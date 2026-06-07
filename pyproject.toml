@@ -38,8 +38,8 @@ dev = [
   "pytest>=7",
 ]
 docs = [
-  "sphinx>=7",
-  "myst-parser>=2",
+  "sphinx>=7,<9",
+  "myst-parser>=2,<5",
   "myst-nb>=1",
   "sphinx-copybutton>=0.5",
   "furo>=2024.1.29",

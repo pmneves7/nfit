@@ -14,16 +14,44 @@ The package is intentionally small at this stage. It does not yet include GUI
 tools, Mantid interoperability, resolution convolution, MCMC, Dask, Numba, or
 JAX.
 
-## Development install
+## Recommended development environment
+
+Use a project-specific conda environment from conda-forge. This keeps compiled
+scientific dependencies such as NumPy, SciPy, BLAS, and Fortran runtimes isolated
+from your base Python installation.
 
 ```bash
-pip install -e ".[dev]"
+cd ~/code/metallix
+conda env create -f environment.yml
+conda activate metallix
 ```
 
-Run tests with:
+If the environment already exists and `environment.yml` changes, update it with:
+
+```bash
+conda env update -f environment.yml --prune
+conda activate metallix
+```
+
+The environment installs the package in editable mode with development and
+documentation extras.
+
+## Tests
 
 ```bash
 pytest
+```
+
+Run the first reference example:
+
+```bash
+python examples/synthetic_single_q_fit.py
+```
+
+Build the documentation:
+
+```bash
+sphinx-build -b html docs docs/_build/html
 ```
 
 The eventual goal is a normal release install:

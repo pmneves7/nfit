@@ -1,0 +1,17 @@
+name: metallix
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - matplotlib
+  - pytest
+  - sphinx<9
+  - myst-parser<5
+  - myst-nb
+  - furo
+  - sphinx-copybutton
+  - pip
+  - pip:
+      - -e ".[dev,docs]"

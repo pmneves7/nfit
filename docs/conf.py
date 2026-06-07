@@ -4,7 +4,6 @@ copyright = "2026, metallix contributors"
 release = "0.0.1"
 
 extensions = [
-    "myst_parser",
     "myst_nb",
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
@@ -13,7 +12,8 @@ extensions = [
 
 source_suffix = {
     ".rst": "restructuredtext",
-    ".md": "markdown",
+    ".md": "myst-nb",
+    ".ipynb": "myst-nb",
 }
 master_doc = "index"
 html_theme = "furo"
