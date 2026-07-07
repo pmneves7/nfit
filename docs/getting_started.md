@@ -23,7 +23,7 @@ MyST Markdown, MyST-NB, and the documentation theme. It also installs `metallix`
 in editable mode with:
 
 ```bash
-pip install -e ".[dev,docs]"
+/Users/pmneves/.conda/envs/metallix/bin/python -m pip install -e ".[dev,docs]"
 ```
 
 ## Validate the install
@@ -31,13 +31,13 @@ pip install -e ".[dev,docs]"
 Run the test suite:
 
 ```bash
-pytest
+/Users/pmneves/.conda/envs/metallix/bin/python -m pytest -q
 ```
 
 Run the first reference example:
 
 ```bash
-python examples/synthetic_single_q_fit.py
+/Users/pmneves/.conda/envs/metallix/bin/python examples/synthetic_single_q_fit.py
 ```
 
 Build the documentation:
@@ -51,4 +51,3 @@ The long-term distribution goal is:
 ```bash
 pip install metallix
 ```
-

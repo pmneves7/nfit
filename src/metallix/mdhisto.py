@@ -7,6 +7,8 @@ from typing import Any, Literal
 import numpy as np
 from numpy.typing import NDArray
 
+from .dataset import PointData4D
+
 
 AxisKind = Literal["momentum", "energy", "unknown"]
 FloatArray = NDArray[np.float64]
@@ -122,6 +124,9 @@ def load_mantid_mdhisto_nxs(
         visual_normalization = _read_optional_scalar(workspace, "visual_normalization")
         if copy_metadata:
             metadata["nexus"] = _copy_metadata_tree(workspace)
+        oriented_lattice = _read_oriented_lattice_metadata(workspace)
+        if oriented_lattice:
+            metadata["oriented_lattice"] = oriented_lattice
 
         return MDHistoData(
             axes=axes,
@@ -135,12 +140,109 @@ def load_mantid_mdhisto_nxs(
         )
 
 
+def point_data_from_hyspec_hhl(
+    data: MDHistoData,
+    *,
+    max_q_trajectories: int | None = None,
+    random_seed: int = 12345,
+    temperature: float | None = None,
+) -> tuple[PointData4D, dict[str, Any]]:
+    """Flatten a HYSPEC HHL ``MDHistoData`` volume into point data.
+
+    The expected axes are ``DeltaE``, ``[H,-H,0]``, ``[0,0,L]``, and
+    ``[H,H,0]``. A point at coordinates ``u=[H,H,0]`` and ``v=[H,-H,0]`` maps to
+    physical reciprocal-lattice coordinates ``H = u + v`` and ``K = u - v``.
+
+    ``max_q_trajectories`` can be used to choose a reproducible subset of
+    complete Q trajectories for faster examples or exploratory fits.
+    """
+
+    e_dim = _axis_index(data, "DeltaE")
+    hmh_dim = _axis_index(data, "[H,-H,0]")
+    l_dim = _axis_index(data, "[0,0,L]")
+    hh_dim = _axis_index(data, "[H,H,0]")
+    if (e_dim, hmh_dim, l_dim, hh_dim) != (0, 1, 2, 3):
+        raise ValueError("HYSPEC HHL axes must be in array order (DeltaE, [H,-H,0], [0,0,L], [H,H,0])")
+
+    valid = np.isfinite(data.signal)
+    valid &= np.isfinite(data.errors)
+    valid &= data.errors > 0.0
+    valid &= ~data.mask
+    valid &= data.num_events > 0.0
+
+    trajectory_has_data = np.any(valid, axis=e_dim)
+    trajectory_indices = np.argwhere(trajectory_has_data)
+    total_trajectories = int(trajectory_indices.shape[0])
+
+    if max_q_trajectories is not None and total_trajectories > max_q_trajectories:
+        rng = np.random.default_rng(random_seed)
+        chosen = np.sort(rng.choice(total_trajectories, size=max_q_trajectories, replace=False))
+        trajectory_indices = trajectory_indices[chosen]
+
+    n_traj = int(trajectory_indices.shape[0])
+    e_centers = data.axes[e_dim].centers
+    hmh_centers = data.axes[hmh_dim].centers
+    l_centers = data.axes[l_dim].centers
+    hh_centers = data.axes[hh_dim].centers
+    n_energy = int(e_centers.size)
+
+    e_idx = np.tile(np.arange(n_energy), n_traj)
+    hmh_idx = np.repeat(trajectory_indices[:, 0], n_energy)
+    l_idx = np.repeat(trajectory_indices[:, 1], n_energy)
+    hh_idx = np.repeat(trajectory_indices[:, 2], n_energy)
+
+    hmh = hmh_centers[hmh_idx]
+    hh = hh_centers[hh_idx]
+    l = l_centers[l_idx]
+    point_mask = valid[e_idx, hmh_idx, l_idx, hh_idx]
+
+    metadata: dict[str, Any] = {
+        "source_file": data.metadata.get("source_file"),
+        "coordinate_units": "r.l.u.",
+        "energy_units": "meV",
+        "hyspec_hhl_axis_map": {
+            "H": "[H,H,0] + [H,-H,0]",
+            "K": "[H,H,0] - [H,-H,0]",
+            "L": "[0,0,L]",
+            "E": "DeltaE",
+        },
+    }
+    if "oriented_lattice" in data.metadata:
+        metadata["oriented_lattice"] = data.metadata["oriented_lattice"]
+
+    point_data = PointData4D(
+        H=hh + hmh,
+        K=hh - hmh,
+        L=l,
+        E=e_centers[e_idx],
+        intensity=data.signal[e_idx, hmh_idx, l_idx, hh_idx],
+        sigma=data.errors[e_idx, hmh_idx, l_idx, hh_idx],
+        mask=point_mask,
+        temperature=temperature,
+        metadata=metadata,
+    )
+    summary = {
+        "total_q_trajectories_with_data": total_trajectories,
+        "used_q_trajectories": n_traj,
+        "candidate_points": point_data.size,
+        "initial_valid_points": int(np.count_nonzero(point_mask)),
+    }
+    return point_data, summary
+
+
 def _signal_axis_names(signal_dataset: Any) -> tuple[str, ...]:
     axes_attr = signal_dataset.attrs.get("axes")
     if axes_attr is None:
         return tuple(f"D{i}" for i in range(signal_dataset.ndim))
     axes_text = _decode_value(axes_attr)
     return tuple(part for part in str(axes_text).split(":") if part)
+
+
+def _axis_index(data: MDHistoData, name: str) -> int:
+    for index, axis in enumerate(data.axes):
+        if axis.name == name:
+            return index
+    raise ValueError(f"axis {name!r} not found")
 
 
 def _read_axis(data_group: Any, axis_name: str) -> MDHistoAxis:
@@ -176,6 +278,38 @@ def _read_optional_scalar(group: Any, name: str) -> int | None:
     if value.size == 0:
         return None
     return int(value[0])
+
+
+def _read_oriented_lattice_metadata(workspace: Any) -> dict[str, Any]:
+    """Read common Mantid oriented-lattice fields when present."""
+
+    wanted = {
+        "orientation_matrix",
+        "ub_matrix",
+        "a",
+        "b",
+        "c",
+        "alpha",
+        "beta",
+        "gamma",
+    }
+    found: dict[str, Any] = {}
+
+    def visit(name: str, obj: Any) -> None:
+        parts = name.lower().split("/")
+        if "oriented_lattice" not in parts:
+            return
+        key = parts[-1]
+        if key not in wanted:
+            return
+        if not hasattr(obj, "shape") or not hasattr(obj, "dtype"):
+            return
+        value = _decode_value(obj[()])
+        found[key] = value
+        found[f"{key}_path"] = obj.name
+
+    workspace.visititems(visit)
+    return found
 
 
 def _copy_metadata_tree(group: Any, *, max_dataset_items: int = 16) -> dict[str, Any]:

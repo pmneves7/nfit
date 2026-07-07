@@ -10,7 +10,8 @@ tests.
 
 getting_started
 physics_conventions
+modeling_pipeline
 examples/synthetic_single_q
+examples/hyspec_constant_background
 api
 ```
-

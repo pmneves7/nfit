@@ -2,6 +2,23 @@
 
 Use this as a concrete checklist for an agentic coding system.
 
+## Environment for all tasks
+
+Use the local `metallix` conda environment explicitly:
+
+```bash
+/Users/pmneves/.conda/envs/metallix/bin/python
+```
+
+Run tests with:
+
+```bash
+/Users/pmneves/.conda/envs/metallix/bin/python -m pytest -q
+```
+
+Do not use the shell's default `python`; it may point to a different Anaconda
+environment and produce misleading Qt/PySide or NumPy-version failures.
+
 ## Task 1: Create repository skeleton
 
 Create a Python package with `src`, `tests`, and `examples`. Add a modern
@@ -11,8 +28,8 @@ named `metallix`. Add README with a short project description.
 Run:
 
 ```bash
-pip install -e .[dev]
-pytest
+/Users/pmneves/.conda/envs/metallix/bin/python -m pip install -e .[dev]
+/Users/pmneves/.conda/envs/metallix/bin/python -m pytest -q
 ```
 
 Do not proceed until import and empty tests work.

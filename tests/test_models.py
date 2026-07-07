@@ -2,7 +2,9 @@ import numpy as np
 import pytest
 
 from metallix.models import (
+    compound_additive_model,
     linear_background,
+    make_constant_intensity_model,
     multi_q_paramagnon_chipp,
     paramagnon_chipp,
     quadratic_distance_rlu,
@@ -79,3 +81,20 @@ def test_relaxational_chipp_and_background():
     np.testing.assert_allclose(out, [1.0])
     np.testing.assert_allclose(linear_background([1.0, 2.0], 0.5, 2.0), [2.5, 4.5])
 
+
+def test_constant_and_compound_measured_intensity_models():
+    from metallix import PointData4D
+
+    data = PointData4D(
+        H=[0.0, 1.0],
+        K=[0.0, 0.0],
+        L=[0.0, 0.0],
+        E=[1.0, 2.0],
+        intensity=[0.0, 0.0],
+        sigma=[1.0, 1.0],
+    )
+    background = make_constant_intensity_model("background")
+    offset = make_constant_intensity_model(value=2.0)
+    model = compound_additive_model(background, offset)
+
+    np.testing.assert_allclose(model(data, {"background": 3.0}), [5.0, 5.0])

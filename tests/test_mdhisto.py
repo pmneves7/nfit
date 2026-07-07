@@ -1,7 +1,7 @@
 import h5py
 import numpy as np
 
-from metallix import load_mantid_mdhisto_nxs
+from metallix import load_mantid_mdhisto_nxs, point_data_from_hyspec_hhl
 
 
 def test_load_mantid_mdhisto_nxs_reads_axes_and_arrays(tmp_path):
@@ -33,6 +33,8 @@ def test_load_mantid_mdhisto_nxs_reads_axes_and_arrays(tmp_path):
         data.create_dataset("errors_squared", data=np.full(signal.shape, 4.0))
         data.create_dataset("mask", data=np.zeros(signal.shape, dtype=np.int8))
         data.create_dataset("num_events", data=np.full(signal.shape, 7.0))
+        oriented_lattice = workspace.create_group("experiment99/sample/oriented_lattice")
+        oriented_lattice.create_dataset("orientation_matrix", data=np.eye(3))
 
     imported = load_mantid_mdhisto_nxs(path)
 
@@ -59,3 +61,23 @@ def test_load_mantid_mdhisto_nxs_reads_axes_and_arrays(tmp_path):
     np.testing.assert_allclose(imported.axes[0].centers, [-0.5, 0.5])
     assert imported.metadata["signal_axes"] == ("D3", "D2", "D1", "D0")
     assert "data/signal" in imported.metadata["nexus"]
+    np.testing.assert_allclose(imported.metadata["oriented_lattice"]["orientation_matrix"], np.eye(3))
+    assert imported.metadata["oriented_lattice"]["orientation_matrix_path"].endswith(
+        "/experiment99/sample/oriented_lattice/orientation_matrix"
+    )
+
+    points, summary = point_data_from_hyspec_hhl(imported, temperature=1.8)
+
+    assert points.size == signal.size
+    assert summary["total_q_trajectories_with_data"] == 3 * 4 * 5
+    assert summary["used_q_trajectories"] == 3 * 4 * 5
+    assert summary["initial_valid_points"] == signal.size
+    np.testing.assert_allclose(points.E[:2], [-0.5, 0.5])
+    hh0 = imported.axes[3].centers[0]
+    hmh0 = imported.axes[1].centers[0]
+    l0 = imported.axes[2].centers[0]
+    np.testing.assert_allclose(points.H[0], hh0 + hmh0)
+    np.testing.assert_allclose(points.K[0], hh0 - hmh0)
+    np.testing.assert_allclose(points.L[0], l0)
+    np.testing.assert_allclose(points.intensity[:2], [0.0, 60.0])
+    assert points.temperature == 1.8

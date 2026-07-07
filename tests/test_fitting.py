@@ -1,6 +1,19 @@
 import numpy as np
+import pytest
 
-from metallix import PointData4D, ParameterSpec, fit_least_squares
+from metallix import (
+    FitDataset,
+    FitProblem,
+    ModelSpec,
+    ParameterSpec,
+    PointData4D,
+    ResolutionSpec,
+    fit_least_squares,
+    fit_problem_least_squares,
+    make_mask_transform,
+    rebin_point_data,
+    sample_problem_parameters,
+)
 from metallix.cross_section import intensity_from_chipp
 from metallix.models import paramagnon_chipp
 
@@ -76,3 +89,170 @@ def test_fit_least_squares_recovers_synthetic_single_q_parameters():
     np.testing.assert_allclose(result.params["omega_sf"], 4.0, rtol=0.08)
     np.testing.assert_allclose(result.params["amplitude"], 5.0, rtol=0.08)
     assert result.covariance is not None
+
+
+def test_fit_problem_combines_weighted_dataset_objectives():
+    data_a = PointData4D(
+        H=[0.0, 1.0],
+        K=[0.0, 0.0],
+        L=[0.0, 0.0],
+        E=[1.0, 1.0],
+        intensity=[2.0, 2.0],
+        sigma=[1.0, 1.0],
+    )
+    data_b = PointData4D(
+        H=[0.0, 1.0],
+        K=[0.0, 0.0],
+        L=[0.0, 0.0],
+        E=[1.0, 1.0],
+        intensity=[4.0, 4.0],
+        sigma=[1.0, 1.0],
+    )
+
+    def constant_model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        return np.full(data.size, params["level"], dtype=float)
+
+    problem = FitProblem(
+        datasets=[
+            FitDataset("low", data_a, weight=1.0),
+            FitDataset("high", data_b, weight=3.0),
+        ],
+        model=ModelSpec("constant", constant_model),
+        parameter_specs=[ParameterSpec("level", 3.0)],
+    )
+
+    result = fit_problem_least_squares(problem)
+
+    assert result.success
+    np.testing.assert_allclose(result.params["level"], 3.5, atol=1e-8)
+    assert set(result.dataset_chi2) == {"low", "high"}
+    np.testing.assert_allclose(result.dataset_chi2["high"], result.dataset_chi2["low"] / 3.0)
+    np.testing.assert_allclose(result.chi2, sum(result.dataset_chi2.values()))
+
+
+def test_fit_dataset_applies_mask_transform_and_resolution():
+    data = PointData4D(
+        H=[0.0, 1.0, 2.0],
+        K=[0.0, 0.0, 0.0],
+        L=[0.0, 0.0, 0.0],
+        E=[1.0, 1.0, 1.0],
+        intensity=[10.0, 20.0, 30.0],
+        sigma=[1.0, 1.0, 1.0],
+    )
+
+    def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        return np.full(data.size, params["level"], dtype=float)
+
+    def resolution(
+        data: PointData4D,
+        model_values: np.ndarray,
+        params: dict[str, float],
+    ) -> np.ndarray:
+        return model_values + params["offset"]
+
+    problem = FitProblem(
+        datasets=[
+            FitDataset(
+                "masked",
+                data,
+                transforms=[make_mask_transform(H=(1.0, None))],
+                resolution=ResolutionSpec("offset", resolution),
+            )
+        ],
+        model=model,
+        parameter_specs=[
+            ParameterSpec("level", 10.0, vary=False),
+            ParameterSpec("offset", 5.0, vary=False),
+        ],
+    )
+
+    result = fit_problem_least_squares(problem)
+
+    assert result.dataset_sizes["masked"] == 2
+    np.testing.assert_allclose(result.dataset_residuals["masked"], [5.0, 15.0])
+    np.testing.assert_allclose(result.dataset_model_values["masked"], [15.0, 15.0])
+
+
+def test_rebin_point_data_returns_masked_regular_grid():
+    data = PointData4D(
+        H=[0.25, 0.75],
+        K=[0.25, 0.25],
+        L=[0.25, 0.25],
+        E=[0.25, 0.25],
+        intensity=[1.0, 3.0],
+        sigma=[1.0, 1.0],
+    )
+
+    rebinned = rebin_point_data(
+        data,
+        lower=[0.0, 0.0, 0.0, 0.0],
+        upper=[1.0, 1.0, 1.0, 1.0],
+        num_bins=[2, 1, 1, 1],
+    )
+
+    assert rebinned.size == 2
+    np.testing.assert_allclose(rebinned.intensity, [1.0, 3.0])
+    np.testing.assert_allclose(rebinned.sigma, [1.0, 1.0])
+    assert np.all(rebinned.mask)
+
+
+def test_rebin_point_data_respects_existing_mask():
+    data = PointData4D(
+        H=[0.25, 0.75],
+        K=[0.25, 0.25],
+        L=[0.25, 0.25],
+        E=[0.25, 0.25],
+        intensity=[1.0, 100.0],
+        sigma=[1.0, 1.0],
+        mask=[True, False],
+    )
+
+    rebinned = rebin_point_data(
+        data,
+        lower=[0.0, 0.0, 0.0, 0.0],
+        upper=[1.0, 1.0, 1.0, 1.0],
+        num_bins=[1, 1, 1, 1],
+    )
+
+    np.testing.assert_allclose(rebinned.intensity, [1.0])
+    np.testing.assert_allclose(rebinned.sigma, [1.0])
+    assert np.all(rebinned.mask)
+
+
+def test_sampling_placeholder_is_explicitly_deferred():
+    data = PointData4D([0.0], [0.0], [0.0], [1.0], [1.0], [1.0])
+    problem = FitProblem(
+        datasets=[FitDataset("data", data)],
+        model=lambda d, p: np.ones(d.size),
+        parameter_specs=[],
+    )
+
+    with pytest.raises(NotImplementedError, match="sampling backends"):
+        sample_problem_parameters(problem)
+
+
+def test_dataset_parameter_bindings_share_values_by_group():
+    def constant_model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        return np.full(data.size, params["constant"], dtype=float)
+
+    data_a = PointData4D([0.0], [0.0], [0.0], [1.0], [2.0], [0.1])
+    data_b = PointData4D([0.0], [0.0], [0.0], [1.0], [2.2], [0.1])
+    data_c = PointData4D([0.0], [0.0], [0.0], [1.0], [5.0], [0.1])
+    problem = FitProblem(
+        datasets=[
+            FitDataset("a", data_a, parameter_bindings={"constant": "group_low"}),
+            FitDataset("b", data_b, parameter_bindings={"constant": "group_low"}),
+            FitDataset("c", data_c, parameter_bindings={"constant": "group_high"}),
+        ],
+        model=constant_model,
+        parameter_specs=[
+            ParameterSpec("group_low", 1.0),
+            ParameterSpec("group_high", 4.0),
+        ],
+    )
+
+    result = fit_problem_least_squares(problem)
+
+    assert result.success
+    np.testing.assert_allclose(result.params["group_low"], 2.1, atol=1e-8)
+    np.testing.assert_allclose(result.params["group_high"], 5.0, atol=1e-8)

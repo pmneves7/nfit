@@ -12,9 +12,8 @@ from metallix.cross_section import intensity_from_chipp
 Run it with:
 
 ```bash
-python examples/synthetic_single_q_fit.py
+/Users/pmneves/.conda/envs/metallix/bin/python examples/synthetic_single_q_fit.py
 ```
 
 The example writes a compact JSON summary to
 `examples/reference_cases/single_q_paramagnon/summary.json`.
-

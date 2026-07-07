@@ -8,13 +8,22 @@ implementation focuses on clean, testable building blocks:
 - overdamped paramagnon susceptibility models returning chi''(Q,E).
 - neutron cross-section helpers that convert chi'' into measured intensity.
 - deterministic least-squares fitting for synthetic-data recovery.
+- a simultaneous-fitting framework with dataset weights, preprocessing
+  transforms, model hooks, resolution hooks, and uncertainty-sampling
+  placeholders.
+- constant and additive compound measured-intensity models, plus dataset-level
+  parameter bindings for shared or grouped constraints.
+- Gaussian energy-resolution broadening with constant or polynomial FWHM and
+  configurable energy oversampling.
+- composable masks for energy windows, `|Q|` ranges, projected boxes,
+  ellipsoids, and phonon-like cones.
 - Mantid `SaveMD` / `MDHistoWorkspace` NeXus import for binned 4D data.
 - simple plotting helpers for 1D cuts, 2D maps, and MDHisto slices.
 - a PySide6 MDHisto slice viewer with axis integration, color controls,
   cursor readout, histogram box cuts, channel selection, and script export.
 
-The package is intentionally small at this stage. It does not yet include
-resolution convolution, MCMC, Dask, Numba, or JAX.
+The package is intentionally small at this stage. MCMC has framework entry
+points but not a concrete backend yet; Dask, Numba, and JAX are not included.
 
 ## Recommended development environment
 
@@ -41,13 +50,16 @@ documentation extras.
 ## Tests
 
 ```bash
-pytest
+/Users/pmneves/.conda/envs/metallix/bin/python -m pytest -q
 ```
+
+Agents and local automation should use the explicit `metallix` conda
+interpreter above rather than the shell's default `python`.
 
 Run the first reference example:
 
 ```bash
-python examples/synthetic_single_q_fit.py
+/Users/pmneves/.conda/envs/metallix/bin/python examples/synthetic_single_q_fit.py
 ```
 
 Import a Mantid MDHisto NeXus file and inspect the axes/channels:

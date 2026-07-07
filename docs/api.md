@@ -16,6 +16,15 @@ Use `plot_mdhisto_slice(data, ...)` when a non-interactive Matplotlib figure is
 preferred, for example in notebooks or batch scripts. The exported scripts from
 the GUI call this helper and include the current display settings.
 
+## Modeling and fitting
+
+The fitting API supports both the original single-dataset
+`fit_least_squares(data, model, specs)` convenience function and the
+simultaneous-fit `FitProblem` workflow. `FitDataset` carries dataset-local
+weights, preprocessing transforms, and optional instrument resolution, while
+`ModelSpec` wraps the shared physics model. See the
+[modeling pipeline](modeling_pipeline.md) page for the recommended structure.
+
 ```{eval-rst}
 .. automodule:: metallix.dataset
    :members:
@@ -27,6 +36,9 @@ the GUI call this helper and include the current display settings.
    :members:
 
 .. automodule:: metallix.fitting
+   :members:
+
+.. automodule:: metallix.resolution
    :members:
 
 .. automodule:: metallix.rebin

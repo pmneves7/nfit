@@ -1,12 +1,66 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from .dataset import PointData4D
+
 
 FloatArray = NDArray[np.float64]
+PointModelFunction = Callable[[PointData4D, dict[str, float]], FloatArray]
+
+
+def constant_intensity_model(
+    data: PointData4D,
+    params: dict[str, float],
+    *,
+    parameter: str = "constant",
+    value: float | None = None,
+) -> FloatArray:
+    """Measured-intensity model constant in momentum and energy.
+
+    By default the constant value is read from ``params[parameter]``. Pass a
+    numeric ``value`` to make a fixed component that does not consume a fitting
+    parameter.
+    """
+
+    level = float(params[parameter] if value is None else value)
+    return np.full(data.size, level, dtype=float)
+
+
+def make_constant_intensity_model(
+    parameter: str = "constant",
+    *,
+    value: float | None = None,
+) -> PointModelFunction:
+    """Return a reusable constant measured-intensity model callable."""
+
+    def model(data: PointData4D, params: dict[str, float]) -> FloatArray:
+        return constant_intensity_model(data, params, parameter=parameter, value=value)
+
+    return model
+
+
+def compound_additive_model(*components: PointModelFunction) -> PointModelFunction:
+    """Return a model that sums multiple primitive measured-intensity models."""
+
+    if len(components) == 0:
+        raise ValueError("compound_additive_model requires at least one component")
+
+    def model(data: PointData4D, params: dict[str, float]) -> FloatArray:
+        total = np.zeros(data.size, dtype=float)
+        for component in components:
+            values = np.asarray(component(data, params), dtype=float)
+            if values.shape != total.shape:
+                raise ValueError(
+                    f"compound component returned shape {values.shape}, expected {total.shape}"
+                )
+            total += values
+        return total
+
+    return model
 
 
 def quadratic_distance_rlu(
@@ -144,4 +198,3 @@ def linear_background(E: ArrayLike, c0: float, c1: float) -> FloatArray:
     """Measured-intensity background linear in energy transfer E in meV."""
 
     return float(c0) + float(c1) * np.asarray(E, dtype=float)
-
