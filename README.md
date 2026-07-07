@@ -8,11 +8,13 @@ implementation focuses on clean, testable building blocks:
 - overdamped paramagnon susceptibility models returning chi''(Q,E).
 - neutron cross-section helpers that convert chi'' into measured intensity.
 - deterministic least-squares fitting for synthetic-data recovery.
-- simple plotting helpers for 1D cuts and 2D maps.
+- Mantid `SaveMD` / `MDHistoWorkspace` NeXus import for binned 4D data.
+- simple plotting helpers for 1D cuts, 2D maps, and MDHisto slices.
+- a PySide6 MDHisto slice viewer with axis integration, color controls,
+  cursor readout, histogram box cuts, channel selection, and script export.
 
-The package is intentionally small at this stage. It does not yet include GUI
-tools, Mantid interoperability, resolution convolution, MCMC, Dask, Numba, or
-JAX.
+The package is intentionally small at this stage. It does not yet include
+resolution convolution, MCMC, Dask, Numba, or JAX.
 
 ## Recommended development environment
 
@@ -48,6 +50,23 @@ Run the first reference example:
 python examples/synthetic_single_q_fit.py
 ```
 
+Import a Mantid MDHisto NeXus file and inspect the axes/channels:
+
+```bash
+python examples/import_hyspec_mdhisto_nxs.py
+```
+
+Open the PySide6 slice viewer for the HYSPEC example data:
+
+```bash
+python examples/view_hyspec_mdhisto_slice.py
+```
+
+The slice viewer can display `signal`, propagated `errors`, `num_events`
+(`multiplicity`), or `mask`; choose x/y axes, integrate hidden axes, tune color
+normalization, copy the figure to the clipboard, or export a static
+`plot_mdhisto_slice(...)` script for notebooks and batch figure generation.
+
 Build the documentation:
 
 ```bash
@@ -64,4 +83,3 @@ pip install metallix
 
 Documentation is planned around Sphinx, MyST Markdown, MyST-NB/Jupyter notebooks,
 and Read the Docs. Initial source pages live in `docs/`.
-

@@ -16,6 +16,8 @@ dependencies = [
   "numpy>=1.23",
   "scipy>=1.9",
   "matplotlib>=3.6",
+  "h5py>=3.8",
+  "pyside6>=6.6",
 ]
 keywords = [
   "inelastic neutron scattering",
@@ -51,4 +53,3 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
-
