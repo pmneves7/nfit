@@ -5,7 +5,7 @@ from pathlib import Path
 from metallix import load_mantid_mdhisto_nxs, slice_viewer
 
 
-FILENAME = "3D_HHL_3meV_1p8K_metallix_m-3m.nxs"
+FILENAME = "4D_test.nxs"
 DATA_PATH = Path("data/hyspec") / FILENAME
 
 

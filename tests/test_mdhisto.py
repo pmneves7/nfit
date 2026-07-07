@@ -36,7 +36,7 @@ def test_load_mantid_mdhisto_nxs_reads_axes_and_arrays(tmp_path):
         oriented_lattice = workspace.create_group("experiment99/sample/oriented_lattice")
         oriented_lattice.create_dataset("orientation_matrix", data=np.eye(3))
 
-    imported = load_mantid_mdhisto_nxs(path)
+    imported = load_mantid_mdhisto_nxs(path, copy_metadata=True)
 
     assert imported.shape == signal.shape
     np.testing.assert_allclose(imported.signal, signal)
@@ -81,3 +81,28 @@ def test_load_mantid_mdhisto_nxs_reads_axes_and_arrays(tmp_path):
     np.testing.assert_allclose(points.L[0], l0)
     np.testing.assert_allclose(points.intensity[:2], [0.0, 60.0])
     assert points.temperature == 1.8
+
+
+def test_load_mantid_mdhisto_nxs_does_not_copy_large_metadata_by_default(tmp_path):
+    path = tmp_path / "tiny_mdhisto.nxs"
+    signal = np.ones((1, 1), dtype=float)
+
+    with h5py.File(path, "w") as handle:
+        workspace = handle.create_group("MDHistoWorkspace")
+        data = workspace.create_group("data")
+        for name, values in (("D1", np.array([0.0, 1.0])), ("D0", np.array([0.0, 1.0]))):
+            axis = data.create_dataset(name, data=values)
+            axis.attrs["long_name"] = name
+            axis.attrs["units"] = "r.l.u."
+        signal_dataset = data.create_dataset("signal", data=signal)
+        signal_dataset.attrs["axes"] = "D1:D0"
+        data.create_dataset("errors_squared", data=np.ones_like(signal))
+        data.create_dataset("mask", data=np.zeros_like(signal, dtype=np.int8))
+        data.create_dataset("num_events", data=np.ones_like(signal))
+        experiment = workspace.create_group("experiment0")
+        experiment.create_dataset("large_raw_payload", data=np.arange(32))
+
+    imported = load_mantid_mdhisto_nxs(path)
+
+    assert "nexus" not in imported.metadata
+    assert imported.metadata["source_file"] == str(path)

@@ -17,6 +17,8 @@ from metallix.plotting import (
     _DropdownSelect,
     plot_2d_map,
     plot_energy_cut,
+    plot_mdhisto_auto,
+    plot_mdhisto_line,
     plot_mdhisto_slice,
     plot_q_cut,
 )
@@ -36,6 +38,45 @@ def test_plotting_helpers_return_axes():
     assert plot_2d_map(data.H, data.K, np.asarray(data.intensity)) is not None
 
 
+def test_hyspec_test_datasets_example_defaults_to_single_dataset_viewer(monkeypatch):
+    import sys
+
+    import examples.plot_hyspec_test_datasets as example
+
+    loaded_paths = []
+    captured = {}
+
+    class Viewer:
+        def run(self):
+            captured["ran"] = True
+
+    def fake_load(path, *, copy_metadata):
+        loaded_paths.append((path.name, copy_metadata))
+        return path.name
+
+    def fake_slice_viewer(datasets, **kwargs):
+        captured["datasets"] = datasets
+        captured["kwargs"] = kwargs
+        return Viewer()
+
+    monkeypatch.setattr(example, "load_mantid_mdhisto_nxs", fake_load)
+    monkeypatch.setattr(example, "slice_viewer", fake_slice_viewer)
+    monkeypatch.setattr(example.Path, "exists", lambda _path: True)
+    monkeypatch.setattr(sys, "argv", ["plot_hyspec_test_datasets.py"])
+
+    example.main()
+
+    assert loaded_paths == [
+        ("1D_test.nxs", False),
+        ("2D_test.nxs", False),
+        ("4D_test.nxs", False),
+    ]
+    assert captured["datasets"] == ["1D_test.nxs", "2D_test.nxs", "4D_test.nxs"]
+    assert captured["kwargs"]["dataset_names"] == ["1D", "2D", "4D"]
+    assert captured["kwargs"]["channel"] == "signal"
+    assert captured["ran"]
+
+
 def test_plot_mdhisto_slice_renders_static_figure_with_histogram_cuts():
     data = _tiny_mdhisto_data()
 
@@ -48,15 +89,20 @@ def test_plot_mdhisto_slice_renders_static_figure_with_histogram_cuts():
         xlim=(-1.0, 1.0),
         ylim=(-0.5, 0.5),
         font_size=13.0,
+        axes_linewidth=2.25,
         show_histogram_axes=True,
         roi_extents=(-1.0, 1.0, -0.5, 0.5),
     )
 
     assert len(fig.axes) == 4
-    ax_image, ax_ycut, _ax_colorbar, ax_xcut = fig.axes
+    ax_image, ax_ycut, ax_colorbar, ax_xcut = fig.axes
     np.testing.assert_allclose(ax_image.get_xlim(), (-1.0, 1.0))
     np.testing.assert_allclose(ax_image.get_ylim(), (-0.5, 0.5))
     assert ax_image.xaxis.label.get_fontsize() == pytest.approx(13.0)
+    assert ax_image.spines["left"].get_linewidth() == pytest.approx(2.25)
+    assert ax_colorbar.spines["left"].get_linewidth() == pytest.approx(2.25)
+    assert ax_image.xaxis.majorTicks[0].tick2line.get_visible()
+    assert ax_image.yaxis.majorTicks[0].tick2line.get_visible()
     assert len(ax_xcut.lines) == 1
     assert len(ax_ycut.lines) == 1
 
@@ -70,6 +116,19 @@ def test_plot_mdhisto_slice_can_render_non_signal_channel():
     rendered = ax_image.collections[0].get_array()
     np.testing.assert_allclose(rendered, data.num_events[1, 1, :, :])
     assert ax_colorbar.yaxis.label.get_text() == "Multiplicity"
+
+
+def test_plot_mdhisto_line_and_auto_dispatch_for_single_non_singleton_axis():
+    data = _tiny_1d_mdhisto_data()
+
+    ax = plot_mdhisto_line(data, channel="signal")
+    auto_ax = plot_mdhisto_auto(data, channel="errors")
+
+    assert ax.get_xlabel() == "[H,H,H] (r.l.u.)"
+    assert ax.get_ylabel() == "Signal"
+    assert len(ax.lines) == 1
+    assert auto_ax.get_ylabel() == "Error"
+    assert len(auto_ax.lines) == 1
 
 
 def test_mdhisto_slice_viewer_selects_hidden_axis_positions():
@@ -215,9 +274,14 @@ def test_qt_control_panel_uses_compact_widgets_without_horizontal_scroll():
     from metallix.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+    viewer.window.show()
+    viewer.app.processEvents()
 
     assert viewer.controls_scroll.horizontalScrollBarPolicy() == QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-    assert viewer.controls_scroll.maximumWidth() <= 380
+    assert viewer.controls_scroll.minimumWidth() >= 430
+    assert viewer.controls_scroll.maximumWidth() >= viewer.controls_scroll.sizeHint().width()
+    assert viewer.controls_scroll.widget().width() >= viewer.controls_scroll.widget().minimumSizeHint().width()
+    assert viewer.dataset_combo.width() > viewer.channel_combo.width()
     assert viewer.x_min_spin.maximumWidth() <= 118
     assert viewer.vmax_spin.maximumWidth() <= 118
     assert viewer.cmap_combo.maximumWidth() <= 150
@@ -235,6 +299,173 @@ def test_qt_channel_dropdown_switches_displayed_channel_and_export_script():
     assert viewer.colorbar.ax.yaxis.label.get_text() == "Error"
     np.testing.assert_allclose(viewer.image.get_array(), viewer.slice_arrays()["errors"])
     assert "channel='errors'" in viewer.figure_script()
+
+
+def test_qt_dataset_dropdown_switches_between_loaded_datasets():
+    pytest.importorskip("PySide6")
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data_a = _tiny_mdhisto_data()
+    data_b = _tiny_mdhisto_data()
+    data_b.signal = data_b.signal + 1000.0
+
+    viewer = QtMDHistoSliceViewer([data_a, data_b], dataset_names=["first", "second"], x_dim=3, y_dim=2)
+
+    assert viewer.dataset_combo.currentText() == "first"
+    np.testing.assert_allclose(viewer.image.get_array(), data_a.signal[1, 1, :, :])
+
+    viewer.dataset_combo.setCurrentIndex(1)
+
+    assert viewer.dataset_index == 1
+    assert viewer.data is data_b
+    assert viewer.dataset_combo.currentText() == "second"
+    np.testing.assert_allclose(viewer.image.get_array(), data_b.signal[1, 1, :, :])
+    assert viewer.x_combo.currentText() == "[H,H,0]"
+    assert viewer.y_combo.currentText() == "[0,0,L]"
+
+
+def test_qt_dataset_dropdown_keeps_plot_configs_independent():
+    pytest.importorskip("PySide6")
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data_a = _tiny_mdhisto_data()
+    data_b = _tiny_mdhisto_data()
+    data_b.signal = data_b.signal + 1000.0
+
+    viewer = QtMDHistoSliceViewer([data_a, data_b], dataset_names=["first", "second"], x_dim=3, y_dim=2)
+
+    viewer.channel_combo.setCurrentText("errors")
+    viewer.cmap_combo.setCurrentText("magma")
+    viewer.x_combo.setCurrentIndex(1)
+    viewer.ax_image.set_xlim(-0.25, 0.25)
+    viewer.ax_image.set_ylim(-0.5, 0.5)
+    viewer.vmin_spin.setValue(viewer.vmin_spin.value() + 1.0)
+    viewer.font_size_spin.setValue(14.0)
+
+    viewer.dataset_combo.setCurrentIndex(1)
+
+    assert viewer.model.channel == "signal"
+    assert viewer.model.cmap == "viridis"
+    assert viewer.model.autoscale
+    assert viewer.font_size == pytest.approx(12.0)
+    assert viewer.x_combo.currentText() == "[H,H,0]"
+    assert viewer.y_combo.currentText() == "[0,0,L]"
+    assert not np.allclose(viewer.ax_image.get_xlim(), (-0.25, 0.25))
+
+    viewer.cmap_combo.setCurrentText("cividis")
+    viewer.ax_image.set_xlim(-1.5, 1.5)
+
+    viewer.dataset_combo.setCurrentIndex(0)
+
+    assert viewer.model.channel == "errors"
+    assert viewer.model.cmap == "magma"
+    assert not viewer.model.autoscale
+    assert viewer.font_size == pytest.approx(14.0)
+    assert viewer.x_combo.currentText() == "[H,-H,0]"
+    assert viewer.y_combo.currentText() == "[0,0,L]"
+    np.testing.assert_allclose(viewer.ax_image.get_xlim(), (-0.25, 0.25))
+    np.testing.assert_allclose(viewer.ax_image.get_ylim(), (-0.5, 0.5))
+    assert "channel='errors'" in viewer.figure_script()
+
+    viewer.dataset_combo.setCurrentIndex(1)
+
+    assert viewer.model.channel == "signal"
+    assert viewer.model.cmap == "cividis"
+    np.testing.assert_allclose(viewer.ax_image.get_xlim(), (-1.5, 1.5))
+    assert "channel='signal'" in viewer.figure_script()
+
+
+def test_qt_dataset_dropdown_handles_1d_line_and_2d_slice_modes():
+    pytest.importorskip("PySide6")
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    line_data = _tiny_1d_mdhisto_data()
+    slice_data = _tiny_mdhisto_data()
+
+    viewer = QtMDHistoSliceViewer([line_data, slice_data], dataset_names=["line", "slice"])
+
+    assert viewer.dataset_combo.currentText() == "line"
+    assert viewer.image is None
+    assert len(viewer.ax_image.lines) == 1
+    assert not viewer.ax_colorbar.get_visible()
+    assert not viewer.axes_group.isHidden()
+    assert viewer.axis_selector_widget.isHidden()
+    assert viewer.hidden_group.isHidden()
+    assert viewer.color_group.isHidden()
+    assert viewer.tools_group.isHidden()
+    assert not viewer.line_group.isHidden()
+
+    viewer.dataset_combo.setCurrentIndex(1)
+
+    assert viewer.dataset_combo.currentText() == "slice"
+    assert viewer.image is not None
+    assert viewer.ax_colorbar.get_visible()
+    assert not viewer.axes_group.isHidden()
+    assert not viewer.color_group.isHidden()
+    assert not viewer.tools_group.isHidden()
+    assert viewer.line_group.isHidden()
+    assert viewer.model.x_dim == 3
+    assert viewer.model.y_dim == 2
+
+
+def test_qt_singleton_axes_are_not_controlled():
+    pytest.importorskip("PySide6")
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_2d_mdhisto_data_with_singletons()
+
+    viewer = QtMDHistoSliceViewer(data)
+
+    assert [viewer.x_combo.itemText(i) for i in range(viewer.x_combo.count())] == ["[0,0,L]", "[H,H,H]"]
+    assert [viewer.y_combo.itemText(i) for i in range(viewer.y_combo.count())] == ["[0,0,L]", "[H,H,H]"]
+    assert viewer.hidden_controls == {}
+
+
+def test_qt_1d_line_plot_controls_update_rendered_line():
+    pytest.importorskip("PySide6")
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_tiny_1d_mdhisto_data())
+
+    assert viewer.marker_face_color == "none"
+    assert viewer.marker_edge_width == pytest.approx(1.5)
+
+    viewer.show_errorbars_check.setChecked(False)
+    viewer.marker_combo.setCurrentText("square")
+    viewer.line_style_combo.setCurrentText("dashed")
+    viewer.marker_size_spin.setValue(8.0)
+    viewer.line_plot_width_spin.setValue(2.0)
+    viewer.marker_edge_width_spin.setValue(1.5)
+    viewer.marker_face_color_combo.setCurrentText("orange")
+    viewer.line_color_combo.setCurrentText("red")
+
+    line = viewer.ax_image.lines[0]
+    assert line.get_marker() == "s"
+    assert line.get_linestyle() == "--"
+    assert line.get_markersize() == pytest.approx(8.0)
+    assert line.get_linewidth() == pytest.approx(2.0)
+    assert line.get_markeredgewidth() == pytest.approx(1.5)
+    assert line.get_markerfacecolor() == "#ff7f0e"
+    assert line.get_markeredgecolor() == "#d62728"
+    assert line.get_color() == "#d62728"
+    assert "plot_mdhisto_line" in viewer.figure_script()
+
+
+def test_qt_1d_line_plot_errorbar_caps_share_linewidth():
+    pytest.importorskip("PySide6")
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_tiny_1d_mdhisto_data())
+
+    viewer.show_errorbar_caps_check.setChecked(True)
+    viewer.errorbar_cap_size_spin.setValue(6.0)
+    viewer.line_plot_width_spin.setValue(2.25)
+
+    data_line, caplines, _barcols = viewer.ax_image.containers[0].lines
+    assert data_line.get_markerfacecolor() == "none"
+    assert len(caplines) == 2
+    assert all(capline.get_markersize() == pytest.approx(12.0) for capline in caplines)
+    assert all(capline.get_linewidth() == pytest.approx(2.25) for capline in caplines)
 
 
 def test_qt_hidden_axis_sliders_and_spins_stay_linked():
@@ -344,12 +575,27 @@ def test_qt_font_size_control_updates_figure_text():
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
 
+    assert viewer.font_size == pytest.approx(12.0)
+    assert viewer.axis_linewidth == pytest.approx(1.5)
+
     viewer.font_size_spin.setValue(14.0)
 
     assert viewer.font_size == pytest.approx(14.0)
     assert viewer.ax_image.xaxis.label.get_fontsize() == pytest.approx(14.0)
     assert viewer.ax_image.yaxis.label.get_fontsize() == pytest.approx(14.0)
     assert viewer.colorbar.ax.yaxis.label.get_fontsize() == pytest.approx(14.0)
+
+    viewer.line_width_spin.setValue(2.5)
+
+    assert viewer.axis_linewidth == pytest.approx(2.5)
+    assert viewer.ax_image.spines["left"].get_linewidth() == pytest.approx(2.5)
+    assert viewer.ax_xcut.spines["left"].get_linewidth() == pytest.approx(2.5)
+    assert viewer.ax_ycut.spines["left"].get_linewidth() == pytest.approx(2.5)
+    assert viewer.colorbar.outline.get_linewidth() == pytest.approx(2.5)
+    assert viewer.ax_image.xaxis.majorTicks[0].tick2line.get_visible()
+    assert viewer.ax_image.yaxis.majorTicks[0].tick2line.get_visible()
+    assert viewer.ax_xcut.xaxis.majorTicks[0].tick2line.get_visible()
+    assert viewer.ax_ycut.yaxis.majorTicks[0].tick2line.get_visible()
 
 
 def test_qt_copy_and_save_script_exports_current_display_state():
@@ -362,6 +608,7 @@ def test_qt_copy_and_save_script_exports_current_display_state():
     data.metadata["source_file"] = "/tmp/example.nxs"
     viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
     viewer.font_size_spin.setValue(12.5)
+    viewer.line_width_spin.setValue(2.0)
     viewer.hist_axes_check.setChecked(True)
     viewer._set_roi_extents((-1.0, 1.0, -0.5, 0.5), update_cuts=True, draw=False)
     viewer.ax_image.set_xlim(-1.0, 1.0)
@@ -375,6 +622,7 @@ def test_qt_copy_and_save_script_exports_current_display_state():
     assert "x_dim='[H,H,0]'" in script
     assert "y_dim='[0,0,L]'" in script
     assert "font_size=12.5" in script
+    assert "axes_linewidth=2.0" in script
     assert "show_histogram_axes=True" in script
     assert "roi_extents=(-1.0, 1.0, -0.5, 0.5)" in script
     assert QtWidgets.QApplication.clipboard().text() == script
@@ -443,6 +691,54 @@ def test_qt_roi_button_enables_rectangle_selector_and_cursor_hkle():
     assert coords["E"] == pytest.approx(0.75)
 
 
+def test_qt_cursor_readout_uses_fixed_labels_and_uncertainty_precision():
+    pytest.importorskip("PySide6")
+    from types import SimpleNamespace
+
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_mdhisto_data()
+    data.signal[1, 1, 3, 2] = -0.0067
+    data.errors[1, 1, 3, 2] = 0.0013
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    view = viewer.slice_arrays()
+    event = SimpleNamespace(
+        inaxes=viewer.ax_image,
+        xdata=float(view["x_centers"][2]),
+        ydata=float(view["y_centers"][3]),
+    )
+
+    viewer._on_motion(event)
+
+    assert viewer.cursor_xy_label.text() == "(x, y) = (0, 0.75)"
+    assert viewer.cursor_hkle_label.text() == "(H, K, L, E) = (1.5, -1.5, 0.75, 0.75)"
+    assert viewer.cursor_intensity_label.text() == "I = -0.0067 ± 0.0013"
+
+
+def test_qt_1d_cursor_readout_tracks_nearest_point_and_hkle():
+    pytest.importorskip("PySide6")
+    from types import SimpleNamespace
+
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_1d_mdhisto_data()
+    data.signal[0, 0, 0, 2] = 3.25
+    data.errors[0, 0, 0, 2] = 0.12
+    viewer = QtMDHistoSliceViewer(data)
+    view = viewer.slice_arrays()
+    event = SimpleNamespace(
+        inaxes=viewer.ax_image,
+        xdata=float(view["x_centers"][2]) + 0.01,
+        ydata=3.0,
+    )
+
+    viewer._on_motion(event)
+
+    assert viewer.cursor_xy_label.text() == "(x, y) = (0.5, 3.25)"
+    assert viewer.cursor_hkle_label.text() == "(H, K, L, E) = (0.5, 0.5, 0.5, 3)"
+    assert viewer.cursor_intensity_label.text() == "I = 3.25 ± 0.12"
+
+
 def test_qt_box_tool_visibility_checkbox_controls_rectangle_selector():
     pytest.importorskip("PySide6")
     from metallix.qt_slice_viewer import QtMDHistoSliceViewer
@@ -450,10 +746,11 @@ def test_qt_box_tool_visibility_checkbox_controls_rectangle_selector():
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
 
     assert not viewer.show_box_check.isChecked()
-    assert not viewer.roi_button.isEnabled()
+    assert viewer.roi_button.isEnabled()
     assert not viewer.rectangle_selector.active
 
     viewer.show_box_check.setChecked(True)
+    assert viewer.hist_axes_check.isChecked()
     viewer.roi_button.setChecked(True)
     assert viewer.rectangle_selector.active
     assert viewer.rectangle_selector.artists[0].get_edgecolor() == pytest.approx(mcolors.to_rgba("#4f8bd6"))
@@ -467,13 +764,14 @@ def test_qt_box_tool_visibility_checkbox_controls_rectangle_selector():
 
     viewer.show_box_check.setChecked(False)
 
-    assert not viewer.roi_button.isEnabled()
+    assert viewer.roi_button.isEnabled()
     assert not viewer.roi_button.isChecked()
     assert not viewer.rectangle_selector.active
 
-    viewer.show_box_check.setChecked(True)
     viewer.roi_button.setChecked(True)
 
+    assert viewer.show_box_check.isChecked()
+    assert viewer.hist_axes_check.isChecked()
     assert viewer.roi_button.isEnabled()
     assert viewer.rectangle_selector.active
 
@@ -550,6 +848,38 @@ def _tiny_mdhisto_data() -> MDHistoData:
             MDHistoAxis("[H,-H,0]", np.array([0.0, 1.0, 2.0, 3.0]), "r.l.u.", "momentum"),
             MDHistoAxis("[0,0,L]", np.linspace(-1.0, 1.0, 5), "r.l.u.", "momentum"),
             MDHistoAxis("[H,H,0]", np.linspace(-2.0, 2.0, 6), "r.l.u.", "momentum"),
+        ),
+        signal=signal,
+        errors=np.ones_like(signal),
+        mask=np.zeros_like(signal, dtype=bool),
+        num_events=np.ones_like(signal),
+    )
+
+
+def _tiny_1d_mdhisto_data() -> MDHistoData:
+    signal = np.arange(5, dtype=float).reshape(1, 1, 1, 5)
+    return MDHistoData(
+        axes=(
+            MDHistoAxis("[L,L,-2L]", np.array([-0.5, 0.5]), "r.l.u.", "momentum"),
+            MDHistoAxis("[H,-H,0]", np.array([-0.5, 0.5]), "r.l.u.", "momentum"),
+            MDHistoAxis("DeltaE", np.array([2.5, 3.5]), "meV", "energy"),
+            MDHistoAxis("[H,H,H]", np.linspace(0.0, 1.0, 6), "r.l.u.", "momentum"),
+        ),
+        signal=signal,
+        errors=np.ones_like(signal),
+        mask=np.zeros_like(signal, dtype=bool),
+        num_events=np.ones_like(signal),
+    )
+
+
+def _tiny_2d_mdhisto_data_with_singletons() -> MDHistoData:
+    signal = np.arange(4 * 5, dtype=float).reshape(1, 1, 4, 5)
+    return MDHistoData(
+        axes=(
+            MDHistoAxis("[L,L,-2L]", np.array([-0.5, 0.5]), "r.l.u.", "momentum"),
+            MDHistoAxis("[H,-H,0]", np.array([-0.5, 0.5]), "r.l.u.", "momentum"),
+            MDHistoAxis("[0,0,L]", np.linspace(-1.0, 1.0, 5), "r.l.u.", "momentum"),
+            MDHistoAxis("[H,H,H]", np.linspace(0.0, 1.0, 6), "r.l.u.", "momentum"),
         ),
         signal=signal,
         errors=np.ones_like(signal),

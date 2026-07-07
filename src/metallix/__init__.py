@@ -57,7 +57,7 @@ from .models import (
     quadratic_distance_rlu,
     relaxational_chipp,
 )
-from .plotting import MDHistoSliceViewer, plot_mdhisto_slice, slice_viewer
+from .plotting import MDHistoSliceViewer, plot_mdhisto_auto, plot_mdhisto_line, plot_mdhisto_slice, slice_viewer
 from .rebin import NDRebin, rebin_nd
 from .resolution import (
     EnergyGaussianResolution,
@@ -122,6 +122,8 @@ __all__ = [
     "mask_out_phonon_cone",
     "multi_q_paramagnon_chipp",
     "paramagnon_chipp",
+    "plot_mdhisto_auto",
+    "plot_mdhisto_line",
     "plot_mdhisto_slice",
     "point_data_from_hyspec_hhl",
     "polynomial_fwhm_energy_resolution",

@@ -74,10 +74,21 @@ Open the PySide6 slice viewer for the HYSPEC example data:
 python examples/view_hyspec_mdhisto_slice.py
 ```
 
+Render the local HYSPEC test datasets (`1D_test.nxs`, `2D_test.nxs`, and
+`4D_test.nxs`) with automatic 1D line plotting and 2D+ slice plotting:
+
+```bash
+python examples/plot_hyspec_test_datasets.py
+python examples/plot_hyspec_test_datasets.py --channel multiplicity --save-dir /tmp/hyspec-plots
+```
+
 The slice viewer can display `signal`, propagated `errors`, `num_events`
 (`multiplicity`), or `mask`; choose x/y axes, integrate hidden axes, tune color
-normalization, copy the figure to the clipboard, or export a static
-`plot_mdhisto_slice(...)` script for notebooks and batch figure generation.
+normalization, switch between loaded datasets, copy the figure to the clipboard,
+or export a static `plot_mdhisto_slice(...)` script for notebooks and batch
+figure generation. `load_mantid_mdhisto_nxs` reads only the core MDHisto arrays
+by default; pass `copy_metadata=True` only when you need a shallow FAIR-style
+copy of ancillary NeXus metadata such as experiment groups.
 
 Build the documentation:
 

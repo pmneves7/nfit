@@ -86,14 +86,15 @@ def load_mantid_mdhisto_nxs(
     path: str | Path,
     *,
     workspace_path: str = "/MDHistoWorkspace",
-    copy_metadata: bool = True,
+    copy_metadata: bool = False,
 ) -> MDHistoData:
     """Load the important arrays and axes from a Mantid ``SaveMD`` NeXus file.
 
     The importer reads ``/MDHistoWorkspace/data`` by default, including axis
     names, axis values, units, signal, one-sigma errors, Mantid mask flags, and
     event counts. ``errors`` are returned as ``sqrt(errors_squared)`` because
-    Mantid stores variances in the file.
+    Mantid stores variances in the file. Bulky non-data metadata groups such as
+    ``experiment0`` are not copied unless ``copy_metadata=True``.
     """
 
     try:

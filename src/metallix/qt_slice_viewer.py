@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -7,6 +8,36 @@ import numpy as np
 
 from .mdhisto import MDHistoData
 from .plotting import MDHistoSliceViewer
+
+
+_MARKER_OPTIONS = {
+    "none": "",
+    "circle": "o",
+    "square": "s",
+    "triangle": "^",
+    "diamond": "D",
+    "plus": "+",
+    "cross": "x",
+}
+_LINE_STYLE_OPTIONS = {
+    "none": "none",
+    "solid": "-",
+    "dashed": "--",
+    "dotted": ":",
+    "dash-dot": "-.",
+}
+_COLOR_OPTIONS = {
+    "none": "none",
+    "blue": "#1f77b4",
+    "orange": "#ff7f0e",
+    "green": "#2ca02c",
+    "red": "#d62728",
+    "purple": "#9467bd",
+    "brown": "#8c564b",
+    "pink": "#e377c2",
+    "gray": "#7f7f7f",
+    "black": "#000000",
+}
 
 
 @dataclass
@@ -21,13 +52,40 @@ class _HiddenAxisControls:
     syncing: bool = False
 
 
+@dataclass
+class _DatasetViewState:
+    model: MDHistoSliceViewer
+    roi_extents: tuple[float, float, float, float] | None = None
+    xlim: tuple[float, float] | None = None
+    ylim: tuple[float, float] | None = None
+    show_box_tool: bool = False
+    histogram_axes: bool = False
+    roi_enabled: bool = False
+    xcut_percent: int = 20
+    ycut_percent: int = 16
+    font_size: float = 12.0
+    axis_linewidth: float = 1.5
+    box_tool_has_auto_shown_hist_axes: bool = False
+    marker: str = "o"
+    line_style: str = "none"
+    marker_size: float = 5.0
+    line_plot_width: float = 1.5
+    marker_edge_width: float = 1.5
+    marker_face_color: str = "#1f77b4"
+    line_color: str = "#1f77b4"
+    show_errorbars: bool = True
+    show_errorbar_caps: bool = False
+    errorbar_cap_size: float = 3.0
+
+
 class QtMDHistoSliceViewer:
     """PySide6 slice viewer with an embedded Matplotlib canvas."""
 
     def __init__(
         self,
-        data: MDHistoData,
+        data: MDHistoData | Sequence[MDHistoData],
         *,
+        dataset_names: Sequence[str] | None = None,
         x_dim: int | str = -1,
         y_dim: int | str = 0,
         channel: str = "signal",
@@ -38,10 +96,23 @@ class QtMDHistoSliceViewer:
         masked: bool = True,
     ) -> None:
         self.app = _qt_app()
+        self.datasets = _coerce_datasets(data)
+        self.dataset_names = _coerce_dataset_names(self.datasets, dataset_names)
+        self.dataset_index = 0
+        self._initial_x_dim = x_dim
+        self._initial_y_dim = y_dim
+        self._initial_channel = channel
+        self._initial_cmap = cmap
+        self._initial_color_scale = color_scale
+        self._initial_auto_limits = auto_limits
+        self._initial_integrate = integrate
+        self._initial_masked = masked
+        initial_data = self.datasets[self.dataset_index]
+        model_x_dim, model_y_dim = _initial_display_dims(initial_data, x_dim, y_dim)
         self.model = MDHistoSliceViewer(
-            data,
-            x_dim=x_dim,
-            y_dim=y_dim,
+            initial_data,
+            x_dim=model_x_dim,
+            y_dim=model_y_dim,
             channel=channel,
             cmap=cmap,
             color_scale=color_scale,
@@ -49,7 +120,7 @@ class QtMDHistoSliceViewer:
             integrate=integrate,
             masked=masked,
         )
-        self.data = data
+        self.data = initial_data
         self.window = None
         self.canvas = None
         self.figure = None
@@ -62,6 +133,9 @@ class QtMDHistoSliceViewer:
         self.image = None
         self.colorbar = None
         self.rectangle_selector = None
+        self.dataset_combo = None
+        self.axes_group = None
+        self.axis_selector_widget = None
         self.x_combo = None
         self.y_combo = None
         self.x_min_spin = None
@@ -77,12 +151,16 @@ class QtMDHistoSliceViewer:
         self.autoscale_check = None
         self.vmin_spin = None
         self.vmax_spin = None
+        self.color_group = None
         self.gamma_label = None
         self.gamma_spin = None
         self.limit_n_label = None
         self.limit_n_spin = None
-        self.hover_label = None
+        self.cursor_xy_label = None
+        self.cursor_hkle_label = None
+        self.cursor_intensity_label = None
         self.roi_button = None
+        self.tools_group = None
         self.show_box_check = None
         self.hist_axes_check = None
         self.xcut_percent_slider = None
@@ -94,21 +172,49 @@ class QtMDHistoSliceViewer:
         self.roi_y_center_spin = None
         self.roi_y_width_spin = None
         self.font_size_spin = None
+        self.line_width_spin = None
+        self.line_group = None
+        self.marker_combo = None
+        self.line_style_combo = None
+        self.marker_size_spin = None
+        self.line_plot_width_spin = None
+        self.marker_edge_width_spin = None
+        self.marker_face_color_combo = None
+        self.line_color_combo = None
+        self.show_errorbars_check = None
+        self.show_errorbar_caps_check = None
+        self.errorbar_cap_size_spin = None
         self.copy_figure_button = None
         self.copy_script_button = None
         self.save_script_button = None
         self.xcut_percent = 20
         self.ycut_percent = 16
-        self.font_size = 10.0
+        self.font_size = 12.0
+        self.axis_linewidth = 1.5
+        self.marker = "o"
+        self.line_style = "none"
+        self.marker_size = 5.0
+        self.line_plot_width = 1.5
+        self.marker_edge_width = 1.5
+        self.marker_face_color = "none"
+        self.line_color = "#1f77b4"
+        self.show_errorbars = True
+        self.show_errorbar_caps = False
+        self.errorbar_cap_size = 3.0
         self.hidden_layout = None
         self.hidden_controls: dict[int, _HiddenAxisControls] = {}
+        self._display_axis_dims: list[int] = []
         self._current_slice: dict[str, np.ndarray] | None = None
         self._syncing_axes = False
         self._syncing_limits = False
         self._syncing_view_limits = False
         self._syncing_roi_controls = False
+        self._box_tool_has_auto_shown_hist_axes = False
+        self._restoring_dataset_state = False
         self._roi_extents: tuple[float, float, float, float] | None = None
         self._view_limit_callback_ids: list[int] = []
+        self._dataset_states: list[_DatasetViewState | None] = [None] * len(self.datasets)
+        self._dataset_states[0] = _DatasetViewState(model=self.model)
         self._build()
         self.update_plot()
 
@@ -161,6 +267,8 @@ class QtMDHistoSliceViewer:
             if source_file
             else "data = ...  # Replace with your MDHistoData object"
         )
+        if self._is_effective_1d():
+            return self._line_figure_script(data_line)
         return "\n".join(
             [
                 "import matplotlib.pyplot as plt",
@@ -187,11 +295,48 @@ class QtMDHistoSliceViewer:
                 f"    xlim={self._export_limits('x')!r},",
                 f"    ylim={self._export_limits('y')!r},",
                 f"    font_size={self.font_size!r},",
+                f"    axes_linewidth={self.axis_linewidth!r},",
                 f"    show_histogram_axes={self.hist_axes_check.isChecked()!r},",
                 f"    roi_extents={self._roi_extents!r},",
                 f"    xcut_percent={self.xcut_percent!r},",
                 f"    ycut_percent={self.ycut_percent!r},",
                 ")",
+                "plt.show()",
+                "",
+            ]
+        )
+
+    def _line_figure_script(self, data_line: str) -> str:
+        return "\n".join(
+            [
+                "import matplotlib.pyplot as plt",
+                "from metallix import load_mantid_mdhisto_nxs, plot_mdhisto_line",
+                "",
+                data_line,
+                "ax = plot_mdhisto_line(",
+                "    data,",
+                f"    axis_dim={self.data.axes[self.model.x_dim].name!r},",
+                f"    channel={self.model.channel!r},",
+                ")",
+                "for container in ax.containers:",
+                "    for artist in getattr(container, 'lines', []):",
+                "        if artist is not None:",
+                "            try:",
+                f"                artist.set_color({self.line_color!r})",
+                "            except Exception:",
+                "                pass",
+                "for line in ax.lines:",
+                f"    line.set_marker({self.marker!r})",
+                f"    line.set_linestyle({'None' if self.line_style == 'none' else self.line_style!r})",
+                f"    line.set_markersize({self.marker_size!r})",
+                f"    line.set_linewidth({self.line_plot_width!r})",
+                f"    line.set_markeredgewidth({self.marker_edge_width!r})",
+                f"    line.set_markerfacecolor({self.marker_face_color!r})",
+                f"    line.set_markeredgecolor({self.line_color!r})",
+                f"    line.set_color({self.line_color!r})",
+                f"ax.tick_params(axis='both', which='both', direction='in', top=True, right=True, width={self.axis_linewidth!r})",
+                f"ax.figure.set_size_inches(8.0, 6.0)",
+                f"plt.rcParams.update({{'font.size': {self.font_size!r}}})",
                 "plt.show()",
                 "",
             ]
@@ -220,9 +365,12 @@ class QtMDHistoSliceViewer:
         central = QtWidgets.QWidget()
         self.window.setCentralWidget(central)
         main_layout = QtWidgets.QHBoxLayout(central)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
         plot_panel = QtWidgets.QWidget()
         plot_layout = QtWidgets.QVBoxLayout(plot_panel)
+        plot_layout.setContentsMargins(8, 8, 8, 8)
         self.figure = Figure(figsize=(10, 8), constrained_layout=True)
         self.grid = self.figure.add_gridspec(
             2,
@@ -236,36 +384,81 @@ class QtMDHistoSliceViewer:
         self.ax_xcut = self.figure.add_subplot(self.grid[1, 0], sharex=self.ax_image)
         self.canvas = FigureCanvasQTAgg(self.figure)
         toolbar = NavigationToolbar2QT(self.canvas, self.window)
+        cursor_bar = QtWidgets.QWidget()
+        cursor_layout = QtWidgets.QHBoxLayout(cursor_bar)
+        cursor_layout.setContentsMargins(4, 0, 4, 0)
+        cursor_layout.setSpacing(12)
+        self.cursor_xy_label = QtWidgets.QLabel("(x, y) = (-, -)")
+        self.cursor_hkle_label = QtWidgets.QLabel("(H, K, L, E) = (-, -, -, -)")
+        self.cursor_intensity_label = QtWidgets.QLabel("I = -")
+        for label, width in (
+            (self.cursor_xy_label, 260),
+            (self.cursor_hkle_label, 380),
+            (self.cursor_intensity_label, 220),
+        ):
+            label.setMinimumWidth(width)
+            label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        cursor_layout.addWidget(self.cursor_xy_label, 0)
+        cursor_layout.addWidget(self.cursor_hkle_label, 0)
+        cursor_layout.addWidget(self.cursor_intensity_label, 1)
         plot_layout.addWidget(toolbar)
+        plot_layout.addWidget(cursor_bar)
         plot_layout.addWidget(self.canvas, 1)
 
         controls = QtWidgets.QScrollArea()
         self.controls_scroll = controls
         controls.setWidgetResizable(True)
         controls.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        controls.setMinimumWidth(340)
-        controls.setMaximumWidth(380)
+        controls.setMinimumWidth(430)
+        controls.setMaximumWidth(500)
         controls_widget = QtWidgets.QWidget()
         controls.setWidget(controls_widget)
         controls_layout = QtWidgets.QVBoxLayout(controls_widget)
         controls_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
 
+        dataset_group = QtWidgets.QGroupBox("Dataset")
+        dataset_layout = QtWidgets.QGridLayout(dataset_group)
+        dataset_layout.setHorizontalSpacing(6)
+        dataset_layout.setVerticalSpacing(6)
+        self.dataset_combo = QtWidgets.QComboBox()
+        self.dataset_combo.addItems(self.dataset_names)
+        _expanding_combobox(self.dataset_combo)
+        self.dataset_combo.currentIndexChanged.connect(self._set_dataset_index)
+        dataset_layout.addWidget(QtWidgets.QLabel("Dataset"), 0, 0)
+        dataset_layout.addWidget(self.dataset_combo, 0, 1)
+        self.channel_combo = QtWidgets.QComboBox()
+        self.channel_combo.addItems(self.model.CHANNELS)
+        _compact_combobox(self.channel_combo)
+        self.channel_combo.setCurrentText(self.model.channel)
+        self.channel_combo.currentTextChanged.connect(self._set_channel)
+        dataset_layout.addWidget(QtWidgets.QLabel("Channel"), 1, 0)
+        dataset_layout.addWidget(self.channel_combo, 1, 1)
+        dataset_layout.setColumnStretch(1, 1)
+        controls_layout.addWidget(dataset_group)
+
         axes_group = QtWidgets.QGroupBox("Displayed axes")
-        axes_form = QtWidgets.QFormLayout(axes_group)
-        axes_form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
-        labels = [axis.name for axis in self.data.axes]
+        self.axes_group = axes_group
+        axes_layout = QtWidgets.QGridLayout(axes_group)
+        axes_layout.setHorizontalSpacing(6)
+        axes_layout.setVerticalSpacing(5)
         self.x_combo = QtWidgets.QComboBox()
         self.y_combo = QtWidgets.QComboBox()
-        self.x_combo.addItems(labels)
-        self.y_combo.addItems(labels)
+        self._sync_axis_combos(rebuild=True)
         _compact_combobox(self.x_combo)
         _compact_combobox(self.y_combo)
-        self.x_combo.setCurrentIndex(self.model.x_dim)
-        self.y_combo.setCurrentIndex(self.model.y_dim)
         self.x_combo.currentIndexChanged.connect(lambda index: self._set_display_dim("x", index))
         self.y_combo.currentIndexChanged.connect(lambda index: self._set_display_dim("y", index))
-        axes_form.addRow("x", self.x_combo)
-        axes_form.addRow("y", self.y_combo)
+        axis_selector_widget = QtWidgets.QWidget()
+        self.axis_selector_widget = axis_selector_widget
+        axis_selector_layout = QtWidgets.QHBoxLayout(axis_selector_widget)
+        axis_selector_layout.setContentsMargins(0, 0, 0, 0)
+        axis_selector_layout.setSpacing(6)
+        axis_selector_layout.addWidget(QtWidgets.QLabel("x"))
+        axis_selector_layout.addWidget(self.x_combo)
+        axis_selector_layout.addWidget(QtWidgets.QLabel("y"))
+        axis_selector_layout.addWidget(self.y_combo)
+        axis_selector_layout.addStretch(1)
+        axes_layout.addWidget(axis_selector_widget, 0, 0, 1, 4)
         self.x_min_spin = _make_float_spinbox()
         self.x_max_spin = _make_float_spinbox()
         self.y_min_spin = _make_float_spinbox()
@@ -274,32 +467,24 @@ class QtMDHistoSliceViewer:
         self.y_reset_button = QtWidgets.QPushButton("Reset")
         self.x_reset_button.setMaximumWidth(64)
         self.y_reset_button.setMaximumWidth(64)
-        x_limits_widget = QtWidgets.QWidget()
-        x_limits_layout = QtWidgets.QGridLayout(x_limits_widget)
-        x_limits_layout.setContentsMargins(0, 0, 0, 0)
-        x_limits_layout.setHorizontalSpacing(6)
-        x_limits_layout.addWidget(QtWidgets.QLabel("min"), 0, 0)
-        x_limits_layout.addWidget(self.x_min_spin, 0, 1)
-        x_limits_layout.addWidget(QtWidgets.QLabel("max"), 1, 0)
-        x_limits_layout.addWidget(self.x_max_spin, 1, 1)
-        x_limits_layout.addWidget(self.x_reset_button, 0, 2, 2, 1)
-        y_limits_widget = QtWidgets.QWidget()
-        y_limits_layout = QtWidgets.QGridLayout(y_limits_widget)
-        y_limits_layout.setContentsMargins(0, 0, 0, 0)
-        y_limits_layout.setHorizontalSpacing(6)
-        y_limits_layout.addWidget(QtWidgets.QLabel("min"), 0, 0)
-        y_limits_layout.addWidget(self.y_min_spin, 0, 1)
-        y_limits_layout.addWidget(QtWidgets.QLabel("max"), 1, 0)
-        y_limits_layout.addWidget(self.y_max_spin, 1, 1)
-        y_limits_layout.addWidget(self.y_reset_button, 0, 2, 2, 1)
         self.x_min_spin.valueChanged.connect(lambda _value: self._set_view_limits("x"))
         self.x_max_spin.valueChanged.connect(lambda _value: self._set_view_limits("x"))
         self.y_min_spin.valueChanged.connect(lambda _value: self._set_view_limits("y"))
         self.y_max_spin.valueChanged.connect(lambda _value: self._set_view_limits("y"))
         self.x_reset_button.clicked.connect(lambda: self._reset_view_limits("x"))
         self.y_reset_button.clicked.connect(lambda: self._reset_view_limits("y"))
-        axes_form.addRow("x limits", x_limits_widget)
-        axes_form.addRow("y limits", y_limits_widget)
+        axes_layout.addWidget(QtWidgets.QLabel("min"), 1, 1)
+        axes_layout.addWidget(QtWidgets.QLabel("max"), 1, 2)
+        axes_layout.addWidget(QtWidgets.QLabel("x limits"), 2, 0)
+        axes_layout.addWidget(self.x_min_spin, 2, 1)
+        axes_layout.addWidget(self.x_max_spin, 2, 2)
+        axes_layout.addWidget(self.x_reset_button, 2, 3)
+        axes_layout.addWidget(QtWidgets.QLabel("y limits"), 3, 0)
+        axes_layout.addWidget(self.y_min_spin, 3, 1)
+        axes_layout.addWidget(self.y_max_spin, 3, 2)
+        axes_layout.addWidget(self.y_reset_button, 3, 3)
+        axes_layout.setColumnStretch(1, 1)
+        axes_layout.setColumnStretch(2, 1)
         controls_layout.addWidget(axes_group)
 
         self.hidden_group = QtWidgets.QGroupBox("Integrated Axes")
@@ -308,18 +493,15 @@ class QtMDHistoSliceViewer:
         self._rebuild_hidden_axis_controls()
 
         color_group = QtWidgets.QGroupBox("Color")
-        color_form = QtWidgets.QFormLayout(color_group)
-        color_form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+        self.color_group = color_group
+        color_layout = QtWidgets.QGridLayout(color_group)
+        color_layout.setHorizontalSpacing(6)
+        color_layout.setVerticalSpacing(6)
         self.cmap_combo = QtWidgets.QComboBox()
         self.cmap_combo.addItems(self.model.COLORMAPS)
         _compact_combobox(self.cmap_combo)
         self.cmap_combo.setCurrentText(self.model.cmap)
         self.cmap_combo.currentTextChanged.connect(self._set_cmap)
-        self.channel_combo = QtWidgets.QComboBox()
-        self.channel_combo.addItems(self.model.CHANNELS)
-        _compact_combobox(self.channel_combo)
-        self.channel_combo.setCurrentText(self.model.channel)
-        self.channel_combo.currentTextChanged.connect(self._set_channel)
         self.scale_combo = QtWidgets.QComboBox()
         self.scale_combo.addItems(self.model.COLOR_SCALES)
         _compact_combobox(self.scale_combo)
@@ -343,23 +525,31 @@ class QtMDHistoSliceViewer:
         self.vmax_spin.valueChanged.connect(lambda value: self._set_manual_limit("vmax", value))
         self.gamma_spin.valueChanged.connect(self._set_power_gamma)
         self.limit_n_spin.valueChanged.connect(self._set_limit_n)
-        color_form.addRow("Channel", self.channel_combo)
-        color_form.addRow("Colormap", self.cmap_combo)
-        color_form.addRow("Scale", self.scale_combo)
-        color_form.addRow("Auto limits", self.limits_combo)
-        color_form.addRow("", self.autoscale_check)
-        color_form.addRow("vmin", self.vmin_spin)
-        color_form.addRow("vmax", self.vmax_spin)
         self.gamma_label = QtWidgets.QLabel("gamma")
-        color_form.addRow(self.gamma_label, self.gamma_spin)
+        self.limit_n_label = QtWidgets.QLabel("N")
+        color_layout.addWidget(QtWidgets.QLabel("Colormap"), 0, 0)
+        color_layout.addWidget(self.cmap_combo, 0, 1)
+        color_layout.addWidget(QtWidgets.QLabel("Scale"), 1, 0)
+        color_layout.addWidget(self.scale_combo, 1, 1)
+        color_layout.addWidget(self.gamma_label, 1, 2)
+        color_layout.addWidget(self.gamma_spin, 1, 3)
+        color_layout.addWidget(QtWidgets.QLabel("Auto limits"), 2, 0)
+        color_layout.addWidget(self.limits_combo, 2, 1)
+        color_layout.addWidget(self.limit_n_label, 2, 2)
+        color_layout.addWidget(self.limit_n_spin, 2, 3)
+        color_layout.addWidget(self.autoscale_check, 3, 1, 1, 3)
+        color_layout.setRowMinimumHeight(4, 6)
+        color_layout.addWidget(QtWidgets.QLabel("vmin"), 5, 0)
+        color_layout.addWidget(self.vmin_spin, 5, 1)
+        color_layout.addWidget(QtWidgets.QLabel("vmax"), 5, 2)
+        color_layout.addWidget(self.vmax_spin, 5, 3)
         self.gamma_label.setVisible(self.model.color_scale == "power")
         self.gamma_spin.setVisible(self.model.color_scale == "power")
-        self.limit_n_label = QtWidgets.QLabel("N")
-        color_form.addRow(self.limit_n_label, self.limit_n_spin)
         self._sync_limit_n_visibility()
         controls_layout.addWidget(color_group)
 
         tools_group = QtWidgets.QGroupBox("Histogram box cuts")
+        self.tools_group = tools_group
         tools_layout = QtWidgets.QGridLayout(tools_group)
         self.roi_button = QtWidgets.QPushButton("Box tool")
         self.roi_button.setCheckable(True)
@@ -395,51 +585,116 @@ class QtMDHistoSliceViewer:
         self.roi_x_width_spin.valueChanged.connect(lambda _value: self._set_roi_from_controls())
         self.roi_y_center_spin.valueChanged.connect(lambda _value: self._set_roi_from_controls())
         self.roi_y_width_spin.valueChanged.connect(lambda _value: self._set_roi_from_controls())
-        tools_layout.addWidget(self.roi_button, 0, 0, 1, 2)
+        tools_layout.addWidget(self.roi_button, 0, 0, 1, 4)
         tools_layout.addWidget(self.show_box_check, 1, 0, 1, 2)
-        tools_layout.addWidget(self.hist_axes_check, 2, 0, 1, 2)
-        tools_layout.addWidget(self.xcut_percent_label, 3, 0)
-        tools_layout.addWidget(self.xcut_percent_slider, 3, 1)
-        tools_layout.addWidget(self.ycut_percent_label, 4, 0)
-        tools_layout.addWidget(self.ycut_percent_slider, 4, 1)
-        tools_layout.addWidget(QtWidgets.QLabel("x center"), 5, 0)
-        tools_layout.addWidget(self.roi_x_center_spin, 5, 1)
-        tools_layout.addWidget(QtWidgets.QLabel("x width"), 6, 0)
-        tools_layout.addWidget(self.roi_x_width_spin, 6, 1)
-        tools_layout.addWidget(QtWidgets.QLabel("y center"), 7, 0)
-        tools_layout.addWidget(self.roi_y_center_spin, 7, 1)
-        tools_layout.addWidget(QtWidgets.QLabel("y width"), 8, 0)
-        tools_layout.addWidget(self.roi_y_width_spin, 8, 1)
-        tools_layout.setColumnMinimumWidth(1, 120)
+        tools_layout.addWidget(self.hist_axes_check, 1, 2, 1, 2)
+        tools_layout.addWidget(QtWidgets.QLabel("x center"), 2, 0)
+        tools_layout.addWidget(self.roi_x_center_spin, 2, 1)
+        tools_layout.addWidget(QtWidgets.QLabel("width"), 2, 2)
+        tools_layout.addWidget(self.roi_x_width_spin, 2, 3)
+        tools_layout.addWidget(QtWidgets.QLabel("y center"), 3, 0)
+        tools_layout.addWidget(self.roi_y_center_spin, 3, 1)
+        tools_layout.addWidget(QtWidgets.QLabel("width"), 3, 2)
+        tools_layout.addWidget(self.roi_y_width_spin, 3, 3)
+        tools_layout.addWidget(self.xcut_percent_label, 4, 0)
+        tools_layout.addWidget(self.xcut_percent_slider, 4, 1, 1, 3)
+        tools_layout.addWidget(self.ycut_percent_label, 5, 0)
+        tools_layout.addWidget(self.ycut_percent_slider, 5, 1, 1, 3)
         tools_layout.setColumnStretch(1, 1)
+        tools_layout.setColumnStretch(3, 1)
         self._sync_histogram_panel_controls()
         controls_layout.addWidget(tools_group)
 
+        line_group = QtWidgets.QGroupBox("Line plot")
+        self.line_group = line_group
+        line_layout = QtWidgets.QGridLayout(line_group)
+        line_layout.setHorizontalSpacing(6)
+        line_layout.setVerticalSpacing(6)
+        self.marker_combo = QtWidgets.QComboBox()
+        self.marker_combo.addItems(_MARKER_OPTIONS.keys())
+        self.marker_combo.setCurrentText("circle")
+        _compact_combobox(self.marker_combo)
+        self.marker_combo.currentTextChanged.connect(self._set_marker)
+        self.line_style_combo = QtWidgets.QComboBox()
+        self.line_style_combo.addItems(_LINE_STYLE_OPTIONS.keys())
+        self.line_style_combo.setCurrentText("none")
+        _compact_combobox(self.line_style_combo)
+        self.line_style_combo.currentTextChanged.connect(self._set_line_style)
+        self.marker_size_spin = _make_float_spinbox(0.0, 50.0)
+        self.marker_size_spin.setValue(self.marker_size)
+        self.marker_size_spin.valueChanged.connect(self._set_marker_size)
+        self.line_plot_width_spin = _make_float_spinbox(0.0, 20.0)
+        self.line_plot_width_spin.setValue(self.line_plot_width)
+        self.line_plot_width_spin.valueChanged.connect(self._set_line_plot_width)
+        self.marker_edge_width_spin = _make_float_spinbox(0.0, 20.0)
+        self.marker_edge_width_spin.setValue(self.marker_edge_width)
+        self.marker_edge_width_spin.valueChanged.connect(self._set_marker_edge_width)
+        self.marker_face_color_combo = QtWidgets.QComboBox()
+        self.marker_face_color_combo.addItems(_COLOR_OPTIONS.keys())
+        self.marker_face_color_combo.setCurrentText("none")
+        _compact_combobox(self.marker_face_color_combo)
+        self.marker_face_color_combo.currentTextChanged.connect(self._set_marker_face_color)
+        self.line_color_combo = QtWidgets.QComboBox()
+        self.line_color_combo.addItems(_COLOR_OPTIONS.keys())
+        self.line_color_combo.setCurrentText("blue")
+        _compact_combobox(self.line_color_combo)
+        self.line_color_combo.currentTextChanged.connect(self._set_line_color)
+        self.show_errorbars_check = QtWidgets.QCheckBox("Show errorbars")
+        self.show_errorbars_check.setChecked(self.show_errorbars)
+        self.show_errorbars_check.toggled.connect(self._set_show_errorbars)
+        self.show_errorbar_caps_check = QtWidgets.QCheckBox("Endcaps")
+        self.show_errorbar_caps_check.setChecked(self.show_errorbar_caps)
+        self.show_errorbar_caps_check.toggled.connect(self._set_show_errorbar_caps)
+        self.errorbar_cap_size_spin = _make_float_spinbox(0.0, 30.0)
+        self.errorbar_cap_size_spin.setValue(self.errorbar_cap_size)
+        self.errorbar_cap_size_spin.valueChanged.connect(self._set_errorbar_cap_size)
+        line_layout.addWidget(QtWidgets.QLabel("Marker"), 0, 0)
+        line_layout.addWidget(self.marker_combo, 0, 1)
+        line_layout.addWidget(QtWidgets.QLabel("Line"), 0, 2)
+        line_layout.addWidget(self.line_style_combo, 0, 3)
+        line_layout.addWidget(QtWidgets.QLabel("Marker size"), 1, 0)
+        line_layout.addWidget(self.marker_size_spin, 1, 1)
+        line_layout.addWidget(QtWidgets.QLabel("Linewidth"), 1, 2)
+        line_layout.addWidget(self.line_plot_width_spin, 1, 3)
+        line_layout.addWidget(QtWidgets.QLabel("Edge width"), 2, 0)
+        line_layout.addWidget(self.marker_edge_width_spin, 2, 1)
+        line_layout.addWidget(self.show_errorbars_check, 2, 2, 1, 2)
+        line_layout.addWidget(QtWidgets.QLabel("Marker face"), 3, 0)
+        line_layout.addWidget(self.marker_face_color_combo, 3, 1)
+        line_layout.addWidget(QtWidgets.QLabel("Line/color"), 3, 2)
+        line_layout.addWidget(self.line_color_combo, 3, 3)
+        line_layout.addWidget(self.show_errorbar_caps_check, 4, 0, 1, 2)
+        line_layout.addWidget(QtWidgets.QLabel("Cap size"), 4, 2)
+        line_layout.addWidget(self.errorbar_cap_size_spin, 4, 3)
+        controls_layout.addWidget(line_group)
+
         figure_group = QtWidgets.QGroupBox("Figure")
-        figure_form = QtWidgets.QFormLayout(figure_group)
-        figure_form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+        figure_layout = QtWidgets.QGridLayout(figure_group)
+        figure_layout.setHorizontalSpacing(6)
+        figure_layout.setVerticalSpacing(6)
         self.font_size_spin = _make_float_spinbox(4.0, 48.0)
         self.font_size_spin.setDecimals(1)
         self.font_size_spin.setValue(self.font_size)
         self.font_size_spin.valueChanged.connect(self._set_font_size)
+        self.line_width_spin = _make_float_spinbox(0.1, 10.0)
+        self.line_width_spin.setDecimals(2)
+        self.line_width_spin.setSingleStep(0.25)
+        self.line_width_spin.setValue(self.axis_linewidth)
+        self.line_width_spin.valueChanged.connect(self._set_axis_linewidth)
         self.copy_figure_button = QtWidgets.QPushButton("Copy figure")
         self.copy_script_button = QtWidgets.QPushButton("Copy script")
         self.save_script_button = QtWidgets.QPushButton("Save script")
         self.copy_figure_button.clicked.connect(self.copy_figure_to_clipboard)
         self.copy_script_button.clicked.connect(self.copy_script_to_clipboard)
         self.save_script_button.clicked.connect(self.save_script)
-        figure_form.addRow("Font size", self.font_size_spin)
-        figure_form.addRow("", self.copy_figure_button)
-        figure_form.addRow("", self.copy_script_button)
-        figure_form.addRow("", self.save_script_button)
+        figure_layout.addWidget(QtWidgets.QLabel("Font size"), 0, 0)
+        figure_layout.addWidget(self.font_size_spin, 0, 1)
+        figure_layout.addWidget(QtWidgets.QLabel("Linewidth"), 0, 2)
+        figure_layout.addWidget(self.line_width_spin, 0, 3)
+        figure_layout.addWidget(self.copy_figure_button, 1, 0, 1, 2)
+        figure_layout.addWidget(self.copy_script_button, 1, 2)
+        figure_layout.addWidget(self.save_script_button, 1, 3)
         controls_layout.addWidget(figure_group)
-
-        hover_group = QtWidgets.QGroupBox("Cursor")
-        hover_layout = QtWidgets.QVBoxLayout(hover_group)
-        self.hover_label = QtWidgets.QLabel("x: -\ny: -\nI: -\nerr: -")
-        self.hover_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
-        hover_layout.addWidget(self.hover_label)
-        controls_layout.addWidget(hover_group)
         controls_layout.addStretch(1)
 
         splitter = QtWidgets.QSplitter()
@@ -447,6 +702,8 @@ class QtMDHistoSliceViewer:
         splitter.addWidget(controls)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 0)
+        splitter.setChildrenCollapsible(False)
+        splitter.setSizes([970, 430])
         main_layout.addWidget(splitter)
 
         from matplotlib.widgets import RectangleSelector
@@ -473,7 +730,11 @@ class QtMDHistoSliceViewer:
 
         _clear_layout(self.hidden_layout)
         self.hidden_controls = {}
-        hidden_dims = [dim for dim in range(self.data.signal.ndim) if dim not in (self.model.x_dim, self.model.y_dim)]
+        hidden_dims = [
+            dim
+            for dim, size in enumerate(self.data.shape)
+            if size > 1 and dim not in (self.model.x_dim, self.model.y_dim)
+        ]
         if not hidden_dims:
             self.hidden_layout.addWidget(QtWidgets.QLabel("No hidden axes."))
             return
@@ -486,6 +747,9 @@ class QtMDHistoSliceViewer:
 
             group = QtWidgets.QGroupBox(axis.name)
             grid = QtWidgets.QGridLayout(group)
+            grid.setContentsMargins(8, 4, 8, 4)
+            grid.setHorizontalSpacing(6)
+            grid.setVerticalSpacing(3)
             value_spin = _make_float_spinbox(low_value, high_value)
             width_spin = _make_float_spinbox(0.0, max(high_value - low_value, 0.0))
             low_spin = _make_float_spinbox(low_value, high_value)
@@ -538,12 +802,12 @@ class QtMDHistoSliceViewer:
             grid.addWidget(width_spin, 0, 3)
             grid.addWidget(QtWidgets.QLabel("Range low"), 1, 0)
             grid.addWidget(low_spin, 1, 1)
-            grid.addWidget(QtWidgets.QLabel("Range high"), 2, 0)
-            grid.addWidget(high_spin, 2, 1)
-            grid.addWidget(integrate_check, 2, 2, 1, 2)
-            grid.addWidget(range_slider, 3, 0, 1, 4)
-            grid.setColumnMinimumWidth(1, 104)
-            grid.setColumnMinimumWidth(3, 104)
+            grid.addWidget(QtWidgets.QLabel("Range high"), 1, 2)
+            grid.addWidget(high_spin, 1, 3)
+            grid.addWidget(range_slider, 2, 0, 1, 4)
+            grid.addWidget(integrate_check, 3, 0, 1, 4)
+            grid.setColumnMinimumWidth(1, 82)
+            grid.setColumnMinimumWidth(3, 82)
             grid.setColumnStretch(0, 0)
             grid.setColumnStretch(1, 0)
             grid.setColumnStretch(2, 0)
@@ -660,6 +924,9 @@ class QtMDHistoSliceViewer:
     def _set_display_dim(self, axis_name: str, dim: int) -> None:
         if self._syncing_axes:
             return
+        if not (0 <= int(dim) < len(self._display_axis_dims)):
+            return
+        dim = self._display_axis_dims[int(dim)]
         if axis_name == "x" and dim == self.model.y_dim:
             self.model.x_dim, self.model.y_dim = self.model.y_dim, self.model.x_dim
             self._sync_axis_combos()
@@ -673,13 +940,218 @@ class QtMDHistoSliceViewer:
         self._rebuild_hidden_axis_controls()
         self.update_plot(preserve_view=False)
 
-    def _sync_axis_combos(self) -> None:
+    def _set_dataset_index(self, index: int) -> None:
+        index = int(index)
+        if index == self.dataset_index or not (0 <= index < len(self.datasets)):
+            return
+        self._dataset_states[self.dataset_index] = self._capture_dataset_state()
+        state = self._dataset_states[index]
+        if state is None:
+            state = self._default_dataset_state(index)
+            self._dataset_states[index] = state
+        self.dataset_index = index
+        self._restore_dataset_state(state)
+
+    def _capture_dataset_state(self) -> _DatasetViewState:
+        xlim = None
+        ylim = None
+        if self.ax_image is not None and self._current_slice is not None:
+            xlim = tuple(float(value) for value in self.ax_image.get_xlim())
+            ylim = tuple(float(value) for value in self.ax_image.get_ylim())
+        return _DatasetViewState(
+            model=self.model,
+            roi_extents=self._roi_extents,
+            xlim=xlim,
+            ylim=ylim,
+            show_box_tool=bool(self.show_box_check.isChecked()) if self.show_box_check is not None else False,
+            histogram_axes=bool(self.hist_axes_check.isChecked()) if self.hist_axes_check is not None else False,
+            roi_enabled=bool(self.roi_button.isChecked()) if self.roi_button is not None else False,
+            xcut_percent=int(self.xcut_percent),
+            ycut_percent=int(self.ycut_percent),
+            font_size=float(self.font_size),
+            axis_linewidth=float(self.axis_linewidth),
+            box_tool_has_auto_shown_hist_axes=bool(self._box_tool_has_auto_shown_hist_axes),
+            marker=str(self.marker),
+            line_style=str(self.line_style),
+            marker_size=float(self.marker_size),
+            line_plot_width=float(self.line_plot_width),
+            marker_edge_width=float(self.marker_edge_width),
+            marker_face_color=str(self.marker_face_color),
+            line_color=str(self.line_color),
+            show_errorbars=bool(self.show_errorbars),
+            show_errorbar_caps=bool(self.show_errorbar_caps),
+            errorbar_cap_size=float(self.errorbar_cap_size),
+        )
+
+    def _default_dataset_state(self, index: int) -> _DatasetViewState:
+        data = self.datasets[index]
+        x_dim, y_dim = self._default_display_dims_for_dataset(data)
+        model = MDHistoSliceViewer(
+            data,
+            x_dim=x_dim,
+            y_dim=y_dim,
+            channel=self._initial_channel,
+            cmap=self._initial_cmap,
+            color_scale=self._initial_color_scale,
+            auto_limits=self._initial_auto_limits,
+            integrate=self._initial_integrate,
+            masked=self._initial_masked,
+        )
+        return _DatasetViewState(
+            model=model,
+        )
+
+    def _restore_dataset_state(self, state: _DatasetViewState) -> None:
+        self._restoring_dataset_state = True
+        try:
+            self.model = state.model
+            self.data = state.model.data
+            self._roi_extents = state.roi_extents
+            self.xcut_percent = int(state.xcut_percent)
+            self.ycut_percent = int(state.ycut_percent)
+            self.font_size = float(state.font_size)
+            self.axis_linewidth = float(state.axis_linewidth)
+            self.marker = str(state.marker)
+            self.line_style = str(state.line_style)
+            self.marker_size = float(state.marker_size)
+            self.line_plot_width = float(state.line_plot_width)
+            self.marker_edge_width = float(state.marker_edge_width)
+            self.marker_face_color = str(state.marker_face_color)
+            self.line_color = str(state.line_color)
+            self.show_errorbars = bool(state.show_errorbars)
+            self.show_errorbar_caps = bool(state.show_errorbar_caps)
+            self.errorbar_cap_size = float(state.errorbar_cap_size)
+            self._box_tool_has_auto_shown_hist_axes = bool(state.box_tool_has_auto_shown_hist_axes)
+            self._current_slice = None
+            self._last_plot_dims = None
+            self._sync_axis_combos(rebuild=True)
+            self._set_combo_silent(self.channel_combo, self.model.channel)
+            self._set_combo_silent(self.cmap_combo, self.model.cmap)
+            self._set_combo_silent(self.scale_combo, self.model.color_scale)
+            self._set_combo_silent(self.limits_combo, self.model.auto_limits)
+            self._set_checkbox_silent(self.autoscale_check, self.model.autoscale)
+            self._set_spin_silent(self.gamma_spin, self.model.power_gamma)
+            self._set_spin_silent(self.limit_n_spin, self._current_limit_n())
+            self._set_spin_silent(self.font_size_spin, self.font_size)
+            self._set_spin_silent(self.line_width_spin, self.axis_linewidth)
+            self._set_combo_silent(self.marker_combo, _option_name(_MARKER_OPTIONS, self.marker))
+            self._set_combo_silent(self.line_style_combo, _option_name(_LINE_STYLE_OPTIONS, self.line_style))
+            self._set_spin_silent(self.marker_size_spin, self.marker_size)
+            self._set_spin_silent(self.line_plot_width_spin, self.line_plot_width)
+            self._set_spin_silent(self.marker_edge_width_spin, self.marker_edge_width)
+            self._set_combo_silent(self.marker_face_color_combo, _option_name(_COLOR_OPTIONS, self.marker_face_color))
+            self._set_combo_silent(self.line_color_combo, _option_name(_COLOR_OPTIONS, self.line_color))
+            self._set_checkbox_silent(self.show_errorbars_check, self.show_errorbars)
+            self._set_checkbox_silent(self.show_errorbar_caps_check, self.show_errorbar_caps)
+            self._set_spin_silent(self.errorbar_cap_size_spin, self.errorbar_cap_size)
+            self._set_slider_silent(self.xcut_percent_slider, self.xcut_percent)
+            self._set_slider_silent(self.ycut_percent_slider, self.ycut_percent)
+            self._set_checkbox_silent(self.show_box_check, state.show_box_tool)
+            self._set_checkbox_silent(self.hist_axes_check, state.histogram_axes)
+            self._set_checkbox_silent(self.roi_button, state.roi_enabled)
+            self.gamma_label.setVisible(self.model.color_scale == "power")
+            self.gamma_spin.setVisible(self.model.color_scale == "power")
+            self._sync_limit_n_visibility()
+            self._rebuild_hidden_axis_controls()
+            self._sync_control_visibility()
+        finally:
+            self._restoring_dataset_state = False
+        self.update_plot(preserve_view=False)
+        if state.xlim is not None:
+            self.ax_image.set_xlim(*state.xlim)
+        if state.ylim is not None:
+            self.ax_image.set_ylim(*state.ylim)
+        self._sync_view_limit_controls()
+        self._set_rectangle_selector_from_controls()
+        self._sync_histogram_panel_controls()
+        self._apply_histogram_axes_layout(draw=False)
+        self.canvas.draw_idle()
+
+    def _set_combo_silent(self, combo, value: str) -> None:
+        previous = combo.blockSignals(True)
+        try:
+            combo.setCurrentText(str(value))
+        finally:
+            combo.blockSignals(previous)
+
+    def _set_checkbox_silent(self, checkbox, checked: bool) -> None:
+        previous = checkbox.blockSignals(True)
+        try:
+            checkbox.setChecked(bool(checked))
+        finally:
+            checkbox.blockSignals(previous)
+
+    def _set_spin_silent(self, spinbox, value: float) -> None:
+        previous = spinbox.blockSignals(True)
+        try:
+            spinbox.setValue(float(value))
+        finally:
+            spinbox.blockSignals(previous)
+
+    def _set_slider_silent(self, slider, value: int) -> None:
+        previous = slider.blockSignals(True)
+        try:
+            slider.setValue(int(value))
+        finally:
+            slider.blockSignals(previous)
+
+    def _set_rectangle_selector_from_controls(self) -> None:
+        if self.rectangle_selector is None:
+            return
+        show_box = bool(self.show_box_check.isChecked())
+        active = show_box and bool(self.roi_button.isChecked())
+        self.rectangle_selector.set_visible(show_box)
+        self.rectangle_selector.set_active(active)
+        self._set_rectangle_selector_style(active=active)
+
+    def _default_display_dims_for_dataset(self, data: MDHistoData) -> tuple[int, int]:
+        if self._initial_x_dim == -1 and self._initial_y_dim == 0:
+            return self._fallback_display_dims(data)
+        try:
+            model = MDHistoSliceViewer(
+                data,
+                x_dim=self._initial_x_dim,
+                y_dim=self._initial_y_dim,
+                channel=self._initial_channel,
+                cmap=self._initial_cmap,
+                color_scale=self._initial_color_scale,
+                auto_limits=self._initial_auto_limits,
+                integrate=self._initial_integrate,
+                masked=self._initial_masked,
+            )
+            return model.x_dim, model.y_dim
+        except Exception:
+            return self._fallback_display_dims(data)
+
+    def _fallback_display_dims(self, data: MDHistoData) -> tuple[int, int]:
+        non_singleton = [dim for dim, size in enumerate(data.shape) if size > 1]
+        if len(non_singleton) >= 2:
+            return non_singleton[-1], non_singleton[-2]
+        if len(non_singleton) == 1:
+            x_dim = non_singleton[0]
+            y_dim = 0 if x_dim != 0 else min(1, data.signal.ndim - 1)
+            return x_dim, y_dim
+        return min(data.signal.ndim - 1, 1), 0
+
+    def _sync_axis_combos(self, *, rebuild: bool = False) -> None:
         self._syncing_axes = True
         try:
-            self.x_combo.setCurrentIndex(self.model.x_dim)
-            self.y_combo.setCurrentIndex(self.model.y_dim)
+            if rebuild:
+                self._display_axis_dims = self._non_singleton_dims()
+                labels = [self.data.axes[dim].name for dim in self._display_axis_dims]
+                self.x_combo.clear()
+                self.y_combo.clear()
+                self.x_combo.addItems(labels)
+                self.y_combo.addItems(labels)
+            if self.model.x_dim in self._display_axis_dims:
+                self.x_combo.setCurrentIndex(self._display_axis_dims.index(self.model.x_dim))
+            if self.model.y_dim in self._display_axis_dims:
+                self.y_combo.setCurrentIndex(self._display_axis_dims.index(self.model.y_dim))
         finally:
             self._syncing_axes = False
+
+    def _non_singleton_dims(self) -> list[int]:
+        return [dim for dim, size in enumerate(self.data.shape) if size > 1]
 
     def _set_cmap(self, cmap: str) -> None:
         self.model.cmap = str(cmap)
@@ -734,9 +1206,64 @@ class QtMDHistoSliceViewer:
             self._set_autoscale_checkbox(True)
             self.update_plot()
 
+    def _set_marker(self, marker_name: str) -> None:
+        self.marker = _MARKER_OPTIONS.get(str(marker_name), "o")
+        if self._is_effective_1d():
+            self.update_plot()
+
+    def _set_line_style(self, line_style_name: str) -> None:
+        self.line_style = _LINE_STYLE_OPTIONS.get(str(line_style_name), "none")
+        if self._is_effective_1d():
+            self.update_plot()
+
+    def _set_marker_size(self, value: float) -> None:
+        self.marker_size = float(value)
+        if self._is_effective_1d():
+            self.update_plot()
+
+    def _set_line_plot_width(self, value: float) -> None:
+        self.line_plot_width = float(value)
+        if self._is_effective_1d():
+            self.update_plot()
+
+    def _set_marker_edge_width(self, value: float) -> None:
+        self.marker_edge_width = float(value)
+        if self._is_effective_1d():
+            self.update_plot()
+
+    def _set_marker_face_color(self, color_name: str) -> None:
+        self.marker_face_color = _COLOR_OPTIONS.get(str(color_name), "#1f77b4")
+        if self._is_effective_1d():
+            self.update_plot()
+
+    def _set_line_color(self, color_name: str) -> None:
+        self.line_color = _COLOR_OPTIONS.get(str(color_name), "#1f77b4")
+        if self._is_effective_1d():
+            self.update_plot()
+
+    def _set_show_errorbars(self, show_errorbars: bool) -> None:
+        self.show_errorbars = bool(show_errorbars)
+        if self._is_effective_1d():
+            self.update_plot()
+
+    def _set_show_errorbar_caps(self, show_caps: bool) -> None:
+        self.show_errorbar_caps = bool(show_caps)
+        if self._is_effective_1d():
+            self.update_plot()
+
+    def _set_errorbar_cap_size(self, value: float) -> None:
+        self.errorbar_cap_size = float(value)
+        if self._is_effective_1d():
+            self.update_plot()
+
     def _set_font_size(self, value: float) -> None:
         self.font_size = float(value)
         self._apply_figure_font_size()
+        self.canvas.draw_idle()
+
+    def _set_axis_linewidth(self, value: float) -> None:
+        self.axis_linewidth = float(value)
+        self._apply_axis_linewidth()
         self.canvas.draw_idle()
 
     def _apply_figure_font_size(self) -> None:
@@ -753,6 +1280,22 @@ class QtMDHistoSliceViewer:
         if self.colorbar is not None:
             self.colorbar.ax.yaxis.label.set_fontsize(size)
             self.colorbar.ax.tick_params(labelsize=size)
+
+    def _apply_axis_linewidth(self) -> None:
+        width = float(self.axis_linewidth)
+        for axis in (self.ax_image, self.ax_xcut, self.ax_ycut):
+            if axis is None:
+                continue
+            for spine in axis.spines.values():
+                spine.set_linewidth(width)
+            axis.tick_params(axis="both", which="both", direction="in", top=True, right=True, width=width)
+        if self.ax_colorbar is not None:
+            for spine in self.ax_colorbar.spines.values():
+                spine.set_linewidth(width)
+            self.ax_colorbar.tick_params(axis="both", which="both", direction="in", width=width)
+        if self.colorbar is not None:
+            self.colorbar.outline.set_linewidth(width)
+            self.colorbar.ax.tick_params(which="both", direction="in", width=width)
 
     def _current_limit_n(self) -> float:
         if self.model.auto_limits == "N-sigma":
@@ -811,6 +1354,9 @@ class QtMDHistoSliceViewer:
             return
         if axis_name == "x":
             self.ax_image.set_xlim(*self._default_view_limits(self.model.x_dim))
+        elif self._is_effective_1d():
+            self.ax_image.relim()
+            self.ax_image.autoscale(axis="y")
         else:
             self.ax_image.set_ylim(*self._default_view_limits(self.model.y_dim))
         self.canvas.draw_idle()
@@ -843,6 +1389,21 @@ class QtMDHistoSliceViewer:
         for spinbox in spinboxes:
             spinbox.setSingleStep(step)
 
+    def _sync_control_visibility(self) -> None:
+        is_line = self._is_effective_1d()
+        if self.axes_group is not None:
+            self.axes_group.setVisible(is_line or len(self._non_singleton_dims()) >= 2)
+        if self.axis_selector_widget is not None:
+            self.axis_selector_widget.setVisible(not is_line)
+        if self.hidden_group is not None:
+            self.hidden_group.setVisible(not is_line)
+        if self.color_group is not None:
+            self.color_group.setVisible(not is_line)
+        if self.tools_group is not None:
+            self.tools_group.setVisible(not is_line)
+        if self.line_group is not None:
+            self.line_group.setVisible(is_line)
+
     def update_plot(self, *, preserve_view: bool = True) -> None:
         previous_xlim = self.ax_image.get_xlim() if preserve_view and self._current_slice is not None else None
         previous_ylim = self.ax_image.get_ylim() if preserve_view and self._current_slice is not None else None
@@ -854,26 +1415,24 @@ class QtMDHistoSliceViewer:
             axis.clear()
         values = self.model._display_values(view)
         vmin, vmax = self.model._color_limits(values)
-        norm = self.model._color_norm(values)
-        self.image = self.ax_image.pcolormesh(
-            view["x_edges"],
-            view["y_edges"],
-            values,
-            shading="auto",
-            cmap=self.model.cmap,
-            norm=norm,
-        )
-        self.ax_image.set_xlabel(self.model._axis_label(self.model.x_dim))
-        self.ax_image.set_ylabel(self.model._axis_label(self.model.y_dim))
-        self.ax_image.set_title("MDHisto slice")
+        if self._is_effective_1d():
+            self._draw_1d_view(view, values)
+        else:
+            self._draw_2d_view(view, values)
+        self._sync_control_visibility()
         if previous_xlim is not None and previous_ylim is not None and previous_dims == current_dims:
             self.ax_image.set_xlim(previous_xlim)
             self.ax_image.set_ylim(previous_ylim)
-        if self.colorbar is None:
+        if self.image is not None and self.colorbar is None:
+            self.ax_colorbar.set_visible(True)
             self.colorbar = self.figure.colorbar(self.image, cax=self.ax_colorbar)
-        else:
+        elif self.image is not None:
+            self.ax_colorbar.set_visible(True)
             self.colorbar.update_normal(self.image)
-        self.colorbar.set_label(self.model._channel_label())
+        else:
+            self.ax_colorbar.set_visible(False)
+        if self.colorbar is not None and self.image is not None:
+            self.colorbar.set_label(self.model._channel_label())
         self.ax_xcut.set_ylabel("Int.")
         self.ax_ycut.set_xlabel("Int.")
         self._sync_limit_spinboxes(vmin, vmax)
@@ -885,8 +1444,63 @@ class QtMDHistoSliceViewer:
             self._set_roi_extents(self._roi_extents, update_cuts=False, draw=False)
         self._apply_histogram_axes_layout(draw=False)
         self._apply_figure_font_size()
+        self._apply_axis_linewidth()
         self._connect_view_limit_callbacks()
         self.canvas.draw_idle()
+
+    def _is_effective_1d(self) -> bool:
+        return sum(size > 1 for size in self.data.shape) == 1
+
+    def _draw_1d_view(self, view: dict[str, np.ndarray], values: np.ndarray) -> None:
+        self.image = None
+        x = np.asarray(view["x_centers"], dtype=float)
+        y = np.asarray(values, dtype=float).reshape(-1)
+        if y.size != x.size:
+            y = np.squeeze(values)
+        marker = self.marker
+        linestyle = "None" if self.line_style == "none" else self.line_style
+        common = {
+            "marker": marker,
+            "linestyle": linestyle,
+            "ms": self.marker_size,
+            "lw": self.line_plot_width,
+            "mew": self.marker_edge_width,
+            "mfc": self.marker_face_color if marker else "none",
+            "mec": self.line_color,
+            "color": self.line_color,
+        }
+        if self.model.channel == "signal" and self.show_errorbars:
+            errors = np.asarray(view["errors"], dtype=float).reshape(-1)
+            if errors.size == x.size:
+                self.ax_image.errorbar(
+                    x,
+                    y,
+                    yerr=errors,
+                    ecolor=self.line_color,
+                    capsize=self.errorbar_cap_size if self.show_errorbar_caps else 0.0,
+                    capthick=self.line_plot_width,
+                    elinewidth=self.line_plot_width,
+                    **common,
+                )
+            else:
+                self.ax_image.plot(x, y, **common)
+        else:
+            self.ax_image.plot(x, y, **common)
+        self.ax_image.set_xlabel(self.model._axis_label(self.model.x_dim))
+        self.ax_image.set_ylabel(self.model._channel_label())
+
+    def _draw_2d_view(self, view: dict[str, np.ndarray], values: np.ndarray) -> None:
+        norm = self.model._color_norm(values)
+        self.image = self.ax_image.pcolormesh(
+            view["x_edges"],
+            view["y_edges"],
+            values,
+            shading="auto",
+            cmap=self.model.cmap,
+            norm=norm,
+        )
+        self.ax_image.set_xlabel(self.model._axis_label(self.model.x_dim))
+        self.ax_image.set_ylabel(self.model._axis_label(self.model.y_dim))
 
     def _sync_limit_spinboxes(self, vmin: float, vmax: float) -> None:
         if not self.model.autoscale:
@@ -899,6 +1513,11 @@ class QtMDHistoSliceViewer:
             self._syncing_limits = False
 
     def _set_roi_enabled(self, enabled: bool) -> None:
+        if enabled:
+            if self.show_box_check is not None and not self.show_box_check.isChecked():
+                self.show_box_check.setChecked(True)
+            if self.hist_axes_check is not None and not self.hist_axes_check.isChecked():
+                self.hist_axes_check.setChecked(True)
         if self.rectangle_selector is not None:
             visible = self.show_box_check is None or self.show_box_check.isChecked()
             self.rectangle_selector.set_active(bool(enabled) and visible)
@@ -906,7 +1525,10 @@ class QtMDHistoSliceViewer:
             self.canvas.draw_idle()
 
     def _set_box_tool_visible(self, visible: bool) -> None:
-        self.roi_button.setEnabled(bool(visible))
+        if visible and not self._box_tool_has_auto_shown_hist_axes:
+            self._box_tool_has_auto_shown_hist_axes = True
+            if self.hist_axes_check is not None and not self.hist_axes_check.isChecked():
+                self.hist_axes_check.setChecked(True)
         if not visible:
             self.roi_button.setChecked(False)
         if self.rectangle_selector is not None:
@@ -948,7 +1570,7 @@ class QtMDHistoSliceViewer:
     def _sync_histogram_panel_controls(self) -> None:
         if self.hist_axes_check is None:
             return
-        visible = bool(self.hist_axes_check.isChecked())
+        visible = bool(self.hist_axes_check.isChecked()) and not self._is_effective_1d()
         self.xcut_percent_slider.setEnabled(visible)
         self.ycut_percent_slider.setEnabled(visible)
         self.xcut_percent_label.setText(f"X cut height: {self.xcut_percent}%")
@@ -957,7 +1579,7 @@ class QtMDHistoSliceViewer:
     def _apply_histogram_axes_layout(self, *, draw: bool) -> None:
         if self.grid is None or self.hist_axes_check is None:
             return
-        visible = bool(self.hist_axes_check.isChecked())
+        visible = bool(self.hist_axes_check.isChecked()) and not self._is_effective_1d()
         x_ratio = self._panel_ratio(self.xcut_percent) if visible else 0.001
         y_ratio = self._panel_ratio(self.ycut_percent) if visible else 0.001
         self.grid.set_height_ratios([1.0, x_ratio])
@@ -1076,27 +1698,51 @@ class QtMDHistoSliceViewer:
             return
         if event.xdata is None or event.ydata is None:
             return
+        if self._is_effective_1d():
+            self._on_line_motion(event)
+            return
         view = self._current_slice
         x_idx = int(np.searchsorted(view["x_edges"], event.xdata, side="right") - 1)
         y_idx = int(np.searchsorted(view["y_edges"], event.ydata, side="right") - 1)
         if not (0 <= x_idx < view["signal"].shape[1] and 0 <= y_idx < view["signal"].shape[0]):
             return
         values = self.model._display_values(view)
-        self.hover_label.setText(
-            "\n".join(
-                [
-                    f"x: {view['x_centers'][x_idx]:.6g}",
-                    f"y: {view['y_centers'][y_idx]:.6g}",
-                    *self._cursor_coordinate_lines(x_idx, y_idx),
-                    f"{self.model._channel_label()}: {values[y_idx, x_idx]:.6g}",
-                    f"err: {view['errors'][y_idx, x_idx]:.6g}",
-                ]
-            )
-        )
-
-    def _cursor_coordinate_lines(self, x_idx: int, y_idx: int) -> list[str]:
         coords = self._cursor_hkle(x_idx, y_idx)
-        return [f"{name}: {coords[name]:.6g}" for name in ("H", "K", "L", "E") if np.isfinite(coords[name])]
+        value_text, error_text = _format_value_with_uncertainty(
+            float(values[y_idx, x_idx]),
+            float(view["errors"][y_idx, x_idx]),
+        )
+        self.cursor_xy_label.setText(
+            f"(x, y) = ({_format_coord(view['x_centers'][x_idx])}, {_format_coord(view['y_centers'][y_idx])})"
+        )
+        self.cursor_hkle_label.setText(
+            "(H, K, L, E) = "
+            f"({_format_coord(coords['H'])}, {_format_coord(coords['K'])}, "
+            f"{_format_coord(coords['L'])}, {_format_coord(coords['E'])})"
+        )
+        self.cursor_intensity_label.setText(f"I = {value_text} ± {error_text}")
+
+    def _on_line_motion(self, event) -> None:
+        view = self._current_slice
+        x = np.asarray(view["x_centers"], dtype=float)
+        if x.size == 0:
+            return
+        x_idx = int(np.nanargmin(np.abs(x - float(event.xdata))))
+        values = np.asarray(self.model._display_values(view), dtype=float).reshape(-1)
+        errors = np.asarray(view["errors"], dtype=float).reshape(-1)
+        if not (0 <= x_idx < values.size):
+            return
+        value = float(values[x_idx])
+        error = float(errors[x_idx]) if x_idx < errors.size else np.nan
+        coords = self._cursor_hkle_1d(x_idx)
+        value_text, error_text = _format_value_with_uncertainty(value, error)
+        self.cursor_xy_label.setText(f"(x, y) = ({_format_coord(x[x_idx])}, {_format_coord(value)})")
+        self.cursor_hkle_label.setText(
+            "(H, K, L, E) = "
+            f"({_format_coord(coords['H'])}, {_format_coord(coords['K'])}, "
+            f"{_format_coord(coords['L'])}, {_format_coord(coords['E'])})"
+        )
+        self.cursor_intensity_label.setText(f"I = {value_text} ± {error_text}")
 
     def _cursor_hkle(self, x_idx: int, y_idx: int) -> dict[str, float]:
         coords = {"H": 0.0, "K": 0.0, "L": 0.0, "E": np.nan}
@@ -1112,6 +1758,27 @@ class QtMDHistoSliceViewer:
                     value = float(np.mean(self.data.axes[dim].centers[selection[0] : selection[1] + 1]))
                 elif selection is None:
                     continue
+                else:
+                    value = self.data.axes[dim].centers[int(selection)]
+            for component, coefficient in _axis_components(axis.name).items():
+                if component == "E":
+                    coords["E"] = float(value)
+                else:
+                    coords[component] += float(coefficient) * float(value)
+        return coords
+
+    def _cursor_hkle_1d(self, x_idx: int) -> dict[str, float]:
+        coords = {"H": 0.0, "K": 0.0, "L": 0.0, "E": np.nan}
+        hidden = self.model._normalized_selections()
+        for dim, axis in enumerate(self.data.axes):
+            if dim == self.model.x_dim:
+                value = self.data.axes[dim].centers[x_idx]
+            else:
+                selection = hidden.get(dim)
+                if isinstance(selection, tuple):
+                    value = float(np.mean(self.data.axes[dim].centers[selection[0] : selection[1] + 1]))
+                elif selection is None:
+                    value = self.data.axes[dim].centers[0]
                 else:
                     value = self.data.axes[dim].centers[int(selection)]
             for component, coefficient in _axis_components(axis.name).items():
@@ -1137,6 +1804,68 @@ def _qt_app():
     return app
 
 
+def _coerce_datasets(data: MDHistoData | Sequence[MDHistoData]) -> list[MDHistoData]:
+    if isinstance(data, MDHistoData):
+        return [data]
+    datasets = list(data)
+    if not datasets:
+        raise ValueError("QtMDHistoSliceViewer requires at least one dataset")
+    if not all(isinstance(dataset, MDHistoData) for dataset in datasets):
+        raise TypeError("all datasets must be MDHistoData instances")
+    return datasets
+
+
+def _coerce_dataset_names(datasets: Sequence[MDHistoData], names: Sequence[str] | None) -> list[str]:
+    if names is not None:
+        labels = [str(name) for name in names]
+        if len(labels) != len(datasets):
+            raise ValueError("dataset_names length must match datasets length")
+        return labels
+    labels = []
+    for index, dataset in enumerate(datasets):
+        source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
+        labels.append(str(source) if source else f"dataset {index + 1}")
+    return labels
+
+
+def _initial_display_dims(data: MDHistoData, x_dim: int | str, y_dim: int | str) -> tuple[int | str, int | str]:
+    if x_dim != -1 or y_dim != 0:
+        return x_dim, y_dim
+    non_singleton = [dim for dim, size in enumerate(data.shape) if size > 1]
+    if len(non_singleton) >= 2:
+        return non_singleton[-1], non_singleton[-2]
+    if len(non_singleton) == 1:
+        x_index = non_singleton[0]
+        y_index = 0 if x_index != 0 else min(1, data.signal.ndim - 1)
+        return x_index, y_index
+    return min(data.signal.ndim - 1, 1), 0
+
+
+def _format_coord(value: float) -> str:
+    if not np.isfinite(value):
+        return "nan"
+    if abs(float(value)) < 1.0e-12:
+        return "0"
+    return f"{float(value):.5g}"
+
+
+def _format_value_with_uncertainty(value: float, error: float) -> tuple[str, str]:
+    if not np.isfinite(value) or not np.isfinite(error) or error == 0.0:
+        return _format_coord(value), _format_coord(error)
+    error_text = f"{abs(float(error)):.2g}"
+    if "e" in error_text or "E" in error_text:
+        return f"{float(value):.2e}", error_text
+    decimals = len(error_text.partition(".")[2])
+    return f"{float(value):.{decimals}f}", error_text
+
+
+def _option_name(options: dict[str, str], value: str) -> str:
+    for name, option_value in options.items():
+        if option_value == value:
+            return name
+    return next(iter(options))
+
+
 def _make_float_spinbox(low: float = -1.0e12, high: float = 1.0e12):
     from PySide6 import QtWidgets
 
@@ -1145,8 +1874,8 @@ def _make_float_spinbox(low: float = -1.0e12, high: float = 1.0e12):
     spin.setDecimals(6)
     spin.setSingleStep(max((high - low) / 200.0, 0.001) if np.isfinite(high - low) else 0.001)
     spin.setKeyboardTracking(False)
-    spin.setMaximumWidth(118)
-    spin.setMinimumWidth(92)
+    spin.setMaximumWidth(104)
+    spin.setMinimumWidth(82)
     spin.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Fixed)
     return spin
 
@@ -1154,9 +1883,16 @@ def _make_float_spinbox(low: float = -1.0e12, high: float = 1.0e12):
 def _compact_combobox(combo) -> None:
     from PySide6 import QtWidgets
 
-    combo.setMaximumWidth(150)
-    combo.setMinimumWidth(96)
+    combo.setMaximumWidth(132)
+    combo.setMinimumWidth(84)
     combo.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Fixed)
+
+
+def _expanding_combobox(combo) -> None:
+    from PySide6 import QtWidgets
+
+    combo.setMinimumWidth(180)
+    combo.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
 
 
 def _make_index_slider(size: int):

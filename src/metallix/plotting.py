@@ -128,6 +128,7 @@ def plot_mdhisto_slice(
     roi_extents: tuple[float, float, float, float] | None = None,
     xcut_percent: float = 20.0,
     ycut_percent: float = 16.0,
+    axes_linewidth: float = 1.0,
     figsize: tuple[float, float] = (8.0, 6.5),
 ):
     """Render a non-interactive MDHisto slice figure.
@@ -195,18 +196,106 @@ def plot_mdhisto_slice(
         )
         ax_image.set_xlabel(model._axis_label(model.x_dim))
         ax_image.set_ylabel(model._axis_label(model.y_dim))
-        ax_image.set_title("MDHisto slice")
         if xlim is not None:
             ax_image.set_xlim(*xlim)
         if ylim is not None:
             ax_image.set_ylim(*ylim)
         colorbar = fig.colorbar(image, cax=ax_colorbar)
         colorbar.set_label(model._channel_label())
+        _apply_axes_linewidth((ax_image, ax_colorbar, ax_xcut, ax_ycut), colorbar, axes_linewidth)
 
         if show_histogram_axes and roi_extents is not None and ax_xcut is not None and ax_ycut is not None:
             _draw_mdhisto_roi_cuts(model, view, roi_extents, ax_xcut, ax_ycut)
+            _apply_axes_linewidth((ax_image, ax_colorbar, ax_xcut, ax_ycut), colorbar, axes_linewidth)
 
     return fig
+
+
+def plot_mdhisto_line(
+    data: MDHistoData,
+    *,
+    axis_dim: int | str | None = None,
+    channel: str = "signal",
+    ax=None,
+):
+    """Render a one-dimensional MDHisto channel as a line plot.
+
+    Mantid reductions often keep singleton dimensions. This helper treats the
+    selected non-singleton dimension as x and indexes the remaining dimensions at
+    their first bin, so a shape like ``(1, 1, 1, N)`` becomes a normal line plot.
+    """
+
+    import matplotlib.pyplot as plt
+
+    if axis_dim is None:
+        non_singleton = [dim for dim, size in enumerate(data.shape) if size > 1]
+        if len(non_singleton) != 1:
+            raise ValueError("axis_dim is required unless exactly one dimension is non-singleton")
+        axis_index = non_singleton[0]
+    else:
+        axis_index = _resolve_mdhisto_dim(data, axis_dim)
+    channel_name = _resolve_mdhisto_channel(channel)
+    values = _mdhisto_channel_array(data, channel_name)
+    index = [0] * data.signal.ndim
+    index[axis_index] = slice(None)
+    y = np.asarray(values[tuple(index)], dtype=float)
+    x = data.axes[axis_index].centers
+    if ax is None:
+        _, ax = plt.subplots()
+    if channel_name == "signal":
+        yerr = np.asarray(_mdhisto_channel_array(data, "errors")[tuple(index)], dtype=float)
+        ax.errorbar(x, y, yerr=yerr, fmt="-", lw=1.2)
+    else:
+        ax.plot(x, y, "-", lw=1.2)
+    axis = data.axes[axis_index]
+    xlabel = f"{axis.name} ({axis.units})" if axis.units else axis.name
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(MDHistoSliceViewer.CHANNEL_LABELS[channel_name])
+    return ax
+
+
+def plot_mdhisto_auto(data: MDHistoData, **kwargs):
+    """Plot a 1D MDHisto as a line, otherwise render a 2D slice figure."""
+
+    non_singleton = [dim for dim, size in enumerate(data.shape) if size > 1]
+    if len(non_singleton) == 1:
+        return plot_mdhisto_line(data, axis_dim=non_singleton[0], **kwargs)
+    if len(non_singleton) < 1:
+        raise ValueError("MDHisto data has no plottable non-singleton dimensions")
+    kwargs.setdefault("x_dim", non_singleton[-1])
+    kwargs.setdefault("y_dim", non_singleton[-2])
+    return plot_mdhisto_slice(data, **kwargs)
+
+
+def _resolve_mdhisto_dim(data: MDHistoData, dim: int | str) -> int:
+    if isinstance(dim, int):
+        return dim % data.signal.ndim
+    names = [axis.name for axis in data.axes]
+    if dim not in names:
+        raise ValueError(f"unknown axis {dim!r}; choose one of {names}")
+    return names.index(dim)
+
+
+def _resolve_mdhisto_channel(channel: str) -> str:
+    normalized = MDHistoSliceViewer.CHANNEL_ALIASES.get(str(channel), str(channel))
+    if normalized not in MDHistoSliceViewer.CHANNELS:
+        raise ValueError(f"unknown channel {channel!r}; choose one of {MDHistoSliceViewer.CHANNELS}")
+    return normalized
+
+
+def _mdhisto_channel_array(data: MDHistoData, channel: str) -> np.ndarray:
+    if channel == "signal":
+        values = np.asarray(data.signal, dtype=float)
+    elif channel == "errors":
+        values = np.asarray(data.errors, dtype=float)
+    elif channel == "num_events":
+        values = np.asarray(data.num_events, dtype=float)
+    elif channel == "mask":
+        return np.asarray(data.mask, dtype=float)
+    else:
+        raise ValueError(f"unknown channel {channel!r}")
+    empty = np.asarray(data.num_events <= 0.0)
+    return np.where(np.asarray(data.mask, dtype=bool) | empty, np.nan, values)
 
 
 def _panel_ratio(percent: float) -> float:
@@ -236,6 +325,27 @@ def _draw_mdhisto_roi_cuts(
     ax_xcut.set_xlabel(model._axis_label(model.x_dim))
     ax_ycut.set_xlabel("Int.")
     ax_ycut.set_ylabel(model._axis_label(model.y_dim))
+
+
+def _apply_axes_linewidth(axes, colorbar, linewidth: float) -> None:
+    width = float(linewidth)
+    for axis in axes:
+        if axis is None:
+            continue
+        for spine in axis.spines.values():
+            spine.set_linewidth(width)
+        is_colorbar_axis = colorbar is not None and axis is colorbar.ax
+        axis.tick_params(
+            axis="both",
+            which="both",
+            direction="in",
+            top=not is_colorbar_axis,
+            right=not is_colorbar_axis,
+            width=width,
+        )
+    if colorbar is not None:
+        colorbar.outline.set_linewidth(width)
+        colorbar.ax.tick_params(which="both", direction="in", width=width)
 
 
 class _DropdownSelect:
@@ -495,7 +605,6 @@ class MDHistoSliceViewer:
         )
         self.ax_image.set_xlabel(self._axis_label(self.x_dim))
         self.ax_image.set_ylabel(self._axis_label(self.y_dim))
-        self.ax_image.set_title("MDHisto slice")
         if self.colorbar is None:
             self.colorbar = self.fig.colorbar(self.image, cax=self.ax_colorbar)
             self.colorbar.set_label(self._channel_label())
