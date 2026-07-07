@@ -7,6 +7,7 @@ from typing import Any, Literal
 import numpy as np
 from numpy.typing import NDArray
 
+from .axes import AxisRole, infer_axis_role
 from .dataset import PointData4D
 
 
@@ -17,7 +18,7 @@ BoolArray = NDArray[np.bool_]
 
 @dataclass(frozen=True)
 class MDHistoAxis:
-    """One binned Mantid MDHistoWorkspace axis."""
+    """One binned reduced-data axis from a Mantid MDHistoWorkspace."""
 
     name: str
     values: FloatArray
@@ -35,10 +36,16 @@ class MDHistoAxis:
             return self.values.copy()
         return 0.5 * (self.values[:-1] + self.values[1:])
 
+    @property
+    def role(self) -> AxisRole:
+        """Reduced-data role inferred from axis name, units, and kind."""
+
+        return infer_axis_role(self.name, units=self.units, kind=self.kind)
+
 
 @dataclass
 class MDHistoData:
-    """Imported Mantid MDHistoWorkspace data with full binned axes.
+    """Imported binned reduced data from a Mantid MDHistoWorkspace.
 
     ``axes`` are ordered to match the array dimensions of ``signal``, ``errors``,
     ``mask``, and ``num_events``. Mantid stores the mask as bin flags; this class
@@ -231,6 +238,49 @@ def point_data_from_hyspec_hhl(
     return point_data, summary
 
 
+def hyspec_hhl_point_indices(
+    data: MDHistoData,
+    points: PointData4D,
+    *,
+    tolerance: float | None = None,
+) -> tuple[NDArray[np.intp], ...]:
+    """Return MDHisto bin indices for HYSPEC HHL point data.
+
+    This is the inverse grid lookup for :func:`point_data_from_hyspec_hhl`.
+    Points are mapped from physical reciprocal-lattice coordinates back to the
+    HYSPEC axes using ``[H,H,0] = (H + K) / 2`` and
+    ``[H,-H,0] = (H - K) / 2``.
+    """
+
+    e_dim = _axis_index(data, "DeltaE")
+    hmh_dim = _axis_index(data, "[H,-H,0]")
+    l_dim = _axis_index(data, "[0,0,L]")
+    hh_dim = _axis_index(data, "[H,H,0]")
+
+    indices: list[NDArray[np.intp] | None] = [None] * data.signal.ndim
+    indices[e_dim] = _nearest_axis_center_indices(
+        data.axes[e_dim],
+        np.asarray(points.E, dtype=float),
+        tolerance=tolerance,
+    )
+    indices[hmh_dim] = _nearest_axis_center_indices(
+        data.axes[hmh_dim],
+        0.5 * (np.asarray(points.H, dtype=float) - np.asarray(points.K, dtype=float)),
+        tolerance=tolerance,
+    )
+    indices[l_dim] = _nearest_axis_center_indices(
+        data.axes[l_dim],
+        np.asarray(points.L, dtype=float),
+        tolerance=tolerance,
+    )
+    indices[hh_dim] = _nearest_axis_center_indices(
+        data.axes[hh_dim],
+        0.5 * (np.asarray(points.H, dtype=float) + np.asarray(points.K, dtype=float)),
+        tolerance=tolerance,
+    )
+    return tuple(index for index in indices if index is not None)
+
+
 def _signal_axis_names(signal_dataset: Any) -> tuple[str, ...]:
     axes_attr = signal_dataset.attrs.get("axes")
     if axes_attr is None:
@@ -244,6 +294,37 @@ def _axis_index(data: MDHistoData, name: str) -> int:
         if axis.name == name:
             return index
     raise ValueError(f"axis {name!r} not found")
+
+
+def _nearest_axis_center_indices(
+    axis: MDHistoAxis,
+    values: FloatArray,
+    *,
+    tolerance: float | None,
+) -> NDArray[np.intp]:
+    centers = np.asarray(axis.centers, dtype=float)
+    if centers.size == 0:
+        raise ValueError(f"axis {axis.name!r} has no centers")
+    positions = np.searchsorted(centers, values)
+    right = np.clip(positions, 0, centers.size - 1)
+    left = np.clip(positions - 1, 0, centers.size - 1)
+    use_right = np.abs(centers[right] - values) <= np.abs(centers[left] - values)
+    indices = np.where(use_right, right, left).astype(np.intp)
+
+    if tolerance is None:
+        if centers.size > 1:
+            scale = float(np.nanmax(np.abs(np.diff(centers))))
+        else:
+            scale = max(abs(float(centers[0])), 1.0)
+        tolerance = max(scale * 1.0e-6, 1.0e-10)
+    mismatch = ~np.isfinite(values) | (np.abs(centers[indices] - values) > tolerance)
+    if np.any(mismatch):
+        first = int(np.flatnonzero(mismatch)[0])
+        raise ValueError(
+            f"value {values[first]!r} does not map onto axis {axis.name!r} "
+            f"within tolerance {tolerance:g}"
+        )
+    return indices
 
 
 def _read_axis(data_group: Any, axis_name: str) -> MDHistoAxis:

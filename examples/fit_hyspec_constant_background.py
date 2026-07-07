@@ -7,16 +7,19 @@ from pathlib import Path
 import numpy as np
 
 from metallix import (
-    FitDataset,
-    FitProblem,
+    attach_fit_comparisons,
+    DataGroup,
+    DatasetEntry,
+    FitModelSession,
     ParameterSpec,
-    fit_problem_least_squares,
+    hyspec_hhl_fit_comparison_from_points,
     load_mantid_mdhisto_nxs,
     make_constant_intensity_model,
     make_energy_q_mask_transform,
     make_phonon_mask_transform,
     point_data_from_hyspec_hhl,
     polynomial_fwhm_energy_resolution,
+    slice_viewer,
 )
 
 
@@ -43,6 +46,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Phonon cone velocity dE/d|Q| in meV per inverse angstrom.",
     )
     parser.add_argument("--resolution-oversampling", type=int, default=5)
+    parser.add_argument(
+        "--view-fit",
+        action="store_true",
+        help="Open the slice viewer with masked data, fit, and residual datasets.",
+    )
     return parser
 
 
@@ -67,25 +75,35 @@ def main() -> None:
             center_units="rlu",
         ),
     ]
-    dataset = FitDataset(
-        name="hyspec_3meV_1p8K",
-        data=point_data,
-        transforms=transforms,
-        resolution=polynomial_fwhm_energy_resolution(
-            [0.6, 0.0, 0.0],
-            oversampling=args.resolution_oversampling,
-        ),
+    data_group = DataGroup(
+        name="hyspec_3meV_1p8K_group",
+        datasets=[
+            DatasetEntry(
+                name="hyspec_3meV_1p8K",
+                data=point_data,
+                kind="inelastic_neutron_point_data",
+                parameters={"temperature": 1.8},
+                transforms=transforms,
+            )
+        ],
+        metadata={"source_file": str(path)},
     )
-    prepared = dataset.prepared().valid()
+    prepared = data_group.get_dataset("hyspec_3meV_1p8K").prepared().valid()
 
     initial_constant = float(np.nanmedian(prepared.intensity))
-    problem = FitProblem(
-        datasets=[dataset],
+    model_session = FitModelSession(
+        name="constant_background",
         model=make_constant_intensity_model("constant"),
         parameter_specs=[ParameterSpec("constant", initial_constant, description="flat background")],
-        description="HYSPEC constant background example",
+        resolution_by_dataset={
+            "hyspec_3meV_1p8K": polynomial_fwhm_energy_resolution(
+                [0.6, 0.0, 0.0],
+                oversampling=args.resolution_oversampling,
+            )
+        },
     )
-    result = fit_problem_least_squares(problem)
+    data_group.add_model(model_session)
+    result = model_session.fit(data_group)
 
     stderr = None if result.stderr is None else result.stderr.get("constant")
     summary = {
@@ -115,9 +133,35 @@ def main() -> None:
             "reduced_chi2": result.reduced_chi2,
             "dof": prepared.size - len(result.variable_names),
             "cost": result.cost,
+            "history_length": len(model_session.history),
         },
     }
     print(json.dumps(summary, indent=2, sort_keys=True))
+
+    if args.view_fit:
+        fit_values = result.dataset_model_values["hyspec_3meV_1p8K"]
+        attach_fit_comparisons(
+            mdhisto,
+            [
+                hyspec_hhl_fit_comparison_from_points(
+                    mdhisto,
+                    prepared,
+                    fit_values,
+                    model_name=model_session.name,
+                    result_name=f"fit {len(model_session.history) - 1}",
+                )
+            ],
+        )
+        viewer = slice_viewer(
+            mdhisto,
+            x_dim="[H,H,0]",
+            y_dim="[0,0,L]",
+            channel="signal",
+            cmap="viridis",
+            color_scale="linear",
+            auto_limits="min/max",
+        )
+        viewer.run()
 
 
 if __name__ == "__main__":

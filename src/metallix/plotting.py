@@ -267,6 +267,278 @@ def plot_mdhisto_auto(data: MDHistoData, **kwargs):
     return plot_mdhisto_slice(data, **kwargs)
 
 
+def mdhisto_with_signal_like(
+    template: MDHistoData,
+    signal: ArrayLike,
+    *,
+    errors: ArrayLike | None = None,
+    mask: ArrayLike | None = None,
+    num_events: ArrayLike | None = None,
+    metadata: dict | None = None,
+) -> MDHistoData:
+    """Return an MDHistoData object sharing axes with ``template``."""
+
+    signal_arr = np.asarray(signal, dtype=float)
+    if signal_arr.shape != template.signal.shape:
+        raise ValueError(
+            f"signal shape {signal_arr.shape} does not match template shape "
+            f"{template.signal.shape}"
+        )
+    errors_arr = np.zeros_like(signal_arr) if errors is None else np.asarray(errors, dtype=float)
+    mask_arr = np.asarray(template.mask if mask is None else mask, dtype=bool)
+    events_arr = np.asarray(template.num_events if num_events is None else num_events, dtype=float)
+    return MDHistoData(
+        axes=template.axes,
+        signal=signal_arr,
+        errors=errors_arr,
+        mask=mask_arr,
+        num_events=events_arr,
+        coordinate_system=template.coordinate_system,
+        visual_normalization=template.visual_normalization,
+        metadata={**template.metadata, **({} if metadata is None else metadata)},
+    )
+
+
+def residual_mdhisto(data: MDHistoData, fit: MDHistoData) -> MDHistoData:
+    """Return ``(data - fit) / error`` as an MDHistoData object."""
+
+    if data.signal.shape != fit.signal.shape:
+        raise ValueError("data and fit shapes must match")
+    with np.errstate(divide="ignore", invalid="ignore"):
+        residual = (
+            np.asarray(data.signal, dtype=float)
+            - np.asarray(fit.signal, dtype=float)
+        ) / np.asarray(data.errors, dtype=float)
+    mask = np.asarray(data.mask, dtype=bool) | ~np.isfinite(residual)
+    return mdhisto_with_signal_like(
+        data,
+        residual,
+        errors=np.ones_like(residual),
+        mask=mask,
+        metadata={"channel": "normalized residual"},
+    )
+
+
+def plot_mdhisto_fit_comparison(
+    data: MDHistoData,
+    fit: MDHistoData,
+    *,
+    residual: MDHistoData | None = None,
+    show_residual: bool = True,
+    x_dim: int | str = -1,
+    y_dim: int | str = 0,
+    channel: str = "signal",
+    selections: dict[int, tuple[float, float]] | None = None,
+    integrate_checks: dict[int, bool] | None = None,
+    cmap: str = "viridis",
+    color_scale: str = "linear",
+    auto_limits: str = "min/max",
+    figsize: tuple[float, float] | None = None,
+):
+    """Plot data, fit, and optionally residual for matching MDHisto datasets."""
+
+    non_singleton = [dim for dim, size in enumerate(data.shape) if size > 1]
+    if len(non_singleton) == 1:
+        return plot_mdhisto_fit_line_comparison(
+            data,
+            fit,
+            residual=residual,
+            show_residual=show_residual,
+            axis_dim=non_singleton[0],
+            channel=channel,
+            figsize=(8.0, 5.5) if figsize is None else figsize,
+        )
+    return _plot_mdhisto_fit_slice_comparison(
+        data,
+        fit,
+        residual=residual,
+        show_residual=show_residual,
+        x_dim=x_dim,
+        y_dim=y_dim,
+        channel=channel,
+        selections=selections,
+        integrate_checks=integrate_checks,
+        cmap=cmap,
+        color_scale=color_scale,
+        auto_limits=auto_limits,
+        figsize=figsize,
+    )
+
+
+def plot_mdhisto_fit_line_comparison(
+    data: MDHistoData,
+    fit: MDHistoData,
+    *,
+    residual: MDHistoData | None = None,
+    show_residual: bool = True,
+    axis_dim: int | str | None = None,
+    channel: str = "signal",
+    ax=None,
+    figsize: tuple[float, float] = (8.0, 5.5),
+):
+    """Overlay 1D data, fit, and vertically offset residual."""
+
+    import matplotlib.pyplot as plt
+
+    if axis_dim is None:
+        non_singleton = [dim for dim, size in enumerate(data.shape) if size > 1]
+        if len(non_singleton) != 1:
+            raise ValueError("axis_dim is required unless exactly one dimension is non-singleton")
+        axis_index = non_singleton[0]
+    else:
+        axis_index = _resolve_mdhisto_dim(data, axis_dim)
+    if ax is None:
+        _, ax = plt.subplots(figsize=figsize)
+    x, y, yerr = _mdhisto_1d_values(data, axis_index, channel)
+    _, yfit, _ = _mdhisto_1d_values(fit, axis_index, channel)
+    ax.errorbar(x, y, yerr=yerr, fmt="o", linestyle="none", ms=5.0, mfc="none", label="data")
+    ax.plot(x, yfit, "-", lw=1.5, label="fit")
+    if show_residual:
+        if residual is None:
+            residual = residual_mdhisto(data, fit)
+        _, r, _ = _mdhisto_1d_values(residual, axis_index, "signal")
+        offset = _residual_offset(y, yfit)
+        ax.axhline(offset, color="0.7", lw=0.8)
+        ax.plot(x, r + offset, "o", ms=4.0, mfc="none", color="0.25", label="residual")
+    axis = data.axes[axis_index]
+    ax.set_xlabel(f"{axis.name} ({axis.units})" if axis.units else axis.name)
+    ax.set_ylabel(MDHistoSliceViewer.CHANNEL_LABELS[_resolve_mdhisto_channel(channel)])
+    ax.legend()
+    return ax
+
+
+def _plot_mdhisto_fit_slice_comparison(
+    data: MDHistoData,
+    fit: MDHistoData,
+    *,
+    residual: MDHistoData | None,
+    show_residual: bool,
+    x_dim: int | str,
+    y_dim: int | str,
+    channel: str,
+    selections: dict[int, tuple[float, float]] | None,
+    integrate_checks: dict[int, bool] | None,
+    cmap: str,
+    color_scale: str,
+    auto_limits: str,
+    figsize: tuple[float, float] | None,
+):
+    import matplotlib.pyplot as plt
+
+    panels: list[tuple[str, MDHistoData, str]] = [("Data", data, channel), ("Fit", fit, channel)]
+    if show_residual:
+        panels.append(
+            (
+                "Residual",
+                residual_mdhisto(data, fit) if residual is None else residual,
+                "signal",
+            )
+        )
+    fig_width = 5.0 * len(panels) if figsize is None else figsize[0]
+    fig_height = 4.8 if figsize is None else figsize[1]
+    fig, axes = plt.subplots(1, len(panels), figsize=(fig_width, fig_height), constrained_layout=True)
+    axes = np.atleast_1d(axes)
+
+    data_model = _configured_mdhisto_model(
+        data,
+        x_dim=x_dim,
+        y_dim=y_dim,
+        channel=channel,
+        selections=selections,
+        integrate_checks=integrate_checks,
+        cmap=cmap,
+        color_scale=color_scale,
+        auto_limits=auto_limits,
+    )
+    data_view = data_model.slice_arrays()
+    data_values = data_model._display_values(data_view)
+    shared_norm = data_model._color_norm(data_values)
+
+    for ax, (title, panel_data, panel_channel) in zip(axes, panels, strict=True):
+        model = _configured_mdhisto_model(
+            panel_data,
+            x_dim=x_dim,
+            y_dim=y_dim,
+            channel=panel_channel,
+            selections=selections,
+            integrate_checks=integrate_checks,
+            cmap=cmap,
+            color_scale=color_scale,
+            auto_limits=auto_limits,
+        )
+        view = model.slice_arrays()
+        values = model._display_values(view)
+        norm = None if title == "Residual" else shared_norm
+        artist = ax.pcolormesh(
+            view["x_edges"],
+            view["y_edges"],
+            values,
+            shading="auto",
+            cmap=cmap,
+            norm=norm,
+        )
+        ax.set_title(title)
+        ax.set_xlabel(model._axis_label(model.x_dim))
+        ax.set_ylabel(model._axis_label(model.y_dim))
+        colorbar = fig.colorbar(artist, ax=ax)
+        colorbar.set_label("Residual (sigma)" if title == "Residual" else model._channel_label())
+    return fig
+
+
+def _configured_mdhisto_model(
+    data: MDHistoData,
+    *,
+    x_dim: int | str,
+    y_dim: int | str,
+    channel: str,
+    selections: dict[int, tuple[float, float]] | None,
+    integrate_checks: dict[int, bool] | None,
+    cmap: str,
+    color_scale: str,
+    auto_limits: str,
+) -> MDHistoSliceViewer:
+    model = MDHistoSliceViewer(
+        data,
+        x_dim=x_dim,
+        y_dim=y_dim,
+        channel=channel,
+        cmap=cmap,
+        color_scale=color_scale,
+        auto_limits=auto_limits,
+    )
+    if selections:
+        model.selections.update({int(dim): tuple(value) for dim, value in selections.items()})
+    if integrate_checks:
+        model.integrate_checks.update({int(dim): bool(value) for dim, value in integrate_checks.items()})
+    return model
+
+
+def _mdhisto_1d_values(
+    data: MDHistoData,
+    axis_index: int,
+    channel: str,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    channel_name = _resolve_mdhisto_channel(channel)
+    values = _mdhisto_channel_array(data, channel_name)
+    index = [0] * data.signal.ndim
+    index[axis_index] = slice(None)
+    y = np.asarray(values[tuple(index)], dtype=float)
+    yerr = None
+    if channel_name == "signal":
+        yerr = np.asarray(_mdhisto_channel_array(data, "errors")[tuple(index)], dtype=float)
+    return data.axes[axis_index].centers, y, yerr
+
+
+def _residual_offset(data_values: np.ndarray, fit_values: np.ndarray) -> float:
+    finite = np.asarray(np.concatenate([np.ravel(data_values), np.ravel(fit_values)]), dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        return -1.0
+    span = float(np.nanmax(finite) - np.nanmin(finite))
+    span = span if span > 0.0 else max(abs(float(np.nanmean(finite))), 1.0)
+    return float(np.nanmin(finite) - 0.25 * span)
+
+
 def _resolve_mdhisto_dim(data: MDHistoData, dim: int | str) -> int:
     if isinstance(dim, int):
         return dim % data.signal.ndim

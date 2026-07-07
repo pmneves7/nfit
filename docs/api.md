@@ -1,12 +1,20 @@
 # API reference
 
-## MDHisto import and viewing
+## Reduced data, import adapters, and viewing
+
+The package centers on reduced experimental coordinates. Importers should read
+axis names, units, masks, intensities, uncertainties, and metadata from their
+source files, then translate them into common containers. Mantid MDHisto NeXus
+support is currently the most developed adapter, but it is not intended to be
+the only supported input.
 
 Mantid `SaveMD` / `MDHistoWorkspace` NeXus files can be loaded with
 `load_mantid_mdhisto_nxs`. The returned `MDHistoData` stores axis metadata plus
 same-shaped `signal`, propagated `errors`, `mask`, and `num_events` arrays. By
 default, the importer avoids copying bulky ancillary NeXus groups such as
 `experiment0`; pass `copy_metadata=True` when a metadata tree copy is needed.
+Axes expose broad roles inferred from file labels and units, such as `h`, `k`,
+`l`, `q_modulus`, `momentum_projection`, and `energy_transfer`.
 
 Use `slice_viewer(data)` for the PySide6 interactive viewer. The viewer supports
 choosing displayed x/y axes, integrating hidden axes, switching the displayed
@@ -23,17 +31,30 @@ plot for exactly-one-non-singleton data or a slice figure otherwise. The
 exported scripts from the GUI call `plot_mdhisto_slice` and include the current
 display settings.
 
+Fit-comparison views can be attached to `MDHistoData` with
+`attach_fit_comparisons`. When the Qt slice viewer sees attached comparisons, it
+shows a "Compare fit" control and can render linked data/fit or
+data/fit/residual panels for a selected model and fit-history result.
+
 ## Modeling and fitting
 
 The fitting API supports both the original single-dataset
 `fit_least_squares(data, model, specs)` convenience function and the
 simultaneous-fit `FitProblem` workflow. `FitDataset` carries dataset-local
 weights, preprocessing transforms, and optional instrument resolution, while
-`ModelSpec` wraps the shared physics model. See the
+`ModelSpec` wraps the shared physics model. `DataGroup` and `FitModelSession`
+package related datasets, per-dataset model overrides, optimizer settings, and
+fit history for iterative analysis. See the
 [modeling pipeline](modeling_pipeline.md) page for the recommended structure.
 
 ```{eval-rst}
+.. automodule:: metallix.axes
+   :members:
+
 .. automodule:: metallix.dataset
+   :members:
+
+.. automodule:: metallix.mdhisto
    :members:
 
 .. automodule:: metallix.models
@@ -43,6 +64,12 @@ weights, preprocessing transforms, and optional instrument resolution, while
    :members:
 
 .. automodule:: metallix.fitting
+   :members:
+
+.. automodule:: metallix.fit_views
+   :members:
+
+.. automodule:: metallix.pipeline
    :members:
 
 .. automodule:: metallix.resolution

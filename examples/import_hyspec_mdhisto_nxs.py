@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import numpy as np
@@ -8,29 +7,8 @@ import numpy as np
 from metallix import load_mantid_mdhisto_nxs
 
 
-FILENAME = "3D_HHL_3meV_1p8K_metallix_m-3m.nxs"
-
-
-def candidate_paths() -> list[Path]:
-    paths: list[Path] = []
-    if data_dir := os.environ.get("METALLIX_HYSPEC_DATA_DIR"):
-        paths.append(Path(data_dir) / FILENAME)
-    paths.extend(
-        [
-            Path("data/hyspec") / FILENAME,
-            Path("data/hyspec/raw") / FILENAME,
-            Path.home() / "metallix-data/hyspec/raw" / FILENAME,
-        ]
-    )
-    return paths
-
-
-def find_data_file() -> Path:
-    for path in candidate_paths():
-        if path.exists():
-            return path
-    tried = "\n".join(f"  - {path}" for path in candidate_paths())
-    raise FileNotFoundError(f"Could not find {FILENAME}. Tried:\n{tried}")
+FILENAME = "4D_test.nxs"
+DATA_PATH = Path("data/hyspec") / FILENAME
 
 
 def finite_range(values: np.ndarray) -> tuple[float, float]:
@@ -41,7 +19,7 @@ def finite_range(values: np.ndarray) -> tuple[float, float]:
 
 
 def main() -> None:
-    path = find_data_file()
+    path = DATA_PATH
     data = load_mantid_mdhisto_nxs(path)
 
     print(f"Loaded: {path}")

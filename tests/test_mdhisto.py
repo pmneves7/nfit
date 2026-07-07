@@ -1,7 +1,13 @@
 import h5py
 import numpy as np
 
-from metallix import load_mantid_mdhisto_nxs, point_data_from_hyspec_hhl
+from metallix import (
+    attach_fit_comparisons,
+    hyspec_hhl_point_indices,
+    hyspec_hhl_fit_comparison_from_points,
+    load_mantid_mdhisto_nxs,
+    point_data_from_hyspec_hhl,
+)
 
 
 def test_load_mantid_mdhisto_nxs_reads_axes_and_arrays(tmp_path):
@@ -58,6 +64,12 @@ def test_load_mantid_mdhisto_nxs_reads_axes_and_arrays(tmp_path):
         "momentum",
         "momentum",
     ]
+    assert [axis.role for axis in imported.axes] == [
+        "energy_transfer",
+        "momentum_projection",
+        "momentum_projection",
+        "momentum_projection",
+    ]
     np.testing.assert_allclose(imported.axes[0].centers, [-0.5, 0.5])
     assert imported.metadata["signal_axes"] == ("D3", "D2", "D1", "D0")
     assert "data/signal" in imported.metadata["nexus"]
@@ -81,6 +93,30 @@ def test_load_mantid_mdhisto_nxs_reads_axes_and_arrays(tmp_path):
     np.testing.assert_allclose(points.L[0], l0)
     np.testing.assert_allclose(points.intensity[:2], [0.0, 60.0])
     assert points.temperature == 1.8
+
+    indices = hyspec_hhl_point_indices(imported, points)
+    np.testing.assert_allclose(imported.signal[indices], points.intensity)
+
+    fit_values = np.full(points.intensity.shape, 5.0)
+    comparison = hyspec_hhl_fit_comparison_from_points(
+        imported,
+        points,
+        fit_values,
+        model_name="constant",
+        result_name="fit 0",
+    )
+    attach_fit_comparisons(imported, [comparison])
+    result_view = comparison.results[0]
+
+    assert imported.metadata["fit_comparisons"] == [comparison]
+    np.testing.assert_allclose(result_view.data.signal[indices], points.intensity)
+    assert np.count_nonzero(~result_view.data.mask) == points.size
+    assert np.count_nonzero(~result_view.fit.mask) == points.size
+    np.testing.assert_allclose(result_view.fit.signal[indices], 5.0)
+    np.testing.assert_allclose(
+        result_view.residual.signal[indices],
+        (points.intensity - 5.0) / points.sigma,
+    )
 
 
 def test_load_mantid_mdhisto_nxs_does_not_copy_large_metadata_by_default(tmp_path):

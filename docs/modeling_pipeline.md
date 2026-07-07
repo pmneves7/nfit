@@ -1,17 +1,19 @@
 # Modeling and fitting pipeline
 
 The fitting framework is organized around simultaneous fits to one or more
-datasets. The implementation is intentionally modular: masking and rebinning
-are dataset-local preprocessing steps, the physics model is shared across the
-fit, each dataset may apply its own instrument resolution model, and the
-optimizer minimizes one concatenated weighted residual vector.
+reduced datasets. The implementation is intentionally modular: importers adapt
+instrument/file conventions into common containers, masking and rebinning are
+dataset-local preprocessing steps, the physics model is shared across the fit,
+each dataset may apply its own instrument resolution model, and the optimizer
+minimizes one concatenated weighted residual vector.
 
 ## Core objects
 
 `PointData4D`
 : Flattened measured data containing `H`, `K`, `L`, energy transfer `E`,
   intensity, uncertainty `sigma`, an analysis mask, optional temperature, and
-  metadata.
+  metadata. It is not tied to a particular spectrometer; any reduced data source
+  that can be expressed in these coordinates can use it.
 
 `ParameterSpec`
 : A named scalar parameter with an initial value, optional bounds, fixed/varying
@@ -38,6 +40,94 @@ optimizer minimizes one concatenated weighted residual vector.
 `FitProblem`
 : The complete simultaneous-fitting definition: datasets, shared model,
   parameter specifications, and metadata.
+
+`DatasetEntry`
+: One raw dataset plus flexible experiment metadata. This wrapper is intentionally
+  general: it can hold neutron point data, MDHisto data, susceptibility curves,
+  powder data, or future polarized-neutron containers. Dataset entries may also
+  carry dataset-local transforms such as masks, cuts, normalization corrections,
+  or rebinning operations.
+
+`DataGroup`
+: A named collection of related datasets. A group can store sample-level context
+  such as lattice parameters, space group, provenance, and any number of
+  associated model sessions. This is the preferred container for field series,
+  temperature series, multiple cuts from one experiment, or data collected on
+  different instruments but fit together.
+
+`FitModelSession`
+: A model attached to a data group. It stores the physics model, current
+  parameter specifications, optimizer settings, per-dataset resolution
+  functions, parameter bindings, dataset weights, and an ordered history of
+  completed fits. Each fit can update the current parameters, and previous
+  history entries can be restored with `rollback`.
+
+`FitComparisonModelView`
+: A viewer-ready representation of fit outputs associated with one reduced
+  dataset. A comparison view can provide the data points used in the fit, the
+  fitted model values, and normalized residuals on matching axes. The slice
+  viewer detects these attached comparisons and can render data/fit/residual
+  panels with linked axes, slicing, integration, and color settings.
+
+```python
+from metallix import (
+    DataGroup,
+    DatasetEntry,
+    FitModelSession,
+    ParameterSpec,
+    make_constant_intensity_model,
+)
+
+group = DataGroup(
+    "field_series",
+    lattice_parameters={"a": 3.8, "b": 3.8, "c": 12.0},
+    spacegroup="P4/mmm",
+    datasets=[
+        DatasetEntry("0T", data_0t, kind="inelastic_neutron", parameters={"field": 0.0}),
+        DatasetEntry("9T", data_9t, kind="inelastic_neutron", parameters={"field": 9.0}),
+    ],
+)
+
+session = FitModelSession(
+    "background_by_field",
+    model=make_constant_intensity_model("constant"),
+    parameter_specs=[
+        ParameterSpec("background_0T", 0.1),
+        ParameterSpec("background_9T", 0.1),
+    ],
+    parameter_bindings_by_dataset={
+        "0T": {"constant": "background_0T"},
+        "9T": {"constant": "background_9T"},
+    },
+)
+
+group.add_model(session)
+result = session.fit(group)
+session.rollback(0)
+```
+
+## Interactive workflow direction
+
+The current workflow is intentionally code-first: scripts create data groups,
+attach masks, choose models, configure resolution functions, run fits, and then
+open a viewer to compare data with fit results. These are not one-off example
+steps; they are the same operations that should later be exposed in a GUI.
+
+The planned GUI should let a user:
+
+- create a `DataGroup` by importing reduced datasets from files,
+- inspect file-provided axes, units, metadata, and inferred axis roles,
+- edit and attach masks to each dataset,
+- attach one or more models and per-dataset resolution functions,
+- configure optimizer settings, weights, parameter constraints, and linked
+  parameter groups,
+- run single, repeated, or batch fits,
+- inspect fit history, roll back to previous results, and compare data, fit, and
+  residuals visually.
+
+The slice viewer fit-comparison mode is the first GUI piece of that larger
+workflow. It is deliberately driven by data/model objects created in code so the
+underlying pipeline remains testable before more GUI editing tools exist.
 
 ## Masking
 

@@ -10,17 +10,26 @@ import matplotlib.colors as mcolors
 import numpy as np
 import pytest
 
-from metallix import PointData4D
+from metallix import (
+    FitComparisonModelView,
+    FitComparisonResultView,
+    PointData4D,
+    attach_fit_comparisons,
+)
 from metallix.mdhisto import MDHistoAxis, MDHistoData
 from metallix.plotting import (
     MDHistoSliceViewer,
     _DropdownSelect,
+    mdhisto_with_signal_like,
     plot_2d_map,
     plot_energy_cut,
     plot_mdhisto_auto,
+    plot_mdhisto_fit_comparison,
+    plot_mdhisto_fit_line_comparison,
     plot_mdhisto_line,
     plot_mdhisto_slice,
     plot_q_cut,
+    residual_mdhisto,
 )
 
 
@@ -129,6 +138,39 @@ def test_plot_mdhisto_line_and_auto_dispatch_for_single_non_singleton_axis():
     assert len(ax.lines) == 1
     assert auto_ax.get_ylabel() == "Error"
     assert len(auto_ax.lines) == 1
+
+
+def test_plot_mdhisto_fit_comparison_renders_data_fit_residual_panels():
+    data = _tiny_mdhisto_data()
+    fit = mdhisto_with_signal_like(data, data.signal + 0.5)
+
+    fig = plot_mdhisto_fit_comparison(data, fit, x_dim=3, y_dim=2)
+    residual = residual_mdhisto(data, fit)
+
+    panel_titles = [ax.get_title() for ax in fig.axes if ax.get_title()]
+    assert panel_titles == ["Data", "Fit", "Residual"]
+    assert len(fig.axes) == 6
+    np.testing.assert_allclose(residual.signal, -0.5)
+
+
+def test_plot_mdhisto_fit_line_comparison_draws_expected_1d_layers():
+    data = _tiny_1d_mdhisto_data()
+    fit = mdhisto_with_signal_like(data, data.signal + 0.5)
+
+    ax = plot_mdhisto_fit_line_comparison(data, fit)
+
+    assert ax.get_xlabel() == "[H,H,H] (r.l.u.)"
+    assert ax.get_ylabel() == "Signal"
+    assert ax.containers
+    assert any(
+        line.get_marker() == "o" and line.get_linestyle() == "None"
+        for line in ax.lines
+    )
+    assert any(
+        line.get_marker() == "None" and line.get_linestyle() == "-"
+        for line in ax.lines
+    )
+    assert any(line.get_label() == "residual" for line in ax.lines)
 
 
 def test_mdhisto_slice_viewer_selects_hidden_axis_positions():
@@ -406,6 +448,51 @@ def test_qt_dataset_dropdown_handles_1d_line_and_2d_slice_modes():
     assert viewer.line_group.isHidden()
     assert viewer.model.x_dim == 3
     assert viewer.model.y_dim == 2
+
+
+def test_qt_fit_compare_panel_draws_data_fit_and_optional_residual():
+    pytest.importorskip("PySide6")
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_mdhisto_data()
+    fit = mdhisto_with_signal_like(data, data.signal + 0.5)
+    residual = residual_mdhisto(data, fit)
+    attach_fit_comparisons(
+        data,
+        [
+            FitComparisonModelView(
+                "constant_background",
+                [
+                    FitComparisonResultView(
+                        "fit 0",
+                        fit=fit,
+                        data=data,
+                        residual=residual,
+                    )
+                ],
+            )
+        ],
+    )
+
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+
+    assert not viewer.fit_compare_group.isHidden()
+    assert not viewer.fit_compare_check.isChecked()
+
+    viewer.fit_compare_check.setChecked(True)
+
+    assert viewer.fit_compare_model_combo.currentText() == "constant_background"
+    assert viewer.fit_compare_result_combo.currentText() == "fit 0"
+    assert [axis.get_title() for axis in viewer._compare_axes] == ["Data", "Fit", "Residual"]
+    assert viewer.tools_group.isHidden()
+
+    viewer.ax_image.set_xlim(-0.5, 0.5)
+
+    np.testing.assert_allclose(viewer._compare_axes[1].get_xlim(), (-0.5, 0.5))
+
+    viewer.fit_compare_residual_check.setChecked(False)
+
+    assert [axis.get_title() for axis in viewer._compare_axes] == ["Data", "Fit"]
 
 
 def test_qt_singleton_axes_are_not_controlled():

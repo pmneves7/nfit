@@ -1,26 +1,35 @@
 # metallix
 
-`metallix` is an early-stage Python package for analyzing four-dimensional
-inelastic neutron scattering data from nearly magnetic metals. The first
-implementation focuses on clean, testable building blocks:
+`metallix` is an early-stage Python package for analyzing reduced magnetic
+scattering and related experimental data from nearly magnetic metals. The
+package is meant to work in physical coordinates such as `H`, `K`, `L`, `|Q|`,
+and energy transfer after data reduction, regardless of whether the data came
+from HYSPEC, another spectrometer, a triple-axis experiment, a powder
+diffractometer, or a text export. The first implementation focuses on clean,
+testable building blocks:
 
 - flattened 4D point data containers for H, K, L, and energy transfer E.
+- generic axis-role inference from file labels and units.
 - overdamped paramagnon susceptibility models returning chi''(Q,E).
 - neutron cross-section helpers that convert chi'' into measured intensity.
 - deterministic least-squares fitting for synthetic-data recovery.
 - a simultaneous-fitting framework with dataset weights, preprocessing
   transforms, model hooks, resolution hooks, and uncertainty-sampling
   placeholders.
+- data groups and model sessions for related datasets, flexible metadata,
+  per-dataset parameter bindings, optimizer settings, and fit history.
 - constant and additive compound measured-intensity models, plus dataset-level
   parameter bindings for shared or grouped constraints.
 - Gaussian energy-resolution broadening with constant or polynomial FWHM and
   configurable energy oversampling.
 - composable masks for energy windows, `|Q|` ranges, projected boxes,
   ellipsoids, and phonon-like cones.
-- Mantid `SaveMD` / `MDHistoWorkspace` NeXus import for binned 4D data.
+- Mantid `SaveMD` / `MDHistoWorkspace` NeXus import as one reduced-data adapter.
 - simple plotting helpers for 1D cuts, 2D maps, and MDHisto slices.
+- static data/fit/residual comparison plots for matching MDHisto outputs.
 - a PySide6 MDHisto slice viewer with axis integration, color controls,
-  cursor readout, histogram box cuts, channel selection, and script export.
+  cursor readout, histogram box cuts, channel selection, fit-comparison panels,
+  and script export.
 
 The package is intentionally small at this stage. MCMC has framework entry
 points but not a concrete backend yet; Dask, Numba, and JAX are not included.
@@ -62,33 +71,35 @@ Run the first reference example:
 /Users/pmneves/.conda/envs/metallix/bin/python examples/synthetic_single_q_fit.py
 ```
 
-Import a Mantid MDHisto NeXus file and inspect the axes/channels:
+Import a Mantid MDHisto NeXus file and inspect the axes/channels. This is the
+current example adapter; the fitting layer is not specific to HYSPEC or MDHisto:
 
 ```bash
-python examples/import_hyspec_mdhisto_nxs.py
+/Users/pmneves/.conda/envs/metallix/bin/python examples/import_hyspec_mdhisto_nxs.py
 ```
 
-Open the PySide6 slice viewer for the HYSPEC example data:
+Open the PySide6 slice viewer for the bundled MDHisto example data:
 
 ```bash
-python examples/view_hyspec_mdhisto_slice.py
+/Users/pmneves/.conda/envs/metallix/bin/python examples/view_hyspec_mdhisto_slice.py
 ```
 
 Render the local HYSPEC test datasets (`1D_test.nxs`, `2D_test.nxs`, and
 `4D_test.nxs`) with automatic 1D line plotting and 2D+ slice plotting:
 
 ```bash
-python examples/plot_hyspec_test_datasets.py
-python examples/plot_hyspec_test_datasets.py --channel multiplicity --save-dir /tmp/hyspec-plots
+/Users/pmneves/.conda/envs/metallix/bin/python examples/plot_hyspec_test_datasets.py
+/Users/pmneves/.conda/envs/metallix/bin/python examples/plot_hyspec_test_datasets.py --channel multiplicity --save-dir /tmp/hyspec-plots
 ```
 
 The slice viewer can display `signal`, propagated `errors`, `num_events`
 (`multiplicity`), or `mask`; choose x/y axes, integrate hidden axes, tune color
 normalization, switch between loaded datasets, copy the figure to the clipboard,
-or export a static `plot_mdhisto_slice(...)` script for notebooks and batch
-figure generation. `load_mantid_mdhisto_nxs` reads only the core MDHisto arrays
-by default; pass `copy_metadata=True` only when you need a shallow FAIR-style
-copy of ancillary NeXus metadata such as experiment groups.
+compare attached fit results as linked data/fit/residual panels, or export a
+static `plot_mdhisto_slice(...)` script for notebooks and batch figure
+generation. `load_mantid_mdhisto_nxs` reads only the core MDHisto arrays by
+default; pass `copy_metadata=True` only when you need a shallow FAIR-style copy
+of ancillary NeXus metadata such as experiment groups.
 
 Build the documentation:
 

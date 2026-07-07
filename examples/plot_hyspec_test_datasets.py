@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from metallix import load_mantid_mdhisto_nxs, plot_mdhisto_auto, slice_viewer
+from metallix import DataGroup, DatasetEntry, load_mantid_mdhisto_nxs, plot_mdhisto_auto, slice_viewer
 
 
 DATASETS = {
@@ -20,12 +20,27 @@ def data_path(name: str) -> Path:
     return path
 
 
+def load_group(names: list[str]) -> DataGroup:
+    return DataGroup(
+        name="hyspec_test_datasets",
+        datasets=[
+            DatasetEntry(
+                name=name,
+                data=load_mantid_mdhisto_nxs(data_path(name), copy_metadata=False),
+                kind="mdhisto",
+                metadata={"source": str(data_path(name))},
+            )
+            for name in names
+        ],
+    )
+
+
 def non_singleton_dims(shape: tuple[int, ...]) -> list[int]:
     return [dim for dim, size in enumerate(shape) if size > 1]
 
 
 def static_plot(name: str, *, channel: str):
-    data = load_mantid_mdhisto_nxs(data_path(name), copy_metadata=False)
+    data = load_group([name]).get_dataset(name).data
     dims = non_singleton_dims(data.shape)
     if len(dims) == 1:
         ax = plot_mdhisto_auto(data, channel=channel)
@@ -63,10 +78,10 @@ def main() -> None:
         )
 
     if not args.save_dir:
-        datasets = [load_mantid_mdhisto_nxs(data_path(name), copy_metadata=False) for name in selected_datasets]
+        group = load_group(selected_datasets)
         viewer = slice_viewer(
-            datasets,
-            dataset_names=selected_datasets,
+            group.data_sequence(),
+            dataset_names=group.dataset_names,
             channel=args.channel,
             cmap="viridis",
             color_scale="linear",
