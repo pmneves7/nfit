@@ -95,10 +95,10 @@ def test_project_helpers_name_import_and_round_trip(tmp_path):
     ]
     assert loaded.data_groups[2].dataset_names == ["scan", "scan1"]
     assert loaded.data_groups[2].datasets[0].masks[0].type == "box"
-    assert loaded.data_groups[2].datasets[1].masks[0].name == "mask1"
-    assert loaded.data_groups[2].models["model1"].parameters["constant"] == 0.25
-    assert loaded.data_groups[2].models["model1"].fit_parameters["constant"] is False
-    assert loaded.data_groups[2].models["model1"].global_fit["constant"] is True
+    assert loaded.data_groups[2].datasets[1].masks[0].name == "Mask1"
+    assert loaded.data_groups[2].models["Model1"].parameters["constant"] == 0.25
+    assert loaded.data_groups[2].models["Model1"].fit_parameters["constant"] is False
+    assert loaded.data_groups[2].models["Model1"].global_fit["constant"] is True
     assert loaded.data_groups[3].datasets[0].name == "scan"
 
 
@@ -336,9 +336,9 @@ def test_project_explorer_adds_edits_and_copies_masks(monkeypatch):
     mask = explorer.add_mask_to_selection()
 
     assert mask is first.masks[0]
-    assert mask.name == "mask1"
+    assert mask.name == "Mask1"
     assert mask.parameters == default_mask_parameters("coordinate_range")
-    assert explorer.tree.currentItem().text(0) == "mask1"
+    assert explorer.tree.currentItem().text(0) == "Mask1"
 
     combo = explorer.mask_type_combo
     combo.setCurrentIndex(combo.findData("box"))
@@ -430,12 +430,12 @@ def test_project_explorer_adds_and_edits_models(monkeypatch):
 
     model = explorer.add_model_to_selection()
 
-    assert model is group.models["model1"]
-    assert model.name == "model1"
+    assert model is group.models["Model1"]
+    assert model.name == "Model1"
     assert model.parameters == default_model_parameters("constant_background")
     assert model.fit_parameters == default_model_fit_parameters("constant_background")
     assert model.global_fit == default_model_global_fit("constant_background")
-    assert explorer.tree.currentItem().text(0) == "model1"
+    assert explorer.tree.currentItem().text(0) == "Model1"
 
     current_item = explorer.tree.currentItem()
     current_item.setText(0, "background")

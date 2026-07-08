@@ -904,23 +904,23 @@ def next_data_group_name(groups: list[DataGroup]) -> str:
 
 
 def next_mask_name(masks: list[MaskSpec]) -> str:
-    """Return the first available maskN name."""
+    """Return the first available MaskN name."""
 
     taken = {mask.name for mask in masks}
     index = 1
-    while f"mask{index}" in taken:
+    while f"Mask{index}" in taken:
         index += 1
-    return f"mask{index}"
+    return f"Mask{index}"
 
 
 def next_model_name(models: dict[str, Any]) -> str:
-    """Return the first available modelN name."""
+    """Return the first available ModelN name."""
 
     taken = set(models)
     index = 1
-    while f"model{index}" in taken:
+    while f"Model{index}" in taken:
         index += 1
-    return f"model{index}"
+    return f"Model{index}"
 
 
 def next_fit_result_name(fits: list[FitTimelineEntry]) -> str:
