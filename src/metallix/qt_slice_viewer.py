@@ -82,6 +82,7 @@ class _DatasetViewState:
     fit_compare_result: str | None = None
     fit_compare_show_residual: bool = True
     apply_masks: bool = True
+    cmap_reversed: bool = False
 
 
 class QtMDHistoSliceViewer:
@@ -156,6 +157,7 @@ class QtMDHistoSliceViewer:
         self.x_reset_button = None
         self.y_reset_button = None
         self.cmap_combo = None
+        self.cmap_reverse_button = None
         self.channel_combo = None
         self.apply_masks_check = None
         self.scale_combo = None
@@ -343,7 +345,7 @@ class QtMDHistoSliceViewer:
                 f"    channel={self.model.channel!r},",
                 f"    selections={self._export_selections()!r},",
                 f"    integrate_checks={self._export_integrate_checks()!r},",
-                f"    cmap={self.model.cmap!r},",
+                f"    cmap={self.model._effective_cmap()!r},",
                 f"    color_scale={self.model.color_scale!r},",
                 f"    auto_limits={self.model.auto_limits!r},",
                 f"    autoscale={self.model.autoscale!r},",
@@ -595,6 +597,8 @@ class QtMDHistoSliceViewer:
         _compact_combobox(self.cmap_combo)
         self.cmap_combo.setCurrentText(self.model.cmap)
         self.cmap_combo.currentTextChanged.connect(self._set_cmap)
+        self.cmap_reverse_button = QtWidgets.QPushButton("Reverse")
+        self.cmap_reverse_button.clicked.connect(self._toggle_cmap_reverse)
         self.scale_combo = QtWidgets.QComboBox()
         self.scale_combo.addItems(self.model.COLOR_SCALES)
         _compact_combobox(self.scale_combo)
@@ -622,6 +626,7 @@ class QtMDHistoSliceViewer:
         self.limit_n_label = QtWidgets.QLabel("N")
         color_layout.addWidget(QtWidgets.QLabel("Colormap"), 0, 0)
         color_layout.addWidget(self.cmap_combo, 0, 1)
+        color_layout.addWidget(self.cmap_reverse_button, 0, 2, 1, 2)
         color_layout.addWidget(QtWidgets.QLabel("Scale"), 1, 0)
         color_layout.addWidget(self.scale_combo, 1, 1)
         color_layout.addWidget(self.gamma_label, 1, 2)
@@ -1068,6 +1073,7 @@ class QtMDHistoSliceViewer:
             fit_compare_result=self.fit_compare_result,
             fit_compare_show_residual=bool(self.fit_compare_show_residual),
             apply_masks=bool(self.model.masked),
+            cmap_reversed=bool(self.model.cmap_reversed),
         )
 
     def _default_dataset_state(self, index: int) -> _DatasetViewState:
@@ -1114,6 +1120,7 @@ class QtMDHistoSliceViewer:
             self.fit_compare_result = state.fit_compare_result
             self.fit_compare_show_residual = bool(state.fit_compare_show_residual)
             self.model.masked = bool(state.apply_masks)
+            self.model.cmap_reversed = bool(state.cmap_reversed)
             self._box_tool_has_auto_shown_hist_axes = bool(state.box_tool_has_auto_shown_hist_axes)
             self._current_slice = None
             self._last_plot_dims = None
@@ -1260,6 +1267,10 @@ class QtMDHistoSliceViewer:
 
     def _set_cmap(self, cmap: str) -> None:
         self.model.cmap = str(cmap)
+        self.update_plot()
+
+    def _toggle_cmap_reverse(self) -> None:
+        self.model.cmap_reversed = not bool(self.model.cmap_reversed)
         self.update_plot()
 
     def _set_channel(self, channel: str) -> None:
@@ -1767,7 +1778,7 @@ class QtMDHistoSliceViewer:
                 view["y_edges"],
                 values,
                 shading="auto",
-                cmap=self.model.cmap,
+                cmap=self.model._effective_cmap(),
                 norm=norm,
             )
             ax.set_title(title)
@@ -1824,6 +1835,7 @@ class QtMDHistoSliceViewer:
         )
         model.selections.update(dict(self.model.selections))
         model.integrate_checks.update(dict(self.model.integrate_checks))
+        model.cmap_reversed = bool(self.model.cmap_reversed)
         model.autoscale = self.model.autoscale
         model.manual_vmin = self.model.manual_vmin
         model.manual_vmax = self.model.manual_vmax
@@ -1873,6 +1885,8 @@ class QtMDHistoSliceViewer:
             self.ax_image.plot(x, y, **common)
         self.ax_image.set_xlabel(self.model._axis_label(self.model.x_dim))
         self.ax_image.set_ylabel(self.model._channel_label())
+        if self.model._is_boolean_channel():
+            self.ax_image.set_ylim(0.0, 1.0)
 
     def _draw_2d_view(self, view: dict[str, np.ndarray], values: np.ndarray) -> None:
         norm = self.model._color_norm(values)
@@ -1881,7 +1895,7 @@ class QtMDHistoSliceViewer:
             view["y_edges"],
             values,
             shading="auto",
-            cmap=self.model.cmap,
+            cmap=self.model._effective_cmap(),
             norm=norm,
         )
         self.ax_image.set_xlabel(self.model._axis_label(self.model.x_dim))

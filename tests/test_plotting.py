@@ -319,6 +319,27 @@ def test_qt_slice_viewer_uses_real_comboboxes_and_swaps_axes():
     assert viewer.y_combo.currentText() == "[H,H,0]"
 
 
+def test_qt_slice_viewer_boolean_channels_use_grey_unit_scale_and_reverse():
+    pytest.importorskip("PySide6")
+    from PySide6 import QtWidgets
+
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_mdhisto_data()
+    data.mask[1, 1, 2, 3] = True
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2, channel="mask")
+
+    assert "grey" in viewer.model.COLORMAPS
+    assert isinstance(viewer.cmap_reverse_button, QtWidgets.QPushButton)
+    assert viewer.model._color_limits(viewer.model._display_values(viewer.slice_arrays())) == (0.0, 1.0)
+    assert viewer.image.cmap.name == "gray"
+
+    viewer.cmap_reverse_button.click()
+
+    assert viewer.model.cmap_reversed is True
+    assert viewer.image.cmap.name == "gray_r"
+
+
 def test_slice_viewer_returns_qt_viewer():
     pytest.importorskip("PySide6")
     from metallix.plotting import slice_viewer

@@ -33,6 +33,8 @@ class MaskSpec:
     type: str = "coordinate_range"
     parameters: dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
+    invert: bool = False
+    additive: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -43,6 +45,7 @@ class ModelComponentSpec:
     name: str
     type: str = "constant_background"
     parameters: dict[str, Any] = field(default_factory=dict)
+    config: dict[str, Any] = field(default_factory=dict)
     fit_parameters: dict[str, bool] = field(default_factory=dict)
     global_fit: dict[str, bool] = field(default_factory=dict)
     enabled: bool = True
@@ -80,6 +83,8 @@ class DatasetEntry:
     metadata: dict[str, Any] = field(default_factory=dict)
     parameters: dict[str, Any] = field(default_factory=dict)
     masks: list[MaskSpec] = field(default_factory=list)
+    enabled: bool = True
+    fit_weight: float = 1.0
     transforms: Sequence[DataTransformAny] = field(default_factory=tuple)
 
     def prepared(self) -> Any:
@@ -132,11 +137,11 @@ class DataGroup:
         raise KeyError(f"unknown dataset {name!r}")
 
     def select(self, names: Iterable[str] | None = None) -> list[DatasetEntry]:
-        """Return datasets in requested order, or all datasets when omitted."""
+        """Return enabled datasets in requested order, or all enabled datasets when omitted."""
 
         if names is None:
-            return list(self.datasets)
-        return [self.get_dataset(name) for name in names]
+            return [dataset for dataset in self.datasets if dataset.enabled]
+        return [dataset for dataset in (self.get_dataset(name) for name in names) if dataset.enabled]
 
     def data_sequence(self, names: Iterable[str] | None = None) -> list[Any]:
         """Return raw data objects for viewer and plotting helpers."""
@@ -198,7 +203,7 @@ class FitModelSession:
                 FitDataset(
                     name=entry.name,
                     data=prepared,
-                    weight=float(self.weights_by_dataset.get(entry.name, 1.0)),
+                    weight=float(self.weights_by_dataset.get(entry.name, entry.fit_weight)),
                     resolution=self._dataset_lookup(self.resolution_by_dataset, entry.name),
                     parameter_bindings=self.parameter_bindings_by_dataset.get(entry.name, {}),
                     metadata={**entry.metadata, "parameters": dict(entry.parameters)},
