@@ -218,6 +218,27 @@ def test_mdhisto_slice_viewer_blanks_empty_bins_when_integrating_ranges():
     assert view["mask"][2, 3]
 
 
+def test_qt_slice_viewer_apply_masks_toggle_shows_masked_bins():
+    pytest.importorskip("PySide6")
+
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_mdhisto_data()
+    data.mask[1, 1, 2, 3] = True
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    viewer.model.selections[0] = (0.75, 0.75)
+    viewer.model.selections[1] = (1.5, 1.5)
+    viewer.update_plot()
+
+    assert viewer.apply_masks_check.isChecked()
+    assert np.isnan(viewer.slice_arrays()["signal"][2, 3])
+
+    viewer.apply_masks_check.setChecked(False)
+
+    assert not np.isnan(viewer.slice_arrays()["signal"][2, 3])
+    assert viewer.slice_arrays()["mask"][2, 3]
+
+
 def test_mdhisto_slice_viewer_auto_color_limits():
     data = _tiny_mdhisto_data()
     viewer = MDHistoSliceViewer(data, x_dim=3, y_dim=2)
@@ -822,6 +843,57 @@ def test_qt_cursor_readout_formats_q_modulus_when_lattice_matrix_is_available():
     viewer._on_motion(event)
 
     assert viewer.cursor_q_label.text() == "|Q| = 2.25 Å⁻¹"
+
+
+def test_qt_cursor_readout_applies_2pi_for_orientation_matrix_convention():
+    pytest.importorskip("PySide6")
+
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_mdhisto_data()
+    data.metadata["oriented_lattice"] = {"orientation_matrix": (0.1 * np.eye(3)).tolist()}
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+
+    assert viewer._q_modulus_inv_angstrom({"H": 1.0, "K": 0.0, "L": 0.0, "E": 0.0}) == pytest.approx(
+        0.2 * np.pi
+    )
+
+    data.metadata["oriented_lattice"]["orientation_matrix_includes_2pi"] = True
+    assert viewer._q_modulus_inv_angstrom({"H": 1.0, "K": 0.0, "L": 0.0, "E": 0.0}) == pytest.approx(
+        0.1
+    )
+
+
+def test_qt_slice_viewer_replace_datasets_preserves_plot_settings():
+    pytest.importorskip("PySide6")
+
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    first = _tiny_mdhisto_data()
+    second = _tiny_mdhisto_data()
+    viewer = QtMDHistoSliceViewer([first, second], dataset_names=["first", "second"], x_dim=3, y_dim=2)
+    viewer.dataset_combo.setCurrentIndex(1)
+    viewer._set_cmap("magma")
+    viewer._set_color_scale("log")
+    viewer._set_manual_limit("vmin", 0.25)
+    viewer._set_font_size(17.0)
+    viewer._set_xcut_percent(31)
+
+    replacement_second = _tiny_mdhisto_data()
+    replacement_third = _tiny_mdhisto_data()
+    viewer.replace_datasets(
+        [first, replacement_second, replacement_third],
+        dataset_names=["first", "second", "third"],
+        selected_dataset_name="second",
+    )
+
+    assert viewer.dataset_combo.currentText() == "second"
+    assert viewer.data is replacement_second
+    assert viewer.model.cmap == "magma"
+    assert viewer.model.color_scale == "log"
+    assert viewer.model.manual_vmin == pytest.approx(0.25)
+    assert viewer.font_size == pytest.approx(17.0)
+    assert viewer.xcut_percent == 31
 
 
 def test_qt_1d_cursor_readout_tracks_nearest_point_and_hkle():

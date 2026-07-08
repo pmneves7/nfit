@@ -22,6 +22,50 @@ DataTransformAny = Callable[[Any], Any]
 
 
 @dataclass
+class MaskSpec:
+    """Serializable analysis mask configuration attached to a dataset.
+
+    ``type`` names a registered mask kind and ``parameters`` stores only
+    JSON-like values needed to rebuild the mask in a script or GUI.
+    """
+
+    name: str
+    type: str = "coordinate_range"
+    parameters: dict[str, Any] = field(default_factory=dict)
+    enabled: bool = True
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ModelComponentSpec:
+    """Serializable model component configuration attached to a data group."""
+
+    name: str
+    type: str = "constant_background"
+    parameters: dict[str, Any] = field(default_factory=dict)
+    fit_parameters: dict[str, bool] = field(default_factory=dict)
+    global_fit: dict[str, bool] = field(default_factory=dict)
+    enabled: bool = True
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class FitTimelineEntry:
+    """Serializable GUI fit-history node for one data group."""
+
+    name: str
+    kind: str = "result"
+    snapshot: dict[str, Any] = field(default_factory=dict)
+    created_at: str | None = None
+    duration_seconds: float | None = None
+    optimizer: str = "least_squares"
+    optimizer_config: dict[str, Any] = field(default_factory=dict)
+    goodness: dict[str, Any] = field(default_factory=dict)
+    children: list["FitTimelineEntry"] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class DatasetEntry:
     """One dataset plus flexible experimental metadata.
 
@@ -35,6 +79,7 @@ class DatasetEntry:
     kind: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
     parameters: dict[str, Any] = field(default_factory=dict)
+    masks: list[MaskSpec] = field(default_factory=list)
     transforms: Sequence[DataTransformAny] = field(default_factory=tuple)
 
     def prepared(self) -> Any:
@@ -55,7 +100,8 @@ class DataGroup:
     lattice_parameters: dict[str, float] | None = None
     spacegroup: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    models: dict[str, "FitModelSession"] = field(default_factory=dict)
+    models: dict[str, "FitModelSession | ModelComponentSpec"] = field(default_factory=dict)
+    fits: list[FitTimelineEntry] = field(default_factory=list)
 
     def add_dataset(self, dataset: DatasetEntry) -> None:
         """Add a dataset, requiring names to stay unique."""

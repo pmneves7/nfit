@@ -564,6 +564,8 @@ def _mdhisto_channel_array(data: MDHistoData, channel: str) -> np.ndarray:
         values = np.asarray(data.num_events, dtype=float)
     elif channel == "mask":
         return np.asarray(data.mask, dtype=float)
+    elif channel in {"file_mask", "metallix_mask"}:
+        return np.asarray(data.metadata.get(channel, np.zeros(data.shape, dtype=bool)), dtype=float)
     else:
         raise ValueError(f"unknown channel {channel!r}")
     empty = np.asarray(data.num_events <= 0.0)
@@ -678,13 +680,15 @@ class MDHistoSliceViewer:
     COLOR_SCALES = ("linear", "log", "symmetriclog", "asinh", "power")
     AUTO_LIMITS = ("min/max", "N-sigma", "N IQR", "Nth percentile")
     COLORMAPS = ("viridis", "magma", "plasma", "cividis", "turbo")
-    CHANNELS = ("signal", "errors", "num_events", "mask")
+    CHANNELS = ("signal", "errors", "num_events", "mask", "file_mask", "metallix_mask")
     CHANNEL_ALIASES = {"multiplicity": "num_events", "events": "num_events", "error": "errors"}
     CHANNEL_LABELS = {
         "signal": "Signal",
         "errors": "Error",
         "num_events": "Multiplicity",
         "mask": "Mask",
+        "file_mask": "File mask",
+        "metallix_mask": "metallix mask",
     }
 
     def __init__(
@@ -853,6 +857,8 @@ class MDHistoSliceViewer:
             "errors": np.sqrt(variance2d),
             "num_events": events2d,
             "mask": mask2d,
+            "file_mask": self._slice_metadata_mask("file_mask", selections),
+            "metallix_mask": self._slice_metadata_mask("metallix_mask", selections),
         }
 
     def update(self) -> None:
@@ -916,6 +922,31 @@ class MDHistoSliceViewer:
             signal, variance, mask = self._blank_empty_bins(signal, variance, events, mask)
         signal, variance, mask = self._blank_empty_bins(signal, variance, events, mask)
         return signal, variance, events, mask
+
+    def _slice_metadata_mask(self, name: str, selections: dict[int, tuple[int, int] | int]) -> np.ndarray:
+        mask = np.asarray(self.data.metadata.get(name, np.zeros(self.data.shape, dtype=bool)), dtype=bool)
+        if mask.shape != self.data.shape:
+            mask = np.zeros(self.data.shape, dtype=bool)
+        index = []
+        reduce_axes = []
+        for dim in range(self.data.signal.ndim):
+            if dim in (self.x_dim, self.y_dim):
+                index.append(slice(None))
+            else:
+                selection = selections[dim]
+                if isinstance(selection, tuple):
+                    start, stop = selection
+                    index.append(slice(start, stop + 1))
+                    reduce_axes.append(len(index) - 1)
+                else:
+                    index.append(selection)
+        out = mask[tuple(index)]
+        for axis in sorted(reduce_axes, reverse=True):
+            out = np.any(out, axis=axis)
+        remaining = [dim for dim in range(self.data.signal.ndim) if dim in (self.x_dim, self.y_dim)]
+        y_pos = remaining.index(self.y_dim)
+        x_pos = remaining.index(self.x_dim)
+        return np.moveaxis(out, (y_pos, x_pos), (0, 1))
 
     def _blank_empty_bins(
         self,
@@ -986,7 +1017,7 @@ class MDHistoSliceViewer:
         return self.CHANNEL_LABELS.get(self.channel, self.channel)
 
     def _display_values(self, view: dict[str, np.ndarray]) -> np.ndarray:
-        if self.channel == "mask":
+        if self.channel in {"mask", "file_mask", "metallix_mask"}:
             return np.asarray(view[self.channel], dtype=float)
         return np.asarray(view[self.channel], dtype=float)
 

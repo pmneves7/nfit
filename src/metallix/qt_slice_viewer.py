@@ -81,6 +81,7 @@ class _DatasetViewState:
     fit_compare_model: str | None = None
     fit_compare_result: str | None = None
     fit_compare_show_residual: bool = True
+    apply_masks: bool = True
 
 
 class QtMDHistoSliceViewer:
@@ -156,6 +157,7 @@ class QtMDHistoSliceViewer:
         self.y_reset_button = None
         self.cmap_combo = None
         self.channel_combo = None
+        self.apply_masks_check = None
         self.scale_combo = None
         self.limits_combo = None
         self.autoscale_check = None
@@ -248,6 +250,47 @@ class QtMDHistoSliceViewer:
 
     def slice_arrays(self) -> dict[str, np.ndarray]:
         return self.model.slice_arrays()
+
+    def replace_datasets(
+        self,
+        data: MDHistoData | Sequence[MDHistoData],
+        *,
+        dataset_names: Sequence[str] | None = None,
+        selected_dataset_name: str | None = None,
+    ) -> None:
+        """Update displayed datasets in place while preserving viewer state."""
+
+        previous_names = list(self.dataset_names)
+        if 0 <= self.dataset_index < len(self._dataset_states):
+            self._dataset_states[self.dataset_index] = self._capture_dataset_state()
+        previous_states = {
+            name: state
+            for name, state in zip(previous_names, self._dataset_states, strict=False)
+            if state is not None
+        }
+        current_name = (
+            selected_dataset_name
+            or (previous_names[self.dataset_index] if 0 <= self.dataset_index < len(previous_names) else None)
+        )
+        self.datasets = _coerce_datasets(data)
+        self.dataset_names = _coerce_dataset_names(self.datasets, dataset_names)
+        if current_name in self.dataset_names:
+            new_index = self.dataset_names.index(current_name)
+        else:
+            new_index = min(self.dataset_index, len(self.datasets) - 1)
+        self._dataset_states = [None] * len(self.datasets)
+        for index, name in enumerate(self.dataset_names):
+            state = previous_states.get(name)
+            if state is not None:
+                state.model.data = self.datasets[index]
+                self._dataset_states[index] = state
+        state = self._dataset_states[new_index]
+        if state is None:
+            state = self._default_dataset_state(new_index)
+            self._dataset_states[new_index] = state
+        self.dataset_index = new_index
+        self._set_combo_items_silent(self.dataset_combo, self.dataset_names, self.dataset_names[new_index])
+        self._restore_dataset_state(state)
 
     @property
     def image_norm(self):
@@ -452,8 +495,12 @@ class QtMDHistoSliceViewer:
         _compact_combobox(self.channel_combo)
         self.channel_combo.setCurrentText(self.model.channel)
         self.channel_combo.currentTextChanged.connect(self._set_channel)
+        self.apply_masks_check = QtWidgets.QCheckBox("Apply Masks")
+        self.apply_masks_check.setChecked(self.model.masked)
+        self.apply_masks_check.toggled.connect(self._set_apply_masks)
         dataset_layout.addWidget(QtWidgets.QLabel("Channel"), 1, 0)
         dataset_layout.addWidget(self.channel_combo, 1, 1)
+        dataset_layout.addWidget(self.apply_masks_check, 1, 2)
         dataset_layout.setColumnStretch(1, 1)
         controls_layout.addWidget(dataset_group)
 
@@ -1020,6 +1067,7 @@ class QtMDHistoSliceViewer:
             fit_compare_model=self.fit_compare_model,
             fit_compare_result=self.fit_compare_result,
             fit_compare_show_residual=bool(self.fit_compare_show_residual),
+            apply_masks=bool(self.model.masked),
         )
 
     def _default_dataset_state(self, index: int) -> _DatasetViewState:
@@ -1038,6 +1086,7 @@ class QtMDHistoSliceViewer:
         )
         return _DatasetViewState(
             model=model,
+            apply_masks=bool(model.masked),
         )
 
     def _restore_dataset_state(self, state: _DatasetViewState) -> None:
@@ -1064,6 +1113,7 @@ class QtMDHistoSliceViewer:
             self.fit_compare_model = state.fit_compare_model
             self.fit_compare_result = state.fit_compare_result
             self.fit_compare_show_residual = bool(state.fit_compare_show_residual)
+            self.model.masked = bool(state.apply_masks)
             self._box_tool_has_auto_shown_hist_axes = bool(state.box_tool_has_auto_shown_hist_axes)
             self._current_slice = None
             self._last_plot_dims = None
@@ -1073,6 +1123,7 @@ class QtMDHistoSliceViewer:
             self._set_combo_silent(self.scale_combo, self.model.color_scale)
             self._set_combo_silent(self.limits_combo, self.model.auto_limits)
             self._set_checkbox_silent(self.autoscale_check, self.model.autoscale)
+            self._set_checkbox_silent(self.apply_masks_check, self.model.masked)
             self._set_spin_silent(self.gamma_spin, self.model.power_gamma)
             self._set_spin_silent(self.limit_n_spin, self._current_limit_n())
             self._set_spin_silent(self.font_size_spin, self.font_size)
@@ -1213,6 +1264,10 @@ class QtMDHistoSliceViewer:
 
     def _set_channel(self, channel: str) -> None:
         self.model.channel = self.model._resolve_channel(channel)
+        self.update_plot()
+
+    def _set_apply_masks(self, checked: bool) -> None:
+        self.model.masked = bool(checked)
         self.update_plot()
 
     def _fit_comparisons(self):
@@ -2087,10 +2142,21 @@ class QtMDHistoSliceViewer:
         if hkl.shape != (3,) or not np.all(np.isfinite(hkl)):
             return None
         try:
-            from .fitting import _metadata_coordinate_units_are_inv_angstrom, _resolve_q_transform
+            from .fitting import _as_3x3_matrix, _metadata_coordinate_units_are_inv_angstrom, _resolve_q_transform
 
             if _metadata_coordinate_units_are_inv_angstrom(self.data.metadata):
                 q_vector = hkl
+            elif "rlu_to_inv_angstrom_matrix" in self.data.metadata:
+                q_vector = _as_3x3_matrix(
+                    self.data.metadata["rlu_to_inv_angstrom_matrix"],
+                    name="rlu_to_inv_angstrom_matrix",
+                ) @ hkl
+            elif "ub_matrix" in self.data.metadata:
+                q_vector = _cursor_q_matrix_from_metadata(self.data.metadata, "ub_matrix") @ hkl
+            elif "orientation_matrix" in self.data.metadata:
+                q_vector = _cursor_q_matrix_from_metadata(self.data.metadata, "orientation_matrix") @ hkl
+            elif isinstance(self.data.metadata.get("oriented_lattice"), dict):
+                q_vector = _cursor_q_matrix_from_oriented_lattice(self.data.metadata["oriented_lattice"]) @ hkl
             else:
                 q_vector = _resolve_q_transform(self.data) @ hkl
         except (KeyError, TypeError, ValueError):
@@ -2179,6 +2245,47 @@ def _coerce_dataset_names(datasets: Sequence[MDHistoData], names: Sequence[str] 
         source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
         labels.append(str(source) if source else f"dataset {index + 1}")
     return labels
+
+
+def _cursor_q_matrix_from_metadata(metadata: dict[str, Any], key: str) -> np.ndarray:
+    from .fitting import _as_3x3_matrix
+
+    matrix = _as_3x3_matrix(metadata[key], name=key)
+    if _cursor_matrix_includes_2pi(metadata, key):
+        return matrix
+    return 2.0 * np.pi * matrix
+
+
+def _cursor_q_matrix_from_oriented_lattice(oriented_lattice: dict[str, Any]) -> np.ndarray:
+    from .fitting import _as_3x3_matrix
+
+    if "rlu_to_inv_angstrom_matrix" in oriented_lattice:
+        return _as_3x3_matrix(
+            oriented_lattice["rlu_to_inv_angstrom_matrix"],
+            name="oriented_lattice.rlu_to_inv_angstrom_matrix",
+        )
+    for key in ("ub_matrix", "orientation_matrix"):
+        if key in oriented_lattice:
+            matrix = _as_3x3_matrix(oriented_lattice[key], name=f"oriented_lattice.{key}")
+            if _cursor_matrix_includes_2pi(oriented_lattice, key):
+                return matrix
+            return 2.0 * np.pi * matrix
+    raise ValueError("oriented_lattice does not contain a cursor Q matrix")
+
+
+def _cursor_matrix_includes_2pi(metadata: dict[str, Any], key: str) -> bool:
+    for flag_key in (
+        f"{key}_includes_2pi",
+        "q_matrix_includes_2pi",
+        "include_2pi",
+        "includes_2pi",
+    ):
+        if flag_key in metadata:
+            return bool(metadata[flag_key])
+    lattice_parameters = metadata.get("lattice_parameters")
+    if isinstance(lattice_parameters, dict) and "include_2pi" in lattice_parameters:
+        return bool(lattice_parameters["include_2pi"])
+    return False
 
 
 def _initial_display_dims(data: MDHistoData, x_dim: int | str, y_dim: int | str) -> tuple[int | str, int | str]:

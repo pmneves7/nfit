@@ -68,7 +68,51 @@ from .models import (
     quadratic_distance_rlu,
     relaxational_chipp,
 )
-from .pipeline import DataGroup, DatasetEntry, FitHistoryEntry, FitModelSession
+from .pipeline import (
+    DataGroup,
+    DatasetEntry,
+    FitHistoryEntry,
+    FitModelSession,
+    FitTimelineEntry,
+    MaskSpec,
+    ModelComponentSpec,
+)
+from .project_gui import (
+    MASK_TYPE_DEFINITIONS,
+    MODEL_TYPE_DEFINITIONS,
+    MetallixProject,
+    available_mask_types,
+    available_model_types,
+    create_data_group,
+    create_placeholder_fit_result,
+    create_mask,
+    create_model_component,
+    dataset_details_text,
+    dataset_for_slice_viewer,
+    default_mask_parameters,
+    default_model_fit_parameters,
+    default_model_global_fit,
+    default_model_parameters,
+    ensure_fit_history,
+    delete_data_group,
+    delete_dataset,
+    delete_mask,
+    delete_model_component,
+    import_dataset_paths,
+    load_project,
+    mask_parameter_tooltip,
+    model_parameter_tooltip,
+    restore_data_group_state,
+    snapshot_data_group_state,
+    forget_missing_recent_projects,
+    recent_project_paths,
+    remember_recent_project,
+    save_project,
+    set_dataset_source,
+    slice_viewer_datasets,
+    copy_mask_to_dataset,
+    copy_dataset_to_group,
+)
 from .plotting import (
     MDHistoSliceViewer,
     mdhisto_with_signal_like,
@@ -89,12 +133,16 @@ from .resolution import (
 
 
 def __getattr__(name: str):
-    """Lazily import optional GUI bindings when the Qt viewer is requested."""
+    """Lazily import optional GUI bindings when a Qt GUI is requested."""
 
     if name == "QtMDHistoSliceViewer":
         from .qt_slice_viewer import QtMDHistoSliceViewer
 
         return QtMDHistoSliceViewer
+    if name == "MetallixProjectExplorer":
+        from .project_gui import MetallixProjectExplorer
+
+        return MetallixProjectExplorer
     raise AttributeError(f"module 'metallix' has no attribute {name!r}")
 
 __all__ = [
@@ -105,6 +153,10 @@ __all__ = [
     "MDHistoAxis",
     "MDHistoData",
     "MDHistoSliceViewer",
+    "MetallixProjectExplorer",
+    "MetallixProject",
+    "MaskSpec",
+    "ModelComponentSpec",
     "ModelSpec",
     "NDRebin",
     "OptimizationConfig",
@@ -123,11 +175,31 @@ __all__ = [
     "constant_background",
     "constant_fwhm_energy_resolution",
     "constant_intensity_model",
+    "available_mask_types",
+    "available_model_types",
+    "create_data_group",
+    "create_placeholder_fit_result",
+    "create_mask",
+    "create_model_component",
+    "copy_dataset_to_group",
+    "copy_mask_to_dataset",
+    "dataset_details_text",
+    "dataset_for_slice_viewer",
+    "default_mask_parameters",
+    "default_model_fit_parameters",
+    "default_model_global_fit",
+    "default_model_parameters",
     "DataGroup",
     "DatasetEntry",
+    "delete_data_group",
+    "delete_dataset",
+    "delete_mask",
+    "delete_model_component",
     "EnergyGaussianResolution",
+    "ensure_fit_history",
     "FitHistoryEntry",
     "FitModelSession",
+    "FitTimelineEntry",
     "FIT_COMPARISON_METADATA_KEY",
     "FitComparisonModelView",
     "FitComparisonResultView",
@@ -138,11 +210,21 @@ __all__ = [
     "from_arrays",
     "identity_resolution",
     "infer_axis_role",
+    "import_dataset_paths",
     "intensity_from_chipp",
     "hyspec_hhl_point_indices",
     "hyspec_hhl_fit_comparison_from_points",
     "linear_background",
+    "load_project",
     "load_mantid_mdhisto_nxs",
+    "MASK_TYPE_DEFINITIONS",
+    "MODEL_TYPE_DEFINITIONS",
+    "mask_parameter_tooltip",
+    "model_parameter_tooltip",
+    "forget_missing_recent_projects",
+    "recent_project_paths",
+    "remember_recent_project",
+    "restore_data_group_state",
     "make_box_mask_transform",
     "make_constant_intensity_model",
     "make_ellipsoid_mask_transform",
@@ -174,5 +256,9 @@ __all__ = [
     "residual_mdhisto",
     "rebin_nd",
     "sample_problem_parameters",
+    "save_project",
+    "set_dataset_source",
+    "snapshot_data_group_state",
     "slice_viewer",
+    "slice_viewer_datasets",
 ]

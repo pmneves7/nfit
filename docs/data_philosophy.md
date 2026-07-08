@@ -29,6 +29,28 @@ diffractometer, or a text export from an external workflow.
 - Resolution functions are per-dataset model components. They can depend on
   instrument and settings, but the optimizer sees only model predictions,
   observed data, uncertainties, masks, and weights.
+- GUI workflows should be backed by scriptable operations. Any task a user can
+  do through the interface should have a human-readable Python equivalent that
+  can be edited, repeated, and version controlled. This is especially important
+  for specialized analyses, repetitive imports, parameter sweeps, and shared
+  fitting recipes. GUI code should call the same small functions a script would
+  call rather than hiding scientific state changes inside widgets.
+- Saved project files should be readable and inspectable whenever practical.
+  Opaque binary state can be useful as a cache, but the primary project
+  description should preserve enough text structure for users to understand and
+  adjust data groups, source files, model settings, and fitting choices.
+
+For example, the project explorer's current data-group workflow is intentionally
+mirrored by scriptable calls:
+
+```python
+from metallix import MetallixProject, create_data_group, import_dataset_paths, save_project
+
+project = MetallixProject()
+group = create_data_group(project, "field_series")
+import_dataset_paths(group, ["low_field.nxs", "high_field.nxs"])
+save_project(project, "field_series.mtlx")
+```
 
 ## Current state
 
@@ -37,3 +59,72 @@ local data available in the repository. That is a starting adapter, not a
 package boundary. The same fitting framework is intended to support reduced
 text tables, one-dimensional cuts, powder averages, and other reduced neutron
 or bulk-measurement data as additional importers are added.
+
+The first project explorer GUI follows this direction by using package-level
+project functions for creating data groups, importing dataset paths, deleting
+entries, and saving/loading projects. Its `.mtlx` files are JSON documents for
+the currently supported project state. Model sessions and embedded fit results
+will need matching text-oriented serialization as those GUI features are added.
+Slice-viewer integration should follow the same pattern: the GUI can open or
+refresh a viewer from a selected `DataGroup`, but the viewable datasets and
+fit-result overlays should come from scriptable data structures such as
+`MDHistoData` plus attached `FitComparisonModelView` metadata. A script that
+fits data and calls `attach_fit_comparisons(...)` should therefore produce the
+same slice-viewer comparison controls that the GUI exposes.
+
+## Mask Standard
+
+Masks are first-class analysis specifications, not ad hoc GUI annotations. A
+dataset mask is represented by a `MaskSpec` with:
+
+- `name`: user-facing identifier, unique within one dataset.
+- `type`: registered mask kind, such as `coordinate_range`, `energy_q_range`,
+  `box`, `ellipsoid`, or `phonon_cone`.
+- `parameters`: JSON-like values needed to rebuild the mask from a script.
+- `enabled`: whether the mask participates in downstream analysis.
+- `metadata`: optional provenance or UI annotations that do not change mask
+  semantics.
+
+Each mask type must declare its parameter names in the shared mask registry so
+scripts, project files, and the GUI editor agree on the same fields. Parameter
+values should stay human-readable and serializable: numbers, strings, booleans,
+lists, and dictionaries are preferred over opaque objects. If a new mask type
+needs a richer representation, update the common standard deliberately and keep
+all existing mask types consistent with it.
+
+Each mask parameter should also declare a default value and standard hover text
+metadata: a short description, allowed values, data type, and example. Defaults
+should be safe starter values, ideally masking no data or almost no data, so the
+user can inspect a baked-in example before narrowing it. The GUI should render
+tooltips from the same registry that scripts use for defaults, and model or
+resolution-model parameter editors should follow the same pattern when they are
+added.
+
+The same restriction should apply to future datasets, models, optimizers, and
+resolution models: GUI controls edit documented, scriptable specifications;
+scientific behavior should not depend on hidden widget state.
+
+## Model Component Standard
+
+Project-level model setup should use `ModelComponentSpec` entries attached to a
+`DataGroup`. A data group may contain multiple model components; the intended
+prediction is the sum of enabled components until a later model-composition
+standard says otherwise. Each component records:
+
+- `name`: user-facing identifier, unique within one data group.
+- `type`: registered model kind, such as `constant_background`,
+  `linear_background`, or `single_q_paramagnon`.
+- `parameters`: JSON-like default/current parameter values.
+- `global_fit`: per-parameter booleans indicating whether one shared value is
+  fitted across all datasets (`True`) or whether each dataset may fit that
+  parameter independently (`False`).
+- `enabled`: whether the component participates in downstream fitting.
+- `metadata`: optional provenance or UI annotations that do not change model
+  semantics.
+
+Like masks, each model parameter must declare a default value, description,
+allowed values, data type, example, and default `global_fit` behavior in the
+shared registry. Defaults should be reasonable starter values rather than hidden
+scientific assumptions. More granular constraints, links, and priors should be
+added by extending this common specification instead of inventing widget-local
+state.

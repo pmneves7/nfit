@@ -35,6 +35,9 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Physics",
 ]
 
+[project.scripts]
+metallix = "metallix.project_gui:main"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=7",
