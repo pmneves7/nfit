@@ -168,6 +168,7 @@ class QtMDHistoSliceViewer:
         self.limit_n_spin = None
         self.cursor_xy_label = None
         self.cursor_hkle_label = None
+        self.cursor_q_label = None
         self.cursor_intensity_label = None
         self.roi_button = None
         self.tools_group = None
@@ -407,16 +408,19 @@ class QtMDHistoSliceViewer:
         cursor_layout.setSpacing(12)
         self.cursor_xy_label = QtWidgets.QLabel("(x, y) = (-, -)")
         self.cursor_hkle_label = QtWidgets.QLabel("(H, K, L, E) = (-, -, -, -)")
+        self.cursor_q_label = QtWidgets.QLabel("|Q| = ? Å⁻¹")
         self.cursor_intensity_label = QtWidgets.QLabel("I = -")
         for label, width in (
-            (self.cursor_xy_label, 260),
-            (self.cursor_hkle_label, 380),
+            (self.cursor_xy_label, 230),
+            (self.cursor_hkle_label, 350),
+            (self.cursor_q_label, 150),
             (self.cursor_intensity_label, 220),
         ):
             label.setMinimumWidth(width)
             label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
         cursor_layout.addWidget(self.cursor_xy_label, 0)
         cursor_layout.addWidget(self.cursor_hkle_label, 0)
+        cursor_layout.addWidget(self.cursor_q_label, 0)
         cursor_layout.addWidget(self.cursor_intensity_label, 1)
         plot_layout.addWidget(toolbar)
         plot_layout.addWidget(cursor_bar)
@@ -2046,6 +2050,7 @@ class QtMDHistoSliceViewer:
             f"({_format_coord(coords['H'])}, {_format_coord(coords['K'])}, "
             f"{_format_coord(coords['L'])}, {_format_coord(coords['E'])})"
         )
+        self.cursor_q_label.setText(self._format_q_modulus(coords))
         self.cursor_intensity_label.setText(f"I = {value_text} ± {error_text}")
 
     def _on_line_motion(self, event) -> None:
@@ -2068,7 +2073,29 @@ class QtMDHistoSliceViewer:
             f"({_format_coord(coords['H'])}, {_format_coord(coords['K'])}, "
             f"{_format_coord(coords['L'])}, {_format_coord(coords['E'])})"
         )
+        self.cursor_q_label.setText(self._format_q_modulus(coords))
         self.cursor_intensity_label.setText(f"I = {value_text} ± {error_text}")
+
+    def _format_q_modulus(self, coords: dict[str, float]) -> str:
+        q = self._q_modulus_inv_angstrom(coords)
+        if q is None or not np.isfinite(q):
+            return "|Q| = ? Å⁻¹"
+        return f"|Q| = {_format_coord(q)} Å⁻¹"
+
+    def _q_modulus_inv_angstrom(self, coords: dict[str, float]) -> float | None:
+        hkl = np.asarray([coords["H"], coords["K"], coords["L"]], dtype=float)
+        if hkl.shape != (3,) or not np.all(np.isfinite(hkl)):
+            return None
+        try:
+            from .fitting import _metadata_coordinate_units_are_inv_angstrom, _resolve_q_transform
+
+            if _metadata_coordinate_units_are_inv_angstrom(self.data.metadata):
+                q_vector = hkl
+            else:
+                q_vector = _resolve_q_transform(self.data) @ hkl
+        except (KeyError, TypeError, ValueError):
+            return None
+        return float(np.linalg.norm(q_vector))
 
     def _cursor_hkle(self, x_idx: int, y_idx: int) -> dict[str, float]:
         coords = {"H": 0.0, "K": 0.0, "L": 0.0, "E": np.nan}

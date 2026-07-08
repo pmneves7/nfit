@@ -799,7 +799,29 @@ def test_qt_cursor_readout_uses_fixed_labels_and_uncertainty_precision():
 
     assert viewer.cursor_xy_label.text() == "(x, y) = (0, 0.75)"
     assert viewer.cursor_hkle_label.text() == "(H, K, L, E) = (1.5, -1.5, 0.75, 0.75)"
+    assert viewer.cursor_q_label.text() == "|Q| = ? Å⁻¹"
     assert viewer.cursor_intensity_label.text() == "I = -0.0067 ± 0.0013"
+
+
+def test_qt_cursor_readout_formats_q_modulus_when_lattice_matrix_is_available():
+    pytest.importorskip("PySide6")
+    from types import SimpleNamespace
+
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_mdhisto_data()
+    data.metadata["rlu_to_inv_angstrom_matrix"] = np.eye(3).tolist()
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    view = viewer.slice_arrays()
+    event = SimpleNamespace(
+        inaxes=viewer.ax_image,
+        xdata=float(view["x_centers"][2]),
+        ydata=float(view["y_centers"][3]),
+    )
+
+    viewer._on_motion(event)
+
+    assert viewer.cursor_q_label.text() == "|Q| = 2.25 Å⁻¹"
 
 
 def test_qt_1d_cursor_readout_tracks_nearest_point_and_hkle():
@@ -823,6 +845,7 @@ def test_qt_1d_cursor_readout_tracks_nearest_point_and_hkle():
 
     assert viewer.cursor_xy_label.text() == "(x, y) = (0.5, 3.25)"
     assert viewer.cursor_hkle_label.text() == "(H, K, L, E) = (0.5, 0.5, 0.5, 3)"
+    assert viewer.cursor_q_label.text() == "|Q| = ? Å⁻¹"
     assert viewer.cursor_intensity_label.text() == "I = 3.25 ± 0.12"
 
 
