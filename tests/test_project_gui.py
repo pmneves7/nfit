@@ -20,11 +20,13 @@ from metallix.project_gui import (
     dataset_for_slice_viewer,
     dataset_rebin_config,
     default_mask_parameters,
+    default_model_config,
     default_model_fit_parameters,
     default_model_global_fit,
     default_model_parameters,
     import_dataset_paths,
     load_project,
+    model_config_tooltip,
     mask_parameter_tooltip,
     model_parameter_tooltip,
     next_data_group_name,
@@ -56,14 +58,19 @@ def test_project_helpers_name_import_and_round_trip(tmp_path):
         group,
         [tmp_path / "scan.nxs", tmp_path / "scan.nxs"],
     )
+    first.enabled = False
+    first.fit_weight = 2.5
     mask = create_mask(first)
     mask.type = "box"
     mask.parameters["center"] = [0.0, 0.0, 0.0, 10.0]
+    mask.invert = True
+    mask.additive = True
     copy_mask_to_dataset(mask, second)
     copied_group = create_data_group(project, "copied_group")
     copy_dataset_to_group(first, copied_group)
     model = create_model_component(group)
     model.parameters["constant"] = 0.25
+    model.config["script_note"] = "fixed"
 
     assert group.dataset_names == ["scan", "scan1"]
     assert first.kind == "nxs"
@@ -85,6 +92,7 @@ def test_project_helpers_name_import_and_round_trip(tmp_path):
     ]
     assert payload["data_groups"][2]["models"][0]["type"] == "constant_background"
     assert payload["data_groups"][2]["models"][0]["parameters"]["constant"] == 0.25
+    assert payload["data_groups"][2]["models"][0]["config"]["script_note"] == "fixed"
     assert payload["data_groups"][2]["models"][0]["fit_parameters"]["constant"] is False
 
     loaded = load_project(project_path)
@@ -96,9 +104,14 @@ def test_project_helpers_name_import_and_round_trip(tmp_path):
         "copied_group",
     ]
     assert loaded.data_groups[2].dataset_names == ["scan", "scan1"]
+    assert loaded.data_groups[2].datasets[0].enabled is False
+    assert loaded.data_groups[2].datasets[0].fit_weight == 2.5
     assert loaded.data_groups[2].datasets[0].masks[0].type == "box"
+    assert loaded.data_groups[2].datasets[0].masks[0].invert is True
+    assert loaded.data_groups[2].datasets[0].masks[0].additive is True
     assert loaded.data_groups[2].datasets[1].masks[0].name == "Mask1"
     assert loaded.data_groups[2].models["Model1"].parameters["constant"] == 0.25
+    assert loaded.data_groups[2].models["Model1"].config["script_note"] == "fixed"
     assert loaded.data_groups[2].models["Model1"].fit_parameters["constant"] is False
     assert loaded.data_groups[2].models["Model1"].global_fit["constant"] is True
     assert loaded.data_groups[3].datasets[0].name == "scan"
@@ -373,6 +386,16 @@ def test_project_explorer_adds_edits_and_copies_masks(monkeypatch):
     assert second.masks[0].type == "box"
     assert second.masks[0].parameters["center"] == [1, 2, 3, 4]
 
+    second_mask = create_mask(first)
+    explorer._refresh_tree(select_group=group, select_mask=second_mask)
+    mask_parent = explorer.tree.topLevelItem(0).child(0).child(0).child(0)
+    first_mask_item = mask_parent.child(0)
+    second_mask_item = mask_parent.child(1)
+    explorer.tree.setCurrentItem(second_mask_item)
+
+    assert explorer.move_or_copy_selected_to_item(first_mask_item, copy_item=False)
+    assert first.masks == [second_mask, mask]
+
 
 def test_dataset_for_slice_viewer_combines_file_and_metallix_coordinate_masks():
     h_axis = MDHistoAxis("H", np.array([0.0, 1.0, 2.0]), "rlu", "momentum")
@@ -410,6 +433,47 @@ def test_coordinate_range_mask_axis_vectors_define_coordinates():
 
     expected = np.array([[False, True], [False, True]])
     np.testing.assert_array_equal(viewed.metadata["metallix_mask"], expected)
+
+
+def test_dataset_for_slice_viewer_applies_mask_order_invert_and_additive():
+    h_axis = MDHistoAxis("H", np.array([-0.5, 0.5, 1.5, 2.5]), "rlu", "momentum")
+    e_axis = MDHistoAxis("E", np.array([0.0]), "meV", "energy")
+    file_mask = np.zeros((3, 1), dtype=bool)
+    file_mask[2, 0] = True
+    data = MDHistoData(
+        axes=(h_axis, e_axis),
+        signal=np.arange(3, dtype=float).reshape(3, 1),
+        errors=np.ones((3, 1)),
+        mask=file_mask,
+        num_events=np.ones((3, 1)),
+        metadata={},
+    )
+    dataset = DatasetEntry("scan", data)
+    masking = create_mask(dataset)
+    masking.parameters["H"] = [1.0, 2.0]
+    additive = create_mask(dataset)
+    additive.parameters["H"] = [1.0, 2.0]
+    additive.additive = True
+
+    viewed = dataset_for_slice_viewer(dataset)
+
+    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], [[False], [False], [False]])
+    np.testing.assert_array_equal(viewed.mask, [[False], [False], [True]])
+
+    dataset.masks = [additive, masking]
+    viewed = dataset_for_slice_viewer(dataset)
+
+    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], [[True], [False], [False]])
+
+    masking.invert = True
+    viewed = dataset_for_slice_viewer(dataset)
+
+    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], [[False], [True], [True]])
+
+    masking.enabled = False
+    viewed = dataset_for_slice_viewer(dataset)
+
+    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], [[False], [False], [False]])
 
 
 def test_dataset_for_slice_viewer_applies_energy_q_range_mask():
@@ -482,9 +546,17 @@ def test_project_explorer_adds_and_edits_models(monkeypatch):
     assert model is group.models["Model1"]
     assert model.name == "Model1"
     assert model.parameters == default_model_parameters("constant_background")
+    assert model.config == default_model_config("constant_background")
     assert model.fit_parameters == default_model_fit_parameters("constant_background")
     assert model.global_fit == default_model_global_fit("constant_background")
     assert explorer.tree.currentItem().text(0) == "Model1"
+
+    fit_group = explorer.model_parameter_widget.findChild(QtWidgets.QGroupBox, "model_fit_parameters_group")
+    config_group = explorer.model_parameter_widget.findChild(QtWidgets.QGroupBox, "model_config_group")
+    assert fit_group is not None
+    assert config_group is not None
+    assert fit_group.title() == "Fit Parameters"
+    assert config_group.title() == "Configuration Settings"
 
     current_item = explorer.tree.currentItem()
     current_item.setText(0, "background")
@@ -501,6 +573,7 @@ def test_project_explorer_adds_and_edits_models(monkeypatch):
     assert model.fit_parameters["c1"] is False
     assert model.global_fit["c0"] is True
     assert model.global_fit["c1"] is True
+    assert model.config == default_model_config("linear_background")
 
     explorer._set_model_parameter("c1", "0.02")
     explorer._set_model_fit_parameter("c1", True)
@@ -518,6 +591,19 @@ def test_project_explorer_adds_and_edits_models(monkeypatch):
     assert any(check.text() == "Global fit" for check in checks)
     assert "Fit:" in tooltip
     assert "Global fit:" in tooltip
+
+    combo.setCurrentIndex(combo.findData("single_q_paramagnon"))
+    assert model.config == {"cross_section": "magnetic"}
+    explorer._set_model_config_setting("cross_section", "kinematic")
+
+    assert model.config["cross_section"] == "kinematic"
+    config_tooltip = model_config_tooltip("single_q_paramagnon", "cross_section")
+    config_group = explorer.model_parameter_widget.findChild(QtWidgets.QGroupBox, "model_config_group")
+    config_editors = config_group.findChildren(QtWidgets.QLineEdit)
+    config_checks = config_group.findChildren(QtWidgets.QCheckBox)
+    assert any(editor.toolTip() == config_tooltip for editor in config_editors)
+    assert config_checks == []
+    assert "Configuration settings are fixed model options" in config_tooltip
 
     models_item = explorer.tree.topLevelItem(0).child(1)
     explorer.tree.setCurrentItem(models_item)
@@ -649,9 +735,16 @@ def test_project_explorer_context_menu_actions_and_source_change(monkeypatch, tm
 
     dataset_item = explorer.tree.topLevelItem(0).child(0).child(0)
     explorer.tree.setCurrentItem(dataset_item)
-    assert explorer.context_menu_action_names(dataset_item) == [
+    assert not explorer.enabled_check.isHidden()
+    assert explorer.enabled_check.isChecked()
+    explorer.fit_weight_spin.setValue(2.25)
+    assert dataset.fit_weight == 2.25
+    explorer.enabled_check.setChecked(False)
+    assert dataset.enabled is False
+    assert explorer.context_menu_action_names(explorer.tree.currentItem()) == [
         "Copy",
         "Paste",
+        "Enable",
         "Rename",
         "Delete",
         "View in slice viewer",
@@ -660,9 +753,13 @@ def test_project_explorer_context_menu_actions_and_source_change(monkeypatch, tm
         "Add mask",
     ]
 
+    dataset_item = explorer.tree.currentItem()
     dataset_item.setText(0, "renamed")
     explorer._tree_item_changed(dataset_item, 0)
     assert dataset.name == "renamed"
+    explorer.enabled_check.setChecked(True)
+    dataset_item = explorer.tree.topLevelItem(0).child(0).child(0)
+    explorer.tree.setCurrentItem(dataset_item)
 
     monkeypatch.setattr(
         QtWidgets.QFileDialog,
@@ -676,10 +773,18 @@ def test_project_explorer_context_menu_actions_and_source_change(monkeypatch, tm
     assert dataset.kind == "nxs"
 
     mask_item = explorer.tree.topLevelItem(0).child(0).child(0).child(0).child(0)
-    assert explorer.context_menu_action_names(mask_item) == ["Copy", "Rename", "Delete"]
+    assert explorer.context_menu_action_names(mask_item) == ["Copy", "Disable", "Rename", "Delete"]
+    explorer.tree.setCurrentItem(mask_item)
+    explorer.enabled_check.setChecked(False)
+    assert mask.enabled is False
+    assert explorer.context_menu_action_names(explorer.tree.currentItem()) == ["Copy", "Enable", "Rename", "Delete"]
 
     model_item = explorer.tree.topLevelItem(0).child(1).child(0)
-    assert explorer.context_menu_action_names(model_item) == ["Rename", "Delete"]
+    assert explorer.context_menu_action_names(model_item) == ["Disable", "Rename", "Delete"]
+    explorer.tree.setCurrentItem(model_item)
+    explorer.enabled_check.setChecked(False)
+    assert model.enabled is False
+    assert explorer.context_menu_action_names(explorer.tree.currentItem()) == ["Enable", "Rename", "Delete"]
 
     models_item = explorer.tree.topLevelItem(0).child(1)
     assert explorer.context_menu_action_names(models_item) == ["Add model"]

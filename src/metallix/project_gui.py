@@ -176,6 +176,7 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "global_fit": True,
             },
         },
+        "config": {},
     },
     "linear_background": {
         "label": "Linear background",
@@ -198,6 +199,7 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "global_fit": True,
             },
         },
+        "config": {},
     },
     "single_q_paramagnon": {
         "label": "Single-Q paramagnon",
@@ -250,6 +252,15 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "type": "float",
                 "example": "3.0",
                 "global_fit": True,
+            },
+        },
+        "config": {
+            "cross_section": {
+                "default": "magnetic",
+                "description": "Calculation convention used when turning model susceptibility into measured intensity.",
+                "allowed": "String naming a supported calculation mode. The initial supported value is magnetic.",
+                "type": "str",
+                "example": "magnetic",
             },
         },
     },
@@ -346,6 +357,7 @@ def create_model_component(
         name=next_model_name(group.models),
         type=type,
         parameters=default_model_parameters(type),
+        config=default_model_config(type),
         fit_parameters=default_model_fit_parameters(type),
         global_fit=default_model_global_fit(type),
     )
@@ -439,6 +451,8 @@ def snapshot_data_group_state(group: DataGroup) -> dict[str, Any]:
             {
                 "name": dataset.name,
                 "parameters": copy.deepcopy(dataset.parameters),
+                "enabled": bool(dataset.enabled),
+                "fit_weight": float(dataset.fit_weight),
                 "masks": [_mask_to_dict(mask) for mask in dataset.masks],
             }
             for dataset in group.datasets
@@ -460,12 +474,16 @@ def restore_data_group_state(group: DataGroup, snapshot: dict[str, Any]) -> None
         if dataset is None:
             continue
         dataset.parameters = dict(dataset_payload.get("parameters", {}))
+        dataset.enabled = bool(dataset_payload.get("enabled", dataset.enabled))
+        dataset.fit_weight = float(dataset_payload.get("fit_weight", dataset.fit_weight))
         dataset.masks = [
             MaskSpec(
                 name=str(mask_payload["name"]),
                 type=str(mask_payload.get("type", "coordinate_range")),
                 parameters=dict(mask_payload.get("parameters", {})),
                 enabled=bool(mask_payload.get("enabled", True)),
+                invert=bool(mask_payload.get("invert", False)),
+                additive=bool(mask_payload.get("additive", False)),
                 metadata=dict(mask_payload.get("metadata", {})),
             )
             for mask_payload in dataset_payload.get("masks", [])
@@ -477,6 +495,7 @@ def restore_data_group_state(group: DataGroup, snapshot: dict[str, Any]) -> None
             continue
         existing.type = str(model_payload.get("type", existing.type))
         existing.parameters = dict(model_payload.get("parameters", {}))
+        existing.config = dict(model_payload.get("config", {}))
         existing.fit_parameters = {
             str(key): bool(value)
             for key, value in dict(model_payload.get("fit_parameters", {})).items()
@@ -520,6 +539,25 @@ def copy_mask_to_dataset(mask: MaskSpec, dataset: DatasetEntry) -> MaskSpec:
     copied.name = _unique_name(copied.name, [existing.name for existing in dataset.masks])
     dataset.masks.append(copied)
     return copied
+
+
+def _move_mask_within_dataset(
+    dataset: DatasetEntry,
+    mask: MaskSpec,
+    target_mask: MaskSpec | None,
+) -> bool:
+    if mask not in dataset.masks:
+        return False
+    old_index = dataset.masks.index(mask)
+    if target_mask is mask:
+        return False
+    dataset.masks.pop(old_index)
+    if target_mask is None or target_mask not in dataset.masks:
+        new_index = len(dataset.masks)
+    else:
+        new_index = dataset.masks.index(target_mask)
+    dataset.masks.insert(new_index, mask)
+    return old_index != new_index
 
 
 def copy_dataset_to_group(dataset: DatasetEntry, group: DataGroup) -> DatasetEntry:
@@ -630,6 +668,15 @@ def default_model_parameters(type: str) -> dict[str, Any]:
     }
 
 
+def default_model_config(type: str) -> dict[str, Any]:
+    """Return default non-optimizable configuration settings for a model type."""
+
+    return {
+        name: copy.deepcopy(metadata["default"])
+        for name, metadata in MODEL_TYPE_DEFINITIONS[type].get("config", {}).items()
+    }
+
+
 def default_model_global_fit(type: str) -> dict[str, bool]:
     """Return default global-fit flags for a registered model type."""
 
@@ -659,6 +706,23 @@ def model_parameter_tooltip(type: str, parameter_name: str) -> str:
             f"Example: {metadata['example']}",
             "Fit: checked means the optimizer may vary this parameter; unchecked means it is fixed at the displayed value.",
             "Global fit: checked means one shared value is fitted across datasets; unchecked means each dataset may fit its own value.",
+        ]
+    )
+
+
+def model_config_tooltip(type: str, setting_name: str) -> str:
+    """Return standard hover text for a model configuration setting editor."""
+
+    metadata = MODEL_TYPE_DEFINITIONS[type].get("config", {})[setting_name]
+    return "\n".join(
+        [
+            f"Configuration setting: {setting_name}",
+            f"Description: {metadata['description']}",
+            f"Allowed values: {metadata['allowed']}",
+            f"Data type: {metadata['type']}",
+            f"Default: {_parameter_to_text(metadata['default'])}",
+            f"Example: {metadata['example']}",
+            "Configuration settings are fixed model options and are not optimized by the fitter.",
         ]
     )
 
@@ -718,7 +782,16 @@ def dataset_detail_sections(
     if dataset.parameters:
         metadata_lines = [*metadata_lines, "", "Parameters", *_mapping_lines(dataset.parameters)]
     return [
-        ("Dataset", [f"Name: {dataset.name}", "Dataset", f"Kind: {dataset.kind or '-'}"]),
+        (
+            "Dataset",
+            [
+                f"Name: {dataset.name}",
+                "Dataset",
+                f"Kind: {dataset.kind or '-'}",
+                f"Enabled for fitting: {dataset.enabled}",
+                f"Fit weight: {_format_number(dataset.fit_weight)}",
+            ],
+        ),
         ("Axes", axes_lines),
         ("Crystal", _dataset_crystal_lines(dataset, group)),
         ("Data", data_lines),
@@ -1069,7 +1142,13 @@ def _metallix_mask_for_mdhisto(dataset: DatasetEntry, data: MDHistoData) -> np.n
     for mask in dataset.masks:
         if not mask.enabled:
             continue
-        combined |= _evaluate_mdhisto_mask(data, mask)
+        mask_values = _evaluate_mdhisto_mask(data, mask)
+        if mask.invert:
+            mask_values = ~mask_values
+        if mask.additive:
+            combined &= ~mask_values
+        else:
+            combined |= mask_values
     return combined
 
 
@@ -1427,6 +1506,19 @@ def _fit_siblings(
     return None
 
 
+def _fit_parent(
+    entries: list[FitTimelineEntry],
+    target: FitTimelineEntry,
+) -> FitTimelineEntry | None:
+    for entry in entries:
+        if target in entry.children:
+            return entry
+        found = _fit_parent(entry.children, target)
+        if found is not None:
+            return found
+    return None
+
+
 def _last_result_at_level(entries: list[FitTimelineEntry]) -> FitTimelineEntry | None:
     for entry in reversed(entries):
         if entry.kind == "result":
@@ -1485,6 +1577,28 @@ def _top_level_current_state_entry(group: DataGroup) -> FitTimelineEntry | None:
 def _set_fit_current_snapshot(entry: FitTimelineEntry, group: DataGroup) -> None:
     entry.snapshot = snapshot_data_group_state(group)
     entry.created_at = _timestamp_now()
+
+
+def _style_enabled_tree_item(item: Any, enabled: bool) -> None:
+    from PySide6 import QtGui
+
+    color = QtGui.QColor("#202020") if enabled else QtGui.QColor("#8a8a8a")
+    item.setForeground(0, QtGui.QBrush(color))
+
+
+def _enabled_state_for_role(
+    role: str,
+    entry: DatasetEntry | None,
+    mask: MaskSpec | None,
+    model: ModelComponentSpec | None,
+) -> bool | None:
+    if role == "dataset" and entry is not None:
+        return bool(entry.enabled)
+    if role == "mask" and mask is not None:
+        return bool(mask.enabled)
+    if role == "model" and model is not None:
+        return bool(model.enabled)
+    return None
 
 
 def _timestamp_now() -> str:
@@ -1565,6 +1679,9 @@ class MetallixProjectExplorer:
         self.recent_projects_menu = None
         self.tree = None
         self.title_label = None
+        self.enabled_check = None
+        self.fit_weight_widget = None
+        self.fit_weight_spin = None
         self.details_label = None
         self.details_scroll = None
         self.details_widget = None
@@ -2008,7 +2125,7 @@ class MetallixProjectExplorer:
 
     def move_or_copy_selected_to_item(self, target_item: Any, *, copy_item: bool) -> bool:
         source_group, source_entry, source_mask, _source_model, source_role = self._objects_for_item(self._current_item())
-        target_group, target_entry, _target_mask, _target_model, target_role = self._objects_for_item(target_item)
+        target_group, target_entry, target_mask, _target_model, target_role = self._objects_for_item(target_item)
         if (
             source_role == "dataset"
             and source_group is not None
@@ -2024,6 +2141,22 @@ class MetallixProjectExplorer:
             self._record_data_group_state_change(target_group)
             self._mark_dirty()
             self._refresh_tree(select_group=target_group, select_dataset=moved)
+            return True
+        if (
+            source_role == "mask"
+            and source_group is not None
+            and source_entry is not None
+            and source_mask is not None
+            and target_group is not None
+            and target_entry is not None
+            and target_entry is source_entry
+            and not copy_item
+            and target_role in {"mask", "masks"}
+        ):
+            if _move_mask_within_dataset(source_entry, source_mask, target_mask if target_role == "mask" else None):
+                self._record_data_group_state_change(source_group)
+                self._mark_dirty()
+                self._refresh_tree(select_group=source_group, select_mask=source_mask)
             return True
         if (
             source_role == "mask"
@@ -2138,6 +2271,24 @@ class MetallixProjectExplorer:
         title_font.setPointSize(18)
         title_font.setBold(True)
         self.title_label.setFont(title_font)
+        title_row = QtWidgets.QHBoxLayout()
+        title_row.addWidget(self.title_label, 1)
+        self.enabled_check = QtWidgets.QCheckBox("Enabled")
+        self.enabled_check.toggled.connect(self._set_selected_enabled)
+        title_row.addWidget(self.enabled_check)
+        self.fit_weight_widget = QtWidgets.QWidget()
+        fit_weight_layout = QtWidgets.QHBoxLayout(self.fit_weight_widget)
+        fit_weight_layout.setContentsMargins(0, 0, 0, 0)
+        fit_weight_layout.setSpacing(6)
+        fit_weight_layout.addWidget(QtWidgets.QLabel("Fit weight"))
+        self.fit_weight_spin = QtWidgets.QDoubleSpinBox()
+        self.fit_weight_spin.setRange(0.0, 1.0e12)
+        self.fit_weight_spin.setDecimals(6)
+        self.fit_weight_spin.setSingleStep(0.1)
+        self.fit_weight_spin.setValue(1.0)
+        self.fit_weight_spin.valueChanged.connect(self._set_selected_dataset_fit_weight)
+        fit_weight_layout.addWidget(self.fit_weight_spin)
+        title_row.addWidget(self.fit_weight_widget)
         self.details_label = QtWidgets.QLabel()
         self.details_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
         self.details_label.setWordWrap(True)
@@ -2211,7 +2362,7 @@ class MetallixProjectExplorer:
         fit_editor_layout.addWidget(self.fit_branch_check, 2, 1)
         self.fit_editor_widget = fit_editor
 
-        right_layout.addWidget(self.title_label)
+        right_layout.addLayout(title_row)
         right_layout.addWidget(self.mask_type_combo)
         right_layout.addWidget(self.mask_parameter_widget)
         right_layout.addWidget(self.model_type_combo)
@@ -2237,7 +2388,7 @@ class MetallixProjectExplorer:
         edit_mask: bool = False,
         edit_model: bool = False,
     ) -> None:
-        from PySide6 import QtCore, QtWidgets
+        from PySide6 import QtCore, QtGui, QtWidgets
 
         self._expanded_state = self._current_expanded_state()
         self._item_roles.clear()
@@ -2260,6 +2411,7 @@ class MetallixProjectExplorer:
                 dataset_item = QtWidgets.QTreeWidgetItem([dataset.name])
                 dataset_item.setFlags(dataset_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
                 self._remember_item(dataset_item, "dataset", group, dataset)
+                _style_enabled_tree_item(dataset_item, dataset.enabled)
                 datasets_item.addChild(dataset_item)
                 masks_item = QtWidgets.QTreeWidgetItem(["Masks"])
                 self._remember_item(masks_item, "masks", group, dataset)
@@ -2268,6 +2420,7 @@ class MetallixProjectExplorer:
                     mask_item = QtWidgets.QTreeWidgetItem([mask.name])
                     mask_item.setFlags(mask_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
                     self._remember_item(mask_item, "mask", group, dataset, mask)
+                    _style_enabled_tree_item(mask_item, mask.enabled)
                     masks_item.addChild(mask_item)
                     if select_mask is mask:
                         item_to_select = mask_item
@@ -2284,6 +2437,7 @@ class MetallixProjectExplorer:
                 if isinstance(model, ModelComponentSpec):
                     model_item.setFlags(model_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
                     self._remember_item(model_item, "model", group, model=model)
+                    _style_enabled_tree_item(model_item, model.enabled)
                     if select_model is model:
                         item_to_select = model_item
                 else:
@@ -2469,6 +2623,7 @@ class MetallixProjectExplorer:
         fit_entry = self._fit_entry_for_item(self._current_item())
         can_import = role in {"group", "datasets"}
         can_add_model = role in {"group", "models"}
+        self._sync_selected_state_controls(role, entry, mask, model)
         self.import_dataset_button.setVisible(can_import)
         self.add_model_button.setVisible(can_add_model)
         self.view_slice_button.setVisible(role in {"group", "datasets", "dataset"})
@@ -2507,7 +2662,10 @@ class MetallixProjectExplorer:
             self._set_details_text(f"{len(entry.masks)} mask(s)")
         elif role == "mask" and entry is not None and mask is not None:
             self.title_label.setText(mask.name)
-            self._set_details_text("Mask")
+            label = MASK_TYPE_DEFINITIONS.get(mask.type, {}).get("label", mask.type)
+            self._set_details_text(
+                f"Mask\n\nType: {label}\nEnabled: {mask.enabled}\nInvert: {mask.invert}\nAdditive: {mask.additive}"
+            )
             self._sync_mask_editor(mask, entry)
         elif role == "models" and group is not None:
             self.title_label.setText(f"{group.name} / Models")
@@ -2540,6 +2698,68 @@ class MetallixProjectExplorer:
             self._clear_model_parameter_editor()
         if role != "fit":
             self.fit_branch_check.setChecked(False)
+
+    def _sync_selected_state_controls(
+        self,
+        role: str,
+        entry: DatasetEntry | None,
+        mask: MaskSpec | None,
+        model: ModelComponentSpec | None,
+    ) -> None:
+        has_enabled = role in {"dataset", "mask", "model"}
+        self.enabled_check.setVisible(has_enabled)
+        self.fit_weight_widget.setVisible(role == "dataset")
+        self.enabled_check.blockSignals(True)
+        try:
+            if role == "dataset" and entry is not None:
+                self.enabled_check.setChecked(bool(entry.enabled))
+            elif role == "mask" and mask is not None:
+                self.enabled_check.setChecked(bool(mask.enabled))
+            elif role == "model" and model is not None:
+                self.enabled_check.setChecked(bool(model.enabled))
+            else:
+                self.enabled_check.setChecked(False)
+        finally:
+            self.enabled_check.blockSignals(False)
+        self.fit_weight_spin.blockSignals(True)
+        try:
+            self.fit_weight_spin.setValue(float(entry.fit_weight) if role == "dataset" and entry is not None else 1.0)
+        finally:
+            self.fit_weight_spin.blockSignals(False)
+
+    def _set_selected_enabled(self, checked: bool) -> None:
+        group, entry, mask, model, role = self._objects_for_item(self._current_item())
+        changed = False
+        if role == "dataset" and entry is not None:
+            changed = entry.enabled != bool(checked)
+            entry.enabled = bool(checked)
+        elif role == "mask" and mask is not None:
+            changed = mask.enabled != bool(checked)
+            mask.enabled = bool(checked)
+        elif role == "model" and model is not None:
+            changed = model.enabled != bool(checked)
+            model.enabled = bool(checked)
+        if not changed:
+            return
+        if group is not None:
+            self._record_data_group_state_change(group)
+        self._mark_dirty()
+        if group is not None:
+            self.refresh_slice_viewer(group)
+        self._refresh_tree(select_group=group, select_dataset=entry, select_mask=mask, select_model=model)
+
+    def _set_selected_dataset_fit_weight(self, value: float) -> None:
+        group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        if role != "dataset" or entry is None:
+            return
+        weight = float(value)
+        if entry.fit_weight == weight:
+            return
+        entry.fit_weight = weight
+        if group is not None:
+            self._record_data_group_state_change(group)
+        self._mark_dirty()
+        self._sync_details()
 
     def _set_details_text(self, text: str) -> None:
         from PySide6 import QtCore, QtWidgets
@@ -2840,14 +3060,17 @@ class MetallixProjectExplorer:
         return [name for name, _enabled in self._context_menu_action_specs(item)]
 
     def _context_menu_action_specs(self, item: Any | None) -> list[tuple[str, bool]]:
-        _group, entry, _mask, _model, role = self._objects_for_item(item)
+        _group, entry, mask, model, role = self._objects_for_item(item)
         can_paste = self._can_paste_into_role(role, entry)
         has_source = bool(entry is not None and _dataset_source_path(entry) is not None)
+        enabled_state = _enabled_state_for_role(role, entry, mask, model)
         specs: list[tuple[str, bool]] = []
         if role in {"dataset", "mask"}:
             specs.append(("Copy", True))
         if role in {"group", "datasets", "dataset", "masks"}:
             specs.append(("Paste", can_paste))
+        if enabled_state is not None:
+            specs.append(("Disable" if enabled_state else "Enable", True))
         if role in {"group", "dataset", "mask", "model", "fit", "fit_timeline"}:
             specs.append(("Rename", True))
             specs.append(("Delete", True))
@@ -2881,6 +3104,8 @@ class MetallixProjectExplorer:
             "Add mask": self.add_mask_to_selection,
             "Add model": self.add_model_to_selection,
             "Fit now": self.fit_now_for_selection,
+            "Enable": lambda: self._set_selected_enabled(True),
+            "Disable": lambda: self._set_selected_enabled(False),
         }
         for name, enabled in self._context_menu_action_specs(item):
             action = menu.addAction(name)
@@ -3014,8 +3239,18 @@ class MetallixProjectExplorer:
 
         ensure_coordinate_range_mask_axes(mask, dataset)
         self._clear_mask_parameter_editor()
+        invert_check = QtWidgets.QCheckBox("Invert")
+        invert_check.setChecked(bool(mask.invert))
+        invert_check.setToolTip("Flip this mask contribution before applying it: masked bins become unmasked and unmasked bins become masked.")
+        invert_check.toggled.connect(lambda checked: self._set_mask_invert(checked))
+        additive_check = QtWidgets.QCheckBox("Additive")
+        additive_check.setChecked(bool(mask.additive))
+        additive_check.setToolTip("Add bins back into the accumulated metallix mask. This never overrides the file mask.")
+        additive_check.toggled.connect(lambda checked: self._set_mask_additive(checked))
+        self.mask_parameter_layout.addWidget(invert_check, 0, 0)
+        self.mask_parameter_layout.addWidget(additive_check, 0, 1)
         parameter_names = _mask_parameter_names(mask, dataset)
-        layout_row = 0
+        layout_row = 1
         added_axis_section = False
         for parameter_name in parameter_names:
             if (
@@ -3062,6 +3297,27 @@ class MetallixProjectExplorer:
         if group is not None:
             self.refresh_slice_viewer(group)
 
+    def _set_mask_invert(self, checked: bool) -> None:
+        self._set_mask_option("invert", bool(checked))
+
+    def _set_mask_additive(self, checked: bool) -> None:
+        self._set_mask_option("additive", bool(checked))
+
+    def _set_mask_option(self, name: str, value: bool) -> None:
+        group, _entry, mask, _model, role = self._objects_for_item(self._current_item())
+        if role != "mask" or mask is None:
+            return
+        if bool(getattr(mask, name)) == bool(value):
+            return
+        setattr(mask, name, bool(value))
+        branch_created = self._record_data_group_state_change(group) if group is not None else False
+        self._mark_dirty()
+        if group is not None and branch_created:
+            self._refresh_tree(select_group=group, select_mask=mask)
+            return
+        if group is not None:
+            self.refresh_slice_viewer(group)
+
     def _refresh_model_type_combo(self) -> None:
         current = self.model_type_combo.currentData()
         self.model_type_combo.blockSignals(True)
@@ -3091,9 +3347,11 @@ class MetallixProjectExplorer:
             return
         model.type = str(type_name)
         defaults = default_model_parameters(model.type)
+        default_config = default_model_config(model.type)
         default_fit = default_model_fit_parameters(model.type)
         default_global = default_model_global_fit(model.type)
         model.parameters = {name: model.parameters.get(name, value) for name, value in defaults.items()}
+        model.config = {name: model.config.get(name, value) for name, value in default_config.items()}
         model.fit_parameters = {name: model.fit_parameters.get(name, value) for name, value in default_fit.items()}
         model.global_fit = {name: model.global_fit.get(name, value) for name, value in default_global.items()}
         branch_created = self._record_data_group_state_change(group) if group is not None else False
@@ -3109,6 +3367,10 @@ class MetallixProjectExplorer:
         from PySide6 import QtWidgets
 
         self._clear_model_parameter_editor()
+        fit_group = QtWidgets.QGroupBox("Fit Parameters")
+        fit_group.setObjectName("model_fit_parameters_group")
+        fit_layout = QtWidgets.QGridLayout(fit_group)
+        fit_layout.setColumnStretch(1, 1)
         for row, parameter_name in enumerate(MODEL_TYPE_DEFINITIONS[model.type]["parameters"]):
             label = QtWidgets.QLabel(parameter_name)
             editor = QtWidgets.QLineEdit(_parameter_to_text(model.parameters.get(parameter_name, "")))
@@ -3130,16 +3392,38 @@ class MetallixProjectExplorer:
             global_check.toggled.connect(
                 lambda checked, parameter_name=parameter_name: self._set_model_global_fit(parameter_name, checked)
             )
-            self.model_parameter_layout.addWidget(label, row, 0)
-            self.model_parameter_layout.addWidget(editor, row, 1)
-            self.model_parameter_layout.addWidget(fit_check, row, 2)
-            self.model_parameter_layout.addWidget(global_check, row, 3)
+            fit_layout.addWidget(label, row, 0)
+            fit_layout.addWidget(editor, row, 1)
+            fit_layout.addWidget(fit_check, row, 2)
+            fit_layout.addWidget(global_check, row, 3)
+        self.model_parameter_layout.addWidget(fit_group, 0, 0, 1, 4)
+
+        config_group = QtWidgets.QGroupBox("Configuration Settings")
+        config_group.setObjectName("model_config_group")
+        config_layout = QtWidgets.QGridLayout(config_group)
+        config_layout.setColumnStretch(1, 1)
+        config_definitions = MODEL_TYPE_DEFINITIONS[model.type].get("config", {})
+        if not config_definitions:
+            config_layout.addWidget(QtWidgets.QLabel("No configuration settings."), 0, 0, 1, 2)
+        for row, setting_name in enumerate(config_definitions):
+            label = QtWidgets.QLabel(setting_name)
+            editor = QtWidgets.QLineEdit(_parameter_to_text(model.config.get(setting_name, "")))
+            tooltip = model_config_tooltip(model.type, setting_name)
+            label.setToolTip(tooltip)
+            editor.setToolTip(tooltip)
+            editor.editingFinished.connect(
+                lambda setting_name=setting_name, editor=editor: self._set_model_config_setting(setting_name, editor.text())
+            )
+            config_layout.addWidget(label, row, 0)
+            config_layout.addWidget(editor, row, 1)
+        self.model_parameter_layout.addWidget(config_group, 1, 0, 1, 4)
 
     def _clear_model_parameter_editor(self) -> None:
         while self.model_parameter_layout.count():
             item = self.model_parameter_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                widget.setParent(None)
                 widget.deleteLater()
 
     def _set_model_parameter(self, name: str, text: str) -> None:
@@ -3149,6 +3433,21 @@ class MetallixProjectExplorer:
         value = _parse_parameter_text(text)
         if model.parameters.get(name) != value:
             model.parameters[name] = value
+            branch_created = self._record_data_group_state_change(group) if group is not None else False
+            self._mark_dirty()
+            if group is not None and branch_created:
+                self._refresh_tree(select_group=group, select_model=model)
+                return
+        if group is not None:
+            self.refresh_slice_viewer(group)
+
+    def _set_model_config_setting(self, name: str, text: str) -> None:
+        group, _entry, _mask, model, role = self._objects_for_item(self._current_item())
+        if role != "model" or model is None:
+            return
+        value = _parse_parameter_text(text)
+        if model.config.get(name) != value:
+            model.config[name] = value
             branch_created = self._record_data_group_state_change(group) if group is not None else False
             self._mark_dirty()
             if group is not None and branch_created:
@@ -3694,12 +3993,16 @@ def _project_from_dict(payload: dict[str, Any]) -> MetallixProject:
                     kind=str(dataset_payload.get("kind", "")),
                     metadata=dict(dataset_payload.get("metadata", {})),
                     parameters=dict(dataset_payload.get("parameters", {})),
+                    enabled=bool(dataset_payload.get("enabled", True)),
+                    fit_weight=float(dataset_payload.get("fit_weight", 1.0)),
                     masks=[
                         MaskSpec(
                             name=str(mask_payload["name"]),
                             type=str(mask_payload.get("type", "coordinate_range")),
                             parameters=dict(mask_payload.get("parameters", {})),
                             enabled=bool(mask_payload.get("enabled", True)),
+                            invert=bool(mask_payload.get("invert", False)),
+                            additive=bool(mask_payload.get("additive", False)),
                             metadata=dict(mask_payload.get("metadata", {})),
                         )
                         for mask_payload in dataset_payload.get("masks", [])
@@ -3713,6 +4016,7 @@ def _project_from_dict(payload: dict[str, Any]) -> MetallixProject:
                 name=str(model_payload["name"]),
                 type=model_type,
                 parameters=dict(model_payload.get("parameters", {})),
+                config=dict(model_payload.get("config", default_model_config(model_type))),
                 fit_parameters={
                     name: bool(fit_payload.get(name, value))
                     for name, value in default_model_fit_parameters(model_type).items()
@@ -3764,6 +4068,8 @@ def _dataset_to_dict(dataset: DatasetEntry) -> dict[str, Any]:
         "kind": dataset.kind,
         "metadata": _json_mapping(dataset.metadata),
         "parameters": _json_mapping(dataset.parameters),
+        "enabled": bool(dataset.enabled),
+        "fit_weight": float(dataset.fit_weight),
         "masks": [_mask_to_dict(mask) for mask in dataset.masks],
     }
 
@@ -3774,6 +4080,8 @@ def _mask_to_dict(mask: MaskSpec) -> dict[str, Any]:
         "type": mask.type,
         "parameters": _json_mapping(mask.parameters),
         "enabled": bool(mask.enabled),
+        "invert": bool(mask.invert),
+        "additive": bool(mask.additive),
         "metadata": _json_mapping(mask.metadata),
     }
 
@@ -3783,6 +4091,7 @@ def _model_to_dict(model: ModelComponentSpec) -> dict[str, Any]:
         "name": model.name,
         "type": model.type,
         "parameters": _json_mapping(model.parameters),
+        "config": _json_mapping(model.config),
         "fit_parameters": {name: bool(value) for name, value in model.fit_parameters.items()},
         "global_fit": {name: bool(value) for name, value in model.global_fit.items()},
         "enabled": bool(model.enabled),

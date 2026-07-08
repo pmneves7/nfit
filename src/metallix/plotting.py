@@ -679,7 +679,7 @@ class MDHistoSliceViewer:
 
     COLOR_SCALES = ("linear", "log", "symmetriclog", "asinh", "power")
     AUTO_LIMITS = ("min/max", "N-sigma", "N IQR", "Nth percentile")
-    COLORMAPS = ("viridis", "magma", "plasma", "cividis", "turbo")
+    COLORMAPS = ("viridis", "magma", "plasma", "cividis", "turbo", "grey")
     CHANNELS = ("signal", "errors", "num_events", "mask", "file_mask", "metallix_mask")
     CHANNEL_ALIASES = {"multiplicity": "num_events", "events": "num_events", "error": "errors"}
     CHANNEL_LABELS = {
@@ -711,7 +711,13 @@ class MDHistoSliceViewer:
         self.y_dim = self._resolve_dim(y_dim)
         if self.x_dim == self.y_dim:
             raise ValueError("x_dim and y_dim must be different")
-        self.cmap = cmap
+        self.cmap = str(cmap)
+        self.cmap_reversed = False
+        if self.cmap.endswith("_r"):
+            self.cmap = self.cmap[:-2]
+            self.cmap_reversed = True
+        if self.cmap == "gray":
+            self.cmap = "grey"
         self.channel = self._resolve_channel(channel)
         self.color_scale = color_scale
         self.auto_limits = auto_limits
@@ -878,7 +884,7 @@ class MDHistoSliceViewer:
             view["y_edges"],
             values,
             shading="auto",
-            cmap=self.cmap,
+            cmap=self._effective_cmap(),
             norm=norm,
         )
         self.ax_image.set_xlabel(self._axis_label(self.x_dim))
@@ -1116,8 +1122,15 @@ class MDHistoSliceViewer:
             self._syncing_axis_radios = False
 
     def _set_cmap(self, cmap: str) -> None:
-        self.cmap = cmap
+        self.cmap = "grey" if str(cmap) == "gray" else str(cmap).removesuffix("_r")
         self.update()
+
+    def _effective_cmap(self) -> str:
+        cmap = "gray" if self._is_boolean_channel() or self.cmap == "grey" else self.cmap
+        return f"{cmap}_r" if self.cmap_reversed else cmap
+
+    def _is_boolean_channel(self) -> bool:
+        return self.channel in {"mask", "file_mask", "metallix_mask"}
 
     def _set_color_scale(self, color_scale: str) -> None:
         self.color_scale = color_scale
@@ -1147,6 +1160,8 @@ class MDHistoSliceViewer:
         import matplotlib.colors as colors
 
         vmin, vmax = self._color_limits(values)
+        if self._is_boolean_channel():
+            return colors.Normalize(vmin=0.0, vmax=1.0)
         if self.color_scale == "log":
             finite_positive = values[np.isfinite(values) & (values > 0)]
             if finite_positive.size == 0:
@@ -1178,6 +1193,8 @@ class MDHistoSliceViewer:
         return colors.Normalize(vmin=vmin, vmax=vmax)
 
     def _color_limits(self, values: np.ndarray) -> tuple[float, float]:
+        if self._is_boolean_channel():
+            return (0.0, 1.0)
         finite = values[np.isfinite(values)]
         if finite.size == 0:
             return (0.0, 1.0)

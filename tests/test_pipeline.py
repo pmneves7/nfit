@@ -67,3 +67,27 @@ def test_data_group_selects_data_and_fit_model_session_tracks_history():
     session.rollback(0, use_after=True)
 
     np.testing.assert_allclose(session.current_parameters()["low_background"], 2.0, atol=1e-8)
+
+
+def test_fit_model_session_skips_disabled_datasets_and_uses_dataset_fit_weight():
+    data_a = PointData4D([0.0], [0.0], [0.0], [1.0], [2.0], [0.1])
+    data_b = PointData4D([0.0], [0.0], [0.0], [1.0], [4.0], [0.1])
+    group = DataGroup(
+        name="field_series",
+        datasets=[
+            DatasetEntry("enabled", data_a, fit_weight=2.5),
+            DatasetEntry("disabled", data_b, enabled=False, fit_weight=9.0),
+        ],
+    )
+    session = FitModelSession(
+        name="constant",
+        model=make_constant_intensity_model("constant"),
+        parameter_specs=[ParameterSpec("constant", 1.0)],
+    )
+
+    problem = session.build_problem(group)
+
+    assert [dataset.name for dataset in group.select()] == ["enabled"]
+    assert [dataset.name for dataset in problem.datasets] == ["enabled"]
+    assert problem.datasets[0].weight == 2.5
+    assert group.select(["enabled", "disabled"]) == [group.datasets[0]]
