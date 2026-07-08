@@ -227,6 +227,7 @@ class QtMDHistoSliceViewer:
         self._syncing_axes = False
         self._syncing_limits = False
         self._syncing_view_limits = False
+        self._autoscaling_view = False
         self._syncing_roi_controls = False
         self._box_tool_has_auto_shown_hist_axes = False
         self._restoring_dataset_state = False
@@ -1530,9 +1531,59 @@ class QtMDHistoSliceViewer:
             except Exception:
                 pass
         self._view_limit_callback_ids = [
-            self.ax_image.callbacks.connect("xlim_changed", lambda _axis: self._sync_view_limit_controls("x")),
-            self.ax_image.callbacks.connect("ylim_changed", lambda _axis: self._sync_view_limit_controls("y")),
+            self.ax_image.callbacks.connect("xlim_changed", lambda _axis: self._on_view_limits_changed("x")),
+            self.ax_image.callbacks.connect("ylim_changed", lambda _axis: self._on_view_limits_changed("y")),
         ]
+
+    def _on_view_limits_changed(self, axis_name: str) -> None:
+        self._sync_view_limit_controls(axis_name)
+        self._apply_autoscale_to_view()
+
+    def _visible_values(self, view: dict[str, np.ndarray], values: np.ndarray) -> np.ndarray:
+        """Return the subset of ``values`` whose bin centers fall within the current x/y limits."""
+
+        if self.ax_image is None:
+            return values
+        values = np.asarray(values, dtype=float)
+        x_centers = np.asarray(view.get("x_centers"))
+        y_centers = np.asarray(view.get("y_centers"))
+        if values.ndim != 2 or x_centers.size != values.shape[1] or y_centers.size != values.shape[0]:
+            return values
+        xlo, xhi = sorted(self.ax_image.get_xlim())
+        ylo, yhi = sorted(self.ax_image.get_ylim())
+        x_in = (x_centers >= xlo) & (x_centers <= xhi)
+        y_in = (y_centers >= ylo) & (y_centers <= yhi)
+        if not x_in.any() or not y_in.any():
+            return values
+        return values[np.ix_(y_in, x_in)]
+
+    def _apply_autoscale_to_view(self) -> None:
+        """Recompute autoscale color limits from data visible within the current x/y limits."""
+
+        if (
+            self._autoscaling_view
+            or self.ax_image is None
+            or self.image is None
+            or self._current_slice is None
+            or not self.model.autoscale
+            or self.model._is_boolean_channel()
+            or self._is_effective_1d()
+            or self._fit_compare_active()
+        ):
+            return
+        self._autoscaling_view = True
+        try:
+            values = self.model._display_values(self._current_slice)
+            subset = self._visible_values(self._current_slice, values)
+            self.image.set_norm(self.model._color_norm(subset))
+            vmin, vmax = self.model._color_limits(subset)
+            if self.colorbar is not None:
+                self.colorbar.update_normal(self.image)
+                self.colorbar.set_label(self.model._channel_label())
+            self._sync_limit_spinboxes(vmin, vmax)
+            self.canvas.draw_idle()
+        finally:
+            self._autoscaling_view = False
 
     def _set_view_limits(self, axis_name: str) -> None:
         if self._syncing_view_limits or self.ax_image is None:
@@ -1736,6 +1787,7 @@ class QtMDHistoSliceViewer:
         self._apply_figure_font_size()
         self._apply_axis_linewidth()
         self._connect_view_limit_callbacks()
+        self._apply_autoscale_to_view()
         self.canvas.draw_idle()
 
     def _draw_fit_compare_view(

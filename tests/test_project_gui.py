@@ -773,11 +773,23 @@ def test_project_explorer_context_menu_actions_and_source_change(monkeypatch, tm
     assert dataset.kind == "nxs"
 
     mask_item = explorer.tree.topLevelItem(0).child(0).child(0).child(0).child(0)
-    assert explorer.context_menu_action_names(mask_item) == ["Copy", "Disable", "Rename", "Delete"]
+    assert explorer.context_menu_action_names(mask_item) == [
+        "Copy",
+        "Disable",
+        "Rename",
+        "Delete",
+        "View in slice viewer",
+    ]
     explorer.tree.setCurrentItem(mask_item)
     explorer.enabled_check.setChecked(False)
     assert mask.enabled is False
-    assert explorer.context_menu_action_names(explorer.tree.currentItem()) == ["Copy", "Enable", "Rename", "Delete"]
+    assert explorer.context_menu_action_names(explorer.tree.currentItem()) == [
+        "Copy",
+        "Enable",
+        "Rename",
+        "Delete",
+        "View in slice viewer",
+    ]
 
     model_item = explorer.tree.topLevelItem(0).child(1).child(0)
     assert explorer.context_menu_action_names(model_item) == ["Disable", "Rename", "Delete"]
@@ -1052,6 +1064,117 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     saved = np.load(save_path)
     assert saved["signal"].shape == (3, 1)
     assert int(saved["axis_count"]) == 2
+
+
+def test_energy_q_range_mask_default_min_q_is_zero():
+    parameters = default_mask_parameters("energy_q_range")
+    assert parameters["q_modulus"] == [0.0, 1.0e99]
+
+
+def test_coordinate_range_axis_vectors_are_rounded():
+    hh_axis = MDHistoAxis("[H,H,0]", np.array([0.0, 0.5, 1.0]), "rlu", "momentum")
+    l_axis = MDHistoAxis("[0,0,L]", np.array([0.0, 0.5, 1.0]), "rlu", "momentum")
+    data = MDHistoData(
+        axes=(hh_axis, l_axis),
+        signal=np.zeros((2, 2)),
+        errors=np.ones((2, 2)),
+        mask=np.zeros((2, 2), dtype=bool),
+        num_events=np.ones((2, 2)),
+        metadata={},
+    )
+    dataset = DatasetEntry("scan", data)
+    mask = create_mask(dataset)
+
+    for key in ("axis_0", "axis_1"):
+        vector = mask.parameters[key]
+        assert len(vector) == 2
+        for component in vector:
+            assert component == round(component, 10)
+    assert 0.5 in mask.parameters["axis_0"]
+
+
+def test_rebin_axis_vector_projects_new_coordinate():
+    h_axis = MDHistoAxis("H", np.array([0.0, 1.0, 2.0]), "rlu", "momentum")
+    e_axis = MDHistoAxis("E", np.array([0.0, 10.0, 20.0]), "meV", "energy")
+    signal = np.array([[1.0, 2.0], [3.0, 4.0]])
+    data = MDHistoData(
+        axes=(h_axis, e_axis),
+        signal=signal,
+        errors=np.ones((2, 2)),
+        mask=np.zeros((2, 2), dtype=bool),
+        num_events=np.ones((2, 2)),
+        metadata={},
+    )
+    dataset = DatasetEntry("scan", data)
+    config = dataset_rebin_config(dataset)
+    config["enabled"] = True
+    # Swap which physical coordinate maps to each output axis.
+    config["axes"][0].update({"vector": [0.0, 1.0], "lower": 0.0, "upper": 20.0, "num_bins": 2})
+    config["axes"][1].update({"vector": [1.0, 0.0], "lower": 0.0, "upper": 2.0, "num_bins": 2})
+
+    rebinned = project_gui.rebinned_dataset_data(dataset)
+
+    assert rebinned.shape == (2, 2)
+    np.testing.assert_allclose(rebinned.signal, signal.T)
+    assert rebinned.metadata["rebin"]["vectors"] == [[0.0, 1.0], [1.0, 0.0]]
+
+
+def test_add_mask_and_slice_viewer_from_masks_node(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    opened = []
+
+    class FakeViewer:
+        def __init__(self, datasets, *, dataset_names):
+            self.dataset_names = list(dataset_names)
+            self.selected = None
+            self.shown = False
+            self.window = None
+            opened.append(self)
+
+            class _Combo:
+                def __init__(self, names):
+                    self.names = names
+                    self.index = 0
+
+                def setCurrentIndex(self, index):
+                    self.index = int(index)
+
+                def currentText(self):
+                    return self.names[self.index]
+
+            self.dataset_combo = _Combo(self.dataset_names)
+
+        def show(self):
+            self.shown = True
+
+    monkeypatch.setattr(project_gui, "QtMDHistoSliceViewer", FakeViewer)
+
+    dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+
+    masks_item = explorer.tree.topLevelItem(0).child(0).child(0).child(0)
+    explorer.tree.setCurrentItem(masks_item)
+
+    action_names = explorer.context_menu_action_names(masks_item)
+    assert "Add mask" in action_names
+    assert "View in slice viewer" in action_names
+    assert not explorer.add_mask_button.isHidden()
+    assert not explorer.view_slice_button.isHidden()
+
+    mask = explorer.add_mask_to_selection()
+    assert mask is not None
+    assert dataset.masks == [mask]
+
+    # Re-select the Masks node and open the viewer for the owning dataset.
+    masks_item = explorer.tree.topLevelItem(0).child(0).child(0).child(0)
+    explorer.tree.setCurrentItem(masks_item)
+    viewer = explorer.open_slice_viewer_for_selection()
+
+    assert viewer is opened[0]
+    assert viewer.dataset_combo.currentText() == "scan"
 
 
 def test_dataset_details_text_summarizes_point_data_conditions():
