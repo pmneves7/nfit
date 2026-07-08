@@ -18,6 +18,7 @@ from metallix.project_gui import (
     copy_mask_to_dataset,
     dataset_details_text,
     dataset_for_slice_viewer,
+    dataset_rebin_config,
     default_mask_parameters,
     default_model_fit_parameters,
     default_model_global_fit,
@@ -30,6 +31,7 @@ from metallix.project_gui import (
     recent_project_paths,
     remember_recent_project,
     forget_missing_recent_projects,
+    save_dataset_file,
     save_project,
     set_dataset_source,
 )
@@ -337,7 +339,10 @@ def test_project_explorer_adds_edits_and_copies_masks(monkeypatch):
 
     assert mask is first.masks[0]
     assert mask.name == "Mask1"
-    assert mask.parameters == default_mask_parameters("coordinate_range")
+    expected_parameters = default_mask_parameters("coordinate_range")
+    assert {name: mask.parameters[name] for name in expected_parameters} == expected_parameters
+    assert mask.parameters["axis_0"] == [1.0, 0.0]
+    assert mask.parameters["axis_1"] == [0.0, 1.0]
     assert explorer.tree.currentItem().text(0) == "Mask1"
 
     combo = explorer.mask_type_combo
@@ -393,6 +398,20 @@ def test_dataset_for_slice_viewer_combines_file_and_metallix_coordinate_masks():
     np.testing.assert_array_equal(viewed.mask, [[True], [True]])
 
 
+def test_coordinate_range_mask_axis_vectors_define_coordinates():
+    data = _grid_mdhisto_data()
+    dataset = DatasetEntry("scan", data)
+    mask = create_mask(dataset)
+    mask.parameters["H"] = [0.0, 10.0]
+    mask.parameters["axis_0"] = [0.0, 1.0]
+    mask.parameters["axis_1"] = [1.0, 0.0]
+
+    viewed = dataset_for_slice_viewer(dataset)
+
+    expected = np.array([[False, True], [False, True]])
+    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], expected)
+
+
 def test_dataset_for_slice_viewer_applies_energy_q_range_mask():
     e_axis = MDHistoAxis("E", np.array([3.0, 5.0, 7.0]), "meV", "energy")
     q_axis = MDHistoAxis("|Q|", np.array([0.0, 0.5, 1.0, 1.5]), "Angstrom^-1", "momentum")
@@ -415,6 +434,36 @@ def test_dataset_for_slice_viewer_applies_energy_q_range_mask():
     expected[0, 1] = True
     np.testing.assert_array_equal(viewed.metadata["metallix_mask"], expected)
     np.testing.assert_array_equal(viewed.mask, expected)
+
+
+def test_energy_q_range_mask_accepts_leading_decimal_and_projected_q_axes():
+    hh_axis = MDHistoAxis("[H,H,0]", np.array([0.0, 0.0, 1.0]), "rlu", "momentum")
+    l_axis = MDHistoAxis("[0,0,L]", np.array([0.0, 0.0, 1.0]), "rlu", "momentum")
+    data = MDHistoData(
+        axes=(hh_axis, l_axis),
+        signal=np.arange(4, dtype=float).reshape(2, 2),
+        errors=np.ones((2, 2)),
+        mask=np.zeros((2, 2), dtype=bool),
+        num_events=np.ones((2, 2)),
+        metadata={
+            "lattice_parameters": {
+                "a": 2.0 * np.pi,
+                "b": 2.0 * np.pi,
+                "c": 2.0 * np.pi,
+                "alpha": 90.0,
+                "beta": 90.0,
+                "gamma": 90.0,
+            }
+        },
+    )
+    dataset = DatasetEntry("scan", data)
+    mask = create_mask(dataset, type="energy_q_range")
+    mask.parameters["q_modulus"] = "[0, .5]"
+
+    viewed = dataset_for_slice_viewer(dataset)
+
+    expected = np.array([[True, True], [False, False]])
+    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], expected)
 
 
 def test_project_explorer_adds_and_edits_models(monkeypatch):
@@ -527,6 +576,56 @@ def test_project_explorer_fit_history_creates_results_branches_and_restores(monk
     assert explicit_branch.kind == "timeline"
     assert explicit_branch.children[0] is branched
     assert explicit_branch.children[-1].name == "Current state"
+    assert explorer.tree.currentItem().text(0) == "Current state"
+    assert not explorer.fit_now_button.isHidden()
+    assert explorer.import_dataset_button.isHidden()
+
+
+def test_project_explorer_fit_now_from_earlier_result_creates_nested_timeline(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Datagroup1", datasets=[DatasetEntry("first", _tiny_mdhisto_data(1.0))])
+    create_model_component(group)
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(2).child(0))
+    explorer.fit_now_for_selection()
+    for _index in range(4):
+        fits_item = explorer.tree.topLevelItem(0).child(2)
+        explorer.tree.setCurrentItem(fits_item.child(fits_item.childCount() - 1))
+        explorer.fit_now_for_selection()
+
+    assert [fit.name for fit in group.fits] == [
+        "Initial",
+        "Fit Result1",
+        "Fit Result2",
+        "Fit Result3",
+        "Fit Result4",
+        "Fit Result5",
+        "Current state",
+    ]
+
+    fit_result3_item = explorer.tree.topLevelItem(0).child(2).child(3)
+    explorer.tree.setCurrentItem(fit_result3_item)
+    branched = explorer.fit_now_for_selection()
+
+    assert branched is not None
+    assert [fit.name for fit in group.fits] == [
+        "Initial",
+        "Fit Result1",
+        "Fit Result2",
+        "Fit Result3",
+        "Fit Result4",
+        "Fit Result5",
+        "Current state",
+    ]
+    assert group.fits[3].children[0].kind == "timeline"
+    assert group.fits[3].children[0].children[0] is branched
+    assert group.fits[3].children[0].children[-1].name == "Current state"
+    assert explorer.tree.currentItem().text(0) == "Current state"
+    assert not explorer.fit_now_button.isHidden()
+    assert explorer.import_dataset_button.isHidden()
 
 
 def test_project_explorer_context_menu_actions_and_source_change(monkeypatch, tmp_path):
@@ -780,7 +879,7 @@ def test_dataset_details_text_summarizes_axes_source_and_metadata(tmp_path, monk
     text = explorer.details_label.text()
     panel_titles = [box.title() for box in explorer.details_widget.findChildren(QtWidgets.QGroupBox)]
 
-    assert panel_titles == ["Dataset", "Axes", "Crystal", "Data", "Source", "Metadata"]
+    assert panel_titles == ["Dataset", "Axes", "Rebin", "Crystal", "Data", "Source", "Metadata"]
     assert "Axes\nDimensions: 2" in text
     assert "Crystal\nLattice parameters" in text
     assert "a: 4.17" in text
@@ -793,6 +892,61 @@ def test_dataset_details_text_summarizes_axes_source_and_metadata(tmp_path, monk
     assert "field: 7 T" in text
     assert "timestamp: 2026-01-02T03:04:05" in text
     assert "sample: NiO" in text
+
+
+def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkeypatch, tmp_path):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    data = _grid_mdhisto_data()
+    dataset = DatasetEntry("scan", data, kind="mdhisto")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
+
+    config = dataset_rebin_config(dataset)
+    assert config["axes"][0]["num_bins"] == 2
+    assert config["axes"][1]["num_bins"] == 2
+    assert config["fractional"] is True
+
+    enable_check = explorer.details_widget.findChild(QtWidgets.QCheckBox, "dataset_rebin_enabled")
+    assert enable_check is not None
+    rebin_panel = next(
+        box for box in explorer.details_widget.findChildren(QtWidgets.QGroupBox) if box.title() == "Rebin"
+    )
+    assert rebin_panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_fractional").isChecked()
+    assert rebin_panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_fit_enabled") is None
+    assert not rebin_panel.findChildren(QtWidgets.QComboBox)
+    assert any(button.text() == "Create dataset from rebin" for button in rebin_panel.findChildren(QtWidgets.QPushButton))
+    enable_check.setChecked(True)
+    explorer._set_dataset_rebin_axis_value(dataset, group, 0, "num_bins", "1")
+    explorer._set_dataset_rebin_axis_value(dataset, group, 1, "num_bins", "1")
+    assert dataset_rebin_config(dataset)["axes"][0]["step_size"] == 2.0
+    explorer._set_dataset_rebin_axis_value(dataset, group, 0, "step_size", "0.75")
+    axis_config = dataset_rebin_config(dataset)["axes"][0]
+    assert axis_config["num_bins"] == 3
+    assert axis_config["step_size"] == pytest.approx(2.0 / 3.0)
+
+    viewed = dataset_for_slice_viewer(dataset)
+
+    assert viewed is not None
+    assert viewed.shape == (3, 1)
+    assert viewed.metadata["rebin"]["normalize"] is True
+    assert viewed.metadata["combined_mask_count"] == 0
+
+    rebinned = explorer.materialize_rebin_for_selection()
+
+    assert rebinned is not None
+    assert group.dataset_names == ["scan", "scan rebinned"]
+    assert isinstance(rebinned.data, MDHistoData)
+    assert rebinned.data.shape == (3, 1)
+
+    save_path = tmp_path / "rebinned.npz"
+    save_dataset_file(dataset, save_path)
+
+    saved = np.load(save_path)
+    assert saved["signal"].shape == (3, 1)
+    assert int(saved["axis_count"]) == 2
 
 
 def test_dataset_details_text_summarizes_point_data_conditions():
@@ -843,6 +997,20 @@ def _tiny_mdhisto_data(value):
     axis_x = MDHistoAxis("H", np.array([0.0, 1.0]), "rlu", "momentum")
     axis_e = MDHistoAxis("E", np.array([0.0, 1.0]), "meV", "energy")
     signal = np.array([[value]])
+    return MDHistoData(
+        axes=(axis_x, axis_e),
+        signal=signal,
+        errors=np.ones_like(signal),
+        mask=np.zeros_like(signal, dtype=bool),
+        num_events=np.ones_like(signal),
+        metadata={},
+    )
+
+
+def _grid_mdhisto_data():
+    axis_x = MDHistoAxis("H", np.array([0.0, 1.0, 2.0]), "rlu", "momentum")
+    axis_e = MDHistoAxis("E", np.array([0.0, 10.0, 20.0]), "meV", "energy")
+    signal = np.array([[1.0, 2.0], [3.0, 4.0]])
     return MDHistoData(
         axes=(axis_x, axis_e),
         signal=signal,

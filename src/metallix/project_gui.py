@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import copy
+import ast
 import platform
 import re
 import subprocess
@@ -14,12 +15,17 @@ from typing import Any
 import numpy as np
 
 from .dataset import PointData4D
-from .mdhisto import MDHistoData, load_mantid_mdhisto_nxs
+from .fitting import rebin_point_data
+from .mdhisto import MDHistoAxis, MDHistoData, load_mantid_mdhisto_nxs
 from .pipeline import DataGroup, DatasetEntry, FitTimelineEntry, MaskSpec, ModelComponentSpec
+from .rebin import rebin_nd
 
 QtMDHistoSliceViewer = None
 RECENT_PROJECT_LIMIT = 10
 RECENT_PROJECTS_KEY = "recent_projects"
+DATASET_REBIN_KEY = "rebin"
+COORDINATE_RANGE_AXIS_PREFIX = "axis_"
+COORDINATE_RANGE_PARAMETER_NAMES = ("H", "K", "L", "E")
 
 
 MASK_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
@@ -313,6 +319,7 @@ def create_mask(dataset: DatasetEntry, name: str | None = None, *, type: str = "
         type=type,
         parameters=default_mask_parameters(type),
     )
+    ensure_coordinate_range_mask_axes(mask, dataset)
     if mask.name in {existing.name for existing in dataset.masks}:
         raise ValueError(f"duplicate mask name {mask.name!r}")
     dataset.masks.append(mask)
@@ -545,9 +552,45 @@ def default_mask_parameters(type: str) -> dict[str, Any]:
     }
 
 
+def ensure_coordinate_range_mask_axes(mask: MaskSpec, dataset: DatasetEntry | None) -> None:
+    """Ensure a coordinate-range mask has one coordinate-axis vector per dataset dimension."""
+
+    if mask.type != "coordinate_range" or dataset is None:
+        return
+    specs = _coordinate_range_axis_specs(dataset.data)
+    if not specs:
+        return
+    stale_keys = [
+        key
+        for key in mask.parameters
+        if key.startswith(COORDINATE_RANGE_AXIS_PREFIX)
+        and key[len(COORDINATE_RANGE_AXIS_PREFIX) :].isdigit()
+        and int(key[len(COORDINATE_RANGE_AXIS_PREFIX) :]) >= len(specs)
+    ]
+    for key in stale_keys:
+        mask.parameters.pop(key, None)
+    for index, spec in enumerate(specs):
+        key = f"{COORDINATE_RANGE_AXIS_PREFIX}{index}"
+        value = mask.parameters.get(key)
+        if not _is_vector_length(value, len(spec["vector"])):
+            mask.parameters[key] = copy.deepcopy(spec["vector"])
+
+
 def mask_parameter_tooltip(type: str, parameter_name: str) -> str:
     """Return standard hover text for a mask parameter editor."""
 
+    if type == "coordinate_range" and parameter_name.startswith(COORDINATE_RANGE_AXIS_PREFIX):
+        axis_number = parameter_name.removeprefix(COORDINATE_RANGE_AXIS_PREFIX)
+        return "\n".join(
+            [
+                f"Parameter: {parameter_name}",
+                f"Description: Coordinate-axis vector {axis_number}. It defines one mask coordinate as a linear combination of the dataset axes.",
+                "Allowed values: A list of N finite numbers, where N is the number of dataset dimensions.",
+                "Data type: list[float]",
+                "Default: identity basis vector for the corresponding dataset coordinate.",
+                "Example: [1, 0, 0, 0]",
+            ]
+        )
     metadata = MASK_TYPE_DEFINITIONS[type]["parameters"][parameter_name]
     return "\n".join(
         [
@@ -559,6 +602,23 @@ def mask_parameter_tooltip(type: str, parameter_name: str) -> str:
             f"Example: {metadata['example']}",
         ]
     )
+
+
+def _mask_parameter_names(mask: MaskSpec, dataset: DatasetEntry | None = None) -> list[str]:
+    names = list(MASK_TYPE_DEFINITIONS[mask.type]["parameters"])
+    if mask.type != "coordinate_range":
+        return names
+    ensure_coordinate_range_mask_axes(mask, dataset)
+    axis_names = sorted(
+        (
+            key
+            for key in mask.parameters
+            if key.startswith(COORDINATE_RANGE_AXIS_PREFIX)
+            and key[len(COORDINATE_RANGE_AXIS_PREFIX) :].isdigit()
+        ),
+        key=lambda key: int(key[len(COORDINATE_RANGE_AXIS_PREFIX) :]),
+    )
+    return [*names, *axis_names]
 
 
 def default_model_parameters(type: str) -> dict[str, Any]:
@@ -686,7 +746,8 @@ def dataset_for_slice_viewer(dataset: DatasetEntry) -> MDHistoData | None:
     """Return a viewer-ready MDHisto dataset, loading from source metadata if needed."""
 
     if isinstance(dataset.data, MDHistoData):
-        return _mdhisto_with_metallix_masks(dataset)
+        data = rebinned_dataset_data(dataset) if dataset_rebin_enabled(dataset) else dataset.data
+        return _mdhisto_with_metallix_masks(dataset, data=data)
     source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
     if not source:
         return None
@@ -697,11 +758,289 @@ def dataset_for_slice_viewer(dataset: DatasetEntry) -> MDHistoData | None:
     dataset.data = loaded
     dataset.kind = dataset.kind or source_path.suffix.lstrip(".").lower()
     dataset.metadata["import_status"] = "loaded"
-    return _mdhisto_with_metallix_masks(dataset)
+    data = rebinned_dataset_data(dataset) if dataset_rebin_enabled(dataset) else dataset.data
+    return _mdhisto_with_metallix_masks(dataset, data=data)
 
 
-def _mdhisto_with_metallix_masks(dataset: DatasetEntry) -> MDHistoData:
-    data = dataset.data
+def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
+    """Return a dataset rebin configuration, creating default axis settings if needed."""
+
+    config = dataset.parameters.get(DATASET_REBIN_KEY)
+    if not isinstance(config, dict):
+        config = {}
+        dataset.parameters[DATASET_REBIN_KEY] = config
+    config.setdefault("enabled", False)
+    config.setdefault("fractional", True)
+    config["normalize"] = True
+    axes = config.get("axes")
+    default_axes = _default_rebin_axes(dataset.data)
+    if not isinstance(axes, list) or len(axes) != len(default_axes):
+        config["axes"] = default_axes
+    else:
+        sanitized_axes = []
+        for axis_config, default_axis in zip(axes, default_axes, strict=True):
+            if not isinstance(axis_config, dict):
+                axis_config = {}
+            for key, value in default_axis.items():
+                axis_config.setdefault(key, value)
+            sanitized_axes.append(_sanitize_rebin_axis_config(axis_config))
+        config["axes"] = sanitized_axes
+    return config
+
+
+def dataset_rebin_enabled(dataset: DatasetEntry) -> bool:
+    """Return whether this dataset should use its rebinned representation."""
+
+    config = dataset.parameters.get(DATASET_REBIN_KEY)
+    return bool(isinstance(config, dict) and config.get("enabled"))
+
+
+def rebinned_dataset_data(dataset: DatasetEntry) -> Any:
+    """Return a rebinned copy of a supported dataset according to its configuration."""
+
+    config = dataset_rebin_config(dataset)
+    if isinstance(dataset.data, PointData4D):
+        return _rebin_point_data(dataset.data, config)
+    if not isinstance(dataset.data, MDHistoData):
+        return dataset.data
+    return _rebin_mdhisto_data(dataset.data, config)
+
+
+def create_rebinned_dataset(
+    group: DataGroup,
+    dataset: DatasetEntry,
+    *,
+    name: str | None = None,
+) -> DatasetEntry:
+    """Materialize a dataset's rebinned view as an independent dataset."""
+
+    data = rebinned_dataset_data(dataset)
+    if data is dataset.data:
+        data = copy.deepcopy(data)
+    new_entry = DatasetEntry(
+        name=_unique_dataset_name(name or f"{dataset.name} rebinned", group.dataset_names),
+        data=data,
+        kind=dataset.kind,
+        metadata={
+            **copy.deepcopy(dataset.metadata),
+            "source_dataset": dataset.name,
+            "rebin_materialized": True,
+        },
+        parameters={},
+        masks=copy.deepcopy(dataset.masks),
+    )
+    group.add_dataset(new_entry)
+    return new_entry
+
+
+def save_dataset_file(dataset: DatasetEntry, path: str | Path, *, use_view: bool = True) -> None:
+    """Save a supported dataset to a script-readable ``.npz`` file."""
+
+    data = dataset_for_slice_viewer(dataset) if use_view else dataset.data
+    if not isinstance(data, MDHistoData):
+        raise TypeError("dataset saving currently supports MDHistoData-compatible datasets")
+    payload: dict[str, Any] = {
+        "signal": data.signal,
+        "errors": data.errors,
+        "mask": data.mask,
+        "num_events": data.num_events,
+        "metadata_json": json.dumps(_json_safe_value(data.metadata), sort_keys=True),
+        "axis_count": np.asarray(len(data.axes), dtype=int),
+    }
+    for index, axis in enumerate(data.axes):
+        payload[f"axis_{index}_values"] = axis.values
+        payload[f"axis_{index}_name"] = np.asarray(axis.name)
+        payload[f"axis_{index}_units"] = np.asarray(axis.units)
+        payload[f"axis_{index}_kind"] = np.asarray(axis.kind)
+        payload[f"axis_{index}_frame"] = np.asarray(axis.frame or "")
+        payload[f"axis_{index}_path"] = np.asarray(axis.path or "")
+        payload[f"axis_{index}_metadata_json"] = np.asarray(json.dumps(_json_safe_value(axis.metadata), sort_keys=True))
+    np.savez_compressed(path, **payload)
+
+
+def _json_safe_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _json_safe_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_value(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return repr(value)
+
+
+def _default_rebin_axes(data: Any) -> list[dict[str, Any]]:
+    if isinstance(data, MDHistoData):
+        axes: list[dict[str, Any]] = []
+        for axis, size in zip(data.axes, data.shape, strict=True):
+            lower, upper = _axis_bounds(axis, size)
+            num_bins = max(int(size), 1)
+            axes.append(
+                {
+                    "name": axis.name,
+                    "units": axis.units,
+                    "lower": lower,
+                    "upper": upper,
+                    "num_bins": num_bins,
+                    "step_size": _step_size_from_bounds(lower, upper, num_bins),
+                }
+            )
+        return axes
+    if isinstance(data, PointData4D):
+        axes = []
+        for name, units, values in (
+            ("H", "rlu", data.H),
+            ("K", "rlu", data.K),
+            ("L", "rlu", data.L),
+            ("E", "meV", data.E),
+        ):
+            finite = np.asarray(values, dtype=float)
+            finite = finite[np.isfinite(finite)]
+            lower = float(np.min(finite)) if finite.size else 0.0
+            upper = float(np.max(finite)) if finite.size else 1.0
+            num_bins = max(int(np.unique(finite).size), 1) if finite.size else 1
+            axes.append(
+                {
+                    "name": name,
+                    "units": units,
+                    "lower": lower,
+                    "upper": upper,
+                    "num_bins": num_bins,
+                    "step_size": _step_size_from_bounds(lower, upper, num_bins),
+                }
+            )
+        return axes
+    return []
+
+
+def _axis_bounds(axis: MDHistoAxis, size: int) -> tuple[float, float]:
+    values = np.asarray(axis.values, dtype=float)
+    if values.size == size + 1:
+        return float(values[0]), float(values[-1])
+    centers = axis.centers
+    if centers.size == 0:
+        return 0.0, 1.0
+    if centers.size == 1:
+        return float(centers[0] - 0.5), float(centers[0] + 0.5)
+    step = float(np.nanmedian(np.diff(centers)))
+    return float(centers[0] - 0.5 * step), float(centers[-1] + 0.5 * step)
+
+
+def _step_size_from_bounds(lower: float, upper: float, num_bins: int) -> float:
+    if num_bins <= 0:
+        return 0.0
+    return float((float(upper) - float(lower)) / float(num_bins))
+
+
+def _num_bins_from_step_size(lower: Any, upper: Any, step_size: float) -> int:
+    width = abs(float(upper) - float(lower))
+    if width == 0.0:
+        return 1
+    return max(int(np.ceil(width / float(step_size))), 1)
+
+
+def _sanitize_rebin_axis_config(axis_config: dict[str, Any]) -> dict[str, Any]:
+    lower = float(axis_config.get("lower", 0.0))
+    upper = float(axis_config.get("upper", lower))
+    num_bins = max(int(axis_config.get("num_bins", 1)), 1)
+    step_size = _step_size_from_bounds(lower, upper, num_bins)
+    return {
+        **axis_config,
+        "lower": lower,
+        "upper": upper,
+        "num_bins": num_bins,
+        "step_size": step_size,
+    }
+
+
+def _rebin_mdhisto_data(data: MDHistoData, config: dict[str, Any]) -> MDHistoData:
+    axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
+    if len(axes_config) != len(data.axes):
+        axes_config = _default_rebin_axes(data)
+    lower = [axis["lower"] for axis in axes_config]
+    upper = [axis["upper"] for axis in axes_config]
+    num_bins = [axis["num_bins"] for axis in axes_config]
+
+    coords = np.stack(np.meshgrid(*(axis.centers for axis in data.axes), indexing="ij"), axis=-1)
+    valid = np.isfinite(data.signal) & np.isfinite(data.errors) & ~data.mask
+    if data.num_events is not None:
+        valid &= np.asarray(data.num_events) > 0.0
+    signal = data.signal[valid]
+    errors = data.errors[valid]
+    coords_valid = coords[valid]
+    if signal.size == 0:
+        raise ValueError("no valid data points remain before rebinning")
+    result = rebin_nd(
+        signal,
+        coords_valid,
+        data_errs=errors,
+        lower=lower,
+        upper=upper,
+        num_bins=num_bins,
+        fractional=bool(config.get("fractional", False)),
+        normalize=True,
+    )
+    if result.binned_data is None or result.binned_data_errs is None or result.n_samples is None:
+        raise RuntimeError("rebinning did not produce binned data")
+    if result.bins_list is None:
+        raise RuntimeError("rebinning did not produce bins")
+    rebinned_axes = tuple(
+        MDHistoAxis(
+            name=source_axis.name,
+            values=np.asarray(bins, dtype=float),
+            units=source_axis.units,
+            kind=source_axis.kind,
+            frame=source_axis.frame,
+            path=source_axis.path,
+            metadata=dict(source_axis.metadata),
+        )
+        for source_axis, bins in zip(data.axes, result.bins_list, strict=True)
+    )
+    mask = ~np.isfinite(result.binned_data) | ~np.isfinite(result.binned_data_errs)
+    mask |= result.n_samples <= 0.0
+    metadata = dict(data.metadata)
+    metadata["rebin"] = {
+        "lower": lower,
+        "upper": upper,
+        "step_size": np.asarray(result.step_size, dtype=float).tolist(),
+        "num_bins": np.asarray(result.num_bins, dtype=int).tolist(),
+        "fractional": bool(config.get("fractional", False)),
+        "normalize": True,
+    }
+    return MDHistoData(
+        axes=rebinned_axes,
+        signal=np.asarray(result.binned_data, dtype=float),
+        errors=np.asarray(result.binned_data_errs, dtype=float),
+        mask=np.asarray(mask, dtype=bool),
+        num_events=np.asarray(result.n_samples, dtype=float),
+        coordinate_system=data.coordinate_system,
+        visual_normalization=data.visual_normalization,
+        metadata=metadata,
+    )
+
+
+def _rebin_point_data(data: PointData4D, config: dict[str, Any]) -> PointData4D:
+    axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
+    if len(axes_config) != 4:
+        axes_config = _default_rebin_axes(data)
+    lower = [axis["lower"] for axis in axes_config]
+    upper = [axis["upper"] for axis in axes_config]
+    num_bins = [axis["num_bins"] for axis in axes_config]
+    return rebin_point_data(
+        data,
+        lower=lower,
+        upper=upper,
+        num_bins=num_bins,
+        fractional=bool(config.get("fractional", False)),
+        normalize=True,
+    )
+
+
+def _mdhisto_with_metallix_masks(dataset: DatasetEntry, *, data: MDHistoData | None = None) -> MDHistoData:
+    data = dataset.data if data is None else data
     if not isinstance(data, MDHistoData):
         raise TypeError("dataset does not contain MDHistoData")
     file_mask = np.asarray(data.mask, dtype=bool)
@@ -745,7 +1084,8 @@ def _evaluate_mdhisto_mask(data: MDHistoData, mask: MaskSpec) -> np.ndarray:
 def _mdhisto_coordinate_range_mask(data: MDHistoData, parameters: dict[str, Any]) -> np.ndarray:
     keep = np.ones(data.shape, dtype=bool)
     coords = _mdhisto_coordinate_grids(data)
-    for name in ("H", "K", "L", "E"):
+    coords.update(_mdhisto_coordinate_range_axis_grids(data, parameters))
+    for name in COORDINATE_RANGE_PARAMETER_NAMES:
         bounds = _parameter_range(parameters.get(name))
         if bounds is None or name not in coords:
             continue
@@ -767,8 +1107,10 @@ def _mdhisto_energy_q_range_mask(data: MDHistoData, parameters: dict[str, Any]) 
         return np.zeros(data.shape, dtype=bool)
     if energy is not None:
         if "E" not in coords:
-            return np.zeros(data.shape, dtype=bool)
-        reject &= _values_in_range(coords["E"], energy)
+            if not _range_is_unrestricted(energy):
+                return np.zeros(data.shape, dtype=bool)
+        else:
+            reject &= _values_in_range(coords["E"], energy)
     if q_modulus is not None:
         q_values = coords.get("q_modulus")
         if q_values is None:
@@ -795,18 +1137,124 @@ def _values_in_range(values: np.ndarray, bounds: tuple[float | None, float | Non
     lower, upper = bounds
     selected = np.ones(values.shape, dtype=bool)
     if lower is not None:
-        selected &= values >= lower
+        selected &= values >= lower - _range_tolerance(lower)
     if upper is not None:
-        selected &= values <= upper
+        selected &= values <= upper + _range_tolerance(upper)
     return selected
+
+
+def _range_is_unrestricted(bounds: tuple[float | None, float | None]) -> bool:
+    lower, upper = bounds
+    return (lower is None or lower <= -1.0e90) and (upper is None or upper >= 1.0e90)
+
+
+def _range_tolerance(value: float) -> float:
+    return max(1.0, abs(float(value))) * 1.0e-12
+
+
+def _mdhisto_coordinate_range_axis_grids(
+    data: MDHistoData,
+    parameters: dict[str, Any],
+) -> dict[str, np.ndarray]:
+    specs = _coordinate_range_axis_specs(data)
+    if not specs:
+        return {}
+    axis_values = np.meshgrid(*(axis.centers for axis in data.axes), indexing="ij")
+    coords: dict[str, np.ndarray] = {}
+    for index, spec in enumerate(specs):
+        key = f"{COORDINATE_RANGE_AXIS_PREFIX}{index}"
+        vector = _coordinate_axis_vector(parameters.get(key), len(data.axes))
+        if vector is None:
+            vector = np.asarray(spec["vector"], dtype=float)
+        values = np.zeros(data.shape, dtype=float)
+        for axis_weight, axis_grid in zip(vector, axis_values, strict=True):
+            if axis_weight:
+                values = values + float(axis_weight) * axis_grid
+        coords[str(spec["name"])] = values
+    return coords
+
+
+def _coordinate_range_axis_specs(data: Any) -> list[dict[str, Any]]:
+    if isinstance(data, MDHistoData):
+        return _mdhisto_coordinate_range_axis_specs(data)
+    if isinstance(data, PointData4D):
+        names = ["H", "K", "L", "E"]
+        return [
+            {"name": name, "vector": _identity_vector(index, len(names))}
+            for index, name in enumerate(names)
+        ]
+    return []
+
+
+def _mdhisto_coordinate_range_axis_specs(data: MDHistoData) -> list[dict[str, Any]]:
+    ndim = len(data.axes)
+    specs_by_name: dict[str, list[float]] = {}
+    projection_rows: list[np.ndarray] = []
+    projection_indices: list[int] = []
+    used_indices: set[int] = set()
+    for index, axis in enumerate(data.axes):
+        role = axis.role
+        if role in {"h", "k", "l", "energy_transfer"}:
+            name = {"h": "H", "k": "K", "l": "L", "energy_transfer": "E"}[role]
+            specs_by_name.setdefault(name, _identity_vector(index, ndim))
+            used_indices.add(index)
+            continue
+        projection = _axis_projection_vector(axis.name)
+        if projection is not None:
+            projection_rows.append(projection)
+            projection_indices.append(index)
+    if projection_rows:
+        matrix = np.vstack(projection_rows)
+        pseudo_inverse = np.linalg.pinv(matrix)
+        for coord_index, name in enumerate(("H", "K", "L")):
+            if name in specs_by_name:
+                continue
+            vector = [0.0] * ndim
+            for projection_index, weight in zip(projection_indices, pseudo_inverse[coord_index], strict=True):
+                vector[projection_index] = float(weight)
+                used_indices.add(projection_index)
+            specs_by_name[name] = vector
+    specs = [
+        {"name": name, "vector": specs_by_name[name]}
+        for name in COORDINATE_RANGE_PARAMETER_NAMES
+        if name in specs_by_name
+    ]
+    for index, axis in enumerate(data.axes):
+        if index in used_indices:
+            continue
+        specs.append({"name": str(axis.name or f"Axis {index}"), "vector": _identity_vector(index, ndim)})
+    return specs[:ndim]
+
+
+def _identity_vector(index: int, ndim: int) -> list[float]:
+    return [1.0 if axis_index == index else 0.0 for axis_index in range(ndim)]
+
+
+def _coordinate_axis_vector(value: Any, ndim: int) -> np.ndarray | None:
+    if isinstance(value, str):
+        value = _parse_parameter_text(value)
+    if not _is_vector_length(value, ndim):
+        return None
+    try:
+        vector = np.asarray(value, dtype=float)
+    except (TypeError, ValueError):
+        return None
+    if not np.all(np.isfinite(vector)):
+        return None
+    return vector
+
+
+def _is_vector_length(value: Any, length: int) -> bool:
+    if isinstance(value, str):
+        value = _parse_parameter_text(value)
+    return isinstance(value, (list, tuple, np.ndarray)) and len(value) == length
 
 
 def _mdhisto_coordinate_grids(data: MDHistoData) -> dict[str, np.ndarray]:
     shape = data.shape
     axis_values = np.meshgrid(*(axis.centers for axis in data.axes), indexing="ij")
     coords: dict[str, np.ndarray] = {}
-    projection_rows: list[np.ndarray] = []
-    projection_values: list[np.ndarray] = []
+    projection_contributions: list[tuple[np.ndarray, np.ndarray]] = []
     for axis, values in zip(data.axes, axis_values, strict=True):
         role = axis.role
         if role in {"h", "k", "l", "energy_transfer", "q_modulus"}:
@@ -815,16 +1263,14 @@ def _mdhisto_coordinate_grids(data: MDHistoData) -> dict[str, np.ndarray]:
             continue
         projection = _axis_projection_vector(axis.name)
         if projection is not None:
-            projection_rows.append(projection)
-            projection_values.append(values)
-    if not {"H", "K", "L"}.issubset(coords) and projection_rows:
-        matrix = np.vstack(projection_rows)
-        pseudo_inverse = np.linalg.pinv(matrix)
-        flat_values = np.vstack([values.reshape(1, -1) for values in projection_values])
-        hkl = pseudo_inverse @ flat_values
-        coords.setdefault("H", hkl[0].reshape(shape))
-        coords.setdefault("K", hkl[1].reshape(shape))
-        coords.setdefault("L", hkl[2].reshape(shape))
+            projection_contributions.append((projection, values))
+    if not {"H", "K", "L"}.issubset(coords) and projection_contributions:
+        hkl = np.zeros((*shape, 3), dtype=float)
+        for projection, values in projection_contributions:
+            hkl = hkl + values[..., np.newaxis] * projection
+        coords.setdefault("H", hkl[..., 0])
+        coords.setdefault("K", hkl[..., 1])
+        coords.setdefault("L", hkl[..., 2])
     return coords
 
 
@@ -882,6 +1328,19 @@ def _mdhisto_q_matrix(metadata: dict[str, Any]) -> np.ndarray:
             if key in oriented_lattice:
                 matrix = np.asarray(oriented_lattice[key], dtype=float)
                 return matrix if key == "rlu_to_inv_angstrom_matrix" or _matrix_includes_2pi(oriented_lattice, key) else 2.0 * np.pi * matrix
+    lattice = metadata.get("lattice_parameters")
+    if isinstance(lattice, dict):
+        from .fitting import reciprocal_basis_from_lattice_parameters
+
+        return reciprocal_basis_from_lattice_parameters(
+            a=float(lattice["a"]),
+            b=float(lattice["b"]),
+            c=float(lattice["c"]),
+            alpha=float(lattice.get("alpha", 90.0)),
+            beta=float(lattice.get("beta", 90.0)),
+            gamma=float(lattice.get("gamma", 90.0)),
+            include_2pi=bool(lattice.get("include_2pi", True)),
+        )
     raise ValueError("|Q| masks require inverse-angstrom coordinates or an attached lattice/UB matrix")
 
 
@@ -966,6 +1425,48 @@ def _fit_siblings(
         if found is not None:
             return found
     return None
+
+
+def _last_result_at_level(entries: list[FitTimelineEntry]) -> FitTimelineEntry | None:
+    for entry in reversed(entries):
+        if entry.kind == "result":
+            return entry
+    return None
+
+
+def _current_state_at_level(entries: list[FitTimelineEntry]) -> FitTimelineEntry | None:
+    for entry in reversed(entries):
+        if entry.kind == "current":
+            return entry
+    return None
+
+
+def _fit_entry_matches_current_state(entries: list[FitTimelineEntry], fit_entry: FitTimelineEntry) -> bool:
+    current = _current_state_at_level(entries)
+    return bool(current is not None and fit_entry.snapshot == current.snapshot)
+
+
+def _current_state_after_result(group: DataGroup, result: FitTimelineEntry) -> FitTimelineEntry | None:
+    siblings = _fit_siblings(group.fits, result)
+    if siblings is None or result not in siblings:
+        return None
+    result_index = siblings.index(result)
+    for entry in siblings[result_index + 1 :]:
+        if entry.kind == "current":
+            return entry
+    return None
+
+
+def _should_branch_fit_now(group: DataGroup, parent: FitTimelineEntry) -> bool:
+    if parent.kind in {"initial", "current"}:
+        return False
+    siblings = _fit_siblings(group.fits, parent)
+    if siblings is None:
+        return True
+    return not (
+        parent is _last_result_at_level(siblings)
+        and _fit_entry_matches_current_state(siblings, parent)
+    )
 
 
 def _replace_current_state(entries: list[FitTimelineEntry], group: DataGroup) -> None:
@@ -1073,6 +1574,7 @@ class MetallixProjectExplorer:
         self.view_slice_button = None
         self.load_dataset_button = None
         self.add_mask_button = None
+        self.save_dataset_button = None
         self.mask_type_combo = None
         self.mask_parameter_widget = None
         self.mask_parameter_layout = None
@@ -1314,20 +1816,67 @@ class MetallixProjectExplorer:
         self._refresh_tree(select_group=group, select_model=model, edit_model=True)
         return model
 
+    def materialize_rebin_for_selection(self) -> DatasetEntry | None:
+        from PySide6 import QtWidgets
+
+        group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        if role != "dataset" or group is None or entry is None:
+            return None
+        try:
+            rebinned = create_rebinned_dataset(group, entry)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Create dataset from rebin",
+                f"Could not create rebinned dataset:\n{exc}",
+            )
+            return None
+        self._record_data_group_state_change(group)
+        self._mark_dirty()
+        self._refresh_tree(select_group=group, select_dataset=rebinned)
+        return rebinned
+
+    def save_dataset_for_selection(self) -> bool:
+        from PySide6 import QtWidgets
+
+        _group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        if role != "dataset" or entry is None:
+            return False
+        path, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
+            self.window,
+            "Save dataset",
+            f"{entry.name}.npz",
+            "NumPy archives (*.npz);;All files (*)",
+        )
+        if not path:
+            return False
+        try:
+            save_dataset_file(entry, path)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Save dataset",
+                f"Could not save dataset:\n{exc}",
+            )
+            return False
+        return True
+
     def fit_now_for_selection(self) -> FitTimelineEntry | None:
         group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
         fit_entry = self._fit_entry_for_item(self._current_item())
         if role != "fit" or group is None or fit_entry is None:
             return None
         self._set_selected_fit_optimizer_config()
+        should_branch = bool(self.fit_branch_check.isChecked()) or _should_branch_fit_now(group, fit_entry)
         result = create_placeholder_fit_result(
             group,
             fit_entry,
-            branch_timeline=bool(self.fit_branch_check.isChecked()),
+            branch_timeline=should_branch,
         )
         self.fit_branch_check.setChecked(False)
+        item_to_select = _current_state_after_result(group, result) if should_branch else result
         self._mark_dirty()
-        self._refresh_tree(select_group=group, select_fit=result)
+        self._refresh_tree(select_group=group, select_fit=item_to_select or result)
         return result
 
     def open_slice_viewer_for_selection(self) -> Any | None:
@@ -1611,16 +2160,19 @@ class MetallixProjectExplorer:
         self.view_slice_button = QtWidgets.QPushButton("View in slice viewer")
         self.load_dataset_button = QtWidgets.QPushButton("Load now")
         self.add_mask_button = QtWidgets.QPushButton("Add mask")
+        self.save_dataset_button = QtWidgets.QPushButton("Save dataset")
         self.import_dataset_button.clicked.connect(self.import_dataset_dialog)
         self.add_model_button.clicked.connect(self.add_model_to_selection)
         self.view_slice_button.clicked.connect(self.open_slice_viewer_for_selection)
         self.load_dataset_button.clicked.connect(self.load_dataset_for_selection)
         self.add_mask_button.clicked.connect(self.add_mask_to_selection)
+        self.save_dataset_button.clicked.connect(self.save_dataset_for_selection)
         actions_row.addWidget(self.import_dataset_button)
         actions_row.addWidget(self.add_model_button)
         actions_row.addWidget(self.view_slice_button)
         actions_row.addWidget(self.load_dataset_button)
         actions_row.addWidget(self.add_mask_button)
+        actions_row.addWidget(self.save_dataset_button)
         actions_row.addStretch(1)
 
         mask_combo_class = _make_refreshing_combo_class()
@@ -1745,9 +2297,9 @@ class MetallixProjectExplorer:
             self._remember_item(fits_item, "fits", group)
             group_item.addChild(fits_item)
             for fit_entry in group.fits:
-                fit_item = self._add_fit_tree_item(fits_item, group, fit_entry)
-                if item_to_select is None and select_fit is fit_entry:
-                    item_to_select = fit_item
+                fit_item = self._add_fit_tree_item(fits_item, group, fit_entry, select_fit=select_fit)
+                if item_to_select is None and select_fit is not None:
+                    item_to_select = self._selected_fit_tree_item(fit_item, select_fit)
             fits_item.setExpanded(self._expanded_state.get(("fits", id(group)), False))
             if select_group is group and item_to_select is None:
                 item_to_select = group_item
@@ -1814,7 +2366,14 @@ class MetallixProjectExplorer:
     ) -> None:
         self._item_roles[id(item)] = (role, group, entry, mask, model)
 
-    def _add_fit_tree_item(self, parent_item: Any, group: DataGroup, fit_entry: FitTimelineEntry) -> Any:
+    def _add_fit_tree_item(
+        self,
+        parent_item: Any,
+        group: DataGroup,
+        fit_entry: FitTimelineEntry,
+        *,
+        select_fit: FitTimelineEntry | None = None,
+    ) -> Any:
         from PySide6 import QtCore, QtWidgets
 
         item = QtWidgets.QTreeWidgetItem([fit_entry.name])
@@ -1824,9 +2383,23 @@ class MetallixProjectExplorer:
         self._fit_item_roles[id(item)] = fit_entry
         parent_item.addChild(item)
         for child in fit_entry.children:
-            self._add_fit_tree_item(item, group, child)
-        item.setExpanded(self._expanded_state.get(("fit", id(fit_entry)), fit_entry.kind == "timeline"))
+            self._add_fit_tree_item(item, group, child, select_fit=select_fit)
+        item.setExpanded(
+            self._expanded_state.get(
+                ("fit", id(fit_entry)),
+                fit_entry.kind == "timeline" or _fit_entry_in_tree(fit_entry.children, select_fit),
+            )
+        )
         return item
+
+    def _selected_fit_tree_item(self, item: Any, select_fit: FitTimelineEntry) -> Any | None:
+        if self._fit_entry_for_item(item) is select_fit:
+            return item
+        for index in range(item.childCount()):
+            found = self._selected_fit_tree_item(item.child(index), select_fit)
+            if found is not None:
+                return found
+        return None
 
     def _tree_item_changed(self, item: Any, column: int) -> None:
         if column != 0:
@@ -1904,6 +2477,10 @@ class MetallixProjectExplorer:
             role == "dataset" and entry is not None and _dataset_can_load(entry)
         )
         self.add_mask_button.setVisible(role == "dataset")
+        self.save_dataset_button.setVisible(role == "dataset")
+        self.save_dataset_button.setEnabled(
+            bool(role == "dataset" and entry is not None and _dataset_can_save(entry))
+        )
         self.delete_button.setEnabled(role in {"group", "dataset", "mask", "model", "fit", "fit_timeline"})
         self.mask_type_combo.setVisible(role == "mask")
         self.mask_parameter_widget.setVisible(role == "mask")
@@ -1931,7 +2508,7 @@ class MetallixProjectExplorer:
         elif role == "mask" and entry is not None and mask is not None:
             self.title_label.setText(mask.name)
             self._set_details_text("Mask")
-            self._sync_mask_editor(mask)
+            self._sync_mask_editor(mask, entry)
         elif role == "models" and group is not None:
             self.title_label.setText(f"{group.name} / Models")
             self._set_details_text(f"{len(group.models)} model(s)")
@@ -1980,8 +2557,96 @@ class MetallixProjectExplorer:
         self.details_label.setText(dataset_details_text(dataset, group=group))
         self._clear_details_panel()
         for title, lines in dataset_detail_sections(dataset, group=group):
-            self.details_layout.addWidget(self._details_group_box(title, lines))
+            if title == "Axes":
+                self.details_layout.addWidget(self._dataset_axes_group_box(dataset, group, lines))
+            else:
+                self.details_layout.addWidget(self._details_group_box(title, lines))
         self.details_layout.addStretch(1)
+
+    def _dataset_axes_group_box(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup | None,
+        lines: list[str],
+    ) -> Any:
+        from PySide6 import QtCore, QtWidgets
+
+        group_box = QtWidgets.QGroupBox("Axes")
+        layout = QtWidgets.QVBoxLayout(group_box)
+        layout.setContentsMargins(10, 8, 10, 8)
+        label = QtWidgets.QLabel("\n".join(lines) if lines else "-")
+        label.setWordWrap(True)
+        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop | QtCore.Qt.AlignmentFlag.AlignLeft)
+        label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(label)
+
+        if not _dataset_can_rebin(dataset):
+            return group_box
+
+        rebin_box = QtWidgets.QGroupBox("Rebin")
+        rebin_layout = QtWidgets.QVBoxLayout(rebin_box)
+        rebin_layout.setContentsMargins(10, 8, 10, 8)
+
+        config = dataset_rebin_config(dataset)
+        enable_check = QtWidgets.QCheckBox("Use rebinned data")
+        enable_check.setObjectName("dataset_rebin_enabled")
+        enable_check.setChecked(bool(config.get("enabled", False)))
+        enable_check.toggled.connect(lambda checked: self._set_dataset_rebin_enabled(dataset, group, checked))
+        rebin_layout.addWidget(enable_check)
+
+        controls = QtWidgets.QWidget()
+        controls.setObjectName("dataset_rebin_controls")
+        controls.setVisible(bool(config.get("enabled", False)))
+        controls_layout = QtWidgets.QGridLayout(controls)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setColumnStretch(4, 1)
+        headers = ["Axis", "Lower", "Upper", "Bins", "Step"]
+        for column, text in enumerate(headers):
+            header = QtWidgets.QLabel(text)
+            header.setStyleSheet("font-weight: 600")
+            controls_layout.addWidget(header, 0, column)
+        for row, axis_config in enumerate(config.get("axes", []), start=1):
+            axis_config = _sanitize_rebin_axis_config(axis_config)
+            axis_label = QtWidgets.QLabel(f"{axis_config.get('name', f'Axis {row}')} ({axis_config.get('units', '-') or '-'})")
+            lower_edit = QtWidgets.QLineEdit(_format_number(axis_config["lower"]))
+            upper_edit = QtWidgets.QLineEdit(_format_number(axis_config["upper"]))
+            bins_edit = QtWidgets.QLineEdit(str(int(axis_config["num_bins"])))
+            step_edit = QtWidgets.QLineEdit(_format_number(axis_config["step_size"]))
+            for editor in (lower_edit, upper_edit, bins_edit, step_edit):
+                editor.setMinimumWidth(72)
+            lower_edit.editingFinished.connect(
+                lambda row=row - 1, editor=lower_edit: self._set_dataset_rebin_axis_value(dataset, group, row, "lower", editor.text())
+            )
+            upper_edit.editingFinished.connect(
+                lambda row=row - 1, editor=upper_edit: self._set_dataset_rebin_axis_value(dataset, group, row, "upper", editor.text())
+            )
+            bins_edit.editingFinished.connect(
+                lambda row=row - 1, editor=bins_edit: self._set_dataset_rebin_axis_value(dataset, group, row, "num_bins", editor.text())
+            )
+            step_edit.editingFinished.connect(
+                lambda row=row - 1, editor=step_edit: self._set_dataset_rebin_axis_value(dataset, group, row, "step_size", editor.text())
+            )
+            controls_layout.addWidget(axis_label, row, 0)
+            controls_layout.addWidget(lower_edit, row, 1)
+            controls_layout.addWidget(upper_edit, row, 2)
+            controls_layout.addWidget(bins_edit, row, 3)
+            controls_layout.addWidget(step_edit, row, 4)
+
+        option_row = QtWidgets.QHBoxLayout()
+        fractional_check = QtWidgets.QCheckBox("Fractional binning")
+        fractional_check.setObjectName("dataset_rebin_fractional")
+        fractional_check.setChecked(bool(config.get("fractional", False)))
+        fractional_check.toggled.connect(lambda checked: self._set_dataset_rebin_option(dataset, group, "fractional", checked))
+        create_button = QtWidgets.QPushButton("Create dataset from rebin")
+        create_button.setEnabled(_dataset_can_rebin(dataset))
+        create_button.clicked.connect(self.materialize_rebin_for_selection)
+        option_row.addWidget(fractional_check)
+        option_row.addWidget(create_button)
+        option_row.addStretch(1)
+        controls_layout.addLayout(option_row, len(config.get("axes", [])) + 1, 0, 1, 5)
+        rebin_layout.addWidget(controls)
+        layout.addWidget(rebin_box)
+        return group_box
 
     def _details_group_box(self, title: str, lines: list[str]) -> Any:
         from PySide6 import QtCore, QtWidgets
@@ -1996,6 +2661,77 @@ class MetallixProjectExplorer:
         label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(label)
         return group_box
+
+    def _set_dataset_rebin_enabled(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup | None,
+        checked: bool,
+    ) -> None:
+        config = dataset_rebin_config(dataset)
+        if bool(config.get("enabled", False)) == bool(checked):
+            return
+        config["enabled"] = bool(checked)
+        self._after_dataset_rebin_changed(dataset, group)
+
+    def _set_dataset_rebin_option(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup | None,
+        key: str,
+        checked: bool,
+    ) -> None:
+        config = dataset_rebin_config(dataset)
+        if bool(config.get(key, False)) == bool(checked):
+            return
+        config[key] = bool(checked)
+        config["normalize"] = True
+        self._after_dataset_rebin_changed(dataset, group)
+
+    def _set_dataset_rebin_axis_value(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup | None,
+        index: int,
+        key: str,
+        text: str,
+    ) -> None:
+        config = dataset_rebin_config(dataset)
+        axes = config.get("axes", [])
+        if not (0 <= index < len(axes)):
+            return
+        axis = axes[index]
+        try:
+            if key == "num_bins":
+                value: Any = max(int(float(text)), 1)
+                if axis.get("num_bins") == value:
+                    return
+                axis["num_bins"] = value
+            else:
+                value = float(text)
+                if key == "step_size":
+                    if value <= 0.0 or not np.isfinite(value):
+                        return
+                    num_bins = _num_bins_from_step_size(axis.get("lower", 0.0), axis.get("upper", 0.0), value)
+                    if axis.get("num_bins") == num_bins:
+                        return
+                    axis["num_bins"] = num_bins
+                else:
+                    if axis.get(key) == value:
+                        return
+                    axis[key] = value
+        except ValueError:
+            return
+        axis.update(_sanitize_rebin_axis_config(axis))
+        self._after_dataset_rebin_changed(dataset, group)
+
+    def _after_dataset_rebin_changed(self, dataset: DatasetEntry, group: DataGroup | None) -> None:
+        if group is not None:
+            self._record_data_group_state_change(group)
+        self._mark_dirty()
+        if group is not None:
+            self.refresh_slice_viewer(group)
+        self._set_dataset_details(dataset, group)
 
     def _clear_details_panel(self) -> None:
         while self.details_layout.count():
@@ -2244,16 +2980,17 @@ class MetallixProjectExplorer:
                 self.mask_type_combo.setCurrentIndex(index)
         self.mask_type_combo.blockSignals(False)
 
-    def _sync_mask_editor(self, mask: MaskSpec) -> None:
+    def _sync_mask_editor(self, mask: MaskSpec, dataset: DatasetEntry | None = None) -> None:
+        ensure_coordinate_range_mask_axes(mask, dataset)
         self._refresh_mask_type_combo()
         index = self.mask_type_combo.findData(mask.type)
         self.mask_type_combo.blockSignals(True)
         self.mask_type_combo.setCurrentIndex(max(index, 0))
         self.mask_type_combo.blockSignals(False)
-        self._rebuild_mask_parameter_editor(mask)
+        self._rebuild_mask_parameter_editor(mask, dataset)
 
     def _set_selected_mask_type(self, _label: str) -> None:
-        group, _entry, mask, _model, role = self._objects_for_item(self._current_item())
+        group, entry, mask, _model, role = self._objects_for_item(self._current_item())
         if role != "mask" or mask is None:
             return
         type_name = self.mask_type_combo.currentData()
@@ -2262,20 +2999,35 @@ class MetallixProjectExplorer:
         mask.type = str(type_name)
         defaults = default_mask_parameters(mask.type)
         mask.parameters = {name: mask.parameters.get(name, value) for name, value in defaults.items()}
+        ensure_coordinate_range_mask_axes(mask, entry)
         branch_created = self._record_data_group_state_change(group) if group is not None else False
         self._mark_dirty()
-        self._rebuild_mask_parameter_editor(mask)
+        self._rebuild_mask_parameter_editor(mask, entry)
         if group is not None:
             if branch_created:
                 self._refresh_tree(select_group=group, select_mask=mask)
             else:
                 self.refresh_slice_viewer(group)
 
-    def _rebuild_mask_parameter_editor(self, mask: MaskSpec) -> None:
+    def _rebuild_mask_parameter_editor(self, mask: MaskSpec, dataset: DatasetEntry | None = None) -> None:
         from PySide6 import QtWidgets
 
+        ensure_coordinate_range_mask_axes(mask, dataset)
         self._clear_mask_parameter_editor()
-        for row, parameter_name in enumerate(MASK_TYPE_DEFINITIONS[mask.type]["parameters"]):
+        parameter_names = _mask_parameter_names(mask, dataset)
+        layout_row = 0
+        added_axis_section = False
+        for parameter_name in parameter_names:
+            if (
+                mask.type == "coordinate_range"
+                and parameter_name.startswith(COORDINATE_RANGE_AXIS_PREFIX)
+                and not added_axis_section
+            ):
+                section_label = QtWidgets.QLabel("Coordinate axes")
+                section_label.setStyleSheet("font-weight: 600")
+                self.mask_parameter_layout.addWidget(section_label, layout_row, 0, 1, 2)
+                layout_row += 1
+                added_axis_section = True
             label = QtWidgets.QLabel(parameter_name)
             editor = QtWidgets.QLineEdit(_parameter_to_text(mask.parameters.get(parameter_name, "")))
             tooltip = mask_parameter_tooltip(mask.type, parameter_name)
@@ -2284,8 +3036,9 @@ class MetallixProjectExplorer:
             editor.editingFinished.connect(
                 lambda parameter_name=parameter_name, editor=editor: self._set_mask_parameter(parameter_name, editor.text())
             )
-            self.mask_parameter_layout.addWidget(label, row, 0)
-            self.mask_parameter_layout.addWidget(editor, row, 1)
+            self.mask_parameter_layout.addWidget(label, layout_row, 0)
+            self.mask_parameter_layout.addWidget(editor, layout_row, 1)
+            layout_row += 1
 
     def _clear_mask_parameter_editor(self) -> None:
         while self.mask_parameter_layout.count():
@@ -2630,6 +3383,14 @@ def _dataset_can_load(dataset: DatasetEntry) -> bool:
         return False
     source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
     return bool(source and Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5"})
+
+
+def _dataset_can_rebin(dataset: DatasetEntry) -> bool:
+    return isinstance(dataset.data, (MDHistoData, PointData4D))
+
+
+def _dataset_can_save(dataset: DatasetEntry) -> bool:
+    return isinstance(dataset.data, MDHistoData) or dataset_rebin_enabled(dataset)
 
 
 def _dataset_axes_and_data_lines(data: Any) -> tuple[list[str], list[str]]:
@@ -3120,7 +3881,10 @@ def _parse_parameter_text(text: str) -> Any:
     try:
         return json.loads(stripped)
     except json.JSONDecodeError:
-        return stripped
+        try:
+            return ast.literal_eval(stripped)
+        except (SyntaxError, ValueError):
+            return stripped
 
 
 def main() -> int:
