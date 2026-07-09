@@ -6,16 +6,18 @@ import pytest
 
 import metallix
 import metallix.project_gui as project_gui
-from metallix.dataset import PointData4D
+from metallix.dataset import PointData4D, PointListData
 from metallix.mdhisto import MDHistoAxis, MDHistoData
 from metallix.project_gui import (
     MetallixProject,
     MetallixProjectExplorer,
+    available_data_types,
     create_mask,
     create_data_group,
     create_model_component,
     copy_dataset_to_group,
     copy_mask_to_dataset,
+    data_type_label,
     dataset_details_text,
     dataset_for_slice_viewer,
     dataset_rebin_config,
@@ -35,9 +37,15 @@ from metallix.project_gui import (
     forget_missing_recent_projects,
     save_dataset_file,
     save_project,
+    set_dataset_data_type,
     set_dataset_source,
 )
 from metallix.pipeline import DataGroup, DatasetEntry
+
+
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+MPMS_FILE = DATA_DIR / "MPMS" / "test_MPMS.dat"
+HB2A_FILE = DATA_DIR / "HB2A" / "test_powder_diffraction.dat"
 
 
 def test_project_helpers_name_import_and_round_trip(tmp_path):
@@ -747,7 +755,7 @@ def test_project_explorer_context_menu_actions_and_source_change(monkeypatch, tm
         "Enable",
         "Rename",
         "Delete",
-        "View in slice viewer",
+        "View in data viewer",
         "Show file location",
         "Change file source",
         "Add mask",
@@ -778,7 +786,7 @@ def test_project_explorer_context_menu_actions_and_source_change(monkeypatch, tm
         "Disable",
         "Rename",
         "Delete",
-        "View in slice viewer",
+        "View in data viewer",
     ]
     explorer.tree.setCurrentItem(mask_item)
     explorer.enabled_check.setChecked(False)
@@ -788,7 +796,7 @@ def test_project_explorer_context_menu_actions_and_source_change(monkeypatch, tm
         "Enable",
         "Rename",
         "Delete",
-        "View in slice viewer",
+        "View in data viewer",
     ]
 
     model_item = explorer.tree.topLevelItem(0).child(1).child(0)
@@ -1066,6 +1074,182 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     assert int(saved["axis_count"]) == 2
 
 
+def test_import_dataset_paths_dispatches_by_data_type_and_round_trips(tmp_path):
+    group = DataGroup("Datagroup1")
+
+    mpms = import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")[0]
+    assert mpms.data_type == "magnetization"
+    assert isinstance(mpms.data, PointListData)
+    assert mpms.metadata["importer"] == "mpms_dat"
+    assert mpms.data.coordinate_names == ["Temperature", "Magnetic Field"]
+
+    powder = import_dataset_paths(group, [HB2A_FILE], data_type="powder_elastic")[0]
+    assert isinstance(powder.data, PointListData)
+
+    nxs = import_dataset_paths(group, ["/fake/scan.nxs"], data_type="single_crystal_inelastic")[0]
+    assert nxs.data is None  # lazy MDHisto placeholder
+    assert nxs.data_type == "single_crystal_inelastic"
+
+    project = MetallixProject([group])
+    path = tmp_path / "proj.mtlx"
+    save_project(project, path)
+    reloaded = load_project(path)
+    types = [ds.data_type for ds in reloaded.data_groups[0].datasets]
+    assert types == ["magnetization", "powder_elastic", "single_crystal_inelastic"]
+    assert reloaded.data_groups[0].datasets[0].metadata["importer"] == "mpms_dat"
+
+
+def test_set_dataset_data_type_reloads_and_resets():
+    group = DataGroup("Datagroup1")
+    entry = import_dataset_paths(group, [HB2A_FILE], data_type="powder_elastic")[0]
+    assert isinstance(entry.data, PointListData)
+
+    # Switch to an MDHisto/nxs type: point data is dropped for lazy reload.
+    set_dataset_data_type(entry, "single_crystal_inelastic")
+    assert entry.data is None
+    assert entry.data_type == "single_crystal_inelastic"
+
+    # Switch back to a point-list type: importer reloads the columns.
+    set_dataset_data_type(entry, "powder_elastic")
+    assert isinstance(entry.data, PointListData)
+    assert entry.data.coordinate_names == ["2theta"]
+
+
+def test_project_explorer_data_type_dropdown_switches_type(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Datagroup1")
+    import_dataset_paths(group, [HB2A_FILE], data_type="powder_elastic")
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
+
+    combo = explorer.details_widget.findChild(QtWidgets.QComboBox, "dataset_data_type")
+    assert combo is not None
+    assert combo.currentData() == "powder_elastic"
+    labels = [label for _name, label in available_data_types()]
+    assert combo.count() == len(labels)
+
+    # Switch to an MDHisto/nxs type: data resets for lazy reload.
+    combo.setCurrentIndex(combo.findData("single_crystal_inelastic"))
+    assert group.datasets[0].data_type == "single_crystal_inelastic"
+    assert group.datasets[0].data is None
+
+
+def test_point_list_scale_and_susceptibility_transforms():
+    from metallix.project_gui import point_list_config, prepared_point_list_data
+
+    group = DataGroup("Datagroup1")
+    dataset = import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")[0]
+    raw = dataset.data
+    config = point_list_config(dataset)
+    config["scale"] = {"factor": 2.0, "channel": "Moment", "units": "emu/mol"}
+    config["susceptibility"] = {"enabled": True, "field": "Magnetic Field", "moment": "Moment"}
+
+    prepared = prepared_point_list_data(dataset)
+
+    # Scale multiplies value and error and relabels units.
+    np.testing.assert_allclose(
+        prepared.channel_values("Moment"), raw.channel_values("Moment") * 2.0
+    )
+    np.testing.assert_allclose(
+        prepared.channel_errors("Moment"), raw.channel_errors("Moment") * 2.0
+    )
+    assert prepared.unit(prepared.channel("Moment")["value"]) == "emu/mol"
+
+    # Susceptibility = scaled moment / field.
+    assert "Susceptibility" in prepared.channel_labels
+    expected = raw.channel_values("Moment") * 2.0 / raw.column("Magnetic Field")
+    np.testing.assert_allclose(prepared.channel_values("Susceptibility"), expected)
+    assert prepared.unit(prepared.channel("Susceptibility")["value"]) == "emu/mol/Oe"
+
+
+def test_powder_wavelength_to_q_and_point_rebin():
+    from metallix.project_gui import (
+        dataset_for_slice_viewer,
+        dataset_rebin_config,
+        point_list_config,
+        prepared_point_list_data,
+    )
+
+    group = DataGroup("Datagroup1")
+    dataset = import_dataset_paths(group, [HB2A_FILE], data_type="powder_elastic")[0]
+    config = point_list_config(dataset)
+    config["wavelength"] = {"value": 2.41, "two_theta": "2theta"}
+
+    prepared = prepared_point_list_data(dataset)
+    assert "q" in prepared.coordinate_names
+    two_theta = dataset.data.column("2theta")
+    expected_q = 4.0 * np.pi * np.sin(np.deg2rad(two_theta) / 2.0) / 2.41
+    np.testing.assert_allclose(prepared.column("q"), expected_q)
+
+    rebin = dataset_rebin_config(dataset)
+    assert rebin["axes"][0]["name"] == "q"
+    rebin["enabled"] = True
+    rebin["axes"][0]["num_bins"] = 100
+    viewed = dataset_for_slice_viewer(dataset)
+    assert isinstance(viewed, PointListData)
+    assert viewed.size < dataset.data.size
+    assert "q" in viewed.coordinate_names
+
+
+def test_point_list_variables_panel_edits_config(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    from metallix.project_gui import point_list_config, prepared_point_list_data
+
+    group = DataGroup("Datagroup1")
+    import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
+    dataset = group.datasets[0]
+
+    panel = next(
+        box
+        for box in explorer.details_widget.findChildren(QtWidgets.QGroupBox)
+        if box.title() == "Variables & transforms"
+    )
+    assert panel is not None
+    factor_spin = explorer.details_widget.findChild(QtWidgets.QDoubleSpinBox, "point_list_scale_factor")
+    factor_spin.setValue(4.0)
+    susc_check = explorer.details_widget.findChild(QtWidgets.QCheckBox, "point_list_susceptibility_enabled")
+    susc_check.setChecked(True)
+
+    config = point_list_config(dataset)
+    assert config["scale"]["factor"] == 4.0
+    assert config["susceptibility"]["enabled"] is True
+    assert "Susceptibility" in prepared_point_list_data(dataset).channel_labels
+
+
+def test_point_list_dataset_opens_in_data_viewer_as_1d(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    group = DataGroup("Datagroup1")
+    import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")
+    datasets, names = project_gui.slice_viewer_datasets(group)
+    assert isinstance(datasets[0], PointListData)
+
+    viewer = QtMDHistoSliceViewer(datasets, dataset_names=names)
+    viewer.show()
+    viewer.update_plot(preserve_view=False)
+
+    assert viewer._is_effective_1d()
+    assert viewer.model.is_point_list
+    # x-axis selector offers coordinates; channel combo offers channels.
+    x_items = [viewer.x_combo.itemText(i) for i in range(viewer.x_combo.count())]
+    assert x_items == ["Temperature", "Magnetic Field"]
+    assert "Moment" in [viewer.channel_combo.itemText(i) for i in range(viewer.channel_combo.count())]
+
+    viewer._set_channel("Moment")
+    viewer._set_display_dim("x", x_items.index("Magnetic Field"))
+    view = viewer.model.slice_arrays()
+    assert view["signal"].size == datasets[0].size
+    assert viewer.model._channel_label() == "Moment (emu)"
+    assert viewer.model._axis_label(0) == "Magnetic Field (Oe)"
+
+
 def test_energy_q_range_mask_default_min_q_is_zero():
     parameters = default_mask_parameters("energy_q_range")
     assert parameters["q_modulus"] == [0.0, 1.0e99]
@@ -1160,7 +1344,7 @@ def test_add_mask_and_slice_viewer_from_masks_node(monkeypatch):
 
     action_names = explorer.context_menu_action_names(masks_item)
     assert "Add mask" in action_names
-    assert "View in slice viewer" in action_names
+    assert "View in data viewer" in action_names
     assert not explorer.add_mask_button.isHidden()
     assert not explorer.view_slice_button.isHidden()
 

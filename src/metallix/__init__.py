@@ -8,7 +8,17 @@ form-factor, polarization, scale, and background terms.
 
 from .axes import AxisRole, infer_axis_role
 from .cross_section import KB_MEV_PER_K, bose_denominator, intensity_from_chipp
-from .dataset import PointData4D, from_arrays
+from .dataset import PointData4D, PointListData, from_arrays
+from .importers import (
+    IMPORTERS,
+    ImporterSpec,
+    import_hb2a_powder,
+    import_mpms_dat,
+    import_with,
+    importers_for_data_type,
+    read_delimited_text,
+    split_name_and_unit,
+)
 from .fitting import (
     FitDataset,
     FitProblem,
@@ -78,11 +88,14 @@ from .pipeline import (
     ModelComponentSpec,
 )
 from .project_gui import (
+    DATA_TYPE_DEFINITIONS,
     MASK_TYPE_DEFINITIONS,
     MODEL_TYPE_DEFINITIONS,
     MetallixProject,
+    available_data_types,
     available_mask_types,
     available_model_types,
+    data_type_label,
     create_data_group,
     create_placeholder_fit_result,
     create_rebinned_dataset,
@@ -115,6 +128,7 @@ from .project_gui import (
     remember_recent_project,
     save_project,
     save_dataset_file,
+    set_dataset_data_type,
     set_dataset_source,
     slice_viewer_datasets,
     copy_mask_to_dataset,
@@ -169,6 +183,19 @@ __all__ = [
     "OptimizationConfig",
     "ParameterSpec",
     "PointData4D",
+    "PointListData",
+    "DATA_TYPE_DEFINITIONS",
+    "ImporterSpec",
+    "IMPORTERS",
+    "available_data_types",
+    "data_type_label",
+    "import_hb2a_powder",
+    "import_mpms_dat",
+    "import_with",
+    "importers_for_data_type",
+    "read_delimited_text",
+    "split_name_and_unit",
+    "set_dataset_data_type",
     "QtMDHistoSliceViewer",
     "ResolutionSpec",
     "SamplerConfig",

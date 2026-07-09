@@ -80,6 +80,7 @@ class DatasetEntry:
     name: str
     data: Any
     kind: str = ""
+    data_type: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
     parameters: dict[str, Any] = field(default_factory=dict)
     masks: list[MaskSpec] = field(default_factory=list)

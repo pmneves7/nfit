@@ -3,8 +3,24 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import ArrayLike
 
-from .dataset import PointData4D
+from .dataset import PointData4D, PointListData
 from .mdhisto import MDHistoData
+
+
+def _edges_from_centers(centers: np.ndarray) -> np.ndarray:
+    """Return bin edges bracketing sorted 1D bin centers (for pcolormesh-free plots)."""
+
+    centers = np.asarray(centers, dtype=float)
+    if centers.size == 0:
+        return np.array([0.0, 1.0], dtype=float)
+    if centers.size == 1:
+        return np.array([centers[0] - 0.5, centers[0] + 0.5], dtype=float)
+    deltas = np.diff(centers)
+    edges = np.empty(centers.size + 1, dtype=float)
+    edges[1:-1] = 0.5 * (centers[:-1] + centers[1:])
+    edges[0] = centers[0] - 0.5 * deltas[0]
+    edges[-1] = centers[-1] + 0.5 * deltas[-1]
+    return edges
 
 
 def plot_energy_cut(
@@ -704,13 +720,27 @@ class MDHistoSliceViewer:
         integrate: bool = False,
         masked: bool = True,
     ) -> None:
-        if data.signal.ndim < 2:
-            raise ValueError("slice viewer requires data with at least two dimensions")
         self.data = data
-        self.x_dim = self._resolve_dim(x_dim)
-        self.y_dim = self._resolve_dim(y_dim)
-        if self.x_dim == self.y_dim:
-            raise ValueError("x_dim and y_dim must be different")
+        self.is_point_list = isinstance(data, PointListData)
+        if self.is_point_list:
+            coordinates = list(data.coordinate_names) or list(data.column_names)
+            channels = list(data.channel_labels) or [
+                name for name in data.column_names if name not in coordinates
+            ] or list(data.column_names)
+            self.point_coordinates = coordinates
+            self.point_channels = channels
+            self.x_key = coordinates[0]
+            self.x_dim = 0
+            self.y_dim = 0
+            self.channel = channel if channel in channels else channels[0]
+        else:
+            if data.signal.ndim < 2:
+                raise ValueError("slice viewer requires data with at least two dimensions")
+            self.x_dim = self._resolve_dim(x_dim)
+            self.y_dim = self._resolve_dim(y_dim)
+            if self.x_dim == self.y_dim:
+                raise ValueError("x_dim and y_dim must be different")
+            self.channel = self._resolve_channel(channel)
         self.cmap = str(cmap)
         self.cmap_reversed = False
         if self.cmap.endswith("_r"):
@@ -718,7 +748,6 @@ class MDHistoSliceViewer:
             self.cmap_reversed = True
         if self.cmap == "gray":
             self.cmap = "grey"
-        self.channel = self._resolve_channel(channel)
         self.color_scale = color_scale
         self.auto_limits = auto_limits
         self.power_gamma = 0.5
@@ -840,6 +869,8 @@ class MDHistoSliceViewer:
     def slice_arrays(self) -> dict[str, np.ndarray]:
         """Return the current 2D slice and associated axes/errors/events."""
 
+        if getattr(self, "is_point_list", False):
+            return self._point_slice_arrays()
         selections = self._normalized_selections()
         signal, variance, events, mask = self._reduce_arrays(selections)
 
@@ -988,6 +1019,8 @@ class MDHistoSliceViewer:
         return selections
 
     def _default_selections(self) -> dict[int, tuple[float, float]]:
+        if getattr(self, "is_point_list", False):
+            return {}
         selections = {}
         for dim, axis in enumerate(self.data.axes):
             centers = axis.centers
@@ -1010,6 +1043,9 @@ class MDHistoSliceViewer:
         return edges
 
     def _axis_label(self, dim: int) -> str:
+        if getattr(self, "is_point_list", False):
+            unit = self.data.unit(self.x_key)
+            return f"{self.x_key} ({unit})" if unit else self.x_key
         axis = self.data.axes[dim]
         return f"{axis.name} ({axis.units})" if axis.units else axis.name
 
@@ -1020,12 +1056,47 @@ class MDHistoSliceViewer:
         return normalized
 
     def _channel_label(self) -> str:
+        if getattr(self, "is_point_list", False):
+            unit = self._point_channel_unit()
+            return f"{self.channel} ({unit})" if unit else self.channel
         return self.CHANNEL_LABELS.get(self.channel, self.channel)
 
     def _display_values(self, view: dict[str, np.ndarray]) -> np.ndarray:
+        if getattr(self, "is_point_list", False):
+            return np.asarray(view["signal"], dtype=float)
         if self.channel in {"mask", "file_mask", "metallix_mask"}:
             return np.asarray(view[self.channel], dtype=float)
         return np.asarray(view[self.channel], dtype=float)
+
+    def _point_channel_unit(self) -> str:
+        if self.channel in self.data.channel_labels:
+            return self.data.unit(self.data.channel(self.channel)["value"])
+        return self.data.unit(self.channel)
+
+    def _point_slice_arrays(self) -> dict[str, np.ndarray]:
+        x = np.asarray(self.data.column(self.x_key), dtype=float)
+        if self.channel in self.data.channel_labels:
+            y = np.asarray(self.data.channel_values(self.channel), dtype=float)
+            errors = self.data.channel_errors(self.channel)
+        else:
+            y = np.asarray(self.data.column(self.channel), dtype=float)
+            errors = None
+        order = np.argsort(x, kind="stable")
+        x = x[order]
+        y = y[order]
+        e = np.full(x.shape, np.nan) if errors is None else np.asarray(errors, dtype=float)[order]
+        return {
+            "x_edges": _edges_from_centers(x),
+            "y_edges": np.array([0.0, 1.0], dtype=float),
+            "x_centers": x,
+            "y_centers": np.array([], dtype=float),
+            "signal": y,
+            "errors": e,
+            "num_events": np.ones_like(x),
+            "mask": ~np.isfinite(y),
+            "file_mask": np.zeros_like(x, dtype=bool),
+            "metallix_mask": np.zeros_like(x, dtype=bool),
+        }
 
     def _resolve_dim(self, dim: int | str) -> int:
         if isinstance(dim, int):

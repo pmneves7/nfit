@@ -14,8 +14,9 @@ from typing import Any
 
 import numpy as np
 
-from .dataset import PointData4D
+from .dataset import PointData4D, PointListData
 from .fitting import rebin_point_data
+from .importers import IMPORTERS, import_with, importers_for_data_type
 from .mdhisto import MDHistoAxis, MDHistoData, load_mantid_mdhisto_nxs
 from .pipeline import DataGroup, DatasetEntry, FitTimelineEntry, MaskSpec, ModelComponentSpec
 from .rebin import rebin_nd
@@ -24,8 +25,44 @@ QtMDHistoSliceViewer = None
 RECENT_PROJECT_LIMIT = 10
 RECENT_PROJECTS_KEY = "recent_projects"
 DATASET_REBIN_KEY = "rebin"
+DATASET_POINT_LIST_KEY = "point_list"
+SUSCEPTIBILITY_CHANNEL_LABEL = "Susceptibility"
+Q_COORDINATE_NAME = "q"
 COORDINATE_RANGE_AXIS_PREFIX = "axis_"
 COORDINATE_RANGE_PARAMETER_NAMES = ("H", "K", "L", "E")
+
+
+# Data types the GUI can attach to a dataset. ``container`` is "mdhisto" for
+# gridded neutron data loaded from Mantid ``.nxs`` (the existing path) or
+# "point_list" for tabular point data loaded by a registered importer. Types
+# without importers are selectable but fall back to the ``.nxs``/MDHisto loader.
+DATA_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
+    "single_crystal_inelastic": {
+        "label": "Single crystal inelastic",
+        "container": "mdhisto",
+    },
+    "powder_inelastic": {
+        "label": "Powder inelastic",
+        "container": "mdhisto",
+    },
+    "single_crystal_elastic": {
+        "label": "Single crystal elastic",
+        "container": "mdhisto",
+    },
+    "powder_elastic": {
+        "label": "Powder elastic",
+        "container": "point_list",
+        "wavelength": True,
+    },
+    "magnetization": {
+        "label": "Magnetization",
+        "container": "point_list",
+        "scale": True,
+        "susceptibility": True,
+    },
+}
+
+DEFAULT_DATA_TYPE = "single_crystal_inelastic"
 
 
 MASK_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
@@ -285,13 +322,50 @@ def create_data_group(project: MetallixProject, name: str | None = None) -> Data
     return group
 
 
-def import_dataset_paths(group: DataGroup, paths: list[str | Path]) -> list[DatasetEntry]:
-    """Add placeholder dataset entries for one or more source files."""
+def available_data_types() -> list[tuple[str, str]]:
+    """Return ``(type, label)`` pairs for every registered data type."""
+
+    return [(name, definition["label"]) for name, definition in DATA_TYPE_DEFINITIONS.items()]
+
+
+def data_type_label(data_type: str) -> str:
+    """Return the human-readable label for a data type."""
+
+    definition = DATA_TYPE_DEFINITIONS.get(data_type)
+    return definition["label"] if definition else (data_type or "-")
+
+
+def data_type_container(data_type: str) -> str:
+    """Return the container kind ("mdhisto" or "point_list") for a data type."""
+
+    definition = DATA_TYPE_DEFINITIONS.get(data_type, {})
+    return str(definition.get("container", "mdhisto"))
+
+
+def default_importer_for_data_type(data_type: str) -> str | None:
+    """Return the default importer name for a data type, or ``None``."""
+
+    specs = importers_for_data_type(data_type)
+    return specs[0].name if specs else None
+
+
+def import_dataset_paths(
+    group: DataGroup,
+    paths: list[str | Path],
+    *,
+    data_type: str | None = None,
+    importer_name: str | None = None,
+) -> list[DatasetEntry]:
+    """Add dataset entries for one or more source files.
+
+    Point-list types are loaded eagerly with their importer; MDHisto/``.nxs``
+    types stay as lazy placeholders loaded on first view.
+    """
 
     entries: list[DatasetEntry] = []
     for path in paths:
         source = Path(path)
-        entry = dataset_entry_from_path(source)
+        entry = dataset_entry_from_path(source, data_type=data_type, importer_name=importer_name)
         entry.name = _unique_dataset_name(entry.name, group.dataset_names)
         group.add_dataset(entry)
         entries.append(entry)
@@ -318,6 +392,206 @@ def set_dataset_source(dataset: DatasetEntry, path: str | Path) -> None:
     dataset.metadata["import_status"] = "pending"
     dataset.kind = source.suffix.lstrip(".").lower()
     dataset.data = None
+    if data_type_container(dataset.data_type) == "point_list":
+        _load_point_list_dataset(dataset)
+
+
+def set_dataset_data_type(
+    dataset: DatasetEntry,
+    data_type: str,
+    *,
+    importer_name: str | None = None,
+) -> None:
+    """Change a dataset's data type and reload/reset its data accordingly."""
+
+    if data_type not in DATA_TYPE_DEFINITIONS:
+        raise ValueError(f"unknown data type {data_type!r}")
+    dataset.data_type = data_type
+    dataset.metadata.pop("import_error", None)
+    if data_type_container(data_type) == "point_list":
+        chosen = importer_name or default_importer_for_data_type(data_type)
+        if chosen is not None:
+            dataset.metadata["importer"] = chosen
+        dataset.data = None
+        if dataset.metadata.get("source_file"):
+            # Reload with the new type's importer, but a mismatched importer must
+            # not crash the type switch; record the error for the details panel.
+            try:
+                _load_point_list_dataset(dataset)
+            except Exception as exc:
+                dataset.data = None
+                dataset.metadata["import_status"] = "error"
+                dataset.metadata["import_error"] = str(exc)
+    else:
+        dataset.metadata.pop("importer", None)
+        # Fall back to the lazy MDHisto/.nxs loader on next view.
+        if not isinstance(dataset.data, MDHistoData):
+            dataset.data = None
+            dataset.metadata["import_status"] = "pending"
+
+
+def _load_point_list_dataset(dataset: DatasetEntry) -> PointListData | None:
+    """Load a point-list dataset from its source file using a registered importer."""
+
+    source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
+    if not source:
+        return None
+    importer_name = dataset.metadata.get("importer") or default_importer_for_data_type(dataset.data_type)
+    if importer_name is None:
+        return None
+    data = import_with(importer_name, source)
+    dataset.data = data
+    dataset.metadata["importer"] = importer_name
+    dataset.metadata["import_status"] = "loaded"
+    if not dataset.kind:
+        dataset.kind = Path(source).suffix.lstrip(".").lower()
+    return data
+
+
+def point_list_config(dataset: DatasetEntry) -> dict[str, Any]:
+    """Return the point-list transform configuration, creating defaults if needed."""
+
+    config = dataset.parameters.get(DATASET_POINT_LIST_KEY)
+    if not isinstance(config, dict):
+        config = {}
+        dataset.parameters[DATASET_POINT_LIST_KEY] = config
+    data = dataset.data if isinstance(dataset.data, PointListData) else None
+    definition = DATA_TYPE_DEFINITIONS.get(dataset.data_type, {})
+
+    if data is not None:
+        config.setdefault("coordinate_names", list(data.coordinate_names))
+        config.setdefault("channels", copy.deepcopy(data.channels))
+    else:
+        config.setdefault("coordinate_names", [])
+        config.setdefault("channels", [])
+
+    if definition.get("scale"):
+        scale = config.get("scale")
+        if not isinstance(scale, dict):
+            scale = {}
+            config["scale"] = scale
+        scale.setdefault("factor", 1.0)
+        scale.setdefault("units", "")
+        default_channel = config["channels"][0]["label"] if config["channels"] else ""
+        scale.setdefault("channel", default_channel)
+    if definition.get("susceptibility"):
+        susc = config.get("susceptibility")
+        if not isinstance(susc, dict):
+            susc = {}
+            config["susceptibility"] = susc
+        susc.setdefault("enabled", False)
+        field_default = next(
+            (name for name in config["coordinate_names"] if "field" in name.lower()),
+            (config["coordinate_names"][0] if config["coordinate_names"] else ""),
+        )
+        susc.setdefault("field", field_default)
+        moment_default = config["channels"][0]["label"] if config["channels"] else ""
+        susc.setdefault("moment", moment_default)
+    if definition.get("wavelength"):
+        wavelength = config.get("wavelength")
+        if not isinstance(wavelength, dict):
+            wavelength = {}
+            config["wavelength"] = wavelength
+        wavelength.setdefault("value", 0.0)
+        two_theta_default = next(
+            (name for name in config["coordinate_names"] if "theta" in name.lower()),
+            (config["coordinate_names"][0] if config["coordinate_names"] else ""),
+        )
+        wavelength.setdefault("two_theta", two_theta_default)
+    return config
+
+
+def prepared_point_list_data(dataset: DatasetEntry) -> PointListData:
+    """Return the point-list data after applying role overrides and transforms."""
+
+    if not isinstance(dataset.data, PointListData):
+        raise TypeError("dataset does not contain PointListData")
+    config = point_list_config(dataset)
+    base = dataset.data
+    columns = {name: np.array(values, dtype=float) for name, values in base.columns.items()}
+    units = dict(base.units)
+
+    coordinate_names = [name for name in config.get("coordinate_names", []) if name in columns]
+    if not coordinate_names:
+        coordinate_names = list(base.coordinate_names)
+    channels = [
+        dict(channel)
+        for channel in config.get("channels", [])
+        if channel.get("value") in columns
+    ]
+    if not channels:
+        channels = [dict(channel) for channel in base.channels]
+
+    definition = DATA_TYPE_DEFINITIONS.get(dataset.data_type, {})
+
+    # Powder wavelength -> q coordinate.
+    if definition.get("wavelength"):
+        wavelength = config.get("wavelength", {})
+        value = float(wavelength.get("value", 0.0) or 0.0)
+        two_theta = wavelength.get("two_theta")
+        if value > 0.0 and two_theta in columns:
+            theta = np.deg2rad(columns[two_theta]) / 2.0
+            columns[Q_COORDINATE_NAME] = 4.0 * np.pi * np.sin(theta) / value
+            units[Q_COORDINATE_NAME] = "Angstrom^-1"
+            if Q_COORDINATE_NAME not in coordinate_names:
+                coordinate_names = [Q_COORDINATE_NAME, *coordinate_names]
+
+    # Magnetization scale factor + unit relabel applied to value and error.
+    if definition.get("scale"):
+        scale = config.get("scale", {})
+        factor = float(scale.get("factor", 1.0) or 1.0)
+        target = scale.get("channel")
+        new_units = str(scale.get("units", "") or "")
+        if factor != 1.0 or new_units:
+            for channel in channels:
+                if channel.get("label") != target:
+                    continue
+                value_name = channel.get("value")
+                error_name = channel.get("error")
+                if value_name in columns:
+                    columns[value_name] = columns[value_name] * factor
+                    if new_units:
+                        units[value_name] = new_units
+                if error_name in columns:
+                    columns[error_name] = columns[error_name] * abs(factor)
+                    if new_units:
+                        units[error_name] = new_units
+
+    # Magnetization susceptibility: moment / field (value and error divided by field).
+    if definition.get("susceptibility"):
+        susc = config.get("susceptibility", {})
+        if susc.get("enabled"):
+            field_name = susc.get("field")
+            moment_label = susc.get("moment")
+            moment_channel = next((c for c in channels if c.get("label") == moment_label), None)
+            if moment_channel is not None and field_name in columns:
+                field = columns[field_name]
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    susc_value = columns[moment_channel["value"]] / field
+                value_col = f"{SUSCEPTIBILITY_CHANNEL_LABEL} value"
+                columns[value_col] = susc_value
+                moment_unit = units.get(moment_channel["value"], "")
+                field_unit = units.get(field_name, "")
+                susc_unit = f"{moment_unit}/{field_unit}" if moment_unit and field_unit else ""
+                units[value_col] = susc_unit
+                error_name = moment_channel.get("error")
+                error_col = None
+                if error_name in columns:
+                    error_col = f"{SUSCEPTIBILITY_CHANNEL_LABEL} error"
+                    with np.errstate(divide="ignore", invalid="ignore"):
+                        columns[error_col] = columns[error_name] / np.abs(field)
+                    units[error_col] = susc_unit
+                channels.append(
+                    {"label": SUSCEPTIBILITY_CHANNEL_LABEL, "value": value_col, "error": error_col}
+                )
+
+    return PointListData(
+        columns=columns,
+        units=units,
+        coordinate_names=coordinate_names,
+        channels=channels,
+        metadata=dict(base.metadata),
+    )
 
 
 def create_mask(dataset: DatasetEntry, name: str | None = None, *, type: str = "coordinate_range") -> MaskSpec:
@@ -787,6 +1061,7 @@ def dataset_detail_sections(
             [
                 f"Name: {dataset.name}",
                 "Dataset",
+                f"Data type: {data_type_label(dataset.data_type)}",
                 f"Kind: {dataset.kind or '-'}",
                 f"Enabled for fitting: {dataset.enabled}",
                 f"Fit weight: {_format_number(dataset.fit_weight)}",
@@ -815,9 +1090,17 @@ def slice_viewer_datasets(
     return data, names
 
 
-def dataset_for_slice_viewer(dataset: DatasetEntry) -> MDHistoData | None:
-    """Return a viewer-ready MDHisto dataset, loading from source metadata if needed."""
+def dataset_for_slice_viewer(dataset: DatasetEntry) -> MDHistoData | PointListData | None:
+    """Return a viewer-ready dataset, loading from source metadata if needed."""
 
+    if data_type_container(dataset.data_type) == "point_list" or isinstance(dataset.data, PointListData):
+        if dataset.data is None:
+            _load_point_list_dataset(dataset)
+        if not isinstance(dataset.data, PointListData):
+            return None
+        if dataset_rebin_enabled(dataset):
+            return rebinned_dataset_data(dataset)
+        return prepared_point_list_data(dataset)
     if isinstance(dataset.data, MDHistoData):
         data = rebinned_dataset_data(dataset) if dataset_rebin_enabled(dataset) else dataset.data
         return _mdhisto_with_metallix_masks(dataset, data=data)
@@ -846,7 +1129,11 @@ def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
     config.setdefault("fractional", True)
     config["normalize"] = True
     axes = config.get("axes")
-    default_axes = _default_rebin_axes(dataset.data)
+    # Point-list rebin binds over the transformed coordinates (e.g. a derived q).
+    if isinstance(dataset.data, PointListData):
+        default_axes = _default_rebin_axes(prepared_point_list_data(dataset))
+    else:
+        default_axes = _default_rebin_axes(dataset.data)
     if not isinstance(axes, list) or len(axes) != len(default_axes):
         config["axes"] = default_axes
     else:
@@ -872,11 +1159,34 @@ def rebinned_dataset_data(dataset: DatasetEntry) -> Any:
     """Return a rebinned copy of a supported dataset according to its configuration."""
 
     config = dataset_rebin_config(dataset)
+    if isinstance(dataset.data, PointListData):
+        return _rebin_point_list_data(dataset, config)
     if isinstance(dataset.data, PointData4D):
         return _rebin_point_data(dataset.data, config)
     if not isinstance(dataset.data, MDHistoData):
         return dataset.data
     return _rebin_mdhisto_data(dataset.data, config)
+
+
+def _rebin_point_list_data(dataset: DatasetEntry, config: dict[str, Any]) -> PointListData:
+    """Rebin transformed point-list data over its coordinates into a histogram."""
+
+    prepared = prepared_point_list_data(dataset)
+    axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
+    coordinate_names = [axis.get("name") for axis in axes_config if axis.get("name") in prepared.columns]
+    if not coordinate_names:
+        coordinate_names = list(prepared.coordinate_names)
+    lower = [axis["lower"] for axis in axes_config[: len(coordinate_names)]] or None
+    upper = [axis["upper"] for axis in axes_config[: len(coordinate_names)]] or None
+    num_bins = [axis["num_bins"] for axis in axes_config[: len(coordinate_names)]] or None
+    return prepared.rebin_to_histogram(
+        coordinate_names,
+        lower=lower,
+        upper=upper,
+        num_bins=num_bins,
+        fractional=bool(config.get("fractional", False)),
+        normalize=True,
+    )
 
 
 def create_rebinned_dataset(
@@ -910,8 +1220,11 @@ def save_dataset_file(dataset: DatasetEntry, path: str | Path, *, use_view: bool
     """Save a supported dataset to a script-readable ``.npz`` file."""
 
     data = dataset_for_slice_viewer(dataset) if use_view else dataset.data
+    if isinstance(data, PointListData):
+        _save_point_list_file(data, path)
+        return
     if not isinstance(data, MDHistoData):
-        raise TypeError("dataset saving currently supports MDHistoData-compatible datasets")
+        raise TypeError("dataset saving currently supports MDHistoData or PointListData datasets")
     payload: dict[str, Any] = {
         "signal": data.signal,
         "errors": data.errors,
@@ -931,6 +1244,21 @@ def save_dataset_file(dataset: DatasetEntry, path: str | Path, *, use_view: bool
     np.savez_compressed(path, **payload)
 
 
+def _save_point_list_file(data: PointListData, path: str | Path) -> None:
+    """Save point-list columns and roles to a script-readable ``.npz`` file."""
+
+    payload: dict[str, Any] = {
+        "column_names_json": json.dumps(list(data.column_names)),
+        "coordinate_names_json": json.dumps(list(data.coordinate_names)),
+        "channels_json": json.dumps(_json_safe_value(data.channels)),
+        "units_json": json.dumps(_json_safe_value(data.units)),
+        "metadata_json": json.dumps(_json_safe_value(data.metadata), sort_keys=True),
+    }
+    for index, name in enumerate(data.column_names):
+        payload[f"column_{index}"] = np.asarray(data.column(name), dtype=float)
+    np.savez_compressed(path, **payload)
+
+
 def _json_safe_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(key): _json_safe_value(item) for key, item in value.items()}
@@ -946,6 +1274,27 @@ def _json_safe_value(value: Any) -> Any:
 
 
 def _default_rebin_axes(data: Any) -> list[dict[str, Any]]:
+    if isinstance(data, PointListData):
+        axes = []
+        coordinate_names = list(data.coordinate_names) or list(data.column_names)[:1]
+        for name in coordinate_names:
+            values = np.asarray(data.column(name), dtype=float)
+            finite = values[np.isfinite(values)]
+            lower = float(np.min(finite)) if finite.size else 0.0
+            upper = float(np.max(finite)) if finite.size else 1.0
+            num_bins = max(int(np.unique(finite).size), 1) if finite.size else 1
+            num_bins = min(num_bins, 200)
+            axes.append(
+                {
+                    "name": name,
+                    "units": data.unit(name),
+                    "lower": lower,
+                    "upper": upper,
+                    "num_bins": num_bins,
+                    "step_size": _step_size_from_bounds(lower, upper, num_bins),
+                }
+            )
+        return axes
     if isinstance(data, MDHistoData):
         axes: list[dict[str, Any]] = []
         ndim = len(data.axes)
@@ -1648,16 +1997,33 @@ def _timestamp_now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
-def dataset_entry_from_path(path: str | Path) -> DatasetEntry:
-    """Create a placeholder dataset entry for a file selected in the GUI."""
+def dataset_entry_from_path(
+    path: str | Path,
+    *,
+    data_type: str | None = None,
+    importer_name: str | None = None,
+) -> DatasetEntry:
+    """Create a dataset entry for a file selected in the GUI.
+
+    Point-list types are loaded immediately; MDHisto/``.nxs`` types are created
+    as lazy placeholders and loaded on first view.
+    """
 
     source = Path(path)
-    return DatasetEntry(
+    resolved_type = data_type or DEFAULT_DATA_TYPE
+    entry = DatasetEntry(
         name=_unique_dataset_name(source.stem or source.name, []),
         data=None,
         kind=source.suffix.lstrip(".").lower(),
+        data_type=resolved_type,
         metadata={"source_file": str(source), "import_status": "pending"},
     )
+    if data_type_container(resolved_type) == "point_list":
+        chosen = importer_name or default_importer_for_data_type(resolved_type)
+        if chosen is not None:
+            entry.metadata["importer"] = chosen
+        _load_point_list_dataset(entry)
+    return entry
 
 
 def save_project(project: MetallixProject, path: str | Path) -> None:
@@ -1789,8 +2155,27 @@ class MetallixProjectExplorer:
         self._refresh_tree(select_group=group, edit_group=True)
         return group
 
-    def import_dataset_paths(self, group: DataGroup, paths: list[str | Path]) -> list[DatasetEntry]:
-        entries = import_dataset_paths(group, paths)
+    def import_dataset_paths(
+        self,
+        group: DataGroup,
+        paths: list[str | Path],
+        *,
+        data_type: str | None = None,
+        importer_name: str | None = None,
+    ) -> list[DatasetEntry]:
+        from PySide6 import QtWidgets
+
+        try:
+            entries = import_dataset_paths(
+                group, paths, data_type=data_type, importer_name=importer_name
+            )
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Import datasets",
+                f"Could not import datasets:\n{exc}",
+            )
+            return []
         if entries:
             self._record_data_group_state_change(group)
             self._mark_dirty()
@@ -1954,7 +2339,47 @@ class MetallixProjectExplorer:
             "",
             "Data files (*);;All files (*)",
         )
-        self.import_dataset_paths(group, paths)
+        if not paths:
+            return
+        choice = self._prompt_import_data_type()
+        if choice is None:
+            return
+        data_type, importer_name = choice
+        self.import_dataset_paths(group, paths, data_type=data_type, importer_name=importer_name)
+
+    def _prompt_import_data_type(self) -> tuple[str, str | None] | None:
+        from PySide6 import QtWidgets
+
+        types = available_data_types()
+        labels = [label for _name, label in types]
+        default_index = next((i for i, (name, _label) in enumerate(types) if name == DEFAULT_DATA_TYPE), 0)
+        label, accepted = QtWidgets.QInputDialog.getItem(
+            self.window,
+            "Data type",
+            "What type of data is this?",
+            labels,
+            default_index,
+            editable=False,
+        )
+        if not accepted:
+            return None
+        data_type = types[labels.index(label)][0]
+        importer_name = default_importer_for_data_type(data_type)
+        importer_specs = importers_for_data_type(data_type)
+        if len(importer_specs) > 1:
+            importer_labels = [spec.label for spec in importer_specs]
+            picked, ok = QtWidgets.QInputDialog.getItem(
+                self.window,
+                "Importer",
+                "Which importer should read this file?",
+                importer_labels,
+                0,
+                editable=False,
+            )
+            if not ok:
+                return None
+            importer_name = importer_specs[importer_labels.index(picked)].name
+        return data_type, importer_name
 
     def add_mask_to_selection(self) -> MaskSpec | None:
         group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
@@ -2060,8 +2485,8 @@ class MetallixProjectExplorer:
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
                 self.window,
-                "Slice viewer",
-                f"Could not load datasets for the slice viewer:\n{exc}",
+                "Data viewer",
+                f"Could not load datasets for the data viewer:\n{exc}",
             )
             return None
         self._sync_details()
@@ -2352,7 +2777,7 @@ class MetallixProjectExplorer:
         actions_row = QtWidgets.QHBoxLayout()
         self.import_dataset_button = QtWidgets.QPushButton("Import dataset")
         self.add_model_button = QtWidgets.QPushButton("Add model")
-        self.view_slice_button = QtWidgets.QPushButton("View in slice viewer")
+        self.view_slice_button = QtWidgets.QPushButton("View in data viewer")
         self.load_dataset_button = QtWidgets.QPushButton("Load now")
         self.add_mask_button = QtWidgets.QPushButton("Add mask")
         self.save_dataset_button = QtWidgets.QPushButton("Save dataset")
@@ -2819,14 +3244,302 @@ class MetallixProjectExplorer:
         self.details_layout.addStretch(1)
 
     def _set_dataset_details(self, dataset: DatasetEntry, group: DataGroup | None) -> None:
+        # Point-list data is cheap to load; populate it lazily (e.g. after a
+        # project reload) so the details and rebin panels have real columns.
+        if dataset.data is None and data_type_container(dataset.data_type) == "point_list":
+            try:
+                _load_point_list_dataset(dataset)
+            except Exception:
+                pass
         self.details_label.setText(dataset_details_text(dataset, group=group))
         self._clear_details_panel()
         for title, lines in dataset_detail_sections(dataset, group=group):
             if title == "Axes":
                 self.details_layout.addWidget(self._dataset_axes_group_box(dataset, group, lines))
+            elif title == "Dataset":
+                self.details_layout.addWidget(self._dataset_type_group_box(dataset, group, lines))
             else:
                 self.details_layout.addWidget(self._details_group_box(title, lines))
+        if isinstance(dataset.data, PointListData):
+            self.details_layout.addWidget(self._dataset_point_list_group_box(dataset, group))
         self.details_layout.addStretch(1)
+
+    def _dataset_point_list_group_box(self, dataset: DatasetEntry, group: DataGroup | None) -> Any:
+        from PySide6 import QtWidgets
+
+        config = point_list_config(dataset)
+        data = dataset.data
+        columns = list(data.column_names)
+        definition = DATA_TYPE_DEFINITIONS.get(dataset.data_type, {})
+
+        group_box = QtWidgets.QGroupBox("Variables & transforms")
+        layout = QtWidgets.QVBoxLayout(group_box)
+        layout.setContentsMargins(10, 8, 10, 8)
+
+        # Independent coordinates (comma-separated column names).
+        coord_row = QtWidgets.QHBoxLayout()
+        coord_row.addWidget(QtWidgets.QLabel("Coordinates"))
+        coord_edit = QtWidgets.QLineEdit(", ".join(config.get("coordinate_names", [])))
+        coord_edit.setObjectName("point_list_coordinates")
+        coord_edit.setToolTip("Comma-separated column names to use as independent coordinates.")
+        coord_edit.editingFinished.connect(
+            lambda editor=coord_edit: self._set_point_list_coordinates(dataset, group, editor.text())
+        )
+        coord_row.addWidget(coord_edit, 1)
+        layout.addLayout(coord_row)
+
+        # Channels: value + error column per channel.
+        channels_box = QtWidgets.QGroupBox("Channels")
+        channels_layout = QtWidgets.QGridLayout(channels_box)
+        channels_layout.setContentsMargins(8, 6, 8, 6)
+        channels_layout.addWidget(_bold_label(QtWidgets, "Value"), 0, 0)
+        channels_layout.addWidget(_bold_label(QtWidgets, "Error"), 0, 1)
+        for row, channel in enumerate(config.get("channels", []), start=1):
+            value_combo = QtWidgets.QComboBox()
+            value_combo.addItems(columns)
+            value_combo.setCurrentText(str(channel.get("value", "")))
+            value_combo.currentTextChanged.connect(
+                lambda text, index=row - 1: self._set_point_list_channel(dataset, group, index, "value", text)
+            )
+            error_combo = QtWidgets.QComboBox()
+            error_combo.addItems(["(none)", *columns])
+            error_combo.setCurrentText(str(channel.get("error") or "(none)"))
+            error_combo.currentTextChanged.connect(
+                lambda text, index=row - 1: self._set_point_list_channel(dataset, group, index, "error", text)
+            )
+            channels_layout.addWidget(value_combo, row, 0)
+            channels_layout.addWidget(error_combo, row, 1)
+            remove_button = QtWidgets.QPushButton("Remove")
+            remove_button.clicked.connect(
+                lambda _checked=False, index=row - 1: self._remove_point_list_channel(dataset, group, index)
+            )
+            channels_layout.addWidget(remove_button, row, 2)
+        add_button = QtWidgets.QPushButton("Add channel")
+        add_button.clicked.connect(lambda: self._add_point_list_channel(dataset, group))
+        channels_layout.addWidget(add_button, len(config.get("channels", [])) + 1, 0)
+        layout.addWidget(channels_box)
+
+        if definition.get("scale"):
+            layout.addWidget(self._point_list_scale_box(dataset, group, config, columns))
+        if definition.get("susceptibility"):
+            layout.addWidget(self._point_list_susceptibility_box(dataset, group, config))
+        if definition.get("wavelength"):
+            layout.addWidget(self._point_list_wavelength_box(dataset, group, config))
+        return group_box
+
+    def _point_list_scale_box(self, dataset, group, config, columns) -> Any:
+        from PySide6 import QtWidgets
+
+        scale = config["scale"]
+        box = QtWidgets.QGroupBox("Scale && units")
+        grid = QtWidgets.QGridLayout(box)
+        grid.setContentsMargins(8, 6, 8, 6)
+        grid.addWidget(QtWidgets.QLabel("Channel"), 0, 0)
+        channel_combo = QtWidgets.QComboBox()
+        channel_combo.addItems([str(c["label"]) for c in config.get("channels", [])])
+        channel_combo.setCurrentText(str(scale.get("channel", "")))
+        channel_combo.currentTextChanged.connect(
+            lambda text: self._set_point_list_scale(dataset, group, "channel", text)
+        )
+        grid.addWidget(channel_combo, 0, 1)
+        grid.addWidget(QtWidgets.QLabel("Factor"), 1, 0)
+        factor_spin = QtWidgets.QDoubleSpinBox()
+        factor_spin.setDecimals(8)
+        factor_spin.setRange(-1.0e12, 1.0e12)
+        factor_spin.setValue(float(scale.get("factor", 1.0)))
+        factor_spin.setObjectName("point_list_scale_factor")
+        factor_spin.valueChanged.connect(
+            lambda value: self._set_point_list_scale(dataset, group, "factor", value)
+        )
+        grid.addWidget(factor_spin, 1, 1)
+        grid.addWidget(QtWidgets.QLabel("Units"), 2, 0)
+        units_edit = QtWidgets.QLineEdit(str(scale.get("units", "")))
+        units_edit.editingFinished.connect(
+            lambda editor=units_edit: self._set_point_list_scale(dataset, group, "units", editor.text())
+        )
+        grid.addWidget(units_edit, 2, 1)
+        return box
+
+    def _point_list_susceptibility_box(self, dataset, group, config) -> Any:
+        from PySide6 import QtWidgets
+
+        susc = config["susceptibility"]
+        box = QtWidgets.QGroupBox("Susceptibility (moment / field)")
+        grid = QtWidgets.QGridLayout(box)
+        grid.setContentsMargins(8, 6, 8, 6)
+        enable = QtWidgets.QCheckBox("Divide moment by field")
+        enable.setObjectName("point_list_susceptibility_enabled")
+        enable.setChecked(bool(susc.get("enabled", False)))
+        enable.toggled.connect(lambda checked: self._set_point_list_susceptibility(dataset, group, "enabled", checked))
+        grid.addWidget(enable, 0, 0, 1, 2)
+        grid.addWidget(QtWidgets.QLabel("Moment"), 1, 0)
+        moment_combo = QtWidgets.QComboBox()
+        moment_combo.addItems([str(c["label"]) for c in config.get("channels", [])])
+        moment_combo.setCurrentText(str(susc.get("moment", "")))
+        moment_combo.currentTextChanged.connect(
+            lambda text: self._set_point_list_susceptibility(dataset, group, "moment", text)
+        )
+        grid.addWidget(moment_combo, 1, 1)
+        grid.addWidget(QtWidgets.QLabel("Field"), 2, 0)
+        field_combo = QtWidgets.QComboBox()
+        field_combo.addItems(list(dataset.data.column_names))
+        field_combo.setCurrentText(str(susc.get("field", "")))
+        field_combo.currentTextChanged.connect(
+            lambda text: self._set_point_list_susceptibility(dataset, group, "field", text)
+        )
+        grid.addWidget(field_combo, 2, 1)
+        return box
+
+    def _point_list_wavelength_box(self, dataset, group, config) -> Any:
+        from PySide6 import QtWidgets
+
+        wavelength = config["wavelength"]
+        box = QtWidgets.QGroupBox("Neutron wavelength -> q")
+        grid = QtWidgets.QGridLayout(box)
+        grid.setContentsMargins(8, 6, 8, 6)
+        grid.addWidget(QtWidgets.QLabel("2theta column"), 0, 0)
+        two_theta_combo = QtWidgets.QComboBox()
+        two_theta_combo.addItems(list(dataset.data.column_names))
+        two_theta_combo.setCurrentText(str(wavelength.get("two_theta", "")))
+        two_theta_combo.currentTextChanged.connect(
+            lambda text: self._set_point_list_wavelength(dataset, group, "two_theta", text)
+        )
+        grid.addWidget(two_theta_combo, 0, 1)
+        grid.addWidget(QtWidgets.QLabel("Wavelength (A)"), 1, 0)
+        wavelength_spin = QtWidgets.QDoubleSpinBox()
+        wavelength_spin.setObjectName("point_list_wavelength")
+        wavelength_spin.setDecimals(5)
+        wavelength_spin.setRange(0.0, 100.0)
+        wavelength_spin.setValue(float(wavelength.get("value", 0.0)))
+        wavelength_spin.valueChanged.connect(
+            lambda value: self._set_point_list_wavelength(dataset, group, "value", value)
+        )
+        grid.addWidget(wavelength_spin, 1, 1)
+        return box
+
+    def _set_point_list_coordinates(self, dataset, group, text: str) -> None:
+        names = [part.strip() for part in text.split(",") if part.strip()]
+        columns = dataset.data.column_names if isinstance(dataset.data, PointListData) else []
+        names = [name for name in names if name in columns]
+        config = point_list_config(dataset)
+        if config.get("coordinate_names") == names:
+            return
+        config["coordinate_names"] = names
+        self._after_point_list_changed(dataset, group)
+
+    def _set_point_list_channel(self, dataset, group, index: int, key: str, text: str) -> None:
+        config = point_list_config(dataset)
+        channels = config.get("channels", [])
+        if not (0 <= index < len(channels)):
+            return
+        value = None if (key == "error" and text == "(none)") else text
+        if channels[index].get(key) == value:
+            return
+        channels[index][key] = value
+        if key == "value":
+            channels[index]["label"] = value
+        self._after_point_list_changed(dataset, group)
+
+    def _add_point_list_channel(self, dataset, group) -> None:
+        config = point_list_config(dataset)
+        columns = list(dataset.data.column_names)
+        if not columns:
+            return
+        config.setdefault("channels", []).append(
+            {"label": columns[0], "value": columns[0], "error": None}
+        )
+        self._after_point_list_changed(dataset, group)
+
+    def _remove_point_list_channel(self, dataset, group, index: int) -> None:
+        config = point_list_config(dataset)
+        channels = config.get("channels", [])
+        if 0 <= index < len(channels):
+            channels.pop(index)
+            self._after_point_list_changed(dataset, group)
+
+    def _set_point_list_scale(self, dataset, group, key: str, value) -> None:
+        config = point_list_config(dataset)
+        scale = config.setdefault("scale", {})
+        new_value = float(value) if key == "factor" else value
+        if scale.get(key) == new_value:
+            return
+        scale[key] = new_value
+        self._after_point_list_changed(dataset, group)
+
+    def _set_point_list_susceptibility(self, dataset, group, key: str, value) -> None:
+        config = point_list_config(dataset)
+        susc = config.setdefault("susceptibility", {})
+        new_value = bool(value) if key == "enabled" else value
+        if susc.get(key) == new_value:
+            return
+        susc[key] = new_value
+        self._after_point_list_changed(dataset, group)
+
+    def _set_point_list_wavelength(self, dataset, group, key: str, value) -> None:
+        config = point_list_config(dataset)
+        wavelength = config.setdefault("wavelength", {})
+        new_value = float(value) if key == "value" else value
+        if wavelength.get(key) == new_value:
+            return
+        wavelength[key] = new_value
+        self._after_point_list_changed(dataset, group)
+
+    def _after_point_list_changed(self, dataset: DatasetEntry, group: DataGroup | None) -> None:
+        if group is not None:
+            self._record_data_group_state_change(group)
+        self._mark_dirty()
+        if group is not None:
+            self.refresh_slice_viewer(group)
+        self._set_dataset_details(dataset, group)
+
+    def _dataset_type_group_box(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup | None,
+        lines: list[str],
+    ) -> Any:
+        from PySide6 import QtCore, QtWidgets
+
+        group_box = QtWidgets.QGroupBox("Dataset")
+        layout = QtWidgets.QVBoxLayout(group_box)
+        layout.setContentsMargins(10, 8, 10, 8)
+        label = QtWidgets.QLabel("\n".join(lines) if lines else "-")
+        label.setWordWrap(True)
+        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop | QtCore.Qt.AlignmentFlag.AlignLeft)
+        label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(label)
+
+        type_row = QtWidgets.QHBoxLayout()
+        type_row.addWidget(QtWidgets.QLabel("Data type"))
+        type_combo = QtWidgets.QComboBox()
+        type_combo.setObjectName("dataset_data_type")
+        for name, type_label in available_data_types():
+            type_combo.addItem(type_label, name)
+        current = dataset.data_type or DEFAULT_DATA_TYPE
+        index = type_combo.findData(current)
+        type_combo.setCurrentIndex(max(index, 0))
+        type_combo.currentIndexChanged.connect(
+            lambda _index, combo=type_combo: self._set_selected_data_type(dataset, group, combo.currentData())
+        )
+        type_row.addWidget(type_combo, 1)
+        layout.addLayout(type_row)
+        return group_box
+
+    def _set_selected_data_type(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup | None,
+        data_type: str,
+    ) -> None:
+        if not data_type or data_type == dataset.data_type:
+            return
+        set_dataset_data_type(dataset, data_type)
+        if group is not None:
+            self._record_data_group_state_change(group)
+        self._mark_dirty()
+        if group is not None:
+            self.refresh_slice_viewer(group)
+        self._set_dataset_details(dataset, group)
 
     def _dataset_axes_group_box(
         self,
@@ -3165,7 +3878,7 @@ class MetallixProjectExplorer:
             specs.append(("Rename", True))
             specs.append(("Delete", True))
         if role in {"group", "datasets", "dataset", "masks", "mask"}:
-            specs.append(("View in slice viewer", True))
+            specs.append(("View in data viewer", True))
         if role == "dataset":
             specs.append(("Show file location", has_source))
             specs.append(("Change file source", True))
@@ -3189,7 +3902,7 @@ class MetallixProjectExplorer:
             "Paste": self.paste_into_selection,
             "Rename": self.rename_selected,
             "Delete": self.delete_selected,
-            "View in slice viewer": self.open_slice_viewer_for_selection,
+            "View in data viewer": self.open_slice_viewer_for_selection,
             "Show file location": self.show_file_location_for_selection,
             "Change file source": self.change_file_source_for_selection,
             "Add mask": self.add_mask_to_selection,
@@ -3603,7 +4316,7 @@ class MetallixProjectExplorer:
             viewer = QtMDHistoSliceViewer(datasets, dataset_names=names)
             self._slice_viewers[id(group)] = viewer
         if viewer.window is not None:
-            viewer.window.setWindowTitle(f"metallix Slice Viewer - {group.name}")
+            viewer.window.setWindowTitle(f"metallix Data Viewer - {group.name}")
         return viewer
 
     def _close_slice_viewer(self, group: DataGroup) -> None:
@@ -3717,6 +4430,12 @@ def _make_project_tree_class():
     return ProjectTree
 
 
+def _bold_label(QtWidgets: Any, text: str) -> Any:
+    label = QtWidgets.QLabel(text)
+    label.setStyleSheet("font-weight: 600")
+    return label
+
+
 def _is_renameable_role(role: str) -> bool:
     return role in {"group", "dataset", "mask", "model", "fit", "fit_timeline"}
 
@@ -3760,7 +4479,9 @@ def _make_refreshing_combo_class():
 
 def _has_slice_viewer_candidates(group: DataGroup) -> bool:
     for dataset in group.datasets:
-        if isinstance(dataset.data, MDHistoData):
+        if isinstance(dataset.data, (MDHistoData, PointListData)):
+            return True
+        if data_type_container(dataset.data_type) == "point_list":
             return True
         source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
         if source and Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5"}:
@@ -3772,15 +4493,19 @@ def _dataset_can_load(dataset: DatasetEntry) -> bool:
     if dataset.data is not None:
         return False
     source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
-    return bool(source and Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5"})
+    if not source:
+        return False
+    if data_type_container(dataset.data_type) == "point_list":
+        return True
+    return bool(Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5"})
 
 
 def _dataset_can_rebin(dataset: DatasetEntry) -> bool:
-    return isinstance(dataset.data, (MDHistoData, PointData4D))
+    return isinstance(dataset.data, (MDHistoData, PointData4D, PointListData))
 
 
 def _dataset_can_save(dataset: DatasetEntry) -> bool:
-    return isinstance(dataset.data, MDHistoData) or dataset_rebin_enabled(dataset)
+    return isinstance(dataset.data, (MDHistoData, PointListData)) or dataset_rebin_enabled(dataset)
 
 
 def _dataset_axes_and_data_lines(data: Any) -> tuple[list[str], list[str]]:
@@ -3815,6 +4540,8 @@ def _dataset_data_summary_lines(data: Any) -> list[str]:
         return _mdhisto_summary_lines(data)
     if isinstance(data, PointData4D):
         return _point_data_summary_lines(data)
+    if isinstance(data, PointListData):
+        return _point_list_summary_lines(data)
     if data is None:
         return ["", "Imported data: not loaded"]
     shape = getattr(data, "shape", None)
@@ -3892,6 +4619,29 @@ def _point_data_summary_lines(data: PointData4D) -> list[str]:
     )
     if data.temperature is not None:
         lines.append(f"Temperature: {_condition_value_text(data.temperature)} K")
+    return lines
+
+
+def _point_list_summary_lines(data: PointListData) -> list[str]:
+    lines = [
+        "",
+        "Axes",
+        f"Points: {data.size}",
+        f"Columns: {len(data.columns)}",
+    ]
+    for name in data.coordinate_names:
+        values = data.column(name)
+        unit = data.unit(name)
+        value_range = ""
+        if values.size:
+            value_range = f", range {_format_number(np.nanmin(values))} to {_format_number(np.nanmax(values))}"
+        lines.append(f"coord {name} ({unit or '-'}){value_range}")
+    lines.extend(["", "Data", f"Points: {data.size}"])
+    for channel in data.channels:
+        label = str(channel["label"])
+        unit = data.unit(str(channel["value"]))
+        error = "with error" if channel.get("error") else "no error"
+        lines.append(f"channel {label} ({unit or '-'}) - {error}")
     return lines
 
 
@@ -4082,6 +4832,7 @@ def _project_from_dict(payload: dict[str, Any]) -> MetallixProject:
                     name=str(dataset_payload["name"]),
                     data=None,
                     kind=str(dataset_payload.get("kind", "")),
+                    data_type=str(dataset_payload.get("data_type", "")),
                     metadata=dict(dataset_payload.get("metadata", {})),
                     parameters=dict(dataset_payload.get("parameters", {})),
                     enabled=bool(dataset_payload.get("enabled", True)),
@@ -4157,6 +4908,7 @@ def _dataset_to_dict(dataset: DatasetEntry) -> dict[str, Any]:
     return {
         "name": dataset.name,
         "kind": dataset.kind,
+        "data_type": dataset.data_type,
         "metadata": _json_mapping(dataset.metadata),
         "parameters": _json_mapping(dataset.parameters),
         "enabled": bool(dataset.enabled),

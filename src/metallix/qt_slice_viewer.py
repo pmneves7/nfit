@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 
+from .dataset import PointListData
 from .fit_views import FitComparisonResultView, fit_comparisons_for_data
 from .mdhisto import MDHistoData
 from .plotting import MDHistoSliceViewer
@@ -150,6 +151,7 @@ class QtMDHistoSliceViewer:
         self.axis_selector_widget = None
         self.x_combo = None
         self.y_combo = None
+        self._axis_y_label = None
         self.x_min_spin = None
         self.x_max_spin = None
         self.y_min_spin = None
@@ -423,7 +425,7 @@ class QtMDHistoSliceViewer:
         from PySide6 import QtCore, QtGui, QtWidgets
 
         self.window = QtWidgets.QMainWindow()
-        self.window.setWindowTitle("metallix MDHisto Slice Viewer")
+        self.window.setWindowTitle("metallix Data Viewer")
         self.window.resize(1400, 900)
 
         central = QtWidgets.QWidget()
@@ -498,6 +500,7 @@ class QtMDHistoSliceViewer:
         _compact_combobox(self.channel_combo)
         self.channel_combo.setCurrentText(self.model.channel)
         self.channel_combo.currentTextChanged.connect(self._set_channel)
+        self._sync_channel_combo()
         self.apply_masks_check = QtWidgets.QCheckBox("Apply Masks")
         self.apply_masks_check.setChecked(self.model.masked)
         self.apply_masks_check.toggled.connect(self._set_apply_masks)
@@ -551,7 +554,8 @@ class QtMDHistoSliceViewer:
         axis_selector_layout.setSpacing(6)
         axis_selector_layout.addWidget(QtWidgets.QLabel("x"))
         axis_selector_layout.addWidget(self.x_combo)
-        axis_selector_layout.addWidget(QtWidgets.QLabel("y"))
+        self._axis_y_label = QtWidgets.QLabel("y")
+        axis_selector_layout.addWidget(self._axis_y_label)
         axis_selector_layout.addWidget(self.y_combo)
         axis_selector_layout.addStretch(1)
         axes_layout.addWidget(axis_selector_widget, 0, 0, 1, 4)
@@ -818,6 +822,9 @@ class QtMDHistoSliceViewer:
 
         _clear_layout(self.hidden_layout)
         self.hidden_controls = {}
+        if getattr(self.model, "is_point_list", False):
+            self.hidden_layout.addWidget(QtWidgets.QLabel("No hidden axes."))
+            return
         hidden_dims = [
             dim
             for dim, size in enumerate(self.data.shape)
@@ -1012,6 +1019,12 @@ class QtMDHistoSliceViewer:
     def _set_display_dim(self, axis_name: str, dim: int) -> None:
         if self._syncing_axes:
             return
+        if getattr(self.model, "is_point_list", False):
+            if axis_name != "x" or not (0 <= int(dim) < len(self.model.point_coordinates)):
+                return
+            self.model.x_key = self.model.point_coordinates[int(dim)]
+            self.update_plot(preserve_view=False)
+            return
         if not (0 <= int(dim) < len(self._display_axis_dims)):
             return
         dim = self._display_axis_dims[int(dim)]
@@ -1126,7 +1139,7 @@ class QtMDHistoSliceViewer:
             self._current_slice = None
             self._last_plot_dims = None
             self._sync_axis_combos(rebuild=True)
-            self._set_combo_silent(self.channel_combo, self.model.channel)
+            self._sync_channel_combo()
             self._set_combo_silent(self.cmap_combo, self.model.cmap)
             self._set_combo_silent(self.scale_combo, self.model.color_scale)
             self._set_combo_silent(self.limits_combo, self.model.auto_limits)
@@ -1218,6 +1231,8 @@ class QtMDHistoSliceViewer:
         self._set_rectangle_selector_style(active=active)
 
     def _default_display_dims_for_dataset(self, data: MDHistoData) -> tuple[int, int]:
+        if isinstance(data, PointListData):
+            return 0, 0
         if self._initial_x_dim == -1 and self._initial_y_dim == 0:
             return self._fallback_display_dims(data)
         try:
@@ -1249,6 +1264,15 @@ class QtMDHistoSliceViewer:
     def _sync_axis_combos(self, *, rebuild: bool = False) -> None:
         self._syncing_axes = True
         try:
+            if getattr(self.model, "is_point_list", False):
+                if rebuild:
+                    self._display_axis_dims = list(range(len(self.model.point_coordinates)))
+                    self.x_combo.clear()
+                    self.y_combo.clear()
+                    self.x_combo.addItems(self.model.point_coordinates)
+                if self.model.x_key in self.model.point_coordinates:
+                    self.x_combo.setCurrentIndex(self.model.point_coordinates.index(self.model.x_key))
+                return
             if rebuild:
                 self._display_axis_dims = self._non_singleton_dims()
                 labels = [self.data.axes[dim].name for dim in self._display_axis_dims]
@@ -1263,7 +1287,18 @@ class QtMDHistoSliceViewer:
         finally:
             self._syncing_axes = False
 
+    def _sync_channel_combo(self) -> None:
+        if self.channel_combo is None:
+            return
+        if getattr(self.model, "is_point_list", False):
+            items = list(self.model.point_channels)
+        else:
+            items = list(self.model.CHANNELS)
+        self._set_combo_items_silent(self.channel_combo, items, self.model.channel)
+
     def _non_singleton_dims(self) -> list[int]:
+        if getattr(self.model, "is_point_list", False):
+            return []
         return [dim for dim, size in enumerate(self.data.shape) if size > 1]
 
     def _set_cmap(self, cmap: str) -> None:
@@ -1275,6 +1310,11 @@ class QtMDHistoSliceViewer:
         self.update_plot()
 
     def _set_channel(self, channel: str) -> None:
+        if getattr(self.model, "is_point_list", False):
+            if channel in self.model.point_channels:
+                self.model.channel = channel
+                self.update_plot()
+            return
         self.model.channel = self.model._resolve_channel(channel)
         self.update_plot()
 
@@ -1658,6 +1698,12 @@ class QtMDHistoSliceViewer:
                 axis.set_ylim(*ylim)
 
     def _default_view_limits(self, dim: int) -> tuple[float, float]:
+        if getattr(self.model, "is_point_list", False):
+            values = np.asarray(self.model.data.column(self.model.x_key), dtype=float)
+            finite = values[np.isfinite(values)]
+            if finite.size == 0:
+                return 0.0, 1.0
+            return float(np.min(finite)), float(np.max(finite))
         edges = self.model._axis_edges(dim)
         return float(edges[0]), float(edges[-1])
 
@@ -1669,13 +1715,20 @@ class QtMDHistoSliceViewer:
 
     def _sync_control_visibility(self) -> None:
         is_line = self._is_effective_1d()
+        is_point = getattr(self.model, "is_point_list", False)
         compare_active = self._fit_compare_active()
         if self.fit_compare_group is not None:
             self.fit_compare_group.setVisible(self._has_fit_comparisons())
         if self.axes_group is not None:
             self.axes_group.setVisible(is_line or len(self._non_singleton_dims()) >= 2)
         if self.axis_selector_widget is not None:
-            self.axis_selector_widget.setVisible(not is_line)
+            # Point data is always 1D but still lets the user pick which
+            # coordinate is the x axis, so keep the selector visible.
+            self.axis_selector_widget.setVisible(is_point or not is_line)
+        if self.y_combo is not None:
+            self.y_combo.setVisible(not is_point)
+        if self._axis_y_label is not None:
+            self._axis_y_label.setVisible(not is_point)
         if self.hidden_group is not None:
             self.hidden_group.setVisible(not is_line)
         if self.color_group is not None:
@@ -1898,6 +1951,8 @@ class QtMDHistoSliceViewer:
         return model
 
     def _is_effective_1d(self) -> bool:
+        if getattr(self.model, "is_point_list", False):
+            return True
         return sum(size > 1 for size in self.data.shape) == 1
 
     def _draw_1d_view(self, view: dict[str, np.ndarray], values: np.ndarray) -> None:
@@ -2290,13 +2345,13 @@ def _qt_app():
 
 
 def _coerce_datasets(data: MDHistoData | Sequence[MDHistoData]) -> list[MDHistoData]:
-    if isinstance(data, MDHistoData):
+    if isinstance(data, (MDHistoData, PointListData)):
         return [data]
     datasets = list(data)
     if not datasets:
         raise ValueError("QtMDHistoSliceViewer requires at least one dataset")
-    if not all(isinstance(dataset, MDHistoData) for dataset in datasets):
-        raise TypeError("all datasets must be MDHistoData instances")
+    if not all(isinstance(dataset, (MDHistoData, PointListData)) for dataset in datasets):
+        raise TypeError("all datasets must be MDHistoData or PointListData instances")
     return datasets
 
 
@@ -2355,6 +2410,8 @@ def _cursor_matrix_includes_2pi(metadata: dict[str, Any], key: str) -> bool:
 
 
 def _initial_display_dims(data: MDHistoData, x_dim: int | str, y_dim: int | str) -> tuple[int | str, int | str]:
+    if isinstance(data, PointListData):
+        return 0, 0
     if x_dim != -1 or y_dim != 0:
         return x_dim, y_dim
     non_singleton = [dim for dim, size in enumerate(data.shape) if size > 1]
