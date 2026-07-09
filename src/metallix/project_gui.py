@@ -541,12 +541,12 @@ def prepared_point_list_data(dataset: DatasetEntry) -> PointListData:
             if Q_COORDINATE_NAME not in columns:
                 # q = 4*pi*sin(theta)/lambda, in inverse angstroms.
                 columns[Q_COORDINATE_NAME] = 4.0 * np.pi * sin_theta / value
-                units[Q_COORDINATE_NAME] = "Angstrom^-1"
+                units[Q_COORDINATE_NAME] = "Å⁻¹"
             if D_SPACING_COORDINATE_NAME not in columns:
                 # d = lambda / (2*sin(theta)) = 2*pi/q, in angstroms.
                 with np.errstate(divide="ignore", invalid="ignore"):
                     columns[D_SPACING_COORDINATE_NAME] = value / (2.0 * sin_theta)
-                units[D_SPACING_COORDINATE_NAME] = "Angstrom"
+                units[D_SPACING_COORDINATE_NAME] = "Å"
             # Powder data is one-dimensional: q, d and 2theta are collinear, so
             # make q the single independent coordinate (used for rebin/fits) and
             # leave d and 2theta as viewable columns.
@@ -3060,7 +3060,10 @@ class MetallixProjectExplorer:
         self.tree.setIndentation(18)
         self.tree.setDragEnabled(True)
         self.tree.setAcceptDrops(True)
-        self.tree.setDragDropMode(QtWidgets.QAbstractItemView.DragDropMode.DropOnly)
+        # DragDrop (not DropOnly) lets the view initiate drags via our custom
+        # startDrag; DropOnly disables drag initiation entirely.
+        self.tree.setDragDropMode(QtWidgets.QAbstractItemView.DragDropMode.DragDrop)
+        self.tree.setDefaultDropAction(QtCore.Qt.DropAction.MoveAction)
         # Allow shift/ctrl(cmd) range and multi selection for dragging several
         # datasets into a group at once.
         self.tree.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -4996,24 +4999,25 @@ def _make_project_tree_class():
             super().dragMoveEvent(event)
 
         def dropEvent(self, event):
+            # Internal item drags: always handled here, never by the default
+            # QTreeWidget item-move machinery.
             if event.mimeData().hasFormat("application/x-metallix-tree-item"):
                 target = self.itemAt(event.position().toPoint())
-                if target is not None:
-                    copied = event.dropAction() == QtCore.Qt.DropAction.CopyAction
-                    if self.explorer.move_or_copy_selected_to_item(target, copy_item=copied):
-                        event.acceptProposedAction()
-                        return
-            target_item = self.itemAt(event.position().toPoint())
-            group, node = self.explorer._resolve_dataset_drop_target(target_item)
-            if group is None:
-                super().dropEvent(event)
+                copied = event.dropAction() == QtCore.Qt.DropAction.CopyAction
+                if target is not None and self.explorer.move_or_copy_selected_to_item(target, copy_item=copied):
+                    event.acceptProposedAction()
+                else:
+                    event.ignore()
                 return
-            paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
-            if paths:
-                into = node if node is not group else None
-                self.explorer.import_dataset_paths(group, paths, into=into)
-                event.acceptProposedAction()
-                return
+            if event.mimeData().hasUrls():
+                target_item = self.itemAt(event.position().toPoint())
+                group, node = self.explorer._resolve_dataset_drop_target(target_item)
+                paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
+                if group is not None and paths:
+                    into = node if node is not group else None
+                    self.explorer.import_dataset_paths(group, paths, into=into)
+                    event.acceptProposedAction()
+                    return
             super().dropEvent(event)
 
     return ProjectTree

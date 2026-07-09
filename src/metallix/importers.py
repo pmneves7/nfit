@@ -239,7 +239,7 @@ def import_hb2a_powder(path: str | Path) -> PointListData:
         delimiter="whitespace",
     )
     columns = {name: values for name, values in parsed.columns.items()}
-    units = {"2theta": "deg"}
+    units = {"2theta": "°"}
     metadata = {"source_file": str(Path(path)), "instrument_header": list(parsed.header_lines)}
     return PointListData(
         columns=columns,

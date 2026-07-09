@@ -1328,8 +1328,8 @@ def test_powder_wavelength_to_q_and_point_rebin():
     # d-spacing in angstroms equals 2*pi/q and lambda/(2 sin theta).
     np.testing.assert_allclose(prepared.column("d"), 2.41 / (2.0 * np.sin(theta)))
     np.testing.assert_allclose(prepared.column("d"), 2.0 * np.pi / prepared.column("q"))
-    assert prepared.unit("q") == "Angstrom^-1"
-    assert prepared.unit("d") == "Angstrom"
+    assert prepared.unit("q") == "Å⁻¹"
+    assert prepared.unit("d") == "Å"
 
     rebin = dataset_rebin_config(dataset)
     assert rebin["axes"][0]["name"] == "q"
@@ -1400,6 +1400,10 @@ def test_point_list_dataset_opens_in_data_viewer_as_1d(monkeypatch):
     assert view["signal"].size == datasets[0].size
     assert viewer.model._channel_label() == "Moment (emu)"
     assert viewer.model._axis_label(0) == "Magnetic Field (Oe)"
+
+    # The channel has an error column, so error bars are drawn for point data.
+    assert viewer.show_errorbars
+    assert len(viewer.ax_image.containers) == 1
 
     event = SimpleNamespace(
         inaxes=viewer.ax_image,

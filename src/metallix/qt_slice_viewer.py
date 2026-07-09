@@ -1973,21 +1973,22 @@ class QtMDHistoSliceViewer:
             "mec": self.line_color,
             "color": self.line_color,
         }
-        if self.model.channel == "signal" and self.show_errorbars:
-            errors = np.asarray(view["errors"], dtype=float).reshape(-1)
-            if errors.size == x.size:
-                self.ax_image.errorbar(
-                    x,
-                    y,
-                    yerr=errors,
-                    ecolor=self.line_color,
-                    capsize=self.errorbar_cap_size if self.show_errorbar_caps else 0.0,
-                    capthick=self.line_plot_width,
-                    elinewidth=self.line_plot_width,
-                    **common,
-                )
-            else:
-                self.ax_image.plot(x, y, **common)
+        # Errorbars apply to the MDHisto "signal" channel and to any point-list
+        # channel that carries an error column.
+        errorbar_channel = self.model.channel == "signal" or getattr(self.model, "is_point_list", False)
+        errors = np.asarray(view.get("errors", []), dtype=float).reshape(-1)
+        has_errors = errors.size == x.size and bool(np.any(np.isfinite(errors)))
+        if errorbar_channel and self.show_errorbars and has_errors:
+            self.ax_image.errorbar(
+                x,
+                y,
+                yerr=errors,
+                ecolor=self.line_color,
+                capsize=self.errorbar_cap_size if self.show_errorbar_caps else 0.0,
+                capthick=self.line_plot_width,
+                elinewidth=self.line_plot_width,
+                **common,
+            )
         else:
             self.ax_image.plot(x, y, **common)
         self.ax_image.set_xlabel(self.model._axis_label(self.model.x_dim))
