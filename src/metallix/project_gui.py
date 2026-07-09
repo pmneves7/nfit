@@ -4146,6 +4146,8 @@ class MetallixProjectExplorer:
                     self.details_layout.addWidget(self._dataset_point_list_group_box(dataset, group))
             elif title == "Dataset":
                 self.details_layout.addWidget(self._dataset_type_group_box(dataset, group, lines))
+            elif title == "Metadata":
+                self.details_layout.addWidget(self._dataset_metadata_group_box(dataset))
             else:
                 self.details_layout.addWidget(self._details_group_box(title, lines))
         self.details_layout.addStretch(1)
@@ -4542,6 +4544,45 @@ class MetallixProjectExplorer:
         label.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop | QtCore.Qt.AlignmentFlag.AlignLeft)
         label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(label)
+        return group_box
+
+    def _dataset_metadata_group_box(self, dataset: DatasetEntry) -> Any:
+        from PySide6 import QtCore, QtWidgets
+
+        group_box = QtWidgets.QGroupBox("Metadata")
+        layout = QtWidgets.QVBoxLayout(group_box)
+        layout.setContentsMargins(10, 8, 10, 8)
+        metadata = _dataset_metadata_mapping(dataset)
+        if not metadata and not dataset.parameters:
+            label = QtWidgets.QLabel("No additional metadata.")
+            label.setWordWrap(True)
+            layout.addWidget(label)
+            return group_box
+
+        tree = QtWidgets.QTreeWidget()
+        tree.setObjectName("dataset_metadata_tree")
+        tree.setColumnCount(2)
+        tree.setHeaderLabels(["Field", "Value"])
+        tree.setRootIsDecorated(True)
+        tree.setAlternatingRowColors(True)
+        tree.setUniformRowHeights(True)
+        tree.setTextElideMode(QtCore.Qt.TextElideMode.ElideRight)
+        tree.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        tree.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        tree.setMinimumHeight(120)
+        tree.setMaximumHeight(260)
+        tree.header().setStretchLastSection(True)
+        tree.header().setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+
+        for key in sorted(metadata):
+            _add_metadata_tree_item(tree, str(key), metadata[key])
+        if dataset.parameters:
+            parameters_item = _add_metadata_tree_item(tree, "Parameters", dict(dataset.parameters))
+            parameters_item.setExpanded(True)
+        for index in range(min(4, tree.topLevelItemCount())):
+            tree.topLevelItem(index).setExpanded(True)
+        tree.resizeColumnToContents(0)
+        layout.addWidget(tree)
         return group_box
 
     def _set_dataset_rebin_enabled(
@@ -5624,6 +5665,10 @@ def _matrix_lines(matrix: Any) -> list[str]:
 
 
 def _dataset_metadata_lines(dataset: DatasetEntry) -> list[str]:
+    return _mapping_lines(_dataset_metadata_mapping(dataset))
+
+
+def _dataset_metadata_mapping(dataset: DatasetEntry) -> dict[str, Any]:
     merged = _merged_dataset_metadata(dataset)
     merged.pop("source_file", None)
     merged.pop("import_status", None)
@@ -5632,7 +5677,7 @@ def _dataset_metadata_lines(dataset: DatasetEntry) -> list[str]:
     merged.pop("ub_matrix", None)
     merged.pop("orientation_matrix", None)
     merged.pop("oriented_lattice", None)
-    return _mapping_lines(merged)
+    return merged
 
 
 def _mapping_lines(mapping: dict[str, Any]) -> list[str]:
@@ -5646,6 +5691,59 @@ def _metadata_value_text(value: Any) -> str:
         return json.dumps(value, sort_keys=True)
     except TypeError:
         return repr(value)
+
+
+def _add_metadata_tree_item(parent: Any, key: str, value: Any, *, depth: int = 0) -> Any:
+    from PySide6 import QtWidgets
+
+    item = QtWidgets.QTreeWidgetItem([str(key), _metadata_tree_value_summary(value)])
+    item.setToolTip(0, str(key))
+    item.setToolTip(1, _metadata_value_text(value))
+    parent.addChild(item) if hasattr(parent, "addChild") else parent.addTopLevelItem(item)
+    if depth >= 6:
+        return item
+    if isinstance(value, dict):
+        for child_key in sorted(value):
+            _add_metadata_tree_item(item, str(child_key), value[child_key], depth=depth + 1)
+    elif _metadata_is_expandable_sequence(value):
+        for index, child_value in enumerate(list(value)[:64]):
+            _add_metadata_tree_item(item, f"[{index}]", child_value, depth=depth + 1)
+        if len(value) > 64:
+            QtWidgets.QTreeWidgetItem(item, ["...", f"{len(value) - 64} more item(s)"])
+    return item
+
+
+def _metadata_tree_value_summary(value: Any) -> str:
+    if isinstance(value, dict):
+        return f"{len(value)} field(s)"
+    if isinstance(value, np.ndarray):
+        return _array_summary(value)
+    if _metadata_is_expandable_sequence(value):
+        return f"{len(value)} item(s)"
+    return _metadata_value_text(value)
+
+
+def _metadata_is_expandable_sequence(value: Any) -> bool:
+    if isinstance(value, (str, bytes, bytearray, np.ndarray)):
+        return False
+    if not isinstance(value, (list, tuple)):
+        return False
+    return len(value) > 8 or any(isinstance(item, (dict, list, tuple, np.ndarray)) for item in value)
+
+
+def _array_summary(value: np.ndarray) -> str:
+    array = np.asarray(value)
+    shape = "x".join(str(size) for size in array.shape) or "scalar"
+    summary = f"array {shape}, {array.dtype}"
+    if array.size == 0:
+        return f"{summary}, empty"
+    if np.issubdtype(array.dtype, np.number):
+        finite = array[np.isfinite(array)]
+        if finite.size:
+            return f"{summary}, min {_format_number(np.nanmin(finite))}, max {_format_number(np.nanmax(finite))}"
+    if array.size <= 8:
+        return f"{summary}, {_metadata_value_text(array.tolist())}"
+    return summary
 
 
 def _condition_value_text(value: Any) -> str:

@@ -1040,6 +1040,7 @@ def test_dataset_details_text_summarizes_axes_source_and_metadata(tmp_path, monk
         {
             "temperature": 12.5,
             "field": "7 T",
+            "sample_environment": {"temperature": 12.5, "field": "7 T", "log": list(range(12))},
             "oriented_lattice": {"orientation_matrix": np.eye(3).tolist()},
         }
     )
@@ -1074,6 +1075,22 @@ def test_dataset_details_text_summarizes_axes_source_and_metadata(tmp_path, monk
     assert "field: 7 T" in text
     assert "timestamp: 2026-01-02T03:04:05" in text
     assert "sample: NiO" in text
+
+    metadata_tree = explorer.details_widget.findChild(QtWidgets.QTreeWidget, "dataset_metadata_tree")
+    assert metadata_tree is not None
+    assert metadata_tree.maximumHeight() == 260
+    assert metadata_tree.headerItem().text(0) == "Field"
+    assert metadata_tree.headerItem().text(1) == "Value"
+    top_level = {
+        metadata_tree.topLevelItem(index).text(0): metadata_tree.topLevelItem(index)
+        for index in range(metadata_tree.topLevelItemCount())
+    }
+    assert top_level["sample_environment"].text(1) == "3 field(s)"
+    child_names = {
+        top_level["sample_environment"].child(index).text(0)
+        for index in range(top_level["sample_environment"].childCount())
+    }
+    assert {"field", "temperature", "log"}.issubset(child_names)
 
 
 def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkeypatch, tmp_path):

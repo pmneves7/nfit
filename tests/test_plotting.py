@@ -898,6 +898,76 @@ def test_qt_cursor_readout_hides_crystal_coordinates_for_powder_and_magnetizatio
     assert magnetization_viewer.cursor_q_label.isHidden()
 
 
+def test_qt_powder_point_cursor_readout_uses_q_column():
+    pytest.importorskip("PySide6")
+    from types import SimpleNamespace
+
+    from metallix.dataset import PointListData
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = PointListData(
+        columns={
+            "q": np.array([0.25, 0.6, 0.9]),
+            "Signal": np.array([1.0, 2.0, 3.0]),
+            "Error": np.array([0.1, 0.1, 0.1]),
+        },
+        units={"q": "Å⁻¹"},
+        coordinate_names=["q"],
+        channels=[{"label": "Signal", "value": "Signal", "error": "Error"}],
+        metadata={"metallix_data_type": "powder_elastic"},
+    )
+    viewer = QtMDHistoSliceViewer(data)
+    view = viewer.slice_arrays()
+    event = SimpleNamespace(
+        inaxes=viewer.ax_image,
+        xdata=float(view["x_centers"][1]),
+        ydata=float(view["signal"][1]),
+    )
+
+    viewer._on_motion(event)
+
+    assert viewer.cursor_hkle_label.isHidden()
+    assert not viewer.cursor_q_label.isHidden()
+    assert viewer.cursor_q_label.text() == "|Q| = 0.6 Å⁻¹"
+
+
+def test_qt_powder_point_cursor_readout_calculates_q_from_two_theta_and_wavelength():
+    pytest.importorskip("PySide6")
+    from types import SimpleNamespace
+
+    from metallix.dataset import PointListData
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    wavelength = 2.41
+    two_theta = np.array([10.0, 30.0, 50.0])
+    data = PointListData(
+        columns={
+            "2theta": two_theta,
+            "Signal": np.array([1.0, 2.0, 3.0]),
+            "Error": np.array([0.1, 0.1, 0.1]),
+        },
+        units={"2theta": "°"},
+        coordinate_names=["2theta"],
+        channels=[{"label": "Signal", "value": "Signal", "error": "Error"}],
+        metadata={
+            "metallix_data_type": "powder_elastic",
+            "wavelength": {"value": wavelength, "two_theta": "2theta"},
+        },
+    )
+    viewer = QtMDHistoSliceViewer(data)
+    view = viewer.slice_arrays()
+    event = SimpleNamespace(
+        inaxes=viewer.ax_image,
+        xdata=float(view["x_centers"][1]),
+        ydata=float(view["signal"][1]),
+    )
+
+    viewer._on_motion(event)
+
+    expected_q = 4.0 * np.pi * np.sin(np.deg2rad(two_theta[1]) / 2.0) / wavelength
+    assert viewer.cursor_q_label.text() == f"|Q| = {expected_q:.5g} Å⁻¹"
+
+
 def test_qt_cursor_readout_applies_2pi_for_orientation_matrix_convention():
     pytest.importorskip("PySide6")
 

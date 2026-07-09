@@ -2315,6 +2315,9 @@ class QtMDHistoSliceViewer:
         return f"|Q| = {_format_coord(q)} Å⁻¹"
 
     def _q_modulus_inv_angstrom(self, coords: dict[str, float]) -> float | None:
+        q_modulus = coords.get("q_modulus")
+        if q_modulus is not None and np.isfinite(q_modulus):
+            return abs(float(q_modulus))
         hkl = np.asarray([coords["H"], coords["K"], coords["L"]], dtype=float)
         if hkl.shape != (3,) or not np.all(np.isfinite(hkl)):
             return None
@@ -2396,6 +2399,9 @@ class QtMDHistoSliceViewer:
         if not (0 <= int(x_idx) < order.size):
             return coords
         row = int(order[int(x_idx)])
+        q_modulus = self._point_list_row_q_modulus(data, row)
+        if q_modulus is not None:
+            coords["q_modulus"] = q_modulus
         for name in data.coordinate_names:
             components = _axis_components(name)
             if not components:
@@ -2407,6 +2413,22 @@ class QtMDHistoSliceViewer:
                 else:
                     coords[component] += float(coefficient) * value
         return coords
+
+    def _point_list_row_q_modulus(self, data: PointListData, row: int) -> float | None:
+        q_name = _point_list_q_column_name(data)
+        if q_name is not None:
+            q_values = np.asarray(data.column(q_name), dtype=float)
+            if 0 <= row < q_values.size and np.isfinite(q_values[row]):
+                return abs(float(q_values[row]))
+        two_theta_name = _point_list_two_theta_column_name(data)
+        wavelength = _point_list_wavelength(data, two_theta_name)
+        if two_theta_name is None or wavelength is None or wavelength <= 0.0:
+            return None
+        two_theta = np.asarray(data.column(two_theta_name), dtype=float)
+        if not (0 <= row < two_theta.size) or not np.isfinite(two_theta[row]):
+            return None
+        theta = np.deg2rad(float(two_theta[row])) / 2.0
+        return float(4.0 * np.pi * np.sin(theta) / wavelength)
 
     def _on_rectangle(self, click, release) -> None:
         extents = self._current_roi_extents(click, release)
@@ -2446,6 +2468,56 @@ def _coerce_dataset_names(datasets: Sequence[MDHistoData], names: Sequence[str] 
         source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
         labels.append(str(source) if source else f"dataset {index + 1}")
     return labels
+
+
+def _normalized_column_name(name: str) -> str:
+    return (
+        str(name)
+        .lower()
+        .replace(" ", "")
+        .replace("_", "")
+        .replace("-", "")
+        .replace("|", "")
+        .replace("modulus", "")
+    )
+
+
+def _point_list_q_column_name(data: PointListData) -> str | None:
+    for name in data.column_names:
+        normalized = _normalized_column_name(name)
+        if normalized in {"q", "qangstrom1", "qangstrom^-1", "qinverseangstrom"}:
+            return name
+    return None
+
+
+def _point_list_two_theta_column_name(data: PointListData) -> str | None:
+    for name in data.column_names:
+        normalized = _normalized_column_name(name).replace("θ", "theta")
+        if normalized in {"2theta", "twotheta"}:
+            return name
+    return None
+
+
+def _point_list_wavelength(data: PointListData, two_theta_name: str | None) -> float | None:
+    metadata = data.metadata if isinstance(data.metadata, dict) else {}
+    candidates = []
+    wavelength = metadata.get("wavelength")
+    if isinstance(wavelength, dict):
+        configured_two_theta = wavelength.get("two_theta")
+        if configured_two_theta not in (None, "", two_theta_name):
+            return None
+        candidates.append(wavelength.get("value"))
+    for key in ("neutron_wavelength", "incident_wavelength", "lambda", "wavelength"):
+        if key in metadata and not isinstance(metadata[key], dict):
+            candidates.append(metadata[key])
+    for candidate in candidates:
+        try:
+            value = float(candidate)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(value) and value > 0.0:
+            return value
+    return None
 
 
 def _cursor_q_matrix_from_metadata(metadata: dict[str, Any], key: str) -> np.ndarray:
