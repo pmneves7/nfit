@@ -727,7 +727,19 @@ class MDHistoSliceViewer:
             channels = list(data.channel_labels) or [
                 name for name in data.column_names if name not in coordinates
             ] or list(data.column_names)
-            self.point_coordinates = coordinates
+            # x-axis choices are the coordinates plus any other non-channel column
+            # (e.g. derived q/d/2theta), coordinates first.
+            channel_columns = set()
+            for channel_def in data.channels:
+                channel_columns.add(channel_def.get("value"))
+                if channel_def.get("error"):
+                    channel_columns.add(channel_def.get("error"))
+            extra_columns = [
+                name
+                for name in data.column_names
+                if name not in coordinates and name not in channel_columns
+            ]
+            self.point_coordinates = coordinates + extra_columns
             self.point_channels = channels
             self.x_key = coordinates[0]
             self.x_dim = 0

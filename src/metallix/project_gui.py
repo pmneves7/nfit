@@ -18,7 +18,7 @@ from .dataset import PointData4D, PointListData
 from .fitting import rebin_point_data
 from .importers import IMPORTERS, import_with, importers_for_data_type
 from .mdhisto import MDHistoAxis, MDHistoData, load_mantid_mdhisto_nxs
-from .pipeline import DataGroup, DatasetEntry, FitTimelineEntry, MaskSpec, ModelComponentSpec
+from .pipeline import DataGroup, DatasetEntry, DatasetGroup, FitTimelineEntry, MaskSpec, ModelComponentSpec
 from .rebin import rebin_nd
 
 QtMDHistoSliceViewer = None
@@ -28,6 +28,7 @@ DATASET_REBIN_KEY = "rebin"
 DATASET_POINT_LIST_KEY = "point_list"
 SUSCEPTIBILITY_CHANNEL_LABEL = "Susceptibility"
 Q_COORDINATE_NAME = "q"
+D_SPACING_COORDINATE_NAME = "d"
 COORDINATE_RANGE_AXIS_PREFIX = "axis_"
 COORDINATE_RANGE_PARAMETER_NAMES = ("H", "K", "L", "E")
 
@@ -379,9 +380,12 @@ def delete_data_group(project: MetallixProject, group: DataGroup) -> None:
 
 
 def delete_dataset(group: DataGroup, dataset: DatasetEntry) -> None:
-    """Remove a dataset entry from a data group."""
+    """Remove a dataset entry from anywhere in the group tree."""
 
-    group.datasets.remove(dataset)
+    parent = _dataset_parent_node(group, dataset)
+    if parent is None:
+        raise ValueError(f"dataset {dataset.name!r} is not in group {group.name!r}")
+    parent.datasets.remove(dataset)
 
 
 def set_dataset_source(dataset: DatasetEntry, path: str | Path) -> None:
@@ -524,17 +528,30 @@ def prepared_point_list_data(dataset: DatasetEntry) -> PointListData:
 
     definition = DATA_TYPE_DEFINITIONS.get(dataset.data_type, {})
 
-    # Powder wavelength -> q coordinate.
+    # Powder wavelength -> q and d-spacing coordinates (created if absent).
     if definition.get("wavelength"):
         wavelength = config.get("wavelength", {})
         value = float(wavelength.get("value", 0.0) or 0.0)
         two_theta = wavelength.get("two_theta")
         if value > 0.0 and two_theta in columns:
             theta = np.deg2rad(columns[two_theta]) / 2.0
-            columns[Q_COORDINATE_NAME] = 4.0 * np.pi * np.sin(theta) / value
-            units[Q_COORDINATE_NAME] = "Angstrom^-1"
-            if Q_COORDINATE_NAME not in coordinate_names:
-                coordinate_names = [Q_COORDINATE_NAME, *coordinate_names]
+            sin_theta = np.sin(theta)
+            if Q_COORDINATE_NAME not in columns:
+                # q = 4*pi*sin(theta)/lambda, in inverse angstroms.
+                columns[Q_COORDINATE_NAME] = 4.0 * np.pi * sin_theta / value
+                units[Q_COORDINATE_NAME] = "Angstrom^-1"
+            if D_SPACING_COORDINATE_NAME not in columns:
+                # d = lambda / (2*sin(theta)) = 2*pi/q, in angstroms.
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    columns[D_SPACING_COORDINATE_NAME] = value / (2.0 * sin_theta)
+                units[D_SPACING_COORDINATE_NAME] = "Angstrom"
+            # Powder data is one-dimensional: q, d and 2theta are collinear, so
+            # make q the single independent coordinate (used for rebin/fits) and
+            # leave d and 2theta as viewable columns.
+            collinear = {Q_COORDINATE_NAME, D_SPACING_COORDINATE_NAME, str(two_theta)}
+            coordinate_names = [Q_COORDINATE_NAME] + [
+                name for name in coordinate_names if name not in collinear
+            ]
 
     # Magnetization scale factor + unit relabel applied to value and error.
     if definition.get("scale"):
@@ -611,10 +628,113 @@ def create_mask(dataset: DatasetEntry, name: str | None = None, *, type: str = "
     return mask
 
 
+def create_group_mask(
+    subgroup: DatasetGroup,
+    reference_dataset: DatasetEntry | None = None,
+    name: str | None = None,
+    *,
+    type: str = "coordinate_range",
+) -> MaskSpec:
+    """Add a shared mask to a nested dataset group, applied to all descendants."""
+
+    if type not in MASK_TYPE_DEFINITIONS:
+        raise ValueError(f"unknown mask type {type!r}")
+    mask = MaskSpec(
+        name=next_mask_name(subgroup.masks) if name is None else name,
+        type=type,
+        parameters=default_mask_parameters(type),
+    )
+    if reference_dataset is not None:
+        ensure_coordinate_range_mask_axes(mask, reference_dataset)
+    if mask.name in {existing.name for existing in subgroup.masks}:
+        raise ValueError(f"duplicate mask name {mask.name!r}")
+    subgroup.masks.append(mask)
+    return mask
+
+
+def _group_reference_dataset(subgroup: DatasetGroup) -> DatasetEntry | None:
+    """Return the first descendant dataset with MDHisto data, for mask axis inference."""
+
+    for dataset in subgroup.iter_datasets():
+        if isinstance(dataset.data, MDHistoData):
+            return dataset
+    return None
+
+
 def delete_mask(dataset: DatasetEntry, mask: MaskSpec) -> None:
     """Remove a mask from a dataset."""
 
     dataset.masks.remove(mask)
+
+
+def next_dataset_group_name(existing_names: Any) -> str:
+    """Return the next available default subgroup name."""
+
+    taken = set(existing_names)
+    index = 1
+    while f"Group{index}" in taken:
+        index += 1
+    return f"Group{index}"
+
+
+def create_dataset_group(
+    data_group: DataGroup,
+    parent_node: Any,
+    name: str | None = None,
+) -> DatasetGroup:
+    """Create a nested dataset group under ``parent_node`` (a DataGroup or DatasetGroup)."""
+
+    existing = {sub.name for sub in data_group.iter_subgroups()}
+    subgroup = DatasetGroup(name=name or next_dataset_group_name(existing))
+    if subgroup.name in existing:
+        raise ValueError(f"duplicate dataset group name {subgroup.name!r}")
+    parent_node.subgroups.append(subgroup)
+    return subgroup
+
+
+def delete_dataset_group(data_group: DataGroup, subgroup: DatasetGroup) -> bool:
+    """Remove a nested dataset group (and its contents) from the group tree."""
+
+    def remove_from(node: Any) -> bool:
+        if subgroup in node.subgroups:
+            node.subgroups.remove(subgroup)
+            return True
+        return any(remove_from(child) for child in node.subgroups)
+
+    return remove_from(data_group)
+
+
+def _dataset_group_parent(data_group: DataGroup, subgroup: DatasetGroup) -> Any:
+    """Return the node whose ``subgroups`` contains ``subgroup`` (DataGroup or DatasetGroup)."""
+
+    def search(node: Any) -> Any:
+        if subgroup in node.subgroups:
+            return node
+        for child in node.subgroups:
+            found = search(child)
+            if found is not None:
+                return found
+        return None
+
+    return search(data_group)
+
+
+def _dataset_parent_node(root: Any, dataset: DatasetEntry) -> Any:
+    """Return the node whose ``datasets`` contains ``dataset`` (DataGroup or DatasetGroup)."""
+
+    if dataset in root.datasets:
+        return root
+    for subgroup in root.subgroups:
+        found = _dataset_parent_node(subgroup, dataset)
+        if found is not None:
+            return found
+    return None
+
+
+def _group_contains_node(ancestor: DatasetGroup, node: Any) -> bool:
+    """Return True if ``node`` is ``ancestor`` or nested anywhere inside it."""
+
+    return node is ancestor or node in ancestor.iter_subgroups()
 
 
 def create_model_component(
@@ -717,6 +837,14 @@ def refresh_current_state_fit_entries(group: DataGroup) -> None:
             entry.created_at = _timestamp_now()
 
 
+def _named_group_nodes(group: DataGroup) -> list[tuple[str, Any]]:
+    """Return ``(key, node)`` pairs for the data group ("") and each subgroup by name."""
+
+    nodes: list[tuple[str, Any]] = [("", group)]
+    nodes.extend((subgroup.name, subgroup) for subgroup in group.iter_subgroups())
+    return nodes
+
+
 def snapshot_data_group_state(group: DataGroup) -> dict[str, Any]:
     """Capture serializable dataset mask and model configuration state."""
 
@@ -727,10 +855,15 @@ def snapshot_data_group_state(group: DataGroup) -> dict[str, Any]:
                 "parameters": copy.deepcopy(dataset.parameters),
                 "enabled": bool(dataset.enabled),
                 "fit_weight": float(dataset.fit_weight),
+                "scale_factor": float(dataset.scale_factor),
                 "masks": [_mask_to_dict(mask) for mask in dataset.masks],
             }
-            for dataset in group.datasets
+            for dataset in group.iter_datasets()
         ],
+        "group_masks": {
+            node_name: [_mask_to_dict(mask) for mask in node.masks]
+            for node_name, node in _named_group_nodes(group)
+        },
         "models": [
             _model_to_dict(model)
             for model in group.models.values()
@@ -742,7 +875,7 @@ def snapshot_data_group_state(group: DataGroup) -> dict[str, Any]:
 def restore_data_group_state(group: DataGroup, snapshot: dict[str, Any]) -> None:
     """Restore dataset masks and model component settings from a snapshot."""
 
-    datasets_by_name = {dataset.name: dataset for dataset in group.datasets}
+    datasets_by_name = {dataset.name: dataset for dataset in group.iter_datasets()}
     for dataset_payload in snapshot.get("datasets", []):
         dataset = datasets_by_name.get(str(dataset_payload.get("name", "")))
         if dataset is None:
@@ -750,18 +883,13 @@ def restore_data_group_state(group: DataGroup, snapshot: dict[str, Any]) -> None
         dataset.parameters = dict(dataset_payload.get("parameters", {}))
         dataset.enabled = bool(dataset_payload.get("enabled", dataset.enabled))
         dataset.fit_weight = float(dataset_payload.get("fit_weight", dataset.fit_weight))
-        dataset.masks = [
-            MaskSpec(
-                name=str(mask_payload["name"]),
-                type=str(mask_payload.get("type", "coordinate_range")),
-                parameters=dict(mask_payload.get("parameters", {})),
-                enabled=bool(mask_payload.get("enabled", True)),
-                invert=bool(mask_payload.get("invert", False)),
-                additive=bool(mask_payload.get("additive", False)),
-                metadata=dict(mask_payload.get("metadata", {})),
-            )
-            for mask_payload in dataset_payload.get("masks", [])
-        ]
+        dataset.scale_factor = float(dataset_payload.get("scale_factor", dataset.scale_factor))
+        dataset.masks = [_mask_from_dict(mask_payload) for mask_payload in dataset_payload.get("masks", [])]
+    group_masks = snapshot.get("group_masks", {})
+    if isinstance(group_masks, dict):
+        for node_name, node in _named_group_nodes(group):
+            if node_name in group_masks:
+                node.masks = [_mask_from_dict(mask_payload) for mask_payload in group_masks[node_name]]
     for model_payload in snapshot.get("models", []):
         name = str(model_payload.get("name", ""))
         existing = group.models.get(name)
@@ -1065,6 +1193,7 @@ def dataset_detail_sections(
                 f"Kind: {dataset.kind or '-'}",
                 f"Enabled for fitting: {dataset.enabled}",
                 f"Fit weight: {_format_number(dataset.fit_weight)}",
+                f"Scale factor: {_format_number(dataset.scale_factor)}",
             ],
         ),
         ("Axes", axes_lines),
@@ -1075,24 +1204,64 @@ def dataset_detail_sections(
     ]
 
 
+def effective_dataset_masks(group: DataGroup, dataset: DatasetEntry) -> list[MaskSpec]:
+    """Return masks inherited from the ancestor group chain of ``dataset``.
+
+    Walks from the data group down through nested dataset groups to the
+    dataset's parent, collecting each level's shared masks (outer to inner).
+    Returns an empty list when the dataset is not found.
+    """
+
+    def search(node: Any) -> list[MaskSpec] | None:
+        if dataset in getattr(node, "datasets", []):
+            return list(node.masks)
+        for subgroup in getattr(node, "subgroups", []):
+            below = search(subgroup)
+            if below is not None:
+                return list(node.masks) + below
+        return None
+
+    return search(group) or []
+
+
 def slice_viewer_datasets(
     group: DataGroup,
 ) -> tuple[list[MDHistoData], list[str]]:
-    """Return data and labels from a group that can be shown in the slice viewer."""
+    """Return data and labels for every dataset in the group tree, with shared masks."""
 
     data: list[MDHistoData] = []
     names: list[str] = []
-    for dataset in group.datasets:
-        view_data = dataset_for_slice_viewer(dataset)
+    for dataset in group.iter_datasets():
+        extra_masks = effective_dataset_masks(group, dataset)
+        view_data = dataset_for_slice_viewer(dataset, extra_masks=extra_masks)
         if view_data is not None:
             data.append(view_data)
             names.append(dataset.name)
     return data, names
 
 
-def dataset_for_slice_viewer(dataset: DatasetEntry) -> MDHistoData | PointListData | None:
-    """Return a viewer-ready dataset, loading from source metadata if needed."""
+def dataset_for_slice_viewer(
+    dataset: DatasetEntry,
+    *,
+    extra_masks: list[MaskSpec] | None = None,
+) -> MDHistoData | PointListData | None:
+    """Return a viewer-ready dataset, loading from source metadata if needed.
 
+    ``extra_masks`` are masks inherited from ancestor dataset groups; they are
+    applied ahead of the dataset's own masks (MDHisto datasets only).
+    """
+
+    result = _viewer_data_before_scale(dataset, extra_masks=extra_masks)
+    if result is None:
+        return None
+    return _apply_dataset_scale(dataset, result)
+
+
+def _viewer_data_before_scale(
+    dataset: DatasetEntry,
+    *,
+    extra_masks: list[MaskSpec] | None = None,
+) -> MDHistoData | PointListData | None:
     if data_type_container(dataset.data_type) == "point_list" or isinstance(dataset.data, PointListData):
         if dataset.data is None:
             _load_point_list_dataset(dataset)
@@ -1103,7 +1272,7 @@ def dataset_for_slice_viewer(dataset: DatasetEntry) -> MDHistoData | PointListDa
         return prepared_point_list_data(dataset)
     if isinstance(dataset.data, MDHistoData):
         data = rebinned_dataset_data(dataset) if dataset_rebin_enabled(dataset) else dataset.data
-        return _mdhisto_with_metallix_masks(dataset, data=data)
+        return _mdhisto_with_metallix_masks(dataset, data=data, extra_masks=extra_masks)
     source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
     if not source:
         return None
@@ -1115,7 +1284,43 @@ def dataset_for_slice_viewer(dataset: DatasetEntry) -> MDHistoData | PointListDa
     dataset.kind = dataset.kind or source_path.suffix.lstrip(".").lower()
     dataset.metadata["import_status"] = "loaded"
     data = rebinned_dataset_data(dataset) if dataset_rebin_enabled(dataset) else dataset.data
-    return _mdhisto_with_metallix_masks(dataset, data=data)
+    return _mdhisto_with_metallix_masks(dataset, data=data, extra_masks=extra_masks)
+
+
+def _apply_dataset_scale(
+    dataset: DatasetEntry,
+    data: MDHistoData | PointListData,
+) -> MDHistoData | PointListData:
+    """Multiply a dataset's signal and errors by its scale factor (both channels)."""
+
+    scale = float(getattr(dataset, "scale_factor", 1.0) or 1.0)
+    if scale == 1.0:
+        return data
+    if isinstance(data, MDHistoData):
+        from dataclasses import replace
+
+        return replace(
+            data,
+            signal=np.asarray(data.signal, dtype=float) * scale,
+            errors=np.asarray(data.errors, dtype=float) * abs(scale),
+        )
+    if isinstance(data, PointListData):
+        columns = {name: np.array(values, dtype=float) for name, values in data.columns.items()}
+        for channel in data.channels:
+            value_name = channel.get("value")
+            error_name = channel.get("error")
+            if value_name in columns:
+                columns[value_name] = columns[value_name] * scale
+            if error_name in columns:
+                columns[error_name] = columns[error_name] * abs(scale)
+        return PointListData(
+            columns=columns,
+            units=dict(data.units),
+            coordinate_names=list(data.coordinate_names),
+            channels=[dict(channel) for channel in data.channels],
+            metadata=dict(data.metadata),
+        )
+    return data
 
 
 def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
@@ -1493,12 +1698,17 @@ def _rebin_point_data(data: PointData4D, config: dict[str, Any]) -> PointData4D:
     )
 
 
-def _mdhisto_with_metallix_masks(dataset: DatasetEntry, *, data: MDHistoData | None = None) -> MDHistoData:
+def _mdhisto_with_metallix_masks(
+    dataset: DatasetEntry,
+    *,
+    data: MDHistoData | None = None,
+    extra_masks: list[MaskSpec] | None = None,
+) -> MDHistoData:
     data = dataset.data if data is None else data
     if not isinstance(data, MDHistoData):
         raise TypeError("dataset does not contain MDHistoData")
     file_mask = np.asarray(data.mask, dtype=bool)
-    metallix_mask = _metallix_mask_for_mdhisto(dataset, data)
+    metallix_mask = _metallix_mask_for_mdhisto(dataset, data, extra_masks=extra_masks)
     combined_mask = file_mask | metallix_mask
     metadata = dict(data.metadata)
     metadata["file_mask"] = file_mask.copy()
@@ -1518,9 +1728,15 @@ def _mdhisto_with_metallix_masks(dataset: DatasetEntry, *, data: MDHistoData | N
     )
 
 
-def _metallix_mask_for_mdhisto(dataset: DatasetEntry, data: MDHistoData) -> np.ndarray:
+def _metallix_mask_for_mdhisto(
+    dataset: DatasetEntry,
+    data: MDHistoData,
+    *,
+    extra_masks: list[MaskSpec] | None = None,
+) -> np.ndarray:
     combined = np.zeros(data.shape, dtype=bool)
-    for mask in dataset.masks:
+    # Ancestor group masks apply first, then the dataset's own masks.
+    for mask in [*(extra_masks or []), *dataset.masks]:
         if not mask.enabled:
             continue
         mask_values = _evaluate_mdhisto_mask(data, mask)
@@ -2091,6 +2307,10 @@ class MetallixProjectExplorer:
         self.enabled_check = None
         self.fit_weight_widget = None
         self.fit_weight_spin = None
+        self.scale_factor_spin = None
+        self.group_bulk_widget = None
+        self.group_fit_weight_edit = None
+        self.group_scale_edit = None
         self.details_label = None
         self.details_scroll = None
         self.details_widget = None
@@ -2100,6 +2320,7 @@ class MetallixProjectExplorer:
         self.view_slice_button = None
         self.load_dataset_button = None
         self.add_mask_button = None
+        self.add_dataset_group_button = None
         self.save_dataset_button = None
         self.mask_type_combo = None
         self.mask_parameter_widget = None
@@ -2134,6 +2355,7 @@ class MetallixProjectExplorer:
             ],
         ] = {}
         self._fit_item_roles: dict[int, FitTimelineEntry] = {}
+        self._dataset_group_roles: dict[int, DatasetGroup] = {}
         self._expanded_state: dict[tuple[Any, ...], bool] = {}
         self._build()
         self._refresh_tree()
@@ -2209,6 +2431,19 @@ class MetallixProjectExplorer:
             self._record_data_group_state_change(group)
             self._mark_dirty()
             self._refresh_tree(select_group=group)
+        elif role == "dataset_group" and group is not None:
+            subgroup = self._dataset_group_for_item(item)
+            if subgroup is not None and delete_dataset_group(group, subgroup):
+                self._record_data_group_state_change(group)
+                self._mark_dirty()
+                self._refresh_tree(select_group=group)
+        elif role == "group_mask" and group is not None and mask is not None:
+            subgroup = self._dataset_group_for_item(item)
+            if subgroup is not None and mask in subgroup.masks:
+                subgroup.masks.remove(mask)
+                self._record_data_group_state_change(group)
+                self._mark_dirty()
+                self._refresh_tree(select_group=group)
         elif role == "model" and group is not None and model is not None:
             delete_model_component(group, model)
             self._record_data_group_state_change(group)
@@ -2382,7 +2617,17 @@ class MetallixProjectExplorer:
         return data_type, importer_name
 
     def add_mask_to_selection(self) -> MaskSpec | None:
-        group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        item = self._current_item()
+        group, entry, _mask, _model, role = self._objects_for_item(item)
+        if role in {"group_masks", "dataset_group"} and group is not None:
+            subgroup = self._dataset_group_for_item(item)
+            if subgroup is None:
+                return None
+            mask = create_group_mask(subgroup, _group_reference_dataset(subgroup))
+            self._record_data_group_state_change(group)
+            self._mark_dirty()
+            self._refresh_tree(select_group=group, select_mask=mask, edit_mask=True)
+            return mask
         if role not in {"dataset", "masks"} or group is None or entry is None:
             return None
         mask = create_mask(entry)
@@ -2390,6 +2635,25 @@ class MetallixProjectExplorer:
         self._mark_dirty()
         self._refresh_tree(select_group=group, select_mask=mask, edit_mask=True)
         return mask
+
+    def add_dataset_group_to_selection(self) -> DatasetGroup | None:
+        item = self._current_item()
+        group, _entry, _mask, _model, role = self._objects_for_item(item)
+        if group is None:
+            return None
+        if role in {"group", "datasets"}:
+            parent_node: Any = group
+        elif role == "dataset_group":
+            parent_node = self._dataset_group_for_item(item)
+        else:
+            return None
+        if parent_node is None:
+            return None
+        subgroup = create_dataset_group(group, parent_node)
+        self._record_data_group_state_change(group)
+        self._mark_dirty()
+        self._refresh_tree(select_group=group, select_dataset_group=subgroup, edit_group=True)
+        return subgroup
 
     def add_model_to_selection(self) -> ModelComponentSpec | None:
         group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
@@ -2466,7 +2730,8 @@ class MetallixProjectExplorer:
 
     def open_slice_viewer_for_selection(self) -> Any | None:
         group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
-        if role not in {"group", "datasets", "dataset", "masks", "mask"} or group is None:
+        allowed = {"group", "datasets", "dataset", "masks", "mask", "dataset_group", "group_masks", "group_mask"}
+        if role not in allowed or group is None:
             return None
         # For a mask or the Masks node, entry is the owning dataset.
         selected_name = entry.name if role in {"dataset", "masks", "mask"} and entry is not None else None
@@ -2593,8 +2858,58 @@ class MetallixProjectExplorer:
         return True
 
     def move_or_copy_selected_to_item(self, target_item: Any, *, copy_item: bool) -> bool:
-        source_group, source_entry, source_mask, _source_model, source_role = self._objects_for_item(self._current_item())
+        source_item = self._current_item()
+        source_group, source_entry, source_mask, _source_model, source_role = self._objects_for_item(source_item)
         target_group, target_entry, target_mask, _target_model, target_role = self._objects_for_item(target_item)
+
+        # Relocate a dataset within the same group (into/out of a subgroup).
+        if (
+            source_role == "dataset"
+            and not copy_item
+            and source_group is not None
+            and source_entry is not None
+            and target_group is source_group
+            and target_role in {"group", "datasets", "dataset_group", "dataset"}
+        ):
+            if target_role in {"group", "datasets"}:
+                target_node: Any = source_group
+            elif target_role == "dataset_group":
+                target_node = self._dataset_group_for_item(target_item)
+            else:
+                target_node = _dataset_parent_node(source_group, target_entry) if target_entry is not None else None
+            parent_node = _dataset_parent_node(source_group, source_entry)
+            if target_node is not None and parent_node is not None and target_node is not parent_node:
+                parent_node.datasets.remove(source_entry)
+                target_node.datasets.append(source_entry)
+                self._record_data_group_state_change(source_group)
+                self._mark_dirty()
+                self._refresh_tree(select_group=source_group, select_dataset=source_entry)
+            return True
+
+        # Re-parent a subgroup within the same group.
+        if (
+            source_role == "dataset_group"
+            and not copy_item
+            and source_group is not None
+            and target_group is source_group
+            and target_role in {"group", "datasets", "dataset_group"}
+        ):
+            subgroup = self._dataset_group_for_item(source_item)
+            target_node = source_group if target_role in {"group", "datasets"} else self._dataset_group_for_item(target_item)
+            if (
+                subgroup is not None
+                and target_node is not None
+                and not _group_contains_node(subgroup, target_node)
+            ):
+                parent_node = _dataset_group_parent(source_group, subgroup)
+                if parent_node is not None and parent_node is not target_node:
+                    parent_node.subgroups.remove(subgroup)
+                    target_node.subgroups.append(subgroup)
+                    self._record_data_group_state_change(source_group)
+                    self._mark_dirty()
+                    self._refresh_tree(select_group=source_group, select_dataset_group=subgroup)
+            return True
+
         if (
             source_role == "dataset"
             and source_group is not None
@@ -2757,7 +3072,42 @@ class MetallixProjectExplorer:
         self.fit_weight_spin.setValue(1.0)
         self.fit_weight_spin.valueChanged.connect(self._set_selected_dataset_fit_weight)
         fit_weight_layout.addWidget(self.fit_weight_spin)
+        fit_weight_layout.addWidget(QtWidgets.QLabel("Scale"))
+        self.scale_factor_spin = QtWidgets.QDoubleSpinBox()
+        self.scale_factor_spin.setObjectName("dataset_scale_factor")
+        self.scale_factor_spin.setRange(-1.0e12, 1.0e12)
+        self.scale_factor_spin.setDecimals(6)
+        self.scale_factor_spin.setSingleStep(0.1)
+        self.scale_factor_spin.setValue(1.0)
+        self.scale_factor_spin.valueChanged.connect(self._set_selected_dataset_scale_factor)
+        fit_weight_layout.addWidget(self.scale_factor_spin)
         title_row.addWidget(self.fit_weight_widget)
+
+        # Bulk editors for a group: blank when descendants differ, editing
+        # overwrites the fit weight / scale of every descendant dataset.
+        self.group_bulk_widget = QtWidgets.QWidget()
+        group_bulk_layout = QtWidgets.QHBoxLayout(self.group_bulk_widget)
+        group_bulk_layout.setContentsMargins(0, 0, 0, 0)
+        group_bulk_layout.setSpacing(6)
+        group_bulk_layout.addWidget(QtWidgets.QLabel("Fit weight"))
+        self.group_fit_weight_edit = QtWidgets.QLineEdit()
+        self.group_fit_weight_edit.setObjectName("group_fit_weight_edit")
+        self.group_fit_weight_edit.setPlaceholderText("(mixed)")
+        self.group_fit_weight_edit.setMaximumWidth(90)
+        self.group_fit_weight_edit.editingFinished.connect(
+            lambda: self._set_group_bulk_value("fit_weight", self.group_fit_weight_edit.text())
+        )
+        group_bulk_layout.addWidget(self.group_fit_weight_edit)
+        group_bulk_layout.addWidget(QtWidgets.QLabel("Scale"))
+        self.group_scale_edit = QtWidgets.QLineEdit()
+        self.group_scale_edit.setObjectName("group_scale_edit")
+        self.group_scale_edit.setPlaceholderText("(mixed)")
+        self.group_scale_edit.setMaximumWidth(90)
+        self.group_scale_edit.editingFinished.connect(
+            lambda: self._set_group_bulk_value("scale_factor", self.group_scale_edit.text())
+        )
+        group_bulk_layout.addWidget(self.group_scale_edit)
+        title_row.addWidget(self.group_bulk_widget)
         self.details_label = QtWidgets.QLabel()
         self.details_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
         self.details_label.setWordWrap(True)
@@ -2780,18 +3130,21 @@ class MetallixProjectExplorer:
         self.view_slice_button = QtWidgets.QPushButton("View in data viewer")
         self.load_dataset_button = QtWidgets.QPushButton("Load now")
         self.add_mask_button = QtWidgets.QPushButton("Add mask")
+        self.add_dataset_group_button = QtWidgets.QPushButton("New dataset group")
         self.save_dataset_button = QtWidgets.QPushButton("Save dataset")
         self.import_dataset_button.clicked.connect(self.import_dataset_dialog)
         self.add_model_button.clicked.connect(self.add_model_to_selection)
         self.view_slice_button.clicked.connect(self.open_slice_viewer_for_selection)
         self.load_dataset_button.clicked.connect(self.load_dataset_for_selection)
         self.add_mask_button.clicked.connect(self.add_mask_to_selection)
+        self.add_dataset_group_button.clicked.connect(self.add_dataset_group_to_selection)
         self.save_dataset_button.clicked.connect(self.save_dataset_for_selection)
         actions_row.addWidget(self.import_dataset_button)
         actions_row.addWidget(self.add_model_button)
         actions_row.addWidget(self.view_slice_button)
         actions_row.addWidget(self.load_dataset_button)
         actions_row.addWidget(self.add_mask_button)
+        actions_row.addWidget(self.add_dataset_group_button)
         actions_row.addWidget(self.save_dataset_button)
         actions_row.addStretch(1)
 
@@ -2853,6 +3206,7 @@ class MetallixProjectExplorer:
         select_mask: MaskSpec | None = None,
         select_model: ModelComponentSpec | None = None,
         select_fit: FitTimelineEntry | None = None,
+        select_dataset_group: DatasetGroup | None = None,
         edit_group: bool = False,
         edit_mask: bool = False,
         edit_model: bool = False,
@@ -2862,6 +3216,7 @@ class MetallixProjectExplorer:
         self._expanded_state = self._current_expanded_state()
         self._item_roles.clear()
         self._fit_item_roles.clear()
+        self._dataset_group_roles.clear()
         self.tree.blockSignals(True)
         self.tree.clear()
         item_to_select = None
@@ -2876,28 +3231,16 @@ class MetallixProjectExplorer:
             datasets_item = QtWidgets.QTreeWidgetItem(["Datasets"])
             self._remember_item(datasets_item, "datasets", group)
             group_item.addChild(datasets_item)
-            for dataset in group.datasets:
-                dataset_item = QtWidgets.QTreeWidgetItem([dataset.name])
-                dataset_item.setFlags(dataset_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
-                self._remember_item(dataset_item, "dataset", group, dataset)
-                _style_enabled_tree_item(dataset_item, dataset.enabled)
-                datasets_item.addChild(dataset_item)
-                masks_item = QtWidgets.QTreeWidgetItem(["Masks"])
-                _style_enabled_tree_item(masks_item, dataset.enabled)
-                self._remember_item(masks_item, "masks", group, dataset)
-                dataset_item.addChild(masks_item)
-                for mask in dataset.masks:
-                    mask_item = QtWidgets.QTreeWidgetItem([mask.name])
-                    mask_item.setFlags(mask_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
-                    self._remember_item(mask_item, "mask", group, dataset, mask)
-                    _style_enabled_tree_item(mask_item, mask.enabled)
-                    masks_item.addChild(mask_item)
-                    if select_mask is mask:
-                        item_to_select = mask_item
-                if select_dataset is dataset and item_to_select is None:
-                    item_to_select = dataset_item
-                dataset_item.setExpanded(self._expanded_state.get(("dataset", id(dataset)), False))
-                masks_item.setExpanded(self._expanded_state.get(("masks", id(dataset)), False))
+            found = self._render_dataset_node(
+                datasets_item,
+                group,
+                group,
+                select_dataset=select_dataset,
+                select_mask=select_mask,
+                select_dataset_group=select_dataset_group,
+            )
+            if found is not None and item_to_select is None:
+                item_to_select = found
 
             models_item = QtWidgets.QTreeWidgetItem(["Models"])
             self._remember_item(models_item, "models", group)
@@ -2938,6 +3281,76 @@ class MetallixProjectExplorer:
                 self.tree.editItem(item_to_select, 0)
         self._sync_details()
         self.refresh_open_slice_viewers()
+
+    def _render_dataset_node(
+        self,
+        parent_item: Any,
+        group: DataGroup,
+        node: Any,
+        *,
+        select_dataset: DatasetEntry | None,
+        select_mask: MaskSpec | None,
+        select_dataset_group: DatasetGroup | None,
+    ) -> Any:
+        """Recursively render a group's datasets and nested subgroups. Returns any matched item."""
+
+        from PySide6 import QtCore, QtWidgets
+
+        found = None
+        for dataset in node.datasets:
+            dataset_item = QtWidgets.QTreeWidgetItem([dataset.name])
+            dataset_item.setFlags(dataset_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
+            self._remember_item(dataset_item, "dataset", group, dataset)
+            _style_enabled_tree_item(dataset_item, dataset.enabled)
+            parent_item.addChild(dataset_item)
+            masks_item = QtWidgets.QTreeWidgetItem(["Masks"])
+            _style_enabled_tree_item(masks_item, dataset.enabled)
+            self._remember_item(masks_item, "masks", group, dataset)
+            dataset_item.addChild(masks_item)
+            for mask in dataset.masks:
+                mask_item = QtWidgets.QTreeWidgetItem([mask.name])
+                mask_item.setFlags(mask_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
+                self._remember_item(mask_item, "mask", group, dataset, mask)
+                _style_enabled_tree_item(mask_item, mask.enabled)
+                masks_item.addChild(mask_item)
+                if select_mask is mask and found is None:
+                    found = mask_item
+            if select_dataset is dataset and found is None:
+                found = dataset_item
+            dataset_item.setExpanded(self._expanded_state.get(("dataset", id(dataset)), False))
+            masks_item.setExpanded(self._expanded_state.get(("masks", id(dataset)), False))
+
+        for subgroup in node.subgroups:
+            subgroup_item = QtWidgets.QTreeWidgetItem([subgroup.name])
+            subgroup_item.setFlags(subgroup_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
+            self._remember_item(subgroup_item, "dataset_group", group, node=subgroup)
+            parent_item.addChild(subgroup_item)
+            gmasks_item = QtWidgets.QTreeWidgetItem(["Masks"])
+            self._remember_item(gmasks_item, "group_masks", group, node=subgroup)
+            subgroup_item.addChild(gmasks_item)
+            for mask in subgroup.masks:
+                gmask_item = QtWidgets.QTreeWidgetItem([mask.name])
+                gmask_item.setFlags(gmask_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
+                self._remember_item(gmask_item, "group_mask", group, mask=mask, node=subgroup)
+                _style_enabled_tree_item(gmask_item, mask.enabled)
+                gmasks_item.addChild(gmask_item)
+                if select_mask is mask and found is None:
+                    found = gmask_item
+            child_found = self._render_dataset_node(
+                subgroup_item,
+                group,
+                subgroup,
+                select_dataset=select_dataset,
+                select_mask=select_mask,
+                select_dataset_group=select_dataset_group,
+            )
+            if child_found is not None and found is None:
+                found = child_found
+            if select_dataset_group is subgroup and found is None:
+                found = subgroup_item
+            subgroup_item.setExpanded(self._expanded_state.get(("dataset_group", id(subgroup)), True))
+            gmasks_item.setExpanded(self._expanded_state.get(("group_masks", id(subgroup)), False))
+        return found
 
     def _current_expanded_state(self) -> dict[tuple[Any, ...], bool]:
         state: dict[tuple[Any, ...], bool] = {}
@@ -2987,8 +3400,16 @@ class MetallixProjectExplorer:
         entry: DatasetEntry | None = None,
         mask: MaskSpec | None = None,
         model: ModelComponentSpec | None = None,
+        node: DatasetGroup | None = None,
     ) -> None:
         self._item_roles[id(item)] = (role, group, entry, mask, model)
+        if node is not None:
+            self._dataset_group_roles[id(item)] = node
+
+    def _dataset_group_for_item(self, item: Any) -> DatasetGroup | None:
+        if item is None:
+            return None
+        return self._dataset_group_roles.get(id(item))
 
     def _add_fit_tree_item(
         self,
@@ -3043,11 +3464,19 @@ class MetallixProjectExplorer:
             changed = entry.name != new_name
             entry.name = new_name
             item.setText(0, entry.name)
-        elif role == "mask" and mask is not None:
+        elif role in {"mask", "group_mask"} and mask is not None:
             new_name = item.text(0).strip() or "mask"
             changed = mask.name != new_name
             mask.name = new_name
             item.setText(0, mask.name)
+        elif role == "dataset_group" and group is not None:
+            subgroup = self._dataset_group_for_item(item)
+            if subgroup is not None:
+                existing = [sub.name for sub in group.iter_subgroups() if sub is not subgroup]
+                new_name = _unique_name(item.text(0).strip() or subgroup.name, existing)
+                changed = subgroup.name != new_name
+                subgroup.name = new_name
+                item.setText(0, subgroup.name)
         elif role == "model" and group is not None and model is not None:
             old_name = _model_key(group, model)
             new_name = _unique_name(item.text(0).strip() or model.name, [name for name in group.models if name != old_name])
@@ -3066,7 +3495,7 @@ class MetallixProjectExplorer:
                 fit_entry.name = new_name
                 item.setText(0, fit_entry.name)
         if changed:
-            if role in {"dataset", "mask", "model"} and group is not None:
+            if role in {"dataset", "mask", "model", "dataset_group", "group_mask"} and group is not None:
                 self._record_data_group_state_change(group)
             self._mark_dirty()
         self._sync_details()
@@ -3096,19 +3525,25 @@ class MetallixProjectExplorer:
         self._sync_selected_state_controls(role, entry, mask, model)
         self.import_dataset_button.setVisible(can_import)
         self.add_model_button.setVisible(can_add_model)
-        self.view_slice_button.setVisible(role in {"group", "datasets", "dataset", "masks", "mask"})
+        self.view_slice_button.setVisible(
+            role in {"group", "datasets", "dataset", "masks", "mask", "dataset_group", "group_masks", "group_mask"}
+        )
         self.view_slice_button.setEnabled(bool(group is not None and _has_slice_viewer_candidates(group)))
         self.load_dataset_button.setVisible(
             role == "dataset" and entry is not None and _dataset_can_load(entry)
         )
-        self.add_mask_button.setVisible(role in {"dataset", "masks"})
+        self.add_mask_button.setVisible(role in {"dataset", "masks", "group_masks", "dataset_group"})
+        self.add_dataset_group_button.setVisible(role in {"group", "datasets", "dataset_group"})
         self.save_dataset_button.setVisible(role == "dataset")
         self.save_dataset_button.setEnabled(
             bool(role == "dataset" and entry is not None and _dataset_can_save(entry))
         )
-        self.delete_button.setEnabled(role in {"group", "dataset", "mask", "model", "fit", "fit_timeline"})
-        self.mask_type_combo.setVisible(role == "mask")
-        self.mask_parameter_widget.setVisible(role == "mask")
+        self.delete_button.setEnabled(
+            role in {"group", "dataset", "mask", "model", "fit", "fit_timeline", "dataset_group", "group_mask"}
+        )
+        mask_editing = role in {"mask", "group_mask"}
+        self.mask_type_combo.setVisible(mask_editing)
+        self.mask_parameter_widget.setVisible(mask_editing)
         self.model_type_combo.setVisible(role == "model")
         self.model_parameter_widget.setVisible(role == "model")
         self.fit_editor_widget.setVisible(role == "fit" and fit_entry is not None)
@@ -3137,6 +3572,30 @@ class MetallixProjectExplorer:
                 f"Mask\n\nType: {label}\nEnabled: {mask.enabled}\nInvert: {mask.invert}\nAdditive: {mask.additive}"
             )
             self._sync_mask_editor(mask, entry)
+        elif role == "dataset_group":
+            subgroup = self._dataset_group_for_item(self._current_item())
+            name = subgroup.name if subgroup is not None else "Dataset group"
+            self.title_label.setText(name)
+            count = len(list(subgroup.iter_datasets())) if subgroup is not None else 0
+            mask_count = len(subgroup.masks) if subgroup is not None else 0
+            self._set_details_text(
+                f"Dataset group\n\nDatasets (incl. nested): {count}\nShared masks: {mask_count}"
+            )
+        elif role == "group_masks":
+            subgroup = self._dataset_group_for_item(self._current_item())
+            name = subgroup.name if subgroup is not None else "-"
+            mask_count = len(subgroup.masks) if subgroup is not None else 0
+            self.title_label.setText(f"{name} / Masks")
+            self._set_details_text(f"{mask_count} shared mask(s)")
+        elif role == "group_mask" and mask is not None:
+            subgroup = self._dataset_group_for_item(self._current_item())
+            self.title_label.setText(mask.name)
+            label = MASK_TYPE_DEFINITIONS.get(mask.type, {}).get("label", mask.type)
+            self._set_details_text(
+                f"Shared mask\n\nType: {label}\nEnabled: {mask.enabled}\nInvert: {mask.invert}\nAdditive: {mask.additive}"
+            )
+            reference = _group_reference_dataset(subgroup) if subgroup is not None else None
+            self._sync_mask_editor(mask, reference)
         elif role == "models" and group is not None:
             self.title_label.setText(f"{group.name} / Models")
             self._set_details_text(f"{len(group.models)} model(s)")
@@ -3162,7 +3621,7 @@ class MetallixProjectExplorer:
         else:
             self.title_label.setText("Project")
             self._set_details_text(f"{len(self.project.data_groups)} data group(s)")
-        if role != "mask":
+        if role not in {"mask", "group_mask"}:
             self._clear_mask_parameter_editor()
         if role != "model":
             self._clear_model_parameter_editor()
@@ -3196,6 +3655,66 @@ class MetallixProjectExplorer:
             self.fit_weight_spin.setValue(float(entry.fit_weight) if role == "dataset" and entry is not None else 1.0)
         finally:
             self.fit_weight_spin.blockSignals(False)
+        self.scale_factor_spin.blockSignals(True)
+        try:
+            self.scale_factor_spin.setValue(
+                float(entry.scale_factor) if role == "dataset" and entry is not None else 1.0
+            )
+        finally:
+            self.scale_factor_spin.blockSignals(False)
+        self._sync_group_bulk_controls(role)
+
+    def _group_bulk_datasets(self, role: str) -> list[DatasetEntry]:
+        item = self._current_item()
+        group, _entry, _mask, _model, item_role = self._objects_for_item(item)
+        if role == "group" and group is not None:
+            return list(group.iter_datasets())
+        if role in {"dataset_group", "group_masks"}:
+            subgroup = self._dataset_group_for_item(item)
+            if subgroup is not None:
+                return list(subgroup.iter_datasets())
+        return []
+
+    def _sync_group_bulk_controls(self, role: str) -> None:
+        show = role in {"group", "dataset_group", "group_masks"}
+        self.group_bulk_widget.setVisible(show)
+        if not show:
+            return
+        datasets = self._group_bulk_datasets(role)
+        for edit, attribute in (
+            (self.group_fit_weight_edit, "fit_weight"),
+            (self.group_scale_edit, "scale_factor"),
+        ):
+            values = {float(getattr(dataset, attribute)) for dataset in datasets}
+            edit.blockSignals(True)
+            try:
+                edit.setText(_format_number(next(iter(values))) if len(values) == 1 else "")
+            finally:
+                edit.blockSignals(False)
+
+    def _set_group_bulk_value(self, attribute: str, text: str) -> None:
+        group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        text = text.strip()
+        if not text or role not in {"group", "dataset_group", "group_masks"}:
+            return
+        try:
+            value = float(text)
+        except ValueError:
+            return
+        datasets = self._group_bulk_datasets(role)
+        changed = False
+        for dataset in datasets:
+            if float(getattr(dataset, attribute)) != value:
+                setattr(dataset, attribute, value)
+                changed = True
+        if not changed:
+            return
+        if group is not None:
+            self._record_data_group_state_change(group)
+        self._mark_dirty()
+        if group is not None:
+            self.refresh_slice_viewer(group)
+        self._sync_details()
 
     def _set_selected_enabled(self, checked: bool) -> None:
         group, entry, mask, model, role = self._objects_for_item(self._current_item())
@@ -3231,6 +3750,21 @@ class MetallixProjectExplorer:
         self._mark_dirty()
         self._sync_details()
 
+    def _set_selected_dataset_scale_factor(self, value: float) -> None:
+        group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        if role != "dataset" or entry is None:
+            return
+        scale = float(value)
+        if entry.scale_factor == scale:
+            return
+        entry.scale_factor = scale
+        if group is not None:
+            self._record_data_group_state_change(group)
+        self._mark_dirty()
+        if group is not None:
+            self.refresh_slice_viewer(group)
+        self._sync_details()
+
     def _set_details_text(self, text: str) -> None:
         from PySide6 import QtCore, QtWidgets
 
@@ -3253,15 +3787,16 @@ class MetallixProjectExplorer:
                 pass
         self.details_label.setText(dataset_details_text(dataset, group=group))
         self._clear_details_panel()
+        is_point_list = isinstance(dataset.data, PointListData)
         for title, lines in dataset_detail_sections(dataset, group=group):
             if title == "Axes":
                 self.details_layout.addWidget(self._dataset_axes_group_box(dataset, group, lines))
+                if is_point_list:
+                    self.details_layout.addWidget(self._dataset_point_list_group_box(dataset, group))
             elif title == "Dataset":
                 self.details_layout.addWidget(self._dataset_type_group_box(dataset, group, lines))
             else:
                 self.details_layout.addWidget(self._details_group_box(title, lines))
-        if isinstance(dataset.data, PointListData):
-            self.details_layout.addWidget(self._dataset_point_list_group_box(dataset, group))
         self.details_layout.addStretch(1)
 
     def _dataset_point_list_group_box(self, dataset: DatasetEntry, group: DataGroup | None) -> Any:
@@ -3272,7 +3807,7 @@ class MetallixProjectExplorer:
         columns = list(data.column_names)
         definition = DATA_TYPE_DEFINITIONS.get(dataset.data_type, {})
 
-        group_box = QtWidgets.QGroupBox("Variables & transforms")
+        group_box = QtWidgets.QGroupBox("Variables and Channels")
         layout = QtWidgets.QVBoxLayout(group_box)
         layout.setContentsMargins(10, 8, 10, 8)
 
@@ -3874,16 +4409,18 @@ class MetallixProjectExplorer:
             specs.append(("Paste", can_paste))
         if enabled_state is not None:
             specs.append(("Disable" if enabled_state else "Enable", True))
-        if role in {"group", "dataset", "mask", "model", "fit", "fit_timeline"}:
+        if role in {"group", "dataset", "mask", "model", "fit", "fit_timeline", "dataset_group", "group_mask"}:
             specs.append(("Rename", True))
             specs.append(("Delete", True))
-        if role in {"group", "datasets", "dataset", "masks", "mask"}:
+        if role in {"group", "datasets", "dataset", "masks", "mask", "dataset_group", "group_masks", "group_mask"}:
             specs.append(("View in data viewer", True))
         if role == "dataset":
             specs.append(("Show file location", has_source))
             specs.append(("Change file source", True))
-        if role in {"dataset", "masks"}:
+        if role in {"dataset", "masks", "group_masks", "dataset_group"}:
             specs.append(("Add mask", True))
+        if role in {"group", "datasets", "dataset_group"}:
+            specs.append(("New dataset group", True))
         if role in {"group", "models"}:
             specs.append(("Add model", True))
         if role == "fit":
@@ -3906,6 +4443,7 @@ class MetallixProjectExplorer:
             "Show file location": self.show_file_location_for_selection,
             "Change file source": self.change_file_source_for_selection,
             "Add mask": self.add_mask_to_selection,
+            "New dataset group": self.add_dataset_group_to_selection,
             "Add model": self.add_model_to_selection,
             "Fit now": self.fit_now_for_selection,
             "Enable": lambda: self._set_selected_enabled(True),
@@ -4020,7 +4558,7 @@ class MetallixProjectExplorer:
 
     def _set_selected_mask_type(self, _label: str) -> None:
         group, entry, mask, _model, role = self._objects_for_item(self._current_item())
-        if role != "mask" or mask is None:
+        if role not in {"mask", "group_mask"} or mask is None:
             return
         type_name = self.mask_type_combo.currentData()
         if not type_name or type_name == mask.type:
@@ -4088,7 +4626,7 @@ class MetallixProjectExplorer:
 
     def _set_mask_parameter(self, name: str, text: str) -> None:
         group, _entry, mask, _model, role = self._objects_for_item(self._current_item())
-        if role != "mask" or mask is None:
+        if role not in {"mask", "group_mask"} or mask is None:
             return
         value = _parse_parameter_text(text)
         if mask.parameters.get(name) != value:
@@ -4109,7 +4647,7 @@ class MetallixProjectExplorer:
 
     def _set_mask_option(self, name: str, value: bool) -> None:
         group, _entry, mask, _model, role = self._objects_for_item(self._current_item())
-        if role != "mask" or mask is None:
+        if role not in {"mask", "group_mask"} or mask is None:
             return
         if bool(getattr(mask, name)) == bool(value):
             return
@@ -4437,7 +4975,7 @@ def _bold_label(QtWidgets: Any, text: str) -> Any:
 
 
 def _is_renameable_role(role: str) -> bool:
-    return role in {"group", "dataset", "mask", "model", "fit", "fit_timeline"}
+    return role in {"group", "dataset", "mask", "model", "fit", "fit_timeline", "dataset_group", "group_mask"}
 
 
 def _dataset_source_path(dataset: DatasetEntry) -> Path | None:
@@ -4822,35 +5360,13 @@ def _project_from_dict(payload: dict[str, Any]) -> MetallixProject:
     for group_payload in payload.get("data_groups", []):
         group = DataGroup(
             name=str(group_payload["name"]),
+            datasets=[_dataset_from_dict(d) for d in group_payload.get("datasets", [])],
+            subgroups=[_dataset_group_from_dict(s) for s in group_payload.get("subgroups", [])],
+            masks=[_mask_from_dict(m) for m in group_payload.get("masks", [])],
             lattice_parameters=group_payload.get("lattice_parameters"),
             spacegroup=group_payload.get("spacegroup"),
             metadata=dict(group_payload.get("metadata", {})),
         )
-        for dataset_payload in group_payload.get("datasets", []):
-            group.add_dataset(
-                DatasetEntry(
-                    name=str(dataset_payload["name"]),
-                    data=None,
-                    kind=str(dataset_payload.get("kind", "")),
-                    data_type=str(dataset_payload.get("data_type", "")),
-                    metadata=dict(dataset_payload.get("metadata", {})),
-                    parameters=dict(dataset_payload.get("parameters", {})),
-                    enabled=bool(dataset_payload.get("enabled", True)),
-                    fit_weight=float(dataset_payload.get("fit_weight", 1.0)),
-                    masks=[
-                        MaskSpec(
-                            name=str(mask_payload["name"]),
-                            type=str(mask_payload.get("type", "coordinate_range")),
-                            parameters=dict(mask_payload.get("parameters", {})),
-                            enabled=bool(mask_payload.get("enabled", True)),
-                            invert=bool(mask_payload.get("invert", False)),
-                            additive=bool(mask_payload.get("additive", False)),
-                            metadata=dict(mask_payload.get("metadata", {})),
-                        )
-                        for mask_payload in dataset_payload.get("masks", [])
-                    ],
-                )
-            )
         for model_payload in group_payload.get("models", []):
             model_type = str(model_payload.get("type", "constant_background"))
             fit_payload = dict(model_payload.get("fit_parameters", {}))
@@ -4880,6 +5396,55 @@ def _project_from_dict(payload: dict[str, Any]) -> MetallixProject:
     return project
 
 
+def _mask_from_dict(mask_payload: dict[str, Any]) -> MaskSpec:
+    return MaskSpec(
+        name=str(mask_payload["name"]),
+        type=str(mask_payload.get("type", "coordinate_range")),
+        parameters=dict(mask_payload.get("parameters", {})),
+        enabled=bool(mask_payload.get("enabled", True)),
+        invert=bool(mask_payload.get("invert", False)),
+        additive=bool(mask_payload.get("additive", False)),
+        metadata=dict(mask_payload.get("metadata", {})),
+    )
+
+
+def _dataset_from_dict(dataset_payload: dict[str, Any]) -> DatasetEntry:
+    return DatasetEntry(
+        name=str(dataset_payload["name"]),
+        data=None,
+        kind=str(dataset_payload.get("kind", "")),
+        data_type=str(dataset_payload.get("data_type", "")),
+        metadata=dict(dataset_payload.get("metadata", {})),
+        parameters=dict(dataset_payload.get("parameters", {})),
+        enabled=bool(dataset_payload.get("enabled", True)),
+        fit_weight=float(dataset_payload.get("fit_weight", 1.0)),
+        scale_factor=float(dataset_payload.get("scale_factor", 1.0)),
+        masks=[_mask_from_dict(mask_payload) for mask_payload in dataset_payload.get("masks", [])],
+    )
+
+
+def _dataset_group_from_dict(payload: dict[str, Any]) -> DatasetGroup:
+    return DatasetGroup(
+        name=str(payload["name"]),
+        datasets=[_dataset_from_dict(d) for d in payload.get("datasets", [])],
+        subgroups=[_dataset_group_from_dict(s) for s in payload.get("subgroups", [])],
+        masks=[_mask_from_dict(m) for m in payload.get("masks", [])],
+        resolution=dict(payload.get("resolution", {})),
+        metadata=dict(payload.get("metadata", {})),
+    )
+
+
+def _dataset_group_to_dict(group: DatasetGroup) -> dict[str, Any]:
+    return {
+        "name": group.name,
+        "datasets": [_dataset_to_dict(dataset) for dataset in group.datasets],
+        "subgroups": [_dataset_group_to_dict(sub) for sub in group.subgroups],
+        "masks": [_mask_to_dict(mask) for mask in group.masks],
+        "resolution": _json_mapping(group.resolution),
+        "metadata": _json_mapping(group.metadata),
+    }
+
+
 def _data_group_to_dict(group: DataGroup) -> dict[str, Any]:
     ensure_fit_history(group)
     refresh_current_state_fit_entries(group)
@@ -4894,6 +5459,8 @@ def _data_group_to_dict(group: DataGroup) -> dict[str, Any]:
         "spacegroup": group.spacegroup,
         "metadata": _json_mapping(group.metadata),
         "datasets": [_dataset_to_dict(dataset) for dataset in group.datasets],
+        "subgroups": [_dataset_group_to_dict(sub) for sub in group.subgroups],
+        "masks": [_mask_to_dict(mask) for mask in group.masks],
         "models": model_payloads,
         "fits": [_fit_entry_to_dict(fit_entry) for fit_entry in group.fits],
     }
@@ -4913,6 +5480,7 @@ def _dataset_to_dict(dataset: DatasetEntry) -> dict[str, Any]:
         "parameters": _json_mapping(dataset.parameters),
         "enabled": bool(dataset.enabled),
         "fit_weight": float(dataset.fit_weight),
+        "scale_factor": float(dataset.scale_factor),
         "masks": [_mask_to_dict(mask) for mask in dataset.masks],
     }
 

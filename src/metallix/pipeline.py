@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
+
+import numpy as np
 
 from .dataset import PointData4D
 from .fitting import (
@@ -86,6 +88,7 @@ class DatasetEntry:
     masks: list[MaskSpec] = field(default_factory=list)
     enabled: bool = True
     fit_weight: float = 1.0
+    scale_factor: float = 1.0
     transforms: Sequence[DataTransformAny] = field(default_factory=tuple)
 
     def prepared(self) -> Any:
@@ -98,23 +101,75 @@ class DatasetEntry:
 
 
 @dataclass
-class DataGroup:
-    """Collection of related datasets and shared sample metadata."""
+class DatasetGroup:
+    """A nested group of datasets sharing masks and (later) a resolution model.
+
+    Groups may nest via ``subgroups``. ``masks`` on a group apply to every
+    descendant dataset. Fit weights and scale factors are *not* stored here; the
+    GUI edits those in bulk across a group's descendant datasets.
+    """
 
     name: str
     datasets: list[DatasetEntry] = field(default_factory=list)
+    subgroups: list["DatasetGroup"] = field(default_factory=list)
+    masks: list[MaskSpec] = field(default_factory=list)
+    resolution: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def iter_datasets(self) -> Iterator[DatasetEntry]:
+        """Yield every dataset in this group and its nested subgroups."""
+
+        yield from self.datasets
+        for subgroup in self.subgroups:
+            yield from subgroup.iter_datasets()
+
+    def iter_subgroups(self) -> Iterator["DatasetGroup"]:
+        """Yield this group's subgroups recursively."""
+
+        for subgroup in self.subgroups:
+            yield subgroup
+            yield from subgroup.iter_subgroups()
+
+
+@dataclass
+class DataGroup:
+    """Collection of related datasets and shared sample metadata.
+
+    ``datasets`` are the group's direct datasets; ``subgroups`` hold nested
+    dataset groups. ``masks`` apply to every dataset in the group and its
+    subgroups. Models and fit history live only at this top level.
+    """
+
+    name: str
+    datasets: list[DatasetEntry] = field(default_factory=list)
+    subgroups: list[DatasetGroup] = field(default_factory=list)
+    masks: list[MaskSpec] = field(default_factory=list)
     lattice_parameters: dict[str, float] | None = None
     spacegroup: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     models: dict[str, "FitModelSession | ModelComponentSpec"] = field(default_factory=dict)
     fits: list[FitTimelineEntry] = field(default_factory=list)
 
-    def add_dataset(self, dataset: DatasetEntry) -> None:
-        """Add a dataset, requiring names to stay unique."""
+    def iter_datasets(self) -> Iterator[DatasetEntry]:
+        """Yield every dataset in this group and its nested subgroups."""
+
+        yield from self.datasets
+        for subgroup in self.subgroups:
+            yield from subgroup.iter_datasets()
+
+    def iter_subgroups(self) -> Iterator[DatasetGroup]:
+        """Yield all nested dataset groups recursively."""
+
+        for subgroup in self.subgroups:
+            yield subgroup
+            yield from subgroup.iter_subgroups()
+
+    def add_dataset(self, dataset: DatasetEntry, *, into: DatasetGroup | None = None) -> None:
+        """Add a dataset (optionally into a subgroup), requiring globally unique names."""
 
         if dataset.name in self.dataset_names:
             raise ValueError(f"duplicate dataset name {dataset.name!r}")
-        self.datasets.append(dataset)
+        (into or self).datasets.append(dataset)
 
     def add_model(self, model: "FitModelSession") -> None:
         """Associate a model session with this group."""
@@ -125,14 +180,14 @@ class DataGroup:
 
     @property
     def dataset_names(self) -> list[str]:
-        """Dataset names in group order."""
+        """All dataset names in the group tree, in traversal order."""
 
-        return [dataset.name for dataset in self.datasets]
+        return [dataset.name for dataset in self.iter_datasets()]
 
     def get_dataset(self, name: str) -> DatasetEntry:
-        """Return a dataset by name."""
+        """Return a dataset by name from anywhere in the group tree."""
 
-        for dataset in self.datasets:
+        for dataset in self.iter_datasets():
             if dataset.name == name:
                 return dataset
         raise KeyError(f"unknown dataset {name!r}")
@@ -141,7 +196,7 @@ class DataGroup:
         """Return enabled datasets in requested order, or all enabled datasets when omitted."""
 
         if names is None:
-            return [dataset for dataset in self.datasets if dataset.enabled]
+            return [dataset for dataset in self.iter_datasets() if dataset.enabled]
         return [dataset for dataset in (self.get_dataset(name) for name in names) if dataset.enabled]
 
     def data_sequence(self, names: Iterable[str] | None = None) -> list[Any]:
@@ -199,6 +254,13 @@ class FitModelSession:
                 raise TypeError(
                     f"dataset {entry.name!r} prepared to {type(prepared).__name__}; "
                     "FitModelSession currently requires PointData4D"
+                )
+            scale = float(getattr(entry, "scale_factor", 1.0) or 1.0)
+            if scale != 1.0:
+                prepared = replace(
+                    prepared,
+                    intensity=np.asarray(prepared.intensity, dtype=float) * scale,
+                    sigma=np.asarray(prepared.sigma, dtype=float) * abs(scale),
                 )
             fit_datasets.append(
                 FitDataset(

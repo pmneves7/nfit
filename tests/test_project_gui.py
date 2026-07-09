@@ -40,7 +40,7 @@ from metallix.project_gui import (
     set_dataset_data_type,
     set_dataset_source,
 )
-from metallix.pipeline import DataGroup, DatasetEntry
+from metallix.pipeline import DataGroup, DatasetEntry, DatasetGroup
 
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
@@ -1136,6 +1136,108 @@ def test_project_explorer_data_type_dropdown_switches_type(monkeypatch):
     assert group.datasets[0].data is None
 
 
+def test_nested_dataset_groups_share_masks_and_round_trip(tmp_path):
+    from metallix.project_gui import (
+        effective_dataset_masks,
+        slice_viewer_datasets,
+    )
+
+    d1 = DatasetEntry("d1", _grid_mdhisto_data(), kind="mdhisto")
+    d2 = DatasetEntry("d2", _grid_mdhisto_data(), kind="mdhisto")
+    sub = DatasetGroup("Group1", datasets=[d2])
+    group = DataGroup("Datagroup1", datasets=[d1], subgroups=[sub])
+    project_gui.create_group_mask(sub, d2)
+    sub.masks[0].parameters["H"] = [-10.0, 0.9]
+
+    # Recursive iteration sees every dataset.
+    assert group.dataset_names == ["d1", "d2"]
+    assert [d.name for d in group.select()] == ["d1", "d2"]
+
+    # Group mask applies only to the subgroup's descendants (d2), not d1.
+    assert [m.name for m in effective_dataset_masks(group, d2)] == ["Mask1"]
+    assert effective_dataset_masks(group, d1) == []
+    data, names = slice_viewer_datasets(group)
+    by_name = dict(zip(names, data))
+    assert by_name["d2"].metadata["metallix_mask_count"] > 0
+    assert by_name["d1"].metadata["metallix_mask_count"] == 0
+
+    # Round-trip nesting + shared masks through JSON (lazy placeholders).
+    save_group = DataGroup("Datagroup2")
+    p1 = import_dataset_paths(save_group, [tmp_path / "a.nxs"])[0]
+    save_sub = DatasetGroup("SubB")
+    save_group.subgroups.append(save_sub)
+    p2 = DatasetEntry("b", None, kind="nxs", metadata={"source_file": str(tmp_path / "b.nxs"), "import_status": "pending"})
+    save_sub.datasets.append(p2)
+    project_gui.create_group_mask(save_sub, None)
+    path = tmp_path / "proj.mtlx"
+    save_project(MetallixProject([save_group]), path)
+    reloaded = load_project(path).data_groups[0]
+    assert reloaded.dataset_names == ["a", "b"]
+    assert reloaded.subgroups[0].name == "SubB"
+    assert reloaded.subgroups[0].masks[0].name == "Mask1"
+
+
+def test_project_explorer_nested_group_bulk_edit_and_tree(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    d1 = DatasetEntry("d1", _grid_mdhisto_data(), kind="mdhisto")
+    d2 = DatasetEntry("d2", _grid_mdhisto_data(), kind="mdhisto")
+    sub = DatasetGroup("Group1", datasets=[d2])
+    group = DataGroup("Datagroup1", datasets=[d1], subgroups=[sub])
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+
+    datasets_item = explorer.tree.topLevelItem(0).child(0)
+    assert [datasets_item.child(i).text(0) for i in range(datasets_item.childCount())] == ["d1", "Group1"]
+    subgroup_item = datasets_item.child(1)
+    assert [subgroup_item.child(i).text(0) for i in range(subgroup_item.childCount())] == ["Masks", "d2"]
+
+    # Bulk-set scale on the subgroup overwrites all descendants.
+    explorer.tree.setCurrentItem(subgroup_item)
+    explorer._set_group_bulk_value("scale_factor", "5")
+    assert [d.scale_factor for d in sub.iter_datasets()] == [5.0]
+
+    # Top group bulk-set covers every dataset; a divergent child blanks the box.
+    top_item = explorer.tree.topLevelItem(0)
+    explorer.tree.setCurrentItem(top_item)
+    explorer._set_group_bulk_value("fit_weight", "3")
+    assert [d.fit_weight for d in group.iter_datasets()] == [3.0, 3.0]
+    d1.fit_weight = 2.0
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
+    explorer._sync_details()
+    assert explorer.group_fit_weight_edit.text() == ""  # mixed
+
+
+def test_dataset_scale_factor_scales_viewed_data_and_round_trips(monkeypatch, tmp_path):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    data = _grid_mdhisto_data()
+    dataset = DatasetEntry("scan", data, kind="mdhisto")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
+
+    scale_spin = explorer.window.findChild(QtWidgets.QDoubleSpinBox, "dataset_scale_factor")
+    assert scale_spin is not None
+    assert scale_spin.value() == 1.0
+    scale_spin.setValue(3.0)
+    assert dataset.scale_factor == 3.0
+
+    viewed = dataset_for_slice_viewer(dataset)
+    np.testing.assert_allclose(viewed.signal, np.asarray(data.signal, dtype=float) * 3.0)
+    np.testing.assert_allclose(viewed.errors, np.asarray(data.errors, dtype=float) * 3.0)
+
+    # Round-trip through JSON using a lazy placeholder dataset.
+    save_group = DataGroup("Datagroup2")
+    placeholder = import_dataset_paths(save_group, [tmp_path / "scan.nxs"])[0]
+    placeholder.scale_factor = 3.0
+    path = tmp_path / "proj.mtlx"
+    save_project(MetallixProject([save_group]), path)
+    assert json.loads(path.read_text())["data_groups"][0]["datasets"][0]["scale_factor"] == 3.0
+    assert load_project(path).data_groups[0].datasets[0].scale_factor == 3.0
+
+
 def test_point_list_scale_and_susceptibility_transforms():
     from metallix.project_gui import point_list_config, prepared_point_list_data
 
@@ -1178,10 +1280,18 @@ def test_powder_wavelength_to_q_and_point_rebin():
     config["wavelength"] = {"value": 2.41, "two_theta": "2theta"}
 
     prepared = prepared_point_list_data(dataset)
-    assert "q" in prepared.coordinate_names
+    # Powder is 1D: q is the single coordinate; d and 2theta remain columns.
+    assert prepared.coordinate_names == ["q"]
+    assert "d" in prepared.column_names
     two_theta = dataset.data.column("2theta")
-    expected_q = 4.0 * np.pi * np.sin(np.deg2rad(two_theta) / 2.0) / 2.41
+    theta = np.deg2rad(two_theta) / 2.0
+    expected_q = 4.0 * np.pi * np.sin(theta) / 2.41
     np.testing.assert_allclose(prepared.column("q"), expected_q)
+    # d-spacing in angstroms equals 2*pi/q and lambda/(2 sin theta).
+    np.testing.assert_allclose(prepared.column("d"), 2.41 / (2.0 * np.sin(theta)))
+    np.testing.assert_allclose(prepared.column("d"), 2.0 * np.pi / prepared.column("q"))
+    assert prepared.unit("q") == "Angstrom^-1"
+    assert prepared.unit("d") == "Angstrom"
 
     rebin = dataset_rebin_config(dataset)
     assert rebin["axes"][0]["name"] == "q"
@@ -1207,7 +1317,7 @@ def test_point_list_variables_panel_edits_config(monkeypatch):
     panel = next(
         box
         for box in explorer.details_widget.findChildren(QtWidgets.QGroupBox)
-        if box.title() == "Variables & transforms"
+        if box.title() == "Variables and Channels"
     )
     assert panel is not None
     factor_spin = explorer.details_widget.findChild(QtWidgets.QDoubleSpinBox, "point_list_scale_factor")
@@ -1239,9 +1349,11 @@ def test_point_list_dataset_opens_in_data_viewer_as_1d(monkeypatch):
 
     assert viewer._is_effective_1d()
     assert viewer.model.is_point_list
-    # x-axis selector offers coordinates; channel combo offers channels.
+    # x-axis selector leads with the coordinates, then offers other non-channel
+    # columns; the channel combo offers the channels.
     x_items = [viewer.x_combo.itemText(i) for i in range(viewer.x_combo.count())]
-    assert x_items == ["Temperature", "Magnetic Field"]
+    assert x_items[:2] == ["Temperature", "Magnetic Field"]
+    assert "Moment" not in x_items  # channels are not x-axis options
     assert "Moment" in [viewer.channel_combo.itemText(i) for i in range(viewer.channel_combo.count())]
 
     viewer._set_channel("Moment")
