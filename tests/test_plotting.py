@@ -842,7 +842,8 @@ def test_qt_cursor_readout_uses_fixed_labels_and_uncertainty_precision():
     assert viewer.cursor_xy_label.text() == "(x, y) = (0, 0.75)"
     assert viewer.cursor_hkle_label.text() == "(H, K, L, E) = (1.5, -1.5, 0.75, 0.75)"
     assert viewer.cursor_q_label.text() == "|Q| = ? Å⁻¹"
-    assert viewer.cursor_intensity_label.text() == "I = -0.0067 ± 0.0013"
+    assert viewer.cursor_intensity_label.text() == "Signal = -0.0067 ± 0.0013"
+    assert viewer.ax_image.format_coord(1.0, 2.0) == ""
 
 
 def test_qt_cursor_readout_formats_q_modulus_when_lattice_matrix_is_available():
@@ -864,6 +865,37 @@ def test_qt_cursor_readout_formats_q_modulus_when_lattice_matrix_is_available():
     viewer._on_motion(event)
 
     assert viewer.cursor_q_label.text() == "|Q| = 2.25 Å⁻¹"
+
+
+def test_qt_cursor_readout_hides_crystal_coordinates_for_powder_and_magnetization():
+    pytest.importorskip("PySide6")
+
+    from metallix.dataset import PointListData
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    powder = _tiny_mdhisto_data()
+    powder.metadata["metallix_data_type"] = "powder_inelastic"
+    powder_viewer = QtMDHistoSliceViewer(powder, x_dim=3, y_dim=2)
+
+    assert powder_viewer.cursor_hkle_label.isHidden()
+    assert not powder_viewer.cursor_q_label.isHidden()
+
+    magnetization = PointListData(
+        columns={
+            "Temperature": np.array([2.0, 4.0]),
+            "Magnetic Field": np.array([1.0, 1.0]),
+            "Moment": np.array([0.1, 0.2]),
+            "Moment error": np.array([0.01, 0.01]),
+        },
+        units={"Temperature": "K", "Magnetic Field": "T"},
+        coordinate_names=["Temperature", "Magnetic Field"],
+        channels=[{"label": "Moment", "value": "Moment", "error": "Moment error"}],
+        metadata={"metallix_data_type": "magnetization"},
+    )
+    magnetization_viewer = QtMDHistoSliceViewer(magnetization)
+
+    assert magnetization_viewer.cursor_hkle_label.isHidden()
+    assert magnetization_viewer.cursor_q_label.isHidden()
 
 
 def test_qt_cursor_readout_applies_2pi_for_orientation_matrix_convention():
@@ -939,7 +971,7 @@ def test_qt_1d_cursor_readout_tracks_nearest_point_and_hkle():
     assert viewer.cursor_xy_label.text() == "(x, y) = (0.5, 3.25)"
     assert viewer.cursor_hkle_label.text() == "(H, K, L, E) = (0.5, 0.5, 0.5, 3)"
     assert viewer.cursor_q_label.text() == "|Q| = ? Å⁻¹"
-    assert viewer.cursor_intensity_label.text() == "I = 3.25 ± 0.12"
+    assert viewer.cursor_intensity_label.text() == "Signal = 3.25 ± 0.12"
 
 
 def test_qt_box_tool_visibility_checkbox_controls_rectangle_selector():

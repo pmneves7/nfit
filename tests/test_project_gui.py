@@ -54,12 +54,12 @@ def test_project_helpers_name_import_and_round_trip(tmp_path):
 
     project = MetallixProject(
         data_groups=[
-            DataGroup("Datagroup1"),
-            DataGroup("Datagroup3"),
+            DataGroup("Workspace1"),
+            DataGroup("Workspace3"),
         ]
     )
 
-    assert next_data_group_name(project.data_groups) == "Datagroup2"
+    assert next_data_group_name(project.data_groups) == "Workspace2"
 
     group = create_data_group(project, "scan_group")
     first, second = import_dataset_paths(
@@ -106,8 +106,8 @@ def test_project_helpers_name_import_and_round_trip(tmp_path):
     loaded = load_project(project_path)
 
     assert [group.name for group in loaded.data_groups] == [
-        "Datagroup1",
-        "Datagroup3",
+        "Workspace1",
+        "Workspace3",
         "scan_group",
         "copied_group",
     ]
@@ -149,7 +149,8 @@ def test_project_explorer_preserves_tree_expansion_and_toolbar_font(monkeypatch,
     assert tree.topLevelItem(0).isExpanded() is False
     assert tree.topLevelItem(1).isExpanded() is True
     assert tree.topLevelItem(1).child(0).isExpanded() is True
-    assert toolbar.font().pointSize() == tree.font().pointSize()
+    assert toolbar.font().pointSize() == tree.font().pointSize() + 1
+    assert file_button.font().pointSize() == tree.font().pointSize() + 1
 
     explorer.expand_all()
     assert all(item.isExpanded() for item in _tree_items_with_children(tree))
@@ -171,6 +172,36 @@ def test_project_explorer_preserves_tree_expansion_and_toolbar_font(monkeypatch,
         "Close": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.Close),
         "Quit": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.Quit),
     }
+
+
+def test_project_explorer_tree_hierarchy_fonts(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
+    create_mask(dataset, "Mask1")
+    model = create_model_component(DataGroup("unused"))
+    group = DataGroup("Workspace1", datasets=[dataset], models={model.name: model})
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+
+    workspace_item = explorer.tree.topLevelItem(0)
+    datasets_item = workspace_item.child(0)
+    models_item = workspace_item.child(1)
+    fits_item = workspace_item.child(2)
+    dataset_item = datasets_item.child(0)
+    masks_item = dataset_item.child(0)
+    mask_item = masks_item.child(0)
+    model_item = models_item.child(0)
+    fit_item = fits_item.child(0)
+
+    assert workspace_item.font(0).bold()
+    assert workspace_item.font(0).underline()
+    assert datasets_item.font(0).bold()
+    assert models_item.font(0).bold()
+    assert fits_item.font(0).bold()
+    for item in (dataset_item, masks_item, mask_item, model_item, fit_item):
+        assert not item.font(0).bold()
+        assert not item.font(0).underline()
 
 
 def test_project_explorer_opens_and_reloads_group_slice_viewer(monkeypatch):
@@ -862,6 +893,7 @@ def test_project_explorer_prompts_for_unsaved_close_and_quit(monkeypatch):
     explorer = MetallixProjectExplorer()
     group = explorer.create_data_group()
 
+    assert group.name == "Workspace1"
     assert explorer.has_unsaved_changes is True
     assert explorer.window.windowTitle().endswith("*")
 
@@ -1215,6 +1247,51 @@ def test_multi_select_move_and_import_into_subgroup(monkeypatch):
     assert [d.name for d in sub.datasets] == ["d1", "d3", "new"]
 
 
+def test_project_explorer_drag_reorders_groups_datasets_and_masks(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    d1 = DatasetEntry("d1", _grid_mdhisto_data(), kind="mdhisto")
+    d2 = DatasetEntry("d2", _grid_mdhisto_data(), kind="mdhisto")
+    d3 = DatasetEntry("d3", _grid_mdhisto_data(), kind="mdhisto")
+    m1 = create_mask(d1, "Mask1")
+    m2 = create_mask(d1, "Mask2")
+    m3 = create_mask(d1, "Mask3")
+    group1 = DataGroup("Datagroup1", datasets=[d1, d2, d3])
+    group2 = DataGroup("Datagroup2")
+    group3 = DataGroup("Datagroup3")
+    explorer = MetallixProjectExplorer(MetallixProject([group1, group2, group3]))
+    below = QtWidgets.QAbstractItemView.DropIndicatorPosition.BelowItem
+
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
+    explorer.tree.topLevelItem(0).setSelected(True)
+    assert explorer.move_or_copy_selected_to_item(explorer.tree.topLevelItem(2), copy_item=False, drop_position=below)
+    assert [group.name for group in explorer.project.data_groups] == ["Datagroup2", "Datagroup3", "Datagroup1"]
+
+    datasets_item = explorer.tree.topLevelItem(2).child(0)
+    dataset_items = {datasets_item.child(i).text(0): datasets_item.child(i) for i in range(datasets_item.childCount())}
+    explorer.tree.clearSelection()
+    explorer.tree.setCurrentItem(dataset_items["d1"])
+    dataset_items["d1"].setSelected(True)
+    dataset_items["d2"].setSelected(True)
+    assert explorer.move_or_copy_selected_to_item(dataset_items["d3"], copy_item=False, drop_position=below)
+    assert [dataset.name for dataset in group1.datasets] == ["d3", "d1", "d2"]
+
+    datasets_item = explorer.tree.topLevelItem(2).child(0)
+    masks_item = next(
+        datasets_item.child(i).child(0)
+        for i in range(datasets_item.childCount())
+        if datasets_item.child(i).text(0) == "d1"
+    )
+    mask_items = {masks_item.child(i).text(0): masks_item.child(i) for i in range(masks_item.childCount())}
+    explorer.tree.clearSelection()
+    explorer.tree.setCurrentItem(mask_items["Mask1"])
+    mask_items["Mask1"].setSelected(True)
+    mask_items["Mask2"].setSelected(True)
+    assert explorer.move_or_copy_selected_to_item(mask_items["Mask3"], copy_item=False, drop_position=below)
+    assert [mask.name for mask in d1.masks] == ["Mask3", "Mask1", "Mask2"]
+
+
 def test_project_explorer_nested_group_bulk_edit_and_tree(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")
@@ -1235,15 +1312,21 @@ def test_project_explorer_nested_group_bulk_edit_and_tree(monkeypatch):
     explorer._set_group_bulk_value("scale_factor", "5")
     assert [d.scale_factor for d in sub.iter_datasets()] == [5.0]
 
-    # Top group bulk-set covers every dataset; a divergent child blanks the box.
+    # The top-level workspace is organizational: fit weight and scale stay neutral
+    # there, so the bulk editor is hidden and helper edits are ignored.
     top_item = explorer.tree.topLevelItem(0)
     explorer.tree.setCurrentItem(top_item)
-    explorer._set_group_bulk_value("fit_weight", "3")
-    assert [d.fit_weight for d in group.iter_datasets()] == [3.0, 3.0]
-    d1.fit_weight = 2.0
-    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
     explorer._sync_details()
-    assert explorer.group_fit_weight_edit.text() == ""  # mixed
+    assert explorer.group_bulk_widget.isHidden()
+    explorer._set_group_bulk_value("fit_weight", "3")
+    assert [d.fit_weight for d in group.iter_datasets()] == [1.0, 1.0]
+
+    # Nested dataset groups still support bulk dataset fit controls.
+    d1.fit_weight = 2.0
+    explorer.tree.setCurrentItem(subgroup_item)
+    explorer._sync_details()
+    assert not explorer.group_bulk_widget.isHidden()
+    assert explorer.group_fit_weight_edit.text() == "1"
 
 
 def test_dataset_scale_factor_scales_viewed_data_and_round_trips(monkeypatch, tmp_path):
@@ -1412,8 +1495,9 @@ def test_point_list_dataset_opens_in_data_viewer_as_1d(monkeypatch):
     )
     viewer._on_motion(event)
 
-    assert viewer.cursor_hkle_label.text() == "(H, K, L, E) = (0, 0, 0, nan)"
-    assert viewer.cursor_intensity_label.text().startswith("I = ")
+    assert viewer.cursor_hkle_label.isHidden()
+    assert viewer.cursor_q_label.isHidden()
+    assert viewer.cursor_intensity_label.text().startswith("Signal = ")
 
 
 def test_energy_q_range_mask_default_min_q_is_zero():

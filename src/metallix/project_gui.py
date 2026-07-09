@@ -7,7 +7,7 @@ import platform
 import re
 import subprocess
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -964,6 +964,19 @@ def _move_mask_within_dataset(
     return old_index != new_index
 
 
+def _move_items_within_list(items: list[Any], moving: list[Any], insert_index: int) -> bool:
+    """Move selected objects inside one ordered list, preserving selection order."""
+
+    moving_ids = {id(item) for item in moving}
+    original = list(items)
+    insert_index = max(0, min(insert_index, len(items)))
+    insert_index -= sum(1 for index, item in enumerate(items) if id(item) in moving_ids and index < insert_index)
+    items[:] = [item for item in items if id(item) not in moving_ids]
+    for offset, item in enumerate(moving):
+        items.insert(insert_index + offset, item)
+    return items != original
+
+
 def copy_dataset_to_group(dataset: DatasetEntry, group: DataGroup) -> DatasetEntry:
     """Copy a dataset entry to another data group, choosing a non-conflicting name."""
 
@@ -1256,7 +1269,27 @@ def dataset_for_slice_viewer(
     result = _viewer_data_before_scale(dataset, extra_masks=extra_masks)
     if result is None:
         return None
-    return _apply_dataset_scale(dataset, result)
+    return _with_viewer_dataset_metadata(dataset, _apply_dataset_scale(dataset, result))
+
+
+def _with_viewer_dataset_metadata(
+    dataset: DatasetEntry,
+    data: MDHistoData | PointListData,
+) -> MDHistoData | PointListData:
+    metadata = dict(getattr(data, "metadata", {}) or {})
+    metadata["metallix_data_type"] = dataset.data_type
+    metadata["metallix_dataset_kind"] = dataset.kind
+    if isinstance(data, MDHistoData):
+        return replace(data, metadata=metadata)
+    if isinstance(data, PointListData):
+        return PointListData(
+            columns={name: np.array(values, dtype=float) for name, values in data.columns.items()},
+            units=dict(data.units),
+            coordinate_names=list(data.coordinate_names),
+            channels=[dict(channel) for channel in data.channels],
+            metadata=metadata,
+        )
+    return data
 
 
 def _viewer_data_before_scale(
@@ -2038,13 +2071,13 @@ def _matrix_includes_2pi(metadata: dict[str, Any], key: str) -> bool:
 
 
 def next_data_group_name(groups: list[DataGroup]) -> str:
-    """Return the first available DatagroupN name."""
+    """Return the first available WorkspaceN name for a top-level workspace."""
 
     taken = {group.name for group in groups}
     index = 1
-    while f"Datagroup{index}" in taken:
+    while f"Workspace{index}" in taken:
         index += 1
-    return f"Datagroup{index}"
+    return f"Workspace{index}"
 
 
 def next_mask_name(masks: list[MaskSpec]) -> str:
@@ -2194,6 +2227,15 @@ def _style_enabled_tree_item(item: Any, enabled: bool) -> None:
         item.setForeground(0, QtGui.QBrush())
     else:
         item.setForeground(0, QtGui.QBrush(QtGui.QColor("#8a8a8a")))
+
+
+def _style_tree_hierarchy_item(item: Any, *, bold: bool = False, underline: bool = False) -> None:
+    from PySide6 import QtGui
+
+    font = QtGui.QFont(item.font(0))
+    font.setBold(bold)
+    font.setUnderline(underline)
+    item.setFont(0, font)
 
 
 def _enabled_state_for_role(
@@ -2887,8 +2929,71 @@ class MetallixProjectExplorer:
             return (group, node) if node is not None else (None, None)
         return None, None
 
-    def _move_or_copy_datasets(self, dataset_items: list[Any], target_item: Any, *, copy_item: bool) -> bool:
+    def _tree_item_sort_key(self, item: Any) -> tuple[int, ...]:
+        path: list[int] = []
+        while item is not None:
+            parent = item.parent()
+            if parent is None:
+                path.append(self.tree.indexOfTopLevelItem(item))
+            else:
+                path.append(parent.indexOfChild(item))
+            item = parent
+        return tuple(reversed(path))
+
+    def _selected_items_for_drag_role(self, role: str) -> list[Any]:
+        items = [item for item in self.tree.selectedItems() if self._objects_for_item(item)[4] == role]
+        current = self._current_item()
+        if current is not None and self._objects_for_item(current)[4] == role and current not in items:
+            items.append(current)
+        return sorted(items, key=self._tree_item_sort_key)
+
+    def _is_below_drop(self, drop_position: Any) -> bool:
+        from PySide6 import QtWidgets
+
+        return drop_position == QtWidgets.QAbstractItemView.DropIndicatorPosition.BelowItem
+
+    def _dataset_drop_target_with_index(
+        self,
+        target_item: Any,
+        drop_position: Any = None,
+    ) -> tuple[DataGroup | None, Any, int | None]:
         target_group, target_node = self._resolve_dataset_drop_target(target_item)
+        if target_group is None or target_node is None:
+            return None, None, None
+        _group, target_entry, _mask, _model, target_role = self._objects_for_item(target_item)
+        if target_role == "dataset" and target_entry is not None:
+            parent_node = _dataset_parent_node(target_group, target_entry)
+            if parent_node is not None:
+                index = parent_node.datasets.index(target_entry)
+                if self._is_below_drop(drop_position):
+                    index += 1
+                return target_group, parent_node, index
+        return target_group, target_node, len(target_node.datasets)
+
+    def _mask_drop_target_with_index(
+        self,
+        target_item: Any,
+        drop_position: Any = None,
+    ) -> tuple[DataGroup | None, DatasetEntry | None, int | None]:
+        group, entry, target_mask, _model, role = self._objects_for_item(target_item)
+        if group is None or entry is None or role not in {"dataset", "masks", "mask"}:
+            return None, None, None
+        if role == "mask" and target_mask is not None:
+            index = entry.masks.index(target_mask)
+            if self._is_below_drop(drop_position):
+                index += 1
+            return group, entry, index
+        return group, entry, len(entry.masks)
+
+    def _move_or_copy_datasets(
+        self,
+        dataset_items: list[Any],
+        target_item: Any,
+        *,
+        copy_item: bool,
+        drop_position: Any = None,
+    ) -> bool:
+        target_group, target_node, insert_index = self._dataset_drop_target_with_index(target_item, drop_position)
         if target_group is None or target_node is None:
             return False
         entries: list[tuple[DataGroup, DatasetEntry]] = []
@@ -2906,26 +3011,43 @@ class MetallixProjectExplorer:
             touched_groups.add(id(group))
             groups_by_id[id(group)] = group
 
+        if not copy_item and all(
+            source_group is target_group and _dataset_parent_node(source_group, source_entry) is target_node
+            for source_group, source_entry in entries
+        ):
+            if _move_items_within_list(target_node.datasets, [entry for _group, entry in entries], insert_index or 0):
+                touch(target_group)
+                last_entry = entries[-1][1]
+            else:
+                last_entry = entries[-1][1]
+            for group in groups_by_id.values():
+                self._record_data_group_state_change(group)
+            self._mark_dirty()
+            self._refresh_tree(select_group=target_group, select_dataset=last_entry)
+            return True
+
+        index = len(target_node.datasets) if insert_index is None else max(0, min(insert_index, len(target_node.datasets)))
         for source_group, source_entry in entries:
             if copy_item:
                 new_entry = copy_dataset_to_group(source_entry, target_group)
-                if target_node is not target_group:
-                    target_group.datasets.remove(new_entry)
-                    target_node.datasets.append(new_entry)
+                target_group.datasets.remove(new_entry)
+                target_node.datasets.insert(index, new_entry)
+                index += 1
                 touch(target_group)
                 last_entry = new_entry
             elif source_group is target_group:
                 parent_node = _dataset_parent_node(source_group, source_entry)
-                if parent_node is not None and parent_node is not target_node:
+                if parent_node is not None:
                     parent_node.datasets.remove(source_entry)
-                    target_node.datasets.append(source_entry)
+                    target_node.datasets.insert(index, source_entry)
+                    index += 1
                 touch(source_group)
                 last_entry = source_entry
             else:
                 new_entry = copy_dataset_to_group(source_entry, target_group)
-                if target_node is not target_group:
-                    target_group.datasets.remove(new_entry)
-                    target_node.datasets.append(new_entry)
+                target_group.datasets.remove(new_entry)
+                target_node.datasets.insert(index, new_entry)
+                index += 1
                 delete_dataset(source_group, source_entry)
                 touch(source_group)
                 touch(target_group)
@@ -2936,19 +3058,83 @@ class MetallixProjectExplorer:
         self._refresh_tree(select_group=target_group, select_dataset=last_entry)
         return True
 
-    def move_or_copy_selected_to_item(self, target_item: Any, *, copy_item: bool) -> bool:
+    def _move_selected_groups(self, target_item: Any, drop_position: Any = None) -> bool:
+        _source_group, _entry, _mask, _model, target_role = self._objects_for_item(target_item)
+        target_group = self._objects_for_item(target_item)[0]
+        if target_role != "group" or target_group is None:
+            return False
+        group_items = self._selected_items_for_drag_role("group")
+        groups = [self._objects_for_item(item)[0] for item in group_items]
+        groups = [group for group in groups if group is not None]
+        if not groups:
+            return False
+        index = self.project.data_groups.index(target_group)
+        if self._is_below_drop(drop_position):
+            index += 1
+        moved = _move_items_within_list(self.project.data_groups, groups, index)
+        self._mark_dirty()
+        self._refresh_tree(select_group=groups[-1] if groups else target_group)
+        return moved or True
+
+    def _move_or_copy_masks(
+        self,
+        mask_items: list[Any],
+        target_item: Any,
+        *,
+        copy_item: bool,
+        drop_position: Any = None,
+    ) -> bool:
+        target_group, target_entry, insert_index = self._mask_drop_target_with_index(target_item, drop_position)
+        if target_group is None or target_entry is None:
+            return False
+        masks: list[tuple[DataGroup, DatasetEntry, MaskSpec]] = []
+        for item in mask_items:
+            source_group, source_entry, source_mask, _model, role = self._objects_for_item(item)
+            if role == "mask" and source_group is not None and source_entry is not None and source_mask is not None:
+                masks.append((source_group, source_entry, source_mask))
+        if not masks:
+            return False
+        if not copy_item and all(source_entry is target_entry for _group, source_entry, _mask in masks):
+            _move_items_within_list(target_entry.masks, [mask for _group, _entry, mask in masks], insert_index or 0)
+            self._record_data_group_state_change(target_group)
+            self._mark_dirty()
+            self._refresh_tree(select_group=target_group, select_mask=masks[-1][2])
+            return True
+        index = len(target_entry.masks) if insert_index is None else max(0, min(insert_index, len(target_entry.masks)))
+        touched_groups: dict[int, DataGroup] = {}
+        last_mask: MaskSpec | None = None
+        for source_group, source_entry, source_mask in masks:
+            moved = copy_mask_to_dataset(source_mask, target_entry)
+            target_entry.masks.remove(moved)
+            target_entry.masks.insert(index, moved)
+            index += 1
+            last_mask = moved
+            touched_groups[id(target_group)] = target_group
+            if not copy_item:
+                delete_mask(source_entry, source_mask)
+                touched_groups[id(source_group)] = source_group
+        for group in touched_groups.values():
+            self._record_data_group_state_change(group)
+        self._mark_dirty()
+        self._refresh_tree(select_group=target_group, select_mask=last_mask)
+        return True
+
+    def move_or_copy_selected_to_item(self, target_item: Any, *, copy_item: bool, drop_position: Any = None) -> bool:
         source_item = self._current_item()
         source_group, source_entry, source_mask, _source_model, source_role = self._objects_for_item(source_item)
         target_group, target_entry, target_mask, _target_model, target_role = self._objects_for_item(target_item)
 
+        if source_role == "group" and not copy_item:
+            return self._move_selected_groups(target_item, drop_position)
+
         # Move/copy one or more selected datasets into the drop target.
         if source_role == "dataset":
-            dataset_items = [
-                item for item in self.tree.selectedItems() if self._objects_for_item(item)[4] == "dataset"
-            ]
-            if source_item is not None and source_item not in dataset_items:
-                dataset_items.append(source_item)
-            return self._move_or_copy_datasets(dataset_items, target_item, copy_item=copy_item)
+            return self._move_or_copy_datasets(
+                self._selected_items_for_drag_role("dataset"),
+                target_item,
+                copy_item=copy_item,
+                drop_position=drop_position,
+            )
 
         # Re-parent a subgroup within the same group.
         if (
@@ -2974,40 +3160,13 @@ class MetallixProjectExplorer:
                     self._refresh_tree(select_group=source_group, select_dataset_group=subgroup)
             return True
 
-        if (
-            source_role == "mask"
-            and source_group is not None
-            and source_entry is not None
-            and source_mask is not None
-            and target_group is not None
-            and target_entry is not None
-            and target_entry is source_entry
-            and not copy_item
-            and target_role in {"mask", "masks"}
-        ):
-            if _move_mask_within_dataset(source_entry, source_mask, target_mask if target_role == "mask" else None):
-                self._record_data_group_state_change(source_group)
-                self._mark_dirty()
-                self._refresh_tree(select_group=source_group, select_mask=source_mask)
-            return True
-        if (
-            source_role == "mask"
-            and source_group is not None
-            and source_entry is not None
-            and source_mask is not None
-            and target_group is not None
-            and target_entry is not None
-            and target_entry is not source_entry
-            and target_role in {"dataset", "masks"}
-        ):
-            moved = copy_mask_to_dataset(source_mask, target_entry)
-            if not copy_item:
-                delete_mask(source_entry, source_mask)
-                self._record_data_group_state_change(source_group)
-            self._record_data_group_state_change(target_group)
-            self._mark_dirty()
-            self._refresh_tree(select_group=target_group, select_mask=moved)
-            return True
+        if source_role == "mask":
+            return self._move_or_copy_masks(
+                self._selected_items_for_drag_role("mask"),
+                target_item,
+                copy_item=copy_item,
+                drop_position=drop_position,
+            )
         return False
 
     def _build(self) -> None:
@@ -3064,6 +3223,7 @@ class MetallixProjectExplorer:
         # startDrag; DropOnly disables drag initiation entirely.
         self.tree.setDragDropMode(QtWidgets.QAbstractItemView.DragDropMode.DragDrop)
         self.tree.setDefaultDropAction(QtCore.Qt.DropAction.MoveAction)
+        self.tree.setDropIndicatorShown(True)
         # Allow shift/ctrl(cmd) range and multi selection for dragging several
         # datasets into a group at once.
         self.tree.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -3073,9 +3233,14 @@ class MetallixProjectExplorer:
         )
         self.tree.currentItemChanged.connect(lambda _current, _previous: self._sync_details())
         self.tree.itemChanged.connect(self._tree_item_changed)
-        toolbar.setFont(self.tree.font())
-        file_button.setFont(self.tree.font())
-        menu.setFont(self.tree.font())
+        toolbar_font = QtGui.QFont(self.tree.font())
+        if toolbar_font.pointSize() > 0:
+            toolbar_font.setPointSize(toolbar_font.pointSize() + 1)
+        else:
+            toolbar_font.setPointSizeF(toolbar_font.pointSizeF() + 1.0)
+        toolbar.setFont(toolbar_font)
+        file_button.setFont(toolbar_font)
+        menu.setFont(toolbar_font)
         left_layout.addWidget(self.tree, 1)
 
         tree_expand_row = QtWidgets.QHBoxLayout()
@@ -3090,7 +3255,7 @@ class MetallixProjectExplorer:
 
         tree_button_row = QtWidgets.QHBoxLayout()
         tree_button_row.setContentsMargins(8, 0, 8, 8)
-        self.create_group_button = QtWidgets.QPushButton("Create data group")
+        self.create_group_button = QtWidgets.QPushButton("Create workspace")
         self.delete_button = QtWidgets.QPushButton("Delete")
         self.create_group_button.clicked.connect(self.create_data_group)
         self.delete_button.clicked.connect(self.delete_selected)
@@ -3137,8 +3302,8 @@ class MetallixProjectExplorer:
         fit_weight_layout.addWidget(self.scale_factor_spin)
         title_row.addWidget(self.fit_weight_widget)
 
-        # Bulk editors for a group: blank when descendants differ, editing
-        # overwrites the fit weight / scale of every descendant dataset.
+        # Bulk editors for nested dataset groups: blank when descendants differ,
+        # editing overwrites the fit weight / scale of every descendant dataset.
         self.group_bulk_widget = QtWidgets.QWidget()
         group_bulk_layout = QtWidgets.QHBoxLayout(self.group_bulk_widget)
         group_bulk_layout.setContentsMargins(0, 0, 0, 0)
@@ -3279,10 +3444,12 @@ class MetallixProjectExplorer:
             refresh_current_state_fit_entries(group)
             group_item = QtWidgets.QTreeWidgetItem([group.name])
             group_item.setFlags(group_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
+            _style_tree_hierarchy_item(group_item, bold=True, underline=True)
             self._remember_item(group_item, "group", group)
             self.tree.addTopLevelItem(group_item)
 
             datasets_item = QtWidgets.QTreeWidgetItem(["Datasets"])
+            _style_tree_hierarchy_item(datasets_item, bold=True)
             self._remember_item(datasets_item, "datasets", group)
             group_item.addChild(datasets_item)
             found = self._render_dataset_node(
@@ -3297,6 +3464,7 @@ class MetallixProjectExplorer:
                 item_to_select = found
 
             models_item = QtWidgets.QTreeWidgetItem(["Models"])
+            _style_tree_hierarchy_item(models_item, bold=True)
             self._remember_item(models_item, "models", group)
             group_item.addChild(models_item)
             for name, model in group.models.items():
@@ -3315,6 +3483,7 @@ class MetallixProjectExplorer:
             datasets_item.setExpanded(self._expanded_state.get(("datasets", id(group)), False))
             models_item.setExpanded(self._expanded_state.get(("models", id(group)), False))
             fits_item = QtWidgets.QTreeWidgetItem(["Fits"])
+            _style_tree_hierarchy_item(fits_item, bold=True)
             self._remember_item(fits_item, "fits", group)
             group_item.addChild(fits_item)
             for fit_entry in group.fits:
@@ -3608,7 +3777,7 @@ class MetallixProjectExplorer:
             ensure_fit_history(group)
             result_count = sum(1 for fit in _walk_fit_entries(group.fits) if fit.kind == "result")
             self._set_details_text(
-                f"Data group\n\nDatasets: {len(group.datasets)}\nModels: {len(group.models)}\nFit results: {result_count}"
+                f"Workspace\n\nDatasets: {len(group.datasets)}\nModels: {len(group.models)}\nFit results: {result_count}"
             )
         elif role == "datasets" and group is not None:
             self.title_label.setText(f"{group.name} / Datasets")
@@ -3674,7 +3843,7 @@ class MetallixProjectExplorer:
             self._set_details_text("Existing fit session")
         else:
             self.title_label.setText("Project")
-            self._set_details_text(f"{len(self.project.data_groups)} data group(s)")
+            self._set_details_text(f"{len(self.project.data_groups)} workspace(s)")
         if role not in {"mask", "group_mask"}:
             self._clear_mask_parameter_editor()
         if role != "model":
@@ -3720,9 +3889,7 @@ class MetallixProjectExplorer:
 
     def _group_bulk_datasets(self, role: str) -> list[DatasetEntry]:
         item = self._current_item()
-        group, _entry, _mask, _model, item_role = self._objects_for_item(item)
-        if role == "group" and group is not None:
-            return list(group.iter_datasets())
+        _group, _entry, _mask, _model, _item_role = self._objects_for_item(item)
         if role in {"dataset_group", "group_masks"}:
             subgroup = self._dataset_group_for_item(item)
             if subgroup is not None:
@@ -3730,7 +3897,7 @@ class MetallixProjectExplorer:
         return []
 
     def _sync_group_bulk_controls(self, role: str) -> None:
-        show = role in {"group", "dataset_group", "group_masks"}
+        show = role in {"dataset_group", "group_masks"}
         self.group_bulk_widget.setVisible(show)
         if not show:
             return
@@ -3749,7 +3916,7 @@ class MetallixProjectExplorer:
     def _set_group_bulk_value(self, attribute: str, text: str) -> None:
         group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
         text = text.strip()
-        if not text or role not in {"group", "dataset_group", "group_masks"}:
+        if not text or role not in {"dataset_group", "group_masks"}:
             return
         try:
             value = float(text)
@@ -4965,14 +5132,14 @@ def _make_project_tree_class():
             if item is None:
                 return
             role = self.explorer._objects_for_item(item)[4]
+            if role not in {"group", "dataset", "mask", "dataset_group"}:
+                return
             selected_roles = {self.explorer._objects_for_item(it)[4] for it in self.selectedItems()}
-            # Datasets may be dragged as a multi-selection; other kinds drag one.
-            if role == "dataset":
-                if not selected_roles.issubset({"dataset"}):
-                    return
-            elif role in {"mask", "dataset_group"}:
-                pass
-            else:
+            if item not in self.selectedItems():
+                selected_roles = {role}
+            if role in {"group", "dataset", "mask"} and not selected_roles.issubset({role}):
+                return
+            if role == "dataset_group" and selected_roles - {"dataset_group"}:
                 return
             drag = QtGui.QDrag(self)
             mime_data = QtCore.QMimeData()
@@ -5004,7 +5171,14 @@ def _make_project_tree_class():
             if event.mimeData().hasFormat("application/x-metallix-tree-item"):
                 target = self.itemAt(event.position().toPoint())
                 copied = event.dropAction() == QtCore.Qt.DropAction.CopyAction
-                if target is not None and self.explorer.move_or_copy_selected_to_item(target, copy_item=copied):
+                if (
+                    target is not None
+                    and self.explorer.move_or_copy_selected_to_item(
+                        target,
+                        copy_item=copied,
+                        drop_position=self.dropIndicatorPosition(),
+                    )
+                ):
                     event.acceptProposedAction()
                 else:
                     event.ignore()

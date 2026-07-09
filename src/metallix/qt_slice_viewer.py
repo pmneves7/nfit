@@ -448,6 +448,7 @@ class QtMDHistoSliceViewer:
         self.ax_ycut = self.figure.add_subplot(self.grid[0, 1], sharey=self.ax_image)
         self.ax_colorbar = self.figure.add_subplot(self.grid[0, 2])
         self.ax_xcut = self.figure.add_subplot(self.grid[1, 0], sharex=self.ax_image)
+        self._suppress_matplotlib_coordinate_status()
         self.canvas = FigureCanvasQTAgg(self.figure)
         toolbar = NavigationToolbar2QT(self.canvas, self.window)
         cursor_bar = QtWidgets.QWidget()
@@ -457,7 +458,7 @@ class QtMDHistoSliceViewer:
         self.cursor_xy_label = QtWidgets.QLabel("(x, y) = (-, -)")
         self.cursor_hkle_label = QtWidgets.QLabel("(H, K, L, E) = (-, -, -, -)")
         self.cursor_q_label = QtWidgets.QLabel("|Q| = ? Å⁻¹")
-        self.cursor_intensity_label = QtWidgets.QLabel("I = -")
+        self.cursor_intensity_label = QtWidgets.QLabel("Signal = -")
         for label, width in (
             (self.cursor_xy_label, 230),
             (self.cursor_hkle_label, 350),
@@ -473,6 +474,7 @@ class QtMDHistoSliceViewer:
         plot_layout.addWidget(toolbar)
         plot_layout.addWidget(cursor_bar)
         plot_layout.addWidget(self.canvas, 1)
+        self._sync_cursor_visibility()
 
         controls = QtWidgets.QScrollArea()
         self.controls_scroll = controls
@@ -1737,10 +1739,61 @@ class QtMDHistoSliceViewer:
             self.tools_group.setVisible(not is_line and not compare_active)
         if self.line_group is not None:
             self.line_group.setVisible(is_line)
+        self._sync_cursor_visibility()
+
+    def _suppress_matplotlib_coordinate_status(self) -> None:
+        for axis in (self.ax_image, self.ax_xcut, self.ax_ycut, self.ax_colorbar, *self._compare_axes):
+            if axis is not None:
+                axis.format_coord = lambda _x, _y: ""
+
+    def _dataset_type_text(self) -> str:
+        metadata = getattr(self.data, "metadata", {}) or {}
+        candidates: list[Any] = []
+        if isinstance(metadata, dict):
+            for key in (
+                "metallix_data_type",
+                "data_type",
+                "dataset_type",
+                "kind",
+                "metallix_dataset_kind",
+                "measurement_type",
+                "importer",
+            ):
+                if key in metadata:
+                    candidates.append(metadata[key])
+        if isinstance(self.data, PointListData):
+            candidates.extend(getattr(self.data, "coordinate_names", []))
+            candidates.extend(channel.get("label", "") for channel in getattr(self.data, "channels", []))
+        else:
+            candidates.extend(axis.name for axis in getattr(self.data, "axes", ()))
+            candidates.extend(axis.kind for axis in getattr(self.data, "axes", ()))
+        return " ".join(str(value).lower() for value in candidates if value is not None)
+
+    def _is_powder_dataset(self) -> bool:
+        text = self._dataset_type_text()
+        if "powder" in text:
+            return True
+        if isinstance(self.data, PointListData):
+            coordinates = [name.lower() for name in self.data.coordinate_names]
+            return any("theta" in name or name in {"q", "|q|", "q_modulus"} for name in coordinates)
+        axis_names = [axis.name.lower() for axis in getattr(self.data, "axes", ())]
+        has_powder_axis = any("theta" in name or name in {"q", "|q|", "q_modulus"} for name in axis_names)
+        has_crystal_axis = any("[h" in name or name in {"h", "k", "l"} for name in axis_names)
+        return has_powder_axis and not has_crystal_axis
+
+    def _is_magnetization_dataset(self) -> bool:
+        return "magnetization" in self._dataset_type_text() or "mpms" in self._dataset_type_text()
+
+    def _sync_cursor_visibility(self) -> None:
+        if self.cursor_hkle_label is not None:
+            self.cursor_hkle_label.setVisible(not (self._is_powder_dataset() or self._is_magnetization_dataset()))
+        if self.cursor_q_label is not None:
+            self.cursor_q_label.setVisible(not self._is_magnetization_dataset())
 
     def _ensure_standard_plot_layout(self) -> None:
         if self._plot_layout_mode in (None, ("standard", 1)):
             self._plot_layout_mode = ("standard", 1)
+            self._suppress_matplotlib_coordinate_status()
             return
         self.figure.clear()
         self.grid = self.figure.add_gridspec(
@@ -1753,6 +1806,7 @@ class QtMDHistoSliceViewer:
         self.ax_ycut = self.figure.add_subplot(self.grid[0, 1], sharey=self.ax_image)
         self.ax_colorbar = self.figure.add_subplot(self.grid[0, 2])
         self.ax_xcut = self.figure.add_subplot(self.grid[1, 0], sharex=self.ax_image)
+        self._suppress_matplotlib_coordinate_status()
         self.image = None
         self.colorbar = None
         self._compare_axes = []
@@ -1771,6 +1825,7 @@ class QtMDHistoSliceViewer:
         self.ax_colorbar = None
         self.image = None
         self.colorbar = None
+        self._suppress_matplotlib_coordinate_status()
         if self.rectangle_selector is not None:
             self.rectangle_selector.set_active(False)
             self.rectangle_selector = None
@@ -2228,7 +2283,7 @@ class QtMDHistoSliceViewer:
             f"{_format_coord(coords['L'])}, {_format_coord(coords['E'])})"
         )
         self.cursor_q_label.setText(self._format_q_modulus(coords))
-        self.cursor_intensity_label.setText(f"I = {value_text} ± {error_text}")
+        self.cursor_intensity_label.setText(f"Signal = {value_text} ± {error_text}")
 
     def _on_line_motion(self, event) -> None:
         view = self._current_slice
@@ -2251,7 +2306,7 @@ class QtMDHistoSliceViewer:
             f"{_format_coord(coords['L'])}, {_format_coord(coords['E'])})"
         )
         self.cursor_q_label.setText(self._format_q_modulus(coords))
-        self.cursor_intensity_label.setText(f"I = {value_text} ± {error_text}")
+        self.cursor_intensity_label.setText(f"Signal = {value_text} ± {error_text}")
 
     def _format_q_modulus(self, coords: dict[str, float]) -> str:
         q = self._q_modulus_inv_angstrom(coords)
