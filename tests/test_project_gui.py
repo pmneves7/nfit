@@ -1222,6 +1222,8 @@ def test_point_list_variables_panel_edits_config(monkeypatch):
 
 
 def test_point_list_dataset_opens_in_data_viewer_as_1d(monkeypatch):
+    from types import SimpleNamespace
+
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")
     from metallix.qt_slice_viewer import QtMDHistoSliceViewer
@@ -1248,6 +1250,16 @@ def test_point_list_dataset_opens_in_data_viewer_as_1d(monkeypatch):
     assert view["signal"].size == datasets[0].size
     assert viewer.model._channel_label() == "Moment (emu)"
     assert viewer.model._axis_label(0) == "Magnetic Field (Oe)"
+
+    event = SimpleNamespace(
+        inaxes=viewer.ax_image,
+        xdata=float(view["x_centers"][0]),
+        ydata=float(view["signal"][0]),
+    )
+    viewer._on_motion(event)
+
+    assert viewer.cursor_hkle_label.text() == "(H, K, L, E) = (0, 0, 0, nan)"
+    assert viewer.cursor_intensity_label.text().startswith("I = ")
 
 
 def test_energy_q_range_mask_default_min_q_is_zero():

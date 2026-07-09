@@ -2308,6 +2308,8 @@ class QtMDHistoSliceViewer:
         return coords
 
     def _cursor_hkle_1d(self, x_idx: int) -> dict[str, float]:
+        if getattr(self.model, "is_point_list", False):
+            return self._cursor_hkle_point_list_1d(x_idx)
         coords = {"H": 0.0, "K": 0.0, "L": 0.0, "E": np.nan}
         hidden = self.model._normalized_selections()
         for dim, axis in enumerate(self.data.axes):
@@ -2326,6 +2328,28 @@ class QtMDHistoSliceViewer:
                     coords["E"] = float(value)
                 else:
                     coords[component] += float(coefficient) * float(value)
+        return coords
+
+    def _cursor_hkle_point_list_1d(self, x_idx: int) -> dict[str, float]:
+        coords = {"H": 0.0, "K": 0.0, "L": 0.0, "E": np.nan}
+        data = self.model.data
+        x = np.asarray(data.column(self.model.x_key), dtype=float)
+        if x.size == 0:
+            return coords
+        order = np.argsort(x, kind="stable")
+        if not (0 <= int(x_idx) < order.size):
+            return coords
+        row = int(order[int(x_idx)])
+        for name in data.coordinate_names:
+            components = _axis_components(name)
+            if not components:
+                continue
+            value = float(data.column(name)[row])
+            for component, coefficient in components.items():
+                if component == "E":
+                    coords["E"] = value
+                else:
+                    coords[component] += float(coefficient) * value
         return coords
 
     def _on_rectangle(self, click, release) -> None:
