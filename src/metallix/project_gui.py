@@ -2238,6 +2238,118 @@ def _style_tree_hierarchy_item(item: Any, *, bold: bool = False, underline: bool
     item.setFont(0, font)
 
 
+_TREE_ICON_CACHE: dict[str, Any] = {}
+
+
+def _tree_item_icon(kind: str) -> Any:
+    from PySide6 import QtCore, QtGui
+
+    if kind in _TREE_ICON_CACHE:
+        return _TREE_ICON_CACHE[kind]
+
+    colors = {
+        "folder": "#5f8fa8",
+        "mask_folder": "#a88fc5",
+        "model_folder": "#c7a45b",
+        "fit_folder": "#7cab80",
+        "dataset": "#6d9fc7",
+        "mask": "#a88fc5",
+        "model": "#c7a45b",
+        "fit_result": "#7cab80",
+        "fit_initial": "#7cab80",
+        "fit_current": "#7cab80",
+    }
+    accent = QtGui.QColor(colors.get(kind, "#9ca3ad"))
+    line = QtGui.QColor("#c7ccd1")
+
+    pixmap = QtGui.QPixmap(16, 16)
+    pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+    painter = QtGui.QPainter(pixmap)
+    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    pen = QtGui.QPen(accent, 1.4)
+    pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+
+    if kind in {"folder", "mask_folder", "model_folder", "fit_folder"}:
+        fill = QtGui.QColor(accent)
+        fill.setAlpha(34)
+        painter.setPen(QtGui.QPen(accent, 1.15))
+        painter.setBrush(fill)
+        path = QtGui.QPainterPath(QtCore.QPointF(2.5, 4.6))
+        path.lineTo(QtCore.QPointF(5.7, 4.6))
+        path.lineTo(QtCore.QPointF(7.0, 6.1))
+        path.lineTo(QtCore.QPointF(13.5, 6.1))
+        path.lineTo(QtCore.QPointF(13.5, 12.9))
+        path.lineTo(QtCore.QPointF(2.5, 12.9))
+        path.closeSubpath()
+        painter.drawPath(path)
+        painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+    elif kind == "dataset":
+        painter.setPen(QtGui.QPen(line, 1.0))
+        painter.drawRoundedRect(QtCore.QRectF(2.3, 4.0, 11.4, 8.7), 1.0, 1.0)
+        painter.setPen(QtGui.QPen(accent, 1.0))
+        for x in (6.1, 9.9):
+            painter.drawLine(QtCore.QPointF(x, 4.3), QtCore.QPointF(x, 12.4))
+        for y in (6.9, 9.8):
+            painter.drawLine(QtCore.QPointF(2.6, y), QtCore.QPointF(13.4, y))
+    elif kind == "mask":
+        removed = QtGui.QColor(accent)
+        removed.setAlpha(88)
+        painter.setPen(QtGui.QPen(line, 1.0))
+        painter.drawRoundedRect(QtCore.QRectF(3.0, 3.0, 10.0, 10.0), 1.2, 1.2)
+        painter.setPen(QtGui.QPen(accent, 1.0))
+        painter.setBrush(removed)
+        painter.drawRect(QtCore.QRectF(3.4, 3.4, 4.0, 4.0))
+        painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        painter.drawLine(QtCore.QPointF(4.1, 4.1), QtCore.QPointF(6.7, 6.7))
+        painter.drawLine(QtCore.QPointF(6.7, 4.1), QtCore.QPointF(4.1, 6.7))
+    elif kind == "model":
+        path = QtGui.QPainterPath(QtCore.QPointF(2.8, 10.8))
+        path.cubicTo(QtCore.QPointF(5.0, 3.0), QtCore.QPointF(7.2, 13.0), QtCore.QPointF(10.0, 5.2))
+        path.cubicTo(QtCore.QPointF(11.2, 2.0), QtCore.QPointF(12.8, 5.5), QtCore.QPointF(13.2, 8.0))
+        painter.drawPath(path)
+        painter.setBrush(accent)
+        painter.drawEllipse(QtCore.QPointF(5.2, 7.0), 1.1, 1.1)
+        painter.drawEllipse(QtCore.QPointF(10.0, 5.2), 1.1, 1.1)
+    elif kind == "fit_result":
+        painter.setPen(QtGui.QPen(line, 1.0))
+        painter.drawLine(QtCore.QPointF(3.0, 12.0), QtCore.QPointF(13.0, 12.0))
+        painter.drawLine(QtCore.QPointF(3.0, 12.0), QtCore.QPointF(3.0, 4.0))
+        painter.setPen(QtGui.QPen(accent, 1.4))
+        painter.drawPolyline(
+            QtGui.QPolygonF(
+                [
+                    QtCore.QPointF(4.0, 10.5),
+                    QtCore.QPointF(6.3, 8.4),
+                    QtCore.QPointF(8.4, 9.3),
+                    QtCore.QPointF(11.8, 5.0),
+                ]
+            )
+        )
+    elif kind == "fit_initial":
+        painter.setPen(QtGui.QPen(accent, 1.4))
+        painter.drawEllipse(QtCore.QPointF(8.0, 8.0), 4.2, 4.2)
+        painter.drawLine(QtCore.QPointF(8.0, 3.8), QtCore.QPointF(8.0, 6.0))
+    elif kind == "fit_current":
+        painter.setPen(QtGui.QPen(line, 1.1))
+        painter.drawEllipse(QtCore.QPointF(8.0, 8.0), 4.5, 4.5)
+        painter.setPen(QtGui.QPen(accent, 1.3))
+        painter.drawEllipse(QtCore.QPointF(8.0, 8.0), 2.1, 2.1)
+        painter.setBrush(accent)
+        painter.drawEllipse(QtCore.QPointF(8.0, 8.0), 0.9, 0.9)
+
+    painter.end()
+    icon = QtGui.QIcon(pixmap)
+    _TREE_ICON_CACHE[kind] = icon
+    return icon
+
+
+def _set_tree_item_icon(item: Any, kind: str) -> None:
+    item.setIcon(0, _tree_item_icon(kind))
+
+
 def _enabled_state_for_role(
     role: str,
     entry: DatasetEntry | None,
@@ -3445,11 +3557,13 @@ class MetallixProjectExplorer:
             group_item = QtWidgets.QTreeWidgetItem([group.name])
             group_item.setFlags(group_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
             _style_tree_hierarchy_item(group_item, bold=True, underline=True)
+            _set_tree_item_icon(group_item, "folder")
             self._remember_item(group_item, "group", group)
             self.tree.addTopLevelItem(group_item)
 
             datasets_item = QtWidgets.QTreeWidgetItem(["Datasets"])
             _style_tree_hierarchy_item(datasets_item, bold=True)
+            _set_tree_item_icon(datasets_item, "folder")
             self._remember_item(datasets_item, "datasets", group)
             group_item.addChild(datasets_item)
             found = self._render_dataset_node(
@@ -3465,10 +3579,12 @@ class MetallixProjectExplorer:
 
             models_item = QtWidgets.QTreeWidgetItem(["Models"])
             _style_tree_hierarchy_item(models_item, bold=True)
+            _set_tree_item_icon(models_item, "model_folder")
             self._remember_item(models_item, "models", group)
             group_item.addChild(models_item)
             for name, model in group.models.items():
                 model_item = QtWidgets.QTreeWidgetItem([name])
+                _set_tree_item_icon(model_item, "model")
                 if isinstance(model, ModelComponentSpec):
                     model_item.setFlags(model_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
                     self._remember_item(model_item, "model", group, model=model)
@@ -3484,6 +3600,7 @@ class MetallixProjectExplorer:
             models_item.setExpanded(self._expanded_state.get(("models", id(group)), False))
             fits_item = QtWidgets.QTreeWidgetItem(["Fits"])
             _style_tree_hierarchy_item(fits_item, bold=True)
+            _set_tree_item_icon(fits_item, "fit_folder")
             self._remember_item(fits_item, "fits", group)
             group_item.addChild(fits_item)
             for fit_entry in group.fits:
@@ -3523,16 +3640,19 @@ class MetallixProjectExplorer:
         for dataset in node.datasets:
             dataset_item = QtWidgets.QTreeWidgetItem([dataset.name])
             dataset_item.setFlags(dataset_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
+            _set_tree_item_icon(dataset_item, "dataset")
             self._remember_item(dataset_item, "dataset", group, dataset)
             _style_enabled_tree_item(dataset_item, dataset.enabled)
             parent_item.addChild(dataset_item)
             masks_item = QtWidgets.QTreeWidgetItem(["Masks"])
+            _set_tree_item_icon(masks_item, "mask_folder")
             _style_enabled_tree_item(masks_item, dataset.enabled)
             self._remember_item(masks_item, "masks", group, dataset)
             dataset_item.addChild(masks_item)
             for mask in dataset.masks:
                 mask_item = QtWidgets.QTreeWidgetItem([mask.name])
                 mask_item.setFlags(mask_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
+                _set_tree_item_icon(mask_item, "mask")
                 self._remember_item(mask_item, "mask", group, dataset, mask)
                 _style_enabled_tree_item(mask_item, mask.enabled)
                 masks_item.addChild(mask_item)
@@ -3546,14 +3666,17 @@ class MetallixProjectExplorer:
         for subgroup in node.subgroups:
             subgroup_item = QtWidgets.QTreeWidgetItem([subgroup.name])
             subgroup_item.setFlags(subgroup_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
+            _set_tree_item_icon(subgroup_item, "folder")
             self._remember_item(subgroup_item, "dataset_group", group, node=subgroup)
             parent_item.addChild(subgroup_item)
             gmasks_item = QtWidgets.QTreeWidgetItem(["Masks"])
+            _set_tree_item_icon(gmasks_item, "mask_folder")
             self._remember_item(gmasks_item, "group_masks", group, node=subgroup)
             subgroup_item.addChild(gmasks_item)
             for mask in subgroup.masks:
                 gmask_item = QtWidgets.QTreeWidgetItem([mask.name])
                 gmask_item.setFlags(gmask_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
+                _set_tree_item_icon(gmask_item, "mask")
                 self._remember_item(gmask_item, "group_mask", group, mask=mask, node=subgroup)
                 _style_enabled_tree_item(gmask_item, mask.enabled)
                 gmasks_item.addChild(gmask_item)
@@ -3647,6 +3770,13 @@ class MetallixProjectExplorer:
         item = QtWidgets.QTreeWidgetItem([fit_entry.name])
         item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
         role = "fit_timeline" if fit_entry.kind == "timeline" else "fit"
+        icon_kind = {
+            "timeline": "fit_folder",
+            "initial": "fit_initial",
+            "current": "fit_current",
+            "result": "fit_result",
+        }.get(fit_entry.kind, "fit_result")
+        _set_tree_item_icon(item, icon_kind)
         self._remember_item(item, role, group)
         self._fit_item_roles[id(item)] = fit_entry
         parent_item.addChild(item)

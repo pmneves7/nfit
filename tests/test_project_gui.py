@@ -40,7 +40,7 @@ from metallix.project_gui import (
     set_dataset_data_type,
     set_dataset_source,
 )
-from metallix.pipeline import DataGroup, DatasetEntry, DatasetGroup
+from metallix.pipeline import DataGroup, DatasetEntry, DatasetGroup, FitTimelineEntry
 
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
@@ -181,7 +181,16 @@ def test_project_explorer_tree_hierarchy_fonts(monkeypatch):
     dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
     create_mask(dataset, "Mask1")
     model = create_model_component(DataGroup("unused"))
-    group = DataGroup("Workspace1", datasets=[dataset], models={model.name: model})
+    group = DataGroup(
+        "Workspace1",
+        datasets=[dataset],
+        models={model.name: model},
+        fits=[
+            FitTimelineEntry("Initial", kind="initial"),
+            FitTimelineEntry("Fit Result1", kind="result"),
+            FitTimelineEntry("Current state", kind="current"),
+        ],
+    )
     explorer = MetallixProjectExplorer(MetallixProject([group]))
 
     workspace_item = explorer.tree.topLevelItem(0)
@@ -192,16 +201,32 @@ def test_project_explorer_tree_hierarchy_fonts(monkeypatch):
     masks_item = dataset_item.child(0)
     mask_item = masks_item.child(0)
     model_item = models_item.child(0)
-    fit_item = fits_item.child(0)
+    initial_item = fits_item.child(0)
+    result_item = fits_item.child(1)
+    current_item = fits_item.child(2)
 
     assert workspace_item.font(0).bold()
     assert workspace_item.font(0).underline()
     assert datasets_item.font(0).bold()
     assert models_item.font(0).bold()
     assert fits_item.font(0).bold()
-    for item in (dataset_item, masks_item, mask_item, model_item, fit_item):
+    for item in (dataset_item, masks_item, mask_item, model_item, initial_item, result_item, current_item):
         assert not item.font(0).bold()
         assert not item.font(0).underline()
+    for item in (
+        workspace_item,
+        datasets_item,
+        models_item,
+        fits_item,
+        dataset_item,
+        masks_item,
+        mask_item,
+        model_item,
+        initial_item,
+        result_item,
+        current_item,
+    ):
+        assert not item.icon(0).isNull()
 
 
 def test_project_explorer_opens_and_reloads_group_slice_viewer(monkeypatch):
