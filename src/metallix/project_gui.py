@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import copy
 import ast
@@ -7,6 +8,7 @@ import platform
 import re
 import subprocess
 import time
+import zlib
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
@@ -15,7 +17,23 @@ from typing import Any
 import numpy as np
 
 from .dataset import PointData4D, PointListData
-from .fitting import rebin_point_data
+from .fit_config import (
+    MODEL_TYPE_REGISTRY,
+    CompiledFitProblem,
+    FitDatasetInput,
+    compile_fit_problem,
+    model_supports_data_type,
+    qualified_parameter_name,
+)
+from .fitting import (
+    OptimizationConfig,
+    SamplerConfig,
+    SamplingResult,
+    evaluate_problem_model,
+    fit_problem_least_squares,
+    rebin_point_data,
+    sample_problem_parameters,
+)
 from .importers import IMPORTERS, import_with, importers_for_data_type
 from .mdhisto import MDHistoAxis, MDHistoData, load_mantid_mdhisto_nxs
 from .pipeline import DataGroup, DatasetEntry, DatasetGroup, FitTimelineEntry, MaskSpec, ModelComponentSpec
@@ -779,26 +797,34 @@ def ensure_fit_history(group: DataGroup) -> list[FitTimelineEntry]:
     return group.fits
 
 
-def create_placeholder_fit_result(
+def create_fit_result_entry(
     group: DataGroup,
     parent: FitTimelineEntry,
     *,
     branch_timeline: bool = False,
+    goodness: dict[str, Any] | None = None,
+    channels: dict[str, dict[str, Any]] | None = None,
+    metadata: dict[str, Any] | None = None,
+    duration_seconds: float | None = None,
 ) -> FitTimelineEntry:
-    """Create a placeholder fit result from current group state."""
+    """Insert a fit-result entry snapshotting the current group state."""
 
-    start = time.perf_counter()
     snapshot = snapshot_data_group_state(group)
-    duration = time.perf_counter() - start
     result = FitTimelineEntry(
         name=next_fit_result_name(group.fits),
         kind="result",
         snapshot=copy.deepcopy(snapshot),
         created_at=_timestamp_now(),
-        duration_seconds=duration,
+        duration_seconds=duration_seconds,
         optimizer=str(parent.optimizer or "least_squares"),
         optimizer_config=copy.deepcopy(parent.optimizer_config),
-        goodness={"status": "not run", "message": "Fit execution is not wired yet."},
+        goodness=(
+            {"status": "not run", "message": "The fit has not been executed."}
+            if goodness is None
+            else dict(goodness)
+        ),
+        channels={} if channels is None else dict(channels),
+        metadata={} if metadata is None else dict(metadata),
     )
     if branch_timeline:
         timeline = FitTimelineEntry(
@@ -816,6 +842,49 @@ def create_placeholder_fit_result(
         siblings.insert(insert_at, result)
         _replace_current_state(siblings, group)
     return result
+
+
+def run_group_fit(
+    group: DataGroup,
+    parent: FitTimelineEntry,
+    *,
+    branch_timeline: bool = False,
+    progress_callback: Any | None = None,
+) -> FitTimelineEntry:
+    """Execute the group's fit and record the outcome in the fit history.
+
+    The optimizer honors masks, disabled datasets/components, fit weights,
+    and scale factors. Optimized parameters are written back to the model
+    components before the result snapshot is taken, so the stored snapshot
+    reproduces the fitted state. Fit and residual channels are evaluated once
+    here and saved on the result entry; they are never recomputed on the fly.
+    A failed fit still records an entry with the failure in ``goodness``.
+    """
+
+    start = time.perf_counter()
+    channels: dict[str, dict[str, Any]] = {}
+    metadata: dict[str, Any] = {}
+    try:
+        outcome = perform_group_fit(
+            group,
+            optimizer_config=parent.optimizer_config,
+            progress_callback=progress_callback,
+        )
+        goodness = outcome["goodness"]
+        channels = outcome["channels"]
+        metadata = outcome.get("metadata", {})
+    except Exception as exc:
+        goodness = {"status": "failed", "message": str(exc)}
+    duration = time.perf_counter() - start
+    return create_fit_result_entry(
+        group,
+        parent,
+        branch_timeline=branch_timeline,
+        goodness=goodness,
+        channels=channels,
+        metadata=metadata,
+        duration_seconds=duration,
+    )
 
 
 def current_state_fit_entry(group: DataGroup) -> FitTimelineEntry:
@@ -908,6 +977,12 @@ def restore_data_group_state(group: DataGroup, snapshot: dict[str, Any]) -> None
             str(key): bool(value)
             for key, value in dict(model_payload.get("global_fit", {})).items()
         }
+        existing.sharing = _sharing_from_payload(model_payload.get("sharing"))
+        existing.limits = dict(model_payload.get("limits", {}) or {})
+        existing.constraints = [
+            dict(constraint) for constraint in model_payload.get("constraints", []) or []
+        ]
+        existing.applies_to = _applies_to_from_payload(model_payload.get("applies_to"))
         existing.enabled = bool(model_payload.get("enabled", existing.enabled))
         existing.metadata = dict(model_payload.get("metadata", {}))
 
@@ -1171,6 +1246,8 @@ def fit_details_text(fit_entry: FitTimelineEntry) -> str:
     if fit_entry.goodness:
         lines.extend(["", "Goodness of fit"])
         lines.extend(_mapping_lines(fit_entry.goodness))
+    if fit_entry.channels:
+        lines.extend(["", f"Stored fit channels: {', '.join(sorted(fit_entry.channels))}"])
     snapshot = fit_entry.snapshot or {}
     lines.extend(
         [
@@ -1250,6 +1327,7 @@ def slice_viewer_datasets(
         extra_masks = effective_dataset_masks(group, dataset)
         view_data = dataset_for_slice_viewer(dataset, extra_masks=extra_masks)
         if view_data is not None:
+            attach_fit_channels_to_view(group, dataset.name, view_data)
             data.append(view_data)
             names.append(dataset.name)
     return data, names
@@ -1290,6 +1368,577 @@ def _with_viewer_dataset_metadata(
             metadata=metadata,
         )
     return data
+
+
+FIT_CHANNEL_NAMES = ("fit", "residual")
+
+
+@dataclass
+class FitDataBundle:
+    """Fit-ready representations of one dataset.
+
+    ``view`` is the masked, scaled data exactly as the data viewer shows it.
+    ``points`` flattens every view point into :class:`PointData4D`; the point
+    mask is ``False`` where the view masks a point, so the optimizer only sees
+    unmasked data while the fitted model can still be evaluated everywhere.
+    ``grid_shape`` reshapes point-ordered channel arrays back onto the MDHisto
+    grid (``None`` for point lists).
+    """
+
+    dataset: DatasetEntry
+    view: Any
+    points: PointData4D
+    grid_shape: tuple[int, ...] | None
+
+
+def fit_data_bundle(group: DataGroup, dataset: DatasetEntry) -> FitDataBundle | None:
+    """Build the fit-ready views of one dataset, or ``None`` if unsupported."""
+
+    extra_masks = effective_dataset_masks(group, dataset)
+    view = dataset_for_slice_viewer(dataset, extra_masks=extra_masks)
+    if isinstance(view, MDHistoData):
+        return FitDataBundle(
+            dataset=dataset,
+            view=view,
+            points=_point_data_from_mdhisto_view(view),
+            grid_shape=view.shape,
+        )
+    if isinstance(view, PointListData):
+        return FitDataBundle(
+            dataset=dataset,
+            view=view,
+            points=_point_data_from_point_list_view(view),
+            grid_shape=None,
+        )
+    return None
+
+
+def _point_data_from_mdhisto_view(data: MDHistoData) -> PointData4D:
+    """Flatten a masked MDHisto view into fit points using axis roles."""
+
+    coords = _mdhisto_coordinate_grids(data)
+    zeros = np.zeros(data.shape, dtype=float)
+    keep = ~np.asarray(data.mask, dtype=bool)
+    keep &= np.asarray(data.num_events, dtype=float) > 0.0
+    metadata: dict[str, Any] = {
+        "fit_coordinates": sorted(name for name in ("H", "K", "L", "E") if name in coords),
+    }
+    for key in ("oriented_lattice", "coordinate_units", "rlu_to_inv_angstrom_matrix"):
+        if key in data.metadata:
+            metadata[key] = data.metadata[key]
+    return PointData4D(
+        H=coords.get("H", zeros).ravel(),
+        K=coords.get("K", zeros).ravel(),
+        L=coords.get("L", zeros).ravel(),
+        E=coords.get("E", zeros).ravel(),
+        intensity=np.asarray(data.signal, dtype=float).ravel(),
+        sigma=np.asarray(data.errors, dtype=float).ravel(),
+        mask=keep.ravel(),
+        metadata=metadata,
+    )
+
+
+def _point_data_from_point_list_view(data: PointListData) -> PointData4D:
+    """Map a point-list view onto fit points.
+
+    Columns named ``H``, ``K``, ``L``, or ``E`` (case-insensitive) become the
+    matching fit coordinates. When no energy-like column exists, the first
+    coordinate column is stored in ``E`` so one-dimensional models have an
+    axis to work with; the mapping is recorded in the point metadata.
+    """
+
+    if not data.channel_labels:
+        raise ValueError("point-list dataset defines no data channels")
+    label = data.channel_labels[0]
+    intensity = np.asarray(data.channel_values(label), dtype=float)
+    errors = data.channel_errors(label)
+    sigma_known = errors is not None
+    sigma = (
+        np.asarray(errors, dtype=float)
+        if sigma_known
+        else np.ones(intensity.shape, dtype=float)
+    )
+
+    columns_by_role: dict[str, np.ndarray] = {}
+    mapping: dict[str, str] = {}
+    for name in data.coordinate_names:
+        role = name.strip().upper()
+        if role in ("H", "K", "L", "E") and role not in columns_by_role:
+            columns_by_role[role] = np.asarray(data.column(name), dtype=float)
+            mapping[role] = name
+    if "E" not in columns_by_role and data.coordinate_names:
+        first = data.coordinate_names[0]
+        if first not in mapping.values():
+            columns_by_role["E"] = np.asarray(data.column(first), dtype=float)
+            mapping["E"] = first
+
+    n = intensity.size
+    zeros = np.zeros(n, dtype=float)
+    mask = np.isfinite(intensity) & np.isfinite(sigma)
+    if sigma_known:
+        mask &= sigma > 0.0
+    return PointData4D(
+        H=columns_by_role.get("H", zeros),
+        K=columns_by_role.get("K", zeros),
+        L=columns_by_role.get("L", zeros),
+        E=columns_by_role.get("E", zeros),
+        intensity=intensity,
+        sigma=sigma,
+        mask=mask,
+        metadata={
+            "fit_coordinate_mapping": mapping,
+            "fit_channel": label,
+            "sigma_known": sigma_known,
+        },
+    )
+
+
+def fit_dataset_inputs(
+    group: DataGroup,
+) -> tuple[list[FitDatasetInput], dict[str, FitDataBundle]]:
+    """Prepare every enabled dataset in a group for the fit compiler."""
+
+    inputs: list[FitDatasetInput] = []
+    bundles: dict[str, FitDataBundle] = {}
+    for dataset in group.iter_datasets():
+        if not dataset.enabled:
+            continue
+        bundle = fit_data_bundle(group, dataset)
+        if bundle is None:
+            continue
+        inputs.append(
+            FitDatasetInput(
+                name=dataset.name,
+                data=bundle.points,
+                weight=float(dataset.fit_weight),
+                data_type=dataset.data_type or DEFAULT_DATA_TYPE,
+            )
+        )
+        bundles[dataset.name] = bundle
+    return inputs, bundles
+
+
+_OPTIMIZER_KWARG_NAMES = ("max_nfev", "xtol", "ftol", "gtol", "loss", "f_scale")
+
+
+def _optimizer_kwargs(optimizer_config: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(optimizer_config, dict):
+        return {}
+    kwargs: dict[str, Any] = {}
+    for name in _OPTIMIZER_KWARG_NAMES:
+        value = optimizer_config.get(name)
+        if value in (None, ""):
+            continue
+        if name == "max_nfev":
+            kwargs[name] = int(value)
+        elif name == "loss":
+            kwargs[name] = str(value)
+        else:
+            kwargs[name] = float(value)
+    init_config = optimizer_config.get("initialization")
+    if isinstance(init_config, dict) and init_config.get("enabled", False):
+        kwargs["initialization"] = {
+            key: value for key, value in init_config.items() if key != "enabled"
+        }
+        kwargs["initialization"].setdefault("method", "differential_evolution")
+    return kwargs
+
+
+def _sampler_config(optimizer_config: dict[str, Any] | None) -> SamplerConfig | None:
+    if not isinstance(optimizer_config, dict):
+        return None
+    sampler = optimizer_config.get("sampler")
+    if not isinstance(sampler, dict) or not sampler.get("enabled", False):
+        return None
+    return SamplerConfig(
+        method=str(sampler.get("method", "emcee")),
+        n_walkers=_optional_int(sampler.get("n_walkers")),
+        n_steps=_optional_int(sampler.get("n_steps")) or 1000,
+        burn_in=int(sampler.get("burn_in", 0) or 0),
+        thin=max(1, int(sampler.get("thin", 1) or 1)),
+        random_seed=_optional_int(sampler.get("random_seed")),
+        kwargs=dict(sampler.get("kwargs", {})) if isinstance(sampler.get("kwargs"), dict) else {},
+    )
+
+
+def _optional_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    return int(value)
+
+
+def perform_group_fit(
+    group: DataGroup,
+    *,
+    optimizer_config: dict[str, Any] | None = None,
+    progress_callback: Any | None = None,
+) -> dict[str, Any]:
+    """Fit the group's enabled model components to its enabled datasets.
+
+    Masks, active/inactive datasets, fit weights, and scale factors are all
+    honored because the fit points come from the same prepared views the data
+    viewer shows. Optimized parameter values are written back to the model
+    components, and per-dataset fit/residual channels are evaluated once over
+    each dataset's full view so they can be stored with the fit result.
+    """
+
+    components = [
+        model for model in group.models.values() if isinstance(model, ModelComponentSpec)
+    ]
+    if not any(component.enabled for component in components):
+        raise ValueError("the data group has no enabled model components")
+    inputs, bundles = fit_dataset_inputs(group)
+    if not inputs:
+        raise ValueError("no enabled dataset could be prepared for fitting")
+
+    compiled = compile_fit_problem(components, inputs, description=group.name)
+    config = OptimizationConfig(kwargs=_optimizer_kwargs(optimizer_config))
+    progress_events: list[dict[str, Any]] = []
+
+    def record_progress(event: dict[str, Any]) -> None:
+        if len(progress_events) < 200:
+            progress_events.append(_progress_event_summary(event))
+        if progress_callback is not None:
+            progress_callback(event)
+
+    result = fit_problem_least_squares(
+        compiled.problem,
+        config=config,
+        progress_callback=record_progress,
+    )
+    sampler_result: SamplingResult | None = None
+    sampler = _sampler_config(optimizer_config)
+    if sampler is not None:
+        sampler_result = sample_problem_parameters(
+            compiled.problem,
+            sampler,
+            initial_params=result.params,
+            require_positive_sigma=config.require_positive_sigma,
+            progress_callback=record_progress,
+        )
+    _write_back_fitted_parameters(group, components, compiled, result)
+    channels = _fit_channels_from_result(compiled, result, bundles)
+    goodness: dict[str, Any] = {
+        "status": "converged" if result.success else "not converged",
+        "message": result.message,
+        "chi2": float(result.chi2),
+        "reduced_chi2": float(result.reduced_chi2),
+        "n_points": int(sum(result.dataset_sizes.values())),
+        "n_variables": len(result.variable_names),
+        "parameters": {name: float(value) for name, value in result.params.items()},
+        "stderr": (
+            {name: float(value) for name, value in result.stderr.items()}
+            if result.stderr
+            else {}
+        ),
+        "covariance": _matrix_summary(result.covariance, result.variable_names),
+        "dataset_chi2": {name: float(value) for name, value in result.dataset_chi2.items()},
+        "dataset_reduced_chi2": {
+            name: float(value) for name, value in result.dataset_reduced_chi2.items()
+        },
+        "skipped_datasets": list(compiled.skipped_datasets),
+    }
+    metadata: dict[str, Any] = {}
+    parameter_labels = _fit_parameter_labels_from_components(components, compiled, result.variable_names)
+    if parameter_labels:
+        metadata["parameter_labels"] = parameter_labels
+    if progress_events:
+        metadata["progress_log"] = progress_events
+    if sampler_result is not None:
+        posterior = _posterior_summary(sampler_result)
+        goodness["posterior"] = posterior
+        metadata["posterior_samples"] = _sampling_result_to_dict(sampler_result)
+    return {
+        "result": result,
+        "compiled": compiled,
+        "goodness": goodness,
+        "channels": channels,
+        "metadata": metadata,
+    }
+
+
+def _matrix_summary(matrix: Any, names: list[str]) -> dict[str, Any]:
+    if matrix is None:
+        return {}
+    arr = np.asarray(matrix, dtype=float)
+    summary: dict[str, Any] = {"variables": list(names), "shape": list(arr.shape)}
+    if arr.ndim == 2 and arr.shape[0] == arr.shape[1] and arr.shape[0] == len(names):
+        summary["matrix"] = arr.tolist()
+        summary["diagonal"] = {name: float(arr[index, index]) for index, name in enumerate(names)}
+        denom = np.sqrt(np.outer(np.diag(arr), np.diag(arr)))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            corr = np.divide(arr, denom, out=np.zeros_like(arr), where=denom > 0)
+        summary["correlation"] = {
+            name: {
+                other: float(corr[i, j])
+                for j, other in enumerate(names)
+            }
+            for i, name in enumerate(names)
+        }
+    return summary
+
+
+def _progress_event_summary(event: dict[str, Any]) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "stage": str(event.get("stage", "fit")),
+        "message": str(event.get("message", "")),
+    }
+    for key in ("iteration", "total", "cost", "convergence"):
+        if event.get(key) is not None:
+            value = event[key]
+            summary[key] = float(value) if key in {"cost", "convergence"} else int(value)
+    params = event.get("parameters")
+    if isinstance(params, dict):
+        summary["parameters"] = {name: float(value) for name, value in params.items()}
+    return summary
+
+
+def _posterior_summary(result: SamplingResult) -> dict[str, Any]:
+    samples = np.asarray(result.samples, dtype=float)
+    summary: dict[str, Any] = dict(result.metadata)
+    if samples.size == 0:
+        summary["samples"] = 0
+        return summary
+    summary["samples"] = int(samples.shape[0])
+    percentiles = np.percentile(samples, [16, 50, 84], axis=0)
+    summary["parameters"] = {
+        name: {
+            "p16": float(percentiles[0, index]),
+            "median": float(percentiles[1, index]),
+            "p84": float(percentiles[2, index]),
+        }
+        for index, name in enumerate(result.variable_names)
+    }
+    if samples.shape[1] > 1:
+        corr = np.corrcoef(samples, rowvar=False)
+        summary["correlation"] = {
+            name: {
+                other: float(corr[i, j])
+                for j, other in enumerate(result.variable_names)
+            }
+            for i, name in enumerate(result.variable_names)
+        }
+    return summary
+
+
+def _sampling_result_to_dict(result: SamplingResult) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "variable_names": list(result.variable_names),
+        "samples": _encode_float_array(result.samples),
+        "metadata": dict(result.metadata),
+    }
+    if result.log_probability is not None:
+        payload["log_probability"] = _encode_float_array(result.log_probability)
+    return payload
+
+
+def _sampling_result_from_dict(payload: Any) -> SamplingResult | None:
+    if not isinstance(payload, dict):
+        return None
+    try:
+        samples = _decode_float_array(payload["samples"])
+    except Exception:
+        return None
+    log_probability = None
+    if isinstance(payload.get("log_probability"), dict):
+        try:
+            log_probability = _decode_float_array(payload["log_probability"])
+        except Exception:
+            log_probability = None
+    return SamplingResult(
+        samples=samples,
+        variable_names=[str(name) for name in payload.get("variable_names", [])],
+        log_probability=log_probability,
+        metadata=dict(payload.get("metadata", {})),
+    )
+
+
+def _fit_parameter_labels_from_components(
+    components: list[ModelComponentSpec],
+    compiled: CompiledFitProblem,
+    variable_names: list[str],
+) -> dict[str, str]:
+    by_component = {component.name: component for component in components}
+    labels: dict[str, str] = {}
+    for name in variable_names:
+        instance = compiled.parameter_instances.get(name)
+        if instance is None:
+            continue
+        component = by_component.get(instance.component)
+        if component is None:
+            continue
+        parameter_labels = component.metadata.get("parameter_labels")
+        if not isinstance(parameter_labels, dict):
+            continue
+        label = str(parameter_labels.get(instance.parameter, "")).strip()
+        if label:
+            labels[name] = label
+    return labels
+
+
+def _write_back_fitted_parameters(
+    group: DataGroup,
+    components: list[ModelComponentSpec],
+    compiled: CompiledFitProblem,
+    result: Any,
+) -> None:
+    """Store optimized values on their model components.
+
+    Globally shared (and constrained) parameters update the component's
+    ``parameters`` directly. Per-dataset and grouped instances are stored per
+    tie key under ``metadata["fitted_values"]`` because a single parameter
+    box cannot display several values.
+    """
+
+    for component in components:
+        info = MODEL_TYPE_REGISTRY.get(component.type)
+        if info is None:
+            continue
+        for parameter in info.parameters:
+            qualified = qualified_parameter_name(component.name, parameter)
+            if qualified in result.params:
+                component.parameters[parameter] = float(result.params[qualified])
+                continue
+            values = {
+                instance.scope: float(result.params[instance.name])
+                for instance in compiled.instances_for(component.name, parameter)
+                if instance.name in result.params
+            }
+            if values:
+                component.metadata.setdefault("fitted_values", {})[parameter] = values
+
+
+def _fit_channels_from_result(
+    compiled: CompiledFitProblem,
+    result: Any,
+    bundles: dict[str, FitDataBundle],
+) -> dict[str, dict[str, Any]]:
+    """Evaluate fit and residual channels over each fitted dataset's view."""
+
+    channels: dict[str, dict[str, Any]] = {}
+    fitted_names = {dataset.name for dataset in compiled.problem.datasets}
+    for name, bundle in bundles.items():
+        if name not in fitted_names:
+            continue
+        values = evaluate_problem_model(
+            compiled.problem, name, result.params, data=bundle.points
+        )
+        fit_values = np.asarray(values, dtype=float)
+        intensity = np.asarray(bundle.points.intensity, dtype=float)
+        sigma = np.asarray(bundle.points.sigma, dtype=float)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            residual_values = (intensity - fit_values) / sigma
+        residual_values = np.where(
+            np.isfinite(intensity) & np.isfinite(sigma) & (sigma > 0.0),
+            residual_values,
+            np.nan,
+        )
+        if bundle.grid_shape is not None:
+            fit_values = fit_values.reshape(bundle.grid_shape)
+            residual_values = residual_values.reshape(bundle.grid_shape)
+        channels[name] = {
+            "kind": "grid" if bundle.grid_shape is not None else "points",
+            "fit": fit_values,
+            "residual": residual_values,
+        }
+    return channels
+
+
+def latest_fit_channels(group: DataGroup, dataset_name: str) -> dict[str, Any] | None:
+    """Return the stored fit channels for a dataset from the newest fit result."""
+
+    latest: dict[str, Any] | None = None
+    for entry in _walk_fit_entries(group.fits):
+        if entry.kind != "result":
+            continue
+        payload = entry.channels.get(dataset_name)
+        if payload:
+            latest = payload
+    return latest
+
+
+def _group_has_fit_channels(group: DataGroup) -> bool:
+    """Return whether any dataset in the group has stored fit channels."""
+
+    return any(entry.channels for entry in _walk_fit_entries(group.fits) if entry.kind == "result")
+
+
+def attach_fit_channels_to_view(
+    group: DataGroup,
+    dataset_name: str,
+    view: MDHistoData | PointListData,
+) -> None:
+    """Attach saved fit/residual channels to a viewer-ready dataset in place.
+
+    Channels are only attached when their stored shape still matches the
+    current view, so stale fits after mask or rebin changes are silently
+    skipped rather than misaligned.
+    """
+
+    payload = latest_fit_channels(group, dataset_name)
+    if payload is None:
+        return
+    arrays: dict[str, np.ndarray] = {}
+    for channel_name in FIT_CHANNEL_NAMES:
+        decoded = _fit_channel_array(payload.get(channel_name))
+        if decoded is None:
+            return
+        arrays[channel_name] = decoded
+    if isinstance(view, MDHistoData):
+        if any(array.shape != view.shape for array in arrays.values()):
+            return
+        for channel_name, array in arrays.items():
+            view.metadata[channel_name] = array
+        return
+    if isinstance(view, PointListData):
+        if any(array.shape != (view.size,) for array in arrays.values()):
+            return
+        existing = set(view.channel_labels)
+        for channel_name, array in arrays.items():
+            view.columns[channel_name] = array
+            if channel_name not in existing:
+                view.channels.append(
+                    {"label": channel_name, "value": channel_name, "error": None}
+                )
+
+
+def _fit_channel_array(value: Any) -> np.ndarray | None:
+    """Return a stored fit channel as a float array, decoding if needed."""
+
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        try:
+            return _decode_float_array(value)
+        except (KeyError, ValueError, TypeError, zlib.error):
+            return None
+    return np.asarray(value, dtype=float)
+
+
+def _encode_float_array(value: Any) -> dict[str, Any]:
+    """Encode a float array as compressed base64 for project JSON.
+
+    Values are stored as float32: fit and residual channels are visualization
+    aids, and halving the payload matters more than the last digits.
+    """
+
+    if isinstance(value, dict) and value.get("__ndarray__"):
+        return value
+    array = np.asarray(value, dtype=np.float32)
+    return {
+        "__ndarray__": True,
+        "dtype": "float32",
+        "shape": [int(size) for size in array.shape],
+        "data": base64.b64encode(zlib.compress(array.tobytes())).decode("ascii"),
+    }
+
+
+def _decode_float_array(payload: dict[str, Any]) -> np.ndarray:
+    """Decode an array stored by :func:`_encode_float_array`."""
+
+    raw = zlib.decompress(base64.b64decode(payload["data"]))
+    array = np.frombuffer(raw, dtype=np.dtype(str(payload.get("dtype", "float32"))))
+    return array.reshape([int(size) for size in payload["shape"]]).astype(float)
 
 
 def _viewer_data_before_scale(
@@ -2132,6 +2781,45 @@ def _fit_entry_in_tree(fits: list[FitTimelineEntry], target: FitTimelineEntry | 
     return any(entry is target for entry in _walk_fit_entries(fits))
 
 
+def _fit_entry_path(
+    fits: list[FitTimelineEntry],
+    target: FitTimelineEntry | None,
+) -> list[int] | None:
+    """Return the list of child indices from the fit root to ``target``.
+
+    Names are not unique across branches (every branch has a "Current state"),
+    so a positional path is the stable identifier for persisting a selection.
+    """
+
+    if target is None:
+        return None
+    for index, entry in enumerate(fits):
+        if entry is target:
+            return [index]
+        below = _fit_entry_path(entry.children, target)
+        if below is not None:
+            return [index, *below]
+    return None
+
+
+def _fit_entry_at_path(
+    fits: list[FitTimelineEntry],
+    path: list[int] | None,
+) -> FitTimelineEntry | None:
+    """Return the fit entry at a positional path, or ``None`` if it is gone."""
+
+    if not path:
+        return None
+    entries = fits
+    entry: FitTimelineEntry | None = None
+    for index in path:
+        if not (0 <= index < len(entries)):
+            return None
+        entry = entries[index]
+        entries = entry.children
+    return entry
+
+
 def _fit_siblings(
     entries: list[FitTimelineEntry],
     target: FitTimelineEntry,
@@ -2188,6 +2876,19 @@ def _current_state_after_result(group: DataGroup, result: FitTimelineEntry) -> F
     return None
 
 
+def _is_editable_initial_baseline(
+    group: DataGroup,
+    fit_entry: FitTimelineEntry | None,
+) -> bool:
+    """Return whether edits should update Initial instead of creating a branch."""
+
+    if fit_entry is None or fit_entry.kind != "initial":
+        return False
+    if group.fits != [fit_entry]:
+        return False
+    return not fit_entry.children
+
+
 def _should_branch_fit_now(group: DataGroup, parent: FitTimelineEntry) -> bool:
     if parent.kind in {"initial", "current"}:
         return False
@@ -2236,6 +2937,17 @@ def _style_tree_hierarchy_item(item: Any, *, bold: bool = False, underline: bool
     font.setBold(bold)
     font.setUnderline(underline)
     item.setFont(0, font)
+
+
+def _style_active_fit_tree_item(item: Any) -> None:
+    from PySide6 import QtGui
+
+    font = QtGui.QFont(item.font(0))
+    font.setBold(True)
+    font.setItalic(True)
+    item.setFont(0, font)
+    item.setForeground(0, QtGui.QBrush(QtGui.QColor("#62b884")))
+    item.setToolTip(0, "Active fit state currently applied to the workspace.")
 
 
 _TREE_ICON_CACHE: dict[str, Any] = {}
@@ -2446,6 +3158,575 @@ def forget_missing_recent_projects(settings: Any | None = None) -> list[Path]:
     return recent
 
 
+class _FitProgressDialog:
+    """Small live progress window for optimizer and sampler runs."""
+
+    def __init__(self, parent: Any) -> None:
+        from PySide6 import QtCore, QtGui, QtWidgets
+
+        self.dialog = QtWidgets.QDialog(parent.window if hasattr(parent, "window") else parent)
+        self.dialog.setWindowTitle("Fit progress")
+        self.dialog.setModal(False)
+        self.dialog.resize(720, 520)
+        self.close_shortcut = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Close, self.dialog)
+        self.close_shortcut.activated.connect(self.dialog.close)
+        layout = QtWidgets.QVBoxLayout(self.dialog)
+        self.stage_label = QtWidgets.QLabel("Ready")
+        stage_font = self.stage_label.font()
+        stage_font.setBold(True)
+        self.stage_label.setFont(stage_font)
+        self.stage_label.setWordWrap(True)
+        self.status_label = QtWidgets.QLabel("No fit is running.")
+        self.status_label.setWordWrap(True)
+        self.progress = QtWidgets.QProgressBar()
+        self.progress.setRange(0, 0)
+        self.parameter_table = QtWidgets.QTableWidget(0, 2)
+        self.parameter_table.setObjectName("fit_progress_parameter_table")
+        self.parameter_table.setToolTip("Current parameter values reported by the active optimizer or sampler stage.")
+        self.parameter_table.setHorizontalHeaderLabels(["Parameter", "Current value"])
+        self.parameter_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.parameter_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self.parameter_table.setAlternatingRowColors(True)
+        self.parameter_table.verticalHeader().setVisible(False)
+        self.parameter_table.horizontalHeader().setStretchLastSection(True)
+        self.parameter_table.horizontalHeader().setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+        self.parameter_table.setMinimumHeight(120)
+        self.parameter_table.setMaximumHeight(190)
+        self.log = QtWidgets.QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setMaximumBlockCount(200)
+        self.log.setToolTip("Short live progress log. Current parameter values are shown in the table above.")
+        self.close_button = QtWidgets.QPushButton("Close")
+        self.close_button.setEnabled(False)
+        self.close_button.setToolTip("Close this progress window after the fit pipeline finishes.")
+        self.close_button.clicked.connect(self.dialog.close)
+        layout.addWidget(self.stage_label)
+        layout.addWidget(self.status_label)
+        layout.addWidget(self.progress)
+        layout.addWidget(self.parameter_table)
+        layout.addWidget(self.log, 1)
+        layout.addWidget(self.close_button)
+
+    def reset(self, title: str = "Starting fit pipeline...") -> None:
+        from PySide6 import QtWidgets
+
+        self.stage_label.setText(title)
+        self.status_label.setStyleSheet("")
+        self.status_label.setText("Preparing data and fit problem.")
+        self.progress.setRange(0, 0)
+        self.parameter_table.setRowCount(0)
+        self.log.clear()
+        self.close_button.setEnabled(False)
+        QtWidgets.QApplication.processEvents()
+
+    def show(self) -> None:
+        from PySide6 import QtWidgets
+
+        self.dialog.show()
+        self.dialog.raise_()
+        self.dialog.activateWindow()
+        QtWidgets.QApplication.processEvents()
+
+    def update_progress(self, event: dict[str, Any]) -> None:
+        from PySide6 import QtWidgets
+
+        stage = str(event.get("stage", "fit"))
+        iteration = event.get("iteration")
+        total = event.get("total")
+        message = str(event.get("message", stage))
+        stage_title = {
+            "initialization": "Initialization: differential evolution",
+            "least_squares": "Least-squares fit",
+            "emcee": "Posterior sampling: emcee",
+        }.get(stage, stage.replace("_", " ").title())
+        self.stage_label.setText(stage_title)
+        status_parts: list[str] = []
+        if iteration is not None:
+            status_parts.append(f"Step {iteration}" + (f" of {total}" if total else ""))
+        if event.get("cost") is not None:
+            status_parts.append(f"cost {_format_number(float(event['cost']))}")
+        if event.get("convergence") is not None:
+            status_parts.append(f"convergence {_format_number(float(event['convergence']))}")
+        self.status_label.setText(" | ".join(status_parts) if status_parts else message)
+        params = event.get("parameters")
+        if isinstance(params, dict) and params:
+            self._set_parameters(params)
+        log_parts = [stage_title]
+        if iteration is not None:
+            log_parts.append(f"step {iteration}" + (f"/{total}" if total else ""))
+        if event.get("cost") is not None:
+            log_parts.append(f"cost {_format_number(float(event['cost']))}")
+        self.log.appendPlainText(" | ".join(log_parts))
+        if total and iteration is not None:
+            self.progress.setRange(0, int(total))
+            self.progress.setValue(min(int(iteration), int(total)))
+        else:
+            self.progress.setRange(0, 0)
+        QtWidgets.QApplication.processEvents()
+
+    def _set_parameters(self, params: dict[str, Any]) -> None:
+        from PySide6 import QtCore, QtWidgets
+
+        items = list(params.items())
+        self.parameter_table.setRowCount(len(items))
+        for row, (name, value) in enumerate(items):
+            name_item = QtWidgets.QTableWidgetItem(str(name))
+            value_text = _format_number(value)
+            value_item = QtWidgets.QTableWidgetItem(value_text)
+            name_item.setToolTip(str(name))
+            value_item.setToolTip(value_text)
+            value_item.setTextAlignment(
+                QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
+            )
+            self.parameter_table.setItem(row, 0, name_item)
+            self.parameter_table.setItem(row, 1, value_item)
+        self.parameter_table.resizeColumnsToContents()
+
+    def finish(self, message: str) -> None:
+        from PySide6 import QtWidgets
+
+        self.stage_label.setText(message)
+        self.status_label.setText("Done.")
+        self.progress.setRange(0, 1)
+        self.progress.setValue(1)
+        self.close_button.setEnabled(True)
+        QtWidgets.QApplication.processEvents()
+
+    def fail(self, message: str) -> None:
+        """Show a fit failure and keep the window open for the user to read."""
+
+        from PySide6 import QtWidgets
+
+        self.stage_label.setText("Fit failed")
+        self.status_label.setStyleSheet("color: #c0392b; font-weight: bold;")
+        self.status_label.setText(message)
+        self.log.appendPlainText(f"ERROR: {message}")
+        self.progress.setRange(0, 1)
+        self.progress.setValue(0)
+        self.close_button.setEnabled(True)
+        self.show()
+        QtWidgets.QApplication.processEvents()
+
+    def close(self) -> None:
+        self.dialog.close()
+
+
+class _FitDiagnosticsPlotWindow:
+    """Dedicated Matplotlib window for fit covariance and posterior diagnostics."""
+
+    def __init__(self, fit_entry: FitTimelineEntry, parent: Any) -> None:
+        from PySide6 import QtGui, QtWidgets
+
+        self.fit_entry = fit_entry
+        self.window = QtWidgets.QMainWindow(parent.window if hasattr(parent, "window") else parent)
+        self.window.setWindowTitle("Fit diagnostics")
+        self.close_shortcut = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Close, self.window)
+        self.close_shortcut.activated.connect(self.window.close)
+        central = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(central)
+        self.tabs = QtWidgets.QTabWidget()
+        self.tabs.setToolTip("Fit diagnostics from covariance estimates and stored emcee samples.")
+        layout.addWidget(self.tabs, 1)
+        self.label_table = self._make_label_table()
+        layout.addWidget(self.label_table)
+        self.window.setCentralWidget(central)
+        self._redraw_plots()
+
+    def _make_label_table(self) -> Any:
+        from PySide6 import QtCore, QtWidgets
+
+        names = _fit_entry_diagnostic_parameter_names(self.fit_entry)
+        labels = _fit_parameter_plot_labels(self.fit_entry, names)
+        table = QtWidgets.QTableWidget(len(names), 2)
+        table.setObjectName("fit_diagnostics_label_table")
+        table.setToolTip(
+            "Edit plot labels for this fit result. Plain text or Matplotlib mathtext/LaTeX-style labels are accepted."
+        )
+        table.setHorizontalHeaderLabels(["Full parameter name", "Plot label"])
+        table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.DoubleClicked
+            | QtWidgets.QAbstractItemView.EditTrigger.EditKeyPressed
+        )
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setStretchLastSection(True)
+        for row, name in enumerate(names):
+            name_item = QtWidgets.QTableWidgetItem(name)
+            name_item.setFlags(name_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+            label_item = QtWidgets.QTableWidgetItem(labels.get(name, f"p{row + 1}"))
+            name_item.setToolTip(name)
+            label_item.setToolTip("Editable plot label. Use p1-style names, plain text, or mathtext such as $\\Gamma$.")
+            table.setItem(row, 0, name_item)
+            table.setItem(row, 1, label_item)
+        table.itemChanged.connect(self._label_table_changed)
+        table.setMaximumHeight(150)
+        table.resizeColumnsToContents()
+        _tooltip_table_corner_buttons(table, "Select all parameter-label rows.")
+        return table
+
+    def _label_table_changed(self, item: Any) -> None:
+        if item.column() != 1:
+            return
+        labels = dict(self.fit_entry.metadata.get("parameter_labels", {}))
+        full_name_item = self.label_table.item(item.row(), 0)
+        if full_name_item is None:
+            return
+        full_name = full_name_item.text()
+        labels[full_name] = item.text().strip() or _compact_diagnostic_labels([full_name])[0]
+        self.fit_entry.metadata["parameter_labels"] = labels
+        self._redraw_plots()
+
+    def _redraw_plots(self) -> None:
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+        from matplotlib.figure import Figure
+
+        active_tab = self.tabs.tabText(self.tabs.currentIndex()) if self.tabs.count() else ""
+        self.tabs.clear()
+
+        covariance = _covariance_matrix_from_fit_entry(self.fit_entry)
+        if covariance is not None:
+            matrix, names, title = covariance
+            labels = _fit_parameter_plot_labels(self.fit_entry, names)
+            cov_fig = Figure(figsize=(max(7, 1.0 * len(names) + 4), max(5, 0.75 * len(names) + 3)))
+            ax = cov_fig.subplots()
+            _draw_matrix_heatmap(ax, matrix, names, labels=labels, title=title)
+            cov_fig.subplots_adjust(left=0.15, right=0.96, bottom=0.16, top=0.88)
+            self.tabs.addTab(FigureCanvas(cov_fig), title)
+
+        result = _sampling_result_from_dict(self.fit_entry.metadata.get("posterior_samples"))
+        if result is None:
+            self._restore_active_tab(active_tab)
+            return
+
+        samples = np.asarray(result.samples, dtype=float)
+        names = list(result.variable_names)
+        labels = _fit_parameter_plot_labels(self.fit_entry, names)
+        summaries = _fit_parameter_summaries(self.fit_entry)
+
+        trace_fig = Figure(figsize=(8, max(3, 1.4 * max(1, len(names)))))
+        trace_axes = trace_fig.subplots(max(1, len(names)), 1, squeeze=False)
+        for index, name in enumerate(names):
+            ax = trace_axes[index, 0]
+            ax.plot(samples[:, index], linewidth=0.5)
+            if name in summaries and summaries[name].get("best") is not None:
+                ax.axhline(float(summaries[name]["best"]), color="red", linewidth=0.9, alpha=0.8)
+            ax.set_ylabel(labels.get(name, f"p{index + 1}"))
+        trace_axes[-1, 0].set_xlabel("flattened sample")
+        trace_fig.subplots_adjust(left=0.18, right=0.98, bottom=0.1, top=0.95, hspace=0.28)
+        self.tabs.addTab(FigureCanvas(trace_fig), "Trace")
+
+        n = len(names)
+        corner_fig = Figure(figsize=(max(6, 2.45 * max(1, n)), max(6, 2.45 * max(1, n))))
+        axes = corner_fig.subplots(max(1, n), max(1, n), squeeze=False)
+        for row in range(n):
+            for col in range(n):
+                ax = axes[row, col]
+                if row == col:
+                    _draw_corner_histogram_panel(
+                        ax,
+                        samples[:, col],
+                        labels.get(names[col], f"p{col + 1}"),
+                        summaries.get(names[col], {}),
+                    )
+                elif row > col:
+                    _draw_corner_density_panel(ax, samples[:, col], samples[:, row])
+                    _draw_corner_reference_lines(
+                        ax,
+                        summaries.get(names[col], {}),
+                        summaries.get(names[row], {}),
+                    )
+                else:
+                    ax.axis("off")
+                _disable_axis_offset_text(ax)
+                if row == n - 1:
+                    ax.set_xlabel(labels.get(names[col], f"p{col + 1}"))
+                if col == 0 and row > 0:
+                    ax.set_ylabel(labels.get(names[row], f"p{row + 1}"))
+                elif row == col and col == 0:
+                    ax.set_ylabel("Count")
+        corner_fig.subplots_adjust(
+            left=0.18,
+            right=0.98,
+            bottom=0.18,
+            top=0.9,
+            hspace=0.48,
+            wspace=0.48,
+        )
+        self.tabs.addTab(FigureCanvas(corner_fig), "Corner")
+        self._restore_active_tab(active_tab)
+
+    def _restore_active_tab(self, tab_text: str) -> None:
+        if not tab_text:
+            return
+        for index in range(self.tabs.count()):
+            if self.tabs.tabText(index) == tab_text:
+                self.tabs.setCurrentIndex(index)
+                return
+
+    def show(self) -> None:
+        self.window.resize(900, 700)
+        self.window.show()
+
+
+def _draw_matrix_heatmap(
+    ax: Any,
+    matrix: Any,
+    names: list[str],
+    *,
+    labels: dict[str, str] | None = None,
+    title: str,
+) -> None:
+    """Draw a labeled covariance or correlation heatmap."""
+
+    arr = np.asarray(matrix, dtype=float)
+    if arr.size == 0:
+        return
+    plot_labels = labels or {name: label for name, label in zip(names, _compact_diagnostic_labels(names))}
+    finite = arr[np.isfinite(arr)]
+    if title.lower().startswith("correlation"):
+        vmin, vmax = -1.0, 1.0
+        cmap = "coolwarm"
+    elif finite.size:
+        limit = float(np.nanmax(np.abs(finite)))
+        vmin, vmax = (-limit, limit) if limit > 0 else (-1.0, 1.0)
+        cmap = "coolwarm"
+    else:
+        vmin, vmax = -1.0, 1.0
+        cmap = "coolwarm"
+    image = ax.imshow(arr, cmap=cmap, vmin=vmin, vmax=vmax)
+    ax.set_title(title)
+    ax.set_xticks(np.arange(len(names)))
+    ax.set_yticks(np.arange(len(names)))
+    ax.set_xticklabels([plot_labels.get(name, f"p{index + 1}") for index, name in enumerate(names)], rotation=0)
+    ax.set_yticklabels([plot_labels.get(name, f"p{index + 1}") for index, name in enumerate(names)])
+    for row in range(arr.shape[0]):
+        for col in range(arr.shape[1]):
+            value = arr[row, col]
+            if np.isfinite(value):
+                ax.text(col, row, _format_number(value), ha="center", va="center", fontsize=7)
+    ax.figure.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
+
+
+def _compact_diagnostic_labels(names: list[str]) -> list[str]:
+    return [f"p{index + 1}" for index in range(len(names))]
+
+
+def _fit_entry_diagnostic_parameter_names(fit_entry: FitTimelineEntry) -> list[str]:
+    names: list[str] = []
+    covariance = _covariance_matrix_from_fit_entry(fit_entry)
+    if covariance is not None:
+        _matrix, cov_names, _title = covariance
+        names.extend(cov_names)
+    samples = _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples"))
+    if samples is not None:
+        names.extend(samples.variable_names)
+    goodness = fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
+    params = goodness.get("parameters") if isinstance(goodness.get("parameters"), dict) else {}
+    names.extend(str(name) for name in params)
+    return list(dict.fromkeys(names))
+
+
+def _fit_parameter_plot_labels(
+    fit_entry: FitTimelineEntry,
+    names: list[str],
+) -> dict[str, str]:
+    stored = fit_entry.metadata.get("parameter_labels")
+    labels = dict(stored) if isinstance(stored, dict) else {}
+    out: dict[str, str] = {}
+    defaults_changed = False
+    for index, name in enumerate(names):
+        label = str(labels.get(name, "")).strip()
+        if not label:
+            label = f"p{index + 1}"
+            labels[name] = label
+            defaults_changed = True
+        out[name] = label
+    if defaults_changed:
+        fit_entry.metadata["parameter_labels"] = labels
+    return out
+
+
+def _fit_parameter_summaries(fit_entry: FitTimelineEntry) -> dict[str, dict[str, float]]:
+    goodness = fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
+    params = goodness.get("parameters") if isinstance(goodness.get("parameters"), dict) else {}
+    stderr = goodness.get("stderr") if isinstance(goodness.get("stderr"), dict) else {}
+    posterior = goodness.get("posterior") if isinstance(goodness.get("posterior"), dict) else {}
+    posterior_params = (
+        posterior.get("parameters")
+        if isinstance(posterior.get("parameters"), dict)
+        else {}
+    )
+    names = set(params) | set(stderr) | set(posterior_params)
+    summaries: dict[str, dict[str, float]] = {}
+    for name in names:
+        summary: dict[str, float] = {}
+        if name in params:
+            summary["best"] = float(params[name])
+        if name in stderr:
+            err = float(stderr[name])
+            summary["stderr"] = err
+            if "best" in summary:
+                summary.setdefault("low", summary["best"] - err)
+                summary.setdefault("high", summary["best"] + err)
+        posterior_row = posterior_params.get(name)
+        if isinstance(posterior_row, dict):
+            for source, target in (("median", "median"), ("p16", "low"), ("p84", "high")):
+                if source in posterior_row:
+                    summary[target] = float(posterior_row[source])
+        summaries[str(name)] = summary
+    return summaries
+
+
+def _draw_corner_histogram_panel(
+    ax: Any,
+    values: Any,
+    name: str,
+    summary: dict[str, float],
+) -> None:
+    arr = np.asarray(values, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    ax.hist(arr, bins=40, histtype="step", color="0.1", linewidth=1.1)
+    center = summary.get("best", summary.get("median"))
+    low = summary.get("low")
+    high = summary.get("high")
+    if center is not None:
+        ax.axvline(center, color="red", linewidth=1.0)
+    if low is not None:
+        ax.axvline(low, color="0.25", linestyle="--", linewidth=0.8)
+    if high is not None:
+        ax.axvline(high, color="0.25", linestyle="--", linewidth=0.8)
+    ax.set_title(_corner_histogram_title(name, summary), fontsize=9, pad=8)
+
+
+def _draw_corner_reference_lines(
+    ax: Any,
+    x_summary: dict[str, float],
+    y_summary: dict[str, float],
+) -> None:
+    x_center = x_summary.get("best", x_summary.get("median"))
+    y_center = y_summary.get("best", y_summary.get("median"))
+    if x_center is not None:
+        ax.axvline(x_center, color="red", linewidth=0.8, alpha=0.85)
+    if y_center is not None:
+        ax.axhline(y_center, color="red", linewidth=0.8, alpha=0.85)
+    if x_center is not None and y_center is not None:
+        ax.plot([x_center], [y_center], marker="o", color="red", markersize=3)
+
+
+def _corner_histogram_title(name: str, summary: dict[str, float]) -> str:
+    center = summary.get("best", summary.get("median"))
+    if center is None:
+        return name
+    low = summary.get("low")
+    high = summary.get("high")
+    if low is None or high is None:
+        return rf"${_mathtext_label(name)} = {_format_number(center)}$"
+    plus = high - center
+    minus = center - low
+    return (
+        rf"${_mathtext_label(name)} = {_format_number(center)}"
+        rf"\,\pm^{{+{_format_number(plus)}}}_{{-{_format_number(minus)}}}$"
+    )
+
+
+def _mathtext_label(label: str) -> str:
+    stripped = str(label).strip()
+    if stripped.startswith("$") and stripped.endswith("$") and len(stripped) >= 2:
+        return stripped[1:-1]
+    if re.search(r"[\\{}_^]", stripped):
+        return stripped
+    return stripped.replace(" ", r"\ ")
+
+
+def _disable_axis_offset_text(ax: Any) -> None:
+    for axis in (ax.xaxis, ax.yaxis):
+        formatter = axis.get_major_formatter()
+        if hasattr(formatter, "set_useOffset"):
+            formatter.set_useOffset(False)
+        if hasattr(formatter, "set_scientific"):
+            formatter.set_scientific(False)
+
+
+def _covariance_matrix_from_fit_entry(
+    fit_entry: FitTimelineEntry,
+) -> tuple[np.ndarray, list[str], str] | None:
+    goodness = fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
+    covariance = goodness.get("covariance") if isinstance(goodness.get("covariance"), dict) else {}
+    names = [str(name) for name in covariance.get("variables", [])]
+    matrix = covariance.get("matrix")
+    if matrix is not None:
+        arr = np.asarray(matrix, dtype=float)
+        if arr.ndim == 2 and arr.shape[0] == arr.shape[1]:
+            if len(names) != arr.shape[0]:
+                names = [f"p{index}" for index in range(arr.shape[0])]
+            return arr, names, "Covariance"
+    correlation = covariance.get("correlation")
+    if isinstance(correlation, dict) and correlation:
+        names = names or [str(name) for name in correlation]
+        arr = np.asarray(
+            [
+                [float(dict(correlation.get(row_name, {})).get(col_name, np.nan)) for col_name in names]
+                for row_name in names
+            ],
+            dtype=float,
+        )
+        if arr.ndim == 2 and arr.shape[0] == arr.shape[1]:
+            return arr, names, "Correlation"
+    return None
+
+
+def _fit_entry_has_diagnostic_plots(fit_entry: FitTimelineEntry | None) -> bool:
+    if fit_entry is None:
+        return False
+    if _covariance_matrix_from_fit_entry(fit_entry) is not None:
+        return True
+    return _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples")) is not None
+
+
+def _draw_corner_density_panel(ax: Any, x: Any, y: Any) -> None:
+    """Draw a 2D posterior panel with density shading, contours, and samples."""
+
+    x_arr = np.asarray(x, dtype=float)
+    y_arr = np.asarray(y, dtype=float)
+    finite = np.isfinite(x_arr) & np.isfinite(y_arr)
+    x_arr = x_arr[finite]
+    y_arr = y_arr[finite]
+    if x_arr.size == 0 or np.ptp(x_arr) == 0.0 or np.ptp(y_arr) == 0.0:
+        ax.scatter(x_arr, y_arr, s=2, alpha=0.25, color="tab:blue", linewidths=0)
+        return
+
+    counts, x_edges, y_edges = np.histogram2d(x_arr, y_arr, bins=48)
+    counts = counts.T
+    if np.any(counts > 0):
+        positive = counts[counts > 0]
+        image = ax.imshow(
+            counts,
+            origin="lower",
+            extent=[x_edges[0], x_edges[-1], y_edges[0], y_edges[-1]],
+            aspect="auto",
+            cmap="Blues",
+            alpha=0.6,
+            interpolation="nearest",
+        )
+        del image
+        if positive.size >= 4:
+            levels = np.percentile(positive, [50.0, 75.0, 90.0])
+            levels = np.unique(levels[levels > 0])
+            if levels.size:
+                x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
+                y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
+                ax.contour(
+                    x_centers,
+                    y_centers,
+                    counts,
+                    levels=levels,
+                    colors="0.15",
+                    linewidths=0.8,
+                    alpha=0.85,
+                )
+    ax.scatter(x_arr, y_arr, s=1.4, alpha=0.12, color="tab:blue", linewidths=0)
+
+
 class MetallixProjectExplorer:
     """PySide6 project explorer for building metallix analysis pipelines."""
 
@@ -2487,8 +3768,21 @@ class MetallixProjectExplorer:
         self.fit_editor_widget = None
         self.fit_optimizer_combo = None
         self.fit_optimizer_config_editor = None
+        self.fit_loss_combo = None
+        self.fit_f_scale_spin = None
+        self.fit_de_check = None
+        self.fit_de_maxiter_spin = None
+        self.fit_de_popsize_spin = None
+        self.fit_emcee_check = None
+        self.fit_emcee_walkers_spin = None
+        self.fit_emcee_steps_spin = None
+        self.fit_emcee_burn_spin = None
+        self.fit_emcee_thin_spin = None
         self.fit_branch_check = None
         self.fit_now_button = None
+        self.fit_corner_button = None
+        self.show_data_fit_button = None
+        self._fit_progress_dialog: _FitProgressDialog | None = None
         self.expand_all_button = None
         self.collapse_all_button = None
         self.create_group_button = None
@@ -2672,9 +3966,18 @@ class MetallixProjectExplorer:
             self.refresh_slice_viewer(group)
         return True
 
+    def _stamp_active_fit_path(self) -> None:
+        """Refresh the active group's stored fit path before persisting."""
+
+        group = self._active_fit_group
+        if group is None or group not in self.project.data_groups:
+            return
+        group.active_fit_path = _fit_entry_path(group.fits, self._active_fit_entry(group))
+
     def save(self) -> bool:
         if self.project_path is None:
             return self.save_as()
+        self._stamp_active_fit_path()
         save_project(self.project, self.project_path)
         self.has_unsaved_changes = False
         self._sync_window_title()
@@ -2692,6 +3995,7 @@ class MetallixProjectExplorer:
         if not path:
             return False
         self.project_path = Path(path)
+        self._stamp_active_fit_path()
         save_project(self.project, self.project_path)
         self._remember_recent_project(self.project_path)
         self.has_unsaved_changes = False
@@ -2727,6 +4031,7 @@ class MetallixProjectExplorer:
         if remember:
             self._remember_recent_project(path)
         self._refresh_tree()
+        self._restore_active_fit_selection()
         self._sync_window_title()
         return True
 
@@ -2885,16 +4190,64 @@ class MetallixProjectExplorer:
             return None
         self._set_selected_fit_optimizer_config()
         should_branch = bool(self.fit_branch_check.isChecked()) or _should_branch_fit_now(group, fit_entry)
-        result = create_placeholder_fit_result(
+        progress = self._fit_progress_dialog
+        if progress is None:
+            progress = _FitProgressDialog(self)
+            self._fit_progress_dialog = progress
+        progress.reset("Starting fit pipeline...")
+        progress.show()
+        result = run_group_fit(
             group,
             fit_entry,
             branch_timeline=should_branch,
+            progress_callback=progress.update_progress,
         )
+        failed = str(result.goodness.get("status", "")) == "failed"
+        if failed:
+            progress.fail(str(result.goodness.get("message", "The fit did not run.")))
+        else:
+            # Close the progress window on success so the refreshed tree is
+            # visible immediately instead of hidden behind the dialog.
+            progress.finish("Fit pipeline finished.")
+            progress.close()
         self.fit_branch_check.setChecked(False)
+        self.refresh_slice_viewer(group)
         item_to_select = _current_state_after_result(group, result) if should_branch else result
+        self._set_active_fit_state(group, item_to_select or result)
         self._mark_dirty()
         self._refresh_tree(select_group=group, select_fit=item_to_select or result)
         return result
+
+    def open_fit_diagnostics_plots_for_selection(self) -> Any | None:
+        fit_entry = self._fit_entry_for_item(self._current_item())
+        if fit_entry is None:
+            return None
+        if not _fit_entry_has_diagnostic_plots(fit_entry):
+            return None
+        window = _FitDiagnosticsPlotWindow(fit_entry, self)
+        window.show()
+        self._slice_viewers[id(window)] = window
+        return window
+
+    def show_data_and_fit_for_selection(self) -> Any | None:
+        """Open the data viewer with the stored fit overlaid on the data."""
+
+        group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        fit_entry = self._fit_entry_for_item(self._current_item())
+        if role != "fit" or group is None or fit_entry is None:
+            return None
+        if not _group_has_fit_channels(group):
+            return None
+        viewer = self.open_slice_viewer(group)
+        if viewer is None:
+            return None
+        check = getattr(viewer, "show_fit_check", None)
+        if check is not None and check.isEnabled():
+            check.setChecked(True)
+        residual_check = getattr(viewer, "show_residual_check", None)
+        if residual_check is not None:
+            residual_check.setChecked(False)
+        return viewer
 
     def open_slice_viewer_for_selection(self) -> Any | None:
         group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
@@ -3295,25 +4648,41 @@ class MetallixProjectExplorer:
         file_button = QtWidgets.QToolButton()
         file_button.setObjectName("file_menu_button")
         file_button.setText("File")
+        file_button.setToolTip("Open project file operations such as New, Open, Save, Close, and Quit.")
         file_button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
         menu = QtWidgets.QMenu(file_button)
+        menu.setToolTipsVisible(True)
         self.file_menu = menu
         new_action = menu.addAction("New", self.new_project)
         new_action.setShortcut(QtGui.QKeySequence.StandardKey.New)
+        new_action.setToolTip("Start a new empty metallix project.")
+        new_action.setStatusTip("Start a new empty metallix project.")
         open_action = menu.addAction("Open", self.open_project)
         open_action.setShortcut(QtGui.QKeySequence.StandardKey.Open)
+        open_action.setToolTip("Open a saved metallix project file.")
+        open_action.setStatusTip("Open a saved metallix project file.")
         self.recent_projects_menu = menu.addMenu("Recent projects")
+        self.recent_projects_menu.setToolTipsVisible(True)
+        self.recent_projects_menu.setToolTip("Open one of the most recently used metallix project files.")
         self.recent_projects_menu.aboutToShow.connect(self._refresh_recent_projects_menu)
         menu.addSeparator()
         save_action = menu.addAction("Save", self.save)
         save_action.setShortcut(QtGui.QKeySequence.StandardKey.Save)
+        save_action.setToolTip("Save the current project to its existing project file.")
+        save_action.setStatusTip("Save the current project to its existing project file.")
         save_as_action = menu.addAction("Save As", self.save_as)
         save_as_action.setShortcut(QtGui.QKeySequence.StandardKey.SaveAs)
+        save_as_action.setToolTip("Choose a new file path and save the current project there.")
+        save_as_action.setStatusTip("Choose a new file path and save the current project there.")
         menu.addSeparator()
         close_action = menu.addAction("Close", self.close_project)
         close_action.setShortcut(QtGui.QKeySequence.StandardKey.Close)
+        close_action.setToolTip("Close the current project after prompting to save unsaved changes.")
+        close_action.setStatusTip("Close the current project after prompting to save unsaved changes.")
         quit_action = menu.addAction("Quit", self.quit_application)
         quit_action.setShortcut(QtGui.QKeySequence.StandardKey.Quit)
+        quit_action.setToolTip("Quit metallix after prompting to save unsaved project changes.")
+        quit_action.setStatusTip("Quit metallix after prompting to save unsaved project changes.")
         file_button.setMenu(menu)
         toolbar.addWidget(file_button)
 
@@ -3327,6 +4696,10 @@ class MetallixProjectExplorer:
 
         project_tree_class = _make_project_tree_class()
         self.tree = project_tree_class(self)
+        self.tree.setToolTip(
+            "Project explorer tree. Select items to edit them, expand folders to navigate, "
+            "drag supported items to reorder or move them, and right-click for actions."
+        )
         self.tree.setHeaderHidden(True)
         self.tree.setIndentation(18)
         self.tree.setDragEnabled(True)
@@ -3359,6 +4732,8 @@ class MetallixProjectExplorer:
         tree_expand_row.setContentsMargins(8, 0, 8, 0)
         self.expand_all_button = QtWidgets.QPushButton("Expand all")
         self.collapse_all_button = QtWidgets.QPushButton("Collapse all")
+        self.expand_all_button.setToolTip("Expand every workspace, folder, dataset, and fit timeline in the tree.")
+        self.collapse_all_button.setToolTip("Collapse the tree to the top-level workspaces.")
         self.expand_all_button.clicked.connect(self.expand_all)
         self.collapse_all_button.clicked.connect(self.collapse_all)
         tree_expand_row.addWidget(self.expand_all_button)
@@ -3369,6 +4744,8 @@ class MetallixProjectExplorer:
         tree_button_row.setContentsMargins(8, 0, 8, 8)
         self.create_group_button = QtWidgets.QPushButton("Create workspace")
         self.delete_button = QtWidgets.QPushButton("Delete")
+        self.create_group_button.setToolTip("Create a new top-level workspace and immediately rename it.")
+        self.delete_button.setToolTip("Delete the selected workspace, dataset, mask, model, or fit item when allowed.")
         self.create_group_button.clicked.connect(self.create_data_group)
         self.delete_button.clicked.connect(self.delete_selected)
         tree_button_row.addWidget(self.create_group_button)
@@ -3389,6 +4766,7 @@ class MetallixProjectExplorer:
         title_row = QtWidgets.QHBoxLayout()
         title_row.addWidget(self.title_label, 1)
         self.enabled_check = QtWidgets.QCheckBox("Enabled")
+        self.enabled_check.setToolTip("Include or exclude the selected dataset, mask, or model from viewing and fitting.")
         self.enabled_check.toggled.connect(self._set_selected_enabled)
         title_row.addWidget(self.enabled_check)
         self.fit_weight_widget = QtWidgets.QWidget()
@@ -3397,6 +4775,7 @@ class MetallixProjectExplorer:
         fit_weight_layout.setSpacing(6)
         fit_weight_layout.addWidget(QtWidgets.QLabel("Fit weight"))
         self.fit_weight_spin = QtWidgets.QDoubleSpinBox()
+        self.fit_weight_spin.setToolTip("Relative fitting weight for the selected dataset. Larger values make this dataset count more in the fit.")
         self.fit_weight_spin.setRange(0.0, 1.0e12)
         self.fit_weight_spin.setDecimals(6)
         self.fit_weight_spin.setSingleStep(0.1)
@@ -3406,6 +4785,7 @@ class MetallixProjectExplorer:
         fit_weight_layout.addWidget(QtWidgets.QLabel("Scale"))
         self.scale_factor_spin = QtWidgets.QDoubleSpinBox()
         self.scale_factor_spin.setObjectName("dataset_scale_factor")
+        self.scale_factor_spin.setToolTip("Scale factor applied to the selected dataset before viewing and fitting.")
         self.scale_factor_spin.setRange(-1.0e12, 1.0e12)
         self.scale_factor_spin.setDecimals(6)
         self.scale_factor_spin.setSingleStep(0.1)
@@ -3423,6 +4803,9 @@ class MetallixProjectExplorer:
         group_bulk_layout.addWidget(QtWidgets.QLabel("Fit weight"))
         self.group_fit_weight_edit = QtWidgets.QLineEdit()
         self.group_fit_weight_edit.setObjectName("group_fit_weight_edit")
+        self.group_fit_weight_edit.setToolTip(
+            "Bulk edit the fit weight for every dataset in this dataset group. Blank means descendant values differ."
+        )
         self.group_fit_weight_edit.setPlaceholderText("(mixed)")
         self.group_fit_weight_edit.setMaximumWidth(90)
         self.group_fit_weight_edit.editingFinished.connect(
@@ -3432,6 +4815,9 @@ class MetallixProjectExplorer:
         group_bulk_layout.addWidget(QtWidgets.QLabel("Scale"))
         self.group_scale_edit = QtWidgets.QLineEdit()
         self.group_scale_edit.setObjectName("group_scale_edit")
+        self.group_scale_edit.setToolTip(
+            "Bulk edit the scale factor for every dataset in this dataset group. Blank means descendant values differ."
+        )
         self.group_scale_edit.setPlaceholderText("(mixed)")
         self.group_scale_edit.setMaximumWidth(90)
         self.group_scale_edit.editingFinished.connect(
@@ -3463,6 +4849,13 @@ class MetallixProjectExplorer:
         self.add_mask_button = QtWidgets.QPushButton("Add mask")
         self.add_dataset_group_button = QtWidgets.QPushButton("New dataset group")
         self.save_dataset_button = QtWidgets.QPushButton("Save dataset")
+        self.import_dataset_button.setToolTip("Import one or more data files into the selected workspace or dataset group.")
+        self.add_model_button.setToolTip("Add a new model component to the selected workspace.")
+        self.view_slice_button.setToolTip("Open or refresh the data viewer for the selected workspace or dataset.")
+        self.load_dataset_button.setToolTip("Load this dataset from disk now so its axes, data, and metadata are available.")
+        self.add_mask_button.setToolTip("Create a new mask under the selected dataset or shared mask folder.")
+        self.add_dataset_group_button.setToolTip("Create a nested dataset group for organizing related datasets and shared masks.")
+        self.save_dataset_button.setToolTip("Export the selected dataset, including current metallix processing, to a data file.")
         self.import_dataset_button.clicked.connect(self.import_dataset_dialog)
         self.add_model_button.clicked.connect(self.add_model_to_selection)
         self.view_slice_button.clicked.connect(self.open_slice_viewer_for_selection)
@@ -3482,6 +4875,7 @@ class MetallixProjectExplorer:
         mask_combo_class = _make_refreshing_combo_class()
         self.mask_type_combo = mask_combo_class(self._refresh_mask_type_combo)
         self.mask_type_combo.setObjectName("mask_type_combo")
+        self.mask_type_combo.setToolTip("Choose the mask type for the selected mask. The parameter editor updates to match this type.")
         self.mask_type_combo.currentTextChanged.connect(self._set_selected_mask_type)
         self.mask_parameter_widget = QtWidgets.QWidget()
         self.mask_parameter_layout = QtWidgets.QGridLayout(self.mask_parameter_widget)
@@ -3490,6 +4884,7 @@ class MetallixProjectExplorer:
         model_combo_class = _make_refreshing_combo_class()
         self.model_type_combo = model_combo_class(self._refresh_model_type_combo)
         self.model_type_combo.setObjectName("model_type_combo")
+        self.model_type_combo.setToolTip("Choose the model function used by the selected model component.")
         self.model_type_combo.currentTextChanged.connect(self._set_selected_model_type)
         self.model_parameter_widget = QtWidgets.QWidget()
         self.model_parameter_layout = QtWidgets.QGridLayout(self.model_parameter_widget)
@@ -3501,18 +4896,105 @@ class MetallixProjectExplorer:
         fit_editor_layout.setColumnStretch(1, 1)
         self.fit_optimizer_combo = QtWidgets.QComboBox()
         self.fit_optimizer_combo.addItems(["least_squares"])
+        self.fit_optimizer_combo.setToolTip("Choose the optimizer used when fitting from this fit state.")
         self.fit_optimizer_combo.currentTextChanged.connect(self._set_selected_fit_optimizer)
+        self.fit_loss_combo = QtWidgets.QComboBox()
+        self.fit_loss_combo.addItems(["linear", "soft_l1", "huber", "cauchy", "arctan"])
+        self.fit_loss_combo.setToolTip(
+            "Least-squares loss. Use linear for ordinary chi-squared; robust losses reduce the influence of outliers."
+        )
+        self.fit_loss_combo.currentTextChanged.connect(self._set_selected_fit_controls_config)
+        self.fit_f_scale_spin = QtWidgets.QDoubleSpinBox()
+        self.fit_f_scale_spin.setRange(1.0e-9, 1.0e9)
+        self.fit_f_scale_spin.setDecimals(6)
+        self.fit_f_scale_spin.setValue(1.0)
+        self.fit_f_scale_spin.setToolTip(
+            "Residual scale where robust losses begin down-weighting points. With normalized residuals, 1.0 means about one sigma."
+        )
+        self.fit_f_scale_spin.valueChanged.connect(self._set_selected_fit_controls_config)
+        self.fit_de_check = QtWidgets.QCheckBox("Differential evolution initialization")
+        self.fit_de_check.setToolTip(
+            "Search the bounded parameter space before least squares. Requires finite bounds on every fitted parameter."
+        )
+        self.fit_de_check.stateChanged.connect(self._set_selected_fit_controls_config)
+        self.fit_de_maxiter_spin = QtWidgets.QSpinBox()
+        self.fit_de_maxiter_spin.setRange(1, 10000)
+        self.fit_de_maxiter_spin.setValue(60)
+        self.fit_de_maxiter_spin.setToolTip("Maximum differential-evolution generations before least-squares polishing.")
+        self.fit_de_maxiter_spin.valueChanged.connect(self._set_selected_fit_controls_config)
+        self.fit_de_popsize_spin = QtWidgets.QSpinBox()
+        self.fit_de_popsize_spin.setRange(2, 200)
+        self.fit_de_popsize_spin.setValue(10)
+        self.fit_de_popsize_spin.setToolTip("Population multiplier for differential evolution. Larger values explore more but run longer.")
+        self.fit_de_popsize_spin.valueChanged.connect(self._set_selected_fit_controls_config)
+        self.fit_emcee_check = QtWidgets.QCheckBox("Sample posterior with emcee")
+        self.fit_emcee_check.setToolTip(
+            "After least squares, run emcee walkers near the best fit to estimate posterior intervals and correlations."
+        )
+        self.fit_emcee_check.stateChanged.connect(self._set_selected_fit_controls_config)
+        self.fit_emcee_walkers_spin = QtWidgets.QSpinBox()
+        self.fit_emcee_walkers_spin.setRange(0, 10000)
+        self.fit_emcee_walkers_spin.setValue(0)
+        self.fit_emcee_walkers_spin.setToolTip("Number of emcee walkers. Use 0 to choose an automatic value from the parameter count.")
+        self.fit_emcee_walkers_spin.valueChanged.connect(self._set_selected_fit_controls_config)
+        self.fit_emcee_steps_spin = QtWidgets.QSpinBox()
+        self.fit_emcee_steps_spin.setRange(1, 1000000)
+        self.fit_emcee_steps_spin.setValue(1000)
+        self.fit_emcee_steps_spin.setToolTip("Number of emcee steps per walker.")
+        self.fit_emcee_steps_spin.valueChanged.connect(self._set_selected_fit_controls_config)
+        self.fit_emcee_burn_spin = QtWidgets.QSpinBox()
+        self.fit_emcee_burn_spin.setRange(0, 1000000)
+        self.fit_emcee_burn_spin.setValue(200)
+        self.fit_emcee_burn_spin.setToolTip("Initial emcee steps to discard before summarizing posterior samples.")
+        self.fit_emcee_burn_spin.valueChanged.connect(self._set_selected_fit_controls_config)
+        self.fit_emcee_thin_spin = QtWidgets.QSpinBox()
+        self.fit_emcee_thin_spin.setRange(1, 10000)
+        self.fit_emcee_thin_spin.setValue(1)
+        self.fit_emcee_thin_spin.setToolTip("Keep every Nth emcee sample after burn-in.")
+        self.fit_emcee_thin_spin.valueChanged.connect(self._set_selected_fit_controls_config)
         self.fit_optimizer_config_editor = QtWidgets.QLineEdit("{}")
-        self.fit_optimizer_config_editor.setToolTip("JSON optimizer configuration for the selected fit state.")
+        self.fit_optimizer_config_editor.setToolTip(
+            "Advanced JSON optimizer configuration for the selected fit state. GUI controls update this; edit directly for extra SciPy/emcee options."
+        )
         self.fit_optimizer_config_editor.editingFinished.connect(self._set_selected_fit_optimizer_config)
         self.fit_branch_check = QtWidgets.QCheckBox("Branch timeline")
         self.fit_now_button = QtWidgets.QPushButton("Fit now")
+        self.fit_corner_button = QtWidgets.QPushButton("Fit diagnostics")
+        self.show_data_fit_button = QtWidgets.QPushButton("Show data and fit")
+        self.fit_branch_check.setToolTip("Start a new nested fit timeline instead of appending to the current timeline.")
+        self.fit_now_button.setToolTip("Run the optimizer from the selected fit state and store the result in the fit history.")
+        self.fit_corner_button.setToolTip(
+            "Open covariance/correlation heatmaps and posterior trace or corner-style plots when diagnostics are stored."
+        )
+        self.show_data_fit_button.setToolTip(
+            "Open the data viewer with the stored fit overlaid on the data (residuals off)."
+        )
         self.fit_now_button.clicked.connect(self.fit_now_for_selection)
+        self.fit_corner_button.clicked.connect(self.open_fit_diagnostics_plots_for_selection)
+        self.show_data_fit_button.clicked.connect(self.show_data_and_fit_for_selection)
         fit_editor_layout.addWidget(QtWidgets.QLabel("Optimizer"), 0, 0)
         fit_editor_layout.addWidget(self.fit_optimizer_combo, 0, 1)
-        fit_editor_layout.addWidget(QtWidgets.QLabel("Config"), 1, 0)
-        fit_editor_layout.addWidget(self.fit_optimizer_config_editor, 1, 1)
-        fit_editor_layout.addWidget(self.fit_branch_check, 2, 1)
+        fit_editor_layout.addWidget(QtWidgets.QLabel("Loss"), 1, 0)
+        fit_editor_layout.addWidget(self.fit_loss_combo, 1, 1)
+        fit_editor_layout.addWidget(QtWidgets.QLabel("Loss scale"), 2, 0)
+        fit_editor_layout.addWidget(self.fit_f_scale_spin, 2, 1)
+        fit_editor_layout.addWidget(self.fit_de_check, 3, 1)
+        fit_editor_layout.addWidget(QtWidgets.QLabel("DE generations"), 4, 0)
+        fit_editor_layout.addWidget(self.fit_de_maxiter_spin, 4, 1)
+        fit_editor_layout.addWidget(QtWidgets.QLabel("DE population"), 5, 0)
+        fit_editor_layout.addWidget(self.fit_de_popsize_spin, 5, 1)
+        fit_editor_layout.addWidget(self.fit_emcee_check, 6, 1)
+        fit_editor_layout.addWidget(QtWidgets.QLabel("Walkers"), 7, 0)
+        fit_editor_layout.addWidget(self.fit_emcee_walkers_spin, 7, 1)
+        fit_editor_layout.addWidget(QtWidgets.QLabel("Steps"), 8, 0)
+        fit_editor_layout.addWidget(self.fit_emcee_steps_spin, 8, 1)
+        fit_editor_layout.addWidget(QtWidgets.QLabel("Burn-in"), 9, 0)
+        fit_editor_layout.addWidget(self.fit_emcee_burn_spin, 9, 1)
+        fit_editor_layout.addWidget(QtWidgets.QLabel("Thin"), 10, 0)
+        fit_editor_layout.addWidget(self.fit_emcee_thin_spin, 10, 1)
+        fit_editor_layout.addWidget(QtWidgets.QLabel("Advanced config"), 11, 0)
+        fit_editor_layout.addWidget(self.fit_optimizer_config_editor, 11, 1)
+        fit_editor_layout.addWidget(self.fit_branch_check, 12, 1)
         self.fit_editor_widget = fit_editor
 
         right_layout.addLayout(title_row)
@@ -3524,6 +5006,8 @@ class MetallixProjectExplorer:
         right_layout.addWidget(self.details_scroll, 1)
         right_layout.addLayout(actions_row)
         right_layout.addWidget(self.fit_now_button)
+        right_layout.addWidget(self.fit_corner_button)
+        right_layout.addWidget(self.show_data_fit_button)
 
         splitter.addWidget(right_panel)
         splitter.setSizes([360, 760])
@@ -3777,6 +5261,8 @@ class MetallixProjectExplorer:
             "result": "fit_result",
         }.get(fit_entry.kind, "fit_result")
         _set_tree_item_icon(item, icon_kind)
+        if self._active_fit_entry(group) is fit_entry:
+            _style_active_fit_tree_item(item)
         self._remember_item(item, role, group)
         self._fit_item_roles[id(item)] = fit_entry
         parent_item.addChild(item)
@@ -3901,6 +5387,17 @@ class MetallixProjectExplorer:
         self.model_parameter_widget.setVisible(role == "model")
         self.fit_editor_widget.setVisible(role == "fit" and fit_entry is not None)
         self.fit_now_button.setVisible(role == "fit" and fit_entry is not None)
+        self.fit_corner_button.setVisible(
+            role == "fit"
+            and fit_entry is not None
+            and _fit_entry_has_diagnostic_plots(fit_entry)
+        )
+        self.show_data_fit_button.setVisible(
+            role == "fit"
+            and fit_entry is not None
+            and group is not None
+            and _group_has_fit_channels(group)
+        )
 
         if role == "group" and group is not None:
             self.title_label.setText(group.name)
@@ -3962,7 +5459,7 @@ class MetallixProjectExplorer:
             if role == "fit" and not self._restoring_fit_selection:
                 self._restore_selected_fit_state(group, fit_entry)
             self._sync_fit_editor(fit_entry)
-            self._set_details_text(fit_details_text(fit_entry))
+            self._set_fit_details(fit_entry)
         elif role == "model" and model is not None:
             self.title_label.setText(model.name)
             label = MODEL_TYPE_DEFINITIONS.get(model.type, {}).get("label", model.type)
@@ -4152,6 +5649,151 @@ class MetallixProjectExplorer:
                 self.details_layout.addWidget(self._details_group_box(title, lines))
         self.details_layout.addStretch(1)
 
+    def _set_fit_details(self, fit_entry: FitTimelineEntry) -> None:
+        self.details_label.setText(fit_details_text(fit_entry))
+        self._clear_details_panel()
+        duration = (
+            f"{_format_number(fit_entry.duration_seconds)} s"
+            if fit_entry.duration_seconds is not None
+            else "-"
+        )
+        self.details_layout.addWidget(
+            self._details_group_box(
+                "Fit",
+                [
+                    f"Type: {fit_entry.kind}",
+                    f"Created: {fit_entry.created_at or '-'}",
+                    f"Optimizer: {fit_entry.optimizer or '-'}",
+                    f"Duration: {duration}",
+                    f"Timeline entries: {len(fit_entry.children)}",
+                ],
+            )
+        )
+        if _fit_results_rows(fit_entry):
+            self.details_layout.addWidget(self._fit_results_group_box(fit_entry))
+        elif _snapshot_parameter_rows(fit_entry):
+            self.details_layout.addWidget(self._parameter_values_group_box(fit_entry))
+        if fit_entry.optimizer_config:
+            self.details_layout.addWidget(
+                self._metadata_tree_group_box(
+                    "Optimizer config",
+                    dict(fit_entry.optimizer_config),
+                    object_name="fit_optimizer_config_tree",
+                    empty_text="No optimizer configuration.",
+                )
+            )
+        if fit_entry.goodness:
+            self.details_layout.addWidget(
+                self._metadata_tree_group_box(
+                    "Goodness of fit",
+                    dict(fit_entry.goodness),
+                    object_name="fit_goodness_tree",
+                    empty_text="No goodness-of-fit values.",
+                )
+            )
+        if fit_entry.channels:
+            self.details_layout.addWidget(
+                self._metadata_tree_group_box(
+                    "Stored fit channels",
+                    dict(fit_entry.channels),
+                    object_name="fit_channels_tree",
+                    empty_text="No stored fit channels.",
+                )
+            )
+        if fit_entry.metadata:
+            self.details_layout.addWidget(
+                self._metadata_tree_group_box(
+                    "Metadata",
+                    dict(fit_entry.metadata),
+                    object_name="fit_metadata_tree",
+                    empty_text="No fit metadata.",
+                )
+            )
+        if fit_entry.snapshot:
+            self.details_layout.addWidget(
+                self._metadata_tree_group_box(
+                    "Snapshot",
+                    dict(fit_entry.snapshot),
+                    object_name="fit_snapshot_tree",
+                    empty_text="No fit snapshot.",
+                )
+            )
+        self.details_layout.addStretch(1)
+
+    def _fit_results_group_box(self, fit_entry: FitTimelineEntry) -> Any:
+        from PySide6 import QtCore, QtWidgets
+
+        rows = _fit_results_rows(fit_entry)
+        group_box = QtWidgets.QGroupBox("Fit results")
+        layout = QtWidgets.QVBoxLayout(group_box)
+        layout.setContentsMargins(10, 8, 10, 8)
+        table = QtWidgets.QTableWidget(len(rows), 6)
+        table.setObjectName("fit_results_table")
+        table.setToolTip(
+            "Human-readable best-fit parameters. Standard errors come from the least-squares covariance; "
+            "posterior columns come from emcee samples when available."
+        )
+        table.setHorizontalHeaderLabels(
+            ["Parameter", "Best fit", "Std err", "Posterior median", "16%", "84%"]
+        )
+        table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setAlternatingRowColors(True)
+        table.setMinimumHeight(120)
+        table.setMaximumHeight(260)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setStretchLastSection(True)
+        table.horizontalHeader().setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+        for row_index, row in enumerate(rows):
+            for column_index, key in enumerate(("name", "value", "stderr", "median", "p16", "p84")):
+                item = QtWidgets.QTableWidgetItem(row.get(key, "-"))
+                item.setToolTip(row.get(key, "-"))
+                if column_index > 0:
+                    item.setTextAlignment(
+                        QtCore.Qt.AlignmentFlag.AlignRight
+                        | QtCore.Qt.AlignmentFlag.AlignVCenter
+                    )
+                table.setItem(row_index, column_index, item)
+        _tooltip_table_corner_buttons(table, "Select all fit-result rows.")
+        table.resizeColumnsToContents()
+        layout.addWidget(table)
+        return group_box
+
+    def _parameter_values_group_box(self, fit_entry: FitTimelineEntry) -> Any:
+        from PySide6 import QtCore, QtWidgets
+
+        rows = _snapshot_parameter_rows(fit_entry)
+        group_box = QtWidgets.QGroupBox("Parameter values")
+        layout = QtWidgets.QVBoxLayout(group_box)
+        layout.setContentsMargins(10, 8, 10, 8)
+        table = QtWidgets.QTableWidget(len(rows), 2)
+        table.setObjectName("parameter_values_table")
+        table.setToolTip(
+            "Current model parameter values for this state. Run a fit to produce best-fit values with uncertainties."
+        )
+        table.setHorizontalHeaderLabels(["Parameter", "Value"])
+        table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setAlternatingRowColors(True)
+        table.setMinimumHeight(100)
+        table.setMaximumHeight(260)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setStretchLastSection(True)
+        table.horizontalHeader().setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+        for row_index, row in enumerate(rows):
+            for column_index, key in enumerate(("name", "value")):
+                item = QtWidgets.QTableWidgetItem(row.get(key, "-"))
+                item.setToolTip(row.get(key, "-"))
+                if column_index > 0:
+                    item.setTextAlignment(
+                        QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
+                    )
+                table.setItem(row_index, column_index, item)
+        _tooltip_table_corner_buttons(table, "Select all parameter rows.")
+        table.resizeColumnsToContents()
+        layout.addWidget(table)
+        return group_box
+
     def _dataset_point_list_group_box(self, dataset: DatasetEntry, group: DataGroup | None) -> Any:
         from PySide6 import QtWidgets
 
@@ -4186,23 +5828,27 @@ class MetallixProjectExplorer:
             value_combo = QtWidgets.QComboBox()
             value_combo.addItems(columns)
             value_combo.setCurrentText(str(channel.get("value", "")))
+            value_combo.setToolTip("Column used as the signal values for this plotted or fitted channel.")
             value_combo.currentTextChanged.connect(
                 lambda text, index=row - 1: self._set_point_list_channel(dataset, group, index, "value", text)
             )
             error_combo = QtWidgets.QComboBox()
             error_combo.addItems(["(none)", *columns])
             error_combo.setCurrentText(str(channel.get("error") or "(none)"))
+            error_combo.setToolTip("Optional column containing one-sigma uncertainties for this channel.")
             error_combo.currentTextChanged.connect(
                 lambda text, index=row - 1: self._set_point_list_channel(dataset, group, index, "error", text)
             )
             channels_layout.addWidget(value_combo, row, 0)
             channels_layout.addWidget(error_combo, row, 1)
             remove_button = QtWidgets.QPushButton("Remove")
+            remove_button.setToolTip("Remove this channel definition from the dataset configuration.")
             remove_button.clicked.connect(
                 lambda _checked=False, index=row - 1: self._remove_point_list_channel(dataset, group, index)
             )
             channels_layout.addWidget(remove_button, row, 2)
         add_button = QtWidgets.QPushButton("Add channel")
+        add_button.setToolTip("Add another signal channel using columns from this point-list dataset.")
         add_button.clicked.connect(lambda: self._add_point_list_channel(dataset, group))
         channels_layout.addWidget(add_button, len(config.get("channels", [])) + 1, 0)
         layout.addWidget(channels_box)
@@ -4226,6 +5872,7 @@ class MetallixProjectExplorer:
         channel_combo = QtWidgets.QComboBox()
         channel_combo.addItems([str(c["label"]) for c in config.get("channels", [])])
         channel_combo.setCurrentText(str(scale.get("channel", "")))
+        channel_combo.setToolTip("Signal channel to scale and assign units for viewing and fitting.")
         channel_combo.currentTextChanged.connect(
             lambda text: self._set_point_list_scale(dataset, group, "channel", text)
         )
@@ -4236,12 +5883,14 @@ class MetallixProjectExplorer:
         factor_spin.setRange(-1.0e12, 1.0e12)
         factor_spin.setValue(float(scale.get("factor", 1.0)))
         factor_spin.setObjectName("point_list_scale_factor")
+        factor_spin.setToolTip("Multiplicative factor applied to the selected signal channel.")
         factor_spin.valueChanged.connect(
             lambda value: self._set_point_list_scale(dataset, group, "factor", value)
         )
         grid.addWidget(factor_spin, 1, 1)
         grid.addWidget(QtWidgets.QLabel("Units"), 2, 0)
         units_edit = QtWidgets.QLineEdit(str(scale.get("units", "")))
+        units_edit.setToolTip("Display and export units for the scaled signal channel.")
         units_edit.editingFinished.connect(
             lambda editor=units_edit: self._set_point_list_scale(dataset, group, "units", editor.text())
         )
@@ -4258,12 +5907,14 @@ class MetallixProjectExplorer:
         enable = QtWidgets.QCheckBox("Divide moment by field")
         enable.setObjectName("point_list_susceptibility_enabled")
         enable.setChecked(bool(susc.get("enabled", False)))
+        enable.setToolTip("Convert a moment channel to susceptibility by dividing by the selected field column.")
         enable.toggled.connect(lambda checked: self._set_point_list_susceptibility(dataset, group, "enabled", checked))
         grid.addWidget(enable, 0, 0, 1, 2)
         grid.addWidget(QtWidgets.QLabel("Moment"), 1, 0)
         moment_combo = QtWidgets.QComboBox()
         moment_combo.addItems([str(c["label"]) for c in config.get("channels", [])])
         moment_combo.setCurrentText(str(susc.get("moment", "")))
+        moment_combo.setToolTip("Signal channel containing the measured moment.")
         moment_combo.currentTextChanged.connect(
             lambda text: self._set_point_list_susceptibility(dataset, group, "moment", text)
         )
@@ -4272,6 +5923,7 @@ class MetallixProjectExplorer:
         field_combo = QtWidgets.QComboBox()
         field_combo.addItems(list(dataset.data.column_names))
         field_combo.setCurrentText(str(susc.get("field", "")))
+        field_combo.setToolTip("Column containing the applied field used to compute susceptibility.")
         field_combo.currentTextChanged.connect(
             lambda text: self._set_point_list_susceptibility(dataset, group, "field", text)
         )
@@ -4289,6 +5941,7 @@ class MetallixProjectExplorer:
         two_theta_combo = QtWidgets.QComboBox()
         two_theta_combo.addItems(list(dataset.data.column_names))
         two_theta_combo.setCurrentText(str(wavelength.get("two_theta", "")))
+        two_theta_combo.setToolTip("Column containing scattering angle 2theta, used with wavelength to compute |Q|.")
         two_theta_combo.currentTextChanged.connect(
             lambda text: self._set_point_list_wavelength(dataset, group, "two_theta", text)
         )
@@ -4299,6 +5952,7 @@ class MetallixProjectExplorer:
         wavelength_spin.setDecimals(5)
         wavelength_spin.setRange(0.0, 100.0)
         wavelength_spin.setValue(float(wavelength.get("value", 0.0)))
+        wavelength_spin.setToolTip("Neutron wavelength in Angstroms used with 2theta to compute |Q|.")
         wavelength_spin.valueChanged.connect(
             lambda value: self._set_point_list_wavelength(dataset, group, "value", value)
         )
@@ -4401,6 +6055,10 @@ class MetallixProjectExplorer:
         type_row.addWidget(QtWidgets.QLabel("Data type"))
         type_combo = QtWidgets.QComboBox()
         type_combo.setObjectName("dataset_data_type")
+        type_combo.setToolTip(
+            "Interpret this dataset as a specific experimental data type. "
+            "This controls metadata handling, viewer readouts, and fitting compatibility."
+        )
         for name, type_label in available_data_types():
             type_combo.addItem(type_label, name)
         current = dataset.data_type or DEFAULT_DATA_TYPE
@@ -4457,6 +6115,7 @@ class MetallixProjectExplorer:
         enable_check = QtWidgets.QCheckBox("Use rebinned data")
         enable_check.setObjectName("dataset_rebin_enabled")
         enable_check.setChecked(bool(config.get("enabled", False)))
+        enable_check.setToolTip("Use the rebinned version of this dataset for viewing and fitting.")
         enable_check.toggled.connect(lambda checked: self._set_dataset_rebin_enabled(dataset, group, checked))
         rebin_layout.addWidget(enable_check)
 
@@ -4483,6 +6142,10 @@ class MetallixProjectExplorer:
             upper_edit = QtWidgets.QLineEdit(_format_number(axis_config["upper"]))
             bins_edit = QtWidgets.QLineEdit(str(int(axis_config["num_bins"])))
             step_edit = QtWidgets.QLineEdit(_format_number(axis_config["step_size"]))
+            lower_edit.setToolTip("Lower bound of the rebinned axis.")
+            upper_edit.setToolTip("Upper bound of the rebinned axis.")
+            bins_edit.setToolTip("Number of bins on this rebinned axis. Editing this updates the step size.")
+            step_edit.setToolTip("Approximate bin step size on this rebinned axis. Editing this updates the number of bins.")
             for editor in (lower_edit, upper_edit, bins_edit, step_edit):
                 editor.setMinimumWidth(72)
             lower_edit.editingFinished.connect(
@@ -4520,9 +6183,11 @@ class MetallixProjectExplorer:
         fractional_check = QtWidgets.QCheckBox("Fractional binning")
         fractional_check.setObjectName("dataset_rebin_fractional")
         fractional_check.setChecked(bool(config.get("fractional", False)))
+        fractional_check.setToolTip("Allow partial source bins to contribute fractionally when rebinning.")
         fractional_check.toggled.connect(lambda checked: self._set_dataset_rebin_option(dataset, group, "fractional", checked))
         create_button = QtWidgets.QPushButton("Create dataset from rebin")
         create_button.setEnabled(_dataset_can_rebin(dataset))
+        create_button.setToolTip("Materialize the current rebinned data as a new independent dataset.")
         create_button.clicked.connect(self.materialize_rebin_for_selection)
         option_row.addWidget(fractional_check)
         option_row.addWidget(create_button)
@@ -4547,20 +6212,38 @@ class MetallixProjectExplorer:
         return group_box
 
     def _dataset_metadata_group_box(self, dataset: DatasetEntry) -> Any:
+        metadata = dict(_dataset_metadata_mapping(dataset))
+        if dataset.parameters:
+            metadata["Parameters"] = dict(dataset.parameters)
+        return self._metadata_tree_group_box(
+            "Metadata",
+            metadata,
+            object_name="dataset_metadata_tree",
+            empty_text="No additional metadata.",
+        )
+
+    def _metadata_tree_group_box(
+        self,
+        title: str,
+        mapping: dict[str, Any],
+        *,
+        object_name: str,
+        empty_text: str,
+    ) -> Any:
         from PySide6 import QtCore, QtWidgets
 
-        group_box = QtWidgets.QGroupBox("Metadata")
+        group_box = QtWidgets.QGroupBox(title)
         layout = QtWidgets.QVBoxLayout(group_box)
         layout.setContentsMargins(10, 8, 10, 8)
-        metadata = _dataset_metadata_mapping(dataset)
-        if not metadata and not dataset.parameters:
-            label = QtWidgets.QLabel("No additional metadata.")
+        if not mapping:
+            label = QtWidgets.QLabel(empty_text)
             label.setWordWrap(True)
             layout.addWidget(label)
             return group_box
 
         tree = QtWidgets.QTreeWidget()
-        tree.setObjectName("dataset_metadata_tree")
+        tree.setObjectName(object_name)
+        tree.setToolTip("Expandable metadata table. Expand rows to inspect nested fields and hover values for full text.")
         tree.setColumnCount(2)
         tree.setHeaderLabels(["Field", "Value"])
         tree.setRootIsDecorated(True)
@@ -4574,11 +6257,10 @@ class MetallixProjectExplorer:
         tree.header().setStretchLastSection(True)
         tree.header().setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
 
-        for key in sorted(metadata):
-            _add_metadata_tree_item(tree, str(key), metadata[key])
-        if dataset.parameters:
-            parameters_item = _add_metadata_tree_item(tree, "Parameters", dict(dataset.parameters))
-            parameters_item.setExpanded(True)
+        for key in sorted(mapping):
+            item = _add_metadata_tree_item(tree, str(key), mapping[key])
+            if key == "Parameters":
+                item.setExpanded(True)
         for index in range(min(4, tree.topLevelItemCount())):
             tree.topLevelItem(index).setExpanded(True)
         tree.resizeColumnToContents(0)
@@ -4693,18 +6375,39 @@ class MetallixProjectExplorer:
     def _restore_selected_fit_state(self, group: DataGroup, fit_entry: FitTimelineEntry) -> None:
         if not fit_entry.snapshot:
             fit_entry.snapshot = snapshot_data_group_state(group)
+        self._set_active_fit_state(group, fit_entry)
         self._restoring_fit_selection = True
         try:
             restore_data_group_state(group, fit_entry.snapshot)
             self._refresh_tree(select_group=group, select_fit=fit_entry)
         finally:
             self._restoring_fit_selection = False
-        self._active_fit_group = group
-        self._active_fit_anchor = fit_entry if fit_entry.kind in {"initial", "result"} else None
-        self._active_fit_current = fit_entry if fit_entry.kind == "current" else None
-        self._active_branch_current = None
         self._mark_dirty()
         self.refresh_slice_viewer(group)
+
+    def _active_fit_entry(self, group: DataGroup) -> FitTimelineEntry | None:
+        if self._active_fit_group is not group:
+            return None
+        for entry in (
+            self._active_branch_current,
+            self._active_fit_current,
+            self._active_fit_anchor,
+        ):
+            if _fit_entry_in_tree(group.fits, entry):
+                return entry
+        return None
+
+    def _set_active_fit_state(self, group: DataGroup, fit_entry: FitTimelineEntry | None) -> None:
+        self._active_fit_group = group
+        self._active_fit_anchor = (
+            fit_entry if fit_entry is not None and fit_entry.kind in {"initial", "result"} else None
+        )
+        self._active_fit_current = (
+            fit_entry if fit_entry is not None and fit_entry.kind == "current" else None
+        )
+        self._active_branch_current = None
+        # Remember which fit entry is active so it can be persisted and restored.
+        group.active_fit_path = _fit_entry_path(group.fits, fit_entry)
 
     def _record_data_group_state_change(self, group: DataGroup) -> bool:
         """Update fit-history current state, creating an edit branch when needed."""
@@ -4718,6 +6421,9 @@ class MetallixProjectExplorer:
             if _fit_entry_in_tree(group.fits, self._active_fit_current):
                 current_entry = self._active_fit_current
             elif _fit_entry_in_tree(group.fits, self._active_fit_anchor):
+                if _is_editable_initial_baseline(group, self._active_fit_anchor):
+                    _set_fit_current_snapshot(self._active_fit_anchor, group)
+                    return False
                 if not _fit_entry_in_tree(group.fits, self._active_branch_current):
                     timeline = FitTimelineEntry(
                         name=next_fit_timeline_name(group.fits),
@@ -4752,13 +6458,57 @@ class MetallixProjectExplorer:
         self._active_fit_current = None
         self._active_branch_current = None
 
+    def _restore_active_fit_selection(self) -> bool:
+        """Select and re-activate the fit entry persisted with the project."""
+
+        for group in self.project.data_groups:
+            entry = _fit_entry_at_path(group.fits, group.active_fit_path)
+            if entry is None:
+                continue
+            self._set_active_fit_state(group, entry)
+            self._refresh_tree(select_group=group, select_fit=entry)
+            return True
+        return False
+
     def _sync_fit_editor(self, fit_entry: FitTimelineEntry) -> None:
         self.fit_optimizer_combo.blockSignals(True)
         self.fit_optimizer_combo.setCurrentText(fit_entry.optimizer or "least_squares")
         self.fit_optimizer_combo.blockSignals(False)
+        config = fit_entry.optimizer_config if isinstance(fit_entry.optimizer_config, dict) else {}
+        self._sync_fit_control_values(config)
         self.fit_optimizer_config_editor.blockSignals(True)
-        self.fit_optimizer_config_editor.setText(json.dumps(fit_entry.optimizer_config, sort_keys=True))
+        self.fit_optimizer_config_editor.setText(json.dumps(config, sort_keys=True))
         self.fit_optimizer_config_editor.blockSignals(False)
+
+    def _sync_fit_control_values(self, config: dict[str, Any]) -> None:
+        widgets = [
+            self.fit_loss_combo,
+            self.fit_f_scale_spin,
+            self.fit_de_check,
+            self.fit_de_maxiter_spin,
+            self.fit_de_popsize_spin,
+            self.fit_emcee_check,
+            self.fit_emcee_walkers_spin,
+            self.fit_emcee_steps_spin,
+            self.fit_emcee_burn_spin,
+            self.fit_emcee_thin_spin,
+        ]
+        for widget in widgets:
+            widget.blockSignals(True)
+        self.fit_loss_combo.setCurrentText(str(config.get("loss", "linear")))
+        self.fit_f_scale_spin.setValue(float(config.get("f_scale", 1.0) or 1.0))
+        initialization = config.get("initialization") if isinstance(config.get("initialization"), dict) else {}
+        self.fit_de_check.setChecked(bool(initialization.get("enabled", False)))
+        self.fit_de_maxiter_spin.setValue(int(initialization.get("maxiter", 60) or 60))
+        self.fit_de_popsize_spin.setValue(int(initialization.get("popsize", 10) or 10))
+        sampler = config.get("sampler") if isinstance(config.get("sampler"), dict) else {}
+        self.fit_emcee_check.setChecked(bool(sampler.get("enabled", False)))
+        self.fit_emcee_walkers_spin.setValue(int(sampler.get("n_walkers", 0) or 0))
+        self.fit_emcee_steps_spin.setValue(int(sampler.get("n_steps", 1000) or 1000))
+        self.fit_emcee_burn_spin.setValue(int(sampler.get("burn_in", 200) or 0))
+        self.fit_emcee_thin_spin.setValue(int(sampler.get("thin", 1) or 1))
+        for widget in widgets:
+            widget.blockSignals(False)
 
     def _set_selected_fit_optimizer(self, optimizer: str) -> None:
         fit_entry = self._fit_entry_for_item(self._current_item())
@@ -4782,7 +6532,55 @@ class MetallixProjectExplorer:
             self.fit_optimizer_config_editor.setText("{}")
         if fit_entry.optimizer_config != config:
             fit_entry.optimizer_config = config
+            self._sync_fit_control_values(config)
             self._mark_dirty()
+
+    def _set_selected_fit_controls_config(self, *args: Any) -> None:
+        del args
+        fit_entry = self._fit_entry_for_item(self._current_item())
+        if fit_entry is None:
+            return
+        config = self._fit_config_from_controls(fit_entry.optimizer_config)
+        if fit_entry.optimizer_config != config:
+            fit_entry.optimizer_config = config
+            self.fit_optimizer_config_editor.blockSignals(True)
+            self.fit_optimizer_config_editor.setText(json.dumps(config, sort_keys=True))
+            self.fit_optimizer_config_editor.blockSignals(False)
+            self._mark_dirty()
+
+    def _fit_config_from_controls(self, existing: dict[str, Any] | None = None) -> dict[str, Any]:
+        config = dict(existing or {})
+        loss = str(self.fit_loss_combo.currentText() or "linear")
+        if loss == "linear":
+            config.pop("loss", None)
+            config.pop("f_scale", None)
+        else:
+            config["loss"] = loss
+            config["f_scale"] = float(self.fit_f_scale_spin.value())
+        if self.fit_de_check.isChecked():
+            config["initialization"] = {
+                "enabled": True,
+                "method": "differential_evolution",
+                "maxiter": int(self.fit_de_maxiter_spin.value()),
+                "popsize": int(self.fit_de_popsize_spin.value()),
+            }
+        else:
+            config.pop("initialization", None)
+        if self.fit_emcee_check.isChecked():
+            sampler = {
+                "enabled": True,
+                "method": "emcee",
+                "n_steps": int(self.fit_emcee_steps_spin.value()),
+                "burn_in": int(self.fit_emcee_burn_spin.value()),
+                "thin": int(self.fit_emcee_thin_spin.value()),
+            }
+            walkers = int(self.fit_emcee_walkers_spin.value())
+            if walkers > 0:
+                sampler["n_walkers"] = walkers
+            config["sampler"] = sampler
+        else:
+            config.pop("sampler", None)
+        return config
 
     def context_menu_action_names(self, item: Any | None) -> list[str]:
         """Return context-menu action names for a tree item."""
@@ -4826,6 +6624,7 @@ class MetallixProjectExplorer:
             return
         self.tree.setCurrentItem(item)
         menu = QtWidgets.QMenu(self.tree)
+        menu.setToolTipsVisible(True)
         actions = {
             "Copy": self.copy_selected,
             "Paste": self.paste_into_selection,
@@ -4841,9 +6640,26 @@ class MetallixProjectExplorer:
             "Enable": lambda: self._set_selected_enabled(True),
             "Disable": lambda: self._set_selected_enabled(False),
         }
+        tooltips = {
+            "Copy": "Copy the selected dataset or mask so it can be pasted elsewhere in the project.",
+            "Paste": "Paste the copied dataset or mask into the selected compatible destination.",
+            "Rename": "Rename the selected tree item.",
+            "Delete": "Delete the selected item when that operation is allowed.",
+            "View in data viewer": "Open or refresh the data viewer for this selection.",
+            "Show file location": "Reveal the selected dataset's source file in the operating system file browser.",
+            "Change file source": "Point this dataset at a different source file on disk.",
+            "Add mask": "Create a new mask for the selected dataset or shared mask folder.",
+            "New dataset group": "Create a nested dataset group under the selected workspace or group.",
+            "Add model": "Create a new model component in the selected workspace.",
+            "Fit now": "Run the optimizer from the selected fit state and store a new fit result.",
+            "Enable": "Enable this item for viewing and fitting.",
+            "Disable": "Disable this item for viewing and fitting.",
+        }
         for name, enabled in self._context_menu_action_specs(item):
             action = menu.addAction(name)
             action.setEnabled(enabled)
+            action.setToolTip(tooltips.get(name, name))
+            action.setStatusTip(tooltips.get(name, name))
             action.triggered.connect(actions[name])
         if not menu.isEmpty():
             menu.exec(global_pos)
@@ -4914,14 +6730,21 @@ class MetallixProjectExplorer:
         if not recent:
             empty_action = self.recent_projects_menu.addAction("No recent projects")
             empty_action.setEnabled(False)
+            empty_action.setToolTip("No recent metallix project files are available.")
+            empty_action.setStatusTip("No recent metallix project files are available.")
             return
         for path in recent:
             action = self.recent_projects_menu.addAction(str(path))
             action.setEnabled(path.exists())
+            tip = f"Open recent project: {path}" if path.exists() else f"Recent project file is missing: {path}"
+            action.setToolTip(tip)
+            action.setStatusTip(tip)
             action.triggered.connect(lambda _checked=False, path=path: self.open_project_path(path))
         if any(not path.exists() for path in recent):
             self.recent_projects_menu.addSeparator()
-            self.recent_projects_menu.addAction("Remove missing projects", self._remove_missing_recent_projects)
+            action = self.recent_projects_menu.addAction("Remove missing projects", self._remove_missing_recent_projects)
+            action.setToolTip("Remove recent-project entries whose files no longer exist.")
+            action.setStatusTip("Remove recent-project entries whose files no longer exist.")
 
     def _remove_missing_recent_projects(self) -> None:
         forget_missing_recent_projects()
@@ -5105,9 +6928,38 @@ class MetallixProjectExplorer:
         fit_group.setObjectName("model_fit_parameters_group")
         fit_layout = QtWidgets.QGridLayout(fit_group)
         fit_layout.setColumnStretch(1, 1)
-        for row, parameter_name in enumerate(MODEL_TYPE_DEFINITIONS[model.type]["parameters"]):
+        header_label = QtWidgets.QLabel("Plot label")
+        header_min = QtWidgets.QLabel("Min")
+        header_max = QtWidgets.QLabel("Max")
+        plot_label_tooltip = (
+            "Optional short label used in fit diagnostic plots. "
+            "Accepts plain text or Matplotlib mathtext such as $\\Gamma$."
+        )
+        header_label.setToolTip(plot_label_tooltip)
+        fit_layout.addWidget(header_label, 0, 2)
+        fit_layout.addWidget(header_min, 0, 3)
+        fit_layout.addWidget(header_max, 0, 4)
+        for index, parameter_name in enumerate(MODEL_TYPE_DEFINITIONS[model.type]["parameters"]):
+            row = index + 1
             label = QtWidgets.QLabel(parameter_name)
             editor = QtWidgets.QLineEdit(_parameter_to_text(model.parameters.get(parameter_name, "")))
+            parameter_labels = model.metadata.get("parameter_labels")
+            plot_label_editor = QtWidgets.QLineEdit(
+                str(parameter_labels.get(parameter_name, ""))
+                if isinstance(parameter_labels, dict)
+                else ""
+            )
+            plot_label_editor.setObjectName(f"model_parameter_plot_label_{parameter_name}")
+            plot_label_editor.setPlaceholderText(f"p{index + 1}")
+            lower_text, upper_text = _model_limit_texts(model, parameter_name)
+            min_editor = QtWidgets.QLineEdit(lower_text)
+            min_editor.setObjectName(f"model_parameter_min_{parameter_name}")
+            min_editor.setPlaceholderText("-inf")
+            min_editor.setMaximumWidth(70)
+            max_editor = QtWidgets.QLineEdit(upper_text)
+            max_editor.setObjectName(f"model_parameter_max_{parameter_name}")
+            max_editor.setPlaceholderText("inf")
+            max_editor.setMaximumWidth(70)
             fit_check = QtWidgets.QCheckBox("Fit")
             fit_check.setChecked(bool(model.fit_parameters.get(parameter_name, False)))
             global_check = QtWidgets.QCheckBox("Global fit")
@@ -5115,10 +6967,32 @@ class MetallixProjectExplorer:
             tooltip = model_parameter_tooltip(model.type, parameter_name)
             label.setToolTip(tooltip)
             editor.setToolTip(tooltip)
-            fit_check.setToolTip(tooltip)
-            global_check.setToolTip(tooltip)
+            plot_label_editor.setToolTip(plot_label_tooltip)
+            limits_tooltip = (
+                "Optional bound applied when the optimizer varies this parameter. "
+                "Leave blank for an unbounded side."
+            )
+            min_editor.setToolTip(limits_tooltip)
+            max_editor.setToolTip(limits_tooltip)
+            fit_check.setToolTip(
+                f"Optimize parameter {parameter_name!r} during fitting. "
+                "Unchecked parameters stay fixed at their current value."
+            )
+            global_check.setToolTip(
+                f"Share parameter {parameter_name!r} across all fitted datasets. "
+                "Uncheck to allow independent per-dataset values."
+            )
             editor.editingFinished.connect(
                 lambda parameter_name=parameter_name, editor=editor: self._set_model_parameter(parameter_name, editor.text())
+            )
+            plot_label_editor.editingFinished.connect(
+                lambda parameter_name=parameter_name, editor=plot_label_editor: self._set_model_parameter_plot_label(parameter_name, editor.text())
+            )
+            min_editor.editingFinished.connect(
+                lambda parameter_name=parameter_name, editor=min_editor: self._set_model_limit(parameter_name, 0, editor.text())
+            )
+            max_editor.editingFinished.connect(
+                lambda parameter_name=parameter_name, editor=max_editor: self._set_model_limit(parameter_name, 1, editor.text())
             )
             fit_check.toggled.connect(
                 lambda checked, parameter_name=parameter_name: self._set_model_fit_parameter(parameter_name, checked)
@@ -5128,9 +7002,35 @@ class MetallixProjectExplorer:
             )
             fit_layout.addWidget(label, row, 0)
             fit_layout.addWidget(editor, row, 1)
-            fit_layout.addWidget(fit_check, row, 2)
-            fit_layout.addWidget(global_check, row, 3)
+            fit_layout.addWidget(plot_label_editor, row, 2)
+            fit_layout.addWidget(min_editor, row, 3)
+            fit_layout.addWidget(max_editor, row, 4)
+            fit_layout.addWidget(fit_check, row, 5)
+            fit_layout.addWidget(global_check, row, 6)
         self.model_parameter_layout.addWidget(fit_group, 0, 0, 1, 4)
+
+        scope_group = QtWidgets.QGroupBox("Dataset Scope")
+        scope_group.setObjectName("model_dataset_scope_group")
+        scope_layout = QtWidgets.QGridLayout(scope_group)
+        scope_layout.setColumnStretch(1, 1)
+        applies_label = QtWidgets.QLabel("Applies to")
+        applies_editor = QtWidgets.QLineEdit(
+            "" if model.applies_to is None else ", ".join(model.applies_to)
+        )
+        applies_editor.setObjectName("model_applies_to_editor")
+        applies_tooltip = (
+            "Comma-separated dataset names this model component fits. "
+            "Leave blank to apply the model to every compatible dataset."
+        )
+        applies_label.setToolTip(applies_tooltip)
+        applies_editor.setToolTip(applies_tooltip)
+        applies_editor.setPlaceholderText("all compatible datasets")
+        applies_editor.editingFinished.connect(
+            lambda editor=applies_editor: self._set_model_applies_to(editor.text())
+        )
+        scope_layout.addWidget(applies_label, 0, 0)
+        scope_layout.addWidget(applies_editor, 0, 1)
+        self.model_parameter_layout.addWidget(scope_group, 1, 0, 1, 4)
 
         config_group = QtWidgets.QGroupBox("Configuration Settings")
         config_group.setObjectName("model_config_group")
@@ -5150,7 +7050,7 @@ class MetallixProjectExplorer:
             )
             config_layout.addWidget(label, row, 0)
             config_layout.addWidget(editor, row, 1)
-        self.model_parameter_layout.addWidget(config_group, 1, 0, 1, 4)
+        self.model_parameter_layout.addWidget(config_group, 2, 0, 1, 4)
 
     def _clear_model_parameter_editor(self) -> None:
         while self.model_parameter_layout.count():
@@ -5174,6 +7074,26 @@ class MetallixProjectExplorer:
                 return
         if group is not None:
             self.refresh_slice_viewer(group)
+
+    def _set_model_parameter_plot_label(self, name: str, text: str) -> None:
+        group, _entry, _mask, model, role = self._objects_for_item(self._current_item())
+        if role != "model" or model is None:
+            return
+        labels = dict(model.metadata.get("parameter_labels", {}))
+        value = text.strip()
+        if value:
+            labels[name] = value
+        else:
+            labels.pop(name, None)
+        if model.metadata.get("parameter_labels", {}) != labels:
+            if labels:
+                model.metadata["parameter_labels"] = labels
+            else:
+                model.metadata.pop("parameter_labels", None)
+            branch_created = self._record_data_group_state_change(group) if group is not None else False
+            self._mark_dirty()
+            if group is not None and branch_created:
+                self._refresh_tree(select_group=group, select_model=model)
 
     def _set_model_config_setting(self, name: str, text: str) -> None:
         group, _entry, _mask, model, role = self._objects_for_item(self._current_item())
@@ -5219,6 +7139,40 @@ class MetallixProjectExplorer:
                 return
         if group is not None:
             self.refresh_slice_viewer(group)
+
+    def _set_model_limit(self, name: str, side: int, text: str) -> None:
+        group, _entry, _mask, model, role = self._objects_for_item(self._current_item())
+        if role != "model" or model is None:
+            return
+        raw = _parse_parameter_text(text.strip()) if text.strip() else None
+        value = None if raw in (None, "") else raw
+        current = model.limits.get(name)
+        limits = list(current) if isinstance(current, (list, tuple)) and len(current) == 2 else [None, None]
+        if limits[side] == value:
+            return
+        limits[side] = value
+        if limits == [None, None]:
+            model.limits.pop(name, None)
+        else:
+            model.limits[name] = limits
+        branch_created = self._record_data_group_state_change(group) if group is not None else False
+        self._mark_dirty()
+        if group is not None and branch_created:
+            self._refresh_tree(select_group=group, select_model=model)
+
+    def _set_model_applies_to(self, text: str) -> None:
+        group, _entry, _mask, model, role = self._objects_for_item(self._current_item())
+        if role != "model" or model is None:
+            return
+        names = [part.strip() for part in text.split(",") if part.strip()]
+        value = names or None
+        if model.applies_to == value:
+            return
+        model.applies_to = value
+        branch_created = self._record_data_group_state_change(group) if group is not None else False
+        self._mark_dirty()
+        if group is not None and branch_created:
+            self._refresh_tree(select_group=group, select_model=model)
 
     def refresh_open_slice_viewers(self) -> None:
         for group in list(self.project.data_groups):
@@ -5713,6 +7667,81 @@ def _add_metadata_tree_item(parent: Any, key: str, value: Any, *, depth: int = 0
     return item
 
 
+def _tooltip_table_corner_buttons(table: Any, tooltip: str) -> None:
+    """Give a table's internal Qt corner/select buttons a tooltip.
+
+    QTableWidget's corner "select all" button is an untooltipped
+    ``QAbstractButton``; label it so it does not read as a bare control.
+    """
+
+    from PySide6 import QtWidgets
+
+    for button in table.findChildren(QtWidgets.QAbstractButton):
+        if not button.toolTip():
+            button.setToolTip(tooltip)
+
+
+def _snapshot_parameter_rows(fit_entry: FitTimelineEntry) -> list[dict[str, str]]:
+    """Return current parameter values from a fit entry's snapshot models.
+
+    Used for the Current state (and Initial) entries, which carry live model
+    parameter values but no optimizer results.
+    """
+
+    snapshot = fit_entry.snapshot if isinstance(fit_entry.snapshot, dict) else {}
+    models = snapshot.get("models", [])
+    if not isinstance(models, list):
+        return []
+    rows: list[dict[str, str]] = []
+    for model in models:
+        if not isinstance(model, dict):
+            continue
+        component = str(model.get("name", ""))
+        params = model.get("parameters", {})
+        if not isinstance(params, dict):
+            continue
+        for name, value in params.items():
+            label = f"{component}.{name}" if component else str(name)
+            rows.append({"name": label, "value": _format_number(value)})
+    return rows
+
+
+def _fit_results_rows(fit_entry: FitTimelineEntry) -> list[dict[str, str]]:
+    goodness = fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
+    params = goodness.get("parameters")
+    if not isinstance(params, dict) or not params:
+        return []
+    stderr = goodness.get("stderr") if isinstance(goodness.get("stderr"), dict) else {}
+    posterior = goodness.get("posterior") if isinstance(goodness.get("posterior"), dict) else {}
+    posterior_params = (
+        posterior.get("parameters")
+        if isinstance(posterior.get("parameters"), dict)
+        else {}
+    )
+    rows: list[dict[str, str]] = []
+    for name, value in params.items():
+        posterior_row = (
+            posterior_params.get(name)
+            if isinstance(posterior_params.get(name), dict)
+            else {}
+        )
+        rows.append(
+            {
+                "name": str(name),
+                "value": _format_number(value),
+                "stderr": _format_number(stderr[name]) if name in stderr else "-",
+                "median": (
+                    _format_number(posterior_row["median"])
+                    if "median" in posterior_row
+                    else "-"
+                ),
+                "p16": _format_number(posterior_row["p16"]) if "p16" in posterior_row else "-",
+                "p84": _format_number(posterior_row["p84"]) if "p84" in posterior_row else "-",
+            }
+        )
+    return rows
+
+
 def _metadata_tree_value_summary(value: Any) -> str:
     if isinstance(value, dict):
         return f"{len(value)} field(s)"
@@ -5840,6 +7869,13 @@ def _project_from_dict(payload: dict[str, Any]) -> MetallixProject:
                     str(name): bool(value)
                     for name, value in dict(model_payload.get("global_fit", {})).items()
                 },
+                sharing=_sharing_from_payload(model_payload.get("sharing")),
+                limits=dict(model_payload.get("limits", {}) or {}),
+                constraints=[
+                    dict(constraint)
+                    for constraint in model_payload.get("constraints", []) or []
+                ],
+                applies_to=_applies_to_from_payload(model_payload.get("applies_to")),
                 enabled=bool(model_payload.get("enabled", True)),
                 metadata=dict(model_payload.get("metadata", {})),
             )
@@ -5848,9 +7884,49 @@ def _project_from_dict(payload: dict[str, Any]) -> MetallixProject:
             _fit_entry_from_dict(fit_payload)
             for fit_payload in group_payload.get("fits", [])
         ]
+        active_path = group_payload.get("active_fit_path")
+        if isinstance(active_path, list) and all(isinstance(index, int) for index in active_path):
+            group.active_fit_path = list(active_path)
         ensure_fit_history(group)
         project.data_groups.append(group)
     return project
+
+
+def _model_limit_texts(model: ModelComponentSpec, parameter_name: str) -> tuple[str, str]:
+    """Return display texts for a parameter's (min, max) bounds."""
+
+    raw = model.limits.get(parameter_name)
+    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+        return "", ""
+    lower, upper = raw
+    return (
+        "" if lower in (None, "") else _parameter_to_text(lower),
+        "" if upper in (None, "") else _parameter_to_text(upper),
+    )
+
+
+def _sharing_from_payload(value: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        return {}
+    sharing: dict[str, dict[str, Any]] = {}
+    for name, entry in value.items():
+        if isinstance(entry, dict):
+            sharing[str(name)] = {
+                "mode": str(entry.get("mode", "global")),
+                "groups": {
+                    str(dataset): str(key)
+                    for dataset, key in dict(entry.get("groups", {})).items()
+                },
+            }
+    return sharing
+
+
+def _applies_to_from_payload(value: Any) -> list[str] | None:
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple)):
+        return [str(name) for name in value]
+    return None
 
 
 def _mask_from_dict(mask_payload: dict[str, Any]) -> MaskSpec:
@@ -5920,6 +7996,9 @@ def _data_group_to_dict(group: DataGroup) -> dict[str, Any]:
         "masks": [_mask_to_dict(mask) for mask in group.masks],
         "models": model_payloads,
         "fits": [_fit_entry_to_dict(fit_entry) for fit_entry in group.fits],
+        "active_fit_path": (
+            list(group.active_fit_path) if group.active_fit_path is not None else None
+        ),
     }
 
 
@@ -5962,6 +8041,10 @@ def _model_to_dict(model: ModelComponentSpec) -> dict[str, Any]:
         "config": _json_mapping(model.config),
         "fit_parameters": {name: bool(value) for name, value in model.fit_parameters.items()},
         "global_fit": {name: bool(value) for name, value in model.global_fit.items()},
+        "sharing": _json_mapping(model.sharing),
+        "limits": _json_mapping(model.limits),
+        "constraints": [dict(constraint) for constraint in model.constraints],
+        "applies_to": None if model.applies_to is None else list(model.applies_to),
         "enabled": bool(model.enabled),
         "metadata": _json_mapping(model.metadata),
     }
@@ -5977,9 +8060,37 @@ def _fit_entry_to_dict(fit_entry: FitTimelineEntry) -> dict[str, Any]:
         "optimizer": fit_entry.optimizer,
         "optimizer_config": _json_mapping(fit_entry.optimizer_config),
         "goodness": _json_mapping(fit_entry.goodness),
+        "channels": _fit_channels_to_dict(fit_entry.channels),
         "children": [_fit_entry_to_dict(child) for child in fit_entry.children],
         "metadata": _json_mapping(fit_entry.metadata),
     }
+
+
+def _fit_channels_to_dict(channels: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for dataset_name, entry in (channels or {}).items():
+        encoded: dict[str, Any] = {"kind": str(entry.get("kind", "points"))}
+        for channel_name in FIT_CHANNEL_NAMES:
+            if entry.get(channel_name) is not None:
+                encoded[channel_name] = _encode_float_array(entry[channel_name])
+        payload[str(dataset_name)] = encoded
+    return payload
+
+
+def _fit_channels_from_dict(payload: Any) -> dict[str, dict[str, Any]]:
+    channels: dict[str, dict[str, Any]] = {}
+    if not isinstance(payload, dict):
+        return channels
+    for dataset_name, entry in payload.items():
+        if not isinstance(entry, dict):
+            continue
+        decoded: dict[str, Any] = {"kind": str(entry.get("kind", "points"))}
+        for channel_name in FIT_CHANNEL_NAMES:
+            array = _fit_channel_array(entry.get(channel_name))
+            if array is not None:
+                decoded[channel_name] = array
+        channels[str(dataset_name)] = decoded
+    return channels
 
 
 def _fit_entry_from_dict(payload: dict[str, Any]) -> FitTimelineEntry:
@@ -5992,6 +8103,7 @@ def _fit_entry_from_dict(payload: dict[str, Any]) -> FitTimelineEntry:
         optimizer=str(payload.get("optimizer", "least_squares")),
         optimizer_config=dict(payload.get("optimizer_config", {})),
         goodness=dict(payload.get("goodness", {})),
+        channels=_fit_channels_from_dict(payload.get("channels")),
         children=[
             _fit_entry_from_dict(child)
             for child in payload.get("children", [])

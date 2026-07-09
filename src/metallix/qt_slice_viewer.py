@@ -7,7 +7,6 @@ from typing import Any
 import numpy as np
 
 from .dataset import PointListData
-from .fit_views import FitComparisonResultView, fit_comparisons_for_data
 from .mdhisto import MDHistoData
 from .plotting import MDHistoSliceViewer
 
@@ -78,10 +77,11 @@ class _DatasetViewState:
     show_errorbars: bool = True
     show_errorbar_caps: bool = False
     errorbar_cap_size: float = 3.0
-    fit_compare_enabled: bool = False
-    fit_compare_model: str | None = None
-    fit_compare_result: str | None = None
-    fit_compare_show_residual: bool = True
+    show_fit: bool = False
+    show_residual: bool = False
+    fit_line_color: str = "#d62728"
+    fit_line_width: float = 2.0
+    residual_percent: int = 30
     apply_masks: bool = True
     cmap_reversed: bool = False
 
@@ -143,11 +143,17 @@ class QtMDHistoSliceViewer:
         self.rectangle_selector = None
         self.dataset_combo = None
         self.axes_group = None
-        self.fit_compare_group = None
-        self.fit_compare_check = None
-        self.fit_compare_model_combo = None
-        self.fit_compare_result_combo = None
-        self.fit_compare_residual_check = None
+        self.show_fit_check = None
+        self.show_residual_check = None
+        self.residual_split_slider = None
+        self.residual_split_label = None
+        self.fit_line_color_combo = None
+        self.fit_line_width_spin = None
+        self.fit_line_color_label = None
+        self.fit_line_width_label = None
+        self.ax_residual = None
+        self.ax_fit_cut = None
+        self.ax_residual_cut = None
         self.axis_selector_widget = None
         self.x_combo = None
         self.y_combo = None
@@ -218,10 +224,11 @@ class QtMDHistoSliceViewer:
         self.show_errorbars = True
         self.show_errorbar_caps = False
         self.errorbar_cap_size = 3.0
-        self.fit_compare_enabled = False
-        self.fit_compare_model = None
-        self.fit_compare_result = None
-        self.fit_compare_show_residual = True
+        self.show_fit = False
+        self.show_residual = False
+        self.fit_line_color = "#d62728"
+        self.fit_line_width = 2.0
+        self.residual_percent = 30
         self.hidden_layout = None
         self.hidden_controls: dict[int, _HiddenAxisControls] = {}
         self._display_axis_dims: list[int] = []
@@ -237,7 +244,7 @@ class QtMDHistoSliceViewer:
         self._view_limit_callback_ids: list[int] = []
         self._dataset_states: list[_DatasetViewState | None] = [None] * len(self.datasets)
         self._dataset_states[0] = _DatasetViewState(model=self.model)
-        self._plot_layout_mode: tuple[str, int] | None = None
+        self._plot_layout_mode: tuple[Any, ...] | None = None
         self._compare_axes = []
         self._compare_colorbars = []
         self._build()
@@ -450,7 +457,11 @@ class QtMDHistoSliceViewer:
         self.ax_xcut = self.figure.add_subplot(self.grid[1, 0], sharex=self.ax_image)
         self._suppress_matplotlib_coordinate_status()
         self.canvas = FigureCanvasQTAgg(self.figure)
+        self.canvas.setToolTip(
+            "Interactive plot canvas. Move the cursor for coordinate readouts; use the toolbar or box tool to inspect slices."
+        )
         toolbar = NavigationToolbar2QT(self.canvas, self.window)
+        toolbar.setToolTip("Matplotlib navigation toolbar for pan, zoom, home, configure, and save actions.")
         cursor_bar = QtWidgets.QWidget()
         cursor_layout = QtWidgets.QHBoxLayout(cursor_bar)
         cursor_layout.setContentsMargins(4, 0, 4, 0)
@@ -493,49 +504,52 @@ class QtMDHistoSliceViewer:
         dataset_layout.setVerticalSpacing(6)
         self.dataset_combo = QtWidgets.QComboBox()
         self.dataset_combo.addItems(self.dataset_names)
+        self.dataset_combo.setToolTip("Choose which loaded dataset is displayed in the viewer.")
         _expanding_combobox(self.dataset_combo)
         self.dataset_combo.currentIndexChanged.connect(self._set_dataset_index)
         dataset_layout.addWidget(QtWidgets.QLabel("Dataset"), 0, 0)
         dataset_layout.addWidget(self.dataset_combo, 0, 1)
         self.channel_combo = QtWidgets.QComboBox()
         self.channel_combo.addItems(self.model.CHANNELS)
+        self.channel_combo.setToolTip("Choose the data channel to display, such as signal, mask, fit, or residual.")
         _compact_combobox(self.channel_combo)
         self.channel_combo.setCurrentText(self.model.channel)
         self.channel_combo.currentTextChanged.connect(self._set_channel)
         self._sync_channel_combo()
         self.apply_masks_check = QtWidgets.QCheckBox("Apply Masks")
         self.apply_masks_check.setChecked(self.model.masked)
+        self.apply_masks_check.setToolTip("Show data after applying file masks and metallix masks. Uncheck to inspect masked-out data.")
         self.apply_masks_check.toggled.connect(self._set_apply_masks)
         dataset_layout.addWidget(QtWidgets.QLabel("Channel"), 1, 0)
         dataset_layout.addWidget(self.channel_combo, 1, 1)
         dataset_layout.addWidget(self.apply_masks_check, 1, 2)
+        self.show_fit_check = QtWidgets.QCheckBox("Show fit")
+        self.show_fit_check.setToolTip(
+            "Show the stored fit channel beside the data (2D) or as a line under the data (1D). "
+            "Enabled once a fit result has stored channels for this dataset."
+        )
+        self.show_fit_check.toggled.connect(self._set_show_fit)
+        self.show_residual_check = QtWidgets.QCheckBox("Show residual")
+        self.show_residual_check.setToolTip(
+            "Also show the normalized residual: a third panel (2D) or axes below the data (1D)."
+        )
+        self.show_residual_check.toggled.connect(self._set_show_residual)
+        dataset_layout.addWidget(self.show_fit_check, 2, 1)
+        dataset_layout.addWidget(self.show_residual_check, 2, 2)
+        self.residual_split_label = QtWidgets.QLabel()
+        self.residual_split_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.residual_split_slider.setRange(10, 70)
+        self.residual_split_slider.setSingleStep(1)
+        self.residual_split_slider.setPageStep(5)
+        self.residual_split_slider.setValue(self.residual_percent)
+        self.residual_split_slider.setToolTip(
+            "Vertical position of the separator between the data and residual axes."
+        )
+        self.residual_split_slider.valueChanged.connect(self._set_residual_percent)
+        dataset_layout.addWidget(self.residual_split_label, 3, 0)
+        dataset_layout.addWidget(self.residual_split_slider, 3, 1, 1, 2)
         dataset_layout.setColumnStretch(1, 1)
         controls_layout.addWidget(dataset_group)
-
-        fit_compare_group = QtWidgets.QGroupBox("Fit compare")
-        self.fit_compare_group = fit_compare_group
-        fit_compare_layout = QtWidgets.QGridLayout(fit_compare_group)
-        fit_compare_layout.setHorizontalSpacing(6)
-        fit_compare_layout.setVerticalSpacing(6)
-        self.fit_compare_check = QtWidgets.QCheckBox("Compare fit")
-        self.fit_compare_check.toggled.connect(self._set_fit_compare_enabled)
-        self.fit_compare_model_combo = QtWidgets.QComboBox()
-        self.fit_compare_model_combo.currentTextChanged.connect(self._set_fit_compare_model)
-        _expanding_combobox(self.fit_compare_model_combo)
-        self.fit_compare_result_combo = QtWidgets.QComboBox()
-        self.fit_compare_result_combo.currentTextChanged.connect(self._set_fit_compare_result)
-        _expanding_combobox(self.fit_compare_result_combo)
-        self.fit_compare_residual_check = QtWidgets.QCheckBox("Show residual")
-        self.fit_compare_residual_check.setChecked(self.fit_compare_show_residual)
-        self.fit_compare_residual_check.toggled.connect(self._set_fit_compare_show_residual)
-        fit_compare_layout.addWidget(self.fit_compare_check, 0, 0, 1, 2)
-        fit_compare_layout.addWidget(QtWidgets.QLabel("Model"), 1, 0)
-        fit_compare_layout.addWidget(self.fit_compare_model_combo, 1, 1)
-        fit_compare_layout.addWidget(QtWidgets.QLabel("Fit result"), 2, 0)
-        fit_compare_layout.addWidget(self.fit_compare_result_combo, 2, 1)
-        fit_compare_layout.addWidget(self.fit_compare_residual_check, 3, 1)
-        fit_compare_layout.setColumnStretch(1, 1)
-        controls_layout.addWidget(fit_compare_group)
 
         axes_group = QtWidgets.QGroupBox("Displayed axes")
         self.axes_group = axes_group
@@ -545,6 +559,8 @@ class QtMDHistoSliceViewer:
         self.x_combo = QtWidgets.QComboBox()
         self.y_combo = QtWidgets.QComboBox()
         self._sync_axis_combos(rebuild=True)
+        self.x_combo.setToolTip("Choose the dataset axis shown horizontally.")
+        self.y_combo.setToolTip("Choose the dataset axis shown vertically. For 1D data this control is hidden.")
         _compact_combobox(self.x_combo)
         _compact_combobox(self.y_combo)
         self.x_combo.currentIndexChanged.connect(lambda index: self._set_display_dim("x", index))
@@ -567,6 +583,12 @@ class QtMDHistoSliceViewer:
         self.y_max_spin = _make_float_spinbox()
         self.x_reset_button = QtWidgets.QPushButton("Reset")
         self.y_reset_button = QtWidgets.QPushButton("Reset")
+        self.x_min_spin.setToolTip("Lower displayed limit for the horizontal axis.")
+        self.x_max_spin.setToolTip("Upper displayed limit for the horizontal axis.")
+        self.y_min_spin.setToolTip("Lower displayed limit for the vertical axis.")
+        self.y_max_spin.setToolTip("Upper displayed limit for the vertical axis.")
+        self.x_reset_button.setToolTip("Reset the horizontal axis limits to the full displayed data range.")
+        self.y_reset_button.setToolTip("Reset the vertical axis limits to the full displayed data range.")
         self.x_reset_button.setMaximumWidth(64)
         self.y_reset_button.setMaximumWidth(64)
         self.x_min_spin.valueChanged.connect(lambda _value: self._set_view_limits("x"))
@@ -601,23 +623,28 @@ class QtMDHistoSliceViewer:
         color_layout.setVerticalSpacing(6)
         self.cmap_combo = QtWidgets.QComboBox()
         self.cmap_combo.addItems(self.model.COLORMAPS)
+        self.cmap_combo.setToolTip("Choose the colormap used for 2D image data.")
         _compact_combobox(self.cmap_combo)
         self.cmap_combo.setCurrentText(self.model.cmap)
         self.cmap_combo.currentTextChanged.connect(self._set_cmap)
         self.cmap_reverse_button = QtWidgets.QPushButton("Reverse")
+        self.cmap_reverse_button.setToolTip("Reverse the selected colormap.")
         self.cmap_reverse_button.clicked.connect(self._toggle_cmap_reverse)
         self.scale_combo = QtWidgets.QComboBox()
         self.scale_combo.addItems(self.model.COLOR_SCALES)
+        self.scale_combo.setToolTip("Choose linear, logarithmic, symmetric logarithmic, or power color scaling.")
         _compact_combobox(self.scale_combo)
         self.scale_combo.setCurrentText(self.model.color_scale)
         self.scale_combo.currentTextChanged.connect(self._set_color_scale)
         self.limits_combo = QtWidgets.QComboBox()
         self.limits_combo.addItems(self.model.AUTO_LIMITS)
+        self.limits_combo.setToolTip("Choose how automatic color limits are estimated from the displayed data.")
         _compact_combobox(self.limits_combo)
         self.limits_combo.setCurrentText(self.model.auto_limits)
         self.limits_combo.currentTextChanged.connect(self._set_auto_limits)
         self.autoscale_check = QtWidgets.QCheckBox("Autoscale")
         self.autoscale_check.setChecked(self.model.autoscale)
+        self.autoscale_check.setToolTip("Automatically recompute color limits when the displayed data or selection changes.")
         self.autoscale_check.toggled.connect(self._set_autoscale)
         self.vmin_spin = _make_float_spinbox()
         self.vmax_spin = _make_float_spinbox()
@@ -625,6 +652,10 @@ class QtMDHistoSliceViewer:
         self.gamma_spin.setValue(self.model.power_gamma)
         self.limit_n_spin = _make_float_spinbox(0.0, 50.0)
         self.limit_n_spin.setValue(self._current_limit_n())
+        self.vmin_spin.setToolTip("Manual lower color limit when autoscale is off.")
+        self.vmax_spin.setToolTip("Manual upper color limit when autoscale is off.")
+        self.gamma_spin.setToolTip("Exponent used by power color scaling.")
+        self.limit_n_spin.setToolTip("Width parameter used by the selected automatic color-limit rule.")
         self.vmin_spin.valueChanged.connect(lambda value: self._set_manual_limit("vmin", value))
         self.vmax_spin.valueChanged.connect(lambda value: self._set_manual_limit("vmax", value))
         self.gamma_spin.valueChanged.connect(self._set_power_gamma)
@@ -670,6 +701,8 @@ class QtMDHistoSliceViewer:
         self.hist_axes_check.toggled.connect(self._set_histogram_axes_visible)
         self.xcut_percent_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.ycut_percent_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.xcut_percent_slider.setToolTip("Height of the horizontal cut panel as a percentage of the figure.")
+        self.ycut_percent_slider.setToolTip("Width of the vertical cut panel as a percentage of the figure.")
         for slider, value in (
             (self.xcut_percent_slider, self.xcut_percent),
             (self.ycut_percent_slider, self.ycut_percent),
@@ -684,6 +717,10 @@ class QtMDHistoSliceViewer:
         self.roi_x_width_spin = _make_float_spinbox(0.0, 1.0e12)
         self.roi_y_center_spin = _make_float_spinbox()
         self.roi_y_width_spin = _make_float_spinbox(0.0, 1.0e12)
+        self.roi_x_center_spin.setToolTip("Center of the rectangle selection along the horizontal axis.")
+        self.roi_x_width_spin.setToolTip("Width of the rectangle selection along the horizontal axis.")
+        self.roi_y_center_spin.setToolTip("Center of the rectangle selection along the vertical axis.")
+        self.roi_y_width_spin.setToolTip("Width of the rectangle selection along the vertical axis.")
         self.xcut_percent_slider.valueChanged.connect(self._set_xcut_percent)
         self.ycut_percent_slider.valueChanged.connect(self._set_ycut_percent)
         self.roi_x_center_spin.valueChanged.connect(lambda _value: self._set_roi_from_controls())
@@ -718,40 +755,50 @@ class QtMDHistoSliceViewer:
         self.marker_combo = QtWidgets.QComboBox()
         self.marker_combo.addItems(_MARKER_OPTIONS.keys())
         self.marker_combo.setCurrentText("circle")
+        self.marker_combo.setToolTip("Marker shape used for 1D line plots.")
         _compact_combobox(self.marker_combo)
         self.marker_combo.currentTextChanged.connect(self._set_marker)
         self.line_style_combo = QtWidgets.QComboBox()
         self.line_style_combo.addItems(_LINE_STYLE_OPTIONS.keys())
         self.line_style_combo.setCurrentText("none")
+        self.line_style_combo.setToolTip("Line style connecting points in 1D line plots.")
         _compact_combobox(self.line_style_combo)
         self.line_style_combo.currentTextChanged.connect(self._set_line_style)
         self.marker_size_spin = _make_float_spinbox(0.0, 50.0)
         self.marker_size_spin.setValue(self.marker_size)
+        self.marker_size_spin.setToolTip("Size of markers in 1D line plots.")
         self.marker_size_spin.valueChanged.connect(self._set_marker_size)
         self.line_plot_width_spin = _make_float_spinbox(0.0, 20.0)
         self.line_plot_width_spin.setValue(self.line_plot_width)
+        self.line_plot_width_spin.setToolTip("Width of the plotted line in 1D line plots.")
         self.line_plot_width_spin.valueChanged.connect(self._set_line_plot_width)
         self.marker_edge_width_spin = _make_float_spinbox(0.0, 20.0)
         self.marker_edge_width_spin.setValue(self.marker_edge_width)
+        self.marker_edge_width_spin.setToolTip("Width of marker outlines in 1D line plots.")
         self.marker_edge_width_spin.valueChanged.connect(self._set_marker_edge_width)
         self.marker_face_color_combo = QtWidgets.QComboBox()
         self.marker_face_color_combo.addItems(_COLOR_OPTIONS.keys())
         self.marker_face_color_combo.setCurrentText("none")
+        self.marker_face_color_combo.setToolTip("Fill color for markers in 1D line plots.")
         _compact_combobox(self.marker_face_color_combo)
         self.marker_face_color_combo.currentTextChanged.connect(self._set_marker_face_color)
         self.line_color_combo = QtWidgets.QComboBox()
         self.line_color_combo.addItems(_COLOR_OPTIONS.keys())
         self.line_color_combo.setCurrentText("blue")
+        self.line_color_combo.setToolTip("Line and marker-edge color for 1D line plots.")
         _compact_combobox(self.line_color_combo)
         self.line_color_combo.currentTextChanged.connect(self._set_line_color)
         self.show_errorbars_check = QtWidgets.QCheckBox("Show errorbars")
         self.show_errorbars_check.setChecked(self.show_errorbars)
+        self.show_errorbars_check.setToolTip("Show uncertainty bars when the selected channel has errors.")
         self.show_errorbars_check.toggled.connect(self._set_show_errorbars)
         self.show_errorbar_caps_check = QtWidgets.QCheckBox("Endcaps")
         self.show_errorbar_caps_check.setChecked(self.show_errorbar_caps)
+        self.show_errorbar_caps_check.setToolTip("Draw endcaps on error bars.")
         self.show_errorbar_caps_check.toggled.connect(self._set_show_errorbar_caps)
         self.errorbar_cap_size_spin = _make_float_spinbox(0.0, 30.0)
         self.errorbar_cap_size_spin.setValue(self.errorbar_cap_size)
+        self.errorbar_cap_size_spin.setToolTip("Size of error-bar endcaps.")
         self.errorbar_cap_size_spin.valueChanged.connect(self._set_errorbar_cap_size)
         line_layout.addWidget(QtWidgets.QLabel("Marker"), 0, 0)
         line_layout.addWidget(self.marker_combo, 0, 1)
@@ -771,6 +818,22 @@ class QtMDHistoSliceViewer:
         line_layout.addWidget(self.show_errorbar_caps_check, 4, 0, 1, 2)
         line_layout.addWidget(QtWidgets.QLabel("Cap size"), 4, 2)
         line_layout.addWidget(self.errorbar_cap_size_spin, 4, 3)
+        self.fit_line_color_combo = QtWidgets.QComboBox()
+        self.fit_line_color_combo.addItems([name for name in _COLOR_OPTIONS if name != "none"])
+        self.fit_line_color_combo.setCurrentText(_option_name(_COLOR_OPTIONS, self.fit_line_color))
+        self.fit_line_color_combo.setToolTip("Color used for stored fit overlays in 1D plots.")
+        _compact_combobox(self.fit_line_color_combo)
+        self.fit_line_color_combo.currentTextChanged.connect(self._set_fit_line_color)
+        self.fit_line_width_spin = _make_float_spinbox(0.1, 20.0)
+        self.fit_line_width_spin.setValue(self.fit_line_width)
+        self.fit_line_width_spin.setToolTip("Line width used for stored fit overlays in 1D plots.")
+        self.fit_line_width_spin.valueChanged.connect(self._set_fit_line_width)
+        self.fit_line_color_label = QtWidgets.QLabel("Fit color")
+        self.fit_line_width_label = QtWidgets.QLabel("Fit width")
+        line_layout.addWidget(self.fit_line_color_label, 5, 0)
+        line_layout.addWidget(self.fit_line_color_combo, 5, 1)
+        line_layout.addWidget(self.fit_line_width_label, 5, 2)
+        line_layout.addWidget(self.fit_line_width_spin, 5, 3)
         controls_layout.addWidget(line_group)
 
         figure_group = QtWidgets.QGroupBox("Figure")
@@ -780,15 +843,20 @@ class QtMDHistoSliceViewer:
         self.font_size_spin = _make_float_spinbox(4.0, 48.0)
         self.font_size_spin.setDecimals(1)
         self.font_size_spin.setValue(self.font_size)
+        self.font_size_spin.setToolTip("Base font size used for axes labels, ticks, titles, and readouts.")
         self.font_size_spin.valueChanged.connect(self._set_font_size)
         self.line_width_spin = _make_float_spinbox(0.1, 10.0)
         self.line_width_spin.setDecimals(2)
         self.line_width_spin.setSingleStep(0.25)
         self.line_width_spin.setValue(self.axis_linewidth)
+        self.line_width_spin.setToolTip("Width of figure axes and frame lines.")
         self.line_width_spin.valueChanged.connect(self._set_axis_linewidth)
         self.copy_figure_button = QtWidgets.QPushButton("Copy figure")
         self.copy_script_button = QtWidgets.QPushButton("Copy script")
         self.save_script_button = QtWidgets.QPushButton("Save script")
+        self.copy_figure_button.setToolTip("Copy the current figure image to the clipboard.")
+        self.copy_script_button.setToolTip("Copy a Python script that recreates the current viewer plot.")
+        self.save_script_button.setToolTip("Save a Python script that recreates the current viewer plot.")
         self.copy_figure_button.clicked.connect(self.copy_figure_to_clipboard)
         self.copy_script_button.clicked.connect(self.copy_script_to_clipboard)
         self.save_script_button.clicked.connect(self.save_script)
@@ -817,7 +885,9 @@ class QtMDHistoSliceViewer:
         self.canvas.mpl_connect("motion_notify_event", self._on_motion)
         copy_shortcut = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Copy, self.window)
         copy_shortcut.activated.connect(self.copy_figure_to_clipboard)
-        self._sync_fit_compare_controls()
+        self.close_shortcut = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Close, self.window)
+        self.close_shortcut.activated.connect(self.window.close)
+        self._sync_fit_channel_controls()
 
     def _rebuild_hidden_axis_controls(self) -> None:
         from PySide6 import QtWidgets
@@ -853,6 +923,14 @@ class QtMDHistoSliceViewer:
             high_spin = _make_float_spinbox(low_value, high_value)
             range_slider = _IntegratedAxisSlider(centers.size)
             integrate_check = QtWidgets.QCheckBox("Integrate range")
+            value_spin.setToolTip(f"Center value selected along hidden axis {axis.name}.")
+            width_spin.setToolTip(f"Width integrated along hidden axis {axis.name}.")
+            low_spin.setToolTip(f"Lower bound of the integrated range along hidden axis {axis.name}.")
+            high_spin.setToolTip(f"Upper bound of the integrated range along hidden axis {axis.name}.")
+            range_slider.setToolTip(f"Drag to choose the selected or integrated range along hidden axis {axis.name}.")
+            integrate_check.setToolTip(
+                "Integrate over the selected range on this hidden axis instead of taking one slice position."
+            )
             integrate_check.setChecked(self.model.integrate_checks.get(dim, self.model.integrate))
             midpoint = 0.5 * (float(current[0]) + float(current[1]))
             value_index = _nearest_index(centers, midpoint)
@@ -1084,10 +1162,11 @@ class QtMDHistoSliceViewer:
             show_errorbars=bool(self.show_errorbars),
             show_errorbar_caps=bool(self.show_errorbar_caps),
             errorbar_cap_size=float(self.errorbar_cap_size),
-            fit_compare_enabled=bool(self.fit_compare_enabled),
-            fit_compare_model=self.fit_compare_model,
-            fit_compare_result=self.fit_compare_result,
-            fit_compare_show_residual=bool(self.fit_compare_show_residual),
+            show_fit=bool(self.show_fit),
+            show_residual=bool(self.show_residual),
+            fit_line_color=str(self.fit_line_color),
+            fit_line_width=float(self.fit_line_width),
+            residual_percent=int(self.residual_percent),
             apply_masks=bool(self.model.masked),
             cmap_reversed=bool(self.model.cmap_reversed),
         )
@@ -1131,10 +1210,11 @@ class QtMDHistoSliceViewer:
             self.show_errorbars = bool(state.show_errorbars)
             self.show_errorbar_caps = bool(state.show_errorbar_caps)
             self.errorbar_cap_size = float(state.errorbar_cap_size)
-            self.fit_compare_enabled = bool(state.fit_compare_enabled)
-            self.fit_compare_model = state.fit_compare_model
-            self.fit_compare_result = state.fit_compare_result
-            self.fit_compare_show_residual = bool(state.fit_compare_show_residual)
+            self.show_fit = bool(state.show_fit)
+            self.show_residual = bool(state.show_residual)
+            self.fit_line_color = str(state.fit_line_color)
+            self.fit_line_width = float(state.fit_line_width)
+            self.residual_percent = int(state.residual_percent)
             self.model.masked = bool(state.apply_masks)
             self.model.cmap_reversed = bool(state.cmap_reversed)
             self._box_tool_has_auto_shown_hist_axes = bool(state.box_tool_has_auto_shown_hist_axes)
@@ -1161,7 +1241,10 @@ class QtMDHistoSliceViewer:
             self._set_checkbox_silent(self.show_errorbars_check, self.show_errorbars)
             self._set_checkbox_silent(self.show_errorbar_caps_check, self.show_errorbar_caps)
             self._set_spin_silent(self.errorbar_cap_size_spin, self.errorbar_cap_size)
-            self._sync_fit_compare_controls()
+            self._set_combo_silent(self.fit_line_color_combo, _option_name(_COLOR_OPTIONS, self.fit_line_color))
+            self._set_spin_silent(self.fit_line_width_spin, self.fit_line_width)
+            self._set_slider_silent(self.residual_split_slider, self.residual_percent)
+            self._sync_fit_channel_controls()
             self._set_slider_silent(self.xcut_percent_slider, self.xcut_percent)
             self._set_slider_silent(self.ycut_percent_slider, self.ycut_percent)
             self._set_checkbox_silent(self.show_box_check, state.show_box_tool)
@@ -1324,72 +1407,100 @@ class QtMDHistoSliceViewer:
         self.model.masked = bool(checked)
         self.update_plot()
 
-    def _fit_comparisons(self):
-        return fit_comparisons_for_data(self.data)
+    def _has_fit_channel(self) -> bool:
+        return self._channel_available("fit")
 
-    def _has_fit_comparisons(self) -> bool:
-        return bool(self._fit_comparisons())
+    def _has_residual_channel(self) -> bool:
+        return self._channel_available("residual")
 
-    def _fit_compare_active(self) -> bool:
-        return bool(self.fit_compare_enabled and self._has_fit_comparisons() and not self._is_effective_1d())
+    def _channel_available(self, name: str) -> bool:
+        if getattr(self.model, "is_point_list", False):
+            return name in self.model.point_channels
+        return name in self.model.CHANNELS
 
-    def _sync_fit_compare_controls(self) -> None:
-        comparisons = self._fit_comparisons()
-        has_comparisons = bool(comparisons)
-        if self.fit_compare_group is None:
-            return
-        self.fit_compare_group.setVisible(has_comparisons)
-        if not has_comparisons:
-            self.fit_compare_enabled = False
-            return
+    def _fit_panels_active(self) -> bool:
+        """Side-by-side pcolor panels are used for 2D data with a fit shown."""
 
-        model_names = [comparison.name for comparison in comparisons]
-        if self.fit_compare_model not in model_names:
-            self.fit_compare_model = model_names[0]
-        selected_model = comparisons[model_names.index(self.fit_compare_model)]
-        result_names = [result.name for result in selected_model.results]
-        if self.fit_compare_result not in result_names:
-            self.fit_compare_result = result_names[0] if result_names else None
+        return bool(self.show_fit and self._has_fit_channel() and not self._is_effective_1d())
 
-        self._set_checkbox_silent(self.fit_compare_check, self.fit_compare_enabled)
-        self._set_checkbox_silent(self.fit_compare_residual_check, self.fit_compare_show_residual)
-        self._set_combo_items_silent(
-            self.fit_compare_model_combo,
-            model_names,
-            self.fit_compare_model,
+    def _residual_axes_active(self) -> bool:
+        """A residual axes below the data is used for 1D data."""
+
+        return bool(
+            self.show_fit
+            and self.show_residual
+            and self._has_fit_channel()
+            and self._has_residual_channel()
+            and self._is_effective_1d()
         )
-        self._set_combo_items_silent(
-            self.fit_compare_result_combo,
-            result_names,
-            self.fit_compare_result,
+
+    def _fit_cuts_active(self) -> bool:
+        """Integrated data+fit cut axes are shown when the box tool is on in 2D fit compare."""
+
+        return bool(
+            self._fit_panels_active()
+            and self.hist_axes_check is not None
+            and self.hist_axes_check.isChecked()
         )
-        controls_enabled = bool(self.fit_compare_enabled)
-        self.fit_compare_model_combo.setEnabled(controls_enabled)
-        self.fit_compare_result_combo.setEnabled(controls_enabled)
-        self.fit_compare_residual_check.setEnabled(controls_enabled)
 
-    def _set_fit_compare_enabled(self, enabled: bool) -> None:
-        self.fit_compare_enabled = bool(enabled)
-        self._sync_fit_compare_controls()
-        self.update_plot(preserve_view=False)
+    def _fit_residual_cut_active(self) -> bool:
+        """A separate residual cut axes accompanies the data+fit cut when residuals are shown."""
 
-    def _set_fit_compare_model(self, name: str) -> None:
-        if not name:
+        return bool(self._fit_cuts_active() and self.show_residual and self._has_residual_channel())
+
+    def _sync_fit_channel_controls(self) -> None:
+        if self.show_fit_check is None:
             return
-        self.fit_compare_model = str(name)
-        self.fit_compare_result = None
-        self._sync_fit_compare_controls()
+        has_fit = self._has_fit_channel()
+        has_residual = self._has_residual_channel()
+        if not has_fit:
+            self.show_fit = False
+        if not (self.show_fit and has_residual):
+            self.show_residual = False
+        self._set_checkbox_silent(self.show_fit_check, self.show_fit)
+        self._set_checkbox_silent(self.show_residual_check, self.show_residual)
+        self.show_fit_check.setEnabled(has_fit)
+        self.show_residual_check.setEnabled(bool(self.show_fit and has_residual))
+        residual_split = self._residual_axes_active()
+        self.residual_split_label.setVisible(residual_split)
+        self.residual_split_slider.setVisible(residual_split)
+        self.residual_split_label.setText(f"Residual height: {self.residual_percent}%")
+        fit_line = bool(has_fit and (self._is_effective_1d() or self._fit_panels_active()))
+        for widget in (
+            self.fit_line_color_label,
+            self.fit_line_color_combo,
+            self.fit_line_width_label,
+            self.fit_line_width_spin,
+        ):
+            if widget is not None:
+                widget.setEnabled(fit_line and self.show_fit)
+
+    def _set_show_fit(self, enabled: bool) -> None:
+        self.show_fit = bool(enabled)
+        self._sync_fit_channel_controls()
         self.update_plot(preserve_view=False)
 
-    def _set_fit_compare_result(self, name: str) -> None:
-        if not name:
-            return
-        self.fit_compare_result = str(name)
+    def _set_show_residual(self, enabled: bool) -> None:
+        self.show_residual = bool(enabled)
+        self._sync_fit_channel_controls()
         self.update_plot(preserve_view=False)
 
-    def _set_fit_compare_show_residual(self, enabled: bool) -> None:
-        self.fit_compare_show_residual = bool(enabled)
-        self.update_plot(preserve_view=False)
+    def _set_fit_line_color(self, color_name: str) -> None:
+        self.fit_line_color = _COLOR_OPTIONS.get(str(color_name), "#d62728")
+        if self.show_fit and (self._is_effective_1d() or self._fit_cuts_active()):
+            self.update_plot()
+
+    def _set_fit_line_width(self, value: float) -> None:
+        self.fit_line_width = float(value)
+        if self.show_fit and (self._is_effective_1d() or self._fit_cuts_active()):
+            self.update_plot()
+
+    def _set_residual_percent(self, value: int) -> None:
+        self.residual_percent = int(value)
+        self.residual_split_label.setText(f"Residual height: {self.residual_percent}%")
+        if self._plot_layout_mode == ("residual_1d", 2) and self.grid is not None:
+            self.grid.set_height_ratios([1.0, self._panel_ratio(self.residual_percent)])
+            self.canvas.draw_idle()
 
     def _set_color_scale(self, color_scale: str) -> None:
         self.model.color_scale = str(color_scale)
@@ -1500,7 +1611,15 @@ class QtMDHistoSliceViewer:
         if self.figure is None:
             return
         size = float(self.font_size)
-        for axis in (self.ax_image, self.ax_xcut, self.ax_ycut, self.ax_colorbar):
+        for axis in (
+            self.ax_image,
+            self.ax_xcut,
+            self.ax_ycut,
+            self.ax_colorbar,
+            self.ax_residual,
+            self.ax_fit_cut,
+            self.ax_residual_cut,
+        ):
             if axis is None:
                 continue
             axis.title.set_fontsize(size + 1.0)
@@ -1521,7 +1640,14 @@ class QtMDHistoSliceViewer:
 
     def _apply_axis_linewidth(self) -> None:
         width = float(self.axis_linewidth)
-        for axis in (self.ax_image, self.ax_xcut, self.ax_ycut):
+        for axis in (
+            self.ax_image,
+            self.ax_xcut,
+            self.ax_ycut,
+            self.ax_residual,
+            self.ax_fit_cut,
+            self.ax_residual_cut,
+        ):
             if axis is None:
                 continue
             for spine in axis.spines.values():
@@ -1610,7 +1736,7 @@ class QtMDHistoSliceViewer:
             or not self.model.autoscale
             or self.model._is_boolean_channel()
             or self._is_effective_1d()
-            or self._fit_compare_active()
+            or self._fit_panels_active()
         ):
             return
         self._autoscaling_view = True
@@ -1675,7 +1801,7 @@ class QtMDHistoSliceViewer:
                 self.y_min_spin.setValue(float(ymin))
                 self.y_max_spin.setValue(float(ymax))
                 self._set_axis_spin_steps((self.y_min_spin, self.y_max_spin), self.model.y_dim)
-            if self._fit_compare_active():
+            if self._fit_panels_active():
                 self._apply_compare_view_limits(
                     xlim=self.ax_image.get_xlim(),
                     ylim=self.ax_image.get_ylim(),
@@ -1718,9 +1844,7 @@ class QtMDHistoSliceViewer:
     def _sync_control_visibility(self) -> None:
         is_line = self._is_effective_1d()
         is_point = getattr(self.model, "is_point_list", False)
-        compare_active = self._fit_compare_active()
-        if self.fit_compare_group is not None:
-            self.fit_compare_group.setVisible(self._has_fit_comparisons())
+        compare_active = self._fit_panels_active()
         if self.axes_group is not None:
             self.axes_group.setVisible(is_line or len(self._non_singleton_dims()) >= 2)
         if self.axis_selector_widget is not None:
@@ -1736,13 +1860,24 @@ class QtMDHistoSliceViewer:
         if self.color_group is not None:
             self.color_group.setVisible(not is_line)
         if self.tools_group is not None:
-            self.tools_group.setVisible(not is_line and not compare_active)
+            # The box tool is used both in the standard 2D layout and in 2D
+            # fit compare (where it drives the integrated data+fit cut).
+            self.tools_group.setVisible(not is_line)
         if self.line_group is not None:
-            self.line_group.setVisible(is_line)
+            self.line_group.setVisible(is_line or compare_active)
         self._sync_cursor_visibility()
 
     def _suppress_matplotlib_coordinate_status(self) -> None:
-        for axis in (self.ax_image, self.ax_xcut, self.ax_ycut, self.ax_colorbar, *self._compare_axes):
+        axes = (
+            self.ax_image,
+            self.ax_xcut,
+            self.ax_ycut,
+            self.ax_colorbar,
+            self.ax_residual,
+            self.ax_fit_cut,
+            self.ax_residual_cut,
+        )
+        for axis in (*axes, *self._compare_axes):
             if axis is not None:
                 axis.format_coord = lambda _x, _y: ""
 
@@ -1806,6 +1941,7 @@ class QtMDHistoSliceViewer:
         self.ax_ycut = self.figure.add_subplot(self.grid[0, 1], sharey=self.ax_image)
         self.ax_colorbar = self.figure.add_subplot(self.grid[0, 2])
         self.ax_xcut = self.figure.add_subplot(self.grid[1, 0], sharex=self.ax_image)
+        self.ax_residual = None
         self._suppress_matplotlib_coordinate_status()
         self.image = None
         self.colorbar = None
@@ -1814,22 +1950,78 @@ class QtMDHistoSliceViewer:
         self._plot_layout_mode = ("standard", 1)
         self._create_rectangle_selector()
 
-    def _ensure_fit_compare_layout(self, panel_count: int) -> None:
+    def _ensure_fit_compare_layout(
+        self,
+        panel_count: int,
+        *,
+        with_cuts: bool = False,
+        with_residual_cut: bool = False,
+    ) -> None:
         self.figure.clear()
-        self.grid = self.figure.add_gridspec(1, panel_count)
-        self._compare_axes = [self.figure.add_subplot(self.grid[0, index]) for index in range(panel_count)]
+        self.ax_xcut = None
+        self.ax_ycut = None
+        self.ax_colorbar = None
+        self.ax_residual = None
+        self.ax_fit_cut = None
+        self.ax_residual_cut = None
+        self.image = None
+        self.colorbar = None
         self._compare_colorbars = []
+        if with_cuts:
+            cut_ratio = self._panel_ratio(self.xcut_percent)
+            outer = self.figure.add_gridspec(2, 1, height_ratios=[1.0, cut_ratio])
+            panel_cells = outer[0].subgridspec(1, panel_count)
+            self._compare_axes = [
+                self.figure.add_subplot(panel_cells[0, index]) for index in range(panel_count)
+            ]
+            n_cut_rows = 2 if with_residual_cut else 1
+            cut_cells = outer[1].subgridspec(n_cut_rows, 1, hspace=0.1)
+            self.ax_fit_cut = self.figure.add_subplot(cut_cells[0, 0], sharex=self._compare_axes[0])
+            if with_residual_cut:
+                self.ax_residual_cut = self.figure.add_subplot(
+                    cut_cells[1, 0], sharex=self._compare_axes[0]
+                )
+            self.grid = outer
+        else:
+            self.grid = self.figure.add_gridspec(1, panel_count)
+            self._compare_axes = [
+                self.figure.add_subplot(self.grid[0, index]) for index in range(panel_count)
+            ]
         self.ax_image = self._compare_axes[0]
+        self._suppress_matplotlib_coordinate_status()
+        if with_cuts:
+            self._create_rectangle_selector()
+        elif self.rectangle_selector is not None:
+            self.rectangle_selector.set_active(False)
+            self.rectangle_selector = None
+        self._plot_layout_mode = ("fit_compare", panel_count, with_cuts, with_residual_cut)
+
+    def _ensure_residual_1d_layout(self) -> None:
+        if self._plot_layout_mode == ("residual_1d", 2):
+            self.grid.set_height_ratios([1.0, self._panel_ratio(self.residual_percent)])
+            self.ax_image.clear()
+            self.ax_residual.clear()
+            return
+        self.figure.clear()
+        self.grid = self.figure.add_gridspec(
+            2,
+            1,
+            height_ratios=[1.0, self._panel_ratio(self.residual_percent)],
+        )
+        self.ax_image = self.figure.add_subplot(self.grid[0, 0])
+        self.ax_residual = self.figure.add_subplot(self.grid[1, 0], sharex=self.ax_image)
         self.ax_xcut = None
         self.ax_ycut = None
         self.ax_colorbar = None
         self.image = None
         self.colorbar = None
+        self._compare_axes = []
+        self._compare_colorbars = []
         self._suppress_matplotlib_coordinate_status()
         if self.rectangle_selector is not None:
             self.rectangle_selector.set_active(False)
             self.rectangle_selector = None
-        self._plot_layout_mode = ("fit_compare", panel_count)
+        self._plot_layout_mode = ("residual_1d", 2)
 
     def _create_rectangle_selector(self) -> None:
         from matplotlib.widgets import RectangleSelector
@@ -1849,15 +2041,18 @@ class QtMDHistoSliceViewer:
             self._set_box_tool_visible(self.show_box_check.isChecked())
 
     def update_plot(self, *, preserve_view: bool = True) -> None:
-        self._sync_fit_compare_controls()
+        self._sync_fit_channel_controls()
         previous_xlim = self.ax_image.get_xlim() if preserve_view and self._current_slice is not None else None
         previous_ylim = self.ax_image.get_ylim() if preserve_view and self._current_slice is not None else None
         previous_dims = getattr(self, "_last_plot_dims", None)
         current_dims = (self.model.x_dim, self.model.y_dim)
         self._current_slice = self.model.slice_arrays()
         view = self._current_slice
-        if self._fit_compare_active():
-            self._draw_fit_compare_view(previous_xlim, previous_ylim, previous_dims, current_dims)
+        if self._fit_panels_active():
+            self._draw_fit_panels_view(previous_xlim, previous_ylim, previous_dims, current_dims)
+            return
+        if self._residual_axes_active():
+            self._draw_1d_with_residual(previous_xlim, previous_dims, current_dims)
             return
         self._ensure_standard_plot_layout()
         for axis in (self.ax_image, self.ax_xcut, self.ax_ycut):
@@ -1898,28 +2093,35 @@ class QtMDHistoSliceViewer:
         self._apply_autoscale_to_view()
         self.canvas.draw_idle()
 
-    def _draw_fit_compare_view(
+    def _draw_fit_panels_view(
         self,
         previous_xlim,
         previous_ylim,
         previous_dims,
         current_dims,
     ) -> None:
-        result = self._current_fit_compare_result()
-        if result is None:
-            self.fit_compare_enabled = False
-            self.update_plot(preserve_view=False)
-            return
+        """Draw side-by-side Data/Fit(/Residual) pcolor panels.
 
-        panels: list[tuple[str, MDHistoData, str]] = [
-            ("Data", result.data if result.data is not None else self.data, self.model.channel),
-            ("Fit", result.fit, self.model.channel),
+        All panels are sliced from the same dataset with identical selections
+        and color settings, so data and fit are compared apples-to-apples.
+        Data and fit share one color normalization; the residual panel uses
+        the same colormap, scale, and manual limits but autoscales its own
+        range since it is in sigma units.
+        """
+
+        panels: list[tuple[str, str]] = [
+            ("Data", self.model.channel),
+            ("Fit", "fit"),
         ]
-        if self.fit_compare_show_residual and result.residual is not None:
-            panels.append(("Residual", result.residual, "signal"))
+        if self.show_residual and self._has_residual_channel():
+            panels.append(("Residual", "residual"))
 
-        self._ensure_fit_compare_layout(len(panels))
-        data_model = self._comparison_panel_model(panels[0][1], panels[0][2])
+        with_cuts = self._fit_cuts_active()
+        with_residual_cut = self._fit_residual_cut_active()
+        self._ensure_fit_compare_layout(
+            len(panels), with_cuts=with_cuts, with_residual_cut=with_residual_cut
+        )
+        data_model = self._comparison_panel_model(self.data, self.model.channel)
         data_view = data_model.slice_arrays()
         data_values = data_model._display_values(data_view)
         shared_norm = data_model._color_norm(data_values)
@@ -1928,11 +2130,11 @@ class QtMDHistoSliceViewer:
         self._current_slice = data_view
         self.image = None
         self.colorbar = None
-        for ax, (title, panel_data, channel) in zip(self._compare_axes, panels, strict=True):
-            model = self._comparison_panel_model(panel_data, channel)
+        for ax, (title, channel) in zip(self._compare_axes, panels, strict=True):
+            model = self._comparison_panel_model(self.data, channel)
             view = model.slice_arrays()
             values = model._display_values(view)
-            norm = None if title == "Residual" else shared_norm
+            norm = model._color_norm(values) if title == "Residual" else shared_norm
             artist = ax.pcolormesh(
                 view["x_edges"],
                 view["y_edges"],
@@ -1945,7 +2147,9 @@ class QtMDHistoSliceViewer:
             ax.set_xlabel(model._axis_label(model.x_dim))
             ax.set_ylabel(model._axis_label(model.y_dim))
             colorbar = self.figure.colorbar(artist, ax=ax)
-            colorbar.set_label("Residual (sigma)" if title == "Residual" else model._channel_label())
+            colorbar.set_label(
+                "Residual (sigma)" if title == "Residual" else data_model._channel_label()
+            )
             self._compare_colorbars.append(colorbar)
             if title == "Data":
                 self.image = artist
@@ -1955,6 +2159,10 @@ class QtMDHistoSliceViewer:
             for axis in self._compare_axes:
                 axis.set_xlim(previous_xlim)
                 axis.set_ylim(previous_ylim)
+        if with_cuts:
+            if self._roi_extents is None or previous_dims != current_dims:
+                self._set_roi_extents(self._default_roi_extents(), update_cuts=False, draw=False)
+            self._update_fit_compare_cuts(self._roi_extents)
         self._sync_control_visibility()
         self._sync_limit_spinboxes(vmin, vmax)
         self._last_plot_dims = current_dims
@@ -1964,22 +2172,72 @@ class QtMDHistoSliceViewer:
         self._connect_view_limit_callbacks()
         self.canvas.draw_idle()
 
-    def _current_fit_compare_result(self) -> FitComparisonResultView | None:
-        comparisons = self._fit_comparisons()
-        if not comparisons:
-            return None
-        model_names = [comparison.name for comparison in comparisons]
-        model_name = self.fit_compare_model if self.fit_compare_model in model_names else model_names[0]
-        comparison = comparisons[model_names.index(model_name)]
-        if not comparison.results:
-            return None
-        result_names = [result.name for result in comparison.results]
-        result_name = (
-            self.fit_compare_result
-            if self.fit_compare_result in result_names
-            else result_names[0]
-        )
-        return comparison.results[result_names.index(result_name)]
+    def _update_fit_compare_cuts(self, extents: tuple[float, float, float, float] | None) -> None:
+        """Populate the integrated data+fit and residual cut axes from a box.
+
+        The data and fit cuts are overlaid on one axes (markers plus a line,
+        like the 1D fit view); the residual cut, when shown, gets its own axes.
+        Each cut integrates the boxed region by summing over the boxed rows,
+        so data, fit, and residual use the same reduction.
+        """
+
+        if self.ax_fit_cut is None or self._current_slice is None or extents is None:
+            return
+        x0, x1, y0, y1 = extents
+        data_view = self._current_slice
+        x_centers = np.asarray(data_view["x_centers"], dtype=float)
+        y_centers = np.asarray(data_view["y_centers"], dtype=float)
+        x_mask = (x_centers >= x0) & (x_centers <= x1)
+        y_mask = (y_centers >= y0) & (y_centers <= y1)
+        self.ax_fit_cut.clear()
+        if self.ax_residual_cut is not None:
+            self.ax_residual_cut.clear()
+
+        if np.any(x_mask) and np.any(y_mask):
+            x = x_centers[x_mask]
+            data_z = self.model._display_values(data_view)
+            data_cut = np.nansum(data_z[np.ix_(y_mask, x_mask)], axis=0)
+            errors = np.asarray(data_view.get("errors"), dtype=float)
+            if errors.shape == data_z.shape:
+                err_cut = np.sqrt(np.nansum(errors[np.ix_(y_mask, x_mask)] ** 2, axis=0))
+                self.ax_fit_cut.errorbar(
+                    x, data_cut, yerr=err_cut, marker="o", linestyle="None",
+                    ms=self.marker_size, mfc=self.marker_face_color or "none",
+                    mec=self.line_color, ecolor=self.line_color, color=self.line_color,
+                    elinewidth=self.line_plot_width, label="data",
+                )
+            else:
+                self.ax_fit_cut.plot(
+                    x, data_cut, marker="o", linestyle="None",
+                    ms=self.marker_size, mfc=self.marker_face_color or "none",
+                    mec=self.line_color, color=self.line_color, label="data",
+                )
+            fit_model = self._comparison_panel_model(self.data, "fit")
+            fit_z = fit_model._display_values(fit_model.slice_arrays())
+            fit_cut = np.nansum(fit_z[np.ix_(y_mask, x_mask)], axis=0)
+            self.ax_fit_cut.plot(
+                x, fit_cut, linestyle="-", marker="", color=self.fit_line_color,
+                lw=self.fit_line_width, zorder=1.5, label="fit",
+            )
+            if self.ax_residual_cut is not None:
+                residual_model = self._comparison_panel_model(self.data, "residual")
+                residual_z = residual_model._display_values(residual_model.slice_arrays())
+                residual_cut = np.nansum(residual_z[np.ix_(y_mask, x_mask)], axis=0)
+                self.ax_residual_cut.axhline(0.0, color="0.5", lw=1.0, zorder=1)
+                self.ax_residual_cut.plot(
+                    x, residual_cut, marker="o", linestyle="None",
+                    ms=self.marker_size, mfc=self.marker_face_color or "none",
+                    mec=self.line_color, color=self.line_color,
+                )
+
+        x_label = self.model._axis_label(self.model.x_dim)
+        self.ax_fit_cut.set_ylabel("Int.")
+        if self.ax_residual_cut is not None:
+            self.ax_fit_cut.tick_params(labelbottom=False)
+            self.ax_residual_cut.set_ylabel("Res. (σ)")
+            self.ax_residual_cut.set_xlabel(x_label)
+        else:
+            self.ax_fit_cut.set_xlabel(x_label)
 
     def _comparison_panel_model(self, data: MDHistoData, channel: str) -> MDHistoSliceViewer:
         model = MDHistoSliceViewer(
@@ -2010,12 +2268,40 @@ class QtMDHistoSliceViewer:
             return True
         return sum(size > 1 for size in self.data.shape) == 1
 
+    def _slice_1d_channel(self, view: dict[str, np.ndarray], name: str) -> np.ndarray | None:
+        """Return a fit/residual channel from the current slice as a 1D array."""
+
+        values = view.get(name)
+        if values is None:
+            return None
+        flattened = np.asarray(values, dtype=float).reshape(-1)
+        x = np.asarray(view["x_centers"], dtype=float)
+        if flattened.size != x.size:
+            flattened = np.squeeze(np.asarray(values, dtype=float))
+            if flattened.size != x.size:
+                return None
+        return flattened
+
     def _draw_1d_view(self, view: dict[str, np.ndarray], values: np.ndarray) -> None:
         self.image = None
         x = np.asarray(view["x_centers"], dtype=float)
         y = np.asarray(values, dtype=float).reshape(-1)
         if y.size != x.size:
             y = np.squeeze(values)
+        if self.show_fit:
+            fit_values = self._slice_1d_channel(view, "fit")
+            if fit_values is not None:
+                # Solid connected line drawn behind the data points.
+                self.ax_image.plot(
+                    x,
+                    fit_values,
+                    linestyle="-",
+                    marker="",
+                    color=self.fit_line_color,
+                    lw=self.fit_line_width,
+                    zorder=1.5,
+                    label="fit",
+                )
         marker = self.marker
         linestyle = "None" if self.line_style == "none" else self.line_style
         common = {
@@ -2050,6 +2336,56 @@ class QtMDHistoSliceViewer:
         self.ax_image.set_ylabel(self.model._channel_label())
         if self.model._is_boolean_channel():
             self.ax_image.set_ylim(0.0, 1.0)
+
+    def _draw_1d_with_residual(self, previous_xlim, previous_dims, current_dims) -> None:
+        """Draw the 1D data+fit with a residual axes below a movable separator."""
+
+        view = self._current_slice
+        values = self.model._display_values(view)
+        self._ensure_residual_1d_layout()
+        self._draw_1d_view(view, values)
+
+        x = np.asarray(view["x_centers"], dtype=float)
+        residual = self._slice_1d_channel(view, "residual")
+        if residual is not None:
+            self.ax_residual.axhline(0.0, color="0.5", lw=1.0, zorder=1)
+            common = {
+                "marker": self.marker,
+                "linestyle": "None",
+                "ms": self.marker_size,
+                "mew": self.marker_edge_width,
+                "mfc": self.marker_face_color if self.marker else "none",
+                "mec": self.line_color,
+                "color": self.line_color,
+            }
+            if self.show_errorbars:
+                # The residual is (data - fit) / sigma, so its uncertainty is one.
+                self.ax_residual.errorbar(
+                    x,
+                    residual,
+                    yerr=np.ones_like(x),
+                    ecolor=self.line_color,
+                    capsize=self.errorbar_cap_size if self.show_errorbar_caps else 0.0,
+                    capthick=self.line_plot_width,
+                    elinewidth=self.line_plot_width,
+                    **common,
+                )
+            else:
+                self.ax_residual.plot(x, residual, **common)
+        self.ax_residual.set_ylabel("Res. (σ)")
+        self.ax_residual.set_xlabel(self.model._axis_label(self.model.x_dim))
+        self.ax_image.set_xlabel("")
+        self.ax_image.tick_params(labelbottom=False)
+
+        self._sync_control_visibility()
+        if previous_xlim is not None and previous_dims == current_dims:
+            self.ax_image.set_xlim(previous_xlim)
+        self._last_plot_dims = current_dims
+        self._sync_view_limit_controls()
+        self._apply_figure_font_size()
+        self._apply_axis_linewidth()
+        self._connect_view_limit_callbacks()
+        self.canvas.draw_idle()
 
     def _draw_2d_view(self, view: dict[str, np.ndarray], values: np.ndarray) -> None:
         norm = self.model._color_norm(values)
@@ -2117,11 +2453,20 @@ class QtMDHistoSliceViewer:
 
     def _set_histogram_axes_visible(self, visible: bool) -> None:
         self._sync_histogram_panel_controls()
+        if self._fit_panels_active():
+            # Toggling the cut axes changes the fit-compare layout, so rebuild.
+            self.update_plot()
+            return
         self._apply_histogram_axes_layout(draw=True)
 
     def _set_xcut_percent(self, value: int) -> None:
         self.xcut_percent = int(value)
         self._sync_histogram_panel_controls()
+        if self._fit_panels_active():
+            if self.ax_fit_cut is not None and self.grid is not None:
+                self.grid.set_height_ratios([1.0, self._panel_ratio(self.xcut_percent)])
+                self.canvas.draw_idle()
+            return
         self._apply_histogram_axes_layout(draw=True)
 
     def _set_ycut_percent(self, value: int) -> None:
@@ -2140,6 +2485,17 @@ class QtMDHistoSliceViewer:
 
     def _apply_histogram_axes_layout(self, *, draw: bool) -> None:
         if self.grid is None or self.hist_axes_check is None:
+            return
+        # The x/y cut panels only exist in the standard 2D layout, whose grid
+        # is 2 rows by 3 columns. In the 1D residual and fit-compare layouts
+        # the grid has a different shape, so touching its ratios here would
+        # raise; guard on the actual grid shape rather than the (possibly
+        # stale) cut-axis references, which can survive a figure rebuild.
+        if self._plot_layout_mode != ("standard", 1):
+            return
+        if self.ax_xcut is None or self.ax_ycut is None:
+            return
+        if getattr(self.grid, "nrows", None) != 2 or getattr(self.grid, "ncols", None) != 3:
             return
         visible = bool(self.hist_axes_check.isChecked()) and not self._is_effective_1d()
         x_ratio = self._panel_ratio(self.xcut_percent) if visible else 0.001
@@ -2235,6 +2591,12 @@ class QtMDHistoSliceViewer:
         return self._normalize_roi_extents((click.xdata, release.xdata, click.ydata, release.ydata))
 
     def _update_histogram_cuts_from_extents(self, extents: tuple[float, float, float, float] | None) -> None:
+        if self._fit_cuts_active():
+            self._update_fit_compare_cuts(extents)
+            self.canvas.draw_idle()
+            return
+        if self.ax_xcut is None or self.ax_ycut is None:
+            return
         if self._current_slice is None or extents is None:
             return
         x0, x1, y0, y1 = extents

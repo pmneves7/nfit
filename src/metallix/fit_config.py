@@ -1,0 +1,467 @@
+"""Compile declarative model-component configuration into a FitProblem.
+
+This module is the bridge between the GUI-facing, serializable layer
+(:class:`~metallix.pipeline.ModelComponentSpec` with sharing policies, bounds,
+dataset selectors, and inequality constraints) and the deliberately dumb
+optimizer layer in :mod:`metallix.fitting` (a flat list of named scalars with
+box bounds).
+
+Concepts
+--------
+Qualified parameter names
+    Every model-component parameter has a qualified name
+    ``"<component>.<parameter>"`` (for example ``"bg.constant"``). Model
+    evaluators read their parameters from the trial dictionary under these
+    qualified names.
+
+Sharing policies
+    A parameter is *instantiated* according to its sharing mode. ``"global"``
+    emits one optimizer parameter named after the qualified name.
+    ``"per_dataset"`` emits one instance per applicable dataset, named
+    ``"<component>.<parameter>[<dataset>]"``. ``"grouped"`` emits one instance
+    per distinct tie key, named ``"<component>.<parameter>[<key>]"``; datasets
+    not listed in the group map get their own private instance. Per-dataset
+    parameter bindings map the qualified name each evaluator reads back to the
+    right instance.
+
+Constraints
+    ``{"parameter": p, "op": ">=", "reference": r}`` reparameterizes the
+    target as ``p = r + delta`` with ``delta >= 0`` (``"<="`` uses ``-``), so
+    the constraint is hard: the optimizer cannot violate it. ``r`` is a number
+    or the qualified name of another global parameter.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+from typing import Any
+
+import numpy as np
+
+from .dataset import PointData4D
+from .fitting import (
+    DerivedParameter,
+    FitDataset,
+    FitProblem,
+    ModelFunction,
+    ParameterBinding,
+    ParameterSpec,
+)
+from .models import paramagnon_chipp
+
+FALLBACK_DATA_TYPE = "single_crystal_inelastic"
+
+SHARING_MODES = ("global", "per_dataset", "grouped")
+
+CONSTRAINT_OFFSET_SUFFIX = "__offset"
+
+
+def qualified_parameter_name(component_name: str, parameter: str) -> str:
+    """Return the qualified name a model evaluator reads a parameter under."""
+
+    return f"{component_name}.{parameter}"
+
+
+def instanced_parameter_name(component_name: str, parameter: str, key: str) -> str:
+    """Return the optimizer name of one instance of a shared parameter."""
+
+    return f"{component_name}.{parameter}[{key}]"
+
+
+def _constant_background_factory(component: Any) -> ModelFunction:
+    key = qualified_parameter_name(component.name, "constant")
+
+    def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        return np.full(data.size, float(params[key]), dtype=float)
+
+    return model
+
+
+def _linear_background_factory(component: Any) -> ModelFunction:
+    c0_key = qualified_parameter_name(component.name, "c0")
+    c1_key = qualified_parameter_name(component.name, "c1")
+
+    def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        return float(params[c0_key]) + float(params[c1_key]) * np.asarray(data.E, dtype=float)
+
+    return model
+
+
+def _single_q_paramagnon_factory(component: Any) -> ModelFunction:
+    name = component.name
+
+    def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        return paramagnon_chipp(
+            data.H,
+            data.K,
+            data.L,
+            data.E,
+            amplitude=float(params[qualified_parameter_name(name, "amplitude")]),
+            q0=(
+                float(params[qualified_parameter_name(name, "q0_h")]),
+                float(params[qualified_parameter_name(name, "q0_k")]),
+                float(params[qualified_parameter_name(name, "q0_l")]),
+            ),
+            kappa=float(params[qualified_parameter_name(name, "kappa")]),
+            omega_sf=float(params[qualified_parameter_name(name, "omega_sf")]),
+        )
+
+    return model
+
+
+@dataclass(frozen=True)
+class ModelTypeInfo:
+    """Fit-engine registration for one model component type.
+
+    ``data_types`` lists the dataset data types the model can be applied to;
+    ``("*",)`` means the model works with any dataset.
+    """
+
+    parameters: tuple[str, ...]
+    data_types: tuple[str, ...]
+    factory: Callable[[Any], ModelFunction]
+
+
+MODEL_TYPE_REGISTRY: dict[str, ModelTypeInfo] = {
+    "constant_background": ModelTypeInfo(
+        parameters=("constant",),
+        data_types=("*",),
+        factory=_constant_background_factory,
+    ),
+    "linear_background": ModelTypeInfo(
+        parameters=("c0", "c1"),
+        data_types=("single_crystal_inelastic", "powder_inelastic"),
+        factory=_linear_background_factory,
+    ),
+    "single_q_paramagnon": ModelTypeInfo(
+        parameters=("amplitude", "q0_h", "q0_k", "q0_l", "kappa", "omega_sf"),
+        data_types=("single_crystal_inelastic",),
+        factory=_single_q_paramagnon_factory,
+    ),
+}
+
+
+def model_supports_data_type(model_type: str, data_type: str) -> bool:
+    """Return whether a registered model type can fit a dataset data type."""
+
+    info = MODEL_TYPE_REGISTRY.get(model_type)
+    if info is None:
+        return False
+    if "*" in info.data_types:
+        return True
+    return (data_type or FALLBACK_DATA_TYPE) in info.data_types
+
+
+@dataclass(frozen=True)
+class FitDatasetInput:
+    """One prepared dataset offered to the fit compiler.
+
+    ``data`` must already reflect masks, scale factors, and any rebinning:
+    the compiler only decides which models and parameters apply to it.
+    """
+
+    name: str
+    data: PointData4D
+    weight: float = 1.0
+    data_type: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ParameterInstance:
+    """Where one optimizer parameter came from."""
+
+    name: str
+    component: str
+    parameter: str
+    scope: str
+    datasets: tuple[str, ...]
+
+
+@dataclass
+class CompiledFitProblem:
+    """A FitProblem plus the bookkeeping to map results back to components."""
+
+    problem: FitProblem
+    parameter_instances: dict[str, ParameterInstance]
+    components_by_dataset: dict[str, list[str]]
+    skipped_datasets: list[str]
+
+    def instances_for(self, component: str, parameter: str) -> list[ParameterInstance]:
+        """Return all optimizer instances of one component parameter."""
+
+        return [
+            instance
+            for instance in self.parameter_instances.values()
+            if instance.component == component and instance.parameter == parameter
+        ]
+
+
+def sharing_mode(component: Any, parameter: str) -> str:
+    """Return the sharing mode of one component parameter.
+
+    An explicit ``sharing`` entry wins; otherwise the legacy ``global_fit``
+    boolean maps ``True`` to ``"global"`` and ``False`` to ``"per_dataset"``.
+    """
+
+    entry = component.sharing.get(parameter) if isinstance(component.sharing, dict) else None
+    if isinstance(entry, dict) and entry.get("mode") in SHARING_MODES:
+        return str(entry["mode"])
+    return "global" if component.global_fit.get(parameter, True) else "per_dataset"
+
+
+def parameter_limits(component: Any, parameter: str) -> tuple[float | None, float | None]:
+    """Return ``(min, max)`` bounds for one component parameter."""
+
+    raw = component.limits.get(parameter) if isinstance(component.limits, dict) else None
+    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+        return None, None
+    lower = None if raw[0] in (None, "") else float(raw[0])
+    upper = None if raw[1] in (None, "") else float(raw[1])
+    return lower, upper
+
+
+def _parameter_value(component: Any, parameter: str) -> float:
+    raw = component.parameters.get(parameter, 0.0)
+    try:
+        return float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"parameter {parameter!r} of component {component.name!r} has "
+            f"non-numeric value {raw!r}"
+        ) from exc
+
+
+def _tie_keys(component: Any, parameter: str, dataset_names: Sequence[str]) -> dict[str, str]:
+    """Return dataset name -> tie key for per_dataset/grouped instancing."""
+
+    mode = sharing_mode(component, parameter)
+    if mode == "per_dataset":
+        return {name: name for name in dataset_names}
+    entry = component.sharing.get(parameter, {}) if isinstance(component.sharing, dict) else {}
+    groups = entry.get("groups", {}) if isinstance(entry, dict) else {}
+    return {name: str(groups.get(name, name)) for name in dataset_names}
+
+
+def compile_fit_problem(
+    components: Sequence[Any],
+    datasets: Sequence[FitDatasetInput],
+    *,
+    description: str = "",
+) -> CompiledFitProblem:
+    """Compile model components and prepared datasets into a FitProblem.
+
+    Only enabled components are used. A component applies to a dataset when
+    the dataset is listed in ``applies_to`` (or ``applies_to`` is ``None``)
+    and the model type supports the dataset's data type. Datasets that no
+    component applies to are excluded from the problem and reported in
+    ``skipped_datasets``. Parameters of components that apply to no dataset
+    are not emitted, so the optimizer never sees insensitive parameters.
+    """
+
+    if not datasets:
+        raise ValueError("compile_fit_problem requires at least one dataset")
+    dataset_names = [dataset.name for dataset in datasets]
+    if len(dataset_names) != len(set(dataset_names)):
+        raise ValueError("dataset names must be unique")
+
+    active = [component for component in components if getattr(component, "enabled", True)]
+    seen: set[str] = set()
+    for component in active:
+        if component.type not in MODEL_TYPE_REGISTRY:
+            raise ValueError(f"model type {component.type!r} is not registered for fitting")
+        if component.name in seen:
+            raise ValueError(f"duplicate model component name {component.name!r}")
+        seen.add(component.name)
+
+    applicable: dict[str, list[str]] = {}
+    components_by_dataset: dict[str, list[str]] = {name: [] for name in dataset_names}
+    for component in active:
+        names: list[str] = []
+        for dataset in datasets:
+            if component.applies_to is not None and dataset.name not in component.applies_to:
+                continue
+            if not model_supports_data_type(component.type, dataset.data_type):
+                continue
+            names.append(dataset.name)
+            components_by_dataset[dataset.name].append(component.name)
+        applicable[component.name] = names
+
+    fitted = [dataset for dataset in datasets if components_by_dataset[dataset.name]]
+    skipped = [name for name in dataset_names if not components_by_dataset[name]]
+    if not fitted:
+        raise ValueError("no dataset is matched by any enabled model component")
+
+    specs: list[ParameterSpec] = []
+    instances: dict[str, ParameterInstance] = {}
+    bindings: dict[str, dict[str, ParameterBinding]] = {name: {} for name in dataset_names}
+
+    def emit(spec: ParameterSpec, instance: ParameterInstance) -> None:
+        if spec.name in instances:
+            raise ValueError(f"duplicate fit parameter name {spec.name!r}")
+        specs.append(spec)
+        instances[spec.name] = instance
+
+    for component in active:
+        component_datasets = applicable[component.name]
+        if not component_datasets:
+            continue
+        info = MODEL_TYPE_REGISTRY[component.type]
+        for parameter in info.parameters:
+            qualified = qualified_parameter_name(component.name, parameter)
+            value = _parameter_value(component, parameter)
+            vary = bool(component.fit_parameters.get(parameter, False))
+            lower, upper = parameter_limits(component, parameter)
+            mode = sharing_mode(component, parameter)
+            if mode == "global":
+                emit(
+                    ParameterSpec(name=qualified, value=value, min=lower, max=upper, vary=vary),
+                    ParameterInstance(
+                        name=qualified,
+                        component=component.name,
+                        parameter=parameter,
+                        scope="global",
+                        datasets=tuple(component_datasets),
+                    ),
+                )
+                continue
+            keys = _tie_keys(component, parameter, component_datasets)
+            for key in dict.fromkeys(keys.values()):
+                name = instanced_parameter_name(component.name, parameter, key)
+                emit(
+                    ParameterSpec(name=name, value=value, min=lower, max=upper, vary=vary),
+                    ParameterInstance(
+                        name=name,
+                        component=component.name,
+                        parameter=parameter,
+                        scope=key,
+                        datasets=tuple(
+                            dataset for dataset, tie in keys.items() if tie == key
+                        ),
+                    ),
+                )
+            for dataset_name, key in keys.items():
+                bindings[dataset_name][qualified] = instanced_parameter_name(
+                    component.name, parameter, key
+                )
+
+    derived = _compile_constraints(active, applicable, specs, instances)
+
+    fit_datasets: list[FitDataset] = []
+    for dataset in fitted:
+        evaluators = [
+            MODEL_TYPE_REGISTRY[component.type].factory(component)
+            for component in active
+            if dataset.name in applicable[component.name]
+        ]
+        fit_datasets.append(
+            FitDataset(
+                name=dataset.name,
+                data=dataset.data,
+                weight=float(dataset.weight),
+                parameter_bindings=dict(bindings[dataset.name]),
+                model=_additive_model(evaluators),
+                metadata=dict(dataset.metadata),
+            )
+        )
+
+    problem = FitProblem(
+        datasets=fit_datasets,
+        model=None,
+        parameter_specs=tuple(specs),
+        derived_parameters=tuple(derived),
+        description=description,
+    )
+    return CompiledFitProblem(
+        problem=problem,
+        parameter_instances=instances,
+        components_by_dataset=components_by_dataset,
+        skipped_datasets=skipped,
+    )
+
+
+def _additive_model(evaluators: Sequence[ModelFunction]) -> ModelFunction:
+    def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        total = np.zeros(data.size, dtype=float)
+        for evaluate in evaluators:
+            total += np.asarray(evaluate(data, params), dtype=float)
+        return total
+
+    return model
+
+
+def _compile_constraints(
+    components: Sequence[Any],
+    applicable: dict[str, list[str]],
+    specs: list[ParameterSpec],
+    instances: dict[str, ParameterInstance],
+) -> list[DerivedParameter]:
+    """Reparameterize inequality constraints as bounded offset parameters."""
+
+    derived: list[DerivedParameter] = []
+    specs_by_name = {spec.name: spec for spec in specs}
+    for component in components:
+        if not applicable.get(component.name):
+            continue
+        for constraint in getattr(component, "constraints", []) or []:
+            parameter = str(constraint.get("parameter", ""))
+            op = str(constraint.get("op", ">="))
+            reference = constraint.get("reference")
+            qualified = qualified_parameter_name(component.name, parameter)
+            target = specs_by_name.get(qualified)
+            if target is None:
+                if any(name.startswith(f"{qualified}[") for name in specs_by_name):
+                    raise ValueError(
+                        f"constraint on {qualified!r} requires global sharing mode"
+                    )
+                raise ValueError(f"constraint references unknown parameter {qualified!r}")
+            if op not in (">=", "<="):
+                raise ValueError(f"unsupported constraint operator {op!r} on {qualified!r}")
+            if target.min is not None or target.max is not None:
+                raise ValueError(
+                    f"parameter {qualified!r} cannot have both limits and a constraint"
+                )
+            if not target.vary:
+                continue
+
+            if isinstance(reference, str):
+                reference_spec = specs_by_name.get(reference)
+                if reference_spec is None:
+                    raise ValueError(
+                        f"constraint on {qualified!r} references unknown parameter "
+                        f"{reference!r}"
+                    )
+                base: str | float = reference
+                reference_value = reference_spec.value
+            else:
+                base = float(reference)
+                reference_value = float(reference)
+
+            sign = 1.0 if op == ">=" else -1.0
+            offset_name = f"{qualified}{CONSTRAINT_OFFSET_SUFFIX}"
+            offset_value = max(sign * (target.value - reference_value), 0.0)
+            specs.remove(target)
+            del specs_by_name[qualified]
+            del instances[qualified]
+            offset_spec = ParameterSpec(
+                name=offset_name,
+                value=offset_value,
+                min=0.0,
+                max=None,
+                vary=True,
+                description=f"offset enforcing {qualified} {op} {reference}",
+            )
+            specs.append(offset_spec)
+            specs_by_name[offset_name] = offset_spec
+            instances[offset_name] = ParameterInstance(
+                name=offset_name,
+                component=component.name,
+                parameter=f"{parameter}{CONSTRAINT_OFFSET_SUFFIX}",
+                scope="global",
+                datasets=tuple(applicable[component.name]),
+            )
+            derived.append(
+                DerivedParameter(name=qualified, base=base, offset=offset_name, sign=sign)
+            )
+    return derived

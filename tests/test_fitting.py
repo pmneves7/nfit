@@ -10,8 +10,10 @@ from metallix import (
     ResolutionSpec,
     fit_least_squares,
     fit_problem_least_squares,
+    OptimizationConfig,
     make_mask_transform,
     rebin_point_data,
+    SamplerConfig,
     sample_problem_parameters,
 )
 from metallix.cross_section import intensity_from_chipp
@@ -219,7 +221,98 @@ def test_rebin_point_data_respects_existing_mask():
     assert np.all(rebinned.mask)
 
 
-def test_sampling_placeholder_is_explicitly_deferred():
+def test_robust_loss_reduces_outlier_pull():
+    data = PointData4D(
+        H=np.arange(6),
+        K=np.zeros(6),
+        L=np.zeros(6),
+        E=np.ones(6),
+        intensity=[2.0, 2.0, 2.0, 2.0, 2.0, 30.0],
+        sigma=np.ones(6),
+    )
+
+    def constant_model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        return np.full(data.size, params["level"], dtype=float)
+
+    problem = FitProblem(
+        datasets=[FitDataset("data", data)],
+        model=constant_model,
+        parameter_specs=[ParameterSpec("level", 1.0)],
+    )
+
+    linear = fit_problem_least_squares(problem)
+    robust = fit_problem_least_squares(
+        problem,
+        config=OptimizationConfig(kwargs={"loss": "soft_l1", "f_scale": 1.0}),
+    )
+
+    assert abs(robust.params["level"] - 2.0) < abs(linear.params["level"] - 2.0)
+
+
+def test_differential_evolution_initialization_finds_better_basin():
+    data = PointData4D([0.0], [0.0], [0.0], [1.0], [0.0], [1.0])
+
+    def multimodal_model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        del data
+        x = params["x"]
+        return np.asarray([(x - 3.0) * (x + 3.0)])
+
+    problem = FitProblem(
+        datasets=[FitDataset("data", data)],
+        model=multimodal_model,
+        parameter_specs=[ParameterSpec("x", 0.1, min=-5.0, max=5.0)],
+    )
+
+    result = fit_problem_least_squares(
+        problem,
+        config=OptimizationConfig(
+            kwargs={
+                "initialization": {
+                    "method": "differential_evolution",
+                    "maxiter": 20,
+                    "popsize": 5,
+                    "seed": 12,
+                }
+            }
+        ),
+    )
+
+    assert result.success
+    assert min(abs(result.params["x"] - 3.0), abs(result.params["x"] + 3.0)) < 1.0e-5
+
+
+def test_emcee_sampling_reports_posterior_samples():
+    pytest.importorskip("emcee")
+    data = PointData4D(
+        [0.0, 1.0, 2.0],
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [1.0, 1.0, 1.0],
+        [2.0, 2.1, 1.9],
+        [0.1, 0.1, 0.1],
+    )
+
+    def constant_model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        return np.full(data.size, params["level"], dtype=float)
+
+    problem = FitProblem(
+        datasets=[FitDataset("data", data)],
+        model=constant_model,
+        parameter_specs=[ParameterSpec("level", 2.0, min=0.0, max=4.0)],
+    )
+
+    result = sample_problem_parameters(
+        problem,
+        initial_params={"level": 2.0},
+        config=SamplerConfig(n_walkers=8, n_steps=12, burn_in=2, random_seed=5),
+    )
+
+    assert result.samples.shape[1] == 1
+    assert result.variable_names == ["level"]
+    assert result.metadata["method"] == "emcee"
+
+
+def test_emcee_sampling_requires_variable_parameters():
     data = PointData4D([0.0], [0.0], [0.0], [1.0], [1.0], [1.0])
     problem = FitProblem(
         datasets=[FitDataset("data", data)],
@@ -227,7 +320,7 @@ def test_sampling_placeholder_is_explicitly_deferred():
         parameter_specs=[],
     )
 
-    with pytest.raises(NotImplementedError, match="sampling backends"):
+    with pytest.raises(ValueError, match="at least one variable"):
         sample_problem_parameters(problem)
 
 

@@ -7,12 +7,11 @@ from pathlib import Path
 import numpy as np
 
 from metallix import (
-    attach_fit_comparisons,
     DataGroup,
     DatasetEntry,
     FitModelSession,
     ParameterSpec,
-    hyspec_hhl_fit_comparison_from_points,
+    hyspec_hhl_point_indices,
     load_mantid_mdhisto_nxs,
     make_constant_intensity_model,
     make_energy_q_mask_transform,
@@ -140,18 +139,17 @@ def main() -> None:
 
     if args.view_fit:
         fit_values = result.dataset_model_values["hyspec_3meV_1p8K"]
-        attach_fit_comparisons(
-            mdhisto,
-            [
-                hyspec_hhl_fit_comparison_from_points(
-                    mdhisto,
-                    prepared,
-                    fit_values,
-                    model_name=model_session.name,
-                    result_name=f"fit {len(model_session.history) - 1}",
-                )
-            ],
-        )
+        # Scatter the point-ordered fit and residual back onto the MDHisto grid
+        # as "fit" and "residual" metadata channels. The data viewer's "Show
+        # fit"/"Show residual" checkboxes read these directly, no recompute.
+        indices = hyspec_hhl_point_indices(mdhisto, prepared)
+        fit_grid = np.full(mdhisto.shape, np.nan, dtype=float)
+        residual_grid = np.full(mdhisto.shape, np.nan, dtype=float)
+        fit_grid[indices] = fit_values
+        residual_grid[indices] = (prepared.intensity - fit_values) / prepared.sigma
+        mdhisto.metadata["fit"] = fit_grid
+        mdhisto.metadata["residual"] = residual_grid
+
         viewer = slice_viewer(
             mdhisto,
             x_dim="[H,H,0]",

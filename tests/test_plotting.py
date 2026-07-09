@@ -10,12 +10,7 @@ import matplotlib.colors as mcolors
 import numpy as np
 import pytest
 
-from metallix import (
-    FitComparisonModelView,
-    FitComparisonResultView,
-    PointData4D,
-    attach_fit_comparisons,
-)
+from metallix import PointData4D
 from metallix.mdhisto import MDHistoAxis, MDHistoData
 from metallix.plotting import (
     MDHistoSliceViewer,
@@ -319,6 +314,56 @@ def test_qt_slice_viewer_uses_real_comboboxes_and_swaps_axes():
     assert viewer.y_combo.currentText() == "[H,H,0]"
 
 
+def test_qt_slice_viewer_interactive_controls_have_tooltips():
+    pytest.importorskip("PySide6")
+    from PySide6 import QtWidgets
+
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+
+    interactive_classes = (
+        QtWidgets.QAbstractButton,
+        QtWidgets.QComboBox,
+        QtWidgets.QLineEdit,
+        QtWidgets.QAbstractSpinBox,
+        QtWidgets.QSlider,
+    )
+    ignored_object_names = {"qt_spinbox_lineedit", "qt_toolbar_ext_button"}
+    missing = []
+    for widget in viewer.window.findChildren(QtWidgets.QWidget):
+        if not isinstance(widget, interactive_classes):
+            continue
+        if widget.objectName() in ignored_object_names:
+            continue
+        if not widget.toolTip().strip():
+            label = widget.text() if hasattr(widget, "text") else widget.objectName()
+            missing.append(f"{type(widget).__name__}:{label}")
+
+    assert missing == []
+
+
+def test_qt_slice_viewer_standard_close_shortcut_closes_window():
+    pytest.importorskip("PySide6")
+    from PySide6 import QtGui, QtWidgets
+
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+    viewer.window.show()
+    QtWidgets.QApplication.processEvents()
+
+    assert viewer.window.isVisible()
+    assert viewer.close_shortcut.key() in QtGui.QKeySequence.keyBindings(
+        QtGui.QKeySequence.StandardKey.Close
+    )
+
+    viewer.close_shortcut.activated.emit()
+    QtWidgets.QApplication.processEvents()
+
+    assert not viewer.window.isVisible()
+
+
 def test_qt_slice_viewer_boolean_channels_use_grey_unit_scale_and_reverse():
     pytest.importorskip("PySide6")
     from PySide6 import QtWidgets
@@ -492,49 +537,174 @@ def test_qt_dataset_dropdown_handles_1d_line_and_2d_slice_modes():
     assert viewer.model.y_dim == 2
 
 
-def test_qt_fit_compare_panel_draws_data_fit_and_optional_residual():
+def _with_fit_channels(data: MDHistoData) -> MDHistoData:
+    data.metadata["fit"] = np.asarray(data.signal, dtype=float) + 0.5
+    data.metadata["residual"] = np.full(data.shape, -0.5, dtype=float)
+    return data
+
+
+def test_qt_show_fit_draws_side_by_side_panels_with_shared_view():
     pytest.importorskip("PySide6")
     from metallix.qt_slice_viewer import QtMDHistoSliceViewer
 
-    data = _tiny_mdhisto_data()
-    fit = mdhisto_with_signal_like(data, data.signal + 0.5)
-    residual = residual_mdhisto(data, fit)
-    attach_fit_comparisons(
-        data,
-        [
-            FitComparisonModelView(
-                "constant_background",
-                [
-                    FitComparisonResultView(
-                        "fit 0",
-                        fit=fit,
-                        data=data,
-                        residual=residual,
-                    )
-                ],
-            )
-        ],
-    )
-
+    data = _with_fit_channels(_tiny_mdhisto_data())
     viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
 
-    assert not viewer.fit_compare_group.isHidden()
-    assert not viewer.fit_compare_check.isChecked()
+    assert viewer.show_fit_check.isEnabled()
+    assert not viewer.show_fit_check.isChecked()
+    assert not viewer.show_residual_check.isEnabled()
 
-    viewer.fit_compare_check.setChecked(True)
+    viewer.show_fit_check.setChecked(True)
 
-    assert viewer.fit_compare_model_combo.currentText() == "constant_background"
-    assert viewer.fit_compare_result_combo.currentText() == "fit 0"
+    assert viewer.show_residual_check.isEnabled()
+    assert [axis.get_title() for axis in viewer._compare_axes] == ["Data", "Fit"]
+    # The box tool remains available in fit compare so cuts can be integrated.
+    assert not viewer.tools_group.isHidden()
+
+    viewer.show_residual_check.setChecked(True)
+
     assert [axis.get_title() for axis in viewer._compare_axes] == ["Data", "Fit", "Residual"]
-    assert viewer.tools_group.isHidden()
 
     viewer.ax_image.set_xlim(-0.5, 0.5)
+    viewer._sync_view_limit_controls()
 
     np.testing.assert_allclose(viewer._compare_axes[1].get_xlim(), (-0.5, 0.5))
+    np.testing.assert_allclose(viewer._compare_axes[2].get_xlim(), (-0.5, 0.5))
 
-    viewer.fit_compare_residual_check.setChecked(False)
+    viewer.show_fit_check.setChecked(False)
 
-    assert [axis.get_title() for axis in viewer._compare_axes] == ["Data", "Fit"]
+    assert viewer._compare_axes == []
+    assert not viewer.show_residual_check.isChecked()
+    assert not viewer.show_residual_check.isEnabled()
+    assert not viewer.tools_group.isHidden()
+
+
+def test_qt_histogram_layout_noop_outside_standard_grid():
+    pytest.importorskip("PySide6")
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _with_fit_channels(_tiny_mdhisto_data())
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    viewer.show_fit_check.setChecked(True)
+
+    # Fit compare uses a non-3-column grid. Even if cut-axis references are
+    # stale (as can happen after a figure rebuild on viewer reuse), applying
+    # the standard histogram layout must not touch or clobber this grid.
+    assert viewer._plot_layout_mode[0] == "fit_compare"
+    viewer.ax_xcut = viewer._compare_axes[0]
+    viewer.ax_ycut = viewer._compare_axes[0]
+    ncols = viewer.grid.ncols
+    viewer._apply_histogram_axes_layout(draw=False)  # must not raise
+    assert viewer.grid.ncols == ncols
+
+
+def test_qt_reopen_after_fit_compare_does_not_crash():
+    pytest.importorskip("PySide6")
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _with_fit_channels(_tiny_mdhisto_data())
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    viewer.show_fit_check.setChecked(True)
+    viewer.hist_axes_check.setChecked(True)  # fit compare with box-tool cuts
+
+    # Reopening the data viewer reuses the widget via replace_datasets, which
+    # restores dataset state and re-applies the histogram layout.
+    fresh = _with_fit_channels(_tiny_mdhisto_data())
+    viewer.replace_datasets([fresh], dataset_names=["first"])  # must not raise
+
+
+def test_qt_show_fit_checkbox_disabled_without_fit_channels():
+    pytest.importorskip("PySide6")
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+
+    assert not viewer.show_fit_check.isEnabled()
+    assert not viewer.show_residual_check.isEnabled()
+
+
+def test_qt_fit_compare_box_tool_draws_overlaid_data_fit_cut_and_residual_cut():
+    pytest.importorskip("PySide6")
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _with_fit_channels(_tiny_mdhisto_data())
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    viewer.show_fit_check.setChecked(True)
+
+    # No cut axes until the histogram box tool is enabled.
+    assert viewer.ax_fit_cut is None
+
+    viewer.hist_axes_check.setChecked(True)
+    assert viewer.ax_fit_cut is not None
+    assert viewer.ax_residual_cut is None
+    labels = [line.get_label() for line in viewer.ax_fit_cut.get_lines()]
+    assert "fit" in labels  # integrated fit line overlaid on the data cut
+
+    # Enabling residuals adds a separate residual cut axes.
+    viewer.show_residual_check.setChecked(True)
+    assert viewer.ax_residual_cut is not None
+    assert [axis.get_title() for axis in viewer._compare_axes] == ["Data", "Fit", "Residual"]
+
+    # Dragging a box updates both cut axes.
+    viewer._set_roi_extents((-1.5, 1.5, -0.5, 1.5), update_cuts=True, draw=True)
+    assert any(line.get_label() == "fit" for line in viewer.ax_fit_cut.get_lines())
+    assert len(viewer.ax_residual_cut.get_lines()) > 0
+
+    # The cut-height slider resizes the cut region.
+    before = list(viewer.grid.get_height_ratios())
+    viewer.xcut_percent_slider.setValue(min(viewer.xcut_percent + 10, 45))
+    after = list(viewer.grid.get_height_ratios())
+    assert after[1] >= before[1]
+
+    # Turning the box tool off removes the cut axes.
+    viewer.hist_axes_check.setChecked(False)
+    assert viewer.ax_fit_cut is None
+    assert viewer.ax_residual_cut is None
+
+
+def test_qt_1d_show_fit_draws_line_behind_data_and_residual_axes():
+    pytest.importorskip("PySide6")
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _with_fit_channels(_tiny_1d_mdhisto_data())
+    viewer = QtMDHistoSliceViewer(data)
+
+    assert viewer.show_fit_check.isEnabled()
+    assert viewer.residual_split_slider.isHidden() or not viewer.residual_split_slider.isVisible()
+
+    viewer.show_fit_check.setChecked(True)
+
+    fit_lines = [
+        line
+        for line in viewer.ax_image.get_lines()
+        if line.get_label() == "fit"
+    ]
+    assert len(fit_lines) == 1
+    assert fit_lines[0].get_linestyle() == "-"
+    assert fit_lines[0].get_zorder() < 2.0
+    np.testing.assert_allclose(fit_lines[0].get_ydata(), data.signal.reshape(-1) + 0.5)
+    assert viewer.ax_residual is None
+
+    viewer.show_residual_check.setChecked(True)
+
+    assert viewer.ax_residual is not None
+    assert viewer._plot_layout_mode == ("residual_1d", 2)
+    assert viewer.ax_residual.get_ylabel() == "Res. (σ)"
+
+    ratios_before = list(viewer.grid.get_height_ratios())
+    viewer.residual_split_slider.setValue(60)
+    ratios_after = list(viewer.grid.get_height_ratios())
+    assert ratios_after[1] > ratios_before[1]
+
+    viewer.fit_line_color_combo.setCurrentText("green")
+    viewer.fit_line_width_spin.setValue(3.5)
+    fit_lines = [line for line in viewer.ax_image.get_lines() if line.get_label() == "fit"]
+    assert fit_lines[0].get_color() == "#2ca02c"
+    assert fit_lines[0].get_linewidth() == pytest.approx(3.5)
+
+    viewer.show_residual_check.setChecked(False)
+
+    assert viewer._plot_layout_mode == ("standard", 1)
 
 
 def test_qt_singleton_axes_are_not_controlled():
@@ -896,6 +1066,48 @@ def test_qt_cursor_readout_hides_crystal_coordinates_for_powder_and_magnetizatio
 
     assert magnetization_viewer.cursor_hkle_label.isHidden()
     assert magnetization_viewer.cursor_q_label.isHidden()
+
+
+def test_qt_point_list_show_fit_draws_line_and_residual_axes():
+    pytest.importorskip("PySide6")
+
+    from metallix.dataset import PointListData
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    temperature = np.linspace(1.0, 10.0, 8)
+    data = PointListData(
+        columns={
+            "Temperature": temperature,
+            "Moment": np.full(8, 2.0),
+            "Moment error": np.full(8, 0.1),
+            "fit": np.full(8, 2.0),
+            "residual": np.zeros(8),
+        },
+        units={"Temperature": "K"},
+        coordinate_names=["Temperature"],
+        channels=[
+            {"label": "Moment", "value": "Moment", "error": "Moment error"},
+            {"label": "fit", "value": "fit", "error": None},
+            {"label": "residual", "value": "residual", "error": None},
+        ],
+        metadata={"metallix_data_type": "magnetization"},
+    )
+    viewer = QtMDHistoSliceViewer(data)
+
+    assert viewer._is_effective_1d()
+    assert viewer.show_fit_check.isEnabled()
+    # the fit/residual columns should not appear as selectable data channels
+    channel_items = [viewer.channel_combo.itemText(i) for i in range(viewer.channel_combo.count())]
+    assert channel_items == ["Moment", "fit", "residual"]
+
+    viewer.show_fit_check.setChecked(True)
+    fit_lines = [line for line in viewer.ax_image.get_lines() if line.get_label() == "fit"]
+    assert len(fit_lines) == 1
+    np.testing.assert_allclose(fit_lines[0].get_ydata(), np.full(8, 2.0))
+
+    viewer.show_residual_check.setChecked(True)
+    assert viewer._plot_layout_mode == ("residual_1d", 2)
+    assert viewer.ax_residual is not None
 
 
 def test_qt_powder_point_cursor_readout_uses_q_column():

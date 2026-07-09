@@ -34,6 +34,17 @@ Run the test suite:
 /Users/pmneves/.conda/envs/metallix/bin/python -m pytest -q
 ```
 
+Launch the graphical project explorer:
+
+```bash
+metallix
+```
+
+The GUI opens the project explorer, where users can create workspaces, import
+datasets, add masks and models, inspect metadata, run fits, and open the data
+viewer. See [GUI workflows](gui_workflows.md) for the current user-facing
+workflow and tooltip/documentation expectations.
+
 Run the first reference example:
 
 ```bash

@@ -18,6 +18,7 @@ dependencies = [
   "matplotlib>=3.6",
   "h5py>=3.8",
   "pyside6>=6.6",
+  "emcee>=3.1",
 ]
 keywords = [
   "inelastic neutron scattering",

@@ -108,26 +108,31 @@ session.rollback(0)
 
 ## Interactive workflow direction
 
-The current workflow is intentionally code-first: scripts create data groups,
-attach masks, choose models, configure resolution functions, run fits, and then
-open a viewer to compare data with fit results. These are not one-off example
-steps; they are the same operations that should later be exposed in a GUI.
+The workflow is intentionally scriptable first: scripts can create data groups,
+attach masks, choose models, configure resolution functions, run fits, and open a
+viewer to compare data with fit results. The GUI should expose those same
+operations without inventing hidden widget-only scientific state.
 
-The planned GUI should let a user:
+The current project explorer launches with `metallix` and lets a user:
 
-- create a `DataGroup` by importing reduced datasets from files,
-- inspect file-provided axes, units, metadata, and inferred axis roles,
-- edit and attach masks to each dataset,
-- attach one or more models and per-dataset resolution functions,
-- configure optimizer settings, weights, parameter constraints, and linked
-  parameter groups,
-- run single, repeated, or batch fits,
-- inspect fit history, roll back to previous results, and compare data, fit, and
-  residuals visually.
+- create workspaces and import reduced datasets from files,
+- organize datasets into nested dataset groups,
+- inspect file-provided axes, units, metadata, inferred axis roles, crystal
+  information, source files, and imported sample-environment context,
+- edit dataset configuration such as point-list coordinate/channel roles and
+  rebinned views,
+- edit and attach dataset or shared masks,
+- attach one or more model components,
+- configure optimizer settings, dataset weights, parameter bounds, fitted/fixed
+  parameters, and global/per-dataset parameter sharing,
+- run fits, branch fit timelines, restore earlier fit states, and inspect
+  structured fit metadata,
+- compare data, fit, and residual channels visually in the data viewer.
 
-The slice viewer fit-comparison mode is the first GUI piece of that larger
-workflow. It is deliberately driven by data/model objects created in code so the
-underlying pipeline remains testable before more GUI editing tools exist.
+The data viewer remains driven by reusable data/model objects. It can display
+stored fit channels from GUI fit history, but script-created datasets with
+attached fit comparisons should continue to produce the same viewer behavior.
+See [GUI workflows](gui_workflows.md) for current user-facing details.
 
 ## Masking
 
@@ -303,6 +308,74 @@ result = fit_problem_least_squares(problem)
 `FitResult` reports optimized parameters, covariance/stderr when the local
 Jacobian supports it, global chi-squared values, and per-dataset chi-squared
 contributions, sizes, weights, residuals, and model values.
+
+`OptimizationConfig.kwargs` is passed to SciPy least squares for deterministic
+fits. Common options include `max_nfev`, tolerances such as `xtol`, and robust
+loss controls:
+
+```python
+from metallix import OptimizationConfig
+
+result = fit_problem_least_squares(
+    problem,
+    config=OptimizationConfig(
+        kwargs={
+            "loss": "soft_l1",
+            "f_scale": 1.0,
+        }
+    ),
+)
+```
+
+`loss="linear"` is ordinary chi-squared minimization. Robust losses such as
+`soft_l1`, `huber`, `cauchy`, and `arctan` keep small residuals close to
+ordinary least squares while reducing the leverage of very large residuals.
+They are useful for imperfect masks or outlier regions, but ordinary
+chi-squared remains the clearest statistical objective when reporting standard
+least-squares errors.
+
+For nonlinear fits with uncertain initial guesses, the least-squares start
+point can be initialized by differential evolution:
+
+```python
+result = fit_problem_least_squares(
+    problem,
+    config=OptimizationConfig(
+        kwargs={
+            "initialization": {
+                "method": "differential_evolution",
+                "maxiter": 60,
+                "popsize": 10,
+                "seed": 123,
+            }
+        }
+    ),
+)
+```
+
+Differential evolution searches the bounded variable-parameter space before
+least-squares polishing. It is opt-in, slower than a local fit, and requires
+finite lower and upper bounds on every fitted parameter.
+
+Posterior sampling uses `emcee` through `sample_problem_parameters`. The usual
+workflow is to run least squares first, then initialize walkers around the
+best-fit parameters:
+
+```python
+from metallix import SamplerConfig, sample_problem_parameters
+
+fit = fit_problem_least_squares(problem)
+posterior = sample_problem_parameters(
+    problem,
+    SamplerConfig(n_walkers=48, n_steps=2000, burn_in=500, random_seed=123),
+    initial_params=fit.params,
+)
+```
+
+The sampler uses the same weighted residual vector as a Gaussian log
+likelihood and uniform priors implied by parameter bounds. It returns samples,
+variable names, log probabilities, and compact diagnostics such as acceptance
+fractions and estimated autocorrelation time when available.
 
 ## Primitive and compound models
 

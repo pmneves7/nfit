@@ -30,6 +30,8 @@ testable building blocks:
 - a PySide6 MDHisto slice viewer with axis integration, color controls,
   cursor readout, histogram box cuts, channel selection, fit-comparison panels,
   and script export.
+- a PySide6 project explorer GUI launched with `metallix` for organizing
+  workspaces, datasets, masks, models, rebinned views, and fit timelines.
 
 The package is intentionally small at this stage. MCMC has framework entry
 points but not a concrete backend yet; Dask, Numba, and JAX are not included.
@@ -84,6 +86,17 @@ Open the PySide6 slice viewer for the bundled MDHisto example data:
 /Users/pmneves/.conda/envs/metallix/bin/python examples/view_hyspec_mdhisto_slice.py
 ```
 
+Launch the project explorer GUI:
+
+```bash
+metallix
+```
+
+The project explorer can create workspaces, import datasets, inspect structured
+metadata, add masks and models, configure rebinning, run fits, and open the data
+viewer. The docs page `docs/gui_workflows.md` is the in-repository wiki for the
+current GUI behavior.
+
 Render the local HYSPEC test datasets (`1D_test.nxs`, `2D_test.nxs`, and
 `4D_test.nxs`) with automatic 1D line plotting and 2D+ slice plotting:
 
@@ -115,5 +128,7 @@ pip install metallix
 
 ## Documentation
 
-Documentation is planned around Sphinx, MyST Markdown, MyST-NB/Jupyter notebooks,
-and Read the Docs. Initial source pages live in `docs/`.
+Documentation is built with Sphinx, MyST Markdown, MyST-NB/Jupyter notebooks,
+and Read the Docs-compatible source pages in `docs/`. When GUI or workflow
+behavior changes, update both the relevant docs page and the wiki-style
+workflow page in `docs/gui_workflows.md`.

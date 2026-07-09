@@ -12,6 +12,7 @@ pipeline.
 
 getting_started
 data_philosophy
+gui_workflows
 physics_conventions
 modeling_pipeline
 examples/synthetic_single_q

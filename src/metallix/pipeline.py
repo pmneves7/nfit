@@ -42,7 +42,23 @@ class MaskSpec:
 
 @dataclass
 class ModelComponentSpec:
-    """Serializable model component configuration attached to a data group."""
+    """Serializable model component configuration attached to a data group.
+
+    Fit-flexibility fields
+    ----------------------
+    ``fit_parameters`` marks which parameters the optimizer may vary.
+    ``sharing`` maps a parameter name to ``{"mode": ..., "groups": {...}}``
+    where mode is ``"global"`` (one shared value), ``"per_dataset"`` (one
+    independent value per dataset), or ``"grouped"`` (datasets sharing a tie
+    key in ``groups`` share one value; unlisted datasets get their own).
+    Parameters without a ``sharing`` entry fall back to the legacy
+    ``global_fit`` booleans. ``limits`` maps a parameter name to
+    ``[min, max]`` bounds where either side may be ``None``. ``constraints``
+    holds entries like ``{"parameter": "c0", "op": ">=", "reference": ...}``
+    where the reference is a number or a qualified ``"component.param"``
+    name. ``applies_to`` restricts the component to the named datasets
+    (``None`` means all compatible datasets).
+    """
 
     name: str
     type: str = "constant_background"
@@ -50,13 +66,24 @@ class ModelComponentSpec:
     config: dict[str, Any] = field(default_factory=dict)
     fit_parameters: dict[str, bool] = field(default_factory=dict)
     global_fit: dict[str, bool] = field(default_factory=dict)
+    sharing: dict[str, dict[str, Any]] = field(default_factory=dict)
+    limits: dict[str, Any] = field(default_factory=dict)
+    constraints: list[dict[str, Any]] = field(default_factory=list)
+    applies_to: list[str] | None = None
     enabled: bool = True
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class FitTimelineEntry:
-    """Serializable GUI fit-history node for one data group."""
+    """Serializable GUI fit-history node for one data group.
+
+    ``channels`` stores per-dataset fitted-model channels computed when the
+    fit ran, keyed by dataset name. Each entry holds ``"fit"`` and
+    ``"residual"`` float arrays aligned with the dataset's view (grid-shaped
+    for MDHisto data, one value per point for point lists) so viewers never
+    need to re-evaluate a potentially expensive model.
+    """
 
     name: str
     kind: str = "result"
@@ -66,6 +93,7 @@ class FitTimelineEntry:
     optimizer: str = "least_squares"
     optimizer_config: dict[str, Any] = field(default_factory=dict)
     goodness: dict[str, Any] = field(default_factory=dict)
+    channels: dict[str, dict[str, Any]] = field(default_factory=dict)
     children: list["FitTimelineEntry"] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -149,6 +177,7 @@ class DataGroup:
     metadata: dict[str, Any] = field(default_factory=dict)
     models: dict[str, "FitModelSession | ModelComponentSpec"] = field(default_factory=dict)
     fits: list[FitTimelineEntry] = field(default_factory=list)
+    active_fit_path: list[int] | None = None
 
     def iter_datasets(self) -> Iterator[DatasetEntry]:
         """Yield every dataset in this group and its nested subgroups."""

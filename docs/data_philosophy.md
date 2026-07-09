@@ -39,6 +39,18 @@ diffractometer, or a text export from an external workflow.
   Opaque binary state can be useful as a cache, but the primary project
   description should preserve enough text structure for users to understand and
   adjust data groups, source files, model settings, and fitting choices.
+- Every user-interactable GUI control should have useful hover text. The tip
+  should explain what the control changes, when the change takes effect, and
+  any important constraints or examples. For registry-backed controls such as
+  mask parameters, model parameters, model configuration, optimizers, and future
+  resolution models, the GUI should render tooltip text from the same metadata
+  that defines scriptable defaults and validation. New GUI features should add
+  tests or audit coverage so controls are not introduced silently without
+  hover help.
+- User-facing behavior changes should update documentation at the same time as
+  code. The Sphinx source pages in `docs/` are the canonical in-repository
+  documentation, and `docs/gui_workflows.md` is the wiki-style page for the
+  current project explorer and data-viewer workflows.
 
 For example, the project explorer's current data-group workflow is intentionally
 mirrored by scriptable calls:

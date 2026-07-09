@@ -16,11 +16,17 @@ try:  # pragma: no cover - exercised only when SciPy is importable.
 except Exception:  # SciPy may be absent or have a broken compiled dependency.
     _scipy_least_squares = None
 
+try:  # pragma: no cover - exercised only when SciPy is importable.
+    from scipy.optimize import differential_evolution as _scipy_differential_evolution
+except Exception:  # SciPy may be absent or have a broken compiled dependency.
+    _scipy_differential_evolution = None
+
 
 FloatArray = NDArray[np.float64]
 ModelFunction = Callable[[PointData4D, dict[str, float]], FloatArray]
 DataTransform = Callable[[PointData4D], PointData4D]
 ResolutionFunction = Callable[[PointData4D, FloatArray, dict[str, float]], FloatArray]
+ProgressCallback = Callable[[dict[str, Any]], None]
 Range = tuple[float | None, float | None]
 ProjectionSpec = str | Sequence[float]
 ParameterBinding = str | float | int
@@ -98,6 +104,29 @@ class ResolutionSpec:
 
 
 @dataclass(frozen=True)
+class DerivedParameter:
+    """A parameter computed from other parameters instead of the optimizer.
+
+    The derived value is ``base + sign * offset``, where ``base`` is either a
+    numeric constant or the name of another (non-derived) parameter, and
+    ``offset`` optionally names another parameter. This linear form is enough
+    to express hard inequality constraints by reparameterization: for example
+    ``p1 >= p2`` becomes ``p1 = p2 + delta`` with ``delta`` bounded at zero.
+    """
+
+    name: str
+    base: str | float
+    offset: str | None = None
+    sign: float = 1.0
+
+    def evaluate(self, params: dict[str, float]) -> float:
+        base = float(params[self.base]) if isinstance(self.base, str) else float(self.base)
+        if self.offset is None:
+            return base
+        return base + float(self.sign) * float(params[self.offset])
+
+
+@dataclass(frozen=True)
 class FitDataset:
     """One dataset participating in a simultaneous fit.
 
@@ -120,6 +149,10 @@ class FitDataset:
         names or fixed scalar values. This lets arbitrary groups of datasets
         share one fitted value while other groups use independently fitted
         values.
+    model:
+        Optional dataset-specific model. When set, it overrides the problem's
+        shared model for this dataset, which lets different datasets fit
+        different model compositions in one simultaneous problem.
     metadata:
         Free-form instrument, scan, normalization, and provenance notes.
     """
@@ -130,6 +163,7 @@ class FitDataset:
     transforms: Sequence[DataTransform] = field(default_factory=tuple)
     resolution: Any = None
     parameter_bindings: dict[str, ParameterBinding] = field(default_factory=dict)
+    model: Any = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def prepared(self) -> PointData4D:
@@ -176,7 +210,7 @@ class SamplerConfig:
     sampler.
     """
 
-    method: str = "mcmc"
+    method: str = "emcee"
     n_walkers: int | None = None
     n_steps: int | None = None
     burn_in: int = 0
@@ -202,12 +236,18 @@ class FitProblem:
     A problem combines one physics model, one shared parameter set, and any
     number of weighted datasets. Dataset-specific behavior belongs in
     ``FitDataset.transforms`` and ``FitDataset.resolution``; shared physics
-    belongs in ``model``.
+    belongs in ``model``. ``model`` may be ``None`` when every dataset carries
+    its own ``FitDataset.model``.
+
+    ``derived_parameters`` are evaluated from the optimizer/fixed parameters on
+    every residual evaluation and merged into the parameter dictionary passed
+    to models. Their names must not collide with ``parameter_specs`` names.
     """
 
     datasets: Sequence[FitDataset]
-    model: ModelSpec | ModelFunction
+    model: ModelSpec | ModelFunction | None
     parameter_specs: Sequence[ParameterSpec]
+    derived_parameters: Sequence[DerivedParameter] = field(default_factory=tuple)
     description: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -220,13 +260,41 @@ class FitProblem:
         for dataset in self.datasets:
             if dataset.weight < 0.0:
                 raise ValueError("dataset weights must be nonnegative")
+            if self.model is None and dataset.model is None:
+                raise ValueError(
+                    f"dataset {dataset.name!r} has no model and the problem has no shared model"
+                )
+        spec_names = {spec.name for spec in self.parameter_specs}
+        for derived in self.derived_parameters:
+            if derived.name in spec_names:
+                raise ValueError(
+                    f"derived parameter {derived.name!r} collides with a parameter spec"
+                )
+            for reference in (derived.base, derived.offset):
+                if isinstance(reference, str) and reference not in spec_names:
+                    raise ValueError(
+                        f"derived parameter {derived.name!r} references unknown parameter "
+                        f"{reference!r}"
+                    )
 
     def predict(self, data: PointData4D, params: dict[str, float]) -> FloatArray:
         """Evaluate the shared physics model."""
 
+        if self.model is None:
+            raise ValueError("FitProblem has no shared model; use the dataset models")
         if isinstance(self.model, ModelSpec):
             return self.model(data, params)
         return np.asarray(self.model(data, params), dtype=float)
+
+    def resolve_parameters(self, params: dict[str, float]) -> dict[str, float]:
+        """Return ``params`` with derived parameters evaluated and merged."""
+
+        if not self.derived_parameters:
+            return params
+        resolved = dict(params)
+        for derived in self.derived_parameters:
+            resolved[derived.name] = derived.evaluate(params)
+        return resolved
 
 
 @dataclass
@@ -322,7 +390,7 @@ def attach_lattice_parameters(
     gamma: float = 90.0,
     include_2pi: bool = True,
 ) -> PointData4D:
-    """Return ``data`` with lattice metadata for RLU-to-|Q| conversion."""
+    """Return ``data`` with lattice metadata for RLU-to-``|Q|`` conversion."""
 
     matrix = reciprocal_basis_from_lattice_parameters(
         a,
@@ -773,6 +841,7 @@ def fit_problem_least_squares(
     problem: FitProblem,
     *,
     config: OptimizationConfig | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> FitResult:
     """Fit all datasets in a :class:`FitProblem` by weighted least squares.
 
@@ -802,7 +871,7 @@ def fit_problem_least_squares(
 
     if len(names) == 0:
         residuals = residual_fn(np.asarray([], dtype=float))
-        params = dict(fixed)
+        params = problem.resolve_parameters(dict(fixed))
         evaluation = _evaluate_problem(
             problem,
             params,
@@ -830,8 +899,26 @@ def fit_problem_least_squares(
             dataset_model_values=evaluation.dataset_model_values,
         )
 
-    result = _run_least_squares(residual_fn, x0=x0, bounds=bounds, kwargs=opt.kwargs)
-    params = unpack_parameters(result.x, names, fixed)
+    x_start = x0
+    init_config = opt.kwargs.get("initialization") if isinstance(opt.kwargs, dict) else None
+    if isinstance(init_config, dict) and init_config.get("method") == "differential_evolution":
+        x_start = initialize_problem_differential_evolution(
+            problem,
+            config=init_config,
+            require_positive_sigma=opt.require_positive_sigma,
+            progress_callback=progress_callback,
+        )
+
+    result = _run_least_squares(
+        residual_fn,
+        x0=x_start,
+        bounds=bounds,
+        kwargs=_least_squares_kwargs(opt.kwargs),
+        progress_callback=progress_callback,
+        names=names,
+        fixed=fixed,
+    )
+    params = problem.resolve_parameters(unpack_parameters(result.x, names, fixed))
     evaluation = _evaluate_problem(
         problem,
         params,
@@ -872,20 +959,221 @@ def fit_problem_least_squares(
     )
 
 
+def evaluate_problem_model(
+    problem: FitProblem,
+    dataset_name: str,
+    params: dict[str, float],
+    data: PointData4D | None = None,
+) -> FloatArray:
+    """Evaluate one dataset's model at arbitrary coordinates.
+
+    Derived parameters and the dataset's parameter bindings are resolved
+    exactly as during optimization. ``data`` defaults to the dataset's own
+    prepared points; pass a different :class:`PointData4D` to evaluate the
+    fitted model over a full unmasked grid for visualization.
+    """
+
+    for dataset in problem.datasets:
+        if dataset.name == dataset_name:
+            break
+    else:
+        raise KeyError(f"unknown dataset {dataset_name!r}")
+    target = dataset.prepared() if data is None else data
+    resolved = problem.resolve_parameters(params)
+    dataset_params = _apply_parameter_bindings(resolved, dataset.parameter_bindings)
+    model = dataset.model if dataset.model is not None else problem.model
+    if isinstance(model, ModelSpec):
+        return model(target, dataset_params)
+    if model is None:
+        raise ValueError(f"dataset {dataset_name!r} has no model")
+    return np.asarray(model(target, dataset_params), dtype=float)
+
+
 def sample_problem_parameters(
     problem: FitProblem,
     config: SamplerConfig | None = None,
+    *,
+    initial_params: dict[str, float] | None = None,
+    require_positive_sigma: bool = True,
+    progress_callback: ProgressCallback | None = None,
 ) -> SamplingResult:
-    """Placeholder entry point for uncertainty sampling.
+    """Sample fitted parameters with the configured posterior sampler.
 
-    The problem/config containers are stable enough for example scripts to show
-    where MCMC or another posterior sampler will plug in. A concrete sampler is
-    intentionally deferred until the project chooses a backend and likelihood
-    conventions.
+    The default ``method="emcee"`` backend is optional. Install the package
+    extra that provides ``emcee`` before using this function. The likelihood is
+    the Gaussian chi-squared implied by the current weighted residual vector,
+    with uniform priors from finite parameter bounds.
     """
 
-    del problem, config
-    raise NotImplementedError("parameter sampling backends are not implemented yet")
+    sampler = SamplerConfig() if config is None else config
+    if sampler.method != "emcee":
+        raise ValueError("only method='emcee' is implemented")
+    x0, bounds, names, fixed = pack_parameters(problem.parameter_specs)
+    if len(names) == 0:
+        raise ValueError("emcee sampling requires at least one variable parameter")
+    try:
+        import emcee  # type: ignore[import-not-found]
+    except Exception as exc:  # pragma: no cover - depends on optional package.
+        raise ImportError(
+            "emcee posterior sampling requires the 'emcee' package. "
+            "Install or update the metallix environment before sampling."
+        ) from exc
+
+    lower, upper = bounds
+    if initial_params is not None:
+        for index, name in enumerate(names):
+            if name in initial_params:
+                x0[index] = float(initial_params[name])
+    x0 = _nudge_inside_bounds(np.clip(x0, lower, upper), bounds)
+
+    n_dim = len(names)
+    n_walkers = int(sampler.n_walkers or max(32, 2 * n_dim + 2))
+    if n_walkers < 2 * n_dim:
+        raise ValueError("emcee requires at least 2 * n_parameters walkers")
+    n_steps = int(sampler.n_steps or 1000)
+    if n_steps <= 0:
+        raise ValueError("emcee n_steps must be positive")
+    burn_in = int(max(0, sampler.burn_in))
+    thin = int(max(1, sampler.thin))
+    rng = np.random.default_rng(sampler.random_seed)
+    p0 = _initial_walker_positions(x0, bounds, n_walkers, rng)
+
+    def log_probability(x: FloatArray) -> float:
+        if np.any(x < lower) or np.any(x > upper):
+            return -np.inf
+        params = unpack_parameters(x, names, fixed)
+        try:
+            evaluation = _evaluate_problem(
+                problem,
+                params,
+                require_positive_sigma=require_positive_sigma,
+            )
+        except Exception:
+            return -np.inf
+        chi2 = float(np.dot(evaluation.residuals, evaluation.residuals))
+        return -0.5 * chi2
+
+    backend_kwargs = dict(sampler.kwargs)
+    emcee_sampler = emcee.EnsembleSampler(n_walkers, n_dim, log_probability, **backend_kwargs)
+    for iteration, state in enumerate(emcee_sampler.sample(p0, iterations=n_steps), start=1):
+        if progress_callback is not None:
+            mean = np.mean(state.coords, axis=0)
+            progress_callback(
+                {
+                    "stage": "emcee",
+                    "iteration": iteration,
+                    "total": n_steps,
+                    "parameters": {name: float(value) for name, value in zip(names, mean)},
+                    "message": f"emcee step {iteration}/{n_steps}",
+                }
+            )
+    samples = np.asarray(emcee_sampler.get_chain(discard=burn_in, thin=thin, flat=True), dtype=float)
+    log_prob = np.asarray(
+        emcee_sampler.get_log_prob(discard=burn_in, thin=thin, flat=True),
+        dtype=float,
+    )
+    metadata: dict[str, Any] = {
+        "method": "emcee",
+        "n_walkers": n_walkers,
+        "n_steps": n_steps,
+        "burn_in": burn_in,
+        "thin": thin,
+        "acceptance_fraction_mean": float(np.mean(emcee_sampler.acceptance_fraction)),
+        "acceptance_fraction_min": float(np.min(emcee_sampler.acceptance_fraction)),
+        "acceptance_fraction_max": float(np.max(emcee_sampler.acceptance_fraction)),
+    }
+    try:
+        metadata["autocorrelation_time"] = [
+            float(value) for value in emcee_sampler.get_autocorr_time(quiet=True)
+        ]
+    except Exception:
+        metadata["autocorrelation_time"] = []
+    return SamplingResult(
+        samples=samples,
+        variable_names=list(names),
+        log_probability=log_prob,
+        metadata=metadata,
+    )
+
+
+def initialize_problem_differential_evolution(
+    problem: FitProblem,
+    *,
+    config: dict[str, Any] | None = None,
+    require_positive_sigma: bool = True,
+    progress_callback: ProgressCallback | None = None,
+) -> FloatArray:
+    """Return a least-squares start vector found by differential evolution."""
+
+    if _scipy_differential_evolution is None:
+        raise RuntimeError("differential evolution initialization requires SciPy")
+    x0, bounds, names, fixed = pack_parameters(problem.parameter_specs)
+    if len(names) == 0:
+        return x0
+    lower, upper = bounds
+    if np.any(~np.isfinite(lower)) or np.any(~np.isfinite(upper)):
+        unbounded = [
+            name
+            for name, lo, hi in zip(names, lower, upper)
+            if not np.isfinite(lo) or not np.isfinite(hi)
+        ]
+        raise ValueError(
+            "differential evolution requires finite bounds for all variable parameters: "
+            + ", ".join(unbounded)
+        )
+
+    options = {} if config is None else dict(config)
+    options.pop("method", None)
+    seed = options.pop("random_seed", options.pop("seed", None))
+    options.setdefault("polish", False)
+    options.setdefault("updating", "immediate")
+    bounds_list = [(float(lo), float(hi)) for lo, hi in zip(lower, upper)]
+    iteration = 0
+
+    def objective(x: FloatArray) -> float:
+        params = unpack_parameters(x, names, fixed)
+        evaluation = _evaluate_problem(
+            problem,
+            params,
+            require_positive_sigma=require_positive_sigma,
+        )
+        return float(np.dot(evaluation.residuals, evaluation.residuals))
+
+    def callback(xk: FloatArray, convergence: float | None = None) -> bool:
+        nonlocal iteration
+        iteration += 1
+        if progress_callback is not None:
+            params = unpack_parameters(xk, names, fixed)
+            progress_callback(
+                {
+                    "stage": "initialization",
+                    "iteration": iteration,
+                    "parameters": {name: float(params[name]) for name in names},
+                    "cost": objective(np.asarray(xk, dtype=float)),
+                    "convergence": None if convergence is None else float(convergence),
+                    "message": f"differential evolution generation {iteration}",
+                }
+            )
+        return False
+
+    result = _scipy_differential_evolution(
+        objective,
+        bounds_list,
+        seed=seed,
+        callback=callback,
+        **options,
+    )
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "stage": "initialization",
+                "iteration": iteration,
+                "parameters": {name: float(value) for name, value in zip(names, result.x)},
+                "cost": float(result.fun),
+                "message": "differential evolution initialization finished",
+            }
+        )
+    return np.asarray(result.x, dtype=float)
 
 
 @dataclass
@@ -915,6 +1203,7 @@ def _evaluate_problem(
     dataset_residuals: dict[str, FloatArray] = {}
     dataset_model_values: dict[str, FloatArray] = {}
 
+    params = problem.resolve_parameters(params)
     for dataset in problem.datasets:
         prepared = dataset.prepared().valid(require_positive_sigma=require_positive_sigma)
         if prepared.size == 0:
@@ -960,15 +1249,20 @@ def _evaluate_dataset_model(
     params: dict[str, float],
 ) -> FloatArray:
     resolution = dataset.resolution
+    model = dataset.model if dataset.model is not None else problem.model
 
     def predict(data: PointData4D, trial_params: dict[str, float]) -> FloatArray:
+        if isinstance(model, ModelSpec):
+            return model(data, trial_params)
+        if model is not None and model is not problem.model:
+            return np.asarray(model(data, trial_params), dtype=float)
         return problem.predict(data, trial_params)
 
     if hasattr(resolution, "evaluate_model"):
         values = resolution.evaluate_model(prepared, predict, params)  # type: ignore[union-attr]
         return np.asarray(values, dtype=float)
 
-    raw_model = np.asarray(problem.predict(prepared, params), dtype=float)
+    raw_model = np.asarray(predict(prepared, params), dtype=float)
     if raw_model.shape != prepared.intensity.shape:
         raise ValueError(
             f"model returned shape {raw_model.shape} for dataset {dataset.name!r}; "
@@ -1127,6 +1421,32 @@ def _covariance_from_jacobian(jacobian: FloatArray, *, chi2: float, dof: int) ->
     return cov * (chi2 / dof)
 
 
+def _least_squares_kwargs(kwargs: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(kwargs, dict):
+        return {}
+    ignored = {"initialization", "sampler"}
+    return {name: value for name, value in kwargs.items() if name not in ignored}
+
+
+def _initial_walker_positions(
+    center: FloatArray,
+    bounds: tuple[FloatArray, FloatArray],
+    n_walkers: int,
+    rng: np.random.Generator,
+) -> FloatArray:
+    lower, upper = bounds
+    walkers = np.empty((n_walkers, center.size), dtype=float)
+    for index, value in enumerate(center):
+        lo = lower[index]
+        hi = upper[index]
+        if np.isfinite(lo) and np.isfinite(hi):
+            scale = max((hi - lo) * 1.0e-4, 1.0e-8)
+        else:
+            scale = max(abs(value) * 1.0e-4, 1.0e-8)
+        walkers[:, index] = value + rng.normal(0.0, scale, size=n_walkers)
+    return _nudge_inside_bounds(np.clip(walkers, lower, upper), bounds)
+
+
 @dataclass
 class _LeastSquaresResult:
     x: FloatArray
@@ -1142,11 +1462,36 @@ def _run_least_squares(
     x0: FloatArray,
     bounds: tuple[FloatArray, FloatArray],
     kwargs: dict[str, Any] | None = None,
+    progress_callback: ProgressCallback | None = None,
+    names: Sequence[str] = (),
+    fixed: dict[str, float] | None = None,
 ) -> _LeastSquaresResult:
     optimizer_kwargs = {} if kwargs is None else dict(kwargs)
+    x0 = _nudge_inside_bounds(x0, bounds)
+    wrapped_residual_fn = residual_fn
+    if progress_callback is not None:
+        evaluation = 0
+
+        def wrapped_residual_fn(x: FloatArray) -> FloatArray:
+            nonlocal evaluation
+            evaluation += 1
+            residual = residual_fn(x)
+            if evaluation == 1 or evaluation % 10 == 0:
+                params = unpack_parameters(x, names, {} if fixed is None else fixed)
+                progress_callback(
+                    {
+                        "stage": "least_squares",
+                        "iteration": evaluation,
+                        "parameters": {name: float(params[name]) for name in names},
+                        "cost": 0.5 * float(np.dot(residual, residual)),
+                        "message": f"least-squares residual evaluation {evaluation}",
+                    }
+                )
+            return residual
+
     if _scipy_least_squares is not None:
         scipy_result = _scipy_least_squares(
-            residual_fn,
+            wrapped_residual_fn,
             x0=x0,
             bounds=bounds,
             **optimizer_kwargs,
@@ -1163,7 +1508,34 @@ def _run_least_squares(
     if unsupported:
         names = ", ".join(sorted(unsupported))
         raise ValueError(f"NumPy least-squares fallback does not support optimizer kwargs: {names}")
-    return _numpy_least_squares(residual_fn, x0=x0, bounds=bounds, **optimizer_kwargs)
+    return _numpy_least_squares(wrapped_residual_fn, x0=x0, bounds=bounds, **optimizer_kwargs)
+
+
+def _nudge_inside_bounds(
+    x0: FloatArray,
+    bounds: tuple[FloatArray, FloatArray],
+) -> FloatArray:
+    """Move initial values strictly inside finite bounds.
+
+    Recent SciPy releases can satisfy ``ftol`` immediately when a start value
+    sits exactly on a bound, returning without optimizing. A nudge of the
+    finite-difference step scale keeps the optimizer productive without
+    meaningfully changing the start point.
+    """
+
+    lower, upper = bounds
+    if x0.size == 0:
+        return x0
+    out = np.asarray(x0, dtype=float).copy()
+    step = np.maximum(1.0e-8, 1.0e-8 * np.abs(out))
+    span = upper - lower
+    finite_span = np.isfinite(span)
+    step = np.where(finite_span, np.minimum(step, 0.25 * span), step)
+    at_lower = np.isfinite(lower) & (out <= lower + step)
+    at_upper = np.isfinite(upper) & (out >= upper - step)
+    out = np.where(at_lower, lower + step, out)
+    out = np.where(at_upper & ~at_lower, upper - step, out)
+    return out
 
 
 def _numpy_least_squares(

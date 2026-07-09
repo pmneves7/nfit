@@ -22,3 +22,14 @@ Qt/PySide and NumPy-version behavior.
 
 If the environment is missing, tell the user rather than silently switching to a
 different Python.
+
+Documentation and wiki maintenance:
+
+- When changing user-facing behavior, update the relevant source documentation in
+  `docs/` during the same change.
+- Treat `docs/gui_workflows.md` as the in-repository wiki for the current GUI
+  and data-viewer workflow. Update it whenever GUI controls, fit-history
+  behavior, data-viewer behavior, or project-file workflow changes.
+- Keep documentation, tests, and tooltips consistent. New user-interactable GUI
+  controls should include useful hover text and test coverage that prevents
+  missing tooltip regressions.

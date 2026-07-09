@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 from numpy.typing import ArrayLike
 
@@ -752,6 +754,16 @@ class MDHistoSliceViewer:
             self.y_dim = self._resolve_dim(y_dim)
             if self.x_dim == self.y_dim:
                 raise ValueError("x_dim and y_dim must be different")
+            extra_channels = self._metadata_channel_names()
+            if extra_channels:
+                # Instance attributes shadow the class tuples so fit channels
+                # only appear for data that actually carries them.
+                self.CHANNELS = (*self.CHANNELS, *extra_channels)
+                self.CHANNEL_LABELS = {
+                    **self.CHANNEL_LABELS,
+                    "fit": "Fit",
+                    "residual": "Residual (sigma)",
+                }
             self.channel = self._resolve_channel(channel)
         self.cmap = str(cmap)
         self.cmap_reversed = False
@@ -897,7 +909,7 @@ class MDHistoSliceViewer:
             signal2d = np.where(mask2d, np.nan, signal2d)
             variance2d = np.where(mask2d, np.nan, variance2d)
 
-        return {
+        view = {
             "x_edges": self._axis_edges(self.x_dim),
             "y_edges": self._axis_edges(self.y_dim),
             "x_centers": self.data.axes[self.x_dim].centers,
@@ -909,6 +921,12 @@ class MDHistoSliceViewer:
             "file_mask": self._slice_metadata_mask("file_mask", selections),
             "metallix_mask": self._slice_metadata_mask("metallix_mask", selections),
         }
+        for name in self._metadata_channel_names():
+            values2d = self._slice_metadata_channel(name, selections)
+            if self.masked:
+                values2d = np.where(mask2d, np.nan, values2d)
+            view[name] = values2d
+        return view
 
     def update(self) -> None:
         """Redraw the image using the current selections and color settings."""
@@ -971,6 +989,49 @@ class MDHistoSliceViewer:
             signal, variance, mask = self._blank_empty_bins(signal, variance, events, mask)
         signal, variance, mask = self._blank_empty_bins(signal, variance, events, mask)
         return signal, variance, events, mask
+
+    def _metadata_channel_names(self) -> tuple[str, ...]:
+        """Return grid-shaped float channels stored in metadata (fit results)."""
+
+        if getattr(self, "is_point_list", False):
+            return ()
+        names = []
+        for name in ("fit", "residual"):
+            value = self.data.metadata.get(name)
+            if isinstance(value, np.ndarray) and value.shape == self.data.shape:
+                names.append(name)
+        return tuple(names)
+
+    def _slice_metadata_channel(
+        self, name: str, selections: dict[int, tuple[int, int] | int]
+    ) -> np.ndarray:
+        """Slice a grid-shaped metadata channel like the signal channel.
+
+        Integrated axes are reduced with ``nansum`` to match how the signal
+        channel accumulates over an integration range.
+        """
+
+        values = np.asarray(self.data.metadata[name], dtype=float)
+        index: list[Any] = []
+        reduce_axes = []
+        for dim in range(self.data.signal.ndim):
+            if dim in (self.x_dim, self.y_dim):
+                index.append(slice(None))
+            else:
+                selection = selections[dim]
+                if isinstance(selection, tuple):
+                    start, stop = selection
+                    index.append(slice(start, stop + 1))
+                    reduce_axes.append(len(index) - 1)
+                else:
+                    index.append(selection)
+        out = values[tuple(index)]
+        for axis in sorted(reduce_axes, reverse=True):
+            out = np.nansum(out, axis=axis)
+        remaining = [dim for dim in range(self.data.signal.ndim) if dim in (self.x_dim, self.y_dim)]
+        y_pos = remaining.index(self.y_dim)
+        x_pos = remaining.index(self.x_dim)
+        return np.moveaxis(out, (y_pos, x_pos), (0, 1))
 
     def _slice_metadata_mask(self, name: str, selections: dict[int, tuple[int, int] | int]) -> np.ndarray:
         mask = np.asarray(self.data.metadata.get(name, np.zeros(self.data.shape, dtype=bool)), dtype=bool)
@@ -1097,7 +1158,7 @@ class MDHistoSliceViewer:
         x = x[order]
         y = y[order]
         e = np.full(x.shape, np.nan) if errors is None else np.asarray(errors, dtype=float)[order]
-        return {
+        view = {
             "x_edges": _edges_from_centers(x),
             "y_edges": np.array([0.0, 1.0], dtype=float),
             "x_centers": x,
@@ -1109,6 +1170,10 @@ class MDHistoSliceViewer:
             "file_mask": np.zeros_like(x, dtype=bool),
             "metallix_mask": np.zeros_like(x, dtype=bool),
         }
+        for name in ("fit", "residual"):
+            if name in self.data.channel_labels:
+                view[name] = np.asarray(self.data.channel_values(name), dtype=float)[order]
+        return view
 
     def _resolve_dim(self, dim: int | str) -> int:
         if isinstance(dim, int):

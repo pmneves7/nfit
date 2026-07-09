@@ -400,6 +400,71 @@ def test_project_explorer_refreshes_details_after_slice_viewer_lazy_load(monkeyp
     assert "Axes\nDimensions: 2" in explorer.details_label.text()
 
 
+def test_project_explorer_interactive_controls_have_tooltips(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    def missing_tooltips(root):
+        interactive_classes = (
+            QtWidgets.QAbstractButton,
+            QtWidgets.QComboBox,
+            QtWidgets.QLineEdit,
+            QtWidgets.QAbstractSpinBox,
+            QtWidgets.QSlider,
+            QtWidgets.QTreeWidget,
+        )
+        ignored_object_names = {"qt_spinbox_lineedit", "qt_toolbar_ext_button"}
+        missing = []
+        for widget in root.findChildren(QtWidgets.QWidget):
+            if not isinstance(widget, interactive_classes):
+                continue
+            if widget.objectName() in ignored_object_names:
+                continue
+            if not widget.toolTip().strip():
+                label = widget.text() if hasattr(widget, "text") else widget.objectName()
+                missing.append(f"{type(widget).__name__}:{label}")
+        return missing
+
+    dataset = DatasetEntry("first", _tiny_mdhisto_data(1.0))
+    group = DataGroup("Workspace1", datasets=[dataset])
+    create_mask(dataset)
+    create_model_component(group)
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    tree_items = [
+        explorer.tree.topLevelItem(0),
+        explorer.tree.topLevelItem(0).child(0).child(0),
+        explorer.tree.topLevelItem(0).child(0).child(0).child(0).child(0),
+        explorer.tree.topLevelItem(0).child(1).child(0),
+        explorer.tree.topLevelItem(0).child(2).child(0),
+    ]
+    for item in tree_items:
+        explorer.tree.setCurrentItem(item)
+
+    assert missing_tooltips(explorer.window) == []
+    assert all(
+        action.toolTip()
+        for action in explorer.file_menu.actions()
+        if not action.isSeparator()
+    )
+
+    point_data = PointListData(
+        columns={
+            "Temperature": np.array([1.0, 2.0]),
+            "Moment": np.array([3.0, 4.0]),
+            "Moment error": np.array([0.1, 0.2]),
+            "Field": np.array([5.0, 6.0]),
+        },
+        units={"Temperature": "K", "Field": "T"},
+        coordinate_names=["Temperature"],
+        channels=[{"label": "Moment", "value": "Moment", "error": "Moment error"}],
+    )
+    point_dataset = DatasetEntry("magnetization", point_data, data_type="magnetization")
+    point_explorer = MetallixProjectExplorer(MetallixProject([DataGroup("Workspace1", datasets=[point_dataset])]))
+    point_explorer.tree.setCurrentItem(point_explorer.tree.topLevelItem(0).child(0).child(0))
+
+    assert missing_tooltips(point_explorer.window) == []
+
+
 def test_project_explorer_adds_edits_and_copies_masks(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
@@ -669,14 +734,59 @@ def test_project_explorer_adds_and_edits_models(monkeypatch):
     assert config_checks == []
     assert "Configuration settings are fixed model options" in config_tooltip
 
+    plot_label_editor = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit,
+        "model_parameter_plot_label_amplitude",
+    )
+    assert plot_label_editor is not None
+    assert plot_label_editor.toolTip()
+    plot_label_editor.setText(r"$A$")
+    explorer._set_model_parameter_plot_label("amplitude", plot_label_editor.text())
+    assert model.metadata["parameter_labels"]["amplitude"] == r"$A$"
+
     models_item = explorer.tree.topLevelItem(0).child(1)
     explorer.tree.setCurrentItem(models_item)
     assert not explorer.add_model_button.isHidden()
 
 
-def test_project_explorer_fit_history_creates_results_branches_and_restores(monkeypatch):
+def test_project_explorer_model_limits_and_applies_to_controls(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")
+    from PySide6 import QtWidgets
+
+    group = DataGroup("Datagroup1", datasets=[DatasetEntry("first", _tiny_mdhisto_data(1.0))])
+    model = create_model_component(group)
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    model_item = explorer.tree.topLevelItem(0).child(1).child(0)
+    explorer.tree.setCurrentItem(model_item)
+
+    fit_group = explorer.model_parameter_widget.findChild(
+        QtWidgets.QGroupBox, "model_fit_parameters_group"
+    )
+    assert fit_group.findChild(QtWidgets.QLineEdit, "model_parameter_min_constant") is not None
+    assert fit_group.findChild(QtWidgets.QLineEdit, "model_parameter_max_constant") is not None
+    explorer._set_model_limit("constant", 0, "0.0")
+    explorer._set_model_limit("constant", 1, "5")
+    assert model.limits["constant"] == [0.0, 5]
+    explorer._set_model_limit("constant", 0, "")
+    assert model.limits["constant"] == [None, 5]
+    explorer._set_model_limit("constant", 1, "")
+    assert "constant" not in model.limits
+
+    scope_group = explorer.model_parameter_widget.findChild(
+        QtWidgets.QGroupBox, "model_dataset_scope_group"
+    )
+    assert scope_group is not None
+    assert scope_group.findChild(QtWidgets.QLineEdit, "model_applies_to_editor") is not None
+    explorer._set_model_applies_to("first, second")
+    assert model.applies_to == ["first", "second"]
+    explorer._set_model_applies_to("")
+    assert model.applies_to is None
+
+
+def test_project_explorer_fit_history_creates_results_branches_and_restores(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
     dataset = DatasetEntry("first", _tiny_mdhisto_data(1.0))
     mask = create_mask(dataset)
@@ -698,7 +808,50 @@ def test_project_explorer_fit_history_creates_results_branches_and_restores(monk
     assert result is not None
     assert result.name == "Fit Result1"
     assert [fit.name for fit in group.fits] == ["Initial", "Fit Result1", "Current state"]
-    assert group.fits[1].goodness["status"] == "not run"
+    assert group.fits[1].goodness["status"] in {"converged", "not converged"}
+    assert "first" in group.fits[1].channels
+
+    result.goodness["diagnostics"] = {"gradient_norm": 0.01, "history": list(range(12))}
+    result.metadata["fit_pipeline"] = {"version": "test", "notes": ["prepared", "solved"]}
+    explorer._set_fit_details(result)
+
+    def current_detail_boxes():
+        boxes = []
+        for index in range(explorer.details_layout.count()):
+            widget = explorer.details_layout.itemAt(index).widget()
+            if isinstance(widget, QtWidgets.QGroupBox):
+                boxes.append(widget)
+        return boxes
+
+    panel_titles = [box.title() for box in current_detail_boxes()]
+    assert "Fit results" in panel_titles
+    assert "Goodness of fit" in panel_titles
+    assert "Stored fit channels" in panel_titles
+    assert "Metadata" in panel_titles
+
+    boxes_by_title = {box.title(): box for box in current_detail_boxes()}
+    results_table = boxes_by_title["Fit results"].findChild(QtWidgets.QTableWidget, "fit_results_table")
+    goodness_tree = boxes_by_title["Goodness of fit"].findChild(QtWidgets.QTreeWidget, "fit_goodness_tree")
+    channels_tree = boxes_by_title["Stored fit channels"].findChild(QtWidgets.QTreeWidget, "fit_channels_tree")
+    metadata_tree = boxes_by_title["Metadata"].findChild(QtWidgets.QTreeWidget, "fit_metadata_tree")
+    assert results_table is not None
+    assert goodness_tree is not None
+    assert channels_tree is not None
+    assert metadata_tree is not None
+    assert results_table.columnCount() == 6
+    assert results_table.rowCount() >= 1
+    assert goodness_tree.maximumHeight() == 260
+    goodness_items = {
+        goodness_tree.topLevelItem(index).text(0): goodness_tree.topLevelItem(index)
+        for index in range(goodness_tree.topLevelItemCount())
+    }
+    assert goodness_items["diagnostics"].text(1) == "2 field(s)"
+    metadata_items = {
+        metadata_tree.topLevelItem(index).text(0): metadata_tree.topLevelItem(index)
+        for index in range(metadata_tree.topLevelItemCount())
+    }
+    assert metadata_items["fit_pipeline"].text(1) == "2 field(s)"
+    assert channels_tree.topLevelItemCount() >= 1
 
     dataset.masks[0].parameters["H"] = [0.0, 0.0]
     model.parameters["constant"] = 9.0
@@ -710,12 +863,24 @@ def test_project_explorer_fit_history_creates_results_branches_and_restores(monk
 
     model_item = explorer.tree.topLevelItem(0).child(1).child(0)
     explorer.tree.setCurrentItem(model_item)
+    restored_result_item = explorer.tree.topLevelItem(0).child(2).child(1)
+    assert explorer.tree.currentItem() is model_item
+    assert restored_result_item.font(0).italic()
+    assert restored_result_item.font(0).bold()
+    assert "Active fit state" in restored_result_item.toolTip(0)
+
     explorer._set_model_parameter("constant", "1.25")
 
     edit_branch = group.fits[1].children[0]
     assert edit_branch.kind == "timeline"
     assert edit_branch.children[-1].kind == "current"
     assert edit_branch.children[-1].snapshot["models"][0]["parameters"]["constant"] == 1.25
+    edit_branch_item = explorer.tree.topLevelItem(0).child(2).child(1).child(0)
+    edit_current_item = edit_branch_item.child(edit_branch_item.childCount() - 1)
+    assert explorer._fit_entry_for_item(edit_current_item) is edit_branch.children[-1]
+    assert explorer.tree.currentItem().text(0) == "Model1"
+    assert edit_current_item.font(0).italic()
+    assert edit_current_item.font(0).bold()
 
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(2).child(1))
     explorer.fit_branch_check.setChecked(True)
@@ -727,8 +892,308 @@ def test_project_explorer_fit_history_creates_results_branches_and_restores(monk
     assert explicit_branch.children[0] is branched
     assert explicit_branch.children[-1].name == "Current state"
     assert explorer.tree.currentItem().text(0) == "Current state"
+    assert explorer.tree.currentItem().font(0).italic()
+    assert explorer.tree.currentItem().font(0).bold()
     assert not explorer.fit_now_button.isHidden()
     assert explorer.import_dataset_button.isHidden()
+
+
+def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Datagroup1", datasets=[DatasetEntry("first", _tiny_mdhisto_data(1.0))])
+    create_model_component(group)
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+
+    fit_item = explorer.tree.topLevelItem(0).child(2).child(0)
+    explorer.tree.setCurrentItem(fit_item)
+
+    controls = [
+        explorer.fit_loss_combo,
+        explorer.fit_f_scale_spin,
+        explorer.fit_de_check,
+        explorer.fit_de_maxiter_spin,
+        explorer.fit_de_popsize_spin,
+        explorer.fit_emcee_check,
+        explorer.fit_emcee_walkers_spin,
+        explorer.fit_emcee_steps_spin,
+        explorer.fit_emcee_burn_spin,
+        explorer.fit_emcee_thin_spin,
+        explorer.fit_optimizer_config_editor,
+        explorer.fit_branch_check,
+        explorer.fit_now_button,
+        explorer.fit_corner_button,
+    ]
+    assert all(control.toolTip() for control in controls)
+
+    explorer.fit_loss_combo.setCurrentText("soft_l1")
+    explorer.fit_f_scale_spin.setValue(2.0)
+    explorer.fit_de_check.setChecked(True)
+    explorer.fit_de_maxiter_spin.setValue(11)
+    explorer.fit_de_popsize_spin.setValue(4)
+    explorer.fit_emcee_check.setChecked(True)
+    explorer.fit_emcee_walkers_spin.setValue(16)
+    explorer.fit_emcee_steps_spin.setValue(25)
+    explorer.fit_emcee_burn_spin.setValue(5)
+    explorer.fit_emcee_thin_spin.setValue(2)
+
+    fit_entry = group.fits[0]
+    assert fit_entry.optimizer_config["loss"] == "soft_l1"
+    assert fit_entry.optimizer_config["f_scale"] == 2.0
+    assert fit_entry.optimizer_config["initialization"] == {
+        "enabled": True,
+        "method": "differential_evolution",
+        "maxiter": 11,
+        "popsize": 4,
+    }
+    assert fit_entry.optimizer_config["sampler"] == {
+        "enabled": True,
+        "method": "emcee",
+        "n_walkers": 16,
+        "n_steps": 25,
+        "burn_in": 5,
+        "thin": 2,
+    }
+
+
+def test_posterior_corner_density_panel_draws_contours():
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    from matplotlib.figure import Figure
+    from metallix.project_gui import _draw_corner_density_panel
+
+    rng = np.random.default_rng(12)
+    x = rng.normal(0.0, 1.0, 1500)
+    y = 0.7 * x + rng.normal(0.0, 0.35, 1500)
+    fig = Figure()
+    ax = fig.subplots()
+
+    _draw_corner_density_panel(ax, x, y)
+
+    assert ax.images
+    assert ax.collections
+
+
+def test_fit_diagnostics_detects_covariance_without_posterior_samples():
+    from metallix.project_gui import _covariance_matrix_from_fit_entry, _fit_entry_has_diagnostic_plots
+
+    entry = FitTimelineEntry(
+        "Fit Result1",
+        goodness={
+            "covariance": {
+                "variables": ["a", "b"],
+                "matrix": [[4.0, -1.0], [-1.0, 9.0]],
+            }
+        },
+    )
+
+    matrix, names, title = _covariance_matrix_from_fit_entry(entry)
+    np.testing.assert_allclose(matrix, [[4.0, -1.0], [-1.0, 9.0]])
+    assert names == ["a", "b"]
+    assert title == "Covariance"
+    assert _fit_entry_has_diagnostic_plots(entry)
+
+
+def test_fit_diagnostics_matrix_heatmap_draws_image():
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    from matplotlib.figure import Figure
+    from metallix.project_gui import _draw_matrix_heatmap
+
+    fig = Figure()
+    ax = fig.subplots()
+
+    _draw_matrix_heatmap(
+        ax,
+        [[1.0, 0.5], [0.5, 2.0]],
+        ["a", "b"],
+        labels={"a": "$A$", "b": "p2"},
+        title="Covariance",
+    )
+
+    assert ax.images
+    assert ax.get_title() == "Covariance"
+    assert [label.get_text() for label in ax.get_xticklabels()] == ["$A$", "p2"]
+
+
+def test_corner_histogram_panel_draws_step_histogram_and_reference_lines():
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    from matplotlib.figure import Figure
+    from metallix.project_gui import _draw_corner_histogram_panel
+
+    fig = Figure()
+    ax = fig.subplots()
+
+    _draw_corner_histogram_panel(
+        ax,
+        np.linspace(0.0, 1.0, 200),
+        "amplitude",
+        {"best": 0.5, "low": 0.4, "high": 0.7},
+    )
+    ax.set_ylabel("Count")
+
+    assert ax.patches
+    assert not ax.patches[0].get_fill()
+    assert len(ax.lines) >= 3
+    assert r"\pm" in ax.get_title()
+    assert ax.get_ylabel() == "Count"
+
+
+def test_corner_reference_lines_are_solid_only():
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    from matplotlib.figure import Figure
+    from metallix.project_gui import _draw_corner_reference_lines
+
+    fig = Figure()
+    ax = fig.subplots()
+
+    _draw_corner_reference_lines(
+        ax,
+        {"best": 1.0, "low": 0.5, "high": 1.5},
+        {"best": 2.0, "low": 1.5, "high": 2.5},
+    )
+
+    assert ax.lines
+    assert all(line.get_linestyle() != ":" for line in ax.lines)
+
+
+def test_fit_diagnostics_label_table_updates_plot_labels(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    from metallix.project_gui import _FitDiagnosticsPlotWindow
+
+    entry = FitTimelineEntry(
+        "Fit Result1",
+        goodness={
+            "parameters": {"a": 1.0, "b": 2.0},
+            "covariance": {
+                "variables": ["a", "b"],
+                "matrix": [[1.0, 0.1], [0.1, 2.0]],
+            },
+        },
+        metadata={
+            "posterior_samples": {
+                "variable_names": ["a", "b"],
+                "samples": project_gui._encode_float_array(
+                    np.column_stack(
+                        [
+                            np.linspace(0.8, 1.2, 64),
+                            np.linspace(1.8, 2.2, 64),
+                        ]
+                    )
+                ),
+            }
+        },
+    )
+    explorer = MetallixProjectExplorer(MetallixProject())
+
+    window = _FitDiagnosticsPlotWindow(entry, explorer)
+    table = window.window.findChild(QtWidgets.QTableWidget, "fit_diagnostics_label_table")
+
+    assert table is not None
+    assert table.item(0, 1).text() == "p1"
+    corner_index = [window.tabs.tabText(index) for index in range(window.tabs.count())].index("Corner")
+    window.tabs.setCurrentIndex(corner_index)
+    table.item(0, 1).setText(r"$\Gamma$")
+
+    assert entry.metadata["parameter_labels"]["a"] == r"$\Gamma$"
+    assert window.tabs.tabText(window.tabs.currentIndex()) == "Corner"
+
+
+def test_fit_progress_dialog_uses_parameter_table_and_resets(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    from metallix.project_gui import _FitProgressDialog
+
+    explorer = MetallixProjectExplorer(MetallixProject())
+    dialog = _FitProgressDialog(explorer)
+
+    dialog.update_progress(
+        {
+            "stage": "least_squares",
+            "iteration": 10,
+            "cost": 12.5,
+            "parameters": {
+                "model.constant[a]": 1.25,
+                "model.constant[b]": 2.5,
+            },
+        }
+    )
+
+    table = dialog.dialog.findChild(QtWidgets.QTableWidget, "fit_progress_parameter_table")
+    assert table is not None
+    assert table.rowCount() == 2
+    assert "model.constant" not in dialog.log.toPlainText()
+    assert "Least-squares fit" in dialog.stage_label.text()
+
+    dialog.reset()
+
+    assert table.rowCount() == 0
+    assert dialog.log.toPlainText() == ""
+
+
+def test_project_explorer_reuses_fit_progress_dialog(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Datagroup1", datasets=[DatasetEntry("first", _tiny_mdhisto_data(1.0))])
+    create_model_component(group)
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+
+    def fake_run_group_fit(group, parent, *, branch_timeline=False, progress_callback=None):
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "stage": "least_squares",
+                    "iteration": 1,
+                    "parameters": {"model.constant": 1.0},
+                }
+            )
+        return parent
+
+    monkeypatch.setattr(project_gui, "run_group_fit", fake_run_group_fit)
+    fit_item = explorer.tree.topLevelItem(0).child(2).child(0)
+    explorer.tree.setCurrentItem(fit_item)
+
+    explorer.fit_now_for_selection()
+    first_dialog = explorer._fit_progress_dialog
+    explorer.fit_now_for_selection()
+
+    assert first_dialog is not None
+    assert explorer._fit_progress_dialog is first_dialog
+
+
+def test_project_explorer_edits_initial_state_in_place_without_results(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Datagroup1", datasets=[DatasetEntry("first", _tiny_mdhisto_data(1.0))])
+    model = create_model_component(group)
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+
+    initial_item = explorer.tree.topLevelItem(0).child(2).child(0)
+    explorer.tree.setCurrentItem(initial_item)
+    assert [fit.name for fit in group.fits] == ["Initial"]
+
+    model_item = explorer.tree.topLevelItem(0).child(1).child(0)
+    explorer.tree.setCurrentItem(model_item)
+    explorer._set_model_fit_parameter("constant", True)
+    explorer._set_model_global_fit("constant", False)
+
+    assert model.fit_parameters["constant"] is True
+    assert model.global_fit["constant"] is False
+    assert [fit.name for fit in group.fits] == ["Initial"]
+    assert group.fits[0].children == []
+    snapshot_model = group.fits[0].snapshot["models"][0]
+    assert snapshot_model["fit_parameters"]["constant"] is True
+    assert snapshot_model["global_fit"]["constant"] is False
 
 
 def test_project_explorer_fit_now_from_earlier_result_creates_nested_timeline(monkeypatch):
@@ -947,6 +1412,34 @@ def test_project_explorer_prompts_for_unsaved_close_and_quit(monkeypatch):
     assert explorer.close_project() is True
     assert explorer.project.data_groups == []
     assert explorer.has_unsaved_changes is False
+
+
+def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtGui = pytest.importorskip("PySide6.QtGui")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    explorer = MetallixProjectExplorer(MetallixProject([DataGroup("Workspace1")]))
+
+    progress = project_gui._FitProgressDialog(explorer)
+    progress.show()
+    assert progress.dialog.isVisible()
+    assert progress.close_shortcut.key() in QtGui.QKeySequence.keyBindings(
+        QtGui.QKeySequence.StandardKey.Close
+    )
+    progress.close_shortcut.activated.emit()
+    QtWidgets.QApplication.processEvents()
+    assert not progress.dialog.isVisible()
+
+    diagnostics = project_gui._FitDiagnosticsPlotWindow(FitTimelineEntry("Fit Result1"), explorer)
+    diagnostics.show()
+    assert diagnostics.window.isVisible()
+    assert diagnostics.close_shortcut.key() in QtGui.QKeySequence.keyBindings(
+        QtGui.QKeySequence.StandardKey.Close
+    )
+    diagnostics.close_shortcut.activated.emit()
+    QtWidgets.QApplication.processEvents()
+    assert not diagnostics.window.isVisible()
 
 
 def test_unsaved_prompt_options(monkeypatch):
