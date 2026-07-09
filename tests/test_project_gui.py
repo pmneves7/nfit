@@ -1177,6 +1177,44 @@ def test_nested_dataset_groups_share_masks_and_round_trip(tmp_path):
     assert reloaded.subgroups[0].masks[0].name == "Mask1"
 
 
+def test_multi_select_move_and_import_into_subgroup(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    d1 = DatasetEntry("d1", _grid_mdhisto_data(), kind="mdhisto")
+    d2 = DatasetEntry("d2", _grid_mdhisto_data(), kind="mdhisto")
+    d3 = DatasetEntry("d3", _grid_mdhisto_data(), kind="mdhisto")
+    sub = DatasetGroup("Group1")
+    group = DataGroup("Datagroup1", datasets=[d1, d2, d3], subgroups=[sub])
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+
+    def dataset_item(name):
+        datasets_item = explorer.tree.topLevelItem(0).child(0)
+        return next(
+            datasets_item.child(i)
+            for i in range(datasets_item.childCount())
+            if datasets_item.child(i).text(0) == name
+        )
+
+    # Multi-select d1 + d3 and drop them into the subgroup.
+    explorer.tree.setCurrentItem(dataset_item("d1"))
+    dataset_item("d1").setSelected(True)
+    dataset_item("d3").setSelected(True)
+    assert explorer.move_or_copy_selected_to_item(dataset_item("Group1"), copy_item=False)
+    assert [d.name for d in group.datasets] == ["d2"]
+    assert [d.name for d in sub.datasets] == ["d1", "d3"]
+
+    # Import button is available on a subgroup, and imports land inside it.
+    subgroup_item = dataset_item("Group1")
+    explorer.tree.setCurrentItem(subgroup_item)
+    explorer._sync_details()
+    assert not explorer.import_dataset_button.isHidden()
+    resolved_group, into = explorer._selected_import_target()
+    assert resolved_group is group and into is sub
+    explorer.import_dataset_paths(group, ["/fake/new.nxs"], data_type="single_crystal_inelastic", into=sub)
+    assert [d.name for d in sub.datasets] == ["d1", "d3", "new"]
+
+
 def test_project_explorer_nested_group_bulk_edit_and_tree(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")

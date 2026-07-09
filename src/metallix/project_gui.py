@@ -356,11 +356,13 @@ def import_dataset_paths(
     *,
     data_type: str | None = None,
     importer_name: str | None = None,
+    into: DatasetGroup | None = None,
 ) -> list[DatasetEntry]:
     """Add dataset entries for one or more source files.
 
     Point-list types are loaded eagerly with their importer; MDHisto/``.nxs``
-    types stay as lazy placeholders loaded on first view.
+    types stay as lazy placeholders loaded on first view. ``into`` optionally
+    places the datasets inside a nested dataset group instead of the group root.
     """
 
     entries: list[DatasetEntry] = []
@@ -368,7 +370,7 @@ def import_dataset_paths(
         source = Path(path)
         entry = dataset_entry_from_path(source, data_type=data_type, importer_name=importer_name)
         entry.name = _unique_dataset_name(entry.name, group.dataset_names)
-        group.add_dataset(entry)
+        group.add_dataset(entry, into=into)
         entries.append(entry)
     return entries
 
@@ -2384,12 +2386,13 @@ class MetallixProjectExplorer:
         *,
         data_type: str | None = None,
         importer_name: str | None = None,
+        into: DatasetGroup | None = None,
     ) -> list[DatasetEntry]:
         from PySide6 import QtWidgets
 
         try:
             entries = import_dataset_paths(
-                group, paths, data_type=data_type, importer_name=importer_name
+                group, paths, data_type=data_type, importer_name=importer_name, into=into
             )
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
@@ -2407,9 +2410,20 @@ class MetallixProjectExplorer:
     def selected_data_group(self) -> DataGroup | None:
         item = self._current_item()
         group, _entry, _mask, _model, role = self._objects_for_item(item)
-        if role in {"group", "datasets", "models", "dataset", "fits", "fit", "fit_timeline"}:
+        if role in {"group", "datasets", "models", "dataset", "fits", "fit", "fit_timeline", "dataset_group"}:
             return group
         return None
+
+    def _selected_import_target(self) -> tuple[DataGroup | None, DatasetGroup | None]:
+        """Return the (data group, nested group) that an import should populate."""
+
+        item = self._current_item()
+        group, _entry, _mask, _model, role = self._objects_for_item(item)
+        if role == "dataset_group":
+            return group, self._dataset_group_for_item(item)
+        if role in {"group", "datasets", "models", "dataset", "fits", "fit", "fit_timeline"}:
+            return group, None
+        return None, None
 
     def delete_selected(self) -> None:
         item = self._current_item()
@@ -2565,7 +2579,7 @@ class MetallixProjectExplorer:
     def import_dataset_dialog(self) -> None:
         from PySide6 import QtWidgets
 
-        group = self.selected_data_group()
+        group, into = self._selected_import_target()
         if group is None:
             return
         paths, _selected_filter = QtWidgets.QFileDialog.getOpenFileNames(
@@ -2580,7 +2594,7 @@ class MetallixProjectExplorer:
         if choice is None:
             return
         data_type, importer_name = choice
-        self.import_dataset_paths(group, paths, data_type=data_type, importer_name=importer_name)
+        self.import_dataset_paths(group, paths, data_type=data_type, importer_name=importer_name, into=into)
 
     def _prompt_import_data_type(self) -> tuple[str, str | None] | None:
         from PySide6 import QtWidgets
@@ -2857,34 +2871,84 @@ class MetallixProjectExplorer:
             self._refresh_tree(select_group=group, select_dataset=entry)
         return True
 
+    def _resolve_dataset_drop_target(self, target_item: Any) -> tuple[DataGroup | None, Any]:
+        """Return the (data group, container node) a dataset drop should land in."""
+
+        group, entry, _mask, _model, role = self._objects_for_item(target_item)
+        if group is None:
+            return None, None
+        if role in {"group", "datasets"}:
+            return group, group
+        if role == "dataset_group":
+            node = self._dataset_group_for_item(target_item)
+            return (group, node) if node is not None else (None, None)
+        if role in {"dataset", "masks"} and entry is not None:
+            node = _dataset_parent_node(group, entry)
+            return (group, node) if node is not None else (None, None)
+        return None, None
+
+    def _move_or_copy_datasets(self, dataset_items: list[Any], target_item: Any, *, copy_item: bool) -> bool:
+        target_group, target_node = self._resolve_dataset_drop_target(target_item)
+        if target_group is None or target_node is None:
+            return False
+        entries: list[tuple[DataGroup, DatasetEntry]] = []
+        for item in dataset_items:
+            source_group, source_entry, _mask, _model, role = self._objects_for_item(item)
+            if role == "dataset" and source_group is not None and source_entry is not None:
+                entries.append((source_group, source_entry))
+        if not entries:
+            return False
+        touched_groups: set[int] = set()
+        groups_by_id: dict[int, DataGroup] = {}
+        last_entry: DatasetEntry | None = None
+
+        def touch(group: DataGroup) -> None:
+            touched_groups.add(id(group))
+            groups_by_id[id(group)] = group
+
+        for source_group, source_entry in entries:
+            if copy_item:
+                new_entry = copy_dataset_to_group(source_entry, target_group)
+                if target_node is not target_group:
+                    target_group.datasets.remove(new_entry)
+                    target_node.datasets.append(new_entry)
+                touch(target_group)
+                last_entry = new_entry
+            elif source_group is target_group:
+                parent_node = _dataset_parent_node(source_group, source_entry)
+                if parent_node is not None and parent_node is not target_node:
+                    parent_node.datasets.remove(source_entry)
+                    target_node.datasets.append(source_entry)
+                touch(source_group)
+                last_entry = source_entry
+            else:
+                new_entry = copy_dataset_to_group(source_entry, target_group)
+                if target_node is not target_group:
+                    target_group.datasets.remove(new_entry)
+                    target_node.datasets.append(new_entry)
+                delete_dataset(source_group, source_entry)
+                touch(source_group)
+                touch(target_group)
+                last_entry = new_entry
+        for group in groups_by_id.values():
+            self._record_data_group_state_change(group)
+        self._mark_dirty()
+        self._refresh_tree(select_group=target_group, select_dataset=last_entry)
+        return True
+
     def move_or_copy_selected_to_item(self, target_item: Any, *, copy_item: bool) -> bool:
         source_item = self._current_item()
         source_group, source_entry, source_mask, _source_model, source_role = self._objects_for_item(source_item)
         target_group, target_entry, target_mask, _target_model, target_role = self._objects_for_item(target_item)
 
-        # Relocate a dataset within the same group (into/out of a subgroup).
-        if (
-            source_role == "dataset"
-            and not copy_item
-            and source_group is not None
-            and source_entry is not None
-            and target_group is source_group
-            and target_role in {"group", "datasets", "dataset_group", "dataset"}
-        ):
-            if target_role in {"group", "datasets"}:
-                target_node: Any = source_group
-            elif target_role == "dataset_group":
-                target_node = self._dataset_group_for_item(target_item)
-            else:
-                target_node = _dataset_parent_node(source_group, target_entry) if target_entry is not None else None
-            parent_node = _dataset_parent_node(source_group, source_entry)
-            if target_node is not None and parent_node is not None and target_node is not parent_node:
-                parent_node.datasets.remove(source_entry)
-                target_node.datasets.append(source_entry)
-                self._record_data_group_state_change(source_group)
-                self._mark_dirty()
-                self._refresh_tree(select_group=source_group, select_dataset=source_entry)
-            return True
+        # Move/copy one or more selected datasets into the drop target.
+        if source_role == "dataset":
+            dataset_items = [
+                item for item in self.tree.selectedItems() if self._objects_for_item(item)[4] == "dataset"
+            ]
+            if source_item is not None and source_item not in dataset_items:
+                dataset_items.append(source_item)
+            return self._move_or_copy_datasets(dataset_items, target_item, copy_item=copy_item)
 
         # Re-parent a subgroup within the same group.
         if (
@@ -2910,22 +2974,6 @@ class MetallixProjectExplorer:
                     self._refresh_tree(select_group=source_group, select_dataset_group=subgroup)
             return True
 
-        if (
-            source_role == "dataset"
-            and source_group is not None
-            and source_entry is not None
-            and target_group is not None
-            and target_group is not source_group
-            and target_role in {"group", "datasets"}
-        ):
-            moved = copy_dataset_to_group(source_entry, target_group)
-            if not copy_item:
-                delete_dataset(source_group, source_entry)
-                self._record_data_group_state_change(source_group)
-            self._record_data_group_state_change(target_group)
-            self._mark_dirty()
-            self._refresh_tree(select_group=target_group, select_dataset=moved)
-            return True
         if (
             source_role == "mask"
             and source_group is not None
@@ -3013,6 +3061,9 @@ class MetallixProjectExplorer:
         self.tree.setDragEnabled(True)
         self.tree.setAcceptDrops(True)
         self.tree.setDragDropMode(QtWidgets.QAbstractItemView.DragDropMode.DropOnly)
+        # Allow shift/ctrl(cmd) range and multi selection for dragging several
+        # datasets into a group at once.
+        self.tree.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.setEditTriggers(
             QtWidgets.QAbstractItemView.EditTrigger.EditKeyPressed
             | QtWidgets.QAbstractItemView.EditTrigger.SelectedClicked
@@ -3520,7 +3571,7 @@ class MetallixProjectExplorer:
     def _sync_details(self) -> None:
         group, entry, mask, model, role = self._objects_for_item(self._current_item())
         fit_entry = self._fit_entry_for_item(self._current_item())
-        can_import = role in {"group", "datasets"}
+        can_import = role in {"group", "datasets", "dataset_group"}
         can_add_model = role in {"group", "models"}
         self._sync_selected_state_controls(role, entry, mask, model)
         self.import_dataset_button.setVisible(can_import)
@@ -4911,7 +4962,14 @@ def _make_project_tree_class():
             if item is None:
                 return
             role = self.explorer._objects_for_item(item)[4]
-            if role not in {"dataset", "mask"}:
+            selected_roles = {self.explorer._objects_for_item(it)[4] for it in self.selectedItems()}
+            # Datasets may be dragged as a multi-selection; other kinds drag one.
+            if role == "dataset":
+                if not selected_roles.issubset({"dataset"}):
+                    return
+            elif role in {"mask", "dataset_group"}:
+                pass
+            else:
                 return
             drag = QtGui.QDrag(self)
             mime_data = QtCore.QMimeData()
@@ -4945,25 +5003,18 @@ def _make_project_tree_class():
                     if self.explorer.move_or_copy_selected_to_item(target, copy_item=copied):
                         event.acceptProposedAction()
                         return
-            group = self._drop_group(event.position().toPoint())
+            target_item = self.itemAt(event.position().toPoint())
+            group, node = self.explorer._resolve_dataset_drop_target(target_item)
             if group is None:
                 super().dropEvent(event)
                 return
             paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
             if paths:
-                self.explorer.import_dataset_paths(group, paths)
+                into = node if node is not group else None
+                self.explorer.import_dataset_paths(group, paths, into=into)
                 event.acceptProposedAction()
                 return
             super().dropEvent(event)
-
-        def _drop_group(self, point):
-            item = self.itemAt(point)
-            if item is None:
-                return None
-            group, _entry, _mask, _model, role = self.explorer._objects_for_item(item)
-            if role in {"group", "datasets", "dataset"}:
-                return group
-            return None
 
     return ProjectTree
 
