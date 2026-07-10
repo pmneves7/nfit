@@ -148,6 +148,18 @@ parameter editor. Parameters fitted separately per dataset or group are stored
 on the component as scoped fitted values because one editor field cannot
 represent several fitted numbers.
 
+If a fit fails, the failed result is kept for diagnostics but the mutable
+scientific state remains available as `Current state`: a failed run from an
+existing fit state creates or reuses the following `Current state`, while a
+failed run from `Current state` keeps that state active for immediate edits.
+
+When a fit state is selected, `Branch timeline` stays above the scrollable
+details area. Optimizer/loss controls, differential-evolution settings, and
+posterior settings appear as panels inside the same scrollable details area as
+the fit state summary. Fit-result and initial-state parameter tables sit in an
+adjustable pane so the user can drag the divider to give more room to the
+parameter list or to the metadata/details below it.
+
 Changing scientific state creates or updates the current timeline state:
 datasets, masks, model components, parameter values, fitted/fixed flags,
 sharing, limits, constraints, scale factors, and dataset weights are all part of

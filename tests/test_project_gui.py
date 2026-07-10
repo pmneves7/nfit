@@ -1012,6 +1012,7 @@ def test_spin_model_form_factor_custom_choice_controls_coefficients(monkeypatch)
 def test_project_explorer_fit_history_creates_results_branches_and_restores(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    QtCore = pytest.importorskip("PySide6.QtCore")
 
     dataset = DatasetEntry("first", _tiny_mdhisto_data(1.0))
     mask = create_mask(dataset)
@@ -1042,13 +1043,28 @@ def test_project_explorer_fit_history_creates_results_branches_and_restores(monk
 
     def current_detail_boxes():
         boxes = []
+        seen = set()
+
+        def collect(widget):
+            if isinstance(widget, QtWidgets.QGroupBox) and id(widget) not in seen:
+                seen.add(id(widget))
+                boxes.append(widget)
+            for child in widget.findChildren(QtWidgets.QGroupBox):
+                if id(child) not in seen:
+                    seen.add(id(child))
+                    boxes.append(child)
+
         for index in range(explorer.details_layout.count()):
             widget = explorer.details_layout.itemAt(index).widget()
-            if isinstance(widget, QtWidgets.QGroupBox):
-                boxes.append(widget)
+            if widget is not None:
+                collect(widget)
         return boxes
 
     panel_titles = [box.title() for box in current_detail_boxes()]
+    parameter_splitter = explorer.details_widget.findChild(
+        QtWidgets.QSplitter, "fit_details_parameter_splitter"
+    )
+    assert parameter_splitter is not None
     assert "Fit results" in panel_titles
     assert "Goodness of fit" in panel_titles
     assert "Stored fit channels" in panel_titles
@@ -1060,6 +1076,7 @@ def test_project_explorer_fit_history_creates_results_branches_and_restores(monk
     channels_tree = boxes_by_title["Stored fit channels"].findChild(QtWidgets.QTreeWidget, "fit_channels_tree")
     metadata_tree = boxes_by_title["Metadata"].findChild(QtWidgets.QTreeWidget, "fit_metadata_tree")
     assert results_table is not None
+    assert parameter_splitter.widget(0).title() == "Fit results"
     assert goodness_tree is not None
     assert channels_tree is not None
     assert metadata_tree is not None
@@ -1211,7 +1228,7 @@ def test_slice_viewer_datasets_attach_current_model_before_fit():
 
 def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-    pytest.importorskip("PySide6.QtWidgets")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
     group = DataGroup("Datagroup1", datasets=[DatasetEntry("first", _tiny_mdhisto_data(1.0))])
     create_model_component(group)
@@ -1239,6 +1256,11 @@ def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(
         explorer.fit_corner_button,
     ]
     assert all(control.toolTip() for control in controls)
+    assert explorer.fit_branch_check.parentWidget() is explorer.fit_editor_widget
+    assert explorer.fit_settings_panel.parentWidget() is explorer.details_widget
+    assert explorer.details_widget.findChild(QtWidgets.QGroupBox, "fit_optimizer_settings_group") is not None
+    assert explorer.details_widget.findChild(QtWidgets.QGroupBox, "fit_de_settings_group") is not None
+    assert explorer.details_widget.findChild(QtWidgets.QGroupBox, "fit_posterior_settings_group") is not None
 
     explorer.fit_loss_combo.setCurrentText("soft_l1")
     explorer.fit_f_scale_spin.setValue(2.0)
@@ -2912,6 +2934,107 @@ def test_dataset_temperature_spin_writes_override(monkeypatch):
 
     spin.setValue(-1.0)
     assert "temperature" not in dataset.parameters
+
+
+def test_dataset_temperature_edit_from_active_result_refreshes_current_state(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    create_model_component(group)
+    project_gui.ensure_fit_history(group)
+    result = project_gui.create_fit_result_entry(
+        group,
+        group.fits[0],
+        goodness={"status": "converged", "parameters": {}},
+    )
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+
+    result_item = explorer.tree.topLevelItem(0).child(2).child(1)
+    explorer.tree.setCurrentItem(result_item)
+    dataset_item = explorer.tree.topLevelItem(0).child(0).child(0)
+    explorer.tree.setCurrentItem(dataset_item)
+
+    explorer.dataset_temperature_spin.setValue(12.5)
+
+    assert [fit.kind for fit in group.fits] == ["initial", "result", "current"]
+    assert group.fits[2].snapshot["datasets"][0]["parameters"]["temperature"] == 12.5
+    fits_item = explorer.tree.topLevelItem(0).child(2)
+    assert fits_item.childCount() == 3
+    assert explorer._fit_entry_for_item(fits_item.child(2)) is group.fits[2]
+    assert result.children == []
+
+
+def test_failed_fit_from_result_creates_current_state_for_temperature_fix(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    create_model_component(group)
+    project_gui.ensure_fit_history(group)
+    first_result = project_gui.create_fit_result_entry(
+        group,
+        group.fits[0],
+        goodness={"status": "converged", "parameters": {}},
+    )
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+
+    def fail_fit(group, *, optimizer_config=None, progress_callback=None):
+        raise ValueError("this model requires a valid sample temperature")
+
+    monkeypatch.setattr(project_gui, "perform_group_fit", fail_fit)
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(2).child(1))
+
+    failed = explorer.fit_now_for_selection()
+
+    assert failed is not None
+    assert failed.goodness["status"] == "failed"
+    assert [fit.kind for fit in group.fits] == ["initial", "result", "result", "current"]
+    assert group.fits[1] is first_result
+    assert group.fits[2] is failed
+    current = group.fits[3]
+    assert explorer._active_fit_entry(group) is current
+    assert explorer.tree.currentItem().text(0) == "Current state"
+
+    dataset_item = explorer.tree.topLevelItem(0).child(0).child(0)
+    explorer.tree.setCurrentItem(dataset_item)
+    explorer.dataset_temperature_spin.setValue(8.0)
+
+    assert [fit.kind for fit in group.fits] == ["initial", "result", "result", "current"]
+    assert group.fits[3] is current
+    assert current.snapshot["datasets"][0]["parameters"]["temperature"] == 8.0
+    assert explorer._active_fit_entry(group) is current
+
+
+def test_failed_fit_from_current_state_keeps_current_state_selected(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    create_model_component(group)
+    project_gui.ensure_fit_history(group)
+    current = project_gui.current_state_fit_entry(group)
+    group.fits.append(current)
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+
+    def fail_fit(group, *, optimizer_config=None, progress_callback=None):
+        raise ValueError("this model requires a valid sample temperature")
+
+    monkeypatch.setattr(project_gui, "perform_group_fit", fail_fit)
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(2).child(1))
+
+    failed = explorer.fit_now_for_selection()
+
+    assert failed is not None
+    assert failed.goodness["status"] == "failed"
+    assert [fit.kind for fit in group.fits] == ["initial", "result", "current"]
+    assert group.fits[1] is failed
+    assert group.fits[2] is current
+    assert explorer._active_fit_entry(group) is current
+    assert explorer.tree.currentItem().text(0) == "Current state"
 
 
 def test_heisenberg_rpa_editor_generates_orbits_and_round_trips(monkeypatch, tmp_path):

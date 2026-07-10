@@ -1038,6 +1038,7 @@ def create_fit_result_entry(
     parent: FitTimelineEntry,
     *,
     branch_timeline: bool = False,
+    replace_current_state: bool = True,
     goodness: dict[str, Any] | None = None,
     channels: dict[str, dict[str, Any]] | None = None,
     metadata: dict[str, Any] | None = None,
@@ -1076,7 +1077,8 @@ def create_fit_result_entry(
             siblings = group.fits
         insert_at = siblings.index(parent) + 1 if parent in siblings else len(siblings)
         siblings.insert(insert_at, result)
-        _replace_current_state(siblings, group)
+        if replace_current_state:
+            _replace_current_state(siblings, group)
     return result
 
 
@@ -1100,6 +1102,7 @@ def run_group_fit(
     start = time.perf_counter()
     channels: dict[str, dict[str, Any]] = {}
     metadata: dict[str, Any] = {}
+    failed = False
     try:
         outcome = perform_group_fit(
             group,
@@ -1110,17 +1113,22 @@ def run_group_fit(
         channels = outcome["channels"]
         metadata = outcome.get("metadata", {})
     except Exception as exc:
+        failed = True
         goodness = {"status": "failed", "message": str(exc)}
     duration = time.perf_counter() - start
-    return create_fit_result_entry(
+    result = create_fit_result_entry(
         group,
         parent,
         branch_timeline=branch_timeline,
+        replace_current_state=not failed,
         goodness=goodness,
         channels=channels,
         metadata=metadata,
         duration_seconds=duration,
     )
+    if failed:
+        _current_state_for_failed_fit(group, parent, result)
+    return result
 
 
 def current_state_fit_entry(group: DataGroup) -> FitTimelineEntry:
@@ -3851,6 +3859,43 @@ def _ensure_current_state_after_result(
     return current, True
 
 
+def _current_state_for_failed_fit(
+    group: DataGroup,
+    parent: FitTimelineEntry,
+    result: FitTimelineEntry,
+) -> FitTimelineEntry | None:
+    """Return/create the current state that should stay active after failure."""
+
+    siblings = _fit_siblings(group.fits, result)
+    if siblings is None:
+        return parent if parent.kind == "current" and _fit_entry_in_tree(group.fits, parent) else None
+    if parent.kind == "current" and parent in siblings:
+        _set_fit_current_snapshot(parent, group)
+        siblings.remove(parent)
+        siblings.insert(siblings.index(result) + 1, parent)
+        return parent
+    if parent.kind in {"initial", "result"}:
+        current, _created = _ensure_current_state_after_result(group, result)
+        if current is not None:
+            _set_fit_current_snapshot(current, group)
+        return current
+    return None
+
+
+def _fit_entry_to_select_after_run(
+    group: DataGroup,
+    parent: FitTimelineEntry,
+    result: FitTimelineEntry,
+) -> FitTimelineEntry:
+    if str(result.goodness.get("status", "")) == "failed":
+        current = _current_state_after_result(group, result)
+        if current is not None:
+            return current
+        if parent.kind == "current" and _fit_entry_in_tree(group.fits, parent):
+            return parent
+    return result
+
+
 def _is_editable_initial_baseline(
     group: DataGroup,
     fit_entry: FitTimelineEntry | None,
@@ -4849,6 +4894,7 @@ class MetallixProjectExplorer:
         self.model_parameter_widget = None
         self.model_parameter_layout = None
         self.fit_editor_widget = None
+        self.fit_settings_panel = None
         self.fit_optimizer_combo = None
         self.fit_optimizer_config_editor = None
         self.fit_loss_combo = None
@@ -5312,7 +5358,7 @@ class MetallixProjectExplorer:
             progress.close()
         self.fit_branch_check.setChecked(False)
         self.refresh_slice_viewer(group)
-        item_to_select = result
+        item_to_select = _fit_entry_to_select_after_run(group, fit_entry, result)
         self._set_active_fit_state(group, item_to_select)
         self._mark_dirty()
         self._refresh_tree(select_group=group, select_fit=item_to_select)
@@ -5454,14 +5500,13 @@ class MetallixProjectExplorer:
                 progress = self._fit_progress_dialog
                 if progress is not None:
                     progress.fail(str(result.goodness.get("message", "The fit did not run.")))
-                return False
             self.fit_branch_check.setChecked(False)
             self.refresh_slice_viewer(group)
-            item_to_select = result
+            item_to_select = _fit_entry_to_select_after_run(group, fit_entry, result)
             self._set_active_fit_state(group, item_to_select)
             self._mark_dirty()
             self._refresh_tree(select_group=group, select_fit=item_to_select)
-            return True
+            return not failed
 
         return self._start_background_task(
             title="Starting fit pipeline...",
@@ -6399,9 +6444,8 @@ class MetallixProjectExplorer:
         self.model_parameter_layout.setColumnStretch(1, 1)
         self.model_parameter_scroll.setWidget(self.model_parameter_widget)
         fit_editor = QtWidgets.QWidget()
-        fit_editor_layout = QtWidgets.QGridLayout(fit_editor)
+        fit_editor_layout = QtWidgets.QHBoxLayout(fit_editor)
         fit_editor_layout.setContentsMargins(0, 0, 0, 0)
-        fit_editor_layout.setColumnStretch(1, 1)
         self.fit_optimizer_combo = QtWidgets.QComboBox()
         self.fit_optimizer_combo.addItems(["least_squares"])
         self.fit_optimizer_combo.setToolTip("Choose the optimizer used when fitting from this fit state.")
@@ -6494,34 +6538,59 @@ class MetallixProjectExplorer:
         self.fit_now_button.clicked.connect(self.start_fit_for_selection)
         self.fit_corner_button.clicked.connect(self.open_fit_diagnostics_plots_for_selection)
         self.show_data_fit_button.clicked.connect(self.show_data_and_fit_for_selection)
-        fit_editor_layout.addWidget(QtWidgets.QLabel("Optimizer"), 0, 0)
-        fit_editor_layout.addWidget(self.fit_optimizer_combo, 0, 1)
-        fit_editor_layout.addWidget(QtWidgets.QLabel("Loss"), 1, 0)
-        fit_editor_layout.addWidget(self.fit_loss_combo, 1, 1)
-        fit_editor_layout.addWidget(QtWidgets.QLabel("Loss scale"), 2, 0)
-        fit_editor_layout.addWidget(self.fit_f_scale_spin, 2, 1)
-        fit_editor_layout.addWidget(self.fit_de_check, 3, 1)
-        fit_editor_layout.addWidget(QtWidgets.QLabel("DE generations"), 4, 0)
-        fit_editor_layout.addWidget(self.fit_de_maxiter_spin, 4, 1)
-        fit_editor_layout.addWidget(QtWidgets.QLabel("DE population"), 5, 0)
-        fit_editor_layout.addWidget(self.fit_de_popsize_spin, 5, 1)
-        fit_editor_layout.addWidget(QtWidgets.QLabel("DE workers"), 6, 0)
-        fit_editor_layout.addWidget(self.fit_de_workers_spin, 6, 1)
-        fit_editor_layout.addWidget(self.fit_emcee_check, 7, 1)
-        fit_editor_layout.addWidget(QtWidgets.QLabel("Walkers"), 8, 0)
-        fit_editor_layout.addWidget(self.fit_emcee_walkers_spin, 8, 1)
-        fit_editor_layout.addWidget(QtWidgets.QLabel("Steps"), 9, 0)
-        fit_editor_layout.addWidget(self.fit_emcee_steps_spin, 9, 1)
-        fit_editor_layout.addWidget(QtWidgets.QLabel("Burn-in"), 10, 0)
-        fit_editor_layout.addWidget(self.fit_emcee_burn_spin, 10, 1)
-        fit_editor_layout.addWidget(QtWidgets.QLabel("Thin"), 11, 0)
-        fit_editor_layout.addWidget(self.fit_emcee_thin_spin, 11, 1)
-        fit_editor_layout.addWidget(QtWidgets.QLabel("emcee workers"), 12, 0)
-        fit_editor_layout.addWidget(self.fit_emcee_workers_spin, 12, 1)
-        fit_editor_layout.addWidget(QtWidgets.QLabel("Advanced config"), 13, 0)
-        fit_editor_layout.addWidget(self.fit_optimizer_config_editor, 13, 1)
-        fit_editor_layout.addWidget(self.fit_branch_check, 14, 1)
+        fit_editor_layout.addWidget(self.fit_branch_check)
+        fit_editor_layout.addStretch(1)
         self.fit_editor_widget = fit_editor
+
+        self.fit_settings_panel = QtWidgets.QWidget()
+        self.fit_settings_panel.setObjectName("fit_settings_panel")
+        fit_settings_layout = QtWidgets.QVBoxLayout(self.fit_settings_panel)
+        fit_settings_layout.setContentsMargins(0, 0, 0, 0)
+        fit_settings_layout.setSpacing(8)
+
+        optimizer_group = QtWidgets.QGroupBox("Optimizer")
+        optimizer_group.setObjectName("fit_optimizer_settings_group")
+        optimizer_layout = QtWidgets.QGridLayout(optimizer_group)
+        optimizer_layout.setColumnStretch(1, 1)
+        optimizer_layout.addWidget(QtWidgets.QLabel("Optimizer"), 0, 0)
+        optimizer_layout.addWidget(self.fit_optimizer_combo, 0, 1)
+        optimizer_layout.addWidget(QtWidgets.QLabel("Loss"), 1, 0)
+        optimizer_layout.addWidget(self.fit_loss_combo, 1, 1)
+        optimizer_layout.addWidget(QtWidgets.QLabel("Loss scale"), 2, 0)
+        optimizer_layout.addWidget(self.fit_f_scale_spin, 2, 1)
+        optimizer_layout.addWidget(QtWidgets.QLabel("Advanced config"), 3, 0)
+        optimizer_layout.addWidget(self.fit_optimizer_config_editor, 3, 1)
+        fit_settings_layout.addWidget(optimizer_group)
+
+        de_group = QtWidgets.QGroupBox("Differential Evolution")
+        de_group.setObjectName("fit_de_settings_group")
+        de_layout = QtWidgets.QGridLayout(de_group)
+        de_layout.setColumnStretch(1, 1)
+        de_layout.addWidget(self.fit_de_check, 0, 1)
+        de_layout.addWidget(QtWidgets.QLabel("DE generations"), 1, 0)
+        de_layout.addWidget(self.fit_de_maxiter_spin, 1, 1)
+        de_layout.addWidget(QtWidgets.QLabel("DE population"), 2, 0)
+        de_layout.addWidget(self.fit_de_popsize_spin, 2, 1)
+        de_layout.addWidget(QtWidgets.QLabel("DE workers"), 3, 0)
+        de_layout.addWidget(self.fit_de_workers_spin, 3, 1)
+        fit_settings_layout.addWidget(de_group)
+
+        posterior_group = QtWidgets.QGroupBox("Posterior")
+        posterior_group.setObjectName("fit_posterior_settings_group")
+        posterior_layout = QtWidgets.QGridLayout(posterior_group)
+        posterior_layout.setColumnStretch(1, 1)
+        posterior_layout.addWidget(self.fit_emcee_check, 0, 1)
+        posterior_layout.addWidget(QtWidgets.QLabel("Walkers"), 1, 0)
+        posterior_layout.addWidget(self.fit_emcee_walkers_spin, 1, 1)
+        posterior_layout.addWidget(QtWidgets.QLabel("Steps"), 2, 0)
+        posterior_layout.addWidget(self.fit_emcee_steps_spin, 2, 1)
+        posterior_layout.addWidget(QtWidgets.QLabel("Burn-in"), 3, 0)
+        posterior_layout.addWidget(self.fit_emcee_burn_spin, 3, 1)
+        posterior_layout.addWidget(QtWidgets.QLabel("Thin"), 4, 0)
+        posterior_layout.addWidget(self.fit_emcee_thin_spin, 4, 1)
+        posterior_layout.addWidget(QtWidgets.QLabel("emcee workers"), 5, 0)
+        posterior_layout.addWidget(self.fit_emcee_workers_spin, 5, 1)
+        fit_settings_layout.addWidget(posterior_group)
 
         right_layout.addLayout(title_row)
         right_layout.addWidget(self.mask_type_combo)
@@ -7131,9 +7200,13 @@ class MetallixProjectExplorer:
         if entry.fit_weight == weight:
             return
         entry.fit_weight = weight
+        branch_created = False
         if group is not None:
-            self._record_data_group_state_change(group)
+            branch_created = self._record_data_group_state_change(group)
         self._mark_dirty()
+        if group is not None and branch_created:
+            self._refresh_tree(select_group=group, select_dataset=entry)
+            return
         self._sync_details()
 
     def _set_selected_dataset_scale_factor(self, value: float) -> None:
@@ -7144,9 +7217,13 @@ class MetallixProjectExplorer:
         if entry.scale_factor == scale:
             return
         entry.scale_factor = scale
+        branch_created = False
         if group is not None:
-            self._record_data_group_state_change(group)
+            branch_created = self._record_data_group_state_change(group)
         self._mark_dirty()
+        if group is not None and branch_created:
+            self._refresh_tree(select_group=group, select_dataset=entry)
+            return
         if group is not None:
             self.refresh_slice_viewer(group)
         self._sync_details()
@@ -7162,9 +7239,13 @@ class MetallixProjectExplorer:
             entry.parameters.pop("temperature", None)
         else:
             entry.parameters["temperature"] = override
+        branch_created = False
         if group is not None:
-            self._record_data_group_state_change(group)
+            branch_created = self._record_data_group_state_change(group)
         self._mark_dirty()
+        if group is not None and branch_created:
+            self._refresh_tree(select_group=group, select_dataset=entry)
+            return
         self._sync_details()
 
     def _set_details_text(self, text: str) -> None:
@@ -7204,6 +7285,8 @@ class MetallixProjectExplorer:
         self.details_layout.addStretch(1)
 
     def _set_fit_details(self, fit_entry: FitTimelineEntry) -> None:
+        from PySide6 import QtCore, QtWidgets
+
         group, _entry, _mask, _model, _role = self._objects_for_item(self._current_item())
         self.details_label.setText(fit_details_text(fit_entry))
         self._clear_details_panel()
@@ -7212,6 +7295,8 @@ class MetallixProjectExplorer:
             if fit_entry.duration_seconds is not None
             else "-"
         )
+        if self.fit_settings_panel is not None:
+            self.details_layout.addWidget(self.fit_settings_panel)
         self.details_layout.addWidget(
             self._details_group_box(
                 "Fit",
@@ -7224,14 +7309,16 @@ class MetallixProjectExplorer:
                 ],
             )
         )
+        parameter_group = None
+        lower_widgets = []
         if _fit_results_rows(fit_entry):
-            self.details_layout.addWidget(self._fit_results_group_box(fit_entry))
+            parameter_group = self._fit_results_group_box(fit_entry)
             if group is not None and fit_entry.kind == "result":
-                self.details_layout.addWidget(self._posterior_sampler_group_box(group, fit_entry))
+                lower_widgets.append(self._posterior_sampler_group_box(group, fit_entry))
         elif _snapshot_parameter_rows(fit_entry):
-            self.details_layout.addWidget(self._parameter_values_group_box(fit_entry))
+            parameter_group = self._parameter_values_group_box(fit_entry)
         if fit_entry.optimizer_config:
-            self.details_layout.addWidget(
+            lower_widgets.append(
                 self._metadata_tree_group_box(
                     "Optimizer config",
                     dict(fit_entry.optimizer_config),
@@ -7240,7 +7327,7 @@ class MetallixProjectExplorer:
                 )
             )
         if fit_entry.goodness:
-            self.details_layout.addWidget(
+            lower_widgets.append(
                 self._metadata_tree_group_box(
                     "Goodness of fit",
                     dict(fit_entry.goodness),
@@ -7249,7 +7336,7 @@ class MetallixProjectExplorer:
                 )
             )
         if fit_entry.channels:
-            self.details_layout.addWidget(
+            lower_widgets.append(
                 self._metadata_tree_group_box(
                     "Stored fit channels",
                     dict(fit_entry.channels),
@@ -7258,7 +7345,7 @@ class MetallixProjectExplorer:
                 )
             )
         if fit_entry.metadata:
-            self.details_layout.addWidget(
+            lower_widgets.append(
                 self._metadata_tree_group_box(
                     "Metadata",
                     dict(fit_entry.metadata),
@@ -7267,7 +7354,7 @@ class MetallixProjectExplorer:
                 )
             )
         if fit_entry.snapshot:
-            self.details_layout.addWidget(
+            lower_widgets.append(
                 self._metadata_tree_group_box(
                     "Snapshot",
                     dict(fit_entry.snapshot),
@@ -7275,6 +7362,28 @@ class MetallixProjectExplorer:
                     empty_text="No fit snapshot.",
                 )
             )
+        if parameter_group is not None and lower_widgets:
+            splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+            splitter.setObjectName("fit_details_parameter_splitter")
+            splitter.setChildrenCollapsible(False)
+            splitter.addWidget(parameter_group)
+            lower_panel = QtWidgets.QWidget()
+            lower_layout = QtWidgets.QVBoxLayout(lower_panel)
+            lower_layout.setContentsMargins(0, 0, 0, 0)
+            lower_layout.setSpacing(8)
+            for widget in lower_widgets:
+                lower_layout.addWidget(widget)
+            lower_layout.addStretch(1)
+            splitter.addWidget(lower_panel)
+            splitter.setStretchFactor(0, 1)
+            splitter.setStretchFactor(1, 2)
+            splitter.setSizes([260, 420])
+            self.details_layout.addWidget(splitter)
+        else:
+            if parameter_group is not None:
+                self.details_layout.addWidget(parameter_group)
+            for widget in lower_widgets:
+                self.details_layout.addWidget(widget)
         self.details_layout.addStretch(1)
 
     def _fit_results_group_box(self, fit_entry: FitTimelineEntry) -> Any:
@@ -7297,7 +7406,10 @@ class MetallixProjectExplorer:
         table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         table.setAlternatingRowColors(True)
         table.setMinimumHeight(120)
-        table.setMaximumHeight(260)
+        table.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding,
+        )
         table.verticalHeader().setVisible(False)
         table.horizontalHeader().setStretchLastSection(True)
         table.horizontalHeader().setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
@@ -7480,7 +7592,10 @@ class MetallixProjectExplorer:
         table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         table.setAlternatingRowColors(True)
         table.setMinimumHeight(100)
-        table.setMaximumHeight(260)
+        table.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding,
+        )
         table.verticalHeader().setVisible(False)
         table.horizontalHeader().setStretchLastSection(True)
         table.horizontalHeader().setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
@@ -8074,7 +8189,11 @@ class MetallixProjectExplorer:
             item = self.details_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
-                widget.deleteLater()
+                if widget is self.fit_settings_panel:
+                    widget.setParent(None)
+                else:
+                    widget.setParent(None)
+                    widget.deleteLater()
 
     def _restore_selected_fit_state(self, group: DataGroup, fit_entry: FitTimelineEntry) -> None:
         if not fit_entry.snapshot:
