@@ -98,8 +98,40 @@ the normal-state response of optimally doped BaFe$_{1.85}$Co$_{0.15}$As$_2$
 ## Model 3: Heisenberg RPA (`heisenberg_rpa`)
 
 The centerpiece model couples local relaxational spins through real-space
-Heisenberg exchange in the random phase approximation. The single-site
-dynamic susceptibility is
+Heisenberg exchange in the random phase approximation.
+
+Terms and symbols used below:
+
+- **Heisenberg exchange** is an isotropic pair interaction between spins; each
+  fitted exchange constant is a scalar $J$ in meV rather than a spin-space
+  tensor.
+- **RPA** means the random phase approximation: the local susceptibility is
+  dressed by repeated exchange scattering, producing the matrix inverse below.
+- $\mathbf{Q} = (H,K,L)$ is momentum transfer in reciprocal lattice units
+  (r.l.u.); $E = \hbar\omega$ is energy transfer in meV, with positive $E$
+  denoting neutron energy loss.
+- $N$ is the number of magnetic sites in the crystallographic cell used for the
+  model; $a$ and $b$ label those sites, and $\mathbf{r}_a$ is the fractional
+  position of site $a$ in that cell.
+- $\chi_0(\omega)$ is the complex single-site dynamic susceptibility.
+  $\chi_0$ without the argument is its static amplitude in meV$^{-1}$, and
+  $\Gamma_0$ is the bare local relaxation energy in meV.
+- $J(\mathbf{Q})$ is the $N \times N$ exchange matrix obtained by Fourier
+  transforming real-space bonds. A **bond** connects site $a$ to site $b$ in a
+  cell displaced by the integer lattice vector $\mathbf{n}$.
+- A **bond orbit** is a symmetry-equivalent set of bonds that share one fitted
+  exchange value, labeled `J1`, `J2`, and so on. $J_{\text{bond}}$ is the
+  exchange value assigned to the orbit containing a particular bond.
+- $U$ is the unitary eigenvector matrix of $J(\mathbf{Q})$, meaning
+  $U^\dagger U = \mathbf{1}$, where $\dagger$ denotes complex-conjugate
+  transpose and $\mathbf{1}$ is the identity matrix. $\Lambda$ is the diagonal
+  eigenvalue matrix; $\lambda_\nu$ is the eigenvalue of mode $\nu$.
+- $w_\nu(\mathbf{Q})$ is the neutron structure-factor weight of mode $\nu$.
+  It tells how strongly that mode contributes to the measured unpolarized
+  magnetic intensity before the common form-factor, Bose-factor, and scale
+  terms from the top of this page are applied.
+
+The single-site dynamic susceptibility is
 
 $$
 \chi_0(\omega) = \frac{\chi_0}{1 - i\omega/\Gamma_0},
@@ -114,8 +146,8 @@ $$
 
 ### Exchange Fourier transform and phase convention
 
-With $N$ magnetic sites at fractional positions $\mathbf{r}_a$ in the unit
-cell, $J(\mathbf{Q})$ is the $N \times N$ Hermitian matrix
+With the definitions above, $J(\mathbf{Q})$ is the $N \times N$ Hermitian
+matrix
 
 $$
 J(\mathbf{Q})_{ab} = \sum_{\text{bonds } (a, b, \mathbf{n})}
@@ -123,10 +155,11 @@ J_{\text{bond}}\,
 e^{2\pi i\, \mathbf{Q} \cdot (\mathbf{r}_b + \mathbf{n} - \mathbf{r}_a)},
 $$
 
-with $\mathbf{Q} = (H, K, L)$ in r.l.u. and $\mathbf{n}$ the integer cell
-offset of the bond target. This is the "extended zone" convention (sublattice
-offsets inside the phases, as in Sunny.jl). Each physical bond is stored once;
-its Hermitian conjugate is added automatically.
+This is the "extended zone" convention: the sublattice offsets
+$\mathbf{r}_b-\mathbf{r}_a$ are included inside the phase factors, as in
+Sunny.jl. Each physical bond is stored once; its Hermitian conjugate, the
+complex-conjugate transpose needed to make $J(\mathbf{Q})$ Hermitian, is added
+automatically.
 
 ### Mode decomposition
 
@@ -144,30 +177,43 @@ $$
 \Gamma_\nu = \Gamma_0 \left[1 - \lambda_\nu(\mathbf{Q})\, \chi_0\right],
 $$
 
-with neutron structure-factor weights
+where $\chi_{\mathbf{Q}\nu}$ is the static susceptibility of mode $\nu$ at
+$\mathbf{Q}$ and $\Gamma_\nu$ is that mode's exchange-renormalized relaxation
+energy. The entry $U_{a\nu}$ is the amplitude of mode $\nu$ on magnetic site
+$a$. The neutron structure-factor weights are
 
 $$
 w_\nu(\mathbf{Q}) = \frac{1}{N}
-\left| \sum_a U_{a\nu}(\mathbf{Q})\,
-e^{2\pi i\, \mathbf{Q} \cdot \mathbf{r}_a} \right|^2,
+\left| \sum_a U_{a\nu}(\mathbf{Q}) \right|^2,
 \qquad \sum_\nu w_\nu(\mathbf{Q}) = 1 .
 $$
 
-The weight sum rule holds exactly because $U$ is unitary and the same phase
-convention enters $J(\mathbf{Q})$ and the weights; the test suite enforces it
-as a phase-convention lock.
+The weight uses the *uniform* sublattice sum, **not** a site-phase-weighted
+sum: because the extended-zone $J(\mathbf{Q})$ above already carries the full
+physical pair phases $e^{2\pi i \mathbf{Q}\cdot(\mathbf{r}_b+\mathbf{n}-\mathbf{r}_a)}$,
+adding site phases $e^{2\pi i \mathbf{Q}\cdot\mathbf{r}_a}$ in the weight would
+double-count the sublattice offsets. With this pairing the observable is
+**exactly independent of the cell description**: the same physical lattice
+described with a doubled cell (twice the sites, half the r.l.u. unit) or a
+shifted origin yields identical $\chi''$. The test suite locks this with a
+cell-equivalence test; the weight sum rule alone does *not* (it holds for any
+phase vector whose entries all have magnitude one), which is why cell
+invariance is the decisive phase-convention check. The sum rule itself holds
+because $U$ is unitary.
 
 ### Physics and conventions
 
 - **Sign convention:** positive $J$ favors ordering at the wavevector where
-  $\lambda_{\max}(\mathbf{Q})$ is largest (e.g. a single positive
-  nearest-neighbor $J$ on a Bravais lattice favors $\mathbf{Q} = 0$,
-  ferromagnetism; negative $J$ favors the zone boundary).
+  $\lambda_{\max}(\mathbf{Q})$, the largest eigenvalue of $J(\mathbf{Q})$, is
+  largest. For example, a single positive nearest-neighbor $J$ on a Bravais
+  lattice (one lattice point per primitive cell) favors $\mathbf{Q} = 0$,
+  ferromagnetism, where spins align uniformly; negative $J$ favors the zone
+  boundary, the edge of the first Brillouin zone.
 - **Stoner-like criterion:** the static susceptibility of mode $\nu$ diverges
   when $\lambda_\nu(\mathbf{Q})\, \chi_0 \to 1$. Evaluation raises an error on
   the ordered side ($1 - \lambda \chi_0 \le 0$); during optimization such
   trial parameters are mapped to a huge misfit so the fit stays in the
-  paramagnetic region.
+  paramagnetic region, where no long-range magnetic order has formed.
 - **Critical slowing:** $\Gamma_\nu = \Gamma_0 (1 - \lambda_\nu \chi_0)$
   softens toward the incipient ordering vector — the standard relaxational
   phenomenology of nearly ordered itinerant magnets [Moriya 1985; Bernhoeft &
@@ -177,15 +223,99 @@ as a phase-convention lock.
 ### Symmetry-distinct bond orbits
 
 Exchange constants are defined per **bond orbit**: the set of bonds mapped
-onto each other by the space group, which must share one $J$. Orbits are
-generated from the crystal (lattice, space group, magnetic Wyckoff sites) up
-to a cutoff distance and labeled `J1`, `J2`, ... by increasing bond length.
-When symmetry-inequivalent orbits occur at the *same* distance they get letter
-suffixes — on the pyrochlore lattice the twelve third neighbors split into
-`J3a` and `J3b` (six bonds each per site), which are independent fit
-parameters, following the Sunny.jl convention. Each orbit label becomes one
-fit parameter of the component, with the same sharing/limit/constraint
-machinery as any other parameter.
+onto each other by the **space group**, the crystal's rotational, mirror,
+inversion, and translational symmetries. Orbits are generated from the crystal
+up to a cutoff distance, the maximum bond length included in the model, and
+labeled `J1`, `J2`, ... by increasing bond length. The required crystal
+information is the lattice, meaning the periodic translation vectors, the space
+group, and the magnetic **Wyckoff sites**, which are symmetry-generated
+positions occupied by the magnetic ion. When symmetry-inequivalent orbits,
+orbits not related by any space-group operation, occur at the *same* distance
+they get letter suffixes — on the pyrochlore lattice the twelve third neighbors
+split into `J3a` and `J3b` (six bonds each per site), which are independent fit
+parameters, following the Sunny.jl convention. Each orbit label becomes one fit
+parameter of the component, with the same sharing/limit/constraint machinery as
+any other parameter.
+
+### Primitive-cell reduction (automatic, exact)
+
+For a centered lattice, the conventional cell is larger than the primitive cell
+and repeats magnetic sites under **centering translations**: fractional lattice
+translations that map the lattice onto itself. The pyrochlore in the
+conventional cubic $Fd\bar{3}m$ cell has 16 sites, but only 4 are
+translationally distinct. Under such a translation $J(\mathbf{Q})$
+block-diagonalizes into sectors, independent matrix blocks, at
+$\mathbf{Q}, \mathbf{Q}+\mathbf{G}_1, \dots$, where each $\mathbf{G}_i$ is a
+reciprocal vector of the reduced primitive description. The uniform neutron
+weight vector lies **entirely in the untranslated sector**; the folded sectors,
+the other blocks created by reducing the cell, carry exactly zero weight.
+Evaluating with one representative site per translation class, the set of sites
+related by centering translations, and fractional bond offsets such as
+$(\tfrac12,\tfrac12,0)$ therefore gives bit-identical $\chi''$ at a fraction of
+the cost: the per-$\mathbf{Q}$ eigendecomposition, or diagonalization of
+$J(\mathbf{Q})$, scales as $N^3$. Reducing 16 sites to 4 sites is therefore a
+$\sim$64× reduction in the dominant kernel, the eigendecomposition step that
+dominates runtime, plus 16× less phase-array memory, the stored complex phase
+factors for all bonds and $\mathbf{Q}$ points.
+
+This happens automatically at evaluation time. The reduction is detected
+empirically from the site and bond lists (candidate translations are pairwise
+site differences that map both the site set and every labeled bond orbit onto
+themselves) — never from the space-group symbol — so a hand-edited network that
+breaks the translation symmetry, or a genuinely primitive cell, is left
+untouched. **Everything the user sees stays in the specified cell:** $\mathbf{Q}$
+axes, positions, bond tables, $J$ labels, and fitted parameters are unchanged;
+only the internal evaluation uses the smaller basis of magnetic sites
+(`metallix.spin_fluctuations.reduce_site_network`).
+
+### Analytic Jacobian (resolvent form)
+
+The **Jacobian** is the matrix of model derivatives with respect to fitted
+parameters that the least-squares optimizer uses. The mode sum above is
+equivalently the **resolvent** contraction, meaning the same response written
+through the inverse RPA denominator matrix rather than through explicit
+eigenmodes:
+
+$$
+\chi(\mathbf{Q}, \omega) = \frac{\chi_0(\omega)}{N}\,
+\boldsymbol{\phi}^\dagger \big[\mathbf{1} - \chi_0(\omega) J(\mathbf{Q})\big]^{-1}
+\boldsymbol{\phi},
+\qquad \chi_0(\omega) = \frac{\chi_0}{1 - i\omega/\Gamma_0},
+$$
+
+Here $\boldsymbol{\phi}$ is the uniform sublattice vector (one equal entry for
+each magnetic site), $\operatorname{Im}$ means imaginary part, and
+$\chi'' = \operatorname{Im}\chi$. Writing
+$A = \mathbf{1} - \chi_0(\omega)J$, where $A$ is the RPA denominator matrix,
+$x = A^{-1}\boldsymbol{\phi}$, and
+$z = A^{-\dagger}\boldsymbol{\phi}$, where $-\dagger$ means inverse Hermitian
+conjugate, every parameter derivative is a closed-form sandwich that reuses the
+single eigendecomposition and contains **no eigenvector derivatives** — so it is
+exact even where $J(\mathbf{Q})$ has degenerate (flat) bands, which the
+pyrochlore has generically:
+
+$$
+\frac{\partial \chi}{\partial J_o} =
+\frac{\chi_0(\omega)^2}{N}\, z^\dagger P_o(\mathbf{Q})\, x,
+\qquad P_o = \frac{\partial J}{\partial J_o},
+$$
+
+Here $J_o$ is the fitted exchange value for orbit $o$, and $P_o(\mathbf{Q})$ is
+that orbit's precomputed structure matrix, i.e. the part of $J(\mathbf{Q})$
+multiplied by $J_o$. The derivatives
+$\partial\chi/\partial\chi_0$ and $\partial\chi/\partial\Gamma_0$ follow from
+the chain rule through $\chi_0(\omega)$ and $A$. Because every planned extension
+of the model (single-ion anisotropy, anisotropic/tensor exchange,
+dipole–dipole, Zeeman coupling to a field) enters
+$J(\mathbf{Q}) = \sum_p \theta_p P_p(\mathbf{Q})$ as a parameter $\theta_p$
+times a precomputed structure matrix $P_p(\mathbf{Q})$, the
+$\partial/\partial J_o$ formula generalizes to those terms verbatim. When every
+model component on a dataset supplies its gradients, the optimizer uses the
+exact Jacobian (`heisenberg_rpa_chipp_and_gradients`) instead of finite
+differences, the numerical derivative method that perturbs one parameter at a
+time. This cuts a least-squares iteration from $1 + n_{\text{param}}$
+evaluations to $\sim$2 and improves convergence; otherwise it falls back
+silently.
 
 ### Units
 

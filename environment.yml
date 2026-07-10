@@ -9,6 +9,7 @@ dependencies:
   - h5py
   - emcee
   - gemmi
+  - numba
   - pyside6
   - pytest
   - sphinx<9

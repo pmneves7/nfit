@@ -54,7 +54,11 @@ include the dataset type, axes, crystal information, data summary, source file,
 and imported metadata. Metadata is shown as an expandable tree so nested fields,
 instrument logs, sample-environment information, timestamps, temperature, field,
 and similar provenance remain inspectable without flattening everything into a
-long text block.
+long text block. For binned MDHisto data, the data summary reports the total
+bin count and a `Fit bins` count computed from the same prepared view used by
+the optimizer, so file masks, inherited group masks, dataset masks, empty bins,
+and invalid uncertainties are reflected in the number of bins that actually
+participate in a fit.
 
 Point-list datasets such as magnetization or powder elastic data expose editable
 coordinate/channel configuration. MDHisto datasets expose rebin settings in the
@@ -137,7 +141,12 @@ fit state is applied even after selecting a model or dataset elsewhere.
 Running `Fit now` from the current state or from the end of a timeline appends a
 new fit result at that level. Running from an earlier result, or explicitly
 checking `Branch timeline`, creates a nested timeline so alternative fitting
-attempts remain organized.
+attempts remain organized. When a fit succeeds, globally shared fitted
+parameters are written back into the live model component and the result
+snapshot, so selecting the model after the fit shows the best-fit values in the
+parameter editor. Parameters fitted separately per dataset or group are stored
+on the component as scoped fitted values because one editor field cannot
+represent several fitted numbers.
 
 Changing scientific state creates or updates the current timeline state:
 datasets, masks, model components, parameter values, fitted/fixed flags,
@@ -176,7 +185,8 @@ worker so the GUI can keep repainting and responding while initialization,
 least squares, or emcee is active. The progress window reports the active
 stage, iteration or residual-evaluation count, current cost when available, and
 current time per step plus current parameter values in a table, with a short
-stage log below. The time-per-step value is reported for differential-evolution
+stage log below; the divider between the table and log is draggable. The
+time-per-step value is reported for differential-evolution
 initialization, least-squares residual evaluations, and emcee posterior
 sampling. The `Cancel` button requests cancellation at the next optimizer or
 sampler progress update. Starting another fit resets the same progress window

@@ -54,11 +54,16 @@ from .form_factors import (
 )
 from .spin_fluctuations import (
     RpaGeometry,
+    available_rpa_backends,
     build_rpa_geometry,
     heisenberg_rpa_chipp,
+    heisenberg_rpa_chipp_and_gradients,
     local_relaxational_chipp,
     mmp_chipp,
+    reduce_site_network,
+    rpa_backend,
     rpa_exchange_matrix,
+    set_rpa_backend,
 )
 from .fitting import (
     DerivedParameter,
@@ -295,11 +300,16 @@ __all__ = [
     "form_factor_sq",
     "magnetic_form_factor_j0",
     "RpaGeometry",
+    "available_rpa_backends",
     "build_rpa_geometry",
     "heisenberg_rpa_chipp",
+    "heisenberg_rpa_chipp_and_gradients",
     "local_relaxational_chipp",
     "mmp_chipp",
+    "reduce_site_network",
+    "rpa_backend",
     "rpa_exchange_matrix",
+    "set_rpa_backend",
     "Bond",
     "BondOrbit",
     "CrystalSite",

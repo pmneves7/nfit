@@ -56,8 +56,10 @@ from .models import paramagnon_chipp
 from .spin_fluctuations import (
     build_rpa_geometry,
     heisenberg_rpa_chipp,
+    heisenberg_rpa_chipp_and_gradients,
     local_relaxational_chipp,
     mmp_chipp,
+    reduce_site_network,
 )
 
 FALLBACK_DATA_TYPE = "single_crystal_inelastic"
@@ -65,6 +67,12 @@ FALLBACK_DATA_TYPE = "single_crystal_inelastic"
 SHARING_MODES = ("global", "per_dataset", "grouped")
 
 CONSTRAINT_OFFSET_SUFFIX = "__offset"
+
+# A model Jacobian returns d(model intensity)/d(parameter) for every parameter
+# the model reads, keyed by the qualified name it reads that parameter under
+# (the same names the model's ``params`` lookups use). Optimizer-variable and
+# constraint bookkeeping is handled by the fit assembler, not here.
+ModelJacobian = Callable[[PointData4D, dict[str, float]], dict[str, np.ndarray]]
 
 
 def qualified_parameter_name(component_name: str, parameter: str) -> str:
@@ -88,6 +96,15 @@ def _constant_background_factory(component: Any) -> ModelFunction:
     return model
 
 
+def _constant_background_jacobian_factory(component: Any) -> ModelJacobian:
+    key = qualified_parameter_name(component.name, "constant")
+
+    def jacobian(data: PointData4D, params: dict[str, float]) -> dict[str, np.ndarray]:
+        return {key: np.ones(data.size, dtype=float)}
+
+    return jacobian
+
+
 def _linear_background_factory(component: Any) -> ModelFunction:
     c0_key = qualified_parameter_name(component.name, "c0")
     c1_key = qualified_parameter_name(component.name, "c1")
@@ -96,6 +113,19 @@ def _linear_background_factory(component: Any) -> ModelFunction:
         return float(params[c0_key]) + float(params[c1_key]) * np.asarray(data.E, dtype=float)
 
     return model
+
+
+def _linear_background_jacobian_factory(component: Any) -> ModelJacobian:
+    c0_key = qualified_parameter_name(component.name, "c0")
+    c1_key = qualified_parameter_name(component.name, "c1")
+
+    def jacobian(data: PointData4D, params: dict[str, float]) -> dict[str, np.ndarray]:
+        return {
+            c0_key: np.ones(data.size, dtype=float),
+            c1_key: np.asarray(data.E, dtype=float).copy(),
+        }
+
+    return jacobian
 
 
 def _single_q_paramagnon_factory(component: Any) -> ModelFunction:
@@ -257,55 +287,72 @@ def heisenberg_rpa_orbit_labels(component: Any) -> tuple[str, ...]:
     return tuple(labels)
 
 
-def _heisenberg_rpa_factory(component: Any) -> ModelFunction:
-    name = component.name
-    config = component.config if isinstance(component.config, dict) else {}
-    site_positions = config.get("site_positions")
-    if not site_positions:
-        raise ValueError(
-            f"heisenberg_rpa component {name!r} defines no magnetic site "
-            "positions; configure the crystal and generate bond orbits first"
-        )
-    orbits = config.get("orbits") or []
-    if not orbits:
-        raise ValueError(
-            f"heisenberg_rpa component {name!r} defines no bond orbits; "
-            "generate symmetry orbits or enter bonds manually first"
-        )
-    labels = heisenberg_rpa_orbit_labels(component)
-    j_keys = {label: qualified_parameter_name(name, label) for label in labels}
-    scale_key = qualified_parameter_name(name, "scale")
-    chi0_key = qualified_parameter_name(name, "chi0")
-    gamma0_key = qualified_parameter_name(name, "gamma0")
+class _RpaComponentEvaluator:
+    """Shared evaluation state for one ``heisenberg_rpa`` component.
 
-    # The Q-dependent, exchange-independent phase arrays (and the equally
-    # Q-fixed magnetic form factor) are expensive to build but constant for a
-    # given dataset, while the optimizer re-evaluates the model thousands of
-    # times. FitDataset.prepared_valid returns a stable object for the lifetime
-    # of a fit, so cache per data object. The cache holds a reference to the
-    # data object and verifies identity on lookup, so the id() key can never
-    # alias a different (freed-then-reused) object.
-    geometry_cache: dict[int, tuple[PointData4D, Any, Any]] = {}
+    Parses the crystal/orbit config once, folds the network onto its primitive
+    cell, and caches the Q-dependent phase geometry per fitted dataset. Exposes
+    :meth:`value` (measured intensity) and :meth:`gradients` (its exact
+    parameter derivatives), which share the same cached geometry so the model
+    and its analytic Jacobian never rebuild it.
+    """
 
-    def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+    def __init__(self, component: Any) -> None:
+        name = component.name
+        config = component.config if isinstance(component.config, dict) else {}
+        site_positions = config.get("site_positions")
+        if not site_positions:
+            raise ValueError(
+                f"heisenberg_rpa component {name!r} defines no magnetic site "
+                "positions; configure the crystal and generate bond orbits first"
+            )
+        orbits = config.get("orbits") or []
+        if not orbits:
+            raise ValueError(
+                f"heisenberg_rpa component {name!r} defines no bond orbits; "
+                "generate symmetry orbits or enter bonds manually first"
+            )
+        self.component = component
+        self.labels = heisenberg_rpa_orbit_labels(component)
+        self.j_keys = {label: qualified_parameter_name(name, label) for label in self.labels}
+        self.scale_key = qualified_parameter_name(name, "scale")
+        self.chi0_key = qualified_parameter_name(name, "chi0")
+        self.gamma0_key = qualified_parameter_name(name, "gamma0")
+        # Fold the network onto its primitive translational cell (exact:
+        # identical chi'' at far lower eigendecomposition cost). Purely an
+        # evaluation-time detail -- the component config, GUI, and fit outputs
+        # all stay in the user's specified cell.
+        self.site_positions, self.orbits = reduce_site_network(site_positions, orbits)
+        # Q-dependent, exchange-independent phase arrays (and the Q-fixed form
+        # factor) are expensive to build but constant for a given dataset. The
+        # cache holds a reference to the data object and verifies identity on
+        # lookup, so the id() key can never alias a freed-then-reused object.
+        self._geometry_cache: dict[int, tuple[PointData4D, Any, Any]] = {}
+
+    def _geometry(self, data: PointData4D) -> tuple[Any, Any]:
+        cached = self._geometry_cache.get(id(data))
+        if cached is not None and cached[0] is data:
+            return cached[1], cached[2]
+        if len(self._geometry_cache) > 32:
+            self._geometry_cache.clear()
+        geometry = build_rpa_geometry(data.H, data.K, data.L, self.site_positions, self.orbits)
+        form_factor_sq = _form_factor_sq_from_config(self.component, data)
+        self._geometry_cache[id(data)] = (data, geometry, form_factor_sq)
+        return geometry, form_factor_sq
+
+    def _j_values(self, params: dict[str, float]) -> dict[str, float]:
+        return {label: float(params[key]) for label, key in self.j_keys.items()}
+
+    def value(self, data: PointData4D, params: dict[str, float]) -> np.ndarray:
         temperature = _dataset_temperature(data)
-        cache_key = id(data)
-        cached = geometry_cache.get(cache_key)
-        if cached is None or cached[0] is not data:
-            if len(geometry_cache) > 32:
-                geometry_cache.clear()
-            geometry = build_rpa_geometry(data.H, data.K, data.L, site_positions, orbits)
-            form_factor_sq = _form_factor_sq_from_config(component, data)
-            geometry_cache[cache_key] = (data, geometry, form_factor_sq)
-        else:
-            _, geometry, form_factor_sq = cached
+        geometry, form_factor_sq = self._geometry(data)
         try:
             chipp = heisenberg_rpa_chipp(
                 geometry,
                 data.E,
-                chi0=float(params[chi0_key]),
-                gamma0=float(params[gamma0_key]),
-                j_values={label: float(params[key]) for label, key in j_keys.items()},
+                chi0=float(params[self.chi0_key]),
+                gamma0=float(params[self.gamma0_key]),
+                j_values=self._j_values(params),
             )
         except ValueError:
             # Unphysical trial parameters (RPA instability, non-positive
@@ -316,12 +363,74 @@ def _heisenberg_rpa_factory(component: Any) -> ModelFunction:
             chipp,
             data.E,
             temperature,
-            scale=float(params[scale_key]),
+            scale=float(params[self.scale_key]),
             form_factor_sq=form_factor_sq,
             polarization=ISOTROPIC_POLARIZATION,
         )
 
-    return model
+    def gradients(self, data: PointData4D, params: dict[str, float]) -> dict[str, np.ndarray]:
+        """Return ``d(intensity)/d(param)`` keyed by qualified parameter name."""
+
+        temperature = _dataset_temperature(data)
+        geometry, form_factor_sq = self._geometry(data)
+        scale = float(params[self.scale_key])
+        try:
+            chipp, chipp_grads = heisenberg_rpa_chipp_and_gradients(
+                geometry,
+                data.E,
+                chi0=float(params[self.chi0_key]),
+                gamma0=float(params[self.gamma0_key]),
+                j_values=self._j_values(params),
+            )
+        except ValueError:
+            # Sentinel-penalty region: the value is a constant with no
+            # parameter dependence, so every column is zero.
+            zero = np.zeros(data.size, dtype=float)
+            columns = {self.scale_key: zero, self.chi0_key: zero, self.gamma0_key: zero}
+            columns.update({key: zero for key in self.j_keys.values()})
+            return columns
+        # I = scale * (2/3) * |f|^2 * chipp / bose(E, T), linear in chipp. The
+        # scale column is I evaluated at unit scale; d(I)/d(chipp) is I with
+        # chipp replaced by 1 (the Bose/form-factor/scale prefactor). Both are
+        # computed directly -- never by dividing by chipp, which would be
+        # singular at nodes where chipp = 0 but the sensitivity is finite.
+        ones = np.ones(data.size, dtype=float)
+        scale_column = np.asarray(
+            intensity_from_chipp(
+                chipp,
+                data.E,
+                temperature,
+                scale=1.0,
+                form_factor_sq=form_factor_sq,
+                polarization=ISOTROPIC_POLARIZATION,
+            ),
+            dtype=float,
+        )
+        d_intensity_d_chipp = np.asarray(
+            intensity_from_chipp(
+                ones,
+                data.E,
+                temperature,
+                scale=scale,
+                form_factor_sq=form_factor_sq,
+                polarization=ISOTROPIC_POLARIZATION,
+            ),
+            dtype=float,
+        )
+        columns = {self.scale_key: scale_column}
+        columns[self.chi0_key] = d_intensity_d_chipp * chipp_grads["chi0"]
+        columns[self.gamma0_key] = d_intensity_d_chipp * chipp_grads["gamma0"]
+        for label, key in self.j_keys.items():
+            columns[key] = d_intensity_d_chipp * chipp_grads[label]
+        return columns
+
+
+def _heisenberg_rpa_factory(component: Any) -> ModelFunction:
+    return _RpaComponentEvaluator(component).value
+
+
+def _heisenberg_rpa_jacobian_factory(component: Any) -> "ModelJacobian":
+    return _RpaComponentEvaluator(component).gradients
 
 
 @dataclass(frozen=True)
@@ -338,6 +447,10 @@ class ModelTypeInfo:
     data_types: tuple[str, ...]
     factory: Callable[[Any], ModelFunction]
     dynamic_parameters: Callable[[Any], tuple[str, ...]] | None = None
+    jacobian_factory: Callable[[Any], ModelJacobian] | None = None
+    """Optional analytic-Jacobian builder. When every component applied to a
+    dataset provides one, the optimizer uses exact gradients instead of finite
+    differences; otherwise it silently falls back."""
 
 
 def component_parameter_names(component: Any) -> tuple[str, ...]:
@@ -354,11 +467,13 @@ MODEL_TYPE_REGISTRY: dict[str, ModelTypeInfo] = {
         parameters=("constant",),
         data_types=("*",),
         factory=_constant_background_factory,
+        jacobian_factory=_constant_background_jacobian_factory,
     ),
     "linear_background": ModelTypeInfo(
         parameters=("c0", "c1"),
         data_types=("single_crystal_inelastic", "powder_inelastic"),
         factory=_linear_background_factory,
+        jacobian_factory=_linear_background_jacobian_factory,
     ),
     "single_q_paramagnon": ModelTypeInfo(
         parameters=("amplitude", "q0_h", "q0_k", "q0_l", "kappa", "omega_sf"),
@@ -380,6 +495,7 @@ MODEL_TYPE_REGISTRY: dict[str, ModelTypeInfo] = {
         data_types=("single_crystal_inelastic",),
         factory=_heisenberg_rpa_factory,
         dynamic_parameters=heisenberg_rpa_orbit_labels,
+        jacobian_factory=_heisenberg_rpa_jacobian_factory,
     ),
 }
 
@@ -591,11 +707,25 @@ def compile_fit_problem(
 
     fit_datasets: list[FitDataset] = []
     for dataset in fitted:
+        components_here = [
+            component for component in active if dataset.name in applicable[component.name]
+        ]
         evaluators = [
             MODEL_TYPE_REGISTRY[component.type].factory(component)
-            for component in active
-            if dataset.name in applicable[component.name]
+            for component in components_here
         ]
+        # An analytic Jacobian is available for the dataset only when *every*
+        # component on it provides one; otherwise the optimizer falls back to
+        # finite differences for the whole problem.
+        jacobian_factories = [
+            MODEL_TYPE_REGISTRY[component.type].jacobian_factory
+            for component in components_here
+        ]
+        model_jacobian = None
+        if components_here and all(factory is not None for factory in jacobian_factories):
+            model_jacobian = _additive_jacobian(
+                [factory(component) for factory, component in zip(jacobian_factories, components_here)]
+            )
         fit_datasets.append(
             FitDataset(
                 name=dataset.name,
@@ -603,6 +733,7 @@ def compile_fit_problem(
                 weight=float(dataset.weight),
                 parameter_bindings=dict(bindings[dataset.name]),
                 model=_additive_model(evaluators),
+                model_jacobian=model_jacobian,
                 metadata=dict(dataset.metadata),
             )
         )
@@ -630,6 +761,21 @@ def _additive_model(evaluators: Sequence[ModelFunction]) -> ModelFunction:
         return total
 
     return model
+
+
+def _additive_jacobian(jacobians: Sequence[ModelJacobian]) -> ModelJacobian:
+    """Merge component Jacobians; each contributes its own qualified names."""
+
+    def jacobian(data: PointData4D, params: dict[str, float]) -> dict[str, np.ndarray]:
+        columns: dict[str, np.ndarray] = {}
+        for evaluate in jacobians:
+            for key, column in evaluate(data, params).items():
+                existing = columns.get(key)
+                arr = np.asarray(column, dtype=float)
+                columns[key] = arr if existing is None else existing + arr
+        return columns
+
+    return jacobian
 
 
 def _compile_constraints(

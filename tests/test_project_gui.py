@@ -42,7 +42,14 @@ from metallix.project_gui import (
     set_dataset_data_type,
     set_dataset_source,
 )
-from metallix.pipeline import DataGroup, DatasetEntry, DatasetGroup, FitTimelineEntry
+from metallix.pipeline import (
+    DataGroup,
+    DatasetEntry,
+    DatasetGroup,
+    FitTimelineEntry,
+    MaskSpec,
+    ModelComponentSpec,
+)
 
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
@@ -716,6 +723,111 @@ def test_phonon_cone_mask_is_inert_with_nonpositive_slope():
     assert viewed.metadata["metallix_mask_count"] == 0
 
 
+def _he_mdhisto_data():
+    # Bin edges chosen so H centers are {0, 1, 2} and E centers are {0, 10}.
+    h_axis = MDHistoAxis("H", np.array([-0.5, 0.5, 1.5, 2.5]), "rlu", "h")
+    e_axis = MDHistoAxis("E", np.array([-5.0, 5.0, 15.0]), "meV", "energy_transfer")
+    shape = (3, 2)
+    return MDHistoData(
+        axes=(h_axis, e_axis),
+        signal=np.zeros(shape),
+        errors=np.ones(shape),
+        mask=np.zeros(shape, dtype=bool),
+        num_events=np.ones(shape),
+        metadata={},
+    )
+
+
+def test_dataset_for_slice_viewer_applies_box_mask():
+    data = _he_mdhisto_data()
+    dataset = DatasetEntry("scan", data)
+    mask = create_mask(dataset, type="box")
+    mask.parameters["axes"] = ["H", "E"]
+    mask.parameters["center"] = [0.0, 0.0]
+    # Full widths of 1.0 (H) and 5.0 (E) => half-widths 0.5 and 2.5.
+    mask.parameters["width"] = [1.0, 5.0]
+
+    viewed = dataset_for_slice_viewer(dataset)
+
+    # Only the H=0, E=0 bin falls inside the box.
+    expected = np.zeros(data.shape, dtype=bool)
+    expected[0, 0] = True
+    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], expected)
+    np.testing.assert_array_equal(viewed.mask, expected)
+
+
+def test_box_mask_is_inert_with_zero_width():
+    data = _he_mdhisto_data()
+    dataset = DatasetEntry("scan", data)
+    mask = create_mask(dataset, type="box")
+    mask.parameters["axes"] = ["H", "E"]
+    mask.parameters["center"] = [0.0, 0.0]
+    # The default zero width must leave the starter mask inert.
+
+    viewed = dataset_for_slice_viewer(dataset)
+
+    assert viewed.metadata["metallix_mask_count"] == 0
+
+
+def test_dataset_for_slice_viewer_applies_ellipsoid_mask():
+    data = _he_mdhisto_data()
+    dataset = DatasetEntry("scan", data)
+    mask = create_mask(dataset, type="ellipsoid")
+    mask.parameters["axes"] = ["H", "E"]
+    mask.parameters["center"] = [0.0, 0.0]
+    # (H / 1)^2 + (E / 10)^2 <= 1 selects H in {0, 1} at E=0 and H=0 at E=10.
+    mask.parameters["radii"] = [1.0, 10.0]
+
+    viewed = dataset_for_slice_viewer(dataset)
+
+    expected = np.zeros(data.shape, dtype=bool)
+    expected[0, 0] = True  # H=0, E=0
+    expected[1, 0] = True  # H=1, E=0 (on the boundary)
+    expected[0, 1] = True  # H=0, E=10 (on the boundary)
+    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], expected)
+    np.testing.assert_array_equal(viewed.mask, expected)
+
+
+def test_ellipsoid_mask_is_inert_with_zero_radius():
+    data = _he_mdhisto_data()
+    dataset = DatasetEntry("scan", data)
+    mask = create_mask(dataset, type="ellipsoid")
+    mask.parameters["axes"] = ["H", "E"]
+    mask.parameters["center"] = [0.0, 0.0]
+    # The default zero radii must leave the starter mask inert.
+
+    viewed = dataset_for_slice_viewer(dataset)
+
+    assert viewed.metadata["metallix_mask_count"] == 0
+
+
+def test_box_mask_resolves_projected_axes():
+    hh_axis = MDHistoAxis("[H,H,0]", np.array([-0.5, 0.5, 1.5]), "rlu", "momentum")
+    l_axis = MDHistoAxis("[0,0,L]", np.array([-0.5, 0.5, 1.5]), "rlu", "momentum")
+    shape = (2, 2)
+    data = MDHistoData(
+        axes=(hh_axis, l_axis),
+        signal=np.zeros(shape),
+        errors=np.ones(shape),
+        mask=np.zeros(shape, dtype=bool),
+        num_events=np.ones(shape),
+        metadata={},
+    )
+    dataset = DatasetEntry("scan", data)
+    mask = create_mask(dataset, type="box")
+    # Project onto the H and L reciprocal-space coordinates.
+    mask.parameters["axes"] = ["H", "L"]
+    mask.parameters["center"] = [0.0, 0.0]
+    mask.parameters["width"] = [1.0, 1.0]
+
+    viewed = dataset_for_slice_viewer(dataset)
+
+    # Only the bin whose [H,H,0]=0 and [0,0,L]=0 lands inside the box.
+    expected = np.zeros(shape, dtype=bool)
+    expected[0, 0] = True
+    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], expected)
+
+
 def test_project_explorer_adds_and_edits_models(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
@@ -1007,6 +1119,79 @@ def test_project_explorer_fit_history_creates_results_branches_and_restores(monk
     assert explorer.tree.currentItem().font(0).bold()
     assert not explorer.fit_now_button.isHidden()
     assert explorer.import_dataset_button.isHidden()
+
+
+def test_fit_now_updates_live_model_parameters_and_editor(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    dataset = DatasetEntry("scan", _tiny_mdhisto_data(3.0))
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    model = create_model_component(group)
+    model.parameters["constant"] = 0.0
+    model.fit_parameters["constant"] = True
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(2).child(0))
+    result = explorer.fit_now_for_selection()
+
+    assert result is not None
+    assert model.parameters["constant"] == pytest.approx(3.0, abs=1e-6)
+    assert result.snapshot["models"][0]["parameters"]["constant"] == pytest.approx(3.0, abs=1e-6)
+
+    model_item = explorer.tree.topLevelItem(0).child(1).child(0)
+    explorer.tree.setCurrentItem(model_item)
+    tooltip = model_parameter_tooltip("constant_background", "constant")
+    parameter_editor = next(
+        editor
+        for editor in explorer.model_parameter_widget.findChildren(QtWidgets.QLineEdit)
+        if editor.toolTip() == tooltip
+    )
+    assert float(parameter_editor.text()) == pytest.approx(3.0, abs=1e-6)
+
+
+def test_write_back_fitted_parameters_includes_dynamic_orbit_parameters():
+    model = ModelComponentSpec(
+        name="rpa",
+        type="heisenberg_rpa",
+        parameters={"scale": 1.0, "chi0": 0.1, "gamma0": 5.0, "J1": 0.0},
+        fit_parameters={"scale": True, "chi0": True, "gamma0": True, "J1": True},
+        config={
+            "site_positions": [[0.0, 0.0, 0.0]],
+            "orbits": [
+                {
+                    "label": "J1",
+                    "bonds": [{"site_i": 0, "site_j": 0, "offset": [1, 0, 0]}],
+                }
+            ],
+        },
+    )
+    compiled = project_gui.compile_fit_problem(
+        [model],
+        [project_gui.FitDatasetInput("scan", _points_for_dynamic_writeback(), data_type="single_crystal_inelastic")],
+    )
+    result = type(
+        "Result",
+        (),
+        {"params": {"rpa.scale": 2.0, "rpa.chi0": 0.2, "rpa.gamma0": 4.0, "rpa.J1": 1.25}},
+    )()
+
+    project_gui._write_back_fitted_parameters(DataGroup("Datagroup1"), [model], compiled, result)
+
+    assert model.parameters["scale"] == pytest.approx(2.0)
+    assert model.parameters["J1"] == pytest.approx(1.25)
+
+
+def _points_for_dynamic_writeback() -> PointData4D:
+    return PointData4D(
+        H=[0.0],
+        K=[0.0],
+        L=[0.0],
+        E=[1.0],
+        intensity=[1.0],
+        sigma=[1.0],
+        temperature=5.0,
+    )
 
 
 def test_slice_viewer_datasets_attach_current_model_before_fit():
@@ -1398,6 +1583,7 @@ def test_fit_diagnostics_trace_uses_chain_steps_when_available(monkeypatch):
 def test_fit_progress_dialog_uses_parameter_table_and_resets(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    QtCore = pytest.importorskip("PySide6.QtCore")
     from metallix.project_gui import _FitProgressDialog
 
     explorer = MetallixProjectExplorer(MetallixProject())
@@ -1417,7 +1603,14 @@ def test_fit_progress_dialog_uses_parameter_table_and_resets(monkeypatch):
     )
 
     table = dialog.dialog.findChild(QtWidgets.QTableWidget, "fit_progress_parameter_table")
+    splitter = dialog.dialog.findChild(QtWidgets.QSplitter, "fit_progress_panel_splitter")
+    log = dialog.dialog.findChild(QtWidgets.QPlainTextEdit, "fit_progress_log")
     assert table is not None
+    assert splitter is not None
+    assert log is dialog.log
+    assert splitter.orientation() == QtCore.Qt.Orientation.Vertical
+    assert splitter.indexOf(table) == 0
+    assert splitter.indexOf(log) == 1
     assert table.rowCount() == 2
     assert "model.constant" not in dialog.log.toPlainText()
     assert "Least-squares fit" in dialog.stage_label.text()
@@ -2003,6 +2196,39 @@ def test_dataset_details_text_summarizes_axes_source_and_metadata(tmp_path, monk
         for index in range(top_level["sample_environment"].childCount())
     }
     assert {"field", "temperature", "log"}.issubset(child_names)
+
+
+def test_dataset_details_fit_bins_include_file_dataset_and_group_masks():
+    data = _grid_mdhisto_data()
+    data.mask[0, 0] = True
+    dataset = DatasetEntry("scan", data, kind="mdhisto")
+    mask = create_mask(dataset, type="box")
+    mask.parameters["axes"] = ["H", "E"]
+    mask.parameters["center"] = [1.5, 5.0]
+    mask.parameters["width"] = [0.1, 0.1]
+    group = DataGroup(
+        "Datagroup1",
+        datasets=[dataset],
+        masks=[
+            MaskSpec(
+                "SharedMask",
+                type="box",
+                parameters={
+                    "axes": ["H", "E"],
+                    "center": [0.5, 15.0],
+                    "width": [0.1, 0.1],
+                },
+            )
+        ],
+    )
+
+    text = dataset_details_text(dataset, group=group)
+
+    assert "Total bins: 4" in text
+    assert "Unmasked bins: 3" in text
+    assert "Fit bins: 1 of 4" in text
+    viewed = dataset_for_slice_viewer(dataset, extra_masks=project_gui.effective_dataset_masks(group, dataset))
+    assert int(np.count_nonzero(~viewed.mask)) == 1
 
 
 def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkeypatch, tmp_path):
@@ -2878,3 +3104,112 @@ def test_reconcile_model_orbit_parameters_keeps_and_drops():
     assert "J9" not in model.fit_parameters
     assert "J9" not in model.limits
     assert model.fit_parameters["J1"] is True
+
+
+def _rpa_overlay_group():
+    data = _grid_mdhisto_data()
+    data.metadata["temperature"] = 5.0
+    dataset = DatasetEntry("scan", data, kind="mdhisto", data_type="single_crystal_inelastic")
+    model = ModelComponentSpec(
+        name="M",
+        type="heisenberg_rpa",
+        parameters={"scale": 1.0, "chi0": 0.3, "gamma0": 2.0, "J1": 0.1},
+        fit_parameters={"scale": True, "chi0": True, "gamma0": True, "J1": True},
+        config={
+            "site_positions": [[0.0, 0.0, 0.0], [0.31, 0.47, 0.11]],
+            "orbits": [
+                {"label": "J1", "bonds": [{"site_i": 0, "site_j": 1, "offset": [0, 0, 0]}]}
+            ],
+        },
+    )
+    group = DataGroup(
+        "Datagroup1",
+        datasets=[dataset],
+        lattice_parameters={"a": 4.0, "b": 4.0, "c": 8.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+    )
+    group.models[model.name] = model
+    return group, dataset, model
+
+
+def test_overlay_cache_reuses_compiled_problem_across_parameter_edits():
+    project_gui._MODEL_OVERLAY_CACHE.clear()
+    group, _dataset, model = _rpa_overlay_group()
+
+    first = project_gui.current_model_channels(group)
+    assert "scan" in first
+    cached = project_gui._MODEL_OVERLAY_CACHE[id(group)]
+    compiled_first = cached["compiled"]
+
+    # A parameter-value edit must reuse the cached bundles/compiled problem...
+    model.parameters["J1"] = 0.25
+    second = project_gui.current_model_channels(group)
+    assert project_gui._MODEL_OVERLAY_CACHE[id(group)]["compiled"] is compiled_first
+    # ...while still reflecting the new value in the overlay.
+    a = np.asarray(first["scan"]["fit"], dtype=float)
+    b = np.asarray(second["scan"]["fit"], dtype=float)
+    finite = np.isfinite(a) & np.isfinite(b)
+    assert finite.any()
+    assert np.nanmax(np.abs(a[finite] - b[finite])) > 0.0
+
+
+def test_overlay_cache_invalidates_on_structural_change():
+    project_gui._MODEL_OVERLAY_CACHE.clear()
+    group, _dataset, model = _rpa_overlay_group()
+    project_gui.current_model_channels(group)
+    compiled_first = project_gui._MODEL_OVERLAY_CACHE[id(group)]["compiled"]
+
+    # Changing the bond network (structure) must rebuild, not reuse.
+    model.config["orbits"] = [
+        {"label": "J1", "bonds": [{"site_i": 0, "site_j": 1, "offset": [0, 0, 0]}]},
+        {"label": "J2", "bonds": [{"site_i": 0, "site_j": 0, "offset": [0, 0, 1]}]},
+    ]
+    model.parameters["J2"] = 0.05
+    project_gui.current_model_channels(group)
+    assert project_gui._MODEL_OVERLAY_CACHE[id(group)]["compiled"] is not compiled_first
+
+
+def test_overlay_evaluates_only_valid_points(monkeypatch):
+    project_gui._MODEL_OVERLAY_CACHE.clear()
+    group, dataset, _model = _rpa_overlay_group()
+    # Mask one grid cell; the overlay there must be NaN, and the model must not
+    # be evaluated over the masked point.
+    dataset.data.mask[0, 0] = True
+
+    seen_sizes = []
+    original = project_gui.evaluate_problem_model
+
+    def spy(problem, name, params, data=None):
+        seen_sizes.append(data.size if data is not None else None)
+        return original(problem, name, params, data=data)
+
+    monkeypatch.setattr(project_gui, "evaluate_problem_model", spy)
+    channels = project_gui.current_model_channels(group)
+    fit = np.asarray(channels["scan"]["fit"], dtype=float)
+    assert not np.isfinite(fit[0, 0])  # masked cell is NaN
+    # exactly the unmasked points were evaluated (fewer than the full grid)
+    assert seen_sizes and seen_sizes[0] == int(np.isfinite(fit).sum())
+
+
+def test_request_overlay_refresh_coalesces_without_event_loop(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+    group, _dataset, _model = _rpa_overlay_group()
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+
+    refreshed = []
+    monkeypatch.setattr(explorer, "refresh_slice_viewer", lambda g: refreshed.append(g))
+    # No viewer open -> request is a no-op.
+    explorer._request_overlay_refresh(group)
+    assert refreshed == []
+
+    # With a viewer registered, rapid requests set a single pending group and
+    # a debounce timer rather than refreshing on every call.
+    explorer._slice_viewers[id(group)] = object()
+    explorer._request_overlay_refresh(group)
+    explorer._request_overlay_refresh(group)
+    assert explorer._pending_overlay_group is group
+    assert explorer._overlay_refresh_timer is not None
+    # Firing the debounced slot runs exactly one refresh.
+    explorer._run_pending_overlay_refresh()
+    assert refreshed == [group]
+    assert explorer._pending_overlay_group is None

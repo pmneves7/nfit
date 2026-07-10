@@ -425,6 +425,23 @@ survives project save/load and can be scripted directly. See
 [Spin-fluctuation models](spin_fluctuation_models.md) for the physics and the
 orbit-generation API.
 
+### Analytic Jacobians
+
+A registration may also supply an optional `jacobian_factory`, mirroring
+`factory`: it closes over the component and returns a callable
+`(data, params) -> {qualified_name: d(model)/d(param)}` giving exact model
+gradients keyed by the same qualified names the model reads. `compile_fit_problem`
+attaches a combined `model_jacobian` to a `FitDataset` only when **every**
+component applied to that dataset provides one (background models and
+`heisenberg_rpa` do). `fit_problem_least_squares` then hands the assembled
+residual Jacobian to SciPy (`problem_supports_analytic_jacobian` gates this,
+additionally requiring no instrument resolution, whose convolution the bare
+model gradient does not carry); otherwise it silently falls back to SciPy's
+finite-difference Jacobian. The assembler maps each model column onto optimizer
+variables through the same `parameter_bindings` and derived-parameter chain rule
+the residual uses, so shared parameters and reparameterized inequality
+constraints are handled automatically.
+
 ## Parameter bindings and constraints
 
 `ParameterSpec` defines the global optimizer parameters. `FitDataset` can map

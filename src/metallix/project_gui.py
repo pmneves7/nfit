@@ -23,6 +23,7 @@ from .fit_config import (
     CompiledFitProblem,
     FitDatasetInput,
     compile_fit_problem,
+    component_parameter_names,
     model_supports_data_type,
     qualified_parameter_name,
 )
@@ -1649,6 +1650,7 @@ def dataset_detail_sections(
     """Return ordered dataset detail sections for text and GUI rendering."""
 
     axes_lines, data_lines = _dataset_axes_and_data_lines(dataset.data)
+    data_lines.extend(_dataset_fit_summary_lines(dataset, group=group))
     data_lines.append(f"Masks: {len(dataset.masks)}")
     source_lines = _dataset_source_lines(dataset)
     metadata_lines = _dataset_metadata_lines(dataset)
@@ -2112,6 +2114,93 @@ def perform_group_fit(
     }
 
 
+# Overlay recomputation is dominated by rebuilding the fit bundles (rebinning
+# the full volume) and the RPA phase geometry. Neither depends on model
+# *parameter values*, so both are cached per group and reused when only a
+# parameter changes -- turning an O(10 s) rebuild on every edit into an O(0.1 s)
+# re-evaluation. The cache is keyed on a structural signature that excludes
+# parameter values (see _overlay_cache_signature).
+_MODEL_OVERLAY_CACHE: dict[int, dict[str, Any]] = {}
+_MODEL_OVERLAY_CACHE_LIMIT = 6
+
+
+def _overlay_cache_signature(group: DataGroup) -> str:
+    """Structural fingerprint of a group's overlay inputs, excluding values.
+
+    Everything that changes the bundles (data identity, masks, rebin,
+    temperature, scale) or the model structure (types, config, sharing,
+    applies-to, enablement) is included; per-parameter *values* are excluded so
+    editing e.g. ``J2`` reuses the cached bundles and geometry.
+    """
+
+    datasets: list[Any] = []
+    for dataset in group.iter_datasets():
+        datasets.append(
+            [
+                dataset.name,
+                bool(dataset.enabled),
+                dataset.data_type,
+                dataset.kind,
+                id(dataset),
+                float(dataset.fit_weight),
+                json.dumps(dataset.parameters, sort_keys=True, default=str),
+                effective_dataset_temperature(group, dataset),
+                [
+                    [mask.type, bool(mask.enabled), bool(mask.invert), bool(mask.additive),
+                     json.dumps(mask.parameters, sort_keys=True, default=str)]
+                    for mask in effective_dataset_masks(group, dataset)
+                ],
+            ]
+        )
+    models: list[Any] = []
+    for model in group.models.values():
+        if not isinstance(model, ModelComponentSpec):
+            continue
+        models.append(
+            [
+                model.name,
+                model.type,
+                bool(model.enabled),
+                list(model.applies_to) if model.applies_to is not None else None,
+                json.dumps(model.config, sort_keys=True, default=str),
+                json.dumps(model.sharing, sort_keys=True, default=str),
+                json.dumps(model.constraints, sort_keys=True, default=str),
+            ]
+        )
+    payload = [
+        datasets,
+        models,
+        json.dumps(group.lattice_parameters, sort_keys=True, default=str),
+        group.spacegroup,
+    ]
+    return json.dumps(payload, sort_keys=True, default=str)
+
+
+def _overlay_current_params(
+    group: DataGroup, compiled: CompiledFitProblem
+) -> dict[str, float]:
+    """Map current component parameter values onto a compiled problem's specs.
+
+    The compiled problem may be cached (its spec values are stale), so read the
+    live values from the components through the instance bookkeeping. Derived
+    (constraint) parameters keep their compiled default.
+    """
+
+    params = {spec.name: float(spec.value) for spec in compiled.problem.parameter_specs}
+    for instance in compiled.parameter_instances.values():
+        component = group.models.get(instance.component)
+        if not isinstance(component, ModelComponentSpec):
+            continue
+        value = component.parameters.get(instance.parameter)
+        if value is None:
+            continue
+        try:
+            params[instance.name] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return params
+
+
 def current_model_channels(group: DataGroup) -> dict[str, dict[str, Any]]:
     """Evaluate enabled model components at their current parameter values."""
 
@@ -2119,14 +2208,35 @@ def current_model_channels(group: DataGroup) -> dict[str, dict[str, Any]]:
         model for model in group.models.values() if isinstance(model, ModelComponentSpec)
     ]
     if not any(component.enabled for component in components):
+        _MODEL_OVERLAY_CACHE.pop(id(group), None)
         return {}
-    inputs, bundles = fit_dataset_inputs(group)
-    if not inputs:
-        return {}
+    signature = _overlay_cache_signature(group)
+    cached = _MODEL_OVERLAY_CACHE.get(id(group))
+    if cached is not None and cached["signature"] == signature:
+        compiled = cached["compiled"]
+        bundles = cached["bundles"]
+        subsets = cached["subsets"]
+    else:
+        inputs, bundles = fit_dataset_inputs(group)
+        if not inputs:
+            _MODEL_OVERLAY_CACHE.pop(id(group), None)
+            return {}
+        try:
+            compiled = compile_fit_problem(components, inputs, description=group.name)
+        except Exception:
+            return {}
+        subsets = {}
+        if len(_MODEL_OVERLAY_CACHE) >= _MODEL_OVERLAY_CACHE_LIMIT:
+            _MODEL_OVERLAY_CACHE.clear()
+        _MODEL_OVERLAY_CACHE[id(group)] = {
+            "signature": signature,
+            "compiled": compiled,
+            "bundles": bundles,
+            "subsets": subsets,
+        }
     try:
-        compiled = compile_fit_problem(components, inputs, description=group.name)
-        params = {spec.name: float(spec.value) for spec in compiled.problem.parameter_specs}
-        return _fit_channels_from_params(compiled, params, bundles)
+        params = _overlay_current_params(group, compiled)
+        return _fit_channels_from_params(compiled, params, bundles, subset_cache=subsets)
     except Exception:
         return {}
 
@@ -2388,10 +2498,7 @@ def _write_back_fitted_parameters(
     """
 
     for component in components:
-        info = MODEL_TYPE_REGISTRY.get(component.type)
-        if info is None:
-            continue
-        for parameter in info.parameters:
+        for parameter in component_parameter_names(component):
             qualified = qualified_parameter_name(component.name, parameter)
             if qualified in result.params:
                 component.parameters[parameter] = float(result.params[qualified])
@@ -2419,20 +2526,43 @@ def _fit_channels_from_params(
     compiled: CompiledFitProblem,
     params: dict[str, float],
     bundles: dict[str, FitDataBundle],
+    subset_cache: dict[str, tuple[np.ndarray, PointData4D]] | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Evaluate fit and residual channels for a compiled problem."""
+    """Evaluate fit and residual channels for a compiled problem.
+
+    ``subset_cache`` optionally memoizes each dataset's valid-point mask and
+    subset across calls; reusing the same subset object also lets the model's
+    per-dataset geometry cache hit, so repeated overlay refreshes at new
+    parameter values skip both the mask scan and the RPA geometry rebuild.
+    """
 
     channels: dict[str, dict[str, Any]] = {}
     fitted_names = {dataset.name for dataset in compiled.problem.datasets}
     for name, bundle in bundles.items():
         if name not in fitted_names:
             continue
-        values = evaluate_problem_model(
-            compiled.problem, name, params, data=bundle.points
-        )
-        fit_values = np.asarray(values, dtype=float)
-        intensity = np.asarray(bundle.points.intensity, dtype=float)
-        sigma = np.asarray(bundle.points.sigma, dtype=float)
+        points = bundle.points
+        # Evaluate the model only where the data is valid (unmasked, finite,
+        # positive sigma) and scatter back onto the full grid with NaN
+        # elsewhere. Masked cells display as NaN regardless, so this avoids
+        # running the model over the (often 10x larger) masked remainder and
+        # over the extra unique Q those masked shells introduce.
+        cached_subset = subset_cache.get(name) if subset_cache is not None else None
+        if cached_subset is not None:
+            keep, subset = cached_subset
+        else:
+            keep = points.valid_mask()
+            subset = _subset_points(points, keep)
+            if subset_cache is not None:
+                subset_cache[name] = (keep, subset)
+        fit_values = np.full(points.size, np.nan, dtype=float)
+        if subset.size:
+            fit_values[keep] = np.asarray(
+                evaluate_problem_model(compiled.problem, name, params, data=subset),
+                dtype=float,
+            )
+        intensity = np.asarray(points.intensity, dtype=float)
+        sigma = np.asarray(points.sigma, dtype=float)
         with np.errstate(divide="ignore", invalid="ignore"):
             residual_values = (intensity - fit_values) / sigma
         residual_values = np.where(
@@ -2449,6 +2579,26 @@ def _fit_channels_from_params(
             "residual": residual_values,
         }
     return channels
+
+
+def _subset_points(points: PointData4D, keep: np.ndarray) -> PointData4D:
+    """Return the ``keep``-selected subset of ``points`` (order preserved)."""
+
+    if isinstance(points.temperature, np.ndarray):
+        temperature: Any = points.temperature[keep]
+    else:
+        temperature = points.temperature
+    return PointData4D(
+        H=points.H[keep],
+        K=points.K[keep],
+        L=points.L[keep],
+        E=points.E[keep],
+        intensity=points.intensity[keep],
+        sigma=points.sigma[keep],
+        mask=np.ones(int(np.count_nonzero(keep)), dtype=bool),
+        temperature=temperature,
+        metadata=dict(points.metadata),
+    )
 
 
 def latest_fit_channels(group: DataGroup, dataset_name: str) -> dict[str, Any] | None:
@@ -3058,7 +3208,155 @@ def _evaluate_mdhisto_mask(data: MDHistoData, mask: MaskSpec) -> np.ndarray:
         return _mdhisto_energy_q_range_mask(data, mask.parameters)
     if mask.type == "phonon_cone":
         return _mdhisto_phonon_cone_mask(data, mask.parameters)
+    if mask.type == "box":
+        return _mdhisto_box_mask(data, mask.parameters)
+    if mask.type == "ellipsoid":
+        return _mdhisto_ellipsoid_mask(data, mask.parameters)
     return np.zeros(data.shape, dtype=bool)
+
+
+def _mdhisto_box_mask(data: MDHistoData, parameters: dict[str, Any]) -> np.ndarray:
+    """Mask a projected box, mirroring :func:`metallix.fitting.mask_out_box`.
+
+    ``axes`` names the projected coordinates, ``center`` locates the box, and
+    ``width`` gives the full extent along each axis. A point is masked when it
+    falls inside the box along every listed axis; the zero-width default (see
+    MASK_TYPE_DEFINITIONS) therefore masks nothing.
+    """
+
+    resolved = _mdhisto_projected_region_inputs(data, parameters, extent_key="width")
+    if resolved is None:
+        return np.zeros(data.shape, dtype=bool)
+    grids, center, width = resolved
+    half_widths = [0.5 * value for value in width]
+    if any(half_width <= 0.0 for half_width in half_widths):
+        return np.zeros(data.shape, dtype=bool)
+    reject = np.ones(data.shape, dtype=bool)
+    for grid, coordinate, half_width in zip(grids, center, half_widths, strict=True):
+        reject &= np.abs(grid - coordinate) <= half_width
+    return reject
+
+
+def _mdhisto_ellipsoid_mask(data: MDHistoData, parameters: dict[str, Any]) -> np.ndarray:
+    """Mask a projected ellipsoid, mirroring :func:`metallix.fitting.mask_out_ellipsoid`.
+
+    ``axes`` names the projected coordinates, ``center`` locates the ellipsoid,
+    and ``radii`` gives the radius along each axis. The zero-radius default
+    masks nothing.
+    """
+
+    resolved = _mdhisto_projected_region_inputs(data, parameters, extent_key="radii")
+    if resolved is None:
+        return np.zeros(data.shape, dtype=bool)
+    grids, center, radii = resolved
+    if any(radius <= 0.0 for radius in radii):
+        return np.zeros(data.shape, dtype=bool)
+    scaled_square = np.zeros(data.shape, dtype=float)
+    for grid, coordinate, radius in zip(grids, center, radii, strict=True):
+        scaled = (grid - coordinate) / radius
+        scaled_square = scaled_square + scaled * scaled
+    return scaled_square <= 1.0
+
+
+def _mdhisto_projected_region_inputs(
+    data: MDHistoData,
+    parameters: dict[str, Any],
+    *,
+    extent_key: str,
+) -> tuple[list[np.ndarray], list[float], list[float]] | None:
+    """Resolve the projected axis grids, center, and extent for box/ellipsoid masks.
+
+    Returns ``None`` when the parameters are incomplete, mismatched in length,
+    or name coordinates that cannot be projected onto the dataset axes, so the
+    caller can fall back to masking nothing.
+    """
+
+    axes = _mask_axis_names(parameters)
+    if not axes:
+        return None
+    center = _parameter_float_sequence(parameters.get("center"))
+    extent = _parameter_float_sequence(parameters.get(extent_key))
+    if center is None or extent is None:
+        return None
+    if not len(axes) == len(center) == len(extent):
+        return None
+    # Range-axis grids supply projected/leftover axis names, but the true
+    # reciprocal coordinates (H/K/L/E) must win when a name refers to them.
+    coords = _mdhisto_coordinate_range_axis_grids(data, parameters)
+    coords.update(_mdhisto_coordinate_grids(data))
+    grids: list[np.ndarray] = []
+    for name in axes:
+        grid = _resolve_projected_axis_grid(name, coords)
+        if grid is None:
+            return None
+        grids.append(grid)
+    return grids, center, extent
+
+
+def _mask_axis_names(parameters: dict[str, Any]) -> list[Any]:
+    axes = parameters.get("axes")
+    if isinstance(axes, str):
+        axes = _parse_parameter_text(axes)
+    if not isinstance(axes, (list, tuple)):
+        return []
+    return list(axes)
+
+
+def _parameter_float_sequence(value: Any) -> list[float] | None:
+    if isinstance(value, str):
+        value = _parse_parameter_text(value)
+    if not isinstance(value, (list, tuple, np.ndarray)):
+        return None
+    result: list[float] = []
+    for item in value:
+        number = _parameter_float(item)
+        if number is None:
+            return None
+        result.append(number)
+    return result
+
+
+def _resolve_projected_axis_grid(name: Any, coords: dict[str, np.ndarray]) -> np.ndarray | None:
+    """Resolve a projected axis name (or vector) to a coordinate grid."""
+
+    if isinstance(name, str):
+        key = name.strip()
+        if key in coords:
+            return coords[key]
+        if key.upper() in coords:
+            return coords[key.upper()]
+        projection = _axis_projection_vector(key)
+        if projection is not None:
+            return _project_hkl_vector(projection, coords)
+        parsed = _parse_parameter_text(key)
+        if isinstance(parsed, (list, tuple)):
+            return _project_hkle_vector(parsed, coords)
+        return None
+    if isinstance(name, (list, tuple, np.ndarray)):
+        return _project_hkle_vector(name, coords)
+    return None
+
+
+def _project_hkl_vector(vector: np.ndarray, coords: dict[str, np.ndarray]) -> np.ndarray | None:
+    if not {"H", "K", "L"}.issubset(coords):
+        return None
+    hkl = np.stack([coords["H"], coords["K"], coords["L"]], axis=-1)
+    return hkl @ np.asarray(vector, dtype=float)
+
+
+def _project_hkle_vector(vector: Any, coords: dict[str, np.ndarray]) -> np.ndarray | None:
+    try:
+        weights = np.asarray(vector, dtype=float)
+    except (TypeError, ValueError):
+        return None
+    if not np.all(np.isfinite(weights)):
+        return None
+    if weights.shape == (3,):
+        return _project_hkl_vector(weights, coords)
+    if weights.shape == (4,) and {"H", "K", "L", "E"}.issubset(coords):
+        hkle = np.stack([coords["H"], coords["K"], coords["L"], coords["E"]], axis=-1)
+        return hkle @ weights
+    return None
 
 
 def _mdhisto_phonon_cone_mask(data: MDHistoData, parameters: dict[str, Any]) -> np.ndarray:
@@ -3864,11 +4162,19 @@ class _FitProgressDialog:
         self.parameter_table.horizontalHeader().setStretchLastSection(True)
         self.parameter_table.horizontalHeader().setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
         self.parameter_table.setMinimumHeight(120)
-        self.parameter_table.setMaximumHeight(190)
         self.log = QtWidgets.QPlainTextEdit()
+        self.log.setObjectName("fit_progress_log")
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(200)
         self.log.setToolTip("Short live progress log. Current parameter values are shown in the table above.")
+        self.panel_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        self.panel_splitter.setObjectName("fit_progress_panel_splitter")
+        self.panel_splitter.setChildrenCollapsible(False)
+        self.panel_splitter.addWidget(self.parameter_table)
+        self.panel_splitter.addWidget(self.log)
+        self.panel_splitter.setStretchFactor(0, 1)
+        self.panel_splitter.setStretchFactor(1, 1)
+        self.panel_splitter.setSizes([240, 220])
         self.cancel_button = QtWidgets.QPushButton("Cancel")
         self.cancel_button.setEnabled(False)
         self.cancel_button.setToolTip("Request cancellation of the active fit or posterior sampler.")
@@ -3881,8 +4187,7 @@ class _FitProgressDialog:
         layout.addWidget(self.stage_label)
         layout.addWidget(self.status_label)
         layout.addWidget(self.progress)
-        layout.addWidget(self.parameter_table)
-        layout.addWidget(self.log, 1)
+        layout.addWidget(self.panel_splitter, 1)
         button_row = QtWidgets.QHBoxLayout()
         button_row.addWidget(self.cancel_button)
         button_row.addWidget(self.close_button)
@@ -4573,6 +4878,8 @@ class MetallixProjectExplorer:
         self.delete_button = None
         self._clipboard: tuple[str, DatasetEntry | MaskSpec] | None = None
         self._slice_viewers: dict[int, Any] = {}
+        self._overlay_refresh_timer = None
+        self._pending_overlay_group: DataGroup | None = None
         self._restoring_fit_selection = False
         self._active_fit_group: DataGroup | None = None
         self._active_fit_anchor: FitTimelineEntry | None = None
@@ -5424,6 +5731,43 @@ class MetallixProjectExplorer:
             viewer.dataset_combo.setCurrentIndex(names.index(selected_dataset_name))
         viewer.show()
         return viewer
+
+    def _request_overlay_refresh(self, group: DataGroup) -> None:
+        """Debounce slice-viewer refreshes from rapid parameter edits.
+
+        Coalesces bursts of edits (dragging a value, fast typing) into a single
+        recompute after a short idle, so the model is not re-evaluated on every
+        keystroke. Falls back to a synchronous refresh if no Qt event loop is
+        available to drive the timer (e.g. headless tests).
+        """
+
+        if id(group) not in self._slice_viewers:
+            return
+        self._pending_overlay_group = group
+        timer = self._overlay_refresh_timer
+        if timer is None:
+            try:
+                from PySide6 import QtCore
+            except Exception:
+                self.refresh_slice_viewer(group)
+                return
+            timer = QtCore.QTimer(self.window)
+            timer.setSingleShot(True)
+            timer.setInterval(200)
+            timer.timeout.connect(self._run_pending_overlay_refresh)
+            self._overlay_refresh_timer = timer
+        app = getattr(self, "app", None)
+        if app is None or not hasattr(app, "exec"):
+            # No event loop to fire the timer; refresh immediately.
+            self.refresh_slice_viewer(group)
+            return
+        timer.start()
+
+    def _run_pending_overlay_refresh(self) -> None:
+        group = self._pending_overlay_group
+        self._pending_overlay_group = None
+        if group is not None:
+            self.refresh_slice_viewer(group)
 
     def refresh_slice_viewer(self, group: DataGroup) -> Any | None:
         if id(group) not in self._slice_viewers:
@@ -8239,7 +8583,7 @@ class MetallixProjectExplorer:
                 self._refresh_tree(select_group=group, select_mask=mask)
                 return
         if group is not None:
-            self.refresh_slice_viewer(group)
+            self._request_overlay_refresh(group)
 
     def _set_mask_invert(self, checked: bool) -> None:
         self._set_mask_option("invert", bool(checked))
@@ -8909,7 +9253,7 @@ class MetallixProjectExplorer:
                 self._refresh_tree(select_group=group, select_model=model)
                 return
         if group is not None:
-            self.refresh_slice_viewer(group)
+            self._request_overlay_refresh(group)
 
     def _set_model_parameter_plot_label(self, name: str, text: str) -> None:
         group, _entry, _mask, model, role = self._objects_for_item(self._current_item())
@@ -9275,6 +9619,36 @@ def _dataset_axes_and_data_lines(data: Any) -> tuple[list[str], list[str]]:
         if not data_lines:
             data_lines = ["No data summary available."]
     return axes, data_lines
+
+
+def _dataset_fit_summary_lines(
+    dataset: DatasetEntry,
+    *,
+    group: DataGroup | None = None,
+) -> list[str]:
+    """Return fit-eligible bin/point counts using the same masks as fitting."""
+
+    if dataset.data is None:
+        return []
+    extra_masks = effective_dataset_masks(group, dataset) if group is not None else []
+    try:
+        view = dataset_for_slice_viewer(dataset, extra_masks=extra_masks)
+        if isinstance(view, MDHistoData):
+            points = _point_data_from_mdhisto_view(view)
+            fit_bins = int(np.count_nonzero(points.valid_mask()))
+            total_bins = int(np.prod(view.shape))
+            return [f"Fit bins: {fit_bins} of {total_bins}"]
+        if isinstance(view, PointListData):
+            points = _point_data_from_point_list_view(view)
+            fit_points = int(np.count_nonzero(points.valid_mask()))
+            return [f"Fit points: {fit_points} of {points.size}"]
+        if isinstance(view, PointData4D):
+            fit_points = int(np.count_nonzero(view.valid_mask()))
+            return [f"Fit points: {fit_points} of {view.size}"]
+    except Exception as exc:
+        label = "Fit bins" if isinstance(dataset.data, MDHistoData) else "Fit points"
+        return [f"{label}: unavailable ({exc})"]
+    return []
 
 
 def _split_dataset_summary_lines(lines: list[str]) -> dict[str, list[str]]:

@@ -30,9 +30,12 @@ Additional conventions used by the spin-fluctuation model family (see
 - Exchange Fourier transforms use the extended-zone phase convention:
   $J(\mathbf{Q})_{ab} = \sum J_{\text{bond}}
   \exp[2\pi i\, \mathbf{Q}\cdot(\mathbf{r}_b + \mathbf{n} - \mathbf{r}_a)]$
-  with fractional site positions inside the phases, matched by site phases
-  $\exp(2\pi i\, \mathbf{Q}\cdot\mathbf{r}_a)$ in neutron weights so that the
-  mode weights of the RPA models sum exactly to one.
+  with fractional site positions inside the phases. Because these matrix
+  elements already carry the full pair phases, the RPA neutron weights use the
+  *uniform* sublattice sum $|\sum_a U_{a\nu}|^2/N$ (no additional site phases),
+  which makes the observable exactly independent of the cell description and
+  keeps the mode weights summing to one. See
+  [Spin-fluctuation models](spin_fluctuation_models.md).
 - Temperature enters only through the Bose factor and is read from each
   dataset (`PointData4D.temperature`), never from fit parameters.
 

@@ -16,6 +16,7 @@ gui_workflows
 physics_conventions
 spin_fluctuation_models
 modeling_pipeline
+performance
 examples/synthetic_single_q
 examples/hyspec_constant_background
 api

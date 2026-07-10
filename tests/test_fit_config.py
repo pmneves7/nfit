@@ -647,3 +647,156 @@ def test_heisenberg_rpa_dynamic_parameter_supports_per_dataset_sharing():
     names = sorted(spec.name for spec in compiled.problem.parameter_specs)
     assert "rpa.chi0[cold]" in names and "rpa.chi0[hot]" in names
     assert "rpa.J1" in names
+
+
+def _rpa_component(**overrides) -> ModelComponentSpec:
+    spec = ModelComponentSpec(
+        name="M",
+        type="heisenberg_rpa",
+        parameters={"scale": 1.2, "chi0": 0.3, "gamma0": 2.0, "J1": 0.1, "J2": -0.05},
+        fit_parameters={"scale": True, "chi0": True, "gamma0": True, "J1": True, "J2": True},
+        config={
+            "site_positions": [[0.0, 0.0, 0.0], [0.31, 0.47, 0.11]],
+            "orbits": [
+                {"label": "J1", "bonds": [{"site_i": 0, "site_j": 1, "offset": [0, 0, 0]}]},
+                {"label": "J2", "bonds": [{"site_i": 0, "site_j": 0, "offset": [0, 0, 1]}]},
+            ],
+        },
+    )
+    for key, value in overrides.items():
+        setattr(spec, key, value)
+    return spec
+
+
+def _rpa_points(temperature: float, seed: int, n: int = 60) -> PointData4D:
+    rng = np.random.default_rng(seed)
+    return PointData4D(
+        H=rng.uniform(-1.0, 1.0, n),
+        K=rng.uniform(-1.0, 1.0, n),
+        L=rng.uniform(-1.0, 1.0, n),
+        E=rng.uniform(0.5, 5.0, n),
+        intensity=rng.uniform(0.0, 1.0, n),
+        sigma=np.full(n, 0.1),
+        temperature=float(temperature),
+        metadata={"coordinate_units": "r.l.u.", "energy_units": "meV"},
+    )
+
+
+def test_heisenberg_rpa_problem_reports_analytic_jacobian():
+    from metallix.fitting import problem_supports_analytic_jacobian
+
+    compiled = compile_fit_problem(
+        [_rpa_component()],
+        [FitDatasetInput("T5", _rpa_points(5.0, 1), data_type="single_crystal_inelastic")],
+    )
+    assert problem_supports_analytic_jacobian(compiled.problem)
+    assert compiled.problem.datasets[0].model_jacobian is not None
+
+
+def test_analytic_jacobian_matches_finite_differences_with_grouped_sharing():
+    from metallix.fitting import (
+        _evaluate_problem,
+        _evaluate_problem_jacobian,
+        _finite_difference_jacobian,
+        pack_parameters,
+        unpack_parameters,
+    )
+
+    # chi0 tied across two temperatures (grouped), scale free per dataset:
+    # exercises the binding chain in the Jacobian assembly.
+    component = _rpa_component(
+        sharing={"chi0": "grouped", "scale": "per_dataset"},
+        groups={"chi0": {"T5": "cold", "T50": "cold"}},
+    )
+    compiled = compile_fit_problem(
+        component and [component],
+        [
+            FitDatasetInput("T5", _rpa_points(5.0, 1), data_type="single_crystal_inelastic"),
+            FitDatasetInput("T50", _rpa_points(50.0, 2), data_type="single_crystal_inelastic"),
+        ],
+    )
+    problem = compiled.problem
+    x0, bounds, names, fixed = pack_parameters(problem.parameter_specs)
+    params = unpack_parameters(x0, names, fixed)
+    analytic = _evaluate_problem_jacobian(problem, params, names, require_positive_sigma=True)
+
+    def residual_fn(x):
+        return _evaluate_problem(
+            problem, unpack_parameters(x, names, fixed), require_positive_sigma=True
+        ).residuals
+
+    fd = _finite_difference_jacobian(residual_fn, x0, residual_fn(x0), bounds)
+    np.testing.assert_allclose(analytic, fd, rtol=2e-6, atol=1e-6)
+
+
+def test_analytic_jacobian_matches_finite_differences_with_constraint():
+    from metallix.fitting import (
+        _evaluate_problem,
+        _evaluate_problem_jacobian,
+        _finite_difference_jacobian,
+        pack_parameters,
+        unpack_parameters,
+    )
+
+    # gamma0 >= chi0 reparameterizes gamma0 as a derived (chi0 + offset):
+    # exercises the derived-parameter chain rule in the assembly.
+    component = _rpa_component(
+        constraints=[{"parameter": "gamma0", "op": ">=", "reference": "M.chi0"}]
+    )
+    compiled = compile_fit_problem(
+        [component],
+        [FitDatasetInput("T5", _rpa_points(5.0, 3), data_type="single_crystal_inelastic")],
+    )
+    problem = compiled.problem
+    x0, bounds, names, fixed = pack_parameters(problem.parameter_specs)
+    params = unpack_parameters(x0, names, fixed)
+    analytic = _evaluate_problem_jacobian(problem, params, names, require_positive_sigma=True)
+
+    def residual_fn(x):
+        return _evaluate_problem(
+            problem, unpack_parameters(x, names, fixed), require_positive_sigma=True
+        ).residuals
+
+    fd = _finite_difference_jacobian(residual_fn, x0, residual_fn(x0), bounds)
+    np.testing.assert_allclose(analytic, fd, rtol=2e-6, atol=1e-6)
+
+
+def test_analytic_and_numeric_jacobians_recover_same_fit():
+    from metallix.fitting import OptimizationConfig
+
+    # Synthesize data from the model, then fit from a perturbed start with the
+    # analytic Jacobian and confirm it recovers the generating parameters.
+    truth = _rpa_component()
+    data = _rpa_points(5.0, 7, n=120)
+    compiled_truth = compile_fit_problem(
+        [truth], [FitDatasetInput("T5", data, data_type="single_crystal_inelastic")]
+    )
+    from metallix.fitting import evaluate_problem_model
+
+    model_values = evaluate_problem_model(
+        compiled_truth.problem,
+        "T5",
+        {spec.name: spec.value for spec in compiled_truth.problem.parameter_specs},
+    )
+    fitted_points = PointData4D(
+        data.H, data.K, data.L, data.E, model_values, np.full(data.size, 0.02),
+        temperature=data.temperature, metadata=dict(data.metadata),
+    )
+    start = _rpa_component(
+        parameters={"scale": 1.0, "chi0": 0.2, "gamma0": 2.5, "J1": 0.05, "J2": 0.0}
+    )
+    compiled = compile_fit_problem(
+        [start], [FitDatasetInput("T5", fitted_points, data_type="single_crystal_inelastic")]
+    )
+    result = fit_problem_least_squares(compiled.problem, config=OptimizationConfig())
+    assert result.success
+    # Noise-free data drawn from the model must be fit essentially perfectly.
+    assert result.reduced_chi2 < 1e-6
+    # The RPA response is invariant under chi0 -> a*chi0, J -> J/a, scale ->
+    # scale/a, so only gamma0 and the products scale*chi0 and chi0*J_o are
+    # physically determined; assert those recover the generating values.
+    p = result.params
+    assert p["M.gamma0"] == pytest.approx(2.0, rel=1e-3)
+    assert p["M.scale"] * p["M.chi0"] == pytest.approx(1.2 * 0.3, rel=1e-3)
+    assert p["M.chi0"] * p["M.J1"] == pytest.approx(0.3 * 0.1, rel=1e-3)
+    assert p["M.chi0"] * p["M.J2"] == pytest.approx(0.3 * -0.05, rel=1e-3)

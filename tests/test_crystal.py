@@ -176,3 +176,42 @@ O1 O 0.50000 0.50000 0.50000
 def test_generate_bond_orbits_validates_cutoff():
     with pytest.raises(ValueError, match="cutoff"):
         generate_bond_orbits(FCC, ["Ni1"], cutoff_angstrom=0.0)
+
+
+def test_pyrochlore_reduces_to_four_sublattices_with_identical_chipp():
+    """Primitive-cell folding of the F-centered pyrochlore network is exact.
+
+    The conventional Fd-3m cell carries 16 magnetic sites; the F-centering
+    translations fold them to 4. chi'' must be identical to machine precision
+    at generic Q with all four exchange constants nonzero.
+    """
+
+    from metallix.spin_fluctuations import (
+        build_rpa_geometry,
+        heisenberg_rpa_chipp,
+        reduce_site_network,
+    )
+
+    a = PYROCHLORE["lattice"]["a"]
+    nn = a * np.sqrt(2.0) / 4.0
+    sites, orbits = generate_bond_orbits(PYROCHLORE, ["M1"], cutoff_angstrom=nn * 2.0 + 0.01)
+    positions = sites_to_config(sites)
+    orbit_payload = orbits_to_config(orbits)
+
+    reduced_positions, reduced_orbits = reduce_site_network(positions, orbit_payload)
+    assert reduced_positions.shape == (4, 3)
+    for full_orbit, reduced_orbit in zip(orbit_payload, reduced_orbits):
+        assert len(reduced_orbit["bonds"]) * 4 == len(full_orbit["bonds"])
+
+    rng = np.random.default_rng(11)
+    hkl = rng.uniform(-2.5, 2.5, size=(40, 3))
+    E = rng.uniform(0.3, 6.0, size=40)
+    j_values = {"J1": 0.12, "J2": -0.05, "J3a": 0.02, "J3b": -0.01}
+
+    full_geometry = build_rpa_geometry(hkl[:, 0], hkl[:, 1], hkl[:, 2], positions, orbit_payload)
+    reduced_geometry = build_rpa_geometry(
+        hkl[:, 0], hkl[:, 1], hkl[:, 2], reduced_positions, reduced_orbits
+    )
+    full = heisenberg_rpa_chipp(full_geometry, E, chi0=0.9, gamma0=3.0, j_values=j_values)
+    reduced = heisenberg_rpa_chipp(reduced_geometry, E, chi0=0.9, gamma0=3.0, j_values=j_values)
+    np.testing.assert_allclose(reduced, full, rtol=1e-12)

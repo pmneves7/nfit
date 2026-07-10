@@ -7,6 +7,7 @@ from metallix.spin_fluctuations import (
     heisenberg_rpa_chipp,
     local_relaxational_chipp,
     mmp_chipp,
+    reduce_site_network,
     rpa_exchange_matrix,
 )
 
@@ -84,9 +85,55 @@ def test_rpa_weights_sum_rule_two_site_random_crystal():
     # Hermiticity of J(Q)
     np.testing.assert_allclose(exchange, np.conj(np.transpose(exchange, (0, 2, 1))), atol=1e-12)
     _, modes = np.linalg.eigh(exchange)
-    amplitudes = np.einsum("qa,qan->qn", geometry.site_phases, modes)
+    amplitudes = modes.sum(axis=1)
     weights = np.abs(amplitudes) ** 2 / geometry.n_sites
     np.testing.assert_allclose(weights.sum(axis=1), 1.0, rtol=1e-12)
+
+
+def test_rpa_is_invariant_under_cell_description():
+    """The same physical chain must give identical chi'' in any cell choice.
+
+    A uniform nearest-neighbor chain is described three ways: a 1-site cell,
+    a 2-site doubled cell (half the r.l.u. unit), and the doubled cell with a
+    shifted origin. This is the decisive phase-convention lock: pairing the
+    extended-zone J(Q) with anything other than the uniform neutron weight
+    breaks it (the sum rule alone holds for any unit-modulus weight vector).
+    """
+
+    J, chi0, gamma0 = 0.3, 0.8, 2.0
+    Qa = np.linspace(0.05, 0.95, 7)
+    E = np.full(Qa.shape, 1.3)
+    zeros = np.zeros_like(Qa)
+
+    single = build_rpa_geometry(
+        Qa,
+        zeros,
+        zeros,
+        [[0.0, 0.0, 0.0]],
+        [{"label": "J1", "bonds": [{"site_i": 0, "site_j": 0, "offset": [1, 0, 0]}]}],
+    )
+    doubled_orbits = [
+        {
+            "label": "J1",
+            "bonds": [
+                {"site_i": 0, "site_j": 1, "offset": [0, 0, 0]},
+                {"site_i": 1, "site_j": 0, "offset": [1, 0, 0]},
+            ],
+        }
+    ]
+    # The doubled cell is twice as long, so the same absolute momentum is 2*Qa
+    # in its reciprocal lattice units.
+    doubled = build_rpa_geometry(
+        2.0 * Qa, zeros, zeros, [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], doubled_orbits
+    )
+    shifted = build_rpa_geometry(
+        2.0 * Qa, zeros, zeros, [[0.13, 0.0, 0.0], [0.63, 0.0, 0.0]], doubled_orbits
+    )
+
+    reference = heisenberg_rpa_chipp(single, E, chi0=chi0, gamma0=gamma0, j_values={"J1": J})
+    for geometry in (doubled, shifted):
+        chipp = heisenberg_rpa_chipp(geometry, E, chi0=chi0, gamma0=gamma0, j_values={"J1": J})
+        np.testing.assert_allclose(chipp, reference, rtol=1e-12)
 
 
 def test_rpa_with_zero_exchange_reduces_to_local_relaxational():
@@ -168,3 +215,252 @@ def test_geometry_validates_inputs():
         heisenberg_rpa_chipp(geometry, [1.0], chi0=1.0, gamma0=0.0, j_values={"J1": 0.0})
     with pytest.raises(ValueError, match="E has"):
         heisenberg_rpa_chipp(geometry, [1.0, 2.0], chi0=1.0, gamma0=1.0, j_values={"J1": 0.0})
+
+
+_DOUBLED_CHAIN_ORBITS = [
+    {
+        "label": "J1",
+        "bonds": [
+            {"site_i": 0, "site_j": 1, "offset": [0, 0, 0]},
+            {"site_i": 1, "site_j": 0, "offset": [1, 0, 0]},
+        ],
+    }
+]
+
+
+def test_reduce_site_network_folds_doubled_chain():
+    positions, orbits = reduce_site_network(
+        [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], _DOUBLED_CHAIN_ORBITS
+    )
+    assert positions.shape == (1, 3)
+    (orbit,) = orbits
+    assert orbit["label"] == "J1"
+    (bond,) = orbit["bonds"]
+    assert bond["site_i"] == bond["site_j"] == 0
+    np.testing.assert_allclose(np.abs(bond["offset"]), [0.5, 0.0, 0.0])
+
+    # chi'' is unchanged by the fold
+    Q = np.linspace(0.05, 1.95, 9)
+    E = np.full(Q.shape, 1.3)
+    zeros = np.zeros_like(Q)
+    full = build_rpa_geometry(
+        Q, zeros, zeros, [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]], _DOUBLED_CHAIN_ORBITS
+    )
+    reduced = build_rpa_geometry(Q, zeros, zeros, positions, orbits)
+    np.testing.assert_allclose(
+        heisenberg_rpa_chipp(reduced, E, chi0=0.8, gamma0=2.0, j_values={"J1": 0.3}),
+        heisenberg_rpa_chipp(full, E, chi0=0.8, gamma0=2.0, j_values={"J1": 0.3}),
+        rtol=1e-12,
+    )
+
+
+def test_reduce_site_network_folds_body_centered_pair():
+    orbits = [
+        {
+            "label": "J1",
+            "bonds": [
+                {"site_i": 0, "site_j": 1, "offset": [0, 0, 0]},
+                {"site_i": 0, "site_j": 1, "offset": [-1, 0, 0]},
+                {"site_i": 0, "site_j": 1, "offset": [0, -1, 0]},
+                {"site_i": 0, "site_j": 1, "offset": [0, 0, -1]},
+                {"site_i": 0, "site_j": 1, "offset": [-1, -1, 0]},
+                {"site_i": 0, "site_j": 1, "offset": [-1, 0, -1]},
+                {"site_i": 0, "site_j": 1, "offset": [0, -1, -1]},
+                {"site_i": 0, "site_j": 1, "offset": [-1, -1, -1]},
+            ],
+        }
+    ]
+    positions, reduced_orbits = reduce_site_network(
+        [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]], orbits
+    )
+    assert positions.shape == (1, 3)
+    assert len(reduced_orbits[0]["bonds"]) == 4  # eight bonds / group order two
+
+
+def test_reduce_site_network_declines_broken_symmetry():
+    # Same doubled chain, but the two bonds carry different labels: the
+    # half-cell translation no longer preserves the labeled network.
+    orbits = [
+        {"label": "Ja", "bonds": [{"site_i": 0, "site_j": 1, "offset": [0, 0, 0]}]},
+        {"label": "Jb", "bonds": [{"site_i": 1, "site_j": 0, "offset": [1, 0, 0]}]},
+    ]
+    site_positions = [[0.0, 0.0, 0.0], [0.5, 0.0, 0.0]]
+    positions, reduced = reduce_site_network(site_positions, orbits)
+    assert positions.shape == (2, 3)
+    assert [orbit["label"] for orbit in reduced] == ["Ja", "Jb"]
+    assert reduced[0]["bonds"] == orbits[0]["bonds"]
+
+
+def test_reduce_site_network_leaves_primitive_networks_alone():
+    positions, reduced = reduce_site_network(
+        [[0.0, 0.0, 0.0], [0.31, 0.47, 0.11]],
+        [
+            {
+                "label": "J1",
+                "bonds": [{"site_i": 0, "site_j": 1, "offset": [0, 0, 0]}],
+            }
+        ],
+    )
+    assert positions.shape == (2, 3)
+    assert len(reduced[0]["bonds"]) == 1
+
+
+def _gradient_geometry(rng, n_points=25):
+    positions = [[0.0, 0.0, 0.0], [0.31, 0.47, 0.11], [0.6, 0.2, 0.8]]
+    orbits = [
+        {
+            "label": "J1",
+            "bonds": [
+                {"site_i": 0, "site_j": 1, "offset": [0, 0, 0]},
+                {"site_i": 1, "site_j": 2, "offset": [0, -1, 0]},
+            ],
+        },
+        {"label": "J2", "bonds": [{"site_i": 0, "site_j": 2, "offset": [0, 0, 1]}]},
+    ]
+    hkl = rng.uniform(-2.0, 2.0, size=(n_points, 3))
+    return build_rpa_geometry(hkl[:, 0], hkl[:, 1], hkl[:, 2], positions, orbits)
+
+
+def test_rpa_gradients_value_matches_plain_evaluation():
+    from metallix.spin_fluctuations import heisenberg_rpa_chipp_and_gradients
+
+    rng = np.random.default_rng(5)
+    geometry = _gradient_geometry(rng)
+    E = rng.uniform(0.3, 5.0, size=geometry.point_index.size)
+    kwargs = dict(chi0=0.4, gamma0=2.5, j_values={"J1": 0.12, "J2": -0.07})
+    value, _ = heisenberg_rpa_chipp_and_gradients(geometry, E, **kwargs)
+    np.testing.assert_allclose(value, heisenberg_rpa_chipp(geometry, E, **kwargs), rtol=1e-11)
+
+
+def test_rpa_gradients_match_finite_differences():
+    from metallix.spin_fluctuations import heisenberg_rpa_chipp_and_gradients
+
+    rng = np.random.default_rng(5)
+    geometry = _gradient_geometry(rng)
+    E = rng.uniform(0.3, 5.0, size=geometry.point_index.size)
+    chi0, gamma0 = 0.4, 2.5
+    j_values = {"J1": 0.12, "J2": -0.07}
+    _, grads = heisenberg_rpa_chipp_and_gradients(
+        geometry, E, chi0=chi0, gamma0=gamma0, j_values=j_values
+    )
+
+    def evaluate(chi0_, gamma0_, j_):
+        return heisenberg_rpa_chipp(geometry, E, chi0=chi0_, gamma0=gamma0_, j_values=j_)
+
+    h = 1e-6
+    fd = {
+        "chi0": (evaluate(chi0 + h, gamma0, j_values) - evaluate(chi0 - h, gamma0, j_values)) / (2 * h),
+        "gamma0": (evaluate(chi0, gamma0 + h, j_values) - evaluate(chi0, gamma0 - h, j_values)) / (2 * h),
+    }
+    for label in j_values:
+        plus = {**j_values, label: j_values[label] + h}
+        minus = {**j_values, label: j_values[label] - h}
+        fd[label] = (evaluate(chi0, gamma0, plus) - evaluate(chi0, gamma0, minus)) / (2 * h)
+
+    for name, reference in fd.items():
+        np.testing.assert_allclose(grads[name], reference, rtol=2e-6, atol=1e-9)
+
+
+def test_rpa_gradients_exact_at_band_degeneracy():
+    # A uniform three-site ring at Q=0 has a doubly degenerate J(Q); the
+    # gradient must still match finite differences (no eigenvector-derivative
+    # blow-up, because the resolvent form never differentiates eigenvectors).
+    from metallix.spin_fluctuations import heisenberg_rpa_chipp_and_gradients
+
+    positions = [[0.0, 0.0, 0.0], [1 / 3, 0.0, 0.0], [2 / 3, 0.0, 0.0]]
+    orbits = [
+        {
+            "label": "J1",
+            "bonds": [
+                {"site_i": 0, "site_j": 1, "offset": [0, 0, 0]},
+                {"site_i": 1, "site_j": 2, "offset": [0, 0, 0]},
+                {"site_i": 2, "site_j": 0, "offset": [1, 0, 0]},
+            ],
+        }
+    ]
+    H = np.array([0.0, 0.0])
+    zeros = np.zeros_like(H)
+    E = np.array([1.3, 2.1])
+    geometry = build_rpa_geometry(H, zeros, zeros, positions, orbits)
+    chi0, gamma0 = 0.5, 2.0
+    _, grads = heisenberg_rpa_chipp_and_gradients(
+        geometry, E, chi0=chi0, gamma0=gamma0, j_values={"J1": 0.2}
+    )
+    h = 1e-6
+    fd = (
+        heisenberg_rpa_chipp(geometry, E, chi0=chi0, gamma0=gamma0, j_values={"J1": 0.2 + h})
+        - heisenberg_rpa_chipp(geometry, E, chi0=chi0, gamma0=gamma0, j_values={"J1": 0.2 - h})
+    ) / (2 * h)
+    np.testing.assert_allclose(grads["J1"], fd, rtol=1e-6, atol=1e-9)
+
+
+@pytest.mark.skipif(
+    "numba" not in __import__("metallix.spin_fluctuations", fromlist=["available_rpa_backends"]).available_rpa_backends(),
+    reason="numba backend not available",
+)
+def test_numba_backend_matches_numpy_value_and_gradients():
+    from metallix import spin_fluctuations as sf
+
+    rng = np.random.default_rng(9)
+    positions = [[0.0, 0.0, 0.0], [0.31, 0.47, 0.11], [0.6, 0.2, 0.8]]
+    orbits = [
+        {
+            "label": "J1",
+            "bonds": [
+                {"site_i": 0, "site_j": 1, "offset": [0, 0, 0]},
+                {"site_i": 1, "site_j": 2, "offset": [0, -1, 0]},
+            ],
+        },
+        {"label": "J2", "bonds": [{"site_i": 0, "site_j": 2, "offset": [0, 0, 1]}]},
+    ]
+    hkl = rng.uniform(-2.0, 2.0, size=(2000, 3))
+    geometry = build_rpa_geometry(hkl[:, 0], hkl[:, 1], hkl[:, 2], positions, orbits)
+    E = rng.uniform(0.3, 5.0, size=geometry.point_index.size)
+    kwargs = dict(chi0=0.4, gamma0=2.5, j_values={"J1": 0.12, "J2": -0.07})
+
+    try:
+        sf.set_rpa_backend("numpy")
+        val_np = heisenberg_rpa_chipp(geometry, E, **kwargs)
+        cp_np, gr_np = sf.heisenberg_rpa_chipp_and_gradients(geometry, E, **kwargs)
+        sf.set_rpa_backend("numba")
+        val_nb = heisenberg_rpa_chipp(geometry, E, **kwargs)
+        cp_nb, gr_nb = sf.heisenberg_rpa_chipp_and_gradients(geometry, E, **kwargs)
+    finally:
+        sf.set_rpa_backend("auto")
+
+    np.testing.assert_allclose(val_nb, val_np, rtol=1e-12, atol=1e-14)
+    np.testing.assert_allclose(cp_nb, cp_np, rtol=1e-12, atol=1e-14)
+    for name in gr_np:
+        np.testing.assert_allclose(gr_nb[name], gr_np[name], rtol=1e-11, atol=1e-13)
+
+
+def test_backend_selection_is_size_gated():
+    from metallix import spin_fluctuations as sf
+
+    try:
+        sf.set_rpa_backend("auto")
+        # Tiny problems always resolve to numpy regardless of installed backends.
+        assert sf._select_rpa_backend(100) == "numpy"
+        sf.set_rpa_backend("numpy")
+        assert sf._select_rpa_backend(10_000_000) == "numpy"
+    finally:
+        sf.set_rpa_backend("auto")
+
+    with pytest.raises(ValueError):
+        sf.set_rpa_backend("nonsense")
+
+
+def test_forcing_unavailable_backend_falls_back_to_numpy():
+    from metallix import spin_fluctuations as sf
+
+    backends = sf.available_rpa_backends()
+    try:
+        if "cupy" not in backends:
+            sf.set_rpa_backend("cupy")
+            assert sf._select_rpa_backend(10_000_000) == "numpy"
+        if "numba" not in backends:
+            sf.set_rpa_backend("numba")
+            assert sf._select_rpa_backend(10_000_000) == "numpy"
+    finally:
+        sf.set_rpa_backend("auto")
+    assert "numpy" in backends

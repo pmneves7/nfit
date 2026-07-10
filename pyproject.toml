@@ -43,6 +43,19 @@ metallix = "metallix.project_gui:main"
 [project.optional-dependencies]
 dev = [
   "pytest>=7",
+  "numba>=0.58",
+]
+# Accelerated compute backends for large spin-fluctuation fits. Both are
+# optional: metallix falls back to numpy when they are absent, and selects a
+# backend by problem size (see metallix.set_rpa_backend).
+accel = [
+  "numba>=0.58",
+]
+# GPU backend. Install the CuPy wheel matching your CUDA toolkit, e.g.
+# `pip install cupy-cuda12x`; the generic `cupy` sdist requires a local CUDA
+# build. AMD ROCm builds of CuPy also work.
+gpu = [
+  "cupy>=12",
 ]
 docs = [
   "sphinx>=7,<9",

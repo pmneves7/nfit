@@ -183,6 +183,11 @@ class FitDataset:
     parameter_bindings: dict[str, ParameterBinding] = field(default_factory=dict)
     model: Any = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    model_jacobian: Any = None
+    """Optional ``(data, params) -> {qualified_name: d(model)/d(param)}`` giving
+    exact model gradients for analytic least-squares. When every dataset in a
+    problem supplies one, the optimizer uses them instead of finite
+    differences."""
     _prepared_valid_cache: dict[bool, PointData4D] = field(
         default_factory=dict, init=False, compare=False, repr=False
     )
@@ -910,6 +915,17 @@ def fit_problem_least_squares(
         )
         return evaluation.residuals
 
+    jacobian_fn: Callable[[FloatArray], FloatArray] | None = None
+    if problem_supports_analytic_jacobian(problem):
+        def jacobian_fn(x: FloatArray) -> FloatArray:
+            params = unpack_parameters(x, names, fixed)
+            return _evaluate_problem_jacobian(
+                problem,
+                params,
+                names,
+                require_positive_sigma=opt.require_positive_sigma,
+            )
+
     if len(names) == 0:
         residuals = residual_fn(np.asarray([], dtype=float))
         params = problem.resolve_parameters(dict(fixed))
@@ -958,6 +974,7 @@ def fit_problem_least_squares(
         progress_callback=progress_callback,
         names=names,
         fixed=fixed,
+        jac=jacobian_fn,
     )
     params = problem.resolve_parameters(unpack_parameters(result.x, names, fixed))
     evaluation = _evaluate_problem(
@@ -1350,6 +1367,103 @@ def _evaluate_problem(
     )
 
 
+def problem_supports_analytic_jacobian(problem: FitProblem) -> bool:
+    """Return whether every dataset can supply an exact model Jacobian.
+
+    Requires a ``model_jacobian`` on each dataset and no instrument resolution
+    (a resolution operator would have to be applied to the gradient columns as
+    well, which the bare model Jacobian does not do).
+    """
+
+    return all(
+        dataset.model_jacobian is not None and dataset.resolution is None
+        for dataset in problem.datasets
+    )
+
+
+def _sensitivity_resolver(
+    problem: FitProblem, variable_names: set[str]
+) -> Callable[[str], dict[str, float]]:
+    """Map any resolved-parameter name to its optimizer-variable sensitivities.
+
+    Returns a memoized function ``name -> {variable_name: d(name)/d(variable)}``.
+    Optimizer variables map to themselves; derived (constraint) parameters
+    expand through their linear ``base + sign * offset`` definition; fixed and
+    unknown names contribute nothing.
+    """
+
+    derived_by_name = {derived.name: derived for derived in problem.derived_parameters}
+    cache: dict[str, dict[str, float]] = {}
+
+    def resolve(name: str) -> dict[str, float]:
+        cached = cache.get(name)
+        if cached is not None:
+            return cached
+        result: dict[str, float] = {}
+        if name in variable_names:
+            result = {name: 1.0}
+        elif name in derived_by_name:
+            derived = derived_by_name[name]
+            if isinstance(derived.base, str):
+                for variable, coeff in resolve(derived.base).items():
+                    result[variable] = result.get(variable, 0.0) + coeff
+            if derived.offset is not None:
+                for variable, coeff in resolve(derived.offset).items():
+                    result[variable] = result.get(variable, 0.0) + derived.sign * coeff
+        cache[name] = result
+        return result
+
+    return resolve
+
+
+def _evaluate_problem_jacobian(
+    problem: FitProblem,
+    params: dict[str, float],
+    names: Sequence[str],
+    *,
+    require_positive_sigma: bool,
+) -> FloatArray:
+    """Assemble the residual Jacobian ``d(residual)/d(variable)`` analytically.
+
+    Rows follow the same dataset order and weighting as :func:`_evaluate_problem`
+    (``residual = sqrt(weight) (I_obs - I_model) / sigma``); columns follow
+    ``names``. Per-dataset/grouped sharing (parameter bindings) and inequality
+    constraints (derived parameters) are resolved through the same chain rule
+    the residual uses.
+    """
+
+    resolved = problem.resolve_parameters(params)
+    resolve = _sensitivity_resolver(problem, set(names))
+    name_index = {name: index for index, name in enumerate(names)}
+
+    blocks: list[FloatArray] = []
+    for dataset in problem.datasets:
+        prepared = dataset.prepared_valid(require_positive_sigma=require_positive_sigma)
+        block = np.zeros((prepared.size, len(names)), dtype=float)
+        dataset_params = _apply_parameter_bindings(resolved, dataset.parameter_bindings)
+        columns = dataset.model_jacobian(prepared, dataset_params)
+        residual_factor = -np.sqrt(dataset.weight) / np.asarray(prepared.sigma, dtype=float)
+        for qualified, d_model in columns.items():
+            binding = dataset.parameter_bindings.get(qualified)
+            if isinstance(binding, str):
+                target = binding
+            elif binding is not None:
+                continue  # bound to a fixed scalar: contributes no column
+            else:
+                target = qualified
+            sensitivities = resolve(target)
+            if not sensitivities:
+                continue
+            residual_column = residual_factor * np.asarray(d_model, dtype=float)
+            for variable, coeff in sensitivities.items():
+                block[:, name_index[variable]] += coeff * residual_column
+        blocks.append(block)
+
+    if not blocks:
+        return np.zeros((0, len(names)), dtype=float)
+    return np.concatenate(blocks, axis=0)
+
+
 def _evaluate_dataset_model(
     problem: FitProblem,
     dataset: FitDataset,
@@ -1573,6 +1687,7 @@ def _run_least_squares(
     progress_callback: ProgressCallback | None = None,
     names: Sequence[str] = (),
     fixed: dict[str, float] | None = None,
+    jac: Callable[[FloatArray], FloatArray] | None = None,
 ) -> _LeastSquaresResult:
     optimizer_kwargs = {} if kwargs is None else dict(kwargs)
     x0 = _nudge_inside_bounds(x0, bounds)
@@ -1602,6 +1717,8 @@ def _run_least_squares(
             return residual
 
     if _scipy_least_squares is not None:
+        if jac is not None:
+            optimizer_kwargs.setdefault("jac", jac)
         scipy_result = _scipy_least_squares(
             wrapped_residual_fn,
             x0=x0,
