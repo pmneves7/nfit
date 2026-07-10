@@ -1355,6 +1355,7 @@ def test_fit_details_posterior_sampler_controls_update_burn_without_timeline(mon
         explorer.window.findChild(QtWidgets.QPushButton, "fit_posterior_apply_button"),
         explorer.window.findChild(QtWidgets.QPushButton, "fit_posterior_rerun_button"),
         explorer.window.findChild(QtWidgets.QPushButton, "fit_posterior_append_button"),
+        explorer.window.findChild(QtWidgets.QPushButton, "fit_posterior_promote_button"),
     ]
     assert all(control is not None and control.toolTip() for control in controls)
 
@@ -1371,6 +1372,53 @@ def test_fit_details_posterior_sampler_controls_update_burn_without_timeline(mon
     assert posterior["burn_in"] == 1
     assert posterior["thin"] == 2
     assert posterior["samples"] == 4
+
+
+def test_promote_best_posterior_sample_creates_current_state(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    dataset = DatasetEntry("first", _tiny_mdhisto_data(2.0))
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    model = create_model_component(group)
+    model.parameters["constant"] = 1.0
+    model.fit_parameters["constant"] = True
+    parameter_name = f"{model.name}.constant"
+    chain = np.array([[[1.0]], [[2.0]]], dtype=float)
+    log_probability_chain = np.array([[-0.5], [0.0]], dtype=float)
+    sampling = project_gui.SamplingResult(
+        samples=chain.reshape(-1, 1),
+        variable_names=[parameter_name],
+        log_probability=log_probability_chain.reshape(-1),
+        metadata={"method": "emcee", "n_steps": 2, "n_walkers": 1, "burn_in": 0, "thin": 1},
+        chain=chain,
+        log_probability_chain=log_probability_chain,
+    )
+    result = FitTimelineEntry(
+        "Fit Result1",
+        kind="result",
+        goodness={"chi2": 1.0, "parameters": {parameter_name: 1.0}},
+        metadata={"posterior_samples": project_gui._sampling_result_to_dict(sampling)},
+        snapshot=project_gui.snapshot_data_group_state(group),
+    )
+    group.fits = [result]
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+
+    fit_item = explorer.tree.topLevelItem(0).child(2).child(0)
+    explorer.tree.setCurrentItem(fit_item)
+    promote_button = explorer.window.findChild(QtWidgets.QPushButton, "fit_posterior_promote_button")
+
+    assert promote_button is not None
+    assert promote_button.isEnabled()
+    assert explorer.promote_best_posterior_sample_for_fit(group, result)
+
+    assert model.parameters["constant"] == pytest.approx(2.0)
+    assert [fit.kind for fit in group.fits] == ["result", "current"]
+    current = group.fits[1]
+    assert current.snapshot["models"][0]["parameters"]["constant"] == pytest.approx(2.0)
+    assert current.metadata["promoted_posterior_sample"]["source_fit"] == "Fit Result1"
+    assert current.metadata["promoted_posterior_sample"]["step"] == 1
+    assert explorer._active_fit_entry(group) is current
 
 
 def test_posterior_corner_density_panel_draws_contours():
@@ -2258,7 +2306,7 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
     data = _grid_mdhisto_data()
-    dataset = DatasetEntry("scan", data, kind="mdhisto")
+    dataset = DatasetEntry("scan", data, kind="mdhisto", parameters={"temperature": 12.5})
     group = DataGroup("Datagroup1", datasets=[dataset])
     explorer = MetallixProjectExplorer(MetallixProject([group]))
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
@@ -2299,6 +2347,7 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     assert group.dataset_names == ["scan", "scan rebinned"]
     assert isinstance(rebinned.data, MDHistoData)
     assert rebinned.data.shape == (3, 1)
+    assert rebinned.parameters["temperature"] == pytest.approx(12.5)
 
     save_path = tmp_path / "rebinned.npz"
     save_dataset_file(dataset, save_path)
@@ -3336,3 +3385,35 @@ def test_request_overlay_refresh_coalesces_without_event_loop(monkeypatch):
     explorer._run_pending_overlay_refresh()
     assert refreshed == [group]
     assert explorer._pending_overlay_group is None
+
+
+def test_viewer_view_cache_reuses_and_invalidates():
+    project_gui._VIEWER_VIEW_CACHE.clear()
+    data = _grid_mdhisto_data()
+    dataset = DatasetEntry("scan", data, kind="mdhisto", data_type="single_crystal_inelastic")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+
+    first = project_gui._viewer_data_before_scale(dataset)
+    second = project_gui._viewer_data_before_scale(dataset)
+    assert first is second  # identical masked view reused
+
+    # A mask change must invalidate the cache (new object, new masking).
+    dataset.masks = [
+        MaskSpec(name="m", type="coordinate_range", parameters={"E": [0.0, 5.0]})
+    ]
+    third = project_gui._viewer_data_before_scale(dataset)
+    assert third is not second
+    # ...and is reused again until the next change.
+    assert project_gui._viewer_data_before_scale(dataset) is third
+
+
+def test_mdhisto_fit_bin_count_matches_point_based_count():
+    data = _grid_mdhisto_data()
+    data.mask[0, 0] = True
+    data.signal[1, 1] = np.nan
+    dataset = DatasetEntry("scan", data, kind="mdhisto", data_type="single_crystal_inelastic")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    view = project_gui.dataset_for_slice_viewer(dataset)
+    fast = project_gui._mdhisto_fit_bin_count(view)
+    reference = int(np.count_nonzero(project_gui._point_data_from_mdhisto_view(view).valid_mask()))
+    assert fast == reference

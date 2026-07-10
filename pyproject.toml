@@ -20,6 +20,7 @@ dependencies = [
   "pyside6>=6.6",
   "emcee>=3.1",
   "gemmi>=0.6",
+  "threadpoolctl>=3.1",
 ]
 keywords = [
   "inelastic neutron scattering",

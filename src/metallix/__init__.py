@@ -60,9 +60,11 @@ from .spin_fluctuations import (
     heisenberg_rpa_chipp_and_gradients,
     local_relaxational_chipp,
     mmp_chipp,
+    num_threads,
     reduce_site_network,
     rpa_backend,
     rpa_exchange_matrix,
+    set_num_threads,
     set_rpa_backend,
 )
 from .fitting import (
@@ -306,9 +308,11 @@ __all__ = [
     "heisenberg_rpa_chipp_and_gradients",
     "local_relaxational_chipp",
     "mmp_chipp",
+    "num_threads",
     "reduce_site_network",
     "rpa_backend",
     "rpa_exchange_matrix",
+    "set_num_threads",
     "set_rpa_backend",
     "Bond",
     "BondOrbit",

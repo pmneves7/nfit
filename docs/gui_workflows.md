@@ -64,6 +64,7 @@ Point-list datasets such as magnetization or powder elastic data expose editable
 coordinate/channel configuration. MDHisto datasets expose rebin settings in the
 Axes panel when rebinning is supported. Rebinning can be enabled for viewing and
 fitting, and the current rebin can be materialized as a new independent dataset.
+The materialized dataset keeps the source dataset's temperature override.
 
 The dataset title row includes a `T (K)` control that sets a per-dataset sample
 temperature override, stored in `dataset.parameters["temperature"]`. Spin down
@@ -225,13 +226,17 @@ posterior correlations. Stored fit and residual channels are available in the
 data viewer when their shapes still match the current dataset view. Fit results
 with best-fit parameters expose a `Posterior sampler` panel. That panel can
 rerun emcee from the best-fit parameters, append additional steps to a stored
-raw chain, or change burn-in/thinning after the fact. These posterior-only
+raw chain, promote the best stored emcee sample when it has a better likelihood
+than the fit result, or change burn-in/thinning after the fact. These posterior-only
 operations update the selected fit result's posterior summaries and diagnostics
 without running least squares again and without creating a new timeline point.
 Changing burn-in or thinning simply reinterprets the stored raw chain; rerun
 replaces the stored posterior; append continues from the final walker positions
-and extends the stored chain. Posterior rerun and append also use the background
-worker/progress window and expose their own emcee worker-thread control.
+and extends the stored chain. Promoting a best sample is different: it restores
+the fit result's snapshot, writes that sample into the editable model parameters,
+and records the result through the same `Current state` path as a manual
+parameter edit. Posterior rerun and append also use the background worker/progress
+window and expose their own emcee worker-thread control.
 
 Fit results with covariance estimates or stored emcee samples expose a `Fit
 diagnostics` button. The diagnostics window includes a covariance heatmap when

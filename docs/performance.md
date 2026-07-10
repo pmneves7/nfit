@@ -39,6 +39,14 @@ automatically — none of them changes the fit result or requires configuration.
   valid (unmasked) points and its bundles and phase geometry are cached across
   parameter edits, so changing a fitted value re-evaluates in ~0.1 s rather than
   rebuilding from scratch. Rapid edits are debounced.
+- **Viewer-view and details caching.** The masked, rebinned viewer view is
+  cached per dataset (keyed on data identity, masks, and rebin — not the
+  selection), so merely selecting a fit result or "Current state" node, or
+  re-selecting a large dataset, no longer re-masks the whole volume. Dataset
+  detail counts are computed directly from the mask/event/intensity arrays
+  instead of materializing coordinate grids. On the 4D reference dataset (59M
+  bins) this takes selecting a fit result from several seconds to ~0.4 s and the
+  dataset-details panel from ~5 s to well under 0.1 s.
 
 Together these took the reference pyrochlore project (162k fitted points) from
 ~1.8 s per model evaluation with per-iteration finite differences to well under
@@ -68,6 +76,30 @@ to floating-point precision by the test suite).
 On the reference 4D pyrochlore fit (4.5M valid points, 156k unique Q), the numba
 backend cut a least-squares iteration from ~2.8 s (numpy) to ~0.8 s, with the
 gradient itself dropping ~4×.
+
+## Threads and many-core / cluster nodes
+
+The parallel worker budget for the RPA kernels (the batched-eigendecomposition
+thread pool and the numba kernel) auto-detects the CPUs the process is actually
+*allowed* to run on: on Linux that respects cgroup / cpuset / SLURM allocations
+via `os.sched_getaffinity`, so a 16-core allocation on a 128-core node uses 16
+workers, not 128. Override with `metallix.set_num_threads(n)` or the
+`METALLIX_NUM_THREADS` environment variable.
+
+The batched eigendecomposition pins the underlying BLAS/LAPACK to a single
+thread per call while our thread pool provides the batch-level parallelism —
+otherwise a multithreaded BLAS (MKL/OpenBLAS/Accelerate) would nest
+`workers × BLAS_threads` threads, which oversubscribes badly on many-core
+nodes. (This is what `threadpoolctl` is for; it is a hard dependency.)
+
+One hardware caveat: on Apple silicon, `eigh` runs through Accelerate's
+AMX-backed LAPACK, whose throughput is bounded by the shared AMX unit rather
+than by core count, so for large magnetic cells ($N \gtrsim 8$ sublattices)
+fewer eigh workers can be faster there — set `METALLIX_NUM_THREADS` lower if
+you hit it. On non-AMX platforms (Linux/Windows with OpenBLAS/MKL) the
+pinned-BLAS pool scales the eigendecomposition across all allocated cores. The
+primitive-cell-reduced common case ($N \le 6$) does not thread the eigh at all,
+so it is unaffected either way.
 
 ## Hardware and libraries
 

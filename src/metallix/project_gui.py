@@ -31,6 +31,7 @@ from .fitting import (
     OptimizationConfig,
     SamplerConfig,
     SamplingResult,
+    _evaluate_problem,
     evaluate_problem_model,
     fit_problem_least_squares,
     rebin_point_data,
@@ -2468,6 +2469,92 @@ def _store_sampling_result_on_fit_entry(fit_entry: FitTimelineEntry, result: Sam
     fit_entry.goodness["posterior"] = _posterior_summary(result)
 
 
+def _best_posterior_sample(
+    result: SamplingResult,
+) -> tuple[dict[str, float], float, dict[str, int]] | None:
+    """Return the stored sample with the highest finite emcee log probability."""
+
+    names = list(result.variable_names)
+    if not names:
+        return None
+    if result.chain is not None and result.log_probability_chain is not None:
+        chain = np.asarray(result.chain, dtype=float)
+        log_probability = np.asarray(result.log_probability_chain, dtype=float)
+        if chain.ndim == 3 and log_probability.shape == chain.shape[:2]:
+            finite = np.isfinite(log_probability)
+            if np.any(finite):
+                masked = np.where(finite, log_probability, -np.inf)
+                flat_index = int(np.argmax(masked))
+                step, walker = np.unravel_index(flat_index, log_probability.shape)
+                sample = chain[int(step), int(walker)]
+                if sample.shape[0] == len(names):
+                    return (
+                        {name: float(sample[index]) for index, name in enumerate(names)},
+                        float(log_probability[int(step), int(walker)]),
+                        {"step": int(step), "walker": int(walker)},
+                    )
+    if result.log_probability is None:
+        return None
+    samples = np.asarray(result.samples, dtype=float)
+    log_probability = np.asarray(result.log_probability, dtype=float)
+    if samples.ndim != 2 or samples.shape[1] != len(names) or log_probability.shape != (samples.shape[0],):
+        return None
+    finite = np.isfinite(log_probability)
+    if not np.any(finite):
+        return None
+    sample_index = int(np.argmax(np.where(finite, log_probability, -np.inf)))
+    sample = samples[sample_index]
+    return (
+        {name: float(sample[index]) for index, name in enumerate(names)},
+        float(log_probability[sample_index]),
+        {"sample": int(sample_index)},
+    )
+
+
+def _log_probability_for_params(
+    compiled: CompiledFitProblem,
+    params: dict[str, float],
+) -> float:
+    """Evaluate the Gaussian log likelihood used by emcee for a parameter set."""
+
+    trial = {spec.name: float(spec.value) for spec in compiled.problem.parameter_specs}
+    trial.update({str(name): float(value) for name, value in params.items()})
+    evaluation = _evaluate_problem(
+        compiled.problem,
+        trial,
+        require_positive_sigma=True,
+    )
+    chi2 = float(np.dot(evaluation.residuals, evaluation.residuals))
+    return -0.5 * chi2
+
+
+def _best_posterior_promotion_candidate(
+    fit_entry: FitTimelineEntry,
+    compiled: CompiledFitProblem | None = None,
+) -> tuple[dict[str, float], float, float, dict[str, int]] | None:
+    """Return a best-sample candidate only when it improves on the fit result."""
+
+    stored = _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples"))
+    if stored is None:
+        return None
+    best = _best_posterior_sample(stored)
+    if best is None:
+        return None
+    sample_params, sample_log_probability, location = best
+    try:
+        baseline_log_probability = -0.5 * float(fit_entry.goodness["chi2"])
+    except (KeyError, TypeError, ValueError):
+        goodness_params = fit_entry.goodness.get("parameters")
+        if compiled is None or not isinstance(goodness_params, dict):
+            return None
+        baseline_log_probability = _log_probability_for_params(compiled, goodness_params)
+    if not np.isfinite(sample_log_probability) or not np.isfinite(baseline_log_probability):
+        return None
+    if sample_log_probability <= baseline_log_probability:
+        return None
+    return sample_params, sample_log_probability, baseline_log_probability, location
+
+
 def _fit_parameter_labels_from_components(
     components: list[ModelComponentSpec],
     compiled: CompiledFitProblem,
@@ -2491,13 +2578,13 @@ def _fit_parameter_labels_from_components(
     return labels
 
 
-def _write_back_fitted_parameters(
+def _write_back_parameter_values(
     group: DataGroup,
     components: list[ModelComponentSpec],
     compiled: CompiledFitProblem,
-    result: Any,
+    params: dict[str, float],
 ) -> None:
-    """Store optimized values on their model components.
+    """Store fit-problem parameter values on their model components.
 
     Globally shared (and constrained) parameters update the component's
     ``parameters`` directly. Per-dataset and grouped instances are stored per
@@ -2508,16 +2595,27 @@ def _write_back_fitted_parameters(
     for component in components:
         for parameter in component_parameter_names(component):
             qualified = qualified_parameter_name(component.name, parameter)
-            if qualified in result.params:
-                component.parameters[parameter] = float(result.params[qualified])
+            if qualified in params:
+                component.parameters[parameter] = float(params[qualified])
                 continue
             values = {
-                instance.scope: float(result.params[instance.name])
+                instance.scope: float(params[instance.name])
                 for instance in compiled.instances_for(component.name, parameter)
-                if instance.name in result.params
+                if instance.name in params
             }
             if values:
                 component.metadata.setdefault("fitted_values", {})[parameter] = values
+
+
+def _write_back_fitted_parameters(
+    group: DataGroup,
+    components: list[ModelComponentSpec],
+    compiled: CompiledFitProblem,
+    result: Any,
+) -> None:
+    """Store optimized values on their model components."""
+
+    _write_back_parameter_values(group, components, compiled, result.params)
 
 
 def _fit_channels_from_result(
@@ -2717,7 +2815,65 @@ def _decode_float_array(payload: dict[str, Any]) -> np.ndarray:
     return array.reshape([int(size) for size in payload["shape"]]).astype(float)
 
 
+# Building a viewer view (loading, rebinning, and masking the full volume) is
+# expensive on large datasets and is redone on every slice-viewer refresh --
+# including when a fit result or "Current state" node is merely selected. The
+# result depends only on the dataset's data, rebin config, and masks (not on the
+# selection or model parameters), so it is cached and reused. The signature
+# excludes the dataset scale factor, which is applied cheaply afterward.
+_VIEWER_VIEW_CACHE: dict[int, tuple[str, Any]] = {}
+_VIEWER_VIEW_CACHE_LIMIT = 8
+
+
+def _mask_signature(masks: list[MaskSpec] | None) -> list[Any]:
+    return [
+        [m.type, bool(m.enabled), bool(m.invert), bool(m.additive),
+         json.dumps(m.parameters, sort_keys=True, default=str)]
+        for m in (masks or [])
+    ]
+
+
+def _viewer_view_signature(
+    dataset: DatasetEntry, extra_masks: list[MaskSpec] | None
+) -> str:
+    rebin = (
+        json.dumps(dataset_rebin_config(dataset), sort_keys=True, default=str)
+        if dataset_rebin_enabled(dataset)
+        else None
+    )
+    payload = [
+        id(dataset.data),
+        dataset.data_type,
+        dataset.kind,
+        rebin,
+        _mask_signature(getattr(dataset, "masks", None)),
+        _mask_signature(extra_masks),
+    ]
+    return json.dumps(payload, sort_keys=True, default=str)
+
+
 def _viewer_data_before_scale(
+    dataset: DatasetEntry,
+    *,
+    extra_masks: list[MaskSpec] | None = None,
+) -> MDHistoData | PointListData | None:
+    key = id(dataset)
+    signature = _viewer_view_signature(dataset, extra_masks)
+    cached = _VIEWER_VIEW_CACHE.get(key)
+    if cached is not None and cached[0] == signature:
+        return cached[1]
+    result = _viewer_data_before_scale_uncached(dataset, extra_masks=extra_masks)
+    if result is not None:
+        # Recompute the signature: the uncached path may have lazily loaded the
+        # data (changing id(dataset.data)), so key the entry on the loaded id.
+        signature = _viewer_view_signature(dataset, extra_masks)
+        if len(_VIEWER_VIEW_CACHE) >= _VIEWER_VIEW_CACHE_LIMIT:
+            _VIEWER_VIEW_CACHE.clear()
+        _VIEWER_VIEW_CACHE[key] = (signature, result)
+    return result
+
+
+def _viewer_data_before_scale_uncached(
     dataset: DatasetEntry,
     *,
     extra_masks: list[MaskSpec] | None = None,
@@ -2865,6 +3021,9 @@ def create_rebinned_dataset(
     data = rebinned_dataset_data(dataset)
     if data is dataset.data:
         data = copy.deepcopy(data)
+    parameters = {}
+    if "temperature" in dataset.parameters:
+        parameters["temperature"] = copy.deepcopy(dataset.parameters["temperature"])
     new_entry = DatasetEntry(
         name=_unique_dataset_name(name or f"{dataset.name} rebinned", group.dataset_names),
         data=data,
@@ -2874,7 +3033,7 @@ def create_rebinned_dataset(
             "source_dataset": dataset.name,
             "rebin_materialized": True,
         },
-        parameters={},
+        parameters=parameters,
         masks=copy.deepcopy(dataset.masks),
     )
     group.add_dataset(new_entry)
@@ -5557,6 +5716,81 @@ class MetallixProjectExplorer:
         self._set_fit_details(fit_entry)
         return True
 
+    def promote_best_posterior_sample_for_fit(
+        self,
+        group: DataGroup,
+        fit_entry: FitTimelineEntry,
+    ) -> bool:
+        from PySide6 import QtWidgets
+
+        try:
+            candidate = _best_posterior_promotion_candidate(fit_entry)
+            if candidate is None and "chi2" not in fit_entry.goodness:
+                compiled = _compiled_problem_for_fit_entry(group, fit_entry)
+                candidate = _best_posterior_promotion_candidate(fit_entry, compiled)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Posterior sampler",
+                f"Could not inspect the posterior samples:\n{exc}",
+            )
+            return False
+        if candidate is None:
+            QtWidgets.QMessageBox.information(
+                self.window,
+                "Posterior sampler",
+                "The stored emcee chain does not contain a finite sample with a better likelihood than this fit result.",
+            )
+            return False
+        sample_params, sample_log_probability, baseline_log_probability, location = candidate
+        current_snapshot = snapshot_data_group_state(group)
+        self._set_active_fit_state(group, fit_entry)
+        try:
+            if fit_entry.snapshot:
+                restore_data_group_state(group, fit_entry.snapshot)
+            components = [
+                model for model in group.models.values() if isinstance(model, ModelComponentSpec)
+            ]
+            inputs, _bundles = fit_dataset_inputs(group)
+            compiled_for_state = compile_fit_problem(components, inputs, description=group.name)
+            promoted_params = {
+                spec.name: float(spec.value)
+                for spec in compiled_for_state.problem.parameter_specs
+            }
+            promoted_params.update(sample_params)
+            promoted_params = compiled_for_state.problem.resolve_parameters(promoted_params)
+            _write_back_parameter_values(
+                group,
+                components,
+                compiled_for_state,
+                promoted_params,
+            )
+        except Exception as exc:
+            restore_data_group_state(group, current_snapshot)
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Posterior sampler",
+                f"Could not promote the posterior sample:\n{exc}",
+            )
+            return False
+        branch_created = self._record_data_group_state_change(group)
+        promoted = self._active_fit_entry(group)
+        if promoted is not None and promoted.kind == "current":
+            promoted.metadata.setdefault("promoted_posterior_sample", {})
+            promoted.metadata["promoted_posterior_sample"] = {
+                "source_fit": fit_entry.name,
+                "log_probability": float(sample_log_probability),
+                "previous_log_probability": float(baseline_log_probability),
+                **location,
+            }
+        self._mark_dirty()
+        self.refresh_slice_viewer(group)
+        if branch_created:
+            self._refresh_tree(select_group=group, select_fit=promoted)
+        else:
+            self._refresh_tree(select_group=group, select_fit=promoted or fit_entry)
+        return True
+
     def run_posterior_sampler_for_fit(
         self,
         group: DataGroup,
@@ -7441,6 +7675,16 @@ class MetallixProjectExplorer:
             if chain.ndim == 3:
                 chain_steps = int(chain.shape[0])
                 chain_walkers = int(chain.shape[1])
+        promotion_candidate = _best_posterior_promotion_candidate(fit_entry)
+        promotion_message = "Stored posterior samples do not include a better finite likelihood than this fit result."
+        if promotion_candidate is not None:
+            _params, best_log_probability, baseline_log_probability, location = promotion_candidate
+            location_text = ", ".join(f"{key} {value}" for key, value in location.items())
+            promotion_message = (
+                "Create a Current state from the best stored emcee sample "
+                f"({location_text}; log probability {_format_number(best_log_probability)} "
+                f"vs {_format_number(baseline_log_probability)} for this fit result)."
+            )
         walkers_default = int(metadata.get("n_walkers") or sampler.get("n_walkers") or 0)
         steps_default = int(metadata.get("n_steps") or sampler.get("n_steps") or 1000)
         burn_default = int(metadata.get("burn_in") or sampler.get("burn_in") or 0)
@@ -7568,10 +7812,22 @@ class MetallixProjectExplorer:
             )
         )
 
+        promote_button = QtWidgets.QPushButton("Use best sample")
+        promote_button.setObjectName("fit_posterior_promote_button")
+        promote_button.setToolTip(promotion_message)
+        promote_button.setEnabled(promotion_candidate is not None)
+        promote_button.clicked.connect(
+            lambda _checked=False: self.promote_best_posterior_sample_for_fit(
+                group,
+                fit_entry,
+            )
+        )
+
         button_row = QtWidgets.QHBoxLayout()
         button_row.addWidget(apply_button)
         button_row.addWidget(rerun_button)
         button_row.addWidget(append_button)
+        button_row.addWidget(promote_button)
         layout.addLayout(button_row, len(controls) + 1, 0, 1, 4)
         return group_box
 
@@ -9740,6 +9996,25 @@ def _dataset_axes_and_data_lines(data: Any) -> tuple[list[str], list[str]]:
     return axes, data_lines
 
 
+def _mdhisto_fit_bin_count(view: MDHistoData) -> int:
+    """Count fit-eligible bins without materializing coordinate grids.
+
+    Matches ``_point_data_from_mdhisto_view(view).valid_mask()``: an MDHisto
+    grid's H/K/L/E bin centers are always finite, so only the mask, event count,
+    and finite/positive intensity and error need checking. This avoids building
+    the (potentially tens of millions of points) coordinate meshgrid just to
+    report a count.
+    """
+
+    keep = ~np.asarray(view.mask, dtype=bool)
+    keep &= np.asarray(view.num_events, dtype=float) > 0.0
+    keep &= np.isfinite(np.asarray(view.signal, dtype=float))
+    errors = np.asarray(view.errors, dtype=float)
+    keep &= np.isfinite(errors)
+    keep &= errors > 0.0
+    return int(np.count_nonzero(keep))
+
+
 def _dataset_fit_summary_lines(
     dataset: DatasetEntry,
     *,
@@ -9753,8 +10028,7 @@ def _dataset_fit_summary_lines(
     try:
         view = dataset_for_slice_viewer(dataset, extra_masks=extra_masks)
         if isinstance(view, MDHistoData):
-            points = _point_data_from_mdhisto_view(view)
-            fit_bins = int(np.count_nonzero(points.valid_mask()))
+            fit_bins = _mdhisto_fit_bin_count(view)
             total_bins = int(np.prod(view.shape))
             return [f"Fit bins: {fit_bins} of {total_bins}"]
         if isinstance(view, PointListData):

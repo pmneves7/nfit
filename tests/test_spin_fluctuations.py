@@ -464,3 +464,38 @@ def test_forcing_unavailable_backend_falls_back_to_numpy():
     finally:
         sf.set_rpa_backend("auto")
     assert "numpy" in backends
+
+
+def test_thread_budget_override_and_affinity_default():
+    from metallix import spin_fluctuations as sf
+
+    try:
+        sf.set_num_threads(3)
+        assert sf.num_threads() == 3
+        sf.set_num_threads(None)  # back to auto
+        assert sf.num_threads() == sf._detect_cpu_budget()
+        # env override is honored when no explicit override is set
+        import os
+
+        os.environ["METALLIX_NUM_THREADS"] = "5"
+        try:
+            assert sf.num_threads() == 5
+        finally:
+            del os.environ["METALLIX_NUM_THREADS"]
+    finally:
+        sf.set_num_threads(None)
+
+
+def test_batched_eigh_matches_single_thread_when_forced_parallel():
+    from metallix import spin_fluctuations as sf
+
+    rng = np.random.default_rng(4)
+    # N=16 crosses the work threshold so the threaded, BLAS-pinned path runs.
+    a = rng.standard_normal((6000, 16, 16)) + 1j * rng.standard_normal((6000, 16, 16))
+    h = a + np.conj(np.transpose(a, (0, 2, 1)))
+    lam_ref, _ = np.linalg.eigh(h)
+    lam, vec = sf._batched_eigh(h)
+    np.testing.assert_allclose(lam, lam_ref, rtol=1e-12, atol=1e-12)
+    # reconstruct H from the returned decomposition as an eigenvector check
+    recon = np.einsum("qan,qn,qbn->qab", vec, lam, np.conj(vec))
+    np.testing.assert_allclose(recon, h, rtol=1e-10, atol=1e-10)

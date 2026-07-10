@@ -10,6 +10,7 @@ dependencies:
   - emcee
   - gemmi
   - numba
+  - threadpoolctl
   - pyside6
   - pytest
   - sphinx<9

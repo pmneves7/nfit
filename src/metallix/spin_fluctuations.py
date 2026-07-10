@@ -93,6 +93,7 @@ References
 
 from __future__ import annotations
 
+import contextlib
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -101,6 +102,11 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
+
+try:  # optional: scopes BLAS thread counts to avoid nested oversubscription
+    from threadpoolctl import threadpool_limits as _threadpool_limits
+except Exception:  # pragma: no cover - threadpoolctl not installed
+    _threadpool_limits = None
 
 from .models import relaxational_chipp
 
@@ -190,17 +196,79 @@ def _select_rpa_backend(n_points: int) -> str:
 # crossover is around N=8 at M~1e5).
 _EIGH_THREAD_WORK = 5.0e7
 
+# Parallel worker budget for the RPA kernels. ``None`` means auto-detect. Auto
+# uses the number of CPUs the process is actually *allowed* to run on -- on
+# Linux that respects cgroup / cpuset / SLURM allocations via
+# ``os.sched_getaffinity`` (so a 16-core job on a 128-core node uses 16, not
+# 128, avoiding oversubscription of shared nodes) -- falling back to
+# ``os.cpu_count`` elsewhere. Override with ``METALLIX_NUM_THREADS`` or
+# :func:`set_num_threads`.
+_THREAD_OVERRIDE: int | None = None
 
-@lru_cache(maxsize=1)
-def _eigh_workers() -> int:
-    return min(8, os.cpu_count() or 1)
+
+def _detect_cpu_budget() -> int:
+    try:
+        return max(1, len(os.sched_getaffinity(0)))  # type: ignore[attr-defined]
+    except AttributeError:  # macOS / Windows lack sched_getaffinity
+        return max(1, os.cpu_count() or 1)
+
+
+def _thread_budget() -> int:
+    if _THREAD_OVERRIDE is not None:
+        return _THREAD_OVERRIDE
+    env = os.environ.get("METALLIX_NUM_THREADS")
+    if env:
+        try:
+            return max(1, int(env))
+        except ValueError:
+            pass
+    return _detect_cpu_budget()
+
+
+def set_num_threads(n: int | None) -> None:
+    """Set the parallel worker budget for the RPA kernels (``None`` = auto).
+
+    Applies to the batched-eigendecomposition thread pool and the numba kernel.
+    The auto default respects the process's CPU allocation (cgroups/SLURM on
+    Linux), so this is mainly for overriding on a shared machine or pinning a
+    benchmark.
+    """
+
+    global _THREAD_OVERRIDE
+    _THREAD_OVERRIDE = None if n is None else max(1, int(n))
+    _eigh_executor.cache_clear()
+    _apply_numba_threads()
+
+
+def num_threads() -> int:
+    """Return the resolved parallel worker budget."""
+
+    return _thread_budget()
+
+
+def _apply_numba_threads() -> None:
+    if _NUMBA_KERNELS is None:
+        return
+    try:
+        import numba
+
+        # set_num_threads is capped at NUMBA_NUM_THREADS (default os.cpu_count),
+        # and the budget never exceeds that, so this is always valid.
+        numba.set_num_threads(_thread_budget())
+    except Exception:  # pragma: no cover - defensive
+        pass
 
 
 @lru_cache(maxsize=1)
 def _eigh_executor() -> ThreadPoolExecutor:
     return ThreadPoolExecutor(
-        max_workers=_eigh_workers(), thread_name_prefix="metallix-eigh"
+        max_workers=_thread_budget(), thread_name_prefix="metallix-eigh"
     )
+
+
+# Align numba's thread count with the detected budget at import (it defaults to
+# the full machine, ignoring cgroup/SLURM allocations).
+_apply_numba_threads()
 
 
 # Target complex elements per gradient block: block * N^2 stays near this, so
@@ -223,13 +291,22 @@ def _batched_eigh(matrices: ComplexArray) -> tuple[FloatArray, ComplexArray]:
     eigenvectors); only the dispatch is parallelized across the leading axis.
     """
 
-    workers = _eigh_workers()
+    workers = _thread_budget()
     batch = matrices.shape[0]
     n_sites = matrices.shape[-1]
     if workers <= 1 or batch * n_sites**3 < _EIGH_THREAD_WORK:
         return np.linalg.eigh(matrices)
     chunks = np.array_split(matrices, workers * 4, axis=0)
-    results = list(_eigh_executor().map(np.linalg.eigh, chunks))
+    # Pin the underlying BLAS/LAPACK to one thread per call for the duration of
+    # the parallel map: our thread pool is already the batch-level parallelism,
+    # and a multithreaded BLAS (MKL/OpenBLAS/Accelerate) would otherwise nest
+    # ``workers x BLAS_threads`` threads -- catastrophic on many-core nodes.
+    if _threadpool_limits is not None:
+        limiter: Any = _threadpool_limits(limits=1, user_api="blas")
+    else:  # pragma: no cover - threadpoolctl absent
+        limiter = contextlib.nullcontext()
+    with limiter:
+        results = list(_eigh_executor().map(np.linalg.eigh, chunks))
     eigenvalues = np.concatenate([values for values, _ in results], axis=0)
     eigenvectors = np.concatenate([vectors for _, vectors in results], axis=0)
     return eigenvalues, eigenvectors
