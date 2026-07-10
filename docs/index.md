@@ -14,6 +14,7 @@ getting_started
 data_philosophy
 gui_workflows
 physics_conventions
+spin_fluctuation_models
 modeling_pipeline
 examples/synthetic_single_q
 examples/hyspec_constant_background

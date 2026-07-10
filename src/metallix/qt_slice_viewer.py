@@ -154,6 +154,8 @@ class QtMDHistoSliceViewer:
         self.ax_residual = None
         self.ax_fit_cut = None
         self.ax_residual_cut = None
+        self.ax_residual_ycut = None
+        self._compare_colorbar_axes = []
         self.axis_selector_widget = None
         self.x_combo = None
         self.y_combo = None
@@ -494,6 +496,10 @@ class QtMDHistoSliceViewer:
         controls.setMinimumWidth(430)
         controls.setMaximumWidth(500)
         controls_widget = QtWidgets.QWidget()
+        controls_widget.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
         controls.setWidget(controls_widget)
         controls_layout = QtWidgets.QVBoxLayout(controls_widget)
         controls_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
@@ -538,6 +544,7 @@ class QtMDHistoSliceViewer:
         dataset_layout.addWidget(self.show_residual_check, 2, 2)
         self.residual_split_label = QtWidgets.QLabel()
         self.residual_split_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.residual_split_slider.setMinimumWidth(80)
         self.residual_split_slider.setRange(10, 70)
         self.residual_split_slider.setSingleStep(1)
         self.residual_split_slider.setPageStep(5)
@@ -854,6 +861,9 @@ class QtMDHistoSliceViewer:
         self.copy_figure_button = QtWidgets.QPushButton("Copy figure")
         self.copy_script_button = QtWidgets.QPushButton("Copy script")
         self.save_script_button = QtWidgets.QPushButton("Save script")
+        for button in (self.copy_figure_button, self.copy_script_button, self.save_script_button):
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed)
         self.copy_figure_button.setToolTip("Copy the current figure image to the clipboard.")
         self.copy_script_button.setToolTip("Copy a Python script that recreates the current viewer plot.")
         self.save_script_button.setToolTip("Save a Python script that recreates the current viewer plot.")
@@ -864,9 +874,9 @@ class QtMDHistoSliceViewer:
         figure_layout.addWidget(self.font_size_spin, 0, 1)
         figure_layout.addWidget(QtWidgets.QLabel("Linewidth"), 0, 2)
         figure_layout.addWidget(self.line_width_spin, 0, 3)
-        figure_layout.addWidget(self.copy_figure_button, 1, 0, 1, 2)
-        figure_layout.addWidget(self.copy_script_button, 1, 2)
-        figure_layout.addWidget(self.save_script_button, 1, 3)
+        figure_layout.addWidget(self.copy_figure_button, 1, 0, 1, 4)
+        figure_layout.addWidget(self.copy_script_button, 2, 0, 1, 2)
+        figure_layout.addWidget(self.save_script_button, 2, 2, 1, 2)
         controls_layout.addWidget(figure_group)
         controls_layout.addStretch(1)
 
@@ -1619,6 +1629,7 @@ class QtMDHistoSliceViewer:
             self.ax_residual,
             self.ax_fit_cut,
             self.ax_residual_cut,
+            self.ax_residual_ycut,
         ):
             if axis is None:
                 continue
@@ -1647,6 +1658,7 @@ class QtMDHistoSliceViewer:
             self.ax_residual,
             self.ax_fit_cut,
             self.ax_residual_cut,
+            self.ax_residual_ycut,
         ):
             if axis is None:
                 continue
@@ -1876,6 +1888,7 @@ class QtMDHistoSliceViewer:
             self.ax_residual,
             self.ax_fit_cut,
             self.ax_residual_cut,
+            self.ax_residual_ycut,
         )
         for axis in (*axes, *self._compare_axes):
             if axis is not None:
@@ -1942,6 +1955,9 @@ class QtMDHistoSliceViewer:
         self.ax_colorbar = self.figure.add_subplot(self.grid[0, 2])
         self.ax_xcut = self.figure.add_subplot(self.grid[1, 0], sharex=self.ax_image)
         self.ax_residual = None
+        self.ax_fit_cut = None
+        self.ax_residual_cut = None
+        self.ax_residual_ycut = None
         self._suppress_matplotlib_coordinate_status()
         self.image = None
         self.colorbar = None
@@ -1964,25 +1980,44 @@ class QtMDHistoSliceViewer:
         self.ax_residual = None
         self.ax_fit_cut = None
         self.ax_residual_cut = None
+        self.ax_residual_ycut = None
         self.image = None
         self.colorbar = None
         self._compare_colorbars = []
+        self._compare_colorbar_axes = []
         if with_cuts:
             cut_ratio = self._panel_ratio(self.xcut_percent)
-            outer = self.figure.add_gridspec(2, 1, height_ratios=[1.0, cut_ratio])
-            panel_cells = outer[0].subgridspec(1, panel_count)
+            ycut_ratio = self._panel_ratio(self.ycut_percent)
+            width_ratios = []
+            for _index in range(panel_count):
+                width_ratios.extend([1.0, 0.045])
+            width_ratios.append(ycut_ratio)
+            if with_residual_cut:
+                width_ratios.append(ycut_ratio)
+            outer = self.figure.add_gridspec(
+                2,
+                panel_count * 2 + 1 + int(with_residual_cut),
+                width_ratios=width_ratios,
+                height_ratios=[1.0, cut_ratio],
+            )
             self._compare_axes = [
-                self.figure.add_subplot(panel_cells[0, index]) for index in range(panel_count)
+                self.figure.add_subplot(outer[0, index * 2]) for index in range(panel_count)
             ]
-            n_cut_rows = 2 if with_residual_cut else 1
-            cut_cells = outer[1].subgridspec(n_cut_rows, 1, hspace=0.1)
-            self.ax_fit_cut = self.figure.add_subplot(cut_cells[0, 0], sharex=self._compare_axes[0])
+            self._compare_colorbar_axes = [
+                self.figure.add_subplot(outer[0, index * 2 + 1]) for index in range(panel_count)
+            ]
+            self.ax_ycut = self.figure.add_subplot(outer[0, panel_count * 2], sharey=self._compare_axes[0])
+            self.ax_fit_cut = self.figure.add_subplot(outer[1, 0], sharex=self._compare_axes[0])
             if with_residual_cut:
                 self.ax_residual_cut = self.figure.add_subplot(
-                    cut_cells[1, 0], sharex=self._compare_axes[0]
+                    outer[1, 2 * (panel_count - 1)], sharex=self._compare_axes[-1]
+                )
+                self.ax_residual_ycut = self.figure.add_subplot(
+                    outer[0, panel_count * 2 + 1], sharey=self._compare_axes[-1]
                 )
             self.grid = outer
         else:
+            self._compare_colorbar_axes = []
             self.grid = self.figure.add_gridspec(1, panel_count)
             self._compare_axes = [
                 self.figure.add_subplot(self.grid[0, index]) for index in range(panel_count)
@@ -2013,6 +2048,7 @@ class QtMDHistoSliceViewer:
         self.ax_xcut = None
         self.ax_ycut = None
         self.ax_colorbar = None
+        self.ax_residual_ycut = None
         self.image = None
         self.colorbar = None
         self._compare_axes = []
@@ -2130,7 +2166,7 @@ class QtMDHistoSliceViewer:
         self._current_slice = data_view
         self.image = None
         self.colorbar = None
-        for ax, (title, channel) in zip(self._compare_axes, panels, strict=True):
+        for index, (ax, (title, channel)) in enumerate(zip(self._compare_axes, panels, strict=True)):
             model = self._comparison_panel_model(self.data, channel)
             view = model.slice_arrays()
             values = model._display_values(view)
@@ -2146,7 +2182,16 @@ class QtMDHistoSliceViewer:
             ax.set_title(title)
             ax.set_xlabel(model._axis_label(model.x_dim))
             ax.set_ylabel(model._axis_label(model.y_dim))
-            colorbar = self.figure.colorbar(artist, ax=ax)
+            colorbar_axis = (
+                self._compare_colorbar_axes[index]
+                if index < len(self._compare_colorbar_axes)
+                else None
+            )
+            colorbar = self.figure.colorbar(
+                artist,
+                cax=colorbar_axis,
+                ax=None if colorbar_axis is not None else ax,
+            )
             colorbar.set_label(
                 "Residual (sigma)" if title == "Residual" else data_model._channel_label()
             )
@@ -2161,8 +2206,10 @@ class QtMDHistoSliceViewer:
                 axis.set_ylim(previous_ylim)
         if with_cuts:
             if self._roi_extents is None or previous_dims != current_dims:
-                self._set_roi_extents(self._default_roi_extents(), update_cuts=False, draw=False)
-            self._update_fit_compare_cuts(self._roi_extents)
+                extents = self._default_roi_extents()
+            else:
+                extents = self._roi_extents
+            self._set_roi_extents(extents, update_cuts=True, draw=False)
         self._sync_control_visibility()
         self._sync_limit_spinboxes(vmin, vmax)
         self._last_plot_dims = current_dims
@@ -2190,13 +2237,19 @@ class QtMDHistoSliceViewer:
         x_mask = (x_centers >= x0) & (x_centers <= x1)
         y_mask = (y_centers >= y0) & (y_centers <= y1)
         self.ax_fit_cut.clear()
+        if self.ax_ycut is not None:
+            self.ax_ycut.clear()
         if self.ax_residual_cut is not None:
             self.ax_residual_cut.clear()
+        if self.ax_residual_ycut is not None:
+            self.ax_residual_ycut.clear()
 
         if np.any(x_mask) and np.any(y_mask):
             x = x_centers[x_mask]
+            y = y_centers[y_mask]
             data_z = self.model._display_values(data_view)
             data_cut = np.nansum(data_z[np.ix_(y_mask, x_mask)], axis=0)
+            data_y_cut = np.nansum(data_z[np.ix_(y_mask, x_mask)], axis=1)
             errors = np.asarray(data_view.get("errors"), dtype=float)
             if errors.shape == data_z.shape:
                 err_cut = np.sqrt(np.nansum(errors[np.ix_(y_mask, x_mask)] ** 2, axis=0))
@@ -2215,29 +2268,70 @@ class QtMDHistoSliceViewer:
             fit_model = self._comparison_panel_model(self.data, "fit")
             fit_z = fit_model._display_values(fit_model.slice_arrays())
             fit_cut = np.nansum(fit_z[np.ix_(y_mask, x_mask)], axis=0)
+            fit_y_cut = np.nansum(fit_z[np.ix_(y_mask, x_mask)], axis=1)
             self.ax_fit_cut.plot(
                 x, fit_cut, linestyle="-", marker="", color=self.fit_line_color,
                 lw=self.fit_line_width, zorder=1.5, label="fit",
             )
+            if self.ax_ycut is not None:
+                self.ax_ycut.plot(
+                    data_y_cut,
+                    y,
+                    marker="o",
+                    linestyle="None",
+                    ms=self.marker_size,
+                    mfc=self.marker_face_color or "none",
+                    mec=self.line_color,
+                    color=self.line_color,
+                    label="data",
+                )
+                self.ax_ycut.plot(
+                    fit_y_cut,
+                    y,
+                    linestyle="-",
+                    marker="",
+                    color=self.fit_line_color,
+                    lw=self.fit_line_width,
+                    label="fit",
+                )
             if self.ax_residual_cut is not None:
                 residual_model = self._comparison_panel_model(self.data, "residual")
                 residual_z = residual_model._display_values(residual_model.slice_arrays())
                 residual_cut = np.nansum(residual_z[np.ix_(y_mask, x_mask)], axis=0)
+                residual_y_cut = np.nansum(residual_z[np.ix_(y_mask, x_mask)], axis=1)
                 self.ax_residual_cut.axhline(0.0, color="0.5", lw=1.0, zorder=1)
                 self.ax_residual_cut.plot(
                     x, residual_cut, marker="o", linestyle="None",
                     ms=self.marker_size, mfc=self.marker_face_color or "none",
                     mec=self.line_color, color=self.line_color,
                 )
+                if self.ax_residual_ycut is not None:
+                    self.ax_residual_ycut.axvline(0.0, color="0.5", lw=1.0, zorder=1)
+                    self.ax_residual_ycut.plot(
+                        residual_y_cut,
+                        y,
+                        marker="o",
+                        linestyle="None",
+                        ms=self.marker_size,
+                        mfc=self.marker_face_color or "none",
+                        mec=self.line_color,
+                        color=self.line_color,
+                    )
 
         x_label = self.model._axis_label(self.model.x_dim)
         self.ax_fit_cut.set_ylabel("Int.")
         if self.ax_residual_cut is not None:
-            self.ax_fit_cut.tick_params(labelbottom=False)
             self.ax_residual_cut.set_ylabel("Res. (σ)")
             self.ax_residual_cut.set_xlabel(x_label)
-        else:
-            self.ax_fit_cut.set_xlabel(x_label)
+        self.ax_fit_cut.set_xlabel(x_label)
+        if self.ax_ycut is not None:
+            self.ax_ycut.set_xlabel("Int.")
+            self.ax_ycut.set_ylabel(self.model._axis_label(self.model.y_dim))
+            self.ax_ycut.tick_params(labelleft=False)
+        if self.ax_residual_ycut is not None:
+            self.ax_residual_ycut.set_xlabel("Res. (σ)")
+            self.ax_residual_ycut.set_ylabel(self.model._axis_label(self.model.y_dim))
+            self.ax_residual_ycut.tick_params(labelleft=False)
 
     def _comparison_panel_model(self, data: MDHistoData, channel: str) -> MDHistoSliceViewer:
         model = MDHistoSliceViewer(
@@ -2472,6 +2566,9 @@ class QtMDHistoSliceViewer:
     def _set_ycut_percent(self, value: int) -> None:
         self.ycut_percent = int(value)
         self._sync_histogram_panel_controls()
+        if self._fit_panels_active() and self._fit_cuts_active():
+            self.update_plot()
+            return
         self._apply_histogram_axes_layout(draw=True)
 
     def _sync_histogram_panel_controls(self) -> None:

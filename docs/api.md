@@ -73,6 +73,15 @@ posterior checks use `emcee` through `sample_problem_parameters`. See the
 .. automodule:: metallix.cross_section
    :members:
 
+.. automodule:: metallix.spin_fluctuations
+   :members:
+
+.. automodule:: metallix.form_factors
+   :members:
+
+.. automodule:: metallix.crystal
+   :members:
+
 .. automodule:: metallix.fitting
    :members:
 

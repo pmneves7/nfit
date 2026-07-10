@@ -400,6 +400,31 @@ model = compound_additive_model(
 )
 ```
 
+## Registered model components and dynamic parameters
+
+GUI-facing model components (`ModelComponentSpec`) are compiled into a
+`FitProblem` through `compile_fit_problem`, which looks each component type up
+in `MODEL_TYPE_REGISTRY` (`metallix.fit_config`). A registration
+(`ModelTypeInfo`) carries the static parameter names, the compatible dataset
+data types, and a factory that closes over the component and returns the model
+callable.
+
+Some models derive additional parameter names from their configuration: the
+`heisenberg_rpa` component emits one exchange parameter per bond orbit stored
+in `config["orbits"]`. Registrations declare this with the optional
+`dynamic_parameters` callable, and `component_parameter_names(component)`
+returns the full static-plus-dynamic list. Dynamic parameters flow through
+sharing modes, limits, and constraints exactly like static ones.
+
+Components snapshot the structured configuration they need (crystal, expanded
+`site_positions`, bond `orbits`) into `component.config` as plain JSON data.
+The `DataGroup` remains the sample-level record (`lattice_parameters`,
+`spacegroup`, `metadata["crystal"]`) used to stamp fit points with the
+RLU-to-inverse-angstrom matrix, but a component stays self-contained so it
+survives project save/load and can be scripted directly. See
+[Spin-fluctuation models](spin_fluctuation_models.md) for the physics and the
+orbit-generation API.
+
 ## Parameter bindings and constraints
 
 `ParameterSpec` defines the global optimizer parameters. `FitDataset` can map

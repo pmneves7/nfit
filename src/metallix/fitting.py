@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from multiprocessing.pool import ThreadPool
 from typing import Any
 from typing import Literal
 
@@ -30,6 +32,21 @@ ProgressCallback = Callable[[dict[str, Any]], None]
 Range = tuple[float | None, float | None]
 ProjectionSpec = str | Sequence[float]
 ParameterBinding = str | float | int
+
+
+def _resolve_parallel_workers(value: Any) -> int:
+    """Resolve user-facing worker counts.
+
+    ``-1`` means "auto": use a conservative number based on available CPUs.
+    Thread pools are useful for expensive NumPy/SciPy-heavy evaluations, but
+    oversubscribing can easily make small fits slower.
+    """
+
+    requested = int(value or 1)
+    if requested == -1:
+        available = os.cpu_count() or 1
+        return max(1, min(available - 1, 8))
+    return max(1, requested)
 
 
 @dataclass(frozen=True)
@@ -227,6 +244,8 @@ class SamplingResult:
     variable_names: list[str]
     log_probability: FloatArray | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    chain: FloatArray | None = None
+    log_probability_chain: FloatArray | None = None
 
 
 @dataclass(frozen=True)
@@ -994,6 +1013,7 @@ def sample_problem_parameters(
     config: SamplerConfig | None = None,
     *,
     initial_params: dict[str, float] | None = None,
+    initial_walkers: FloatArray | None = None,
     require_positive_sigma: bool = True,
     progress_callback: ProgressCallback | None = None,
 ) -> SamplingResult:
@@ -1036,7 +1056,17 @@ def sample_problem_parameters(
     burn_in = int(max(0, sampler.burn_in))
     thin = int(max(1, sampler.thin))
     rng = np.random.default_rng(sampler.random_seed)
-    p0 = _initial_walker_positions(x0, bounds, n_walkers, rng)
+    if initial_walkers is None:
+        p0 = _initial_walker_positions(x0, bounds, n_walkers, rng)
+    else:
+        p0 = np.asarray(initial_walkers, dtype=float)
+        if p0.shape != (n_walkers, n_dim):
+            raise ValueError(
+                "initial_walkers must have shape "
+                f"({n_walkers}, {n_dim}); got {tuple(p0.shape)}"
+            )
+        if np.any(p0 < lower) or np.any(p0 > upper):
+            raise ValueError("initial_walkers must lie inside finite parameter bounds")
 
     def log_probability(x: FloatArray) -> float:
         if np.any(x < lower) or np.any(x > upper):
@@ -1054,45 +1084,66 @@ def sample_problem_parameters(
         return -0.5 * chi2
 
     backend_kwargs = dict(sampler.kwargs)
-    emcee_sampler = emcee.EnsembleSampler(n_walkers, n_dim, log_probability, **backend_kwargs)
-    for iteration, state in enumerate(emcee_sampler.sample(p0, iterations=n_steps), start=1):
-        if progress_callback is not None:
-            mean = np.mean(state.coords, axis=0)
-            progress_callback(
-                {
-                    "stage": "emcee",
-                    "iteration": iteration,
-                    "total": n_steps,
-                    "parameters": {name: float(value) for name, value in zip(names, mean)},
-                    "message": f"emcee step {iteration}/{n_steps}",
-                }
-            )
-    samples = np.asarray(emcee_sampler.get_chain(discard=burn_in, thin=thin, flat=True), dtype=float)
-    log_prob = np.asarray(
-        emcee_sampler.get_log_prob(discard=burn_in, thin=thin, flat=True),
-        dtype=float,
-    )
+    worker_request = backend_kwargs.pop("workers", backend_kwargs.pop("parallel_workers", 1))
+    workers = _resolve_parallel_workers(worker_request)
+    pool = ThreadPool(workers) if workers > 1 else None
+    try:
+        if pool is not None:
+            backend_kwargs["pool"] = pool
+        emcee_sampler = emcee.EnsembleSampler(
+            n_walkers, n_dim, log_probability, **backend_kwargs
+        )
+        for iteration, state in enumerate(emcee_sampler.sample(p0, iterations=n_steps), start=1):
+            if progress_callback is not None:
+                mean = np.mean(state.coords, axis=0)
+                progress_callback(
+                    {
+                        "stage": "emcee",
+                        "iteration": iteration,
+                        "total": n_steps,
+                        "parameters": {name: float(value) for name, value in zip(names, mean)},
+                        "message": f"emcee step {iteration}/{n_steps}",
+                    }
+                )
+        chain = np.asarray(emcee_sampler.get_chain(), dtype=float)
+        log_prob_chain = np.asarray(emcee_sampler.get_log_prob(), dtype=float)
+        samples = np.asarray(emcee_sampler.get_chain(discard=burn_in, thin=thin, flat=True), dtype=float)
+        log_prob = np.asarray(
+            emcee_sampler.get_log_prob(discard=burn_in, thin=thin, flat=True),
+            dtype=float,
+        )
+        acceptance_fraction = np.asarray(emcee_sampler.acceptance_fraction, dtype=float)
+        try:
+            autocorrelation_time = [
+                float(value) for value in emcee_sampler.get_autocorr_time(quiet=True)
+            ]
+        except Exception:
+            autocorrelation_time = []
+    finally:
+        if pool is not None:
+            pool.close()
+            pool.join()
     metadata: dict[str, Any] = {
         "method": "emcee",
         "n_walkers": n_walkers,
         "n_steps": n_steps,
         "burn_in": burn_in,
         "thin": thin,
-        "acceptance_fraction_mean": float(np.mean(emcee_sampler.acceptance_fraction)),
-        "acceptance_fraction_min": float(np.min(emcee_sampler.acceptance_fraction)),
-        "acceptance_fraction_max": float(np.max(emcee_sampler.acceptance_fraction)),
+        "random_seed": sampler.random_seed,
+        "workers": workers,
+        "worker_request": "auto" if int(worker_request or 1) == -1 else workers,
+        "acceptance_fraction_mean": float(np.mean(acceptance_fraction)),
+        "acceptance_fraction_min": float(np.min(acceptance_fraction)),
+        "acceptance_fraction_max": float(np.max(acceptance_fraction)),
     }
-    try:
-        metadata["autocorrelation_time"] = [
-            float(value) for value in emcee_sampler.get_autocorr_time(quiet=True)
-        ]
-    except Exception:
-        metadata["autocorrelation_time"] = []
+    metadata["autocorrelation_time"] = autocorrelation_time
     return SamplingResult(
         samples=samples,
         variable_names=list(names),
         log_probability=log_prob,
         metadata=metadata,
+        chain=chain,
+        log_probability_chain=log_prob_chain,
     )
 
 
@@ -1125,8 +1176,14 @@ def initialize_problem_differential_evolution(
     options = {} if config is None else dict(config)
     options.pop("method", None)
     seed = options.pop("random_seed", options.pop("seed", None))
+    workers = _resolve_parallel_workers(options.pop("workers", options.pop("parallel_workers", 1)))
     options.setdefault("polish", False)
     options.setdefault("updating", "immediate")
+    pool = None
+    if workers > 1:
+        pool = ThreadPool(workers)
+        options["workers"] = pool.map
+        options["updating"] = "deferred"
     bounds_list = [(float(lo), float(hi)) for lo, hi in zip(lower, upper)]
     iteration = 0
 
@@ -1156,13 +1213,31 @@ def initialize_problem_differential_evolution(
             )
         return False
 
-    result = _scipy_differential_evolution(
-        objective,
-        bounds_list,
-        seed=seed,
-        callback=callback,
-        **options,
-    )
+    try:
+        objective(x0)
+    except Exception as exc:
+        preview = ", ".join(
+            f"{name}={value:.6g}" for name, value in zip(names, x0[: len(names)])
+        )
+        raise RuntimeError(
+            "differential evolution initialization could not evaluate the "
+            "model at the starting parameters"
+            + (f" ({preview})" if preview else "")
+            + f": {exc}"
+        ) from exc
+
+    try:
+        result = _scipy_differential_evolution(
+            objective,
+            bounds_list,
+            seed=seed,
+            callback=callback,
+            **options,
+        )
+    finally:
+        if pool is not None:
+            pool.close()
+            pool.join()
     if progress_callback is not None:
         progress_callback(
             {

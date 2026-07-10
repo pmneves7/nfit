@@ -32,3 +32,34 @@ def test_negative_temperature_rejected():
     with pytest.raises(ValueError):
         bose_denominator([1.0], -1.0)
 
+
+def test_bose_denominator_array_temperature_matches_scalar_loop():
+    E = np.array([0.5, 1.0, -2.0, 1e-14])
+    temperatures = np.array([1.8, 50.0, 300.0, 100.0])
+    denom = bose_denominator(E, temperatures)
+    expected = np.concatenate(
+        [bose_denominator(E[i : i + 1], float(temperatures[i])) for i in range(E.size)]
+    )
+    np.testing.assert_allclose(denom, expected, rtol=1e-12)
+
+
+def test_bose_denominator_mixed_zero_and_finite_temperatures():
+    E = np.array([1.0, -1.0, 1.0])
+    temperatures = np.array([0.0, 0.0, 10.0])
+    denom = bose_denominator(E, temperatures)
+    assert denom[0] == 1.0
+    assert np.isnan(denom[1])
+    np.testing.assert_allclose(denom[2], -np.expm1(-1.0 / (KB_MEV_PER_K * 10.0)))
+
+
+def test_bose_denominator_array_temperature_rejects_negative_entry():
+    with pytest.raises(ValueError):
+        bose_denominator([1.0, 1.0], [10.0, -1.0])
+
+
+def test_intensity_from_chipp_accepts_array_temperature():
+    E = np.array([1.0, 2.0])
+    temperatures = np.array([5.0, 200.0])
+    intensity = intensity_from_chipp([1.0, 1.0], E, temperatures)
+    np.testing.assert_allclose(intensity, 1.0 / bose_denominator(E, temperatures))
+

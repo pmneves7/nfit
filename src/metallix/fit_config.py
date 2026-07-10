@@ -39,6 +39,7 @@ from typing import Any
 
 import numpy as np
 
+from .cross_section import intensity_from_chipp
 from .dataset import PointData4D
 from .fitting import (
     DerivedParameter,
@@ -47,8 +48,17 @@ from .fitting import (
     ModelFunction,
     ParameterBinding,
     ParameterSpec,
+    _metadata_coordinate_units_are_inv_angstrom,
+    _resolve_q_transform,
 )
+from .form_factors import form_factor_sq
 from .models import paramagnon_chipp
+from .spin_fluctuations import (
+    build_rpa_geometry,
+    heisenberg_rpa_chipp,
+    local_relaxational_chipp,
+    mmp_chipp,
+)
 
 FALLBACK_DATA_TYPE = "single_crystal_inelastic"
 
@@ -110,17 +120,225 @@ def _single_q_paramagnon_factory(component: Any) -> ModelFunction:
     return model
 
 
+ISOTROPIC_POLARIZATION = 2.0 / 3.0
+"""Polarization factor for isotropic (Heisenberg) spins.
+
+Unpolarized neutrons couple only to spin components perpendicular to Q; for an
+isotropic spin system the orientation factor averages to ``2/3``.
+"""
+
+
+def _dataset_temperature(data: PointData4D) -> float | np.ndarray:
+    """Return the sample temperature of a fitted dataset, validating it."""
+
+    temperature = data.temperature
+    if temperature is None or np.any(~np.isfinite(np.asarray(temperature, dtype=float))):
+        raise ValueError(
+            "this model requires a valid sample temperature for every fitted "
+            "dataset: set it in the dataset details (Temperature) or import "
+            "data that carries temperature metadata"
+        )
+    return temperature
+
+
+def _form_factor_sq_from_config(component: Any, data: PointData4D) -> float | np.ndarray:
+    """Return ``|f(Q)|^2`` from a component's ``ion`` / coefficient config.
+
+    Returns 1.0 when the component configures no form factor. Computing
+    ``|Q|`` in inverse angstrom requires lattice or UB metadata on the data.
+    """
+
+    config = component.config if isinstance(component.config, dict) else {}
+    ion = str(config.get("ion", "") or "").strip()
+    coefficients = config.get("form_factor_coefficients")
+    if not ion and not coefficients:
+        return 1.0
+    from .fitting import q_modulus_inv_angstrom
+
+    q = q_modulus_inv_angstrom(data)
+    return form_factor_sq(q, ion=ion or None, coefficients=coefficients)
+
+
+def _q_offset_sq_inv_angstrom(
+    data: PointData4D, q0: tuple[float, float, float]
+) -> np.ndarray:
+    """Return ``|q - Q0|^2`` in inverse square angstrom with ``Q0`` in RLU."""
+
+    delta = np.column_stack(
+        [
+            np.asarray(data.H, dtype=float) - q0[0],
+            np.asarray(data.K, dtype=float) - q0[1],
+            np.asarray(data.L, dtype=float) - q0[2],
+        ]
+    )
+    if not _metadata_coordinate_units_are_inv_angstrom(data.metadata):
+        delta = delta @ _resolve_q_transform(data).T
+    return np.einsum("ij,ij->i", delta, delta)
+
+
+def _local_relaxational_factory(component: Any) -> ModelFunction:
+    name = component.name
+    scale_key = qualified_parameter_name(name, "scale")
+    chi_key = qualified_parameter_name(name, "chi_loc")
+    gamma_key = qualified_parameter_name(name, "gamma")
+
+    def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        chipp = local_relaxational_chipp(
+            data.E,
+            chi_loc=float(params[chi_key]),
+            gamma=float(params[gamma_key]),
+        )
+        return intensity_from_chipp(
+            chipp,
+            data.E,
+            _dataset_temperature(data),
+            scale=float(params[scale_key]),
+            form_factor_sq=_form_factor_sq_from_config(component, data),
+            polarization=ISOTROPIC_POLARIZATION,
+        )
+
+    return model
+
+
+def _mmp_relaxational_factory(component: Any) -> ModelFunction:
+    name = component.name
+    keys = {
+        parameter: qualified_parameter_name(name, parameter)
+        for parameter in ("scale", "chi_pk", "xi", "omega_sf", "q0_h", "q0_k", "q0_l")
+    }
+
+    def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        q0 = (
+            float(params[keys["q0_h"]]),
+            float(params[keys["q0_k"]]),
+            float(params[keys["q0_l"]]),
+        )
+        chipp = mmp_chipp(
+            _q_offset_sq_inv_angstrom(data, q0),
+            data.E,
+            chi_pk=float(params[keys["chi_pk"]]),
+            xi=float(params[keys["xi"]]),
+            omega_sf=float(params[keys["omega_sf"]]),
+        )
+        return intensity_from_chipp(
+            chipp,
+            data.E,
+            _dataset_temperature(data),
+            scale=float(params[keys["scale"]]),
+            form_factor_sq=_form_factor_sq_from_config(component, data),
+            polarization=ISOTROPIC_POLARIZATION,
+        )
+
+    return model
+
+
+def heisenberg_rpa_orbit_labels(component: Any) -> tuple[str, ...]:
+    """Return the exchange-parameter names of a ``heisenberg_rpa`` component.
+
+    One fit parameter per bond orbit in ``config["orbits"]``, in stored order.
+    """
+
+    config = component.config if isinstance(component.config, dict) else {}
+    orbits = config.get("orbits") or []
+    labels: list[str] = []
+    for orbit in orbits:
+        label = str(orbit.get("label", "")).strip()
+        if not label:
+            raise ValueError(
+                f"component {component.name!r} has a bond orbit without a label"
+            )
+        if label in labels:
+            raise ValueError(
+                f"component {component.name!r} has duplicate bond orbit label {label!r}"
+            )
+        labels.append(label)
+    return tuple(labels)
+
+
+def _heisenberg_rpa_factory(component: Any) -> ModelFunction:
+    name = component.name
+    config = component.config if isinstance(component.config, dict) else {}
+    site_positions = config.get("site_positions")
+    if not site_positions:
+        raise ValueError(
+            f"heisenberg_rpa component {name!r} defines no magnetic site "
+            "positions; configure the crystal and generate bond orbits first"
+        )
+    orbits = config.get("orbits") or []
+    if not orbits:
+        raise ValueError(
+            f"heisenberg_rpa component {name!r} defines no bond orbits; "
+            "generate symmetry orbits or enter bonds manually first"
+        )
+    labels = heisenberg_rpa_orbit_labels(component)
+    j_keys = {label: qualified_parameter_name(name, label) for label in labels}
+    scale_key = qualified_parameter_name(name, "scale")
+    chi0_key = qualified_parameter_name(name, "chi0")
+    gamma0_key = qualified_parameter_name(name, "gamma0")
+
+    # The Q-dependent, exchange-independent phase arrays are expensive to
+    # build but fixed for a given dataset, while the optimizer re-evaluates
+    # the model thousands of times. FitDataset data objects are stable for
+    # the lifetime of a fit, so cache per data object.
+    geometry_cache: dict[tuple[int, int], Any] = {}
+
+    def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        temperature = _dataset_temperature(data)
+        cache_key = (id(data), data.size)
+        geometry = geometry_cache.get(cache_key)
+        if geometry is None:
+            if len(geometry_cache) > 32:
+                geometry_cache.clear()
+            geometry = build_rpa_geometry(data.H, data.K, data.L, site_positions, orbits)
+            geometry_cache[cache_key] = geometry
+        try:
+            chipp = heisenberg_rpa_chipp(
+                geometry,
+                data.E,
+                chi0=float(params[chi0_key]),
+                gamma0=float(params[gamma0_key]),
+                j_values={label: float(params[key]) for label, key in j_keys.items()},
+            )
+        except ValueError:
+            # Unphysical trial parameters (RPA instability, non-positive
+            # chi0/gamma0). Optimizers probe these while searching; a huge
+            # finite misfit steers them back without aborting the fit.
+            return np.full(data.size, 1e6, dtype=float)
+        return intensity_from_chipp(
+            chipp,
+            data.E,
+            temperature,
+            scale=float(params[scale_key]),
+            form_factor_sq=_form_factor_sq_from_config(component, data),
+            polarization=ISOTROPIC_POLARIZATION,
+        )
+
+    return model
+
+
 @dataclass(frozen=True)
 class ModelTypeInfo:
     """Fit-engine registration for one model component type.
 
     ``data_types`` lists the dataset data types the model can be applied to;
-    ``("*",)`` means the model works with any dataset.
+    ``("*",)`` means the model works with any dataset. ``dynamic_parameters``
+    optionally derives additional parameter names from a component's
+    configuration (e.g. one exchange constant per bond orbit).
     """
 
     parameters: tuple[str, ...]
     data_types: tuple[str, ...]
     factory: Callable[[Any], ModelFunction]
+    dynamic_parameters: Callable[[Any], tuple[str, ...]] | None = None
+
+
+def component_parameter_names(component: Any) -> tuple[str, ...]:
+    """Return all parameter names of a component, static plus config-derived."""
+
+    info = MODEL_TYPE_REGISTRY[component.type]
+    if info.dynamic_parameters is None:
+        return info.parameters
+    return (*info.parameters, *info.dynamic_parameters(component))
 
 
 MODEL_TYPE_REGISTRY: dict[str, ModelTypeInfo] = {
@@ -138,6 +356,22 @@ MODEL_TYPE_REGISTRY: dict[str, ModelTypeInfo] = {
         parameters=("amplitude", "q0_h", "q0_k", "q0_l", "kappa", "omega_sf"),
         data_types=("single_crystal_inelastic",),
         factory=_single_q_paramagnon_factory,
+    ),
+    "local_relaxational": ModelTypeInfo(
+        parameters=("scale", "chi_loc", "gamma"),
+        data_types=("single_crystal_inelastic", "powder_inelastic"),
+        factory=_local_relaxational_factory,
+    ),
+    "mmp_relaxational": ModelTypeInfo(
+        parameters=("scale", "chi_pk", "xi", "omega_sf", "q0_h", "q0_k", "q0_l"),
+        data_types=("single_crystal_inelastic",),
+        factory=_mmp_relaxational_factory,
+    ),
+    "heisenberg_rpa": ModelTypeInfo(
+        parameters=("scale", "chi0", "gamma0"),
+        data_types=("single_crystal_inelastic",),
+        factory=_heisenberg_rpa_factory,
+        dynamic_parameters=heisenberg_rpa_orbit_labels,
     ),
 }
 
@@ -307,8 +541,7 @@ def compile_fit_problem(
         component_datasets = applicable[component.name]
         if not component_datasets:
             continue
-        info = MODEL_TYPE_REGISTRY[component.type]
-        for parameter in info.parameters:
+        for parameter in component_parameter_names(component):
             qualified = qualified_parameter_name(component.name, parameter)
             value = _parameter_value(component, parameter)
             vary = bool(component.fit_parameters.get(parameter, False))

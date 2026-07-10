@@ -8,6 +8,7 @@ dependencies:
   - matplotlib
   - h5py
   - emcee
+  - gemmi
   - pyside6
   - pytest
   - sphinx<9

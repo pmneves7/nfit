@@ -281,6 +281,34 @@ def test_differential_evolution_initialization_finds_better_basin():
     assert min(abs(result.params["x"] - 3.0), abs(result.params["x"] + 3.0)) < 1.0e-5
 
 
+def test_differential_evolution_reports_starting_model_failure():
+    data = PointData4D([0.0], [0.0], [0.0], [1.0], [0.0], [1.0])
+
+    def bad_model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        del data, params
+        raise ValueError("bad model configuration")
+
+    problem = FitProblem(
+        datasets=[FitDataset("data", data)],
+        model=bad_model,
+        parameter_specs=[ParameterSpec("x", 0.1, min=-5.0, max=5.0)],
+    )
+
+    with pytest.raises(RuntimeError, match="starting parameters.*bad model configuration"):
+        fit_problem_least_squares(
+            problem,
+            config=OptimizationConfig(
+                kwargs={
+                    "initialization": {
+                        "method": "differential_evolution",
+                        "maxiter": 1,
+                        "popsize": 5,
+                    }
+                }
+            ),
+        )
+
+
 def test_emcee_sampling_reports_posterior_samples():
     pytest.importorskip("emcee")
     data = PointData4D(
@@ -310,6 +338,20 @@ def test_emcee_sampling_reports_posterior_samples():
     assert result.samples.shape[1] == 1
     assert result.variable_names == ["level"]
     assert result.metadata["method"] == "emcee"
+    assert result.chain is not None
+    assert result.chain.shape == (12, 8, 1)
+    assert result.log_probability_chain is not None
+    assert result.log_probability_chain.shape == (12, 8)
+
+
+def test_parallel_worker_auto_uses_conservative_cpu_count(monkeypatch):
+    from metallix.fitting import _resolve_parallel_workers
+
+    monkeypatch.setattr("metallix.fitting.os.cpu_count", lambda: 12)
+
+    assert _resolve_parallel_workers(-1) == 8
+    assert _resolve_parallel_workers(1) == 1
+    assert _resolve_parallel_workers(4) == 4
 
 
 def test_emcee_sampling_requires_variable_parameters():

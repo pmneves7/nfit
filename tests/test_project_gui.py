@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 
 import numpy as np
@@ -898,6 +899,21 @@ def test_project_explorer_fit_history_creates_results_branches_and_restores(monk
     assert explorer.import_dataset_button.isHidden()
 
 
+def test_slice_viewer_datasets_attach_current_model_before_fit():
+    dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    model = create_model_component(group)
+    model.parameters["constant"] = 7.0
+
+    datasets, names = project_gui.slice_viewer_datasets(group)
+
+    assert names == ["scan"]
+    assert "fit" in datasets[0].metadata
+    assert "residual" in datasets[0].metadata
+    np.testing.assert_allclose(datasets[0].metadata["fit"], np.full(dataset.data.shape, 7.0))
+    np.testing.assert_allclose(datasets[0].metadata["residual"], dataset.data.signal - 7.0)
+
+
 def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")
@@ -915,11 +931,13 @@ def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(
         explorer.fit_de_check,
         explorer.fit_de_maxiter_spin,
         explorer.fit_de_popsize_spin,
+        explorer.fit_de_workers_spin,
         explorer.fit_emcee_check,
         explorer.fit_emcee_walkers_spin,
         explorer.fit_emcee_steps_spin,
         explorer.fit_emcee_burn_spin,
         explorer.fit_emcee_thin_spin,
+        explorer.fit_emcee_workers_spin,
         explorer.fit_optimizer_config_editor,
         explorer.fit_branch_check,
         explorer.fit_now_button,
@@ -932,11 +950,13 @@ def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(
     explorer.fit_de_check.setChecked(True)
     explorer.fit_de_maxiter_spin.setValue(11)
     explorer.fit_de_popsize_spin.setValue(4)
+    explorer.fit_de_workers_spin.setValue(-1)
     explorer.fit_emcee_check.setChecked(True)
     explorer.fit_emcee_walkers_spin.setValue(16)
     explorer.fit_emcee_steps_spin.setValue(25)
     explorer.fit_emcee_burn_spin.setValue(5)
     explorer.fit_emcee_thin_spin.setValue(2)
+    explorer.fit_emcee_workers_spin.setValue(3)
 
     fit_entry = group.fits[0]
     assert fit_entry.optimizer_config["loss"] == "soft_l1"
@@ -946,6 +966,7 @@ def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(
         "method": "differential_evolution",
         "maxiter": 11,
         "popsize": 4,
+        "workers": -1,
     }
     assert fit_entry.optimizer_config["sampler"] == {
         "enabled": True,
@@ -954,7 +975,85 @@ def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(
         "n_steps": 25,
         "burn_in": 5,
         "thin": 2,
+        "workers": 3,
     }
+
+
+def test_sampling_result_serializes_raw_chain_and_rewindows():
+    result = project_gui.SamplingResult(
+        samples=np.zeros((1, 1), dtype=float),
+        variable_names=["level"],
+        log_probability=np.zeros(1, dtype=float),
+        metadata={"method": "emcee", "n_steps": 4, "n_walkers": 2, "burn_in": 0, "thin": 1},
+        chain=np.arange(8, dtype=float).reshape(4, 2, 1),
+        log_probability_chain=np.arange(8, dtype=float).reshape(4, 2),
+    )
+
+    restored = project_gui._sampling_result_from_dict(project_gui._sampling_result_to_dict(result))
+    assert restored is not None
+    assert restored.chain is not None
+    np.testing.assert_allclose(restored.chain, result.chain)
+
+    rewindowed = project_gui._sampling_result_with_window(restored, burn_in=1, thin=2)
+    np.testing.assert_allclose(rewindowed.samples[:, 0], [2.0, 3.0, 6.0, 7.0])
+    assert rewindowed.metadata["burn_in"] == 1
+    assert rewindowed.metadata["thin"] == 2
+    assert rewindowed.metadata["samples"] == 4
+
+
+def test_fit_details_posterior_sampler_controls_update_burn_without_timeline(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Datagroup1", datasets=[DatasetEntry("first", _tiny_mdhisto_data(1.0))])
+    model = create_model_component(group)
+    model.parameters["constant"] = 1.0
+    chain = np.arange(8, dtype=float).reshape(4, 2, 1)
+    sampling = project_gui.SamplingResult(
+        samples=chain.reshape(-1, 1),
+        variable_names=["model1.constant"],
+        metadata={"method": "emcee", "n_steps": 4, "n_walkers": 2, "burn_in": 0, "thin": 1},
+        chain=chain,
+    )
+    result = FitTimelineEntry(
+        "Fit Result1",
+        kind="result",
+        goodness={"parameters": {"model1.constant": 1.0}},
+        metadata={"posterior_samples": project_gui._sampling_result_to_dict(sampling)},
+        snapshot=project_gui.snapshot_data_group_state(group),
+    )
+    group.fits = [result]
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+
+    fit_item = explorer.tree.topLevelItem(0).child(2).child(0)
+    explorer.tree.setCurrentItem(fit_item)
+
+    controls = [
+        explorer.window.findChild(QtWidgets.QSpinBox, "fit_posterior_walkers_spin"),
+        explorer.window.findChild(QtWidgets.QSpinBox, "fit_posterior_steps_spin"),
+        explorer.window.findChild(QtWidgets.QSpinBox, "fit_posterior_burn_spin"),
+        explorer.window.findChild(QtWidgets.QSpinBox, "fit_posterior_thin_spin"),
+        explorer.window.findChild(QtWidgets.QSpinBox, "fit_posterior_seed_spin"),
+        explorer.window.findChild(QtWidgets.QSpinBox, "fit_posterior_workers_spin"),
+        explorer.window.findChild(QtWidgets.QPushButton, "fit_posterior_apply_button"),
+        explorer.window.findChild(QtWidgets.QPushButton, "fit_posterior_rerun_button"),
+        explorer.window.findChild(QtWidgets.QPushButton, "fit_posterior_append_button"),
+    ]
+    assert all(control is not None and control.toolTip() for control in controls)
+
+    burn_spin = explorer.window.findChild(QtWidgets.QSpinBox, "fit_posterior_burn_spin")
+    thin_spin = explorer.window.findChild(QtWidgets.QSpinBox, "fit_posterior_thin_spin")
+    burn_spin.setValue(1)
+    thin_spin.setValue(2)
+    before_count = len(group.fits)
+
+    assert explorer.apply_posterior_sampling_window(result, burn_spin.value(), thin_spin.value())
+
+    assert len(group.fits) == before_count
+    posterior = result.goodness["posterior"]
+    assert posterior["burn_in"] == 1
+    assert posterior["thin"] == 2
+    assert posterior["samples"] == 4
 
 
 def test_posterior_corner_density_panel_draws_contours():
@@ -1019,6 +1118,27 @@ def test_fit_diagnostics_matrix_heatmap_draws_image():
     assert [label.get_text() for label in ax.get_xticklabels()] == ["$A$", "p2"]
 
 
+def test_fit_diagnostics_matrix_heatmap_is_centered_in_figure():
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    from matplotlib.figure import Figure
+    from metallix.project_gui import _draw_centered_matrix_heatmap
+
+    fig = Figure(figsize=(8, 6))
+    ax = _draw_centered_matrix_heatmap(
+        fig,
+        [[1.0, 0.2], [0.2, 3.0]],
+        ["a", "b"],
+        labels={"a": "p1", "b": "p2"},
+        title="Covariance",
+    )
+
+    bbox = ax.get_position()
+    assert abs((bbox.x0 + bbox.x1) / 2.0 - 0.5) < 0.08
+    assert abs((bbox.y0 + bbox.y1) / 2.0 - 0.5) < 0.08
+
+
 def test_corner_histogram_panel_draws_step_histogram_and_reference_lines():
     import matplotlib
 
@@ -1064,6 +1184,36 @@ def test_corner_reference_lines_are_solid_only():
     assert all(line.get_linestyle() != ":" for line in ax.lines)
 
 
+def test_trace_panel_draws_walkers_and_burn_in_marker():
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    from matplotlib.figure import Figure
+    from metallix.project_gui import _draw_trace_panel
+
+    chain = np.stack(
+        [
+            np.column_stack([np.linspace(0.0, 1.0, 6), np.linspace(1.0, 2.0, 6)]),
+            np.column_stack([np.linspace(0.5, 1.5, 6), np.linspace(1.5, 2.5, 6)]),
+        ],
+        axis=1,
+    )
+    result = project_gui.SamplingResult(
+        samples=chain.reshape(-1, 2),
+        variable_names=["a", "b"],
+        metadata={"burn_in": 2},
+        chain=chain,
+    )
+    fig = Figure()
+    ax = fig.subplots()
+
+    _draw_trace_panel(ax, result, parameter_index=0, summary={"best": 0.75})
+
+    assert len(ax.lines) == 4
+    assert any(line.get_linestyle() == "--" for line in ax.lines)
+    assert [text.get_text() for text in ax.texts] == ["burn-in"]
+
+
 def test_fit_diagnostics_label_table_updates_plot_labels(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
@@ -1105,6 +1255,34 @@ def test_fit_diagnostics_label_table_updates_plot_labels(monkeypatch):
 
     assert entry.metadata["parameter_labels"]["a"] == r"$\Gamma$"
     assert window.tabs.tabText(window.tabs.currentIndex()) == "Corner"
+
+
+def test_fit_diagnostics_trace_uses_chain_steps_when_available(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+    from metallix.project_gui import _FitDiagnosticsPlotWindow
+
+    chain = np.arange(24, dtype=float).reshape(6, 2, 2)
+    entry = FitTimelineEntry(
+        "Fit Result1",
+        metadata={
+            "posterior_samples": project_gui._sampling_result_to_dict(
+                project_gui.SamplingResult(
+                    samples=chain.reshape(-1, 2),
+                    variable_names=["a", "b"],
+                    metadata={"burn_in": 2},
+                    chain=chain,
+                )
+            )
+        },
+    )
+    explorer = MetallixProjectExplorer(MetallixProject())
+
+    window = _FitDiagnosticsPlotWindow(entry, explorer)
+    trace_index = [window.tabs.tabText(index) for index in range(window.tabs.count())].index("Trace")
+    canvas = window.tabs.widget(trace_index)
+
+    assert canvas.figure.axes[-1].get_xlabel() == "MCMC step"
 
 
 def test_fit_progress_dialog_uses_parameter_table_and_resets(monkeypatch):
@@ -1168,6 +1346,41 @@ def test_project_explorer_reuses_fit_progress_dialog(monkeypatch):
 
     assert first_dialog is not None
     assert explorer._fit_progress_dialog is first_dialog
+
+
+def test_project_explorer_start_fit_runs_in_background_worker(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Datagroup1", datasets=[DatasetEntry("first", _tiny_mdhisto_data(1.0))])
+    create_model_component(group)
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    calls = []
+
+    def fake_run_group_fit(group, parent, *, branch_timeline=False, progress_callback=None):
+        calls.append("run")
+        if progress_callback is not None:
+            progress_callback({"stage": "least_squares", "iteration": 1, "total": 1})
+        return project_gui.create_fit_result_entry(
+            group,
+            parent,
+            branch_timeline=branch_timeline,
+            goodness={"status": "converged", "parameters": {}},
+        )
+
+    monkeypatch.setattr(project_gui, "run_group_fit", fake_run_group_fit)
+    fit_item = explorer.tree.topLevelItem(0).child(2).child(0)
+    explorer.tree.setCurrentItem(fit_item)
+
+    assert explorer.start_fit_for_selection()
+    assert explorer._fit_worker_thread is not None
+
+    deadline = time.monotonic() + 3.0
+    while explorer._fit_worker_thread is not None and time.monotonic() < deadline:
+        QtWidgets.QApplication.processEvents()
+
+    assert calls == ["run"]
+    assert explorer._fit_worker_thread is None
 
 
 def test_project_explorer_edits_initial_state_in_place_without_results(monkeypatch):
@@ -2216,3 +2429,228 @@ def _grid_mdhisto_data():
         num_events=np.ones_like(signal),
         metadata={},
     )
+
+
+def test_fit_points_carry_temperature_and_group_lattice():
+    data = _grid_mdhisto_data()
+    data.metadata["temperature"] = 4.2
+    dataset = DatasetEntry("scan", data, kind="mdhisto")
+    group = DataGroup(
+        "Datagroup1",
+        datasets=[dataset],
+        lattice_parameters={"a": 4.0, "b": 4.0, "c": 8.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+    )
+
+    bundle = project_gui.fit_data_bundle(group, dataset)
+    assert bundle is not None
+    assert bundle.points.temperature == 4.2
+    matrix = np.asarray(bundle.points.metadata["rlu_to_inv_angstrom_matrix"])
+    np.testing.assert_allclose(matrix[0, 0], 2.0 * np.pi / 4.0)
+    np.testing.assert_allclose(matrix[2, 2], 2.0 * np.pi / 8.0)
+
+    dataset.parameters["temperature"] = 100.0
+    bundle = project_gui.fit_data_bundle(group, dataset)
+    assert bundle.points.temperature == 100.0
+    assert project_gui.effective_dataset_temperature(group, dataset) == 100.0
+
+
+def test_fit_points_leave_temperature_unset_without_metadata():
+    dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    bundle = project_gui.fit_data_bundle(group, dataset)
+    assert bundle.points.temperature is None
+    assert "rlu_to_inv_angstrom_matrix" not in bundle.points.metadata
+
+
+def test_dataset_temperature_spin_writes_override(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
+
+    spin = explorer.dataset_temperature_spin
+    assert spin.specialValueText() == "(from data)"
+    assert spin.value() == -1.0
+
+    spin.setValue(4.2)
+    assert dataset.parameters["temperature"] == 4.2
+
+    spin.setValue(-1.0)
+    assert "temperature" not in dataset.parameters
+
+
+def test_heisenberg_rpa_editor_generates_orbits_and_round_trips(monkeypatch, tmp_path):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("gemmi")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Datagroup1")
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
+    model = explorer.add_model_to_selection()
+
+    combo = explorer.model_type_combo
+    combo.setCurrentIndex(combo.findData("heisenberg_rpa"))
+    assert model.type == "heisenberg_rpa"
+
+    crystal_box = explorer.model_parameter_widget.findChild(QtWidgets.QGroupBox, "model_crystal_group")
+    bonds_box = explorer.model_parameter_widget.findChild(QtWidgets.QGroupBox, "model_bonds_group")
+    sites_box = explorer.model_parameter_widget.findChild(QtWidgets.QGroupBox, "model_crystal_sites_group")
+    assert crystal_box is not None and bonds_box is not None and sites_box is not None
+
+    # configure an FCC crystal through the handlers
+    for name in ("a", "b", "c"):
+        explorer._set_model_crystal_lattice(name, "4.0")
+    explorer._set_model_crystal_spacegroup("F m -3 m")
+    explorer._add_model_crystal_site()
+    explorer._set_model_crystal_site(0, "label", "Ni1")
+    explorer._set_model_crystal_site(0, "ion", "Ni2")
+    explorer._set_model_site_magnetic(0, True)
+    explorer._set_model_config_setting("bond_cutoff_angstrom", "3.0")
+    explorer._generate_selected_model_bond_orbits()
+
+    assert [orbit["label"] for orbit in model.config["orbits"]] == ["J1"]
+    assert len(model.config["site_positions"]) == 4
+    assert model.parameters["J1"] == 0.0
+    assert model.fit_parameters["J1"] is False
+
+    j1_editor = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "model_parameter_min_J1"
+    )
+    assert j1_editor is not None  # J1 row exists in the fit-parameter grid
+
+    orbit_table = explorer.model_parameter_widget.findChild(QtWidgets.QTableWidget, "model_bonds_table")
+    assert orbit_table is not None
+    assert orbit_table.rowCount() == 1
+    assert orbit_table.item(0, 0).text() == "J1"
+    assert orbit_table.item(0, 2).text() == "24"
+
+    explorer._set_model_parameter("J1", "0.15")
+    explorer._set_model_fit_parameter("J1", True)
+
+    path = tmp_path / "project.json"
+    save_project(MetallixProject([group]), path)
+    loaded = load_project(path)
+    loaded_model = next(iter(loaded.data_groups[0].models.values()))
+    assert [orbit["label"] for orbit in loaded_model.config["orbits"]] == ["J1"]
+    assert loaded_model.parameters["J1"] == 0.15
+    assert loaded_model.fit_parameters["J1"] is True
+    assert loaded_model.config["site_positions"] == model.config["site_positions"]
+
+
+def test_heisenberg_rpa_fit_parameters_scroll_when_many_orbits(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    QtCore = pytest.importorskip("PySide6.QtCore")
+
+    group = DataGroup("Datagroup1")
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
+    model = explorer.add_model_to_selection()
+
+    combo = explorer.model_type_combo
+    combo.setCurrentIndex(combo.findData("heisenberg_rpa"))
+    model.config["orbits"] = [{"label": f"J{index}", "bonds": []} for index in range(1, 25)]
+    project_gui.reconcile_model_orbit_parameters(model)
+    explorer._rebuild_model_parameter_editor(model)
+
+    fit_group = explorer.model_parameter_widget.findChild(
+        QtWidgets.QGroupBox, "model_fit_parameters_group"
+    )
+    fit_scroll = explorer.model_parameter_widget.findChild(
+        QtWidgets.QScrollArea, "model_fit_parameters_scroll"
+    )
+    assert fit_group is not None
+    assert fit_scroll is not None
+    assert fit_scroll.minimumHeight() >= 180
+    assert fit_scroll.maximumHeight() <= 320
+    assert fit_scroll.verticalScrollBarPolicy() == QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded
+    assert fit_scroll.widget().minimumSizeHint().height() > fit_scroll.minimumHeight()
+    assert (
+        explorer.model_parameter_widget.findChild(
+            QtWidgets.QLineEdit, "model_parameter_min_J24"
+        )
+        is not None
+    )
+
+
+def test_import_cif_into_model_populates_config_and_group(tmp_path):
+    pytest.importorskip("gemmi")
+    from metallix.pipeline import ModelComponentSpec
+    from metallix.project_gui import generate_model_bond_orbits, import_cif_into_model
+
+    cif = tmp_path / "fcc.cif"
+    cif.write_text(
+        """
+data_fcc
+_cell_length_a 4.0
+_cell_length_b 4.0
+_cell_length_c 4.0
+_cell_angle_alpha 90
+_cell_angle_beta 90
+_cell_angle_gamma 90
+_symmetry_space_group_name_H-M 'F m -3 m'
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+Ni1 Ni 0 0 0
+"""
+    )
+    model = ModelComponentSpec(
+        name="rpa",
+        type="heisenberg_rpa",
+        parameters={"scale": 1.0, "chi0": 0.1, "gamma0": 5.0},
+    )
+    group = DataGroup("Datagroup1")
+    imported = import_cif_into_model(model, str(cif), group=group)
+    assert model.config["crystal"]["lattice"]["a"] == pytest.approx(4.0)
+    assert group.lattice_parameters["a"] == pytest.approx(4.0)
+    assert group.metadata["crystal"] == imported
+
+    model.config["magnetic_sites"] = ["Ni1"]
+    model.config["bond_cutoff_angstrom"] = 3.0
+    labels = generate_model_bond_orbits(model)
+    assert labels == ["J1"]
+    assert model.parameters["J1"] == 0.0
+
+
+def test_generate_model_bond_orbits_requires_magnetic_site():
+    from metallix.pipeline import ModelComponentSpec
+    from metallix.project_gui import generate_model_bond_orbits, model_crystal_config
+
+    model = ModelComponentSpec(name="rpa", type="heisenberg_rpa", parameters={})
+    model_crystal_config(model)["sites"].append(
+        {"label": "X1", "position": [0.0, 0.0, 0.0], "ion": ""}
+    )
+    with pytest.raises(ValueError, match="magnetic site"):
+        generate_model_bond_orbits(model)
+
+
+def test_reconcile_model_orbit_parameters_keeps_and_drops():
+    from metallix.pipeline import ModelComponentSpec
+    from metallix.project_gui import reconcile_model_orbit_parameters
+
+    model = ModelComponentSpec(
+        name="rpa",
+        type="heisenberg_rpa",
+        parameters={"scale": 1.0, "chi0": 0.1, "gamma0": 5.0, "J1": 0.2, "J9": 0.7},
+        fit_parameters={"J1": True, "J9": True},
+        limits={"J9": [0.0, 1.0]},
+    )
+    model.config["orbits"] = [
+        {"label": "J1", "bonds": []},
+        {"label": "J2", "bonds": []},
+    ]
+    reconcile_model_orbit_parameters(model)
+    assert model.parameters["J1"] == 0.2
+    assert model.parameters["J2"] == 0.0
+    assert "J9" not in model.parameters
+    assert "J9" not in model.fit_parameters
+    assert "J9" not in model.limits
+    assert model.fit_parameters["J1"] is True

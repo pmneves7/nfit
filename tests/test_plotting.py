@@ -636,19 +636,42 @@ def test_qt_fit_compare_box_tool_draws_overlaid_data_fit_cut_and_residual_cut():
 
     viewer.hist_axes_check.setChecked(True)
     assert viewer.ax_fit_cut is not None
+    assert viewer.ax_ycut is not None
     assert viewer.ax_residual_cut is None
     labels = [line.get_label() for line in viewer.ax_fit_cut.get_lines()]
     assert "fit" in labels  # integrated fit line overlaid on the data cut
+    y_labels = [line.get_label() for line in viewer.ax_ycut.get_lines()]
+    assert "fit" in y_labels  # vertical fit cut is restored at the far right
 
     # Enabling residuals adds a separate residual cut axes.
     viewer.show_residual_check.setChecked(True)
     assert viewer.ax_residual_cut is not None
+    assert viewer.ax_residual_ycut is not None
     assert [axis.get_title() for axis in viewer._compare_axes] == ["Data", "Fit", "Residual"]
+    viewer.canvas.draw()
+    data_box = viewer._compare_axes[0].get_position()
+    residual_box = viewer._compare_axes[2].get_position()
+    fit_cut_box = viewer.ax_fit_cut.get_position()
+    residual_cut_box = viewer.ax_residual_cut.get_position()
+    ycut_box = viewer.ax_ycut.get_position()
+    residual_ycut_box = viewer.ax_residual_ycut.get_position()
+    assert fit_cut_box.x0 == pytest.approx(data_box.x0)
+    assert fit_cut_box.x1 == pytest.approx(data_box.x1)
+    assert residual_cut_box.x0 == pytest.approx(residual_box.x0)
+    assert residual_cut_box.x1 == pytest.approx(residual_box.x1)
+    assert ycut_box.x0 > residual_box.x1
+    assert residual_ycut_box.x0 > ycut_box.x1
+    assert ycut_box.y0 == pytest.approx(data_box.y0)
+    assert ycut_box.y1 == pytest.approx(data_box.y1)
+    assert residual_ycut_box.y0 == pytest.approx(residual_box.y0)
+    assert residual_ycut_box.y1 == pytest.approx(residual_box.y1)
 
     # Dragging a box updates both cut axes.
     viewer._set_roi_extents((-1.5, 1.5, -0.5, 1.5), update_cuts=True, draw=True)
     assert any(line.get_label() == "fit" for line in viewer.ax_fit_cut.get_lines())
+    assert any(line.get_label() == "fit" for line in viewer.ax_ycut.get_lines())
     assert len(viewer.ax_residual_cut.get_lines()) > 0
+    assert len(viewer.ax_residual_ycut.get_lines()) > 0
 
     # The cut-height slider resizes the cut region.
     before = list(viewer.grid.get_height_ratios())
@@ -659,7 +682,50 @@ def test_qt_fit_compare_box_tool_draws_overlaid_data_fit_cut_and_residual_cut():
     # Turning the box tool off removes the cut axes.
     viewer.hist_axes_check.setChecked(False)
     assert viewer.ax_fit_cut is None
+    assert viewer.ax_ycut is None
     assert viewer.ax_residual_cut is None
+    assert viewer.ax_residual_ycut is None
+
+
+def test_qt_fit_compare_box_extents_survive_fit_and_residual_toggles():
+    pytest.importorskip("PySide6")
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _with_fit_channels(_tiny_mdhisto_data())
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    viewer.hist_axes_check.setChecked(True)
+    viewer._set_roi_extents((-1.2, 0.8, -0.25, 1.75), update_cuts=True, draw=False)
+
+    expected = viewer._roi_extents
+    expected_x_center = viewer.roi_x_center_spin.value()
+    expected_x_width = viewer.roi_x_width_spin.value()
+    expected_y_center = viewer.roi_y_center_spin.value()
+    expected_y_width = viewer.roi_y_width_spin.value()
+
+    viewer.show_fit_check.setChecked(True)
+    assert viewer._roi_extents == pytest.approx(expected)
+    assert viewer.rectangle_selector.extents == pytest.approx(expected)
+    assert viewer.roi_x_center_spin.value() == pytest.approx(expected_x_center)
+    assert viewer.roi_x_width_spin.value() == pytest.approx(expected_x_width)
+    assert viewer.roi_y_center_spin.value() == pytest.approx(expected_y_center)
+    assert viewer.roi_y_width_spin.value() == pytest.approx(expected_y_width)
+
+    viewer.show_residual_check.setChecked(True)
+    assert viewer._roi_extents == pytest.approx(expected)
+    assert viewer.rectangle_selector.extents == pytest.approx(expected)
+    assert viewer.roi_x_center_spin.value() == pytest.approx(expected_x_center)
+    assert viewer.roi_x_width_spin.value() == pytest.approx(expected_x_width)
+    assert viewer.roi_y_center_spin.value() == pytest.approx(expected_y_center)
+    assert viewer.roi_y_width_spin.value() == pytest.approx(expected_y_width)
+
+    viewer.show_residual_check.setChecked(False)
+    viewer.show_fit_check.setChecked(False)
+    assert viewer._roi_extents == pytest.approx(expected)
+    assert viewer.rectangle_selector.extents == pytest.approx(expected)
+    assert viewer.roi_x_center_spin.value() == pytest.approx(expected_x_center)
+    assert viewer.roi_x_width_spin.value() == pytest.approx(expected_x_width)
+    assert viewer.roi_y_center_spin.value() == pytest.approx(expected_y_center)
+    assert viewer.roi_y_width_spin.value() == pytest.approx(expected_y_width)
 
 
 def test_qt_1d_show_fit_draws_line_behind_data_and_residual_axes():
@@ -690,6 +756,11 @@ def test_qt_1d_show_fit_draws_line_behind_data_and_residual_axes():
     assert viewer.ax_residual is not None
     assert viewer._plot_layout_mode == ("residual_1d", 2)
     assert viewer.ax_residual.get_ylabel() == "Res. (σ)"
+    viewer.window.resize(900, 620)
+    viewer.window.show()
+    viewer.app.processEvents()
+    assert viewer.controls_scroll.widget().width() <= viewer.controls_scroll.viewport().width()
+    assert viewer.save_script_button.geometry().right() <= viewer.save_script_button.parentWidget().width()
 
     ratios_before = list(viewer.grid.get_height_ratios())
     viewer.residual_split_slider.setValue(60)

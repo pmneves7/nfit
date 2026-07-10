@@ -58,6 +58,15 @@ coordinate/channel configuration. MDHisto datasets expose rebin settings in the
 Axes panel when rebinning is supported. Rebinning can be enabled for viewing and
 fitting, and the current rebin can be materialized as a new independent dataset.
 
+The dataset title row includes a `T (K)` control that sets a per-dataset sample
+temperature override, stored in `dataset.parameters["temperature"]`. Spin down
+to the minimum ("(from data)") to defer to any temperature imported with the
+data. Physics models that need the Bose factor read the temperature from the
+fit points and raise a clear error when no valid temperature is available.
+When the data group defines lattice parameters, they are attached to the fit
+points automatically so form factors and |Q|-dependent models work without
+per-dataset setup.
+
 ## Masks and models
 
 Selecting a mask or model shows its type selector and parameter editor at the
@@ -76,7 +85,35 @@ datasets. Each parameter can also define an optional plot label used as the
 default nickname in fit diagnostics; plain text and Matplotlib mathtext/LaTeX
 style labels such as `$\\Gamma$` are accepted. More granular constraints and
 linking should continue to be expressed as explicit, scriptable model
-configuration rather than hidden widget state.
+configuration rather than hidden widget state. When a model exposes many
+parameters, such as generated Heisenberg RPA exchange orbits, the Fit
+Parameters panel scrolls internally so rows keep normal editor height.
+
+The spin-fluctuation models (`local_relaxational`, `mmp_relaxational`,
+`heisenberg_rpa`; see [Spin-fluctuation models](spin_fluctuation_models.md))
+add a magnetic-ion picker for the tabulated form factor. The Heisenberg RPA
+model additionally shows a structured crystal editor:
+
+- **Crystal** — lattice parameters and space group, with `Import CIF...`
+  (loads lattice, space group, and atomic sites from a CIF file, and copies
+  them onto the data group) and `Use group crystal` (copies the group's stored
+  crystal into the model). Bare numeric or Hermann-Mauguin space groups use
+  gemmi's reference setting; append an explicit setting such as `:1` or `:2`
+  when a non-reference origin choice is intended.
+- **Atomic Sites** — an editable table of Wyckoff sites with fractional
+  coordinates, a magnetic-ion selector per site, and a `Magnetic` checkbox
+  marking which sites carry spins.
+- **Exchange Bonds** — a bond-length cutoff and a `Generate symmetry orbits`
+  button. Generation expands the magnetic sites through the space group,
+  enumerates bonds up to the cutoff, groups them into symmetry-distinct orbits
+  (`J1`, `J2`, `J3a`, `J3b`, ...), and adds one exchange fit parameter per
+  orbit to the Fit Parameters grid. Values of orbits whose labels persist are
+  kept across regeneration; a read-only table summarizes each orbit's
+  distance and multiplicity.
+
+All crystal and bond state is plain data in the model component's
+configuration, so it serializes with the project file and can equally be set
+from a script.
 
 ## Fit timeline
 
@@ -108,6 +145,11 @@ The fit editor follows a simple opt-in pipeline:
 3. `Sample posterior with emcee` may be enabled after least squares to estimate
    posterior intervals and correlations around the fitted solution.
 
+Initialization and posterior sampling are optional. For simple fits with good
+starting values, users can leave differential evolution and emcee disabled and
+just run least squares. For more complex fits, emcee can be run as part of the
+fit pipeline or later from an existing fit result.
+
 The `Loss` control selects the least-squares residual penalty. `linear` is the
 ordinary chi-squared objective. Robust choices such as `soft_l1`, `huber`,
 `cauchy`, and `arctan` down-weight large residuals and are useful as a safety
@@ -116,11 +158,22 @@ regions. `Loss scale` sets the residual scale where robust losses begin to
 down-weight points; with normalized residuals, `1.0` is approximately one
 standard deviation.
 
-Longer fit runs open or reuse a progress window. It reports the active stage,
-iteration or residual-evaluation count, current cost when available, and current
-parameter values in a table, with a short stage log below. Starting another fit
-resets the same progress window instead of opening duplicates. A compact
-progress log is also stored in the fit metadata.
+Longer fit runs open or reuse a progress window and run in a background Qt
+worker so the GUI can keep repainting and responding while initialization,
+least squares, or emcee is active. The progress window reports the active
+stage, iteration or residual-evaluation count, current cost when available, and
+current parameter values in a table, with a short stage log below. The `Cancel`
+button requests cancellation at the next optimizer or sampler progress update.
+Starting another fit resets the same progress window instead of opening
+duplicates. A compact progress log is also stored in the fit metadata.
+
+`DE workers` and `emcee workers` control optional parallel worker threads for
+differential-evolution objective evaluations and emcee log-probability
+evaluations. The default is `1`, which keeps execution serial and predictable.
+Use `-1` to let metallix choose a conservative CPU-based value, currently one
+less than the available processor count capped at eight workers. Values greater
+than one use an internal thread pool; this is most useful when model evaluation
+spends substantial time in NumPy/SciPy code.
 
 Fit metadata is displayed in structured panels for optimizer configuration,
 goodness-of-fit values, stored fit channels, arbitrary metadata, and the saved
@@ -132,19 +185,32 @@ per-dataset contributions in the structured goodness-of-fit panel. Posterior
 summaries include emcee settings, acceptance fractions, credible intervals, and
 posterior correlations. Stored fit and residual channels are available in the
 data viewer when their shapes still match the current dataset view. Fit results
-with covariance estimates or stored emcee samples expose a `Fit diagnostics`
-button. The diagnostics window includes a covariance heatmap when a covariance
-matrix is available, or a correlation heatmap for older fit entries that only
-stored correlations. Diagnostic plots use compact labels such as `p1`, `p2`,
+with best-fit parameters expose a `Posterior sampler` panel. That panel can
+rerun emcee from the best-fit parameters, append additional steps to a stored
+raw chain, or change burn-in/thinning after the fact. These posterior-only
+operations update the selected fit result's posterior summaries and diagnostics
+without running least squares again and without creating a new timeline point.
+Changing burn-in or thinning simply reinterprets the stored raw chain; rerun
+replaces the stored posterior; append continues from the final walker positions
+and extends the stored chain. Posterior rerun and append also use the background
+worker/progress window and expose their own emcee worker-thread control.
+
+Fit results with covariance estimates or stored emcee samples expose a `Fit
+diagnostics` button. The diagnostics window includes a covariance heatmap when
+a covariance matrix is available, or a correlation heatmap for older fit entries
+that only stored correlations. Diagnostic plots use compact labels such as `p1`, `p2`,
 ... by default. A label table at the bottom of the diagnostics window shows the
 full parameter names and editable plot labels; edits immediately redraw the
 covariance, trace, and corner plots for that fit result. When emcee samples are
-stored, the same window also includes trace and corner-style posterior tabs.
-Corner histograms are drawn as unfilled step histograms with best-fit and
+stored, the same window also includes trace and corner-style posterior tabs. The
+trace tab uses the raw emcee chain when available, plotting each walker as its
+own colored line against `MCMC step` and marking the selected burn-in step.
+Older entries that only stored flattened samples fall back to a single `sample`
+axis. Corner histograms are drawn as unfilled step histograms with best-fit and
 uncertainty marker lines plus value/error titles using a proper plus-minus
-symbol with stacked asymmetric bounds. The lower-triangle panels combine density
-shading, iso-density contour lines, faint individual samples, and solid best-fit
-reference crosshairs so overplotted posterior pile-ups remain visible.
+symbol with stacked asymmetric bounds. The lower-triangle panels combine
+density shading, iso-density contour lines, faint individual samples, and solid
+best-fit reference crosshairs so overplotted posterior pile-ups remain visible.
 
 ## Data viewer
 
@@ -152,6 +218,13 @@ The data viewer supports dataset switching, channel selection, mask toggling,
 axis selection, hidden-axis slicing/integration, color scale and limit controls,
 cursor readouts, histogram box cuts, 1D line styling, fit overlays, figure copy,
 and script export.
+When enabled model components have a complete parameter set, the viewer can
+calculate and show the current model and residual channels even before an
+optimization has been run. Stored fit-result channels are still reused when
+available and compatible with the current dataset view.
+For 2D fit comparisons, histogram box cuts show integrated data+fit cuts along
+both plotted axes; when residuals are enabled, residual cuts are shown below
+the residual panel and at the far right.
 
 For powder and magnetization-style datasets, cursor readouts hide coordinate
 quantities that are not meaningful for that data type. `|Q|` readout is shown

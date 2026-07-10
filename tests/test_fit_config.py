@@ -414,3 +414,236 @@ def test_project_round_trip_preserves_fit_channels_and_model_fields(tmp_path):
     stored = np.asarray(payload["fit"], dtype=float)
     assert stored.shape == (4, 5)
     assert stored == pytest.approx(np.full((4, 5), 1.5), rel=1e-6)
+
+
+def _rlu_matrix(a: float) -> list[list[float]]:
+    return (2.0 * np.pi / a * np.eye(3)).tolist()
+
+
+def _spin_fluctuation_points(
+    intensity: np.ndarray,
+    H: np.ndarray,
+    E: np.ndarray,
+    *,
+    temperature: float | None,
+    lattice_a: float | None = None,
+) -> PointData4D:
+    metadata = {}
+    if lattice_a is not None:
+        metadata["rlu_to_inv_angstrom_matrix"] = _rlu_matrix(lattice_a)
+    return PointData4D(
+        H=H,
+        K=np.zeros_like(H),
+        L=np.zeros_like(H),
+        E=E,
+        intensity=intensity,
+        sigma=np.full(H.shape, 0.01),
+        temperature=temperature,
+        metadata=metadata,
+    )
+
+
+def test_heisenberg_rpa_emits_dynamic_orbit_parameters():
+    component = ModelComponentSpec(
+        name="rpa",
+        type="heisenberg_rpa",
+        parameters={"scale": 1.0, "chi0": 0.5, "gamma0": 2.0, "J1": 0.1, "J3a": 0.0},
+        fit_parameters={"J1": True},
+        config={
+            "site_positions": [[0.0, 0.0, 0.0]],
+            "orbits": [
+                {"label": "J1", "bonds": [{"site_i": 0, "site_j": 0, "offset": [1, 0, 0]}]},
+                {"label": "J3a", "bonds": [{"site_i": 0, "site_j": 0, "offset": [3, 0, 0]}]},
+            ],
+        },
+    )
+    H = np.linspace(0.0, 1.0, 16)
+    points = _spin_fluctuation_points(np.ones(16), H, np.ones(16), temperature=10.0)
+    compiled = compile_fit_problem([component], [FitDatasetInput("a", points)])
+    names = [spec.name for spec in compiled.problem.parameter_specs]
+    assert names == ["rpa.scale", "rpa.chi0", "rpa.gamma0", "rpa.J1", "rpa.J3a"]
+
+
+def test_spin_fluctuation_models_require_temperature():
+    component = ModelComponentSpec(
+        name="loc",
+        type="local_relaxational",
+        parameters={"scale": 1.0, "chi_loc": 1.0, "gamma": 2.0},
+        fit_parameters={"chi_loc": True},
+    )
+    H = np.zeros(8)
+    points = _spin_fluctuation_points(
+        np.ones(8), H, np.linspace(0.5, 4.0, 8), temperature=None
+    )
+    compiled = compile_fit_problem([component], [FitDatasetInput("a", points)])
+    with pytest.raises(ValueError, match="temperature"):
+        fit_problem_least_squares(compiled.problem)
+
+
+def test_local_relaxational_fit_recovers_synthetic_parameters():
+    from metallix.cross_section import intensity_from_chipp
+    from metallix.fit_config import ISOTROPIC_POLARIZATION
+    from metallix.spin_fluctuations import local_relaxational_chipp
+
+    rng = np.random.default_rng(11)
+    E = np.linspace(0.5, 12.0, 80)
+    H = np.zeros_like(E)
+    temperature = 25.0
+    truth = {"chi_loc": 2.4, "gamma": 3.1}
+    clean = intensity_from_chipp(
+        local_relaxational_chipp(E, **truth),
+        E,
+        temperature,
+        polarization=ISOTROPIC_POLARIZATION,
+    )
+    points = _spin_fluctuation_points(
+        clean + rng.normal(0.0, 0.005, E.size), H, E, temperature=temperature
+    )
+    component = ModelComponentSpec(
+        name="loc",
+        type="local_relaxational",
+        parameters={"scale": 1.0, "chi_loc": 1.0, "gamma": 2.0},
+        fit_parameters={"chi_loc": True, "gamma": True},
+    )
+    compiled = compile_fit_problem([component], [FitDatasetInput("a", points)])
+    result = fit_problem_least_squares(compiled.problem)
+    assert result.params["loc.chi_loc"] == pytest.approx(truth["chi_loc"], rel=0.02)
+    assert result.params["loc.gamma"] == pytest.approx(truth["gamma"], rel=0.02)
+
+
+def test_mmp_relaxational_fit_recovers_synthetic_parameters():
+    from metallix.cross_section import intensity_from_chipp
+    from metallix.fit_config import ISOTROPIC_POLARIZATION
+    from metallix.spin_fluctuations import mmp_chipp
+
+    rng = np.random.default_rng(5)
+    lattice_a = 4.0
+    H_axis = np.linspace(0.2, 0.8, 13)
+    E_axis = np.linspace(0.5, 8.0, 11)
+    H, E = (arr.ravel() for arr in np.meshgrid(H_axis, E_axis))
+    temperature = 40.0
+    truth = {"chi_pk": 3.0, "xi": 2.2, "omega_sf": 1.8}
+    q_sq = (2.0 * np.pi / lattice_a) ** 2 * (H - 0.5) ** 2
+    clean = intensity_from_chipp(
+        mmp_chipp(q_sq, E, **truth),
+        E,
+        temperature,
+        polarization=ISOTROPIC_POLARIZATION,
+    )
+    points = _spin_fluctuation_points(
+        clean + rng.normal(0.0, 0.005, E.size),
+        H,
+        E,
+        temperature=temperature,
+        lattice_a=lattice_a,
+    )
+    component = ModelComponentSpec(
+        name="mmp",
+        type="mmp_relaxational",
+        parameters={
+            "scale": 1.0,
+            "chi_pk": 1.5,
+            "xi": 1.0,
+            "omega_sf": 1.0,
+            "q0_h": 0.5,
+            "q0_k": 0.0,
+            "q0_l": 0.0,
+        },
+        fit_parameters={"chi_pk": True, "xi": True, "omega_sf": True},
+    )
+    compiled = compile_fit_problem([component], [FitDatasetInput("a", points)])
+    result = fit_problem_least_squares(compiled.problem)
+    assert result.params["mmp.chi_pk"] == pytest.approx(truth["chi_pk"], rel=0.05)
+    assert result.params["mmp.xi"] == pytest.approx(truth["xi"], rel=0.05)
+    assert result.params["mmp.omega_sf"] == pytest.approx(truth["omega_sf"], rel=0.05)
+
+
+def _heisenberg_chain_component(**overrides) -> ModelComponentSpec:
+    spec = ModelComponentSpec(
+        name="rpa",
+        type="heisenberg_rpa",
+        parameters={"scale": 1.0, "chi0": 0.5, "gamma0": 2.5, "J1": 0.05},
+        fit_parameters={"chi0": True, "gamma0": True, "J1": True},
+        config={
+            "site_positions": [[0.0, 0.0, 0.0]],
+            "orbits": [
+                {"label": "J1", "bonds": [{"site_i": 0, "site_j": 0, "offset": [1, 0, 0]}]}
+            ],
+        },
+    )
+    for key, value in overrides.items():
+        setattr(spec, key, value)
+    return spec
+
+
+def test_heisenberg_rpa_fit_recovers_synthetic_parameters():
+    from metallix.cross_section import intensity_from_chipp
+    from metallix.fit_config import ISOTROPIC_POLARIZATION
+    from metallix.spin_fluctuations import build_rpa_geometry, heisenberg_rpa_chipp
+
+    rng = np.random.default_rng(2)
+    H_axis = np.linspace(0.0, 1.0, 15)
+    E_axis = np.linspace(0.5, 10.0, 12)
+    H, E = (arr.ravel() for arr in np.meshgrid(H_axis, E_axis))
+    temperature = 15.0
+    truth = {"chi0": 0.7, "gamma0": 3.0, "J1": 0.4}
+    orbits = [{"label": "J1", "bonds": [{"site_i": 0, "site_j": 0, "offset": [1, 0, 0]}]}]
+    geometry = build_rpa_geometry(H, np.zeros_like(H), np.zeros_like(H), [[0.0, 0.0, 0.0]], orbits)
+    clean = intensity_from_chipp(
+        heisenberg_rpa_chipp(
+            geometry,
+            E,
+            chi0=truth["chi0"],
+            gamma0=truth["gamma0"],
+            j_values={"J1": truth["J1"]},
+        ),
+        E,
+        temperature,
+        polarization=ISOTROPIC_POLARIZATION,
+    )
+    points = _spin_fluctuation_points(
+        clean + rng.normal(0.0, 0.002, E.size), H, E, temperature=temperature
+    )
+    compiled = compile_fit_problem(
+        [_heisenberg_chain_component()], [FitDatasetInput("a", points)]
+    )
+    result = fit_problem_least_squares(compiled.problem)
+    assert result.params["rpa.chi0"] == pytest.approx(truth["chi0"], rel=0.05)
+    assert result.params["rpa.gamma0"] == pytest.approx(truth["gamma0"], rel=0.05)
+    assert result.params["rpa.J1"] == pytest.approx(truth["J1"], rel=0.05)
+
+
+def test_heisenberg_rpa_blank_custom_form_factor_uses_selected_ion():
+    H = np.linspace(0.0, 1.0, 8)
+    points = _spin_fluctuation_points(
+        np.ones(H.size),
+        H,
+        np.ones(H.size),
+        temperature=5.0,
+        lattice_a=8.24062,
+    )
+    component = _heisenberg_chain_component()
+    component.config["ion"] = "V2"
+    component.config["form_factor_coefficients"] = ""
+    component.fit_parameters = {}
+
+    compiled = compile_fit_problem([component], [FitDatasetInput("a", points)])
+    result = fit_problem_least_squares(compiled.problem)
+
+    assert result.success
+    assert np.all(np.isfinite(result.model_values))
+
+
+def test_heisenberg_rpa_dynamic_parameter_supports_per_dataset_sharing():
+    component = _heisenberg_chain_component(
+        sharing={"chi0": {"mode": "per_dataset"}},
+    )
+    H = np.linspace(0.0, 1.0, 10)
+    make = lambda: _spin_fluctuation_points(np.ones(10), H, np.ones(10), temperature=5.0)
+    compiled = compile_fit_problem(
+        [component],
+        [FitDatasetInput("cold", make()), FitDatasetInput("hot", make())],
+    )
+    names = sorted(spec.name for spec in compiled.problem.parameter_specs)
+    assert "rpa.chi0[cold]" in names and "rpa.chi0[hot]" in names
+    assert "rpa.J1" in names

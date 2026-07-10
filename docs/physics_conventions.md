@@ -20,3 +20,19 @@ $$
 The scale, magnetic form factor, polarization factor, and background are kept
 explicit so that normalization assumptions remain visible.
 
+Additional conventions used by the spin-fluctuation model family (see
+[Spin-fluctuation models](spin_fluctuation_models.md) for the full math):
+
+- The polarization factor for isotropic (Heisenberg) spins is $P = 2/3$.
+- Magnetic form factors use the $\langle j_0 \rangle$ analytic approximation
+  $f(s) = A e^{-a s^2} + B e^{-b s^2} + C e^{-c s^2} + D$ with
+  $s = |Q|/4\pi$ in Å⁻¹ (`metallix.form_factors`).
+- Exchange Fourier transforms use the extended-zone phase convention:
+  $J(\mathbf{Q})_{ab} = \sum J_{\text{bond}}
+  \exp[2\pi i\, \mathbf{Q}\cdot(\mathbf{r}_b + \mathbf{n} - \mathbf{r}_a)]$
+  with fractional site positions inside the phases, matched by site phases
+  $\exp(2\pi i\, \mathbf{Q}\cdot\mathbf{r}_a)$ in neutron weights so that the
+  mode weights of the RPA models sum exactly to one.
+- Temperature enters only through the Bose factor and is read from each
+  dataset (`PointData4D.temperature`), never from fit parameters.
+

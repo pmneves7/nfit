@@ -32,8 +32,10 @@ from .fitting import (
     evaluate_problem_model,
     fit_problem_least_squares,
     rebin_point_data,
+    reciprocal_basis_from_lattice_parameters,
     sample_problem_parameters,
 )
+from .form_factors import available_ions
 from .importers import IMPORTERS, import_with, importers_for_data_type
 from .mdhisto import MDHistoAxis, MDHistoData, load_mantid_mdhisto_nxs
 from .pipeline import DataGroup, DatasetEntry, DatasetGroup, FitTimelineEntry, MaskSpec, ModelComponentSpec
@@ -317,6 +319,236 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "String naming a supported calculation mode. The initial supported value is magnetic.",
                 "type": "str",
                 "example": "magnetic",
+            },
+        },
+    },
+    "local_relaxational": {
+        "label": "Local relaxational spin",
+        "description": (
+            "Fully local spin relaxing at rate Gamma: chi'' = chi_loc * Gamma * E / (E^2 + Gamma^2), "
+            "converted to intensity with the Bose factor, magnetic form factor, and isotropic "
+            "polarization factor 2/3. Requires a dataset temperature."
+        ),
+        "parameters": {
+            "scale": {
+                "default": 1.0,
+                "description": (
+                    "Overall intensity scale for unnormalized data. Degenerate with chi_loc; "
+                    "fix one of the two."
+                ),
+                "allowed": "Positive finite number.",
+                "type": "float",
+                "example": "1.0",
+                "global_fit": True,
+            },
+            "chi_loc": {
+                "default": 1.0,
+                "description": "Static local susceptibility (1/meV up to the intensity normalization).",
+                "allowed": "Positive finite number.",
+                "type": "float",
+                "example": "2.0",
+                "global_fit": True,
+            },
+            "gamma": {
+                "default": 2.0,
+                "description": "Relaxation rate Gamma: chi'' peaks at E = Gamma.",
+                "allowed": "Positive finite number in meV.",
+                "type": "float",
+                "example": "3.0",
+                "global_fit": True,
+            },
+        },
+        "config": {
+            "ion": {
+                "default": "",
+                "description": (
+                    "Magnetic ion whose tabulated <j0> form factor multiplies the intensity "
+                    "(requires lattice metadata for |Q|). Leave empty for no form factor."
+                ),
+                "allowed": "An ion label from the ILL <j0> tables, e.g. Mn2, Fe2, Yb3, or empty.",
+                "type": "str",
+                "example": "Fe2",
+                "choices": "form_factor_ions",
+            },
+            "form_factor_coefficients": {
+                "default": "",
+                "description": (
+                    "Custom <j0> coefficients A, a, B, b, C, c, D overriding the ion table "
+                    "(see https://www.ill.eu/sites/ccsl/ffacts/)."
+                ),
+                "allowed": "Seven comma-separated numbers, or empty to use the ion table.",
+                "type": "str",
+                "example": "0.0263, 34.96, 0.3668, 15.94, 0.6188, 5.594, -0.0119",
+            },
+        },
+    },
+    "mmp_relaxational": {
+        "label": "MMP relaxational (nearly AFM)",
+        "description": (
+            "Millis-Monien-Pines susceptibility of a nearly antiferromagnetic metal: "
+            "chi(q,w) = chi_pk / (1 + xi^2 |q-Q0|^2 - i w/omega_sf), converted to intensity "
+            "with Bose, form-factor, and isotropic polarization factors. "
+            "Requires dataset temperature and lattice metadata."
+        ),
+        "parameters": {
+            "scale": {
+                "default": 1.0,
+                "description": (
+                    "Overall intensity scale for unnormalized data. Degenerate with chi_pk; "
+                    "fix one of the two."
+                ),
+                "allowed": "Positive finite number.",
+                "type": "float",
+                "example": "1.0",
+                "global_fit": True,
+            },
+            "chi_pk": {
+                "default": 1.0,
+                "description": "Static susceptibility at the ordering vector Q0 (1/meV up to normalization).",
+                "allowed": "Positive finite number.",
+                "type": "float",
+                "example": "3.0",
+                "global_fit": True,
+            },
+            "xi": {
+                "default": 1.0,
+                "description": "Magnetic correlation length.",
+                "allowed": "Positive finite number in Angstrom.",
+                "type": "float",
+                "example": "2.5",
+                "global_fit": True,
+            },
+            "omega_sf": {
+                "default": 1.0,
+                "description": "Spin-fluctuation energy: relaxation rate of the mode at Q0.",
+                "allowed": "Positive finite number in meV.",
+                "type": "float",
+                "example": "1.8",
+                "global_fit": True,
+            },
+            "q0_h": {
+                "default": 0.5,
+                "description": "H coordinate of the ordering vector Q0.",
+                "allowed": "Finite number in reciprocal lattice units.",
+                "type": "float",
+                "example": "0.5",
+                "global_fit": True,
+            },
+            "q0_k": {
+                "default": 0.0,
+                "description": "K coordinate of the ordering vector Q0.",
+                "allowed": "Finite number in reciprocal lattice units.",
+                "type": "float",
+                "example": "0.5",
+                "global_fit": True,
+            },
+            "q0_l": {
+                "default": 0.0,
+                "description": "L coordinate of the ordering vector Q0.",
+                "allowed": "Finite number in reciprocal lattice units.",
+                "type": "float",
+                "example": "0.0",
+                "global_fit": True,
+            },
+        },
+        "config": {
+            "ion": {
+                "default": "",
+                "description": (
+                    "Magnetic ion whose tabulated <j0> form factor multiplies the intensity. "
+                    "Leave empty for no form factor."
+                ),
+                "allowed": "An ion label from the ILL <j0> tables, e.g. Mn2, Fe2, Yb3, or empty.",
+                "type": "str",
+                "example": "Fe2",
+                "choices": "form_factor_ions",
+            },
+            "form_factor_coefficients": {
+                "default": "",
+                "description": (
+                    "Custom <j0> coefficients A, a, B, b, C, c, D overriding the ion table "
+                    "(see https://www.ill.eu/sites/ccsl/ffacts/)."
+                ),
+                "allowed": "Seven comma-separated numbers, or empty to use the ion table.",
+                "type": "str",
+                "example": "0.0263, 34.96, 0.3668, 15.94, 0.6188, 5.594, -0.0119",
+            },
+        },
+    },
+    "heisenberg_rpa": {
+        "label": "Heisenberg RPA spin fluctuations",
+        "description": (
+            "Local relaxational spins coupled by Heisenberg exchange in the RPA: "
+            "chi(Q,w) = [1 - chi0(w) J(Q)]^-1 chi0(w) with chi0(w) = chi0/(1 - i w/Gamma0). "
+            "J(Q) is built from symmetry-distinct bond orbits (J1, J2, J3a, ...), each an "
+            "exchange fit parameter in meV; J > 0 favors ordering where J(Q) is maximal and "
+            "the fit is restricted to the paramagnetic side max J(Q) chi0 < 1. "
+            "Configure the crystal and generate bond orbits, then fit. Requires dataset temperature."
+        ),
+        "structured_config": True,
+        "dynamic_parameter_description": (
+            "Heisenberg exchange constant of symmetry orbit {name} in meV; one shared value "
+            "for every bond in the orbit. Positive J favors ordering at the wavevector "
+            "maximizing J(Q)."
+        ),
+        "parameters": {
+            "scale": {
+                "default": 1.0,
+                "description": (
+                    "Overall intensity scale for unnormalized data. Degenerate with chi0's "
+                    "magnitude only in part (chi0 also sets the RPA denominator), but fitting "
+                    "both is usually ill-conditioned; consider fixing one."
+                ),
+                "allowed": "Positive finite number.",
+                "type": "float",
+                "example": "1.0",
+                "global_fit": True,
+            },
+            "chi0": {
+                "default": 0.1,
+                "description": (
+                    "Single-site static susceptibility entering the RPA denominator "
+                    "(1/meV: the product J * chi0 is dimensionless). The magnetic instability "
+                    "is at max J(Q) chi0 = 1."
+                ),
+                "allowed": "Positive finite number in 1/meV.",
+                "type": "float",
+                "example": "0.5",
+                "global_fit": True,
+            },
+            "gamma0": {
+                "default": 5.0,
+                "description": (
+                    "Bare single-site relaxation rate; the coupled mode at Q relaxes at "
+                    "Gamma0 (1 - J(Q) chi0), softening toward the ordering vector."
+                ),
+                "allowed": "Positive finite number in meV.",
+                "type": "float",
+                "example": "5.0",
+                "global_fit": True,
+            },
+        },
+        "config": {
+            "ion": {
+                "default": "",
+                "description": (
+                    "Magnetic ion whose tabulated <j0> form factor multiplies the intensity. "
+                    "Leave empty for no form factor."
+                ),
+                "allowed": "An ion label from the ILL <j0> tables, e.g. Mn2, Fe2, Yb3, or empty.",
+                "type": "str",
+                "example": "Yb3",
+                "choices": "form_factor_ions",
+            },
+            "form_factor_coefficients": {
+                "default": "",
+                "description": (
+                    "Custom <j0> coefficients A, a, B, b, C, c, D overriding the ion table "
+                    "(see https://www.ill.eu/sites/ccsl/ffacts/)."
+                ),
+                "allowed": "Seven comma-separated numbers, or empty to use the ion table.",
+                "type": "str",
+                "example": "0.0263, 34.96, 0.3668, 15.94, 0.6188, 5.594, -0.0119",
             },
         },
     },
@@ -1151,6 +1383,129 @@ def _mask_parameter_names(mask: MaskSpec, dataset: DatasetEntry | None = None) -
     return [*names, *axis_names]
 
 
+def model_parameter_names(model: ModelComponentSpec) -> list[str]:
+    """Return all parameter names of a model, static plus config-derived.
+
+    Models such as ``heisenberg_rpa`` emit one exchange parameter per bond
+    orbit in their configuration; this mirrors
+    :func:`metallix.fit_config.component_parameter_names` for the GUI.
+    """
+
+    from .fit_config import component_parameter_names
+
+    return list(component_parameter_names(model))
+
+
+DEFAULT_BOND_CUTOFF_ANGSTROM = 6.0
+
+
+class _NoChange(Exception):
+    """Signals that a model-config mutation left the state untouched."""
+
+
+def model_crystal_config(model: ModelComponentSpec) -> dict[str, Any]:
+    """Return (creating if needed) the nested crystal config of a model.
+
+    Shape: ``{"lattice": {"a", "b", "c", "alpha", "beta", "gamma"},
+    "spacegroup": str, "sites": [{"label", "position", "ion"}]}``. The dict
+    lives inside ``model.config`` and is plain JSON data, so it serializes
+    with the project file.
+    """
+
+    crystal = model.config.get("crystal")
+    if not isinstance(crystal, dict):
+        crystal = {}
+        model.config["crystal"] = crystal
+    lattice = crystal.setdefault(
+        "lattice",
+        {"a": 5.0, "b": 5.0, "c": 5.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+    )
+    for name, fallback in (
+        ("a", 5.0), ("b", 5.0), ("c", 5.0),
+        ("alpha", 90.0), ("beta", 90.0), ("gamma", 90.0),
+    ):
+        lattice.setdefault(name, fallback)
+    crystal.setdefault("spacegroup", "P 1")
+    crystal.setdefault("sites", [])
+    return crystal
+
+
+def reconcile_model_orbit_parameters(model: ModelComponentSpec) -> None:
+    """Align a model's exchange parameters with its configured bond orbits.
+
+    Values of orbits whose labels persist are kept; new orbits start at 0 meV
+    and fixed; parameters of removed orbits are dropped along with their fit
+    flags, limits, and sharing entries.
+    """
+
+    static = set(MODEL_TYPE_DEFINITIONS[model.type]["parameters"])
+    labels = [str(orbit.get("label", "")) for orbit in model.config.get("orbits", [])]
+    keep = static | set(labels)
+    for mapping in (
+        model.parameters,
+        model.fit_parameters,
+        model.global_fit,
+        model.limits,
+        model.sharing,
+    ):
+        if isinstance(mapping, dict):
+            for key in [name for name in mapping if name not in keep]:
+                mapping.pop(key)
+    for label in labels:
+        model.parameters.setdefault(label, 0.0)
+        model.fit_parameters.setdefault(label, False)
+        model.global_fit.setdefault(label, True)
+
+
+def import_cif_into_model(
+    model: ModelComponentSpec, path: str, *, group: DataGroup | None = None
+) -> dict[str, Any]:
+    """Load a CIF file into a model's crystal config (and optionally its group).
+
+    Existing bond orbits are cleared because their site indices refer to the
+    previous crystal. Returns the imported crystal dict.
+    """
+
+    from .crystal import crystal_from_cif
+
+    imported = crystal_from_cif(path)
+    model.config["crystal"] = imported
+    model.config["magnetic_sites"] = []
+    model.config.pop("orbits", None)
+    model.config.pop("site_positions", None)
+    reconcile_model_orbit_parameters(model)
+    if group is not None:
+        group.lattice_parameters = dict(imported["lattice"])
+        group.spacegroup = imported["spacegroup"]
+        group.metadata["crystal"] = copy.deepcopy(imported)
+    return imported
+
+
+def generate_model_bond_orbits(model: ModelComponentSpec) -> list[str]:
+    """Generate symmetry-distinct bond orbits from a model's crystal config.
+
+    Writes ``config["orbits"]`` and ``config["site_positions"]`` (the expanded
+    magnetic sites the bond indices refer to), reconciles the exchange
+    parameters, and returns the orbit labels.
+    """
+
+    from .crystal import generate_bond_orbits, orbits_to_config, sites_to_config
+
+    crystal = model_crystal_config(model)
+    magnetic = [str(label) for label in model.config.get("magnetic_sites", [])]
+    if not magnetic:
+        raise ValueError(
+            "select at least one magnetic site (check 'Magnetic') before "
+            "generating bond orbits"
+        )
+    cutoff = float(model.config.get("bond_cutoff_angstrom", DEFAULT_BOND_CUTOFF_ANGSTROM))
+    sites, orbits = generate_bond_orbits(crystal, magnetic, cutoff)
+    model.config["site_positions"] = sites_to_config(sites)
+    model.config["orbits"] = orbits_to_config(orbits)
+    reconcile_model_orbit_parameters(model)
+    return [orbit.label for orbit in orbits]
+
+
 def default_model_parameters(type: str) -> dict[str, Any]:
     """Return default parameter values for a registered model type."""
 
@@ -1185,9 +1540,30 @@ def default_model_fit_parameters(type: str) -> dict[str, bool]:
 
 
 def model_parameter_tooltip(type: str, parameter_name: str) -> str:
-    """Return standard hover text for a model parameter editor."""
+    """Return standard hover text for a model parameter editor.
 
-    metadata = MODEL_TYPE_DEFINITIONS[type]["parameters"][parameter_name]
+    Config-derived parameters (e.g. exchange constants of generated bond
+    orbits) are not in the static definitions; they use the model type's
+    ``dynamic_parameter_description`` template.
+    """
+
+    definition = MODEL_TYPE_DEFINITIONS[type]
+    metadata = definition["parameters"].get(parameter_name)
+    if metadata is None:
+        template = definition.get(
+            "dynamic_parameter_description",
+            "Configuration-derived fit parameter {name}.",
+        )
+        return "\n".join(
+            [
+                f"Parameter: {parameter_name}",
+                f"Description: {template.format(name=parameter_name)}",
+                "Data type: float",
+                "Default: 0",
+                "Fit: checked means the optimizer may vary this parameter; unchecked means it is fixed at the displayed value.",
+                "Global fit: checked means one shared value is fitted across datasets; unchecked means each dataset may fit its own value.",
+            ]
+        )
     return "\n".join(
         [
             f"Parameter: {parameter_name}",
@@ -1323,11 +1699,17 @@ def slice_viewer_datasets(
 
     data: list[MDHistoData] = []
     names: list[str] = []
+    model_channels = current_model_channels(group)
     for dataset in group.iter_datasets():
         extra_masks = effective_dataset_masks(group, dataset)
         view_data = dataset_for_slice_viewer(dataset, extra_masks=extra_masks)
         if view_data is not None:
-            attach_fit_channels_to_view(group, dataset.name, view_data)
+            attach_fit_channels_to_view(
+                group,
+                dataset.name,
+                view_data,
+                fallback_payload=model_channels.get(dataset.name),
+            )
             data.append(view_data)
             names.append(dataset.name)
     return data, names
@@ -1397,20 +1779,73 @@ def fit_data_bundle(group: DataGroup, dataset: DatasetEntry) -> FitDataBundle | 
     extra_masks = effective_dataset_masks(group, dataset)
     view = dataset_for_slice_viewer(dataset, extra_masks=extra_masks)
     if isinstance(view, MDHistoData):
-        return FitDataBundle(
-            dataset=dataset,
-            view=view,
-            points=_point_data_from_mdhisto_view(view),
-            grid_shape=view.shape,
+        points = _point_data_from_mdhisto_view(view)
+    elif isinstance(view, PointListData):
+        points = _point_data_from_point_list_view(view)
+    else:
+        return None
+    _apply_sample_context_to_points(group, dataset, points)
+    return FitDataBundle(
+        dataset=dataset,
+        view=view,
+        points=points,
+        grid_shape=view.shape if isinstance(view, MDHistoData) else None,
+    )
+
+
+def effective_dataset_temperature(
+    group: DataGroup, dataset: DatasetEntry
+) -> float | None:
+    """Return the dataset temperature override in K, or ``None`` if unset.
+
+    ``dataset.parameters["temperature"]`` takes precedence over any
+    temperature carried by the imported data itself.
+    """
+
+    value = dataset.parameters.get("temperature")
+    if value in (None, ""):
+        return None
+    return float(value)
+
+
+def _apply_sample_context_to_points(
+    group: DataGroup, dataset: DatasetEntry, points: PointData4D
+) -> None:
+    """Stamp per-dataset temperature and group lattice metadata onto fit points.
+
+    Physics models read the sample temperature from ``PointData4D.temperature``
+    and convert HKL to ``|Q|`` through ``rlu_to_inv_angstrom_matrix`` metadata;
+    both are supplied here so models never depend on GUI state.
+    """
+
+    override = effective_dataset_temperature(group, dataset)
+    if override is not None:
+        points.temperature = override
+    if (
+        "rlu_to_inv_angstrom_matrix" not in points.metadata
+        and isinstance(group.lattice_parameters, dict)
+        and all(key in group.lattice_parameters for key in ("a", "b", "c"))
+    ):
+        lattice = group.lattice_parameters
+        matrix = reciprocal_basis_from_lattice_parameters(
+            float(lattice["a"]),
+            float(lattice["b"]),
+            float(lattice["c"]),
+            float(lattice.get("alpha", 90.0)),
+            float(lattice.get("beta", 90.0)),
+            float(lattice.get("gamma", 90.0)),
         )
-    if isinstance(view, PointListData):
-        return FitDataBundle(
-            dataset=dataset,
-            view=view,
-            points=_point_data_from_point_list_view(view),
-            grid_shape=None,
-        )
-    return None
+        points.metadata["lattice_parameters"] = {
+            "a": float(lattice["a"]),
+            "b": float(lattice["b"]),
+            "c": float(lattice["c"]),
+            "alpha": float(lattice.get("alpha", 90.0)),
+            "beta": float(lattice.get("beta", 90.0)),
+            "gamma": float(lattice.get("gamma", 90.0)),
+            "angle_units": "degree",
+            "include_2pi": True,
+        }
+        points.metadata["rlu_to_inv_angstrom_matrix"] = matrix.tolist()
 
 
 def _point_data_from_mdhisto_view(data: MDHistoData) -> PointData4D:
@@ -1426,6 +1861,7 @@ def _point_data_from_mdhisto_view(data: MDHistoData) -> PointData4D:
     for key in ("oriented_lattice", "coordinate_units", "rlu_to_inv_angstrom_matrix"):
         if key in data.metadata:
             metadata[key] = data.metadata[key]
+    temperature = data.metadata.get("temperature")
     return PointData4D(
         H=coords.get("H", zeros).ravel(),
         K=coords.get("K", zeros).ravel(),
@@ -1434,6 +1870,7 @@ def _point_data_from_mdhisto_view(data: MDHistoData) -> PointData4D:
         intensity=np.asarray(data.signal, dtype=float).ravel(),
         sigma=np.asarray(data.errors, dtype=float).ravel(),
         mask=keep.ravel(),
+        temperature=float(temperature) if temperature is not None else None,
         metadata=metadata,
     )
 
@@ -1477,6 +1914,13 @@ def _point_data_from_point_list_view(data: PointListData) -> PointData4D:
     mask = np.isfinite(intensity) & np.isfinite(sigma)
     if sigma_known:
         mask &= sigma > 0.0
+    temperature: float | np.ndarray | None = None
+    for name in data.columns:
+        if name.strip().lower() == "temperature":
+            temperature = np.asarray(data.column(name), dtype=float)
+            break
+    if temperature is None and data.metadata.get("temperature") is not None:
+        temperature = float(data.metadata["temperature"])
     return PointData4D(
         H=columns_by_role.get("H", zeros),
         K=columns_by_role.get("K", zeros),
@@ -1485,6 +1929,7 @@ def _point_data_from_point_list_view(data: PointListData) -> PointData4D:
         intensity=intensity,
         sigma=sigma,
         mask=mask,
+        temperature=temperature,
         metadata={
             "fit_coordinate_mapping": mapping,
             "fit_channel": label,
@@ -1557,7 +2002,14 @@ def _sampler_config(optimizer_config: dict[str, Any] | None) -> SamplerConfig | 
         burn_in=int(sampler.get("burn_in", 0) or 0),
         thin=max(1, int(sampler.get("thin", 1) or 1)),
         random_seed=_optional_int(sampler.get("random_seed")),
-        kwargs=dict(sampler.get("kwargs", {})) if isinstance(sampler.get("kwargs"), dict) else {},
+        kwargs={
+            **(dict(sampler.get("kwargs", {})) if isinstance(sampler.get("kwargs"), dict) else {}),
+            **(
+                {"workers": int(sampler.get("workers"))}
+                if sampler.get("workers") not in (None, "")
+                else {}
+            ),
+        },
     )
 
 
@@ -1657,6 +2109,46 @@ def perform_group_fit(
     }
 
 
+def current_model_channels(group: DataGroup) -> dict[str, dict[str, Any]]:
+    """Evaluate enabled model components at their current parameter values."""
+
+    components = [
+        model for model in group.models.values() if isinstance(model, ModelComponentSpec)
+    ]
+    if not any(component.enabled for component in components):
+        return {}
+    inputs, bundles = fit_dataset_inputs(group)
+    if not inputs:
+        return {}
+    try:
+        compiled = compile_fit_problem(components, inputs, description=group.name)
+        params = {spec.name: float(spec.value) for spec in compiled.problem.parameter_specs}
+        return _fit_channels_from_params(compiled, params, bundles)
+    except Exception:
+        return {}
+
+
+def _compiled_problem_for_fit_entry(
+    group: DataGroup,
+    fit_entry: FitTimelineEntry,
+) -> CompiledFitProblem:
+    """Compile the fitting problem from a stored fit snapshot without leaving state changed."""
+
+    current_snapshot = snapshot_data_group_state(group)
+    try:
+        if fit_entry.snapshot:
+            restore_data_group_state(group, fit_entry.snapshot)
+        components = [
+            model for model in group.models.values() if isinstance(model, ModelComponentSpec)
+        ]
+        inputs, _bundles = fit_dataset_inputs(group)
+        if not inputs:
+            raise ValueError("no enabled dataset could be prepared for posterior sampling")
+        return compile_fit_problem(components, inputs, description=group.name)
+    finally:
+        restore_data_group_state(group, current_snapshot)
+
+
 def _matrix_summary(matrix: Any, names: list[str]) -> dict[str, Any]:
     if matrix is None:
         return {}
@@ -1729,6 +2221,10 @@ def _sampling_result_to_dict(result: SamplingResult) -> dict[str, Any]:
     }
     if result.log_probability is not None:
         payload["log_probability"] = _encode_float_array(result.log_probability)
+    if result.chain is not None:
+        payload["chain"] = _encode_float_array(result.chain)
+    if result.log_probability_chain is not None:
+        payload["log_probability_chain"] = _encode_float_array(result.log_probability_chain)
     return payload
 
 
@@ -1745,12 +2241,106 @@ def _sampling_result_from_dict(payload: Any) -> SamplingResult | None:
             log_probability = _decode_float_array(payload["log_probability"])
         except Exception:
             log_probability = None
+    chain = None
+    if isinstance(payload.get("chain"), dict):
+        try:
+            chain = _decode_float_array(payload["chain"])
+        except Exception:
+            chain = None
+    log_probability_chain = None
+    if isinstance(payload.get("log_probability_chain"), dict):
+        try:
+            log_probability_chain = _decode_float_array(payload["log_probability_chain"])
+        except Exception:
+            log_probability_chain = None
     return SamplingResult(
         samples=samples,
         variable_names=[str(name) for name in payload.get("variable_names", [])],
         log_probability=log_probability,
         metadata=dict(payload.get("metadata", {})),
+        chain=chain,
+        log_probability_chain=log_probability_chain,
     )
+
+
+def _sampling_result_with_window(result: SamplingResult, burn_in: int, thin: int) -> SamplingResult:
+    """Return a copy flattened with a different burn-in/thinning window."""
+
+    if result.chain is None:
+        raise ValueError("stored posterior does not include a raw emcee chain")
+    chain = np.asarray(result.chain, dtype=float)
+    if chain.ndim != 3 or chain.shape[0] == 0:
+        raise ValueError("stored posterior chain is empty or malformed")
+    burn = min(max(0, int(burn_in)), max(0, chain.shape[0] - 1))
+    step = max(1, int(thin))
+    sliced = chain[burn::step]
+    samples = sliced.reshape((-1, chain.shape[2]))
+    log_probability = None
+    if result.log_probability_chain is not None:
+        log_chain = np.asarray(result.log_probability_chain, dtype=float)
+        if log_chain.shape[:2] == chain.shape[:2]:
+            log_probability = log_chain[burn::step].reshape(-1)
+    metadata = dict(result.metadata)
+    metadata["burn_in"] = burn
+    metadata["thin"] = step
+    metadata["samples"] = int(samples.shape[0])
+    metadata["n_steps"] = int(chain.shape[0])
+    metadata["n_walkers"] = int(chain.shape[1])
+    return SamplingResult(
+        samples=samples,
+        variable_names=list(result.variable_names),
+        log_probability=log_probability,
+        metadata=metadata,
+        chain=chain,
+        log_probability_chain=result.log_probability_chain,
+    )
+
+
+def _combined_sampling_result(
+    original: SamplingResult,
+    appended: SamplingResult,
+    *,
+    burn_in: int,
+    thin: int,
+) -> SamplingResult:
+    """Concatenate two emcee chains and re-flatten them with the requested window."""
+
+    if original.chain is None or appended.chain is None:
+        raise ValueError("appending posterior samples requires raw emcee chains")
+    if list(original.variable_names) != list(appended.variable_names):
+        raise ValueError("appended posterior variables do not match the stored chain")
+    chain = np.concatenate(
+        [np.asarray(original.chain, dtype=float), np.asarray(appended.chain, dtype=float)],
+        axis=0,
+    )
+    log_probability_chain = None
+    if original.log_probability_chain is not None and appended.log_probability_chain is not None:
+        log_probability_chain = np.concatenate(
+            [
+                np.asarray(original.log_probability_chain, dtype=float),
+                np.asarray(appended.log_probability_chain, dtype=float),
+            ],
+            axis=0,
+        )
+    metadata = dict(original.metadata)
+    metadata.update(dict(appended.metadata))
+    metadata["n_steps"] = int(chain.shape[0])
+    metadata["n_walkers"] = int(chain.shape[1])
+    metadata["appended_steps"] = int(appended.chain.shape[0])
+    result = SamplingResult(
+        samples=np.empty((0, chain.shape[2]), dtype=float),
+        variable_names=list(original.variable_names),
+        log_probability=None,
+        metadata=metadata,
+        chain=chain,
+        log_probability_chain=log_probability_chain,
+    )
+    return _sampling_result_with_window(result, burn_in=burn_in, thin=thin)
+
+
+def _store_sampling_result_on_fit_entry(fit_entry: FitTimelineEntry, result: SamplingResult) -> None:
+    fit_entry.metadata["posterior_samples"] = _sampling_result_to_dict(result)
+    fit_entry.goodness["posterior"] = _posterior_summary(result)
 
 
 def _fit_parameter_labels_from_components(
@@ -1815,13 +2405,23 @@ def _fit_channels_from_result(
 ) -> dict[str, dict[str, Any]]:
     """Evaluate fit and residual channels over each fitted dataset's view."""
 
+    return _fit_channels_from_params(compiled, result.params, bundles)
+
+
+def _fit_channels_from_params(
+    compiled: CompiledFitProblem,
+    params: dict[str, float],
+    bundles: dict[str, FitDataBundle],
+) -> dict[str, dict[str, Any]]:
+    """Evaluate fit and residual channels for a compiled problem."""
+
     channels: dict[str, dict[str, Any]] = {}
     fitted_names = {dataset.name for dataset in compiled.problem.datasets}
     for name, bundle in bundles.items():
         if name not in fitted_names:
             continue
         values = evaluate_problem_model(
-            compiled.problem, name, result.params, data=bundle.points
+            compiled.problem, name, params, data=bundle.points
         )
         fit_values = np.asarray(values, dtype=float)
         intensity = np.asarray(bundle.points.intensity, dtype=float)
@@ -1863,10 +2463,21 @@ def _group_has_fit_channels(group: DataGroup) -> bool:
     return any(entry.channels for entry in _walk_fit_entries(group.fits) if entry.kind == "result")
 
 
+def _group_has_enabled_model_components(group: DataGroup) -> bool:
+    """Return whether the group has a model that can be evaluated."""
+
+    return any(
+        isinstance(model, ModelComponentSpec) and model.enabled
+        for model in group.models.values()
+    )
+
+
 def attach_fit_channels_to_view(
     group: DataGroup,
     dataset_name: str,
     view: MDHistoData | PointListData,
+    *,
+    fallback_payload: dict[str, Any] | None = None,
 ) -> None:
     """Attach saved fit/residual channels to a viewer-ready dataset in place.
 
@@ -1875,7 +2486,7 @@ def attach_fit_channels_to_view(
     skipped rather than misaligned.
     """
 
-    payload = latest_fit_channels(group, dataset_name)
+    payload = latest_fit_channels(group, dataset_name) or fallback_payload
     if payload is None:
         return
     arrays: dict[str, np.ndarray] = {}
@@ -3196,16 +3807,24 @@ class _FitProgressDialog:
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(200)
         self.log.setToolTip("Short live progress log. Current parameter values are shown in the table above.")
+        self.cancel_button = QtWidgets.QPushButton("Cancel")
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.setToolTip("Request cancellation of the active fit or posterior sampler.")
+        self.cancel_button.clicked.connect(self._cancel_requested)
         self.close_button = QtWidgets.QPushButton("Close")
         self.close_button.setEnabled(False)
         self.close_button.setToolTip("Close this progress window after the fit pipeline finishes.")
         self.close_button.clicked.connect(self.dialog.close)
+        self._cancel_callback: Any | None = None
         layout.addWidget(self.stage_label)
         layout.addWidget(self.status_label)
         layout.addWidget(self.progress)
         layout.addWidget(self.parameter_table)
         layout.addWidget(self.log, 1)
-        layout.addWidget(self.close_button)
+        button_row = QtWidgets.QHBoxLayout()
+        button_row.addWidget(self.cancel_button)
+        button_row.addWidget(self.close_button)
+        layout.addLayout(button_row)
 
     def reset(self, title: str = "Starting fit pipeline...") -> None:
         from PySide6 import QtWidgets
@@ -3216,8 +3835,21 @@ class _FitProgressDialog:
         self.progress.setRange(0, 0)
         self.parameter_table.setRowCount(0)
         self.log.clear()
+        self.cancel_button.setEnabled(False)
         self.close_button.setEnabled(False)
+        self._cancel_callback = None
         QtWidgets.QApplication.processEvents()
+
+    def set_cancel_callback(self, callback: Any | None) -> None:
+        self._cancel_callback = callback
+        self.cancel_button.setEnabled(callback is not None)
+
+    def _cancel_requested(self) -> None:
+        if self._cancel_callback is None:
+            return
+        self._cancel_callback()
+        self.status_label.setText("Cancellation requested. Waiting for the active step to stop...")
+        self.cancel_button.setEnabled(False)
 
     def show(self) -> None:
         from PySide6 import QtWidgets
@@ -3289,6 +3921,8 @@ class _FitProgressDialog:
         self.status_label.setText("Done.")
         self.progress.setRange(0, 1)
         self.progress.setValue(1)
+        self.cancel_button.setEnabled(False)
+        self._cancel_callback = None
         self.close_button.setEnabled(True)
         QtWidgets.QApplication.processEvents()
 
@@ -3303,6 +3937,8 @@ class _FitProgressDialog:
         self.log.appendPlainText(f"ERROR: {message}")
         self.progress.setRange(0, 1)
         self.progress.setValue(0)
+        self.cancel_button.setEnabled(False)
+        self._cancel_callback = None
         self.close_button.setEnabled(True)
         self.show()
         QtWidgets.QApplication.processEvents()
@@ -3388,9 +4024,7 @@ class _FitDiagnosticsPlotWindow:
             matrix, names, title = covariance
             labels = _fit_parameter_plot_labels(self.fit_entry, names)
             cov_fig = Figure(figsize=(max(7, 1.0 * len(names) + 4), max(5, 0.75 * len(names) + 3)))
-            ax = cov_fig.subplots()
-            _draw_matrix_heatmap(ax, matrix, names, labels=labels, title=title)
-            cov_fig.subplots_adjust(left=0.15, right=0.96, bottom=0.16, top=0.88)
+            _draw_centered_matrix_heatmap(cov_fig, matrix, names, labels=labels, title=title)
             self.tabs.addTab(FigureCanvas(cov_fig), title)
 
         result = _sampling_result_from_dict(self.fit_entry.metadata.get("posterior_samples"))
@@ -3407,11 +4041,14 @@ class _FitDiagnosticsPlotWindow:
         trace_axes = trace_fig.subplots(max(1, len(names)), 1, squeeze=False)
         for index, name in enumerate(names):
             ax = trace_axes[index, 0]
-            ax.plot(samples[:, index], linewidth=0.5)
-            if name in summaries and summaries[name].get("best") is not None:
-                ax.axhline(float(summaries[name]["best"]), color="red", linewidth=0.9, alpha=0.8)
+            _draw_trace_panel(
+                ax,
+                result,
+                parameter_index=index,
+                summary=summaries.get(name, {}),
+            )
             ax.set_ylabel(labels.get(name, f"p{index + 1}"))
-        trace_axes[-1, 0].set_xlabel("flattened sample")
+        trace_axes[-1, 0].set_xlabel("MCMC step" if result.chain is not None else "sample")
         trace_fig.subplots_adjust(left=0.18, right=0.98, bottom=0.1, top=0.95, hspace=0.28)
         self.tabs.addTab(FigureCanvas(trace_fig), "Trace")
 
@@ -3475,6 +4112,7 @@ def _draw_matrix_heatmap(
     *,
     labels: dict[str, str] | None = None,
     title: str,
+    colorbar_ax: Any | None = None,
 ) -> None:
     """Draw a labeled covariance or correlation heatmap."""
 
@@ -3504,11 +4142,83 @@ def _draw_matrix_heatmap(
             value = arr[row, col]
             if np.isfinite(value):
                 ax.text(col, row, _format_number(value), ha="center", va="center", fontsize=7)
-    ax.figure.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
+    if colorbar_ax is None:
+        ax.figure.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
+    else:
+        ax.figure.colorbar(image, cax=colorbar_ax)
+
+
+def _draw_centered_matrix_heatmap(
+    fig: Any,
+    matrix: Any,
+    names: list[str],
+    *,
+    labels: dict[str, str] | None = None,
+    title: str,
+) -> Any:
+    """Draw the covariance/correlation matrix centered in the diagnostics tab."""
+
+    arr = np.asarray(matrix, dtype=float)
+    label_count = max(1, len(names))
+    square_size = min(0.66, max(0.42, 0.10 * label_count + 0.34))
+    colorbar_width = 0.028
+    gap = 0.025
+    total_width = square_size + gap + colorbar_width
+    left = max(0.08, (1.0 - total_width) / 2.0)
+    bottom = max(0.14, (1.0 - square_size) / 2.0)
+    ax = fig.add_axes([left, bottom, square_size, square_size])
+    colorbar_ax = fig.add_axes([left + square_size + gap, bottom, colorbar_width, square_size])
+    _draw_matrix_heatmap(ax, arr, names, labels=labels, title=title, colorbar_ax=colorbar_ax)
+    return ax
 
 
 def _compact_diagnostic_labels(names: list[str]) -> list[str]:
     return [f"p{index + 1}" for index in range(len(names))]
+
+
+def _draw_trace_panel(
+    ax: Any,
+    result: SamplingResult,
+    *,
+    parameter_index: int,
+    summary: dict[str, float],
+) -> None:
+    """Draw one posterior trace panel, preferring raw walker chains."""
+
+    if result.chain is not None:
+        chain = np.asarray(result.chain, dtype=float)
+        if chain.ndim == 3 and parameter_index < chain.shape[2]:
+            steps = np.arange(chain.shape[0])
+            ax.plot(steps, chain[:, :, parameter_index], linewidth=0.55, alpha=0.75)
+            burn_in = int(result.metadata.get("burn_in", 0) or 0)
+            if 0 < burn_in < chain.shape[0]:
+                ax.axvline(
+                    burn_in,
+                    color="black",
+                    linestyle="--",
+                    linewidth=1.0,
+                    alpha=0.85,
+                )
+                top = ax.get_ylim()[1]
+                ax.annotate(
+                    "burn-in",
+                    xy=(burn_in, top),
+                    xytext=(4, -4),
+                    textcoords="offset points",
+                    ha="left",
+                    va="top",
+                    fontsize=8,
+                    color="black",
+                )
+            if summary.get("best") is not None:
+                ax.axhline(float(summary["best"]), color="red", linewidth=0.9, alpha=0.8)
+            return
+
+    samples = np.asarray(result.samples, dtype=float)
+    if samples.ndim == 2 and parameter_index < samples.shape[1]:
+        ax.plot(samples[:, parameter_index], linewidth=0.7)
+    if summary.get("best") is not None:
+        ax.axhline(float(summary["best"]), color="red", linewidth=0.9, alpha=0.8)
 
 
 def _fit_entry_diagnostic_parameter_names(fit_entry: FitTimelineEntry) -> list[str]:
@@ -3745,6 +4455,7 @@ class MetallixProjectExplorer:
         self.fit_weight_widget = None
         self.fit_weight_spin = None
         self.scale_factor_spin = None
+        self.dataset_temperature_spin = None
         self.group_bulk_widget = None
         self.group_fit_weight_edit = None
         self.group_scale_edit = None
@@ -3773,16 +4484,22 @@ class MetallixProjectExplorer:
         self.fit_de_check = None
         self.fit_de_maxiter_spin = None
         self.fit_de_popsize_spin = None
+        self.fit_de_workers_spin = None
         self.fit_emcee_check = None
         self.fit_emcee_walkers_spin = None
         self.fit_emcee_steps_spin = None
         self.fit_emcee_burn_spin = None
         self.fit_emcee_thin_spin = None
+        self.fit_emcee_workers_spin = None
         self.fit_branch_check = None
         self.fit_now_button = None
         self.fit_corner_button = None
         self.show_data_fit_button = None
         self._fit_progress_dialog: _FitProgressDialog | None = None
+        self._fit_worker_thread = None
+        self._fit_worker = None
+        self._fit_worker_handler = None
+        self._fit_disabled_widget_states: list[tuple[Any, bool]] = []
         self.expand_all_button = None
         self.collapse_all_button = None
         self.create_group_button = None
@@ -4218,6 +4935,159 @@ class MetallixProjectExplorer:
         self._refresh_tree(select_group=group, select_fit=item_to_select or result)
         return result
 
+    def _start_background_task(
+        self,
+        *,
+        title: str,
+        failure_title: str,
+        task: Any,
+        on_success: Any,
+        success_message: str,
+        close_on_success: bool = True,
+    ) -> bool:
+        from PySide6 import QtCore, QtWidgets
+
+        thread = self._fit_worker_thread
+        if thread is not None and thread.isRunning():
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                failure_title,
+                "Another fit or posterior sampler is already running.",
+            )
+            return False
+
+        class Worker(QtCore.QObject):
+            progress = QtCore.Signal(dict)
+            finished = QtCore.Signal(object)
+            failed = QtCore.Signal(str)
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.cancel_requested = False
+
+            @QtCore.Slot()
+            def run(self) -> None:
+                try:
+                    def progress_callback(event: dict[str, Any]) -> None:
+                        if self.cancel_requested:
+                            raise RuntimeError("Operation cancelled by user.")
+                        self.progress.emit(event)
+
+                    self.finished.emit(task(progress_callback))
+                except Exception as exc:
+                    self.failed.emit(str(exc))
+
+            def cancel(self) -> None:
+                self.cancel_requested = True
+
+        class Handler(QtCore.QObject):
+            @QtCore.Slot(dict)
+            def handle_progress(self, event: dict[str, Any]) -> None:
+                progress.update_progress(event)
+
+            @QtCore.Slot(object)
+            def handle_success(self, result: Any) -> None:
+                should_finish = on_success(result)
+                if should_finish is not False:
+                    progress.finish(success_message)
+                    if close_on_success:
+                        progress.close()
+                worker_thread.quit()
+
+            @QtCore.Slot(str)
+            def handle_failure(self, message: str) -> None:
+                progress.fail(message)
+                QtWidgets.QMessageBox.warning(self.window, failure_title, message)
+                worker_thread.quit()
+
+        progress = self._fit_progress_dialog
+        if progress is None:
+            progress = _FitProgressDialog(self)
+            self._fit_progress_dialog = progress
+        progress.reset(title)
+        progress.show()
+
+        worker_thread = QtCore.QThread(self.window)
+        worker = Worker()
+        handler = Handler(self.window)
+        worker.moveToThread(worker_thread)
+        self._fit_worker_thread = worker_thread
+        self._fit_worker = worker
+        self._fit_worker_handler = handler
+        self._fit_disabled_widget_states = []
+        for widget in (
+            self.tree,
+            self.fit_editor_widget,
+            self.details_scroll,
+            self.fit_now_button,
+            self.fit_corner_button,
+            self.show_data_fit_button,
+            self.delete_button,
+        ):
+            if widget is not None:
+                self._fit_disabled_widget_states.append((widget, widget.isEnabled()))
+                widget.setEnabled(False)
+        progress.set_cancel_callback(worker.cancel)
+        worker_thread.started.connect(worker.run)
+        worker.progress.connect(handler.handle_progress)
+
+        def cleanup() -> None:
+            progress.set_cancel_callback(None)
+            for widget, enabled in self._fit_disabled_widget_states:
+                widget.setEnabled(enabled)
+            self._fit_disabled_widget_states = []
+            self._fit_worker_thread = None
+            self._fit_worker = None
+            self._fit_worker_handler = None
+
+        worker.finished.connect(handler.handle_success)
+        worker.failed.connect(handler.handle_failure)
+        worker.finished.connect(worker.deleteLater)
+        worker.failed.connect(worker.deleteLater)
+        worker_thread.finished.connect(cleanup)
+        worker_thread.finished.connect(worker_thread.deleteLater)
+        worker_thread.start()
+        return True
+
+    def start_fit_for_selection(self) -> bool:
+        group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        fit_entry = self._fit_entry_for_item(self._current_item())
+        if role != "fit" or group is None or fit_entry is None:
+            return False
+        self._set_selected_fit_optimizer_config()
+        should_branch = bool(self.fit_branch_check.isChecked()) or _should_branch_fit_now(group, fit_entry)
+
+        def task(progress_callback: Any) -> FitTimelineEntry:
+            return run_group_fit(
+                group,
+                fit_entry,
+                branch_timeline=should_branch,
+                progress_callback=progress_callback,
+            )
+
+        def on_success(result: FitTimelineEntry) -> None:
+            failed = str(result.goodness.get("status", "")) == "failed"
+            if failed:
+                progress = self._fit_progress_dialog
+                if progress is not None:
+                    progress.fail(str(result.goodness.get("message", "The fit did not run.")))
+                return False
+            self.fit_branch_check.setChecked(False)
+            self.refresh_slice_viewer(group)
+            item_to_select = _current_state_after_result(group, result) if should_branch else result
+            self._set_active_fit_state(group, item_to_select or result)
+            self._mark_dirty()
+            self._refresh_tree(select_group=group, select_fit=item_to_select or result)
+            return True
+
+        return self._start_background_task(
+            title="Starting fit pipeline...",
+            failure_title="Fit now",
+            task=task,
+            on_success=on_success,
+            success_message="Fit pipeline finished.",
+        )
+
     def open_fit_diagnostics_plots_for_selection(self) -> Any | None:
         fit_entry = self._fit_entry_for_item(self._current_item())
         if fit_entry is None:
@@ -4229,6 +5099,201 @@ class MetallixProjectExplorer:
         self._slice_viewers[id(window)] = window
         return window
 
+    def apply_posterior_sampling_window(
+        self,
+        fit_entry: FitTimelineEntry,
+        burn_in: int,
+        thin: int,
+    ) -> bool:
+        from PySide6 import QtWidgets
+
+        stored = _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples"))
+        if stored is None or stored.chain is None:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Posterior sampler",
+                "This fit result does not contain a raw emcee chain to re-window.",
+            )
+            return False
+        try:
+            updated = _sampling_result_with_window(stored, burn_in=burn_in, thin=thin)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Posterior sampler",
+                f"Could not update the posterior sampling window:\n{exc}",
+            )
+            return False
+        _store_sampling_result_on_fit_entry(fit_entry, updated)
+        self._mark_dirty()
+        self._set_fit_details(fit_entry)
+        return True
+
+    def run_posterior_sampler_for_fit(
+        self,
+        group: DataGroup,
+        fit_entry: FitTimelineEntry,
+        *,
+        n_walkers: int,
+        n_steps: int,
+        burn_in: int,
+        thin: int,
+        random_seed: int | None,
+        workers: int = 1,
+        append: bool = False,
+    ) -> bool:
+        from PySide6 import QtWidgets
+
+        if not isinstance(fit_entry.goodness.get("parameters"), dict):
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Posterior sampler",
+                "This fit result does not contain best-fit parameters to start emcee.",
+            )
+            return False
+        progress = self._fit_progress_dialog
+        if progress is None:
+            progress = _FitProgressDialog(self)
+            self._fit_progress_dialog = progress
+        progress.reset("Starting emcee posterior sampler...")
+        progress.show()
+        try:
+            result = self._posterior_sampler_result_for_fit(
+                group,
+                fit_entry,
+                n_walkers=n_walkers,
+                n_steps=n_steps,
+                burn_in=burn_in,
+                thin=thin,
+                random_seed=random_seed,
+                workers=workers,
+                append=append,
+                progress_callback=progress.update_progress,
+            )
+        except Exception as exc:
+            progress.fail(str(exc))
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Posterior sampler",
+                f"Could not run emcee posterior sampling:\n{exc}",
+            )
+            return False
+        _store_sampling_result_on_fit_entry(fit_entry, result)
+        self._mark_dirty()
+        progress.finish("emcee posterior sampling finished.")
+        progress.close()
+        self._set_fit_details(fit_entry)
+        return True
+
+    def start_posterior_sampler_for_fit(
+        self,
+        group: DataGroup,
+        fit_entry: FitTimelineEntry,
+        *,
+        n_walkers: int,
+        n_steps: int,
+        burn_in: int,
+        thin: int,
+        random_seed: int | None,
+        workers: int = 1,
+        append: bool = False,
+    ) -> bool:
+        from PySide6 import QtWidgets
+
+        if not isinstance(fit_entry.goodness.get("parameters"), dict):
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Posterior sampler",
+                "This fit result does not contain best-fit parameters to start emcee.",
+            )
+            return False
+
+        def task(progress_callback: Any) -> SamplingResult:
+            return self._posterior_sampler_result_for_fit(
+                group,
+                fit_entry,
+                n_walkers=n_walkers,
+                n_steps=n_steps,
+                burn_in=burn_in,
+                thin=thin,
+                random_seed=random_seed,
+                workers=workers,
+                append=append,
+                progress_callback=progress_callback,
+            )
+
+        def on_success(result: SamplingResult) -> bool:
+            _store_sampling_result_on_fit_entry(fit_entry, result)
+            self._mark_dirty()
+            self._set_fit_details(fit_entry)
+            return True
+
+        return self._start_background_task(
+            title="Starting emcee posterior sampler...",
+            failure_title="Posterior sampler",
+            task=task,
+            on_success=on_success,
+            success_message="emcee posterior sampling finished.",
+        )
+
+    def _posterior_sampler_result_for_fit(
+        self,
+        group: DataGroup,
+        fit_entry: FitTimelineEntry,
+        *,
+        n_walkers: int,
+        n_steps: int,
+        burn_in: int,
+        thin: int,
+        random_seed: int | None,
+        workers: int,
+        append: bool,
+        progress_callback: Any | None,
+    ) -> SamplingResult:
+        compiled = _compiled_problem_for_fit_entry(group, fit_entry)
+        initial_params = {
+            str(name): float(value)
+            for name, value in dict(fit_entry.goodness.get("parameters", {})).items()
+        }
+        initial_walkers = None
+        stored = _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples"))
+        walkers = None if n_walkers <= 0 else int(n_walkers)
+        if append:
+            if stored is None or stored.chain is None:
+                raise ValueError("append requires an existing raw emcee chain")
+            compiled_names = [
+                spec.name for spec in compiled.problem.parameter_specs if spec.vary
+            ]
+            if list(stored.variable_names) != compiled_names:
+                raise ValueError(
+                    "stored posterior parameter order no longer matches the fit problem"
+                )
+            chain = np.asarray(stored.chain, dtype=float)
+            if chain.ndim != 3 or chain.shape[0] == 0:
+                raise ValueError("stored raw emcee chain is empty or malformed")
+            initial_walkers = np.asarray(chain[-1], dtype=float)
+            walkers = int(initial_walkers.shape[0])
+        config = SamplerConfig(
+            n_walkers=walkers,
+            n_steps=int(n_steps),
+            burn_in=int(burn_in),
+            thin=max(1, int(thin)),
+            random_seed=random_seed,
+            kwargs={"workers": int(workers)},
+        )
+        sampled = sample_problem_parameters(
+            compiled.problem,
+            config,
+            initial_params=initial_params if initial_walkers is None else None,
+            initial_walkers=initial_walkers,
+            progress_callback=progress_callback,
+        )
+        return (
+            _combined_sampling_result(stored, sampled, burn_in=burn_in, thin=thin)
+            if append and stored is not None
+            else sampled
+        )
+
     def show_data_and_fit_for_selection(self) -> Any | None:
         """Open the data viewer with the stored fit overlaid on the data."""
 
@@ -4236,7 +5301,7 @@ class MetallixProjectExplorer:
         fit_entry = self._fit_entry_for_item(self._current_item())
         if role != "fit" or group is None or fit_entry is None:
             return None
-        if not _group_has_fit_channels(group):
+        if not (_group_has_fit_channels(group) or _group_has_enabled_model_components(group)):
             return None
         viewer = self.open_slice_viewer(group)
         if viewer is None:
@@ -4792,6 +5857,21 @@ class MetallixProjectExplorer:
         self.scale_factor_spin.setValue(1.0)
         self.scale_factor_spin.valueChanged.connect(self._set_selected_dataset_scale_factor)
         fit_weight_layout.addWidget(self.scale_factor_spin)
+        fit_weight_layout.addWidget(QtWidgets.QLabel("T (K)"))
+        self.dataset_temperature_spin = QtWidgets.QDoubleSpinBox()
+        self.dataset_temperature_spin.setObjectName("dataset_temperature")
+        self.dataset_temperature_spin.setToolTip(
+            "Sample temperature override in kelvin for the selected dataset. "
+            "Physics models use it for the Bose factor; set to '(from data)' "
+            "(spin to the minimum) to use the temperature imported with the data."
+        )
+        self.dataset_temperature_spin.setRange(-1.0, 1.0e4)
+        self.dataset_temperature_spin.setDecimals(3)
+        self.dataset_temperature_spin.setSingleStep(1.0)
+        self.dataset_temperature_spin.setSpecialValueText("(from data)")
+        self.dataset_temperature_spin.setValue(-1.0)
+        self.dataset_temperature_spin.valueChanged.connect(self._set_selected_dataset_temperature)
+        fit_weight_layout.addWidget(self.dataset_temperature_spin)
         title_row.addWidget(self.fit_weight_widget)
 
         # Bulk editors for nested dataset groups: blank when descendants differ,
@@ -4927,6 +6007,13 @@ class MetallixProjectExplorer:
         self.fit_de_popsize_spin.setValue(10)
         self.fit_de_popsize_spin.setToolTip("Population multiplier for differential evolution. Larger values explore more but run longer.")
         self.fit_de_popsize_spin.valueChanged.connect(self._set_selected_fit_controls_config)
+        self.fit_de_workers_spin = QtWidgets.QSpinBox()
+        self.fit_de_workers_spin.setRange(-1, 256)
+        self.fit_de_workers_spin.setValue(1)
+        self.fit_de_workers_spin.setToolTip(
+            "Parallel worker threads for differential-evolution objective evaluations. Use 1 for serial execution or -1 for an automatic CPU-based choice."
+        )
+        self.fit_de_workers_spin.valueChanged.connect(self._set_selected_fit_controls_config)
         self.fit_emcee_check = QtWidgets.QCheckBox("Sample posterior with emcee")
         self.fit_emcee_check.setToolTip(
             "After least squares, run emcee walkers near the best fit to estimate posterior intervals and correlations."
@@ -4952,6 +6039,13 @@ class MetallixProjectExplorer:
         self.fit_emcee_thin_spin.setValue(1)
         self.fit_emcee_thin_spin.setToolTip("Keep every Nth emcee sample after burn-in.")
         self.fit_emcee_thin_spin.valueChanged.connect(self._set_selected_fit_controls_config)
+        self.fit_emcee_workers_spin = QtWidgets.QSpinBox()
+        self.fit_emcee_workers_spin.setRange(-1, 256)
+        self.fit_emcee_workers_spin.setValue(1)
+        self.fit_emcee_workers_spin.setToolTip(
+            "Parallel worker threads for emcee log-probability evaluations. Use 1 for serial execution or -1 for an automatic CPU-based choice."
+        )
+        self.fit_emcee_workers_spin.valueChanged.connect(self._set_selected_fit_controls_config)
         self.fit_optimizer_config_editor = QtWidgets.QLineEdit("{}")
         self.fit_optimizer_config_editor.setToolTip(
             "Advanced JSON optimizer configuration for the selected fit state. GUI controls update this; edit directly for extra SciPy/emcee options."
@@ -4967,9 +6061,9 @@ class MetallixProjectExplorer:
             "Open covariance/correlation heatmaps and posterior trace or corner-style plots when diagnostics are stored."
         )
         self.show_data_fit_button.setToolTip(
-            "Open the data viewer with the stored fit overlaid on the data (residuals off)."
+            "Open the data viewer with the fit overlay enabled, using stored fit channels or the current model parameters."
         )
-        self.fit_now_button.clicked.connect(self.fit_now_for_selection)
+        self.fit_now_button.clicked.connect(self.start_fit_for_selection)
         self.fit_corner_button.clicked.connect(self.open_fit_diagnostics_plots_for_selection)
         self.show_data_fit_button.clicked.connect(self.show_data_and_fit_for_selection)
         fit_editor_layout.addWidget(QtWidgets.QLabel("Optimizer"), 0, 0)
@@ -4983,18 +6077,22 @@ class MetallixProjectExplorer:
         fit_editor_layout.addWidget(self.fit_de_maxiter_spin, 4, 1)
         fit_editor_layout.addWidget(QtWidgets.QLabel("DE population"), 5, 0)
         fit_editor_layout.addWidget(self.fit_de_popsize_spin, 5, 1)
-        fit_editor_layout.addWidget(self.fit_emcee_check, 6, 1)
-        fit_editor_layout.addWidget(QtWidgets.QLabel("Walkers"), 7, 0)
-        fit_editor_layout.addWidget(self.fit_emcee_walkers_spin, 7, 1)
-        fit_editor_layout.addWidget(QtWidgets.QLabel("Steps"), 8, 0)
-        fit_editor_layout.addWidget(self.fit_emcee_steps_spin, 8, 1)
-        fit_editor_layout.addWidget(QtWidgets.QLabel("Burn-in"), 9, 0)
-        fit_editor_layout.addWidget(self.fit_emcee_burn_spin, 9, 1)
-        fit_editor_layout.addWidget(QtWidgets.QLabel("Thin"), 10, 0)
-        fit_editor_layout.addWidget(self.fit_emcee_thin_spin, 10, 1)
-        fit_editor_layout.addWidget(QtWidgets.QLabel("Advanced config"), 11, 0)
-        fit_editor_layout.addWidget(self.fit_optimizer_config_editor, 11, 1)
-        fit_editor_layout.addWidget(self.fit_branch_check, 12, 1)
+        fit_editor_layout.addWidget(QtWidgets.QLabel("DE workers"), 6, 0)
+        fit_editor_layout.addWidget(self.fit_de_workers_spin, 6, 1)
+        fit_editor_layout.addWidget(self.fit_emcee_check, 7, 1)
+        fit_editor_layout.addWidget(QtWidgets.QLabel("Walkers"), 8, 0)
+        fit_editor_layout.addWidget(self.fit_emcee_walkers_spin, 8, 1)
+        fit_editor_layout.addWidget(QtWidgets.QLabel("Steps"), 9, 0)
+        fit_editor_layout.addWidget(self.fit_emcee_steps_spin, 9, 1)
+        fit_editor_layout.addWidget(QtWidgets.QLabel("Burn-in"), 10, 0)
+        fit_editor_layout.addWidget(self.fit_emcee_burn_spin, 10, 1)
+        fit_editor_layout.addWidget(QtWidgets.QLabel("Thin"), 11, 0)
+        fit_editor_layout.addWidget(self.fit_emcee_thin_spin, 11, 1)
+        fit_editor_layout.addWidget(QtWidgets.QLabel("emcee workers"), 12, 0)
+        fit_editor_layout.addWidget(self.fit_emcee_workers_spin, 12, 1)
+        fit_editor_layout.addWidget(QtWidgets.QLabel("Advanced config"), 13, 0)
+        fit_editor_layout.addWidget(self.fit_optimizer_config_editor, 13, 1)
+        fit_editor_layout.addWidget(self.fit_branch_check, 14, 1)
         self.fit_editor_widget = fit_editor
 
         right_layout.addLayout(title_row)
@@ -5396,7 +6494,7 @@ class MetallixProjectExplorer:
             role == "fit"
             and fit_entry is not None
             and group is not None
-            and _group_has_fit_channels(group)
+            and (_group_has_fit_channels(group) or _group_has_enabled_model_components(group))
         )
 
         if role == "group" and group is not None:
@@ -5512,6 +6610,18 @@ class MetallixProjectExplorer:
             )
         finally:
             self.scale_factor_spin.blockSignals(False)
+        self.dataset_temperature_spin.blockSignals(True)
+        try:
+            override = (
+                entry.parameters.get("temperature")
+                if role == "dataset" and entry is not None
+                else None
+            )
+            self.dataset_temperature_spin.setValue(
+                float(override) if override not in (None, "") else -1.0
+            )
+        finally:
+            self.dataset_temperature_spin.blockSignals(False)
         self._sync_group_bulk_controls(role)
 
     def _group_bulk_datasets(self, role: str) -> list[DatasetEntry]:
@@ -5613,6 +6723,22 @@ class MetallixProjectExplorer:
             self.refresh_slice_viewer(group)
         self._sync_details()
 
+    def _set_selected_dataset_temperature(self, value: float) -> None:
+        group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        if role != "dataset" or entry is None:
+            return
+        override = None if float(value) < 0.0 else float(value)
+        if entry.parameters.get("temperature") == override:
+            return
+        if override is None:
+            entry.parameters.pop("temperature", None)
+        else:
+            entry.parameters["temperature"] = override
+        if group is not None:
+            self._record_data_group_state_change(group)
+        self._mark_dirty()
+        self._sync_details()
+
     def _set_details_text(self, text: str) -> None:
         from PySide6 import QtCore, QtWidgets
 
@@ -5650,6 +6776,7 @@ class MetallixProjectExplorer:
         self.details_layout.addStretch(1)
 
     def _set_fit_details(self, fit_entry: FitTimelineEntry) -> None:
+        group, _entry, _mask, _model, _role = self._objects_for_item(self._current_item())
         self.details_label.setText(fit_details_text(fit_entry))
         self._clear_details_panel()
         duration = (
@@ -5671,6 +6798,8 @@ class MetallixProjectExplorer:
         )
         if _fit_results_rows(fit_entry):
             self.details_layout.addWidget(self._fit_results_group_box(fit_entry))
+            if group is not None and fit_entry.kind == "result":
+                self.details_layout.addWidget(self._posterior_sampler_group_box(group, fit_entry))
         elif _snapshot_parameter_rows(fit_entry):
             self.details_layout.addWidget(self._parameter_values_group_box(fit_entry))
         if fit_entry.optimizer_config:
@@ -5757,6 +6886,153 @@ class MetallixProjectExplorer:
         _tooltip_table_corner_buttons(table, "Select all fit-result rows.")
         table.resizeColumnsToContents()
         layout.addWidget(table)
+        return group_box
+
+    def _posterior_sampler_group_box(self, group: DataGroup, fit_entry: FitTimelineEntry) -> Any:
+        from PySide6 import QtWidgets
+
+        stored = _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples"))
+        metadata = dict(stored.metadata) if stored is not None else {}
+        sampler = fit_entry.optimizer_config.get("sampler", {}) if isinstance(fit_entry.optimizer_config, dict) else {}
+        chain_steps = 0
+        chain_walkers = 0
+        if stored is not None and stored.chain is not None:
+            chain = np.asarray(stored.chain, dtype=float)
+            if chain.ndim == 3:
+                chain_steps = int(chain.shape[0])
+                chain_walkers = int(chain.shape[1])
+        walkers_default = int(metadata.get("n_walkers") or sampler.get("n_walkers") or 0)
+        steps_default = int(metadata.get("n_steps") or sampler.get("n_steps") or 1000)
+        burn_default = int(metadata.get("burn_in") or sampler.get("burn_in") or 0)
+        thin_default = max(1, int(metadata.get("thin") or sampler.get("thin") or 1))
+        workers_default = int(sampler.get("workers", metadata.get("workers", 1)) or 1)
+        seed_value = metadata.get("random_seed", sampler.get("random_seed", None))
+
+        group_box = QtWidgets.QGroupBox("Posterior sampler")
+        group_box.setToolTip(
+            "Inspect or update emcee posterior samples for this fit result without running least squares or creating a timeline entry."
+        )
+        layout = QtWidgets.QGridLayout(group_box)
+        layout.setContentsMargins(10, 8, 10, 8)
+
+        status = QtWidgets.QLabel(
+            f"Stored samples: {0 if stored is None else len(stored.samples):d}    "
+            f"Raw chain: {chain_steps:d} steps x {chain_walkers:d} walkers"
+        )
+        status.setToolTip("Current posterior storage for this fit result.")
+        layout.addWidget(status, 0, 0, 1, 4)
+
+        walkers_spin = QtWidgets.QSpinBox()
+        walkers_spin.setObjectName("fit_posterior_walkers_spin")
+        walkers_spin.setRange(0, 10000)
+        walkers_spin.setValue(max(0, walkers_default))
+        walkers_spin.setToolTip(
+            "Number of walkers for a full emcee rerun. Use 0 to choose an automatic value; append continues from the stored walkers."
+        )
+
+        steps_spin = QtWidgets.QSpinBox()
+        steps_spin.setObjectName("fit_posterior_steps_spin")
+        steps_spin.setRange(1, 1000000)
+        steps_spin.setValue(max(1, steps_default))
+        steps_spin.setToolTip("Number of emcee steps to run. For append, this many new steps are added to the stored chain.")
+
+        burn_spin = QtWidgets.QSpinBox()
+        burn_spin.setObjectName("fit_posterior_burn_spin")
+        burn_spin.setRange(0, 1000000)
+        burn_spin.setValue(max(0, burn_default))
+        burn_spin.setToolTip(
+            "Initial chain steps to discard before computing posterior summaries and diagnostic plots. "
+            "Changing this only changes the view of stored samples."
+        )
+
+        thin_spin = QtWidgets.QSpinBox()
+        thin_spin.setObjectName("fit_posterior_thin_spin")
+        thin_spin.setRange(1, 10000)
+        thin_spin.setValue(thin_default)
+        thin_spin.setToolTip(
+            "Keep every Nth stored sample after burn-in when computing summaries and diagnostic plots."
+        )
+
+        seed_spin = QtWidgets.QSpinBox()
+        seed_spin.setObjectName("fit_posterior_seed_spin")
+        seed_spin.setRange(-1, 2147483647)
+        seed_spin.setValue(-1 if seed_value in (None, "") else int(seed_value))
+        seed_spin.setToolTip("Random seed for a full rerun. Use -1 for a fresh random initialization.")
+
+        workers_spin = QtWidgets.QSpinBox()
+        workers_spin.setObjectName("fit_posterior_workers_spin")
+        workers_spin.setRange(-1, 256)
+        workers_spin.setValue(workers_default)
+        workers_spin.setToolTip(
+            "Parallel worker threads for emcee log-probability evaluations during rerun or append. Use -1 for an automatic CPU-based choice."
+        )
+
+        controls = [
+            ("Walkers", walkers_spin),
+            ("Steps", steps_spin),
+            ("Burn-in", burn_spin),
+            ("Thin", thin_spin),
+            ("Seed", seed_spin),
+            ("Workers", workers_spin),
+        ]
+        for index, (label, widget) in enumerate(controls, start=1):
+            layout.addWidget(QtWidgets.QLabel(label), index, 0)
+            layout.addWidget(widget, index, 1, 1, 3)
+
+        apply_button = QtWidgets.QPushButton("Apply burn-in/thin")
+        apply_button.setObjectName("fit_posterior_apply_button")
+        apply_button.setToolTip("Recompute posterior summaries and plots from the stored raw chain without rerunning emcee.")
+        apply_button.setEnabled(stored is not None and stored.chain is not None)
+        apply_button.clicked.connect(
+            lambda _checked=False: self.apply_posterior_sampling_window(
+                fit_entry, burn_spin.value(), thin_spin.value()
+            )
+        )
+
+        rerun_button = QtWidgets.QPushButton("Rerun emcee")
+        rerun_button.setObjectName("fit_posterior_rerun_button")
+        rerun_button.setToolTip(
+            "Run a new emcee posterior sample from the best-fit parameters and replace the stored posterior for this fit result."
+        )
+        rerun_button.clicked.connect(
+            lambda _checked=False: self.start_posterior_sampler_for_fit(
+                group,
+                fit_entry,
+                n_walkers=walkers_spin.value(),
+                n_steps=steps_spin.value(),
+                burn_in=burn_spin.value(),
+                thin=thin_spin.value(),
+                random_seed=None if seed_spin.value() < 0 else seed_spin.value(),
+                workers=workers_spin.value(),
+                append=False,
+            )
+        )
+
+        append_button = QtWidgets.QPushButton("Append steps")
+        append_button.setObjectName("fit_posterior_append_button")
+        append_button.setToolTip(
+            "Continue the stored emcee chain from its last walker positions and then recompute summaries with the selected burn-in/thin."
+        )
+        append_button.setEnabled(stored is not None and stored.chain is not None)
+        append_button.clicked.connect(
+            lambda _checked=False: self.start_posterior_sampler_for_fit(
+                group,
+                fit_entry,
+                n_walkers=walkers_spin.value(),
+                n_steps=steps_spin.value(),
+                burn_in=burn_spin.value(),
+                thin=thin_spin.value(),
+                random_seed=None if seed_spin.value() < 0 else seed_spin.value(),
+                workers=workers_spin.value(),
+                append=True,
+            )
+        )
+
+        button_row = QtWidgets.QHBoxLayout()
+        button_row.addWidget(apply_button)
+        button_row.addWidget(rerun_button)
+        button_row.addWidget(append_button)
+        layout.addLayout(button_row, len(controls) + 1, 0, 1, 4)
         return group_box
 
     def _parameter_values_group_box(self, fit_entry: FitTimelineEntry) -> Any:
@@ -6487,11 +7763,13 @@ class MetallixProjectExplorer:
             self.fit_de_check,
             self.fit_de_maxiter_spin,
             self.fit_de_popsize_spin,
+            self.fit_de_workers_spin,
             self.fit_emcee_check,
             self.fit_emcee_walkers_spin,
             self.fit_emcee_steps_spin,
             self.fit_emcee_burn_spin,
             self.fit_emcee_thin_spin,
+            self.fit_emcee_workers_spin,
         ]
         for widget in widgets:
             widget.blockSignals(True)
@@ -6501,12 +7779,14 @@ class MetallixProjectExplorer:
         self.fit_de_check.setChecked(bool(initialization.get("enabled", False)))
         self.fit_de_maxiter_spin.setValue(int(initialization.get("maxiter", 60) or 60))
         self.fit_de_popsize_spin.setValue(int(initialization.get("popsize", 10) or 10))
+        self.fit_de_workers_spin.setValue(int(initialization.get("workers", 1) or 1))
         sampler = config.get("sampler") if isinstance(config.get("sampler"), dict) else {}
         self.fit_emcee_check.setChecked(bool(sampler.get("enabled", False)))
         self.fit_emcee_walkers_spin.setValue(int(sampler.get("n_walkers", 0) or 0))
         self.fit_emcee_steps_spin.setValue(int(sampler.get("n_steps", 1000) or 1000))
         self.fit_emcee_burn_spin.setValue(int(sampler.get("burn_in", 200) or 0))
         self.fit_emcee_thin_spin.setValue(int(sampler.get("thin", 1) or 1))
+        self.fit_emcee_workers_spin.setValue(int(sampler.get("workers", 1) or 1))
         for widget in widgets:
             widget.blockSignals(False)
 
@@ -6563,6 +7843,7 @@ class MetallixProjectExplorer:
                 "method": "differential_evolution",
                 "maxiter": int(self.fit_de_maxiter_spin.value()),
                 "popsize": int(self.fit_de_popsize_spin.value()),
+                "workers": int(self.fit_de_workers_spin.value()),
             }
         else:
             config.pop("initialization", None)
@@ -6573,6 +7854,7 @@ class MetallixProjectExplorer:
                 "n_steps": int(self.fit_emcee_steps_spin.value()),
                 "burn_in": int(self.fit_emcee_burn_spin.value()),
                 "thin": int(self.fit_emcee_thin_spin.value()),
+                "workers": int(self.fit_emcee_workers_spin.value()),
             }
             walkers = int(self.fit_emcee_walkers_spin.value())
             if walkers > 0:
@@ -6636,7 +7918,7 @@ class MetallixProjectExplorer:
             "Add mask": self.add_mask_to_selection,
             "New dataset group": self.add_dataset_group_to_selection,
             "Add model": self.add_model_to_selection,
-            "Fit now": self.fit_now_for_selection,
+            "Fit now": self.start_fit_for_selection,
             "Enable": lambda: self._set_selected_enabled(True),
             "Disable": lambda: self._set_selected_enabled(False),
         }
@@ -6921,12 +8203,25 @@ class MetallixProjectExplorer:
                 self.refresh_slice_viewer(group)
 
     def _rebuild_model_parameter_editor(self, model: ModelComponentSpec) -> None:
-        from PySide6 import QtWidgets
+        from PySide6 import QtCore, QtWidgets
 
         self._clear_model_parameter_editor()
         fit_group = QtWidgets.QGroupBox("Fit Parameters")
         fit_group.setObjectName("model_fit_parameters_group")
-        fit_layout = QtWidgets.QGridLayout(fit_group)
+        fit_group_layout = QtWidgets.QVBoxLayout(fit_group)
+        fit_group_layout.setContentsMargins(6, 6, 6, 6)
+        fit_scroll = QtWidgets.QScrollArea()
+        fit_scroll.setObjectName("model_fit_parameters_scroll")
+        fit_scroll.setWidgetResizable(True)
+        fit_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        fit_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        fit_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        fit_scroll.setMinimumHeight(180)
+        fit_scroll.setMaximumHeight(320)
+        fit_contents = QtWidgets.QWidget()
+        fit_layout = QtWidgets.QGridLayout(fit_contents)
+        fit_layout.setContentsMargins(0, 0, 0, 0)
+        fit_layout.setVerticalSpacing(4)
         fit_layout.setColumnStretch(1, 1)
         header_label = QtWidgets.QLabel("Plot label")
         header_min = QtWidgets.QLabel("Min")
@@ -6939,7 +8234,7 @@ class MetallixProjectExplorer:
         fit_layout.addWidget(header_label, 0, 2)
         fit_layout.addWidget(header_min, 0, 3)
         fit_layout.addWidget(header_max, 0, 4)
-        for index, parameter_name in enumerate(MODEL_TYPE_DEFINITIONS[model.type]["parameters"]):
+        for index, parameter_name in enumerate(model_parameter_names(model)):
             row = index + 1
             label = QtWidgets.QLabel(parameter_name)
             editor = QtWidgets.QLineEdit(_parameter_to_text(model.parameters.get(parameter_name, "")))
@@ -7007,6 +8302,8 @@ class MetallixProjectExplorer:
             fit_layout.addWidget(max_editor, row, 4)
             fit_layout.addWidget(fit_check, row, 5)
             fit_layout.addWidget(global_check, row, 6)
+        fit_scroll.setWidget(fit_contents)
+        fit_group_layout.addWidget(fit_scroll)
         self.model_parameter_layout.addWidget(fit_group, 0, 0, 1, 4)
 
         scope_group = QtWidgets.QGroupBox("Dataset Scope")
@@ -7041,9 +8338,26 @@ class MetallixProjectExplorer:
             config_layout.addWidget(QtWidgets.QLabel("No configuration settings."), 0, 0, 1, 2)
         for row, setting_name in enumerate(config_definitions):
             label = QtWidgets.QLabel(setting_name)
-            editor = QtWidgets.QLineEdit(_parameter_to_text(model.config.get(setting_name, "")))
             tooltip = model_config_tooltip(model.type, setting_name)
             label.setToolTip(tooltip)
+            if config_definitions[setting_name].get("choices") == "form_factor_ions":
+                combo = QtWidgets.QComboBox()
+                combo.setObjectName(f"model_config_choice_{setting_name}")
+                combo.addItem("(none)", "")
+                for ion in available_ions():
+                    combo.addItem(ion, ion)
+                current = str(model.config.get(setting_name, "") or "")
+                combo.setCurrentIndex(max(combo.findData(current), 0))
+                combo.setToolTip(tooltip)
+                combo.currentIndexChanged.connect(
+                    lambda _index, setting_name=setting_name, combo=combo: self._set_model_config_setting(
+                        setting_name, str(combo.currentData() or "")
+                    )
+                )
+                config_layout.addWidget(label, row, 0)
+                config_layout.addWidget(combo, row, 1)
+                continue
+            editor = QtWidgets.QLineEdit(_parameter_to_text(model.config.get(setting_name, "")))
             editor.setToolTip(tooltip)
             editor.editingFinished.connect(
                 lambda setting_name=setting_name, editor=editor: self._set_model_config_setting(setting_name, editor.text())
@@ -7051,6 +8365,8 @@ class MetallixProjectExplorer:
             config_layout.addWidget(label, row, 0)
             config_layout.addWidget(editor, row, 1)
         self.model_parameter_layout.addWidget(config_group, 2, 0, 1, 4)
+        if MODEL_TYPE_DEFINITIONS[model.type].get("structured_config"):
+            self._build_model_crystal_editor(model)
 
     def _clear_model_parameter_editor(self) -> None:
         while self.model_parameter_layout.count():
@@ -7059,6 +8375,389 @@ class MetallixProjectExplorer:
             if widget is not None:
                 widget.setParent(None)
                 widget.deleteLater()
+
+    def _build_model_crystal_editor(self, model: ModelComponentSpec) -> None:
+        """Structured crystal / magnetic-site / bond-orbit editor.
+
+        Shown for model types flagged ``structured_config`` (heisenberg_rpa).
+        Everything edits plain JSON data in ``model.config`` so the state
+        serializes with the project and drives the fit factory directly.
+        """
+
+        from PySide6 import QtWidgets
+
+        crystal = model_crystal_config(model)
+        lattice = crystal["lattice"]
+
+        crystal_group = QtWidgets.QGroupBox("Crystal")
+        crystal_group.setObjectName("model_crystal_group")
+        crystal_layout = QtWidgets.QGridLayout(crystal_group)
+        lattice_tooltip = (
+            "Unit-cell parameter used to build exchange bonds and convert HKL "
+            "to |Q|. Lengths in Angstrom, angles in degrees."
+        )
+        for column, name in enumerate(("a", "b", "c", "alpha", "beta", "gamma")):
+            label = QtWidgets.QLabel(name)
+            label.setToolTip(lattice_tooltip)
+            editor = QtWidgets.QLineEdit(_parameter_to_text(lattice.get(name, "")))
+            editor.setObjectName(f"model_crystal_{name}")
+            editor.setToolTip(lattice_tooltip)
+            editor.setMaximumWidth(70)
+            editor.editingFinished.connect(
+                lambda name=name, editor=editor: self._set_model_crystal_lattice(name, editor.text())
+            )
+            crystal_layout.addWidget(label, 0, 2 * column)
+            crystal_layout.addWidget(editor, 0, 2 * column + 1)
+        spacegroup_label = QtWidgets.QLabel("Space group")
+        spacegroup_tooltip = (
+            "Hermann-Mauguin space group symbol (e.g. 'F d -3 m:2'). Used to "
+            "expand the magnetic sites and to group bonds into symmetry-"
+            "distinct orbits sharing one exchange constant."
+        )
+        spacegroup_label.setToolTip(spacegroup_tooltip)
+        spacegroup_editor = QtWidgets.QLineEdit(str(crystal.get("spacegroup", "P 1")))
+        spacegroup_editor.setObjectName("model_crystal_spacegroup")
+        spacegroup_editor.setToolTip(spacegroup_tooltip)
+        spacegroup_editor.editingFinished.connect(
+            lambda editor=spacegroup_editor: self._set_model_crystal_spacegroup(editor.text())
+        )
+        crystal_layout.addWidget(spacegroup_label, 1, 0, 1, 2)
+        crystal_layout.addWidget(spacegroup_editor, 1, 2, 1, 4)
+        import_button = QtWidgets.QPushButton("Import CIF...")
+        import_button.setObjectName("model_crystal_import_cif")
+        import_button.setToolTip(
+            "Load lattice, space group, and atomic sites from a CIF file into "
+            "this model (and offer them to the data group). Clears previously "
+            "generated bond orbits."
+        )
+        import_button.clicked.connect(self._import_cif_into_selected_model)
+        crystal_layout.addWidget(import_button, 1, 6, 1, 2)
+        from_group_button = QtWidgets.QPushButton("Use group crystal")
+        from_group_button.setObjectName("model_crystal_from_group")
+        from_group_button.setToolTip(
+            "Copy the crystal (lattice, space group, sites) stored on this "
+            "dataset group into the model configuration."
+        )
+        from_group_button.clicked.connect(self._use_group_crystal_for_selected_model)
+        crystal_layout.addWidget(from_group_button, 1, 8, 1, 2)
+        self.model_parameter_layout.addWidget(crystal_group, 3, 0, 1, 4)
+
+        sites_group = QtWidgets.QGroupBox("Atomic Sites")
+        sites_group.setObjectName("model_crystal_sites_group")
+        sites_layout = QtWidgets.QGridLayout(sites_group)
+        magnetic_labels = {str(name) for name in model.config.get("magnetic_sites", [])}
+        for header_column, header in enumerate(("Label", "x", "y", "z", "Ion", "", "")):
+            if header:
+                sites_layout.addWidget(QtWidgets.QLabel(header), 0, header_column)
+        site_tooltip = (
+            "Wyckoff site of the crystal: label, fractional coordinates, and "
+            "the magnetic ion for the <j0> form factor. Check 'Magnetic' to "
+            "include the site in exchange-bond generation."
+        )
+        for index, site in enumerate(crystal["sites"]):
+            row = index + 1
+            label_editor = QtWidgets.QLineEdit(str(site.get("label", "")))
+            label_editor.setObjectName(f"model_crystal_site_label_{index}")
+            label_editor.setToolTip(site_tooltip)
+            label_editor.editingFinished.connect(
+                lambda index=index, editor=label_editor: self._set_model_crystal_site(index, "label", editor.text())
+            )
+            sites_layout.addWidget(label_editor, row, 0)
+            position = site.get("position", [0.0, 0.0, 0.0])
+            for axis in range(3):
+                editor = QtWidgets.QLineEdit(_parameter_to_text(position[axis]))
+                editor.setObjectName(f"model_crystal_site_{index}_{'xyz'[axis]}")
+                editor.setToolTip(site_tooltip)
+                editor.setMaximumWidth(70)
+                editor.editingFinished.connect(
+                    lambda index=index, axis=axis, editor=editor: self._set_model_crystal_site(index, axis, editor.text())
+                )
+                sites_layout.addWidget(editor, row, 1 + axis)
+            ion_combo = QtWidgets.QComboBox()
+            ion_combo.setObjectName(f"model_crystal_site_ion_{index}")
+            ion_combo.setToolTip(
+                "Magnetic ion of this site; sets the tabulated <j0> form "
+                "factor key. '(none)' leaves the site without a form factor."
+            )
+            ion_combo.addItem("(none)", "")
+            for ion in available_ions():
+                ion_combo.addItem(ion, ion)
+            ion_combo.setCurrentIndex(max(ion_combo.findData(str(site.get("ion", "") or "")), 0))
+            ion_combo.currentIndexChanged.connect(
+                lambda _index, index=index, combo=ion_combo: self._set_model_crystal_site(index, "ion", str(combo.currentData() or ""))
+            )
+            sites_layout.addWidget(ion_combo, row, 4)
+            magnetic_check = QtWidgets.QCheckBox("Magnetic")
+            magnetic_check.setObjectName(f"model_crystal_site_magnetic_{index}")
+            magnetic_check.setToolTip(
+                "Include this site in magnetic-site expansion and exchange-"
+                "bond generation."
+            )
+            magnetic_check.setChecked(str(site.get("label", "")) in magnetic_labels)
+            magnetic_check.toggled.connect(
+                lambda checked, index=index: self._set_model_site_magnetic(index, checked)
+            )
+            sites_layout.addWidget(magnetic_check, row, 5)
+            remove_button = QtWidgets.QPushButton("Remove")
+            remove_button.setObjectName(f"model_crystal_site_remove_{index}")
+            remove_button.setToolTip("Remove this atomic site from the crystal.")
+            remove_button.clicked.connect(
+                lambda _checked=False, index=index: self._remove_model_crystal_site(index)
+            )
+            sites_layout.addWidget(remove_button, row, 6)
+        add_site_button = QtWidgets.QPushButton("Add site")
+        add_site_button.setObjectName("model_crystal_site_add")
+        add_site_button.setToolTip("Append a new atomic site to the crystal.")
+        add_site_button.clicked.connect(self._add_model_crystal_site)
+        sites_layout.addWidget(add_site_button, len(crystal["sites"]) + 1, 0)
+        self.model_parameter_layout.addWidget(sites_group, 4, 0, 1, 4)
+
+        bonds_group = QtWidgets.QGroupBox("Exchange Bonds")
+        bonds_group.setObjectName("model_bonds_group")
+        bonds_layout = QtWidgets.QGridLayout(bonds_group)
+        cutoff_label = QtWidgets.QLabel("Bond cutoff (A)")
+        cutoff_tooltip = (
+            "Maximum bond length in Angstrom when enumerating exchange "
+            "paths. Each symmetry-distinct orbit within the cutoff becomes "
+            "one exchange fit parameter (J1, J2, J3a, ...)."
+        )
+        cutoff_label.setToolTip(cutoff_tooltip)
+        cutoff_editor = QtWidgets.QLineEdit(
+            _parameter_to_text(model.config.get("bond_cutoff_angstrom", DEFAULT_BOND_CUTOFF_ANGSTROM))
+        )
+        cutoff_editor.setObjectName("model_bonds_cutoff")
+        cutoff_editor.setToolTip(cutoff_tooltip)
+        cutoff_editor.setMaximumWidth(70)
+        cutoff_editor.editingFinished.connect(
+            lambda editor=cutoff_editor: self._set_model_config_setting("bond_cutoff_angstrom", editor.text())
+        )
+        bonds_layout.addWidget(cutoff_label, 0, 0)
+        bonds_layout.addWidget(cutoff_editor, 0, 1)
+        generate_button = QtWidgets.QPushButton("Generate symmetry orbits")
+        generate_button.setObjectName("model_bonds_generate")
+        generate_button.setToolTip(
+            "Expand the magnetic sites through the space group, enumerate "
+            "bonds up to the cutoff, and group them into symmetry-distinct "
+            "orbits. Each orbit becomes one exchange parameter; values of "
+            "orbits whose labels persist are kept."
+        )
+        generate_button.clicked.connect(self._generate_selected_model_bond_orbits)
+        bonds_layout.addWidget(generate_button, 0, 2)
+        orbits = model.config.get("orbits") or []
+        table = QtWidgets.QTableWidget(len(orbits), 4)
+        table.setObjectName("model_bonds_table")
+        table.setToolTip(
+            "Symmetry-distinct bond orbits of the current crystal. Each row "
+            "is one exchange fit parameter; multiplicity counts the bonds "
+            "sharing that constant."
+        )
+        table.setHorizontalHeaderLabels(["Orbit", "Distance (A)", "Multiplicity", "Example bond"])
+        table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        for row, orbit in enumerate(orbits):
+            bonds = orbit.get("bonds", [])
+            example = ""
+            if bonds:
+                bond = bonds[0]
+                example = (
+                    f"site {bond.get('site_i')} -> site {bond.get('site_j')} "
+                    f"+ {tuple(bond.get('offset', (0, 0, 0)))}"
+                )
+            for column, text in enumerate(
+                (
+                    str(orbit.get("label", "")),
+                    _format_number(float(orbit.get("distance_angstrom", 0.0))),
+                    str(len(bonds)),
+                    example,
+                )
+            ):
+                table.setItem(row, column, QtWidgets.QTableWidgetItem(text))
+        table.resizeColumnsToContents()
+        table.setMaximumHeight(180)
+        bonds_layout.addWidget(table, 1, 0, 1, 3)
+        self.model_parameter_layout.addWidget(bonds_group, 5, 0, 1, 4)
+
+    def _selected_model_and_group(self) -> tuple[DataGroup | None, ModelComponentSpec | None]:
+        group, _entry, _mask, model, role = self._objects_for_item(self._current_item())
+        if role != "model" or model is None:
+            return None, None
+        return group, model
+
+    def _mutate_selected_model(self, mutate) -> None:
+        """Apply a config mutation to the selected model and refresh the editor."""
+
+        group, model = self._selected_model_and_group()
+        if model is None:
+            return
+        try:
+            mutate(model, group)
+        except (ValueError, ImportError, KeyError) as exc:
+            from PySide6 import QtWidgets
+
+            QtWidgets.QMessageBox.warning(self.window, "Model configuration", str(exc))
+            return
+        branch_created = self._record_data_group_state_change(group) if group is not None else False
+        self._mark_dirty()
+        self._rebuild_model_parameter_editor(model)
+        if group is not None:
+            if branch_created:
+                self._refresh_tree(select_group=group, select_model=model)
+            else:
+                self.refresh_slice_viewer(group)
+
+    def _set_model_crystal_lattice(self, name: str, text: str) -> None:
+        def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
+            lattice = model_crystal_config(model)["lattice"]
+            value = float(_parse_parameter_text(text))
+            if lattice.get(name) == value:
+                raise _NoChange()
+            lattice[name] = value
+
+        self._mutate_selected_model_quietly(mutate)
+
+    def _set_model_crystal_spacegroup(self, text: str) -> None:
+        def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
+            crystal = model_crystal_config(model)
+            value = text.strip() or "P 1"
+            if crystal.get("spacegroup") == value:
+                raise _NoChange()
+            crystal["spacegroup"] = value
+
+        self._mutate_selected_model_quietly(mutate)
+
+    def _set_model_crystal_site(self, index: int, field: Any, text: str) -> None:
+        def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
+            sites = model_crystal_config(model)["sites"]
+            if not (0 <= index < len(sites)):
+                raise _NoChange()
+            site = sites[index]
+            if field == "label":
+                value = text.strip()
+                if site.get("label") == value:
+                    raise _NoChange()
+                magnetic = [str(name) for name in model.config.get("magnetic_sites", [])]
+                model.config["magnetic_sites"] = [
+                    value if name == str(site.get("label", "")) else name for name in magnetic
+                ]
+                site["label"] = value
+            elif field == "ion":
+                if site.get("ion") == text:
+                    raise _NoChange()
+                site["ion"] = text
+            else:
+                position = list(site.get("position", [0.0, 0.0, 0.0]))
+                value = float(_parse_parameter_text(text))
+                if position[int(field)] == value:
+                    raise _NoChange()
+                position[int(field)] = value
+                site["position"] = position
+
+        self._mutate_selected_model_quietly(mutate)
+
+    def _set_model_site_magnetic(self, index: int, checked: bool) -> None:
+        def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
+            sites = model_crystal_config(model)["sites"]
+            if not (0 <= index < len(sites)):
+                raise _NoChange()
+            label = str(sites[index].get("label", ""))
+            magnetic = [str(name) for name in model.config.get("magnetic_sites", [])]
+            if bool(checked) == (label in magnetic):
+                raise _NoChange()
+            if checked:
+                magnetic.append(label)
+            else:
+                magnetic = [name for name in magnetic if name != label]
+            model.config["magnetic_sites"] = magnetic
+
+        self._mutate_selected_model_quietly(mutate)
+
+    def _add_model_crystal_site(self) -> None:
+        def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
+            sites = model_crystal_config(model)["sites"]
+            sites.append(
+                {
+                    "label": f"Site{len(sites) + 1}",
+                    "position": [0.0, 0.0, 0.0],
+                    "ion": "",
+                }
+            )
+
+        self._mutate_selected_model(mutate)
+
+    def _remove_model_crystal_site(self, index: int) -> None:
+        def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
+            sites = model_crystal_config(model)["sites"]
+            if not (0 <= index < len(sites)):
+                raise _NoChange()
+            removed = sites.pop(index)
+            label = str(removed.get("label", ""))
+            model.config["magnetic_sites"] = [
+                str(name) for name in model.config.get("magnetic_sites", []) if str(name) != label
+            ]
+
+        self._mutate_selected_model(mutate)
+
+    def _import_cif_into_selected_model(self) -> None:
+        from PySide6 import QtWidgets
+
+        group, model = self._selected_model_and_group()
+        if model is None:
+            return
+        path, _selected = QtWidgets.QFileDialog.getOpenFileName(
+            self.window, "Import CIF", "", "CIF files (*.cif);;All files (*)"
+        )
+        if not path:
+            return
+
+        def mutate(model: ModelComponentSpec, group: DataGroup | None) -> None:
+            import_cif_into_model(model, path, group=group)
+
+        self._mutate_selected_model(mutate)
+
+    def _use_group_crystal_for_selected_model(self) -> None:
+        def mutate(model: ModelComponentSpec, group: DataGroup | None) -> None:
+            if group is None:
+                raise ValueError("the model is not attached to a data group")
+            stored = group.metadata.get("crystal")
+            if isinstance(stored, dict) and stored.get("sites"):
+                model.config["crystal"] = copy.deepcopy(stored)
+            elif isinstance(group.lattice_parameters, dict):
+                crystal = model_crystal_config(model)
+                crystal["lattice"] = {
+                    name: float(group.lattice_parameters.get(name, fallback))
+                    for name, fallback in (
+                        ("a", 5.0), ("b", 5.0), ("c", 5.0),
+                        ("alpha", 90.0), ("beta", 90.0), ("gamma", 90.0),
+                    )
+                }
+                if group.spacegroup:
+                    crystal["spacegroup"] = str(group.spacegroup)
+            else:
+                raise ValueError(
+                    "the data group stores no crystal information; import a "
+                    "CIF or set lattice parameters on the group first"
+                )
+            model.config.pop("orbits", None)
+            model.config.pop("site_positions", None)
+            reconcile_model_orbit_parameters(model)
+
+        self._mutate_selected_model(mutate)
+
+    def _generate_selected_model_bond_orbits(self) -> None:
+        def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
+            generate_model_bond_orbits(model)
+
+        self._mutate_selected_model(mutate)
+
+    def _mutate_selected_model_quietly(self, mutate) -> None:
+        """Like ``_mutate_selected_model`` but a ``_NoChange`` is not an error."""
+
+        def wrapped(model: ModelComponentSpec, group: DataGroup | None) -> None:
+            mutate(model, group)
+
+        try:
+            self._mutate_selected_model(wrapped)
+        except _NoChange:
+            return
 
     def _set_model_parameter(self, name: str, text: str) -> None:
         group, _entry, _mask, model, role = self._objects_for_item(self._current_item())
@@ -7862,8 +9561,11 @@ def _project_from_dict(payload: dict[str, Any]) -> MetallixProject:
                 parameters=dict(model_payload.get("parameters", {})),
                 config=dict(model_payload.get("config", default_model_config(model_type))),
                 fit_parameters={
-                    name: bool(fit_payload.get(name, value))
-                    for name, value in default_model_fit_parameters(model_type).items()
+                    # defaults first, then every saved flag: config-derived
+                    # parameter names (e.g. J1 of generated bond orbits) are
+                    # not in the static defaults and must survive a load
+                    **default_model_fit_parameters(model_type),
+                    **{str(name): bool(value) for name, value in fit_payload.items()},
                 },
                 global_fit={
                     str(name): bool(value)
