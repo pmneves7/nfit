@@ -106,8 +106,9 @@ Render the local HYSPEC test datasets (`1D_test.nxs`, `2D_test.nxs`, and
 ```
 
 The slice viewer can display `signal`, propagated `errors`, `num_events`
-(`multiplicity`), or `mask`; choose x/y axes, integrate hidden axes, tune color
-normalization, switch between loaded datasets, copy the figure to the clipboard,
+(`multiplicity`), `combined_mask`, `file_mask`, or `metallix_mask`; choose x/y
+axes, integrate hidden axes, tune color normalization, switch between loaded
+datasets, copy the figure to the clipboard,
 compare attached fit results as linked data/fit/residual panels, or export a
 static `plot_mdhisto_slice(...)` script for notebooks and batch figure
 generation. `load_mantid_mdhisto_nxs` reads only the core MDHisto arrays by

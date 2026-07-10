@@ -6,6 +6,7 @@ import copy
 import ast
 import platform
 import re
+import signal
 import subprocess
 import time
 import zlib
@@ -51,6 +52,7 @@ Q_COORDINATE_NAME = "q"
 D_SPACING_COORDINATE_NAME = "d"
 COORDINATE_RANGE_AXIS_PREFIX = "axis_"
 COORDINATE_RANGE_PARAMETER_NAMES = ("H", "K", "L", "E")
+CUSTOM_FORM_FACTOR_CHOICE = "__custom__"
 
 
 # Data types the GUI can attach to a dataset. ``container`` is "mdhisto" for
@@ -362,10 +364,11 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
             "ion": {
                 "default": "",
                 "description": (
-                    "Magnetic ion whose tabulated <j0> form factor multiplies the intensity "
-                    "(requires lattice metadata for |Q|). Leave empty for no form factor."
+                    "Magnetic form factor multiplying the intensity: choose a tabulated ion, "
+                    "Custom for explicit <j0> coefficients, or none for no form factor. "
+                    "Requires lattice metadata for |Q|."
                 ),
-                "allowed": "An ion label from the ILL <j0> tables, e.g. Mn2, Fe2, Yb3, or empty.",
+                "allowed": "An ion label from the ILL <j0> tables, Custom, or empty.",
                 "type": "str",
                 "example": "Fe2",
                 "choices": "form_factor_ions",
@@ -455,10 +458,10 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
             "ion": {
                 "default": "",
                 "description": (
-                    "Magnetic ion whose tabulated <j0> form factor multiplies the intensity. "
-                    "Leave empty for no form factor."
+                    "Magnetic form factor multiplying the intensity: choose a tabulated ion, "
+                    "Custom for explicit <j0> coefficients, or none for no form factor."
                 ),
-                "allowed": "An ion label from the ILL <j0> tables, e.g. Mn2, Fe2, Yb3, or empty.",
+                "allowed": "An ion label from the ILL <j0> tables, Custom, or empty.",
                 "type": "str",
                 "example": "Fe2",
                 "choices": "form_factor_ions",
@@ -532,10 +535,10 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
             "ion": {
                 "default": "",
                 "description": (
-                    "Magnetic ion whose tabulated <j0> form factor multiplies the intensity. "
-                    "Leave empty for no form factor."
+                    "Magnetic form factor multiplying the intensity: choose a tabulated ion, "
+                    "Custom for explicit <j0> coefficients, or none for no form factor."
                 ),
-                "allowed": "An ion label from the ILL <j0> tables, e.g. Mn2, Fe2, Yb3, or empty.",
+                "allowed": "An ion label from the ILL <j0> tables, Custom, or empty.",
                 "type": "str",
                 "example": "Yb3",
                 "choices": "form_factor_ions",
@@ -1063,7 +1066,7 @@ def create_fit_result_entry(
             name=next_fit_timeline_name(group.fits),
             kind="timeline",
             created_at=_timestamp_now(),
-            children=[result, current_state_fit_entry(group)],
+            children=[result],
         )
         parent.children.append(timeline)
     else:
@@ -2175,10 +2178,14 @@ def _progress_event_summary(event: dict[str, Any]) -> dict[str, Any]:
         "stage": str(event.get("stage", "fit")),
         "message": str(event.get("message", "")),
     }
-    for key in ("iteration", "total", "cost", "convergence"):
+    for key in ("iteration", "total", "cost", "convergence", "elapsed_seconds", "seconds_per_step"):
         if event.get(key) is not None:
             value = event[key]
-            summary[key] = float(value) if key in {"cost", "convergence"} else int(value)
+            summary[key] = (
+                float(value)
+                if key in {"cost", "convergence", "elapsed_seconds", "seconds_per_step"}
+                else int(value)
+            )
     params = event.get("parameters")
     if isinstance(params, dict):
         summary["parameters"] = {name: float(value) for name, value in params.items()}
@@ -3049,7 +3056,49 @@ def _evaluate_mdhisto_mask(data: MDHistoData, mask: MaskSpec) -> np.ndarray:
         return _mdhisto_coordinate_range_mask(data, mask.parameters)
     if mask.type == "energy_q_range":
         return _mdhisto_energy_q_range_mask(data, mask.parameters)
+    if mask.type == "phonon_cone":
+        return _mdhisto_phonon_cone_mask(data, mask.parameters)
     return np.zeros(data.shape, dtype=bool)
+
+
+def _mdhisto_phonon_cone_mask(data: MDHistoData, parameters: dict[str, Any]) -> np.ndarray:
+    slope = _parameter_float(parameters.get("slope"))
+    if slope is None or slope <= 0.0:
+        # A non-positive slope leaves the starter mask inert (see MASK_TYPE_DEFINITIONS).
+        return np.zeros(data.shape, dtype=bool)
+    center = _coordinate_axis_vector(parameters.get("center"), 3)
+    if center is None:
+        return np.zeros(data.shape, dtype=bool)
+    coords = _mdhisto_coordinate_grids(data)
+    if not {"H", "K", "L", "E"}.issubset(coords):
+        return np.zeros(data.shape, dtype=bool)
+    radius = _parameter_float(parameters.get("radius")) or 0.0
+    radius = max(radius, 0.0)
+
+    hkl = np.stack([coords["H"], coords["K"], coords["L"]], axis=-1)
+    if _metadata_coordinate_units_are_inv_angstrom_for_mdhisto(data.metadata):
+        q_vectors = hkl
+        center_q = center
+    else:
+        matrix = _mdhisto_q_matrix(data.metadata)
+        q_vectors = np.einsum("ij,...j->...i", matrix, hkl)
+        center_q = matrix @ center
+
+    cone_radius = np.abs(coords["E"]) / slope + radius
+    distance = np.linalg.norm(q_vectors - center_q, axis=-1)
+    return distance <= cone_radius
+
+
+def _parameter_float(value: Any) -> float | None:
+    if isinstance(value, str):
+        value = _parse_parameter_text(value)
+    if value in (None, ""):
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if np.isfinite(result) else None
 
 
 def _mdhisto_coordinate_range_mask(data: MDHistoData, parameters: dict[str, Any]) -> np.ndarray:
@@ -3487,6 +3536,23 @@ def _current_state_after_result(group: DataGroup, result: FitTimelineEntry) -> F
     return None
 
 
+def _ensure_current_state_after_result(
+    group: DataGroup,
+    result: FitTimelineEntry,
+) -> tuple[FitTimelineEntry | None, bool]:
+    """Return/create the mutable current state immediately after ``result``."""
+
+    siblings = _fit_siblings(group.fits, result)
+    if siblings is None or result not in siblings:
+        return None, False
+    existing = _current_state_after_result(group, result)
+    if existing is not None:
+        return existing, False
+    current = current_state_fit_entry(group)
+    siblings.insert(siblings.index(result) + 1, current)
+    return current, True
+
+
 def _is_editable_initial_baseline(
     group: DataGroup,
     fit_entry: FitTimelineEntry | None,
@@ -3506,16 +3572,12 @@ def _should_branch_fit_now(group: DataGroup, parent: FitTimelineEntry) -> bool:
     siblings = _fit_siblings(group.fits, parent)
     if siblings is None:
         return True
-    return not (
-        parent is _last_result_at_level(siblings)
-        and _fit_entry_matches_current_state(siblings, parent)
-    )
+    return parent is not _last_result_at_level(siblings)
 
 
 def _replace_current_state(entries: list[FitTimelineEntry], group: DataGroup) -> None:
+    del group
     entries[:] = [entry for entry in entries if entry.kind != "current"]
-    if any(entry.kind == "result" for entry in entries):
-        entries.append(current_state_fit_entry(group))
 
 
 def _top_level_current_state_entry(group: DataGroup) -> FitTimelineEntry | None:
@@ -3879,6 +3941,8 @@ class _FitProgressDialog:
             status_parts.append(f"cost {_format_number(float(event['cost']))}")
         if event.get("convergence") is not None:
             status_parts.append(f"convergence {_format_number(float(event['convergence']))}")
+        if event.get("seconds_per_step") is not None:
+            status_parts.append(f"{_format_seconds_per_step(float(event['seconds_per_step']))}/step")
         self.status_label.setText(" | ".join(status_parts) if status_parts else message)
         params = event.get("parameters")
         if isinstance(params, dict) and params:
@@ -3888,6 +3952,8 @@ class _FitProgressDialog:
             log_parts.append(f"step {iteration}" + (f"/{total}" if total else ""))
         if event.get("cost") is not None:
             log_parts.append(f"cost {_format_number(float(event['cost']))}")
+        if event.get("seconds_per_step") is not None:
+            log_parts.append(f"{_format_seconds_per_step(float(event['seconds_per_step']))}/step")
         self.log.appendPlainText(" | ".join(log_parts))
         if total and iteration is not None:
             self.progress.setRange(0, int(total))
@@ -4474,6 +4540,7 @@ class MetallixProjectExplorer:
         self.mask_parameter_widget = None
         self.mask_parameter_layout = None
         self.model_type_combo = None
+        self.model_parameter_scroll = None
         self.model_parameter_widget = None
         self.model_parameter_layout = None
         self.fit_editor_widget = None
@@ -4536,7 +4603,16 @@ class MetallixProjectExplorer:
 
     def run(self) -> int:
         self.show()
-        return int(self.app.exec())
+        interrupt_timer, previous_interrupt_handler = _install_cli_interrupt_handler(self.app)
+        try:
+            return int(self.app.exec())
+        except KeyboardInterrupt:
+            self.app.exit(130)
+            return 130
+        finally:
+            if interrupt_timer is not None:
+                interrupt_timer.stop()
+            _restore_cli_interrupt_handler(previous_interrupt_handler)
 
     def create_data_group(self) -> DataGroup:
         group = create_data_group(self.project)
@@ -4929,10 +5005,10 @@ class MetallixProjectExplorer:
             progress.close()
         self.fit_branch_check.setChecked(False)
         self.refresh_slice_viewer(group)
-        item_to_select = _current_state_after_result(group, result) if should_branch else result
-        self._set_active_fit_state(group, item_to_select or result)
+        item_to_select = result
+        self._set_active_fit_state(group, item_to_select)
         self._mark_dirty()
-        self._refresh_tree(select_group=group, select_fit=item_to_select or result)
+        self._refresh_tree(select_group=group, select_fit=item_to_select)
         return result
 
     def _start_background_task(
@@ -5074,10 +5150,10 @@ class MetallixProjectExplorer:
                 return False
             self.fit_branch_check.setChecked(False)
             self.refresh_slice_viewer(group)
-            item_to_select = _current_state_after_result(group, result) if should_branch else result
-            self._set_active_fit_state(group, item_to_select or result)
+            item_to_select = result
+            self._set_active_fit_state(group, item_to_select)
             self._mark_dirty()
-            self._refresh_tree(select_group=group, select_fit=item_to_select or result)
+            self._refresh_tree(select_group=group, select_fit=item_to_select)
             return True
 
         return self._start_background_task(
@@ -5966,10 +6042,18 @@ class MetallixProjectExplorer:
         self.model_type_combo.setObjectName("model_type_combo")
         self.model_type_combo.setToolTip("Choose the model function used by the selected model component.")
         self.model_type_combo.currentTextChanged.connect(self._set_selected_model_type)
+        self.model_parameter_scroll = QtWidgets.QScrollArea()
+        self.model_parameter_scroll.setObjectName("model_parameter_scroll")
+        self.model_parameter_scroll.setWidgetResizable(True)
+        self.model_parameter_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.model_parameter_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.model_parameter_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.model_parameter_scroll.setMinimumHeight(240)
         self.model_parameter_widget = QtWidgets.QWidget()
         self.model_parameter_layout = QtWidgets.QGridLayout(self.model_parameter_widget)
         self.model_parameter_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
         self.model_parameter_layout.setColumnStretch(1, 1)
+        self.model_parameter_scroll.setWidget(self.model_parameter_widget)
         fit_editor = QtWidgets.QWidget()
         fit_editor_layout = QtWidgets.QGridLayout(fit_editor)
         fit_editor_layout.setContentsMargins(0, 0, 0, 0)
@@ -6099,7 +6183,7 @@ class MetallixProjectExplorer:
         right_layout.addWidget(self.mask_type_combo)
         right_layout.addWidget(self.mask_parameter_widget)
         right_layout.addWidget(self.model_type_combo)
-        right_layout.addWidget(self.model_parameter_widget)
+        right_layout.addWidget(self.model_parameter_scroll, 5)
         right_layout.addWidget(self.fit_editor_widget)
         right_layout.addWidget(self.details_scroll, 1)
         right_layout.addLayout(actions_row)
@@ -6482,7 +6566,7 @@ class MetallixProjectExplorer:
         self.mask_type_combo.setVisible(mask_editing)
         self.mask_parameter_widget.setVisible(mask_editing)
         self.model_type_combo.setVisible(role == "model")
-        self.model_parameter_widget.setVisible(role == "model")
+        self.model_parameter_scroll.setVisible(role == "model")
         self.fit_editor_widget.setVisible(role == "fit" and fit_entry is not None)
         self.fit_now_button.setVisible(role == "fit" and fit_entry is not None)
         self.fit_corner_button.setVisible(
@@ -7686,12 +7770,16 @@ class MetallixProjectExplorer:
         group.active_fit_path = _fit_entry_path(group.fits, fit_entry)
 
     def _record_data_group_state_change(self, group: DataGroup) -> bool:
-        """Update fit-history current state, creating an edit branch when needed."""
+        """Update fit-history current state, creating an edit branch when needed.
+
+        Returns True when the fit tree or active fit entry changed and callers
+        should refresh the tree.
+        """
 
         if self._restoring_fit_selection:
             return False
         ensure_fit_history(group)
-        branch_created = False
+        tree_changed = False
         current_entry: FitTimelineEntry | None = None
         if self._active_fit_group is group:
             if _fit_entry_in_tree(group.fits, self._active_fit_current):
@@ -7700,23 +7788,40 @@ class MetallixProjectExplorer:
                 if _is_editable_initial_baseline(group, self._active_fit_anchor):
                     _set_fit_current_snapshot(self._active_fit_anchor, group)
                     return False
-                if not _fit_entry_in_tree(group.fits, self._active_branch_current):
-                    timeline = FitTimelineEntry(
-                        name=next_fit_timeline_name(group.fits),
-                        kind="timeline",
-                        created_at=_timestamp_now(),
-                        metadata={
-                            "branch_reason": "dataset/model state edited after restoring a fit",
-                            "branched_from": self._active_fit_anchor.name,
-                        },
+                siblings = _fit_siblings(group.fits, self._active_fit_anchor)
+                if (
+                    self._active_fit_anchor.kind == "result"
+                    and siblings is not None
+                    and self._active_fit_anchor is _last_result_at_level(siblings)
+                ):
+                    current_entry, _created = _ensure_current_state_after_result(
+                        group, self._active_fit_anchor
                     )
-                    current_entry = current_state_fit_entry(group)
-                    timeline.children.append(current_entry)
-                    self._active_fit_anchor.children.append(timeline)
-                    self._active_branch_current = current_entry
-                    branch_created = True
-                else:
-                    current_entry = self._active_branch_current
+                    self._active_fit_current = current_entry
+                    self._active_branch_current = None
+                    tree_changed = True
+                    if current_entry is not None:
+                        group.active_fit_path = _fit_entry_path(group.fits, current_entry)
+                elif self._active_fit_anchor.kind == "result":
+                    if not _fit_entry_in_tree(group.fits, self._active_branch_current):
+                        timeline = FitTimelineEntry(
+                            name=next_fit_timeline_name(group.fits),
+                            kind="timeline",
+                            created_at=_timestamp_now(),
+                            metadata={
+                                "branch_reason": "dataset/model state edited after restoring a fit",
+                                "branched_from": self._active_fit_anchor.name,
+                            },
+                        )
+                        current_entry = current_state_fit_entry(group)
+                        timeline.children.append(current_entry)
+                        self._active_fit_anchor.children.append(timeline)
+                        self._active_branch_current = current_entry
+                        self._active_fit_current = None
+                        tree_changed = True
+                        group.active_fit_path = _fit_entry_path(group.fits, current_entry)
+                    else:
+                        current_entry = self._active_branch_current
             else:
                 self._active_fit_group = None
                 self._active_fit_anchor = None
@@ -7726,7 +7831,7 @@ class MetallixProjectExplorer:
             current_entry = _top_level_current_state_entry(group)
         if current_entry is not None:
             _set_fit_current_snapshot(current_entry, group)
-        return branch_created
+        return tree_changed
 
     def _clear_active_fit_state(self) -> None:
         self._active_fit_group = None
@@ -8203,24 +8308,12 @@ class MetallixProjectExplorer:
                 self.refresh_slice_viewer(group)
 
     def _rebuild_model_parameter_editor(self, model: ModelComponentSpec) -> None:
-        from PySide6 import QtCore, QtWidgets
+        from PySide6 import QtWidgets
 
         self._clear_model_parameter_editor()
         fit_group = QtWidgets.QGroupBox("Fit Parameters")
         fit_group.setObjectName("model_fit_parameters_group")
-        fit_group_layout = QtWidgets.QVBoxLayout(fit_group)
-        fit_group_layout.setContentsMargins(6, 6, 6, 6)
-        fit_scroll = QtWidgets.QScrollArea()
-        fit_scroll.setObjectName("model_fit_parameters_scroll")
-        fit_scroll.setWidgetResizable(True)
-        fit_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
-        fit_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        fit_scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        fit_scroll.setMinimumHeight(180)
-        fit_scroll.setMaximumHeight(320)
-        fit_contents = QtWidgets.QWidget()
-        fit_layout = QtWidgets.QGridLayout(fit_contents)
-        fit_layout.setContentsMargins(0, 0, 0, 0)
+        fit_layout = QtWidgets.QGridLayout(fit_group)
         fit_layout.setVerticalSpacing(4)
         fit_layout.setColumnStretch(1, 1)
         header_label = QtWidgets.QLabel("Plot label")
@@ -8302,8 +8395,6 @@ class MetallixProjectExplorer:
             fit_layout.addWidget(max_editor, row, 4)
             fit_layout.addWidget(fit_check, row, 5)
             fit_layout.addWidget(global_check, row, 6)
-        fit_scroll.setWidget(fit_contents)
-        fit_group_layout.addWidget(fit_scroll)
         self.model_parameter_layout.addWidget(fit_group, 0, 0, 1, 4)
 
         scope_group = QtWidgets.QGroupBox("Dataset Scope")
@@ -8336,26 +8427,51 @@ class MetallixProjectExplorer:
         config_definitions = MODEL_TYPE_DEFINITIONS[model.type].get("config", {})
         if not config_definitions:
             config_layout.addWidget(QtWidgets.QLabel("No configuration settings."), 0, 0, 1, 2)
-        for row, setting_name in enumerate(config_definitions):
+        row = 0
+        for setting_name in config_definitions:
+            if setting_name == "form_factor_coefficients":
+                continue
             label = QtWidgets.QLabel(setting_name)
             tooltip = model_config_tooltip(model.type, setting_name)
             label.setToolTip(tooltip)
             if config_definitions[setting_name].get("choices") == "form_factor_ions":
+                label.setText("form_factor")
                 combo = QtWidgets.QComboBox()
                 combo.setObjectName(f"model_config_choice_{setting_name}")
                 combo.addItem("(none)", "")
                 for ion in available_ions():
                     combo.addItem(ion, ion)
+                combo.addItem("Custom...", CUSTOM_FORM_FACTOR_CHOICE)
                 current = str(model.config.get(setting_name, "") or "")
+                if str(model.config.get("form_factor_coefficients", "") or "").strip():
+                    current = CUSTOM_FORM_FACTOR_CHOICE
                 combo.setCurrentIndex(max(combo.findData(current), 0))
                 combo.setToolTip(tooltip)
                 combo.currentIndexChanged.connect(
-                    lambda _index, setting_name=setting_name, combo=combo: self._set_model_config_setting(
-                        setting_name, str(combo.currentData() or "")
+                    lambda _index, combo=combo: self._set_model_form_factor_choice(
+                        str(combo.currentData() or "")
                     )
                 )
                 config_layout.addWidget(label, row, 0)
                 config_layout.addWidget(combo, row, 1)
+                row += 1
+                if current == CUSTOM_FORM_FACTOR_CHOICE:
+                    coeff_tooltip = model_config_tooltip(model.type, "form_factor_coefficients")
+                    coeff_label = QtWidgets.QLabel("custom coefficients")
+                    coeff_label.setToolTip(coeff_tooltip)
+                    coeff_editor = QtWidgets.QLineEdit(
+                        _parameter_to_text(model.config.get("form_factor_coefficients", ""))
+                    )
+                    coeff_editor.setObjectName("model_config_form_factor_coefficients")
+                    coeff_editor.setToolTip(coeff_tooltip)
+                    coeff_editor.editingFinished.connect(
+                        lambda editor=coeff_editor: self._set_model_config_setting(
+                            "form_factor_coefficients", editor.text()
+                        )
+                    )
+                    config_layout.addWidget(coeff_label, row, 0)
+                    config_layout.addWidget(coeff_editor, row, 1)
+                    row += 1
                 continue
             editor = QtWidgets.QLineEdit(_parameter_to_text(model.config.get(setting_name, "")))
             editor.setToolTip(tooltip)
@@ -8364,6 +8480,7 @@ class MetallixProjectExplorer:
             )
             config_layout.addWidget(label, row, 0)
             config_layout.addWidget(editor, row, 1)
+            row += 1
         self.model_parameter_layout.addWidget(config_group, 2, 0, 1, 4)
         if MODEL_TYPE_DEFINITIONS[model.type].get("structured_config"):
             self._build_model_crystal_editor(model)
@@ -8572,7 +8689,17 @@ class MetallixProjectExplorer:
             ):
                 table.setItem(row, column, QtWidgets.QTableWidgetItem(text))
         table.resizeColumnsToContents()
-        table.setMaximumHeight(180)
+        table.resizeRowsToContents()
+        visible_rows = min(max(len(orbits), 4), 10)
+        row_height = max(table.verticalHeader().defaultSectionSize(), 24)
+        table_height = (
+            table.horizontalHeader().height()
+            + row_height * visible_rows
+            + 2 * table.frameWidth()
+            + 8
+        )
+        table.setMinimumHeight(table_height)
+        table.setMaximumHeight(table_height)
         bonds_layout.addWidget(table, 1, 0, 1, 3)
         self.model_parameter_layout.addWidget(bonds_group, 5, 0, 1, 4)
 
@@ -8743,7 +8870,17 @@ class MetallixProjectExplorer:
         self._mutate_selected_model(mutate)
 
     def _generate_selected_model_bond_orbits(self) -> None:
+        from PySide6 import QtWidgets
+
+        cutoff_editor = self.model_parameter_widget.findChild(
+            QtWidgets.QLineEdit, "model_bonds_cutoff"
+        )
+
         def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
+            if cutoff_editor is not None:
+                model.config["bond_cutoff_angstrom"] = _parse_parameter_text(
+                    cutoff_editor.text()
+                )
             generate_model_bond_orbits(model)
 
         self._mutate_selected_model(mutate)
@@ -8803,6 +8940,34 @@ class MetallixProjectExplorer:
             model.config[name] = value
             branch_created = self._record_data_group_state_change(group) if group is not None else False
             self._mark_dirty()
+            if group is not None and branch_created:
+                self._refresh_tree(select_group=group, select_model=model)
+                return
+        if group is not None:
+            self.refresh_slice_viewer(group)
+
+    def _set_model_form_factor_choice(self, choice: str) -> None:
+        group, _entry, _mask, model, role = self._objects_for_item(self._current_item())
+        if role != "model" or model is None:
+            return
+        choice = str(choice or "")
+        changed = False
+        if choice == CUSTOM_FORM_FACTOR_CHOICE:
+            if model.config.get("ion") != CUSTOM_FORM_FACTOR_CHOICE:
+                model.config["ion"] = CUSTOM_FORM_FACTOR_CHOICE
+                changed = True
+            model.config.setdefault("form_factor_coefficients", "")
+        else:
+            if model.config.get("ion") != choice:
+                model.config["ion"] = choice
+                changed = True
+            if model.config.get("form_factor_coefficients"):
+                model.config["form_factor_coefficients"] = ""
+                changed = True
+        if changed:
+            branch_created = self._record_data_group_state_change(group) if group is not None else False
+            self._mark_dirty()
+            self._rebuild_model_parameter_editor(model)
             if group is not None and branch_created:
                 self._refresh_tree(select_group=group, select_model=model)
                 return
@@ -9498,6 +9663,15 @@ def _format_number(value: Any) -> str:
         return str(value)
 
 
+def _format_seconds_per_step(value: float) -> str:
+    seconds = float(value)
+    if not np.isfinite(seconds) or seconds < 0.0:
+        return "-"
+    if seconds < 1.0:
+        return f"{seconds * 1000.0:.3g} ms"
+    return f"{seconds:.3g} s"
+
+
 def _format_bytes(num_bytes: int) -> str:
     value = float(num_bytes)
     for unit in ("B", "KB", "MB", "GB", "TB"):
@@ -9835,6 +10009,33 @@ def _qt_app():
     if app is None:
         app = QtWidgets.QApplication([])
     return app
+
+
+def _install_cli_interrupt_handler(app: Any) -> tuple[Any | None, Any | None]:
+    """Let terminal Ctrl+C interrupt the Qt event loop."""
+
+    from PySide6 import QtCore
+
+    try:
+        previous_handler = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, lambda signum, _frame: app.exit(128 + signum))
+    except ValueError:
+        return None, None
+
+    interrupt_timer = QtCore.QTimer()
+    interrupt_timer.setInterval(200)
+    interrupt_timer.timeout.connect(lambda: None)
+    interrupt_timer.start()
+    return interrupt_timer, previous_handler
+
+
+def _restore_cli_interrupt_handler(previous_handler: Any | None) -> None:
+    if previous_handler is None:
+        return
+    try:
+        signal.signal(signal.SIGINT, previous_handler)
+    except ValueError:
+        return
 
 
 def _settings():

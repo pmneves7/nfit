@@ -39,9 +39,10 @@ python examples/plot_hyspec_test_datasets.py --save-dir /tmp/hyspec-test-plots
 ```
 
 The viewer can switch between same-shaped MDHisto channels (`signal`, `errors`,
-`num_events`/multiplicity, and `mask`) from the Channel dropdown. The Figure
-panel can copy the current figure or export a `plot_mdhisto_slice(...)` script
-that reproduces the current display settings without launching the GUI.
+`num_events`/multiplicity, `combined_mask`, `file_mask`, and `metallix_mask`)
+from the Channel dropdown. The Figure panel can copy the current figure or
+export a `plot_mdhisto_slice(...)` script that reproduces the current display
+settings without launching the GUI.
 When multiple datasets are loaded into the Qt viewer, the Dataset dropdown
 switches between them and rebuilds the axis/integration controls for the
 selected file.

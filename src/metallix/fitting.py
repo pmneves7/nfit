@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from multiprocessing.pool import ThreadPool
@@ -182,6 +183,9 @@ class FitDataset:
     parameter_bindings: dict[str, ParameterBinding] = field(default_factory=dict)
     model: Any = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    _prepared_valid_cache: dict[bool, PointData4D] = field(
+        default_factory=dict, init=False, compare=False, repr=False
+    )
 
     def prepared(self) -> PointData4D:
         """Return data after applying all dataset-local transforms."""
@@ -192,6 +196,24 @@ class FitDataset:
             if not isinstance(prepared, PointData4D):
                 raise TypeError("dataset transforms must return PointData4D")
         return prepared
+
+    def prepared_valid(self, *, require_positive_sigma: bool) -> PointData4D:
+        """Return the transformed, validity-filtered points, memoized per fit.
+
+        Transforms and validity filtering depend only on ``self.data``, not on
+        trial parameters, so the result is stable for the lifetime of the
+        dataset. Optimizers re-evaluate the model thousands of times; caching
+        here avoids re-running the transform chain each iteration and, crucially,
+        returns the *same* ``PointData4D`` object every time so per-dataset model
+        precomputations keyed on data identity (e.g. the RPA phase geometry)
+        actually hit their cache instead of rebuilding.
+        """
+
+        cached = self._prepared_valid_cache.get(require_positive_sigma)
+        if cached is None:
+            cached = self.prepared().valid(require_positive_sigma=require_positive_sigma)
+            self._prepared_valid_cache[require_positive_sigma] = cached
+        return cached
 
     def apply_resolution(
         self,
@@ -1093,14 +1115,18 @@ def sample_problem_parameters(
         emcee_sampler = emcee.EnsembleSampler(
             n_walkers, n_dim, log_probability, **backend_kwargs
         )
+        sampler_start = time.perf_counter()
         for iteration, state in enumerate(emcee_sampler.sample(p0, iterations=n_steps), start=1):
             if progress_callback is not None:
                 mean = np.mean(state.coords, axis=0)
+                elapsed = time.perf_counter() - sampler_start
                 progress_callback(
                     {
                         "stage": "emcee",
                         "iteration": iteration,
                         "total": n_steps,
+                        "elapsed_seconds": elapsed,
+                        "seconds_per_step": elapsed / max(iteration, 1),
                         "parameters": {name: float(value) for name, value in zip(names, mean)},
                         "message": f"emcee step {iteration}/{n_steps}",
                     }
@@ -1186,6 +1212,7 @@ def initialize_problem_differential_evolution(
         options["updating"] = "deferred"
     bounds_list = [(float(lo), float(hi)) for lo, hi in zip(lower, upper)]
     iteration = 0
+    initialization_start = time.perf_counter()
 
     def objective(x: FloatArray) -> float:
         params = unpack_parameters(x, names, fixed)
@@ -1201,10 +1228,13 @@ def initialize_problem_differential_evolution(
         iteration += 1
         if progress_callback is not None:
             params = unpack_parameters(xk, names, fixed)
+            elapsed = time.perf_counter() - initialization_start
             progress_callback(
                 {
                     "stage": "initialization",
                     "iteration": iteration,
+                    "elapsed_seconds": elapsed,
+                    "seconds_per_step": elapsed / max(iteration, 1),
                     "parameters": {name: float(params[name]) for name in names},
                     "cost": objective(np.asarray(xk, dtype=float)),
                     "convergence": None if convergence is None else float(convergence),
@@ -1239,10 +1269,13 @@ def initialize_problem_differential_evolution(
             pool.close()
             pool.join()
     if progress_callback is not None:
+        elapsed = time.perf_counter() - initialization_start
         progress_callback(
             {
                 "stage": "initialization",
                 "iteration": iteration,
+                "elapsed_seconds": elapsed,
+                "seconds_per_step": elapsed / iteration if iteration else None,
                 "parameters": {name: float(value) for name, value in zip(names, result.x)},
                 "cost": float(result.fun),
                 "message": "differential evolution initialization finished",
@@ -1280,7 +1313,7 @@ def _evaluate_problem(
 
     params = problem.resolve_parameters(params)
     for dataset in problem.datasets:
-        prepared = dataset.prepared().valid(require_positive_sigma=require_positive_sigma)
+        prepared = dataset.prepared_valid(require_positive_sigma=require_positive_sigma)
         if prepared.size == 0:
             raise ValueError(f"dataset {dataset.name!r} has no valid points after preprocessing")
 
@@ -1546,6 +1579,7 @@ def _run_least_squares(
     wrapped_residual_fn = residual_fn
     if progress_callback is not None:
         evaluation = 0
+        fit_start = time.perf_counter()
 
         def wrapped_residual_fn(x: FloatArray) -> FloatArray:
             nonlocal evaluation
@@ -1553,10 +1587,13 @@ def _run_least_squares(
             residual = residual_fn(x)
             if evaluation == 1 or evaluation % 10 == 0:
                 params = unpack_parameters(x, names, {} if fixed is None else fixed)
+                elapsed = time.perf_counter() - fit_start
                 progress_callback(
                     {
                         "stage": "least_squares",
                         "iteration": evaluation,
+                        "elapsed_seconds": elapsed,
+                        "seconds_per_step": elapsed / max(evaluation, 1),
                         "parameters": {name: float(params[name]) for name in names},
                         "cost": 0.5 * float(np.dot(residual, residual)),
                         "message": f"least-squares residual evaluation {evaluation}",

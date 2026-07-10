@@ -132,6 +132,27 @@ def test_fit_problem_combines_weighted_dataset_objectives():
     np.testing.assert_allclose(result.chi2, sum(result.dataset_chi2.values()))
 
 
+def test_least_squares_progress_reports_time_per_step():
+    data = PointData4D([0.0, 1.0], [0.0, 0.0], [0.0, 0.0], [1.0, 1.0], [2.0, 3.0], [1.0, 1.0])
+    events = []
+
+    def constant_model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        return np.full(data.size, params["level"], dtype=float)
+
+    problem = FitProblem(
+        datasets=[FitDataset("data", data)],
+        model=constant_model,
+        parameter_specs=[ParameterSpec("level", 1.0)],
+    )
+
+    fit_problem_least_squares(problem, progress_callback=events.append)
+
+    timed = [event for event in events if event.get("stage") == "least_squares"]
+    assert timed
+    assert all(event["elapsed_seconds"] >= 0.0 for event in timed)
+    assert all(event["seconds_per_step"] >= 0.0 for event in timed)
+
+
 def test_fit_dataset_applies_mask_transform_and_resolution():
     data = PointData4D(
         H=[0.0, 1.0, 2.0],

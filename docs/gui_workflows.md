@@ -20,6 +20,9 @@ During local development, the explicit environment interpreter is:
 /Users/pmneves/.conda/envs/metallix/bin/python -m metallix.project_gui
 ```
 
+When launched from a terminal, Ctrl+C sends an interrupt that closes the Qt
+event loop cleanly with the standard interrupt exit status.
+
 ## Project explorer
 
 The left tree organizes a project into top-level workspaces. A workspace holds
@@ -76,6 +79,9 @@ without guessing from the widget label alone.
 
 Masks are applied together. File-provided masks remain separate from metallix
 masks; metallix masks are applied as their own analysis mask layer. The data
+viewer exposes `combined_mask`, `file_mask`, and `metallix_mask` channels:
+`combined_mask` is the effective file-or-metallix exclusion mask used for
+display and fitting, while the other two channels show provenance. The data
 viewer's `Apply Masks` checkbox controls whether masked regions are hidden in
 the viewer, but fitting still excludes masked data.
 
@@ -85,14 +91,16 @@ datasets. Each parameter can also define an optional plot label used as the
 default nickname in fit diagnostics; plain text and Matplotlib mathtext/LaTeX
 style labels such as `$\\Gamma$` are accepted. More granular constraints and
 linking should continue to be expressed as explicit, scriptable model
-configuration rather than hidden widget state. When a model exposes many
-parameters, such as generated Heisenberg RPA exchange orbits, the Fit
-Parameters panel scrolls internally so rows keep normal editor height.
+configuration rather than hidden widget state. The model editor scrolls when a
+component has many sections or parameters, so fit-parameter rows keep normal
+editor height as generated Heisenberg RPA exchange orbits are added.
 
 The spin-fluctuation models (`local_relaxational`, `mmp_relaxational`,
 `heisenberg_rpa`; see [Spin-fluctuation models](spin_fluctuation_models.md))
-add a magnetic-ion picker for the tabulated form factor. The Heisenberg RPA
-model additionally shows a structured crystal editor:
+add a form-factor picker with all tabulated magnetic-ion entries plus a
+`Custom...` choice; the custom coefficient field appears only when that choice
+is selected. The Heisenberg RPA model additionally shows a structured crystal
+editor:
 
 - **Crystal** — lattice parameters and space group, with `Import CIF...`
   (loads lattice, space group, and atomic sites from a CIF file, and copies
@@ -108,8 +116,9 @@ model additionally shows a structured crystal editor:
   enumerates bonds up to the cutoff, groups them into symmetry-distinct orbits
   (`J1`, `J2`, `J3a`, `J3b`, ...), and adds one exchange fit parameter per
   orbit to the Fit Parameters grid. Values of orbits whose labels persist are
-  kept across regeneration; a read-only table summarizes each orbit's
-  distance and multiplicity.
+  kept across regeneration; a read-only table grows with the orbit count, up
+  to a capped visible height, and summarizes each orbit's distance and
+  multiplicity.
 
 All crystal and bond state is plain data in the model component's
 configuration, so it serializes with the project file and can equally be set
@@ -119,7 +128,9 @@ from a script.
 
 The `Fits` tree stores initial conditions, fit results, current states, and
 nested timelines. Selecting a fit state restores the dataset/mask/model
-configuration stored with that fit. The active fit state is shown with a
+configuration stored with that fit. Running a fit creates only the new fit
+result; a sibling `Current state` is created lazily only when the user edits the
+latest result at that timeline level. The active fit state is shown with a
 different tree style from the ordinary cursor selection, so users can tell which
 fit state is applied even after selecting a model or dataset elsewhere.
 
@@ -131,10 +142,12 @@ attempts remain organized.
 Changing scientific state creates or updates the current timeline state:
 datasets, masks, model components, parameter values, fitted/fixed flags,
 sharing, limits, constraints, scale factors, and dataset weights are all part of
-the fit snapshot. Changing only fit-engine settings does not create an edit
-branch by itself. This lets users rerun the same scientific state with a
-different loss, initializer, or posterior sampler and compare the resulting fit
-entries side by side.
+the fit snapshot. Editing the latest fit result at a level moves the active fit
+state to that level's `Current state` and records the edit there; editing an
+earlier result creates a nested timeline. Changing only fit-engine settings does
+not create an edit branch by itself. This lets users rerun the same scientific
+state with a different loss, initializer, or posterior sampler and compare the
+resulting fit entries side by side.
 
 The fit editor follows a simple opt-in pipeline:
 
@@ -162,10 +175,13 @@ Longer fit runs open or reuse a progress window and run in a background Qt
 worker so the GUI can keep repainting and responding while initialization,
 least squares, or emcee is active. The progress window reports the active
 stage, iteration or residual-evaluation count, current cost when available, and
-current parameter values in a table, with a short stage log below. The `Cancel`
-button requests cancellation at the next optimizer or sampler progress update.
-Starting another fit resets the same progress window instead of opening
-duplicates. A compact progress log is also stored in the fit metadata.
+current time per step plus current parameter values in a table, with a short
+stage log below. The time-per-step value is reported for differential-evolution
+initialization, least-squares residual evaluations, and emcee posterior
+sampling. The `Cancel` button requests cancellation at the next optimizer or
+sampler progress update. Starting another fit resets the same progress window
+instead of opening duplicates. A compact progress log is also stored in the fit
+metadata.
 
 `DE workers` and `emcee workers` control optional parallel worker threads for
 differential-evolution objective evaluations and emcee log-probability

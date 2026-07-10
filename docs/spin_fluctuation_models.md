@@ -46,8 +46,9 @@ s = \frac{|Q|}{4\pi} \ \text{in Å}^{-1},
 $$
 
 for the common $3d$, $4d$, $4f$, and $5f$ ions, keyed by labels such as
-`"Mn2"`, `"Fe2"`, `"Yb3"`, `"U4"`. Custom coefficients
-$(A, a, B, b, C, c, D)$ from the ILL tables override the built-in table.
+`"Mn2"`, `"Fe2"`, `"Yb3"`, `"U4"`. In the GUI, select a tabulated entry from
+the form-factor dropdown, or choose `Custom...` to show the coefficient field
+for explicit $(A, a, B, b, C, c, D)$ values from the ILL tables.
 Computing $|Q|$ in Å$^{-1}$ requires lattice metadata on the fit points; the
 GUI attaches the group's lattice parameters automatically.
 

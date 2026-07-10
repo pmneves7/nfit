@@ -297,6 +297,7 @@ class QtMDHistoSliceViewer:
             state = previous_states.get(name)
             if state is not None:
                 state.model.data = self.datasets[index]
+                state.model.refresh_metadata_channels()
                 self._dataset_states[index] = state
         state = self._dataset_states[new_index]
         if state is None:
@@ -517,7 +518,9 @@ class QtMDHistoSliceViewer:
         dataset_layout.addWidget(self.dataset_combo, 0, 1)
         self.channel_combo = QtWidgets.QComboBox()
         self.channel_combo.addItems(self.model.CHANNELS)
-        self.channel_combo.setToolTip("Choose the data channel to display, such as signal, mask, fit, or residual.")
+        self.channel_combo.setToolTip(
+            "Choose the data channel to display, such as signal, combined_mask, file_mask, metallix_mask, fit, or residual."
+        )
         _compact_combobox(self.channel_combo)
         self.channel_combo.setCurrentText(self.model.channel)
         self.channel_combo.currentTextChanged.connect(self._set_channel)
@@ -531,8 +534,8 @@ class QtMDHistoSliceViewer:
         dataset_layout.addWidget(self.apply_masks_check, 1, 2)
         self.show_fit_check = QtWidgets.QCheckBox("Show fit")
         self.show_fit_check.setToolTip(
-            "Show the stored fit channel beside the data (2D) or as a line under the data (1D). "
-            "Enabled once a fit result has stored channels for this dataset."
+            "Show the fit channel beside the data (2D) or as a line under the data (1D). "
+            "Enabled once stored fit channels or current model channels are available for this dataset."
         )
         self.show_fit_check.toggled.connect(self._set_show_fit)
         self.show_residual_check = QtWidgets.QCheckBox("Show residual")

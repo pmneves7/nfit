@@ -150,6 +150,8 @@ def _form_factor_sq_from_config(component: Any, data: PointData4D) -> float | np
 
     config = component.config if isinstance(component.config, dict) else {}
     ion = str(config.get("ion", "") or "").strip()
+    if ion == "__custom__":
+        ion = ""
     coefficients = config.get("form_factor_coefficients")
     if not ion and not coefficients:
         return 1.0
@@ -276,21 +278,27 @@ def _heisenberg_rpa_factory(component: Any) -> ModelFunction:
     chi0_key = qualified_parameter_name(name, "chi0")
     gamma0_key = qualified_parameter_name(name, "gamma0")
 
-    # The Q-dependent, exchange-independent phase arrays are expensive to
-    # build but fixed for a given dataset, while the optimizer re-evaluates
-    # the model thousands of times. FitDataset data objects are stable for
-    # the lifetime of a fit, so cache per data object.
-    geometry_cache: dict[tuple[int, int], Any] = {}
+    # The Q-dependent, exchange-independent phase arrays (and the equally
+    # Q-fixed magnetic form factor) are expensive to build but constant for a
+    # given dataset, while the optimizer re-evaluates the model thousands of
+    # times. FitDataset.prepared_valid returns a stable object for the lifetime
+    # of a fit, so cache per data object. The cache holds a reference to the
+    # data object and verifies identity on lookup, so the id() key can never
+    # alias a different (freed-then-reused) object.
+    geometry_cache: dict[int, tuple[PointData4D, Any, Any]] = {}
 
     def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
         temperature = _dataset_temperature(data)
-        cache_key = (id(data), data.size)
-        geometry = geometry_cache.get(cache_key)
-        if geometry is None:
+        cache_key = id(data)
+        cached = geometry_cache.get(cache_key)
+        if cached is None or cached[0] is not data:
             if len(geometry_cache) > 32:
                 geometry_cache.clear()
             geometry = build_rpa_geometry(data.H, data.K, data.L, site_positions, orbits)
-            geometry_cache[cache_key] = geometry
+            form_factor_sq = _form_factor_sq_from_config(component, data)
+            geometry_cache[cache_key] = (data, geometry, form_factor_sq)
+        else:
+            _, geometry, form_factor_sq = cached
         try:
             chipp = heisenberg_rpa_chipp(
                 geometry,
@@ -309,7 +317,7 @@ def _heisenberg_rpa_factory(component: Any) -> ModelFunction:
             data.E,
             temperature,
             scale=float(params[scale_key]),
-            form_factor_sq=_form_factor_sq_from_config(component, data),
+            form_factor_sq=form_factor_sq,
             polarization=ISOTROPIC_POLARIZATION,
         )
 

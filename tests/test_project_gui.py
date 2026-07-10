@@ -1,4 +1,5 @@
 import json
+import signal
 import time
 from pathlib import Path
 
@@ -660,6 +661,61 @@ def test_energy_q_range_mask_accepts_leading_decimal_and_projected_q_axes():
     np.testing.assert_array_equal(viewed.metadata["metallix_mask"], expected)
 
 
+def test_dataset_for_slice_viewer_applies_phonon_cone_mask():
+    # Bin edges chosen so centers are H in {0, 1} and E in {0, 10}.
+    h_axis = MDHistoAxis("H", np.array([-0.5, 0.5, 1.5]), "rlu", "h")
+    k_axis = MDHistoAxis("K", np.array([-0.5, 0.5]), "rlu", "k")
+    l_axis = MDHistoAxis("L", np.array([-0.5, 0.5]), "rlu", "l")
+    e_axis = MDHistoAxis("E", np.array([-5.0, 5.0, 15.0]), "meV", "energy_transfer")
+    shape = (2, 1, 1, 2)
+    data = MDHistoData(
+        axes=(h_axis, k_axis, l_axis, e_axis),
+        signal=np.zeros(shape),
+        errors=np.ones(shape),
+        mask=np.zeros(shape, dtype=bool),
+        num_events=np.ones(shape),
+        # Cubic 2*pi lattice makes 1 rlu equal 1 inverse angstrom.
+        metadata={"lattice_parameters": {"a": 2.0 * np.pi, "b": 2.0 * np.pi, "c": 2.0 * np.pi}},
+    )
+    dataset = DatasetEntry("scan", data)
+    mask = create_mask(dataset, type="phonon_cone")
+    mask.parameters["center"] = [0.0, 0.0, 0.0]
+    mask.parameters["slope"] = 35.0
+    mask.parameters["radius"] = 0.0
+
+    viewed = dataset_for_slice_viewer(dataset)
+
+    # Only the H=0 column falls inside the cone; the H=1 column is 1 inv-angstrom away.
+    expected = np.zeros(shape, dtype=bool)
+    expected[0] = True
+    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], expected)
+
+
+def test_phonon_cone_mask_is_inert_with_nonpositive_slope():
+    h_axis = MDHistoAxis("H", np.array([-0.5, 0.5, 1.5]), "rlu", "h")
+    k_axis = MDHistoAxis("K", np.array([-0.5, 0.5]), "rlu", "k")
+    l_axis = MDHistoAxis("L", np.array([-0.5, 0.5]), "rlu", "l")
+    e_axis = MDHistoAxis("E", np.array([-5.0, 5.0, 15.0]), "meV", "energy_transfer")
+    shape = (2, 1, 1, 2)
+    data = MDHistoData(
+        axes=(h_axis, k_axis, l_axis, e_axis),
+        signal=np.zeros(shape),
+        errors=np.ones(shape),
+        mask=np.zeros(shape, dtype=bool),
+        num_events=np.ones(shape),
+        metadata={"lattice_parameters": {"a": 2.0 * np.pi, "b": 2.0 * np.pi, "c": 2.0 * np.pi}},
+    )
+    dataset = DatasetEntry("scan", data)
+    mask = create_mask(dataset, type="phonon_cone")
+    mask.parameters["center"] = [0.0, 0.0, 0.0]
+    # The default zero slope must leave the starter mask inert instead of raising.
+    mask.parameters["slope"] = 0.0
+
+    viewed = dataset_for_slice_viewer(dataset)
+
+    assert viewed.metadata["metallix_mask_count"] == 0
+
+
 def test_project_explorer_adds_and_edits_models(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
@@ -683,8 +739,15 @@ def test_project_explorer_adds_and_edits_models(monkeypatch):
 
     fit_group = explorer.model_parameter_widget.findChild(QtWidgets.QGroupBox, "model_fit_parameters_group")
     config_group = explorer.model_parameter_widget.findChild(QtWidgets.QGroupBox, "model_config_group")
+    model_scroll = explorer.window.findChild(QtWidgets.QScrollArea, "model_parameter_scroll")
     assert fit_group is not None
     assert config_group is not None
+    assert model_scroll is not None
+    assert model_scroll.widget() is explorer.model_parameter_widget
+    right_layout = model_scroll.parentWidget().layout()
+    assert right_layout.stretch(right_layout.indexOf(model_scroll)) > right_layout.stretch(
+        right_layout.indexOf(explorer.details_scroll)
+    )
     assert fit_group.title() == "Fit Parameters"
     assert config_group.title() == "Configuration Settings"
 
@@ -785,6 +848,55 @@ def test_project_explorer_model_limits_and_applies_to_controls(monkeypatch):
     assert model.applies_to is None
 
 
+def test_spin_model_form_factor_custom_choice_controls_coefficients(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Datagroup1")
+    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
+    model = explorer.add_model_to_selection()
+
+    combo = explorer.model_type_combo
+    combo.setCurrentIndex(combo.findData("local_relaxational"))
+
+    form_combo = explorer.model_parameter_widget.findChild(QtWidgets.QComboBox, "model_config_choice_ion")
+    assert form_combo is not None
+    assert form_combo.findData(project_gui.CUSTOM_FORM_FACTOR_CHOICE) >= 0
+    assert (
+        explorer.model_parameter_widget.findChild(
+            QtWidgets.QLineEdit, "model_config_form_factor_coefficients"
+        )
+        is None
+    )
+
+    form_combo.setCurrentIndex(form_combo.findData("Fe2"))
+    assert model.config["ion"] == "Fe2"
+    assert model.config["form_factor_coefficients"] == ""
+
+    form_combo = explorer.model_parameter_widget.findChild(QtWidgets.QComboBox, "model_config_choice_ion")
+    form_combo.setCurrentIndex(form_combo.findData(project_gui.CUSTOM_FORM_FACTOR_CHOICE))
+    coeff_editor = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "model_config_form_factor_coefficients"
+    )
+    assert coeff_editor is not None
+    coeff_editor.setText("0.0263, 34.96, 0.3668, 15.94, 0.6188, 5.594, -0.0119")
+    explorer._set_model_config_setting("form_factor_coefficients", coeff_editor.text())
+    assert model.config["ion"] == project_gui.CUSTOM_FORM_FACTOR_CHOICE
+    assert len(model.config["form_factor_coefficients"]) == 7
+
+    form_combo = explorer.model_parameter_widget.findChild(QtWidgets.QComboBox, "model_config_choice_ion")
+    form_combo.setCurrentIndex(form_combo.findData("Mn2"))
+    assert model.config["ion"] == "Mn2"
+    assert model.config["form_factor_coefficients"] == ""
+    assert (
+        explorer.model_parameter_widget.findChild(
+            QtWidgets.QLineEdit, "model_config_form_factor_coefficients"
+        )
+        is None
+    )
+
+
 def test_project_explorer_fit_history_creates_results_branches_and_restores(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
@@ -808,7 +920,7 @@ def test_project_explorer_fit_history_creates_results_branches_and_restores(monk
 
     assert result is not None
     assert result.name == "Fit Result1"
-    assert [fit.name for fit in group.fits] == ["Initial", "Fit Result1", "Current state"]
+    assert [fit.name for fit in group.fits] == ["Initial", "Fit Result1"]
     assert group.fits[1].goodness["status"] in {"converged", "not converged"}
     assert "first" in group.fits[1].channels
 
@@ -872,27 +984,25 @@ def test_project_explorer_fit_history_creates_results_branches_and_restores(monk
 
     explorer._set_model_parameter("constant", "1.25")
 
-    edit_branch = group.fits[1].children[0]
-    assert edit_branch.kind == "timeline"
-    assert edit_branch.children[-1].kind == "current"
-    assert edit_branch.children[-1].snapshot["models"][0]["parameters"]["constant"] == 1.25
-    edit_branch_item = explorer.tree.topLevelItem(0).child(2).child(1).child(0)
-    edit_current_item = edit_branch_item.child(edit_branch_item.childCount() - 1)
-    assert explorer._fit_entry_for_item(edit_current_item) is edit_branch.children[-1]
+    assert group.fits[1].children == []
+    assert [fit.name for fit in group.fits] == ["Initial", "Fit Result1", "Current state"]
+    assert group.fits[2].kind == "current"
+    assert group.fits[2].snapshot["models"][0]["parameters"]["constant"] == 1.25
+    edit_current_item = explorer.tree.topLevelItem(0).child(2).child(2)
+    assert explorer._fit_entry_for_item(edit_current_item) is group.fits[2]
     assert explorer.tree.currentItem().text(0) == "Model1"
     assert edit_current_item.font(0).italic()
     assert edit_current_item.font(0).bold()
 
-    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(2).child(1))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(2).child(2))
     explorer.fit_branch_check.setChecked(True)
     branched = explorer.fit_now_for_selection()
 
     assert branched is not None
-    explicit_branch = group.fits[1].children[-1]
+    explicit_branch = group.fits[2].children[-1]
     assert explicit_branch.kind == "timeline"
-    assert explicit_branch.children[0] is branched
-    assert explicit_branch.children[-1].name == "Current state"
-    assert explorer.tree.currentItem().text(0) == "Current state"
+    assert explicit_branch.children == [branched]
+    assert explorer.tree.currentItem().text(0) == branched.name
     assert explorer.tree.currentItem().font(0).italic()
     assert explorer.tree.currentItem().font(0).bold()
     assert not explorer.fit_now_button.isHidden()
@@ -1298,6 +1408,7 @@ def test_fit_progress_dialog_uses_parameter_table_and_resets(monkeypatch):
             "stage": "least_squares",
             "iteration": 10,
             "cost": 12.5,
+            "seconds_per_step": 0.125,
             "parameters": {
                 "model.constant[a]": 1.25,
                 "model.constant[b]": 2.5,
@@ -1310,11 +1421,24 @@ def test_fit_progress_dialog_uses_parameter_table_and_resets(monkeypatch):
     assert table.rowCount() == 2
     assert "model.constant" not in dialog.log.toPlainText()
     assert "Least-squares fit" in dialog.stage_label.text()
+    assert "125 ms/step" in dialog.status_label.text()
+    assert "125 ms/step" in dialog.log.toPlainText()
 
     dialog.reset()
 
     assert table.rowCount() == 0
     assert dialog.log.toPlainText() == ""
+
+    summary = project_gui._progress_event_summary(
+        {
+            "stage": "emcee",
+            "iteration": 3,
+            "elapsed_seconds": 1.5,
+            "seconds_per_step": 0.5,
+        }
+    )
+    assert summary["elapsed_seconds"] == 1.5
+    assert summary["seconds_per_step"] == 0.5
 
 
 def test_project_explorer_reuses_fit_progress_dialog(monkeypatch):
@@ -1431,7 +1555,6 @@ def test_project_explorer_fit_now_from_earlier_result_creates_nested_timeline(mo
         "Fit Result3",
         "Fit Result4",
         "Fit Result5",
-        "Current state",
     ]
 
     fit_result3_item = explorer.tree.topLevelItem(0).child(2).child(3)
@@ -1446,14 +1569,22 @@ def test_project_explorer_fit_now_from_earlier_result_creates_nested_timeline(mo
         "Fit Result3",
         "Fit Result4",
         "Fit Result5",
-        "Current state",
     ]
     assert group.fits[3].children[0].kind == "timeline"
     assert group.fits[3].children[0].children[0] is branched
-    assert group.fits[3].children[0].children[-1].name == "Current state"
-    assert explorer.tree.currentItem().text(0) == "Current state"
+    assert group.fits[3].children[0].children == [branched]
+    assert explorer.tree.currentItem().text(0) == branched.name
     assert not explorer.fit_now_button.isHidden()
     assert explorer.import_dataset_button.isHidden()
+
+    model_item = explorer.tree.topLevelItem(0).child(1).child(0)
+    explorer.tree.setCurrentItem(model_item)
+    explorer._set_model_parameter("constant", "2.5")
+
+    timeline = group.fits[3].children[0]
+    assert [entry.kind for entry in timeline.children] == ["result", "current"]
+    assert timeline.children[1].snapshot["models"][0]["parameters"]["constant"] == 2.5
+    assert timeline.children[0].children == []
 
 
 def test_project_explorer_context_menu_actions_and_source_change(monkeypatch, tmp_path):
@@ -1653,6 +1784,81 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
     diagnostics.close_shortcut.activated.emit()
     QtWidgets.QApplication.processEvents()
     assert not diagnostics.window.isVisible()
+
+
+def test_cli_interrupt_handler_maps_sigint_to_qt_exit(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    project_gui._qt_app()
+    exits = []
+
+    class FakeApp:
+        def exit(self, code=0):
+            exits.append(code)
+
+    previous_handler = object()
+    installed_handlers = {}
+
+    monkeypatch.setattr(project_gui.signal, "getsignal", lambda signum: previous_handler)
+    monkeypatch.setattr(
+        project_gui.signal,
+        "signal",
+        lambda signum, handler: installed_handlers.setdefault(signum, handler),
+    )
+
+    timer, restored_handler = project_gui._install_cli_interrupt_handler(FakeApp())
+    try:
+        assert restored_handler is previous_handler
+        installed_handlers[signal.SIGINT](signal.SIGINT, None)
+        assert exits == [130]
+    finally:
+        if timer is not None:
+            timer.stop()
+
+
+def test_project_explorer_run_handles_keyboard_interrupt(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    class FakeApp:
+        def __init__(self):
+            self.exit_codes = []
+
+        def exec(self):
+            raise KeyboardInterrupt
+
+        def exit(self, code=0):
+            self.exit_codes.append(code)
+
+    class FakeTimer:
+        def __init__(self):
+            self.stopped = False
+
+        def stop(self):
+            self.stopped = True
+
+    fake_app = FakeApp()
+    fake_timer = FakeTimer()
+    restored_handlers = []
+    explorer = MetallixProjectExplorer()
+    explorer.app = fake_app
+    monkeypatch.setattr(explorer, "show", lambda: explorer)
+    monkeypatch.setattr(
+        project_gui,
+        "_install_cli_interrupt_handler",
+        lambda app: (fake_timer, "previous-handler"),
+    )
+    monkeypatch.setattr(
+        project_gui,
+        "_restore_cli_interrupt_handler",
+        lambda handler: restored_handlers.append(handler),
+    )
+
+    assert explorer.run() == 130
+    assert fake_app.exit_codes == [130]
+    assert fake_timer.stopped is True
+    assert restored_handlers == ["previous-handler"]
 
 
 def test_unsaved_prompt_options(monkeypatch):
@@ -2509,7 +2715,12 @@ def test_heisenberg_rpa_editor_generates_orbits_and_round_trips(monkeypatch, tmp
     explorer._set_model_crystal_site(0, "label", "Ni1")
     explorer._set_model_crystal_site(0, "ion", "Ni2")
     explorer._set_model_site_magnetic(0, True)
-    explorer._set_model_config_setting("bond_cutoff_angstrom", "3.0")
+
+    cutoff_editor = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "model_bonds_cutoff"
+    )
+    assert cutoff_editor is not None
+    cutoff_editor.setText("3.0")
     explorer._generate_selected_model_bond_orbits()
 
     assert [orbit["label"] for orbit in model.config["orbits"]] == ["J1"]
@@ -2528,6 +2739,16 @@ def test_heisenberg_rpa_editor_generates_orbits_and_round_trips(monkeypatch, tmp
     assert orbit_table.item(0, 0).text() == "J1"
     assert orbit_table.item(0, 2).text() == "24"
 
+    cutoff_editor = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "model_bonds_cutoff"
+    )
+    assert cutoff_editor is not None
+    cutoff_editor.setText("4.1")
+    explorer._generate_selected_model_bond_orbits()
+
+    assert model.config["bond_cutoff_angstrom"] == 4.1
+    assert [orbit["label"] for orbit in model.config["orbits"]] == ["J1", "J2"]
+
     explorer._set_model_parameter("J1", "0.15")
     explorer._set_model_fit_parameter("J1", True)
 
@@ -2535,13 +2756,13 @@ def test_heisenberg_rpa_editor_generates_orbits_and_round_trips(monkeypatch, tmp
     save_project(MetallixProject([group]), path)
     loaded = load_project(path)
     loaded_model = next(iter(loaded.data_groups[0].models.values()))
-    assert [orbit["label"] for orbit in loaded_model.config["orbits"]] == ["J1"]
+    assert [orbit["label"] for orbit in loaded_model.config["orbits"]] == ["J1", "J2"]
     assert loaded_model.parameters["J1"] == 0.15
     assert loaded_model.fit_parameters["J1"] is True
     assert loaded_model.config["site_positions"] == model.config["site_positions"]
 
 
-def test_heisenberg_rpa_fit_parameters_scroll_when_many_orbits(monkeypatch):
+def test_heisenberg_rpa_editor_scrolls_while_fit_parameters_grow(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
     QtCore = pytest.importorskip("PySide6.QtCore")
@@ -2560,15 +2781,18 @@ def test_heisenberg_rpa_fit_parameters_scroll_when_many_orbits(monkeypatch):
     fit_group = explorer.model_parameter_widget.findChild(
         QtWidgets.QGroupBox, "model_fit_parameters_group"
     )
-    fit_scroll = explorer.model_parameter_widget.findChild(
-        QtWidgets.QScrollArea, "model_fit_parameters_scroll"
-    )
+    model_scroll = explorer.window.findChild(QtWidgets.QScrollArea, "model_parameter_scroll")
+    orbit_table = explorer.model_parameter_widget.findChild(QtWidgets.QTableWidget, "model_bonds_table")
     assert fit_group is not None
-    assert fit_scroll is not None
-    assert fit_scroll.minimumHeight() >= 180
-    assert fit_scroll.maximumHeight() <= 320
-    assert fit_scroll.verticalScrollBarPolicy() == QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded
-    assert fit_scroll.widget().minimumSizeHint().height() > fit_scroll.minimumHeight()
+    assert model_scroll is not None
+    assert orbit_table is not None
+    assert not model_scroll.isHidden()
+    assert model_scroll.verticalScrollBarPolicy() == QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded
+    assert model_scroll.widget().minimumSizeHint().height() > model_scroll.minimumHeight()
+    assert fit_group.findChild(QtWidgets.QScrollArea, "model_fit_parameters_scroll") is None
+    assert fit_group.minimumSizeHint().height() > model_scroll.minimumHeight()
+    assert orbit_table.maximumHeight() == orbit_table.minimumHeight()
+    assert orbit_table.maximumHeight() >= orbit_table.horizontalHeader().height() + 4 * 24
     assert (
         explorer.model_parameter_widget.findChild(
             QtWidgets.QLineEdit, "model_parameter_min_J24"

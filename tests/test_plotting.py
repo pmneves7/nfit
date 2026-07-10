@@ -210,6 +210,7 @@ def test_mdhisto_slice_viewer_blanks_empty_bins_when_integrating_ranges():
     assert view["num_events"][2, 3] == 0.0
     assert np.isnan(view["signal"][2, 3])
     assert np.isnan(view["errors"][2, 3])
+    assert view["combined_mask"][2, 3]
     assert view["mask"][2, 3]
 
 
@@ -231,7 +232,7 @@ def test_qt_slice_viewer_apply_masks_toggle_shows_masked_bins():
     viewer.apply_masks_check.setChecked(False)
 
     assert not np.isnan(viewer.slice_arrays()["signal"][2, 3])
-    assert viewer.slice_arrays()["mask"][2, 3]
+    assert viewer.slice_arrays()["combined_mask"][2, 3]
 
 
 def test_mdhisto_slice_viewer_auto_color_limits():
@@ -375,6 +376,7 @@ def test_qt_slice_viewer_boolean_channels_use_grey_unit_scale_and_reverse():
     viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2, channel="mask")
 
     assert "grey" in viewer.model.COLORMAPS
+    assert viewer.model.channel == "combined_mask"
     assert isinstance(viewer.cmap_reverse_button, QtWidgets.QPushButton)
     assert viewer.model._color_limits(viewer.model._display_values(viewer.slice_arrays())) == (0.0, 1.0)
     assert viewer.image.cmap.name == "gray"
@@ -611,6 +613,24 @@ def test_qt_reopen_after_fit_compare_does_not_crash():
     # restores dataset state and re-applies the histogram layout.
     fresh = _with_fit_channels(_tiny_mdhisto_data())
     viewer.replace_datasets([fresh], dataset_names=["first"])  # must not raise
+
+
+def test_qt_replace_datasets_enables_fit_controls_when_channels_appear():
+    pytest.importorskip("PySide6")
+    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), dataset_names=["scan"], x_dim=3, y_dim=2)
+    assert not viewer.show_fit_check.isEnabled()
+
+    viewer.replace_datasets(
+        [_with_fit_channels(_tiny_mdhisto_data())],
+        dataset_names=["scan"],
+        selected_dataset_name="scan",
+    )
+
+    assert viewer.show_fit_check.isEnabled()
+    viewer.show_fit_check.setChecked(True)
+    assert viewer.show_residual_check.isEnabled()
 
 
 def test_qt_show_fit_checkbox_disabled_without_fit_channels():

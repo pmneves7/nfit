@@ -88,7 +88,10 @@ References
 
 from __future__ import annotations
 
+import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -99,6 +102,41 @@ from .models import relaxational_chipp
 
 FloatArray = NDArray[np.float64]
 ComplexArray = NDArray[np.complex128]
+
+# Batched ``eigh`` over the unique-Q grid dominates the RPA evaluation cost.
+# numpy loops over the batch in a single thread, but each small Hermitian
+# decomposition releases the GIL, so chunking across a thread pool gives a
+# near-linear speedup. Only worth the dispatch overhead above this many Q.
+_EIGH_THREAD_THRESHOLD = 4096
+
+
+@lru_cache(maxsize=1)
+def _eigh_workers() -> int:
+    return min(8, os.cpu_count() or 1)
+
+
+@lru_cache(maxsize=1)
+def _eigh_executor() -> ThreadPoolExecutor:
+    return ThreadPoolExecutor(
+        max_workers=_eigh_workers(), thread_name_prefix="metallix-eigh"
+    )
+
+
+def _batched_eigh(matrices: ComplexArray) -> tuple[FloatArray, ComplexArray]:
+    """Eigendecompose a stack of Hermitian matrices, threaded when large.
+
+    Identical result to ``np.linalg.eigh`` (ascending eigenvalues, unitary
+    eigenvectors); only the dispatch is parallelized across the leading axis.
+    """
+
+    workers = _eigh_workers()
+    if matrices.shape[0] < _EIGH_THREAD_THRESHOLD or workers <= 1:
+        return np.linalg.eigh(matrices)
+    chunks = np.array_split(matrices, workers * 4, axis=0)
+    results = list(_eigh_executor().map(np.linalg.eigh, chunks))
+    eigenvalues = np.concatenate([values for values, _ in results], axis=0)
+    eigenvectors = np.concatenate([vectors for _, vectors in results], axis=0)
+    return eigenvalues, eigenvectors
 
 
 def local_relaxational_chipp(
@@ -296,7 +334,7 @@ def heisenberg_rpa_chipp(
         )
 
     exchange = rpa_exchange_matrix(geometry, j_values)
-    lam, modes = np.linalg.eigh(exchange)
+    lam, modes = _batched_eigh(exchange)
 
     denominator = 1.0 - lam * float(chi0)
     if np.any(denominator <= 0.0):

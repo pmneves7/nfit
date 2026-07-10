@@ -580,7 +580,7 @@ def _mdhisto_channel_array(data: MDHistoData, channel: str) -> np.ndarray:
         values = np.asarray(data.errors, dtype=float)
     elif channel == "num_events":
         values = np.asarray(data.num_events, dtype=float)
-    elif channel == "mask":
+    elif channel == "combined_mask":
         return np.asarray(data.mask, dtype=float)
     elif channel in {"file_mask", "metallix_mask"}:
         return np.asarray(data.metadata.get(channel, np.zeros(data.shape, dtype=bool)), dtype=float)
@@ -698,15 +698,21 @@ class MDHistoSliceViewer:
     COLOR_SCALES = ("linear", "log", "symmetriclog", "asinh", "power")
     AUTO_LIMITS = ("min/max", "N-sigma", "N IQR", "Nth percentile")
     COLORMAPS = ("viridis", "magma", "plasma", "cividis", "turbo", "grey")
-    CHANNELS = ("signal", "errors", "num_events", "mask", "file_mask", "metallix_mask")
-    CHANNEL_ALIASES = {"multiplicity": "num_events", "events": "num_events", "error": "errors"}
+    CHANNELS = ("signal", "errors", "num_events", "combined_mask", "file_mask", "metallix_mask")
+    CHANNEL_ALIASES = {
+        "multiplicity": "num_events",
+        "events": "num_events",
+        "error": "errors",
+        "mask": "combined_mask",
+        "total_mask": "combined_mask",
+    }
     CHANNEL_LABELS = {
         "signal": "Signal",
         "errors": "Error",
         "num_events": "Multiplicity",
-        "mask": "Mask",
+        "combined_mask": "Combined mask",
         "file_mask": "File mask",
-        "metallix_mask": "metallix mask",
+        "metallix_mask": "Metallix mask",
     }
 
     def __init__(
@@ -754,16 +760,7 @@ class MDHistoSliceViewer:
             self.y_dim = self._resolve_dim(y_dim)
             if self.x_dim == self.y_dim:
                 raise ValueError("x_dim and y_dim must be different")
-            extra_channels = self._metadata_channel_names()
-            if extra_channels:
-                # Instance attributes shadow the class tuples so fit channels
-                # only appear for data that actually carries them.
-                self.CHANNELS = (*self.CHANNELS, *extra_channels)
-                self.CHANNEL_LABELS = {
-                    **self.CHANNEL_LABELS,
-                    "fit": "Fit",
-                    "residual": "Residual (sigma)",
-                }
+            self.refresh_metadata_channels()
             self.channel = self._resolve_channel(channel)
         self.cmap = str(cmap)
         self.cmap_reversed = False
@@ -917,6 +914,7 @@ class MDHistoSliceViewer:
             "signal": signal2d,
             "errors": np.sqrt(variance2d),
             "num_events": events2d,
+            "combined_mask": mask2d,
             "mask": mask2d,
             "file_mask": self._slice_metadata_mask("file_mask", selections),
             "metallix_mask": self._slice_metadata_mask("metallix_mask", selections),
@@ -1001,6 +999,27 @@ class MDHistoSliceViewer:
             if isinstance(value, np.ndarray) and value.shape == self.data.shape:
                 names.append(name)
         return tuple(names)
+
+    def refresh_metadata_channels(self) -> None:
+        """Refresh instance channel lists after MDHisto metadata changes."""
+
+        if getattr(self, "is_point_list", False):
+            return
+        extra_channels = self._metadata_channel_names()
+        self.CHANNELS = (*type(self).CHANNELS, *extra_channels)
+        self.CHANNEL_LABELS = {
+            **type(self).CHANNEL_LABELS,
+            **(
+                {
+                    "fit": "Fit",
+                    "residual": "Residual (sigma)",
+                }
+                if extra_channels
+                else {}
+            ),
+        }
+        if hasattr(self, "channel") and self.channel not in self.CHANNELS:
+            self.channel = self._resolve_channel("signal")
 
     def _slice_metadata_channel(
         self, name: str, selections: dict[int, tuple[int, int] | int]
@@ -1137,7 +1156,7 @@ class MDHistoSliceViewer:
     def _display_values(self, view: dict[str, np.ndarray]) -> np.ndarray:
         if getattr(self, "is_point_list", False):
             return np.asarray(view["signal"], dtype=float)
-        if self.channel in {"mask", "file_mask", "metallix_mask"}:
+        if self.channel in {"combined_mask", "file_mask", "metallix_mask"}:
             return np.asarray(view[self.channel], dtype=float)
         return np.asarray(view[self.channel], dtype=float)
 
@@ -1166,6 +1185,7 @@ class MDHistoSliceViewer:
             "signal": y,
             "errors": e,
             "num_events": np.ones_like(x),
+            "combined_mask": ~np.isfinite(y),
             "mask": ~np.isfinite(y),
             "file_mask": np.zeros_like(x, dtype=bool),
             "metallix_mask": np.zeros_like(x, dtype=bool),
@@ -1278,7 +1298,7 @@ class MDHistoSliceViewer:
         return f"{cmap}_r" if self.cmap_reversed else cmap
 
     def _is_boolean_channel(self) -> bool:
-        return self.channel in {"mask", "file_mask", "metallix_mask"}
+        return self.channel in {"combined_mask", "file_mask", "metallix_mask"}
 
     def _set_color_scale(self, color_scale: str) -> None:
         self.color_scale = color_scale
