@@ -27,6 +27,7 @@ docs/_build/
 *.h5
 *.hdf5
 data/hyspec/raw/
+data/hyspec/metallix_project_3D.mtlx
 
 # OS/editor
 .DS_Store
