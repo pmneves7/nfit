@@ -2985,6 +2985,46 @@ def test_rebin_axis_vector_projects_new_coordinate():
     assert rebinned.metadata["rebin"]["vectors"] == [[0.0, 1.0], [1.0, 0.0]]
 
 
+def test_rebin_defaults_follow_mdhisto_axis_coordinate_vectors():
+    axes = (
+        MDHistoAxis("DeltaE", np.array([0.0, 1.0, 2.0]), "meV", "energy"),
+        MDHistoAxis("[H,-H,0]", np.array([-1.0, 0.0, 1.0]), "rlu", "momentum"),
+        MDHistoAxis("[0,0,L]", np.array([0.0, 1.0, 2.0]), "rlu", "momentum"),
+        MDHistoAxis("[H,H,0]", np.array([0.0, 1.0, 2.0]), "rlu", "momentum"),
+    )
+    signal = np.arange(16, dtype=float).reshape((2, 2, 2, 2))
+    data = MDHistoData(
+        axes=axes,
+        signal=signal,
+        errors=np.ones_like(signal),
+        mask=np.zeros_like(signal, dtype=bool),
+        num_events=np.ones_like(signal),
+        metadata={},
+    )
+    dataset = DatasetEntry("scan", data)
+
+    config = dataset_rebin_config(dataset)
+
+    assert [axis["vector"] for axis in config["axes"]] == [
+        [0.0, 0.0, 0.0, 1.0],
+        [1.0, -1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [1.0, 1.0, 0.0, 0.0],
+    ]
+
+    config["enabled"] = True
+    config["fractional"] = False
+    rebinned = project_gui.rebinned_dataset_data(dataset)
+
+    np.testing.assert_allclose(rebinned.signal, signal)
+    assert rebinned.metadata["rebin"]["vectors"] == [
+        [0.0, 0.0, 0.0, 1.0],
+        [1.0, -1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [1.0, 1.0, 0.0, 0.0],
+    ]
+
+
 def test_add_mask_and_slice_viewer_from_masks_node(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")

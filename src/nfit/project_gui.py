@@ -3587,7 +3587,7 @@ def _default_rebin_axes(data: Any) -> list[dict[str, Any]]:
                 {
                     "name": axis.name,
                     "units": axis.units,
-                    "vector": _identity_vector(index, ndim),
+                    "vector": _mdhisto_rebin_axis_vector(axis, index, ndim),
                     "lower": lower,
                     "upper": upper,
                     "num_bins": num_bins,
@@ -3680,6 +3680,60 @@ def _rebin_axis_vector(axis_config: dict[str, Any], index: int, ndim: int) -> np
     return np.asarray(_identity_vector(index if 0 <= index < ndim else 0, ndim), dtype=float)
 
 
+def _mdhisto_rebin_axis_vector(axis: MDHistoAxis, index: int, ndim: int) -> list[float]:
+    """Return a default rebin vector that follows the displayed MDHisto axis."""
+
+    if ndim == 4:
+        role = axis.role
+        role_vectors = {
+            "h": [1.0, 0.0, 0.0, 0.0],
+            "k": [0.0, 1.0, 0.0, 0.0],
+            "l": [0.0, 0.0, 1.0, 0.0],
+            "energy_transfer": [0.0, 0.0, 0.0, 1.0],
+        }
+        if role in role_vectors:
+            return role_vectors[role]
+        projection = _axis_projection_vector(axis.name)
+        if projection is not None:
+            return [_clean_axis_weight(value) for value in [*projection.tolist(), 0.0]]
+    return _identity_vector(index, ndim)
+
+
+def _mdhisto_rebin_source_axis_vectors(data: MDHistoData) -> list[np.ndarray | None]:
+    vectors: list[np.ndarray | None] = []
+    if len(data.axes) != 4:
+        return [None for _axis in data.axes]
+    for axis in data.axes:
+        vectors.append(np.asarray(_mdhisto_rebin_axis_vector(axis, len(vectors), len(data.axes)), dtype=float))
+    return vectors
+
+
+def _mdhisto_rebin_component(
+    data: MDHistoData,
+    source_grids: list[np.ndarray],
+    axis_config: dict[str, Any],
+    index: int,
+) -> np.ndarray:
+    ndim = len(data.axes)
+    vector = _rebin_axis_vector(axis_config, index, ndim)
+    component = np.zeros(data.shape, dtype=float)
+    if vector.size == 4:
+        source_vectors = _mdhisto_rebin_source_axis_vectors(data)
+        for source_vector, grid in zip(source_vectors, source_grids, strict=True):
+            if source_vector is not None and np.allclose(vector, source_vector):
+                return np.asarray(grid, dtype=float)
+        coords = _mdhisto_coordinate_grids(data)
+        if all(name in coords for name in ("H", "K", "L", "E")):
+            for weight, name in zip(vector, ("H", "K", "L", "E"), strict=True):
+                if weight:
+                    component = component + float(weight) * coords[name]
+            return component
+    for weight, grid in zip(vector, source_grids, strict=True):
+        if weight:
+            component = component + float(weight) * grid
+    return component
+
+
 def _rebin_mdhisto_data(data: MDHistoData, config: dict[str, Any]) -> MDHistoData:
     axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
     if len(axes_config) != len(data.axes):
@@ -3692,12 +3746,7 @@ def _rebin_mdhisto_data(data: MDHistoData, config: dict[str, Any]) -> MDHistoDat
     source_grids = np.meshgrid(*(axis.centers for axis in data.axes), indexing="ij")
     projected = []
     for index, axis_config in enumerate(axes_config):
-        vector = _rebin_axis_vector(axis_config, index, ndim)
-        component = np.zeros(data.shape, dtype=float)
-        for weight, grid in zip(vector, source_grids, strict=True):
-            if weight:
-                component = component + float(weight) * grid
-        projected.append(component)
+        projected.append(_mdhisto_rebin_component(data, list(source_grids), axis_config, index))
     coords = np.stack(projected, axis=-1)
     valid = np.isfinite(data.signal) & np.isfinite(data.errors) & ~data.mask
     if data.num_events is not None:
@@ -9067,8 +9116,9 @@ class NfitProjectExplorer:
                 vector_edit = QtWidgets.QLineEdit(_parameter_to_text(axis_config.get("vector", [])))
                 vector_edit.setMinimumWidth(110)
                 vector_edit.setToolTip(
-                    "Projection vector defining this rebin coordinate as a linear combination of the dataset axes. "
-                    "Defaults to the dataset coordinate axis. Example for a 4D dataset: [1, 0, 0, 0]."
+                    "Projection vector defining this rebin coordinate. For 4D MDHisto data, vectors follow "
+                    "the displayed H,K,L,E coordinate axis when possible, e.g. DeltaE -> [0, 0, 0, 1] "
+                    "and [H,-H,0] -> [1, -1, 0, 0]."
                 )
                 vector_edit.editingFinished.connect(
                     lambda row=row - 1, editor=vector_edit: self._set_dataset_rebin_axis_vector(dataset, group, row, editor.text())

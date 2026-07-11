@@ -80,6 +80,10 @@ require more computational time. The target is not a cap on total rebinner
 memory use, because source arrays, coordinates, output grids, and bookkeeping
 also consume memory. The best value depends on dataset size, output grid size,
 dimensionality, and available memory.
+For 4D MDHisto data, the `Coord axis` defaults follow the displayed physical
+axis when possible rather than a blind diagonal matrix: for example `DeltaE`
+starts as `[0, 0, 0, 1]`, `[H,-H,0]` starts as `[1, -1, 0, 0]`, `[0,0,L]`
+starts as `[0, 0, 1, 0]`, and `[H,H,0]` starts as `[1, 1, 0, 0]`.
 
 Workspace rows also summarize the number of descendant datasets, total loaded
 data points, dataset types, fit weights, and scale factors. When all enabled
