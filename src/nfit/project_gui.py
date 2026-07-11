@@ -1175,6 +1175,7 @@ def snapshot_data_group_state(group: DataGroup) -> dict[str, Any]:
                 "enabled": bool(dataset.enabled),
                 "fit_weight": float(dataset.fit_weight),
                 "scale_factor": float(dataset.scale_factor),
+                "scale_factor_vary": bool(dataset.scale_factor_vary),
                 "masks": [_mask_to_dict(mask) for mask in dataset.masks],
             }
             for dataset in group.iter_datasets()
@@ -1203,6 +1204,7 @@ def restore_data_group_state(group: DataGroup, snapshot: dict[str, Any]) -> None
         dataset.enabled = bool(dataset_payload.get("enabled", dataset.enabled))
         dataset.fit_weight = float(dataset_payload.get("fit_weight", dataset.fit_weight))
         dataset.scale_factor = float(dataset_payload.get("scale_factor", dataset.scale_factor))
+        dataset.scale_factor_vary = bool(dataset_payload.get("scale_factor_vary", dataset.scale_factor_vary))
         dataset.masks = [_mask_from_dict(mask_payload) for mask_payload in dataset_payload.get("masks", [])]
     group_masks = snapshot.get("group_masks", {})
     if isinstance(group_masks, dict):
@@ -1679,6 +1681,7 @@ def dataset_detail_sections(
                 f"Enabled for fitting: {dataset.enabled}",
                 f"Fit weight: {_format_number(dataset.fit_weight)}",
                 f"Scale factor: {_format_number(dataset.scale_factor)}",
+                f"Scale fitted: {bool(dataset.scale_factor_vary)}",
             ],
         ),
         ("Axes", axes_lines),
@@ -2185,7 +2188,11 @@ def fit_data_bundle(group: DataGroup, dataset: DatasetEntry) -> FitDataBundle | 
         points = dataset.data
         _apply_sample_context_to_points(group, dataset, points)
         return FitDataBundle(dataset=dataset, view=dataset.data, points=points, grid_shape=None)
-    view = dataset_for_slice_viewer(dataset, extra_masks=extra_masks)
+    if dataset.scale_factor_vary:
+        raw_view = _viewer_data_before_scale(dataset, extra_masks=extra_masks)
+        view = _with_viewer_dataset_metadata(dataset, raw_view) if raw_view is not None else None
+    else:
+        view = dataset_for_slice_viewer(dataset, extra_masks=extra_masks)
     if isinstance(view, MDHistoData):
         points = _point_data_from_mdhisto_view(view)
     elif isinstance(view, PointListData):
@@ -2380,6 +2387,8 @@ def fit_dataset_inputs(
                 data=bundle.points,
                 weight=float(dataset.fit_weight),
                 data_type=dataset.data_type or DEFAULT_DATA_TYPE,
+                scale_value=float(dataset.scale_factor),
+                scale_vary=bool(dataset.scale_factor_vary),
             )
         )
         bundles[dataset.name] = bundle
@@ -2561,6 +2570,8 @@ def _overlay_cache_signature(group: DataGroup) -> str:
                 dataset.kind,
                 id(dataset),
                 float(dataset.fit_weight),
+                float(dataset.scale_factor),
+                bool(dataset.scale_factor_vary),
                 json.dumps(dataset.parameters, sort_keys=True, default=str),
                 effective_dataset_temperature(group, dataset),
                 [
@@ -2606,6 +2617,13 @@ def _overlay_current_params(
 
     params = {spec.name: float(spec.value) for spec in compiled.problem.parameter_specs}
     for instance in compiled.parameter_instances.values():
+        if instance.component == "dataset" and instance.parameter == "scale_factor":
+            try:
+                dataset = group.get_dataset(instance.scope)
+            except KeyError:
+                continue
+            params[instance.name] = float(dataset.scale_factor)
+            continue
         component = group.models.get(instance.component)
         if not isinstance(component, ModelComponentSpec):
             continue
@@ -3025,6 +3043,26 @@ def _write_back_fitted_parameters(
     """Store optimized values on their model components."""
 
     _write_back_parameter_values(group, components, compiled, result.params)
+    _write_back_dataset_scale_factors(group, compiled, result.params)
+
+
+def _write_back_dataset_scale_factors(
+    group: DataGroup,
+    compiled: CompiledFitProblem,
+    params: dict[str, float],
+) -> None:
+    """Store optimized dataset scale factors on their datasets."""
+
+    for instance in compiled.parameter_instances.values():
+        if instance.component != "dataset" or instance.parameter != "scale_factor":
+            continue
+        if instance.name not in params:
+            continue
+        try:
+            dataset = group.get_dataset(instance.scope)
+        except KeyError:
+            continue
+        dataset.scale_factor = float(params[instance.name])
 
 
 def _fit_channels_from_result(
@@ -3076,8 +3114,16 @@ def _fit_channels_from_params(
                 evaluate_problem_model(compiled.problem, name, params, data=subset),
                 dtype=float,
             )
+        fit_dataset = next(
+            dataset for dataset in compiled.problem.datasets if dataset.name == name
+        )
         intensity = np.asarray(points.intensity, dtype=float)
         sigma = np.asarray(points.sigma, dtype=float)
+        if fit_dataset.data_scale_parameter:
+            resolved = compiled.problem.resolve_parameters(params)
+            scale = float(resolved[fit_dataset.data_scale_parameter])
+            intensity = intensity * scale
+            sigma = sigma * max(abs(scale), np.finfo(float).tiny)
         with np.errstate(divide="ignore", invalid="ignore"):
             residual_values = (intensity - fit_values) / sigma
         residual_values = np.where(
@@ -7284,13 +7330,25 @@ class NfitProjectExplorer:
         fit_weight_layout.addWidget(QtWidgets.QLabel("Scale"))
         self.scale_factor_spin = QtWidgets.QDoubleSpinBox()
         self.scale_factor_spin.setObjectName("dataset_scale_factor")
-        self.scale_factor_spin.setToolTip("Scale factor applied to the selected dataset before viewing and fitting.")
+        self.scale_factor_spin.setToolTip(
+            "Scale factor for the selected dataset. When Fit scale is unchecked, this is applied before viewing and fitting. "
+            "When Fit scale is checked, this value is the initial guess for the fitted scale parameter."
+        )
         self.scale_factor_spin.setRange(-1.0e12, 1.0e12)
         self.scale_factor_spin.setDecimals(6)
         self.scale_factor_spin.setSingleStep(0.1)
         self.scale_factor_spin.setValue(1.0)
         self.scale_factor_spin.valueChanged.connect(self._set_selected_dataset_scale_factor)
         fit_weight_layout.addWidget(self.scale_factor_spin)
+        self.scale_factor_fit_check = QtWidgets.QCheckBox("Fit scale")
+        self.scale_factor_fit_check.setObjectName("dataset_scale_factor_vary")
+        self.scale_factor_fit_check.setToolTip(
+            "Treat the selected dataset's scale as a fitted parameter. The Scale value is used as the initial guess, "
+            "then the fitted value is written back to the dataset. The fitted scale multiplies the signal and its "
+            "absolute value multiplies the uncertainty; avoid an initial value of zero."
+        )
+        self.scale_factor_fit_check.toggled.connect(self._set_selected_dataset_scale_factor_vary)
+        fit_weight_layout.addWidget(self.scale_factor_fit_check)
         fit_weight_layout.addWidget(QtWidgets.QLabel("T (K)"))
         self.dataset_temperature_spin = QtWidgets.QDoubleSpinBox()
         self.dataset_temperature_spin.setObjectName("dataset_temperature")
@@ -8073,6 +8131,13 @@ class NfitProjectExplorer:
             )
         finally:
             self.scale_factor_spin.blockSignals(False)
+        self.scale_factor_fit_check.blockSignals(True)
+        try:
+            self.scale_factor_fit_check.setChecked(
+                bool(entry.scale_factor_vary) if role == "dataset" and entry is not None else False
+            )
+        finally:
+            self.scale_factor_fit_check.blockSignals(False)
         self.dataset_temperature_spin.blockSignals(True)
         try:
             override = (
@@ -8183,6 +8248,25 @@ class NfitProjectExplorer:
         if entry.scale_factor == scale:
             return
         entry.scale_factor = scale
+        branch_created = False
+        if group is not None:
+            branch_created = self._record_data_group_state_change(group)
+        self._mark_dirty()
+        if group is not None and branch_created:
+            self._refresh_tree(select_group=group, select_dataset=entry)
+            return
+        if group is not None:
+            self.refresh_slice_viewer(group)
+        self._sync_details()
+
+    def _set_selected_dataset_scale_factor_vary(self, checked: bool) -> None:
+        group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        if role != "dataset" or entry is None:
+            return
+        vary = bool(checked)
+        if entry.scale_factor_vary == vary:
+            return
+        entry.scale_factor_vary = vary
         branch_created = False
         if group is not None:
             branch_created = self._record_data_group_state_change(group)
@@ -11640,6 +11724,7 @@ def _dataset_from_dict(dataset_payload: dict[str, Any]) -> DatasetEntry:
         enabled=bool(dataset_payload.get("enabled", True)),
         fit_weight=float(dataset_payload.get("fit_weight", 1.0)),
         scale_factor=float(dataset_payload.get("scale_factor", 1.0)),
+        scale_factor_vary=bool(dataset_payload.get("scale_factor_vary", False)),
         masks=[_mask_from_dict(mask_payload) for mask_payload in dataset_payload.get("masks", [])],
     )
 
@@ -11705,6 +11790,7 @@ def _dataset_to_dict(dataset: DatasetEntry) -> dict[str, Any]:
         "enabled": bool(dataset.enabled),
         "fit_weight": float(dataset.fit_weight),
         "scale_factor": float(dataset.scale_factor),
+        "scale_factor_vary": bool(dataset.scale_factor_vary),
         "masks": [_mask_to_dict(mask) for mask in dataset.masks],
     }
 

@@ -2772,10 +2772,15 @@ def test_dataset_scale_factor_scales_viewed_data_and_round_trips(monkeypatch, tm
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
 
     scale_spin = explorer.window.findChild(QtWidgets.QDoubleSpinBox, "dataset_scale_factor")
+    scale_fit_check = explorer.window.findChild(QtWidgets.QCheckBox, "dataset_scale_factor_vary")
     assert scale_spin is not None
+    assert scale_fit_check is not None
     assert scale_spin.value() == 1.0
+    assert not scale_fit_check.isChecked()
     scale_spin.setValue(3.0)
+    scale_fit_check.setChecked(True)
     assert dataset.scale_factor == 3.0
+    assert dataset.scale_factor_vary is True
 
     viewed = dataset_for_slice_viewer(dataset)
     np.testing.assert_allclose(viewed.signal, np.asarray(data.signal, dtype=float) * 3.0)
@@ -2785,10 +2790,15 @@ def test_dataset_scale_factor_scales_viewed_data_and_round_trips(monkeypatch, tm
     save_group = DataGroup("Datagroup2")
     placeholder = import_dataset_paths(save_group, [tmp_path / "scan.nxs"])[0]
     placeholder.scale_factor = 3.0
+    placeholder.scale_factor_vary = True
     path = tmp_path / "proj.nfit"
     save_project(NfitProject([save_group]), path)
-    assert json.loads(path.read_text())["data_groups"][0]["datasets"][0]["scale_factor"] == 3.0
-    assert load_project(path).data_groups[0].datasets[0].scale_factor == 3.0
+    payload = json.loads(path.read_text())["data_groups"][0]["datasets"][0]
+    assert payload["scale_factor"] == 3.0
+    assert payload["scale_factor_vary"] is True
+    loaded = load_project(path).data_groups[0].datasets[0]
+    assert loaded.scale_factor == 3.0
+    assert loaded.scale_factor_vary is True
 
 
 def test_point_list_scale_and_susceptibility_transforms():

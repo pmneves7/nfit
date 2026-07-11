@@ -114,6 +114,16 @@ When the data group defines lattice parameters, they are attached to the fit
 points automatically so form factors and |Q|-dependent models work without
 per-dataset setup.
 
+The same title row includes dataset `Fit weight` and `Scale` controls. With
+`Fit scale` unchecked, `Scale` is a fixed data transform: nfit multiplies the
+dataset signal by the scale factor and its uncertainty by the absolute value of
+the scale factor before viewing and fitting. With `Fit scale` checked, `Scale`
+is instead the initial guess for an optimizer parameter named for that dataset;
+the fit compares `scale * signal` to the model and uses `abs(scale) * sigma` as
+the uncertainty. After the fit, the optimized scale is written back to the
+dataset and stored in the fit snapshot. Because zero scale makes the data-side
+uncertainty singular, use a nonzero initial scale.
+
 ## Masks and models
 
 Selecting a mask or model shows its type selector and parameter editor at the

@@ -515,8 +515,10 @@ def model_supports_data_type(model_type: str, data_type: str) -> bool:
 class FitDatasetInput:
     """One prepared dataset offered to the fit compiler.
 
-    ``data`` must already reflect masks, scale factors, and any rebinning:
-    the compiler only decides which models and parameters apply to it.
+    ``data`` must already reflect masks and any rebinning. Fixed scale factors
+    should already be applied; fitted scale factors should be passed as
+    ``scale_value`` with ``scale_vary=True`` so the compiler can add a dataset
+    scale parameter.
     """
 
     name: str
@@ -524,6 +526,8 @@ class FitDatasetInput:
     weight: float = 1.0
     data_type: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    scale_value: float = 1.0
+    scale_vary: bool = False
 
 
 @dataclass(frozen=True)
@@ -567,6 +571,12 @@ def sharing_mode(component: Any, parameter: str) -> str:
     if isinstance(entry, dict) and entry.get("mode") in SHARING_MODES:
         return str(entry["mode"])
     return "global" if component.global_fit.get(parameter, True) else "per_dataset"
+
+
+def dataset_scale_parameter_name(dataset_name: str) -> str:
+    """Return the optimizer parameter name for a fitted dataset scale."""
+
+    return f"dataset_scale[{dataset_name}]"
 
 
 def parameter_limits(component: Any, parameter: str) -> tuple[float | None, float | None]:
@@ -703,6 +713,28 @@ def compile_fit_problem(
                     component.name, parameter, key
                 )
 
+    scale_parameters: dict[str, str] = {}
+    for dataset in fitted:
+        if not dataset.scale_vary:
+            continue
+        name = dataset_scale_parameter_name(dataset.name)
+        emit(
+            ParameterSpec(
+                name=name,
+                value=float(dataset.scale_value),
+                vary=True,
+                description=f"Scale factor for dataset {dataset.name}",
+            ),
+            ParameterInstance(
+                name=name,
+                component="dataset",
+                parameter="scale_factor",
+                scope=dataset.name,
+                datasets=(dataset.name,),
+            ),
+        )
+        scale_parameters[dataset.name] = name
+
     derived = _compile_constraints(active, applicable, specs, instances)
 
     fit_datasets: list[FitDataset] = []
@@ -722,7 +754,11 @@ def compile_fit_problem(
             for component in components_here
         ]
         model_jacobian = None
-        if components_here and all(factory is not None for factory in jacobian_factories):
+        if (
+            components_here
+            and dataset.name not in scale_parameters
+            and all(factory is not None for factory in jacobian_factories)
+        ):
             model_jacobian = _additive_jacobian(
                 [factory(component) for factory, component in zip(jacobian_factories, components_here)]
             )
@@ -733,6 +769,7 @@ def compile_fit_problem(
                 weight=float(dataset.weight),
                 parameter_bindings=dict(bindings[dataset.name]),
                 model=_additive_model(evaluators),
+                data_scale_parameter=scale_parameters.get(dataset.name),
                 model_jacobian=model_jacobian,
                 metadata=dict(dataset.metadata),
             )

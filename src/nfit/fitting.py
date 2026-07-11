@@ -171,6 +171,11 @@ class FitDataset:
         Optional dataset-specific model. When set, it overrides the problem's
         shared model for this dataset, which lets different datasets fit
         different model compositions in one simultaneous problem.
+    data_scale_parameter:
+        Optional optimizer parameter name for a data-side scale factor. When
+        set, residuals compare ``scale * intensity`` to the model and use
+        ``abs(scale) * sigma`` for uncertainty, matching the fixed dataset
+        scale convention.
     metadata:
         Free-form instrument, scan, normalization, and provenance notes.
     """
@@ -182,6 +187,7 @@ class FitDataset:
     resolution: Any = None
     parameter_bindings: dict[str, ParameterBinding] = field(default_factory=dict)
     model: Any = None
+    data_scale_parameter: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     model_jacobian: Any = None
     """Optional ``(data, params) -> {qualified_name: d(model)/d(param)}`` giving
@@ -1348,7 +1354,14 @@ def _evaluate_problem(
                 f"expected {prepared.intensity.shape}"
             )
 
-        residual = (prepared.intensity - model_values) / prepared.sigma
+        intensity = np.asarray(prepared.intensity, dtype=float)
+        sigma = np.asarray(prepared.sigma, dtype=float)
+        if dataset.data_scale_parameter:
+            scale = float(params[dataset.data_scale_parameter])
+            intensity = intensity * scale
+            sigma = sigma * max(abs(scale), np.finfo(float).tiny)
+        with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+            residual = (intensity - model_values) / sigma
         weighted_residual = np.sqrt(dataset.weight) * residual
         residual_blocks.append(weighted_residual)
         model_blocks.append(model_values)

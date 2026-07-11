@@ -7,6 +7,7 @@ from nfit.dataset import PointData4D, PointListData
 from nfit.fit_config import (
     FitDatasetInput,
     compile_fit_problem,
+    dataset_scale_parameter_name,
     instanced_parameter_name,
     model_supports_data_type,
     qualified_parameter_name,
@@ -284,6 +285,50 @@ def test_run_group_fit_honors_masks_disabled_datasets_and_scales():
     assert fitted["first"] == pytest.approx(1.0, abs=1e-6)
     assert fitted["third"] == pytest.approx(4.0, abs=1e-6)
     assert "second" not in entry.channels
+
+
+def test_compile_fit_problem_adds_dataset_scale_parameter_to_residuals():
+    data = PointData4D(
+        H=np.zeros(8),
+        K=np.zeros(8),
+        L=np.zeros(8),
+        E=np.linspace(0.0, 1.0, 8),
+        intensity=np.full(8, 2.0),
+        sigma=np.full(8, 0.1),
+    )
+    component = _constant_component(parameters={"constant": 1.0}, fit_parameters={"constant": False})
+    compiled = compile_fit_problem(
+        [component],
+        [FitDatasetInput("scan", data, scale_value=1.0, scale_vary=True)],
+    )
+
+    scale_name = dataset_scale_parameter_name("scan")
+    assert scale_name in compiled.parameter_instances
+    assert compiled.parameter_instances[scale_name].component == "dataset"
+    assert compiled.problem.datasets[0].data_scale_parameter == scale_name
+
+    result = fit_problem_least_squares(compiled.problem)
+    assert result.success
+    assert result.params[scale_name] == pytest.approx(0.5, abs=1e-6)
+    assert result.reduced_chi2 == pytest.approx(0.0, abs=1e-8)
+
+
+def test_run_group_fit_can_fit_dataset_scale_factor():
+    group = _fit_ready_group({"scan": 2.0})
+    dataset = group.get_dataset("scan")
+    dataset.scale_factor = 1.0
+    dataset.scale_factor_vary = True
+    model = create_model_component(group)
+    model.parameters["constant"] = 1.0
+    model.fit_parameters["constant"] = False
+    ensure_fit_history(group)
+
+    entry = run_group_fit(group, group.fits[0])
+    assert entry.goodness["status"] == "converged"
+    assert dataset.scale_factor == pytest.approx(0.5, abs=1e-6)
+    assert entry.snapshot["datasets"][0]["scale_factor"] == pytest.approx(0.5, abs=1e-6)
+    assert entry.snapshot["datasets"][0]["scale_factor_vary"] is True
+    assert entry.channels["scan"]["residual"] == pytest.approx(np.zeros((4, 5)), abs=1e-6)
 
 
 def test_run_group_fit_weights_change_global_compromise():
@@ -801,3 +846,63 @@ def test_analytic_and_numeric_jacobians_recover_same_fit():
     assert p["M.scale"] * p["M.chi0"] == pytest.approx(1.2 * 0.3, rel=1e-3)
     assert p["M.chi0"] * p["M.J1"] == pytest.approx(0.3 * 0.1, rel=1e-3)
     assert p["M.chi0"] * p["M.J2"] == pytest.approx(0.3 * -0.05, rel=1e-3)
+
+
+def test_heisenberg_rpa_fit_is_backend_invariant():
+    """A full fit must converge to the same result on numpy and numba backends.
+
+    The numba path uses the Jacobi eigensolver (different from LAPACK), so this
+    locks that the accelerated backend does not change fit results beyond
+    floating-point noise.
+    """
+    pytest.importorskip("numba")
+    from nfit import spin_fluctuations as sf
+    from nfit.fitting import OptimizationConfig
+
+    # A large-enough single-crystal problem to exercise the numba eigensolver.
+    truth = _rpa_component()
+    data = _rpa_points(5.0, 11, n=3000)
+    compiled_truth = compile_fit_problem(
+        [truth], [FitDatasetInput("d", data, data_type="single_crystal_inelastic")]
+    )
+    from nfit.fitting import evaluate_problem_model
+
+    model_values = evaluate_problem_model(
+        compiled_truth.problem,
+        "d",
+        {spec.name: spec.value for spec in compiled_truth.problem.parameter_specs},
+    )
+    fitted = PointData4D(
+        data.H, data.K, data.L, data.E, model_values, np.full(data.size, 0.02),
+        temperature=data.temperature, metadata=dict(data.metadata),
+    )
+
+    def fit_with(backend):
+        sf.set_rpa_backend(backend)
+        try:
+            start = _rpa_component(
+                parameters={"scale": 1.0, "chi0": 0.2, "gamma0": 2.5, "J1": 0.05, "J2": 0.0}
+            )
+            compiled = compile_fit_problem(
+                [start], [FitDatasetInput("d", fitted, data_type="single_crystal_inelastic")]
+            )
+            return fit_problem_least_squares(compiled.problem, config=OptimizationConfig())
+        finally:
+            sf.set_rpa_backend("auto")
+
+    result_numba = fit_with("numba")
+    result_numpy = fit_with("numpy")
+    assert result_numba.success and result_numpy.success
+    # Both backends reach the same-quality minimum. Individual parameters can
+    # differ because the RPA response is invariant under chi0 -> a*chi0,
+    # J -> J/a, scale -> scale/a (a flat valley of equally good fits), so the
+    # invariant is the fit quality and the physical model prediction.
+    assert result_numba.reduced_chi2 == pytest.approx(result_numpy.reduced_chi2, rel=1e-6)
+    compiled = compile_fit_problem(
+        [_rpa_component()], [FitDatasetInput("d", fitted, data_type="single_crystal_inelastic")]
+    )
+    from nfit.fitting import evaluate_problem_model
+
+    pred_numba = evaluate_problem_model(compiled.problem, "d", result_numba.params)
+    pred_numpy = evaluate_problem_model(compiled.problem, "d", result_numpy.params)
+    np.testing.assert_allclose(pred_numba, pred_numpy, rtol=1e-4, atol=1e-6)

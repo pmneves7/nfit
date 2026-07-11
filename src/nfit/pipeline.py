@@ -117,6 +117,7 @@ class DatasetEntry:
     enabled: bool = True
     fit_weight: float = 1.0
     scale_factor: float = 1.0
+    scale_factor_vary: bool = False
     transforms: Sequence[DataTransformAny] = field(default_factory=tuple)
 
     def prepared(self) -> Any:
