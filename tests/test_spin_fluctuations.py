@@ -394,12 +394,11 @@ def test_rpa_gradients_exact_at_band_degeneracy():
     np.testing.assert_allclose(grads["J1"], fd, rtol=1e-6, atol=1e-9)
 
 
-@pytest.mark.skipif(
-    "numba" not in __import__("nfit.spin_fluctuations", fromlist=["available_rpa_backends"]).available_rpa_backends(),
-    reason="numba backend not available",
-)
 def test_numba_backend_matches_numpy_value_and_gradients():
+    pytest.importorskip("numba")
     from nfit import spin_fluctuations as sf
+
+    assert "numba" in sf.available_rpa_backends()
 
     rng = np.random.default_rng(9)
     positions = [[0.0, 0.0, 0.0], [0.31, 0.47, 0.11], [0.6, 0.2, 0.8]]
@@ -418,20 +417,38 @@ def test_numba_backend_matches_numpy_value_and_gradients():
     E = rng.uniform(0.3, 5.0, size=geometry.point_index.size)
     kwargs = dict(chi0=0.4, gamma0=2.5, j_values={"J1": 0.12, "J2": -0.07})
 
+    def clear_cache():
+        # The eigendecomposition is cached on the geometry keyed by j_values;
+        # clear it between backends so the numba path really recomputes the
+        # eigendecomposition (with the numba solver) instead of reusing the
+        # numpy backend's cached modes.
+        geometry.__dict__.pop("_rpa_modes_cache", None)
+
     try:
         sf.set_rpa_backend("numpy")
+        clear_cache()
         val_np = heisenberg_rpa_chipp(geometry, E, **kwargs)
+        clear_cache()
         cp_np, gr_np = sf.heisenberg_rpa_chipp_and_gradients(geometry, E, **kwargs)
         sf.set_rpa_backend("numba")
+        # Guard against a vacuous pass: the forced numba backend must actually
+        # be selected, and it must actually use the numba eigensolver (not the
+        # cached numpy modes), otherwise this would compare numpy against numpy.
+        assert sf._select_rpa_backend(E.size) == "numba"
+        assert sf._use_numba_eigh(geometry.n_q, geometry.n_sites)
+        clear_cache()
         val_nb = heisenberg_rpa_chipp(geometry, E, **kwargs)
+        clear_cache()
         cp_nb, gr_nb = sf.heisenberg_rpa_chipp_and_gradients(geometry, E, **kwargs)
     finally:
         sf.set_rpa_backend("auto")
 
-    np.testing.assert_allclose(val_nb, val_np, rtol=1e-12, atol=1e-14)
-    np.testing.assert_allclose(cp_nb, cp_np, rtol=1e-12, atol=1e-14)
+    # Different backend AND a different eigensolver (numba Jacobi vs LAPACK), so
+    # results agree to floating-point precision, not bit-for-bit.
+    np.testing.assert_allclose(val_nb, val_np, rtol=1e-10, atol=1e-13)
+    np.testing.assert_allclose(cp_nb, cp_np, rtol=1e-10, atol=1e-13)
     for name in gr_np:
-        np.testing.assert_allclose(gr_nb[name], gr_np[name], rtol=1e-11, atol=1e-13)
+        np.testing.assert_allclose(gr_nb[name], gr_np[name], rtol=1e-9, atol=1e-12)
 
 
 def test_backend_selection_is_size_gated():
@@ -499,3 +516,142 @@ def test_batched_eigh_matches_single_thread_when_forced_parallel():
     # reconstruct H from the returned decomposition as an eigenvector check
     recon = np.einsum("qan,qn,qbn->qab", vec, lam, np.conj(vec))
     np.testing.assert_allclose(recon, h, rtol=1e-10, atol=1e-10)
+
+
+def test_numba_eigensolver_matches_lapack():
+    pytest.importorskip("numba")
+    from nfit import _rpa_numba
+
+    rng = np.random.default_rng(21)
+    for n in (2, 3, 4, 8, 12, 16):
+        m = rng.standard_normal((300, n, n)) + 1j * rng.standard_normal((300, n, n))
+        hermitian = m + np.conj(np.transpose(m, (0, 2, 1)))
+        lam, vec = _rpa_numba.batched_hermitian_eigh(np.ascontiguousarray(hermitian))
+        # A valid decomposition: eigenvalues match LAPACK (sorted), V unitary,
+        # and V diag(lam) V^dagger reconstructs the matrix. Order/phase are free.
+        np.testing.assert_allclose(
+            np.sort(lam, axis=1), np.linalg.eigvalsh(hermitian), rtol=1e-9, atol=1e-9
+        )
+        recon = np.einsum("bij,bj,bkj->bik", vec, lam, np.conj(vec))
+        np.testing.assert_allclose(recon, hermitian, rtol=1e-9, atol=1e-9)
+        identity = np.einsum("bij,bkj->bik", vec, np.conj(vec))
+        np.testing.assert_allclose(identity, np.broadcast_to(np.eye(n), (300, n, n)), atol=1e-9)
+
+    # Degenerate / diagonal / zero matrices must not break the sweep.
+    special = np.stack(
+        [
+            np.diag([1.0, 1.0, 1.0, 3.0]).astype(complex),
+            np.zeros((4, 4), dtype=complex),
+            np.diag([2.0, 2.0, 5.0, 5.0]).astype(complex),
+        ]
+    )
+    lam, vec = _rpa_numba.batched_hermitian_eigh(np.ascontiguousarray(special))
+    recon = np.einsum("bij,bj,bkj->bik", vec, lam, np.conj(vec))
+    np.testing.assert_allclose(recon, special, atol=1e-12)
+
+
+def test_numba_eigh_leaves_observable_numerically_unchanged():
+    """The numba eigensolver path must reproduce the LAPACK-path observable."""
+    pytest.importorskip("numba")
+    from nfit import spin_fluctuations as sf
+
+    rng = np.random.default_rng(3)
+    positions = [[0.0, 0.0, 0.0], [0.31, 0.47, 0.11], [0.6, 0.2, 0.8]]
+    orbits = [
+        {"label": "J1", "bonds": [{"site_i": 0, "site_j": 1, "offset": [0, 0, 0]}]},
+        {"label": "J2", "bonds": [{"site_i": 1, "site_j": 2, "offset": [0, 0, 1]}]},
+    ]
+    hkl = rng.uniform(-2.0, 2.0, size=(2500, 3))
+    geometry = build_rpa_geometry(hkl[:, 0], hkl[:, 1], hkl[:, 2], positions, orbits)
+    E = rng.uniform(0.3, 5.0, size=geometry.point_index.size)
+    kwargs = dict(chi0=0.5, gamma0=2.0, j_values={"J1": 0.1, "J2": -0.06})
+
+    lam_lapack, modes_lapack = sf._batched_eigh(sf.rpa_exchange_matrix(geometry, kwargs["j_values"]))
+    lam_numba, modes_numba = sf._NUMBA_KERNELS.batched_hermitian_eigh(
+        np.ascontiguousarray(sf.rpa_exchange_matrix(geometry, kwargs["j_values"]))
+    )
+    # eigenvalue sets agree
+    np.testing.assert_allclose(
+        np.sort(lam_numba, axis=1), np.sort(lam_lapack, axis=1), rtol=1e-9, atol=1e-9
+    )
+
+    def chipp_with(lam, modes):
+        # Force the exact modes into the geometry cache, then evaluate via the
+        # numpy contraction so only the eigensolver differs.
+        key = tuple(sorted((str(k), float(v)) for k, v in kwargs["j_values"].items()))
+        geometry.__dict__["_rpa_modes_cache"] = (key, lam, modes)
+        try:
+            sf.set_rpa_backend("numpy")
+            return sf.heisenberg_rpa_chipp_and_gradients(geometry, E, **kwargs)
+        finally:
+            sf.set_rpa_backend("auto")
+            geometry.__dict__.pop("_rpa_modes_cache", None)
+
+    cp_l, gr_l = chipp_with(lam_lapack, modes_lapack)
+    cp_n, gr_n = chipp_with(lam_numba, modes_numba)
+    np.testing.assert_allclose(cp_n, cp_l, rtol=1e-10, atol=1e-13)
+    for name in gr_l:
+        np.testing.assert_allclose(gr_n[name], gr_l[name], rtol=1e-9, atol=1e-12)
+
+
+def test_eigendecomposition_is_shared_between_value_and_gradients():
+    """Part 1: value + gradients at the same params trigger only one eigh."""
+    from nfit import spin_fluctuations as sf
+
+    rng = np.random.default_rng(5)
+    geometry = _gradient_geometry(rng)
+    E = rng.uniform(0.3, 5.0, size=geometry.point_index.size)
+    kwargs = dict(chi0=0.4, gamma0=2.5, j_values={"J1": 0.12, "J2": -0.07})
+
+    calls = {"n": 0}
+    original = sf._batched_eigh
+
+    def counting(matrices):
+        calls["n"] += 1
+        return original(matrices)
+
+    try:
+        sf.set_rpa_backend("numpy")  # ensure the LAPACK path (counted) is used
+        geometry.__dict__.pop("_rpa_modes_cache", None)
+        sf._batched_eigh = counting
+        val = heisenberg_rpa_chipp(geometry, E, **kwargs)
+        cp, gr = sf.heisenberg_rpa_chipp_and_gradients(geometry, E, **kwargs)
+    finally:
+        sf._batched_eigh = original
+        sf.set_rpa_backend("auto")
+
+    # One eigendecomposition served both the value and the gradients.
+    assert calls["n"] == 1
+    # The value (mode-sum form) and the gradient function's chipp (resolvent
+    # form) are mathematically equal; they agree to floating-point precision.
+    np.testing.assert_allclose(val, cp, rtol=1e-12, atol=1e-15)
+
+    # Changing a J invalidates the cache and recomputes.
+    calls["n"] = 0
+    try:
+        sf.set_rpa_backend("numpy")
+        sf._batched_eigh = counting
+        heisenberg_rpa_chipp(geometry, E, chi0=0.4, gamma0=2.5, j_values={"J1": 0.2, "J2": -0.07})
+    finally:
+        sf._batched_eigh = original
+        sf.set_rpa_backend("auto")
+    assert calls["n"] == 1
+
+
+def test_eigh_backend_gating_by_size_and_matrix_dimension():
+    from nfit import spin_fluctuations as sf
+
+    if sf._NUMBA_KERNELS is None:
+        assert not sf._use_numba_eigh(10_000_000, 4)
+        return
+    try:
+        sf.set_rpa_backend("auto")
+        assert not sf._use_numba_eigh(10, 4)          # tiny batch -> LAPACK
+        assert sf._use_numba_eigh(500_000, 4)          # large batch -> numba
+        assert not sf._use_numba_eigh(500_000, 64)     # large matrices -> LAPACK
+        sf.set_rpa_backend("numpy")
+        assert not sf._use_numba_eigh(500_000, 4)      # forced numpy -> LAPACK
+        sf.set_rpa_backend("numba")
+        assert sf._use_numba_eigh(10, 4)               # forced numba honors small batch
+    finally:
+        sf.set_rpa_backend("auto")

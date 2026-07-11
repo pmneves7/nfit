@@ -186,6 +186,27 @@ def _select_rpa_backend(n_points: int) -> str:
         return "numba"
     return "numpy"
 
+
+# The batched Hermitian eigendecomposition of J(Q) dominates the cost for
+# datasets with little energy-per-Q deduplication (e.g. 2D maps). For small
+# matrices the fused numba Jacobi solver beats LAPACK by ~7x (no per-call
+# overhead, parallel over the batch). It is used for small sublattice counts
+# and large batches; larger matrices fall back to LAPACK (Jacobi is O(N^3) per
+# sweep and LAPACK is more efficient there).
+_NUMBA_EIGH_MAX_SITES = 16
+_NUMBA_EIGH_MIN_BATCH = 2000
+
+
+def _use_numba_eigh(n_batch: int, n_sites: int) -> bool:
+    if _NUMBA_KERNELS is None or _RPA_BACKEND == "numpy":
+        return False
+    if n_sites > _NUMBA_EIGH_MAX_SITES:
+        return False
+    if _RPA_BACKEND in ("numba", "cupy"):
+        return True
+    return n_batch >= _NUMBA_EIGH_MIN_BATCH
+
+
 # Batched ``eigh`` over the unique-Q grid dominates the RPA evaluation cost.
 # numpy loops over the batch in a single thread, but each small Hermitian
 # decomposition releases the GIL, so chunking across a thread pool can give a
@@ -692,23 +713,41 @@ def _rpa_modes(
 ) -> tuple[FloatArray, ComplexArray]:
     """Eigen-factor ``J(Q)`` at each unique Q and guard against instability.
 
-    Returns ``(lam, modes)`` with ``lam`` the ascending real eigenvalues
-    ``(n_q, n_sites)`` and ``modes`` the unitary eigenvectors
-    ``(n_q, n_sites, n_sites)`` (``modes[q, a, nu] = U_{a nu}(Q)``).
+    Returns ``(lam, modes)`` with ``lam`` the real eigenvalues ``(n_q,
+    n_sites)`` and ``modes`` the unitary eigenvectors ``(n_q, n_sites,
+    n_sites)`` (``modes[q, a, nu] = U_{a nu}(Q)``). Order and phase are
+    unspecified; the RPA observable sums over all modes and is invariant to
+    both, and to the basis within degenerate subspaces.
 
-    This batched Hermitian eigendecomposition is the hot kernel of the RPA
-    model and the single seam an accelerated backend (GPU, or a batched-LU
-    resolvent solve once single-ion anisotropy makes the local propagator a
-    per-site tensor and the eigenbasis of ``J`` no longer diagonalizes the RPA
-    denominator) would replace. Everything around it is cheap bookkeeping.
+    The eigendecomposition is the hot kernel of the model. It is computed by a
+    fused numba Jacobi solver for small matrices (much faster than per-call
+    LAPACK) or by LAPACK otherwise, and cached on the geometry keyed by the
+    exchange values so a least-squares iteration's back-to-back value and
+    Jacobian evaluations share a single decomposition.
 
     Raises ``ValueError`` when the static RPA denominator ``1 - lambda chi0`` is
     non-positive anywhere, i.e. at or beyond the magnetic instability
     ``max_Q lambda_nu(Q) chi0 = 1``.
     """
 
-    exchange = rpa_exchange_matrix(geometry, j_values)
-    lam, modes = _batched_eigh(exchange)
+    # Cache the decomposition on the geometry keyed by the exchange values.
+    # lam/modes depend only on J(Q) (not chi0/gamma0), so the value and the
+    # Jacobian at the same parameters -- which scipy evaluates back to back --
+    # reuse one eigendecomposition instead of computing it twice.
+    key = tuple(sorted((str(label), float(value)) for label, value in j_values.items()))
+    cached = geometry.__dict__.get("_rpa_modes_cache")
+    if cached is not None and cached[0] == key:
+        lam, modes = cached[1], cached[2]
+    else:
+        exchange = rpa_exchange_matrix(geometry, j_values)
+        if _use_numba_eigh(exchange.shape[0], exchange.shape[-1]):
+            lam, modes = _NUMBA_KERNELS.batched_hermitian_eigh(
+                np.ascontiguousarray(exchange)
+            )
+        else:
+            lam, modes = _batched_eigh(exchange)
+        geometry.__dict__["_rpa_modes_cache"] = (key, lam, modes)
+
     if np.any(1.0 - lam * chi0 <= 0.0):
         raise ValueError(
             "RPA instability: 1 - lambda(Q) * chi0 <= 0 "

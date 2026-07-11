@@ -26,12 +26,23 @@ automatically — none of them changes the fit result or requires configuration.
   resolution), the optimizer uses them instead of finite differences, cutting a
   least-squares iteration from $1 + n_{\text{param}}$ model evaluations to about
   two and improving convergence.
-- **Work-gated threaded eigendecomposition.** The batched `eigh` over the
-  unique-$\mathbf{Q}$ grid is chunked across a thread pool only when the total
-  work $M N^3$ is large enough to amortize the dispatch (roughly $N \ge 8$).
-  NumPy releases the GIL per small decomposition, so this parallelizes cleanly;
-  for the tiny matrices left after primitive-cell reduction it correctly stays
-  single-threaded.
+- **Shared eigendecomposition.** The eigendecomposition of $J(\mathbf{Q})$
+  depends only on the exchange values, so it is cached on the geometry and the
+  back-to-back value and Jacobian evaluations of one least-squares iteration
+  reuse a single decomposition instead of computing it twice.
+- **Fused small-matrix eigensolver.** For datasets with little
+  energy-per-$\mathbf{Q}$ deduplication (2D maps), the cost is dominated by
+  decomposing many tiny $J(\mathbf{Q})$ matrices, where LAPACK's per-call
+  overhead is the bottleneck. A fused numba Jacobi eigensolver decomposes the
+  whole batch in one parallel kernel — ~7× faster than batched LAPACK for
+  $4\times4$ matrices, and it scales across all cores. It is used for small
+  sublattice counts ($N \le 16$) and large batches; larger matrices use LAPACK.
+  Combined with the shared decomposition, this took a 393k-point 2D-map
+  iteration from ~1.3 s to ~0.26 s.
+- **Work-gated threaded eigendecomposition.** When the LAPACK path is used, the
+  batched `eigh` is chunked across a thread pool only when the total work
+  $M N^3$ is large enough to amortize the dispatch (roughly $N \ge 8$), with the
+  underlying BLAS pinned to one thread to avoid nested oversubscription.
 - **Memory-bounded gradients.** The analytic Jacobian streams over points in
   blocks, so its $(\text{block}, N, N)$ temporaries stay within a fixed budget
   regardless of dataset size.

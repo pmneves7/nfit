@@ -393,6 +393,44 @@ likelihood and uniform priors implied by parameter bounds. It returns samples,
 variable names, log probabilities, and compact diagnostics such as acceptance
 fractions and estimated autocorrelation time when available.
 
+### Why an emcee step costs far more than a least-squares step
+
+`emcee` is an *ensemble* sampler: every step advances all `n_walkers` walkers
+at once, so a single step evaluates the model **once per walker** — `n_walkers`
+likelihood (residual) evaluations. A least-squares step, by contrast, is a
+single model evaluation. So a step of MCMC is inherently ~`n_walkers` times more
+expensive than a step of least squares. In the GUI this shows up directly: with
+the default ensemble a least-squares step runs in ~1 s while an emcee step takes
+~20–30 s — the ratio is just the walker count.
+
+When `Walkers` is left at 0 (or `SamplerConfig(n_walkers=None)`), the walker
+count defaults to `max(32, 2 * n_parameters + 2)`, i.e. **32** for a typical
+handful of parameters. Practical consequences:
+
+- **Fewer walkers make each step faster but not the run cheaper.** The total
+  work for a given effective sample size is roughly `n_walkers * n_steps`
+  evaluations either way, and the stretch move mixes better with more walkers
+  (the minimum is `2 * n_parameters`). Treat `Walkers` as a granularity knob,
+  not a speed knob.
+- **The analytic Jacobian does not help MCMC.** Sampling needs only the
+  likelihood (the residual), not its gradient — so the Jacobian that accelerates
+  least squares is unused here. The per-evaluation cost still benefits from the
+  compute backend (see [Performance notes](performance.md)) and the cached
+  per-dataset geometry.
+- **Parallelizing across walkers is the one per-step lever, with a caveat.** The
+  walker evaluations in a step are independent and can be spread over a pool
+  (`SamplerConfig(kwargs={"workers": N})` / the GUI "emcee workers" field). But
+  each evaluation already uses all cores through the numba/threaded backends, so
+  raising emcee workers *and* leaving the backend multithreaded oversubscribes.
+  To use it, pin the backend to one thread (`nfit.set_num_threads(1)`) and set
+  emcee workers to the core count; on a single machine that is roughly a wash
+  for large datasets, and it pays off mainly across cluster nodes.
+
+So budget MCMC as a long/overnight (or cluster) job relative to a fit. To shrink
+wall time, reduce `n_steps` (a good least-squares start plus burn-in usually
+means you need far fewer than the default), sample a downsampled dataset, or
+distribute walkers across a cluster.
+
 ## Primitive and compound models
 
 The simplest measured-intensity model is constant in momentum and energy:
@@ -523,7 +561,8 @@ required to remain finite and positive at all evaluated energies.
 
 ## Uncertainty sampling
 
-`SamplerConfig`, `SamplingResult`, and `sample_problem_parameters` define the
-future MCMC/uncertainty-sampling entry point. The sampler itself is deliberately
-not implemented yet; once a backend is chosen, it will consume the same
-`FitProblem` and parameter specifications used by deterministic optimization.
+`SamplerConfig`, `SamplingResult`, and `sample_problem_parameters` provide
+posterior sampling with an `emcee` ensemble backend over the same `FitProblem`
+and parameter specifications used by deterministic optimization. See the
+posterior-sampling workflow above and, in particular,
+[Why an emcee step costs far more than a least-squares step](#why-an-emcee-step-costs-far-more-than-a-least-squares-step).

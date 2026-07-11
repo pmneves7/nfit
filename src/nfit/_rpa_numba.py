@@ -18,6 +18,100 @@ import numpy as np
 from numba import njit, prange
 
 
+@njit(cache=True, fastmath=False)
+def _hermitian_jacobi(A, V, n):
+    """In-place cyclic complex-Hermitian Jacobi on one matrix.
+
+    ``A`` (working copy, driven toward diagonal) holds the eigenvalues on its
+    diagonal on return; ``V`` (initialized to the identity) accumulates the
+    eigenvectors as columns. Each off-diagonal element is annihilated by a
+    phase rotation (making it real) followed by a real Givens rotation.
+    """
+
+    total = 0.0
+    for i in range(n):
+        for j in range(n):
+            total += A[i, j].real * A[i, j].real + A[i, j].imag * A[i, j].imag
+    if total <= 0.0:
+        return
+    threshold = 1e-24 * total
+    for _sweep in range(40):
+        off = 0.0
+        for p in range(n - 1):
+            for q in range(p + 1, n):
+                off += A[p, q].real * A[p, q].real + A[p, q].imag * A[p, q].imag
+        if off <= threshold:
+            break
+        for p in range(n - 1):
+            for q in range(p + 1, n):
+                apq = A[p, q]
+                mag = abs(apq)
+                if mag < 1e-300:
+                    continue
+                # Phase rotation: make A[p, q] real by scaling column/row q.
+                ph = apq / mag
+                cph = ph.conjugate()
+                for k in range(n):
+                    A[k, q] = A[k, q] * cph
+                for k in range(n):
+                    A[q, k] = A[q, k] * ph
+                for k in range(n):
+                    V[k, q] = V[k, q] * cph
+                # Real Givens rotation to annihilate the (now real) A[p, q].
+                app = A[p, p].real
+                aqq = A[q, q].real
+                x = A[p, q].real
+                if app == aqq:
+                    t = 1.0 if x >= 0.0 else -1.0
+                else:
+                    zeta = (app - aqq) / (2.0 * x)
+                    t = (1.0 if zeta >= 0.0 else -1.0) / (abs(zeta) + np.sqrt(1.0 + zeta * zeta))
+                c = 1.0 / np.sqrt(1.0 + t * t)
+                s = t * c
+                for k in range(n):
+                    akp = A[k, p]
+                    akq = A[k, q]
+                    A[k, p] = akp * c + akq * s
+                    A[k, q] = -akp * s + akq * c
+                for k in range(n):
+                    apk = A[p, k]
+                    aqk = A[q, k]
+                    A[p, k] = c * apk + s * aqk
+                    A[q, k] = -s * apk + c * aqk
+                for k in range(n):
+                    vkp = V[k, p]
+                    vkq = V[k, q]
+                    V[k, p] = vkp * c + vkq * s
+                    V[k, q] = -vkp * s + vkq * c
+
+
+@njit(parallel=True, cache=True, fastmath=False)
+def batched_hermitian_eigh(matrices):
+    """Batched Hermitian eigendecomposition (Jacobi), parallel over the batch.
+
+    Returns ``(eigenvalues, eigenvectors)`` shaped like ``numpy.linalg.eigh``
+    (eigenvectors as columns), but in *unspecified order and phase*. That is
+    sufficient for the RPA observable, which sums over all modes and is
+    invariant to eigenvector phase and to the basis within degenerate subspaces.
+    Fuses the many tiny decompositions into one parallel kernel, avoiding the
+    per-call LAPACK overhead that dominates for small matrices.
+    """
+
+    batch = matrices.shape[0]
+    n = matrices.shape[1]
+    eigenvalues = np.empty((batch, n), dtype=np.float64)
+    eigenvectors = np.empty((batch, n, n), dtype=np.complex128)
+    for b in prange(batch):
+        A = matrices[b].copy()
+        V = np.eye(n, dtype=np.complex128)
+        _hermitian_jacobi(A, V, n)
+        for i in range(n):
+            eigenvalues[b, i] = A[i, i].real
+            for j in range(n):
+                eigenvectors[b, i, j] = V[i, j]
+    return eigenvalues, eigenvectors
+
+
 @njit(parallel=True, cache=True, fastmath=False)
 def rpa_value_kernel(lam, modes, point_index, energy, chi0, gamma0):
     """Return ``chi''`` per point (uniform-weight RPA mode sum)."""
