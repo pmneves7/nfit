@@ -1226,6 +1226,31 @@ def test_slice_viewer_datasets_attach_current_model_before_fit():
     np.testing.assert_allclose(datasets[0].metadata["residual"], dataset.data.signal - 7.0)
 
 
+def test_slice_viewer_datasets_prefer_current_model_over_stored_fit_channels():
+    dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    model = create_model_component(group)
+    model.parameters["constant"] = 7.0
+    group.fits = [
+        FitTimelineEntry(
+            "Fit Result1",
+            kind="result",
+            channels={
+                "scan": {
+                    "fit": np.full(dataset.data.shape, 3.0),
+                    "residual": np.full(dataset.data.shape, -2.0),
+                }
+            },
+        )
+    ]
+
+    datasets, names = project_gui.slice_viewer_datasets(group)
+
+    assert names == ["scan"]
+    np.testing.assert_allclose(datasets[0].metadata["fit"], np.full(dataset.data.shape, 7.0))
+    np.testing.assert_allclose(datasets[0].metadata["residual"], dataset.data.signal - 7.0)
+
+
 def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
@@ -1729,10 +1754,13 @@ def test_project_explorer_reuses_fit_progress_dialog(monkeypatch):
 
     explorer.fit_now_for_selection()
     first_dialog = explorer._fit_progress_dialog
+    assert first_dialog is not None
+    assert first_dialog.dialog.isVisible()
+    assert first_dialog.close_button.isEnabled()
     explorer.fit_now_for_selection()
 
-    assert first_dialog is not None
     assert explorer._fit_progress_dialog is first_dialog
+    assert first_dialog.dialog.isVisible()
 
 
 def test_project_explorer_start_fit_runs_in_background_worker(monkeypatch):
@@ -1768,6 +1796,9 @@ def test_project_explorer_start_fit_runs_in_background_worker(monkeypatch):
 
     assert calls == ["run"]
     assert explorer._fit_worker_thread is None
+    assert explorer._fit_progress_dialog is not None
+    assert explorer._fit_progress_dialog.dialog.isVisible()
+    assert explorer._fit_progress_dialog.close_button.isEnabled()
 
 
 def test_project_explorer_edits_initial_state_in_place_without_results(monkeypatch):

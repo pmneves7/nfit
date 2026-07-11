@@ -532,10 +532,10 @@ class QtMDHistoSliceViewer:
         dataset_layout.addWidget(QtWidgets.QLabel("Channel"), 1, 0)
         dataset_layout.addWidget(self.channel_combo, 1, 1)
         dataset_layout.addWidget(self.apply_masks_check, 1, 2)
-        self.show_fit_check = QtWidgets.QCheckBox("Show fit")
+        self.show_fit_check = QtWidgets.QCheckBox("Show model")
         self.show_fit_check.setToolTip(
-            "Show the fit channel beside the data (2D) or as a line under the data (1D). "
-            "Enabled once stored fit channels or current model channels are available for this dataset."
+            "Show the current model beside the data (2D) or as a line under the data (1D). "
+            "Enabled once current model channels or stored fit channels are available for this dataset."
         )
         self.show_fit_check.toggled.connect(self._set_show_fit)
         self.show_residual_check = QtWidgets.QCheckBox("Show residual")
@@ -831,15 +831,15 @@ class QtMDHistoSliceViewer:
         self.fit_line_color_combo = QtWidgets.QComboBox()
         self.fit_line_color_combo.addItems([name for name in _COLOR_OPTIONS if name != "none"])
         self.fit_line_color_combo.setCurrentText(_option_name(_COLOR_OPTIONS, self.fit_line_color))
-        self.fit_line_color_combo.setToolTip("Color used for stored fit overlays in 1D plots.")
+        self.fit_line_color_combo.setToolTip("Color used for model overlays in 1D plots.")
         _compact_combobox(self.fit_line_color_combo)
         self.fit_line_color_combo.currentTextChanged.connect(self._set_fit_line_color)
         self.fit_line_width_spin = _make_float_spinbox(0.1, 20.0)
         self.fit_line_width_spin.setValue(self.fit_line_width)
-        self.fit_line_width_spin.setToolTip("Line width used for stored fit overlays in 1D plots.")
+        self.fit_line_width_spin.setToolTip("Line width used for model overlays in 1D plots.")
         self.fit_line_width_spin.valueChanged.connect(self._set_fit_line_width)
-        self.fit_line_color_label = QtWidgets.QLabel("Fit color")
-        self.fit_line_width_label = QtWidgets.QLabel("Fit width")
+        self.fit_line_color_label = QtWidgets.QLabel("Model color")
+        self.fit_line_width_label = QtWidgets.QLabel("Model width")
         line_layout.addWidget(self.fit_line_color_label, 5, 0)
         line_layout.addWidget(self.fit_line_color_combo, 5, 1)
         line_layout.addWidget(self.fit_line_width_label, 5, 2)

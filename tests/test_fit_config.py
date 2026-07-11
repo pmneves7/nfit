@@ -334,6 +334,7 @@ def test_stale_fit_channels_are_skipped_after_shape_change():
     ensure_fit_history(group)
     run_group_fit(group, group.fits[0])
 
+    model.enabled = False
     group.get_dataset("first").data = _grid_mdhisto(np.full((3, 3), 1.5))
     datasets, names = slice_viewer_datasets(group)
     view = datasets[names.index("first")]

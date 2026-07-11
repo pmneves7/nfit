@@ -552,6 +552,7 @@ def test_qt_show_fit_draws_side_by_side_panels_with_shared_view():
     data = _with_fit_channels(_tiny_mdhisto_data())
     viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
 
+    assert viewer.show_fit_check.text() == "Show model"
     assert viewer.show_fit_check.isEnabled()
     assert not viewer.show_fit_check.isChecked()
     assert not viewer.show_residual_check.isEnabled()

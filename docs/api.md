@@ -20,7 +20,7 @@ Use `slice_viewer(data)` for the PySide6 interactive viewer. The viewer supports
 choosing displayed x/y axes, integrating hidden axes, switching the displayed
 channel (`signal`, `errors`, `num_events`/multiplicity, `combined_mask`,
 `file_mask`, or `metallix_mask`), color-scale controls, cursor readout,
-histogram box cuts, mask toggling, fit overlays,
+histogram box cuts, mask toggling, model overlays,
 figure font sizing, dataset switching, clipboard copy, and script export. The
 Qt viewer accepts either one `MDHistoData` object or a sequence of datasets plus
 optional `dataset_names`.

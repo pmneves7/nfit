@@ -185,13 +185,24 @@ starting values, users can leave differential evolution and emcee disabled and
 just run least squares. For more complex fits, emcee can be run as part of the
 fit pipeline or later from an existing fit result.
 
-The `Loss` control selects the least-squares residual penalty. `linear` is the
-ordinary chi-squared objective. Robust choices such as `soft_l1`, `huber`,
-`cauchy`, and `arctan` down-weight large residuals and are useful as a safety
-valve for imperfect masks, spurions, detector artifacts, or model-mismatch
-regions. `Loss scale` sets the residual scale where robust losses begin to
-down-weight points; with normalized residuals, `1.0` is approximately one
-standard deviation.
+The `Loss` control selects the cost function: the rule that turns residuals
+into a number the optimizer tries to make small. A residual is the difference
+between data and model divided by the data uncertainty, so a residual of `1`
+means the model is about one standard deviation away from the data point. The
+available losses are:
+
+| Loss | What it does | When to use it |
+| --- | --- | --- |
+| `linear` | Ordinary chi-squared. Every residual is squared, so points with residual `10` count one hundred times more than points with residual `1`. | Use this for clean data, well-understood error bars, and final reported fits where the usual least-squares uncertainties should be easy to interpret. |
+| `soft_l1` | A smooth robust loss. Small residuals behave like ordinary chi-squared, while large residuals grow more slowly. | A good first robust choice when a few pixels, spurions, or imperfectly masked regions are pulling the fit away from the main signal. It is gentler than the more aggressive robust losses. |
+| `huber` | Chi-squared near zero, then roughly linear for residuals above the loss scale. | Use when you want a simple compromise: trust most points, but stop very large residuals from dominating. It is often easy to explain and less aggressive than `cauchy` or `arctan`. |
+| `cauchy` | Strongly down-weights large residuals. Very bad points add only slowly increasing cost. | Use for exploratory fits when there are clear outliers or model-mismatch regions that should have little leverage. It can hide systematic problems, so inspect residuals before trusting the result. |
+| `arctan` | The most aggressive option here. Very large residuals contribute almost a capped amount. | Use only as a last-resort diagnostic when severe outliers otherwise prevent convergence. If this changes the scientific conclusion, improve masks/modeling and refit with a less aggressive loss. |
+
+`Loss scale` sets where robust losses begin to treat a point as "large." With
+normalized residuals, `1.0` is approximately one standard deviation. Increasing
+it makes robust losses behave more like ordinary least squares; decreasing it
+makes down-weighting begin earlier.
 
 Longer fit runs open or reuse a progress window and run in a background Qt
 worker so the GUI can keep repainting and responding while initialization,
@@ -203,8 +214,9 @@ time-per-step value is reported for differential-evolution
 initialization, least-squares residual evaluations, and emcee posterior
 sampling. The `Cancel` button requests cancellation at the next optimizer or
 sampler progress update. Starting another fit resets the same progress window
-instead of opening duplicates. A compact progress log is also stored in the fit
-metadata.
+instead of opening duplicates. When a fit pipeline finishes, the progress window
+stays open so the final stage, parameters, and log remain available until the
+user closes it. A compact progress log is also stored in the fit metadata.
 
 `DE workers` and `emcee workers` control optional parallel worker threads for
 differential-evolution objective evaluations and emcee log-probability
@@ -259,12 +271,13 @@ best-fit reference crosshairs so overplotted posterior pile-ups remain visible.
 
 The data viewer supports dataset switching, channel selection, mask toggling,
 axis selection, hidden-axis slicing/integration, color scale and limit controls,
-cursor readouts, histogram box cuts, 1D line styling, fit overlays, figure copy,
+cursor readouts, histogram box cuts, 1D line styling, model overlays, figure copy,
 and script export.
 When enabled model components have a complete parameter set, the viewer can
-calculate and show the current model and residual channels even before an
-optimization has been run. Stored fit-result channels are still reused when
-available and compatible with the current dataset view.
+calculate and show the current model and residual channels from the `Show
+model` control even before an optimization has been run. Stored fit-result
+channels are still reused when no current model can be evaluated and the stored
+channels remain compatible with the current dataset view.
 For 2D fit comparisons, histogram box cuts show integrated data+fit cuts along
 both plotted axes; when residuals are enabled, residual cuts are shown below
 the residual panel and at the far right.

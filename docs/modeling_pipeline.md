@@ -127,11 +127,12 @@ The current project explorer launches with `metallix` and lets a user:
   parameters, and global/per-dataset parameter sharing,
 - run fits, branch fit timelines, restore earlier fit states, and inspect
   structured fit metadata,
-- compare data, fit, and residual channels visually in the data viewer.
+- compare data, model, and residual channels visually in the data viewer.
 
 The data viewer remains driven by reusable data/model objects. It can display
-stored fit channels from GUI fit history, but script-created datasets with
-attached fit comparisons should continue to produce the same viewer behavior.
+current model channels and stored fit channels from GUI fit history, but
+script-created datasets with attached fit comparisons should continue to
+produce the same viewer behavior.
 See [GUI workflows](gui_workflows.md) for current user-facing details.
 
 ## Masking
@@ -327,12 +328,27 @@ result = fit_problem_least_squares(
 )
 ```
 
-`loss="linear"` is ordinary chi-squared minimization. Robust losses such as
-`soft_l1`, `huber`, `cauchy`, and `arctan` keep small residuals close to
-ordinary least squares while reducing the leverage of very large residuals.
-They are useful for imperfect masks or outlier regions, but ordinary
-chi-squared remains the clearest statistical objective when reporting standard
-least-squares errors.
+The `loss` option chooses the cost function: the rule that converts residuals
+into the scalar objective minimized by least squares. Metallix residuals are
+normally normalized by the data uncertainty, so a residual of `1` means the
+model is about one standard deviation away from that point. `f_scale` sets the
+residual size where robust losses begin treating a point as large; `f_scale=1.0`
+means "start down-weighting around one sigma." Larger `f_scale` values make a
+robust loss behave more like ordinary least squares, while smaller values make
+down-weighting begin earlier.
+
+| Loss | What it does | When to use it |
+| --- | --- | --- |
+| `linear` | Ordinary chi-squared minimization. Residuals are squared, so a point with residual `10` has one hundred times the cost of a point with residual `1`. | Use for clean data, reliable uncertainties, and final reported fits where standard least-squares errors should be interpretable. |
+| `soft_l1` | A smooth robust loss. It behaves like chi-squared for small residuals, but large residuals grow more slowly. | A good first robust option for imperfect masks, detector artifacts, spurions, or a few outlier pixels. It reduces outlier leverage without being too abrupt. |
+| `huber` | Chi-squared for small residuals, then roughly linear growth once residuals exceed `f_scale`. | Use when most points should still be trusted but occasional large residuals should not dominate the fit. This is a conservative, easy-to-explain robust choice. |
+| `cauchy` | Strongly suppresses the influence of large residuals. Very bad points add only slowly increasing cost. | Useful for exploratory fits with obvious outliers or model-mismatch regions. Check residual maps carefully, because it can make a poor model look deceptively stable. |
+| `arctan` | Very aggressive down-weighting; extremely large residuals contribute almost a capped cost. | Reserve for diagnostics or difficult convergence problems with severe outliers. If it materially changes the answer, improve the mask/model and repeat with a less aggressive loss. |
+
+Robust losses are practical safety valves, not substitutes for understanding the
+data. For publication-quality parameter values and uncertainty estimates,
+ordinary chi-squared (`linear`) remains the clearest statistical objective when
+the error model is credible.
 
 For nonlinear fits with uncertain initial guesses, the least-squares start
 point can be initialized by differential evolution:

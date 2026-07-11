@@ -48,6 +48,6 @@ Open the interactive viewer after fitting with:
 
 The attached comparison contains three matching views on the original HYSPEC
 axes: the masked data points used in the fit, the fitted model values, and
-`(data - fit) / sigma`. Use the "Compare fit" checkbox to open linked data/fit
+`(data - fit) / sigma`. Use the "Show model" checkbox to open linked data/model
 panels, choose the model and fit result from the dropdown menus, and toggle the
 residual panel.

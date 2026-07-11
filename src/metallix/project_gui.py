@@ -2742,14 +2742,14 @@ def attach_fit_channels_to_view(
     *,
     fallback_payload: dict[str, Any] | None = None,
 ) -> None:
-    """Attach saved fit/residual channels to a viewer-ready dataset in place.
+    """Attach live-model or saved fit/residual channels to a viewer-ready dataset.
 
-    Channels are only attached when their stored shape still matches the
-    current view, so stale fits after mask or rebin changes are silently
-    skipped rather than misaligned.
+    Live current-model channels take precedence when available. Channels are
+    only attached when their shape still matches the current view, so stale fits
+    after mask or rebin changes are silently skipped rather than misaligned.
     """
 
-    payload = latest_fit_channels(group, dataset_name) or fallback_payload
+    payload = fallback_payload or latest_fit_channels(group, dataset_name)
     if payload is None:
         return
     arrays: dict[str, np.ndarray] = {}
@@ -5511,10 +5511,7 @@ class MetallixProjectExplorer:
         if failed:
             progress.fail(str(result.goodness.get("message", "The fit did not run.")))
         else:
-            # Close the progress window on success so the refreshed tree is
-            # visible immediately instead of hidden behind the dialog.
             progress.finish("Fit pipeline finished.")
-            progress.close()
         self.fit_branch_check.setChecked(False)
         self.refresh_slice_viewer(group)
         item_to_select = _fit_entry_to_select_after_run(group, fit_entry, result)
@@ -5673,6 +5670,7 @@ class MetallixProjectExplorer:
             task=task,
             on_success=on_success,
             success_message="Fit pipeline finished.",
+            close_on_success=False,
         )
 
     def open_fit_diagnostics_plots_for_selection(self) -> Any | None:
@@ -5957,7 +5955,7 @@ class MetallixProjectExplorer:
         )
 
     def show_data_and_fit_for_selection(self) -> Any | None:
-        """Open the data viewer with the stored fit overlaid on the data."""
+        """Open the data viewer with the model overlay enabled."""
 
         group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
         fit_entry = self._fit_entry_for_item(self._current_item())
@@ -6760,14 +6758,14 @@ class MetallixProjectExplorer:
         self.fit_branch_check = QtWidgets.QCheckBox("Branch timeline")
         self.fit_now_button = QtWidgets.QPushButton("Fit now")
         self.fit_corner_button = QtWidgets.QPushButton("Fit diagnostics")
-        self.show_data_fit_button = QtWidgets.QPushButton("Show data and fit")
+        self.show_data_fit_button = QtWidgets.QPushButton("Show data and model")
         self.fit_branch_check.setToolTip("Start a new nested fit timeline instead of appending to the current timeline.")
         self.fit_now_button.setToolTip("Run the optimizer from the selected fit state and store the result in the fit history.")
         self.fit_corner_button.setToolTip(
             "Open covariance/correlation heatmaps and posterior trace or corner-style plots when diagnostics are stored."
         )
         self.show_data_fit_button.setToolTip(
-            "Open the data viewer with the fit overlay enabled, using stored fit channels or the current model parameters."
+            "Open the data viewer with the model overlay enabled, using current model parameters or stored fit channels."
         )
         self.fit_now_button.clicked.connect(self.start_fit_for_selection)
         self.fit_corner_button.clicked.connect(self.open_fit_diagnostics_plots_for_selection)
@@ -9023,8 +9021,7 @@ class MetallixProjectExplorer:
         if group is not None:
             if branch_created:
                 self._refresh_tree(select_group=group, select_model=model)
-            else:
-                self.refresh_slice_viewer(group)
+            self._request_overlay_refresh(group)
 
     def _rebuild_model_parameter_editor(self, model: ModelComponentSpec) -> None:
         from PySide6 import QtWidgets
@@ -9447,8 +9444,7 @@ class MetallixProjectExplorer:
         if group is not None:
             if branch_created:
                 self._refresh_tree(select_group=group, select_model=model)
-            else:
-                self.refresh_slice_viewer(group)
+            self._request_overlay_refresh(group)
 
     def _set_model_crystal_lattice(self, name: str, text: str) -> None:
         def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
@@ -9626,7 +9622,6 @@ class MetallixProjectExplorer:
             self._mark_dirty()
             if group is not None and branch_created:
                 self._refresh_tree(select_group=group, select_model=model)
-                return
         if group is not None:
             self._request_overlay_refresh(group)
 
@@ -9661,9 +9656,8 @@ class MetallixProjectExplorer:
             self._mark_dirty()
             if group is not None and branch_created:
                 self._refresh_tree(select_group=group, select_model=model)
-                return
         if group is not None:
-            self.refresh_slice_viewer(group)
+            self._request_overlay_refresh(group)
 
     def _set_model_form_factor_choice(self, choice: str) -> None:
         group, _entry, _mask, model, role = self._objects_for_item(self._current_item())
@@ -9689,9 +9683,8 @@ class MetallixProjectExplorer:
             self._rebuild_model_parameter_editor(model)
             if group is not None and branch_created:
                 self._refresh_tree(select_group=group, select_model=model)
-                return
         if group is not None:
-            self.refresh_slice_viewer(group)
+            self._request_overlay_refresh(group)
 
     def _set_model_global_fit(self, name: str, checked: bool) -> None:
         group, _entry, _mask, model, role = self._objects_for_item(self._current_item())
@@ -9704,9 +9697,8 @@ class MetallixProjectExplorer:
             self._mark_dirty()
             if group is not None and branch_created:
                 self._refresh_tree(select_group=group, select_model=model)
-                return
         if group is not None:
-            self.refresh_slice_viewer(group)
+            self._request_overlay_refresh(group)
 
     def _set_model_fit_parameter(self, name: str, checked: bool) -> None:
         group, _entry, _mask, model, role = self._objects_for_item(self._current_item())
@@ -9719,9 +9711,8 @@ class MetallixProjectExplorer:
             self._mark_dirty()
             if group is not None and branch_created:
                 self._refresh_tree(select_group=group, select_model=model)
-                return
         if group is not None:
-            self.refresh_slice_viewer(group)
+            self._request_overlay_refresh(group)
 
     def _set_model_limit(self, name: str, side: int, text: str) -> None:
         group, _entry, _mask, model, role = self._objects_for_item(self._current_item())
@@ -9742,6 +9733,8 @@ class MetallixProjectExplorer:
         self._mark_dirty()
         if group is not None and branch_created:
             self._refresh_tree(select_group=group, select_model=model)
+        if group is not None:
+            self._request_overlay_refresh(group)
 
     def _set_model_applies_to(self, text: str) -> None:
         group, _entry, _mask, model, role = self._objects_for_item(self._current_item())
@@ -9756,6 +9749,8 @@ class MetallixProjectExplorer:
         self._mark_dirty()
         if group is not None and branch_created:
             self._refresh_tree(select_group=group, select_model=model)
+        if group is not None:
+            self._request_overlay_refresh(group)
 
     def refresh_open_slice_viewers(self) -> None:
         for group in list(self.project.data_groups):
