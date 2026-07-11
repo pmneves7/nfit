@@ -32,7 +32,7 @@
           ],
           "metadata": {
             "import_status": "loaded",
-            "source_file": "/Users/pmneves/code/metallix/data/hyspec/3D_test.nxs"
+            "source_file": "/Users/pmneves/code/nfit/data/hyspec/3D_test.nxs"
           },
           "name": "3D_test",
           "parameters": {
@@ -19198,7 +19198,7 @@
       "subgroups": []
     }
   ],
-  "format": "metallix-project",
+  "format": "nfit-project",
   "settings": {},
   "version": 1
 }

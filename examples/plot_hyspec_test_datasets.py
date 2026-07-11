@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from metallix import DataGroup, DatasetEntry, load_mantid_mdhisto_nxs, plot_mdhisto_auto, slice_viewer
+from nfit import DataGroup, DatasetEntry, load_mantid_mdhisto_nxs, plot_mdhisto_auto, slice_viewer
 
 
 DATASETS = {

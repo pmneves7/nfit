@@ -5,14 +5,14 @@ adds Gaussian noise, and fits measured intensity. The susceptibility model and
 cross-section wrapper are separate:
 
 ```python
-from metallix.models import paramagnon_chipp
-from metallix.cross_section import intensity_from_chipp
+from nfit.models import paramagnon_chipp
+from nfit.cross_section import intensity_from_chipp
 ```
 
 Run it with:
 
 ```bash
-/Users/pmneves/.conda/envs/metallix/bin/python examples/synthetic_single_q_fit.py
+/Users/pmneves/anaconda3/envs/nfit/bin/python examples/synthetic_single_q_fit.py
 ```
 
 The example writes a compact JSON summary to

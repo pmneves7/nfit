@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from metallix.form_factors import (
+from nfit.form_factors import (
     J0_COEFFICIENTS,
     available_ions,
     form_factor_sq,

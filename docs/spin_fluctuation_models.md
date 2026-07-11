@@ -37,7 +37,7 @@ Backgrounds are separate additive components (`constant_background`,
 
 ## Magnetic form factor
 
-The `metallix.form_factors` module tabulates the $\langle j_0 \rangle$
+The `nfit.form_factors` module tabulates the $\langle j_0 \rangle$
 analytic approximation
 
 $$
@@ -220,6 +220,101 @@ because $U$ is unitary.
   Lonzarich 1995]. In the limit of all $J = 0$ the model reduces exactly to
   `local_relaxational`.
 
+### Limiting cases
+
+Several simple limits are useful for checking a fit or choosing starting
+parameters.
+
+**No exchange.** If every exchange parameter is zero, $J(\mathbf{Q}) = 0$ and
+all RPA denominators are one. The model reduces exactly to the local
+relaxational form
+
+$$
+\chi''(E) =
+\chi_0\, \frac{\Gamma_0 E}{E^2 + \Gamma_0^2}.
+$$
+
+The only remaining $\mathbf{Q}$ dependence in measured intensity is from the
+magnetic form factor and any experimental coverage or masking.
+
+**One magnetic site per primitive cell.** For a Bravais-lattice model,
+$J(\mathbf{Q})$ is a scalar rather than a matrix, so the response is one
+renormalized relaxational mode:
+
+$$
+\chi''(\mathbf{Q}, E) =
+\chi_{\mathbf{Q}}\,
+\frac{\Gamma_{\mathbf{Q}} E}{E^2 + \Gamma_{\mathbf{Q}}^2},
+$$
+
+$$
+\chi_{\mathbf{Q}} =
+\frac{\chi_0}{1 - J(\mathbf{Q})\chi_0},
+\qquad
+\Gamma_{\mathbf{Q}} =
+\Gamma_0 \left[1 - J(\mathbf{Q})\chi_0\right].
+$$
+
+For a one-dimensional nearest-neighbor chain in this convention,
+$J(H) = 2J\cos(2\pi H)$.
+
+**Approach to magnetic order.** As the largest mode approaches the
+Stoner-like criterion from the paramagnetic side,
+
+$$
+\lambda_{\max}(\mathbf{Q})\chi_0 \to 1^-,
+$$
+
+the corresponding static susceptibility diverges and its relaxation energy
+softens to zero. At or beyond the instability
+($1 - \lambda_\nu \chi_0 \le 0$), direct evaluation raises an error; during a
+fit, those trial parameters are assigned a large finite misfit so the
+optimizer is steered back to the paramagnetic side.
+
+**Zero and negative energy transfer.** Because the model computes
+$\chi''$, the susceptibility is odd in energy:
+
+$$
+\chi''(\mathbf{Q}, 0) = 0,
+\qquad
+\chi''(\mathbf{Q}, -E) = -\chi''(\mathbf{Q}, E).
+$$
+
+The measured intensity also includes the Bose detailed-balance factor, so the
+small-$E$ intensity can remain finite even though $\chi''$ itself vanishes at
+$E = 0$.
+
+**Low-energy paramagnetic response.** For small positive $E$ while all RPA
+denominators remain positive,
+
+$$
+\chi''(\mathbf{Q}, E) \approx
+\frac{\chi_0 E}{\Gamma_0}
+\sum_\nu
+\frac{w_\nu(\mathbf{Q})}
+{\left[1 - \lambda_\nu(\mathbf{Q})\chi_0\right]^2}.
+$$
+
+This squared denominator is why low-energy cuts emphasize the incipient
+ordering vector so strongly.
+
+**High-energy tail.** When $|E|$ is much larger than every renormalized
+relaxation energy $\Gamma_\nu$, the leading tail becomes
+
+$$
+\chi''(\mathbf{Q}, E) \sim \frac{\chi_0 \Gamma_0}{E},
+$$
+
+independent of exchange to leading order. This follows from
+$\chi_{\mathbf{Q}\nu}\Gamma_\nu = \chi_0\Gamma_0$ and the weight sum rule
+$\sum_\nu w_\nu(\mathbf{Q}) = 1$.
+
+**Equivalent cell descriptions.** A shifted origin, a doubled cell, or the
+automatic primitive-cell reduction should not change the observable
+$\chi''$ when the bond network represents the same physical lattice. The
+extended-zone phase convention and uniform sublattice weight above are chosen
+to make this invariance exact.
+
 ### Symmetry-distinct bond orbits
 
 Exchange constants are defined per **bond orbit**: the set of bonds mapped
@@ -266,7 +361,7 @@ breaks the translation symmetry, or a genuinely primitive cell, is left
 untouched. **Everything the user sees stays in the specified cell:** $\mathbf{Q}$
 axes, positions, bond tables, $J$ labels, and fitted parameters are unchanged;
 only the internal evaluation uses the smaller basis of magnetic sites
-(`metallix.spin_fluctuations.reduce_site_network`).
+(`nfit.spin_fluctuations.reduce_site_network`).
 
 ### Analytic Jacobian (resolvent form)
 
@@ -339,7 +434,7 @@ temperature — typically `chi0` and `gamma0` — while keeping the exchange
 constants and `scale` global:
 
 ```python
-from metallix import FitDatasetInput, ModelComponentSpec, compile_fit_problem
+from nfit import FitDatasetInput, ModelComponentSpec, compile_fit_problem
 
 component = ModelComponentSpec(
     name="rpa",
@@ -372,7 +467,7 @@ global `rpa.J1`, and each dataset's Bose factor uses its own temperature.
 For scripted orbit generation from a CIF file:
 
 ```python
-from metallix import crystal_from_cif, generate_bond_orbits, orbits_to_config, sites_to_config
+from nfit import crystal_from_cif, generate_bond_orbits, orbits_to_config, sites_to_config
 
 crystal = crystal_from_cif("pyrochlore.cif")
 sites, orbits = generate_bond_orbits(crystal, ["Yb1"], cutoff_angstrom=7.2)

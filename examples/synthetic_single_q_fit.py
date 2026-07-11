@@ -5,9 +5,9 @@ from pathlib import Path
 
 import numpy as np
 
-from metallix import PointData4D, ParameterSpec, fit_least_squares
-from metallix.cross_section import intensity_from_chipp
-from metallix.models import paramagnon_chipp
+from nfit import PointData4D, ParameterSpec, fit_least_squares
+from nfit.cross_section import intensity_from_chipp
+from nfit.models import paramagnon_chipp
 
 
 def measured_model(data: PointData4D, params: dict[str, float]) -> np.ndarray:

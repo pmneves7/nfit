@@ -2,28 +2,28 @@
 
 ## Recommended conda setup
 
-Use a dedicated conda environment for `metallix`. This avoids mixing compiled
+Use a dedicated conda environment for `nfit`. This avoids mixing compiled
 scientific packages from the project with your base Python installation.
 
 ```bash
-cd ~/code/metallix
+cd ~/code/nfit
 conda env create -f environment.yml
-conda activate metallix
+conda activate nfit
 ```
 
 If the environment already exists, update it after changes to `environment.yml`:
 
 ```bash
 conda env update -f environment.yml --prune
-conda activate metallix
+conda activate nfit
 ```
 
 The environment uses conda-forge for NumPy, SciPy, Matplotlib, pytest, Sphinx,
-MyST Markdown, MyST-NB, and the documentation theme. It also installs `metallix`
+MyST Markdown, MyST-NB, and the documentation theme. It also installs `nfit`
 in editable mode with:
 
 ```bash
-/Users/pmneves/.conda/envs/metallix/bin/python -m pip install -e ".[dev,docs]"
+/Users/pmneves/anaconda3/envs/nfit/bin/python -m pip install -e ".[dev,docs]"
 ```
 
 ## Validate the install
@@ -31,13 +31,13 @@ in editable mode with:
 Run the test suite:
 
 ```bash
-/Users/pmneves/.conda/envs/metallix/bin/python -m pytest -q
+/Users/pmneves/anaconda3/envs/nfit/bin/python -m pytest -q
 ```
 
 Launch the graphical project explorer:
 
 ```bash
-metallix
+nfit
 ```
 
 The GUI opens the project explorer, where users can create workspaces, import
@@ -48,7 +48,7 @@ workflow and tooltip/documentation expectations.
 Run the first reference example:
 
 ```bash
-/Users/pmneves/.conda/envs/metallix/bin/python examples/synthetic_single_q_fit.py
+/Users/pmneves/anaconda3/envs/nfit/bin/python examples/synthetic_single_q_fit.py
 ```
 
 Build the documentation:
@@ -60,5 +60,21 @@ sphinx-build -b html docs docs/_build/html
 The long-term distribution goal is:
 
 ```bash
-pip install metallix
+pip install nfit
+```
+
+After the package is published, `pip install nfit` should install the runtime
+dependencies and expose the GUI launcher:
+
+```bash
+nfit
+```
+
+Before publishing, check release artifacts locally:
+
+```bash
+/Users/pmneves/anaconda3/envs/nfit/bin/python -m build
+/Users/pmneves/anaconda3/envs/nfit/bin/python -m twine check dist/*
+/Users/pmneves/anaconda3/envs/nfit/bin/python -m pip install dist/nfit-*.whl
+nfit
 ```

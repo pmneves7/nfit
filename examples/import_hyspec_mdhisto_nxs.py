@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from metallix import load_mantid_mdhisto_nxs
+from nfit import load_mantid_mdhisto_nxs
 
 
 FILENAME = "4D_test.nxs"

@@ -1,4 +1,4 @@
-from metallix import infer_axis_role
+from nfit import infer_axis_role
 
 
 def test_infer_axis_role_from_reduced_data_labels_and_units():

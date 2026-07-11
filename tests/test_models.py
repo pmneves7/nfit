@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from metallix.models import (
+from nfit.models import (
     compound_additive_model,
     linear_background,
     make_constant_intensity_model,
@@ -83,7 +83,7 @@ def test_relaxational_chipp_and_background():
 
 
 def test_constant_and_compound_measured_intensity_models():
-    from metallix import PointData4D
+    from nfit import PointData4D
 
     data = PointData4D(
         H=[0.0, 1.0],

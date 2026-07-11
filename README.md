@@ -1,7 +1,8 @@
-# metallix
+# nfit
 
-`metallix` is an early-stage Python package for analyzing reduced magnetic
+`nfit` is an early-stage Python package for analyzing reduced magnetic
 scattering and related experimental data from nearly magnetic metals. The
+name stands for neutron fitting and N-dimensional fitting. The
 package is meant to work in physical coordinates such as `H`, `K`, `L`, `|Q|`,
 and energy transfer after data reduction, regardless of whether the data came
 from HYSPEC, another spectrometer, a triple-axis experiment, a powder
@@ -30,11 +31,16 @@ testable building blocks:
 - a PySide6 MDHisto slice viewer with axis integration, color controls,
   cursor readout, histogram box cuts, channel selection, fit-comparison panels,
   and script export.
-- a PySide6 project explorer GUI launched with `metallix` for organizing
+- a PySide6 project explorer GUI launched with `nfit` for organizing
   workspaces, datasets, masks, models, rebinned views, and fit timelines.
 
 The package is intentionally small at this stage. MCMC has framework entry
 points but not a concrete backend yet; Dask, Numba, and JAX are not included.
+
+## Authorship
+
+Nfit was authored by Paul M. Neves (Johns Hopkins University,
+pneves1@jhu.edu) with use of LLM coding tools.
 
 ## Recommended development environment
 
@@ -43,16 +49,16 @@ scientific dependencies such as NumPy, SciPy, BLAS, and Fortran runtimes isolate
 from your base Python installation.
 
 ```bash
-cd ~/code/metallix
+cd ~/code/nfit
 conda env create -f environment.yml
-conda activate metallix
+conda activate nfit
 ```
 
 If the environment already exists and `environment.yml` changes, update it with:
 
 ```bash
 conda env update -f environment.yml --prune
-conda activate metallix
+conda activate nfit
 ```
 
 The environment installs the package in editable mode with development and
@@ -61,35 +67,35 @@ documentation extras.
 ## Tests
 
 ```bash
-/Users/pmneves/.conda/envs/metallix/bin/python -m pytest -q
+/Users/pmneves/anaconda3/envs/nfit/bin/python -m pytest -q
 ```
 
-Agents and local automation should use the explicit `metallix` conda
+Agents and local automation should use the explicit `nfit` conda
 interpreter above rather than the shell's default `python`.
 
 Run the first reference example:
 
 ```bash
-/Users/pmneves/.conda/envs/metallix/bin/python examples/synthetic_single_q_fit.py
+/Users/pmneves/anaconda3/envs/nfit/bin/python examples/synthetic_single_q_fit.py
 ```
 
 Import a Mantid MDHisto NeXus file and inspect the axes/channels. This is the
 current example adapter; the fitting layer is not specific to HYSPEC or MDHisto:
 
 ```bash
-/Users/pmneves/.conda/envs/metallix/bin/python examples/import_hyspec_mdhisto_nxs.py
+/Users/pmneves/anaconda3/envs/nfit/bin/python examples/import_hyspec_mdhisto_nxs.py
 ```
 
 Open the PySide6 slice viewer for the bundled MDHisto example data:
 
 ```bash
-/Users/pmneves/.conda/envs/metallix/bin/python examples/view_hyspec_mdhisto_slice.py
+/Users/pmneves/anaconda3/envs/nfit/bin/python examples/view_hyspec_mdhisto_slice.py
 ```
 
 Launch the project explorer GUI:
 
 ```bash
-metallix
+nfit
 ```
 
 The project explorer can create workspaces, import datasets, inspect structured
@@ -101,12 +107,12 @@ Render the local HYSPEC test datasets (`1D_test.nxs`, `2D_test.nxs`, and
 `4D_test.nxs`) with automatic 1D line plotting and 2D+ slice plotting:
 
 ```bash
-/Users/pmneves/.conda/envs/metallix/bin/python examples/plot_hyspec_test_datasets.py
-/Users/pmneves/.conda/envs/metallix/bin/python examples/plot_hyspec_test_datasets.py --channel multiplicity --save-dir /tmp/hyspec-plots
+/Users/pmneves/anaconda3/envs/nfit/bin/python examples/plot_hyspec_test_datasets.py
+/Users/pmneves/anaconda3/envs/nfit/bin/python examples/plot_hyspec_test_datasets.py --channel multiplicity --save-dir /tmp/hyspec-plots
 ```
 
 The slice viewer can display `signal`, propagated `errors`, `num_events`
-(`multiplicity`), `combined_mask`, `file_mask`, or `metallix_mask`; choose x/y
+(`multiplicity`), `combined_mask`, `file_mask`, or `nfit_mask`; choose x/y
 axes, integrate hidden axes, tune color normalization, switch between loaded
 datasets, copy the figure to the clipboard,
 compare attached fit results as linked data/fit/residual panels, or export a
@@ -124,7 +130,23 @@ sphinx-build -b html docs docs/_build/html
 The eventual goal is a normal release install:
 
 ```bash
-pip install metallix
+pip install nfit
+```
+
+Once published, that command should install the package and expose the GUI
+launcher:
+
+```bash
+nfit
+```
+
+Until the project is ready for public release, validate packaging locally with:
+
+```bash
+/Users/pmneves/anaconda3/envs/nfit/bin/python -m build
+/Users/pmneves/anaconda3/envs/nfit/bin/python -m twine check dist/*
+/Users/pmneves/anaconda3/envs/nfit/bin/python -m pip install dist/nfit-*.whl
+nfit
 ```
 
 ## Documentation

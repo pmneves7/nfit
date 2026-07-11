@@ -52,7 +52,7 @@ Acceptance criteria:
 - Package can be imported.
 - Documentation source tree exists, even if initially minimal.
 - Reference-example directory exists with a short README describing the intended validation role.
-- Project metadata is compatible with an eventual PyPI release named `metallix`.
+- Project metadata is compatible with an eventual PyPI release named `nfit`.
 
 ## Milestone 1: Core data containers
 
@@ -244,7 +244,7 @@ Core pages:
 - approximations and caveats page explaining finite windows, background handling, normalization assumptions, phenomenological lattice harmonics, and when not to overinterpret fitted parameters.
 - scientific references page with short notes on what each reference supports.
 - examples gallery based on scripts or notebooks.
-- distribution page explaining editable installs during development and the future `pip install metallix` path once released.
+- distribution page explaining editable installs during development and the future `pip install nfit` path once released.
 
 Acceptance criteria:
 
@@ -254,7 +254,7 @@ Acceptance criteria:
 - every public model has a documented equation, parameter table, units, and convention notes.
 - approximation pages distinguish implemented behavior from scientific interpretation.
 - references are attached to the relevant equations or assumptions, not only listed at the end.
-- packaging metadata is organized so the project can eventually be published as `metallix`.
+- packaging metadata is organized so the project can eventually be published as `nfit`.
 
 ## Milestone 10: Robust reference examples and validation gallery
 

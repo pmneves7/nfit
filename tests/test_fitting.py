@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from metallix import (
+from nfit import (
     FitDataset,
     FitProblem,
     ModelSpec,
@@ -16,8 +16,8 @@ from metallix import (
     SamplerConfig,
     sample_problem_parameters,
 )
-from metallix.cross_section import intensity_from_chipp
-from metallix.models import paramagnon_chipp
+from nfit.cross_section import intensity_from_chipp
+from nfit.models import paramagnon_chipp
 
 
 def measured_model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
@@ -366,9 +366,9 @@ def test_emcee_sampling_reports_posterior_samples():
 
 
 def test_parallel_worker_auto_uses_conservative_cpu_count(monkeypatch):
-    from metallix.fitting import _resolve_parallel_workers
+    from nfit.fitting import _resolve_parallel_workers
 
-    monkeypatch.setattr("metallix.fitting.os.cpu_count", lambda: 12)
+    monkeypatch.setattr("nfit.fitting.os.cpu_count", lambda: 12)
 
     assert _resolve_parallel_workers(-1) == 8
     assert _resolve_parallel_workers(1) == 1

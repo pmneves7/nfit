@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from metallix import (
+from nfit import (
     DataGroup,
     DatasetEntry,
     FitModelSession,

@@ -1,4 +1,4 @@
-name: metallix
+name: nfit
 channels:
   - conda-forge
 dependencies:

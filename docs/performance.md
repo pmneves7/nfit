@@ -61,15 +61,15 @@ millions of points — run through a selectable backend:
 | backend | when | dependency |
 | --- | --- | --- |
 | `numpy` | always available; fastest for small problems | — |
-| `numba` | large problems on CPU (fused, parallel, streaming kernel) | `pip install metallix[accel]` |
-| `cupy` | large problems on an NVIDIA/AMD GPU | `pip install metallix[gpu]` (CuPy wheel matching your CUDA/ROCm) |
+| `numba` | large problems on CPU (fused, parallel, streaming kernel) | `pip install nfit[accel]` |
+| `cupy` | large problems on an NVIDIA/AMD GPU | `pip install nfit[gpu]` (CuPy wheel matching your CUDA/ROCm) |
 
-`metallix.set_rpa_backend("auto")` (the default, also via the
-`METALLIX_RPA_BACKEND` environment variable) picks `numpy` below ~50k points so
+`nfit.set_rpa_backend("auto")` (the default, also via the
+`NFIT_RPA_BACKEND` environment variable) picks `numpy` below ~50k points so
 a 100-point dataset pays no JIT or host↔device overhead, `numba` for larger CPU
 problems, and `cupy` for the largest when a GPU is present. `numpy` /
 `numba` / `cupy` force a specific backend (falling back to `numpy` if the
-requested one is unavailable); `metallix.available_rpa_backends()` reports what
+requested one is unavailable); `nfit.available_rpa_backends()` reports what
 is installed. All backends produce identical results (locked to the numpy path
 to floating-point precision by the test suite).
 
@@ -83,8 +83,8 @@ The parallel worker budget for the RPA kernels (the batched-eigendecomposition
 thread pool and the numba kernel) auto-detects the CPUs the process is actually
 *allowed* to run on: on Linux that respects cgroup / cpuset / SLURM allocations
 via `os.sched_getaffinity`, so a 16-core allocation on a 128-core node uses 16
-workers, not 128. Override with `metallix.set_num_threads(n)` or the
-`METALLIX_NUM_THREADS` environment variable.
+workers, not 128. Override with `nfit.set_num_threads(n)` or the
+`NFIT_NUM_THREADS` environment variable.
 
 The batched eigendecomposition pins the underlying BLAS/LAPACK to a single
 thread per call while our thread pool provides the batch-level parallelism —
@@ -95,7 +95,7 @@ nodes. (This is what `threadpoolctl` is for; it is a hard dependency.)
 One hardware caveat: on Apple silicon, `eigh` runs through Accelerate's
 AMX-backed LAPACK, whose throughput is bounded by the shared AMX unit rather
 than by core count, so for large magnetic cells ($N \gtrsim 8$ sublattices)
-fewer eigh workers can be faster there — set `METALLIX_NUM_THREADS` lower if
+fewer eigh workers can be faster there — set `NFIT_NUM_THREADS` lower if
 you hit it. On non-AMX platforms (Linux/Windows with OpenBLAS/MKL) the
 pinned-BLAS pool scales the eigendecomposition across all allocated cores. The
 primitive-cell-reduced common case ($N \le 6$) does not thread the eigh at all,
@@ -103,7 +103,7 @@ so it is unaffected either way.
 
 ## Hardware and libraries
 
-metallix computes through NumPy/SciPy, so it inherits whatever LAPACK/BLAS
+nfit computes through NumPy/SciPy, so it inherits whatever LAPACK/BLAS
 those were built against. This is an **environment choice, not a code change**,
 and the package stays portable across macOS, Linux, Windows, and clusters with
 no configuration:
@@ -113,7 +113,7 @@ no configuration:
   for the small dense decompositions here. On other platforms OpenBLAS or MKL
   are the usual defaults.
 - The batched eigendecomposition and per-point contractions are isolated behind
-  a small set of seams (`metallix.spin_fluctuations._rpa_modes`,
+  a small set of seams (`nfit.spin_fluctuations._rpa_modes`,
   `_rpa_numba`, `_rpa_cupy`). The GPU backend currently accelerates the
   per-point contractions; keeping the eigendecomposition on the GPU
   (`cupy.linalg.eigh`) to avoid the host↔device transfer is a natural next step.

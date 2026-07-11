@@ -1,7 +1,7 @@
 import h5py
 import numpy as np
 
-from metallix import (
+from nfit import (
     attach_fit_comparisons,
     hyspec_hhl_point_indices,
     hyspec_hhl_fit_comparison_from_points,

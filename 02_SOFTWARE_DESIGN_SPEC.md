@@ -2,12 +2,12 @@
 
 ## 1. Package name
 
-Working distribution name: `metallix`.
+Working distribution name: `nfit`.
 
 The package should eventually be installable with a command like:
 
 ```bash
-pip install metallix
+pip install nfit
 ```
 
 During early development, the import path may remain simple and provisional
@@ -400,7 +400,7 @@ Documentation and distribution stack:
 - Read the Docs for hosted documentation builds.
 - Modern `pyproject.toml` packaging metadata and build configuration.
 - A local `sphinx-build` check included in the developer workflow once docs are nontrivial.
-- A future PyPI-ready distribution so users can install with `pip install metallix`.
+- A future PyPI-ready distribution so users can install with `pip install nfit`.
 
 ## 11. Reference examples and validation cases
 

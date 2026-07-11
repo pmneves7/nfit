@@ -1,6 +1,6 @@
 # Reduced-data philosophy
 
-`metallix` should be organized around reduced experimental coordinates and
+`nfit` should be organized around reduced experimental coordinates and
 models, not around any one instrument, file format, or Mantid workspace type.
 
 The common assumption is that data reduction has already converted raw detector
@@ -56,9 +56,9 @@ For example, the project explorer's current data-group workflow is intentionally
 mirrored by scriptable calls:
 
 ```python
-from metallix import MetallixProject, create_data_group, import_dataset_paths, save_project
+from nfit import NfitProject, create_data_group, import_dataset_paths, save_project
 
-project = MetallixProject()
+project = NfitProject()
 group = create_data_group(project, "field_series")
 import_dataset_paths(group, ["low_field.nxs", "high_field.nxs"])
 save_project(project, "field_series.mtlx")

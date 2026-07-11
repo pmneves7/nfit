@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from metallix.cross_section import KB_MEV_PER_K, bose_denominator, intensity_from_chipp
+from nfit.cross_section import KB_MEV_PER_K, bose_denominator, intensity_from_chipp
 
 
 def test_bose_denominator_small_energy_uses_linear_limit():

@@ -97,7 +97,7 @@ Keep chi'' and measured S(Q,E) conceptually separate.
 8. Plotting tools for observed slices, model slices, and residuals.
 9. Documentation website built with Sphinx, MyST Markdown, MyST-NB/Jupyter notebooks, and Read the Docs; it should explain installation, examples, physics conventions, scientific references, approximations, limitations, and interpretation rules.
 10. Robust reference examples that double as user tutorials, human-checkable validation cases, and regression checks for known scientific workflows.
-11. Eventual package distribution so users can install with a command like `pip install metallix`.
+11. Eventual package distribution so users can install with a command like `pip install nfit`.
 
 ## Documentation goals
 
@@ -109,7 +109,7 @@ Include:
 - a short README that points to full documentation.
 - getting-started workflow from installation to first fit.
 - Sphinx documentation configuration, MyST Markdown pages, MyST-NB/Jupyter notebook examples, and Read the Docs hosting configuration.
-- packaging notes for editable development installs and eventual `pip install metallix` distribution.
+- packaging notes for editable development installs and eventual `pip install nfit` distribution.
 - physics convention pages for chi'', S(Q,E), energy transfer, RLU coordinates, Bose factor, magnetic form factor, polarization factor, and absolute normalization.
 - model-reference pages with equations, parameter meanings, units, limits, and references.
 - examples that can be run against the current API.

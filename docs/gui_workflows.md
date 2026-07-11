@@ -7,17 +7,17 @@ that can be repeated later.
 
 ## Launch
 
-After installing the package in the `metallix` environment, launch the project
+After installing the package in the `nfit` environment, launch the project
 explorer with:
 
 ```bash
-metallix
+nfit
 ```
 
 During local development, the explicit environment interpreter is:
 
 ```bash
-/Users/pmneves/.conda/envs/metallix/bin/python -m metallix.project_gui
+/Users/pmneves/anaconda3/envs/nfit/bin/python -m nfit.project_gui
 ```
 
 When launched from a terminal, Ctrl+C sends an interrupt that closes the Qt
@@ -82,10 +82,10 @@ top of the right panel. Parameter tooltips come from the same registry that
 defines defaults and examples, so a user can inspect what each field means
 without guessing from the widget label alone.
 
-Masks are applied together. File-provided masks remain separate from metallix
-masks; metallix masks are applied as their own analysis mask layer. The data
-viewer exposes `combined_mask`, `file_mask`, and `metallix_mask` channels:
-`combined_mask` is the effective file-or-metallix exclusion mask used for
+Masks are applied together. File-provided masks remain separate from nfit
+masks; nfit masks are applied as their own analysis mask layer. The data
+viewer exposes `combined_mask`, `file_mask`, and `nfit_mask` channels:
+`combined_mask` is the effective file-or-nfit exclusion mask used for
 display and fitting, while the other two channels show provenance. The data
 viewer's `Apply Masks` checkbox controls whether masked regions are hidden in
 the viewer, but fitting still excludes masked data.
@@ -221,7 +221,7 @@ user closes it. A compact progress log is also stored in the fit metadata.
 `DE workers` and `emcee workers` control optional parallel worker threads for
 differential-evolution objective evaluations and emcee log-probability
 evaluations. The default is `1`, which keeps execution serial and predictable.
-Use `-1` to let metallix choose a conservative CPU-based value, currently one
+Use `-1` to let nfit choose a conservative CPU-based value, currently one
 less than the available processor count capped at eight workers. Values greater
 than one use an internal thread pool; this is most useful when model evaluation
 spends substantial time in NumPy/SciPy code.

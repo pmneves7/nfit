@@ -5,7 +5,7 @@ preprocessing, model, resolution, and fitting framework on the bundled HYSPEC
 example file:
 
 ```bash
-/Users/pmneves/.conda/envs/metallix/bin/python examples/fit_hyspec_constant_background.py
+/Users/pmneves/anaconda3/envs/nfit/bin/python examples/fit_hyspec_constant_background.py
 ```
 
 The script:
@@ -29,13 +29,13 @@ trajectories so that the example runs quickly. Use all eligible trajectories
 with:
 
 ```bash
-/Users/pmneves/.conda/envs/metallix/bin/python examples/fit_hyspec_constant_background.py --max-q-trajectories 0
+/Users/pmneves/anaconda3/envs/nfit/bin/python examples/fit_hyspec_constant_background.py --max-q-trajectories 0
 ```
 
 The phonon velocity and resolution oversampling are configurable:
 
 ```bash
-/Users/pmneves/.conda/envs/metallix/bin/python examples/fit_hyspec_constant_background.py \
+/Users/pmneves/anaconda3/envs/nfit/bin/python examples/fit_hyspec_constant_background.py \
   --phonon-velocity 35.0 \
   --resolution-oversampling 5
 ```
@@ -43,7 +43,7 @@ The phonon velocity and resolution oversampling are configurable:
 Open the interactive viewer after fitting with:
 
 ```bash
-/Users/pmneves/.conda/envs/metallix/bin/python examples/fit_hyspec_constant_background.py --view-fit
+/Users/pmneves/anaconda3/envs/nfit/bin/python examples/fit_hyspec_constant_background.py --view-fit
 ```
 
 The attached comparison contains three matching views on the original HYSPEC

@@ -19,7 +19,7 @@ Axes expose broad roles inferred from file labels and units, such as `h`, `k`,
 Use `slice_viewer(data)` for the PySide6 interactive viewer. The viewer supports
 choosing displayed x/y axes, integrating hidden axes, switching the displayed
 channel (`signal`, `errors`, `num_events`/multiplicity, `combined_mask`,
-`file_mask`, or `metallix_mask`), color-scale controls, cursor readout,
+`file_mask`, or `nfit_mask`), color-scale controls, cursor readout,
 histogram box cuts, mask toggling, model overlays,
 figure font sizing, dataset switching, clipboard copy, and script export. The
 Qt viewer accepts either one `MDHistoData` object or a sequence of datasets plus
@@ -39,7 +39,7 @@ residual channels directly. When the Qt viewer sees compatible stored channels,
 it can render linked data/fit or data/fit/residual panels while preserving the
 current plotting settings.
 
-Launch the project explorer with `metallix`. The explorer manages saved
+Launch the project explorer with `nfit`. The explorer manages saved
 projects, workspaces, datasets, dataset groups, masks, models, rebinned dataset
 views, and fit timelines. The GUI is documented in
 [GUI workflows](gui_workflows.md); its controls are expected to stay backed by
@@ -59,45 +59,45 @@ posterior checks use `emcee` through `sample_problem_parameters`. See the
 [modeling pipeline](modeling_pipeline.md) page for the recommended structure.
 
 ```{eval-rst}
-.. automodule:: metallix.axes
+.. automodule:: nfit.axes
    :members:
 
-.. automodule:: metallix.dataset
+.. automodule:: nfit.dataset
    :members:
 
-.. automodule:: metallix.mdhisto
+.. automodule:: nfit.mdhisto
    :members:
 
-.. automodule:: metallix.models
+.. automodule:: nfit.models
    :members:
 
-.. automodule:: metallix.cross_section
+.. automodule:: nfit.cross_section
    :members:
 
-.. automodule:: metallix.spin_fluctuations
+.. automodule:: nfit.spin_fluctuations
    :members:
 
-.. automodule:: metallix.form_factors
+.. automodule:: nfit.form_factors
    :members:
 
-.. automodule:: metallix.crystal
+.. automodule:: nfit.crystal
    :members:
 
-.. automodule:: metallix.fitting
+.. automodule:: nfit.fitting
    :members:
 
-.. automodule:: metallix.fit_views
+.. automodule:: nfit.fit_views
    :members:
 
-.. automodule:: metallix.pipeline
+.. automodule:: nfit.pipeline
    :members:
 
-.. automodule:: metallix.resolution
+.. automodule:: nfit.resolution
    :members:
 
-.. automodule:: metallix.rebin
+.. automodule:: nfit.rebin
    :members:
 
-.. automodule:: metallix.plotting
+.. automodule:: nfit.plotting
    :members:
 ```

@@ -70,7 +70,7 @@ minimizes one concatenated weighted residual vector.
   panels with linked axes, slicing, integration, and color settings.
 
 ```python
-from metallix import (
+from nfit import (
     DataGroup,
     DatasetEntry,
     FitModelSession,
@@ -113,7 +113,7 @@ attach masks, choose models, configure resolution functions, run fits, and open 
 viewer to compare data with fit results. The GUI should expose those same
 operations without inventing hidden widget-only scientific state.
 
-The current project explorer launches with `metallix` and lets a user:
+The current project explorer launches with `nfit` and lets a user:
 
 - create workspaces and import reduced datasets from files,
 - organize datasets into nested dataset groups,
@@ -143,7 +143,7 @@ combine with existing masks, so independent masks can be composed in a
 `FitDataset` transform list.
 
 ```python
-from metallix import FitDataset, make_energy_q_mask_transform, make_mask_transform
+from nfit import FitDataset, make_energy_q_mask_transform, make_mask_transform
 
 dataset = FitDataset(
     "hyspec_50K",
@@ -165,7 +165,7 @@ example `metadata={"coordinate_units": "angstrom^-1"}`. For RLU data, attach a
 lattice or UB-style matrix first:
 
 ```python
-from metallix import attach_lattice_parameters, make_energy_q_mask_transform
+from nfit import attach_lattice_parameters, make_energy_q_mask_transform
 
 data = attach_lattice_parameters(
     data,
@@ -198,7 +198,7 @@ with three entries projects `(H,K,L)`; a vector with four entries projects
 `(H,K,L,E)`.
 
 ```python
-from metallix import make_box_mask_transform, make_ellipsoid_mask_transform
+from nfit import make_box_mask_transform, make_ellipsoid_mask_transform
 
 box_mask = make_box_mask_transform(
     dimensions=[(1.0, 1.0, 0.0), "E"],
@@ -223,7 +223,7 @@ box, regardless of `L`.
 grows linearly with energy, centered at a specified reciprocal-space point:
 
 ```python
-from metallix import make_phonon_mask_transform
+from nfit import make_phonon_mask_transform
 
 phonon_mask = make_phonon_mask_transform(
     center=[0.0, 0.0, 0.0],
@@ -244,7 +244,7 @@ energy transfer should matter.
 placeholder for `(H,K,L,E)` point data:
 
 ```python
-from metallix import make_rebin_transform
+from nfit import make_rebin_transform
 
 dataset = FitDataset(
     "coarse_grid",
@@ -282,7 +282,7 @@ quality datasets, low quality datasets, and data from different instruments to
 contribute with explicitly chosen relative weights.
 
 ```python
-from metallix import (
+from nfit import (
     FitDataset,
     FitProblem,
     ModelSpec,
@@ -315,7 +315,7 @@ fits. Common options include `max_nfev`, tolerances such as `xtol`, and robust
 loss controls:
 
 ```python
-from metallix import OptimizationConfig
+from nfit import OptimizationConfig
 
 result = fit_problem_least_squares(
     problem,
@@ -329,7 +329,7 @@ result = fit_problem_least_squares(
 ```
 
 The `loss` option chooses the cost function: the rule that converts residuals
-into the scalar objective minimized by least squares. Metallix residuals are
+into the scalar objective minimized by least squares. Nfit residuals are
 normally normalized by the data uncertainty, so a residual of `1` means the
 model is about one standard deviation away from that point. `f_scale` sets the
 residual size where robust losses begin treating a point as large; `f_scale=1.0`
@@ -378,7 +378,7 @@ workflow is to run least squares first, then initialize walkers around the
 best-fit parameters:
 
 ```python
-from metallix import SamplerConfig, sample_problem_parameters
+from nfit import SamplerConfig, sample_problem_parameters
 
 fit = fit_problem_least_squares(problem)
 posterior = sample_problem_parameters(
@@ -398,7 +398,7 @@ fractions and estimated autocorrelation time when available.
 The simplest measured-intensity model is constant in momentum and energy:
 
 ```python
-from metallix import make_constant_intensity_model
+from nfit import make_constant_intensity_model
 
 background = make_constant_intensity_model("background")
 ```
@@ -408,7 +408,7 @@ Multiple primitive models can be added together with
 parameter dictionary, and the returned measured intensities are summed:
 
 ```python
-from metallix import compound_additive_model, make_constant_intensity_model
+from nfit import compound_additive_model, make_constant_intensity_model
 
 model = compound_additive_model(
     make_constant_intensity_model("background"),
@@ -420,7 +420,7 @@ model = compound_additive_model(
 
 GUI-facing model components (`ModelComponentSpec`) are compiled into a
 `FitProblem` through `compile_fit_problem`, which looks each component type up
-in `MODEL_TYPE_REGISTRY` (`metallix.fit_config`). A registration
+in `MODEL_TYPE_REGISTRY` (`nfit.fit_config`). A registration
 (`ModelTypeInfo`) carries the static parameter names, the compatible dataset
 data types, and a factory that closes over the component and returns the model
 callable.
@@ -491,7 +491,7 @@ evaluates the physics model on an oversampled energy grid for each unique
 points.
 
 ```python
-from metallix import FitDataset, constant_fwhm_energy_resolution
+from nfit import FitDataset, constant_fwhm_energy_resolution
 
 dataset = FitDataset(
     "instrument_a",
@@ -509,7 +509,7 @@ ParameterSpec("resolution_fwhm", 1.2, min=0.05, unit="meV")
 Polynomial FWHM is also available:
 
 ```python
-from metallix import polynomial_fwhm_energy_resolution
+from nfit import polynomial_fwhm_energy_resolution
 
 resolution = polynomial_fwhm_energy_resolution(
     ["fwhm0", "fwhm1", "fwhm2"],

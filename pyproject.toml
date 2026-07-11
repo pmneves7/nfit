@@ -3,14 +3,14 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "metallix"
-version = "0.0.1"
+name = "nfit"
+version = "0.4.0"
 description = "Reduced magnetic-scattering analysis for nearly magnetic metals"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
-  { name = "metallix contributors" }
+  { name = "Paul M. Neves", email = "pneves1@jhu.edu" }
 ]
 dependencies = [
   "numpy>=1.23",
@@ -31,6 +31,8 @@ keywords = [
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
@@ -38,17 +40,25 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Physics",
 ]
 
+[project.urls]
+Homepage = "https://github.com/pmneves7/nfit"
+Repository = "https://github.com/pmneves7/nfit"
+Documentation = "https://nfit.readthedocs.io/"
+Issues = "https://github.com/pmneves7/nfit/issues"
+
 [project.scripts]
-metallix = "metallix.project_gui:main"
+nfit = "nfit.project_gui:main"
 
 [project.optional-dependencies]
 dev = [
+  "build>=1",
   "pytest>=7",
+  "twine>=5",
   "numba>=0.58",
 ]
 # Accelerated compute backends for large spin-fluctuation fits. Both are
-# optional: metallix falls back to numpy when they are absent, and selects a
-# backend by problem size (see metallix.set_rpa_backend).
+# optional: nfit falls back to numpy when they are absent, and selects a
+# backend by problem size (see nfit.set_rpa_backend).
 accel = [
   "numba>=0.58",
 ]

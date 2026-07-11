@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from metallix import (
+from nfit import (
     PointData4D,
     attach_lattice_parameters,
     mask_out_box,

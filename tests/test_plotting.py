@@ -10,9 +10,9 @@ import matplotlib.colors as mcolors
 import numpy as np
 import pytest
 
-from metallix import PointData4D
-from metallix.mdhisto import MDHistoAxis, MDHistoData
-from metallix.plotting import (
+from nfit import PointData4D
+from nfit.mdhisto import MDHistoAxis, MDHistoData
+from nfit.plotting import (
     MDHistoSliceViewer,
     _DropdownSelect,
     mdhisto_with_signal_like,
@@ -217,7 +217,7 @@ def test_mdhisto_slice_viewer_blanks_empty_bins_when_integrating_ranges():
 def test_qt_slice_viewer_apply_masks_toggle_shows_masked_bins():
     pytest.importorskip("PySide6")
 
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     data = _tiny_mdhisto_data()
     data.mask[1, 1, 2, 3] = True
@@ -299,7 +299,7 @@ def test_qt_slice_viewer_uses_real_comboboxes_and_swaps_axes():
     pytest.importorskip("PySide6")
     from PySide6 import QtWidgets
 
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
 
@@ -319,7 +319,7 @@ def test_qt_slice_viewer_interactive_controls_have_tooltips():
     pytest.importorskip("PySide6")
     from PySide6 import QtWidgets
 
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
 
@@ -348,7 +348,7 @@ def test_qt_slice_viewer_standard_close_shortcut_closes_window():
     pytest.importorskip("PySide6")
     from PySide6 import QtGui, QtWidgets
 
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
     viewer.window.show()
@@ -369,7 +369,7 @@ def test_qt_slice_viewer_boolean_channels_use_grey_unit_scale_and_reverse():
     pytest.importorskip("PySide6")
     from PySide6 import QtWidgets
 
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     data = _tiny_mdhisto_data()
     data.mask[1, 1, 2, 3] = True
@@ -389,8 +389,8 @@ def test_qt_slice_viewer_boolean_channels_use_grey_unit_scale_and_reverse():
 
 def test_slice_viewer_returns_qt_viewer():
     pytest.importorskip("PySide6")
-    from metallix.plotting import slice_viewer
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.plotting import slice_viewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = slice_viewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
 
@@ -402,7 +402,7 @@ def test_qt_control_panel_uses_compact_widgets_without_horizontal_scroll():
     pytest.importorskip("PySide6")
     from PySide6 import QtCore
 
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
     viewer.window.show()
@@ -420,7 +420,7 @@ def test_qt_control_panel_uses_compact_widgets_without_horizontal_scroll():
 
 def test_qt_channel_dropdown_switches_displayed_channel_and_export_script():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
 
@@ -434,7 +434,7 @@ def test_qt_channel_dropdown_switches_displayed_channel_and_export_script():
 
 def test_qt_dataset_dropdown_switches_between_loaded_datasets():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     data_a = _tiny_mdhisto_data()
     data_b = _tiny_mdhisto_data()
@@ -457,7 +457,7 @@ def test_qt_dataset_dropdown_switches_between_loaded_datasets():
 
 def test_qt_dataset_dropdown_keeps_plot_configs_independent():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     data_a = _tiny_mdhisto_data()
     data_b = _tiny_mdhisto_data()
@@ -508,7 +508,7 @@ def test_qt_dataset_dropdown_keeps_plot_configs_independent():
 
 def test_qt_dataset_dropdown_handles_1d_line_and_2d_slice_modes():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     line_data = _tiny_1d_mdhisto_data()
     slice_data = _tiny_mdhisto_data()
@@ -547,7 +547,7 @@ def _with_fit_channels(data: MDHistoData) -> MDHistoData:
 
 def test_qt_show_fit_draws_side_by_side_panels_with_shared_view():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     data = _with_fit_channels(_tiny_mdhisto_data())
     viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
@@ -584,7 +584,7 @@ def test_qt_show_fit_draws_side_by_side_panels_with_shared_view():
 
 def test_qt_histogram_layout_noop_outside_standard_grid():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     data = _with_fit_channels(_tiny_mdhisto_data())
     viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
@@ -603,7 +603,7 @@ def test_qt_histogram_layout_noop_outside_standard_grid():
 
 def test_qt_reopen_after_fit_compare_does_not_crash():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     data = _with_fit_channels(_tiny_mdhisto_data())
     viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
@@ -618,7 +618,7 @@ def test_qt_reopen_after_fit_compare_does_not_crash():
 
 def test_qt_replace_datasets_enables_fit_controls_when_channels_appear():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), dataset_names=["scan"], x_dim=3, y_dim=2)
     assert not viewer.show_fit_check.isEnabled()
@@ -636,7 +636,7 @@ def test_qt_replace_datasets_enables_fit_controls_when_channels_appear():
 
 def test_qt_show_fit_checkbox_disabled_without_fit_channels():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
 
@@ -646,7 +646,7 @@ def test_qt_show_fit_checkbox_disabled_without_fit_channels():
 
 def test_qt_fit_compare_box_tool_draws_overlaid_data_fit_cut_and_residual_cut():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     data = _with_fit_channels(_tiny_mdhisto_data())
     viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
@@ -710,7 +710,7 @@ def test_qt_fit_compare_box_tool_draws_overlaid_data_fit_cut_and_residual_cut():
 
 def test_qt_fit_compare_box_extents_survive_fit_and_residual_toggles():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     data = _with_fit_channels(_tiny_mdhisto_data())
     viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
@@ -751,7 +751,7 @@ def test_qt_fit_compare_box_extents_survive_fit_and_residual_toggles():
 
 def test_qt_1d_show_fit_draws_line_behind_data_and_residual_axes():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     data = _with_fit_channels(_tiny_1d_mdhisto_data())
     viewer = QtMDHistoSliceViewer(data)
@@ -801,7 +801,7 @@ def test_qt_1d_show_fit_draws_line_behind_data_and_residual_axes():
 
 def test_qt_singleton_axes_are_not_controlled():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     data = _tiny_2d_mdhisto_data_with_singletons()
 
@@ -814,7 +814,7 @@ def test_qt_singleton_axes_are_not_controlled():
 
 def test_qt_1d_line_plot_controls_update_rendered_line():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_1d_mdhisto_data())
 
@@ -844,7 +844,7 @@ def test_qt_1d_line_plot_controls_update_rendered_line():
 
 def test_qt_1d_line_plot_errorbar_caps_share_linewidth():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_1d_mdhisto_data())
 
@@ -861,7 +861,7 @@ def test_qt_1d_line_plot_errorbar_caps_share_linewidth():
 
 def test_qt_hidden_axis_sliders_and_spins_stay_linked():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=1)
     controls = viewer.hidden_controls[2]
@@ -886,7 +886,7 @@ def test_qt_hidden_axis_sliders_and_spins_stay_linked():
 
 def test_qt_integrated_axis_width_enables_range_without_changing_value():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=1)
     controls = viewer.hidden_controls[2]
@@ -901,7 +901,7 @@ def test_qt_integrated_axis_width_enables_range_without_changing_value():
 
 def test_qt_autoscale_limits_and_manual_override():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
 
@@ -928,7 +928,7 @@ def test_qt_autoscale_limits_and_manual_override():
 
 def test_qt_color_scale_preserves_manual_view_and_power_gamma():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
     viewer.ax_image.set_xlim(-0.3, 0.7)
@@ -945,7 +945,7 @@ def test_qt_color_scale_preserves_manual_view_and_power_gamma():
 
 def test_qt_repeated_redraws_reuse_colorbar_without_locator_recursion():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
     colorbar = viewer.colorbar
@@ -962,7 +962,7 @@ def test_qt_repeated_redraws_reuse_colorbar_without_locator_recursion():
 
 def test_qt_font_size_control_updates_figure_text():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
 
@@ -993,7 +993,7 @@ def test_qt_copy_and_save_script_exports_current_display_state():
     pytest.importorskip("PySide6")
     from PySide6 import QtWidgets
 
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     data = _tiny_mdhisto_data()
     data.metadata["source_file"] = "/tmp/example.nxs"
@@ -1023,7 +1023,7 @@ def test_qt_copy_figure_to_clipboard_sets_pixmap():
     pytest.importorskip("PySide6")
     from PySide6 import QtWidgets
 
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
 
@@ -1034,7 +1034,7 @@ def test_qt_copy_figure_to_clipboard_sets_pixmap():
 
 def test_qt_view_limit_controls_track_set_and_reset_main_axes():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
 
@@ -1064,7 +1064,7 @@ def test_qt_view_limit_controls_track_set_and_reset_main_axes():
 
 def test_qt_roi_button_enables_rectangle_selector_and_cursor_hkle():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
 
@@ -1086,7 +1086,7 @@ def test_qt_cursor_readout_uses_fixed_labels_and_uncertainty_precision():
     pytest.importorskip("PySide6")
     from types import SimpleNamespace
 
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     data = _tiny_mdhisto_data()
     data.signal[1, 1, 3, 2] = -0.0067
@@ -1112,7 +1112,7 @@ def test_qt_cursor_readout_formats_q_modulus_when_lattice_matrix_is_available():
     pytest.importorskip("PySide6")
     from types import SimpleNamespace
 
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     data = _tiny_mdhisto_data()
     data.metadata["rlu_to_inv_angstrom_matrix"] = np.eye(3).tolist()
@@ -1132,11 +1132,11 @@ def test_qt_cursor_readout_formats_q_modulus_when_lattice_matrix_is_available():
 def test_qt_cursor_readout_hides_crystal_coordinates_for_powder_and_magnetization():
     pytest.importorskip("PySide6")
 
-    from metallix.dataset import PointListData
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.dataset import PointListData
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     powder = _tiny_mdhisto_data()
-    powder.metadata["metallix_data_type"] = "powder_inelastic"
+    powder.metadata["nfit_data_type"] = "powder_inelastic"
     powder_viewer = QtMDHistoSliceViewer(powder, x_dim=3, y_dim=2)
 
     assert powder_viewer.cursor_hkle_label.isHidden()
@@ -1152,7 +1152,7 @@ def test_qt_cursor_readout_hides_crystal_coordinates_for_powder_and_magnetizatio
         units={"Temperature": "K", "Magnetic Field": "T"},
         coordinate_names=["Temperature", "Magnetic Field"],
         channels=[{"label": "Moment", "value": "Moment", "error": "Moment error"}],
-        metadata={"metallix_data_type": "magnetization"},
+        metadata={"nfit_data_type": "magnetization"},
     )
     magnetization_viewer = QtMDHistoSliceViewer(magnetization)
 
@@ -1163,8 +1163,8 @@ def test_qt_cursor_readout_hides_crystal_coordinates_for_powder_and_magnetizatio
 def test_qt_point_list_show_fit_draws_line_and_residual_axes():
     pytest.importorskip("PySide6")
 
-    from metallix.dataset import PointListData
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.dataset import PointListData
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     temperature = np.linspace(1.0, 10.0, 8)
     data = PointListData(
@@ -1182,7 +1182,7 @@ def test_qt_point_list_show_fit_draws_line_and_residual_axes():
             {"label": "fit", "value": "fit", "error": None},
             {"label": "residual", "value": "residual", "error": None},
         ],
-        metadata={"metallix_data_type": "magnetization"},
+        metadata={"nfit_data_type": "magnetization"},
     )
     viewer = QtMDHistoSliceViewer(data)
 
@@ -1206,8 +1206,8 @@ def test_qt_powder_point_cursor_readout_uses_q_column():
     pytest.importorskip("PySide6")
     from types import SimpleNamespace
 
-    from metallix.dataset import PointListData
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.dataset import PointListData
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     data = PointListData(
         columns={
@@ -1218,7 +1218,7 @@ def test_qt_powder_point_cursor_readout_uses_q_column():
         units={"q": "Å⁻¹"},
         coordinate_names=["q"],
         channels=[{"label": "Signal", "value": "Signal", "error": "Error"}],
-        metadata={"metallix_data_type": "powder_elastic"},
+        metadata={"nfit_data_type": "powder_elastic"},
     )
     viewer = QtMDHistoSliceViewer(data)
     view = viewer.slice_arrays()
@@ -1239,8 +1239,8 @@ def test_qt_powder_point_cursor_readout_calculates_q_from_two_theta_and_waveleng
     pytest.importorskip("PySide6")
     from types import SimpleNamespace
 
-    from metallix.dataset import PointListData
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.dataset import PointListData
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     wavelength = 2.41
     two_theta = np.array([10.0, 30.0, 50.0])
@@ -1254,7 +1254,7 @@ def test_qt_powder_point_cursor_readout_calculates_q_from_two_theta_and_waveleng
         coordinate_names=["2theta"],
         channels=[{"label": "Signal", "value": "Signal", "error": "Error"}],
         metadata={
-            "metallix_data_type": "powder_elastic",
+            "nfit_data_type": "powder_elastic",
             "wavelength": {"value": wavelength, "two_theta": "2theta"},
         },
     )
@@ -1275,7 +1275,7 @@ def test_qt_powder_point_cursor_readout_calculates_q_from_two_theta_and_waveleng
 def test_qt_cursor_readout_applies_2pi_for_orientation_matrix_convention():
     pytest.importorskip("PySide6")
 
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     data = _tiny_mdhisto_data()
     data.metadata["oriented_lattice"] = {"orientation_matrix": (0.1 * np.eye(3)).tolist()}
@@ -1294,7 +1294,7 @@ def test_qt_cursor_readout_applies_2pi_for_orientation_matrix_convention():
 def test_qt_slice_viewer_replace_datasets_preserves_plot_settings():
     pytest.importorskip("PySide6")
 
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     first = _tiny_mdhisto_data()
     second = _tiny_mdhisto_data()
@@ -1327,7 +1327,7 @@ def test_qt_1d_cursor_readout_tracks_nearest_point_and_hkle():
     pytest.importorskip("PySide6")
     from types import SimpleNamespace
 
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     data = _tiny_1d_mdhisto_data()
     data.signal[0, 0, 0, 2] = 3.25
@@ -1350,7 +1350,7 @@ def test_qt_1d_cursor_readout_tracks_nearest_point_and_hkle():
 
 def test_qt_box_tool_visibility_checkbox_controls_rectangle_selector():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
 
@@ -1387,7 +1387,7 @@ def test_qt_box_tool_visibility_checkbox_controls_rectangle_selector():
 
 def test_qt_roi_center_width_controls_sync_with_rectangle_extents():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
     viewer.show_box_check.setChecked(True)
@@ -1421,7 +1421,7 @@ def test_qt_roi_center_width_controls_sync_with_rectangle_extents():
 
 def test_qt_histogram_axes_visibility_and_panel_percent_controls():
     pytest.importorskip("PySide6")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
 

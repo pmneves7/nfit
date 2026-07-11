@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from metallix import PointData4D, from_arrays
+from nfit import PointData4D, from_arrays
 
 
 def test_point_data_valid_masks_nonfinite_and_bad_sigma():

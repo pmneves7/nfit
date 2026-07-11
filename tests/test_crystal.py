@@ -3,7 +3,7 @@ import pytest
 
 pytest.importorskip("gemmi")
 
-from metallix.crystal import (
+from nfit.crystal import (
     Bond,
     crystal_from_cif,
     expand_magnetic_sites,
@@ -119,7 +119,7 @@ def test_orbit_config_round_trip():
 
 
 def test_orbits_feed_rpa_geometry():
-    from metallix.spin_fluctuations import build_rpa_geometry, rpa_exchange_matrix
+    from nfit.spin_fluctuations import build_rpa_geometry, rpa_exchange_matrix
 
     sites, orbits = generate_bond_orbits(FCC, ["Ni1"], cutoff_angstrom=3.0)
     H = np.array([0.0, 0.3, 1.0])
@@ -186,7 +186,7 @@ def test_pyrochlore_reduces_to_four_sublattices_with_identical_chipp():
     at generic Q with all four exchange constants nonzero.
     """
 
-    from metallix.spin_fluctuations import (
+    from nfit.spin_fluctuations import (
         build_rpa_geometry,
         heisenberg_rpa_chipp,
         reduce_site_network,

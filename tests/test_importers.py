@@ -3,8 +3,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from metallix.dataset import PointListData
-from metallix.importers import (
+from nfit.dataset import PointListData
+from nfit.importers import (
     IMPORTERS,
     import_hb2a_powder,
     import_mpms_dat,

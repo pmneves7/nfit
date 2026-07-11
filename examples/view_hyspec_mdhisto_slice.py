@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from metallix import load_mantid_mdhisto_nxs, slice_viewer
+from nfit import load_mantid_mdhisto_nxs, slice_viewer
 
 
 FILENAME = "4D_test.nxs"

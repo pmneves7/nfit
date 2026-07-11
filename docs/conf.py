@@ -1,7 +1,7 @@
-project = "metallix"
-author = "metallix contributors"
-copyright = "2026, metallix contributors"
-release = "0.0.1"
+project = "nfit"
+author = "Paul M. Neves"
+copyright = "2026, Paul M. Neves"
+release = "0.4.0"
 
 extensions = [
     "myst_nb",
@@ -19,4 +19,3 @@ master_doc = "index"
 html_theme = "furo"
 myst_enable_extensions = ["dollarmath", "amsmath"]
 nb_execution_mode = "off"
-

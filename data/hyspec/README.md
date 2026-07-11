@@ -4,13 +4,13 @@ Large HYSPEC data files should usually live outside the git checkout. The
 notebook looks first in:
 
 ```text
-~/metallix-data/hyspec/raw/
+~/nfit-data/hyspec/raw/
 ```
 
 You can override that location with:
 
 ```bash
-export METALLIX_HYSPEC_DATA_DIR=/path/to/hyspec/raw
+export NFIT_HYSPEC_DATA_DIR=/path/to/hyspec/raw
 ```
 
 If you prefer a repo-local scratch location, put files here:
@@ -22,7 +22,7 @@ data/hyspec/raw/
 For the real Mantid `SaveMD` output, either layout is fine:
 
 ```text
-~/metallix-data/hyspec/raw/<your_hyspec_savemd_file>.nxs
+~/nfit-data/hyspec/raw/<your_hyspec_savemd_file>.nxs
 data/hyspec/raw/<your_hyspec_savemd_file>.nxs
 ```
 
@@ -39,7 +39,7 @@ python examples/plot_hyspec_test_datasets.py --save-dir /tmp/hyspec-test-plots
 ```
 
 The viewer can switch between same-shaped MDHisto channels (`signal`, `errors`,
-`num_events`/multiplicity, `combined_mask`, `file_mask`, and `metallix_mask`)
+`num_events`/multiplicity, `combined_mask`, `file_mask`, and `nfit_mask`)
 from the Channel dropdown. The Figure panel can copy the current figure or
 export a `plot_mdhisto_slice(...)` script that reproduces the current display
 settings without launching the GUI.

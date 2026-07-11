@@ -3,20 +3,20 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from metallix.dataset import PointData4D, PointListData
-from metallix.fit_config import (
+from nfit.dataset import PointData4D, PointListData
+from nfit.fit_config import (
     FitDatasetInput,
     compile_fit_problem,
     instanced_parameter_name,
     model_supports_data_type,
     qualified_parameter_name,
 )
-from metallix.fitting import fit_problem_least_squares
-from metallix.mdhisto import MDHistoAxis, MDHistoData
-from metallix.pipeline import DataGroup, DatasetEntry, ModelComponentSpec
-from metallix.plotting import MDHistoSliceViewer
-from metallix.project_gui import (
-    MetallixProject,
+from nfit.fitting import fit_problem_least_squares
+from nfit.mdhisto import MDHistoAxis, MDHistoData
+from nfit.pipeline import DataGroup, DatasetEntry, ModelComponentSpec
+from nfit.plotting import MDHistoSliceViewer
+from nfit.project_gui import (
+    NfitProject,
     attach_fit_channels_to_view,
     create_mask,
     create_model_component,
@@ -401,7 +401,7 @@ def test_project_round_trip_preserves_fit_channels_and_model_fields(tmp_path):
     dataset.metadata["source_file"] = str(tmp_path / "missing.nxs")
 
     path = tmp_path / "project.json"
-    save_project(MetallixProject([group]), path)
+    save_project(NfitProject([group]), path)
     loaded = load_project(path)
     loaded_group = loaded.data_groups[0]
     loaded_model = next(iter(loaded_group.models.values()))
@@ -482,9 +482,9 @@ def test_spin_fluctuation_models_require_temperature():
 
 
 def test_local_relaxational_fit_recovers_synthetic_parameters():
-    from metallix.cross_section import intensity_from_chipp
-    from metallix.fit_config import ISOTROPIC_POLARIZATION
-    from metallix.spin_fluctuations import local_relaxational_chipp
+    from nfit.cross_section import intensity_from_chipp
+    from nfit.fit_config import ISOTROPIC_POLARIZATION
+    from nfit.spin_fluctuations import local_relaxational_chipp
 
     rng = np.random.default_rng(11)
     E = np.linspace(0.5, 12.0, 80)
@@ -513,9 +513,9 @@ def test_local_relaxational_fit_recovers_synthetic_parameters():
 
 
 def test_mmp_relaxational_fit_recovers_synthetic_parameters():
-    from metallix.cross_section import intensity_from_chipp
-    from metallix.fit_config import ISOTROPIC_POLARIZATION
-    from metallix.spin_fluctuations import mmp_chipp
+    from nfit.cross_section import intensity_from_chipp
+    from nfit.fit_config import ISOTROPIC_POLARIZATION
+    from nfit.spin_fluctuations import mmp_chipp
 
     rng = np.random.default_rng(5)
     lattice_a = 4.0
@@ -578,9 +578,9 @@ def _heisenberg_chain_component(**overrides) -> ModelComponentSpec:
 
 
 def test_heisenberg_rpa_fit_recovers_synthetic_parameters():
-    from metallix.cross_section import intensity_from_chipp
-    from metallix.fit_config import ISOTROPIC_POLARIZATION
-    from metallix.spin_fluctuations import build_rpa_geometry, heisenberg_rpa_chipp
+    from nfit.cross_section import intensity_from_chipp
+    from nfit.fit_config import ISOTROPIC_POLARIZATION
+    from nfit.spin_fluctuations import build_rpa_geometry, heisenberg_rpa_chipp
 
     rng = np.random.default_rng(2)
     H_axis = np.linspace(0.0, 1.0, 15)
@@ -684,7 +684,7 @@ def _rpa_points(temperature: float, seed: int, n: int = 60) -> PointData4D:
 
 
 def test_heisenberg_rpa_problem_reports_analytic_jacobian():
-    from metallix.fitting import problem_supports_analytic_jacobian
+    from nfit.fitting import problem_supports_analytic_jacobian
 
     compiled = compile_fit_problem(
         [_rpa_component()],
@@ -695,7 +695,7 @@ def test_heisenberg_rpa_problem_reports_analytic_jacobian():
 
 
 def test_analytic_jacobian_matches_finite_differences_with_grouped_sharing():
-    from metallix.fitting import (
+    from nfit.fitting import (
         _evaluate_problem,
         _evaluate_problem_jacobian,
         _finite_difference_jacobian,
@@ -731,7 +731,7 @@ def test_analytic_jacobian_matches_finite_differences_with_grouped_sharing():
 
 
 def test_analytic_jacobian_matches_finite_differences_with_constraint():
-    from metallix.fitting import (
+    from nfit.fitting import (
         _evaluate_problem,
         _evaluate_problem_jacobian,
         _finite_difference_jacobian,
@@ -763,7 +763,7 @@ def test_analytic_jacobian_matches_finite_differences_with_constraint():
 
 
 def test_analytic_and_numeric_jacobians_recover_same_fit():
-    from metallix.fitting import OptimizationConfig
+    from nfit.fitting import OptimizationConfig
 
     # Synthesize data from the model, then fit from a perturbed start with the
     # analytic Jacobian and confirm it recovers the generating parameters.
@@ -772,7 +772,7 @@ def test_analytic_and_numeric_jacobians_recover_same_fit():
     compiled_truth = compile_fit_problem(
         [truth], [FitDatasetInput("T5", data, data_type="single_crystal_inelastic")]
     )
-    from metallix.fitting import evaluate_problem_model
+    from nfit.fitting import evaluate_problem_model
 
     model_values = evaluate_problem_model(
         compiled_truth.problem,

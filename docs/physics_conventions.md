@@ -26,7 +26,7 @@ Additional conventions used by the spin-fluctuation model family (see
 - The polarization factor for isotropic (Heisenberg) spins is $P = 2/3$.
 - Magnetic form factors use the $\langle j_0 \rangle$ analytic approximation
   $f(s) = A e^{-a s^2} + B e^{-b s^2} + C e^{-c s^2} + D$ with
-  $s = |Q|/4\pi$ in Å⁻¹ (`metallix.form_factors`).
+  $s = |Q|/4\pi$ in Å⁻¹ (`nfit.form_factors`).
 - Exchange Fourier transforms use the extended-zone phase convention:
   $J(\mathbf{Q})_{ab} = \sum J_{\text{bond}}
   \exp[2\pi i\, \mathbf{Q}\cdot(\mathbf{r}_b + \mathbf{n} - \mathbf{r}_a)]$

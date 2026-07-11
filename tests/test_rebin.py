@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from metallix import NDRebin, rebin_nd
+from nfit import NDRebin, rebin_nd
 
 
 def test_rebin_nd_averages_values_and_propagates_errors():

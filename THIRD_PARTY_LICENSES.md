@@ -2,7 +2,7 @@
 
 ## SasView sasdata NDRebin
 
-`src/metallix/rebin.py` adapts the `NDRebin` implementation from SasView
+`src/nfit/rebin.py` adapts the `NDRebin` implementation from SasView
 `sasdata.transforms.NDrebin.NDRebin`.
 
 Copyright (c) 2009-2025, SasView Developers

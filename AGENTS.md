@@ -1,19 +1,19 @@
 # Agent Instructions
 
-This repository should be developed and tested with the local `metallix` conda
+This repository should be developed and tested with the local `nfit` conda
 environment.
 
 Use this interpreter explicitly unless the user tells you otherwise:
 
 ```bash
-/Users/pmneves/.conda/envs/metallix/bin/python
+/Users/pmneves/anaconda3/envs/nfit/bin/python
 ```
 
 Preferred test commands:
 
 ```bash
-/Users/pmneves/.conda/envs/metallix/bin/python -m pytest -q
-/Users/pmneves/.conda/envs/metallix/bin/python -m compileall -q src/metallix tests examples
+/Users/pmneves/anaconda3/envs/nfit/bin/python -m pytest -q
+/Users/pmneves/anaconda3/envs/nfit/bin/python -m compileall -q src/nfit tests examples
 ```
 
 Do not rely on the shell's default `python`; on this machine it may point to a
@@ -22,6 +22,15 @@ Qt/PySide and NumPy-version behavior.
 
 If the environment is missing, tell the user rather than silently switching to a
 different Python.
+
+Versioning and authorship:
+
+- Update the project version in `pyproject.toml` and `docs/conf.py` as part of
+  every commit. Use a reasonable semantic-version bump for the behavioral scope
+  of the commit.
+- Keep the authorship statement intact: this project was authored by Paul M.
+  Neves (Johns Hopkins University, pneves1@jhu.edu) with use of LLM coding
+  tools.
 
 Documentation and wiki maintenance:
 

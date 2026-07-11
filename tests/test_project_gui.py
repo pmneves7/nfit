@@ -6,13 +6,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import metallix
-import metallix.project_gui as project_gui
-from metallix.dataset import PointData4D, PointListData
-from metallix.mdhisto import MDHistoAxis, MDHistoData
-from metallix.project_gui import (
-    MetallixProject,
-    MetallixProjectExplorer,
+import nfit
+import nfit.project_gui as project_gui
+from nfit.dataset import PointData4D, PointListData
+from nfit.mdhisto import MDHistoAxis, MDHistoData
+from nfit.project_gui import (
+    NfitProject,
+    NfitProjectExplorer,
     available_data_types,
     create_mask,
     create_data_group,
@@ -42,7 +42,7 @@ from metallix.project_gui import (
     set_dataset_data_type,
     set_dataset_source,
 )
-from metallix.pipeline import (
+from nfit.pipeline import (
     DataGroup,
     DatasetEntry,
     DatasetGroup,
@@ -58,10 +58,10 @@ HB2A_FILE = DATA_DIR / "HB2A" / "test_powder_diffraction.dat"
 
 
 def test_project_helpers_name_import_and_round_trip(tmp_path):
-    assert metallix.create_data_group is create_data_group
-    assert metallix.import_dataset_paths is import_dataset_paths
+    assert nfit.create_data_group is create_data_group
+    assert nfit.import_dataset_paths is import_dataset_paths
 
-    project = MetallixProject(
+    project = NfitProject(
         data_groups=[
             DataGroup("Workspace1"),
             DataGroup("Workspace3"),
@@ -98,7 +98,7 @@ def test_project_helpers_name_import_and_round_trip(tmp_path):
     save_project(project, project_path)
 
     payload = json.loads(project_path.read_text(encoding="utf-8"))
-    assert payload["format"] == "metallix-project"
+    assert payload["format"] == "nfit-project"
     assert payload["data_groups"][2]["datasets"][0]["name"] == "scan"
     assert payload["data_groups"][2]["datasets"][0]["masks"][0]["type"] == "box"
     assert payload["data_groups"][2]["datasets"][0]["masks"][0]["parameters"]["center"] == [
@@ -141,7 +141,7 @@ def test_project_explorer_preserves_tree_expansion_and_toolbar_font(monkeypatch,
 
     group_a = DataGroup("Datagroup1")
     group_b = DataGroup("Datagroup2")
-    explorer = MetallixProjectExplorer(MetallixProject([group_a, group_b]))
+    explorer = NfitProjectExplorer(NfitProject([group_a, group_b]))
     tree = explorer.tree
     toolbar = explorer.window.findChild(QtWidgets.QToolBar)
     file_button = toolbar.findChild(QtWidgets.QToolButton, "file_menu_button")
@@ -200,7 +200,7 @@ def test_project_explorer_tree_hierarchy_fonts(monkeypatch):
             FitTimelineEntry("Current state", kind="current"),
         ],
     )
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
 
     workspace_item = explorer.tree.topLevelItem(0)
     datasets_item = workspace_item.child(0)
@@ -292,7 +292,7 @@ def test_project_explorer_opens_and_reloads_group_slice_viewer(monkeypatch):
     first = DatasetEntry("first", _tiny_mdhisto_data(1.0))
     second = DatasetEntry("second", _tiny_mdhisto_data(2.0))
     group = DataGroup("Datagroup1", datasets=[first, second])
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
 
     dataset_item = explorer.tree.topLevelItem(0).child(0).child(1)
     explorer.tree.setCurrentItem(dataset_item)
@@ -332,7 +332,7 @@ def test_project_explorer_loads_dataset_and_refreshes_details(monkeypatch, tmp_p
         metadata={"source_file": str(source), "import_status": "pending"},
     )
     group = DataGroup("Datagroup1", datasets=[dataset])
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
     dataset_item = explorer.tree.topLevelItem(0).child(0).child(0)
     explorer.tree.setCurrentItem(dataset_item)
 
@@ -391,7 +391,7 @@ def test_project_explorer_refreshes_details_after_slice_viewer_lazy_load(monkeyp
         metadata={"source_file": str(source), "import_status": "pending"},
     )
     group = DataGroup("Datagroup1", datasets=[dataset])
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
 
     monkeypatch.setattr(project_gui, "QtMDHistoSliceViewer", FakeViewer)
@@ -438,7 +438,7 @@ def test_project_explorer_interactive_controls_have_tooltips(monkeypatch):
     group = DataGroup("Workspace1", datasets=[dataset])
     create_mask(dataset)
     create_model_component(group)
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
     tree_items = [
         explorer.tree.topLevelItem(0),
         explorer.tree.topLevelItem(0).child(0).child(0),
@@ -468,7 +468,7 @@ def test_project_explorer_interactive_controls_have_tooltips(monkeypatch):
         channels=[{"label": "Moment", "value": "Moment", "error": "Moment error"}],
     )
     point_dataset = DatasetEntry("magnetization", point_data, data_type="magnetization")
-    point_explorer = MetallixProjectExplorer(MetallixProject([DataGroup("Workspace1", datasets=[point_dataset])]))
+    point_explorer = NfitProjectExplorer(NfitProject([DataGroup("Workspace1", datasets=[point_dataset])]))
     point_explorer.tree.setCurrentItem(point_explorer.tree.topLevelItem(0).child(0).child(0))
 
     assert missing_tooltips(point_explorer.window) == []
@@ -481,7 +481,7 @@ def test_project_explorer_adds_edits_and_copies_masks(monkeypatch):
     first = DatasetEntry("first", _tiny_mdhisto_data(1.0))
     second = DatasetEntry("second", _tiny_mdhisto_data(2.0))
     group = DataGroup("Datagroup1", datasets=[first, second])
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
 
     first_dataset_item = explorer.tree.topLevelItem(0).child(0).child(0)
     explorer.tree.setCurrentItem(first_dataset_item)
@@ -535,7 +535,7 @@ def test_project_explorer_adds_edits_and_copies_masks(monkeypatch):
     assert first.masks == [second_mask, mask]
 
 
-def test_dataset_for_slice_viewer_combines_file_and_metallix_coordinate_masks():
+def test_dataset_for_slice_viewer_combines_file_and_nfit_coordinate_masks():
     h_axis = MDHistoAxis("H", np.array([0.0, 1.0, 2.0]), "rlu", "momentum")
     e_axis = MDHistoAxis("E", np.array([0.0, 1.0]), "meV", "energy")
     file_mask = np.zeros((2, 1), dtype=bool)
@@ -555,7 +555,7 @@ def test_dataset_for_slice_viewer_combines_file_and_metallix_coordinate_masks():
     viewed = dataset_for_slice_viewer(dataset)
 
     np.testing.assert_array_equal(viewed.metadata["file_mask"], file_mask)
-    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], [[True], [False]])
+    np.testing.assert_array_equal(viewed.metadata["nfit_mask"], [[True], [False]])
     np.testing.assert_array_equal(viewed.mask, [[True], [True]])
 
 
@@ -570,7 +570,7 @@ def test_coordinate_range_mask_axis_vectors_define_coordinates():
     viewed = dataset_for_slice_viewer(dataset)
 
     expected = np.array([[False, True], [False, True]])
-    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], expected)
+    np.testing.assert_array_equal(viewed.metadata["nfit_mask"], expected)
 
 
 def test_dataset_for_slice_viewer_applies_mask_order_invert_and_additive():
@@ -595,23 +595,23 @@ def test_dataset_for_slice_viewer_applies_mask_order_invert_and_additive():
 
     viewed = dataset_for_slice_viewer(dataset)
 
-    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], [[False], [False], [False]])
+    np.testing.assert_array_equal(viewed.metadata["nfit_mask"], [[False], [False], [False]])
     np.testing.assert_array_equal(viewed.mask, [[False], [False], [True]])
 
     dataset.masks = [additive, masking]
     viewed = dataset_for_slice_viewer(dataset)
 
-    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], [[True], [False], [False]])
+    np.testing.assert_array_equal(viewed.metadata["nfit_mask"], [[True], [False], [False]])
 
     masking.invert = True
     viewed = dataset_for_slice_viewer(dataset)
 
-    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], [[False], [True], [True]])
+    np.testing.assert_array_equal(viewed.metadata["nfit_mask"], [[False], [True], [True]])
 
     masking.enabled = False
     viewed = dataset_for_slice_viewer(dataset)
 
-    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], [[False], [False], [False]])
+    np.testing.assert_array_equal(viewed.metadata["nfit_mask"], [[False], [False], [False]])
 
 
 def test_dataset_for_slice_viewer_applies_energy_q_range_mask():
@@ -634,7 +634,7 @@ def test_dataset_for_slice_viewer_applies_energy_q_range_mask():
 
     expected = np.zeros((2, 3), dtype=bool)
     expected[0, 1] = True
-    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], expected)
+    np.testing.assert_array_equal(viewed.metadata["nfit_mask"], expected)
     np.testing.assert_array_equal(viewed.mask, expected)
 
 
@@ -665,7 +665,7 @@ def test_energy_q_range_mask_accepts_leading_decimal_and_projected_q_axes():
     viewed = dataset_for_slice_viewer(dataset)
 
     expected = np.array([[True, True], [False, False]])
-    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], expected)
+    np.testing.assert_array_equal(viewed.metadata["nfit_mask"], expected)
 
 
 def test_dataset_for_slice_viewer_applies_phonon_cone_mask():
@@ -695,7 +695,7 @@ def test_dataset_for_slice_viewer_applies_phonon_cone_mask():
     # Only the H=0 column falls inside the cone; the H=1 column is 1 inv-angstrom away.
     expected = np.zeros(shape, dtype=bool)
     expected[0] = True
-    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], expected)
+    np.testing.assert_array_equal(viewed.metadata["nfit_mask"], expected)
 
 
 def test_phonon_cone_mask_is_inert_with_nonpositive_slope():
@@ -720,7 +720,7 @@ def test_phonon_cone_mask_is_inert_with_nonpositive_slope():
 
     viewed = dataset_for_slice_viewer(dataset)
 
-    assert viewed.metadata["metallix_mask_count"] == 0
+    assert viewed.metadata["nfit_mask_count"] == 0
 
 
 def _he_mdhisto_data():
@@ -752,7 +752,7 @@ def test_dataset_for_slice_viewer_applies_box_mask():
     # Only the H=0, E=0 bin falls inside the box.
     expected = np.zeros(data.shape, dtype=bool)
     expected[0, 0] = True
-    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], expected)
+    np.testing.assert_array_equal(viewed.metadata["nfit_mask"], expected)
     np.testing.assert_array_equal(viewed.mask, expected)
 
 
@@ -766,7 +766,7 @@ def test_box_mask_is_inert_with_zero_width():
 
     viewed = dataset_for_slice_viewer(dataset)
 
-    assert viewed.metadata["metallix_mask_count"] == 0
+    assert viewed.metadata["nfit_mask_count"] == 0
 
 
 def test_dataset_for_slice_viewer_applies_ellipsoid_mask():
@@ -784,7 +784,7 @@ def test_dataset_for_slice_viewer_applies_ellipsoid_mask():
     expected[0, 0] = True  # H=0, E=0
     expected[1, 0] = True  # H=1, E=0 (on the boundary)
     expected[0, 1] = True  # H=0, E=10 (on the boundary)
-    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], expected)
+    np.testing.assert_array_equal(viewed.metadata["nfit_mask"], expected)
     np.testing.assert_array_equal(viewed.mask, expected)
 
 
@@ -798,7 +798,7 @@ def test_ellipsoid_mask_is_inert_with_zero_radius():
 
     viewed = dataset_for_slice_viewer(dataset)
 
-    assert viewed.metadata["metallix_mask_count"] == 0
+    assert viewed.metadata["nfit_mask_count"] == 0
 
 
 def test_box_mask_resolves_projected_axes():
@@ -825,7 +825,7 @@ def test_box_mask_resolves_projected_axes():
     # Only the bin whose [H,H,0]=0 and [0,0,L]=0 lands inside the box.
     expected = np.zeros(shape, dtype=bool)
     expected[0, 0] = True
-    np.testing.assert_array_equal(viewed.metadata["metallix_mask"], expected)
+    np.testing.assert_array_equal(viewed.metadata["nfit_mask"], expected)
 
 
 def test_project_explorer_adds_and_edits_models(monkeypatch):
@@ -833,7 +833,7 @@ def test_project_explorer_adds_and_edits_models(monkeypatch):
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
     group = DataGroup("Datagroup1")
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
     group_item = explorer.tree.topLevelItem(0)
 
     explorer.tree.setCurrentItem(group_item)
@@ -932,7 +932,7 @@ def test_project_explorer_model_limits_and_applies_to_controls(monkeypatch):
 
     group = DataGroup("Datagroup1", datasets=[DatasetEntry("first", _tiny_mdhisto_data(1.0))])
     model = create_model_component(group)
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
     model_item = explorer.tree.topLevelItem(0).child(1).child(0)
     explorer.tree.setCurrentItem(model_item)
 
@@ -965,7 +965,7 @@ def test_spin_model_form_factor_custom_choice_controls_coefficients(monkeypatch)
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
     group = DataGroup("Datagroup1")
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
     model = explorer.add_model_to_selection()
 
@@ -1020,7 +1020,7 @@ def test_project_explorer_fit_history_creates_results_branches_and_restores(monk
     group = DataGroup("Datagroup1", datasets=[dataset])
     model = create_model_component(group)
     model.parameters["constant"] = 0.5
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
 
     group_item = explorer.tree.topLevelItem(0)
     fits_item = group_item.child(2)
@@ -1147,7 +1147,7 @@ def test_fit_now_updates_live_model_parameters_and_editor(monkeypatch):
     model = create_model_component(group)
     model.parameters["constant"] = 0.0
     model.fit_parameters["constant"] = True
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
 
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(2).child(0))
     result = explorer.fit_now_for_selection()
@@ -1257,7 +1257,7 @@ def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(
 
     group = DataGroup("Datagroup1", datasets=[DatasetEntry("first", _tiny_mdhisto_data(1.0))])
     create_model_component(group)
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
 
     fit_item = explorer.tree.topLevelItem(0).child(2).child(0)
     explorer.tree.setCurrentItem(fit_item)
@@ -1365,7 +1365,7 @@ def test_fit_details_posterior_sampler_controls_update_burn_without_timeline(mon
         snapshot=project_gui.snapshot_data_group_state(group),
     )
     group.fits = [result]
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
 
     fit_item = explorer.tree.topLevelItem(0).child(2).child(0)
     explorer.tree.setCurrentItem(fit_item)
@@ -1427,7 +1427,7 @@ def test_promote_best_posterior_sample_creates_current_state(monkeypatch):
         snapshot=project_gui.snapshot_data_group_state(group),
     )
     group.fits = [result]
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
 
     fit_item = explorer.tree.topLevelItem(0).child(2).child(0)
     explorer.tree.setCurrentItem(fit_item)
@@ -1451,7 +1451,7 @@ def test_posterior_corner_density_panel_draws_contours():
 
     matplotlib.use("Agg", force=True)
     from matplotlib.figure import Figure
-    from metallix.project_gui import _draw_corner_density_panel
+    from nfit.project_gui import _draw_corner_density_panel
 
     rng = np.random.default_rng(12)
     x = rng.normal(0.0, 1.0, 1500)
@@ -1466,7 +1466,7 @@ def test_posterior_corner_density_panel_draws_contours():
 
 
 def test_fit_diagnostics_detects_covariance_without_posterior_samples():
-    from metallix.project_gui import _covariance_matrix_from_fit_entry, _fit_entry_has_diagnostic_plots
+    from nfit.project_gui import _covariance_matrix_from_fit_entry, _fit_entry_has_diagnostic_plots
 
     entry = FitTimelineEntry(
         "Fit Result1",
@@ -1490,7 +1490,7 @@ def test_fit_diagnostics_matrix_heatmap_draws_image():
 
     matplotlib.use("Agg", force=True)
     from matplotlib.figure import Figure
-    from metallix.project_gui import _draw_matrix_heatmap
+    from nfit.project_gui import _draw_matrix_heatmap
 
     fig = Figure()
     ax = fig.subplots()
@@ -1513,7 +1513,7 @@ def test_fit_diagnostics_matrix_heatmap_is_centered_in_figure():
 
     matplotlib.use("Agg", force=True)
     from matplotlib.figure import Figure
-    from metallix.project_gui import _draw_centered_matrix_heatmap
+    from nfit.project_gui import _draw_centered_matrix_heatmap
 
     fig = Figure(figsize=(8, 6))
     ax = _draw_centered_matrix_heatmap(
@@ -1534,7 +1534,7 @@ def test_corner_histogram_panel_draws_step_histogram_and_reference_lines():
 
     matplotlib.use("Agg", force=True)
     from matplotlib.figure import Figure
-    from metallix.project_gui import _draw_corner_histogram_panel
+    from nfit.project_gui import _draw_corner_histogram_panel
 
     fig = Figure()
     ax = fig.subplots()
@@ -1559,7 +1559,7 @@ def test_corner_reference_lines_are_solid_only():
 
     matplotlib.use("Agg", force=True)
     from matplotlib.figure import Figure
-    from metallix.project_gui import _draw_corner_reference_lines
+    from nfit.project_gui import _draw_corner_reference_lines
 
     fig = Figure()
     ax = fig.subplots()
@@ -1579,7 +1579,7 @@ def test_trace_panel_draws_walkers_and_burn_in_marker():
 
     matplotlib.use("Agg", force=True)
     from matplotlib.figure import Figure
-    from metallix.project_gui import _draw_trace_panel
+    from nfit.project_gui import _draw_trace_panel
 
     chain = np.stack(
         [
@@ -1607,7 +1607,7 @@ def test_trace_panel_draws_walkers_and_burn_in_marker():
 def test_fit_diagnostics_label_table_updates_plot_labels(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
-    from metallix.project_gui import _FitDiagnosticsPlotWindow
+    from nfit.project_gui import _FitDiagnosticsPlotWindow
 
     entry = FitTimelineEntry(
         "Fit Result1",
@@ -1632,7 +1632,7 @@ def test_fit_diagnostics_label_table_updates_plot_labels(monkeypatch):
             }
         },
     )
-    explorer = MetallixProjectExplorer(MetallixProject())
+    explorer = NfitProjectExplorer(NfitProject())
 
     window = _FitDiagnosticsPlotWindow(entry, explorer)
     table = window.window.findChild(QtWidgets.QTableWidget, "fit_diagnostics_label_table")
@@ -1650,7 +1650,7 @@ def test_fit_diagnostics_label_table_updates_plot_labels(monkeypatch):
 def test_fit_diagnostics_trace_uses_chain_steps_when_available(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")
-    from metallix.project_gui import _FitDiagnosticsPlotWindow
+    from nfit.project_gui import _FitDiagnosticsPlotWindow
 
     chain = np.arange(24, dtype=float).reshape(6, 2, 2)
     entry = FitTimelineEntry(
@@ -1666,7 +1666,7 @@ def test_fit_diagnostics_trace_uses_chain_steps_when_available(monkeypatch):
             )
         },
     )
-    explorer = MetallixProjectExplorer(MetallixProject())
+    explorer = NfitProjectExplorer(NfitProject())
 
     window = _FitDiagnosticsPlotWindow(entry, explorer)
     trace_index = [window.tabs.tabText(index) for index in range(window.tabs.count())].index("Trace")
@@ -1679,9 +1679,9 @@ def test_fit_progress_dialog_uses_parameter_table_and_resets(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
     QtCore = pytest.importorskip("PySide6.QtCore")
-    from metallix.project_gui import _FitProgressDialog
+    from nfit.project_gui import _FitProgressDialog
 
-    explorer = MetallixProjectExplorer(MetallixProject())
+    explorer = NfitProjectExplorer(NfitProject())
     dialog = _FitProgressDialog(explorer)
 
     dialog.update_progress(
@@ -1735,7 +1735,7 @@ def test_project_explorer_reuses_fit_progress_dialog(monkeypatch):
 
     group = DataGroup("Datagroup1", datasets=[DatasetEntry("first", _tiny_mdhisto_data(1.0))])
     create_model_component(group)
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
 
     def fake_run_group_fit(group, parent, *, branch_timeline=False, progress_callback=None):
         if progress_callback is not None:
@@ -1769,7 +1769,7 @@ def test_project_explorer_start_fit_runs_in_background_worker(monkeypatch):
 
     group = DataGroup("Datagroup1", datasets=[DatasetEntry("first", _tiny_mdhisto_data(1.0))])
     create_model_component(group)
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
     calls = []
 
     def fake_run_group_fit(group, parent, *, branch_timeline=False, progress_callback=None):
@@ -1807,7 +1807,7 @@ def test_project_explorer_edits_initial_state_in_place_without_results(monkeypat
 
     group = DataGroup("Datagroup1", datasets=[DatasetEntry("first", _tiny_mdhisto_data(1.0))])
     model = create_model_component(group)
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
 
     initial_item = explorer.tree.topLevelItem(0).child(2).child(0)
     explorer.tree.setCurrentItem(initial_item)
@@ -1833,7 +1833,7 @@ def test_project_explorer_fit_now_from_earlier_result_creates_nested_timeline(mo
 
     group = DataGroup("Datagroup1", datasets=[DatasetEntry("first", _tiny_mdhisto_data(1.0))])
     create_model_component(group)
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
 
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(2).child(0))
     explorer.fit_now_for_selection()
@@ -1898,7 +1898,7 @@ def test_project_explorer_context_menu_actions_and_source_change(monkeypatch, tm
     mask = create_mask(dataset)
     group = DataGroup("Datagroup1", datasets=[dataset])
     model = create_model_component(group)
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
 
     dataset_item = explorer.tree.topLevelItem(0).child(0).child(0)
     explorer.tree.setCurrentItem(dataset_item)
@@ -1988,8 +1988,8 @@ def test_recent_project_helpers_and_file_menu(monkeypatch, tmp_path):
     first = tmp_path / "first.mtlx"
     second = tmp_path / "second.mtlx"
     missing = tmp_path / "missing.mtlx"
-    save_project(MetallixProject(), first)
-    save_project(MetallixProject([DataGroup("Datagroup1")]), second)
+    save_project(NfitProject(), first)
+    save_project(NfitProject([DataGroup("Datagroup1")]), second)
 
     remember_recent_project(first, settings)
     remember_recent_project(second, settings)
@@ -2002,7 +2002,7 @@ def test_recent_project_helpers_and_file_menu(monkeypatch, tmp_path):
     assert forget_missing_recent_projects(settings) == [first, second]
 
     monkeypatch.setattr(project_gui, "_settings", lambda: settings)
-    explorer = MetallixProjectExplorer()
+    explorer = NfitProjectExplorer()
     explorer._refresh_recent_projects_menu()
     action_texts = [action.text() for action in explorer.recent_projects_menu.actions()]
     assert str(first) in action_texts
@@ -2018,7 +2018,7 @@ def test_project_explorer_prompts_for_unsaved_close_and_quit(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")
 
-    explorer = MetallixProjectExplorer()
+    explorer = NfitProjectExplorer()
     group = explorer.create_data_group()
 
     assert group.name == "Workspace1"
@@ -2043,7 +2043,7 @@ def test_project_explorer_prompts_for_unsaved_close_and_quit(monkeypatch):
     assert closed == ["quit"]
 
     explorer.project_path = Path("/tmp/opened.mtlx")
-    explorer.project = MetallixProject([group])
+    explorer.project = NfitProject([group])
     explorer.has_unsaved_changes = True
     monkeypatch.setattr(explorer, "_confirm_save_before_closing_project", lambda: True)
 
@@ -2057,7 +2057,7 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
     QtGui = pytest.importorskip("PySide6.QtGui")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
-    explorer = MetallixProjectExplorer(MetallixProject([DataGroup("Workspace1")]))
+    explorer = NfitProjectExplorer(NfitProject([DataGroup("Workspace1")]))
 
     progress = project_gui._FitProgressDialog(explorer)
     progress.show()
@@ -2135,7 +2135,7 @@ def test_project_explorer_run_handles_keyboard_interrupt(monkeypatch):
     fake_app = FakeApp()
     fake_timer = FakeTimer()
     restored_handlers = []
-    explorer = MetallixProjectExplorer()
+    explorer = NfitProjectExplorer()
     explorer.app = fake_app
     monkeypatch.setattr(explorer, "show", lambda: explorer)
     monkeypatch.setattr(
@@ -2209,7 +2209,7 @@ def test_unsaved_prompt_options(monkeypatch):
 
     monkeypatch.setattr(QtWidgets, "QMessageBox", FakeMessageBox)
 
-    explorer = MetallixProjectExplorer()
+    explorer = NfitProjectExplorer()
     explorer._mark_dirty()
 
     FakeMessageBox.clicked_label = FakeMessageBox.StandardButton.Cancel
@@ -2262,7 +2262,7 @@ def test_dataset_details_text_summarizes_axes_source_and_metadata(tmp_path, monk
         datasets=[dataset],
         lattice_parameters={"a": 4.17, "b": 4.17, "c": 4.17, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
     )
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
 
     text = explorer.details_label.text()
@@ -2339,7 +2339,7 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     data = _grid_mdhisto_data()
     dataset = DatasetEntry("scan", data, kind="mdhisto", parameters={"temperature": 12.5})
     group = DataGroup("Datagroup1", datasets=[dataset])
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
 
     config = dataset_rebin_config(dataset)
@@ -2404,7 +2404,7 @@ def test_import_dataset_paths_dispatches_by_data_type_and_round_trips(tmp_path):
     assert nxs.data is None  # lazy MDHisto placeholder
     assert nxs.data_type == "single_crystal_inelastic"
 
-    project = MetallixProject([group])
+    project = NfitProject([group])
     path = tmp_path / "proj.mtlx"
     save_project(project, path)
     reloaded = load_project(path)
@@ -2435,7 +2435,7 @@ def test_project_explorer_data_type_dropdown_switches_type(monkeypatch):
 
     group = DataGroup("Datagroup1")
     import_dataset_paths(group, [HB2A_FILE], data_type="powder_elastic")
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
 
     combo = explorer.details_widget.findChild(QtWidgets.QComboBox, "dataset_data_type")
@@ -2451,7 +2451,7 @@ def test_project_explorer_data_type_dropdown_switches_type(monkeypatch):
 
 
 def test_nested_dataset_groups_share_masks_and_round_trip(tmp_path):
-    from metallix.project_gui import (
+    from nfit.project_gui import (
         effective_dataset_masks,
         slice_viewer_datasets,
     )
@@ -2472,8 +2472,8 @@ def test_nested_dataset_groups_share_masks_and_round_trip(tmp_path):
     assert effective_dataset_masks(group, d1) == []
     data, names = slice_viewer_datasets(group)
     by_name = dict(zip(names, data))
-    assert by_name["d2"].metadata["metallix_mask_count"] > 0
-    assert by_name["d1"].metadata["metallix_mask_count"] == 0
+    assert by_name["d2"].metadata["nfit_mask_count"] > 0
+    assert by_name["d1"].metadata["nfit_mask_count"] == 0
 
     # Round-trip nesting + shared masks through JSON (lazy placeholders).
     save_group = DataGroup("Datagroup2")
@@ -2484,7 +2484,7 @@ def test_nested_dataset_groups_share_masks_and_round_trip(tmp_path):
     save_sub.datasets.append(p2)
     project_gui.create_group_mask(save_sub, None)
     path = tmp_path / "proj.mtlx"
-    save_project(MetallixProject([save_group]), path)
+    save_project(NfitProject([save_group]), path)
     reloaded = load_project(path).data_groups[0]
     assert reloaded.dataset_names == ["a", "b"]
     assert reloaded.subgroups[0].name == "SubB"
@@ -2500,7 +2500,7 @@ def test_multi_select_move_and_import_into_subgroup(monkeypatch):
     d3 = DatasetEntry("d3", _grid_mdhisto_data(), kind="mdhisto")
     sub = DatasetGroup("Group1")
     group = DataGroup("Datagroup1", datasets=[d1, d2, d3], subgroups=[sub])
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
 
     def dataset_item(name):
         datasets_item = explorer.tree.topLevelItem(0).child(0)
@@ -2542,7 +2542,7 @@ def test_project_explorer_drag_reorders_groups_datasets_and_masks(monkeypatch):
     group1 = DataGroup("Datagroup1", datasets=[d1, d2, d3])
     group2 = DataGroup("Datagroup2")
     group3 = DataGroup("Datagroup3")
-    explorer = MetallixProjectExplorer(MetallixProject([group1, group2, group3]))
+    explorer = NfitProjectExplorer(NfitProject([group1, group2, group3]))
     below = QtWidgets.QAbstractItemView.DropIndicatorPosition.BelowItem
 
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
@@ -2582,7 +2582,7 @@ def test_project_explorer_nested_group_bulk_edit_and_tree(monkeypatch):
     d2 = DatasetEntry("d2", _grid_mdhisto_data(), kind="mdhisto")
     sub = DatasetGroup("Group1", datasets=[d2])
     group = DataGroup("Datagroup1", datasets=[d1], subgroups=[sub])
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
 
     datasets_item = explorer.tree.topLevelItem(0).child(0)
     assert [datasets_item.child(i).text(0) for i in range(datasets_item.childCount())] == ["d1", "Group1"]
@@ -2618,7 +2618,7 @@ def test_dataset_scale_factor_scales_viewed_data_and_round_trips(monkeypatch, tm
     data = _grid_mdhisto_data()
     dataset = DatasetEntry("scan", data, kind="mdhisto")
     group = DataGroup("Datagroup1", datasets=[dataset])
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
 
     scale_spin = explorer.window.findChild(QtWidgets.QDoubleSpinBox, "dataset_scale_factor")
@@ -2636,13 +2636,13 @@ def test_dataset_scale_factor_scales_viewed_data_and_round_trips(monkeypatch, tm
     placeholder = import_dataset_paths(save_group, [tmp_path / "scan.nxs"])[0]
     placeholder.scale_factor = 3.0
     path = tmp_path / "proj.mtlx"
-    save_project(MetallixProject([save_group]), path)
+    save_project(NfitProject([save_group]), path)
     assert json.loads(path.read_text())["data_groups"][0]["datasets"][0]["scale_factor"] == 3.0
     assert load_project(path).data_groups[0].datasets[0].scale_factor == 3.0
 
 
 def test_point_list_scale_and_susceptibility_transforms():
-    from metallix.project_gui import point_list_config, prepared_point_list_data
+    from nfit.project_gui import point_list_config, prepared_point_list_data
 
     group = DataGroup("Datagroup1")
     dataset = import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")[0]
@@ -2670,7 +2670,7 @@ def test_point_list_scale_and_susceptibility_transforms():
 
 
 def test_powder_wavelength_to_q_and_point_rebin():
-    from metallix.project_gui import (
+    from nfit.project_gui import (
         dataset_for_slice_viewer,
         dataset_rebin_config,
         point_list_config,
@@ -2709,11 +2709,11 @@ def test_powder_wavelength_to_q_and_point_rebin():
 def test_point_list_variables_panel_edits_config(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
-    from metallix.project_gui import point_list_config, prepared_point_list_data
+    from nfit.project_gui import point_list_config, prepared_point_list_data
 
     group = DataGroup("Datagroup1")
     import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
     dataset = group.datasets[0]
 
@@ -2739,7 +2739,7 @@ def test_point_list_dataset_opens_in_data_viewer_as_1d(monkeypatch):
 
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")
-    from metallix.qt_slice_viewer import QtMDHistoSliceViewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     group = DataGroup("Datagroup1")
     import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")
@@ -2869,7 +2869,7 @@ def test_add_mask_and_slice_viewer_from_masks_node(monkeypatch):
 
     dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
     group = DataGroup("Datagroup1", datasets=[dataset])
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
 
     masks_item = explorer.tree.topLevelItem(0).child(0).child(0).child(0)
     explorer.tree.setCurrentItem(masks_item)
@@ -3002,7 +3002,7 @@ def test_dataset_temperature_spin_writes_override(monkeypatch):
 
     dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
     group = DataGroup("Datagroup1", datasets=[dataset])
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
 
     spin = explorer.dataset_temperature_spin
@@ -3029,7 +3029,7 @@ def test_dataset_temperature_edit_from_active_result_refreshes_current_state(mon
         group.fits[0],
         goodness={"status": "converged", "parameters": {}},
     )
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
 
     result_item = explorer.tree.topLevelItem(0).child(2).child(1)
     explorer.tree.setCurrentItem(result_item)
@@ -3059,7 +3059,7 @@ def test_failed_fit_from_result_creates_current_state_for_temperature_fix(monkey
         group.fits[0],
         goodness={"status": "converged", "parameters": {}},
     )
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
 
     def fail_fit(group, *, optimizer_config=None, progress_callback=None):
         raise ValueError("this model requires a valid sample temperature")
@@ -3098,7 +3098,7 @@ def test_failed_fit_from_current_state_keeps_current_state_selected(monkeypatch)
     project_gui.ensure_fit_history(group)
     current = project_gui.current_state_fit_entry(group)
     group.fits.append(current)
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
 
     def fail_fit(group, *, optimizer_config=None, progress_callback=None):
         raise ValueError("this model requires a valid sample temperature")
@@ -3123,7 +3123,7 @@ def test_heisenberg_rpa_editor_generates_orbits_and_round_trips(monkeypatch, tmp
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
     group = DataGroup("Datagroup1")
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
     model = explorer.add_model_to_selection()
 
@@ -3182,7 +3182,7 @@ def test_heisenberg_rpa_editor_generates_orbits_and_round_trips(monkeypatch, tmp
     explorer._set_model_fit_parameter("J1", True)
 
     path = tmp_path / "project.json"
-    save_project(MetallixProject([group]), path)
+    save_project(NfitProject([group]), path)
     loaded = load_project(path)
     loaded_model = next(iter(loaded.data_groups[0].models.values()))
     assert [orbit["label"] for orbit in loaded_model.config["orbits"]] == ["J1", "J2"]
@@ -3197,7 +3197,7 @@ def test_heisenberg_rpa_editor_scrolls_while_fit_parameters_grow(monkeypatch):
     QtCore = pytest.importorskip("PySide6.QtCore")
 
     group = DataGroup("Datagroup1")
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
     model = explorer.add_model_to_selection()
 
@@ -3232,8 +3232,8 @@ def test_heisenberg_rpa_editor_scrolls_while_fit_parameters_grow(monkeypatch):
 
 def test_import_cif_into_model_populates_config_and_group(tmp_path):
     pytest.importorskip("gemmi")
-    from metallix.pipeline import ModelComponentSpec
-    from metallix.project_gui import generate_model_bond_orbits, import_cif_into_model
+    from nfit.pipeline import ModelComponentSpec
+    from nfit.project_gui import generate_model_bond_orbits, import_cif_into_model
 
     cif = tmp_path / "fcc.cif"
     cif.write_text(
@@ -3274,8 +3274,8 @@ Ni1 Ni 0 0 0
 
 
 def test_generate_model_bond_orbits_requires_magnetic_site():
-    from metallix.pipeline import ModelComponentSpec
-    from metallix.project_gui import generate_model_bond_orbits, model_crystal_config
+    from nfit.pipeline import ModelComponentSpec
+    from nfit.project_gui import generate_model_bond_orbits, model_crystal_config
 
     model = ModelComponentSpec(name="rpa", type="heisenberg_rpa", parameters={})
     model_crystal_config(model)["sites"].append(
@@ -3286,8 +3286,8 @@ def test_generate_model_bond_orbits_requires_magnetic_site():
 
 
 def test_reconcile_model_orbit_parameters_keeps_and_drops():
-    from metallix.pipeline import ModelComponentSpec
-    from metallix.project_gui import reconcile_model_orbit_parameters
+    from nfit.pipeline import ModelComponentSpec
+    from nfit.project_gui import reconcile_model_orbit_parameters
 
     model = ModelComponentSpec(
         name="rpa",
@@ -3397,7 +3397,7 @@ def test_request_overlay_refresh_coalesces_without_event_loop(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")
     group, _dataset, _model = _rpa_overlay_group()
-    explorer = MetallixProjectExplorer(MetallixProject([group]))
+    explorer = NfitProjectExplorer(NfitProject([group]))
 
     refreshed = []
     monkeypatch.setattr(explorer, "refresh_slice_viewer", lambda g: refreshed.append(g))

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from metallix.spin_fluctuations import (
+from nfit.spin_fluctuations import (
     RpaGeometry,
     build_rpa_geometry,
     heisenberg_rpa_chipp,
@@ -322,7 +322,7 @@ def _gradient_geometry(rng, n_points=25):
 
 
 def test_rpa_gradients_value_matches_plain_evaluation():
-    from metallix.spin_fluctuations import heisenberg_rpa_chipp_and_gradients
+    from nfit.spin_fluctuations import heisenberg_rpa_chipp_and_gradients
 
     rng = np.random.default_rng(5)
     geometry = _gradient_geometry(rng)
@@ -333,7 +333,7 @@ def test_rpa_gradients_value_matches_plain_evaluation():
 
 
 def test_rpa_gradients_match_finite_differences():
-    from metallix.spin_fluctuations import heisenberg_rpa_chipp_and_gradients
+    from nfit.spin_fluctuations import heisenberg_rpa_chipp_and_gradients
 
     rng = np.random.default_rng(5)
     geometry = _gradient_geometry(rng)
@@ -365,7 +365,7 @@ def test_rpa_gradients_exact_at_band_degeneracy():
     # A uniform three-site ring at Q=0 has a doubly degenerate J(Q); the
     # gradient must still match finite differences (no eigenvector-derivative
     # blow-up, because the resolvent form never differentiates eigenvectors).
-    from metallix.spin_fluctuations import heisenberg_rpa_chipp_and_gradients
+    from nfit.spin_fluctuations import heisenberg_rpa_chipp_and_gradients
 
     positions = [[0.0, 0.0, 0.0], [1 / 3, 0.0, 0.0], [2 / 3, 0.0, 0.0]]
     orbits = [
@@ -395,11 +395,11 @@ def test_rpa_gradients_exact_at_band_degeneracy():
 
 
 @pytest.mark.skipif(
-    "numba" not in __import__("metallix.spin_fluctuations", fromlist=["available_rpa_backends"]).available_rpa_backends(),
+    "numba" not in __import__("nfit.spin_fluctuations", fromlist=["available_rpa_backends"]).available_rpa_backends(),
     reason="numba backend not available",
 )
 def test_numba_backend_matches_numpy_value_and_gradients():
-    from metallix import spin_fluctuations as sf
+    from nfit import spin_fluctuations as sf
 
     rng = np.random.default_rng(9)
     positions = [[0.0, 0.0, 0.0], [0.31, 0.47, 0.11], [0.6, 0.2, 0.8]]
@@ -435,7 +435,7 @@ def test_numba_backend_matches_numpy_value_and_gradients():
 
 
 def test_backend_selection_is_size_gated():
-    from metallix import spin_fluctuations as sf
+    from nfit import spin_fluctuations as sf
 
     try:
         sf.set_rpa_backend("auto")
@@ -451,7 +451,7 @@ def test_backend_selection_is_size_gated():
 
 
 def test_forcing_unavailable_backend_falls_back_to_numpy():
-    from metallix import spin_fluctuations as sf
+    from nfit import spin_fluctuations as sf
 
     backends = sf.available_rpa_backends()
     try:
@@ -467,7 +467,7 @@ def test_forcing_unavailable_backend_falls_back_to_numpy():
 
 
 def test_thread_budget_override_and_affinity_default():
-    from metallix import spin_fluctuations as sf
+    from nfit import spin_fluctuations as sf
 
     try:
         sf.set_num_threads(3)
@@ -477,17 +477,17 @@ def test_thread_budget_override_and_affinity_default():
         # env override is honored when no explicit override is set
         import os
 
-        os.environ["METALLIX_NUM_THREADS"] = "5"
+        os.environ["NFIT_NUM_THREADS"] = "5"
         try:
             assert sf.num_threads() == 5
         finally:
-            del os.environ["METALLIX_NUM_THREADS"]
+            del os.environ["NFIT_NUM_THREADS"]
     finally:
         sf.set_num_threads(None)
 
 
 def test_batched_eigh_matches_single_thread_when_forced_parallel():
-    from metallix import spin_fluctuations as sf
+    from nfit import spin_fluctuations as sf
 
     rng = np.random.default_rng(4)
     # N=16 crosses the work threshold so the threaded, BLAS-pinned path runs.

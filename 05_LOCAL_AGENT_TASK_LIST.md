@@ -4,16 +4,16 @@ Use this as a concrete checklist for an agentic coding system.
 
 ## Environment for all tasks
 
-Use the local `metallix` conda environment explicitly:
+Use the local `nfit` conda environment explicitly:
 
 ```bash
-/Users/pmneves/.conda/envs/metallix/bin/python
+/Users/pmneves/anaconda3/envs/nfit/bin/python
 ```
 
 Run tests with:
 
 ```bash
-/Users/pmneves/.conda/envs/metallix/bin/python -m pytest -q
+/Users/pmneves/anaconda3/envs/nfit/bin/python -m pytest -q
 ```
 
 Do not use the shell's default `python`; it may point to a different Anaconda
@@ -23,13 +23,13 @@ environment and produce misleading Qt/PySide or NumPy-version failures.
 
 Create a Python package with `src`, `tests`, and `examples`. Add a modern
 `pyproject.toml` with packaging metadata compatible with an eventual distribution
-named `metallix`. Add README with a short project description.
+named `nfit`. Add README with a short project description.
 
 Run:
 
 ```bash
-/Users/pmneves/.conda/envs/metallix/bin/python -m pip install -e .[dev]
-/Users/pmneves/.conda/envs/metallix/bin/python -m pytest -q
+/Users/pmneves/anaconda3/envs/nfit/bin/python -m pip install -e .[dev]
+/Users/pmneves/anaconda3/envs/nfit/bin/python -m pytest -q
 ```
 
 Do not proceed until import and empty tests work.
@@ -136,7 +136,7 @@ Required pages:
 - approximations and caveats page.
 - annotated scientific references page.
 - examples gallery linked to scripts or notebooks.
-- distribution page explaining local editable installs and the eventual `pip install metallix` installation path.
+- distribution page explaining local editable installs and the eventual `pip install nfit` installation path.
 
 Acceptance checks:
 
@@ -200,7 +200,7 @@ Eventually add support for polarized neutron scattering measurements:
 - Do not introduce a GUI.
 - Do not introduce JAX, Numba, Dask, PyMC, or Mantid until the base implementation passes tests.
 - Do not implement polarized neutron scattering support until it is explicitly promoted from the far-future backlog.
-- Use modern `pyproject.toml` packaging and plan for an eventual `pip install metallix` release.
+- Use modern `pyproject.toml` packaging and plan for an eventual `pip install nfit` release.
 - Write tests before or alongside each feature.
 - Do not hard-code a specific material.
 - Do not silently assume absolute normalization.
