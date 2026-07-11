@@ -48,6 +48,7 @@ QtMDHistoSliceViewer = None
 RECENT_PROJECT_LIMIT = 10
 RECENT_PROJECTS_KEY = "recent_projects"
 DATASET_REBIN_KEY = "rebin"
+DEFAULT_REBIN_MAX_BATCH_MB = 192
 DATASET_POINT_LIST_KEY = "point_list"
 SUSCEPTIBILITY_CHANNEL_LABEL = "Susceptibility"
 Q_COORDINATE_NAME = "q"
@@ -2950,6 +2951,12 @@ def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
         dataset.parameters[DATASET_REBIN_KEY] = config
     config.setdefault("enabled", False)
     config.setdefault("fractional", True)
+    try:
+        config["max_batch_mb"] = max(int(config.get("max_batch_mb", DEFAULT_REBIN_MAX_BATCH_MB)), 1)
+    except (TypeError, ValueError):
+        config["max_batch_mb"] = DEFAULT_REBIN_MAX_BATCH_MB
+    if config.get("mean_weighting") not in {"inverse_variance", "uniform"}:
+        config["mean_weighting"] = "inverse_variance"
     config["normalize"] = True
     axes = config.get("axes")
     # Point-list rebin binds over the transformed coordinates (e.g. a derived q).
@@ -3032,7 +3039,25 @@ def _rebin_point_list_data(dataset: DatasetEntry, config: dict[str, Any]) -> Poi
         num_bins=num_bins,
         fractional=bool(config.get("fractional", False)),
         normalize=True,
+        mean_weighting=_rebin_mean_weighting(config),
+        max_batch_bytes=_rebin_max_batch_bytes(config),
     )
+
+
+def _rebin_mean_weighting(config: dict[str, Any]) -> str:
+    value = config.get("mean_weighting")
+    return str(value) if value in {"inverse_variance", "uniform"} else "inverse_variance"
+
+
+def _rebin_max_batch_mb(config: dict[str, Any]) -> int:
+    try:
+        return max(int(config.get("max_batch_mb", DEFAULT_REBIN_MAX_BATCH_MB)), 1)
+    except (TypeError, ValueError):
+        return DEFAULT_REBIN_MAX_BATCH_MB
+
+
+def _rebin_max_batch_bytes(config: dict[str, Any]) -> int:
+    return _rebin_max_batch_mb(config) * 1024 * 1024
 
 
 def create_rebinned_dataset(
@@ -3283,6 +3308,8 @@ def _rebin_mdhisto_data(data: MDHistoData, config: dict[str, Any]) -> MDHistoDat
         num_bins=num_bins,
         fractional=bool(config.get("fractional", False)),
         normalize=True,
+        mean_weighting=_rebin_mean_weighting(config),
+        max_batch_bytes=_rebin_max_batch_bytes(config),
     )
     if result.binned_data is None or result.binned_data_errs is None or result.n_samples is None:
         raise RuntimeError("rebinning did not produce binned data")
@@ -3312,6 +3339,9 @@ def _rebin_mdhisto_data(data: MDHistoData, config: dict[str, Any]) -> MDHistoDat
         "vectors": vectors,
         "fractional": bool(config.get("fractional", False)),
         "normalize": True,
+        "mean_weighting": _rebin_mean_weighting(config),
+        "max_batch_mb": _rebin_max_batch_mb(config),
+        "max_batch_bytes": _rebin_max_batch_bytes(config),
     }
     return MDHistoData(
         axes=rebinned_axes,
@@ -3339,6 +3369,8 @@ def _rebin_point_data(data: PointData4D, config: dict[str, Any]) -> PointData4D:
         num_bins=num_bins,
         fractional=bool(config.get("fractional", False)),
         normalize=True,
+        mean_weighting=_rebin_mean_weighting(config),
+        max_batch_bytes=_rebin_max_batch_bytes(config),
     )
 
 
@@ -5505,8 +5537,8 @@ class NfitProjectExplorer:
         path, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
             self.window,
             "Save nfit project",
-            "nfit_project.mtlx",
-            "nfit projects (*.mtlx);;All files (*)",
+            "nfit_project.nfit",
+            "nfit projects (*.nfit);;All files (*)",
         )
         if not path:
             return False
@@ -5525,7 +5557,7 @@ class NfitProjectExplorer:
             self.window,
             "Open nfit project",
             "",
-            "nfit projects (*.mtlx);;All files (*)",
+            "nfit projects (*.nfit);;All files (*)",
         )
         if not path:
             return False
@@ -5673,6 +5705,40 @@ class NfitProjectExplorer:
         self._mark_dirty()
         self._refresh_tree(select_group=group, select_dataset=rebinned)
         return rebinned
+
+    def save_rebin_for_selection(self) -> bool:
+        from PySide6 import QtWidgets
+
+        group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        if role != "dataset" or group is None or entry is None:
+            return False
+        path, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
+            self.window,
+            "Save rebinned dataset",
+            f"{entry.name} rebinned.npz",
+            "NumPy archives (*.npz);;All files (*)",
+        )
+        if not path:
+            return False
+        try:
+            data = rebinned_dataset_data(entry, extra_masks=effective_dataset_masks(group, entry))
+            rebinned_entry = DatasetEntry(
+                name=f"{entry.name} rebinned",
+                data=data,
+                kind=entry.kind,
+                metadata={**copy.deepcopy(entry.metadata), "source_dataset": entry.name, "rebin_saved": True},
+                parameters=copy.deepcopy(entry.parameters),
+                masks=copy.deepcopy(entry.masks),
+            )
+            save_dataset_file(rebinned_entry, path, use_view=False)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Save rebinned dataset",
+                f"Could not save rebinned dataset:\n{exc}",
+            )
+            return False
+        return True
 
     def save_dataset_for_selection(self) -> bool:
         from PySide6 import QtWidgets
@@ -8468,14 +8534,64 @@ class NfitProjectExplorer:
         fractional_check.setChecked(bool(config.get("fractional", False)))
         fractional_check.setToolTip("Allow partial source bins to contribute fractionally when rebinning.")
         fractional_check.toggled.connect(lambda checked: self._set_dataset_rebin_option(dataset, group, "fractional", checked))
+        mean_label = QtWidgets.QLabel("Mean")
+        mean_combo = QtWidgets.QComboBox()
+        mean_combo.setObjectName("dataset_rebin_mean_weighting")
+        mean_combo.setToolTip(
+            "Choose how multiple source points in a rebinned bin are averaged. "
+            "Inverse variance uses 1/sigma^2 weights; uniform keeps the simple mean."
+        )
+        mean_combo.addItem("Inverse variance", "inverse_variance")
+        mean_combo.addItem("Uniform", "uniform")
+        mean_index = mean_combo.findData(_rebin_mean_weighting(config))
+        mean_combo.setCurrentIndex(max(mean_index, 0))
+        mean_combo.currentIndexChanged.connect(
+            lambda _index, combo=mean_combo: self._set_dataset_rebin_mean_weighting(
+                dataset,
+                group,
+                str(combo.currentData() or "inverse_variance"),
+            )
+        )
+        batch_tooltip = (
+            "Approximate per-batch working-memory target in MB. Smaller batches usually use less temporary memory "
+            "but require more computational time. This is not a cap on total rebinner memory use; total memory also "
+            "depends on dataset size, output grid size, dimensionality, and other arrays. The optimum depends on the "
+            "dataset size and available memory."
+        )
+        batch_label = QtWidgets.QLabel("Batch target")
+        batch_label.setToolTip(batch_tooltip)
+        batch_spin = QtWidgets.QSpinBox()
+        batch_spin.setObjectName("dataset_rebin_max_batch_mb")
+        batch_spin.setRange(1, 1_048_576)
+        batch_spin.setSuffix(" MB")
+        batch_spin.setValue(_rebin_max_batch_mb(config))
+        batch_spin.setToolTip(batch_tooltip)
+        batch_spin.setAccelerated(True)
+        batch_spin.valueChanged.connect(
+            lambda value: self._set_dataset_rebin_max_batch_mb(dataset, group, int(value))
+        )
         create_button = QtWidgets.QPushButton("Create dataset from rebin")
+        create_button.setObjectName("dataset_rebin_create")
         create_button.setEnabled(_dataset_can_rebin(dataset))
         create_button.setToolTip("Materialize the current rebinned data as a new independent dataset.")
         create_button.clicked.connect(self.materialize_rebin_for_selection)
+        save_rebin_button = QtWidgets.QPushButton("Save rebin to disk")
+        save_rebin_button.setObjectName("dataset_rebin_save")
+        save_rebin_button.setEnabled(_dataset_can_rebin(dataset))
+        save_rebin_button.setToolTip("Export the current rebinned dataset directly to a NumPy archive.")
+        save_rebin_button.clicked.connect(self.save_rebin_for_selection)
         option_row.addWidget(fractional_check)
-        option_row.addWidget(create_button)
+        option_row.addWidget(mean_label)
+        option_row.addWidget(mean_combo)
+        option_row.addWidget(batch_label)
+        option_row.addWidget(batch_spin)
         option_row.addStretch(1)
         controls_layout.addLayout(option_row, len(config.get("axes", [])) + 1, 0, 1, last_column + 1)
+        action_row = QtWidgets.QHBoxLayout()
+        action_row.addWidget(create_button)
+        action_row.addWidget(save_rebin_button)
+        action_row.addStretch(1)
+        controls_layout.addLayout(action_row, len(config.get("axes", [])) + 2, 0, 1, last_column + 1)
         rebin_layout.addWidget(controls)
         layout.addWidget(rebin_box)
         return group_box
@@ -8573,6 +8689,34 @@ class NfitProjectExplorer:
         if bool(config.get(key, False)) == bool(checked):
             return
         config[key] = bool(checked)
+        config["normalize"] = True
+        self._after_dataset_rebin_changed(dataset, group)
+
+    def _set_dataset_rebin_mean_weighting(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup | None,
+        value: str,
+    ) -> None:
+        config = dataset_rebin_config(dataset)
+        value = value if value in {"inverse_variance", "uniform"} else "inverse_variance"
+        if _rebin_mean_weighting(config) == value:
+            return
+        config["mean_weighting"] = value
+        config["normalize"] = True
+        self._after_dataset_rebin_changed(dataset, group)
+
+    def _set_dataset_rebin_max_batch_mb(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup | None,
+        value: int,
+    ) -> None:
+        config = dataset_rebin_config(dataset)
+        value = max(int(value), 1)
+        if _rebin_max_batch_mb(config) == value:
+            return
+        config["max_batch_mb"] = value
         config["normalize"] = True
         self._after_dataset_rebin_changed(dataset, group)
 

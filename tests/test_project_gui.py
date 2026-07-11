@@ -94,7 +94,7 @@ def test_project_helpers_name_import_and_round_trip(tmp_path):
     assert first.metadata["source_file"].endswith("scan.nxs")
     assert first.metadata["import_status"] == "pending"
 
-    project_path = tmp_path / "project.mtlx"
+    project_path = tmp_path / "project.nfit"
     save_project(project, project_path)
 
     payload = json.loads(project_path.read_text(encoding="utf-8"))
@@ -1985,9 +1985,9 @@ def test_recent_project_helpers_and_file_menu(monkeypatch, tmp_path):
             self.values[key] = value
 
     settings = FakeSettings()
-    first = tmp_path / "first.mtlx"
-    second = tmp_path / "second.mtlx"
-    missing = tmp_path / "missing.mtlx"
+    first = tmp_path / "first.nfit"
+    second = tmp_path / "second.nfit"
+    missing = tmp_path / "missing.nfit"
     save_project(NfitProject(), first)
     save_project(NfitProject([DataGroup("Datagroup1")]), second)
 
@@ -2042,7 +2042,7 @@ def test_project_explorer_prompts_for_unsaved_close_and_quit(monkeypatch):
     assert explorer.close_project() is True
     assert closed == ["quit"]
 
-    explorer.project_path = Path("/tmp/opened.mtlx")
+    explorer.project_path = Path("/tmp/opened.nfit")
     explorer.project = NfitProject([group])
     explorer.has_unsaved_changes = True
     monkeypatch.setattr(explorer, "_confirm_save_before_closing_project", lambda: True)
@@ -2346,6 +2346,7 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     assert config["axes"][0]["num_bins"] == 2
     assert config["axes"][1]["num_bins"] == 2
     assert config["fractional"] is True
+    assert config["max_batch_mb"] == 192
 
     enable_check = explorer.details_widget.findChild(QtWidgets.QCheckBox, "dataset_rebin_enabled")
     assert enable_check is not None
@@ -2354,8 +2355,21 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     )
     assert rebin_panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_fractional").isChecked()
     assert rebin_panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_fit_enabled") is None
-    assert not rebin_panel.findChildren(QtWidgets.QComboBox)
-    assert any(button.text() == "Create dataset from rebin" for button in rebin_panel.findChildren(QtWidgets.QPushButton))
+    mean_combo = rebin_panel.findChild(QtWidgets.QComboBox, "dataset_rebin_mean_weighting")
+    assert mean_combo is not None
+    assert mean_combo.currentData() == "inverse_variance"
+    batch_spin = rebin_panel.findChild(QtWidgets.QSpinBox, "dataset_rebin_max_batch_mb")
+    assert batch_spin is not None
+    assert batch_spin.value() == 192
+    assert "not a cap on total rebinner memory use" in batch_spin.toolTip()
+    batch_spin.setValue(64)
+    assert dataset_rebin_config(dataset)["max_batch_mb"] == 64
+    create_button = rebin_panel.findChild(QtWidgets.QPushButton, "dataset_rebin_create")
+    save_rebin_button = rebin_panel.findChild(QtWidgets.QPushButton, "dataset_rebin_save")
+    assert create_button is not None
+    assert create_button.text() == "Create dataset from rebin"
+    assert save_rebin_button is not None
+    assert save_rebin_button.text() == "Save rebin to disk"
     enable_check.setChecked(True)
     explorer._set_dataset_rebin_axis_value(dataset, group, 0, "num_bins", "1")
     explorer._set_dataset_rebin_axis_value(dataset, group, 1, "num_bins", "1")
@@ -2371,6 +2385,17 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     assert viewed.shape == (3, 1)
     assert viewed.metadata["rebin"]["normalize"] is True
     assert viewed.metadata["combined_mask_count"] == 0
+
+    dialog_save_path = tmp_path / "dialog-rebinned.npz"
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(dialog_save_path), "NumPy archives (*.npz)"),
+    )
+    assert explorer.save_rebin_for_selection()
+    dialog_saved = np.load(dialog_save_path)
+    assert dialog_saved["signal"].shape == (3, 1)
+    assert int(dialog_saved["axis_count"]) == 2
 
     rebinned = explorer.materialize_rebin_for_selection()
 
@@ -2466,7 +2491,7 @@ def test_import_dataset_paths_dispatches_by_data_type_and_round_trips(tmp_path):
     assert nxs.data_type == "single_crystal_inelastic"
 
     project = NfitProject([group])
-    path = tmp_path / "proj.mtlx"
+    path = tmp_path / "proj.nfit"
     save_project(project, path)
     reloaded = load_project(path)
     types = [ds.data_type for ds in reloaded.data_groups[0].datasets]
@@ -2544,7 +2569,7 @@ def test_nested_dataset_groups_share_masks_and_round_trip(tmp_path):
     p2 = DatasetEntry("b", None, kind="nxs", metadata={"source_file": str(tmp_path / "b.nxs"), "import_status": "pending"})
     save_sub.datasets.append(p2)
     project_gui.create_group_mask(save_sub, None)
-    path = tmp_path / "proj.mtlx"
+    path = tmp_path / "proj.nfit"
     save_project(NfitProject([save_group]), path)
     reloaded = load_project(path).data_groups[0]
     assert reloaded.dataset_names == ["a", "b"]
@@ -2696,7 +2721,7 @@ def test_dataset_scale_factor_scales_viewed_data_and_round_trips(monkeypatch, tm
     save_group = DataGroup("Datagroup2")
     placeholder = import_dataset_paths(save_group, [tmp_path / "scan.nxs"])[0]
     placeholder.scale_factor = 3.0
-    path = tmp_path / "proj.mtlx"
+    path = tmp_path / "proj.nfit"
     save_project(NfitProject([save_group]), path)
     assert json.loads(path.read_text())["data_groups"][0]["datasets"][0]["scale_factor"] == 3.0
     assert load_project(path).data_groups[0].datasets[0].scale_factor == 3.0

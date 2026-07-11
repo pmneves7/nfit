@@ -63,11 +63,23 @@ participate in a fit.
 Point-list datasets such as magnetization or powder elastic data expose editable
 coordinate/channel configuration. MDHisto datasets expose rebin settings in the
 Axes panel when rebinning is supported. Rebinning can be enabled for viewing and
-fitting, and the current rebin can be materialized as a new independent dataset.
+fitting. The current rebin can be materialized as a new independent project
+dataset with `Create dataset from rebin`, or written directly to disk with
+`Save rebin to disk`.
 All enabled file, inherited group, and dataset masks are applied before point or
 MDHisto data are rebinned, so excluded data do not contribute to rebinned bin
 averages; disabled masks are ignored. The materialized dataset keeps the source
-dataset's temperature override.
+dataset's temperature override. The Rebin panel's `Mean` selector controls how
+multiple source points are averaged inside each output bin: `Inverse variance`
+uses `1/sigma^2` weights and is the default, while `Uniform` keeps a simple
+mean. Fractional binning still applies the geometric fractional contribution on
+top of the selected mean weighting and is enabled by default. The Rebin panel's
+`Batch target` control sets the approximate per-batch working-memory target in
+MB; it defaults to 192 MB. Smaller batches usually use less temporary memory but
+require more computational time. The target is not a cap on total rebinner
+memory use, because source arrays, coordinates, output grids, and bookkeeping
+also consume memory. The best value depends on dataset size, output grid size,
+dimensionality, and available memory.
 
 The dataset title row includes a `T (K)` control that sets a per-dataset sample
 temperature override, stored in `dataset.parameters["temperature"]`. Spin down

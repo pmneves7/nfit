@@ -732,8 +732,10 @@ def rebin_point_data(
     upper: ArrayLike | None = None,
     step_size: ArrayLike | None = None,
     num_bins: ArrayLike | None = None,
-    fractional: bool = False,
+    fractional: bool = True,
     normalize: bool = True,
+    mean_weighting: str = "inverse_variance",
+    max_batch_bytes: int = 192 * 1024 * 1024,
 ) -> PointData4D:
     """Rebin flattened ``(H,K,L,E)`` point data onto a regular 4D grid.
 
@@ -758,6 +760,8 @@ def rebin_point_data(
         num_bins=num_bins,
         fractional=fractional,
         normalize=normalize,
+        mean_weighting=mean_weighting,
+        max_batch_bytes=max_batch_bytes,
     )
     if result.bin_centers_list is None:
         raise RuntimeError("rebinning did not produce bin centers")
@@ -782,6 +786,8 @@ def rebin_point_data(
         "num_bins": np.asarray(result.num_bins, dtype=int).tolist(),
         "fractional": fractional,
         "normalize": normalize,
+        "mean_weighting": str(mean_weighting),
+        "max_batch_bytes": int(max_batch_bytes),
     }
     if isinstance(source.temperature, np.ndarray):
         metadata["temperature_note"] = "pointwise temperature was dropped during rebinning"

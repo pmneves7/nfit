@@ -11,6 +11,8 @@ pipeline.
 Nfit was authored by Paul M. Neves (Johns Hopkins University,
 pneves1@jhu.edu) with use of LLM coding tools.
 
+Current package version: 0.4.2.
+
 ```{toctree}
 :maxdepth: 2
 

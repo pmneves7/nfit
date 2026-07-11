@@ -61,7 +61,7 @@ from nfit import NfitProject, create_data_group, import_dataset_paths, save_proj
 project = NfitProject()
 group = create_data_group(project, "field_series")
 import_dataset_paths(group, ["low_field.nxs", "high_field.nxs"])
-save_project(project, "field_series.mtlx")
+save_project(project, "field_series.nfit")
 ```
 
 ## Current state
@@ -74,7 +74,7 @@ or bulk-measurement data as additional importers are added.
 
 The first project explorer GUI follows this direction by using package-level
 project functions for creating data groups, importing dataset paths, deleting
-entries, and saving/loading projects. Its `.mtlx` files are JSON documents for
+entries, and saving/loading projects. Its `.nfit` files are JSON documents for
 the currently supported project state. Model sessions and embedded fit results
 will need matching text-oriented serialization as those GUI features are added.
 Slice-viewer integration should follow the same pattern: the GUI can open or

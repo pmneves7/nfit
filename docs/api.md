@@ -45,6 +45,39 @@ views, and fit timelines. The GUI is documented in
 [GUI workflows](gui_workflows.md); its controls are expected to stay backed by
 scriptable project state rather than hidden widget-only state.
 
+## N-dimensional rebinning
+
+Use `rebin_nd` or `NDRebin` to bin point values onto regular N-dimensional
+grids. Fractional binning is enabled by default, so a source point can be
+distributed to neighboring bins according to its geometric overlap; pass
+`fractional=False` for single-bin assignment. With `normalize=True`, each
+output bin is an average of all source points that contribute to that bin. The
+default averaging mode is
+`mean_weighting="inverse_variance"`: when `data_errs` are supplied, each source
+point receives a `1 / sigma**2` weight, and fractional binning multiplies that
+statistical weight by the point's fractional spatial contribution. The reported
+bin error is propagated from the same linear weights, which reduces to
+`1 / sqrt(sum(1 / sigma**2))` for non-fractional inverse-variance averages.
+Points with non-finite or non-positive uncertainties are skipped in this mode.
+
+Set `mean_weighting="uniform"` to keep the legacy simple mean behavior. In that
+mode, each point has equal statistical weight and fractional binning contributes
+only the spatial fraction. If `normalize=False`, rebinning returns weighted sums
+instead of means and `mean_weighting` is ignored.
+
+Fractional binning is accumulated in batches. Earlier implementations expanded
+every point into its full list of neighboring-bin contributions at once, which
+can be prohibitive for large 4D datasets. The current rebinner accumulates each
+batch directly into the output arrays; set `batch_size` explicitly for
+benchmarking or use `max_batch_bytes` to let `NDRebin` choose an approximate
+working-memory target. The default target is 192 MB of per-batch working arrays.
+This value is not a cap on total rebinner memory use: the rebinner still holds
+the source data, coordinates, errors, output arrays, and other bookkeeping. A
+smaller target usually reduces temporary memory at the cost of more CPU time,
+while a larger target can reduce batching overhead but raises peak memory. The
+best value depends on the dataset size, output grid size, dimensionality, and
+available memory.
+
 ## Modeling and fitting
 
 The fitting API supports both the original single-dataset

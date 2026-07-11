@@ -277,8 +277,10 @@ class PointListData:
         upper: ArrayLike | None = None,
         num_bins: ArrayLike | None = None,
         step_size: ArrayLike | None = None,
-        fractional: bool = False,
+        fractional: bool = True,
         normalize: bool = True,
+        mean_weighting: str = "inverse_variance",
+        max_batch_bytes: int = 192 * 1024 * 1024,
     ) -> "PointListData":
         """Bin the points onto a regular grid, returning occupied bin centers.
 
@@ -317,6 +319,8 @@ class PointListData:
                 step_size=step_size,
                 fractional=fractional,
                 normalize=normalize,
+                mean_weighting=mean_weighting,
+                max_batch_bytes=max_batch_bytes,
             )
             if result.binned_data is None or result.n_samples is None or result.bin_centers_list is None:
                 raise RuntimeError("rebinning did not produce binned data")
@@ -359,6 +363,8 @@ class PointListData:
             "num_bins": list(n_samples.shape),
             "fractional": bool(fractional),
             "normalize": bool(normalize),
+            "mean_weighting": str(mean_weighting),
+            "max_batch_bytes": int(max_batch_bytes),
         }
         return PointListData(
             columns=new_columns,
@@ -374,4 +380,3 @@ def _as_float_1d(name: str, value: ArrayLike) -> FloatArray:
     if arr.ndim != 1:
         raise ValueError(f"{name} must be a one-dimensional array, got shape {arr.shape}")
     return arr
-
