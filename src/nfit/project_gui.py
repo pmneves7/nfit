@@ -2887,8 +2887,9 @@ def _viewer_data_before_scale_uncached(
             return rebinned_dataset_data(dataset)
         return prepared_point_list_data(dataset)
     if isinstance(dataset.data, MDHistoData):
-        data = rebinned_dataset_data(dataset) if dataset_rebin_enabled(dataset) else dataset.data
-        return _mdhisto_with_nfit_masks(dataset, data=data, extra_masks=extra_masks)
+        if dataset_rebin_enabled(dataset):
+            return rebinned_dataset_data(dataset, extra_masks=extra_masks)
+        return _mdhisto_with_nfit_masks(dataset, data=dataset.data, extra_masks=extra_masks)
     source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
     if not source:
         return None
@@ -2899,8 +2900,9 @@ def _viewer_data_before_scale_uncached(
     dataset.data = loaded
     dataset.kind = dataset.kind or source_path.suffix.lstrip(".").lower()
     dataset.metadata["import_status"] = "loaded"
-    data = rebinned_dataset_data(dataset) if dataset_rebin_enabled(dataset) else dataset.data
-    return _mdhisto_with_nfit_masks(dataset, data=data, extra_masks=extra_masks)
+    if dataset_rebin_enabled(dataset):
+        return rebinned_dataset_data(dataset, extra_masks=extra_masks)
+    return _mdhisto_with_nfit_masks(dataset, data=dataset.data, extra_masks=extra_masks)
 
 
 def _apply_dataset_scale(
@@ -2976,17 +2978,40 @@ def dataset_rebin_enabled(dataset: DatasetEntry) -> bool:
     return bool(isinstance(config, dict) and config.get("enabled"))
 
 
-def rebinned_dataset_data(dataset: DatasetEntry) -> Any:
+def rebinned_dataset_data(
+    dataset: DatasetEntry,
+    *,
+    extra_masks: list[MaskSpec] | None = None,
+) -> Any:
     """Return a rebinned copy of a supported dataset according to its configuration."""
 
     config = dataset_rebin_config(dataset)
     if isinstance(dataset.data, PointListData):
         return _rebin_point_list_data(dataset, config)
     if isinstance(dataset.data, PointData4D):
-        return _rebin_point_data(dataset.data, config)
+        return _rebin_point_data(_point_data_with_nfit_masks(dataset, dataset.data, extra_masks=extra_masks), config)
     if not isinstance(dataset.data, MDHistoData):
         return dataset.data
-    return _rebin_mdhisto_data(dataset.data, config)
+    masked = _mdhisto_with_nfit_masks(dataset, data=dataset.data, extra_masks=extra_masks)
+    return _with_rebinned_mask_metadata(_rebin_mdhisto_data(masked, config), masked)
+
+
+def _with_rebinned_mask_metadata(rebinned: MDHistoData, source: MDHistoData) -> MDHistoData:
+    """Annotate a rebinned MDHisto result whose source masks were applied up front."""
+
+    metadata = dict(rebinned.metadata)
+    rebin_metadata = dict(metadata.get("rebin", {}))
+    for key in ("file_mask_count", "nfit_mask_count", "combined_mask_count"):
+        if key in source.metadata:
+            rebin_metadata[f"source_{key}"] = int(source.metadata[key])
+    metadata["rebin"] = rebin_metadata
+    output_mask = np.asarray(rebinned.mask, dtype=bool)
+    metadata["file_mask"] = np.zeros(rebinned.shape, dtype=bool)
+    metadata["nfit_mask"] = np.zeros(rebinned.shape, dtype=bool)
+    metadata["file_mask_count"] = 0
+    metadata["nfit_mask_count"] = 0
+    metadata["combined_mask_count"] = int(np.count_nonzero(output_mask))
+    return replace(rebinned, metadata=metadata)
 
 
 def _rebin_point_list_data(dataset: DatasetEntry, config: dict[str, Any]) -> PointListData:
@@ -3018,7 +3043,7 @@ def create_rebinned_dataset(
 ) -> DatasetEntry:
     """Materialize a dataset's rebinned view as an independent dataset."""
 
-    data = rebinned_dataset_data(dataset)
+    data = rebinned_dataset_data(dataset, extra_masks=effective_dataset_masks(group, dataset))
     if data is dataset.data:
         data = copy.deepcopy(data)
     parameters = {}
@@ -3315,6 +3340,188 @@ def _rebin_point_data(data: PointData4D, config: dict[str, Any]) -> PointData4D:
         fractional=bool(config.get("fractional", False)),
         normalize=True,
     )
+
+
+def _point_data_with_nfit_masks(
+    dataset: DatasetEntry,
+    data: PointData4D,
+    *,
+    extra_masks: list[MaskSpec] | None = None,
+) -> PointData4D:
+    reject = ~np.asarray(data.mask, dtype=bool)
+    nfit_mask = _nfit_mask_for_point_data(dataset, data, extra_masks=extra_masks)
+    combined_reject = reject | nfit_mask
+    if not np.any(combined_reject) and np.all(np.asarray(data.mask, dtype=bool)):
+        return data
+    metadata = dict(data.metadata)
+    metadata["nfit_mask_count"] = int(np.count_nonzero(nfit_mask))
+    metadata["combined_mask_count"] = int(np.count_nonzero(combined_reject))
+    temperature = data.temperature.copy() if isinstance(data.temperature, np.ndarray) else data.temperature
+    return PointData4D(
+        H=data.H.copy(),
+        K=data.K.copy(),
+        L=data.L.copy(),
+        E=data.E.copy(),
+        intensity=data.intensity.copy(),
+        sigma=data.sigma.copy(),
+        mask=~combined_reject,
+        temperature=temperature,
+        metadata=metadata,
+    )
+
+
+def _nfit_mask_for_point_data(
+    dataset: DatasetEntry,
+    data: PointData4D,
+    *,
+    extra_masks: list[MaskSpec] | None = None,
+) -> np.ndarray:
+    combined = np.zeros(data.size, dtype=bool)
+    for mask in [*(extra_masks or []), *dataset.masks]:
+        if not mask.enabled:
+            continue
+        mask_values = _evaluate_point_data_mask(data, mask)
+        if mask.invert:
+            mask_values = ~mask_values
+        if mask.additive:
+            combined &= ~mask_values
+        else:
+            combined |= mask_values
+    return combined
+
+
+def _evaluate_point_data_mask(data: PointData4D, mask: MaskSpec) -> np.ndarray:
+    if mask.type == "coordinate_range":
+        return _point_data_coordinate_range_mask(data, mask.parameters)
+    if mask.type == "energy_q_range":
+        return _point_data_energy_q_range_mask(data, mask.parameters)
+    if mask.type == "phonon_cone":
+        return _point_data_phonon_cone_mask(data, mask.parameters)
+    if mask.type == "box":
+        return _point_data_box_mask(data, mask.parameters)
+    if mask.type == "ellipsoid":
+        return _point_data_ellipsoid_mask(data, mask.parameters)
+    return np.zeros(data.size, dtype=bool)
+
+
+def _point_data_coordinate_range_mask(data: PointData4D, parameters: dict[str, Any]) -> np.ndarray:
+    keep = np.ones(data.size, dtype=bool)
+    coords = _point_data_coordinate_values(data)
+    for name in COORDINATE_RANGE_PARAMETER_NAMES:
+        bounds = _parameter_range(parameters.get(name))
+        if bounds is None or name not in coords:
+            continue
+        lower, upper = bounds
+        values = coords[name]
+        if lower is not None:
+            keep &= values >= lower
+        if upper is not None:
+            keep &= values <= upper
+    return ~keep
+
+
+def _point_data_energy_q_range_mask(data: PointData4D, parameters: dict[str, Any]) -> np.ndarray:
+    reject = np.ones(data.size, dtype=bool)
+    energy = _parameter_range(parameters.get("energy"))
+    q_modulus = _parameter_range(parameters.get("q_modulus"))
+    if energy is None and q_modulus is None:
+        return np.zeros(data.size, dtype=bool)
+    if energy is not None:
+        reject &= _values_in_range(np.asarray(data.E, dtype=float), energy)
+    if q_modulus is not None:
+        reject &= _values_in_range(_point_data_q_modulus(data), q_modulus)
+    return reject
+
+
+def _point_data_box_mask(data: PointData4D, parameters: dict[str, Any]) -> np.ndarray:
+    resolved = _point_data_projected_region_inputs(data, parameters, extent_key="width")
+    if resolved is None:
+        return np.zeros(data.size, dtype=bool)
+    values, center, width = resolved
+    half_widths = [0.5 * value for value in width]
+    if any(half_width <= 0.0 for half_width in half_widths):
+        return np.zeros(data.size, dtype=bool)
+    reject = np.ones(data.size, dtype=bool)
+    for value, coordinate, half_width in zip(values, center, half_widths, strict=True):
+        reject &= np.abs(value - coordinate) <= half_width
+    return reject
+
+
+def _point_data_ellipsoid_mask(data: PointData4D, parameters: dict[str, Any]) -> np.ndarray:
+    resolved = _point_data_projected_region_inputs(data, parameters, extent_key="radii")
+    if resolved is None:
+        return np.zeros(data.size, dtype=bool)
+    values, center, radii = resolved
+    if any(radius <= 0.0 for radius in radii):
+        return np.zeros(data.size, dtype=bool)
+    scaled_square = np.zeros(data.size, dtype=float)
+    for value, coordinate, radius in zip(values, center, radii, strict=True):
+        scaled = (value - coordinate) / radius
+        scaled_square = scaled_square + scaled * scaled
+    return scaled_square <= 1.0
+
+
+def _point_data_projected_region_inputs(
+    data: PointData4D,
+    parameters: dict[str, Any],
+    *,
+    extent_key: str,
+) -> tuple[list[np.ndarray], list[float], list[float]] | None:
+    axes = _mask_axis_names(parameters)
+    if not axes:
+        return None
+    center = _parameter_float_sequence(parameters.get("center"))
+    extent = _parameter_float_sequence(parameters.get(extent_key))
+    if center is None or extent is None:
+        return None
+    if not len(axes) == len(center) == len(extent):
+        return None
+    coords = _point_data_coordinate_values(data)
+    values: list[np.ndarray] = []
+    for name in axes:
+        value = _resolve_projected_axis_grid(name, coords)
+        if value is None:
+            return None
+        values.append(value)
+    return values, center, extent
+
+
+def _point_data_phonon_cone_mask(data: PointData4D, parameters: dict[str, Any]) -> np.ndarray:
+    slope = _parameter_float(parameters.get("slope"))
+    if slope is None or slope <= 0.0:
+        return np.zeros(data.size, dtype=bool)
+    center = _coordinate_axis_vector(parameters.get("center"), 3)
+    if center is None:
+        return np.zeros(data.size, dtype=bool)
+    radius = max(_parameter_float(parameters.get("radius")) or 0.0, 0.0)
+    q_vectors = _point_data_q_vectors(data)
+    if _metadata_coordinate_units_are_inv_angstrom_for_mdhisto(data.metadata):
+        center_q = center
+    else:
+        center_q = _mdhisto_q_matrix(data.metadata) @ center
+    cone_radius = np.abs(np.asarray(data.E, dtype=float)) / slope + radius
+    distance = np.linalg.norm(q_vectors - center_q, axis=-1)
+    return distance <= cone_radius
+
+
+def _point_data_coordinate_values(data: PointData4D) -> dict[str, np.ndarray]:
+    return {
+        "H": np.asarray(data.H, dtype=float),
+        "K": np.asarray(data.K, dtype=float),
+        "L": np.asarray(data.L, dtype=float),
+        "E": np.asarray(data.E, dtype=float),
+    }
+
+
+def _point_data_q_vectors(data: PointData4D) -> np.ndarray:
+    hkl = np.column_stack([data.H, data.K, data.L])
+    if _metadata_coordinate_units_are_inv_angstrom_for_mdhisto(data.metadata):
+        return hkl
+    return hkl @ _mdhisto_q_matrix(data.metadata).T
+
+
+def _point_data_q_modulus(data: PointData4D) -> np.ndarray:
+    return np.linalg.norm(_point_data_q_vectors(data), axis=1)
 
 
 def _mdhisto_with_nfit_masks(
@@ -5084,7 +5291,10 @@ class NfitProjectExplorer:
         self._clipboard: tuple[str, DatasetEntry | MaskSpec] | None = None
         self._slice_viewers: dict[int, Any] = {}
         self._overlay_refresh_timer = None
-        self._pending_overlay_group: DataGroup | None = None
+        self._pending_overlay_groups: dict[int, DataGroup] = {}
+        # True only while the Qt event loop is running (set in run()); in
+        # headless/test use it stays False so overlay refreshes are synchronous.
+        self._interactive = False
         self._restoring_fit_selection = False
         self._active_fit_group: DataGroup | None = None
         self._active_fit_anchor: FitTimelineEntry | None = None
@@ -5115,6 +5325,7 @@ class NfitProjectExplorer:
 
     def run(self) -> int:
         self.show()
+        self._interactive = True
         interrupt_timer, previous_interrupt_handler = _install_cli_interrupt_handler(self.app)
         try:
             return int(self.app.exec())
@@ -6010,17 +6221,21 @@ class NfitProjectExplorer:
         return viewer
 
     def _request_overlay_refresh(self, group: DataGroup) -> None:
-        """Debounce slice-viewer refreshes from rapid parameter edits.
+        """Debounce a slice-viewer refresh, coalescing rapid triggers.
 
-        Coalesces bursts of edits (dragging a value, fast typing) into a single
-        recompute after a short idle, so the model is not re-evaluated on every
-        keystroke. Falls back to a synchronous refresh if no Qt event loop is
-        available to drive the timer (e.g. headless tests).
+        Bursts of edits (dragging a value, fast typing) or repeated tree
+        refreshes collapse into a single recompute after a short idle, so the
+        (expensive) overlay is not re-evaluated on every event. Outside the Qt
+        event loop -- headless/test use, where ``_interactive`` is False -- it
+        refreshes synchronously so callers see the update immediately.
         """
 
         if id(group) not in self._slice_viewers:
             return
-        self._pending_overlay_group = group
+        if not self._interactive:
+            self.refresh_slice_viewer(group)
+            return
+        self._pending_overlay_groups[id(group)] = group
         timer = self._overlay_refresh_timer
         if timer is None:
             try:
@@ -6033,17 +6248,12 @@ class NfitProjectExplorer:
             timer.setInterval(200)
             timer.timeout.connect(self._run_pending_overlay_refresh)
             self._overlay_refresh_timer = timer
-        app = getattr(self, "app", None)
-        if app is None or not hasattr(app, "exec"):
-            # No event loop to fire the timer; refresh immediately.
-            self.refresh_slice_viewer(group)
-            return
         timer.start()
 
     def _run_pending_overlay_refresh(self) -> None:
-        group = self._pending_overlay_group
-        self._pending_overlay_group = None
-        if group is not None:
+        pending = list(self._pending_overlay_groups.values())
+        self._pending_overlay_groups.clear()
+        for group in pending:
             self.refresh_slice_viewer(group)
 
     def refresh_slice_viewer(self, group: DataGroup) -> Any | None:
@@ -8456,11 +8666,13 @@ class NfitProjectExplorer:
         self._restoring_fit_selection = True
         try:
             restore_data_group_state(group, fit_entry.snapshot)
+            # _refresh_tree already refreshes every open slice viewer for the
+            # restored state; an explicit refresh here would recompute the
+            # (expensive) overlay a second time.
             self._refresh_tree(select_group=group, select_fit=fit_entry)
         finally:
             self._restoring_fit_selection = False
         self._mark_dirty()
-        self.refresh_slice_viewer(group)
 
     def _active_fit_entry(self, group: DataGroup) -> FitTimelineEntry | None:
         if self._active_fit_group is not group:
@@ -9753,8 +9965,11 @@ class NfitProjectExplorer:
             self._request_overlay_refresh(group)
 
     def refresh_open_slice_viewers(self) -> None:
+        # Debounced: a tree refresh (selection change, timeline switch, fit
+        # completion, ...) schedules the overlay recompute instead of blocking
+        # on it. In headless/test use this runs synchronously.
         for group in list(self.project.data_groups):
-            self.refresh_slice_viewer(group)
+            self._request_overlay_refresh(group)
 
     def _replace_slice_viewer(
         self,

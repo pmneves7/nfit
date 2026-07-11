@@ -101,7 +101,9 @@ nfit
 The project explorer can create workspaces, import datasets, inspect structured
 metadata, add masks and models, configure rebinning, run fits, and open the data
 viewer. The docs page `docs/gui_workflows.md` is the in-repository wiki for the
-current GUI behavior.
+current GUI behavior. Rebinning honors masks up front: enabled file, inherited
+group, and dataset masks are applied before point or MDHisto data contribute to
+rebinned bins, while disabled masks are ignored.
 
 Render the local HYSPEC test datasets (`1D_test.nxs`, `2D_test.nxs`, and
 `4D_test.nxs`) with automatic 1D line plotting and 2D+ slice plotting:

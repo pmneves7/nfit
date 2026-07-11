@@ -2388,6 +2388,67 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     assert int(saved["axis_count"]) == 2
 
 
+def test_mdhisto_rebin_applies_enabled_masks_before_binning():
+    axis = MDHistoAxis("H", np.array([0.0, 1.0, 2.0]), "rlu", "momentum")
+    data = MDHistoData(
+        axes=(axis,),
+        signal=np.array([1.0, 100.0]),
+        errors=np.array([1.0, 1.0]),
+        mask=np.array([False, False]),
+        num_events=np.array([1.0, 1.0]),
+    )
+    dataset = DatasetEntry("scan", data, kind="mdhisto")
+    mask = create_mask(dataset)
+    mask.parameters["H"] = [0.0, 1.0]
+    mask.enabled = False
+    config = dataset_rebin_config(dataset)
+    config["enabled"] = True
+    config["fractional"] = False
+    config["axes"][0].update({"lower": 0.0, "upper": 2.0, "num_bins": 1})
+
+    viewed = dataset_for_slice_viewer(dataset)
+
+    assert viewed is not None
+    np.testing.assert_allclose(viewed.signal, [50.5])
+    assert viewed.metadata["rebin"]["source_nfit_mask_count"] == 0
+
+    mask.enabled = True
+    viewed = dataset_for_slice_viewer(dataset)
+
+    assert viewed is not None
+    np.testing.assert_allclose(viewed.signal, [1.0])
+    assert viewed.metadata["rebin"]["source_nfit_mask_count"] == 1
+
+
+def test_point_data_rebin_applies_enabled_masks_before_binning():
+    data = PointData4D(
+        H=[0.25, 0.75],
+        K=[0.0, 0.0],
+        L=[0.0, 0.0],
+        E=[0.0, 0.0],
+        intensity=[1.0, 100.0],
+        sigma=[1.0, 1.0],
+    )
+    dataset = DatasetEntry("points", data, kind="point")
+    mask = create_mask(dataset)
+    mask.parameters["H"] = [0.0, 0.5]
+    mask.enabled = False
+    config = dataset_rebin_config(dataset)
+    config["enabled"] = True
+    config["fractional"] = False
+    for axis in config["axes"]:
+        axis.update({"lower": 0.0, "upper": 1.0, "num_bins": 1})
+
+    rebinned = project_gui.rebinned_dataset_data(dataset)
+
+    np.testing.assert_allclose(rebinned.intensity, [50.5])
+
+    mask.enabled = True
+    rebinned = project_gui.rebinned_dataset_data(dataset)
+
+    np.testing.assert_allclose(rebinned.intensity, [1.0])
+
+
 def test_import_dataset_paths_dispatches_by_data_type_and_round_trips(tmp_path):
     group = DataGroup("Datagroup1")
 
@@ -3405,17 +3466,27 @@ def test_request_overlay_refresh_coalesces_without_event_loop(monkeypatch):
     explorer._request_overlay_refresh(group)
     assert refreshed == []
 
-    # With a viewer registered, rapid requests set a single pending group and
-    # a debounce timer rather than refreshing on every call.
     explorer._slice_viewers[id(group)] = object()
+
+    # Headless/non-interactive: refresh happens synchronously so callers and
+    # tests observe the update immediately.
+    assert explorer._interactive is False
+    explorer._request_overlay_refresh(group)
+    assert refreshed == [group]
+
+    # Interactive: rapid requests coalesce into the pending set + a debounce
+    # timer instead of refreshing on every call.
+    refreshed.clear()
+    explorer._interactive = True
     explorer._request_overlay_refresh(group)
     explorer._request_overlay_refresh(group)
-    assert explorer._pending_overlay_group is group
+    assert refreshed == []
+    assert id(group) in explorer._pending_overlay_groups
     assert explorer._overlay_refresh_timer is not None
-    # Firing the debounced slot runs exactly one refresh.
+    # Firing the debounced slot runs exactly one refresh and clears the queue.
     explorer._run_pending_overlay_refresh()
     assert refreshed == [group]
-    assert explorer._pending_overlay_group is None
+    assert not explorer._pending_overlay_groups
 
 
 def test_viewer_view_cache_reuses_and_invalidates():

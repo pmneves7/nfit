@@ -64,7 +64,10 @@ Point-list datasets such as magnetization or powder elastic data expose editable
 coordinate/channel configuration. MDHisto datasets expose rebin settings in the
 Axes panel when rebinning is supported. Rebinning can be enabled for viewing and
 fitting, and the current rebin can be materialized as a new independent dataset.
-The materialized dataset keeps the source dataset's temperature override.
+All enabled file, inherited group, and dataset masks are applied before point or
+MDHisto data are rebinned, so excluded data do not contribute to rebinned bin
+averages; disabled masks are ignored. The materialized dataset keeps the source
+dataset's temperature override.
 
 The dataset title row includes a `T (K)` control that sets a per-dataset sample
 temperature override, stored in `dataset.parameters["temperature"]`. Spin down
@@ -88,7 +91,9 @@ viewer exposes `combined_mask`, `file_mask`, and `nfit_mask` channels:
 `combined_mask` is the effective file-or-nfit exclusion mask used for
 display and fitting, while the other two channels show provenance. The data
 viewer's `Apply Masks` checkbox controls whether masked regions are hidden in
-the viewer, but fitting still excludes masked data.
+the viewer, but fitting still excludes masked data. When a dataset is rebinned,
+these source masks are applied before binning; the rebinned view's output mask
+then marks empty or invalid rebinned bins.
 
 Models can have multiple components in one workspace. Model parameters include
 controls for whether they are fitted and whether they are shared globally across
