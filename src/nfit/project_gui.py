@@ -48,6 +48,8 @@ QtMDHistoSliceViewer = None
 RECENT_PROJECT_LIMIT = 10
 RECENT_PROJECTS_KEY = "recent_projects"
 DATASET_REBIN_KEY = "rebin"
+GROUP_COMPOSITE_KEY = "composite"
+GROUP_COMPOSITE_NAME = "Composite"
 DEFAULT_REBIN_MAX_BATCH_MB = 192
 DATASET_POINT_LIST_KEY = "point_list"
 SUSCEPTIBILITY_CHANNEL_LABEL = "Susceptibility"
@@ -1707,14 +1709,401 @@ def effective_dataset_masks(group: DataGroup, dataset: DatasetEntry) -> list[Mas
     return search(group) or []
 
 
+def data_group_composite_config(group: DataGroup) -> dict[str, Any]:
+    """Return the group-level composite dataset configuration."""
+
+    config = group.metadata.get(GROUP_COMPOSITE_KEY)
+    if not isinstance(config, dict):
+        config = {}
+        group.metadata[GROUP_COMPOSITE_KEY] = config
+    config.setdefault("enabled", False)
+    config.setdefault("fractional", True)
+    if config.get("mean_weighting") not in {"inverse_variance", "uniform"}:
+        config["mean_weighting"] = "inverse_variance"
+    try:
+        config["max_batch_mb"] = max(int(config.get("max_batch_mb", DEFAULT_REBIN_MAX_BATCH_MB)), 1)
+    except (TypeError, ValueError):
+        config["max_batch_mb"] = DEFAULT_REBIN_MAX_BATCH_MB
+    config["normalize"] = True
+    reference = _composite_reference_data(group)
+    default_axes = _default_rebin_axes(reference) if reference is not None else []
+    axes = config.get("axes")
+    if not isinstance(axes, list) or len(axes) != len(default_axes):
+        config["axes"] = default_axes
+    else:
+        sanitized_axes = []
+        for axis_config, default_axis in zip(axes, default_axes, strict=True):
+            if not isinstance(axis_config, dict):
+                axis_config = {}
+            for key, value in default_axis.items():
+                axis_config.setdefault(key, value)
+            sanitized_axes.append(_sanitize_rebin_axis_config(axis_config))
+        config["axes"] = sanitized_axes
+    return config
+
+
+def data_group_composite_enabled(group: DataGroup) -> bool:
+    config = group.metadata.get(GROUP_COMPOSITE_KEY)
+    return bool(isinstance(config, dict) and config.get("enabled"))
+
+
+def _composite_dataset_name(group: DataGroup) -> str:
+    return f"{group.name} {GROUP_COMPOSITE_NAME}"
+
+
+def _composite_candidates(group: DataGroup) -> list[DatasetEntry]:
+    return [dataset for dataset in group.iter_datasets() if dataset.enabled]
+
+
+def _dataset_composite_kind(dataset: DatasetEntry) -> str:
+    if data_type_container(dataset.data_type) == "point_list" or isinstance(dataset.data, PointListData):
+        return "point_list"
+    if isinstance(dataset.data, MDHistoData) or data_type_container(dataset.data_type) == "mdhisto":
+        return "mdhisto"
+    if isinstance(dataset.data, PointData4D):
+        return "point_data_4d"
+    return type(dataset.data).__name__ if dataset.data is not None else "unknown"
+
+
+def data_group_composite_status(group: DataGroup) -> tuple[bool, str]:
+    datasets = _composite_candidates(group)
+    if not datasets:
+        return False, "No enabled datasets are available to combine."
+    kinds = {_dataset_composite_kind(dataset) for dataset in datasets}
+    if len(kinds) != 1:
+        return False, "Composite datasets require all enabled datasets to hold the same kind of data."
+    if next(iter(kinds)) not in {"mdhisto", "point_list", "point_data_4d"}:
+        return False, "This dataset kind cannot be composited yet."
+    return True, "Ready to combine enabled datasets into one rebinned composite."
+
+
+def _composite_reference_data(group: DataGroup) -> Any | None:
+    ok, _message = data_group_composite_status(group)
+    if not ok:
+        return None
+    dataset = _composite_candidates(group)[0]
+    try:
+        return _source_data_for_group_composite(group, dataset)
+    except Exception:
+        return dataset.data
+
+
+def _ensure_dataset_data_loaded(dataset: DatasetEntry) -> Any:
+    if dataset.data is not None:
+        return dataset.data
+    if data_type_container(dataset.data_type) == "point_list":
+        loaded = _load_point_list_dataset(dataset)
+        if loaded is not None:
+            return loaded
+    source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
+    if source and Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5"}:
+        loaded = load_mantid_mdhisto_nxs(Path(source), copy_metadata=False)
+        dataset.data = loaded
+        dataset.kind = dataset.kind or Path(source).suffix.lstrip(".").lower()
+        dataset.metadata["import_status"] = "loaded"
+        return loaded
+    return dataset.data
+
+
+def _source_data_for_group_composite(group: DataGroup, dataset: DatasetEntry) -> Any:
+    data = _ensure_dataset_data_loaded(dataset)
+    extra_masks = effective_dataset_masks(group, dataset)
+    if isinstance(data, PointListData):
+        return prepared_point_list_data(dataset)
+    if isinstance(data, MDHistoData):
+        return _mdhisto_with_nfit_masks(dataset, data=data, extra_masks=extra_masks)
+    if isinstance(data, PointData4D):
+        return _point_data_with_nfit_masks(dataset, data, extra_masks=extra_masks)
+    return data
+
+
+def composite_dataset_data(group: DataGroup) -> MDHistoData | PointListData | PointData4D:
+    """Build the group's rebinned composite dataset from enabled members."""
+
+    ok, message = data_group_composite_status(group)
+    if not ok:
+        raise ValueError(message)
+    config = data_group_composite_config(group)
+    kind = _dataset_composite_kind(_composite_candidates(group)[0])
+    if kind == "mdhisto":
+        return _composite_mdhisto_data(group, config)
+    if kind == "point_list":
+        return _composite_point_list_data(group, config)
+    if kind == "point_data_4d":
+        return _composite_point_data(group, config)
+    raise ValueError(f"unsupported composite dataset kind {kind!r}")
+
+
+def composite_dataset_entry(group: DataGroup) -> DatasetEntry:
+    datasets = _composite_candidates(group)
+    first = datasets[0] if datasets else None
+    return DatasetEntry(
+        name=_composite_dataset_name(group),
+        data=composite_dataset_data(group),
+        kind=(first.kind if first is not None else ""),
+        data_type=(first.data_type if first is not None else ""),
+        metadata={"source_group": group.name, "composite": True},
+        parameters={},
+        enabled=True,
+        fit_weight=1.0,
+        scale_factor=1.0,
+    )
+
+
+def _scaled_error_for_weight(dataset: DatasetEntry, errors: np.ndarray) -> np.ndarray:
+    return np.asarray(errors, dtype=float) * abs(float(dataset.scale_factor))
+
+
+def _dataset_statistical_weight(dataset: DatasetEntry, size: int) -> np.ndarray:
+    weight = float(dataset.fit_weight)
+    if not np.isfinite(weight) or weight <= 0.0:
+        return np.zeros(size, dtype=float)
+    return np.full(size, weight, dtype=float)
+
+
+def _composite_rebin_bounds(config: dict[str, Any]) -> tuple[list[float], list[float], list[int]]:
+    axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
+    return (
+        [axis["lower"] for axis in axes_config],
+        [axis["upper"] for axis in axes_config],
+        [axis["num_bins"] for axis in axes_config],
+    )
+
+
+def _composite_mdhisto_data(group: DataGroup, config: dict[str, Any]) -> MDHistoData:
+    lower, upper, num_bins = _composite_rebin_bounds(config)
+    coords_parts: list[np.ndarray] = []
+    signal_parts: list[np.ndarray] = []
+    error_parts: list[np.ndarray] = []
+    weight_parts: list[np.ndarray] = []
+    first_data: MDHistoData | None = None
+    for dataset in _composite_candidates(group):
+        data = _source_data_for_group_composite(group, dataset)
+        if not isinstance(data, MDHistoData):
+            continue
+        if first_data is None:
+            first_data = data
+        source_grids = np.meshgrid(*(axis.centers for axis in data.axes), indexing="ij")
+        coords = np.stack(source_grids, axis=-1)
+        valid = np.isfinite(data.signal) & np.isfinite(data.errors) & ~np.asarray(data.mask, dtype=bool)
+        if data.num_events is not None:
+            valid &= np.asarray(data.num_events) > 0.0
+        if not np.any(valid):
+            continue
+        scale = float(dataset.scale_factor)
+        signal = np.asarray(data.signal[valid], dtype=float) * scale
+        errors = _scaled_error_for_weight(dataset, np.asarray(data.errors[valid], dtype=float))
+        weights = _dataset_statistical_weight(dataset, signal.size)
+        coords_parts.append(coords[valid])
+        signal_parts.append(signal)
+        error_parts.append(errors)
+        weight_parts.append(weights)
+    if first_data is None or not signal_parts:
+        raise ValueError("no valid data points remain before compositing")
+    coords_all = np.concatenate(coords_parts, axis=0)
+    signal_all = np.concatenate(signal_parts)
+    errors_all = np.concatenate(error_parts)
+    weights_all = np.concatenate(weight_parts)
+    result = rebin_nd(
+        signal_all,
+        coords_all,
+        data_errs=errors_all,
+        data_weights=weights_all,
+        lower=lower,
+        upper=upper,
+        num_bins=num_bins,
+        fractional=bool(config.get("fractional", True)),
+        normalize=True,
+        mean_weighting=_rebin_mean_weighting(config),
+        max_batch_bytes=_rebin_max_batch_bytes(config),
+    )
+    if result.binned_data is None or result.binned_data_errs is None or result.n_samples is None or result.bins_list is None:
+        raise RuntimeError("composite rebinning did not produce binned data")
+    axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
+    axes = tuple(
+        MDHistoAxis(
+            name=str(axis_config.get("name") or source_axis.name),
+            values=np.asarray(bins, dtype=float),
+            units=str(axis_config.get("units") if axis_config.get("units") is not None else source_axis.units),
+            kind=source_axis.kind,
+            frame=source_axis.frame,
+            path=source_axis.path,
+            metadata=dict(source_axis.metadata),
+        )
+        for source_axis, axis_config, bins in zip(first_data.axes, axes_config, result.bins_list, strict=True)
+    )
+    mask = ~np.isfinite(result.binned_data) | ~np.isfinite(result.binned_data_errs)
+    mask |= result.n_samples <= 0.0
+    metadata = {
+        "composite": True,
+        "source_group": group.name,
+        "source_datasets": [dataset.name for dataset in _composite_candidates(group)],
+        "rebin": {
+            "lower": lower,
+            "upper": upper,
+            "step_size": np.asarray(result.step_size, dtype=float).tolist(),
+            "num_bins": np.asarray(result.num_bins, dtype=int).tolist(),
+            "fractional": bool(config.get("fractional", True)),
+            "normalize": True,
+            "mean_weighting": _rebin_mean_weighting(config),
+            "max_batch_mb": _rebin_max_batch_mb(config),
+            "max_batch_bytes": _rebin_max_batch_bytes(config),
+            "weighted_by_fit_weight": True,
+        },
+    }
+    return MDHistoData(
+        axes=axes,
+        signal=np.asarray(result.binned_data, dtype=float),
+        errors=np.asarray(result.binned_data_errs, dtype=float),
+        mask=np.asarray(mask, dtype=bool),
+        num_events=np.asarray(result.n_samples, dtype=float),
+        coordinate_system=first_data.coordinate_system,
+        visual_normalization=first_data.visual_normalization,
+        metadata=metadata,
+    )
+
+
+def _composite_point_data(group: DataGroup, config: dict[str, Any]) -> PointData4D:
+    lower, upper, num_bins = _composite_rebin_bounds(config)
+    coords_parts: list[np.ndarray] = []
+    signal_parts: list[np.ndarray] = []
+    error_parts: list[np.ndarray] = []
+    weight_parts: list[np.ndarray] = []
+    for dataset in _composite_candidates(group):
+        data = _source_data_for_group_composite(group, dataset)
+        if not isinstance(data, PointData4D):
+            continue
+        source = data.valid(require_positive_sigma=False)
+        if source.size == 0:
+            continue
+        coords_parts.append(np.column_stack(source.coordinates()))
+        scale = float(dataset.scale_factor)
+        signal = np.asarray(source.intensity, dtype=float) * scale
+        signal_parts.append(signal)
+        error_parts.append(_scaled_error_for_weight(dataset, source.sigma))
+        weight_parts.append(_dataset_statistical_weight(dataset, source.size))
+    if not signal_parts:
+        raise ValueError("no valid data points remain before compositing")
+    result = rebin_nd(
+        np.concatenate(signal_parts),
+        np.concatenate(coords_parts, axis=0),
+        data_errs=np.concatenate(error_parts),
+        data_weights=np.concatenate(weight_parts),
+        lower=lower,
+        upper=upper,
+        num_bins=num_bins,
+        fractional=bool(config.get("fractional", True)),
+        normalize=True,
+        mean_weighting=_rebin_mean_weighting(config),
+        max_batch_bytes=_rebin_max_batch_bytes(config),
+    )
+    if result.bin_centers_list is None or result.binned_data is None or result.binned_data_errs is None or result.n_samples is None:
+        raise RuntimeError("composite rebinning did not produce binned data")
+    H_grid, K_grid, L_grid, E_grid = np.meshgrid(*result.bin_centers_list, indexing="ij")
+    mask = np.isfinite(result.binned_data) & np.isfinite(result.binned_data_errs) & (result.n_samples > 0.0)
+    return PointData4D(
+        H_grid.ravel(),
+        K_grid.ravel(),
+        L_grid.ravel(),
+        E_grid.ravel(),
+        np.asarray(result.binned_data, dtype=float).ravel(),
+        np.asarray(result.binned_data_errs, dtype=float).ravel(),
+        mask=mask.ravel(),
+        metadata={"composite": True, "source_group": group.name},
+    )
+
+
+def _composite_point_list_data(group: DataGroup, config: dict[str, Any]) -> PointListData:
+    datasets = _composite_candidates(group)
+    prepared = [_source_data_for_group_composite(group, dataset) for dataset in datasets]
+    point_lists = [data for data in prepared if isinstance(data, PointListData)]
+    if not point_lists:
+        raise ValueError("no point-list datasets are available to composite")
+    coordinate_names = list(point_lists[0].coordinate_names)
+    channel_label = point_lists[0].channel_labels[0] if point_lists[0].channel_labels else None
+    if not coordinate_names or channel_label is None:
+        raise ValueError("point-list composites require coordinates and at least one channel")
+    for data in point_lists[1:]:
+        if list(data.coordinate_names) != coordinate_names or channel_label not in data.channel_labels:
+            raise ValueError("point-list composites require matching coordinates and channel labels")
+    lower, upper, num_bins = _composite_rebin_bounds(config)
+    coords_parts: list[np.ndarray] = []
+    signal_parts: list[np.ndarray] = []
+    error_parts: list[np.ndarray] = []
+    weight_parts: list[np.ndarray] = []
+    for dataset, data in zip(datasets, point_lists, strict=False):
+        coords = np.column_stack([data.column(name) for name in coordinate_names])
+        finite = np.all(np.isfinite(coords), axis=1)
+        values = np.asarray(data.channel_values(channel_label), dtype=float)
+        errors = data.channel_errors(channel_label)
+        if errors is None:
+            errors = np.ones(values.shape, dtype=float)
+        valid = finite & np.isfinite(values) & np.isfinite(errors)
+        if not np.any(valid):
+            continue
+        scale = float(dataset.scale_factor)
+        coords_parts.append(coords[valid])
+        signal_parts.append(values[valid] * scale)
+        error_parts.append(_scaled_error_for_weight(dataset, np.asarray(errors[valid], dtype=float)))
+        weight_parts.append(_dataset_statistical_weight(dataset, int(np.count_nonzero(valid))))
+    if not signal_parts:
+        raise ValueError("no valid point-list rows remain before compositing")
+    result = rebin_nd(
+        np.concatenate(signal_parts),
+        np.concatenate(coords_parts, axis=0),
+        data_errs=np.concatenate(error_parts),
+        data_weights=np.concatenate(weight_parts),
+        lower=lower,
+        upper=upper,
+        num_bins=num_bins,
+        fractional=bool(config.get("fractional", True)),
+        normalize=True,
+        mean_weighting=_rebin_mean_weighting(config),
+        max_batch_bytes=_rebin_max_batch_bytes(config),
+    )
+    if result.binned_data is None or result.binned_data_errs is None or result.n_samples is None or result.bin_centers_list is None:
+        raise RuntimeError("composite rebinning did not produce binned data")
+    occupied = result.n_samples > 0.0
+    center_grids = np.meshgrid(*result.bin_centers_list, indexing="ij")
+    value_name = point_lists[0].channel(channel_label)["value"]
+    error_name = point_lists[0].channel(channel_label).get("error") or f"{value_name}_error"
+    columns = {name: grid[occupied] for name, grid in zip(coordinate_names, center_grids, strict=True)}
+    columns[value_name] = np.asarray(result.binned_data, dtype=float)[occupied]
+    columns[error_name] = np.asarray(result.binned_data_errs, dtype=float)[occupied]
+    columns["n_samples"] = np.asarray(result.n_samples, dtype=float)[occupied]
+    return PointListData(
+        columns=columns,
+        units={**{name: point_lists[0].unit(name) for name in coordinate_names}, value_name: point_lists[0].unit(value_name), error_name: point_lists[0].unit(error_name)},
+        coordinate_names=coordinate_names,
+        channels=[{"label": channel_label, "value": value_name, "error": error_name}],
+        metadata={"composite": True, "source_group": group.name, "source_datasets": [dataset.name for dataset in datasets]},
+    )
+
+
 def slice_viewer_datasets(
     group: DataGroup,
+    *,
+    use_composite: bool = True,
 ) -> tuple[list[MDHistoData], list[str]]:
     """Return data and labels for every dataset in the group tree, with shared masks."""
 
     data: list[MDHistoData] = []
     names: list[str] = []
     model_channels = current_model_channels(group)
+    if use_composite and data_group_composite_enabled(group):
+        composite = composite_dataset_entry(group)
+        view_data = dataset_for_slice_viewer(composite)
+        if view_data is not None:
+            composite_name = composite.name
+            attach_fit_channels_to_view(
+                group,
+                composite_name,
+                view_data,
+                fallback_payload=model_channels.get(composite_name),
+            )
+            data.append(view_data)
+            names.append(composite_name)
+        return data, names
     for dataset in group.iter_datasets():
         extra_masks = effective_dataset_masks(group, dataset)
         view_data = dataset_for_slice_viewer(dataset, extra_masks=extra_masks)
@@ -1792,6 +2181,10 @@ def fit_data_bundle(group: DataGroup, dataset: DatasetEntry) -> FitDataBundle | 
     """Build the fit-ready views of one dataset, or ``None`` if unsupported."""
 
     extra_masks = effective_dataset_masks(group, dataset)
+    if isinstance(dataset.data, PointData4D):
+        points = dataset.data
+        _apply_sample_context_to_points(group, dataset, points)
+        return FitDataBundle(dataset=dataset, view=dataset.data, points=points, grid_shape=None)
     view = dataset_for_slice_viewer(dataset, extra_masks=extra_masks)
     if isinstance(view, MDHistoData):
         points = _point_data_from_mdhisto_view(view)
@@ -1960,6 +2353,21 @@ def fit_dataset_inputs(
 
     inputs: list[FitDatasetInput] = []
     bundles: dict[str, FitDataBundle] = {}
+    if data_group_composite_enabled(group):
+        composite = composite_dataset_entry(group)
+        bundle = fit_data_bundle(group, composite)
+        if bundle is None:
+            return inputs, bundles
+        inputs.append(
+            FitDatasetInput(
+                name=composite.name,
+                data=bundle.points,
+                weight=1.0,
+                data_type=composite.data_type or DEFAULT_DATA_TYPE,
+            )
+        )
+        bundles[composite.name] = bundle
+        return inputs, bundles
     for dataset in group.iter_datasets():
         if not dataset.enabled:
             continue
@@ -6258,18 +6666,20 @@ class NfitProjectExplorer:
             return None
         # For a mask or the Masks node, entry is the owning dataset.
         selected_name = entry.name if role in {"dataset", "masks", "mask"} and entry is not None else None
-        return self.open_slice_viewer(group, selected_dataset_name=selected_name)
+        use_composite = selected_name is None
+        return self.open_slice_viewer(group, selected_dataset_name=selected_name, use_composite=use_composite)
 
     def open_slice_viewer(
         self,
         group: DataGroup,
         *,
         selected_dataset_name: str | None = None,
+        use_composite: bool = True,
     ) -> Any | None:
         from PySide6 import QtWidgets
 
         try:
-            datasets, names = slice_viewer_datasets(group)
+            datasets, names = slice_viewer_datasets(group, use_composite=use_composite)
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
                 self.window,
@@ -6281,6 +6691,7 @@ class NfitProjectExplorer:
         if not datasets:
             return None
         viewer = self._replace_slice_viewer(group, datasets, names)
+        setattr(viewer, "_nfit_use_composite", bool(use_composite))
         if selected_dataset_name in names:
             viewer.dataset_combo.setCurrentIndex(names.index(selected_dataset_name))
         viewer.show()
@@ -6327,10 +6738,11 @@ class NfitProjectExplorer:
             return None
         selected_name = None
         current_viewer = self._slice_viewers[id(group)]
+        use_composite = bool(getattr(current_viewer, "_nfit_use_composite", True))
         if current_viewer.dataset_combo is not None:
             selected_name = current_viewer.dataset_combo.currentText()
         try:
-            datasets, names = slice_viewer_datasets(group)
+            datasets, names = slice_viewer_datasets(group, use_composite=use_composite)
         except Exception:
             return None
         if not datasets:
@@ -7505,10 +7917,7 @@ class NfitProjectExplorer:
         if role == "group" and group is not None:
             self.title_label.setText(group.name)
             ensure_fit_history(group)
-            result_count = sum(1 for fit in _walk_fit_entries(group.fits) if fit.kind == "result")
-            self._set_details_text(
-                f"Workspace\n\nDatasets: {len(group.datasets)}\nModels: {len(group.models)}\nFit results: {result_count}"
-            )
+            self._set_group_details(group)
         elif role == "datasets" and group is not None:
             self.title_label.setText(f"{group.name} / Datasets")
             self._set_details_text(f"{len(group.datasets)} dataset(s)")
@@ -7767,6 +8176,149 @@ class NfitProjectExplorer:
         label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
         self.details_layout.addWidget(label)
         self.details_layout.addStretch(1)
+
+    def _set_group_details(self, group: DataGroup) -> None:
+        result_count = sum(1 for fit in _walk_fit_entries(group.fits) if fit.kind == "result")
+        datasets = list(group.iter_datasets())
+        text = (
+            f"Workspace\n\nDatasets: {len(datasets)}\nModels: {len(group.models)}\n"
+            f"Fit results: {result_count}"
+        )
+        self.details_label.setText(text)
+        self._clear_details_panel()
+        self.details_layout.addWidget(
+            self._details_group_box(
+                "Workspace",
+                [
+                    f"Datasets: {len(datasets)}",
+                    f"Data points: {_format_number(_group_data_point_count(group))}",
+                    f"Dataset types: {_group_dataset_type_summary(group)}",
+                    f"Models: {len(group.models)}",
+                    f"Fit results: {result_count}",
+                ],
+            )
+        )
+        self.details_layout.addWidget(self._group_dataset_weights_group_box(group))
+        self.details_layout.addWidget(self._group_composite_group_box(group))
+        self.details_layout.addStretch(1)
+
+    def _group_dataset_weights_group_box(self, group: DataGroup) -> Any:
+        from PySide6 import QtWidgets
+
+        box = QtWidgets.QGroupBox("Datasets")
+        layout = QtWidgets.QGridLayout(box)
+        layout.setContentsMargins(10, 8, 10, 8)
+        headers = ["Name", "Type", "Points", "Fit weight", "Scale"]
+        for column, label in enumerate(headers):
+            layout.addWidget(QtWidgets.QLabel(label), 0, column)
+        for row, dataset in enumerate(group.iter_datasets(), start=1):
+            layout.addWidget(QtWidgets.QLabel(dataset.name), row, 0)
+            layout.addWidget(QtWidgets.QLabel(data_type_label(dataset.data_type)), row, 1)
+            layout.addWidget(QtWidgets.QLabel(_format_number(_dataset_data_point_count(dataset))), row, 2)
+            layout.addWidget(QtWidgets.QLabel(_format_number(dataset.fit_weight)), row, 3)
+            layout.addWidget(QtWidgets.QLabel(_format_number(dataset.scale_factor)), row, 4)
+        box.setToolTip(
+            "Datasets in this workspace. In composite mode each dataset's signal is multiplied by its scale factor, "
+            "its uncertainty by the absolute scale factor, and its statistical contribution by the fit weight. "
+            "Use a negative scale factor to subtract a dataset from the composite."
+        )
+        return box
+
+    def _group_composite_group_box(self, group: DataGroup) -> Any:
+        from PySide6 import QtWidgets
+
+        box = QtWidgets.QGroupBox("Composite dataset")
+        box.setToolTip(
+            "Combine compatible enabled datasets into one rebinned effective dataset for this workspace. "
+            "Enable the checkbox to show the composite rebin controls."
+        )
+        layout = QtWidgets.QVBoxLayout(box)
+        layout.setContentsMargins(10, 8, 10, 8)
+        config = data_group_composite_config(group)
+        can_combine, message = data_group_composite_status(group)
+        enable_check = QtWidgets.QCheckBox("Combine enabled datasets into one effective dataset")
+        enable_check.setObjectName("group_composite_enabled")
+        enable_check.setChecked(bool(config.get("enabled", False)))
+        enable_check.setEnabled(can_combine)
+        enable_check.setToolTip(
+            "When checked, this workspace plots and fits one rebinned composite dataset. "
+            "The fitter receives only the composite and does not see the constituent datasets. "
+            "All enabled datasets must have the same data kind. Negative dataset scale factors subtract data."
+        )
+        enable_check.toggled.connect(lambda checked: self._set_group_composite_enabled(group, checked))
+        layout.addWidget(enable_check)
+        message_label = QtWidgets.QLabel(message)
+        message_label.setWordWrap(True)
+        message_label.setToolTip("Composite status. All enabled datasets must have the same data kind before they can be combined.")
+        layout.addWidget(message_label)
+
+        controls = QtWidgets.QWidget()
+        controls.setEnabled(can_combine)
+        controls.setVisible(bool(config.get("enabled", False)))
+        controls_layout = QtWidgets.QGridLayout(controls)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        axes = config.get("axes", [])
+        headers = ["Axis", "Lower", "Upper", "Bins", "Step"]
+        for column, label in enumerate(headers):
+            controls_layout.addWidget(QtWidgets.QLabel(label), 0, column)
+        for row, axis_config in enumerate(axes, start=1):
+            axis = _sanitize_rebin_axis_config(axis_config)
+            controls_layout.addWidget(QtWidgets.QLabel(str(axis.get("name", f"Axis {row}"))), row, 0)
+            for column, key in enumerate(("lower", "upper", "num_bins", "step_size"), start=1):
+                edit = QtWidgets.QLineEdit(_parameter_to_text(axis.get(key)))
+                edit.setMinimumWidth(72)
+                edit.setToolTip(
+                    f"Composite rebin {key.replace('_', ' ')} for this axis. "
+                    "These bounds and bins are applied after all enabled datasets are scaled, weighted, and collected."
+                )
+                edit.editingFinished.connect(
+                    lambda row=row - 1, key=key, editor=edit: self._set_group_composite_axis_value(group, row, key, editor.text())
+                )
+                controls_layout.addWidget(edit, row, column)
+        option_row = QtWidgets.QHBoxLayout()
+        fractional_check = QtWidgets.QCheckBox("Fractional binning")
+        fractional_check.setObjectName("group_composite_fractional")
+        fractional_check.setChecked(bool(config.get("fractional", True)))
+        fractional_check.setToolTip(
+            "Distribute source points fractionally into neighboring composite bins after dataset scale and fit-weight factors are applied."
+        )
+        fractional_check.toggled.connect(lambda checked: self._set_group_composite_option(group, "fractional", checked))
+        mean_label = QtWidgets.QLabel("Mean")
+        mean_combo = QtWidgets.QComboBox()
+        mean_combo.setObjectName("group_composite_mean_weighting")
+        mean_combo.setToolTip(
+            "Choose the composite averaging mode. Inverse variance uses fit_weight/sigma^2 after dataset scale factors are applied; "
+            "uniform keeps a simple weighted geometric mean."
+        )
+        mean_combo.addItem("Inverse variance", "inverse_variance")
+        mean_combo.addItem("Uniform", "uniform")
+        mean_combo.setCurrentIndex(max(mean_combo.findData(_rebin_mean_weighting(config)), 0))
+        mean_combo.currentIndexChanged.connect(
+            lambda _index, combo=mean_combo: self._set_group_composite_mean_weighting(group, str(combo.currentData() or "inverse_variance"))
+        )
+        batch_label = QtWidgets.QLabel("Batch target")
+        batch_spin = QtWidgets.QSpinBox()
+        batch_spin.setObjectName("group_composite_max_batch_mb")
+        batch_spin.setRange(1, 1_048_576)
+        batch_spin.setSuffix(" MB")
+        batch_spin.setValue(_rebin_max_batch_mb(config))
+        batch_tooltip = (
+            "Approximate per-batch working-memory target in MB. Smaller batches usually use less temporary memory "
+            "but require more computational time. This is not a cap on total rebinner memory use. The optimum depends "
+            "on dataset size, output grid size, dimensionality, and available memory."
+        )
+        batch_label.setToolTip(batch_tooltip)
+        batch_spin.setToolTip(batch_tooltip)
+        batch_spin.valueChanged.connect(lambda value: self._set_group_composite_max_batch_mb(group, int(value)))
+        option_row.addWidget(fractional_check)
+        option_row.addWidget(mean_label)
+        option_row.addWidget(mean_combo)
+        option_row.addWidget(batch_label)
+        option_row.addWidget(batch_spin)
+        option_row.addStretch(1)
+        controls_layout.addLayout(option_row, len(axes) + 1, 0, 1, len(headers))
+        layout.addWidget(controls)
+        return box
 
     def _set_dataset_details(self, dataset: DatasetEntry, group: DataGroup | None) -> None:
         # Point-list data is cheap to load; populate it lazily (e.g. after a
@@ -8720,6 +9272,63 @@ class NfitProjectExplorer:
         config["normalize"] = True
         self._after_dataset_rebin_changed(dataset, group)
 
+    def _set_group_composite_enabled(self, group: DataGroup, checked: bool) -> None:
+        config = data_group_composite_config(group)
+        if bool(config.get("enabled", False)) == bool(checked):
+            return
+        config["enabled"] = bool(checked)
+        config["normalize"] = True
+        self._after_group_composite_changed(group)
+
+    def _set_group_composite_option(self, group: DataGroup, key: str, checked: bool) -> None:
+        config = data_group_composite_config(group)
+        if bool(config.get(key, False)) == bool(checked):
+            return
+        config[key] = bool(checked)
+        config["normalize"] = True
+        self._after_group_composite_changed(group)
+
+    def _set_group_composite_mean_weighting(self, group: DataGroup, value: str) -> None:
+        config = data_group_composite_config(group)
+        value = value if value in {"inverse_variance", "uniform"} else "inverse_variance"
+        if _rebin_mean_weighting(config) == value:
+            return
+        config["mean_weighting"] = value
+        config["normalize"] = True
+        self._after_group_composite_changed(group)
+
+    def _set_group_composite_max_batch_mb(self, group: DataGroup, value: int) -> None:
+        config = data_group_composite_config(group)
+        value = max(int(value), 1)
+        if _rebin_max_batch_mb(config) == value:
+            return
+        config["max_batch_mb"] = value
+        config["normalize"] = True
+        self._after_group_composite_changed(group)
+
+    def _set_group_composite_axis_value(self, group: DataGroup, index: int, key: str, text: str) -> None:
+        config = data_group_composite_config(group)
+        axes = config.get("axes")
+        if not isinstance(axes, list) or not (0 <= index < len(axes)):
+            return
+        axis = dict(axes[index])
+        try:
+            if key == "num_bins":
+                axis[key] = max(int(float(text)), 1)
+            else:
+                axis[key] = float(text)
+        except ValueError:
+            self._set_group_details(group)
+            return
+        if key == "step_size":
+            step = float(axis.get("step_size", 0.0))
+            if step > 0.0:
+                axis["num_bins"] = _num_bins_from_step_size(axis.get("lower", 0.0), axis.get("upper", 0.0), step)
+        axis.update(_sanitize_rebin_axis_config(axis))
+        axes[index] = axis
+        config["normalize"] = True
+        self._after_group_composite_changed(group)
+
     def _set_dataset_rebin_axis_value(
         self,
         dataset: DatasetEntry,
@@ -8791,6 +9400,13 @@ class NfitProjectExplorer:
         if group is not None:
             self.refresh_slice_viewer(group)
         self._set_dataset_details(dataset, group)
+
+    def _after_group_composite_changed(self, group: DataGroup) -> None:
+        self._record_data_group_state_change(group)
+        self._mark_dirty()
+        self.refresh_slice_viewer(group)
+        self._request_overlay_refresh(group)
+        self._set_group_details(group)
 
     def _clear_details_panel(self) -> None:
         while self.details_layout.count():
@@ -10307,7 +10923,7 @@ def _make_refreshing_combo_class():
 
 
 def _has_slice_viewer_candidates(group: DataGroup) -> bool:
-    for dataset in group.datasets:
+    for dataset in group.iter_datasets():
         if isinstance(dataset.data, (MDHistoData, PointListData)):
             return True
         if data_type_container(dataset.data_type) == "point_list":
@@ -10335,6 +10951,31 @@ def _dataset_can_rebin(dataset: DatasetEntry) -> bool:
 
 def _dataset_can_save(dataset: DatasetEntry) -> bool:
     return isinstance(dataset.data, (MDHistoData, PointListData)) or dataset_rebin_enabled(dataset)
+
+
+def _dataset_data_point_count(dataset: DatasetEntry) -> int:
+    data = dataset.data
+    if isinstance(data, MDHistoData):
+        return int(np.prod(data.shape))
+    if isinstance(data, PointListData):
+        return int(data.size)
+    if isinstance(data, PointData4D):
+        return int(data.size)
+    return 0
+
+
+def _group_data_point_count(group: DataGroup) -> int:
+    return sum(_dataset_data_point_count(dataset) for dataset in group.iter_datasets())
+
+
+def _group_dataset_type_summary(group: DataGroup) -> str:
+    counts: dict[str, int] = {}
+    for dataset in group.iter_datasets():
+        label = data_type_label(dataset.data_type)
+        counts[label] = counts.get(label, 0) + 1
+    if not counts:
+        return "-"
+    return ", ".join(f"{label}: {count}" for label, count in sorted(counts.items()))
 
 
 def _dataset_axes_and_data_lines(data: Any) -> tuple[list[str], list[str]]:

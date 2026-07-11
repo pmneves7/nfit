@@ -30,6 +30,10 @@ class NDRebin:
         ``data`` after flattening.
     data_errs:
         Optional one-sigma uncertainties with the same shape as ``data``.
+    data_weights:
+        Optional positive statistical weights with the same shape as ``data``.
+        These multiply the averaging weights. With inverse-variance averaging,
+        the effective point weight is ``data_weights / data_errs**2``.
     axes:
         Optional coordinate axes to project onto before binning. Defaults to the
         identity basis.
@@ -76,6 +80,7 @@ class NDRebin:
         data: ArrayLike,
         coords: ArrayLike,
         data_errs: ArrayLike | None = None,
+        data_weights: ArrayLike | None = None,
         axes: ArrayLike | None = None,
         upper: ArrayLike | None = None,
         lower: ArrayLike | None = None,
@@ -90,6 +95,7 @@ class NDRebin:
         self.data = np.asarray(data, dtype=float)
         self.coords = np.asarray(coords, dtype=float)
         self.data_errs = None if data_errs is None else np.asarray(data_errs, dtype=float)
+        self.data_weights = None if data_weights is None else np.asarray(data_weights, dtype=float)
         self.axes = None if axes is None else np.asarray(axes, dtype=float)
         self.upper = upper
         self.lower = lower
@@ -107,6 +113,7 @@ class NDRebin:
         self.has_data_errs = data_errs is not None
         self.data_flat: FloatArray | None = None
         self.errors_flat: FloatArray | None = None
+        self.weights_flat: FloatArray | None = None
         self.coords_flat: FloatArray | None = None
         self.bins_list: list[FloatArray] | None = None
         self.bin_centers_list: list[FloatArray] | None = None
@@ -138,6 +145,7 @@ class NDRebin:
 
         self._check_data_coords()
         self._check_data_errs()
+        self._check_data_weights()
         self._check_options()
         self._flatten_coords()
 
@@ -174,6 +182,15 @@ class NDRebin:
 
         if self.errors_flat.shape != self.data_flat.shape:
             raise ValueError("data_errs must have the same shape as data")
+
+    def _check_data_weights(self) -> None:
+        assert self.data_flat is not None
+        if self.data_weights is None:
+            self.weights_flat = np.ones(self.data_flat.shape, dtype=float)
+            return
+        self.weights_flat = np.asarray(self.data_weights, dtype=float).ravel()
+        if self.weights_flat.shape != self.data_flat.shape:
+            raise ValueError("data_weights must have the same shape as data")
 
     def _check_options(self) -> None:
         if self.mean_weighting not in {"inverse_variance", "uniform"}:
@@ -482,17 +499,20 @@ class NDRebin:
     ) -> None:
         assert self.data_flat is not None
         assert self.errors_flat is not None
+        assert self.weights_flat is not None
 
         valid = np.isfinite(spatial_weights)
+        statistical_weights = self.weights_flat[point_indices]
+        valid &= np.isfinite(statistical_weights) & (statistical_weights > 0.0)
         if self._use_inverse_variance_weights():
             errors = self.errors_flat[point_indices]
             valid &= np.isfinite(errors) & (errors > 0.0)
             if not np.any(valid):
                 return
-            inv_var = 1.0 / (errors[valid] ** 2)
+            inv_var = statistical_weights[valid] / (errors[valid] ** 2)
             mean_weights = spatial_weights[valid] * inv_var
             data_weights = mean_weights * self.data_flat[point_indices[valid]]
-            err_weights = (mean_weights**2) * (errors[valid] ** 2)
+            err_weights = mean_weights
             norm_weights = mean_weights
             sample_weights = spatial_weights[valid]
             flat_idx = flat_idx[valid]
@@ -501,9 +521,9 @@ class NDRebin:
                 return
             errors = self.errors_flat[point_indices[valid]]
             sample_weights = spatial_weights[valid]
-            data_weights = sample_weights * self.data_flat[point_indices[valid]]
-            err_weights = (sample_weights**2) * (errors**2)
-            norm_weights = sample_weights
+            norm_weights = sample_weights * statistical_weights[valid]
+            data_weights = norm_weights * self.data_flat[point_indices[valid]]
+            err_weights = (norm_weights**2) * (errors**2)
             flat_idx = flat_idx[valid]
 
         minlength = bd_sum.size

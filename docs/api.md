@@ -56,9 +56,12 @@ default averaging mode is
 `mean_weighting="inverse_variance"`: when `data_errs` are supplied, each source
 point receives a `1 / sigma**2` weight, and fractional binning multiplies that
 statistical weight by the point's fractional spatial contribution. The reported
-bin error is propagated from the same linear weights, which reduces to
+bin error follows the accumulated inverse-variance weight, reducing to
 `1 / sqrt(sum(1 / sigma**2))` for non-fractional inverse-variance averages.
 Points with non-finite or non-positive uncertainties are skipped in this mode.
+Optional `data_weights` multiply each point's statistical weight; the GUI uses
+this for workspace composites so dataset fit weights enter as
+`fit_weight / sigma**2`.
 
 Set `mean_weighting="uniform"` to keep the legacy simple mean behavior. In that
 mode, each point has equal statistical weight and fractional binning contributes

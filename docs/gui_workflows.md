@@ -81,6 +81,26 @@ memory use, because source arrays, coordinates, output grids, and bookkeeping
 also consume memory. The best value depends on dataset size, output grid size,
 dimensionality, and available memory.
 
+Workspace rows also summarize the number of descendant datasets, total loaded
+data points, dataset types, fit weights, and scale factors. When all enabled
+datasets in a workspace hold the same kind of data, the `Composite dataset`
+panel can combine them into one effective rebinned dataset. Composite mode uses
+the same rebin controls as an individual dataset, but applies them after
+collecting valid points from every enabled constituent dataset. For each source
+dataset, nfit first multiplies the signal by the dataset scale factor and the
+uncertainty by the absolute value of that scale factor; use a negative scale
+factor to subtract a dataset from the composite. The inverse-variance weight is
+then multiplied by the dataset fit weight, so larger fit weights make that
+dataset count more strongly in the composite average.
+
+When composite mode is enabled, the workspace behaves like a single dataset for
+plotting and fitting. Opening the data viewer from the workspace shows only the
+composite dataset, and the fitter receives only that composite dataset. The
+individual constituent datasets are not fitted separately. To inspect the
+constituents, open the data viewer from one of the datasets inside the
+workspace; that viewer shows the datasets that make up the composite instead of
+the composite itself.
+
 The dataset title row includes a `T (K)` control that sets a per-dataset sample
 temperature override, stored in `dataset.parameters["temperature"]`. Spin down
 to the minimum ("(from data)") to defer to any temperature imported with the

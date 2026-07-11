@@ -2413,6 +2413,70 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     assert int(saved["axis_count"]) == 2
 
 
+def test_data_group_composite_uses_scale_fit_weight_and_rebinning():
+    first = DatasetEntry("first", _tiny_mdhisto_data(1.0), kind="mdhisto", data_type="single_crystal_inelastic")
+    second = DatasetEntry(
+        "second",
+        _tiny_mdhisto_data(5.0),
+        kind="mdhisto",
+        data_type="single_crystal_inelastic",
+        scale_factor=-1.0,
+        fit_weight=3.0,
+    )
+    group = DataGroup("Datagroup1", datasets=[first, second])
+    config = project_gui.data_group_composite_config(group)
+    config["enabled"] = True
+    config["fractional"] = False
+
+    composite = project_gui.composite_dataset_data(group)
+
+    assert isinstance(composite, MDHistoData)
+    np.testing.assert_allclose(composite.signal, [[-3.5]])
+    np.testing.assert_allclose(composite.errors, [[0.5]])
+    np.testing.assert_allclose(composite.num_events, [[2.0]])
+    assert composite.metadata["rebin"]["weighted_by_fit_weight"] is True
+
+    datasets, names = project_gui.slice_viewer_datasets(group)
+    assert names == ["Datagroup1 Composite"]
+    np.testing.assert_allclose(datasets[0].signal, [[-3.5]])
+
+    constituent_datasets, constituent_names = project_gui.slice_viewer_datasets(group, use_composite=False)
+    assert constituent_names == ["first", "second"]
+    np.testing.assert_allclose(constituent_datasets[1].signal, [[-5.0]])
+
+    inputs, bundles = project_gui.fit_dataset_inputs(group)
+    assert [item.name for item in inputs] == ["Datagroup1 Composite"]
+    assert list(bundles) == ["Datagroup1 Composite"]
+
+
+def test_data_group_composite_controls_show_summary_and_update_config(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    first = DatasetEntry("first", _tiny_mdhisto_data(1.0), kind="mdhisto", data_type="single_crystal_inelastic")
+    second = DatasetEntry("second", _tiny_mdhisto_data(2.0), kind="mdhisto", data_type="single_crystal_inelastic")
+    second.scale_factor = -1.0
+    second.fit_weight = 2.0
+    group = DataGroup("Datagroup1", datasets=[first, second])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
+
+    text = explorer.details_label.text()
+    assert "Datasets: 2" in text
+    checkbox = explorer.details_widget.findChild(QtWidgets.QCheckBox, "group_composite_enabled")
+    assert checkbox is not None
+    assert checkbox.toolTip()
+    batch_spin = explorer.details_widget.findChild(QtWidgets.QSpinBox, "group_composite_max_batch_mb")
+    assert batch_spin is not None
+    assert batch_spin.value() == 192
+
+    checkbox.setChecked(True)
+
+    config = project_gui.data_group_composite_config(group)
+    assert config["enabled"] is True
+    assert config["mean_weighting"] == "inverse_variance"
+
+
 def test_mdhisto_rebin_applies_enabled_masks_before_binning():
     axis = MDHistoAxis("H", np.array([0.0, 1.0, 2.0]), "rlu", "momentum")
     data = MDHistoData(

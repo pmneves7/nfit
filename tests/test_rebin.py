@@ -36,6 +36,23 @@ def test_rebin_nd_defaults_to_inverse_variance_weighted_mean():
     np.testing.assert_allclose(result.n_samples, [2.0])
 
 
+def test_rebin_nd_inverse_variance_respects_extra_data_weights():
+    result = rebin_nd(
+        data=[0.0, 10.0],
+        coords=[0.25, 0.75],
+        data_errs=[1.0, 1.0],
+        data_weights=[1.0, 3.0],
+        lower=0.0,
+        upper=1.0,
+        num_bins=1,
+        fractional=False,
+    )
+
+    np.testing.assert_allclose(result.binned_data, [7.5])
+    np.testing.assert_allclose(result.binned_data_errs, [0.5])
+    np.testing.assert_allclose(result.n_samples, [2.0])
+
+
 def test_rebin_nd_can_use_uniform_mean_for_legacy_averaging():
     result = rebin_nd(
         data=[0.0, 10.0],
