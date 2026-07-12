@@ -396,6 +396,10 @@ class RpaGeometry:
     n_q: int
     """Number of unique Q points the phase arrays are stored at."""
 
+    unique_hkl: FloatArray | None = None
+    """``(n_q, 3)`` HKL of each unique Q row (RLU); needed for the tensor path's
+    Cartesian Q-hat polarization factor and for the Ewald dipole sum."""
+
 
 def _site_positions(sites: ArrayLike) -> FloatArray:
     positions = np.atleast_2d(np.asarray(sites, dtype=float))
@@ -670,6 +674,7 @@ def build_rpa_geometry(
         point_index=point_index,
         n_sites=n_sites,
         n_q=int(unique_hkl.shape[0]),
+        unique_hkl=np.ascontiguousarray(unique_hkl, dtype=float),
     )
 
 

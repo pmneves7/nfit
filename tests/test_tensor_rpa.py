@@ -1,0 +1,117 @@
+import numpy as np
+import pytest
+
+from nfit.crystal import (
+    generate_bond_orbits,
+    orbits_to_config,
+    sites_to_config,
+    symmetry_allowed_exchange_basis,
+)
+from nfit.fitting import reciprocal_basis_from_lattice_parameters
+from nfit.spin_fluctuations import build_rpa_geometry, heisenberg_rpa_chipp
+from nfit.tensor_rpa import (
+    build_tensor_structure,
+    cartesian_qhat_per_point,
+    tensor_rpa_unpolarized_chipp,
+    tensor_susceptibility,
+)
+
+
+PYROCHLORE = {
+    "lattice": {"a": 10.0, "b": 10.0, "c": 10.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+    "spacegroup": "F d -3 m:2",
+    "sites": [{"label": "M1", "position": [0.0, 0.0, 0.0], "ion": "Yb3"}],
+}
+
+
+def _two_site_geometry(rng, n=40):
+    positions = [[0.0, 0.0, 0.0], [0.31, 0.47, 0.11], [0.6, 0.2, 0.8]]
+    orbits = [
+        {"label": "J1", "bonds": [
+            {"site_i": 0, "site_j": 1, "offset": [0, 0, 0]},
+            {"site_i": 1, "site_j": 2, "offset": [0, -1, 0]}]},
+        {"label": "J2", "bonds": [{"site_i": 0, "site_j": 2, "offset": [0, 0, 1]}]},
+    ]
+    hkl = rng.uniform(-2.0, 2.0, size=(n, 3))
+    geometry = build_rpa_geometry(hkl[:, 0], hkl[:, 1], hkl[:, 2], positions, orbits)
+    return positions, orbits, geometry
+
+
+def test_tensor_heisenberg_only_matches_scalar_intensity():
+    """Tier-A tensor path with no anisotropy equals (2/3) * scalar chi''."""
+    rng = np.random.default_rng(0)
+    positions, orbits, geometry = _two_site_geometry(rng)
+    E = rng.uniform(0.3, 5.0, size=geometry.point_index.size)
+    kwargs = dict(chi0=0.4, gamma0=2.5)
+    j_values = {"J1": 0.12, "J2": -0.07}
+
+    scalar = heisenberg_rpa_chipp(geometry, E, j_values=j_values, **kwargs)
+    structure = build_tensor_structure(geometry, positions, orbits)
+    q_hat = cartesian_qhat_per_point(geometry, np.eye(3))
+    tensor = tensor_rpa_unpolarized_chipp(
+        structure, geometry, E, q_hat, param_values=j_values, **kwargs
+    )
+    np.testing.assert_allclose(tensor, (2.0 / 3.0) * scalar, rtol=1e-11, atol=1e-14)
+
+
+def test_tensor_heisenberg_susceptibility_is_isotropic():
+    rng = np.random.default_rng(2)
+    positions, orbits, geometry = _two_site_geometry(rng)
+    E = rng.uniform(0.3, 5.0, size=geometry.point_index.size)
+    structure = build_tensor_structure(geometry, positions, orbits)
+    chi = tensor_susceptibility(
+        structure, geometry, E, chi0=0.4, gamma0=2.5, param_values={"J1": 0.1, "J2": -0.05}
+    )
+    # chi = scalar * I3: diagonal equal, off-diagonal zero.
+    np.testing.assert_allclose(chi[:, 0, 1], 0.0, atol=1e-13)
+    np.testing.assert_allclose(chi[:, 0, 2], 0.0, atol=1e-13)
+    np.testing.assert_allclose(chi[:, 0, 0], chi[:, 1, 1], atol=1e-13)
+    np.testing.assert_allclose(chi[:, 0, 0], chi[:, 2, 2], atol=1e-13)
+
+
+def test_anisotropy_vanishing_reduces_to_heisenberg():
+    rng = np.random.default_rng(1)
+    a = PYROCHLORE["lattice"]["a"]
+    nn = a * np.sqrt(2.0) / 4.0
+    sites, orbits = generate_bond_orbits(PYROCHLORE, ["M1"], cutoff_angstrom=nn + 0.01)
+    positions = sites_to_config(sites)
+    orbit_config = orbits_to_config(orbits)
+    basis = symmetry_allowed_exchange_basis(PYROCHLORE, sites, orbits[0])
+
+    hkl = rng.uniform(-2.0, 2.0, size=(60, 3))
+    geometry = build_rpa_geometry(hkl[:, 0], hkl[:, 1], hkl[:, 2], positions, orbit_config)
+    E = rng.uniform(0.3, 5.0, size=geometry.point_index.size)
+    basis_matrix = reciprocal_basis_from_lattice_parameters(a, a, a, 90, 90, 90)
+    q_hat = cartesian_qhat_per_point(geometry, basis_matrix)
+    kwargs = dict(chi0=0.02, gamma0=3.0)
+
+    anisotropy = {"J1": {"enabled": True, "basis": basis}}
+    structure = build_tensor_structure(
+        geometry, positions, orbits=orbit_config, lattice=PYROCHLORE["lattice"], anisotropy=anisotropy
+    )
+    heisenberg = build_tensor_structure(geometry, positions, orbits=orbit_config)
+
+    values = {"J1": 0.05, "J2": 0.02}
+    with_zero_aniso = dict(values)
+    with_zero_aniso.update({name: 0.0 for name in structure.parameter_names if name not in values})
+    full = tensor_rpa_unpolarized_chipp(structure, geometry, E, q_hat, param_values=with_zero_aniso, **kwargs)
+    plain = tensor_rpa_unpolarized_chipp(heisenberg, geometry, E, q_hat, param_values=values, **kwargs)
+    np.testing.assert_allclose(full, plain, rtol=1e-12, atol=1e-14)
+
+    # An anisotropic coefficient breaks the isotropy and changes the intensity.
+    with_aniso = dict(with_zero_aniso)
+    with_aniso["J1_S1"] = 0.01
+    perturbed = tensor_rpa_unpolarized_chipp(structure, geometry, E, q_hat, param_values=with_aniso, **kwargs)
+    assert np.max(np.abs(perturbed - full)) > 1e-8
+
+
+def test_tensor_instability_raises():
+    rng = np.random.default_rng(3)
+    positions, orbits, geometry = _two_site_geometry(rng, n=5)
+    E = np.full(geometry.point_index.size, 1.0)
+    structure = build_tensor_structure(geometry, positions, orbits)
+    with pytest.raises(ValueError, match="instability"):
+        tensor_rpa_unpolarized_chipp(
+            structure, geometry, E, cartesian_qhat_per_point(geometry, np.eye(3)),
+            chi0=5.0, gamma0=1.0, param_values={"J1": 1.0, "J2": 1.0},
+        )
