@@ -60,6 +60,7 @@ from .spin_fluctuations import (
     local_relaxational_chipp,
     mmp_chipp,
     reduce_site_network,
+    reduce_site_network_with_tensors,
 )
 
 FALLBACK_DATA_TYPE = "single_crystal_inelastic"
@@ -405,16 +406,28 @@ class _RpaComponentEvaluator:
             if label not in self._zeeman_keys
         }
         if self.tensor_mode:
-            # The anisotropy/SIA tensors are tied to the sites and their
-            # recorded symmetry generators, which primitive-cell reduction does
-            # not yet carry through, so keep the user's full cell for now.
-            self.site_positions = site_positions
-            self.orbits = orbits
+            # Fold onto the primitive cell carrying the tensor payloads: pure
+            # lattice translations do not rotate spins, so anisotropic exchange,
+            # single-ion anisotropy, and dipole coupling are invariant under the
+            # fold. The bond rotations/reversals and per-site generators travel
+            # with the reduced network; the dipole Ewald tensor is rebuilt from
+            # the reduced sites (unchanged lattice). Declines to the full cell if
+            # any payload cannot fold cleanly.
+            (
+                self.site_positions,
+                self.orbits,
+                self._site_rotations,
+                self._sia,
+            ) = reduce_site_network_with_tensors(
+                site_positions,
+                orbits,
+                site_rotations=config.get("site_rotations"),
+                sia=config.get("sia"),
+                dipole_enabled=bool((config.get("dipole") or {}).get("enabled")),
+            )
             self._anisotropy = config.get("anisotropy")
-            self._sia = config.get("sia")
             self._dipole = config.get("dipole")
             self._lattice = (config.get("crystal") or {}).get("lattice")
-            self._site_rotations = config.get("site_rotations")
         else:
             # Fold the network onto its primitive translational cell (exact:
             # identical chi'' at far lower eigendecomposition cost). Purely an

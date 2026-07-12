@@ -4,11 +4,17 @@ import pytest
 from nfit.crystal import (
     generate_bond_orbits,
     orbits_to_config,
+    site_rotations_to_config,
     sites_to_config,
     symmetry_allowed_exchange_basis,
+    symmetry_allowed_sia_basis,
 )
 from nfit.fitting import reciprocal_basis_from_lattice_parameters
-from nfit.spin_fluctuations import build_rpa_geometry, heisenberg_rpa_chipp
+from nfit.spin_fluctuations import (
+    build_rpa_geometry,
+    heisenberg_rpa_chipp,
+    reduce_site_network_with_tensors,
+)
 from nfit.tensor_rpa import (
     build_tensor_structure,
     cartesian_qhat_per_point,
@@ -115,6 +121,95 @@ def test_tensor_instability_raises():
             structure, geometry, E, cartesian_qhat_per_point(geometry, np.eye(3)),
             chi0=5.0, gamma0=1.0, param_values={"J1": 1.0, "J2": 1.0},
         )
+
+
+def test_pyrochlore_tensor_reduction_matches_full_cell():
+    """16 -> 4 primitive fold is exact with anisotropic exchange and SIA on.
+
+    Pure lattice translations do not rotate spins, so the bond-resolved
+    anisotropic exchange tensors and the on-site single-ion anisotropy are each
+    invariant under the F-centering fold. chi'' from the reduced 4-site network
+    must match the full 16-site cell to machine precision.
+    """
+
+    rng = np.random.default_rng(7)
+    a = PYROCHLORE["lattice"]["a"]
+    nn = a * np.sqrt(2.0) / 4.0
+    sites, orbits = generate_bond_orbits(PYROCHLORE, ["M1"], cutoff_angstrom=nn + 0.01)
+    positions = sites_to_config(sites)  # 16 sites
+    orbit_config = orbits_to_config(orbits)
+    site_rotations = site_rotations_to_config(sites)
+    aniso_basis = symmetry_allowed_exchange_basis(PYROCHLORE, sites, orbits[0])
+    sia_basis = symmetry_allowed_sia_basis(PYROCHLORE, "M1")
+    assert len(positions) == 16 and sia_basis  # trigonal site: 1 allowed tensor
+
+    anisotropy = {"J1": {"enabled": True, "basis": aniso_basis}}
+    sia = {"M1": {"enabled": True, "sites": list(range(len(positions))), "basis": sia_basis}}
+
+    r_positions, r_orbits, r_rotations, r_sia = reduce_site_network_with_tensors(
+        positions, orbit_config, site_rotations=site_rotations, sia=sia
+    )
+    assert np.asarray(r_positions).shape == (4, 3)
+    assert len(r_rotations) == 4
+    assert len(r_sia["M1"]["sites"]) == 4
+
+    hkl = rng.uniform(-2.5, 2.5, size=(48, 3))
+    E = rng.uniform(0.3, 6.0, size=48)
+    basis_matrix = reciprocal_basis_from_lattice_parameters(a, a, a, 90, 90, 90)
+    kwargs = dict(chi0=0.02, gamma0=3.0)
+    params = {
+        "J1": 0.05,
+        "J1_S1": 0.01,
+        "J1_S2": -0.008,
+        "J1_D1": 0.006,
+        "K1_M1": 0.02,
+    }
+
+    def evaluate(pos, orbs, rots, sia_spec):
+        geometry = build_rpa_geometry(hkl[:, 0], hkl[:, 1], hkl[:, 2], pos, orbs)
+        structure = build_tensor_structure(
+            geometry,
+            pos,
+            orbits=orbs,
+            lattice=PYROCHLORE["lattice"],
+            anisotropy=anisotropy,
+            sia=sia_spec,
+            site_rotations=rots,
+        )
+        q_hat = cartesian_qhat_per_point(geometry, basis_matrix)
+        return tensor_rpa_unpolarized_chipp(
+            structure, geometry, E, q_hat, param_values=params, **kwargs
+        )
+
+    full = evaluate(positions, orbit_config, site_rotations, sia)
+    folded = evaluate(r_positions, r_orbits, r_rotations, r_sia)
+    np.testing.assert_allclose(folded, full, rtol=1e-11, atol=1e-14)
+
+
+def test_tensor_reduction_declines_when_dipole_active():
+    """The dipole Ewald sum needs the primitive lattice, so folding is skipped.
+
+    Keeping the caller's conventional lattice on a reduced cell would give the
+    wrong long-range sum, so the tensor reduction returns the full network
+    unchanged whenever the dipole term is enabled.
+    """
+
+    a = PYROCHLORE["lattice"]["a"]
+    nn = a * np.sqrt(2.0) / 4.0
+    sites, orbits = generate_bond_orbits(PYROCHLORE, ["M1"], cutoff_angstrom=nn + 0.01)
+    positions = sites_to_config(sites)
+    orbit_config = orbits_to_config(orbits)
+    site_rotations = site_rotations_to_config(sites)
+
+    r_positions, r_orbits, r_rotations, _ = reduce_site_network_with_tensors(
+        positions,
+        orbit_config,
+        site_rotations=site_rotations,
+        dipole_enabled=True,
+    )
+    assert np.asarray(r_positions).shape == (16, 3)
+    assert len(r_orbits) == len(orbit_config)
+    assert len(r_rotations) == 16
 
 
 def _rotation_about_axis(axis, angle):

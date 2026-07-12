@@ -435,37 +435,24 @@ def _canonical_bond_key(
     return min(forward, backward)
 
 
-def reduce_site_network(
-    site_positions: ArrayLike,
+def _translation_reduction(
+    positions: FloatArray,
     orbits: Sequence[Mapping[str, Any]],
-    *,
-    tol: float = 1e-8,
-) -> tuple[FloatArray, list[dict[str, Any]]]:
-    """Fold a site/bond network onto its primitive translational cell.
+    tol: float,
+) -> tuple[list[int], list[int], dict[int, int], int] | None:
+    """Detect the primitive translational sub-cell of a site/bond network.
 
-    When the magnetic sites and every labeled bond orbit are invariant under a
-    fractional lattice translation (an F/I/C/R centering, or any accidental
-    translation symmetry), the extended-zone ``J(Q)`` block-diagonalizes and
-    the uniform neutron weight vector lies entirely in the untranslated
-    sector. Evaluating with one representative site per translation class and
-    fractional bond offsets therefore gives *identical* ``chi''`` at a fraction
-    of the eigendecomposition cost (e.g. pyrochlore in the conventional cubic
-    cell: 16 sites -> 4).
-
-    Everything stays expressed in the caller's cell: Q remains in the same
-    r.l.u., positions keep their fractional coordinates, and bond offsets
-    simply become fractional vectors such as ``(1/2, 1/2, 0)``. The reduction
-    is detected empirically from the site and bond lists themselves -- never
-    from a space-group symbol -- so hand-edited networks that break the
-    translation symmetry are left untouched. Returns the inputs unchanged
-    whenever no valid translation exists or any consistency check fails.
+    Returns ``(reps, representative, rep_index, group_order)`` when the network
+    folds onto a smaller cell, or ``None`` when it does not (or any consistency
+    check fails). ``representative[i]`` is the lowest site index in ``i``'s
+    translation coset; ``reps`` lists the distinct representatives; ``rep_index``
+    maps a representative to its rank in ``reps``; ``group_order`` is the number
+    of sites per coset. Shared by the scalar and tensor-carrying folds.
     """
 
-    positions = _site_positions(site_positions)
     n_sites = positions.shape[0]
-    original = (positions, [dict(orbit) for orbit in orbits])
     if n_sites <= 1:
-        return original
+        return None
 
     wrapped = _wrap_to_unit(positions)
 
@@ -485,7 +472,7 @@ def reduce_site_network(
     for orbit in orbits:
         keys = bond_keys(orbit.get("bonds", []))
         if keys is None:
-            return original
+            return None
         orbit_keys.append(keys)
 
     def translation_site_map(translation: FloatArray) -> list[tuple[int, FloatArray]] | None:
@@ -534,7 +521,7 @@ def reduce_site_network(
         if mapping is not None and preserves_bonds(mapping):
             translations.append((t, mapping))
     if not translations:
-        return original
+        return None
 
     # Defensive group-closure check: composing two valid translations must be
     # the identity or another valid translation, or the detection is
@@ -546,7 +533,7 @@ def reduce_site_network(
             if np.all(np.abs(composed) < tol):
                 continue
             if not any(np.all(np.abs(composed - t) < tol) for t in valid):
-                return original
+                return None
 
     # Partition sites into cosets under the translation group; the lowest
     # index of each coset is its representative.
@@ -570,13 +557,33 @@ def reduce_site_network(
     reps = sorted(set(representative))
     n_reduced = len(reps)
     if n_reduced == n_sites:
-        return original
+        return None
     if n_sites % n_reduced != 0:
-        return original
+        return None
     rep_index = {site: rank for rank, site in enumerate(reps)}
     group_order = n_sites // n_reduced
+    return reps, representative, rep_index, group_order
 
-    reduced_positions = positions[reps]
+
+def _fold_orbits(
+    positions: FloatArray,
+    orbits: Sequence[Mapping[str, Any]],
+    representative: list[int],
+    rep_index: dict[int, int],
+    group_order: int,
+    *,
+    carry_tensor: bool = False,
+) -> list[dict[str, Any]] | None:
+    """Fold each orbit's bonds onto the reduced cell.
+
+    Returns the reduced orbits, or ``None`` if any orbit does not fold cleanly
+    (bond count not divisible by ``group_order``). In ``carry_tensor`` mode each
+    folded bond keeps the symmetry rotation and reversal of the representative
+    full-cell bond it came from -- pure lattice translations do not rotate spins,
+    so every bond folding to one key produces the same Cartesian tensor, and the
+    carried ``rotation``/``reversed`` stay consistent with the stored bond
+    orientation.
+    """
 
     reduced_orbits: list[dict[str, Any]] = []
     for orbit in orbits:
@@ -593,18 +600,134 @@ def reduce_site_network(
                 positions[alpha] - positions[beta]
             )
             key = _canonical_bond_key(rep_index[alpha], rep_index[beta], new_offset)
-            folded[key] = {
+            entry = {
                 "site_i": rep_index[alpha],
                 "site_j": rep_index[beta],
                 "offset": [float(x) for x in new_offset],
             }
+            if carry_tensor:
+                rotation = bond.get("rotation")
+                if rotation is not None:
+                    entry["rotation"] = [
+                        [float(x) for x in row] for row in np.asarray(rotation, dtype=float)
+                    ]
+                entry["reversed"] = bool(bond.get("reversed", False))
+            folded[key] = entry
         if len(folded) * group_order != len(orbit.get("bonds", [])):
-            return original
+            return None
         reduced = dict(orbit)
         reduced["bonds"] = list(folded.values())
         reduced_orbits.append(reduced)
+    return reduced_orbits
 
-    return reduced_positions, reduced_orbits
+
+def reduce_site_network(
+    site_positions: ArrayLike,
+    orbits: Sequence[Mapping[str, Any]],
+    *,
+    tol: float = 1e-8,
+) -> tuple[FloatArray, list[dict[str, Any]]]:
+    """Fold a site/bond network onto its primitive translational cell.
+
+    When the magnetic sites and every labeled bond orbit are invariant under a
+    fractional lattice translation (an F/I/C/R centering, or any accidental
+    translation symmetry), the extended-zone ``J(Q)`` block-diagonalizes and
+    the uniform neutron weight vector lies entirely in the untranslated
+    sector. Evaluating with one representative site per translation class and
+    fractional bond offsets therefore gives *identical* ``chi''`` at a fraction
+    of the eigendecomposition cost (e.g. pyrochlore in the conventional cubic
+    cell: 16 sites -> 4).
+
+    Everything stays expressed in the caller's cell: Q remains in the same
+    r.l.u., positions keep their fractional coordinates, and bond offsets
+    simply become fractional vectors such as ``(1/2, 1/2, 0)``. The reduction
+    is detected empirically from the site and bond lists themselves -- never
+    from a space-group symbol -- so hand-edited networks that break the
+    translation symmetry are left untouched. Returns the inputs unchanged
+    whenever no valid translation exists or any consistency check fails.
+    """
+
+    positions = _site_positions(site_positions)
+    original = (positions, [dict(orbit) for orbit in orbits])
+    detected = _translation_reduction(positions, orbits, tol)
+    if detected is None:
+        return original
+    reps, representative, rep_index, group_order = detected
+    reduced_orbits = _fold_orbits(
+        positions, orbits, representative, rep_index, group_order
+    )
+    if reduced_orbits is None:
+        return original
+    return positions[reps], reduced_orbits
+
+
+def reduce_site_network_with_tensors(
+    site_positions: ArrayLike,
+    orbits: Sequence[Mapping[str, Any]],
+    *,
+    site_rotations: Sequence[Any] | None = None,
+    sia: Mapping[str, Any] | None = None,
+    dipole_enabled: bool = False,
+    tol: float = 1e-8,
+) -> tuple[FloatArray, list[dict[str, Any]], list[Any] | None, dict[str, Any] | None]:
+    """Fold a tensor-carrying network onto its primitive translational cell.
+
+    Like :func:`reduce_site_network`, but additionally carries the per-bond
+    symmetry rotation/reversal (needed to rebuild the anisotropic exchange
+    tensors), the per-site generating rotations (needed for single-ion
+    anisotropy), and the single-ion ``sites`` index lists through the fold.
+    Pure lattice translations do not rotate spins, so bond-resolved anisotropic
+    exchange and on-site single-ion anisotropy are exactly invariant under the
+    fold. **Dipole coupling is not folded**: its Ewald lattice sum depends on
+    the Bravais lattice, and the reduced cell would need the (finer) primitive
+    lattice vectors rather than the caller's conventional lattice, so when
+    ``dipole_enabled`` the full cell is kept. Returns ``(positions, orbits,
+    site_rotations, sia)`` unchanged whenever no reduction applies, a payload
+    cannot fold cleanly, or the dipole term is active.
+    """
+
+    positions = _site_positions(site_positions)
+    original = (
+        positions,
+        [dict(orbit) for orbit in orbits],
+        list(site_rotations) if site_rotations is not None else None,
+        dict(sia) if sia is not None else None,
+    )
+    if dipole_enabled:
+        return original
+    detected = _translation_reduction(positions, orbits, tol)
+    if detected is None:
+        return original
+    reps, representative, rep_index, group_order = detected
+    reduced_orbits = _fold_orbits(
+        positions, orbits, representative, rep_index, group_order, carry_tensor=True
+    )
+    if reduced_orbits is None:
+        return original
+
+    reduced_rotations: list[Any] | None = None
+    if site_rotations is not None:
+        if len(site_rotations) != positions.shape[0]:
+            return original
+        reduced_rotations = [site_rotations[site] for site in reps]
+
+    reduced_sia: dict[str, Any] | None = None
+    if sia:
+        reduced_sia = {}
+        for class_label, spec in sia.items():
+            if not spec:
+                reduced_sia[class_label] = spec
+                continue
+            new_spec = dict(spec)
+            indices = spec.get("sites")
+            if indices is not None:
+                folded_sites = sorted(
+                    {rep_index[representative[int(index)]] for index in indices}
+                )
+                new_spec["sites"] = folded_sites
+            reduced_sia[class_label] = new_spec
+
+    return positions[reps], reduced_orbits, reduced_rotations, reduced_sia
 
 
 def build_rpa_geometry(
