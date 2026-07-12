@@ -554,6 +554,13 @@ compiled = compile_fit_problem(
 The compiled problem then contains `rpa.chi0[T2K]`, `rpa.chi0[T50K]`, one
 global `rpa.J1`, and each dataset's Bose factor uses its own temperature.
 
+This per-temperature parametrization is deliberately unconstrained — the
+fitted $\chi_0(T)$, $\Gamma_0(T)$ trajectories are themselves the physics
+output. [Theory notes](theory_notes.md) discusses the sum rules and
+self-consistency closures (spherical/Onsager, Moriya SCR, Takahashi) that can
+replace the per-temperature values with one or two global parameters, and the
+diagnostics for choosing between them.
+
 For scripted orbit generation from a CIF file:
 
 ```python

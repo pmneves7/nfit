@@ -11,7 +11,7 @@ pipeline.
 Nfit was authored by Paul M. Neves (Johns Hopkins University,
 pneves1@jhu.edu) with use of LLM coding tools.
 
-Current package version: 0.5.2.
+Current package version: 0.7.0.
 
 ```{toctree}
 :maxdepth: 2
@@ -21,6 +21,7 @@ data_philosophy
 gui_workflows
 physics_conventions
 spin_fluctuation_models
+theory_notes
 modeling_pipeline
 performance
 examples/synthetic_single_q

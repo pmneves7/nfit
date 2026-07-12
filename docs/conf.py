@@ -18,4 +18,5 @@ source_suffix = {
 master_doc = "index"
 html_theme = "furo"
 myst_enable_extensions = ["dollarmath", "amsmath"]
+myst_heading_anchors = 4
 nb_execution_mode = "off"
