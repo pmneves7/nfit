@@ -115,3 +115,48 @@ def test_tensor_instability_raises():
             structure, geometry, E, cartesian_qhat_per_point(geometry, np.eye(3)),
             chi0=5.0, gamma0=1.0, param_values={"J1": 1.0, "J2": 1.0},
         )
+
+
+def _rotation_about_axis(axis, angle):
+    axis = np.asarray(axis, dtype=float)
+    axis = axis / np.linalg.norm(axis)
+    cross = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+    return np.eye(3) + np.sin(angle) * cross + (1 - np.cos(angle)) * (cross @ cross)
+
+
+def test_intensity_is_invariant_under_a_global_frame_rotation():
+    """Rotating every spin tensor and Q-hat by the same R leaves I unchanged.
+
+    chi rotates as R chi R^T and the unpolarized weight as R W R^T, so
+    sum W chi'' is a rotational invariant. This locks the polarization
+    contraction and the tensor bookkeeping together.
+    """
+    import copy
+
+    rng = np.random.default_rng(7)
+    positions, orbits, geometry = _two_site_geometry(rng)
+    E = rng.uniform(0.3, 5.0, size=geometry.point_index.size)
+    chi0, gamma0 = 0.3, 2.5
+
+    # Give the structure genuine anisotropy by hand-setting per-bond tensors.
+    structure = build_tensor_structure(geometry, positions, orbits)
+    sym = np.array([[0.2, 0.1, 0.0], [0.1, -0.2, 0.05], [0.0, 0.05, 0.0]])
+    for term in structure.terms["J1"]:
+        term.tensor = term.tensor + sym.astype(complex)
+
+    q_hat = cartesian_qhat_per_point(geometry, np.eye(3))
+    values = {"J1": 0.1, "J2": -0.04}
+    base = tensor_rpa_unpolarized_chipp(
+        structure, geometry, E, q_hat, param_values=values, chi0=chi0, gamma0=gamma0
+    )
+
+    rotation = _rotation_about_axis([0.3, -0.5, 0.8], 0.7)
+    rotated = copy.deepcopy(structure)
+    for terms in rotated.terms.values():
+        for term in terms:
+            term.tensor = rotation @ term.tensor @ rotation.T
+    rotated_qhat = q_hat @ rotation.T
+    rotated_intensity = tensor_rpa_unpolarized_chipp(
+        rotated, geometry, E, rotated_qhat, param_values=values, chi0=chi0, gamma0=gamma0
+    )
+    np.testing.assert_allclose(rotated_intensity, base, rtol=1e-10, atol=1e-13)
