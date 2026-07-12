@@ -1822,7 +1822,46 @@ def effective_dataset_masks(group: DataGroup, dataset: DatasetEntry) -> list[Mas
     return search(group) or []
 
 
-def data_group_composite_config(group: DataGroup) -> dict[str, Any]:
+@dataclass(frozen=True)
+class _CompositeScope:
+    root: DataGroup
+    node: DataGroup | DatasetGroup
+
+    @property
+    def name(self) -> str:
+        return self.node.name
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        return self.node.metadata
+
+    @property
+    def masks(self) -> list[MaskSpec]:
+        masks = list(self.root.masks)
+        if self.node is not self.root:
+            masks.extend(self.node.masks)
+        return masks
+
+    def iter_datasets(self):
+        return self.node.iter_datasets()
+
+
+def _composite_scope(
+    root: DataGroup,
+    node: DataGroup | DatasetGroup | None = None,
+) -> DataGroup | _CompositeScope:
+    return root if node is None or node is root else _CompositeScope(root, node)
+
+
+def _composite_root(group: DataGroup | _CompositeScope) -> DataGroup:
+    return group.root if isinstance(group, _CompositeScope) else group
+
+
+def _composite_cache_key(group: DataGroup | _CompositeScope) -> int:
+    return id(group.node) if isinstance(group, _CompositeScope) else id(group)
+
+
+def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str, Any]:
     """Return the group-level composite dataset configuration."""
 
     config = group.metadata.get(GROUP_COMPOSITE_KEY)
@@ -1981,7 +2020,7 @@ def _ensure_dataset_data_loaded(dataset: DatasetEntry) -> Any:
 
 def _source_data_for_group_composite(group: DataGroup, dataset: DatasetEntry) -> Any:
     data = _ensure_dataset_data_loaded(dataset)
-    extra_masks = effective_dataset_masks(group, dataset)
+    extra_masks = effective_dataset_masks(_composite_root(group), dataset)
     if isinstance(data, PointListData):
         return prepared_point_list_data(dataset)
     if isinstance(data, MDHistoData):
@@ -2005,6 +2044,7 @@ def _composite_cache_signature(group: DataGroup) -> str:
                 float(dataset.fit_weight),
                 float(dataset.scale_factor),
                 _mask_signature(getattr(dataset, "masks", None)),
+                _mask_signature(effective_dataset_masks(_composite_root(group), dataset)),
             ]
             for dataset in _composite_candidates(group)
         ],
@@ -2041,7 +2081,8 @@ def _cached_composite_dataset_data(
     progress_callback: Any | None = None,
 ) -> MDHistoData | PointListData | PointData4D | None:
     signature = _composite_cache_signature(group)
-    cached = _COMPOSITE_DATA_CACHE.get(id(group))
+    cache_key = _composite_cache_key(group)
+    cached = _COMPOSITE_DATA_CACHE.get(cache_key)
     if cached is not None and cached[0] == signature:
         return cached[1]
     if cached is not None and _should_defer_composite_rebin(group, force_rebin=force_rebin):
@@ -2054,7 +2095,7 @@ def _cached_composite_dataset_data(
     signature = _composite_cache_signature(group)
     if len(_COMPOSITE_DATA_CACHE) >= _COMPOSITE_DATA_CACHE_LIMIT:
         _COMPOSITE_DATA_CACHE.clear()
-    _COMPOSITE_DATA_CACHE[id(group)] = (signature, result)
+    _COMPOSITE_DATA_CACHE[cache_key] = (signature, result)
     return result
 
 
@@ -2331,6 +2372,39 @@ def _composite_point_list_data(
     )
 
 
+def _effective_dataset_entries(
+    group: DataGroup,
+    node: DataGroup | DatasetGroup,
+    *,
+    use_composite: bool,
+    force_rebin: bool,
+    progress_callback: Any | None,
+):
+    scope = _composite_scope(group, node)
+    if use_composite and data_group_composite_enabled(scope):
+        yield composite_dataset_entry(
+            scope,
+            force_rebin=force_rebin,
+            progress_callback=progress_callback,
+        )
+        return
+    yield from node.datasets
+    for subgroup in node.subgroups:
+        yield from _effective_dataset_entries(
+            group,
+            subgroup,
+            use_composite=use_composite,
+            force_rebin=force_rebin,
+            progress_callback=progress_callback,
+        )
+
+
+def _composite_scopes(group: DataGroup):
+    yield group
+    for subgroup in group.iter_subgroups():
+        yield _composite_scope(group, subgroup)
+
+
 def slice_viewer_datasets(
     group: DataGroup,
     *,
@@ -2343,30 +2417,16 @@ def slice_viewer_datasets(
     data: list[MDHistoData] = []
     names: list[str] = []
     model_channels = current_model_channels(group)
-    if use_composite and data_group_composite_enabled(group):
-        composite = composite_dataset_entry(
-            group,
-            force_rebin=force_rebin,
-            progress_callback=progress_callback,
-        )
-        view_data = dataset_for_slice_viewer(
-            composite,
-            force_rebin=force_rebin,
-            progress_callback=progress_callback,
-        )
-        if view_data is not None:
-            composite_name = composite.name
-            attach_fit_channels_to_view(
-                group,
-                composite_name,
-                view_data,
-                fallback_payload=model_channels.get(composite_name),
-            )
-            data.append(view_data)
-            names.append(composite_name)
-        return data, names
-    for dataset in group.iter_datasets():
-        extra_masks = effective_dataset_masks(group, dataset)
+    entries = _effective_dataset_entries(
+        group,
+        group,
+        use_composite=use_composite,
+        force_rebin=force_rebin,
+        progress_callback=progress_callback,
+    )
+    for dataset in entries:
+        is_composite = bool(dataset.metadata.get("composite"))
+        extra_masks = [] if is_composite else effective_dataset_masks(group, dataset)
         view_data = dataset_for_slice_viewer(
             dataset,
             extra_masks=extra_masks,
@@ -2690,31 +2750,14 @@ def fit_dataset_inputs(
 
     inputs: list[FitDatasetInput] = []
     bundles: dict[str, FitDataBundle] = {}
-    if data_group_composite_enabled(group):
-        composite = composite_dataset_entry(
-            group,
-            force_rebin=force_rebin,
-            progress_callback=progress_callback,
-        )
-        bundle = fit_data_bundle(
-            group,
-            composite,
-            force_rebin=force_rebin,
-            progress_callback=progress_callback,
-        )
-        if bundle is None:
-            return inputs, bundles
-        inputs.append(
-            FitDatasetInput(
-                name=composite.name,
-                data=bundle.points,
-                weight=1.0,
-                data_type=composite.data_type or DEFAULT_DATA_TYPE,
-            )
-        )
-        bundles[composite.name] = bundle
-        return inputs, bundles
-    for dataset in group.iter_datasets():
+    entries = _effective_dataset_entries(
+        group,
+        group,
+        use_composite=True,
+        force_rebin=force_rebin,
+        progress_callback=progress_callback,
+    )
+    for dataset in entries:
         if not dataset.enabled:
             continue
         bundle = fit_data_bundle(
@@ -2729,10 +2772,10 @@ def fit_dataset_inputs(
             FitDatasetInput(
                 name=dataset.name,
                 data=bundle.points,
-                weight=float(dataset.fit_weight),
+                weight=(1.0 if dataset.metadata.get("composite") else float(dataset.fit_weight)),
                 data_type=dataset.data_type or DEFAULT_DATA_TYPE,
-                scale_value=float(dataset.scale_factor),
-                scale_vary=bool(dataset.scale_factor_vary),
+                scale_value=(1.0 if dataset.metadata.get("composite") else float(dataset.scale_factor)),
+                scale_vary=(False if dataset.metadata.get("composite") else bool(dataset.scale_factor_vary)),
             )
         )
         bundles[dataset.name] = bundle
@@ -6868,7 +6911,7 @@ class NfitProjectExplorer:
         self._set_dataset_details(entry, group)
         return True
 
-    def rebin_composite_now(self, group: DataGroup) -> bool:
+    def rebin_composite_now(self, group: DataGroup | _CompositeScope) -> bool:
         from PySide6 import QtWidgets
 
         if group is None or not data_group_composite_enabled(group):
@@ -6892,9 +6935,10 @@ class NfitProjectExplorer:
             self._close_rebin_progress(progress)
         if data is None:
             return False
-        self.refresh_slice_viewer(group)
-        self._request_overlay_refresh(group)
-        self._set_group_details(group)
+        root = _composite_root(group)
+        self.refresh_slice_viewer(root)
+        self._request_overlay_refresh(root)
+        self._sync_details()
         return True
 
     def save_dataset_for_selection(self) -> bool:
@@ -7579,10 +7623,12 @@ class NfitProjectExplorer:
         return self._slice_viewers.get(id(group))
 
     def _rebin_progress_callback_for_group(self, group: DataGroup, *, use_composite: bool = True) -> Any | None:
-        if use_composite and data_group_composite_enabled(group):
-            config = data_group_composite_config(group)
-            if _composite_rebin_is_large(group, config):
-                return self._make_rebin_progress_callback("Rebinning composite dataset...")
+        if use_composite and any(
+            data_group_composite_enabled(scope)
+            and _composite_rebin_is_large(scope, data_group_composite_config(scope))
+            for scope in _composite_scopes(group)
+        ):
+            return self._make_rebin_progress_callback("Rebinning composite dataset...")
         if not any(
             dataset_rebin_enabled(dataset)
             and _dataset_rebin_is_large(dataset, dataset_rebin_config(dataset))
@@ -8788,7 +8834,7 @@ class NfitProjectExplorer:
             self._set_group_details(group)
         elif role == "datasets" and group is not None:
             self.title_label.setText(f"{group.name} / Datasets")
-            self._set_details_text(f"{len(group.datasets)} dataset(s)")
+            self._set_dataset_collection_details(group, group)
         elif role == "dataset" and entry is not None:
             self.title_label.setText(entry.name)
             self._set_dataset_details(entry, group)
@@ -8806,11 +8852,10 @@ class NfitProjectExplorer:
             subgroup = self._dataset_group_for_item(self._current_item())
             name = subgroup.name if subgroup is not None else "Dataset group"
             self.title_label.setText(name)
-            count = len(list(subgroup.iter_datasets())) if subgroup is not None else 0
-            mask_count = len(subgroup.masks) if subgroup is not None else 0
-            self._set_details_text(
-                f"Dataset group\n\nDatasets (incl. nested): {count}\nShared masks: {mask_count}"
-            )
+            if group is not None and subgroup is not None:
+                self._set_dataset_collection_details(group, subgroup)
+            else:
+                self._set_details_text("Dataset group")
         elif role == "group_masks":
             subgroup = self._dataset_group_for_item(self._current_item())
             name = subgroup.name if subgroup is not None else "-"
@@ -9265,11 +9310,42 @@ class NfitProjectExplorer:
                 ],
             )
         )
-        self.details_layout.addWidget(self._group_dataset_weights_group_box(group))
-        self.details_layout.addWidget(self._group_composite_group_box(group))
         self.details_layout.addStretch(1)
 
-    def _group_dataset_weights_group_box(self, group: DataGroup) -> Any:
+    def _set_dataset_collection_details(
+        self,
+        root: DataGroup,
+        node: DataGroup | DatasetGroup,
+    ) -> None:
+        datasets = list(node.iter_datasets())
+        text = (
+            f"Dataset collection\n\nDatasets (incl. nested): {len(datasets)}\n"
+            f"Data points: {_format_number(sum(_dataset_data_point_count(dataset) for dataset in datasets))}\n"
+            f"Dataset types: {_group_dataset_type_summary(node)}"
+        )
+        if isinstance(node, DatasetGroup):
+            text += f"\nShared masks: {len(node.masks)}"
+        self.details_label.setText(text)
+        self._clear_details_panel()
+        summary_lines = [
+            f"Datasets (incl. nested): {len(datasets)}",
+            f"Data points: {_format_number(sum(_dataset_data_point_count(dataset) for dataset in datasets))}",
+            f"Dataset types: {_group_dataset_type_summary(node)}",
+        ]
+        if isinstance(node, DatasetGroup):
+            summary_lines.append(f"Shared masks: {len(node.masks)}")
+        self.details_layout.addWidget(
+            self._details_group_box(
+                "Dataset collection",
+                summary_lines,
+            )
+        )
+        scope = _composite_scope(root, node)
+        self.details_layout.addWidget(self._group_dataset_weights_group_box(scope))
+        self.details_layout.addWidget(self._group_composite_group_box(scope))
+        self.details_layout.addStretch(1)
+
+    def _group_dataset_weights_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         from PySide6 import QtWidgets
 
         box = QtWidgets.QGroupBox("Datasets")
@@ -9285,18 +9361,18 @@ class NfitProjectExplorer:
             layout.addWidget(QtWidgets.QLabel(_format_number(dataset.fit_weight)), row, 3)
             layout.addWidget(QtWidgets.QLabel(_format_number(dataset.scale_factor)), row, 4)
         box.setToolTip(
-            "Datasets in this workspace. In composite mode each dataset's signal is multiplied by its scale factor, "
+            "Datasets in this collection. In composite mode each dataset's signal is multiplied by its scale factor, "
             "its uncertainty by the absolute scale factor, and its statistical contribution by the fit weight. "
             "Use a negative scale factor to subtract a dataset from the composite."
         )
         return box
 
-    def _group_composite_group_box(self, group: DataGroup) -> Any:
+    def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         from PySide6 import QtWidgets
 
         box = QtWidgets.QGroupBox("Composite dataset")
         box.setToolTip(
-            "Combine compatible enabled datasets into one rebinned effective dataset for this workspace. "
+            "Combine compatible enabled datasets in this collection into one rebinned effective dataset. "
             "Enable the checkbox to show the composite rebin controls."
         )
         layout = QtWidgets.QVBoxLayout(box)
@@ -9308,8 +9384,8 @@ class NfitProjectExplorer:
         enable_check.setChecked(bool(config.get("enabled", False)))
         enable_check.setEnabled(can_combine)
         enable_check.setToolTip(
-            "When checked, this workspace plots and fits one rebinned composite dataset. "
-            "The fitter receives only the composite and does not see the constituent datasets. "
+            "When checked, this dataset collection plots and fits as one rebinned composite dataset. "
+            "The fitter receives the composite instead of this collection's constituent datasets. "
             "All enabled datasets must have the same data kind. Negative dataset scale factors subtract data."
         )
         enable_check.toggled.connect(lambda checked: self._set_group_composite_enabled(group, checked))
@@ -10413,7 +10489,7 @@ class NfitProjectExplorer:
         config["normalize"] = True
         self._after_dataset_rebin_changed(dataset, group)
 
-    def _set_group_composite_enabled(self, group: DataGroup, checked: bool) -> None:
+    def _set_group_composite_enabled(self, group: DataGroup | _CompositeScope, checked: bool) -> None:
         config = data_group_composite_config(group)
         if bool(config.get("enabled", False)) == bool(checked):
             return
@@ -10421,7 +10497,7 @@ class NfitProjectExplorer:
         config["normalize"] = True
         self._after_group_composite_changed(group)
 
-    def _set_group_composite_option(self, group: DataGroup, key: str, checked: bool) -> None:
+    def _set_group_composite_option(self, group: DataGroup | _CompositeScope, key: str, checked: bool) -> None:
         config = data_group_composite_config(group)
         if bool(config.get(key, False)) == bool(checked):
             return
@@ -10429,7 +10505,7 @@ class NfitProjectExplorer:
         config["normalize"] = True
         self._after_group_composite_changed(group)
 
-    def _set_group_composite_auto(self, group: DataGroup, checked: bool) -> None:
+    def _set_group_composite_auto(self, group: DataGroup | _CompositeScope, checked: bool) -> None:
         config = data_group_composite_config(group)
         if bool(config.get("auto_rebin", True)) == bool(checked):
             return
@@ -10437,11 +10513,11 @@ class NfitProjectExplorer:
         if checked and config.get("stale"):
             self._after_group_composite_changed(group)
             return
-        self._record_data_group_state_change(group)
+        self._record_data_group_state_change(_composite_root(group))
         self._mark_dirty()
-        self._set_group_details(group)
+        self._sync_details()
 
-    def _set_group_composite_mean_weighting(self, group: DataGroup, value: str) -> None:
+    def _set_group_composite_mean_weighting(self, group: DataGroup | _CompositeScope, value: str) -> None:
         config = data_group_composite_config(group)
         value = value if value in {"inverse_variance", "uniform"} else "inverse_variance"
         if _rebin_mean_weighting(config) == value:
@@ -10450,7 +10526,7 @@ class NfitProjectExplorer:
         config["normalize"] = True
         self._after_group_composite_changed(group)
 
-    def _set_group_composite_max_batch_mb(self, group: DataGroup, value: int) -> None:
+    def _set_group_composite_max_batch_mb(self, group: DataGroup | _CompositeScope, value: int) -> None:
         config = data_group_composite_config(group)
         value = max(int(value), 1)
         if _rebin_max_batch_mb(config) == value:
@@ -10459,7 +10535,7 @@ class NfitProjectExplorer:
         config["normalize"] = True
         self._after_group_composite_changed(group)
 
-    def _set_group_composite_axis_value(self, group: DataGroup, index: int, key: str, text: str) -> None:
+    def _set_group_composite_axis_value(self, group: DataGroup | _CompositeScope, index: int, key: str, text: str) -> None:
         config = data_group_composite_config(group)
         axes = config.get("axes")
         if not isinstance(axes, list) or not (0 <= index < len(axes)):
@@ -10471,7 +10547,7 @@ class NfitProjectExplorer:
             else:
                 axis[key] = float(text)
         except ValueError:
-            self._set_group_details(group)
+            self._sync_details()
             return
         if key == "step_size":
             step = float(axis.get("step_size", 0.0))
@@ -10556,15 +10632,16 @@ class NfitProjectExplorer:
             self.refresh_slice_viewer(group)
         self._set_dataset_details(dataset, group)
 
-    def _after_group_composite_changed(self, group: DataGroup) -> None:
+    def _after_group_composite_changed(self, group: DataGroup | _CompositeScope) -> None:
         config = data_group_composite_config(group)
         config["stale"] = True
-        self._record_data_group_state_change(group)
+        root = _composite_root(group)
+        self._record_data_group_state_change(root)
         self._mark_dirty()
         if bool(config.get("auto_rebin", True)):
-            self.refresh_slice_viewer(group)
-            self._request_overlay_refresh(group)
-        self._set_group_details(group)
+            self.refresh_slice_viewer(root)
+            self._request_overlay_refresh(root)
+        self._sync_details()
 
     def _clear_details_panel(self) -> None:
         while self.details_layout.count():

@@ -2789,10 +2789,10 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
     second.fit_weight = 2.0
     group = DataGroup("Datagroup1", datasets=[first, second])
     explorer = NfitProjectExplorer(NfitProject([group]))
-    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0))
 
     text = explorer.details_label.text()
-    assert "Datasets: 2" in text
+    assert "Datasets (incl. nested): 2" in text
     checkbox = explorer.details_widget.findChild(QtWidgets.QCheckBox, "group_composite_enabled")
     assert checkbox is not None
     assert checkbox.toolTip()
@@ -2823,7 +2823,7 @@ def test_large_data_group_composite_defaults_manual_and_defers_refresh(monkeypat
     second = DatasetEntry("second", _tiny_mdhisto_data(2.0), kind="mdhisto", data_type="single_crystal_inelastic")
     group = DataGroup("Datagroup1", datasets=[first, second])
     explorer = NfitProjectExplorer(NfitProject([group]))
-    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0))
 
     config = project_gui.data_group_composite_config(group)
     assert config["auto_rebin"] is False
@@ -2850,6 +2850,62 @@ def test_large_data_group_composite_defaults_manual_and_defers_refresh(monkeypat
     datasets, names = project_gui.slice_viewer_datasets(group, force_rebin=False)
     assert names == ["Datagroup1 Composite"]
     np.testing.assert_allclose(datasets[0].signal, [[1.5]])
+
+
+def test_composite_controls_live_on_dataset_collections_not_workspace(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtCore = pytest.importorskip("PySide6.QtCore")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    first = DatasetEntry("first", _tiny_mdhisto_data(1.0), kind="mdhisto")
+    second = DatasetEntry("second", _tiny_mdhisto_data(2.0), kind="mdhisto")
+    subgroup = DatasetGroup("Group1", datasets=[second])
+    group = DataGroup("Datagroup1", datasets=[first], subgroups=[subgroup])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    workspace_item = explorer.tree.topLevelItem(0)
+    datasets_item = workspace_item.child(0)
+    subgroup_item = datasets_item.child(1)
+
+    def flush_deletes():
+        QtWidgets.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+
+    explorer.tree.setCurrentItem(workspace_item)
+    flush_deletes()
+    assert explorer.details_widget.findChild(QtWidgets.QCheckBox, "group_composite_enabled") is None
+
+    explorer.tree.setCurrentItem(datasets_item)
+    flush_deletes()
+    top_check = explorer.details_widget.findChild(QtWidgets.QCheckBox, "group_composite_enabled")
+    assert top_check is not None
+    top_check.setChecked(True)
+    assert project_gui.data_group_composite_config(group)["enabled"] is True
+
+    explorer.tree.setCurrentItem(subgroup_item)
+    flush_deletes()
+    nested_check = explorer.details_widget.findChild(QtWidgets.QCheckBox, "group_composite_enabled")
+    assert nested_check is not None
+    assert not nested_check.isChecked()
+    nested_check.setChecked(True)
+    nested_scope = project_gui._composite_scope(group, subgroup)
+    assert project_gui.data_group_composite_config(nested_scope)["enabled"] is True
+
+
+def test_nested_composite_replaces_only_its_dataset_group_descendants():
+    root_dataset = DatasetEntry("root", _tiny_mdhisto_data(10.0), kind="mdhisto")
+    first = DatasetEntry("first", _tiny_mdhisto_data(2.0), kind="mdhisto")
+    second = DatasetEntry("second", _tiny_mdhisto_data(4.0), kind="mdhisto")
+    subgroup = DatasetGroup("Group1", datasets=[first, second])
+    group = DataGroup("Datagroup1", datasets=[root_dataset], subgroups=[subgroup])
+    nested_scope = project_gui._composite_scope(group, subgroup)
+    project_gui.data_group_composite_config(nested_scope)["enabled"] = True
+
+    datasets, names = project_gui.slice_viewer_datasets(group)
+
+    assert names == ["root", "Group1 Composite"]
+    np.testing.assert_allclose(datasets[0].signal, [[10.0]])
+    np.testing.assert_allclose(datasets[1].signal, [[3.0]])
+    inputs, _bundles = project_gui.fit_dataset_inputs(group)
+    assert [item.name for item in inputs] == ["root", "Group1 Composite"]
 
 
 def test_mdhisto_rebin_applies_enabled_masks_before_binning():

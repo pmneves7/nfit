@@ -1,3 +1,8 @@
+import os
+from pathlib import Path
+import subprocess
+import sys
+
 import numpy as np
 import pytest
 
@@ -392,6 +397,31 @@ def test_rpa_gradients_exact_at_band_degeneracy():
         - heisenberg_rpa_chipp(geometry, E, chi0=chi0, gamma0=gamma0, j_values={"J1": 0.2 - h})
     ) / (2 * h)
     np.testing.assert_allclose(grads["J1"], fd, rtol=1e-6, atol=1e-9)
+
+
+def test_numba_openmp_initialization_avoids_deprecated_nested_info(tmp_path):
+    pytest.importorskip("numba")
+    env = os.environ.copy()
+    env["NUMBA_CACHE_DIR"] = str(tmp_path / "numba-cache")
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from nfit import spin_fluctuations as sf; "
+            "print(sf.available_rpa_backends()); "
+            "print(sf._NUMBA_KERNELS._OPENMP_PARALLEL_INITIALIZED)",
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "numba" in result.stdout
+    assert "True" in result.stdout
+    assert "omp_set_nested routine deprecated" not in result.stderr
 
 
 def test_numba_backend_matches_numpy_value_and_gradients():

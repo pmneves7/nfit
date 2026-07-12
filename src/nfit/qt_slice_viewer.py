@@ -8,7 +8,7 @@ import numpy as np
 
 from .dataset import PointListData
 from .mdhisto import MDHistoData
-from .plotting import MDHistoSliceViewer
+from .plotting import MDHistoSliceViewer, smooth_mdhisto_view
 
 
 _MARKER_OPTIONS = {
@@ -84,6 +84,8 @@ class _DatasetViewState:
     residual_percent: int = 30
     apply_masks: bool = True
     cmap_reversed: bool = False
+    smoothing_x: float = 0.0
+    smoothing_y: float = 0.0
 
 
 class QtMDHistoSliceViewer:
@@ -176,6 +178,10 @@ class QtMDHistoSliceViewer:
         self.vmin_spin = None
         self.vmax_spin = None
         self.color_group = None
+        self.smoothing_group = None
+        self.smoothing_x_spin = None
+        self.smoothing_y_spin = None
+        self.smoothing_y_label = None
         self.gamma_label = None
         self.gamma_spin = None
         self.limit_n_label = None
@@ -212,10 +218,15 @@ class QtMDHistoSliceViewer:
         self.copy_figure_button = None
         self.copy_script_button = None
         self.save_script_button = None
+        self.view_mode_combo = None
+        self.content_stack = None
+        self.volume_panel = None
         self.xcut_percent = 20
         self.ycut_percent = 16
         self.font_size = 12.0
         self.axis_linewidth = 1.5
+        self.smoothing_x = 0.0
+        self.smoothing_y = 0.0
         self.marker = "o"
         self.line_style = "none"
         self.marker_size = 5.0
@@ -288,6 +299,10 @@ class QtMDHistoSliceViewer:
         )
         self.datasets = _coerce_datasets(data)
         self.dataset_names = _coerce_dataset_names(self.datasets, dataset_names)
+        if self.volume_panel is not None:
+            self.content_stack.setCurrentIndex(0)
+            self.view_mode_combo.setCurrentIndex(0)
+            self._close_volume_panel()
         if current_name in self.dataset_names:
             new_index = self.dataset_names.index(current_name)
         else:
@@ -368,6 +383,8 @@ class QtMDHistoSliceViewer:
                 f"    iqr_n={self.model.iqr_n!r},",
                 f"    percentile_n={self.model.percentile_n!r},",
                 f"    power_gamma={self.model.power_gamma!r},",
+                f"    smoothing_sigma_x={self.smoothing_x!r},",
+                f"    smoothing_sigma_y={self.smoothing_y!r},",
                 f"    xlim={self._export_limits('x')!r},",
                 f"    ylim={self._export_limits('y')!r},",
                 f"    font_size={self.font_size!r},",
@@ -393,6 +410,7 @@ class QtMDHistoSliceViewer:
                 "    data,",
                 f"    axis_dim={self.data.axes[self.model.x_dim].name!r},",
                 f"    channel={self.model.channel!r},",
+                f"    smoothing_sigma={self.smoothing_x!r},",
                 ")",
                 "for container in ax.containers:",
                 "    for artist in getattr(container, 'lines', []):",
@@ -434,15 +452,33 @@ class QtMDHistoSliceViewer:
         from matplotlib.figure import Figure
         from PySide6 import QtCore, QtGui, QtWidgets
 
-        self.window = QtWidgets.QMainWindow()
+        self.window = _make_data_viewer_window_class()(self)
         self.window.setWindowTitle("nfit Data Viewer")
         self.window.resize(1400, 900)
 
         central = QtWidgets.QWidget()
         self.window.setCentralWidget(central)
-        main_layout = QtWidgets.QHBoxLayout(central)
+        main_layout = QtWidgets.QVBoxLayout(central)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
+
+        mode_bar = QtWidgets.QWidget()
+        mode_layout = QtWidgets.QHBoxLayout(mode_bar)
+        mode_layout.setContentsMargins(8, 6, 8, 6)
+        mode_layout.addWidget(QtWidgets.QLabel("Visualization"))
+        self.view_mode_combo = QtWidgets.QComboBox()
+        self.view_mode_combo.setObjectName("data_viewer_mode_combo")
+        self.view_mode_combo.addItems(["2D slices", "3D PyVista"])
+        self.view_mode_combo.setToolTip(
+            "Switch between the standard slice viewer and PyVista volume/isosurface rendering. "
+            "3D mode is available for gridded datasets with at least three dimensions."
+        )
+        self.view_mode_combo.currentIndexChanged.connect(self._set_view_mode)
+        mode_layout.addWidget(self.view_mode_combo)
+        mode_layout.addStretch(1)
+        main_layout.addWidget(mode_bar)
+        self.content_stack = QtWidgets.QStackedWidget()
+        main_layout.addWidget(self.content_stack, 1)
 
         plot_panel = QtWidgets.QWidget()
         plot_layout = QtWidgets.QVBoxLayout(plot_panel)
@@ -694,6 +730,31 @@ class QtMDHistoSliceViewer:
         self._sync_limit_n_visibility()
         controls_layout.addWidget(color_group)
 
+        smoothing_group = QtWidgets.QGroupBox("Plot smoothing")
+        self.smoothing_group = smoothing_group
+        smoothing_layout = QtWidgets.QGridLayout(smoothing_group)
+        self.smoothing_x_spin = _make_float_spinbox(0.0, 100.0)
+        self.smoothing_y_spin = _make_float_spinbox(0.0, 100.0)
+        self.smoothing_x_spin.setObjectName("slice_smoothing_x_spin")
+        self.smoothing_y_spin.setObjectName("slice_smoothing_y_spin")
+        for axis_name, spin in (("X", self.smoothing_x_spin), ("Y", self.smoothing_y_spin)):
+            spin.setDecimals(2)
+            spin.setSingleStep(0.25)
+            spin.setSuffix(" bins")
+            spin.setToolTip(
+                f"Gaussian blur sigma along displayed {axis_name}, in bin widths. "
+                "This changes plotting only; fitting, dataset values, and numerical exports remain unchanged."
+            )
+        self.smoothing_x_spin.valueChanged.connect(lambda value: self._set_plot_smoothing("x", value))
+        self.smoothing_y_spin.valueChanged.connect(lambda value: self._set_plot_smoothing("y", value))
+        smoothing_layout.addWidget(QtWidgets.QLabel("X sigma"), 0, 0)
+        smoothing_layout.addWidget(self.smoothing_x_spin, 0, 1)
+        self.smoothing_y_label = QtWidgets.QLabel("Y sigma")
+        smoothing_layout.addWidget(self.smoothing_y_label, 1, 0)
+        smoothing_layout.addWidget(self.smoothing_y_spin, 1, 1)
+        smoothing_layout.setColumnStretch(1, 1)
+        controls_layout.addWidget(smoothing_group)
+
         tools_group = QtWidgets.QGroupBox("Histogram box cuts")
         self.tools_group = tools_group
         tools_layout = QtWidgets.QGridLayout(tools_group)
@@ -890,7 +951,7 @@ class QtMDHistoSliceViewer:
         splitter.setStretchFactor(1, 0)
         splitter.setChildrenCollapsible(False)
         splitter.setSizes([970, 430])
-        main_layout.addWidget(splitter)
+        self.content_stack.addWidget(splitter)
 
         self._plot_layout_mode = ("standard", 1)
         self._create_rectangle_selector()
@@ -901,6 +962,61 @@ class QtMDHistoSliceViewer:
         self.close_shortcut = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Close, self.window)
         self.close_shortcut.activated.connect(self.window.close)
         self._sync_fit_channel_controls()
+        self._sync_view_mode_availability()
+
+    def _sync_view_mode_availability(self) -> None:
+        from .qt_volume_viewer import supports_volume_view
+
+        available = supports_volume_view(self.data)
+        item = self.view_mode_combo.model().item(1)
+        if item is not None:
+            item.setEnabled(available)
+            item.setToolTip(
+                "Render this dataset as a volume or isosurface."
+                if available
+                else "3D mode requires a gridded dataset with at least three dimensions."
+            )
+        if not available and self.view_mode_combo.currentIndex() == 1:
+            self.view_mode_combo.setCurrentIndex(0)
+
+    def _set_view_mode(self, index: int) -> None:
+        if int(index) == 0:
+            self.content_stack.setCurrentIndex(0)
+            return
+        from .qt_volume_viewer import QtVolumeViewerPanel, supports_volume_view
+
+        if not supports_volume_view(self.data):
+            self.view_mode_combo.setCurrentIndex(0)
+            return
+        if self.volume_panel is None:
+            supported = [
+                (dataset, name, original_index)
+                for original_index, (dataset, name) in enumerate(zip(self.datasets, self.dataset_names, strict=True))
+                if supports_volume_view(dataset)
+            ]
+            selected = next(
+                (index for index, (_dataset, _name, original) in enumerate(supported) if original == self.dataset_index),
+                0,
+            )
+            self.volume_panel = QtVolumeViewerPanel(
+                [item[0] for item in supported],
+                dataset_names=[item[1] for item in supported],
+                selected_index=selected,
+            )
+            self.content_stack.addWidget(self.volume_panel)
+        self.content_stack.setCurrentWidget(self.volume_panel)
+
+    def _close_volume_panel(self) -> None:
+        panel = self.volume_panel
+        if panel is None:
+            return
+        self.volume_panel = None
+        if self.content_stack is not None:
+            self.content_stack.setCurrentIndex(0)
+            self.content_stack.removeWidget(panel)
+        panel.setParent(None)
+        panel.shutdown()
+        panel.deleteLater()
 
     def _rebuild_hidden_axis_controls(self) -> None:
         from PySide6 import QtWidgets
@@ -1182,6 +1298,8 @@ class QtMDHistoSliceViewer:
             residual_percent=int(self.residual_percent),
             apply_masks=bool(self.model.masked),
             cmap_reversed=bool(self.model.cmap_reversed),
+            smoothing_x=float(self.smoothing_x),
+            smoothing_y=float(self.smoothing_y),
         )
 
     def _default_dataset_state(self, index: int) -> _DatasetViewState:
@@ -1228,12 +1346,15 @@ class QtMDHistoSliceViewer:
             self.fit_line_color = str(state.fit_line_color)
             self.fit_line_width = float(state.fit_line_width)
             self.residual_percent = int(state.residual_percent)
+            self.smoothing_x = float(state.smoothing_x)
+            self.smoothing_y = float(state.smoothing_y)
             self.model.masked = bool(state.apply_masks)
             self.model.cmap_reversed = bool(state.cmap_reversed)
             self._box_tool_has_auto_shown_hist_axes = bool(state.box_tool_has_auto_shown_hist_axes)
             self._current_slice = None
             self._last_plot_dims = None
             self._sync_axis_combos(rebuild=True)
+            self._sync_view_mode_availability()
             self._sync_channel_combo()
             self._set_combo_silent(self.cmap_combo, self.model.cmap)
             self._set_combo_silent(self.scale_combo, self.model.color_scale)
@@ -1244,6 +1365,8 @@ class QtMDHistoSliceViewer:
             self._set_spin_silent(self.limit_n_spin, self._current_limit_n())
             self._set_spin_silent(self.font_size_spin, self.font_size)
             self._set_spin_silent(self.line_width_spin, self.axis_linewidth)
+            self._set_spin_silent(self.smoothing_x_spin, self.smoothing_x)
+            self._set_spin_silent(self.smoothing_y_spin, self.smoothing_y)
             self._set_combo_silent(self.marker_combo, _option_name(_MARKER_OPTIONS, self.marker))
             self._set_combo_silent(self.line_style_combo, _option_name(_LINE_STYLE_OPTIONS, self.line_style))
             self._set_spin_silent(self.marker_size_spin, self.marker_size)
@@ -1402,6 +1525,24 @@ class QtMDHistoSliceViewer:
     def _set_cmap(self, cmap: str) -> None:
         self.model.cmap = str(cmap)
         self.update_plot()
+
+    def _set_plot_smoothing(self, axis_name: str, value: float) -> None:
+        if self._restoring_dataset_state:
+            return
+        if axis_name == "x":
+            self.smoothing_x = max(float(value), 0.0)
+        else:
+            self.smoothing_y = max(float(value), 0.0)
+        self.update_plot()
+
+    def _smoothed_slice_view(self, view: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        if getattr(self.model, "is_point_list", False):
+            return view
+        return smooth_mdhisto_view(
+            view,
+            sigma_x=self.smoothing_x,
+            sigma_y=self.smoothing_y,
+        )
 
     def _toggle_cmap_reverse(self) -> None:
         self.model.cmap_reversed = not bool(self.model.cmap_reversed)
@@ -1874,6 +2015,12 @@ class QtMDHistoSliceViewer:
             self.hidden_group.setVisible(not is_line)
         if self.color_group is not None:
             self.color_group.setVisible(not is_line)
+        if self.smoothing_group is not None:
+            self.smoothing_group.setVisible(not is_point)
+        if self.smoothing_y_spin is not None:
+            self.smoothing_y_spin.setVisible(not is_line)
+        if self.smoothing_y_label is not None:
+            self.smoothing_y_label.setVisible(not is_line)
         if self.tools_group is not None:
             # The box tool is used both in the standard 2D layout and in 2D
             # fit compare (where it drives the integrated data+fit cut).
@@ -2085,7 +2232,7 @@ class QtMDHistoSliceViewer:
         previous_ylim = self.ax_image.get_ylim() if preserve_view and self._current_slice is not None else None
         previous_dims = getattr(self, "_last_plot_dims", None)
         current_dims = (self.model.x_dim, self.model.y_dim)
-        self._current_slice = self.model.slice_arrays()
+        self._current_slice = self._smoothed_slice_view(self.model.slice_arrays())
         view = self._current_slice
         if self._fit_panels_active():
             self._draw_fit_panels_view(previous_xlim, previous_ylim, previous_dims, current_dims)
@@ -2161,7 +2308,7 @@ class QtMDHistoSliceViewer:
             len(panels), with_cuts=with_cuts, with_residual_cut=with_residual_cut
         )
         data_model = self._comparison_panel_model(self.data, self.model.channel)
-        data_view = data_model.slice_arrays()
+        data_view = self._smoothed_slice_view(data_model.slice_arrays())
         data_values = data_model._display_values(data_view)
         shared_norm = data_model._color_norm(data_values)
         vmin, vmax = data_model._color_limits(data_values)
@@ -2171,7 +2318,7 @@ class QtMDHistoSliceViewer:
         self.colorbar = None
         for index, (ax, (title, channel)) in enumerate(zip(self._compare_axes, panels, strict=True)):
             model = self._comparison_panel_model(self.data, channel)
-            view = model.slice_arrays()
+            view = self._smoothed_slice_view(model.slice_arrays())
             values = model._display_values(view)
             norm = model._color_norm(values) if title == "Residual" else shared_norm
             artist = ax.pcolormesh(
@@ -2269,7 +2416,7 @@ class QtMDHistoSliceViewer:
                     mec=self.line_color, color=self.line_color, label="data",
                 )
             fit_model = self._comparison_panel_model(self.data, "fit")
-            fit_z = fit_model._display_values(fit_model.slice_arrays())
+            fit_z = fit_model._display_values(self._smoothed_slice_view(fit_model.slice_arrays()))
             fit_cut = np.nansum(fit_z[np.ix_(y_mask, x_mask)], axis=0)
             fit_y_cut = np.nansum(fit_z[np.ix_(y_mask, x_mask)], axis=1)
             self.ax_fit_cut.plot(
@@ -2299,7 +2446,9 @@ class QtMDHistoSliceViewer:
                 )
             if self.ax_residual_cut is not None:
                 residual_model = self._comparison_panel_model(self.data, "residual")
-                residual_z = residual_model._display_values(residual_model.slice_arrays())
+                residual_z = residual_model._display_values(
+                    self._smoothed_slice_view(residual_model.slice_arrays())
+                )
                 residual_cut = np.nansum(residual_z[np.ix_(y_mask, x_mask)], axis=0)
                 residual_y_cut = np.nansum(residual_z[np.ix_(y_mask, x_mask)], axis=1)
                 self.ax_residual_cut.axhline(0.0, color="0.5", lw=1.0, zorder=1)
@@ -2906,6 +3055,21 @@ def _qt_app():
     if app is None:
         app = QtWidgets.QApplication([])
     return app
+
+
+def _make_data_viewer_window_class():
+    from PySide6 import QtWidgets
+
+    class DataViewerWindow(QtWidgets.QMainWindow):
+        def __init__(self, viewer):
+            super().__init__()
+            self.viewer = viewer
+
+        def closeEvent(self, event):
+            self.viewer._close_volume_panel()
+            super().closeEvent(event)
+
+    return DataViewerWindow
 
 
 def _coerce_datasets(data: MDHistoData | Sequence[MDHistoData]) -> list[MDHistoData]:

@@ -23,7 +23,22 @@ channel (`signal`, `errors`, `num_events`/multiplicity, `combined_mask`,
 histogram box cuts, mask toggling, model overlays,
 figure font sizing, dataset switching, clipboard copy, and script export. The
 Qt viewer accepts either one `MDHistoData` object or a sequence of datasets plus
-optional `dataset_names`.
+optional `dataset_names`. Independent displayed-X/Y Gaussian smoothing is
+specified in bin-width units and is visual only; source arrays and fitting data
+are never modified.
+
+For gridded data with at least three dimensions, the same viewer exposes a
+PyVista 3D mode. It supports independent X/Y/Z selection, slicing or integrating
+specified ranges on remaining dimensions, viewed-axis limits, equal-data-unit
+or custom visual axis scaling, volume and isosurface rendering, separate color
+and opacity channels, editable color/opacity transfer curves, and mask-aware
+rendering. Independent X/Y/Z Gaussian smoothing applies only to rendering and
+image/movie output; numerical grids and surface-model exports remain
+unsmoothed. It can export volume data (`.vtr`), surface meshes/scenes (`.vtp`,
+`.ply`, `.stl`, or `.gltf`), still PNG images, and a full-orbit MP4 movie around
+displayed X/Y/Z (Z by default) or the camera's current vertical direction.
+PyVista, PyVistaQt, imageio, and the bundled imageio FFmpeg backend are installed
+as nfit application dependencies.
 
 Use `plot_mdhisto_slice(data, ...)` when a non-interactive Matplotlib colormap
 figure is preferred, for example in notebooks or batch scripts. Use

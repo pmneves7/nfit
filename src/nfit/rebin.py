@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from itertools import product
 from typing import Any, Literal
 
@@ -91,6 +92,7 @@ class NDRebin:
         mean_weighting: MeanWeighting = "inverse_variance",
         batch_size: int | None = None,
         max_batch_bytes: int = 192 * 1024 * 1024,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.data = np.asarray(data, dtype=float)
         self.coords = np.asarray(coords, dtype=float)
@@ -106,6 +108,7 @@ class NDRebin:
         self.mean_weighting = mean_weighting
         self.batch_size = batch_size
         self.max_batch_bytes = int(max_batch_bytes)
+        self.progress_callback = progress_callback
 
         self.Nvals: int | None = None
         self.Ndims: int | None = None
@@ -372,6 +375,7 @@ class NDRebin:
             inds = self.bin_inds[start:stop]
             valid = ~np.isnan(inds).any(axis=1)
             if not np.any(valid):
+                self._emit_progress(stop)
                 continue
             inds_int = inds[valid].astype(int)
             flat_idx = np.ravel_multi_index(inds_int.T, dims=tuple(num_bins))
@@ -386,6 +390,7 @@ class NDRebin:
                 norm_sum,
                 ns_sum,
             )
+            self._emit_progress(stop)
 
         self._store_accumulators(bd_sum, err_sum, norm_sum, ns_sum)
 
@@ -402,6 +407,7 @@ class NDRebin:
             valid_inds = self.bin_inds[start:stop] - 0.5
             valid = ~np.isnan(valid_inds).any(axis=1)
             if not np.any(valid):
+                self._emit_progress(stop)
                 continue
             valid_inds = valid_inds[valid]
             point_indices = np.arange(start, stop, dtype=int)[valid]
@@ -445,6 +451,7 @@ class NDRebin:
                     norm_sum,
                     ns_sum,
                 )
+            self._emit_progress(stop)
 
         self._store_accumulators(bd_sum, err_sum, norm_sum, ns_sum)
 
@@ -472,6 +479,19 @@ class NDRebin:
         contribution_factor = 2 ** self.Ndims if fractional else 1
         bytes_per_point = 8 * max(8, self.Ndims * (6 + contribution_factor))
         return max(1, min(self.Nvals, int(self.max_batch_bytes // bytes_per_point)))
+
+    def _emit_progress(self, processed: int) -> None:
+        if self.progress_callback is None:
+            return
+        assert self.Nvals is not None
+        self.progress_callback(
+            {
+                "stage": "rebin",
+                "iteration": int(min(processed, self.Nvals)),
+                "total": int(self.Nvals),
+                "message": f"rebinning {min(processed, self.Nvals)}/{self.Nvals} points",
+            }
+        )
 
     def _store_accumulators(
         self,

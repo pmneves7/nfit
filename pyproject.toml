@@ -21,6 +21,10 @@ dependencies = [
   "emcee>=3.1",
   "gemmi>=0.6",
   "threadpoolctl>=3.1",
+  "pyvista>=0.46",
+  "pyvistaqt>=0.11",
+  "imageio>=2.31",
+  "imageio-ffmpeg>=0.4",
 ]
 keywords = [
   "inelastic neutron scattering",

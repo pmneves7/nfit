@@ -25,7 +25,17 @@ from nfit.plotting import (
     plot_mdhisto_slice,
     plot_q_cut,
     residual_mdhisto,
+    gaussian_smooth_nan,
 )
+
+
+def test_gaussian_plot_smoothing_preserves_masked_bins():
+    values = np.asarray([0.0, np.nan, 10.0, 0.0])
+    smoothed = gaussian_smooth_nan(values, 1.0)
+
+    assert np.isnan(smoothed[1])
+    assert smoothed[0] > 0.0
+    assert smoothed[2] < 10.0
 
 
 def test_plotting_helpers_return_axes():
@@ -430,6 +440,59 @@ def test_qt_channel_dropdown_switches_displayed_channel_and_export_script():
     assert viewer.colorbar.ax.yaxis.label.get_text() == "Error"
     np.testing.assert_allclose(viewer.image.get_array(), viewer.slice_arrays()["errors"])
     assert "channel='errors'" in viewer.figure_script()
+
+
+def test_qt_plot_smoothing_is_axis_specific_and_does_not_modify_dataset_values():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_mdhisto_data()
+    original_signal = data.signal.copy()
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    raw_slice = viewer.slice_arrays()["signal"].copy()
+
+    viewer.smoothing_x_spin.setValue(1.0)
+    x_smoothed = viewer._current_slice["signal"].copy()
+    assert not np.allclose(x_smoothed, raw_slice)
+    np.testing.assert_allclose(viewer.slice_arrays()["signal"], raw_slice)
+    np.testing.assert_allclose(data.signal, original_signal)
+
+    viewer.smoothing_y_spin.setValue(1.5)
+    xy_smoothed = viewer._current_slice["signal"]
+    assert not np.allclose(xy_smoothed, x_smoothed)
+    script = viewer.figure_script()
+    assert "smoothing_sigma_x=1.0" in script
+    assert "smoothing_sigma_y=1.5" in script
+    assert "plotting only" in viewer.smoothing_x_spin.toolTip()
+
+
+def test_data_viewer_closes_volume_panel_before_window_children_are_destroyed():
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+
+    class Panel(QtWidgets.QWidget):
+        def __init__(self):
+            super().__init__()
+            self.shutdown_count = 0
+
+        def shutdown(self):
+            self.shutdown_count += 1
+
+    panel = Panel()
+    viewer.volume_panel = panel
+    viewer.content_stack.addWidget(panel)
+    viewer.content_stack.setCurrentWidget(panel)
+    viewer.window.show()
+    viewer.window.close()
+    viewer.app.processEvents()
+
+    assert panel.shutdown_count == 1
+    import shiboken6
+
+    assert not shiboken6.isValid(panel)
+    assert viewer.volume_panel is None
 
 
 def test_qt_dataset_dropdown_switches_between_loaded_datasets():

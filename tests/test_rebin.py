@@ -143,6 +143,23 @@ def test_fractional_rebin_batching_matches_full_accumulation():
     np.testing.assert_allclose(batched.n_samples, full.n_samples)
 
 
+def test_rebin_reports_batch_progress():
+    events = []
+    result = rebin_nd(
+        data=np.arange(6.0),
+        coords=np.arange(6.0),
+        num_bins=[3],
+        batch_size=2,
+        fractional=False,
+        progress_callback=events.append,
+    )
+
+    assert result.binned_data is not None
+    assert [event["iteration"] for event in events] == [2, 4, 6]
+    assert [event["total"] for event in events] == [6, 6, 6]
+    assert all(event["stage"] == "rebin" for event in events)
+
+
 def test_rebin_accepts_last_axis_coordinate_dimension():
     x = np.array([0.25, 0.75])
     y = np.array([0.25, 0.75])

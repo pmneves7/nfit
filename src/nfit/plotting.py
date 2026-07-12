@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -139,6 +139,8 @@ def plot_mdhisto_slice(
     iqr_n: float = 1.5,
     percentile_n: float = 1.0,
     power_gamma: float = 0.5,
+    smoothing_sigma_x: float = 0.0,
+    smoothing_sigma_y: float = 0.0,
     xlim: tuple[float, float] | None = None,
     ylim: tuple[float, float] | None = None,
     font_size: float = 10.0,
@@ -180,7 +182,11 @@ def plot_mdhisto_slice(
     model.percentile_n = float(percentile_n)
     model.power_gamma = float(power_gamma)
 
-    view = model.slice_arrays()
+    view = smooth_mdhisto_view(
+        model.slice_arrays(),
+        sigma_x=smoothing_sigma_x,
+        sigma_y=smoothing_sigma_y,
+    )
     with plt.rc_context({"font.size": float(font_size)}):
         fig = plt.figure(figsize=figsize, constrained_layout=True)
         if show_histogram_axes:
@@ -234,6 +240,7 @@ def plot_mdhisto_line(
     *,
     axis_dim: int | str | None = None,
     channel: str = "signal",
+    smoothing_sigma: float = 0.0,
     ax=None,
 ):
     """Render a one-dimensional MDHisto channel as a line plot.
@@ -257,11 +264,13 @@ def plot_mdhisto_line(
     index = [0] * data.signal.ndim
     index[axis_index] = slice(None)
     y = np.asarray(values[tuple(index)], dtype=float)
+    y = gaussian_smooth_nan(y, (max(float(smoothing_sigma), 0.0),))
     x = data.axes[axis_index].centers
     if ax is None:
         _, ax = plt.subplots()
     if channel_name == "signal":
         yerr = np.asarray(_mdhisto_channel_array(data, "errors")[tuple(index)], dtype=float)
+        yerr = gaussian_smooth_nan(yerr, (max(float(smoothing_sigma), 0.0),))
         ax.errorbar(x, y, yerr=yerr, fmt="-", lw=1.2)
     else:
         ax.plot(x, y, "-", lw=1.2)
@@ -1455,3 +1464,53 @@ def slice_viewer(data: MDHistoData, **kwargs) -> MDHistoSliceViewer:
     viewer = QtMDHistoSliceViewer(data, **kwargs)
     viewer.show()
     return viewer
+def gaussian_smooth_nan(values: np.ndarray, sigma: float | Sequence[float]) -> np.ndarray:
+    """Gaussian-smooth finite plotting values without filling masked holes."""
+
+    from scipy.ndimage import gaussian_filter
+
+    array = np.asarray(values, dtype=float)
+    sigma_values = np.broadcast_to(np.asarray(sigma, dtype=float), (array.ndim,))
+    if not np.any(sigma_values > 0.0):
+        return array.copy()
+    finite = np.isfinite(array)
+    numerator = gaussian_filter(
+        np.where(finite, array, 0.0),
+        sigma=sigma_values,
+        mode="nearest",
+    )
+    denominator = gaussian_filter(
+        finite.astype(float),
+        sigma=sigma_values,
+        mode="nearest",
+    )
+    with np.errstate(divide="ignore", invalid="ignore"):
+        smoothed = numerator / denominator
+    return np.where(finite & (denominator > np.finfo(float).eps), smoothed, np.nan)
+
+
+def smooth_mdhisto_view(
+    view: dict[str, np.ndarray],
+    *,
+    sigma_x: float = 0.0,
+    sigma_y: float = 0.0,
+) -> dict[str, np.ndarray]:
+    """Return a plot-only smoothed copy of a 1D or 2D slice-view mapping."""
+
+    result = dict(view)
+    reference = np.asarray(view.get("signal"), dtype=float)
+    if reference.ndim == 1:
+        sigma = (max(float(sigma_x), 0.0),)
+    elif reference.ndim == 2:
+        sigma = (max(float(sigma_y), 0.0), max(float(sigma_x), 0.0))
+    else:
+        return result
+    if not any(value > 0.0 for value in sigma):
+        return result
+    excluded = {"combined_mask", "mask", "file_mask", "nfit_mask"}
+    for name, values in view.items():
+        array = np.asarray(values)
+        if name in excluded or array.shape != reference.shape or array.dtype == bool:
+            continue
+        result[name] = gaussian_smooth_nan(array, sigma)
+    return result

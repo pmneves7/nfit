@@ -271,11 +271,9 @@ def _apply_numba_threads() -> None:
     if _NUMBA_KERNELS is None:
         return
     try:
-        import numba
-
         # set_num_threads is capped at NUMBA_NUM_THREADS (default os.cpu_count),
         # and the budget never exceeds that, so this is always valid.
-        numba.set_num_threads(_thread_budget())
+        _NUMBA_KERNELS.initialize_num_threads(_thread_budget())
     except Exception:  # pragma: no cover - defensive
         pass
 

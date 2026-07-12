@@ -14,8 +14,94 @@ the numpy path to machine precision (locked by the test suite).
 
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
+import os
+import sys
+import threading
+from functools import lru_cache
+from pathlib import Path
+
 import numpy as np
-from numba import njit, prange
+from numba import njit, prange, set_num_threads as _numba_set_num_threads
+
+
+_OPENMP_INIT_LOCK = threading.Lock()
+_OPENMP_PARALLEL_INITIALIZED = False
+
+
+@lru_cache(maxsize=1)
+def _openmp_warning_controls():
+    """Return LLVM/Intel OpenMP warning controls when that runtime is active."""
+
+    prefix = Path(sys.prefix)
+    candidates = [
+        prefix / "lib" / "libomp.dylib",
+        prefix / "lib" / "libomp.so",
+        prefix / "lib" / "libomp.so.5",
+        prefix / "Library" / "bin" / "libomp.dll",
+    ]
+    discovered = ctypes.util.find_library("omp")
+    if discovered:
+        candidates.append(Path(discovered))
+    for candidate in candidates:
+        try:
+            library = ctypes.CDLL(str(candidate))
+            warnings_off = library.kmp_set_warnings_off
+            warnings_on = library.kmp_set_warnings_on
+            warnings_off.argtypes = []
+            warnings_off.restype = None
+            warnings_on.argtypes = []
+            warnings_on.restype = None
+            return warnings_off, warnings_on
+        except (OSError, AttributeError):
+            continue
+    return None
+
+
+def _run_parallel_kernel(kernel, *args):
+    """Initialize Numba OpenMP without its deprecated-API informational line."""
+
+    global _OPENMP_PARALLEL_INITIALIZED
+    if _OPENMP_PARALLEL_INITIALIZED:
+        return kernel(*args)
+    with _OPENMP_INIT_LOCK:
+        if _OPENMP_PARALLEL_INITIALIZED:
+            return kernel(*args)
+        controls = _openmp_warning_controls()
+        if controls is None:
+            result = kernel(*args)
+        else:
+            warnings_off, warnings_on = controls
+            configured = os.environ.get("KMP_WARNINGS", "").strip().lower()
+            warnings_were_enabled = configured not in {"0", "false", "off", "no"}
+            warnings_off()
+            try:
+                result = kernel(*args)
+            finally:
+                warnings_on() if warnings_were_enabled else warnings_off()
+        _OPENMP_PARALLEL_INITIALIZED = True
+        return result
+
+
+def initialize_num_threads(n_threads: int) -> None:
+    """Set Numba's thread budget while quietly initializing its OpenMP layer."""
+
+    global _OPENMP_PARALLEL_INITIALIZED
+    with _OPENMP_INIT_LOCK:
+        controls = _openmp_warning_controls()
+        if controls is None:
+            _numba_set_num_threads(int(n_threads))
+        else:
+            warnings_off, warnings_on = controls
+            configured = os.environ.get("KMP_WARNINGS", "").strip().lower()
+            warnings_were_enabled = configured not in {"0", "false", "off", "no"}
+            warnings_off()
+            try:
+                _numba_set_num_threads(int(n_threads))
+            finally:
+                warnings_on() if warnings_were_enabled else warnings_off()
+        _OPENMP_PARALLEL_INITIALIZED = True
 
 
 @njit(cache=True, fastmath=False)
@@ -86,7 +172,7 @@ def _hermitian_jacobi(A, V, n):
 
 
 @njit(parallel=True, cache=True, fastmath=False)
-def batched_hermitian_eigh(matrices):
+def _batched_hermitian_eigh_parallel(matrices):
     """Batched Hermitian eigendecomposition (Jacobi), parallel over the batch.
 
     Returns ``(eigenvalues, eigenvectors)`` shaped like ``numpy.linalg.eigh``
@@ -113,7 +199,7 @@ def batched_hermitian_eigh(matrices):
 
 
 @njit(parallel=True, cache=True, fastmath=False)
-def rpa_value_kernel(lam, modes, point_index, energy, chi0, gamma0):
+def _rpa_value_kernel_parallel(lam, modes, point_index, energy, chi0, gamma0):
     """Return ``chi''`` per point (uniform-weight RPA mode sum)."""
 
     n_points = energy.shape[0]
@@ -137,7 +223,7 @@ def rpa_value_kernel(lam, modes, point_index, energy, chi0, gamma0):
 
 
 @njit(parallel=True, cache=True, fastmath=False)
-def rpa_value_grad_kernel(lam, modes, point_index, energy, phases, chi0, gamma0):
+def _rpa_value_grad_kernel_parallel(lam, modes, point_index, energy, phases, chi0, gamma0):
     """Return ``chi''`` and its ``chi0``/``gamma0``/orbit gradients per point.
 
     ``phases`` is the ``(n_orbits, n_q, N, N)`` stack of orbit phase matrices in
@@ -198,3 +284,32 @@ def rpa_value_grad_kernel(lam, modes, point_index, energy, phases, chi0, gamma0)
                     acc += cza * phases[o, q, a, b] * xs[b]
             grad_j[o, p] = (f_sq * acc).imag / n_sites
     return chipp, grad_chi0, grad_gamma0, grad_j
+
+
+def batched_hermitian_eigh(matrices):
+    return _run_parallel_kernel(_batched_hermitian_eigh_parallel, matrices)
+
+
+def rpa_value_kernel(lam, modes, point_index, energy, chi0, gamma0):
+    return _run_parallel_kernel(
+        _rpa_value_kernel_parallel,
+        lam,
+        modes,
+        point_index,
+        energy,
+        chi0,
+        gamma0,
+    )
+
+
+def rpa_value_grad_kernel(lam, modes, point_index, energy, phases, chi0, gamma0):
+    return _run_parallel_kernel(
+        _rpa_value_grad_kernel_parallel,
+        lam,
+        modes,
+        point_index,
+        energy,
+        phases,
+        chi0,
+        gamma0,
+    )

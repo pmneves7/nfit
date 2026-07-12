@@ -105,10 +105,12 @@ axis when possible rather than a blind diagonal matrix: for example `DeltaE`
 starts as `[0, 0, 0, 1]`, `[H,-H,0]` starts as `[1, -1, 0, 0]`, `[0,0,L]`
 starts as `[0, 0, 1, 0]`, and `[H,H,0]` starts as `[1, 1, 0, 0]`.
 
-Workspace rows also summarize the number of descendant datasets, total loaded
-data points, dataset types, fit weights, and scale factors. When all enabled
-datasets in a workspace hold the same kind of data, the `Composite dataset`
-panel can combine them into one effective rebinned dataset. Composite mode uses
+Select the top-level `Datasets` node or any nested dataset group to see its
+descendant dataset count, total loaded data points, dataset types, fit weights,
+scale factors, and `Composite dataset` panel. Composite controls are not shown
+on the workspace node, which remains the owner of models and fit history. When
+all enabled datasets in the selected collection hold the same kind of data,
+the panel can combine them into one effective rebinned dataset. Composite mode uses
 the same rebin controls as an individual dataset, but applies them after
 collecting valid points from every enabled constituent dataset. For each source
 dataset, nfit first multiplies the signal by the dataset scale factor and the
@@ -117,13 +119,14 @@ factor to subtract a dataset from the composite. The inverse-variance weight is
 then multiplied by the dataset fit weight, so larger fit weights make that
 dataset count more strongly in the composite average.
 
-When composite mode is enabled, the workspace behaves like a single dataset for
-plotting and fitting. Opening the data viewer from the workspace shows only the
-composite dataset, and the fitter receives only that composite dataset. The
-individual constituent datasets are not fitted separately. To inspect the
-constituents, open the data viewer from one of the datasets inside the
-workspace; that viewer shows the datasets that make up the composite instead of
-the composite itself.
+When composite mode is enabled on the top-level `Datasets` node, the entire
+dataset tree behaves like a single dataset for plotting and fitting. When it is
+enabled on a nested dataset group, only that group's descendants are replaced
+by its composite; datasets and groups beside it remain separate fit/viewer
+inputs. The individual constituents of an active composite are not fitted
+separately. To inspect constituents, open the data viewer from a dataset inside
+the composite; that viewer bypasses composites and exposes the underlying
+datasets.
 Composite rebin controls use the same batching and automatic/manual behavior as
 individual dataset rebins. Large composites default to manual rebinning: edits
 are marked pending, the cached composite is reused during passive refreshes,
@@ -340,7 +343,8 @@ than the fit result, or change burn-in/thinning after the fact. These posterior-
 operations update the selected fit result's posterior summaries and diagnostics
 without running least squares again and without creating a new timeline point.
 Changing burn-in or thinning simply reinterprets the stored raw chain; rerun
-replaces the stored posterior; append continues from the final walker positions
+replaces the stored posterior after an overwrite-confirmation dialog when
+samples already exist; append continues from the final walker positions
 and extends the stored chain. Promoting a best sample is different: it restores
 the fit result's snapshot, writes that sample into the editable model parameters,
 and records the result through the same `Current state` path as a manual
@@ -370,6 +374,13 @@ The data viewer supports dataset switching, channel selection, mask toggling,
 axis selection, hidden-axis slicing/integration, color scale and limit controls,
 cursor readouts, histogram box cuts, 1D line styling, model overlays, figure copy,
 and script export.
+`Plot smoothing` provides independent Gaussian sigma controls for the displayed
+X and Y directions, measured in bin widths. A value of zero disables smoothing
+on that direction. Smoothing is applied after slicing/integration and only to
+the plotted channels; it does not change the dataset, fitting inputs, rebinned
+data, or numerical data exports. Masked bins remain masked and do not contribute
+to neighboring smoothed values. Figure scripts include the smoothing settings
+because they reproduce the visual plot.
 When enabled model components have a complete parameter set, the viewer can
 calculate and show the current model and residual channels from the `Show
 model` control even before an optimization has been run. Stored fit-result
@@ -378,6 +389,59 @@ channels remain compatible with the current dataset view.
 For 2D fit comparisons, histogram box cuts show integrated data+fit cuts along
 both plotted axes; when residuals are enabled, residual cuts are shown below
 the residual panel and at the far right.
+
+### 3D PyVista mode
+
+For a gridded dataset with three or more dimensions, the `Visualization`
+selector enables `3D PyVista`. This mode renders the selected dataset in the
+same data-viewer window and leaves the standard `2D slices` mode available for
+cuts and detailed inspection. Point-list datasets must first be rebinned onto a
+regular grid before volumetric rendering.
+
+Choose three distinct dataset axes for the displayed X, Y, and Z coordinates.
+Every remaining dimension has the same center, width, low/high range, and
+`Integrate range` controls used by the 2D slicer. With integration off, the
+nearest bin to `Value` is selected. With integration on, bins between `Range
+low` and `Range high` are summed into the 3D volume. This is how, for example,
+an adjustable energy interval of a 4D reciprocal-space dataset can be viewed
+as a volume. Masks and empty bins are applied before a remaining dimension is
+integrated, and bins with no valid contribution stay transparent.
+
+The X/Y/Z limit controls crop the rendered volume using bin centers while
+retaining complete cells and their bounding edges. `Reset axis limits` restores
+the full selected axes. `Equal data units` preserves the dataset's true axis
+length ratios: one coordinate unit has the same visual length on X, Y, and Z.
+`Custom` enables independent scale factors for stretching or squishing the
+rendered axes without changing scalar values or coordinate labels.
+
+The 3D `Plot smoothing` controls independently set Gaussian sigma along the
+displayed X, Y, and Z directions in bin widths. They affect interactive
+rendering, still images, and movies only. Volume-grid and surface-model exports
+are generated from the unsmoothed numerical channels, and masked cells remain
+transparent. Axis scaling is likewise applied to a temporary render grid so the
+volumetric data itself stretches or squishes rather than only moving its bounds.
+
+`Volume` performs direct volume rendering. `Isosurface` extracts a surface at
+the selected level of the opacity channel. The scene uses a white background
+with black orientation and coordinate axes. The color and opacity channels are
+independent: keep `Link opacity to color` checked to drive both from one
+channel, or uncheck it to select a different opacity channel. Each channel has
+its own clipped value range. The color mapping curve maps normalized color
+values to positions in the selected colormap, while the opacity mapping curve
+maps normalized opacity values from transparent to opaque. Drag curve points,
+click to add one, and right-click an interior point to remove it. Masked or
+non-finite values remain transparent regardless of the transfer curves.
+
+`Export 3D model` saves an isosurface as VTK PolyData, PLY, STL, or a glTF
+scene. A volumetric view is saved as a VTK rectilinear grid (`.vtr`) because a
+ray-cast volume is scalar field data rather than a polygon mesh. `Export still
+image` saves the current camera view as PNG. `Rotation axis` selects displayed
+X, Y, or Z, or the direction currently vertical on screen. Z is the default.
+`Animate rotation` previews a continuous orbit around the selected axis. The
+movie controls set frame rate and duration; `Export rotation MP4` renders one
+complete orbit around that same axis at the current camera distance, then
+restores the original view. MP4 encoding is supplied by nfit's
+`imageio-ffmpeg` dependency.
 
 For powder and magnetization-style datasets, cursor readouts hide coordinate
 quantities that are not meaningful for that data type. `|Q|` readout is shown
