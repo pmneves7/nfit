@@ -160,3 +160,66 @@ def test_intensity_is_invariant_under_a_global_frame_rotation():
         rotated, geometry, E, rotated_qhat, param_values=values, chi0=chi0, gamma0=gamma0
     )
     np.testing.assert_allclose(rotated_intensity, base, rtol=1e-10, atol=1e-13)
+
+
+def test_zeeman_reduces_to_tier_a_at_zero_field():
+    from nfit.tensor_rpa import (
+        tensor_rpa_zeeman_unpolarized_chipp,
+        zeeman_cartesian_propagator,
+    )
+
+    rng = np.random.default_rng(4)
+    positions, orbits, geometry = _two_site_geometry(rng)
+    E = rng.uniform(0.3, 5.0, size=geometry.point_index.size)
+    structure = build_tensor_structure(geometry, positions, orbits)
+    q_hat = cartesian_qhat_per_point(geometry, np.eye(3))
+    values = {"J1": 0.12, "J2": -0.07}
+    chi0, gamma0 = 0.4, 2.5
+
+    tier_a = tensor_rpa_unpolarized_chipp(
+        structure, geometry, E, q_hat, param_values=values, chi0=chi0, gamma0=gamma0
+    )
+    propagator = zeeman_cartesian_propagator(
+        E, np.array([0.0, 0.0, 1.0]), chi0=chi0, gamma0=gamma0, omega_larmor=0.0
+    )
+    tier_b = tensor_rpa_zeeman_unpolarized_chipp(
+        structure, geometry, E, q_hat, propagator, param_values=values
+    )
+    np.testing.assert_allclose(tier_b, tier_a, rtol=1e-11, atol=1e-14)
+
+
+def test_zeeman_propagator_is_gyrotropic_and_larmor_resonant():
+    from nfit.tensor_rpa import (
+        MU_B_MEV_PER_T,
+        tensor_zeeman_susceptibility,
+        zeeman_cartesian_propagator,
+    )
+
+    b_hat = np.array([0.0, 0.0, 1.0])
+    E = np.linspace(-3.0, 6.0, 9)
+    zero = zeeman_cartesian_propagator(E, b_hat, chi0=0.5, gamma0=1.0, omega_larmor=0.0)
+    # Zero field: scalar chi0(omega) I3.
+    np.testing.assert_allclose(zero[:, 0, 1], 0.0, atol=1e-14)
+    np.testing.assert_allclose(zero[:, 0, 0], zero[:, 2, 2], atol=1e-14)
+
+    field = zeeman_cartesian_propagator(E, b_hat, chi0=0.5, gamma0=1.0, omega_larmor=1.5)
+    # Transverse block is gyrotropic (antisymmetric), longitudinal unchanged.
+    np.testing.assert_allclose(field[:, 0, 1], -field[:, 1, 0], atol=1e-14)
+    assert np.max(np.abs(field[:, 0, 1])) > 1e-6
+
+    # A decoupled site's transverse chi'' resonates near omega_L (relaxational
+    # peak is at omega_L + Gamma).
+    line = np.linspace(0.05, 6.0, 400)
+    geometry = build_rpa_geometry(
+        np.zeros(400), np.zeros(400), np.zeros(400), [[0.0, 0.0, 0.0]],
+        [{"label": "J1", "bonds": [{"site_i": 0, "site_j": 0, "offset": [1, 0, 0]}]}],
+    )
+    structure = build_tensor_structure(
+        geometry, [[0.0, 0.0, 0.0]],
+        [{"label": "J1", "bonds": [{"site_i": 0, "site_j": 0, "offset": [1, 0, 0]}]}],
+    )
+    gamma = 0.3
+    propagator = zeeman_cartesian_propagator(line, b_hat, chi0=0.5, gamma0=gamma, omega_larmor=2.5)
+    chi = tensor_zeeman_susceptibility(structure, geometry, line, propagator, param_values={"J1": 0.0})
+    peak = line[np.argmax(chi[:, 0, 0].imag)]
+    assert peak == pytest.approx(2.5 + gamma, abs=0.05)

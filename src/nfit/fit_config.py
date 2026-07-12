@@ -315,10 +315,16 @@ def _component_has_tensor_terms(config: Mapping[str, Any]) -> bool:
             isinstance(spec, dict) and spec.get("enabled") for spec in section.values()
         ):
             return True
-    dipole = config.get("dipole")
-    if isinstance(dipole, dict) and dipole.get("enabled"):
-        return True
+    for section_key in ("dipole", "zeeman"):
+        section = config.get(section_key)
+        if isinstance(section, dict) and section.get("enabled"):
+            return True
     return False
+
+
+def _component_has_zeeman(config: Mapping[str, Any]) -> bool:
+    zeeman = config.get("zeeman")
+    return isinstance(zeeman, dict) and bool(zeeman.get("enabled"))
 
 
 def heisenberg_rpa_parameter_labels(component: Any) -> tuple[str, ...]:
@@ -349,6 +355,8 @@ def heisenberg_rpa_parameter_labels(component: Any) -> tuple[str, ...]:
     dipole = config.get("dipole")
     if isinstance(dipole, dict) and dipole.get("enabled"):
         labels.append("D_dip")
+    if _component_has_zeeman(config):
+        labels.extend(("g_factor", "chi_perp_ratio", "gamma_perp_ratio"))
     return tuple(labels)
 
 
@@ -385,9 +393,16 @@ class _RpaComponentEvaluator:
         self.chi0_key = qualified_parameter_name(name, "chi0")
         self.gamma0_key = qualified_parameter_name(name, "gamma0")
         self.tensor_mode = _component_has_tensor_terms(config)
+        self.zeeman_mode = _component_has_zeeman(config)
+        self._zeeman_keys = {
+            key: qualified_parameter_name(name, key)
+            for key in ("g_factor", "chi_perp_ratio", "gamma_perp_ratio")
+        }
+        # The tensor J(Q) coefficients exclude the Zeeman propagator parameters.
         self.tensor_keys = {
             label: qualified_parameter_name(name, label)
             for label in heisenberg_rpa_parameter_labels(component)
+            if label not in self._zeeman_keys
         }
         if self.tensor_mode:
             # The anisotropy/SIA tensors are tied to the sites and their
@@ -457,9 +472,39 @@ class _RpaComponentEvaluator:
 
     def value(self, data: PointData4D, params: dict[str, float]) -> np.ndarray:
         temperature = _dataset_temperature(data)
+        # Validate the applied field before the instability guard below, so a
+        # missing field raises its actionable error instead of being caught and
+        # turned into the 1e6 sentinel.
+        field = _dataset_magnetic_field(data) if self.zeeman_mode else None
         geometry, form_factor_sq, tensor_context = self._geometry(data)
         try:
-            if self.tensor_mode:
+            if self.zeeman_mode:
+                from .tensor_rpa import (
+                    tensor_rpa_zeeman_unpolarized_chipp,
+                    zeeman_cartesian_propagator,
+                    MU_B_MEV_PER_T,
+                )
+
+                structure, q_hat = tensor_context
+                magnitude = float(np.linalg.norm(field))
+                b_hat = field / magnitude if magnitude > 0 else np.array([0.0, 0.0, 1.0])
+                g_factor = float(params[self._zeeman_keys["g_factor"]])
+                energy = np.asarray(data.E, dtype=float)
+                propagator = zeeman_cartesian_propagator(
+                    energy,
+                    b_hat,
+                    chi0=float(params[self.chi0_key]),
+                    gamma0=float(params[self.gamma0_key]),
+                    omega_larmor=g_factor * MU_B_MEV_PER_T * magnitude,
+                    chi_perp_ratio=float(params[self._zeeman_keys["chi_perp_ratio"]]),
+                    gamma_perp_ratio=float(params[self._zeeman_keys["gamma_perp_ratio"]]),
+                )
+                chipp = tensor_rpa_zeeman_unpolarized_chipp(
+                    structure, geometry, energy, q_hat, propagator,
+                    param_values=self._tensor_values(params),
+                )
+                polarization = 1.0
+            elif self.tensor_mode:
                 from .tensor_rpa import tensor_rpa_unpolarized_chipp
 
                 structure, q_hat = tensor_context

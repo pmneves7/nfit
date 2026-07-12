@@ -290,6 +290,69 @@ def tensor_susceptibility(
     return chi
 
 
+# Bohr magneton in meV/T (Larmor energy omega_L = g * MU_B_MEV_PER_T * B).
+MU_B_MEV_PER_T = 0.05788381
+
+
+def _perpendicular_frame(b_hat: FloatArray) -> tuple[FloatArray, FloatArray]:
+    """Return two unit vectors completing a right-handed frame with ``b_hat``.
+
+    The transverse response is invariant to rotations about ``b_hat``, so any
+    consistent perpendicular pair works.
+    """
+
+    reference = np.array([1.0, 0.0, 0.0]) if abs(b_hat[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+    x_axis = reference - np.dot(reference, b_hat) * b_hat
+    x_axis /= np.linalg.norm(x_axis)
+    y_axis = np.cross(b_hat, x_axis)
+    return x_axis, y_axis
+
+
+def zeeman_cartesian_propagator(
+    energy: FloatArray,
+    b_hat: FloatArray,
+    *,
+    chi0: float,
+    gamma0: float,
+    omega_larmor: float,
+    chi_perp_ratio: float = 1.0,
+    gamma_perp_ratio: float = 1.0,
+) -> ComplexArray:
+    """Return the single-site local propagator ``X0(omega)`` per point (3x3).
+
+    In the field frame (z = B-hat) the longitudinal response is
+    ``chi_par / (1 - i w / Gamma_par)`` and the transverse circular modes are
+    ``chi_perp / (1 - i (w -/+ omega_L) / Gamma_perp)``; the Cartesian tensor
+    has a gyrotropic (antisymmetric) part proportional to ``omega_L``. At
+    ``omega_L -> 0`` with unit ratios it becomes the scalar ``chi0(omega) I3``.
+    """
+
+    e = np.asarray(energy, dtype=float)
+    x_par = chi0 / (1.0 - 1j * e / gamma0)
+    chi_perp = chi_perp_ratio * chi0
+    gamma_perp = gamma_perp_ratio * gamma0
+    x_plus = chi_perp / (1.0 - 1j * (e - omega_larmor) / gamma_perp)
+    x_minus = chi_perp / (1.0 - 1j * (e + omega_larmor) / gamma_perp)
+    diag_perp = 0.5 * (x_plus + x_minus)
+    off_perp = 0.5j * (x_plus - x_minus)  # gyrotropic, -> 0 as omega_L -> 0
+
+    x_axis, y_axis = _perpendicular_frame(np.asarray(b_hat, dtype=float))
+    z_axis = np.asarray(b_hat, dtype=float)
+    # X0_frame = diag_perp (xx,yy) + off_perp (xy antisymmetric) + x_par (zz).
+    # Build directly in Cartesian: X0 = a (I - zz^T) + s (zz^T) + g [xy antisym],
+    # where the antisymmetric transverse part is off_perp * (x y^T - y x^T).
+    n = e.shape[0]
+    identity = np.eye(3)
+    zz = np.outer(z_axis, z_axis)
+    antisym = np.outer(x_axis, y_axis) - np.outer(y_axis, x_axis)
+    propagator = (
+        diag_perp[:, None, None] * (identity - zz)[None]
+        + x_par[:, None, None] * zz[None]
+        + off_perp[:, None, None] * antisym[None]
+    )
+    return propagator.astype(complex)
+
+
 def cartesian_qhat_per_point(
     geometry: RpaGeometry, rlu_to_inv_angstrom: FloatArray
 ) -> FloatArray:
@@ -317,6 +380,76 @@ def _unpolarized_weight(q_hat: FloatArray) -> FloatArray:
     return (identity - outer) / 3.0
 
 
+_ZEEMAN_SOLVE_BLOCK = 200_000
+
+
+def tensor_zeeman_susceptibility(
+    structure: TensorStructure,
+    geometry: RpaGeometry,
+    energy: FloatArray,
+    propagator: ComplexArray,
+    *,
+    param_values: Mapping[str, float],
+) -> ComplexArray:
+    """Return ``chi_{alpha beta}`` (n_points, 3, 3) with a tensor local propagator.
+
+    ``propagator`` is the per-point ``X0(omega)`` 3x3 (from
+    :func:`zeeman_cartesian_propagator`), which no longer commutes with
+    ``J(Q)``'s eigenbasis, so this solves ``[1 - X0 J(Q)] chi = X0`` per point by
+    batched LU (chunked to bound memory) rather than diagonalizing once per Q.
+    ``chi_{alpha beta} = (1/N) phi_alpha^dagger (1 - X0 J)^{-1} X0 phi_beta`` with
+    ``phi_alpha`` the uniform-site Cartesian source.
+    """
+
+    exchange = assemble_tensor_exchange(structure, param_values)  # (n_q, 3N, 3N)
+    n_sites = structure.n_sites
+    dim = 3 * n_sites
+    idx = geometry.point_index
+    n_points = energy.shape[0]
+    identity = np.eye(dim)
+
+    chi = np.empty((n_points, 3, 3), dtype=complex)
+    block = _ZEEMAN_SOLVE_BLOCK
+    for start in range(0, n_points, block):
+        stop = min(start + block, n_points)
+        sel = slice(start, stop)
+        j_block = exchange[idx[sel]]  # (m, 3N, 3N)
+        x0 = propagator[sel]  # (m, 3, 3)
+        m = stop - start
+        # X0_full @ J : apply the site-local 3x3 X0 to the alpha index of each
+        # site row of J. Reshape J to (m, N, 3, 3N).
+        j_reshaped = j_block.reshape(m, n_sites, 3, dim)
+        x0_j = np.einsum("pag,pngB->pnaB", x0, j_reshaped).reshape(m, dim, dim)
+        a_matrix = identity[None] - x0_j
+        # RHS: X0_full phi_beta has block (a, alpha) = X0[alpha, beta] for all a.
+        rhs = np.broadcast_to(x0[:, None, :, :], (m, n_sites, 3, 3)).reshape(m, dim, 3)
+        solution = np.linalg.solve(a_matrix, rhs)  # (m, 3N, 3)
+        chi[sel] = solution.reshape(m, n_sites, 3, 3).sum(axis=1) / n_sites
+    return chi
+
+
+def _chipp_from_chi(chi: ComplexArray, q_hat: FloatArray) -> FloatArray:
+    chi_dd = (chi - np.conj(np.swapaxes(chi, -1, -2))) / 2.0j
+    return np.einsum("pab,pab->p", _unpolarized_weight(q_hat), chi_dd).real
+
+
+def tensor_rpa_zeeman_unpolarized_chipp(
+    structure: TensorStructure,
+    geometry: RpaGeometry,
+    energy: FloatArray,
+    q_hat: FloatArray,
+    propagator: ComplexArray,
+    *,
+    param_values: Mapping[str, float],
+) -> FloatArray:
+    """Unpolarized ``chi''`` per point for the field-on (Tier-B) path."""
+
+    chi = tensor_zeeman_susceptibility(
+        structure, geometry, energy, propagator, param_values=param_values
+    )
+    return _chipp_from_chi(chi, q_hat)
+
+
 def tensor_rpa_unpolarized_chipp(
     structure: TensorStructure,
     geometry: RpaGeometry,
@@ -336,6 +469,4 @@ def tensor_rpa_unpolarized_chipp(
     chi = tensor_susceptibility(
         structure, geometry, energy, chi0=chi0, gamma0=gamma0, param_values=param_values
     )
-    chi_dd = (chi - np.conj(np.swapaxes(chi, -1, -2))) / 2.0j  # Hermitian chi''
-    weight = _unpolarized_weight(q_hat)
-    return np.einsum("pab,pab->p", weight, chi_dd).real
+    return _chipp_from_chi(chi, q_hat)
