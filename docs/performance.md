@@ -112,6 +112,34 @@ pinned-BLAS pool scales the eigendecomposition across all allocated cores. The
 primitive-cell-reduced common case ($N \le 6$) does not thread the eigh at all,
 so it is unaffected either way.
 
+## Tensor (anisotropic) interactions
+
+Enabling anisotropic exchange, single-ion anisotropy, dipole–dipole, or Zeeman
+promotes $J(\mathbf{Q})$ to a $3N\times3N$ matrix
+([Spin-fluctuation models](spin_fluctuation_models.md#tensor-anisotropic-interactions)).
+Cost notes:
+
+- **Tier A (field off).** One Hermitian $3N\times3N$ eigendecomposition per
+  unique $\mathbf{Q}$: roughly $3^3\approx 27\times$ the scalar per-$\mathbf{Q}$
+  work at fixed $N$, though $3N\le 16$ (e.g. pyrochlore $N=4\Rightarrow 3N=12$)
+  still fits the fused numba Jacobi eigensolver. Structure matrices are stored
+  **bond-resolved** (per-bond phase rows + $3\times3$ Cartesian tensors) and
+  assembled per iteration, so no $(n_Q, N, N, 3, 3)$ array is held per parameter.
+- **Tier B (field on).** A batched LU solve of
+  $\mathbb 1 - X_0(\omega)\mathbb{J}(\mathbf{Q})$ per fitted point (chunked at
+  200k points), since the gyrotropic $X_0(\omega)$ breaks the eigenbasis reuse.
+  Budget a few seconds per evaluation on the 4D job.
+- **Dipole cache.** The Ewald tensor is built once per dataset geometry and
+  cached densely at shape $(n_Q, N, N, 3, 3)$ complex — ≈360 MB for
+  $n_Q=156\text{k}$, $N=4$. It also disables primitive-cell reduction (the Ewald
+  sum needs the primitive lattice), so the full cell is used when dipole is on.
+- **Gradients.** Tensor mode currently uses central-difference gradients
+  ($1+n_{\text{param}}$ evaluations per iteration); the scalar path keeps its
+  analytic Jacobian.
+
+The scalar path is untouched when no tensor section is configured, so existing
+projects see no change.
+
 ## Hardware and libraries
 
 nfit computes through NumPy/SciPy, so it inherits whatever LAPACK/BLAS
@@ -131,9 +159,10 @@ no configuration:
 
 ## Deferred
 
-A batched-LU resolvent kernel (needed once single-ion anisotropy makes the
-local propagator a per-site tensor and the eigenbasis of $J$ no longer
-diagonalizes the RPA denominator) and a fully on-GPU pipeline (GPU
-eigendecomposition) are left for when they are needed. The backend seams keep
-the hot path swappable so those can be added without disturbing the physics or
-the portable numpy default.
+An analytic Jacobian for the tensor path (the resolvent sandwich generalizes,
+but tensor mode currently falls back to finite differences), a fully on-GPU
+pipeline (GPU eigendecomposition and the Tier-B batched solve), and
+tensor-carrying primitive-cell reduction *with* dipoles (needs the primitive
+lattice vectors for the Ewald sum) are left for when they are needed. The
+backend seams keep the hot path swappable so those can be added without
+disturbing the physics or the portable numpy default.

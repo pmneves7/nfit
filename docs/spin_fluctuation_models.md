@@ -399,12 +399,15 @@ Here $J_o$ is the fitted exchange value for orbit $o$, and $P_o(\mathbf{Q})$ is
 that orbit's precomputed structure matrix, i.e. the part of $J(\mathbf{Q})$
 multiplied by $J_o$. The derivatives
 $\partial\chi/\partial\chi_0$ and $\partial\chi/\partial\Gamma_0$ follow from
-the chain rule through $\chi_0(\omega)$ and $A$. Because every planned extension
+the chain rule through $\chi_0(\omega)$ and $A$. Because every tensor extension
 of the model (single-ion anisotropy, anisotropic/tensor exchange,
-dipole–dipole, Zeeman coupling to a field) enters
+dipole–dipole, Zeeman coupling to a field; see
+[Tensor (anisotropic) interactions](#tensor-anisotropic-interactions)) enters
 $J(\mathbf{Q}) = \sum_p \theta_p P_p(\mathbf{Q})$ as a parameter $\theta_p$
 times a precomputed structure matrix $P_p(\mathbf{Q})$, the
-$\partial/\partial J_o$ formula generalizes to those terms verbatim. When every
+$\partial/\partial J_o$ formula generalizes to those terms verbatim (in tensor
+mode the current implementation uses central-difference gradients; the scalar
+path keeps the analytic Jacobian). When every
 model component on a dataset supplies its gradients, the optimizer uses the
 exact Jacobian (`heisenberg_rpa_chipp_and_gradients`) instead of finite
 differences, the numerical derivative method that perturbs one parameter at a
@@ -423,6 +426,93 @@ silently.
 | $T$ | K |
 
 $J \chi_0$ is dimensionless, so the instability criterion is unit-free.
+
+### Tensor (anisotropic) interactions
+
+The scalar Heisenberg model above generalizes to the full anisotropic
+interaction set by promoting $J(\mathbf{Q})$ to a $3N\times 3N$ Hermitian matrix
+carrying Cartesian spin indices $\alpha,\beta$ on the $N$ magnetic sublattices:
+
+$$
+\mathbb{J}(\mathbf{Q})_{(a\alpha),(b\beta)} = \sum_p \theta_p\,
+P_p(\mathbf{Q})_{(a\alpha),(b\beta)},
+\qquad
+\chi(\mathbf{Q},\omega) = \bigl[\mathbb 1 - \chi_0(\omega)\,\mathbb{J}(\mathbf{Q})\bigr]^{-1}\chi_0(\omega).
+$$
+
+Each contribution is a fitted coefficient $\theta_p$ times a precomputed
+structure matrix. When no tensor section is configured the evaluator runs the
+*exact* scalar path unchanged (bit-identical, no cost). The terms are:
+
+- **Anisotropic exchange** — for each bond orbit the symmetry engine projects
+  the rank-2 spin–spin tensor onto the invariant subspace of the representative
+  bond's stabilizer (`symmetry_allowed_exchange_basis`), removes the isotropic
+  part (that stays the scalar Heisenberg parameter), and classifies the
+  remainder as symmetric–traceless (`S1, S2, …`) or antisymmetric/
+  Dzyaloshinskii–Moriya (`D1, …`). Each bond $b$ in the orbit contributes
+  $R_g\,T_c\,R_g^{\mathsf T}$ (transposed when the generating op reverses the
+  bond), with $R_g$ the Cartesian rotation of the op mapping the representative
+  bond to $b$. Rank-2 tensors transform with $R$ even for improper ops (the two
+  axial-vector $\det R$ factors cancel). Pyrochlore nearest neighbours allow one
+  isotropic + two symmetric + one DM component (Ross *et al.* 2011).
+- **Single-ion anisotropy (SIA)** — a $\mathbf{Q}$-independent on-site diagonal
+  block per site class, from the symmetric-traceless invariants of the site
+  point group (`symmetry_allowed_sia_basis`, coefficients `K1, …`), rotated to
+  each site by its recorded generator. Cubic site symmetry allows none; only
+  the rank-2 (quadratic) part is kept — higher-order anisotropy is beyond
+  soft-spin RPA at Gaussian level.
+- **Dipole–dipole** — one strength $D_{\mathrm{dip}}$ times the Ewald-summed
+  dipole tensor $\mathfrak D(\mathbf{Q})$ (`nfit.dipole.ewald_dipole_tensor`;
+  real-space erfc + reciprocal Gaussian + self term, tinfoil boundary). The
+  default of $D_{\mathrm{dip}}$ is the physical $(\mu_0/4\pi)(g\mu_B)^2$ in
+  meV·Å³; pin it (vary off) to keep the physical value or fit it. The tensor is
+  cached densely per dataset geometry.
+- **Zeeman (applied field)** — see below; makes $\chi_0(\omega)$ a per-site
+  gyrotropic $3\times3$ tensor in the field frame.
+
+**Intensity and polarization.** The evaluator forms the dissipative tensor
+$\chi''_{\alpha\beta} = (\chi_{\alpha\beta} - \chi^*_{\beta\alpha})/2i$ and
+contracts it against a per-channel weight matrix — it never collapses to a
+scalar internally, so polarized channels can be added later without a kernel
+rewrite. The only user-facing channel now is unpolarized,
+$W = \tfrac13(\delta_{\alpha\beta} - \hat Q_\alpha \hat Q_\beta)$. The $1/3$
+normalization makes the isotropic limit **exactly** equal the scalar model's
+$\tfrac23\chi''$, so enabling an $\varepsilon$-small anisotropy produces no
+intensity jump (locked by tests). See
+[physics_conventions](physics_conventions.md) for the sign and frame
+conventions.
+
+**Two evaluation tiers.** With $B=0$ the local propagator is scalar and
+$\chi(\mathbf{Q},\omega)$ follows from one Hermitian eigendecomposition of the
+$3N\times3N$ $\mathbb{J}(\mathbf{Q})$ per unique $\mathbf{Q}$ (Tier A, covers
+exchange + SIA + dipole). With the Zeeman term on, $X_0(\omega)$ is gyrotropic
+and no longer commutes with $\mathbb{J}$'s eigenbasis, so each fitted point takes
+a batched LU solve of $\mathbb 1 - X_0(\omega)\mathbb{J}(\mathbf{Q})$ (Tier B).
+Tier B at $B\to0$ reduces to Tier A to machine precision (tested).
+
+**Zeeman propagator.** In the field frame $\hat z = \hat B$ (uniform field), the
+per-site local response is longitudinal $\chi_\parallel/(1 - i\omega/\Gamma_\parallel)$
+along $\hat z$ and transverse circular $\chi_\perp/(1 - i(\omega \mp \omega_L)/\Gamma_\perp)$
+in the plane, with Larmor frequency $\omega_L = g\,\mu_B\,B$ and
+$\mu_B = 0.05788\,\text{meV/T}$. Fitted parameters are `g_factor` (default 2),
+`chi_perp_ratio`, and `gamma_perp_ratio` (both default 1). The term needs a
+valid per-dataset field (`Dataset details → Sample environment`, or
+`dataset.parameters["magnetic_field"]`); a missing field raises a clear error.
+
+**Primitive-cell reduction.** Pure lattice translations do not rotate spins, so
+bond-resolved anisotropic exchange and on-site SIA fold onto the primitive cell
+*exactly* (pyrochlore 16 → 4; tested to machine precision) carrying their
+rotations and generators. The dipole Ewald sum depends on the Bravais lattice
+and would need the primitive lattice vectors, so reduction is declined whenever
+the dipole term is active.
+
+**Enabling in the GUI.** In the `heisenberg_rpa` structured editor, generate the
+symmetry bond orbits, then use the **Interactions** box to toggle anisotropic
+exchange, single-ion anisotropy, dipole–dipole, and Zeeman. Enabling a term
+snapshots the symmetry-allowed tensor basis into the component config and adds
+the corresponding fit parameters (`J1_S1`, `J1_D1`, `K1_<class>`, `D_dip`,
+`g_factor`, …). The per-dataset field lives in the `Sample environment` panel of
+the dataset details.
 
 ## Temperature-dependent fitting
 
@@ -496,3 +586,15 @@ component.config["orbits"] = orbits_to_config(orbits)  # J1, J2, J3a, J3b, ...
    <https://www.ill.eu/sites/ccsl/ffacts/>
 7. D. Dahlbom et al., Sunny.jl — symmetry-distinct bond convention:
    <https://github.com/SunnySuite/Sunny.jl>
+8. K. A. Ross, L. Savary, B. D. Gaulin, and L. Balents, "Quantum excitations in
+   quantum spin ice", Phys. Rev. X **1**, 021002 (2011); and J. D. Thompson
+   *et al.* / K. A. Ross *et al.*, Phys. Rev. B **84**, 064430 (2011) —
+   symmetry-allowed anisotropic exchange on the pyrochlore lattice.
+   <https://doi.org/10.1103/PhysRevB.84.064430>
+9. M. Enjalran and M. J. P. Gingras, "Theory of paramagnetic scattering in
+   highly frustrated magnets with long-range dipole–dipole interactions: The
+   case of the Tb₂Ti₂O₇ pyrochlore", Phys. Rev. B **70**, 174426 (2004) — RPA
+   with Ewald-summed dipoles. <https://doi.org/10.1103/PhysRevB.70.174426>
+10. T. Moriya, "Anisotropic superexchange interaction and weak ferromagnetism",
+    Phys. Rev. **120**, 91 (1960) — Dzyaloshinskii–Moriya rules.
+    <https://doi.org/10.1103/PhysRev.120.91>
