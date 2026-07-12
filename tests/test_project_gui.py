@@ -1511,6 +1511,91 @@ def test_fit_details_posterior_sampler_controls_update_burn_without_timeline(mon
     assert posterior["samples"] == 4
 
 
+def test_posterior_rerun_confirms_before_replacing_existing_samples(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Datagroup1", datasets=[DatasetEntry("first", _tiny_mdhisto_data(1.0))])
+    sampling = project_gui.SamplingResult(
+        samples=np.zeros((1, 1), dtype=float),
+        variable_names=["model1.constant"],
+        metadata={"method": "emcee"},
+        chain=np.zeros((1, 1, 1), dtype=float),
+    )
+    result = FitTimelineEntry(
+        "Fit Result1",
+        kind="result",
+        goodness={"parameters": {"model1.constant": 1.0}},
+        metadata={"posterior_samples": project_gui._sampling_result_to_dict(sampling)},
+    )
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    starts = []
+    prompts = []
+    monkeypatch.setattr(
+        explorer,
+        "start_posterior_sampler_for_fit",
+        lambda *args, **kwargs: starts.append((args, kwargs)) or True,
+    )
+
+    def answer_prompt(parent, title, text, buttons, default):
+        prompts.append((parent, title, text, buttons, default))
+        return QtWidgets.QMessageBox.StandardButton.Cancel
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", answer_prompt)
+    kwargs = dict(n_walkers=8, n_steps=20, burn_in=2, thin=1, random_seed=None, workers=1)
+
+    assert explorer.confirm_and_start_posterior_rerun(group, result, **kwargs) is False
+    assert starts == []
+    assert prompts[0][1] == "Replace emcee samples?"
+    assert "raw chain" in prompts[0][2]
+    assert prompts[0][4] == QtWidgets.QMessageBox.StandardButton.Cancel
+
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "question",
+        lambda *_args: QtWidgets.QMessageBox.StandardButton.Yes,
+    )
+    assert explorer.confirm_and_start_posterior_rerun(group, result, **kwargs) is True
+    assert starts[0][0] == (group, result)
+    assert starts[0][1] == {**kwargs, "append": False}
+
+
+def test_posterior_rerun_without_existing_samples_does_not_prompt(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Datagroup1")
+    result = FitTimelineEntry(
+        "Fit Result1",
+        kind="result",
+        goodness={"parameters": {"model1.constant": 1.0}},
+    )
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "question",
+        lambda *_args: pytest.fail("unexpected overwrite confirmation"),
+    )
+    starts = []
+    monkeypatch.setattr(
+        explorer,
+        "start_posterior_sampler_for_fit",
+        lambda *args, **kwargs: starts.append((args, kwargs)) or True,
+    )
+
+    assert explorer.confirm_and_start_posterior_rerun(
+        group,
+        result,
+        n_walkers=8,
+        n_steps=20,
+        burn_in=2,
+        thin=1,
+        random_seed=None,
+        workers=1,
+    ) is True
+    assert len(starts) == 1
+
+
 def test_promote_best_posterior_sample_creates_current_state(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
@@ -3679,6 +3764,88 @@ def test_heisenberg_rpa_editor_generates_orbits_and_round_trips(monkeypatch, tmp
     assert loaded_model.parameters["J1"] == 0.15
     assert loaded_model.fit_parameters["J1"] is True
     assert loaded_model.config["site_positions"] == model.config["site_positions"]
+
+
+def test_heisenberg_rpa_editor_toggles_tensor_interactions(monkeypatch, tmp_path):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("gemmi")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Datagroup1")
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
+    model = explorer.add_model_to_selection()
+
+    combo = explorer.model_type_combo
+    combo.setCurrentIndex(combo.findData("heisenberg_rpa"))
+
+    for name in ("a", "b", "c"):
+        explorer._set_model_crystal_lattice(name, "4.0")
+    explorer._set_model_crystal_spacegroup("F m -3 m")
+    explorer._add_model_crystal_site()
+    explorer._set_model_crystal_site(0, "label", "Ni1")
+    explorer._set_model_crystal_site(0, "ion", "Ni2")
+    explorer._set_model_site_magnetic(0, True)
+
+    cutoff_editor = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "model_bonds_cutoff"
+    )
+    cutoff_editor.setText("3.0")
+    explorer._generate_selected_model_bond_orbits()
+
+    interactions = explorer.model_parameter_widget.findChild(
+        QtWidgets.QGroupBox, "model_interactions_group"
+    )
+    assert interactions is not None
+
+    # Every interaction toggle carries a tooltip (audit convention).
+    for kind in ("anisotropy", "sia", "dipole", "zeeman"):
+        box = explorer.model_parameter_widget.findChild(
+            QtWidgets.QCheckBox, f"model_interaction_{kind}"
+        )
+        assert box is not None and box.toolTip().strip()
+
+    # Dipole seeds the physical strength as a fit parameter.
+    dipole_box = explorer.model_parameter_widget.findChild(
+        QtWidgets.QCheckBox, "model_interaction_dipole"
+    )
+    dipole_box.setChecked(True)
+    assert model.config["dipole"]["enabled"] is True
+    assert "D_dip" in model.parameters
+    assert model.parameters["D_dip"] > 0.0
+
+    # Zeeman exposes g_factor and the transverse ratios.
+    zeeman_box = explorer.model_parameter_widget.findChild(
+        QtWidgets.QCheckBox, "model_interaction_zeeman"
+    )
+    zeeman_box.setChecked(True)
+    assert model.config["zeeman"]["enabled"] is True
+    for name in ("g_factor", "chi_perp_ratio", "gamma_perp_ratio"):
+        assert name in model.parameters
+
+    # Anisotropy snapshots the symmetry-allowed exchange tensors.
+    aniso_box = explorer.model_parameter_widget.findChild(
+        QtWidgets.QCheckBox, "model_interaction_anisotropy"
+    )
+    aniso_box.setChecked(True)
+    assert model.config.get("anisotropy")
+
+    path = tmp_path / "project.json"
+    save_project(NfitProject([group]), path)
+    loaded = load_project(path)
+    loaded_model = next(iter(loaded.data_groups[0].models.values()))
+    assert loaded_model.config["dipole"]["enabled"] is True
+    assert loaded_model.config["zeeman"]["enabled"] is True
+    assert loaded_model.config.get("anisotropy")
+    assert loaded_model.parameters["D_dip"] == model.parameters["D_dip"]
+
+    # Disabling clears the config section and its dynamic parameters.
+    dipole_box = explorer.model_parameter_widget.findChild(
+        QtWidgets.QCheckBox, "model_interaction_dipole"
+    )
+    dipole_box.setChecked(False)
+    assert model.config["dipole"]["enabled"] is False
+    assert "D_dip" not in model.parameters
 
 
 def test_heisenberg_rpa_editor_scrolls_while_fit_parameters_grow(monkeypatch):

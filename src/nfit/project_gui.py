@@ -1467,17 +1467,23 @@ def model_crystal_config(model: ModelComponentSpec) -> dict[str, Any]:
     return crystal
 
 
-def reconcile_model_orbit_parameters(model: ModelComponentSpec) -> None:
-    """Align a model's exchange parameters with its configured bond orbits.
+# Default starting values for the non-orbit dynamic parameters (all others
+# default to 0.0). Zeeman parameters must be nonzero to have any effect.
+_MODEL_PARAMETER_DEFAULTS = {"g_factor": 2.0, "chi_perp_ratio": 1.0, "gamma_perp_ratio": 1.0}
 
-    Values of orbits whose labels persist are kept; new orbits start at 0 meV
-    and fixed; parameters of removed orbits are dropped along with their fit
-    flags, limits, and sharing entries.
+
+def reconcile_model_orbit_parameters(model: ModelComponentSpec) -> None:
+    """Align a model's fit parameters with its configured interactions.
+
+    Covers the Heisenberg orbits plus any enabled tensor terms (anisotropic
+    exchange, single-ion anisotropy, dipole strength, Zeeman). Values of
+    parameters whose names persist are kept; new ones start at their default
+    (0 meV / fixed, or the physical Zeeman defaults); parameters of removed
+    interactions are dropped along with their fit flags, limits, and sharing.
     """
 
-    static = set(MODEL_TYPE_DEFINITIONS[model.type]["parameters"])
-    labels = [str(orbit.get("label", "")) for orbit in model.config.get("orbits", [])]
-    keep = static | set(labels)
+    names = list(component_parameter_names(model))
+    keep = set(names)
     for mapping in (
         model.parameters,
         model.fit_parameters,
@@ -1488,10 +1494,13 @@ def reconcile_model_orbit_parameters(model: ModelComponentSpec) -> None:
         if isinstance(mapping, dict):
             for key in [name for name in mapping if name not in keep]:
                 mapping.pop(key)
-    for label in labels:
-        model.parameters.setdefault(label, 0.0)
-        model.fit_parameters.setdefault(label, False)
-        model.global_fit.setdefault(label, True)
+    static = set(MODEL_TYPE_DEFINITIONS[model.type]["parameters"])
+    for name in names:
+        if name in static:
+            continue
+        model.parameters.setdefault(name, _MODEL_PARAMETER_DEFAULTS.get(name, 0.0))
+        model.fit_parameters.setdefault(name, False)
+        model.global_fit.setdefault(name, True)
 
 
 def import_cif_into_model(
@@ -1526,7 +1535,12 @@ def generate_model_bond_orbits(model: ModelComponentSpec) -> list[str]:
     parameters, and returns the orbit labels.
     """
 
-    from .crystal import generate_bond_orbits, orbits_to_config, sites_to_config
+    from .crystal import (
+        generate_bond_orbits,
+        orbits_to_config,
+        site_rotations_to_config,
+        sites_to_config,
+    )
 
     crystal = model_crystal_config(model)
     magnetic = [str(label) for label in model.config.get("magnetic_sites", [])]
@@ -1538,9 +1552,86 @@ def generate_model_bond_orbits(model: ModelComponentSpec) -> list[str]:
     cutoff = float(model.config.get("bond_cutoff_angstrom", DEFAULT_BOND_CUTOFF_ANGSTROM))
     sites, orbits = generate_bond_orbits(crystal, magnetic, cutoff)
     model.config["site_positions"] = sites_to_config(sites)
+    model.config["site_rotations"] = site_rotations_to_config(sites)
     model.config["orbits"] = orbits_to_config(orbits)
+    # Re-generating the network invalidates the snapshotted tensor bases (they
+    # depend on the specific bonds/sites); drop them so they are regenerated.
+    model.config.pop("anisotropy", None)
+    model.config.pop("sia", None)
     reconcile_model_orbit_parameters(model)
     return [orbit.label for orbit in orbits]
+
+
+def set_model_anisotropic_exchange(model: ModelComponentSpec, enabled: bool) -> None:
+    """Enable/disable symmetry-allowed anisotropic exchange on every bond orbit.
+
+    When enabling, projects the allowed rank-2 tensor basis of each orbit and
+    snapshots it into ``config["anisotropy"]``; orbits with no allowed
+    anisotropy contribute nothing. Reconciles the ``<orbit>_S1``/``_D1`` fit
+    parameters either way.
+    """
+
+    if not enabled:
+        model.config.pop("anisotropy", None)
+        reconcile_model_orbit_parameters(model)
+        return
+    from .crystal import (
+        expand_magnetic_sites,
+        orbits_from_config,
+        symmetry_allowed_exchange_basis,
+    )
+
+    crystal = model_crystal_config(model)
+    magnetic = [str(label) for label in model.config.get("magnetic_sites", [])]
+    sites = expand_magnetic_sites(crystal, magnetic)
+    orbits = orbits_from_config(model.config.get("orbits", []))
+    anisotropy: dict[str, Any] = {}
+    for orbit in orbits:
+        basis = symmetry_allowed_exchange_basis(crystal, sites, orbit)
+        if basis:
+            anisotropy[orbit.label] = {"enabled": True, "basis": basis}
+    model.config["anisotropy"] = anisotropy
+    reconcile_model_orbit_parameters(model)
+
+
+def set_model_single_ion_anisotropy(model: ModelComponentSpec, enabled: bool) -> None:
+    """Enable/disable symmetry-allowed single-ion anisotropy on every site class."""
+
+    if not enabled:
+        model.config.pop("sia", None)
+        reconcile_model_orbit_parameters(model)
+        return
+    from .crystal import expand_magnetic_sites, symmetry_allowed_sia_basis
+
+    crystal = model_crystal_config(model)
+    magnetic = [str(label) for label in model.config.get("magnetic_sites", [])]
+    sites = expand_magnetic_sites(crystal, magnetic)
+    sia: dict[str, Any] = {}
+    for label in magnetic:
+        basis = symmetry_allowed_sia_basis(crystal, label)
+        if basis:
+            indices = [i for i, site in enumerate(sites) if site.label.startswith(f"{label}_")]
+            sia[label] = {"enabled": True, "sites": indices, "basis": basis}
+    model.config["sia"] = sia
+    reconcile_model_orbit_parameters(model)
+
+
+def set_model_dipole(model: ModelComponentSpec, enabled: bool) -> None:
+    """Enable/disable Ewald dipole-dipole coupling (one fitted ``D_dip``)."""
+
+    model.config["dipole"] = {"enabled": bool(enabled)}
+    if enabled:
+        from .dipole import dipole_coupling_constant
+
+        model.parameters.setdefault("D_dip", dipole_coupling_constant())
+    reconcile_model_orbit_parameters(model)
+
+
+def set_model_zeeman(model: ModelComponentSpec, enabled: bool) -> None:
+    """Enable/disable the Zeeman (applied-field) term (g_factor + ratios)."""
+
+    model.config["zeeman"] = {"enabled": bool(enabled)}
+    reconcile_model_orbit_parameters(model)
 
 
 def default_model_parameters(type: str) -> dict[str, Any]:
@@ -7262,6 +7353,34 @@ class NfitProjectExplorer:
             success_message="emcee posterior sampling finished.",
         )
 
+    def confirm_and_start_posterior_rerun(
+        self,
+        group: DataGroup,
+        fit_entry: FitTimelineEntry,
+        **sampler_kwargs: Any,
+    ) -> bool:
+        from PySide6 import QtWidgets
+
+        stored = _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples"))
+        if stored is not None:
+            answer = QtWidgets.QMessageBox.question(
+                self.window,
+                "Replace emcee samples?",
+                "This fit result already has emcee samples. Rerunning will replace "
+                "the stored samples and raw chain. Continue?",
+                QtWidgets.QMessageBox.StandardButton.Yes
+                | QtWidgets.QMessageBox.StandardButton.Cancel,
+                QtWidgets.QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+                return False
+        return self.start_posterior_sampler_for_fit(
+            group,
+            fit_entry,
+            append=False,
+            **sampler_kwargs,
+        )
+
     def _posterior_sampler_result_for_fit(
         self,
         group: DataGroup,
@@ -9580,10 +9699,11 @@ class NfitProjectExplorer:
         rerun_button = QtWidgets.QPushButton("Rerun emcee")
         rerun_button.setObjectName("fit_posterior_rerun_button")
         rerun_button.setToolTip(
-            "Run a new emcee posterior sample from the best-fit parameters and replace the stored posterior for this fit result."
+            "Run a new emcee posterior sample from the best-fit parameters. If samples already exist, "
+            "you will be asked to confirm before the stored samples and raw chain are replaced."
         )
         rerun_button.clicked.connect(
-            lambda _checked=False: self.start_posterior_sampler_for_fit(
+            lambda _checked=False: self.confirm_and_start_posterior_rerun(
                 group,
                 fit_entry,
                 n_walkers=walkers_spin.value(),
@@ -9592,7 +9712,6 @@ class NfitProjectExplorer:
                 thin=thin_spin.value(),
                 random_seed=None if seed_spin.value() < 0 else seed_spin.value(),
                 workers=workers_spin.value(),
-                append=False,
             )
         )
 
@@ -11429,6 +11548,122 @@ class NfitProjectExplorer:
         table.setMaximumHeight(table_height)
         bonds_layout.addWidget(table, 1, 0, 1, 3)
         self.model_parameter_layout.addWidget(bonds_group, 5, 0, 1, 4)
+
+        self._build_model_interactions_editor(model)
+
+    def _build_model_interactions_editor(self, model: ModelComponentSpec) -> None:
+        """Anisotropy / SIA / dipole / Zeeman toggles for the heisenberg_rpa model."""
+
+        from PySide6 import QtWidgets
+
+        group = QtWidgets.QGroupBox("Interactions")
+        group.setObjectName("model_interactions_group")
+        layout = QtWidgets.QGridLayout(group)
+
+        has_orbits = bool(model.config.get("orbits"))
+        has_sites = bool(model.config.get("magnetic_sites"))
+
+        anisotropy = model.config.get("anisotropy") or {}
+        n_aniso = sum(len(entry.get("basis", ())) for entry in anisotropy.values())
+        sia = model.config.get("sia") or {}
+        n_sia = sum(len(entry.get("basis", ())) for entry in sia.values())
+
+        def add_toggle(row, kind, text, tooltip, checked, enabled, summary):
+            box = QtWidgets.QCheckBox(text)
+            box.setObjectName(f"model_interaction_{kind}")
+            box.setToolTip(tooltip)
+            box.setChecked(bool(checked))
+            box.setEnabled(bool(enabled))
+            box.toggled.connect(
+                lambda state, k=kind: self._set_model_interaction(k, state)
+            )
+            layout.addWidget(box, row, 0)
+            label = QtWidgets.QLabel(summary)
+            label.setObjectName(f"model_interaction_{kind}_summary")
+            label.setToolTip(tooltip)
+            label.setWordWrap(True)
+            layout.addWidget(label, row, 1)
+
+        add_toggle(
+            0,
+            "anisotropy",
+            "Anisotropic exchange",
+            "Project the symmetry-allowed rank-2 exchange tensors (symmetric "
+            "off-diagonal + Dzyaloshinskii-Moriya) of every bond orbit and fit "
+            "one coefficient per allowed component (J1_S1, J1_D1, ...). The "
+            "isotropic part stays the existing Heisenberg parameter. Requires "
+            "generated bond orbits.",
+            bool(anisotropy),
+            has_orbits,
+            (
+                f"{n_aniso} tensor parameter(s) across {len(anisotropy)} orbit(s)."
+                if anisotropy
+                else (
+                    "Enable to snapshot allowed exchange tensors."
+                    if has_orbits
+                    else "Generate bond orbits first."
+                )
+            ),
+        )
+        add_toggle(
+            1,
+            "sia",
+            "Single-ion anisotropy",
+            "Add the symmetry-allowed single-ion anisotropy (rank-2, "
+            "traceless) for each magnetic site class, rotated per site by its "
+            "generating operation. Fits one K coefficient per allowed "
+            "component. Requires magnetic sites.",
+            bool(sia),
+            has_sites,
+            (
+                f"{n_sia} anisotropy parameter(s) across {len(sia)} site class(es)."
+                if sia
+                else (
+                    "Enable to snapshot allowed on-site tensors."
+                    if has_sites
+                    else "Define magnetic sites first."
+                )
+            ),
+        )
+        add_toggle(
+            2,
+            "dipole",
+            "Dipole-dipole (Ewald)",
+            "Include long-range magnetic dipole-dipole coupling via Ewald "
+            "summation. Fits one strength D_dip that multiplies the cached "
+            "dipole tensor; its default is the physical (mu0/4pi)(g mu_B)^2 "
+            "value. Pin (vary off) to keep the physical strength.",
+            bool((model.config.get("dipole") or {}).get("enabled")),
+            True,
+            "Physical strength seeds D_dip; long-range, cached per geometry.",
+        )
+        add_toggle(
+            3,
+            "zeeman",
+            "Zeeman (applied field)",
+            "Enable the applied-field (Larmor) term. Uses the per-dataset "
+            "magnetic field from Sample environment and fits g_factor plus "
+            "transverse chi/gamma ratios. Datasets fitted with this on must "
+            "have a field set.",
+            bool((model.config.get("zeeman") or {}).get("enabled")),
+            True,
+            "Needs a per-dataset field (Dataset details -> Sample environment).",
+        )
+
+        self.model_parameter_layout.addWidget(group, 6, 0, 1, 4)
+
+    def _set_model_interaction(self, kind: str, enabled: bool) -> None:
+        def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
+            if kind == "anisotropy":
+                set_model_anisotropic_exchange(model, enabled)
+            elif kind == "sia":
+                set_model_single_ion_anisotropy(model, enabled)
+            elif kind == "dipole":
+                set_model_dipole(model, enabled)
+            elif kind == "zeeman":
+                set_model_zeeman(model, enabled)
+
+        self._mutate_selected_model(mutate)
 
     def _selected_model_and_group(self) -> tuple[DataGroup | None, ModelComponentSpec | None]:
         group, _entry, _mask, model, role = self._objects_for_item(self._current_item())
