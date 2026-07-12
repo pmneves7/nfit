@@ -1029,3 +1029,62 @@ def test_tensor_fit_recovers_anisotropic_parameters():
     result = fit_problem_least_squares(compiled.problem, config=OptimizationConfig())
     assert result.success
     assert result.reduced_chi2 < 1e-6
+
+
+def test_dipole_component_emits_parameter_and_reduces_to_scalar_at_zero():
+    from nfit.crystal import generate_bond_orbits, orbits_to_config, sites_to_config
+    from nfit.dipole import dipole_coupling_constant
+    from nfit.fitting import evaluate_problem_model
+
+    crystal = {
+        "lattice": {"a": 10.0, "b": 10.0, "c": 10.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+        "spacegroup": "F d -3 m:2",
+        "sites": [{"label": "M1", "position": [0.0, 0.0, 0.0], "ion": "V2"}],
+    }
+    nn = 10.0 * np.sqrt(2.0) / 4.0
+    sites, orbits = generate_bond_orbits(crystal, ["M1"], cutoff_angstrom=nn + 0.01)
+    config = {
+        "site_positions": sites_to_config(sites),
+        "orbits": orbits_to_config(orbits),
+        "crystal": crystal,
+        "ion": "V2",
+        "dipole": {"enabled": True},
+    }
+    component = ModelComponentSpec(
+        name="M", type="heisenberg_rpa",
+        parameters={"scale": 1.0, "chi0": 0.02, "gamma0": 3.0, "J1": 0.05, "D_dip": 0.0},
+        fit_parameters={"scale": True, "J1": True, "D_dip": True}, config=config,
+    )
+    assert "D_dip" in component_parameter_names(component)
+
+    points = _tensor_points(5, n=120)
+    compiled = compile_fit_problem(
+        [component], [FitDatasetInput("d", points, data_type="single_crystal_inelastic")]
+    )
+    with_zero_dipole = evaluate_problem_model(
+        compiled.problem, "d", {spec.name: spec.value for spec in compiled.problem.parameter_specs}
+    )
+
+    scalar = ModelComponentSpec(
+        name="M", type="heisenberg_rpa",
+        parameters={"scale": 1.0, "chi0": 0.02, "gamma0": 3.0, "J1": 0.05}, fit_parameters={},
+        config={k: v for k, v in config.items() if k != "dipole"},
+    )
+    compiled_scalar = compile_fit_problem(
+        [scalar], [FitDatasetInput("d", points, data_type="single_crystal_inelastic")]
+    )
+    scalar_values = evaluate_problem_model(
+        compiled_scalar.problem, "d",
+        {spec.name: spec.value for spec in compiled_scalar.problem.parameter_specs},
+    )
+    # D_dip = 0 must reduce to the scalar Heisenberg intensity.
+    np.testing.assert_allclose(with_zero_dipole, scalar_values, rtol=1e-10, atol=1e-12)
+
+    # A physical dipole strength changes the intensity.
+    physical = dict(component.parameters)
+    physical["D_dip"] = dipole_coupling_constant()
+    with_dipole = evaluate_problem_model(compiled.problem, "d", {
+        spec.name: physical.get(spec.name.split(".")[-1], spec.value)
+        for spec in compiled.problem.parameter_specs
+    })
+    assert np.max(np.abs(with_dipole - with_zero_dipole)) > 1e-8

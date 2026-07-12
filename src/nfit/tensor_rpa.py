@@ -65,6 +65,10 @@ class TensorStructure:
     n_q: int
     parameter_names: tuple[str, ...]
     terms: dict[str, list[_BlockTerm]] = field(default_factory=dict)
+    dense_terms: dict[str, ComplexArray] = field(default_factory=dict)
+    """Parameter name -> pre-assembled Hermitian ``(n_q, 3N, 3N)`` structure
+    matrix (the dipole Ewald tensor). Added directly at assembly (no Hermitian
+    completion, unlike the bond-resolved ``terms``)."""
 
 
 def _identity3() -> ComplexArray:
@@ -80,6 +84,7 @@ def build_tensor_structure(
     anisotropy: Mapping[str, Any] | None = None,
     sia: Mapping[str, Any] | None = None,
     site_rotations: Sequence[Any] | None = None,
+    dipole: Mapping[str, Any] | None = None,
 ) -> TensorStructure:
     """Assemble the bond-resolved structure matrices for a tensor RPA component.
 
@@ -179,11 +184,27 @@ def build_tensor_structure(
                 parameter_names.append(name)
                 terms[name] = block_terms
 
+    dense_terms: dict[str, ComplexArray] = {}
+    # Dipole-dipole: one strength D_dip times the Ewald-summed dipole tensor,
+    # cached densely (it is not bond-local).
+    if dipole and dipole.get("enabled"):
+        if lattice is None:
+            raise ValueError("dipole-dipole coupling requires lattice parameters")
+        from .dipole import ewald_dipole_tensor
+
+        tensor = ewald_dipole_tensor(geometry.unique_hkl, positions, lattice)
+        # (n_q, N, N, 3, 3) -> (n_q, 3N, 3N); block (j, k) at rows 3j.., cols 3k..
+        dim = 3 * n_sites
+        dense = np.transpose(tensor, (0, 1, 3, 2, 4)).reshape(geometry.n_q, dim, dim)
+        parameter_names.append("D_dip")
+        dense_terms["D_dip"] = np.ascontiguousarray(dense)
+
     return TensorStructure(
         n_sites=n_sites,
         n_q=geometry.n_q,
         parameter_names=tuple(parameter_names),
         terms=terms,
+        dense_terms=dense_terms,
     )
 
 
@@ -198,7 +219,7 @@ def assemble_tensor_exchange(
         coeff = float(param_values.get(name, 0.0))
         if coeff == 0.0:
             continue
-        for term in structure.terms[name]:
+        for term in structure.terms.get(name, ()):
             block = coeff * term.phase[:, None, None] * term.tensor[None, :, :]
             ai = 3 * term.site_i
             bj = 3 * term.site_j
@@ -207,6 +228,10 @@ def assemble_tensor_exchange(
             matrix[:, bj : bj + 3, ai : ai + 3] += np.conj(
                 np.swapaxes(block, -1, -2)
             )
+        dense = structure.dense_terms.get(name)
+        if dense is not None:
+            # Already Hermitian over the full 3N x 3N; add it directly.
+            matrix += coeff * dense
     return matrix
 
 

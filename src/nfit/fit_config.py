@@ -315,6 +315,9 @@ def _component_has_tensor_terms(config: Mapping[str, Any]) -> bool:
             isinstance(spec, dict) and spec.get("enabled") for spec in section.values()
         ):
             return True
+    dipole = config.get("dipole")
+    if isinstance(dipole, dict) and dipole.get("enabled"):
+        return True
     return False
 
 
@@ -343,6 +346,9 @@ def heisenberg_rpa_parameter_labels(component: Any) -> tuple[str, ...]:
                 continue
             for element in spec.get("basis", []):
                 labels.append(f"{element['name']}_{class_label}")
+    dipole = config.get("dipole")
+    if isinstance(dipole, dict) and dipole.get("enabled"):
+        labels.append("D_dip")
     return tuple(labels)
 
 
@@ -391,6 +397,7 @@ class _RpaComponentEvaluator:
             self.orbits = orbits
             self._anisotropy = config.get("anisotropy")
             self._sia = config.get("sia")
+            self._dipole = config.get("dipole")
             self._lattice = (config.get("crystal") or {}).get("lattice")
             self._site_rotations = config.get("site_rotations")
         else:
@@ -437,6 +444,7 @@ class _RpaComponentEvaluator:
             anisotropy=self._anisotropy,
             sia=self._sia,
             site_rotations=self._site_rotations,
+            dipole=self._dipole,
         )
         q_hat = cartesian_qhat_per_point(geometry, np.asarray(matrix, dtype=float))
         return structure, q_hat
