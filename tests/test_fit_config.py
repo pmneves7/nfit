@@ -7,6 +7,7 @@ from nfit.dataset import PointData4D, PointListData
 from nfit.fit_config import (
     FitDatasetInput,
     compile_fit_problem,
+    component_parameter_names,
     dataset_scale_parameter_name,
     instanced_parameter_name,
     model_supports_data_type,
@@ -918,3 +919,113 @@ def test_dataset_magnetic_field_validator_gives_actionable_error():
     np.testing.assert_array_equal(
         _dataset_magnetic_field(points), np.array([0.0, 0.0, 1.5])
     )
+
+
+def _pyrochlore_tensor_component(fit_aniso=True):
+    from nfit.crystal import (
+        generate_bond_orbits,
+        orbits_to_config,
+        sites_to_config,
+        symmetry_allowed_exchange_basis,
+    )
+
+    crystal = {
+        "lattice": {"a": 10.0, "b": 10.0, "c": 10.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+        "spacegroup": "F d -3 m:2",
+        "sites": [{"label": "M1", "position": [0.0, 0.0, 0.0], "ion": "V2"}],
+    }
+    nn = 10.0 * np.sqrt(2.0) / 4.0
+    sites, orbits = generate_bond_orbits(crystal, ["M1"], cutoff_angstrom=nn + 0.01)
+    basis = symmetry_allowed_exchange_basis(crystal, sites, orbits[0])
+    return crystal, ModelComponentSpec(
+        name="M",
+        type="heisenberg_rpa",
+        parameters={"scale": 1.0, "chi0": 0.02, "gamma0": 3.0, "J1": 0.05,
+                    "J1_S1": 0.0, "J1_S2": 0.0, "J1_D1": 0.0},
+        fit_parameters={"scale": True, "chi0": True, "J1": True, "J1_S1": fit_aniso},
+        config={
+            "site_positions": sites_to_config(sites),
+            "orbits": orbits_to_config(orbits),
+            "crystal": crystal,
+            "ion": "V2",
+            "anisotropy": {"J1": {"enabled": True, "basis": basis}},
+        },
+    )
+
+
+def _tensor_points(seed, n=200):
+    from nfit.fitting import reciprocal_basis_from_lattice_parameters
+
+    rng = np.random.default_rng(seed)
+    matrix = reciprocal_basis_from_lattice_parameters(10, 10, 10, 90, 90, 90)
+    return PointData4D(
+        H=rng.uniform(-1.0, 1.0, n), K=rng.uniform(-1.0, 1.0, n), L=rng.uniform(-1.0, 1.0, n),
+        E=rng.uniform(0.5, 5.0, n), intensity=np.zeros(n), sigma=np.full(n, 0.05),
+        temperature=5.0,
+        metadata={"coordinate_units": "r.l.u.", "energy_units": "meV",
+                  "rlu_to_inv_angstrom_matrix": matrix.tolist()},
+    )
+
+
+def test_tensor_component_emits_anisotropy_parameters_and_declines_analytic_jacobian():
+    from nfit.fitting import problem_supports_analytic_jacobian
+
+    _crystal, component = _pyrochlore_tensor_component()
+    names = component_parameter_names(component)
+    assert names == ("scale", "chi0", "gamma0", "J1", "J1_S1", "J1_S2", "J1_D1")
+    compiled = compile_fit_problem(
+        [component], [FitDatasetInput("d", _tensor_points(0), data_type="single_crystal_inelastic")]
+    )
+    # Tensor path falls back to finite-difference gradients.
+    assert not problem_supports_analytic_jacobian(compiled.problem)
+
+
+def test_disabled_anisotropy_takes_scalar_path_bit_identical():
+    """A component whose anisotropy sections are all disabled must be scalar."""
+    from nfit.fitting import evaluate_problem_model, problem_supports_analytic_jacobian
+    from nfit.fit_config import _RpaComponentEvaluator
+
+    _crystal, component = _pyrochlore_tensor_component()
+    # Disable the anisotropy section entirely.
+    component.config["anisotropy"]["J1"]["enabled"] = False
+    component.fit_parameters = {"scale": True, "chi0": True, "J1": True}
+    assert not _RpaComponentEvaluator(component).tensor_mode
+    compiled = compile_fit_problem(
+        [component], [FitDatasetInput("d", _tensor_points(1), data_type="single_crystal_inelastic")]
+    )
+    # The scalar path keeps its analytic Jacobian.
+    assert problem_supports_analytic_jacobian(compiled.problem)
+    values = evaluate_problem_model(
+        compiled.problem, "d", {spec.name: spec.value for spec in compiled.problem.parameter_specs}
+    )
+    assert np.all(np.isfinite(values))
+
+
+def test_tensor_fit_recovers_anisotropic_parameters():
+    from nfit.fitting import (
+        OptimizationConfig,
+        evaluate_problem_model,
+        fit_problem_least_squares,
+    )
+
+    _crystal, truth = _pyrochlore_tensor_component(fit_aniso=False)
+    truth.parameters.update({"scale": 1.2, "J1_S1": 0.012})
+    points = _tensor_points(3)
+    compiled_truth = compile_fit_problem(
+        [truth], [FitDatasetInput("d", points, data_type="single_crystal_inelastic")]
+    )
+    model_values = evaluate_problem_model(
+        compiled_truth.problem, "d",
+        {spec.name: spec.value for spec in compiled_truth.problem.parameter_specs},
+    )
+    fitted = PointData4D(
+        points.H, points.K, points.L, points.E, model_values, np.full(points.size, 0.01),
+        temperature=points.temperature, metadata=dict(points.metadata),
+    )
+    _crystal, start = _pyrochlore_tensor_component()
+    compiled = compile_fit_problem(
+        [start], [FitDatasetInput("d", fitted, data_type="single_crystal_inelastic")]
+    )
+    result = fit_problem_least_squares(compiled.problem, config=OptimizationConfig())
+    assert result.success
+    assert result.reduced_chi2 < 1e-6

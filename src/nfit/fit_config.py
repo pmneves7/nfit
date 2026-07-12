@@ -33,7 +33,7 @@ Constraints
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -284,7 +284,7 @@ def _mmp_relaxational_factory(component: Any) -> ModelFunction:
 
 
 def heisenberg_rpa_orbit_labels(component: Any) -> tuple[str, ...]:
-    """Return the exchange-parameter names of a ``heisenberg_rpa`` component.
+    """Return the Heisenberg exchange-parameter names of a component.
 
     One fit parameter per bond orbit in ``config["orbits"]``, in stored order.
     """
@@ -303,6 +303,46 @@ def heisenberg_rpa_orbit_labels(component: Any) -> tuple[str, ...]:
                 f"component {component.name!r} has duplicate bond orbit label {label!r}"
             )
         labels.append(label)
+    return tuple(labels)
+
+
+def _component_has_tensor_terms(config: Mapping[str, Any]) -> bool:
+    """Return whether any anisotropic/tensor interaction section is enabled."""
+
+    for section_key in ("anisotropy", "sia"):
+        section = config.get(section_key)
+        if isinstance(section, dict) and any(
+            isinstance(spec, dict) and spec.get("enabled") for spec in section.values()
+        ):
+            return True
+    return False
+
+
+def heisenberg_rpa_parameter_labels(component: Any) -> tuple[str, ...]:
+    """All dynamic fit-parameter names of a ``heisenberg_rpa`` component.
+
+    Heisenberg orbit labels (``J1``, ...) plus one coefficient per enabled
+    anisotropic-exchange basis element (``J1_S1``, ``J1_D1``, ...) and per
+    enabled single-ion-anisotropy basis element (``K1_<site>``, ...), matching
+    the parameter names the tensor evaluator assembles.
+    """
+
+    labels = list(heisenberg_rpa_orbit_labels(component))
+    config = component.config if isinstance(component.config, dict) else {}
+    anisotropy = config.get("anisotropy")
+    if isinstance(anisotropy, dict):
+        for orbit_label, spec in anisotropy.items():
+            if not isinstance(spec, dict) or not spec.get("enabled"):
+                continue
+            for element in spec.get("basis", []):
+                labels.append(f"{orbit_label}_{element['name']}")
+    sia = config.get("sia")
+    if isinstance(sia, dict):
+        for class_label, spec in sia.items():
+            if not isinstance(spec, dict) or not spec.get("enabled"):
+                continue
+            for element in spec.get("basis", []):
+                labels.append(f"{element['name']}_{class_label}")
     return tuple(labels)
 
 
@@ -332,47 +372,110 @@ class _RpaComponentEvaluator:
                 "generate symmetry orbits or enter bonds manually first"
             )
         self.component = component
+        self.config = config
         self.labels = heisenberg_rpa_orbit_labels(component)
         self.j_keys = {label: qualified_parameter_name(name, label) for label in self.labels}
         self.scale_key = qualified_parameter_name(name, "scale")
         self.chi0_key = qualified_parameter_name(name, "chi0")
         self.gamma0_key = qualified_parameter_name(name, "gamma0")
-        # Fold the network onto its primitive translational cell (exact:
-        # identical chi'' at far lower eigendecomposition cost). Purely an
-        # evaluation-time detail -- the component config, GUI, and fit outputs
-        # all stay in the user's specified cell.
-        self.site_positions, self.orbits = reduce_site_network(site_positions, orbits)
+        self.tensor_mode = _component_has_tensor_terms(config)
+        self.tensor_keys = {
+            label: qualified_parameter_name(name, label)
+            for label in heisenberg_rpa_parameter_labels(component)
+        }
+        if self.tensor_mode:
+            # The anisotropy/SIA tensors are tied to the sites and their
+            # recorded symmetry generators, which primitive-cell reduction does
+            # not yet carry through, so keep the user's full cell for now.
+            self.site_positions = site_positions
+            self.orbits = orbits
+            self._anisotropy = config.get("anisotropy")
+            self._sia = config.get("sia")
+            self._lattice = (config.get("crystal") or {}).get("lattice")
+            self._site_rotations = config.get("site_rotations")
+        else:
+            # Fold the network onto its primitive translational cell (exact:
+            # identical chi'' at far lower eigendecomposition cost). Purely an
+            # evaluation-time detail -- the component config, GUI, and fit
+            # outputs all stay in the user's specified cell.
+            self.site_positions, self.orbits = reduce_site_network(site_positions, orbits)
         # Q-dependent, exchange-independent phase arrays (and the Q-fixed form
         # factor) are expensive to build but constant for a given dataset. The
         # cache holds a reference to the data object and verifies identity on
         # lookup, so the id() key can never alias a freed-then-reused object.
-        self._geometry_cache: dict[int, tuple[PointData4D, Any, Any]] = {}
+        self._geometry_cache: dict[int, tuple[PointData4D, Any, Any, Any]] = {}
 
-    def _geometry(self, data: PointData4D) -> tuple[Any, Any]:
+    def _geometry(self, data: PointData4D) -> tuple[Any, Any, Any]:
         cached = self._geometry_cache.get(id(data))
         if cached is not None and cached[0] is data:
-            return cached[1], cached[2]
+            return cached[1], cached[2], cached[3]
         if len(self._geometry_cache) > 32:
             self._geometry_cache.clear()
         geometry = build_rpa_geometry(data.H, data.K, data.L, self.site_positions, self.orbits)
         form_factor_sq = _form_factor_sq_from_config(self.component, data)
-        self._geometry_cache[id(data)] = (data, geometry, form_factor_sq)
-        return geometry, form_factor_sq
+        tensor_context = None
+        if self.tensor_mode:
+            tensor_context = self._build_tensor_context(geometry, data)
+        self._geometry_cache[id(data)] = (data, geometry, form_factor_sq, tensor_context)
+        return geometry, form_factor_sq, tensor_context
+
+    def _build_tensor_context(self, geometry: Any, data: PointData4D) -> tuple[Any, Any]:
+        from .tensor_rpa import build_tensor_structure, cartesian_qhat_per_point
+
+        matrix = data.metadata.get("rlu_to_inv_angstrom_matrix")
+        if matrix is None:
+            raise ValueError(
+                f"heisenberg_rpa component {self.component.name!r} has anisotropic "
+                "terms enabled but the fit points lack an RLU->inverse-angstrom "
+                "matrix; the data group needs lattice parameters"
+            )
+        structure = build_tensor_structure(
+            geometry,
+            self.site_positions,
+            orbits=self.orbits,
+            lattice=self._lattice,
+            anisotropy=self._anisotropy,
+            sia=self._sia,
+            site_rotations=self._site_rotations,
+        )
+        q_hat = cartesian_qhat_per_point(geometry, np.asarray(matrix, dtype=float))
+        return structure, q_hat
 
     def _j_values(self, params: dict[str, float]) -> dict[str, float]:
         return {label: float(params[key]) for label, key in self.j_keys.items()}
 
+    def _tensor_values(self, params: dict[str, float]) -> dict[str, float]:
+        return {label: float(params[key]) for label, key in self.tensor_keys.items()}
+
     def value(self, data: PointData4D, params: dict[str, float]) -> np.ndarray:
         temperature = _dataset_temperature(data)
-        geometry, form_factor_sq = self._geometry(data)
+        geometry, form_factor_sq, tensor_context = self._geometry(data)
         try:
-            chipp = heisenberg_rpa_chipp(
-                geometry,
-                data.E,
-                chi0=float(params[self.chi0_key]),
-                gamma0=float(params[self.gamma0_key]),
-                j_values=self._j_values(params),
-            )
+            if self.tensor_mode:
+                from .tensor_rpa import tensor_rpa_unpolarized_chipp
+
+                structure, q_hat = tensor_context
+                chipp = tensor_rpa_unpolarized_chipp(
+                    structure,
+                    geometry,
+                    np.asarray(data.E, dtype=float),
+                    q_hat,
+                    chi0=float(params[self.chi0_key]),
+                    gamma0=float(params[self.gamma0_key]),
+                    param_values=self._tensor_values(params),
+                )
+                # The unpolarized channel already carries the polarization
+                # average, so no extra scalar polarization factor here.
+                polarization = 1.0
+            else:
+                chipp = heisenberg_rpa_chipp(
+                    geometry,
+                    data.E,
+                    chi0=float(params[self.chi0_key]),
+                    gamma0=float(params[self.gamma0_key]),
+                    j_values=self._j_values(params),
+                )
+                polarization = ISOTROPIC_POLARIZATION
         except ValueError:
             # Unphysical trial parameters (RPA instability, non-positive
             # chi0/gamma0). Optimizers probe these while searching; a huge
@@ -384,14 +487,14 @@ class _RpaComponentEvaluator:
             temperature,
             scale=float(params[self.scale_key]),
             form_factor_sq=form_factor_sq,
-            polarization=ISOTROPIC_POLARIZATION,
+            polarization=polarization,
         )
 
     def gradients(self, data: PointData4D, params: dict[str, float]) -> dict[str, np.ndarray]:
         """Return ``d(intensity)/d(param)`` keyed by qualified parameter name."""
 
         temperature = _dataset_temperature(data)
-        geometry, form_factor_sq = self._geometry(data)
+        geometry, form_factor_sq, _tensor_context = self._geometry(data)
         scale = float(params[self.scale_key])
         try:
             chipp, chipp_grads = heisenberg_rpa_chipp_and_gradients(
@@ -448,7 +551,13 @@ def _heisenberg_rpa_factory(component: Any) -> ModelFunction:
     return _RpaComponentEvaluator(component).value
 
 
-def _heisenberg_rpa_jacobian_factory(component: Any) -> "ModelJacobian":
+def _heisenberg_rpa_jacobian_factory(component: Any) -> "ModelJacobian | None":
+    # Analytic gradients are implemented for the scalar Heisenberg path only;
+    # components with anisotropic tensor terms fall back to finite differences
+    # (the fit engine gates on every component providing a Jacobian).
+    config = component.config if isinstance(component.config, dict) else {}
+    if _component_has_tensor_terms(config):
+        return None
     return _RpaComponentEvaluator(component).gradients
 
 
@@ -513,7 +622,7 @@ MODEL_TYPE_REGISTRY: dict[str, ModelTypeInfo] = {
         parameters=("scale", "chi0", "gamma0"),
         data_types=("single_crystal_inelastic",),
         factory=_heisenberg_rpa_factory,
-        dynamic_parameters=heisenberg_rpa_orbit_labels,
+        dynamic_parameters=heisenberg_rpa_parameter_labels,
         jacobian_factory=_heisenberg_rpa_jacobian_factory,
     ),
 }
@@ -778,9 +887,13 @@ def compile_fit_problem(
             and dataset.name not in scale_parameters
             and all(factory is not None for factory in jacobian_factories)
         ):
-            model_jacobian = _additive_jacobian(
-                [factory(component) for factory, component in zip(jacobian_factories, components_here)]
-            )
+            # A registry entry may have a jacobian factory that still declines
+            # (returns None) for a particular component configuration (e.g. a
+            # heisenberg_rpa component with anisotropic tensor terms). Only use
+            # analytic Jacobians when every component actually yields one.
+            built = [factory(component) for factory, component in zip(jacobian_factories, components_here)]
+            if all(jacobian is not None for jacobian in built):
+                model_jacobian = _additive_jacobian(built)
         fit_datasets.append(
             FitDataset(
                 name=dataset.name,
