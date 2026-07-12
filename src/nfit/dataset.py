@@ -29,6 +29,10 @@ class PointData4D:
         Optional boolean mask. True means the point is eligible for analysis.
     temperature
         Sample temperature in K, either scalar or one value per point.
+    magnetic_field
+        Applied magnetic field as a Cartesian 3-vector in Tesla (crystal
+        Cartesian frame, a along x), shared by all points. ``None`` when no
+        field was applied or recorded.
     metadata
         Free-form metadata. Use this for units, sample, scan, and normalization
         notes; do not hide physics assumptions in code.
@@ -42,6 +46,7 @@ class PointData4D:
     sigma: ArrayLike
     mask: ArrayLike | None = None
     temperature: float | ArrayLike | None = None
+    magnetic_field: ArrayLike | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -72,6 +77,15 @@ class PointData4D:
                     f"temperature shape {temp.shape} does not match H shape {shape}"
                 )
             self.temperature = temp
+
+        if self.magnetic_field is not None:
+            field_vector = np.asarray(self.magnetic_field, dtype=float)
+            if field_vector.shape != (3,):
+                raise ValueError(
+                    "magnetic_field must be a Cartesian 3-vector in Tesla; got "
+                    f"shape {field_vector.shape}"
+                )
+            self.magnetic_field = field_vector
 
     @property
     def size(self) -> int:
@@ -117,6 +131,7 @@ class PointData4D:
             sigma=self.sigma[mask],
             mask=np.ones(int(np.count_nonzero(mask)), dtype=bool),
             temperature=temp,
+            magnetic_field=None if self.magnetic_field is None else np.array(self.magnetic_field),
             metadata=dict(self.metadata),
         )
 
@@ -136,6 +151,7 @@ def from_arrays(
     *,
     mask: ArrayLike | None = None,
     temperature: float | ArrayLike | None = None,
+    magnetic_field: ArrayLike | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> PointData4D:
     """Construct :class:`PointData4D` from array-like inputs."""
@@ -149,6 +165,7 @@ def from_arrays(
         sigma=sigma,
         mask=mask,
         temperature=temperature,
+        magnetic_field=magnetic_field,
         metadata={} if metadata is None else dict(metadata),
     )
 

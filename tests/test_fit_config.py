@@ -906,3 +906,15 @@ def test_heisenberg_rpa_fit_is_backend_invariant():
     pred_numba = evaluate_problem_model(compiled.problem, "d", result_numba.params)
     pred_numpy = evaluate_problem_model(compiled.problem, "d", result_numpy.params)
     np.testing.assert_allclose(pred_numba, pred_numpy, rtol=1e-4, atol=1e-6)
+
+
+def test_dataset_magnetic_field_validator_gives_actionable_error():
+    from nfit.fit_config import _dataset_magnetic_field
+
+    points = _rpa_points(5.0, 3)
+    with pytest.raises(ValueError, match="Sample\\s*environment"):
+        _dataset_magnetic_field(points)
+    points.magnetic_field = np.array([0.0, 0.0, 1.5])
+    np.testing.assert_array_equal(
+        _dataset_magnetic_field(points), np.array([0.0, 0.0, 1.5])
+    )

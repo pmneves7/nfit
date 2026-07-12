@@ -184,6 +184,7 @@ def _dense_group_data(data: PointData4D, sorted_indices: FloatArray, dense_e: Fl
         intensity=np.zeros_like(dense_e, dtype=float),
         sigma=np.ones_like(dense_e, dtype=float),
         temperature=temperature,
+        magnetic_field=None if data.magnetic_field is None else np.array(data.magnetic_field),
         metadata=dict(data.metadata),
     )
 
@@ -202,6 +203,7 @@ def _subset_point_data(data: PointData4D, indices: FloatArray) -> PointData4D:
         sigma=data.sigma[indices],
         mask=np.ones(len(indices), dtype=bool),
         temperature=temperature,
+        magnetic_field=None if data.magnetic_field is None else np.array(data.magnetic_field),
         metadata=dict(data.metadata),
     )
 

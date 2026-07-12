@@ -14,6 +14,7 @@ from nfit import (
     make_mask_transform,
     rebin_point_data,
     SamplerConfig,
+    SamplingCancelled,
     sample_problem_parameters,
 )
 from nfit.cross_section import intensity_from_chipp
@@ -365,6 +366,49 @@ def test_emcee_sampling_reports_posterior_samples():
     assert result.log_probability_chain.shape == (12, 8)
 
 
+def test_emcee_sampling_cancellation_returns_partial_chain():
+    pytest.importorskip("emcee")
+    data = PointData4D(
+        [0.0, 1.0, 2.0],
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [1.0, 1.0, 1.0],
+        [2.0, 2.1, 1.9],
+        [0.1, 0.1, 0.1],
+    )
+
+    def constant_model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        return np.full(data.size, params["level"], dtype=float)
+
+    problem = FitProblem(
+        datasets=[FitDataset("data", data)],
+        model=constant_model,
+        parameter_specs=[ParameterSpec("level", 2.0, min=0.0, max=4.0)],
+    )
+
+    def cancel_after_three(event: dict[str, object]) -> None:
+        if event.get("stage") == "emcee" and event.get("iteration") == 3:
+            raise RuntimeError("stop")
+
+    with pytest.raises(SamplingCancelled) as caught:
+        sample_problem_parameters(
+            problem,
+            initial_params={"level": 2.0},
+            config=SamplerConfig(n_walkers=8, n_steps=12, burn_in=0, random_seed=5),
+            progress_callback=cancel_after_three,
+        )
+
+    result = caught.value.result
+    assert result.metadata["cancelled"] is True
+    assert result.metadata["completed"] is False
+    assert result.metadata["n_steps"] == 3
+    assert result.metadata["requested_n_steps"] == 12
+    assert result.chain is not None
+    assert result.chain.shape == (3, 8, 1)
+    assert result.log_probability_chain is not None
+    assert result.log_probability_chain.shape == (3, 8)
+
+
 def test_parallel_worker_auto_uses_conservative_cpu_count(monkeypatch):
     from nfit.fitting import _resolve_parallel_workers
 
@@ -412,3 +456,62 @@ def test_dataset_parameter_bindings_share_values_by_group():
     assert result.success
     np.testing.assert_allclose(result.params["group_low"], 2.1, atol=1e-8)
     np.testing.assert_allclose(result.params["group_high"], 5.0, atol=1e-8)
+
+
+def test_magnetic_field_vector_frames_agree_for_cubic():
+    from nfit.fitting import magnetic_field_vector
+
+    lattice = {"a": 4.0, "b": 4.0, "c": 4.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0}
+    uvw = magnetic_field_vector(2.0, [1, 1, 1], "uvw", lattice)
+    hkl = magnetic_field_vector(2.0, [1, 1, 1], "hkl", lattice)
+    np.testing.assert_allclose(uvw, hkl, atol=1e-12)
+    np.testing.assert_allclose(np.linalg.norm(uvw), 2.0, rtol=1e-12)
+    np.testing.assert_allclose(uvw, 2.0 * np.ones(3) / np.sqrt(3.0), atol=1e-12)
+
+
+def test_magnetic_field_vector_frames_differ_for_orthorhombic():
+    from nfit.fitting import magnetic_field_vector
+
+    lattice = {"a": 3.0, "b": 5.0, "c": 8.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0}
+    # Direct [110] direction is along a*x + b*y ~ (3, 5, 0); reciprocal (110)
+    # is along x/a + y/b ~ (1/3, 1/5, 0). Hand-checked normalization.
+    uvw = magnetic_field_vector(1.0, [1, 1, 0], "uvw", lattice)
+    hkl = magnetic_field_vector(1.0, [1, 1, 0], "hkl", lattice)
+    np.testing.assert_allclose(uvw, np.array([3.0, 5.0, 0.0]) / np.linalg.norm([3.0, 5.0, 0.0]), atol=1e-12)
+    np.testing.assert_allclose(
+        hkl, np.array([1 / 3.0, 1 / 5.0, 0.0]) / np.linalg.norm([1 / 3.0, 1 / 5.0, 0.0]), atol=1e-12
+    )
+    assert not np.allclose(uvw, hkl)
+
+    with pytest.raises(ValueError, match="frame"):
+        magnetic_field_vector(1.0, [1, 0, 0], "cartesian", lattice)
+    with pytest.raises(ValueError, match="direction"):
+        magnetic_field_vector(1.0, [0, 0, 0], "uvw", lattice)
+
+
+def test_point_data_magnetic_field_propagates_through_pipeline():
+    from nfit.fitting import _copy_point_data
+
+    field = np.array([0.0, 0.0, 2.0])
+    data = PointData4D(
+        H=np.array([0.1, 0.2, np.nan]),
+        K=np.zeros(3),
+        L=np.zeros(3),
+        E=np.array([1.0, 2.0, 3.0]),
+        intensity=np.ones(3),
+        sigma=np.ones(3),
+        temperature=4.0,
+        magnetic_field=field,
+    )
+    np.testing.assert_array_equal(data.magnetic_field, field)
+    valid = data.valid()
+    assert valid.size == 2
+    np.testing.assert_array_equal(valid.magnetic_field, field)
+    copied = _copy_point_data(data, mask=np.array([True, True, False]))
+    np.testing.assert_array_equal(copied.magnetic_field, field)
+    # a non-3-vector is rejected
+    with pytest.raises(ValueError, match="magnetic_field"):
+        PointData4D(
+            H=np.zeros(1), K=np.zeros(1), L=np.zeros(1), E=np.zeros(1),
+            intensity=np.zeros(1), sigma=np.ones(1), magnetic_field=[1.0, 2.0],
+        )

@@ -42,6 +42,16 @@ buttons, keyboard shortcuts, drag and drop, and right-click context menus:
 - add masks and model components,
 - run fits and keep the resulting history in the `Fits` tree.
 
+The tree supports multi-selection so several items of the same kind can be
+deleted at once. Shift-click extends a contiguous range from the previously
+clicked item and Ctrl/Command-click toggles individual items; the selection is
+automatically kept to a single kind, so a range of fit results (or datasets,
+masks, or models) never sweeps in the enclosing workspace or the
+`Datasets`/`Models`/`Fits` folder headers. Pressing `Delete` or the `Delete`
+button then removes every selected item in one action. Extending a fit selection
+with a modifier held does not restore each fit's state as you go, so building a
+selection to prune old history stays fast.
+
 The `File` menu supports New, Open, Recent projects, Save, Save As, Close, and
 Quit. On platforms with standard shortcuts, these use the expected New/Open/Save
 bindings, with Command as the default modifier on macOS and Control elsewhere.
@@ -80,6 +90,16 @@ require more computational time. The target is not a cap on total rebinner
 memory use, because source arrays, coordinates, output grids, and bookkeeping
 also consume memory. The best value depends on dataset size, output grid size,
 dimensionality, and available memory.
+The `Automatic rebinning` checkbox controls whether edits to rebin bounds,
+vectors, bin counts, weighting, or batching immediately recompute the cached
+rebinned view. nfit estimates the work from source points, output-bin count,
+and fractional-neighbor contributions; small datasets default to automatic
+rebinning, while large datasets default to manual rebinning. When automatic
+rebinning is off, edits are marked pending and the currently cached rebin stays
+visible until `Rebin now` is pressed. Operations that require current rebinned
+data, including fitting, opening the data viewer, materializing a rebinned
+dataset, and saving a rebinned dataset, force the pending rebin first. Large
+explicit rebin jobs show a progress dialog driven by the rebinner batches.
 For 4D MDHisto data, the `Coord axis` defaults follow the displayed physical
 axis when possible rather than a blind diagonal matrix: for example `DeltaE`
 starts as `[0, 0, 0, 1]`, `[H,-H,0]` starts as `[1, -1, 0, 0]`, `[0,0,L]`
@@ -104,17 +124,39 @@ individual constituent datasets are not fitted separately. To inspect the
 constituents, open the data viewer from one of the datasets inside the
 workspace; that viewer shows the datasets that make up the composite instead of
 the composite itself.
+Composite rebin controls use the same batching and automatic/manual behavior as
+individual dataset rebins. Large composites default to manual rebinning: edits
+are marked pending, the cached composite is reused during passive refreshes,
+and `Rebin now`, fitting, or opening the data viewer forces the current
+composite rebin. Large composite rebins also report progress by batch.
 
-The dataset title row includes a `T (K)` control that sets a per-dataset sample
-temperature override, stored in `dataset.parameters["temperature"]`. Spin down
-to the minimum ("(from data)") to defer to any temperature imported with the
-data. Physics models that need the Bose factor read the temperature from the
-fit points and raise a clear error when no valid temperature is available.
+A **Sample environment** panel sits between the Dataset and Axes panels of the
+dataset details. It holds the per-dataset temperature and applied magnetic
+field:
+
+- `T (K)` sets a per-dataset sample temperature override, stored in
+  `dataset.parameters["temperature"]`. Spin down to the minimum ("(from data)")
+  to defer to any temperature imported with the data. Physics models that need
+  the Bose factor read the temperature from the fit points and raise a clear
+  error when no valid temperature is available.
+- `Field (T)` sets the applied magnetic field magnitude in tesla; `(none)` (the
+  minimum) means zero field. The frame selector chooses whether the direction
+  is a direct-lattice `[u v w]` vector (the usual experimental statement, e.g.
+  B ∥ [111]) or a reciprocal `(H K L)` vector, and the direction box takes three
+  components such as `1 1 0`. Only the orientation matters; the magnitude sets
+  the strength. The field is stored as
+  `dataset.parameters["magnetic_field"] = {"magnitude_T", "direction", "frame"}`
+  and converted to a Cartesian tesla vector on the fit points using the data
+  group's lattice (so a group lattice is required to orient it). The Zeeman term
+  of spin-fluctuation models reads it and raises a clear error when it is
+  needed but missing. For cubic crystals the two frames give the same
+  directions; for lower symmetry they differ.
+
 When the data group defines lattice parameters, they are attached to the fit
 points automatically so form factors and |Q|-dependent models work without
 per-dataset setup.
 
-The same title row includes dataset `Fit weight` and `Scale` controls. With
+The dataset title row includes dataset `Fit weight` and `Scale` controls. With
 `Fit scale` unchecked, `Scale` is a fixed data transform: nfit multiplies the
 dataset signal by the scale factor and its uncertainty by the absolute value of
 the scale factor before viewing and fitting. With `Fit scale` checked, `Scale`
@@ -264,10 +306,14 @@ stage log below; the divider between the table and log is draggable. The
 time-per-step value is reported for differential-evolution
 initialization, least-squares residual evaluations, and emcee posterior
 sampling. The `Cancel` button requests cancellation at the next optimizer or
-sampler progress update. Starting another fit resets the same progress window
-instead of opening duplicates. When a fit pipeline finishes, the progress window
-stays open so the final stage, parameters, and log remain available until the
-user closes it. A compact progress log is also stored in the fit metadata.
+sampler progress update. If cancellation happens during emcee after one or more
+samples have been recorded, nfit stores the partial raw chain on the fit result
+just like a completed posterior run; the posterior diagnostics can inspect it,
+and `Append emcee` can continue from the last saved walker positions. Starting
+another fit resets the same progress window instead of opening duplicates. When
+a fit pipeline finishes, the progress window stays open so the final stage,
+parameters, and log remain available until the user closes it. A compact
+progress log is also stored in the fit metadata.
 
 `DE workers` and `emcee workers` control optional parallel worker threads for
 differential-evolution objective evaluations and emcee log-probability

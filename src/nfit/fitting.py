@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from multiprocessing.pool import ThreadPool
 from typing import Any
@@ -281,6 +281,14 @@ class SamplingResult:
     log_probability_chain: FloatArray | None = None
 
 
+class SamplingCancelled(RuntimeError):
+    """Raised when posterior sampling is cancelled after producing samples."""
+
+    def __init__(self, message: str, result: SamplingResult) -> None:
+        super().__init__(message)
+        self.result = result
+
+
 @dataclass(frozen=True)
 class FitProblem:
     """Complete simultaneous-fitting problem definition.
@@ -429,6 +437,78 @@ def reciprocal_basis_from_lattice_parameters(
     bstar = factor * np.cross(cvec, avec) / volume
     cstar = factor * np.cross(avec, bvec) / volume
     return np.column_stack([astar, bstar, cstar])
+
+
+def direct_basis_from_lattice_parameters(
+    a: float,
+    b: float,
+    c: float,
+    alpha: float,
+    beta: float,
+    gamma: float,
+) -> FloatArray:
+    """Return the 3x3 matrix whose columns are the direct lattice vectors (Å).
+
+    Uses the same Cartesian frame as
+    :func:`reciprocal_basis_from_lattice_parameters` (``a`` along ``x``), so
+    direct-lattice directions ``[u v w]`` and reciprocal directions ``(H K L)``
+    convert into one consistent Cartesian frame.
+    """
+
+    lengths = np.asarray([a, b, c], dtype=float)
+    if np.any(lengths <= 0.0):
+        raise ValueError("lattice lengths must be positive")
+    angles = np.deg2rad(np.asarray([alpha, beta, gamma], dtype=float))
+    if np.any((angles <= 0.0) | (angles >= np.pi)):
+        raise ValueError("lattice angles must be between 0 and 180 degrees")
+    alpha_r, beta_r, gamma_r = angles
+    avec = np.array([a, 0.0, 0.0], dtype=float)
+    bvec = np.array([b * np.cos(gamma_r), b * np.sin(gamma_r), 0.0], dtype=float)
+    cx = c * np.cos(beta_r)
+    cy = c * (np.cos(alpha_r) - np.cos(beta_r) * np.cos(gamma_r)) / np.sin(gamma_r)
+    cz2 = c * c - cx * cx - cy * cy
+    if cz2 <= 0.0:
+        raise ValueError("lattice parameters produce a non-positive unit-cell volume")
+    cvec = np.array([cx, cy, np.sqrt(cz2)], dtype=float)
+    return np.column_stack([avec, bvec, cvec])
+
+
+def magnetic_field_vector(
+    magnitude_tesla: float,
+    direction: ArrayLike,
+    frame: str,
+    lattice: Mapping[str, Any],
+) -> FloatArray:
+    """Return the applied field as a Cartesian 3-vector in Tesla.
+
+    ``direction`` is a crystallographic direction in the given ``frame``:
+    ``"uvw"`` interprets it as a direct-lattice direction ``[u v w]`` (the
+    usual experimental statement, e.g. field along ``[1 1 1]``), ``"hkl"`` as
+    a reciprocal-lattice direction ``(H K L)``. The direction is normalized in
+    Cartesian coordinates and scaled by ``magnitude_tesla``; only the
+    direction's orientation matters, not its length. For cubic lattices the
+    two frames give the same directions; for lower symmetry they differ.
+    """
+
+    magnitude = float(magnitude_tesla)
+    vector = np.asarray(direction, dtype=float).reshape(3)
+    if not np.all(np.isfinite(vector)) or float(np.linalg.norm(vector)) == 0.0:
+        raise ValueError("magnetic field direction must be a finite nonzero 3-vector")
+    a = float(lattice["a"])
+    b = float(lattice["b"])
+    c = float(lattice["c"])
+    alpha = float(lattice.get("alpha", 90.0))
+    beta = float(lattice.get("beta", 90.0))
+    gamma = float(lattice.get("gamma", 90.0))
+    frame_name = str(frame).lower()
+    if frame_name == "uvw":
+        basis = direct_basis_from_lattice_parameters(a, b, c, alpha, beta, gamma)
+    elif frame_name == "hkl":
+        basis = reciprocal_basis_from_lattice_parameters(a, b, c, alpha, beta, gamma)
+    else:
+        raise ValueError(f"unknown magnetic field frame {frame!r}; use 'uvw' or 'hkl'")
+    cartesian = basis @ vector
+    return magnitude * cartesian / float(np.linalg.norm(cartesian))
 
 
 def attach_lattice_parameters(
@@ -742,6 +822,7 @@ def rebin_point_data(
     normalize: bool = True,
     mean_weighting: str = "inverse_variance",
     max_batch_bytes: int = 192 * 1024 * 1024,
+    progress_callback: ProgressCallback | None = None,
 ) -> PointData4D:
     """Rebin flattened ``(H,K,L,E)`` point data onto a regular 4D grid.
 
@@ -768,6 +849,7 @@ def rebin_point_data(
         normalize=normalize,
         mean_weighting=mean_weighting,
         max_batch_bytes=max_batch_bytes,
+        progress_callback=progress_callback,
     )
     if result.bin_centers_list is None:
         raise RuntimeError("rebinning did not produce bin centers")
@@ -807,6 +889,7 @@ def rebin_point_data(
         result.binned_data_errs.ravel(),
         mask=mask.ravel(),
         temperature=temperature,
+        magnetic_field=None if source.magnetic_field is None else np.array(source.magnetic_field),
         metadata=metadata,
     )
 
@@ -1138,31 +1221,19 @@ def sample_problem_parameters(
     worker_request = backend_kwargs.pop("workers", backend_kwargs.pop("parallel_workers", 1))
     workers = _resolve_parallel_workers(worker_request)
     pool = ThreadPool(workers) if workers > 1 else None
-    try:
-        if pool is not None:
-            backend_kwargs["pool"] = pool
-        emcee_sampler = emcee.EnsembleSampler(
-            n_walkers, n_dim, log_probability, **backend_kwargs
-        )
-        sampler_start = time.perf_counter()
-        for iteration, state in enumerate(emcee_sampler.sample(p0, iterations=n_steps), start=1):
-            if progress_callback is not None:
-                mean = np.mean(state.coords, axis=0)
-                elapsed = time.perf_counter() - sampler_start
-                progress_callback(
-                    {
-                        "stage": "emcee",
-                        "iteration": iteration,
-                        "total": n_steps,
-                        "elapsed_seconds": elapsed,
-                        "seconds_per_step": elapsed / max(iteration, 1),
-                        "parameters": {name: float(value) for name, value in zip(names, mean)},
-                        "message": f"emcee step {iteration}/{n_steps}",
-                    }
-                )
+    emcee_sampler: Any | None = None
+
+    def result_from_sampler(*, completed: bool) -> SamplingResult:
+        if emcee_sampler is None:
+            raise RuntimeError("emcee sampler has not been initialized")
         chain = np.asarray(emcee_sampler.get_chain(), dtype=float)
         log_prob_chain = np.asarray(emcee_sampler.get_log_prob(), dtype=float)
-        samples = np.asarray(emcee_sampler.get_chain(discard=burn_in, thin=thin, flat=True), dtype=float)
+        if chain.ndim != 3 or chain.shape[0] == 0:
+            raise RuntimeError("emcee sampling was cancelled before any samples were recorded")
+        actual_steps = int(chain.shape[0])
+        samples = np.asarray(
+            emcee_sampler.get_chain(discard=burn_in, thin=thin, flat=True), dtype=float
+        )
         log_prob = np.asarray(
             emcee_sampler.get_log_prob(discard=burn_in, thin=thin, flat=True),
             dtype=float,
@@ -1174,32 +1245,66 @@ def sample_problem_parameters(
             ]
         except Exception:
             autocorrelation_time = []
+        metadata: dict[str, Any] = {
+            "method": "emcee",
+            "n_walkers": n_walkers,
+            "n_steps": actual_steps,
+            "requested_n_steps": n_steps,
+            "completed": bool(completed),
+            "cancelled": not bool(completed),
+            "burn_in": burn_in,
+            "thin": thin,
+            "random_seed": sampler.random_seed,
+            "workers": workers,
+            "worker_request": "auto" if int(worker_request or 1) == -1 else workers,
+            "acceptance_fraction_mean": float(np.mean(acceptance_fraction)),
+            "acceptance_fraction_min": float(np.min(acceptance_fraction)),
+            "acceptance_fraction_max": float(np.max(acceptance_fraction)),
+        }
+        metadata["autocorrelation_time"] = autocorrelation_time
+        return SamplingResult(
+            samples=samples,
+            variable_names=list(names),
+            log_probability=log_prob,
+            metadata=metadata,
+            chain=chain,
+            log_probability_chain=log_prob_chain,
+        )
+
+    try:
+        if pool is not None:
+            backend_kwargs["pool"] = pool
+        emcee_sampler = emcee.EnsembleSampler(
+            n_walkers, n_dim, log_probability, **backend_kwargs
+        )
+        sampler_start = time.perf_counter()
+        for iteration, state in enumerate(emcee_sampler.sample(p0, iterations=n_steps), start=1):
+            if progress_callback is not None:
+                mean = np.mean(state.coords, axis=0)
+                elapsed = time.perf_counter() - sampler_start
+                try:
+                    progress_callback(
+                        {
+                            "stage": "emcee",
+                            "iteration": iteration,
+                            "total": n_steps,
+                            "elapsed_seconds": elapsed,
+                            "seconds_per_step": elapsed / max(iteration, 1),
+                            "parameters": {name: float(value) for name, value in zip(names, mean)},
+                            "message": f"emcee step {iteration}/{n_steps}",
+                        }
+                    )
+                except Exception as exc:
+                    raise SamplingCancelled(
+                        "emcee posterior sampling cancelled; partial samples were saved.",
+                        result_from_sampler(completed=False),
+                    ) from exc
+        result = result_from_sampler(completed=True)
     finally:
         if pool is not None:
             pool.close()
             pool.join()
-    metadata: dict[str, Any] = {
-        "method": "emcee",
-        "n_walkers": n_walkers,
-        "n_steps": n_steps,
-        "burn_in": burn_in,
-        "thin": thin,
-        "random_seed": sampler.random_seed,
-        "workers": workers,
-        "worker_request": "auto" if int(worker_request or 1) == -1 else workers,
-        "acceptance_fraction_mean": float(np.mean(acceptance_fraction)),
-        "acceptance_fraction_min": float(np.min(acceptance_fraction)),
-        "acceptance_fraction_max": float(np.max(acceptance_fraction)),
-    }
-    metadata["autocorrelation_time"] = autocorrelation_time
-    return SamplingResult(
-        samples=samples,
-        variable_names=list(names),
-        log_probability=log_prob,
-        metadata=metadata,
-        chain=chain,
-        log_probability_chain=log_prob_chain,
-    )
+    return result
 
 
 def initialize_problem_differential_evolution(
@@ -1545,6 +1650,7 @@ def _copy_point_data(data: PointData4D, *, mask: ArrayLike) -> PointData4D:
         data.sigma.copy(),
         mask=np.asarray(mask, dtype=bool).copy(),
         temperature=temperature,
+        magnetic_field=None if data.magnetic_field is None else np.array(data.magnetic_field),
         metadata=dict(data.metadata),
     )
 

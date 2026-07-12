@@ -171,6 +171,25 @@ def _dataset_temperature(data: PointData4D) -> float | np.ndarray:
     return temperature
 
 
+def _dataset_magnetic_field(data: PointData4D) -> np.ndarray:
+    """Return the applied field of a fitted dataset, validating it.
+
+    Zeeman-enabled models require a Cartesian Tesla 3-vector on every fitted
+    dataset (stamped from the dataset's Sample environment settings).
+    """
+
+    field_vector = data.magnetic_field
+    if field_vector is None or not np.all(np.isfinite(np.asarray(field_vector, dtype=float))):
+        raise ValueError(
+            "this model has the Zeeman term enabled and requires a valid "
+            "applied magnetic field for every fitted dataset: set the field "
+            "magnitude and direction in the dataset details (Sample "
+            "environment), and make sure the data group has lattice "
+            "parameters to orient the direction"
+        )
+    return np.asarray(field_vector, dtype=float)
+
+
 def _form_factor_sq_from_config(component: Any, data: PointData4D) -> float | np.ndarray:
     """Return ``|f(Q)|^2`` from a component's ``ion`` / coefficient config.
 

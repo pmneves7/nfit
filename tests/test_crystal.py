@@ -215,3 +215,143 @@ def test_pyrochlore_reduces_to_four_sublattices_with_identical_chipp():
     full = heisenberg_rpa_chipp(full_geometry, E, chi0=0.9, gamma0=3.0, j_values=j_values)
     reduced = heisenberg_rpa_chipp(reduced_geometry, E, chi0=0.9, gamma0=3.0, j_values=j_values)
     np.testing.assert_allclose(reduced, full, rtol=1e-12)
+
+
+P1_TRICLINIC = {
+    "lattice": {"a": 5.0, "b": 6.0, "c": 7.0, "alpha": 80.0, "beta": 95.0, "gamma": 105.0},
+    "spacegroup": "P 1",
+    "sites": [
+        {"label": "A", "position": [0.0, 0.0, 0.0], "ion": ""},
+        {"label": "B", "position": [0.3, 0.4, 0.2], "ion": ""},
+    ],
+}
+
+
+def _bond_vector_cartesian(bond, positions, lattice_matrix):
+    delta = (
+        positions[bond.site_j]
+        + np.asarray(bond.offset, dtype=float)
+        - positions[bond.site_i]
+    )
+    return lattice_matrix @ delta
+
+
+def test_bond_orbits_record_symmetry_operations():
+    from nfit.crystal import _lattice_vectors, cartesian_rotation
+
+    a = PYROCHLORE["lattice"]["a"]
+    nn = a * np.sqrt(2.0) / 4.0
+    sites, orbits = generate_bond_orbits(PYROCHLORE, ["M1"], cutoff_angstrom=2 * nn + 0.01)
+    lattice_matrix = _lattice_vectors(PYROCHLORE["lattice"])
+    positions = np.asarray([site.position for site in sites])
+
+    for orbit in orbits:
+        assert orbit.operations is not None
+        assert len(orbit.operations) == len(orbit.bonds)
+        # The representative carries the identity, unreversed.
+        np.testing.assert_allclose(np.asarray(orbit.operations[0].rotation), np.eye(3))
+        assert orbit.operations[0].reverses is False
+        representative_vector = _bond_vector_cartesian(
+            orbit.bonds[0], positions, lattice_matrix
+        )
+        for bond, symmetry in zip(orbit.bonds, orbit.operations):
+            rotation = cartesian_rotation(
+                np.asarray(symmetry.rotation), PYROCHLORE["lattice"]
+            )
+            # Cartesian rotations of crystallographic ops are orthogonal.
+            np.testing.assert_allclose(rotation @ rotation.T, np.eye(3), atol=1e-10)
+            # The recorded op maps the representative bond vector onto this
+            # bond's vector (with a sign flip when the op reversed the bond).
+            target = _bond_vector_cartesian(bond, positions, lattice_matrix)
+            if symmetry.reverses:
+                target = -target
+            np.testing.assert_allclose(rotation @ representative_vector, target, atol=1e-8)
+
+    # Sites record their generating rotation too.
+    assert all(site.rotation is not None for site in sites)
+    np.testing.assert_allclose(np.asarray(sites[0].rotation), np.eye(3))
+
+
+def test_pyrochlore_nn_exchange_basis_matches_published_form():
+    """Pyrochlore NN allows 4 couplings incl. Heisenberg (Ross et al. PRB 84, 064430):
+    after removing the isotropic part, 2 symmetric-traceless + 1 DM."""
+    from nfit.crystal import symmetry_allowed_exchange_basis
+
+    a = PYROCHLORE["lattice"]["a"]
+    nn = a * np.sqrt(2.0) / 4.0
+    sites, orbits = generate_bond_orbits(PYROCHLORE, ["M1"], cutoff_angstrom=nn + 0.01)
+    basis = symmetry_allowed_exchange_basis(PYROCHLORE, sites, orbits[0])
+    kinds = [element["kind"] for element in basis]
+    assert kinds == ["symmetric", "symmetric", "dm"]
+    for element in basis:
+        matrix = np.asarray(element["matrix"])
+        np.testing.assert_allclose(np.linalg.norm(matrix), 1.0, rtol=1e-9)
+        if element["kind"] == "symmetric":
+            np.testing.assert_allclose(matrix, matrix.T, atol=1e-9)
+            assert abs(np.trace(matrix)) < 1e-9
+        else:
+            np.testing.assert_allclose(matrix, -matrix.T, atol=1e-9)
+
+
+def test_fcc_nn_bond_inversion_center_forbids_dm():
+    """FCC NN bond midpoints are inversion centers: Moriya's rules give D = 0."""
+    from nfit.crystal import symmetry_allowed_exchange_basis
+
+    sites, orbits = generate_bond_orbits(FCC, ["Ni1"], cutoff_angstrom=3.0)
+    basis = symmetry_allowed_exchange_basis(FCC, sites, orbits[0])
+    kinds = [element["kind"] for element in basis]
+    assert kinds == ["symmetric", "symmetric"]
+
+
+def test_p1_bond_allows_the_full_anisotropic_space():
+    from nfit.crystal import symmetry_allowed_exchange_basis
+
+    sites, orbits = generate_bond_orbits(P1_TRICLINIC, ["A", "B"], cutoff_angstrom=4.0)
+    basis = symmetry_allowed_exchange_basis(P1_TRICLINIC, sites, orbits[0])
+    kinds = [element["kind"] for element in basis]
+    assert kinds.count("symmetric") == 5 and kinds.count("dm") == 3
+
+
+def test_pyrochlore_sia_is_uniaxial_along_local_111():
+    from nfit.crystal import symmetry_allowed_sia_basis
+
+    basis = symmetry_allowed_sia_basis(PYROCHLORE, "M1")
+    assert len(basis) == 1
+    matrix = np.asarray(basis[0]["matrix"])
+    axis = np.array([1.0, 1.0, 1.0]) / np.sqrt(3.0)
+    reference = 3.0 * np.outer(axis, axis) - np.eye(3)
+    reference /= np.linalg.norm(reference)
+    assert abs(np.sum(matrix * reference)) == pytest.approx(1.0, abs=1e-9)
+
+
+def test_cubic_site_symmetry_forbids_sia():
+    from nfit.crystal import symmetry_allowed_sia_basis
+
+    assert symmetry_allowed_sia_basis(FCC, "Ni1") == []
+
+
+def test_p1_site_sia_is_five_dimensional():
+    from nfit.crystal import symmetry_allowed_sia_basis
+
+    basis = symmetry_allowed_sia_basis(P1_TRICLINIC, "B")
+    assert len(basis) == 5
+    for element in basis:
+        matrix = np.asarray(element["matrix"])
+        np.testing.assert_allclose(matrix, matrix.T, atol=1e-9)
+        assert abs(np.trace(matrix)) < 1e-9
+
+
+def test_orbit_config_round_trips_symmetry_operations():
+    sites, orbits = generate_bond_orbits(FCC, ["Ni1"], cutoff_angstrom=3.0)
+    payload = orbits_to_config(orbits)
+    assert all("rotation" in bond and "reversed" in bond for bond in payload[0]["bonds"])
+    rebuilt = orbits_from_config(payload)
+    assert rebuilt[0].operations is not None
+    for original, restored in zip(orbits[0].operations, rebuilt[0].operations):
+        np.testing.assert_allclose(
+            np.asarray(original.rotation), np.asarray(restored.rotation)
+        )
+        assert original.reverses == restored.reverses
+    # Legacy payloads without rotations still load, with operations=None.
+    legacy = [{"label": "J1", "bonds": [{"site_i": 0, "site_j": 1, "offset": [0, 0, 0]}]}]
+    assert orbits_from_config(legacy)[0].operations is None

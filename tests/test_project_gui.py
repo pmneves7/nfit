@@ -1138,6 +1138,76 @@ def test_project_explorer_fit_history_creates_results_branches_and_restores(monk
     assert explorer.import_dataset_button.isHidden()
 
 
+def test_project_explorer_deletes_a_range_of_selected_fits(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    dataset = DatasetEntry("first", _tiny_mdhisto_data(1.0))
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+
+    group.fits.extend(FitTimelineEntry(name=f"Fit Result{index}") for index in range(1, 5))
+    explorer._refresh_tree(select_group=group)
+
+    group_item = explorer.tree.topLevelItem(0)
+    fits_item = group_item.child(2)
+    assert fits_item.text(0) == "Fits"
+    fits_item.setExpanded(True)
+    assert [group_item.child(2).child(i).text(0) for i in range(fits_item.childCount())] == [
+        "Initial",
+        "Fit Result1",
+        "Fit Result2",
+        "Fit Result3",
+        "Fit Result4",
+    ]
+
+    # A shift/ctrl selection suppresses the per-fit state restore (and its tree
+    # rebuild) so the growing multi-selection survives.
+    monkeypatch.setattr(explorer, "_is_multi_select_gesture", lambda: True)
+
+    # Select a contiguous run of result fits and delete them in one action.
+    range_items = [fits_item.child(index) for index in (1, 2, 3)]
+    explorer.tree.setCurrentItem(range_items[-1])
+    for item in range_items:
+        item.setSelected(True)
+
+    explorer.delete_selected()
+
+    assert [fit.name for fit in group.fits] == ["Initial", "Fit Result4"]
+
+
+def test_project_explorer_range_selection_stays_within_role(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    dataset = DatasetEntry("first", _tiny_mdhisto_data(1.0))
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+
+    group.fits.append(FitTimelineEntry(name="Fit Result1"))
+    explorer._refresh_tree(select_group=group)
+
+    group_item = explorer.tree.topLevelItem(0)
+    fits_item = group_item.child(2)
+    fits_item.setExpanded(True)
+    fit_item = fits_item.child(1)
+    assert fit_item.text(0) == "Fit Result1"
+
+    # Emulate a shift-click whose visual range sweeps in the workspace root and
+    # folder headers: the current (clicked) item is a fit, so the non-fit rows
+    # must be pruned back out of the selection.
+    monkeypatch.setattr(explorer, "_is_multi_select_gesture", lambda: True)
+    explorer.tree.setCurrentItem(fit_item)
+    fit_item.setSelected(True)
+    group_item.setSelected(True)
+    fits_item.setSelected(True)
+
+    selected_roles = {
+        explorer._objects_for_item(item)[4] for item in explorer.tree.selectedItems()
+    }
+    assert selected_roles == {"fit"}
+
+
 def test_fit_now_updates_live_model_parameters_and_editor(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
@@ -1341,6 +1411,48 @@ def test_sampling_result_serializes_raw_chain_and_rewindows():
     assert rewindowed.metadata["burn_in"] == 1
     assert rewindowed.metadata["thin"] == 2
     assert rewindowed.metadata["samples"] == 4
+
+
+def test_fit_pipeline_saves_partial_emcee_when_sampler_is_cancelled(monkeypatch):
+    group = DataGroup("Datagroup1", datasets=[DatasetEntry("first", _tiny_mdhisto_data(1.0))])
+    model = create_model_component(group)
+    model.parameters["constant"] = 0.0
+    model.fit_parameters["constant"] = True
+    chain = np.arange(4, dtype=float).reshape(2, 2, 1)
+    partial = project_gui.SamplingResult(
+        samples=chain.reshape(-1, 1),
+        variable_names=["model1.constant"],
+        metadata={
+            "method": "emcee",
+            "n_walkers": 2,
+            "n_steps": 2,
+            "requested_n_steps": 10,
+            "burn_in": 0,
+            "thin": 1,
+            "cancelled": True,
+            "completed": False,
+        },
+        chain=chain,
+        log_probability_chain=np.zeros((2, 2), dtype=float),
+    )
+
+    def cancel_sampling(*_args, **_kwargs):
+        raise project_gui.SamplingCancelled("cancelled", partial)
+
+    monkeypatch.setattr(project_gui, "sample_problem_parameters", cancel_sampling)
+
+    outcome = project_gui.perform_group_fit(
+        group,
+        optimizer_config={"sampler": {"enabled": True, "n_walkers": 2, "n_steps": 10}},
+    )
+
+    assert outcome["goodness"]["status"] == "cancelled"
+    assert "partial posterior" in outcome["goodness"]["message"]
+    stored = project_gui._sampling_result_from_dict(outcome["metadata"].get("posterior_samples"))
+    assert stored is not None
+    assert stored.metadata["cancelled"] is True
+    assert stored.chain is not None
+    np.testing.assert_allclose(stored.chain, chain)
 
 
 def test_fit_details_posterior_sampler_controls_update_burn_without_timeline(monkeypatch):
@@ -1798,6 +1910,79 @@ def test_project_explorer_start_fit_runs_in_background_worker(monkeypatch):
     assert explorer._fit_worker_thread is None
     assert explorer._fit_progress_dialog is not None
     assert explorer._fit_progress_dialog.dialog.isVisible()
+    assert explorer._fit_progress_dialog.close_button.isEnabled()
+
+
+def test_background_posterior_cancel_saves_partial_chain_and_reenables_gui(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Datagroup1", datasets=[DatasetEntry("first", _tiny_mdhisto_data(1.0))])
+    model = create_model_component(group)
+    model.parameters["constant"] = 1.0
+    result_entry = FitTimelineEntry(
+        "Fit Result1",
+        kind="result",
+        goodness={"parameters": {"model1.constant": 1.0}},
+        snapshot=project_gui.snapshot_data_group_state(group),
+    )
+    group.fits = [result_entry]
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    chain = np.arange(6, dtype=float).reshape(3, 2, 1)
+    partial = project_gui.SamplingResult(
+        samples=chain.reshape(-1, 1),
+        variable_names=["model1.constant"],
+        log_probability=np.zeros(6, dtype=float),
+        metadata={
+            "method": "emcee",
+            "n_walkers": 2,
+            "n_steps": 3,
+            "requested_n_steps": 20,
+            "burn_in": 0,
+            "thin": 1,
+            "cancelled": True,
+            "completed": False,
+        },
+        chain=chain,
+        log_probability_chain=np.zeros((3, 2), dtype=float),
+    )
+
+    def cancel_sampler(_group, _fit_entry, **kwargs):
+        progress_callback = kwargs.get("progress_callback")
+        if progress_callback is not None:
+            progress_callback({"stage": "emcee", "iteration": 3, "total": 20})
+        raise project_gui.SamplingCancelled("cancelled", partial)
+
+    monkeypatch.setattr(explorer, "_posterior_sampler_result_for_fit", cancel_sampler)
+
+    assert explorer.start_posterior_sampler_for_fit(
+        group,
+        result_entry,
+        n_walkers=2,
+        n_steps=20,
+        burn_in=0,
+        thin=1,
+        random_seed=None,
+        workers=1,
+    )
+    assert not explorer.tree.isEnabled()
+    assert explorer._fit_worker_thread is not None
+
+    deadline = time.monotonic() + 3.0
+    while explorer._fit_worker_thread is not None and time.monotonic() < deadline:
+        QtWidgets.QApplication.processEvents()
+
+    assert explorer._fit_worker_thread is None
+    assert explorer.tree.isEnabled()
+    assert explorer.details_scroll.isEnabled()
+    stored = project_gui._sampling_result_from_dict(result_entry.metadata.get("posterior_samples"))
+    assert stored is not None
+    assert stored.metadata["cancelled"] is True
+    assert stored.metadata["n_steps"] == 3
+    assert stored.chain is not None
+    np.testing.assert_allclose(stored.chain, chain)
+    assert result_entry.goodness["posterior"]["samples"] == 6
+    assert explorer._fit_progress_dialog is not None
     assert explorer._fit_progress_dialog.close_button.isEnabled()
 
 
@@ -2268,7 +2453,16 @@ def test_dataset_details_text_summarizes_axes_source_and_metadata(tmp_path, monk
     text = explorer.details_label.text()
     panel_titles = [box.title() for box in explorer.details_widget.findChildren(QtWidgets.QGroupBox)]
 
-    assert panel_titles == ["Dataset", "Axes", "Rebin", "Crystal", "Data", "Source", "Metadata"]
+    assert panel_titles == [
+        "Dataset",
+        "Sample environment",
+        "Axes",
+        "Rebin",
+        "Crystal",
+        "Data",
+        "Source",
+        "Metadata",
+    ]
     assert "Axes\nDimensions: 2" in text
     assert "Crystal\nLattice parameters" in text
     assert "a: 4.17" in text
@@ -2347,6 +2541,7 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     assert config["axes"][1]["num_bins"] == 2
     assert config["fractional"] is True
     assert config["max_batch_mb"] == 192
+    assert config["auto_rebin"] is True
 
     enable_check = explorer.details_widget.findChild(QtWidgets.QCheckBox, "dataset_rebin_enabled")
     assert enable_check is not None
@@ -2354,6 +2549,9 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
         box for box in explorer.details_widget.findChildren(QtWidgets.QGroupBox) if box.title() == "Rebin"
     )
     assert rebin_panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_fractional").isChecked()
+    auto_check = rebin_panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_auto")
+    assert auto_check is not None
+    assert auto_check.isChecked()
     assert rebin_panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_fit_enabled") is None
     mean_combo = rebin_panel.findChild(QtWidgets.QComboBox, "dataset_rebin_mean_weighting")
     assert mean_combo is not None
@@ -2365,8 +2563,11 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     batch_spin.setValue(64)
     assert dataset_rebin_config(dataset)["max_batch_mb"] == 64
     create_button = rebin_panel.findChild(QtWidgets.QPushButton, "dataset_rebin_create")
+    rebin_now_button = rebin_panel.findChild(QtWidgets.QPushButton, "dataset_rebin_now")
     save_rebin_button = rebin_panel.findChild(QtWidgets.QPushButton, "dataset_rebin_save")
     assert create_button is not None
+    assert rebin_now_button is not None
+    assert rebin_now_button.text() == "Rebin now"
     assert create_button.text() == "Create dataset from rebin"
     assert save_rebin_button is not None
     assert save_rebin_button.text() == "Save rebin to disk"
@@ -2411,6 +2612,50 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     saved = np.load(save_path)
     assert saved["signal"].shape == (3, 1)
     assert int(saved["axis_count"]) == 2
+
+
+def test_large_dataset_rebin_defaults_manual_and_defers_refresh(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    monkeypatch.setattr(project_gui, "REBIN_AUTO_MAX_CONTRIBUTIONS", 1)
+    project_gui._VIEWER_VIEW_CACHE.clear()
+
+    data = _grid_mdhisto_data()
+    dataset = DatasetEntry("scan", data, kind="mdhisto")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
+
+    config = dataset_rebin_config(dataset)
+    assert config["auto_rebin"] is False
+    rebin_panel = next(
+        box for box in explorer.details_widget.findChildren(QtWidgets.QGroupBox) if box.title() == "Rebin"
+    )
+    auto_check = rebin_panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_auto")
+    status = rebin_panel.findChild(QtWidgets.QLabel, "dataset_rebin_status")
+    assert auto_check is not None and not auto_check.isChecked()
+    assert status is not None
+    assert "manual" in status.text().lower() or "disabled" in status.text().lower()
+
+    enable_check = rebin_panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_enabled")
+    assert enable_check is not None
+    enable_check.setChecked(True)
+    refreshes = []
+    monkeypatch.setattr(explorer, "refresh_slice_viewer", lambda group: refreshes.append(group))
+    explorer._set_dataset_rebin_axis_value(dataset, group, 0, "num_bins", "1")
+
+    assert refreshes == []
+    assert dataset_rebin_config(dataset)["stale"] is True
+    deferred = project_gui._viewer_data_before_scale(dataset, force_rebin=False)
+    assert deferred is not None
+    assert deferred.shape == data.shape
+    assert dataset_rebin_config(dataset)["stale"] is True
+
+    assert explorer.rebin_now_for_selection()
+    assert dataset_rebin_config(dataset)["stale"] is False
+    forced = dataset_for_slice_viewer(dataset)
+    assert forced is not None
+    assert forced.shape[0] == 1
 
 
 def test_data_group_composite_uses_scale_fit_weight_and_rebinning():
@@ -2469,12 +2714,57 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
     batch_spin = explorer.details_widget.findChild(QtWidgets.QSpinBox, "group_composite_max_batch_mb")
     assert batch_spin is not None
     assert batch_spin.value() == 192
+    auto_check = explorer.details_widget.findChild(QtWidgets.QCheckBox, "group_composite_auto")
+    assert auto_check is not None
+    assert auto_check.isChecked()
+    rebin_now_button = explorer.details_widget.findChild(QtWidgets.QPushButton, "group_composite_rebin_now")
+    assert rebin_now_button is not None
+    assert rebin_now_button.toolTip()
 
     checkbox.setChecked(True)
 
     config = project_gui.data_group_composite_config(group)
     assert config["enabled"] is True
     assert config["mean_weighting"] == "inverse_variance"
+
+
+def test_large_data_group_composite_defaults_manual_and_defers_refresh(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    monkeypatch.setattr(project_gui, "REBIN_AUTO_MAX_CONTRIBUTIONS", 1)
+    project_gui._COMPOSITE_DATA_CACHE.clear()
+
+    first = DatasetEntry("first", _tiny_mdhisto_data(1.0), kind="mdhisto", data_type="single_crystal_inelastic")
+    second = DatasetEntry("second", _tiny_mdhisto_data(2.0), kind="mdhisto", data_type="single_crystal_inelastic")
+    group = DataGroup("Datagroup1", datasets=[first, second])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
+
+    config = project_gui.data_group_composite_config(group)
+    assert config["auto_rebin"] is False
+    auto_check = explorer.details_widget.findChild(QtWidgets.QCheckBox, "group_composite_auto")
+    assert auto_check is not None
+    assert not auto_check.isChecked()
+    status_label = explorer.details_widget.findChild(QtWidgets.QLabel, "group_composite_status")
+    assert status_label is not None
+
+    refresh_calls = []
+    monkeypatch.setattr(explorer, "refresh_slice_viewer", lambda group: refresh_calls.append(group))
+    checkbox = explorer.details_widget.findChild(QtWidgets.QCheckBox, "group_composite_enabled")
+    assert checkbox is not None
+    checkbox.setChecked(True)
+
+    assert refresh_calls == []
+    assert config["stale"] is True
+    datasets, names = project_gui.slice_viewer_datasets(group, force_rebin=False)
+    assert datasets == []
+    assert names == []
+
+    assert explorer.rebin_composite_now(group) is True
+    assert config["stale"] is False
+    datasets, names = project_gui.slice_viewer_datasets(group, force_rebin=False)
+    assert names == ["Datagroup1 Composite"]
+    np.testing.assert_allclose(datasets[0].signal, [[1.5]])
 
 
 def test_mdhisto_rebin_applies_enabled_masks_before_binning():
@@ -3658,3 +3948,101 @@ def test_mdhisto_fit_bin_count_matches_point_based_count():
     fast = project_gui._mdhisto_fit_bin_count(view)
     reference = int(np.count_nonzero(project_gui._point_data_from_mdhisto_view(view).valid_mask()))
     assert fast == reference
+
+
+def test_fit_points_carry_magnetic_field_from_dataset_parameters():
+    data = _grid_mdhisto_data()
+    dataset = DatasetEntry("scan", data, kind="mdhisto")
+    group = DataGroup(
+        "Datagroup1",
+        datasets=[dataset],
+        lattice_parameters={"a": 3.0, "b": 5.0, "c": 8.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+    )
+
+    # No field set -> nothing stamped.
+    bundle = project_gui.fit_data_bundle(group, dataset)
+    assert bundle.points.magnetic_field is None
+    assert project_gui.effective_dataset_field(group, dataset) is None
+
+    dataset.parameters["magnetic_field"] = {
+        "magnitude_T": 2.0,
+        "direction": [1, 1, 0],
+        "frame": "uvw",
+    }
+    bundle = project_gui.fit_data_bundle(group, dataset)
+    expected = 2.0 * np.array([3.0, 5.0, 0.0]) / np.linalg.norm([3.0, 5.0, 0.0])
+    np.testing.assert_allclose(bundle.points.magnetic_field, expected, atol=1e-12)
+
+    # hkl frame differs for this orthorhombic lattice.
+    dataset.parameters["magnetic_field"]["frame"] = "hkl"
+    bundle = project_gui.fit_data_bundle(group, dataset)
+    expected_hkl = 2.0 * np.array([1 / 3.0, 1 / 5.0, 0.0]) / np.linalg.norm([1 / 3.0, 1 / 5.0, 0.0])
+    np.testing.assert_allclose(bundle.points.magnetic_field, expected_hkl, atol=1e-12)
+
+    # Zero magnitude means no field.
+    dataset.parameters["magnetic_field"]["magnitude_T"] = 0.0
+    assert project_gui.effective_dataset_field(group, dataset) is None
+
+    # Without lattice parameters the direction cannot be oriented.
+    dataset.parameters["magnetic_field"]["magnitude_T"] = 2.0
+    bare_group = DataGroup("Bare", datasets=[dataset])
+    assert project_gui.effective_dataset_field(bare_group, dataset) is None
+
+
+def test_sample_environment_panel_hosts_temperature_and_field(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6 import QtWidgets
+
+    data = _grid_mdhisto_data()
+    dataset = DatasetEntry("scan", data, kind="mdhisto")
+    group = DataGroup(
+        "Datagroup1",
+        datasets=[dataset],
+        lattice_parameters={"a": 3.0, "b": 5.0, "c": 8.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+    )
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
+
+    # Panel exists, is titled correctly, and sits between Dataset and Axes.
+    panel = explorer.details_widget.findChild(QtWidgets.QGroupBox, "dataset_sample_environment_group")
+    assert panel is not None
+    titles = [box.title() for box in explorer.details_widget.findChildren(QtWidgets.QGroupBox)]
+    assert titles.index("Sample environment") == titles.index("Dataset") + 1
+    assert titles.index("Sample environment") < titles.index("Axes")
+
+    # Temperature control relocated but keeps its objectName + behavior.
+    temp = explorer.window.findChild(QtWidgets.QDoubleSpinBox, "dataset_temperature")
+    assert temp is explorer.dataset_temperature_spin
+    explorer._set_selected_dataset_temperature(12.5)
+    assert dataset.parameters["temperature"] == 12.5
+
+    # Field controls write the structured parameter.
+    explorer.dataset_field_magnitude_spin.setValue(2.0)
+    explorer.dataset_field_direction_edit.setText("1 1 0")
+    explorer._set_selected_dataset_field_direction()
+    field = dataset.parameters["magnetic_field"]
+    assert field["magnitude_T"] == 2.0
+    assert field["direction"] == [1.0, 1.0, 0.0]
+    assert field["frame"] == "uvw"
+
+    # Switching the frame updates the payload; the panel re-syncs on reselect.
+    idx = explorer.dataset_field_frame_combo.findData("hkl")
+    explorer.dataset_field_frame_combo.setCurrentIndex(idx)
+    assert dataset.parameters["magnetic_field"]["frame"] == "hkl"
+
+    # Zeroing the magnitude clears the field entirely.
+    explorer.dataset_field_magnitude_spin.setValue(-1.0)
+    assert "magnetic_field" not in dataset.parameters
+
+    # Field survives the data-group state snapshot/restore round-trip (the same
+    # mechanism the fit timeline and project files serialize through).
+    dataset.parameters["magnetic_field"] = {"magnitude_T": 3.0, "direction": [0, 0, 1], "frame": "hkl"}
+    snapshot = project_gui.snapshot_data_group_state(group)
+    dataset.parameters.pop("magnetic_field")
+    project_gui.restore_data_group_state(group, snapshot)
+    restored = list(group.iter_datasets())[0]
+    assert restored.parameters["magnetic_field"] == {
+        "magnitude_T": 3.0,
+        "direction": [0, 0, 1],
+        "frame": "hkl",
+    }

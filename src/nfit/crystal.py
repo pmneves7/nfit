@@ -52,11 +52,32 @@ def _require_gemmi():
 
 @dataclass(frozen=True)
 class CrystalSite:
-    """One magnetic site of the expanded unit cell (fractional coordinates)."""
+    """One magnetic site of the expanded unit cell (fractional coordinates).
+
+    ``rotation`` is the fractional rotation matrix of the space-group operation
+    that generated this site from its Wyckoff representative (``None`` for
+    legacy payloads). Site-anisotropy tensors of the representative are carried
+    to this site with it.
+    """
 
     label: str
     position: tuple[float, float, float]
     ion: str = ""
+    rotation: tuple[tuple[float, float, float], ...] | None = None
+
+
+@dataclass(frozen=True)
+class BondSymmetry:
+    """How an orbit's representative bond maps onto one member bond.
+
+    ``rotation`` is the fractional rotation of the space-group operation;
+    ``reverses`` records that the operation mapped the representative onto the
+    member with opposite orientation (the stored bond is the canonicalized
+    form), in which case exchange tensors transpose.
+    """
+
+    rotation: tuple[tuple[float, float, float], ...]
+    reverses: bool = False
 
 
 @dataclass(frozen=True)
@@ -81,11 +102,18 @@ class Bond:
 
 @dataclass(frozen=True)
 class BondOrbit:
-    """All bonds equivalent under the space group, sharing one exchange constant."""
+    """All bonds equivalent under the space group, sharing one exchange constant.
+
+    ``operations`` (when present) is aligned with ``bonds`` and records, per
+    bond, the symmetry operation carrying the orbit's representative bond
+    (``bonds[0]``, whose entry is the identity) onto it — needed to rotate
+    anisotropic exchange tensors onto each bond.
+    """
 
     label: str
     distance_angstrom: float
     bonds: tuple[Bond, ...]
+    operations: tuple[BondSymmetry, ...] | None = None
 
     @property
     def multiplicity(self) -> int:
@@ -238,9 +266,14 @@ def expand_magnetic_sites(
                     label=f"{label}_{count}",
                     position=(float(position[0]), float(position[1]), float(position[2])),
                     ion=ion,
+                    rotation=_rotation_tuple(rotation),
                 )
             )
     return expanded
+
+
+def _rotation_tuple(rotation: FloatArray) -> tuple[tuple[float, float, float], ...]:
+    return tuple(tuple(float(x) for x in row) for row in np.asarray(rotation, dtype=float))
 
 
 def _site_index_and_offset(
@@ -265,7 +298,14 @@ def _transform_bond(
     rotation: FloatArray,
     translation: FloatArray,
     site_positions: FloatArray,
-) -> Bond:
+) -> tuple[Bond, bool]:
+    """Map a bond through a symmetry op; return ``(canonical bond, reversed)``.
+
+    ``reversed`` is True when canonicalization flipped the transformed bond's
+    orientation relative to the op's image of the input bond — exchange
+    tensors carried onto the stored bond must then be transposed.
+    """
+
     start = site_positions[bond.site_i]
     end = site_positions[bond.site_j] + np.asarray(bond.offset, dtype=float)
     new_start = rotation @ start + translation
@@ -273,7 +313,9 @@ def _transform_bond(
     index_i, shift_i = _site_index_and_offset(new_start, site_positions)
     index_j, shift_j = _site_index_and_offset(new_end, site_positions)
     offset = shift_j - shift_i
-    return Bond(index_i, index_j, (int(offset[0]), int(offset[1]), int(offset[2]))).canonical()
+    image = Bond(index_i, index_j, (int(offset[0]), int(offset[1]), int(offset[2])))
+    canonical = image.canonical()
+    return canonical, canonical != image
 
 
 def generate_bond_orbits(
@@ -326,17 +368,26 @@ def generate_bond_orbits(
                 seen.add(bond)
                 bonds_by_distance.setdefault(round(distance, _DISTANCE_DECIMALS), []).append(bond)
 
-    # Group bonds into orbits under the space group, shell by shell.
-    shells: list[tuple[float, list[list[Bond]]]] = []
+    # Group bonds into orbits under the space group, shell by shell. For each
+    # orbit member remember the (first) operation carrying the representative
+    # onto it, so anisotropic exchange tensors can be rotated onto every bond.
+    shells: list[tuple[float, list[tuple[list[Bond], list[BondSymmetry]]]]] = []
+    identity = np.eye(3)
     for distance in sorted(bonds_by_distance):
         remaining = set(bonds_by_distance[distance])
-        orbits: list[list[Bond]] = []
+        orbits: list[tuple[list[Bond], list[BondSymmetry]]] = []
         while remaining:
             seed = min(remaining, key=lambda b: (b.site_i, b.site_j, b.offset))
-            orbit = {
-                _transform_bond(seed, rotation, translation, positions)
-                for rotation, translation in operations
+            mapped: dict[Bond, BondSymmetry] = {
+                seed: BondSymmetry(rotation=_rotation_tuple(identity), reverses=False)
             }
+            for rotation, translation in operations:
+                image, reverses = _transform_bond(seed, rotation, translation, positions)
+                if image not in mapped:
+                    mapped[image] = BondSymmetry(
+                        rotation=_rotation_tuple(rotation), reverses=reverses
+                    )
+            orbit = set(mapped)
             if not orbit <= remaining:
                 stray = sorted(orbit - remaining)[0]
                 raise ValueError(
@@ -344,12 +395,15 @@ def generate_bond_orbits(
                     "the same distance shell; inconsistent crystal input"
                 )
             remaining -= orbit
-            orbits.append(sorted(orbit, key=lambda b: (b.site_i, b.site_j, b.offset)))
+            ordered = [seed] + sorted(
+                orbit - {seed}, key=lambda b: (b.site_i, b.site_j, b.offset)
+            )
+            orbits.append((ordered, [mapped[bond] for bond in ordered]))
         shells.append((distance, orbits))
 
     labeled: list[BondOrbit] = []
     for shell_number, (distance, orbits) in enumerate(shells, start=1):
-        for orbit_number, orbit in enumerate(orbits):
+        for orbit_number, (orbit, symmetries) in enumerate(orbits):
             suffix = ""
             if len(orbits) > 1:
                 suffix = chr(ord("a") + orbit_number)
@@ -358,9 +412,190 @@ def generate_bond_orbits(
                     label=f"J{shell_number}{suffix}",
                     distance_angstrom=distance,
                     bonds=tuple(orbit),
+                    operations=tuple(symmetries),
                 )
             )
     return sites, labeled
+
+
+def cartesian_rotation(
+    rotation: FloatArray | Sequence[Sequence[float]], lattice: Mapping[str, Any]
+) -> FloatArray:
+    """Convert a fractional-coordinate rotation to a Cartesian rotation matrix.
+
+    ``R_cart = L R_frac L^{-1}`` with ``L`` the lattice-vector matrix. For a
+    crystallographic operation the result is orthogonal (proper or improper).
+    """
+
+    basis = _lattice_vectors(lattice)
+    return basis @ np.asarray(rotation, dtype=float) @ np.linalg.inv(basis)
+
+
+def _tensor_action_matrix(rotation_cart: FloatArray, transpose: bool) -> FloatArray:
+    """9x9 matrix of ``T -> R (T or T^T) R^T`` acting on row-major ``vec(T)``.
+
+    This is the transformation of a rank-2 spin-spin coupling tensor under a
+    (possibly improper) point operation: spins are axial vectors, but the two
+    ``det(R)`` factors cancel for rank-2, so ``R`` is used directly. The
+    ``transpose`` form applies when the operation reverses the bond.
+    """
+
+    action = np.zeros((9, 9))
+    for k in range(9):
+        basis_tensor = np.zeros(9)
+        basis_tensor[k] = 1.0
+        tensor = basis_tensor.reshape(3, 3)
+        image = rotation_cart @ (tensor.T if transpose else tensor) @ rotation_cart.T
+        action[:, k] = image.reshape(9)
+    return action
+
+
+def _invariant_tensor_basis(
+    actions: Sequence[FloatArray],
+    *,
+    remove_isotropic: bool,
+    symmetric_only: bool = False,
+) -> tuple[FloatArray, FloatArray]:
+    """Orthonormal bases of the tensor subspace fixed by all ``actions``.
+
+    Averages the group action (a projector, symmetric because the actions are
+    orthogonal in the Frobenius inner product), extracts the eigenvalue-one
+    subspace, optionally removes the isotropic direction, and splits the result
+    into symmetric and antisymmetric parts. Returns ``(symmetric_basis,
+    antisymmetric_basis)`` as ``(9, k)`` column matrices with deterministic
+    ordering and sign.
+    """
+
+    projector = np.zeros((9, 9))
+    for action in actions:
+        projector += action
+    projector /= len(actions)
+    projector = 0.5 * (projector + projector.T)
+    eigenvalues, eigenvectors = np.linalg.eigh(projector)
+    allowed = eigenvectors[:, eigenvalues > 0.99]
+
+    if remove_isotropic:
+        iso = np.eye(3).reshape(9) / np.sqrt(3.0)
+        allowed = allowed - np.outer(iso, iso @ allowed)
+
+    transpose_map = _tensor_action_matrix(np.eye(3), transpose=True)
+    sym = 0.5 * (allowed + transpose_map @ allowed)
+    antisym = 0.5 * (allowed - transpose_map @ allowed)
+
+    def orthonormal(columns: FloatArray) -> FloatArray:
+        if columns.size == 0:
+            return np.zeros((9, 0))
+        left, singular, _ = np.linalg.svd(columns, full_matrices=False)
+        basis = left[:, singular > 1e-8]
+        # Deterministic sign: first significant component positive.
+        for index in range(basis.shape[1]):
+            column = basis[:, index]
+            lead = column[np.argmax(np.abs(column) > 1e-8)]
+            if lead < 0:
+                basis[:, index] = -column
+        return np.round(basis, 12)
+
+    if symmetric_only:
+        return orthonormal(sym), np.zeros((9, 0))
+    return orthonormal(sym), orthonormal(antisym)
+
+
+def _bond_stabilizer_actions(
+    bond: Bond,
+    positions: FloatArray,
+    operations: Sequence[tuple[FloatArray, FloatArray]],
+    lattice: Mapping[str, Any],
+) -> list[FloatArray]:
+    """Tensor-space actions of every op mapping ``bond`` onto itself."""
+
+    actions = []
+    for rotation, translation in operations:
+        image, reverses = _transform_bond(bond, rotation, translation, positions)
+        if image == bond.canonical():
+            rotation_cart = cartesian_rotation(rotation, lattice)
+            actions.append(_tensor_action_matrix(rotation_cart, transpose=reverses))
+    return actions
+
+
+def symmetry_allowed_exchange_basis(
+    crystal: Mapping[str, Any],
+    sites: Sequence[CrystalSite],
+    orbit: BondOrbit,
+) -> list[dict[str, Any]]:
+    """Symmetry-allowed anisotropic exchange basis for one bond orbit.
+
+    Projects the 9-dimensional rank-2 tensor space onto the subspace invariant
+    under the representative bond's stabilizer (operations mapping the bond
+    onto itself, with the transpose constraint when they reverse it), removes
+    the isotropic component (that is the orbit's Heisenberg parameter), and
+    returns unit-Frobenius basis matrices in **Cartesian** coordinates:
+    ``[{"name": "S1"|"D1"..., "kind": "symmetric"|"dm", "matrix": [[...]]}]``.
+    Symmetric-traceless elements are named ``S1..``, antisymmetric
+    (Dzyaloshinskii–Moriya) elements ``D1..``. A bond whose midpoint is an
+    inversion center gets no DM elements, per the Moriya rules.
+    """
+
+    positions = np.asarray([site.position for site in sites], dtype=float)
+    operations = _symmetry_operations(crystal.get("spacegroup", "P 1"))
+    representative = orbit.bonds[0]
+    actions = _bond_stabilizer_actions(
+        representative, positions, operations, crystal["lattice"]
+    )
+    symmetric, antisymmetric = _invariant_tensor_basis(actions, remove_isotropic=True)
+    basis: list[dict[str, Any]] = []
+    for index in range(symmetric.shape[1]):
+        basis.append(
+            {
+                "name": f"S{index + 1}",
+                "kind": "symmetric",
+                "matrix": symmetric[:, index].reshape(3, 3).tolist(),
+            }
+        )
+    for index in range(antisymmetric.shape[1]):
+        basis.append(
+            {
+                "name": f"D{index + 1}",
+                "kind": "dm",
+                "matrix": antisymmetric[:, index].reshape(3, 3).tolist(),
+            }
+        )
+    return basis
+
+
+def symmetry_allowed_sia_basis(
+    crystal: Mapping[str, Any],
+    site_label: str,
+) -> list[dict[str, Any]]:
+    """Symmetry-allowed single-ion anisotropy basis for one Wyckoff site.
+
+    ``site_label`` names an entry of ``crystal["sites"]`` (the Wyckoff
+    representative). Returns unit-Frobenius **symmetric-traceless** Cartesian
+    basis matrices invariant under the site's point group:
+    ``[{"name": "K1"..., "matrix": [[...]]}]``. Cubic site symmetry allows
+    none (rank-2 anisotropy vanishes); tensors for symmetry-equivalent sites
+    are obtained by rotating these with each site's recorded generator.
+    """
+
+    entries = {str(site["label"]): site for site in crystal.get("sites", [])}
+    if str(site_label) not in entries:
+        raise ValueError(
+            f"site label {site_label!r} not found; crystal defines {sorted(entries)}"
+        )
+    base = np.asarray(entries[str(site_label)]["position"], dtype=float)
+    operations = _symmetry_operations(crystal.get("spacegroup", "P 1"))
+    actions = []
+    for rotation, translation in operations:
+        image = _wrap_fractional(rotation @ base + translation)
+        if np.allclose(image, _wrap_fractional(base.copy()), atol=1e-6):
+            rotation_cart = cartesian_rotation(rotation, crystal["lattice"])
+            actions.append(_tensor_action_matrix(rotation_cart, transpose=False))
+    symmetric, _ = _invariant_tensor_basis(
+        actions, remove_isotropic=True, symmetric_only=True
+    )
+    return [
+        {"name": f"K{index + 1}", "matrix": symmetric[:, index].reshape(3, 3).tolist()}
+        for index in range(symmetric.shape[1])
+    ]
 
 
 def sites_to_config(sites: Sequence[CrystalSite]) -> list[list[float]]:
@@ -369,24 +604,47 @@ def sites_to_config(sites: Sequence[CrystalSite]) -> list[list[float]]:
     return [[float(x) for x in site.position] for site in sites]
 
 
-def orbits_to_config(orbits: Sequence[BondOrbit]) -> list[dict[str, Any]]:
-    """Serialize bond orbits into the plain-dict form models consume."""
+def site_rotations_to_config(sites: Sequence[CrystalSite]) -> list[Any]:
+    """Serialize per-site generator rotations (fractional; ``None`` if absent)."""
 
     return [
-        {
-            "label": orbit.label,
-            "distance_angstrom": float(orbit.distance_angstrom),
-            "bonds": [
-                {
-                    "site_i": bond.site_i,
-                    "site_j": bond.site_j,
-                    "offset": list(bond.offset),
-                }
-                for bond in orbit.bonds
-            ],
-        }
-        for orbit in orbits
+        [[float(x) for x in row] for row in site.rotation]
+        if site.rotation is not None
+        else None
+        for site in sites
     ]
+
+
+def orbits_to_config(orbits: Sequence[BondOrbit]) -> list[dict[str, Any]]:
+    """Serialize bond orbits into the plain-dict form models consume.
+
+    When an orbit carries symmetry operations, each bond dict additionally has
+    ``"rotation"`` (fractional 3x3) and ``"reversed"`` (bool) describing how
+    the representative bond maps onto it.
+    """
+
+    payload: list[dict[str, Any]] = []
+    for orbit in orbits:
+        bonds = []
+        for index, bond in enumerate(orbit.bonds):
+            entry: dict[str, Any] = {
+                "site_i": bond.site_i,
+                "site_j": bond.site_j,
+                "offset": list(bond.offset),
+            }
+            if orbit.operations is not None:
+                symmetry = orbit.operations[index]
+                entry["rotation"] = [[float(x) for x in row] for row in symmetry.rotation]
+                entry["reversed"] = bool(symmetry.reverses)
+            bonds.append(entry)
+        payload.append(
+            {
+                "label": orbit.label,
+                "distance_angstrom": float(orbit.distance_angstrom),
+                "bonds": bonds,
+            }
+        )
+    return payload
 
 
 def orbits_from_config(payload: Sequence[Mapping[str, Any]]) -> list[BondOrbit]:
@@ -394,23 +652,37 @@ def orbits_from_config(payload: Sequence[Mapping[str, Any]]) -> list[BondOrbit]:
 
     orbits: list[BondOrbit] = []
     for entry in payload:
-        bonds = tuple(
-            Bond(
-                int(bond["site_i"]),
-                int(bond["site_j"]),
-                (
-                    int(bond["offset"][0]),
-                    int(bond["offset"][1]),
-                    int(bond["offset"][2]),
-                ),
+        bonds = []
+        symmetries: list[BondSymmetry] = []
+        have_operations = True
+        for bond in entry.get("bonds", []):
+            bonds.append(
+                Bond(
+                    int(bond["site_i"]),
+                    int(bond["site_j"]),
+                    (
+                        int(bond["offset"][0]),
+                        int(bond["offset"][1]),
+                        int(bond["offset"][2]),
+                    ),
+                )
             )
-            for bond in entry.get("bonds", [])
-        )
+            rotation = bond.get("rotation")
+            if rotation is None:
+                have_operations = False
+            else:
+                symmetries.append(
+                    BondSymmetry(
+                        rotation=_rotation_tuple(np.asarray(rotation, dtype=float)),
+                        reverses=bool(bond.get("reversed", False)),
+                    )
+                )
         orbits.append(
             BondOrbit(
                 label=str(entry["label"]),
                 distance_angstrom=float(entry.get("distance_angstrom", 0.0)),
-                bonds=bonds,
+                bonds=tuple(bonds),
+                operations=tuple(symmetries) if have_operations and symmetries else None,
             )
         )
     return orbits

@@ -30,10 +30,12 @@ from .fit_config import (
 from .fitting import (
     OptimizationConfig,
     SamplerConfig,
+    SamplingCancelled,
     SamplingResult,
     _evaluate_problem,
     evaluate_problem_model,
     fit_problem_least_squares,
+    magnetic_field_vector,
     rebin_point_data,
     reciprocal_basis_from_lattice_parameters,
     sample_problem_parameters,
@@ -51,6 +53,8 @@ DATASET_REBIN_KEY = "rebin"
 GROUP_COMPOSITE_KEY = "composite"
 GROUP_COMPOSITE_NAME = "Composite"
 DEFAULT_REBIN_MAX_BATCH_MB = 192
+REBIN_AUTO_MAX_CONTRIBUTIONS = 5_000_000
+REBIN_AUTO_MAX_OUTPUT_BINS = 2_000_000
 DATASET_POINT_LIST_KEY = "point_list"
 SUSCEPTIBILITY_CHANNEL_LABEL = "Susceptibility"
 Q_COORDINATE_NAME = "q"
@@ -1261,6 +1265,21 @@ def delete_model_component(group: DataGroup, model: ModelComponentSpec) -> None:
     raise ValueError(f"model {model.name!r} is not in data group {group.name!r}")
 
 
+# Tree-item roles that support deletion. A batch delete is restricted to a
+# single logical role so that a range selection of, for example, fit results
+# never sweeps in the enclosing workspace or folder headers.
+_DELETABLE_TREE_ROLES = frozenset(
+    {"group", "dataset", "mask", "dataset_group", "group_mask", "model", "fit", "fit_timeline"}
+)
+
+# Roles that should be treated as interchangeable when deciding which items a
+# multi-selection delete may touch together.
+_DELETABLE_ROLE_GROUP: dict[str, frozenset[str]] = {
+    "fit": frozenset({"fit", "fit_timeline"}),
+    "fit_timeline": frozenset({"fit", "fit_timeline"}),
+}
+
+
 def copy_mask_to_dataset(mask: MaskSpec, dataset: DatasetEntry) -> MaskSpec:
     """Copy a mask spec to another dataset, choosing a non-conflicting name."""
 
@@ -1742,7 +1761,68 @@ def data_group_composite_config(group: DataGroup) -> dict[str, Any]:
                 axis_config.setdefault(key, value)
             sanitized_axes.append(_sanitize_rebin_axis_config(axis_config))
         config["axes"] = sanitized_axes
+    if "auto_rebin" not in config:
+        config["auto_rebin"] = not _composite_rebin_is_large(group, config)
+    config.setdefault("stale", False)
     return config
+
+
+def _composite_source_points(group: DataGroup) -> int:
+    return sum(_dataset_rebin_source_points(dataset) for dataset in _composite_candidates(group))
+
+
+def _composite_output_bins(config: dict[str, Any]) -> int:
+    total = 1
+    axes = config.get("axes", [])
+    if not isinstance(axes, list):
+        return 0
+    for axis in axes:
+        if isinstance(axis, dict):
+            total *= max(int(axis.get("num_bins", 1) or 1), 1)
+    return int(total)
+
+
+def _composite_estimated_contributions(group: DataGroup, config: dict[str, Any]) -> int:
+    ndim = len(config.get("axes", []) or [])
+    multiplier = 2**ndim if bool(config.get("fractional", True)) else 1
+    return int(_composite_source_points(group) * multiplier)
+
+
+def _composite_rebin_is_large(group: DataGroup, config: dict[str, Any]) -> bool:
+    return (
+        _composite_estimated_contributions(group, config) > REBIN_AUTO_MAX_CONTRIBUTIONS
+        or _composite_output_bins(config) > REBIN_AUTO_MAX_OUTPUT_BINS
+    )
+
+
+def _composite_rebin_status_text(group: DataGroup, config: dict[str, Any]) -> str:
+    if not bool(config.get("enabled", False)):
+        return "Composite rebinning is off."
+    size_note = "large" if _composite_rebin_is_large(group, config) else "small"
+    if bool(config.get("auto_rebin", True)):
+        if bool(config.get("stale", False)):
+            return f"Automatic composite rebinning is on ({size_note}); pending edits will recompute on the next refresh."
+        return f"Automatic composite rebinning is on ({size_note}); edits recompute the cached composite."
+    if bool(config.get("stale", False)):
+        return f"Manual composite rebinning is on ({size_note}); Rebin now, fit, or open the data viewer to apply pending edits."
+    return f"Manual composite rebinning is on ({size_note}); the cached composite is current."
+
+
+def _composite_auto_enabled(group: DataGroup) -> bool:
+    return bool(data_group_composite_config(group).get("auto_rebin", True))
+
+
+def _composite_rebin_is_stale(group: DataGroup) -> bool:
+    return bool(data_group_composite_config(group).get("stale", False))
+
+
+def _should_defer_composite_rebin(group: DataGroup, *, force_rebin: bool) -> bool:
+    return (
+        data_group_composite_enabled(group)
+        and not force_rebin
+        and not _composite_auto_enabled(group)
+        and _composite_rebin_is_stale(group)
+    )
 
 
 def data_group_composite_enabled(group: DataGroup) -> bool:
@@ -1820,7 +1900,33 @@ def _source_data_for_group_composite(group: DataGroup, dataset: DatasetEntry) ->
     return data
 
 
-def composite_dataset_data(group: DataGroup) -> MDHistoData | PointListData | PointData4D:
+def _composite_cache_signature(group: DataGroup) -> str:
+    config = data_group_composite_config(group)
+    payload = [
+        json.dumps(config, sort_keys=True, default=str),
+        [
+            [
+                dataset.name,
+                id(dataset.data),
+                dataset.data_type,
+                dataset.kind,
+                bool(dataset.enabled),
+                float(dataset.fit_weight),
+                float(dataset.scale_factor),
+                _mask_signature(getattr(dataset, "masks", None)),
+            ]
+            for dataset in _composite_candidates(group)
+        ],
+        _mask_signature(getattr(group, "masks", None)),
+    ]
+    return json.dumps(payload, sort_keys=True, default=str)
+
+
+def composite_dataset_data(
+    group: DataGroup,
+    *,
+    progress_callback: Any | None = None,
+) -> MDHistoData | PointListData | PointData4D:
     """Build the group's rebinned composite dataset from enabled members."""
 
     ok, message = data_group_composite_status(group)
@@ -1829,20 +1935,53 @@ def composite_dataset_data(group: DataGroup) -> MDHistoData | PointListData | Po
     config = data_group_composite_config(group)
     kind = _dataset_composite_kind(_composite_candidates(group)[0])
     if kind == "mdhisto":
-        return _composite_mdhisto_data(group, config)
+        return _composite_mdhisto_data(group, config, progress_callback=progress_callback)
     if kind == "point_list":
-        return _composite_point_list_data(group, config)
+        return _composite_point_list_data(group, config, progress_callback=progress_callback)
     if kind == "point_data_4d":
-        return _composite_point_data(group, config)
+        return _composite_point_data(group, config, progress_callback=progress_callback)
     raise ValueError(f"unsupported composite dataset kind {kind!r}")
 
 
-def composite_dataset_entry(group: DataGroup) -> DatasetEntry:
+def _cached_composite_dataset_data(
+    group: DataGroup,
+    *,
+    force_rebin: bool = True,
+    progress_callback: Any | None = None,
+) -> MDHistoData | PointListData | PointData4D | None:
+    signature = _composite_cache_signature(group)
+    cached = _COMPOSITE_DATA_CACHE.get(id(group))
+    if cached is not None and cached[0] == signature:
+        return cached[1]
+    if cached is not None and _should_defer_composite_rebin(group, force_rebin=force_rebin):
+        return cached[1]
+    if _should_defer_composite_rebin(group, force_rebin=force_rebin):
+        return None
+    result = composite_dataset_data(group, progress_callback=progress_callback)
+    config = data_group_composite_config(group)
+    config["stale"] = False
+    signature = _composite_cache_signature(group)
+    if len(_COMPOSITE_DATA_CACHE) >= _COMPOSITE_DATA_CACHE_LIMIT:
+        _COMPOSITE_DATA_CACHE.clear()
+    _COMPOSITE_DATA_CACHE[id(group)] = (signature, result)
+    return result
+
+
+def composite_dataset_entry(
+    group: DataGroup,
+    *,
+    force_rebin: bool = True,
+    progress_callback: Any | None = None,
+) -> DatasetEntry:
     datasets = _composite_candidates(group)
     first = datasets[0] if datasets else None
     return DatasetEntry(
         name=_composite_dataset_name(group),
-        data=composite_dataset_data(group),
+        data=_cached_composite_dataset_data(
+            group,
+            force_rebin=force_rebin,
+            progress_callback=progress_callback,
+        ),
         kind=(first.kind if first is not None else ""),
         data_type=(first.data_type if first is not None else ""),
         metadata={"source_group": group.name, "composite": True},
@@ -1873,7 +2012,12 @@ def _composite_rebin_bounds(config: dict[str, Any]) -> tuple[list[float], list[f
     )
 
 
-def _composite_mdhisto_data(group: DataGroup, config: dict[str, Any]) -> MDHistoData:
+def _composite_mdhisto_data(
+    group: DataGroup,
+    config: dict[str, Any],
+    *,
+    progress_callback: Any | None = None,
+) -> MDHistoData:
     lower, upper, num_bins = _composite_rebin_bounds(config)
     coords_parts: list[np.ndarray] = []
     signal_parts: list[np.ndarray] = []
@@ -1919,6 +2063,7 @@ def _composite_mdhisto_data(group: DataGroup, config: dict[str, Any]) -> MDHisto
         normalize=True,
         mean_weighting=_rebin_mean_weighting(config),
         max_batch_bytes=_rebin_max_batch_bytes(config),
+        progress_callback=progress_callback,
     )
     if result.binned_data is None or result.binned_data_errs is None or result.n_samples is None or result.bins_list is None:
         raise RuntimeError("composite rebinning did not produce binned data")
@@ -1966,7 +2111,12 @@ def _composite_mdhisto_data(group: DataGroup, config: dict[str, Any]) -> MDHisto
     )
 
 
-def _composite_point_data(group: DataGroup, config: dict[str, Any]) -> PointData4D:
+def _composite_point_data(
+    group: DataGroup,
+    config: dict[str, Any],
+    *,
+    progress_callback: Any | None = None,
+) -> PointData4D:
     lower, upper, num_bins = _composite_rebin_bounds(config)
     coords_parts: list[np.ndarray] = []
     signal_parts: list[np.ndarray] = []
@@ -1999,6 +2149,7 @@ def _composite_point_data(group: DataGroup, config: dict[str, Any]) -> PointData
         normalize=True,
         mean_weighting=_rebin_mean_weighting(config),
         max_batch_bytes=_rebin_max_batch_bytes(config),
+        progress_callback=progress_callback,
     )
     if result.bin_centers_list is None or result.binned_data is None or result.binned_data_errs is None or result.n_samples is None:
         raise RuntimeError("composite rebinning did not produce binned data")
@@ -2016,7 +2167,12 @@ def _composite_point_data(group: DataGroup, config: dict[str, Any]) -> PointData
     )
 
 
-def _composite_point_list_data(group: DataGroup, config: dict[str, Any]) -> PointListData:
+def _composite_point_list_data(
+    group: DataGroup,
+    config: dict[str, Any],
+    *,
+    progress_callback: Any | None = None,
+) -> PointListData:
     datasets = _composite_candidates(group)
     prepared = [_source_data_for_group_composite(group, dataset) for dataset in datasets]
     point_lists = [data for data in prepared if isinstance(data, PointListData)]
@@ -2063,6 +2219,7 @@ def _composite_point_list_data(group: DataGroup, config: dict[str, Any]) -> Poin
         normalize=True,
         mean_weighting=_rebin_mean_weighting(config),
         max_batch_bytes=_rebin_max_batch_bytes(config),
+        progress_callback=progress_callback,
     )
     if result.binned_data is None or result.binned_data_errs is None or result.n_samples is None or result.bin_centers_list is None:
         raise RuntimeError("composite rebinning did not produce binned data")
@@ -2087,6 +2244,8 @@ def slice_viewer_datasets(
     group: DataGroup,
     *,
     use_composite: bool = True,
+    force_rebin: bool = True,
+    progress_callback: Any | None = None,
 ) -> tuple[list[MDHistoData], list[str]]:
     """Return data and labels for every dataset in the group tree, with shared masks."""
 
@@ -2094,8 +2253,16 @@ def slice_viewer_datasets(
     names: list[str] = []
     model_channels = current_model_channels(group)
     if use_composite and data_group_composite_enabled(group):
-        composite = composite_dataset_entry(group)
-        view_data = dataset_for_slice_viewer(composite)
+        composite = composite_dataset_entry(
+            group,
+            force_rebin=force_rebin,
+            progress_callback=progress_callback,
+        )
+        view_data = dataset_for_slice_viewer(
+            composite,
+            force_rebin=force_rebin,
+            progress_callback=progress_callback,
+        )
         if view_data is not None:
             composite_name = composite.name
             attach_fit_channels_to_view(
@@ -2109,7 +2276,12 @@ def slice_viewer_datasets(
         return data, names
     for dataset in group.iter_datasets():
         extra_masks = effective_dataset_masks(group, dataset)
-        view_data = dataset_for_slice_viewer(dataset, extra_masks=extra_masks)
+        view_data = dataset_for_slice_viewer(
+            dataset,
+            extra_masks=extra_masks,
+            force_rebin=force_rebin,
+            progress_callback=progress_callback,
+        )
         if view_data is not None:
             attach_fit_channels_to_view(
                 group,
@@ -2126,6 +2298,8 @@ def dataset_for_slice_viewer(
     dataset: DatasetEntry,
     *,
     extra_masks: list[MaskSpec] | None = None,
+    force_rebin: bool = True,
+    progress_callback: Any | None = None,
 ) -> MDHistoData | PointListData | None:
     """Return a viewer-ready dataset, loading from source metadata if needed.
 
@@ -2133,7 +2307,12 @@ def dataset_for_slice_viewer(
     applied ahead of the dataset's own masks (MDHisto datasets only).
     """
 
-    result = _viewer_data_before_scale(dataset, extra_masks=extra_masks)
+    result = _viewer_data_before_scale(
+        dataset,
+        extra_masks=extra_masks,
+        force_rebin=force_rebin,
+        progress_callback=progress_callback,
+    )
     if result is None:
         return None
     return _with_viewer_dataset_metadata(dataset, _apply_dataset_scale(dataset, result))
@@ -2180,7 +2359,13 @@ class FitDataBundle:
     grid_shape: tuple[int, ...] | None
 
 
-def fit_data_bundle(group: DataGroup, dataset: DatasetEntry) -> FitDataBundle | None:
+def fit_data_bundle(
+    group: DataGroup,
+    dataset: DatasetEntry,
+    *,
+    force_rebin: bool = True,
+    progress_callback: Any | None = None,
+) -> FitDataBundle | None:
     """Build the fit-ready views of one dataset, or ``None`` if unsupported."""
 
     extra_masks = effective_dataset_masks(group, dataset)
@@ -2189,10 +2374,20 @@ def fit_data_bundle(group: DataGroup, dataset: DatasetEntry) -> FitDataBundle | 
         _apply_sample_context_to_points(group, dataset, points)
         return FitDataBundle(dataset=dataset, view=dataset.data, points=points, grid_shape=None)
     if dataset.scale_factor_vary:
-        raw_view = _viewer_data_before_scale(dataset, extra_masks=extra_masks)
+        raw_view = _viewer_data_before_scale(
+            dataset,
+            extra_masks=extra_masks,
+            force_rebin=force_rebin,
+            progress_callback=progress_callback,
+        )
         view = _with_viewer_dataset_metadata(dataset, raw_view) if raw_view is not None else None
     else:
-        view = dataset_for_slice_viewer(dataset, extra_masks=extra_masks)
+        view = dataset_for_slice_viewer(
+            dataset,
+            extra_masks=extra_masks,
+            force_rebin=force_rebin,
+            progress_callback=progress_callback,
+        )
     if isinstance(view, MDHistoData):
         points = _point_data_from_mdhisto_view(view)
     elif isinstance(view, PointListData):
@@ -2223,19 +2418,60 @@ def effective_dataset_temperature(
     return float(value)
 
 
+def effective_dataset_field(
+    group: DataGroup, dataset: DatasetEntry
+) -> np.ndarray | None:
+    """Return the dataset's applied field as a Cartesian Tesla 3-vector.
+
+    Reads ``dataset.parameters["magnetic_field"]`` — a dict with
+    ``magnitude_T`` (Tesla), ``direction`` (3-vector), and ``frame`` (``"uvw"``
+    for direct-lattice directions, ``"hkl"`` for reciprocal). Returns ``None``
+    when no field is set, the magnitude is zero, or the group has no lattice
+    parameters to orient the direction with.
+    """
+
+    payload = dataset.parameters.get("magnetic_field")
+    if not isinstance(payload, dict):
+        return None
+    try:
+        magnitude = float(payload.get("magnitude_T", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if magnitude == 0.0:
+        return None
+    direction = payload.get("direction")
+    lattice = group.lattice_parameters
+    if (
+        direction is None
+        or not isinstance(lattice, dict)
+        or not all(key in lattice for key in ("a", "b", "c"))
+    ):
+        return None
+    try:
+        return magnetic_field_vector(
+            magnitude, direction, str(payload.get("frame", "uvw")), lattice
+        )
+    except (TypeError, ValueError):
+        return None
+
+
 def _apply_sample_context_to_points(
     group: DataGroup, dataset: DatasetEntry, points: PointData4D
 ) -> None:
-    """Stamp per-dataset temperature and group lattice metadata onto fit points.
+    """Stamp per-dataset temperature, field, and lattice metadata onto fit points.
 
     Physics models read the sample temperature from ``PointData4D.temperature``
-    and convert HKL to ``|Q|`` through ``rlu_to_inv_angstrom_matrix`` metadata;
-    both are supplied here so models never depend on GUI state.
+    and the applied field from ``PointData4D.magnetic_field`` (Cartesian
+    Tesla), and convert HKL to ``|Q|`` through ``rlu_to_inv_angstrom_matrix``
+    metadata; all are supplied here so models never depend on GUI state.
     """
 
     override = effective_dataset_temperature(group, dataset)
     if override is not None:
         points.temperature = override
+    field_vector = effective_dataset_field(group, dataset)
+    if field_vector is not None:
+        points.magnetic_field = field_vector
     if (
         "rlu_to_inv_angstrom_matrix" not in points.metadata
         and isinstance(group.lattice_parameters, dict)
@@ -2355,14 +2591,26 @@ def _point_data_from_point_list_view(data: PointListData) -> PointData4D:
 
 def fit_dataset_inputs(
     group: DataGroup,
+    *,
+    force_rebin: bool = True,
+    progress_callback: Any | None = None,
 ) -> tuple[list[FitDatasetInput], dict[str, FitDataBundle]]:
     """Prepare every enabled dataset in a group for the fit compiler."""
 
     inputs: list[FitDatasetInput] = []
     bundles: dict[str, FitDataBundle] = {}
     if data_group_composite_enabled(group):
-        composite = composite_dataset_entry(group)
-        bundle = fit_data_bundle(group, composite)
+        composite = composite_dataset_entry(
+            group,
+            force_rebin=force_rebin,
+            progress_callback=progress_callback,
+        )
+        bundle = fit_data_bundle(
+            group,
+            composite,
+            force_rebin=force_rebin,
+            progress_callback=progress_callback,
+        )
         if bundle is None:
             return inputs, bundles
         inputs.append(
@@ -2378,7 +2626,12 @@ def fit_dataset_inputs(
     for dataset in group.iter_datasets():
         if not dataset.enabled:
             continue
-        bundle = fit_data_bundle(group, dataset)
+        bundle = fit_data_bundle(
+            group,
+            dataset,
+            force_rebin=force_rebin,
+            progress_callback=progress_callback,
+        )
         if bundle is None:
             continue
         inputs.append(
@@ -2471,12 +2724,6 @@ def perform_group_fit(
     ]
     if not any(component.enabled for component in components):
         raise ValueError("the data group has no enabled model components")
-    inputs, bundles = fit_dataset_inputs(group)
-    if not inputs:
-        raise ValueError("no enabled dataset could be prepared for fitting")
-
-    compiled = compile_fit_problem(components, inputs, description=group.name)
-    config = OptimizationConfig(kwargs=_optimizer_kwargs(optimizer_config))
     progress_events: list[dict[str, Any]] = []
 
     def record_progress(event: dict[str, Any]) -> None:
@@ -2485,26 +2732,46 @@ def perform_group_fit(
         if progress_callback is not None:
             progress_callback(event)
 
+    inputs, bundles = fit_dataset_inputs(group, progress_callback=record_progress)
+    if not inputs:
+        raise ValueError("no enabled dataset could be prepared for fitting")
+
+    compiled = compile_fit_problem(components, inputs, description=group.name)
+    config = OptimizationConfig(kwargs=_optimizer_kwargs(optimizer_config))
+
     result = fit_problem_least_squares(
         compiled.problem,
         config=config,
         progress_callback=record_progress,
     )
     sampler_result: SamplingResult | None = None
+    sampler_cancelled = False
     sampler = _sampler_config(optimizer_config)
     if sampler is not None:
-        sampler_result = sample_problem_parameters(
-            compiled.problem,
-            sampler,
-            initial_params=result.params,
-            require_positive_sigma=config.require_positive_sigma,
-            progress_callback=record_progress,
-        )
+        try:
+            sampler_result = sample_problem_parameters(
+                compiled.problem,
+                sampler,
+                initial_params=result.params,
+                require_positive_sigma=config.require_positive_sigma,
+                progress_callback=record_progress,
+            )
+        except SamplingCancelled as exc:
+            sampler_result = exc.result
+            sampler_cancelled = True
     _write_back_fitted_parameters(group, components, compiled, result)
     channels = _fit_channels_from_result(compiled, result, bundles)
     goodness: dict[str, Any] = {
-        "status": "converged" if result.success else "not converged",
-        "message": result.message,
+        "status": (
+            "cancelled"
+            if sampler_cancelled
+            else ("converged" if result.success else "not converged")
+        ),
+        "message": (
+            "emcee posterior sampling cancelled; partial posterior samples were saved."
+            if sampler_cancelled
+            else result.message
+        ),
         "chi2": float(result.chi2),
         "reduced_chi2": float(result.reduced_chi2),
         "n_points": int(sum(result.dataset_sizes.values())),
@@ -2653,7 +2920,7 @@ def current_model_channels(group: DataGroup) -> dict[str, dict[str, Any]]:
         bundles = cached["bundles"]
         subsets = cached["subsets"]
     else:
-        inputs, bundles = fit_dataset_inputs(group)
+        inputs, bundles = fit_dataset_inputs(group, force_rebin=False)
         if not inputs:
             _MODEL_OVERLAY_CACHE.pop(id(group), None)
             return {}
@@ -3158,6 +3425,7 @@ def _subset_points(points: PointData4D, keep: np.ndarray) -> PointData4D:
         sigma=points.sigma[keep],
         mask=np.ones(int(np.count_nonzero(keep)), dtype=bool),
         temperature=temperature,
+        magnetic_field=None if points.magnetic_field is None else np.array(points.magnetic_field),
         metadata=dict(points.metadata),
     )
 
@@ -3278,6 +3546,8 @@ def _decode_float_array(payload: dict[str, Any]) -> np.ndarray:
 # excludes the dataset scale factor, which is applied cheaply afterward.
 _VIEWER_VIEW_CACHE: dict[int, tuple[str, Any]] = {}
 _VIEWER_VIEW_CACHE_LIMIT = 8
+_COMPOSITE_DATA_CACHE: dict[int, tuple[str, Any]] = {}
+_COMPOSITE_DATA_CACHE_LIMIT = 4
 
 
 def _mask_signature(masks: list[MaskSpec] | None) -> list[Any]:
@@ -3311,13 +3581,22 @@ def _viewer_data_before_scale(
     dataset: DatasetEntry,
     *,
     extra_masks: list[MaskSpec] | None = None,
+    force_rebin: bool = True,
+    progress_callback: Any | None = None,
 ) -> MDHistoData | PointListData | None:
     key = id(dataset)
     signature = _viewer_view_signature(dataset, extra_masks)
     cached = _VIEWER_VIEW_CACHE.get(key)
     if cached is not None and cached[0] == signature:
         return cached[1]
-    result = _viewer_data_before_scale_uncached(dataset, extra_masks=extra_masks)
+    if cached is not None and _should_defer_dataset_rebin(dataset, force_rebin=force_rebin):
+        return cached[1]
+    result = _viewer_data_before_scale_uncached(
+        dataset,
+        extra_masks=extra_masks,
+        force_rebin=force_rebin,
+        progress_callback=progress_callback,
+    )
     if result is not None:
         # Recompute the signature: the uncached path may have lazily loaded the
         # data (changing id(dataset.data)), so key the entry on the loaded id.
@@ -3332,6 +3611,8 @@ def _viewer_data_before_scale_uncached(
     dataset: DatasetEntry,
     *,
     extra_masks: list[MaskSpec] | None = None,
+    force_rebin: bool = True,
+    progress_callback: Any | None = None,
 ) -> MDHistoData | PointListData | None:
     if data_type_container(dataset.data_type) == "point_list" or isinstance(dataset.data, PointListData):
         if dataset.data is None:
@@ -3339,11 +3620,15 @@ def _viewer_data_before_scale_uncached(
         if not isinstance(dataset.data, PointListData):
             return None
         if dataset_rebin_enabled(dataset):
-            return rebinned_dataset_data(dataset)
+            if _should_defer_dataset_rebin(dataset, force_rebin=force_rebin):
+                return prepared_point_list_data(dataset)
+            return rebinned_dataset_data(dataset, progress_callback=progress_callback)
         return prepared_point_list_data(dataset)
     if isinstance(dataset.data, MDHistoData):
         if dataset_rebin_enabled(dataset):
-            return rebinned_dataset_data(dataset, extra_masks=extra_masks)
+            if _should_defer_dataset_rebin(dataset, force_rebin=force_rebin):
+                return _mdhisto_with_nfit_masks(dataset, data=dataset.data, extra_masks=extra_masks)
+            return rebinned_dataset_data(dataset, extra_masks=extra_masks, progress_callback=progress_callback)
         return _mdhisto_with_nfit_masks(dataset, data=dataset.data, extra_masks=extra_masks)
     source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
     if not source:
@@ -3356,7 +3641,9 @@ def _viewer_data_before_scale_uncached(
     dataset.kind = dataset.kind or source_path.suffix.lstrip(".").lower()
     dataset.metadata["import_status"] = "loaded"
     if dataset_rebin_enabled(dataset):
-        return rebinned_dataset_data(dataset, extra_masks=extra_masks)
+        if _should_defer_dataset_rebin(dataset, force_rebin=force_rebin):
+            return _mdhisto_with_nfit_masks(dataset, data=dataset.data, extra_masks=extra_masks)
+        return rebinned_dataset_data(dataset, extra_masks=extra_masks, progress_callback=progress_callback)
     return _mdhisto_with_nfit_masks(dataset, data=dataset.data, extra_masks=extra_masks)
 
 
@@ -3429,6 +3716,9 @@ def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
                 axis_config.setdefault(key, value)
             sanitized_axes.append(_sanitize_rebin_axis_config(axis_config))
         config["axes"] = sanitized_axes
+    if "auto_rebin" not in config:
+        config["auto_rebin"] = not _dataset_rebin_is_large(dataset, config)
+    config.setdefault("stale", False)
     return config
 
 
@@ -3439,22 +3729,108 @@ def dataset_rebin_enabled(dataset: DatasetEntry) -> bool:
     return bool(isinstance(config, dict) and config.get("enabled"))
 
 
+def _dataset_rebin_source_points(dataset: DatasetEntry) -> int:
+    data = dataset.data
+    if isinstance(data, MDHistoData):
+        return int(np.asarray(data.signal).size)
+    if isinstance(data, PointData4D):
+        return int(data.size)
+    if isinstance(data, PointListData):
+        try:
+            return int(prepared_point_list_data(dataset).size)
+        except Exception:
+            return 0
+    return 0
+
+
+def _dataset_rebin_output_bins(config: dict[str, Any]) -> int:
+    total = 1
+    axes = config.get("axes")
+    if not isinstance(axes, list) or not axes:
+        return 0
+    for axis in axes:
+        if not isinstance(axis, dict):
+            return 0
+        total *= max(int(axis.get("num_bins", 1) or 1), 1)
+    return int(total)
+
+
+def _dataset_rebin_estimated_contributions(dataset: DatasetEntry, config: dict[str, Any]) -> int:
+    source_points = _dataset_rebin_source_points(dataset)
+    ndim = max(len(config.get("axes", []) or []), 1)
+    multiplier = 2**ndim if bool(config.get("fractional", True)) else 1
+    return int(source_points * multiplier)
+
+
+def _dataset_rebin_is_large(dataset: DatasetEntry, config: dict[str, Any]) -> bool:
+    return (
+        _dataset_rebin_estimated_contributions(dataset, config) > REBIN_AUTO_MAX_CONTRIBUTIONS
+        or _dataset_rebin_output_bins(config) > REBIN_AUTO_MAX_OUTPUT_BINS
+    )
+
+
+def _dataset_rebin_status_text(dataset: DatasetEntry, config: dict[str, Any]) -> str:
+    if not bool(config.get("enabled", False)):
+        return "Rebinning is disabled."
+    size_note = "large dataset" if _dataset_rebin_is_large(dataset, config) else "small dataset"
+    if bool(config.get("auto_rebin", True)):
+        if bool(config.get("stale", False)):
+            return f"Automatic rebinning is on ({size_note}); pending edits will recompute on the next refresh."
+        return f"Automatic rebinning is on ({size_note}); edits recompute the cached rebin."
+    if bool(config.get("stale", False)):
+        return "Manual rebin pending; press Rebin now or start a fit/view/export operation to compute it."
+    return f"Manual rebinning is on ({size_note}); cached rebin is current."
+
+
+def _dataset_rebin_auto_enabled(dataset: DatasetEntry) -> bool:
+    config = dataset_rebin_config(dataset)
+    return bool(config.get("auto_rebin", True))
+
+
+def _dataset_rebin_is_stale(dataset: DatasetEntry) -> bool:
+    config = dataset.parameters.get(DATASET_REBIN_KEY)
+    return bool(isinstance(config, dict) and config.get("stale", False))
+
+
+def _should_defer_dataset_rebin(dataset: DatasetEntry, *, force_rebin: bool) -> bool:
+    return bool(
+        dataset_rebin_enabled(dataset)
+        and not force_rebin
+        and _dataset_rebin_is_stale(dataset)
+        and not _dataset_rebin_auto_enabled(dataset)
+    )
+
+
 def rebinned_dataset_data(
     dataset: DatasetEntry,
     *,
     extra_masks: list[MaskSpec] | None = None,
+    progress_callback: Any | None = None,
 ) -> Any:
     """Return a rebinned copy of a supported dataset according to its configuration."""
 
     config = dataset_rebin_config(dataset)
     if isinstance(dataset.data, PointListData):
-        return _rebin_point_list_data(dataset, config)
+        result = _rebin_point_list_data(dataset, config)
+        config["stale"] = False
+        return result
     if isinstance(dataset.data, PointData4D):
-        return _rebin_point_data(_point_data_with_nfit_masks(dataset, dataset.data, extra_masks=extra_masks), config)
+        result = _rebin_point_data(
+            _point_data_with_nfit_masks(dataset, dataset.data, extra_masks=extra_masks),
+            config,
+            progress_callback=progress_callback,
+        )
+        config["stale"] = False
+        return result
     if not isinstance(dataset.data, MDHistoData):
         return dataset.data
     masked = _mdhisto_with_nfit_masks(dataset, data=dataset.data, extra_masks=extra_masks)
-    return _with_rebinned_mask_metadata(_rebin_mdhisto_data(masked, config), masked)
+    result = _with_rebinned_mask_metadata(
+        _rebin_mdhisto_data(masked, config, progress_callback=progress_callback),
+        masked,
+    )
+    config["stale"] = False
+    return result
 
 
 def _with_rebinned_mask_metadata(rebinned: MDHistoData, source: MDHistoData) -> MDHistoData:
@@ -3519,10 +3895,15 @@ def create_rebinned_dataset(
     dataset: DatasetEntry,
     *,
     name: str | None = None,
+    progress_callback: Any | None = None,
 ) -> DatasetEntry:
     """Materialize a dataset's rebinned view as an independent dataset."""
 
-    data = rebinned_dataset_data(dataset, extra_masks=effective_dataset_masks(group, dataset))
+    data = rebinned_dataset_data(
+        dataset,
+        extra_masks=effective_dataset_masks(group, dataset),
+        progress_callback=progress_callback,
+    )
     if data is dataset.data:
         data = copy.deepcopy(data)
     parameters = {}
@@ -3780,7 +4161,12 @@ def _mdhisto_rebin_component(
     return component
 
 
-def _rebin_mdhisto_data(data: MDHistoData, config: dict[str, Any]) -> MDHistoData:
+def _rebin_mdhisto_data(
+    data: MDHistoData,
+    config: dict[str, Any],
+    *,
+    progress_callback: Any | None = None,
+) -> MDHistoData:
     axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
     if len(axes_config) != len(data.axes):
         axes_config = _default_rebin_axes(data)
@@ -3813,6 +4199,7 @@ def _rebin_mdhisto_data(data: MDHistoData, config: dict[str, Any]) -> MDHistoDat
         normalize=True,
         mean_weighting=_rebin_mean_weighting(config),
         max_batch_bytes=_rebin_max_batch_bytes(config),
+        progress_callback=progress_callback,
     )
     if result.binned_data is None or result.binned_data_errs is None or result.n_samples is None:
         raise RuntimeError("rebinning did not produce binned data")
@@ -3858,7 +4245,12 @@ def _rebin_mdhisto_data(data: MDHistoData, config: dict[str, Any]) -> MDHistoDat
     )
 
 
-def _rebin_point_data(data: PointData4D, config: dict[str, Any]) -> PointData4D:
+def _rebin_point_data(
+    data: PointData4D,
+    config: dict[str, Any],
+    *,
+    progress_callback: Any | None = None,
+) -> PointData4D:
     axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
     if len(axes_config) != 4:
         axes_config = _default_rebin_axes(data)
@@ -3874,6 +4266,7 @@ def _rebin_point_data(data: PointData4D, config: dict[str, Any]) -> PointData4D:
         normalize=True,
         mean_weighting=_rebin_mean_weighting(config),
         max_batch_bytes=_rebin_max_batch_bytes(config),
+        progress_callback=progress_callback,
     )
 
 
@@ -3901,6 +4294,7 @@ def _point_data_with_nfit_masks(
         sigma=data.sigma.copy(),
         mask=~combined_reject,
         temperature=temperature,
+        magnetic_field=None if data.magnetic_field is None else np.array(data.magnetic_field),
         metadata=metadata,
     )
 
@@ -5123,7 +5517,10 @@ class _FitProgressDialog:
         self.panel_splitter.setSizes([240, 220])
         self.cancel_button = QtWidgets.QPushButton("Cancel")
         self.cancel_button.setEnabled(False)
-        self.cancel_button.setToolTip("Request cancellation of the active fit or posterior sampler.")
+        self.cancel_button.setToolTip(
+            "Request cancellation of the active fit or posterior sampler. If emcee has already recorded samples, "
+            "the partial chain is saved so it can be inspected or appended later."
+        )
         self.cancel_button.clicked.connect(self._cancel_requested)
         self.close_button = QtWidgets.QPushButton("Close")
         self.close_button.setEnabled(False)
@@ -5181,6 +5578,7 @@ class _FitProgressDialog:
         message = str(event.get("message", stage))
         stage_title = {
             "initialization": "Initialization: differential evolution",
+            "rebin": "Rebinning data",
             "least_squares": "Least-squares fit",
             "emcee": "Posterior sampling: emcee",
         }.get(stage, stage.replace("_", " ").title())
@@ -5773,6 +6171,10 @@ class NfitProjectExplorer:
         self.fit_weight_spin = None
         self.scale_factor_spin = None
         self.dataset_temperature_spin = None
+        self.sample_environment_widget = None
+        self.dataset_field_magnitude_spin = None
+        self.dataset_field_frame_combo = None
+        self.dataset_field_direction_edit = None
         self.group_bulk_widget = None
         self.group_fit_weight_edit = None
         self.group_scale_edit = None
@@ -5925,48 +6327,140 @@ class NfitProjectExplorer:
         return None, None
 
     def delete_selected(self) -> None:
-        item = self._current_item()
+        items = self._selected_deletable_items()
+        if not items:
+            return
+        changed = False
+        affected_groups: list[DataGroup] = []
+        for item in items:
+            did_change, group = self._delete_tree_item(item)
+            if did_change:
+                changed = True
+                if group is not None and group not in affected_groups:
+                    affected_groups.append(group)
+        if not changed:
+            return
+        self._mark_dirty()
+        select_group = affected_groups[0] if len(affected_groups) == 1 else None
+        self._refresh_tree(select_group=select_group)
+
+    def _is_multi_select_gesture(self) -> bool:
+        """True while the user extends a selection with shift/ctrl/cmd.
+
+        Selecting a single fit restores its snapshot into the live model, which
+        rebuilds the tree. During a range or toggle selection that rebuild would
+        destroy the very multi-selection the user is building (for example to
+        delete several fit results at once), so the restore is suppressed while
+        a modifier is held.
+        """
+
+        from PySide6 import QtCore, QtWidgets
+
+        modifiers = QtWidgets.QApplication.keyboardModifiers()
+        extend = (
+            QtCore.Qt.KeyboardModifier.ShiftModifier
+            | QtCore.Qt.KeyboardModifier.ControlModifier
+            | QtCore.Qt.KeyboardModifier.MetaModifier
+        )
+        return bool(modifiers & extend)
+
+    def _prune_tree_selection(self) -> None:
+        """Keep multi-selections homogeneous by role.
+
+        The tree uses ``ExtendedSelection``, so a shift-click selects every
+        visible row between the anchor and the click, which otherwise sweeps in
+        the workspace root and the ``Datasets``/``Models``/``Fits`` folder
+        headers. Restricting the selection to items sharing the current (just
+        clicked) item's role lets the user grab a contiguous run of fits,
+        datasets, masks, or models without dragging in unrelated rows.
+        """
+
+        selected = self.tree.selectedItems()
+        if len(selected) <= 1:
+            return
+        current = self._current_item()
+        current_role = self._objects_for_item(current)[4]
+        keep_roles = _DELETABLE_ROLE_GROUP.get(current_role, {current_role})
+        stale = [item for item in selected if self._objects_for_item(item)[4] not in keep_roles]
+        if not stale:
+            return
+        self.tree.blockSignals(True)
+        try:
+            for item in stale:
+                item.setSelected(False)
+        finally:
+            self.tree.blockSignals(False)
+
+    def _selected_deletable_items(self) -> list[Any]:
+        """Selected tree items that can be deleted, restricted to one role.
+
+        Range/multi selection can span several roles; a batch delete only makes
+        sense within a single role, so the returned items all share the current
+        item's role (falling back to the current item when nothing else is
+        selected).
+        """
+
+        current = self._current_item()
+        current_role = self._objects_for_item(current)[4]
+        if current_role not in _DELETABLE_TREE_ROLES:
+            return []
+        keep_roles = _DELETABLE_ROLE_GROUP.get(current_role, {current_role})
+        items = [
+            item
+            for item in self.tree.selectedItems()
+            if self._objects_for_item(item)[4] in keep_roles
+        ]
+        if current is not None and current not in items:
+            items.append(current)
+        return items
+
+    def _delete_tree_item(self, item: Any) -> tuple[bool, DataGroup | None]:
+        """Delete a single tree item's object without refreshing the tree.
+
+        Returns ``(changed, group_to_reselect)``; ``group_to_reselect`` is the
+        data group the caller should reselect after refreshing, or ``None`` when
+        no selection should be restored (for example after deleting a whole
+        workspace).
+        """
+
         group, entry, mask, model, role = self._objects_for_item(item)
         if role == "group" and group is not None:
             delete_data_group(self.project, group)
             self._close_slice_viewer(group)
             if self._active_fit_group is group:
                 self._clear_active_fit_state()
-            self._mark_dirty()
-            self._refresh_tree()
-        elif role == "dataset" and group is not None and entry is not None:
+            return True, None
+        if role == "dataset" and group is not None and entry is not None:
             delete_dataset(group, entry)
             self._record_data_group_state_change(group)
-            self._mark_dirty()
-            self._refresh_tree(select_group=group)
-        elif role == "mask" and group is not None and entry is not None and mask is not None:
+            return True, group
+        if role == "mask" and group is not None and entry is not None and mask is not None:
             delete_mask(entry, mask)
             self._record_data_group_state_change(group)
-            self._mark_dirty()
-            self._refresh_tree(select_group=group)
-        elif role == "dataset_group" and group is not None:
+            return True, group
+        if role == "dataset_group" and group is not None:
             subgroup = self._dataset_group_for_item(item)
             if subgroup is not None and delete_dataset_group(group, subgroup):
                 self._record_data_group_state_change(group)
-                self._mark_dirty()
-                self._refresh_tree(select_group=group)
-        elif role == "group_mask" and group is not None and mask is not None:
+                return True, group
+            return False, None
+        if role == "group_mask" and group is not None and mask is not None:
             subgroup = self._dataset_group_for_item(item)
             if subgroup is not None and mask in subgroup.masks:
                 subgroup.masks.remove(mask)
                 self._record_data_group_state_change(group)
-                self._mark_dirty()
-                self._refresh_tree(select_group=group)
-        elif role == "model" and group is not None and model is not None:
+                return True, group
+            return False, None
+        if role == "model" and group is not None and model is not None:
             delete_model_component(group, model)
             self._record_data_group_state_change(group)
-            self._mark_dirty()
-            self._refresh_tree(select_group=group)
-        elif role in {"fit", "fit_timeline"} and group is not None:
+            return True, group
+        if role in {"fit", "fit_timeline"} and group is not None:
             fit_entry = self._fit_entry_for_item(item)
             if fit_entry is not None and delete_fit_entry(group, fit_entry):
-                self._mark_dirty()
-                self._refresh_tree(select_group=group)
+                return True, group
+            return False, None
+        return False, None
 
     def new_project(self) -> bool:
         if not self._confirm_save_before_closing_project():
@@ -6195,8 +6689,9 @@ class NfitProjectExplorer:
         group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
         if role != "dataset" or group is None or entry is None:
             return None
+        progress = self._make_rebin_progress_callback("Creating rebinned dataset...") if _dataset_rebin_is_large(entry, dataset_rebin_config(entry)) else None
         try:
-            rebinned = create_rebinned_dataset(group, entry)
+            rebinned = create_rebinned_dataset(group, entry, progress_callback=progress)
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
                 self.window,
@@ -6204,6 +6699,8 @@ class NfitProjectExplorer:
                 f"Could not create rebinned dataset:\n{exc}",
             )
             return None
+        finally:
+            self._close_rebin_progress(progress)
         self._record_data_group_state_change(group)
         self._mark_dirty()
         self._refresh_tree(select_group=group, select_dataset=rebinned)
@@ -6223,8 +6720,13 @@ class NfitProjectExplorer:
         )
         if not path:
             return False
+        progress = self._make_rebin_progress_callback("Saving rebinned dataset...") if _dataset_rebin_is_large(entry, dataset_rebin_config(entry)) else None
         try:
-            data = rebinned_dataset_data(entry, extra_masks=effective_dataset_masks(group, entry))
+            data = rebinned_dataset_data(
+                entry,
+                extra_masks=effective_dataset_masks(group, entry),
+                progress_callback=progress,
+            )
             rebinned_entry = DatasetEntry(
                 name=f"{entry.name} rebinned",
                 data=data,
@@ -6241,6 +6743,67 @@ class NfitProjectExplorer:
                 f"Could not save rebinned dataset:\n{exc}",
             )
             return False
+        finally:
+            self._close_rebin_progress(progress)
+        return True
+
+    def rebin_now_for_selection(self) -> bool:
+        from PySide6 import QtWidgets
+
+        group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        if role != "dataset" or group is None or entry is None:
+            return False
+        progress = self._make_rebin_progress_callback("Rebinning dataset...") if _dataset_rebin_is_large(entry, dataset_rebin_config(entry)) else None
+        try:
+            view = dataset_for_slice_viewer(
+                entry,
+                extra_masks=effective_dataset_masks(group, entry),
+                force_rebin=True,
+                progress_callback=progress,
+            )
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Rebin now",
+                f"Could not rebin dataset:\n{exc}",
+            )
+            return False
+        finally:
+            self._close_rebin_progress(progress)
+        if view is None:
+            return False
+        if group is not None:
+            self.refresh_slice_viewer(group)
+        self._set_dataset_details(entry, group)
+        return True
+
+    def rebin_composite_now(self, group: DataGroup) -> bool:
+        from PySide6 import QtWidgets
+
+        if group is None or not data_group_composite_enabled(group):
+            return False
+        config = data_group_composite_config(group)
+        progress = self._make_rebin_progress_callback("Rebinning composite dataset...") if _composite_rebin_is_large(group, config) else None
+        try:
+            data = _cached_composite_dataset_data(
+                group,
+                force_rebin=True,
+                progress_callback=progress,
+            )
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Rebin now",
+                f"Could not rebin composite dataset:\n{exc}",
+            )
+            return False
+        finally:
+            self._close_rebin_progress(progress)
+        if data is None:
+            return False
+        self.refresh_slice_viewer(group)
+        self._request_overlay_refresh(group)
+        self._set_group_details(group)
         return True
 
     def save_dataset_for_selection(self) -> bool:
@@ -6324,6 +6887,7 @@ class NfitProjectExplorer:
         class Worker(QtCore.QObject):
             progress = QtCore.Signal(dict)
             finished = QtCore.Signal(object)
+            cancelled = QtCore.Signal(object)
             failed = QtCore.Signal(str)
 
             def __init__(self) -> None:
@@ -6339,6 +6903,8 @@ class NfitProjectExplorer:
                         self.progress.emit(event)
 
                     self.finished.emit(task(progress_callback))
+                except SamplingCancelled as exc:
+                    self.cancelled.emit(exc.result)
                 except Exception as exc:
                     self.failed.emit(str(exc))
 
@@ -6357,6 +6923,12 @@ class NfitProjectExplorer:
                     progress.finish(success_message)
                     if close_on_success:
                         progress.close()
+                worker_thread.quit()
+
+            @QtCore.Slot(object)
+            def handle_cancelled(self, result: Any) -> None:
+                on_success(result)
+                progress.finish("emcee posterior sampling cancelled; partial samples saved.")
                 worker_thread.quit()
 
             @QtCore.Slot(str)
@@ -6406,8 +6978,10 @@ class NfitProjectExplorer:
             self._fit_worker_handler = None
 
         worker.finished.connect(handler.handle_success)
+        worker.cancelled.connect(handler.handle_cancelled)
         worker.failed.connect(handler.handle_failure)
         worker.finished.connect(worker.deleteLater)
+        worker.cancelled.connect(worker.deleteLater)
         worker.failed.connect(worker.deleteLater)
         worker_thread.finished.connect(cleanup)
         worker_thread.finished.connect(worker_thread.deleteLater)
@@ -6432,17 +7006,22 @@ class NfitProjectExplorer:
 
         def on_success(result: FitTimelineEntry) -> None:
             failed = str(result.goodness.get("status", "")) == "failed"
+            cancelled = str(result.goodness.get("status", "")) == "cancelled"
             if failed:
                 progress = self._fit_progress_dialog
                 if progress is not None:
                     progress.fail(str(result.goodness.get("message", "The fit did not run.")))
+            elif cancelled:
+                progress = self._fit_progress_dialog
+                if progress is not None:
+                    progress.finish(str(result.goodness.get("message", "Partial posterior samples were saved.")))
             self.fit_branch_check.setChecked(False)
             self.refresh_slice_viewer(group)
             item_to_select = _fit_entry_to_select_after_run(group, fit_entry, result)
             self._set_active_fit_state(group, item_to_select)
             self._mark_dirty()
             self._refresh_tree(select_group=group, select_fit=item_to_select)
-            return not failed
+            return not (failed or cancelled)
 
         return self._start_background_task(
             title="Starting fit pipeline...",
@@ -6610,6 +7189,13 @@ class NfitProjectExplorer:
                 append=append,
                 progress_callback=progress.update_progress,
             )
+        except SamplingCancelled as exc:
+            result = exc.result
+            _store_sampling_result_on_fit_entry(fit_entry, result)
+            self._mark_dirty()
+            progress.finish("emcee posterior sampling cancelled; partial samples saved.")
+            self._set_fit_details(fit_entry)
+            return True
         except Exception as exc:
             progress.fail(str(exc))
             QtWidgets.QMessageBox.warning(
@@ -6721,13 +7307,21 @@ class NfitProjectExplorer:
             random_seed=random_seed,
             kwargs={"workers": int(workers)},
         )
-        sampled = sample_problem_parameters(
-            compiled.problem,
-            config,
-            initial_params=initial_params if initial_walkers is None else None,
-            initial_walkers=initial_walkers,
-            progress_callback=progress_callback,
-        )
+        try:
+            sampled = sample_problem_parameters(
+                compiled.problem,
+                config,
+                initial_params=initial_params if initial_walkers is None else None,
+                initial_walkers=initial_walkers,
+                progress_callback=progress_callback,
+            )
+        except SamplingCancelled as exc:
+            partial = (
+                _combined_sampling_result(stored, exc.result, burn_in=burn_in, thin=thin)
+                if append and stored is not None
+                else exc.result
+            )
+            raise SamplingCancelled(str(exc), partial) from exc
         return (
             _combined_sampling_result(stored, sampled, burn_in=burn_in, thin=thin)
             if append and stored is not None
@@ -6773,8 +7367,14 @@ class NfitProjectExplorer:
     ) -> Any | None:
         from PySide6 import QtWidgets
 
+        progress = self._rebin_progress_callback_for_group(group, use_composite=use_composite)
         try:
-            datasets, names = slice_viewer_datasets(group, use_composite=use_composite)
+            datasets, names = slice_viewer_datasets(
+                group,
+                use_composite=use_composite,
+                force_rebin=True,
+                progress_callback=progress,
+            )
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
                 self.window,
@@ -6782,6 +7382,8 @@ class NfitProjectExplorer:
                 f"Could not load datasets for the data viewer:\n{exc}",
             )
             return None
+        finally:
+            self._close_rebin_progress(progress)
         self._sync_details()
         if not datasets:
             return None
@@ -6837,7 +7439,11 @@ class NfitProjectExplorer:
         if current_viewer.dataset_combo is not None:
             selected_name = current_viewer.dataset_combo.currentText()
         try:
-            datasets, names = slice_viewer_datasets(group, use_composite=use_composite)
+            datasets, names = slice_viewer_datasets(
+                group,
+                use_composite=use_composite,
+                force_rebin=False,
+            )
         except Exception:
             return None
         if not datasets:
@@ -6852,6 +7458,49 @@ class NfitProjectExplorer:
         else:
             self._replace_slice_viewer(group, datasets, names)
         return self._slice_viewers.get(id(group))
+
+    def _rebin_progress_callback_for_group(self, group: DataGroup, *, use_composite: bool = True) -> Any | None:
+        if use_composite and data_group_composite_enabled(group):
+            config = data_group_composite_config(group)
+            if _composite_rebin_is_large(group, config):
+                return self._make_rebin_progress_callback("Rebinning composite dataset...")
+        if not any(
+            dataset_rebin_enabled(dataset)
+            and _dataset_rebin_is_large(dataset, dataset_rebin_config(dataset))
+            for dataset in group.iter_datasets()
+        ):
+            return None
+        return self._make_rebin_progress_callback("Rebinning dataset...")
+
+    def _make_rebin_progress_callback(self, title: str) -> Any | None:
+        try:
+            from PySide6 import QtCore, QtWidgets
+        except Exception:
+            return None
+        dialog = QtWidgets.QProgressDialog(title, None, 0, 100, self.window)
+        dialog.setWindowTitle("Rebin progress")
+        dialog.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
+        dialog.setMinimumDuration(0)
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+        dialog.show()
+
+        def callback(event: dict[str, Any]) -> None:
+            total = int(event.get("total") or 0)
+            iteration = int(event.get("iteration") or 0)
+            if total > 0:
+                dialog.setMaximum(total)
+                dialog.setValue(min(iteration, total))
+            dialog.setLabelText(str(event.get("message") or title))
+            QtWidgets.QApplication.processEvents()
+
+        setattr(callback, "_nfit_progress_dialog", dialog)
+        return callback
+
+    def _close_rebin_progress(self, callback: Any | None) -> None:
+        dialog = getattr(callback, "_nfit_progress_dialog", None)
+        if dialog is not None:
+            dialog.close()
 
     def copy_selected(self) -> None:
         _group, entry, mask, _model, role = self._objects_for_item(self._current_item())
@@ -7262,6 +7911,7 @@ class NfitProjectExplorer:
             | QtWidgets.QAbstractItemView.EditTrigger.SelectedClicked
         )
         self.tree.currentItemChanged.connect(lambda _current, _previous: self._sync_details())
+        self.tree.itemSelectionChanged.connect(self._prune_tree_selection)
         self.tree.itemChanged.connect(self._tree_item_changed)
         toolbar_font = QtGui.QFont(self.tree.font())
         if toolbar_font.pointSize() > 0:
@@ -7290,7 +7940,10 @@ class NfitProjectExplorer:
         self.create_group_button = QtWidgets.QPushButton("Create workspace")
         self.delete_button = QtWidgets.QPushButton("Delete")
         self.create_group_button.setToolTip("Create a new top-level workspace and immediately rename it.")
-        self.delete_button.setToolTip("Delete the selected workspace, dataset, mask, model, or fit item when allowed.")
+        self.delete_button.setToolTip(
+            "Delete the selected workspace, dataset, mask, model, or fit item(s) when allowed. "
+            "Shift- or Ctrl/Command-click to select and delete several items of the same kind at once."
+        )
         self.create_group_button.clicked.connect(self.create_data_group)
         self.delete_button.clicked.connect(self.delete_selected)
         tree_button_row.addWidget(self.create_group_button)
@@ -7349,22 +8002,11 @@ class NfitProjectExplorer:
         )
         self.scale_factor_fit_check.toggled.connect(self._set_selected_dataset_scale_factor_vary)
         fit_weight_layout.addWidget(self.scale_factor_fit_check)
-        fit_weight_layout.addWidget(QtWidgets.QLabel("T (K)"))
-        self.dataset_temperature_spin = QtWidgets.QDoubleSpinBox()
-        self.dataset_temperature_spin.setObjectName("dataset_temperature")
-        self.dataset_temperature_spin.setToolTip(
-            "Sample temperature override in kelvin for the selected dataset. "
-            "Physics models use it for the Bose factor; set to '(from data)' "
-            "(spin to the minimum) to use the temperature imported with the data."
-        )
-        self.dataset_temperature_spin.setRange(-1.0, 1.0e4)
-        self.dataset_temperature_spin.setDecimals(3)
-        self.dataset_temperature_spin.setSingleStep(1.0)
-        self.dataset_temperature_spin.setSpecialValueText("(from data)")
-        self.dataset_temperature_spin.setValue(-1.0)
-        self.dataset_temperature_spin.valueChanged.connect(self._set_selected_dataset_temperature)
-        fit_weight_layout.addWidget(self.dataset_temperature_spin)
         title_row.addWidget(self.fit_weight_widget)
+        # Temperature and applied field live in the Sample environment panel
+        # (built below), between the Dataset and Axes detail panels, to keep
+        # this top row uncluttered.
+        self._build_sample_environment_panel()
 
         # Bulk editors for nested dataset groups: blank when descendants differ,
         # editing overwrites the fit weight / scale of every descendant dataset.
@@ -8075,7 +8717,11 @@ class NfitProjectExplorer:
             self._set_details_text(f"Fit history\n\nResults: {result_count}")
         elif role in {"fit", "fit_timeline"} and group is not None and fit_entry is not None:
             self.title_label.setText(fit_entry.name)
-            if role == "fit" and not self._restoring_fit_selection:
+            if (
+                role == "fit"
+                and not self._restoring_fit_selection
+                and not self._is_multi_select_gesture()
+            ):
                 self._restore_selected_fit_state(group, fit_entry)
             self._sync_fit_editor(fit_entry)
             self._set_fit_details(fit_entry)
@@ -8138,18 +8784,7 @@ class NfitProjectExplorer:
             )
         finally:
             self.scale_factor_fit_check.blockSignals(False)
-        self.dataset_temperature_spin.blockSignals(True)
-        try:
-            override = (
-                entry.parameters.get("temperature")
-                if role == "dataset" and entry is not None
-                else None
-            )
-            self.dataset_temperature_spin.setValue(
-                float(override) if override not in (None, "") else -1.0
-            )
-        finally:
-            self.dataset_temperature_spin.blockSignals(False)
+        self._sync_sample_environment_controls(entry, role)
         self._sync_group_bulk_controls(role)
 
     def _group_bulk_datasets(self, role: str) -> list[DatasetEntry]:
@@ -8298,6 +8933,186 @@ class NfitProjectExplorer:
             return
         self._sync_details()
 
+    def _build_sample_environment_panel(self) -> None:
+        """Build the persistent 'Sample environment' details panel.
+
+        Holds the per-dataset temperature and applied-magnetic-field controls.
+        It is a persistent widget (like the fit-settings panel) inserted into
+        the dataset-details column between the Dataset and Axes panels; it is
+        removed but not destroyed on each details refresh.
+        """
+
+        from PySide6 import QtWidgets
+
+        self.sample_environment_widget = QtWidgets.QGroupBox("Sample environment")
+        self.sample_environment_widget.setObjectName("dataset_sample_environment_group")
+        layout = QtWidgets.QGridLayout(self.sample_environment_widget)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setHorizontalSpacing(6)
+        layout.setVerticalSpacing(4)
+
+        layout.addWidget(QtWidgets.QLabel("T (K)"), 0, 0)
+        self.dataset_temperature_spin = QtWidgets.QDoubleSpinBox()
+        self.dataset_temperature_spin.setObjectName("dataset_temperature")
+        self.dataset_temperature_spin.setToolTip(
+            "Sample temperature override in kelvin for the selected dataset. "
+            "Physics models use it for the Bose factor; set to '(from data)' "
+            "(spin to the minimum) to use the temperature imported with the data."
+        )
+        self.dataset_temperature_spin.setRange(-1.0, 1.0e4)
+        self.dataset_temperature_spin.setDecimals(3)
+        self.dataset_temperature_spin.setSingleStep(1.0)
+        self.dataset_temperature_spin.setSpecialValueText("(from data)")
+        self.dataset_temperature_spin.setValue(-1.0)
+        self.dataset_temperature_spin.valueChanged.connect(self._set_selected_dataset_temperature)
+        layout.addWidget(self.dataset_temperature_spin, 0, 1, 1, 3)
+
+        layout.addWidget(QtWidgets.QLabel("Field (T)"), 1, 0)
+        self.dataset_field_magnitude_spin = QtWidgets.QDoubleSpinBox()
+        self.dataset_field_magnitude_spin.setObjectName("dataset_field_magnitude")
+        self.dataset_field_magnitude_spin.setToolTip(
+            "Applied magnetic field magnitude in tesla for the selected "
+            "dataset. Used by the Zeeman term of spin-fluctuation models. Set "
+            "to '(none)' (spin to the minimum) for zero field. The direction "
+            "below and the data group's lattice orient the field vector."
+        )
+        self.dataset_field_magnitude_spin.setRange(-1.0, 1.0e3)
+        self.dataset_field_magnitude_spin.setDecimals(4)
+        self.dataset_field_magnitude_spin.setSingleStep(0.1)
+        self.dataset_field_magnitude_spin.setSpecialValueText("(none)")
+        self.dataset_field_magnitude_spin.setValue(-1.0)
+        self.dataset_field_magnitude_spin.valueChanged.connect(
+            self._set_selected_dataset_field_magnitude
+        )
+        layout.addWidget(self.dataset_field_magnitude_spin, 1, 1)
+
+        self.dataset_field_frame_combo = QtWidgets.QComboBox()
+        self.dataset_field_frame_combo.setObjectName("dataset_field_frame")
+        self.dataset_field_frame_combo.setToolTip(
+            "Frame the field direction is expressed in: direct-lattice "
+            "[u v w] (the usual experimental statement, e.g. B ∥ [111]) or "
+            "reciprocal (H K L). For cubic crystals the two agree; for lower "
+            "symmetry they differ."
+        )
+        self.dataset_field_frame_combo.addItem("[u v w] direct", "uvw")
+        self.dataset_field_frame_combo.addItem("(H K L) reciprocal", "hkl")
+        self.dataset_field_frame_combo.currentIndexChanged.connect(
+            self._set_selected_dataset_field_frame
+        )
+        layout.addWidget(self.dataset_field_frame_combo, 1, 2)
+
+        self.dataset_field_direction_edit = QtWidgets.QLineEdit()
+        self.dataset_field_direction_edit.setObjectName("dataset_field_direction")
+        self.dataset_field_direction_edit.setToolTip(
+            "Field direction as three components, e.g. '1 1 1'. Interpreted in "
+            "the frame selected at left; only the orientation matters (the "
+            "magnitude above sets the strength)."
+        )
+        self.dataset_field_direction_edit.setPlaceholderText("1 1 1")
+        self.dataset_field_direction_edit.editingFinished.connect(
+            self._set_selected_dataset_field_direction
+        )
+        layout.addWidget(self.dataset_field_direction_edit, 1, 3)
+
+        self.sample_environment_widget.setParent(None)
+
+    def _selected_field_payload(self, entry: DatasetEntry) -> dict[str, Any]:
+        payload = entry.parameters.get("magnetic_field")
+        if isinstance(payload, dict):
+            return dict(payload)
+        return {"magnitude_T": 0.0, "direction": [1.0, 1.0, 1.0], "frame": "uvw"}
+
+    def _commit_field_payload(
+        self, group: DataGroup | None, entry: DatasetEntry, payload: dict[str, Any]
+    ) -> None:
+        magnitude = float(payload.get("magnitude_T", 0.0) or 0.0)
+        if magnitude <= 0.0:
+            if "magnetic_field" not in entry.parameters:
+                return
+            entry.parameters.pop("magnetic_field", None)
+        else:
+            if entry.parameters.get("magnetic_field") == payload:
+                return
+            entry.parameters["magnetic_field"] = payload
+        branch_created = False
+        if group is not None:
+            branch_created = self._record_data_group_state_change(group)
+        self._mark_dirty()
+        if group is not None and branch_created:
+            self._refresh_tree(select_group=group, select_dataset=entry)
+            return
+        self._sync_details()
+
+    def _set_selected_dataset_field_magnitude(self, value: float) -> None:
+        group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        if role != "dataset" or entry is None:
+            return
+        payload = self._selected_field_payload(entry)
+        payload["magnitude_T"] = 0.0 if float(value) < 0.0 else float(value)
+        self._commit_field_payload(group, entry, payload)
+
+    def _set_selected_dataset_field_frame(self, _index: int) -> None:
+        group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        if role != "dataset" or entry is None:
+            return
+        payload = self._selected_field_payload(entry)
+        payload["frame"] = str(self.dataset_field_frame_combo.currentData() or "uvw")
+        self._commit_field_payload(group, entry, payload)
+
+    def _set_selected_dataset_field_direction(self) -> None:
+        group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        if role != "dataset" or entry is None:
+            return
+        text = self.dataset_field_direction_edit.text().replace(",", " ")
+        try:
+            components = [float(part) for part in text.split()]
+        except ValueError:
+            components = []
+        if len(components) != 3 or all(c == 0.0 for c in components):
+            self._sync_details()  # revert the edit to the stored value
+            return
+        payload = self._selected_field_payload(entry)
+        payload["direction"] = components
+        self._commit_field_payload(group, entry, payload)
+
+    def _sync_sample_environment_controls(
+        self, entry: DatasetEntry | None, role: str
+    ) -> None:
+        is_dataset = role == "dataset" and entry is not None
+        override = entry.parameters.get("temperature") if is_dataset else None
+        self.dataset_temperature_spin.blockSignals(True)
+        try:
+            self.dataset_temperature_spin.setValue(
+                float(override) if override not in (None, "") else -1.0
+            )
+        finally:
+            self.dataset_temperature_spin.blockSignals(False)
+
+        payload = entry.parameters.get("magnetic_field") if is_dataset else None
+        if not isinstance(payload, dict):
+            payload = {}
+        magnitude = float(payload.get("magnitude_T", 0.0) or 0.0)
+        direction = payload.get("direction", [1.0, 1.0, 1.0])
+        frame = str(payload.get("frame", "uvw"))
+        self.dataset_field_magnitude_spin.blockSignals(True)
+        try:
+            self.dataset_field_magnitude_spin.setValue(magnitude if magnitude > 0.0 else -1.0)
+        finally:
+            self.dataset_field_magnitude_spin.blockSignals(False)
+        self.dataset_field_frame_combo.blockSignals(True)
+        try:
+            index = self.dataset_field_frame_combo.findData(frame)
+            self.dataset_field_frame_combo.setCurrentIndex(index if index >= 0 else 0)
+        finally:
+            self.dataset_field_frame_combo.blockSignals(False)
+        self.dataset_field_direction_edit.blockSignals(True)
+        try:
+            self.dataset_field_direction_edit.setText(
+                " ".join(_format_number(float(x)) for x in direction)
+            )
+        finally:
+            self.dataset_field_direction_edit.blockSignals(False)
+
     def _set_details_text(self, text: str) -> None:
         from PySide6 import QtCore, QtWidgets
 
@@ -8416,6 +9231,15 @@ class NfitProjectExplorer:
             "Distribute source points fractionally into neighboring composite bins after dataset scale and fit-weight factors are applied."
         )
         fractional_check.toggled.connect(lambda checked: self._set_group_composite_option(group, "fractional", checked))
+        auto_check = QtWidgets.QCheckBox("Automatic rebinning")
+        auto_check.setObjectName("group_composite_auto")
+        auto_check.setChecked(bool(config.get("auto_rebin", True)))
+        auto_check.setToolTip(
+            "Automatically recompute the composite when composite rebin settings change. For large composites this defaults off, "
+            "so edits are marked pending until Rebin now is pressed or an operation such as fitting or opening the data viewer "
+            "requires an up-to-date composite."
+        )
+        auto_check.toggled.connect(lambda checked: self._set_group_composite_auto(group, checked))
         mean_label = QtWidgets.QLabel("Mean")
         mean_combo = QtWidgets.QComboBox()
         mean_combo.setObjectName("group_composite_mean_weighting")
@@ -8444,12 +9268,31 @@ class NfitProjectExplorer:
         batch_spin.setToolTip(batch_tooltip)
         batch_spin.valueChanged.connect(lambda value: self._set_group_composite_max_batch_mb(group, int(value)))
         option_row.addWidget(fractional_check)
+        option_row.addWidget(auto_check)
         option_row.addWidget(mean_label)
         option_row.addWidget(mean_combo)
         option_row.addWidget(batch_label)
         option_row.addWidget(batch_spin)
         option_row.addStretch(1)
         controls_layout.addLayout(option_row, len(axes) + 1, 0, 1, len(headers))
+        status_label = QtWidgets.QLabel(_composite_rebin_status_text(group, config))
+        status_label.setObjectName("group_composite_status")
+        status_label.setWordWrap(True)
+        status_label.setToolTip(
+            "Shows whether the cached composite rebin is current. Pending manual rebinning will be forced automatically for fit and viewer operations."
+        )
+        controls_layout.addWidget(status_label, len(axes) + 2, 0, 1, len(headers))
+        action_row = QtWidgets.QHBoxLayout()
+        rebin_now_button = QtWidgets.QPushButton("Rebin now")
+        rebin_now_button.setObjectName("group_composite_rebin_now")
+        rebin_now_button.setEnabled(can_combine)
+        rebin_now_button.setToolTip(
+            "Compute the current composite rebin immediately and update the cached viewer/fit data. Use this when automatic rebinning is off."
+        )
+        rebin_now_button.clicked.connect(lambda: self.rebin_composite_now(group))
+        action_row.addWidget(rebin_now_button)
+        action_row.addStretch(1)
+        controls_layout.addLayout(action_row, len(axes) + 3, 0, 1, len(headers))
         layout.addWidget(controls)
         return box
 
@@ -8471,6 +9314,8 @@ class NfitProjectExplorer:
                     self.details_layout.addWidget(self._dataset_point_list_group_box(dataset, group))
             elif title == "Dataset":
                 self.details_layout.addWidget(self._dataset_type_group_box(dataset, group, lines))
+                # Sample environment sits between the Dataset and Axes panels.
+                self.details_layout.addWidget(self.sample_environment_widget)
             elif title == "Metadata":
                 self.details_layout.addWidget(self._dataset_metadata_group_box(dataset))
             else:
@@ -9220,6 +10065,15 @@ class NfitProjectExplorer:
         fractional_check.setChecked(bool(config.get("fractional", False)))
         fractional_check.setToolTip("Allow partial source bins to contribute fractionally when rebinning.")
         fractional_check.toggled.connect(lambda checked: self._set_dataset_rebin_option(dataset, group, "fractional", checked))
+        auto_check = QtWidgets.QCheckBox("Automatic rebinning")
+        auto_check.setObjectName("dataset_rebin_auto")
+        auto_check.setChecked(bool(config.get("auto_rebin", True)))
+        auto_check.setToolTip(
+            "Automatically recompute the rebinned data when rebin settings change. For large datasets this defaults off, "
+            "so edits are marked pending until Rebin now is pressed or an operation such as fitting, opening the data viewer, "
+            "or saving a rebinned dataset requires an up-to-date rebin."
+        )
+        auto_check.toggled.connect(lambda checked: self._set_dataset_rebin_auto(dataset, group, checked))
         mean_label = QtWidgets.QLabel("Mean")
         mean_combo = QtWidgets.QComboBox()
         mean_combo.setObjectName("dataset_rebin_mean_weighting")
@@ -9261,23 +10115,39 @@ class NfitProjectExplorer:
         create_button.setEnabled(_dataset_can_rebin(dataset))
         create_button.setToolTip("Materialize the current rebinned data as a new independent dataset.")
         create_button.clicked.connect(self.materialize_rebin_for_selection)
+        rebin_now_button = QtWidgets.QPushButton("Rebin now")
+        rebin_now_button.setObjectName("dataset_rebin_now")
+        rebin_now_button.setEnabled(_dataset_can_rebin(dataset))
+        rebin_now_button.setToolTip(
+            "Compute the current rebin immediately and update the cached viewer/fit data. Use this when automatic rebinning is off."
+        )
+        rebin_now_button.clicked.connect(self.rebin_now_for_selection)
         save_rebin_button = QtWidgets.QPushButton("Save rebin to disk")
         save_rebin_button.setObjectName("dataset_rebin_save")
         save_rebin_button.setEnabled(_dataset_can_rebin(dataset))
         save_rebin_button.setToolTip("Export the current rebinned dataset directly to a NumPy archive.")
         save_rebin_button.clicked.connect(self.save_rebin_for_selection)
         option_row.addWidget(fractional_check)
+        option_row.addWidget(auto_check)
         option_row.addWidget(mean_label)
         option_row.addWidget(mean_combo)
         option_row.addWidget(batch_label)
         option_row.addWidget(batch_spin)
         option_row.addStretch(1)
         controls_layout.addLayout(option_row, len(config.get("axes", [])) + 1, 0, 1, last_column + 1)
+        status_label = QtWidgets.QLabel(_dataset_rebin_status_text(dataset, config))
+        status_label.setObjectName("dataset_rebin_status")
+        status_label.setWordWrap(True)
+        status_label.setToolTip(
+            "Shows whether the cached rebinned data is current. Pending manual rebinning will be forced automatically for fit, view, and export operations."
+        )
+        controls_layout.addWidget(status_label, len(config.get("axes", [])) + 2, 0, 1, last_column + 1)
         action_row = QtWidgets.QHBoxLayout()
+        action_row.addWidget(rebin_now_button)
         action_row.addWidget(create_button)
         action_row.addWidget(save_rebin_button)
         action_row.addStretch(1)
-        controls_layout.addLayout(action_row, len(config.get("axes", [])) + 2, 0, 1, last_column + 1)
+        controls_layout.addLayout(action_row, len(config.get("axes", [])) + 3, 0, 1, last_column + 1)
         rebin_layout.addWidget(controls)
         layout.addWidget(rebin_box)
         return group_box
@@ -9378,6 +10248,24 @@ class NfitProjectExplorer:
         config["normalize"] = True
         self._after_dataset_rebin_changed(dataset, group)
 
+    def _set_dataset_rebin_auto(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup | None,
+        checked: bool,
+    ) -> None:
+        config = dataset_rebin_config(dataset)
+        if bool(config.get("auto_rebin", True)) == bool(checked):
+            return
+        config["auto_rebin"] = bool(checked)
+        if checked and config.get("stale") and group is not None:
+            self._after_dataset_rebin_changed(dataset, group)
+            return
+        if group is not None:
+            self._record_data_group_state_change(group)
+        self._mark_dirty()
+        self._set_dataset_details(dataset, group)
+
     def _set_dataset_rebin_mean_weighting(
         self,
         dataset: DatasetEntry,
@@ -9421,6 +10309,18 @@ class NfitProjectExplorer:
         config[key] = bool(checked)
         config["normalize"] = True
         self._after_group_composite_changed(group)
+
+    def _set_group_composite_auto(self, group: DataGroup, checked: bool) -> None:
+        config = data_group_composite_config(group)
+        if bool(config.get("auto_rebin", True)) == bool(checked):
+            return
+        config["auto_rebin"] = bool(checked)
+        if checked and config.get("stale"):
+            self._after_group_composite_changed(group)
+            return
+        self._record_data_group_state_change(group)
+        self._mark_dirty()
+        self._set_group_details(group)
 
     def _set_group_composite_mean_weighting(self, group: DataGroup, value: str) -> None:
         config = data_group_composite_config(group)
@@ -9528,18 +10428,23 @@ class NfitProjectExplorer:
         self._after_dataset_rebin_changed(dataset, group)
 
     def _after_dataset_rebin_changed(self, dataset: DatasetEntry, group: DataGroup | None) -> None:
+        config = dataset_rebin_config(dataset)
+        config["stale"] = True
         if group is not None:
             self._record_data_group_state_change(group)
         self._mark_dirty()
-        if group is not None:
+        if group is not None and bool(config.get("auto_rebin", True)):
             self.refresh_slice_viewer(group)
         self._set_dataset_details(dataset, group)
 
     def _after_group_composite_changed(self, group: DataGroup) -> None:
+        config = data_group_composite_config(group)
+        config["stale"] = True
         self._record_data_group_state_change(group)
         self._mark_dirty()
-        self.refresh_slice_viewer(group)
-        self._request_overlay_refresh(group)
+        if bool(config.get("auto_rebin", True)):
+            self.refresh_slice_viewer(group)
+            self._request_overlay_refresh(group)
         self._set_group_details(group)
 
     def _clear_details_panel(self) -> None:
@@ -9547,7 +10452,7 @@ class NfitProjectExplorer:
             item = self.details_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
-                if widget is self.fit_settings_panel:
+                if widget is self.fit_settings_panel or widget is self.sample_environment_widget:
                     widget.setParent(None)
                 else:
                     widget.setParent(None)
@@ -11155,7 +12060,7 @@ def _dataset_fit_summary_lines(
         return []
     extra_masks = effective_dataset_masks(group, dataset) if group is not None else []
     try:
-        view = dataset_for_slice_viewer(dataset, extra_masks=extra_masks)
+        view = dataset_for_slice_viewer(dataset, extra_masks=extra_masks, force_rebin=False)
         if isinstance(view, MDHistoData):
             fit_bins = _mdhisto_fit_bin_count(view)
             total_bins = int(np.prod(view.shape))
