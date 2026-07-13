@@ -1514,7 +1514,14 @@ def model_crystal_config(model: ModelComponentSpec) -> dict[str, Any]:
 
 # Default starting values for the non-orbit dynamic parameters (all others
 # default to 0.0). Zeeman parameters must be nonzero to have any effect.
-_MODEL_PARAMETER_DEFAULTS = {"g_factor": 2.0, "chi_perp_ratio": 1.0, "gamma_perp_ratio": 1.0}
+_MODEL_PARAMETER_DEFAULTS = {
+    "g_factor": 2.0,
+    "chi_perp_ratio": 1.0,
+    "gamma_perp_ratio": 1.0,
+    "m2_total": 1.0,
+    "mode_coupling_u": 0.0,
+    "total_amplitude": 1.0,
+}
 
 
 def reconcile_model_orbit_parameters(model: ModelComponentSpec) -> None:
@@ -1676,6 +1683,37 @@ def set_model_zeeman(model: ModelComponentSpec, enabled: bool) -> None:
     """Enable/disable the Zeeman (applied-field) term (g_factor + ratios)."""
 
     model.config["zeeman"] = {"enabled": bool(enabled)}
+    reconcile_model_orbit_parameters(model)
+
+
+# Default closure config seeded when a mode is first selected.
+_CLOSURE_CONFIG_DEFAULTS = {
+    "mode": "none",
+    "energy_cutoff_mev": 100.0,
+    "bz_grid": 16,
+    "omega_points": 200,
+    "moment_mode": "fixed",
+    "moment_target": 1.0,
+}
+
+
+def set_model_closure(model: ModelComponentSpec, updates: dict[str, Any]) -> None:
+    """Merge closure settings into ``config["closure"]`` and reconcile params.
+
+    ``updates`` carries any of the closure keys (``mode``, ``energy_cutoff_mev``,
+    ``bz_grid``, ``omega_points``, ``moment_mode``, ``moment_target``). Selecting
+    mode ``"none"`` drops the section entirely so the component takes the exact
+    legacy code path; any other mode seeds the defaults and adds the closure's
+    dynamic fit parameters (``m2_total``/``mode_coupling_u``/``total_amplitude``).
+    """
+
+    closure = dict(_CLOSURE_CONFIG_DEFAULTS)
+    closure.update(model.config.get("closure") or {})
+    closure.update(updates)
+    if str(closure.get("mode", "none")).lower() == "none":
+        model.config.pop("closure", None)
+    else:
+        model.config["closure"] = closure
     reconcile_model_orbit_parameters(model)
 
 
@@ -10540,6 +10578,9 @@ class NfitProjectExplorer:
                     empty_text="No goodness-of-fit values.",
                 )
             )
+        diagnostics_group = self._fit_diagnostics_group_box(fit_entry)
+        if diagnostics_group is not None:
+            lower_widgets.append(diagnostics_group)
         if fit_entry.channels:
             lower_widgets.append(
                 self._metadata_tree_group_box(
@@ -10630,6 +10671,90 @@ class NfitProjectExplorer:
                 table.setItem(row_index, column_index, item)
         _tooltip_table_corner_buttons(table, "Select all fit-result rows.")
         table.resizeColumnsToContents()
+        layout.addWidget(table)
+        return group_box
+
+    # Diagnostic metrics shown per dataset, in display order: (metadata key,
+    # column header, tooltip).
+    _DIAGNOSTIC_COLUMNS = (
+        ("temperature", "T (K)", "Dataset temperature."),
+        ("mu_eff_sq", "mu_eff^2", "Effective fluctuating moment per site: the "
+         "Brillouin-zone and energy integral of chi'' (with the closure's "
+         "energy cutoff), in model units."),
+        ("chi_static_q0", "chi(0)", "Uniform static susceptibility at Q=0 "
+         "(Kramers-Kronig of the modes); the zero-field bulk susceptibility."),
+        ("chi_static_qpeak", "chi_peak", "Peak static susceptibility over the "
+         "BZ grid; locates the incipient ordering vector."),
+        ("chi0_gamma0", "chi0*gamma0", "Product of the local susceptibility and "
+         "relaxation rate (tracks the local spectral weight)."),
+        ("distance_to_instability", "1-lam*chi0", "Distance to the RPA "
+         "instability; approaches 0 as the system orders."),
+        ("lambda_shift", "lambda", "Onsager reaction field solved by the "
+         "closure (0 when no closure or non-Onsager)."),
+        ("chi0_eff", "chi0_eff", "Effective local susceptibility after the "
+         "closure (equals the fitted chi0 when no closure is active)."),
+    )
+
+    def _fit_diagnostics_group_box(self, fit_entry: FitTimelineEntry) -> Any:
+        """Per-dataset physics diagnostics table, or ``None`` when absent."""
+
+        from PySide6 import QtCore, QtWidgets
+
+        diagnostics = (
+            fit_entry.metadata.get("diagnostics")
+            if isinstance(fit_entry.metadata, dict)
+            else None
+        )
+        if not isinstance(diagnostics, dict) or not diagnostics:
+            return None
+
+        datasets = sorted(diagnostics)
+        columns = self._DIAGNOSTIC_COLUMNS
+        group_box = QtWidgets.QGroupBox("Physics diagnostics")
+        group_box.setObjectName("fit_diagnostics_group")
+        layout = QtWidgets.QVBoxLayout(group_box)
+        layout.setContentsMargins(10, 8, 10, 8)
+        table = QtWidgets.QTableWidget(len(datasets), len(columns) + 1)
+        table.setObjectName("fit_diagnostics_table")
+        table.setToolTip(
+            "Model-derived physical quantities per dataset, computed after the "
+            "fit (see the theory notes). These are plottable vs temperature "
+            "across a temperature series."
+        )
+        table.setHorizontalHeaderLabels(
+            ["Dataset"] + [header for _key, header, _tip in columns]
+        )
+        for column_index, (_key, _header, tip) in enumerate(columns):
+            table.horizontalHeaderItem(column_index + 1).setToolTip(tip)
+        table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setStretchLastSection(True)
+        table.horizontalHeader().setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+        for row_index, dataset_name in enumerate(datasets):
+            record = diagnostics[dataset_name] or {}
+            name_item = QtWidgets.QTableWidgetItem(str(dataset_name))
+            name_item.setToolTip(str(dataset_name))
+            if record.get("unstable"):
+                name_item.setToolTip(
+                    f"{dataset_name}: parameters were at or beyond the RPA "
+                    "instability when diagnostics were computed."
+                )
+            table.setItem(row_index, 0, name_item)
+            for column_index, (key, _header, tip) in enumerate(columns):
+                value = record.get(key)
+                text = _format_number(float(value)) if value is not None else "-"
+                item = QtWidgets.QTableWidgetItem(text)
+                item.setToolTip(tip)
+                item.setTextAlignment(
+                    QtCore.Qt.AlignmentFlag.AlignRight
+                    | QtCore.Qt.AlignmentFlag.AlignVCenter
+                )
+                table.setItem(row_index, column_index + 1, item)
+        _tooltip_table_corner_buttons(table, "Select all diagnostics rows.")
+        table.resizeColumnsToContents()
+        table.setMinimumHeight(90)
         layout.addWidget(table)
         return group_box
 
@@ -13016,6 +13141,132 @@ class NfitProjectExplorer:
 
         self.model_parameter_layout.addWidget(group, 6, 0, 1, 4)
 
+        self._build_model_closure_editor(model)
+
+    def _build_model_closure_editor(self, model: ModelComponentSpec) -> None:
+        """Self-consistency closure controls for the heisenberg_rpa model."""
+
+        from PySide6 import QtWidgets
+
+        closure = model.config.get("closure") or {}
+        mode = str(closure.get("mode", "none")).lower()
+
+        group = QtWidgets.QGroupBox("Self-consistency closure")
+        group.setObjectName("model_closure_group")
+        layout = QtWidgets.QGridLayout(group)
+
+        mode_tooltip = (
+            "Sum-rule closure that makes the local response self-consistent "
+            "instead of freely fitted (see the theory notes). 'None' keeps the "
+            "bare RPA. 'Onsager' solves a reaction field so the fluctuation "
+            "moment hits a target; 'SCR' (Moriya) renormalizes chi0 through the "
+            "mode-coupling u; 'TAC' (Takahashi) conserves the total zero-point "
+            "plus thermal amplitude. Closures add their own fit parameters and "
+            "use finite-difference gradients."
+        )
+        mode_label = QtWidgets.QLabel("Closure")
+        mode_label.setToolTip(mode_tooltip)
+        layout.addWidget(mode_label, 0, 0)
+        mode_combo = QtWidgets.QComboBox()
+        mode_combo.setObjectName("model_closure_mode")
+        mode_combo.setToolTip(mode_tooltip)
+        for label, value in (
+            ("None (bare RPA)", "none"),
+            ("Onsager reaction field", "onsager"),
+            ("Moriya SCR", "scr"),
+            ("Takahashi TAC", "tac"),
+        ):
+            mode_combo.addItem(label, value)
+        mode_combo.setCurrentIndex(max(mode_combo.findData(mode), 0))
+        mode_combo.currentIndexChanged.connect(
+            lambda _idx, combo=mode_combo: self._set_model_closure(
+                {"mode": combo.currentData()}
+            )
+        )
+        layout.addWidget(mode_combo, 0, 1)
+
+        if mode == "none":
+            self.model_parameter_layout.addWidget(group, 7, 0, 1, 4)
+            return
+
+        def add_numeric(row, key, label_text, tooltip, value):
+            label = QtWidgets.QLabel(label_text)
+            label.setToolTip(tooltip)
+            layout.addWidget(label, row, 0)
+            editor = QtWidgets.QLineEdit(_parameter_to_text(value))
+            editor.setObjectName(f"model_closure_{key}")
+            editor.setToolTip(tooltip)
+            editor.setMaximumWidth(90)
+            editor.editingFinished.connect(
+                lambda ed=editor, k=key: self._set_model_closure(
+                    {k: _parse_parameter_text(ed.text())}
+                )
+            )
+            layout.addWidget(editor, row, 1)
+
+        add_numeric(
+            1,
+            "energy_cutoff_mev",
+            "Energy cutoff (meV)",
+            "Upper energy limit Lambda of the moment integral. Physically the "
+            "bandwidth or crystal-field scale; the relaxational amplitude grows "
+            "logarithmically with it, so it must be set deliberately.",
+            closure.get("energy_cutoff_mev", 100.0),
+        )
+        add_numeric(
+            2,
+            "bz_grid",
+            "BZ grid (N per axis)",
+            "Brillouin-zone sampling is an N x N x N grid over the reduced "
+            "cell. Larger N is more accurate but costs more; N=8 is a good "
+            "starting point while exploring, especially with a field on.",
+            closure.get("bz_grid", 16),
+        )
+        if mode in ("onsager", "tac"):
+            moment_tooltip = (
+                "How the moment budget is set. 'Fixed' uses the target below; "
+                "'Fitted' exposes it as a fit parameter (m2_total for Onsager, "
+                "total_amplitude for TAC) so the data determine the moment size."
+            )
+            moment_label = QtWidgets.QLabel("Moment target")
+            moment_label.setToolTip(moment_tooltip)
+            layout.addWidget(moment_label, 3, 0)
+            moment_combo = QtWidgets.QComboBox()
+            moment_combo.setObjectName("model_closure_moment_mode")
+            moment_combo.setToolTip(moment_tooltip)
+            for label, value in (("Fixed", "fixed"), ("Fitted", "fitted")):
+                moment_combo.addItem(label, value)
+            moment_combo.setCurrentIndex(
+                max(moment_combo.findData(str(closure.get("moment_mode", "fixed"))), 0)
+            )
+            moment_combo.currentIndexChanged.connect(
+                lambda _idx, combo=moment_combo: self._set_model_closure(
+                    {"moment_mode": combo.currentData()}
+                )
+            )
+            layout.addWidget(moment_combo, 3, 1)
+            if str(closure.get("moment_mode", "fixed")) == "fixed":
+                add_numeric(
+                    4,
+                    "moment_target",
+                    "Target value",
+                    "The conserved per-site amplitude <m^2> (Onsager) or total "
+                    "zero-point + thermal amplitude (TAC), in model units. For a "
+                    "rigid local moment this is ~ S(S+1).",
+                    closure.get("moment_target", 1.0),
+                )
+        if (model.config.get("zeeman") or {}).get("enabled"):
+            add_numeric(
+                5,
+                "omega_points",
+                "Energy points (field)",
+                "Number of energy-quadrature points for the field-on (Tier-B) "
+                "moment integral. Only used when the Zeeman term is active.",
+                closure.get("omega_points", 200),
+            )
+
+        self.model_parameter_layout.addWidget(group, 7, 0, 1, 4)
+
     def _set_model_interaction(self, kind: str, enabled: bool) -> None:
         def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
             if kind == "anisotropy":
@@ -13026,6 +13277,12 @@ class NfitProjectExplorer:
                 set_model_dipole(model, enabled)
             elif kind == "zeeman":
                 set_model_zeeman(model, enabled)
+
+        self._mutate_selected_model(mutate)
+
+    def _set_model_closure(self, updates: dict[str, Any]) -> None:
+        def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
+            set_model_closure(model, updates)
 
         self._mutate_selected_model(mutate)
 

@@ -555,8 +555,8 @@ def test_dataset_for_slice_viewer_combines_file_and_nfit_coordinate_masks():
     viewed = dataset_for_slice_viewer(dataset)
 
     np.testing.assert_array_equal(viewed.metadata["file_mask"], file_mask)
-    np.testing.assert_array_equal(viewed.metadata["nfit_mask"], [[True], [False]])
-    np.testing.assert_array_equal(viewed.mask, [[True], [True]])
+    np.testing.assert_array_equal(viewed.metadata["nfit_mask"], [[False], [True]])
+    np.testing.assert_array_equal(viewed.mask, [[False], [True]])
 
 
 def test_coordinate_range_mask_axis_vectors_define_coordinates():
@@ -569,7 +569,7 @@ def test_coordinate_range_mask_axis_vectors_define_coordinates():
 
     viewed = dataset_for_slice_viewer(dataset)
 
-    expected = np.array([[False, True], [False, True]])
+    expected = np.array([[True, False], [True, False]])
     np.testing.assert_array_equal(viewed.metadata["nfit_mask"], expected)
 
 
@@ -601,12 +601,12 @@ def test_dataset_for_slice_viewer_applies_mask_order_invert_and_additive():
     dataset.masks = [additive, masking]
     viewed = dataset_for_slice_viewer(dataset)
 
-    np.testing.assert_array_equal(viewed.metadata["nfit_mask"], [[True], [False], [False]])
+    np.testing.assert_array_equal(viewed.metadata["nfit_mask"], [[False], [True], [True]])
 
     masking.invert = True
     viewed = dataset_for_slice_viewer(dataset)
 
-    np.testing.assert_array_equal(viewed.metadata["nfit_mask"], [[False], [True], [True]])
+    np.testing.assert_array_equal(viewed.metadata["nfit_mask"], [[True], [False], [False]])
 
     masking.enabled = False
     viewed = dataset_for_slice_viewer(dataset)
@@ -696,6 +696,60 @@ def test_dataset_for_slice_viewer_applies_phonon_cone_mask():
     expected = np.zeros(shape, dtype=bool)
     expected[0] = True
     np.testing.assert_array_equal(viewed.metadata["nfit_mask"], expected)
+
+
+def test_phonon_cone_mask_combines_multiple_bragg_centers_for_histogram_and_points():
+    h_axis = MDHistoAxis("H", np.array([-0.5, 0.5, 1.5, 2.5]), "rlu", "h")
+    k_axis = MDHistoAxis("K", np.array([-0.5, 0.5]), "rlu", "k")
+    l_axis = MDHistoAxis("L", np.array([-0.5, 0.5]), "rlu", "l")
+    e_axis = MDHistoAxis("E", np.array([-0.5, 0.5]), "meV", "energy_transfer")
+    shape = (3, 1, 1, 1)
+    metadata = {
+        "lattice_parameters": {
+            "a": 2.0 * np.pi,
+            "b": 2.0 * np.pi,
+            "c": 2.0 * np.pi,
+        }
+    }
+    histogram = DatasetEntry(
+        "grid",
+        MDHistoData(
+            axes=(h_axis, k_axis, l_axis, e_axis),
+            signal=np.zeros(shape),
+            errors=np.ones(shape),
+            mask=np.zeros(shape, dtype=bool),
+            num_events=np.ones(shape),
+            metadata=metadata,
+        ),
+    )
+    histogram_mask = create_mask(histogram, type="phonon_cone")
+    histogram_mask.parameters.update(
+        {"center": [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]], "slope": 10.0, "radius": 0.1}
+    )
+
+    viewed = dataset_for_slice_viewer(histogram)
+    np.testing.assert_array_equal(
+        viewed.metadata["nfit_mask"].reshape(-1),
+        [True, False, True],
+    )
+
+    points = PointData4D(
+        H=[0.0, 1.0, 2.0],
+        K=[0.0, 0.0, 0.0],
+        L=[0.0, 0.0, 0.0],
+        E=[0.0, 0.0, 0.0],
+        intensity=[1.0, 1.0, 1.0],
+        sigma=[1.0, 1.0, 1.0],
+        metadata=metadata,
+    )
+    point_dataset = DatasetEntry("points", points)
+    point_mask = create_mask(point_dataset, type="phonon_cone")
+    point_mask.parameters.update(histogram_mask.parameters)
+
+    np.testing.assert_array_equal(
+        project_gui._nfit_mask_for_point_data(point_dataset, points),
+        [True, False, True],
+    )
 
 
 def test_phonon_cone_mask_is_inert_with_nonpositive_slope():
@@ -1016,7 +1070,7 @@ def test_project_explorer_fit_history_creates_results_branches_and_restores(monk
 
     dataset = DatasetEntry("first", _tiny_mdhisto_data(1.0))
     mask = create_mask(dataset)
-    mask.parameters["H"] = [-1.0, 1.0]
+    mask.parameters["H"] = [0.0, 0.0]
     group = DataGroup("Datagroup1", datasets=[dataset])
     model = create_model_component(group)
     model.parameters["constant"] = 0.5
@@ -1095,12 +1149,12 @@ def test_project_explorer_fit_history_creates_results_branches_and_restores(monk
     assert metadata_items["fit_pipeline"].text(1) == "2 field(s)"
     assert channels_tree.topLevelItemCount() >= 1
 
-    dataset.masks[0].parameters["H"] = [0.0, 0.0]
+    dataset.masks[0].parameters["H"] = [2.0, 3.0]
     model.parameters["constant"] = 9.0
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(2).child(1))
 
-    assert dataset.masks[0].parameters["H"] == [-1.0, 1.0]
+    assert dataset.masks[0].parameters["H"] == [0.0, 0.0]
     assert model.parameters["constant"] == 0.5
 
     model_item = explorer.tree.topLevelItem(0).child(1).child(0)
@@ -2633,6 +2687,11 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     rebin_panel = next(
         box for box in explorer.details_widget.findChildren(QtWidgets.QGroupBox) if box.title() == "Rebin"
     )
+    assert rebin_panel.findChild(QtWidgets.QLabel, "dataset_rebin_axis_variable_0").text() == "H"
+    assert rebin_panel.findChild(QtWidgets.QLabel, "dataset_rebin_axis_variable_1").text() == "E"
+    assert "Scalar variable" in rebin_panel.findChild(
+        QtWidgets.QLabel, "dataset_rebin_axis_variable_0"
+    ).toolTip()
     assert rebin_panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_fractional").isChecked()
     auto_check = rebin_panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_auto")
     assert auto_check is not None
@@ -2699,6 +2758,54 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     assert int(saved["axis_count"]) == 2
 
 
+def test_dataset_rebin_edits_preserve_details_scroll_position(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtCore = pytest.importorskip("PySide6.QtCore")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    data = _grid_mdhisto_data()
+    data.metadata["notes"] = {f"entry_{index}": f"value {index}" for index in range(30)}
+    dataset = DatasetEntry("scan", data, kind="mdhisto")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer.window.resize(760, 280)
+    explorer.window.show()
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
+    explorer.details_scroll.setFixedHeight(180)
+    explorer.details_widget.setMinimumHeight(1000)
+    QtWidgets.QApplication.processEvents()
+
+    project_gui.dataset_rebin_config(dataset)["auto_rebin"] = False
+    enable_rebin = explorer.details_widget.findChild(QtWidgets.QCheckBox, "dataset_rebin_enabled")
+    assert enable_rebin is not None
+    enable_rebin.setChecked(True)
+    QtWidgets.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+    QtWidgets.QApplication.processEvents()
+
+    scrollbar = explorer.details_scroll.verticalScrollBar()
+    assert scrollbar.maximum() > 0
+    position = max(1, scrollbar.maximum() // 2)
+    scrollbar.setValue(position)
+    assert scrollbar.value() == position
+
+    editor = explorer.details_widget.findChild(
+        QtWidgets.QLineEdit, "dataset_rebin_resolution_value_0"
+    )
+    assert editor is not None
+    editor.setFocus()
+    editor.setText("0.75")
+    editor.editingFinished.emit()
+    QtWidgets.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+    QtWidgets.QApplication.processEvents()
+    QtWidgets.QApplication.processEvents()
+
+    assert scrollbar.value() == min(position, scrollbar.maximum())
+    assert explorer.details_widget.findChild(
+        QtWidgets.QLineEdit, "dataset_rebin_resolution_value_0"
+    ) is editor
+    assert explorer.window.focusWidget().objectName() == "dataset_rebin_resolution_value_0"
+
+
 def test_large_dataset_rebin_defaults_manual_and_defers_refresh(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
@@ -2741,6 +2848,48 @@ def test_large_dataset_rebin_defaults_manual_and_defers_refresh(monkeypatch):
     forced = dataset_for_slice_viewer(dataset)
     assert forced is not None
     assert forced.shape[0] == 1
+
+
+def test_dataset_rebin_resolution_selector_switches_between_step_and_bins(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtCore = pytest.importorskip("PySide6.QtCore")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
+    config = dataset_rebin_config(dataset)
+    config["auto_rebin"] = False
+
+    mode_combo = explorer.details_widget.findChild(QtWidgets.QComboBox, "dataset_rebin_resolution_mode")
+    value_edit = explorer.details_widget.findChild(
+        QtWidgets.QLineEdit, "dataset_rebin_resolution_value_0"
+    )
+    assert mode_combo is not None and mode_combo.currentData() == "step"
+    assert value_edit is not None and float(value_edit.text()) == pytest.approx(1.0)
+
+    mode_combo.setCurrentIndex(mode_combo.findData("bins"))
+    QtWidgets.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+    QtWidgets.QApplication.processEvents()
+    assert config["resolution_mode"] == "bins"
+    value_edit = explorer.details_widget.findChild(
+        QtWidgets.QLineEdit, "dataset_rebin_resolution_value_0"
+    )
+    assert value_edit is not None and value_edit.text() == "2"
+
+    explorer._set_dataset_rebin_axis_value(dataset, group, 0, "lower", "-1")
+    assert config["axes"][0]["num_bins"] == 2
+    assert config["axes"][0]["step_size"] == pytest.approx(1.5)
+
+    mode_combo = explorer.details_widget.findChild(QtWidgets.QComboBox, "dataset_rebin_resolution_mode")
+    mode_combo.setCurrentIndex(mode_combo.findData("step"))
+    QtWidgets.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+    QtWidgets.QApplication.processEvents()
+    assert config["resolution_mode"] == "step"
+    explorer._set_dataset_rebin_axis_value(dataset, group, 0, "lower", "-4")
+    assert config["axes"][0]["num_bins"] == 4
+    assert config["axes"][0]["step_size"] == pytest.approx(1.5)
 
 
 def test_data_group_composite_uses_scale_fit_weight_and_rebinning():
@@ -2811,6 +2960,12 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
     config = project_gui.data_group_composite_config(group)
     assert config["enabled"] is True
     assert config["mean_weighting"] == "inverse_variance"
+    resolution_mode = explorer.details_widget.findChild(
+        QtWidgets.QComboBox, "group_composite_resolution_mode"
+    )
+    assert resolution_mode is not None and resolution_mode.currentData() == "step"
+    resolution_mode.setCurrentIndex(resolution_mode.findData("bins"))
+    assert config["resolution_mode"] == "bins"
 
 
 def test_large_data_group_composite_defaults_manual_and_defers_refresh(monkeypatch):
@@ -2936,7 +3091,7 @@ def test_mdhisto_rebin_applies_enabled_masks_before_binning():
     viewed = dataset_for_slice_viewer(dataset)
 
     assert viewed is not None
-    np.testing.assert_allclose(viewed.signal, [1.0])
+    np.testing.assert_allclose(viewed.signal, [100.0])
     assert viewed.metadata["rebin"]["source_nfit_mask_count"] == 1
 
 
@@ -2966,7 +3121,7 @@ def test_point_data_rebin_applies_enabled_masks_before_binning():
     mask.enabled = True
     rebinned = project_gui.rebinned_dataset_data(dataset)
 
-    np.testing.assert_allclose(rebinned.intensity, [1.0])
+    np.testing.assert_allclose(rebinned.intensity, [100.0])
 
 
 def test_import_dataset_paths_dispatches_by_data_type_and_round_trips(tmp_path):
@@ -3373,12 +3528,40 @@ def test_point_list_dataset_opens_in_data_viewer_as_1d(monkeypatch):
     assert viewer.cursor_intensity_label.text().startswith("Signal = ")
 
 
-def test_energy_q_range_mask_default_min_q_is_zero():
+def test_energy_q_range_mask_defaults_are_neutral():
     parameters = default_mask_parameters("energy_q_range")
-    assert parameters["q_modulus"] == [0.0, 1.0e99]
+    assert parameters["energy"] == [0.0, 0.0]
+    assert parameters["q_modulus"] == [0.0, 0.0]
 
 
-def test_coordinate_range_axis_vectors_are_rounded():
+def test_legacy_broad_mask_defaults_remain_neutral():
+    assert project_gui._exclusion_parameter_range([-1.0e99, 1.0e99]) is None
+    assert project_gui._exclusion_parameter_range([0.0, 1.0e99]) is None
+
+
+def test_all_registered_mask_defaults_mask_nothing_for_histogram_and_points():
+    histogram = DatasetEntry("grid", _grid_mdhisto_data())
+    points = PointData4D(
+        H=[0.0, 1.0],
+        K=[0.0, 0.0],
+        L=[0.0, 0.0],
+        E=[0.0, 5.0],
+        intensity=[1.0, 2.0],
+        sigma=[1.0, 1.0],
+    )
+    point_dataset = DatasetEntry("points", points)
+    for mask_type in project_gui.available_mask_types():
+        histogram.masks = []
+        point_dataset.masks = []
+        create_mask(histogram, type=mask_type)
+        create_mask(point_dataset, type=mask_type)
+        viewed = dataset_for_slice_viewer(histogram)
+        assert viewed.metadata["nfit_mask_count"] == 0, mask_type
+        point_mask = project_gui._nfit_mask_for_point_data(point_dataset, points)
+        assert not np.any(point_mask), mask_type
+
+
+def test_coordinate_range_axis_vectors_fall_back_when_projection_dimension_differs():
     hh_axis = MDHistoAxis("[H,H,0]", np.array([0.0, 0.5, 1.0]), "rlu", "momentum")
     l_axis = MDHistoAxis("[0,0,L]", np.array([0.0, 0.5, 1.0]), "rlu", "momentum")
     data = MDHistoData(
@@ -3392,12 +3575,38 @@ def test_coordinate_range_axis_vectors_are_rounded():
     dataset = DatasetEntry("scan", data)
     mask = create_mask(dataset)
 
-    for key in ("axis_0", "axis_1"):
-        vector = mask.parameters[key]
-        assert len(vector) == 2
-        for component in vector:
-            assert component == round(component, 10)
-    assert 0.5 in mask.parameters["axis_0"]
+    assert mask.parameters["axis_0"] == [1.0, 0.0]
+    assert mask.parameters["axis_1"] == [0.0, 1.0]
+
+
+def test_coordinate_range_mask_defaults_match_four_dimensional_rebin_axes():
+    axes = (
+        MDHistoAxis("DeltaE", np.array([0.0, 1.0, 2.0]), "meV", "energy"),
+        MDHistoAxis("[H,-H,0]", np.array([-1.0, 0.0, 1.0]), "rlu", "momentum"),
+        MDHistoAxis("[0,0,L]", np.array([0.0, 1.0, 2.0]), "rlu", "momentum"),
+        MDHistoAxis("[H,H,0]", np.array([0.0, 1.0, 2.0]), "rlu", "momentum"),
+    )
+    signal = np.zeros((2, 2, 2, 2))
+    dataset = DatasetEntry(
+        "scan",
+        MDHistoData(
+            axes=axes,
+            signal=signal,
+            errors=np.ones_like(signal),
+            mask=np.zeros_like(signal, dtype=bool),
+            num_events=np.ones_like(signal),
+            metadata={},
+        ),
+    )
+
+    mask = create_mask(dataset)
+
+    assert [mask.parameters[f"axis_{index}"] for index in range(4)] == [
+        [0.0, 0.0, 0.0, 1.0],
+        [1.0, -1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [1.0, 1.0, 0.0, 0.0],
+    ]
 
 
 def test_rebin_axis_vector_projects_new_coordinate():
@@ -3464,6 +3673,131 @@ def test_rebin_defaults_follow_mdhisto_axis_coordinate_vectors():
         [0.0, 0.0, 1.0, 0.0],
         [1.0, 1.0, 0.0, 0.0],
     ]
+
+
+def test_rebin_basis_change_regenerates_names_and_keeps_full_data_extent():
+    axes = (
+        MDHistoAxis("DeltaE", np.array([-12.7, 0.0, 12.7]), "meV", "energy"),
+        MDHistoAxis("[H,-H,0]", np.array([-0.5, 0.0, 0.5]), "rlu", "momentum"),
+        MDHistoAxis("[0,0,L]", np.array([-5.5, 0.0, 5.5]), "rlu", "momentum"),
+        MDHistoAxis("[H,H,0]", np.array([-4.0, 0.0, 4.0]), "rlu", "momentum"),
+    )
+    signal = np.arange(16, dtype=float).reshape((2, 2, 2, 2))
+    data = MDHistoData(
+        axes=axes,
+        signal=signal,
+        errors=np.ones_like(signal),
+        mask=np.zeros_like(signal, dtype=bool),
+        num_events=np.ones_like(signal),
+        metadata={},
+    )
+    dataset = DatasetEntry("scan", data)
+    config = dataset_rebin_config(dataset)
+
+    project_gui._update_mdhisto_rebin_basis(
+        data, config["axes"], 2, [1.0, 0.0, -2.0, 0.0]
+    )
+    project_gui._update_mdhisto_rebin_basis(
+        data, config["axes"], 3, [1.0, 1.0, 1.0, 0.0]
+    )
+
+    assert [axis["variable"] for axis in config["axes"]] == ["E", "H", "L", "H"]
+    assert [axis["name"] for axis in config["axes"]] == [
+        "DeltaE",
+        "[H,-H,0]",
+        "[L,0,-2L]",
+        "[H,H,H]",
+    ]
+
+    transform = project_gui._mdhisto_rebin_basis_transform(data, config["axes"])
+    source_bounds = [project_gui._axis_bounds(axis, 2) for axis in axes]
+    corners = np.array(
+        [
+            [bounds[(bits >> index) & 1] for index, bounds in enumerate(source_bounds)]
+            for bits in range(16)
+        ],
+        dtype=float,
+    )
+    transformed_corners = corners @ transform
+    for index, axis in enumerate(config["axes"]):
+        assert axis["lower"] == pytest.approx(np.min(transformed_corners[:, index]))
+        assert axis["upper"] == pytest.approx(np.max(transformed_corners[:, index]))
+        assert axis["num_bins"] >= 1
+
+    config["enabled"] = True
+    config["fractional"] = False
+    rebinned = project_gui.rebinned_dataset_data(dataset)
+    assert [axis.name for axis in rebinned.axes] == [
+        "DeltaE",
+        "[H,-H,0]",
+        "[L,0,-2L]",
+        "[H,H,H]",
+    ]
+
+
+def test_rebin_basis_rejects_energy_mixing_and_dependent_axes():
+    axes = (
+        MDHistoAxis("DeltaE", np.array([0.0, 1.0, 2.0]), "meV", "energy"),
+        MDHistoAxis("[H,-H,0]", np.array([-1.0, 0.0, 1.0]), "rlu", "momentum"),
+        MDHistoAxis("[0,0,L]", np.array([-1.0, 0.0, 1.0]), "rlu", "momentum"),
+        MDHistoAxis("[H,H,0]", np.array([-1.0, 0.0, 1.0]), "rlu", "momentum"),
+    )
+    data = MDHistoData(
+        axes=axes,
+        signal=np.zeros((2, 2, 2, 2)),
+        errors=np.ones((2, 2, 2, 2)),
+        mask=np.zeros((2, 2, 2, 2), dtype=bool),
+        num_events=np.ones((2, 2, 2, 2)),
+        metadata={},
+    )
+    config = dataset_rebin_config(DatasetEntry("scan", data))
+
+    mixed_energy = [dict(axis) for axis in config["axes"]]
+    mixed_energy[0]["vector"] = [1.0, 0.0, 0.0, 1.0]
+    with pytest.raises(ValueError, match="energy variable"):
+        project_gui._validate_mdhisto_rebin_basis(mixed_energy, 4)
+
+    mixed_momentum = [dict(axis) for axis in config["axes"]]
+    mixed_momentum[1]["vector"] = [1.0, -1.0, 0.0, 1.0]
+    with pytest.raises(ValueError, match="cannot be mixed"):
+        project_gui._validate_mdhisto_rebin_basis(mixed_momentum, 4)
+
+    dependent = [dict(axis) for axis in config["axes"]]
+    dependent[3]["vector"] = list(dependent[1]["vector"])
+    with pytest.raises(ValueError, match="linearly independent"):
+        project_gui._validate_mdhisto_rebin_basis(dependent, 4)
+
+
+def test_legacy_custom_rebin_basis_refits_bounds_once():
+    axes = (
+        MDHistoAxis("DeltaE", np.array([-10.0, 0.0, 10.0]), "meV", "energy"),
+        MDHistoAxis("[H,-H,0]", np.array([-0.5, 0.0, 0.5]), "rlu", "momentum"),
+        MDHistoAxis("[0,0,L]", np.array([-5.0, 0.0, 5.0]), "rlu", "momentum"),
+        MDHistoAxis("[H,H,0]", np.array([-4.0, 0.0, 4.0]), "rlu", "momentum"),
+    )
+    data = MDHistoData(
+        axes=axes,
+        signal=np.zeros((2, 2, 2, 2)),
+        errors=np.ones((2, 2, 2, 2)),
+        mask=np.zeros((2, 2, 2, 2), dtype=bool),
+        num_events=np.ones((2, 2, 2, 2)),
+        metadata={},
+    )
+    dataset = DatasetEntry("scan", data)
+    config = dataset_rebin_config(dataset)
+    config["axes"][2]["vector"] = [1.0, 0.0, -2.0, 0.0]
+    config["axes"][3]["vector"] = [1.0, 1.0, 1.0, 0.0]
+    config["axes"][1].update({"lower": -0.5, "upper": 0.5, "num_bins": 2})
+    config.pop("coordinate_basis_version")
+
+    migrated = dataset_rebin_config(dataset)
+
+    assert migrated["coordinate_basis_version"] == project_gui.REBIN_COORDINATE_BASIS_VERSION
+    assert migrated["stale"] is True
+    assert migrated["axes"][1]["lower"] < -0.5
+    assert migrated["axes"][1]["upper"] > 0.5
+    migrated["axes"][1]["lower"] = -0.25
+    assert dataset_rebin_config(dataset)["axes"][1]["lower"] == -0.25
 
 
 def test_add_mask_and_slice_viewer_from_masks_node(monkeypatch):
@@ -3904,6 +4238,129 @@ def test_heisenberg_rpa_editor_toggles_tensor_interactions(monkeypatch, tmp_path
     assert "D_dip" not in model.parameters
 
 
+def test_heisenberg_rpa_editor_closure_controls(monkeypatch, tmp_path):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("gemmi")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Datagroup1")
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
+    model = explorer.add_model_to_selection()
+    combo = explorer.model_type_combo
+    combo.setCurrentIndex(combo.findData("heisenberg_rpa"))
+
+    for name in ("a", "b", "c"):
+        explorer._set_model_crystal_lattice(name, "4.0")
+    explorer._set_model_crystal_spacegroup("F m -3 m")
+    explorer._add_model_crystal_site()
+    explorer._set_model_crystal_site(0, "label", "Ni1")
+    explorer._set_model_crystal_site(0, "ion", "Ni2")
+    explorer._set_model_site_magnetic(0, True)
+    explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "model_bonds_cutoff"
+    ).setText("3.0")
+    explorer._generate_selected_model_bond_orbits()
+
+    closure_group = explorer.model_parameter_widget.findChild(
+        QtWidgets.QGroupBox, "model_closure_group"
+    )
+    assert closure_group is not None
+    mode_combo = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox, "model_closure_mode"
+    )
+    assert mode_combo is not None and mode_combo.toolTip().strip()
+    # No closure by default: config has none, no closure params.
+    assert "closure" not in model.config
+    assert "m2_total" not in model.parameters
+
+    # Select the fitted-target Onsager closure.
+    mode_combo.setCurrentIndex(mode_combo.findData("onsager"))
+    assert model.config["closure"]["mode"] == "onsager"
+    moment_combo = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox, "model_closure_moment_mode"
+    )
+    moment_combo.setCurrentIndex(moment_combo.findData("fitted"))
+    assert model.config["closure"]["moment_mode"] == "fitted"
+    assert "m2_total" in model.parameters
+
+    cutoff_editor = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "model_closure_energy_cutoff_mev"
+    )
+    assert cutoff_editor is not None and cutoff_editor.toolTip().strip()
+    cutoff_editor.setText("50.0")
+    cutoff_editor.editingFinished.emit()
+    assert model.config["closure"]["energy_cutoff_mev"] == 50.0
+
+    # Switch to SCR: exposes mode_coupling_u, drops m2_total.
+    mode_combo = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox, "model_closure_mode"
+    )
+    mode_combo.setCurrentIndex(mode_combo.findData("scr"))
+    assert "mode_coupling_u" in model.parameters
+    assert "m2_total" not in model.parameters
+
+    # Round-trips through save/load.
+    path = tmp_path / "closure.json"
+    save_project(NfitProject([group]), path)
+    loaded_model = next(iter(load_project(path).data_groups[0].models.values()))
+    assert loaded_model.config["closure"]["mode"] == "scr"
+    assert loaded_model.config["closure"]["energy_cutoff_mev"] == 50.0
+    assert "mode_coupling_u" in loaded_model.parameters
+
+    # Back to none: config section and closure params are cleared.
+    mode_combo = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox, "model_closure_mode"
+    )
+    mode_combo.setCurrentIndex(mode_combo.findData("none"))
+    assert "closure" not in model.config
+    assert "mode_coupling_u" not in model.parameters
+
+
+def test_fit_details_show_diagnostics_table(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    from nfit.pipeline import FitTimelineEntry
+
+    group = DataGroup("Datagroup1")
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    entry = FitTimelineEntry(
+        name="fit",
+        kind="result",
+        snapshot={},
+        created_at="now",
+        goodness={"status": "converged"},
+        metadata={
+            "diagnostics": {
+                "scan": {
+                    "temperature": 10.0,
+                    "mu_eff_sq": 1.23,
+                    "chi_static_q0": 0.7,
+                    "chi_static_qpeak": 0.9,
+                    "chi0_gamma0": 0.6,
+                    "distance_to_instability": 0.3,
+                    "lambda_shift": 0.05,
+                    "chi0_eff": 0.3,
+                }
+            }
+        },
+    )
+    box = explorer._fit_diagnostics_group_box(entry)
+    assert box is not None
+    table = box.findChild(QtWidgets.QTableWidget, "fit_diagnostics_table")
+    assert table is not None
+    assert table.rowCount() == 1
+    assert table.item(0, 0).text() == "scan"
+    # A header tooltip exists on every metric column (audit convention).
+    for column in range(1, table.columnCount()):
+        assert table.horizontalHeaderItem(column).toolTip().strip()
+
+    # No diagnostics metadata -> no table.
+    empty = FitTimelineEntry(name="f", kind="result", snapshot={}, created_at="now",
+                             metadata={})
+    assert explorer._fit_diagnostics_group_box(empty) is None
+
+
 def test_heisenberg_rpa_editor_scrolls_while_fit_parameters_grow(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
@@ -4161,6 +4618,130 @@ def test_viewer_view_cache_reuses_and_invalidates():
     assert project_gui._viewer_data_before_scale(dataset) is third
 
 
+def test_large_dataset_manual_masks_defer_passive_evaluation_and_force_for_fit(monkeypatch):
+    project_gui._VIEWER_VIEW_CACHE.clear()
+    monkeypatch.setattr(project_gui, "MASK_AUTO_MAX_POINTS", 1)
+    data = _grid_mdhisto_data()
+    dataset = DatasetEntry("scan", data, kind="mdhisto", data_type="single_crystal_inelastic")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    mask = create_mask(dataset)
+    mask.parameters["E"] = [0.0, 5.0]
+    config = project_gui.dataset_mask_application_config(dataset)
+    assert config["auto_apply"] is False
+    assert config["stale"] is False
+
+    evaluations = []
+    original = project_gui._evaluate_mdhisto_mask
+
+    def record_evaluation(data, spec):
+        evaluations.append(spec.name)
+        return original(data, spec)
+
+    monkeypatch.setattr(project_gui, "_evaluate_mdhisto_mask", record_evaluation)
+
+    passive = dataset_for_slice_viewer(dataset, force_rebin=False, force_masks=False)
+    assert evaluations == []
+    assert passive.metadata["mask_application_pending"] is True
+    assert config["stale"] is False
+
+    bundle = project_gui.fit_data_bundle(group, dataset)
+    assert bundle is not None
+    assert evaluations == [mask.name]
+    assert config["stale"] is False
+
+    mask.parameters["E"] = [5.0, 10.0]
+    config["stale"] = True
+    cached = dataset_for_slice_viewer(dataset, force_rebin=False, force_masks=False)
+    assert evaluations == [mask.name]
+    np.testing.assert_array_equal(cached.mask, bundle.view.mask)
+
+    config["auto_apply"] = True
+    automatic = dataset_for_slice_viewer(dataset, force_rebin=False, force_masks=False)
+    assert automatic is not None
+    assert evaluations == [mask.name, mask.name]
+    assert config["stale"] is False
+
+
+def test_large_mask_editor_defaults_manual_and_apply_now_clears_pending(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtCore = pytest.importorskip("PySide6.QtCore")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    monkeypatch.setattr(project_gui, "MASK_AUTO_MAX_POINTS", 1)
+    project_gui._VIEWER_VIEW_CACHE.clear()
+
+    dataset = DatasetEntry(
+        "scan",
+        _grid_mdhisto_data(),
+        kind="mdhisto",
+        data_type="single_crystal_inelastic",
+    )
+    mask = create_mask(dataset)
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer._refresh_tree(select_group=group, select_mask=mask)
+
+    auto = explorer.window.findChild(QtWidgets.QCheckBox, "mask_auto_apply")
+    apply_now = explorer.window.findChild(QtWidgets.QPushButton, "mask_apply_now")
+    status = explorer.window.findChild(QtWidgets.QLabel, "mask_application_status")
+    assert auto is not None and not auto.isChecked()
+    assert apply_now is not None and apply_now.toolTip()
+    assert status is not None and status.toolTip()
+    assert "pending" in status.text().lower()
+
+    explorer._set_mask_parameter("E", "[0.25, 5.0]")
+    config = project_gui.dataset_mask_application_config(dataset)
+    assert config["stale"] is True
+    QtWidgets.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+    assert "pending" in explorer.window.findChild(
+        QtWidgets.QLabel, "mask_application_status"
+    ).text().lower()
+
+    assert explorer.apply_masks_now_for_selection()
+    assert config["stale"] is False
+    assert "current" in explorer.window.findChild(
+        QtWidgets.QLabel, "mask_application_status"
+    ).text().lower()
+
+
+def test_apply_masks_switches_to_rebin_progress_when_rebinning(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
+    mask = create_mask(dataset)
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer._refresh_tree(select_group=group, select_mask=mask)
+    dataset_rebin_config(dataset)["enabled"] = True
+
+    titles = []
+    events = []
+    closed = []
+
+    def make_progress(title):
+        titles.append(title)
+
+        def callback(event):
+            events.append(event)
+
+        return callback
+
+    def fake_viewer_data(entry, **kwargs):
+        callback = kwargs["progress_callback"]
+        assert callback is not None
+        callback({"iteration": 1, "total": 1, "message": "Rebinning batch 1 of 1"})
+        return entry.data
+
+    monkeypatch.setattr(explorer, "_make_rebin_progress_callback", make_progress)
+    monkeypatch.setattr(explorer, "_close_rebin_progress", lambda callback: closed.append(callback))
+    monkeypatch.setattr(project_gui, "dataset_for_slice_viewer", fake_viewer_data)
+
+    assert explorer.apply_masks_now_for_selection()
+    assert titles == ["Rebinning scan..."]
+    assert events and events[0]["message"] == "Rebinning batch 1 of 1"
+    assert len(closed) == 1
+
+
 def test_mdhisto_fit_bin_count_matches_point_based_count():
     data = _grid_mdhisto_data()
     data.mask[0, 0] = True
@@ -4269,3 +4850,43 @@ def test_sample_environment_panel_hosts_temperature_and_field(monkeypatch):
         "direction": [0, 0, 1],
         "frame": "hkl",
     }
+
+
+def test_isaw_ub_round_trip_uses_transposed_file_convention(tmp_path):
+    path = tmp_path / "orientation.mat"
+    path.write_text(
+        " 0.07074842 -0.05057369  0.08492118\n"
+        " 0.06997787 -0.04812406 -0.08695870\n"
+        " 0.06980259  0.09950387  0.00110520\n"
+        " 8.2270 8.2270 8.2270 90.0000 90.0000 90.0000 556.8324\n"
+        " 0 0 0 0 0 0 0\n"
+    )
+    ub, lattice = project_gui.read_isaw_ub(path)
+    np.testing.assert_allclose(ub[:, 0], [0.07074842, -0.05057369, 0.08492118])
+    output = tmp_path / "roundtrip.mat"
+    project_gui.write_isaw_ub(output, ub, lattice)
+    restored, restored_lattice = project_gui.read_isaw_ub(output)
+    np.testing.assert_allclose(restored, ub)
+    assert restored_lattice == pytest.approx(lattice)
+    assert float(output.read_text().splitlines()[3].split()[6]) == pytest.approx(8.227**3, rel=1e-4)
+
+
+def test_ub_from_lattice_orientation_uses_beam_x_and_vertical_z():
+    lattice = {"a": 4.0, "b": 5.0, "c": 6.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0}
+    ub = project_gui.ub_from_lattice_orientation(lattice, [1, 0, 0], [0, 1, 0])
+    np.testing.assert_allclose(ub @ [1, 0, 0], [0.25, 0.0, 0.0], atol=1e-12)
+    np.testing.assert_allclose(ub @ [0, 1, 0], [0.0, 0.2, 0.0], atol=1e-12)
+    assert np.cross(ub @ [1, 0, 0], ub @ [0, 1, 0])[2] > 0.0
+
+
+def test_single_crystal_dataset_and_group_expose_ub_setup(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    dataset = DatasetEntry("scan", _tiny_mdhisto_data(1.0), data_type="single_crystal_inelastic")
+    subgroup = DatasetGroup("runs", datasets=[dataset])
+    group = DataGroup("sample", subgroups=[subgroup])
+    explorer = project_gui.NfitProjectExplorer(NfitProject([group]))
+    explorer._refresh_tree(select_group=group, select_dataset=dataset)
+    assert explorer.details_widget.findChild(QtWidgets.QPushButton, "open_ub_setup") is not None
+    explorer._refresh_tree(select_dataset_group=subgroup)
+    assert explorer.details_widget.findChild(QtWidgets.QPushButton, "open_ub_setup") is not None
