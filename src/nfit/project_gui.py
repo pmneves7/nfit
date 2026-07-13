@@ -44,7 +44,7 @@ from .fitting import (
 )
 from .form_factors import available_ions
 from .importers import IMPORTERS, import_with, importers_for_data_type
-from .mdhisto import MDHistoAxis, MDHistoData, load_mantid_mdhisto_nxs
+from .mdhisto import MDHistoAxis, MDHistoData, load_mantid_mdhisto_nxs, mdhisto_measured_bins
 from .mdevent import assess_mdevent_memory, bin_mdevent_group, is_mdevent_file, load_mdevent_run_points, mdevent_dataset_group
 from .pipeline import DataGroup, DatasetEntry, DatasetGroup, FitTimelineEntry, MaskSpec, ModelComponentSpec
 from .rebin import rebin_nd
@@ -646,10 +646,62 @@ def import_dataset_paths(
             entries.extend(subgroup.datasets)
             continue
         entry = dataset_entry_from_path(source, data_type=data_type, importer_name=importer_name)
+        if resolved_type == "single_crystal_inelastic" and is_raw_dgs_nexus_file(source):
+            entry.kind = "raw_dgs_nexus"
+            entry.metadata["raw_reduction_required"] = True
         entry.name = _unique_dataset_name(entry.name, group.dataset_names)
         group.add_dataset(entry, into=into)
         entries.append(entry)
     return entries
+
+
+def is_raw_dgs_nexus_file(path: str | Path) -> bool:
+    """Return whether a NeXus file holds raw event banks rather than reduced data."""
+
+    try:
+        import h5py
+        with h5py.File(path, "r") as handle:
+            entry = handle.get("entry")
+            return entry is not None and any(name.startswith("bank") and name.endswith("_events") for name in entry)
+    except (ImportError, OSError):
+        return False
+
+
+def parse_dataset_numors(text: str) -> list[int]:
+    """Parse comma-separated run numbers and inclusive ``start[:step]:end`` ranges."""
+
+    values: list[int] = []
+    seen: set[int] = set()
+    for raw_piece in str(text).split(","):
+        piece = raw_piece.strip()
+        if not piece:
+            continue
+        parts = [part.strip() for part in piece.split(":")]
+        try:
+            if len(parts) == 1:
+                expanded = [int(parts[0])]
+            elif len(parts) == 2:
+                start, end = (int(part) for part in parts)
+                step = 1 if end >= start else -1
+                expanded = list(range(start, end + step, step))
+            elif len(parts) == 3:
+                start, step, end = (int(part) for part in parts)
+                if step == 0 or (end - start) * step < 0:
+                    raise ValueError
+                expanded = list(range(start, end + (1 if step > 0 else -1), step))
+            else:
+                raise ValueError
+        except ValueError as exc:
+            raise ValueError(
+                f"invalid run range {piece!r}; use 409981:409995, 409981:3:409995, or comma-separated values"
+            ) from exc
+        for value in expanded:
+            if value not in seen:
+                seen.add(value)
+                values.append(value)
+    if not values:
+        raise ValueError("enter at least one run number or range")
+    return values
 
 
 def import_mdevent_dataset_group(
@@ -2089,6 +2141,8 @@ def _composite_candidates(group: DataGroup) -> list[DatasetEntry]:
 def _dataset_composite_kind(dataset: DatasetEntry) -> str:
     if dataset.kind == "mdevent":
         return "mdevent"
+    if dataset.kind == "raw_dgs_nexus":
+        return "raw_dgs_nexus"
     if data_type_container(dataset.data_type) == "point_list" or isinstance(dataset.data, PointListData):
         return "point_list"
     if isinstance(dataset.data, MDHistoData) or data_type_container(dataset.data_type) == "mdhisto":
@@ -2105,6 +2159,8 @@ def data_group_composite_status(group: DataGroup) -> tuple[bool, str]:
     kinds = {_dataset_composite_kind(dataset) for dataset in datasets}
     if len(kinds) != 1:
         return False, "Composite datasets require all enabled datasets to hold the same kind of data."
+    if next(iter(kinds)) == "raw_dgs_nexus":
+        return False, "Raw DGS NeXus files require native time-of-flight-to-HKLE reduction before they can be composited."
     if next(iter(kinds)) not in {"mdhisto", "point_list", "point_data_4d", "mdevent"}:
         return False, "This dataset kind cannot be composited yet."
     return True, "Ready to combine enabled datasets into one rebinned composite."
@@ -2310,7 +2366,7 @@ def _composite_mdhisto_data(
         coords = np.stack(source_grids, axis=-1)
         valid = np.isfinite(data.signal) & np.isfinite(data.errors) & ~np.asarray(data.mask, dtype=bool)
         if data.num_events is not None:
-            valid &= np.asarray(data.num_events) > 0.0
+            valid &= mdhisto_measured_bins(data)
         if not np.any(valid):
             continue
         scale = float(dataset.scale_factor)
@@ -2918,7 +2974,7 @@ def _point_data_from_mdhisto_view(data: MDHistoData) -> PointData4D:
     coords = _mdhisto_coordinate_grids(data)
     zeros = np.zeros(data.shape, dtype=float)
     keep = ~np.asarray(data.mask, dtype=bool)
-    keep &= np.asarray(data.num_events, dtype=float) > 0.0
+    keep &= mdhisto_measured_bins(data)
     metadata: dict[str, Any] = {
         "fit_coordinates": sorted(name for name in ("H", "K", "L", "E") if name in coords),
     }
@@ -3379,6 +3435,9 @@ def perform_group_fit(
         "dataset_chi2": {name: float(value) for name, value in result.dataset_chi2.items()},
         "dataset_reduced_chi2": {
             name: float(value) for name, value in result.dataset_reduced_chi2.items()
+        },
+        "dataset_n_points": {
+            name: int(size) for name, size in result.dataset_sizes.items()
         },
         "skipped_datasets": list(compiled.skipped_datasets),
     }
@@ -4293,6 +4352,8 @@ def _viewer_data_before_scale_uncached(
     force_masks: bool = True,
     progress_callback: Any | None = None,
 ) -> MDHistoData | PointListData | None:
+    if dataset.kind == "raw_dgs_nexus":
+        return None
     if data_type_container(dataset.data_type) == "point_list" or isinstance(dataset.data, PointListData):
         if dataset.data is None:
             _load_point_list_dataset(dataset)
@@ -5135,7 +5196,7 @@ def _rebin_mdhisto_data(
     coords = np.stack(projected, axis=-1)
     valid = np.isfinite(data.signal) & np.isfinite(data.errors) & ~data.mask
     if data.num_events is not None:
-        valid &= np.asarray(data.num_events) > 0.0
+        valid &= mdhisto_measured_bins(data)
     signal = data.signal[valid]
     errors = data.errors[valid]
     coords_valid = coords[valid]
@@ -7288,6 +7349,93 @@ class NfitProjectExplorer:
             self._mark_dirty()
             self._refresh_tree(select_group=group)
         return entries
+
+    def _dataset_importing_config(self, group: DataGroup) -> dict[str, Any]:
+        config = group.metadata.get("dataset_importing")
+        if not isinstance(config, dict):
+            config = {}
+            group.metadata["dataset_importing"] = config
+        config.setdefault("enabled", False)
+        config.setdefault("path", "")
+        config.setdefault("prefix", "")
+        config.setdefault("suffix", "")
+        config.setdefault("numors", "")
+        return config
+
+    def _set_dataset_importing_enabled(self, group: DataGroup, enabled: bool) -> None:
+        config = self._dataset_importing_config(group)
+        if bool(config["enabled"]) == bool(enabled):
+            return
+        config["enabled"] = bool(enabled)
+        self._record_data_group_state_change(group)
+        self._mark_dirty()
+        self._sync_details()
+
+    def _set_dataset_importing_text(self, group: DataGroup, key: str, text: str) -> None:
+        config = self._dataset_importing_config(group)
+        value = str(text).strip()
+        if config.get(key) == value:
+            return
+        config[key] = value
+        self._record_data_group_state_change(group)
+        self._mark_dirty()
+
+    def _add_dataset_import_files(self, group: DataGroup) -> None:
+        from PySide6 import QtWidgets
+
+        paths, _selected_filter = QtWidgets.QFileDialog.getOpenFileNames(
+            self.window, "Add datasets", "", "Data files (*);;All files (*)"
+        )
+        if paths:
+            self.import_dataset_paths(group, paths, data_type=DEFAULT_DATA_TYPE)
+
+    def _import_dataset_importing_range(self, group: DataGroup) -> None:
+        from PySide6 import QtWidgets
+
+        config = self._dataset_importing_config(group)
+        try:
+            numors = parse_dataset_numors(config.get("numors", ""))
+        except ValueError as exc:
+            QtWidgets.QMessageBox.warning(self.window, "Import datasets", str(exc))
+            return
+        directory = Path(str(config.get("path", "")).strip()).expanduser()
+        prefix = str(config.get("prefix", ""))
+        suffix = str(config.get("suffix", ""))
+        if not directory.is_dir():
+            QtWidgets.QMessageBox.warning(self.window, "Import datasets", f"Dataset directory does not exist:\n{directory}")
+            return
+        paths = [directory / f"{prefix}{numor}{suffix}" for numor in numors]
+        missing = [path.name for path in paths if not path.is_file()]
+        if missing:
+            shown = ", ".join(missing[:10])
+            suffix_text = "" if len(missing) <= 10 else f" and {len(missing) - 10} more"
+            QtWidgets.QMessageBox.warning(
+                self.window, "Import datasets",
+                f"The requested files do not exist:\n{shown}{suffix_text}",
+            )
+            return
+        self.import_dataset_paths(group, paths, data_type=DEFAULT_DATA_TYPE)
+
+    def _clear_imported_datasets(self, group: DataGroup) -> None:
+        from PySide6 import QtWidgets
+
+        dataset_count = sum(1 for _dataset in group.iter_datasets())
+        if dataset_count == 0:
+            return
+        answer = QtWidgets.QMessageBox.question(
+            self.window,
+            "Clear datasets",
+            f"Remove all {dataset_count} datasets and nested dataset groups from {group.name!r}?",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        group.datasets.clear()
+        group.subgroups.clear()
+        self._record_data_group_state_change(group)
+        self._mark_dirty()
+        self._refresh_tree(select_group=group)
 
     def selected_data_group(self) -> DataGroup | None:
         item = self._current_item()
@@ -10194,9 +10342,70 @@ class NfitProjectExplorer:
                 ],
             )
         )
+        self.details_layout.addWidget(self._dataset_importing_group_box(group))
         if any(dataset.data_type.startswith("single_crystal") for dataset in group.iter_datasets()):
             self.details_layout.addWidget(self._ub_setup_group_box(group, group))
         self.details_layout.addStretch(1)
+
+    def _dataset_importing_group_box(self, group: DataGroup) -> Any:
+        from PySide6 import QtWidgets
+
+        config = self._dataset_importing_config(group)
+        box = QtWidgets.QGroupBox("Dataset importing")
+        box.setToolTip(
+            "Add single-crystal dataset files directly to this data group. Use the range fields for numbered files, "
+            "or Add files to choose an arbitrary set in the file browser."
+        )
+        layout = QtWidgets.QVBoxLayout(box)
+        enabled = QtWidgets.QCheckBox("Import datasets from files")
+        enabled.setObjectName("dataset_importing_enabled")
+        enabled.setChecked(bool(config.get("enabled", False)))
+        enabled.setToolTip(
+            "Enable file-based dataset importing for this data group. The setting is saved with the project."
+        )
+        enabled.toggled.connect(lambda checked: self._set_dataset_importing_enabled(group, checked))
+        layout.addWidget(enabled)
+
+        controls = QtWidgets.QWidget()
+        controls.setObjectName("dataset_importing_controls")
+        controls.setEnabled(bool(config.get("enabled", False)))
+        grid = QtWidgets.QGridLayout(controls)
+        grid.setContentsMargins(0, 0, 0, 0)
+        add_files = QtWidgets.QPushButton("Add files")
+        add_files.setObjectName("dataset_importing_add_files")
+        add_files.setToolTip("Choose one or more dataset files to add as single-crystal dataset entries.")
+        add_files.clicked.connect(lambda: self._add_dataset_import_files(group))
+        grid.addWidget(add_files, 0, 0, 1, 2)
+
+        fields = (
+            ("Path", "path", "Directory containing numbered dataset files."),
+            ("Prefix", "prefix", "Text before each run number, for example SEQ_."),
+            ("Suffix", "suffix", "Text after each run number, for example .nxs.h5."),
+            ("Numors", "numors", "Run numbers and inclusive ranges: 409981:409995, 409981:3:409995, or comma-separated ranges."),
+        )
+        for row, (label, key, tooltip) in enumerate(fields, start=1):
+            grid.addWidget(QtWidgets.QLabel(label), row, 0)
+            edit = QtWidgets.QLineEdit(str(config.get(key, "")))
+            edit.setObjectName(f"dataset_importing_{key}")
+            edit.setToolTip(tooltip)
+            edit.editingFinished.connect(
+                lambda edit=edit, key=key: self._set_dataset_importing_text(group, key, edit.text())
+            )
+            grid.addWidget(edit, row, 1)
+
+        import_button = QtWidgets.QPushButton("Import datasets")
+        import_button.setObjectName("dataset_importing_import_range")
+        import_button.setToolTip("Build paths from Path, Prefix, Suffix, and Numors, then add each existing file as a dataset.")
+        import_button.clicked.connect(lambda: self._import_dataset_importing_range(group))
+        grid.addWidget(import_button, len(fields) + 1, 0, 1, 2)
+
+        clear_button = QtWidgets.QPushButton("Clear datasets")
+        clear_button.setObjectName("dataset_importing_clear")
+        clear_button.setToolTip("Remove every direct and nested dataset from this data group after confirmation. Models, masks, and fit history are kept.")
+        clear_button.clicked.connect(lambda: self._clear_imported_datasets(group))
+        grid.addWidget(clear_button, len(fields) + 2, 0, 1, 2)
+        layout.addWidget(controls)
+        return box
 
     def _set_dataset_collection_details(
         self,
@@ -10420,7 +10629,9 @@ class NfitProjectExplorer:
         box = QtWidgets.QGroupBox("Composite dataset")
         box.setToolTip(
             "Combine compatible enabled datasets in this collection into one rebinned effective dataset. "
-            "Enable the checkbox to show the composite rebin controls."
+            "Enable the checkbox to show the composite rebin controls. For MDEvent composites, detector-covered "
+            "zero-count bins stay at signal zero and use a finite conservative Poisson uncertainty; only bins with "
+            "no detector coverage are masked."
         )
         layout = QtWidgets.QVBoxLayout(box)
         layout.setContentsMargins(10, 8, 10, 8)
@@ -14002,6 +14213,8 @@ def _make_refreshing_combo_class():
 
 def _has_slice_viewer_candidates(group: DataGroup) -> bool:
     for dataset in group.iter_datasets():
+        if dataset.kind == "raw_dgs_nexus":
+            continue
         if isinstance(dataset.data, (MDHistoData, PointListData)):
             return True
         if data_type_container(dataset.data_type) == "point_list":
@@ -14014,6 +14227,8 @@ def _has_slice_viewer_candidates(group: DataGroup) -> bool:
 
 def _dataset_can_load(dataset: DatasetEntry) -> bool:
     if dataset.data is not None:
+        return False
+    if dataset.kind == "raw_dgs_nexus":
         return False
     source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
     if not source:
@@ -14080,7 +14295,7 @@ def _mdhisto_fit_bin_count(view: MDHistoData) -> int:
     """
 
     keep = ~np.asarray(view.mask, dtype=bool)
-    keep &= np.asarray(view.num_events, dtype=float) > 0.0
+    keep &= mdhisto_measured_bins(view)
     keep &= np.isfinite(np.asarray(view.signal, dtype=float))
     errors = np.asarray(view.errors, dtype=float)
     keep &= np.isfinite(errors)

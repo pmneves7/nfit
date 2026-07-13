@@ -251,6 +251,8 @@ def test_run_group_fit_recovers_constant_and_stores_channels():
     entry = run_group_fit(group, group.fits[0])
     assert entry.goodness["status"] == "converged"
     assert model.parameters["constant"] == pytest.approx(1.5, abs=1e-6)
+    # Per-dataset point counts are persisted for the fit report.
+    assert entry.goodness["dataset_n_points"] == {"first": 20}
     channels = entry.channels["first"]
     assert channels["kind"] == "grid"
     assert channels["fit"].shape == (4, 5)
