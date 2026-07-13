@@ -103,6 +103,8 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from . import _parallel
+
 try:  # optional: scopes BLAS thread counts to avoid nested oversubscription
     from threadpoolctl import threadpool_limits as _threadpool_limits
 except Exception:  # pragma: no cover - threadpoolctl not installed
@@ -224,26 +226,12 @@ _EIGH_THREAD_WORK = 5.0e7
 # 128, avoiding oversubscription of shared nodes) -- falling back to
 # ``os.cpu_count`` elsewhere. Override with ``NFIT_NUM_THREADS`` or
 # :func:`set_num_threads`.
-_THREAD_OVERRIDE: int | None = None
-
-
 def _detect_cpu_budget() -> int:
-    try:
-        return max(1, len(os.sched_getaffinity(0)))  # type: ignore[attr-defined]
-    except AttributeError:  # macOS / Windows lack sched_getaffinity
-        return max(1, os.cpu_count() or 1)
+    return _parallel.detect_cpu_budget()
 
 
 def _thread_budget() -> int:
-    if _THREAD_OVERRIDE is not None:
-        return _THREAD_OVERRIDE
-    env = os.environ.get("NFIT_NUM_THREADS")
-    if env:
-        try:
-            return max(1, int(env))
-        except ValueError:
-            pass
-    return _detect_cpu_budget()
+    return _parallel.num_threads()
 
 
 def set_num_threads(n: int | None) -> None:
@@ -255,8 +243,7 @@ def set_num_threads(n: int | None) -> None:
     benchmark.
     """
 
-    global _THREAD_OVERRIDE
-    _THREAD_OVERRIDE = None if n is None else max(1, int(n))
+    _parallel.set_num_threads(n)
     _eigh_executor.cache_clear()
     _apply_numba_threads()
 
@@ -835,7 +822,10 @@ def _validate_rpa_energy(geometry: RpaGeometry, energy: FloatArray) -> None:
 
 
 def _rpa_modes(
-    geometry: RpaGeometry, j_values: Mapping[str, float], chi0: float
+    geometry: RpaGeometry,
+    j_values: Mapping[str, float],
+    chi0: float,
+    lambda_shift: float = 0.0,
 ) -> tuple[FloatArray, ComplexArray]:
     """Eigen-factor ``J(Q)`` at each unique Q and guard against instability.
 
@@ -853,7 +843,10 @@ def _rpa_modes(
 
     Raises ``ValueError`` when the static RPA denominator ``1 - lambda chi0`` is
     non-positive anywhere, i.e. at or beyond the magnetic instability
-    ``max_Q lambda_nu(Q) chi0 = 1``.
+    ``max_Q lambda_nu(Q) chi0 = 1``. ``lambda_shift`` is the Onsager reaction
+    field (a rigid shift ``lambda -> lambda - lambda_shift`` applied by the
+    caller); it enters only the stability check here -- the returned
+    eigenvalues stay unshifted so the cache is keyed by ``J`` alone.
     """
 
     # Cache the decomposition on the geometry keyed by the exchange values.
@@ -874,10 +867,11 @@ def _rpa_modes(
             lam, modes = _batched_eigh(exchange)
         geometry.__dict__["_rpa_modes_cache"] = (key, lam, modes)
 
-    if np.any(1.0 - lam * chi0 <= 0.0):
+    lam_effective = lam - lambda_shift if lambda_shift != 0.0 else lam
+    if np.any(1.0 - lam_effective * chi0 <= 0.0):
         raise ValueError(
             "RPA instability: 1 - lambda(Q) * chi0 <= 0 "
-            f"(max lambda * chi0 = {float(np.max(lam * chi0)):.6g}); "
+            f"(max lambda * chi0 = {float(np.max(lam_effective * chi0)):.6g}); "
             "the parameters describe a magnetically ordered state"
         )
     return lam, modes
@@ -904,13 +898,17 @@ def heisenberg_rpa_chipp(
     chi0: float,
     gamma0: float,
     j_values: Mapping[str, float],
+    lambda_shift: float = 0.0,
 ) -> FloatArray:
     """RPA ``chi''(Q, E)`` for relaxational local spins coupled by ``J(Q)``.
 
     See the module docstring for the full model and conventions. Raises
     ``ValueError`` when the RPA denominator ``1 - lambda_nu(Q) chi0`` is not
     positive at some Q, i.e. when the parameters are at or beyond the magnetic
-    instability ``max_Q lambda_nu(Q) chi0 = 1``.
+    instability ``max_Q lambda_nu(Q) chi0 = 1``. ``lambda_shift`` is the
+    Onsager reaction field of the sum-rule closures: a rigid, Q-independent
+    shift ``J(Q) -> J(Q) - lambda_shift`` (equivalently of every eigenvalue);
+    the default 0.0 leaves the computation untouched.
     """
 
     chi0 = float(chi0)
@@ -919,7 +917,9 @@ def heisenberg_rpa_chipp(
     energy = np.asarray(E, dtype=float).ravel()
     _validate_rpa_energy(geometry, energy)
 
-    lam, modes = _rpa_modes(geometry, j_values, chi0)
+    lam, modes = _rpa_modes(geometry, j_values, chi0, lambda_shift)
+    if lambda_shift != 0.0:
+        lam = lam - lambda_shift
     idx = geometry.point_index
 
     backend = _select_rpa_backend(energy.shape[0])

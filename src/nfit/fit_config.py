@@ -61,6 +61,7 @@ from .spin_fluctuations import (
     mmp_chipp,
     reduce_site_network,
     reduce_site_network_with_tensors,
+    rpa_exchange_matrix,
 )
 
 FALLBACK_DATA_TYPE = "single_crystal_inelastic"
@@ -358,6 +359,11 @@ def heisenberg_rpa_parameter_labels(component: Any) -> tuple[str, ...]:
         labels.append("D_dip")
     if _component_has_zeeman(config):
         labels.extend(("g_factor", "chi_perp_ratio", "gamma_perp_ratio"))
+    from .closures import ClosureSpec
+
+    closure_spec = ClosureSpec.from_config(config)
+    if closure_spec is not None:
+        labels.extend(closure_spec.parameter_names())
     return tuple(labels)
 
 
@@ -399,12 +405,28 @@ class _RpaComponentEvaluator:
             key: qualified_parameter_name(name, key)
             for key in ("g_factor", "chi_perp_ratio", "gamma_perp_ratio")
         }
-        # The tensor J(Q) coefficients exclude the Zeeman propagator parameters.
+        from .closures import ClosureSpec
+
+        self.closure_spec = ClosureSpec.from_config(config)
+        closure_labels = (
+            self.closure_spec.parameter_names() if self.closure_spec else ()
+        )
+        self._closure_keys = {
+            label: qualified_parameter_name(name, label) for label in closure_labels
+        }
+        # The tensor J(Q) coefficients exclude the Zeeman propagator and
+        # closure parameters (neither enters the interaction matrix).
         self.tensor_keys = {
             label: qualified_parameter_name(name, label)
             for label in heisenberg_rpa_parameter_labels(component)
-            if label not in self._zeeman_keys
+            if label not in self._zeeman_keys and label not in self._closure_keys
         }
+        # Closure solve/eigenvalue caches (see _solve_closure). Keyed by exact
+        # parameter tuples: scipy evaluates value and FD columns back to back
+        # at identical floats, so exact keys hit without rounding tolerance.
+        self._closure_moment_cache: dict[tuple, Any] = {}
+        self._closure_result_cache: dict[tuple, Any] = {}
+        self._closure_bz_context: Any = None
         if self.tensor_mode:
             # Fold onto the primitive cell carrying the tensor payloads: pure
             # lattice translations do not rotate spins, so anisotropic exchange,
@@ -483,6 +505,170 @@ class _RpaComponentEvaluator:
     def _tensor_values(self, params: dict[str, float]) -> dict[str, float]:
         return {label: float(params[key]) for label, key in self.tensor_keys.items()}
 
+    def _closure_context(self) -> tuple[Any, Any]:
+        """BZ-grid geometry (and tensor structure) for the closure integrals.
+
+        Built once per evaluator: the grid depends only on the component's
+        site network and closure config, never on a dataset.
+        """
+
+        if self._closure_bz_context is None:
+            from .sum_rules import bz_sample_hkl
+
+            grid = bz_sample_hkl(self.closure_spec.bz_grid)
+            bz_geometry = build_rpa_geometry(
+                grid[:, 0], grid[:, 1], grid[:, 2], self.site_positions, self.orbits
+            )
+            bz_structure = None
+            if self.tensor_mode:
+                from .tensor_rpa import build_tensor_structure
+
+                bz_structure = build_tensor_structure(
+                    bz_geometry,
+                    self.site_positions,
+                    orbits=self.orbits,
+                    lattice=self._lattice,
+                    anisotropy=self._anisotropy,
+                    sia=self._sia,
+                    site_rotations=self._site_rotations,
+                    dipole=self._dipole,
+                )
+            self._closure_bz_context = (bz_geometry, bz_structure)
+        return self._closure_bz_context
+
+    def _closure_moment_model(
+        self, params: dict[str, float], field: np.ndarray | None
+    ) -> Any:
+        """Moment backend for the closure solver, cached per parameter point."""
+
+        from .closures import TierAMoments, TierBMoments
+
+        bz_geometry, bz_structure = self._closure_context()
+        if self.zeeman_mode:
+            from .tensor_rpa import (
+                MU_B_MEV_PER_T,
+                assemble_tensor_exchange,
+                zeeman_cartesian_propagator,
+            )
+
+            magnitude = float(np.linalg.norm(field)) if field is not None else 0.0
+            b_hat = (
+                field / magnitude if magnitude > 0 else np.array([0.0, 0.0, 1.0])
+            )
+            g_factor = float(params[self._zeeman_keys["g_factor"]])
+            chi_perp = float(params[self._zeeman_keys["chi_perp_ratio"]])
+            gamma_perp = float(params[self._zeeman_keys["gamma_perp_ratio"]])
+            omega_larmor = g_factor * MU_B_MEV_PER_T * magnitude
+            tensor_values = self._tensor_values(params)
+            key = (
+                "tier_b",
+                tuple(sorted(tensor_values.items())),
+                omega_larmor,
+                chi_perp,
+                gamma_perp,
+                tuple(np.asarray(b_hat, dtype=float)),
+            )
+            model = self._closure_moment_cache.get(key)
+            if model is None:
+                exchange = assemble_tensor_exchange(bz_structure, tensor_values)
+
+                def builder(omega, chi0, gamma0):
+                    return zeeman_cartesian_propagator(
+                        omega,
+                        b_hat,
+                        chi0=chi0,
+                        gamma0=gamma0,
+                        omega_larmor=omega_larmor,
+                        chi_perp_ratio=chi_perp,
+                        gamma_perp_ratio=gamma_perp,
+                    )
+
+                model = TierBMoments(
+                    exchange,
+                    bz_geometry.n_sites,
+                    builder,
+                    omega_points=self.closure_spec.omega_points,
+                    static_response_bound=max(1.0, chi_perp),
+                )
+        elif self.tensor_mode:
+            from .tensor_rpa import assemble_tensor_exchange
+
+            tensor_values = self._tensor_values(params)
+            key = ("tier_a_tensor", tuple(sorted(tensor_values.items())))
+            model = self._closure_moment_cache.get(key)
+            if model is None:
+                exchange = assemble_tensor_exchange(bz_structure, tensor_values)
+                model = TierAMoments(
+                    np.linalg.eigvalsh(exchange),
+                    bz_geometry.n_sites,
+                    isotropic_components=1,
+                )
+        else:
+            j_values = self._j_values(params)
+            key = ("tier_a", tuple(sorted(j_values.items())))
+            model = self._closure_moment_cache.get(key)
+            if model is None:
+                exchange = rpa_exchange_matrix(bz_geometry, j_values)
+                model = TierAMoments(
+                    np.linalg.eigvalsh(exchange),
+                    bz_geometry.n_sites,
+                    isotropic_components=3,
+                )
+        if len(self._closure_moment_cache) > 8:
+            self._closure_moment_cache.clear()
+        self._closure_moment_cache[key] = model
+        return model
+
+    def _solve_closure(
+        self,
+        params: dict[str, float],
+        temperature: Any,
+        field: np.ndarray | None,
+    ) -> Any:
+        """Solve the configured closure at this dataset's (T, B), cached."""
+
+        from .closures import solve_closure
+
+        unique_t = np.unique(np.atleast_1d(np.asarray(temperature, dtype=float)))
+        if unique_t.size != 1:
+            raise ValueError(
+                "sum-rule closures need a single temperature per dataset; "
+                "per-point temperatures are only supported for magnetization "
+                "datasets"
+            )
+        t = float(unique_t[0])
+        relevant = sorted(
+            set(self.j_keys.values())
+            | set(self.tensor_keys.values())
+            | set(self._closure_keys.values())
+            | {self.chi0_key, self.gamma0_key}
+            | (set(self._zeeman_keys.values()) if self.zeeman_mode else set())
+        )
+        key = (
+            t,
+            tuple(np.asarray(field, dtype=float)) if field is not None else None,
+            tuple(float(params[k]) for k in relevant),
+        )
+        cached = self._closure_result_cache.get(key)
+        if cached is not None:
+            return cached
+        model = self._closure_moment_model(params, field)
+        result = solve_closure(
+            self.closure_spec,
+            model,
+            chi0=float(params[self.chi0_key]),
+            gamma0=float(params[self.gamma0_key]),
+            temperature_K=t,
+            params={
+                label: float(params[key_])
+                for label, key_ in self._closure_keys.items()
+            },
+        )
+        if len(self._closure_result_cache) > 256:
+            self._closure_result_cache.clear()
+        self._closure_result_cache[key] = result
+        return result
+
     def value(self, data: PointData4D, params: dict[str, float]) -> np.ndarray:
         temperature = _dataset_temperature(data)
         # Validate the applied field before the instability guard below, so a
@@ -491,6 +677,12 @@ class _RpaComponentEvaluator:
         field = _dataset_magnetic_field(data) if self.zeeman_mode else None
         geometry, form_factor_sq, tensor_context = self._geometry(data)
         try:
+            chi0 = float(params[self.chi0_key])
+            lambda_shift = 0.0
+            if self.closure_spec is not None:
+                closure = self._solve_closure(params, temperature, field)
+                chi0 = closure.chi0_eff
+                lambda_shift = closure.lambda_shift
             if self.zeeman_mode:
                 from .tensor_rpa import (
                     tensor_rpa_zeeman_unpolarized_chipp,
@@ -506,7 +698,7 @@ class _RpaComponentEvaluator:
                 propagator = zeeman_cartesian_propagator(
                     energy,
                     b_hat,
-                    chi0=float(params[self.chi0_key]),
+                    chi0=chi0,
                     gamma0=float(params[self.gamma0_key]),
                     omega_larmor=g_factor * MU_B_MEV_PER_T * magnitude,
                     chi_perp_ratio=float(params[self._zeeman_keys["chi_perp_ratio"]]),
@@ -515,6 +707,7 @@ class _RpaComponentEvaluator:
                 chipp = tensor_rpa_zeeman_unpolarized_chipp(
                     structure, geometry, energy, q_hat, propagator,
                     param_values=self._tensor_values(params),
+                    lambda_shift=lambda_shift,
                 )
                 polarization = 1.0
             elif self.tensor_mode:
@@ -526,9 +719,10 @@ class _RpaComponentEvaluator:
                     geometry,
                     np.asarray(data.E, dtype=float),
                     q_hat,
-                    chi0=float(params[self.chi0_key]),
+                    chi0=chi0,
                     gamma0=float(params[self.gamma0_key]),
                     param_values=self._tensor_values(params),
+                    lambda_shift=lambda_shift,
                 )
                 # The unpolarized channel already carries the polarization
                 # average, so no extra scalar polarization factor here.
@@ -537,15 +731,17 @@ class _RpaComponentEvaluator:
                 chipp = heisenberg_rpa_chipp(
                     geometry,
                     data.E,
-                    chi0=float(params[self.chi0_key]),
+                    chi0=chi0,
                     gamma0=float(params[self.gamma0_key]),
                     j_values=self._j_values(params),
+                    lambda_shift=lambda_shift,
                 )
                 polarization = ISOTROPIC_POLARIZATION
         except ValueError:
             # Unphysical trial parameters (RPA instability, non-positive
-            # chi0/gamma0). Optimizers probe these while searching; a huge
-            # finite misfit steers them back without aborting the fit.
+            # chi0/gamma0, unsatisfiable closure). Optimizers probe these while
+            # searching; a huge finite misfit steers them back without
+            # aborting the fit.
             return np.full(data.size, 1e6, dtype=float)
         return intensity_from_chipp(
             chipp,
@@ -620,9 +816,15 @@ def _heisenberg_rpa_factory(component: Any) -> ModelFunction:
 def _heisenberg_rpa_jacobian_factory(component: Any) -> "ModelJacobian | None":
     # Analytic gradients are implemented for the scalar Heisenberg path only;
     # components with anisotropic tensor terms fall back to finite differences
-    # (the fit engine gates on every component providing a Jacobian).
+    # (the fit engine gates on every component providing a Jacobian). Sum-rule
+    # closures make chi0_eff/lambda an implicit function of every parameter,
+    # so they also use the finite-difference fallback.
     config = component.config if isinstance(component.config, dict) else {}
     if _component_has_tensor_terms(config):
+        return None
+    from .closures import ClosureSpec
+
+    if ClosureSpec.from_config(config) is not None:
         return None
     return _RpaComponentEvaluator(component).gradients
 

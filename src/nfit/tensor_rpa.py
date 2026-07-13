@@ -252,17 +252,22 @@ def tensor_susceptibility(
     chi0: float,
     gamma0: float,
     param_values: Mapping[str, float],
+    lambda_shift: float = 0.0,
 ) -> ComplexArray:
     """Return the ``(n_points, 3, 3)`` dynamic susceptibility ``chi_{alpha beta}``.
 
     ``chi(Q, w) = (1/N) sum_nu w_nu w_nu^dagger chi0(w) / (1 - chi0(w) lam_nu)``
     with uniform Cartesian mode amplitudes ``w_{alpha nu} = sum_a U[(a
     alpha), nu]`` and ``chi0(w) = chi0 / (1 - i w / gamma0)``. Raises on RPA
-    instability (``1 - lam chi0 <= 0``).
+    instability (``1 - lam chi0 <= 0``). ``lambda_shift`` is the Onsager
+    reaction field (rigid shift of every eigenvalue); 0.0 leaves the
+    computation untouched.
     """
 
     exchange = assemble_tensor_exchange(structure, param_values)
     lam, modes = _tensor_eigh(exchange)  # (n_q, 3N), (n_q, 3N, 3N)
+    if lambda_shift != 0.0:
+        lam = lam - lambda_shift
     if np.any(1.0 - lam * chi0 <= 0.0):
         raise ValueError(
             "RPA instability: 1 - lambda(Q) * chi0 <= 0 "
@@ -390,6 +395,7 @@ def tensor_zeeman_susceptibility(
     propagator: ComplexArray,
     *,
     param_values: Mapping[str, float],
+    lambda_shift: float = 0.0,
 ) -> ComplexArray:
     """Return ``chi_{alpha beta}`` (n_points, 3, 3) with a tensor local propagator.
 
@@ -398,12 +404,16 @@ def tensor_zeeman_susceptibility(
     ``J(Q)``'s eigenbasis, so this solves ``[1 - X0 J(Q)] chi = X0`` per point by
     batched LU (chunked to bound memory) rather than diagonalizing once per Q.
     ``chi_{alpha beta} = (1/N) phi_alpha^dagger (1 - X0 J)^{-1} X0 phi_beta`` with
-    ``phi_alpha`` the uniform-site Cartesian source.
+    ``phi_alpha`` the uniform-site Cartesian source. ``lambda_shift`` is the
+    Onsager reaction field, ``J(Q) -> J(Q) - lambda_shift``; 0.0 leaves the
+    computation untouched.
     """
 
     exchange = assemble_tensor_exchange(structure, param_values)  # (n_q, 3N, 3N)
     n_sites = structure.n_sites
     dim = 3 * n_sites
+    if lambda_shift != 0.0:
+        exchange = exchange - lambda_shift * np.eye(dim)[None]
     idx = geometry.point_index
     n_points = energy.shape[0]
     identity = np.eye(dim)
@@ -441,11 +451,17 @@ def tensor_rpa_zeeman_unpolarized_chipp(
     propagator: ComplexArray,
     *,
     param_values: Mapping[str, float],
+    lambda_shift: float = 0.0,
 ) -> FloatArray:
     """Unpolarized ``chi''`` per point for the field-on (Tier-B) path."""
 
     chi = tensor_zeeman_susceptibility(
-        structure, geometry, energy, propagator, param_values=param_values
+        structure,
+        geometry,
+        energy,
+        propagator,
+        param_values=param_values,
+        lambda_shift=lambda_shift,
     )
     return _chipp_from_chi(chi, q_hat)
 
@@ -459,6 +475,7 @@ def tensor_rpa_unpolarized_chipp(
     chi0: float,
     gamma0: float,
     param_values: Mapping[str, float],
+    lambda_shift: float = 0.0,
 ) -> FloatArray:
     """Unpolarized ``chi''`` per point: ``sum_{ab} W_{ab}(Qhat) chi''_{ab}``.
 
@@ -467,6 +484,12 @@ def tensor_rpa_unpolarized_chipp(
     """
 
     chi = tensor_susceptibility(
-        structure, geometry, energy, chi0=chi0, gamma0=gamma0, param_values=param_values
+        structure,
+        geometry,
+        energy,
+        chi0=chi0,
+        gamma0=gamma0,
+        param_values=param_values,
+        lambda_shift=lambda_shift,
     )
     return _chipp_from_chi(chi, q_hat)
