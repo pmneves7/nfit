@@ -28,6 +28,7 @@ docs/_build/
 *.hdf5
 data/hyspec/raw/
 data/hyspec/nfit_project_3D.nfit
+data/hyspec/nfit_project_4D.nfit
 
 # OS/editor
 .DS_Store
