@@ -514,6 +514,61 @@ the corresponding fit parameters (`J1_S1`, `J1_D1`, `K1_<class>`, `D_dip`,
 `g_factor`, …). The per-dataset field lives in the `Sample environment` panel of
 the dataset details.
 
+### Self-consistency closures
+
+By default the model is a bare (non-self-consistent) RPA: `chi0`/`gamma0` are
+fitted per dataset and the moment sum rule is unenforced. A **closure** makes
+the local response self-consistent, so the temperature dependence is
+*explained* by one or two global parameters instead of fitted per temperature.
+The theory and references are in [theory_notes](theory_notes.md); the config
+is `config["closure"]`:
+
+```python
+config["closure"] = {
+    "mode": "none" | "onsager" | "scr" | "tac",
+    "energy_cutoff_mev": 100.0,   # Lambda for the moment integral
+    "bz_grid": 16,                # N^3 Brillouin-zone grid (drop to ~8 with a field)
+    "omega_points": 200,          # field-on energy quadrature only
+    "moment_mode": "fixed" | "fitted",   # onsager / tac
+    "moment_target": 1.0,         # used when moment_mode == "fixed"
+}
+```
+
+- **Onsager** solves the reaction field $\lambda(T)$ so the per-site amplitude
+  $\langle m^2\rangle$ equals the target (`moment_target`, or the fitted
+  parameter `m2_total`); $J(\mathbf{Q})\to J(\mathbf{Q})-\lambda$.
+- **SCR** (Moriya) solves $\chi_{0,\text{eff}}^{-1}(T)=\chi_0^{-1}+u\langle
+  m^2\rangle(T)$, exposing `mode_coupling_u`; here **`chi0` is the $T=0$ bare
+  value**. `u = 0` reduces exactly to the bare RPA.
+- **TAC** (Takahashi) solves $\chi_{0,\text{eff}}(T)$ so the zero-point plus
+  thermal amplitude equals `total_amplitude`.
+
+Absent config or `mode: "none"` runs the *exact* bare path (bit-identical).
+Closures use finite-difference gradients and work with every interaction term
+(scalar, tensor Tier A, and the field-on Tier B). The GUI exposes them in the
+**Self-consistency closure** box of the model editor; solved internals
+($\lambda(T)$, $\chi_{0,\text{eff}}$, $\mu_{\text{eff}}^2$) appear in the
+**Physics diagnostics** table of the fit result.
+
+### Bulk susceptibility and MPMS co-fit
+
+The model predicts the uniform static susceptibility
+$\chi(\mathbf{Q}=0,\omega=0)$ (Kramers–Kronig of the modes, with the active
+closure), and hence the bulk moment $M(T,B)=\text{scale}\cdot g^2\,
+\chi_{\text{uniform}}(T,B)\cdot B$ — nonlinear in $B$ when a field-aware
+closure is active. MPMS `magnetization` datasets (moment vs $T$ and/or field,
+imported through `import_mpms_dat`) are fit **jointly** with inelastic data in
+one problem, sharing $J$/`chi0`/`gamma0`; the momentum coordinates are zero and
+the temperature/field are the per-point axes.
+
+Units: the model $\chi$ is in 1/meV per magnetic site; the molar susceptibility
+is $\chi_{\text{mol}} = C\,g^2\,\chi_{\text{model}}$ per site,
+$C=N_A\mu_{B,\text{cgs}}^2/(\text{meV in erg})\approx0.0323$ emu·meV/mol
+(`nfit.sum_rules.EMU_PER_MOL_PER_MODEL_CHI`). By default a free per-dataset
+`scale` absorbs the constant and the sample amount. In **absolute mode**
+(dataset panel: sample mass + molar mass) the emu/mol conversion is pinned and
+the fit runs in absolute emu.
+
 ## Temperature-dependent fitting
 
 Model parameters are shared across datasets through the standard sharing
