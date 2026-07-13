@@ -1428,3 +1428,160 @@ def test_group_fit_stores_and_persists_diagnostics(tmp_path):
     assert restored.metadata["diagnostics"]["scan"]["mu_eff_sq"] == pytest.approx(
         diagnostics["scan"]["mu_eff_sq"]
     )
+
+
+def _magnetization_points(temperatures, fields_tesla, moment, sigma=0.01):
+    """Build a magnetization PointData4D (H=K=L=E=0, per-point T and B_z)."""
+    temps = np.asarray(temperatures, dtype=float)
+    fields = np.asarray(fields_tesla, dtype=float)
+    n = temps.size
+    field_vecs = np.zeros((n, 3))
+    field_vecs[:, 2] = fields
+    return PointData4D(
+        H=np.zeros(n), K=np.zeros(n), L=np.zeros(n), E=np.zeros(n),
+        intensity=np.asarray(moment, dtype=float), sigma=np.full(n, sigma),
+        temperature=temps, magnetic_field=field_vecs,
+        metadata={"data_type": "magnetization"},
+    )
+
+
+def _magnetization_component(closure=None, **params):
+    values = {"scale": 1.0, "chi0": 0.5, "gamma0": 2.0, "J1": 0.0}
+    values.update(params)
+    config = {
+        "site_positions": [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]],
+        "orbits": [{"label": "J1", "bonds": [{"site_i": 0, "site_j": 1, "offset": [0, 0, 0]}]}],
+    }
+    if closure is not None:
+        config["closure"] = closure
+    return ModelComponentSpec(
+        name="M", type="heisenberg_rpa", parameters=values, fit_parameters={}, config=config,
+    )
+
+
+def test_magnetization_supported_and_linear_response():
+    assert model_supports_data_type("heisenberg_rpa", "magnetization")
+
+    # Decoupled spins (J1=0): chi_uniform = chi0, so M = scale * g^2 * chi0 * B.
+    component = _magnetization_component(chi0=0.4, J1=0.0)
+    fields = np.array([1.0, 2.0, 3.0])
+    points = _magnetization_points([10.0, 10.0, 10.0], fields, np.zeros(3))
+    from nfit.fitting import evaluate_problem_model
+
+    compiled = compile_fit_problem(
+        [component], [FitDatasetInput("m", points, data_type="magnetization")]
+    )
+    values = evaluate_problem_model(
+        compiled.problem, "m",
+        {spec.name: spec.value for spec in compiled.problem.parameter_specs},
+    )
+    expected = 1.0 * (2.0**2) * 0.4 * fields  # g=2 default
+    np.testing.assert_allclose(values, expected, rtol=1e-9)
+
+
+def test_magnetization_absolute_normalization():
+    """Absolute mode multiplies by the emu/mol constant, moles, and Oe/T."""
+    from nfit.fitting import evaluate_problem_model
+    from nfit.sum_rules import EMU_PER_MOL_PER_MODEL_CHI
+
+    component = _magnetization_component(chi0=0.3, J1=0.0)
+    component.config["bulk"] = {"enabled": True, "sites_per_fu": 2}
+    fields = np.array([0.5, 1.0])
+    points = _magnetization_points([5.0, 5.0], fields, np.zeros(2))
+    points.metadata.update(
+        {"absolute_units": True, "sample_mass_mg": 10.0, "molar_mass_g_mol": 200.0}
+    )
+    compiled = compile_fit_problem(
+        [component], [FitDatasetInput("m", points, data_type="magnetization")]
+    )
+    values = evaluate_problem_model(
+        compiled.problem, "m",
+        {spec.name: spec.value for spec in compiled.problem.parameter_specs},
+    )
+    moles = (10.0 / 1000.0) / 200.0
+    factor = EMU_PER_MOL_PER_MODEL_CHI * moles * 1.0e4 / 2.0
+    expected = 1.0 * factor * (2.0**2) * 0.3 * fields
+    np.testing.assert_allclose(values, expected, rtol=1e-9)
+
+
+def test_magnetization_point_data_maps_temperature_and_field():
+    from nfit.dataset import PointListData
+    from nfit.pipeline import DataGroup, DatasetEntry
+    from nfit.project_gui import _magnetization_point_data
+
+    columns = {
+        "Temperature": np.array([2.0, 300.0]),
+        "Magnetic Field": np.array([10000.0, 50000.0]),  # oersted
+        "Moment": np.array([0.1, 0.2]),
+    }
+    view = PointListData(
+        columns=columns, units={"Temperature": "K", "Magnetic Field": "Oe", "Moment": "emu"},
+        coordinate_names=["Temperature", "Magnetic Field"],
+        channels=[{"label": "Moment", "value": "Moment", "error": None}],
+        metadata={},
+    )
+    group = DataGroup(name="G")
+    dataset = DatasetEntry("m", None)
+    dataset.data_type = "magnetization"
+    points = _magnetization_point_data(view, group, dataset)
+    assert np.all(points.H == 0) and np.all(points.E == 0)
+    np.testing.assert_allclose(points.temperature, [2.0, 300.0])
+    # Oersted -> tesla (1 T = 1e4 Oe), along default z.
+    np.testing.assert_allclose(points.magnetic_field[:, 2], [1.0, 5.0])
+    assert points.metadata["data_type"] == "magnetization"
+
+
+def test_cofit_ins_and_magnetization_share_parameters():
+    """One parameter set generates both INS and chi(T) data; a joint fit with
+    shared chi0/J recovers it."""
+    from nfit.fitting import (
+        OptimizationConfig,
+        evaluate_problem_model,
+        fit_problem_least_squares,
+    )
+
+    ins = _closure_points(21, n=80)
+    temps = np.linspace(5.0, 200.0, 40)
+    mag = _magnetization_points(temps, np.full(temps.size, 1.0), np.zeros(temps.size))
+
+    truth = _closure_scalar_component(chi0=0.4, J1=0.08)
+    truth.parameters["scale"] = 1.0
+    truth_mag = _magnetization_component(chi0=0.4, J1=0.08, scale=1.0)
+
+    compiled_truth = compile_fit_problem(
+        [truth],
+        [FitDatasetInput("ins", ins, data_type="single_crystal_inelastic")],
+    )
+    ins_values = evaluate_problem_model(
+        compiled_truth.problem, "ins",
+        {spec.name: spec.value for spec in compiled_truth.problem.parameter_specs},
+    )
+    compiled_truth_mag = compile_fit_problem(
+        [truth_mag], [FitDatasetInput("mag", mag, data_type="magnetization")]
+    )
+    mag_values = evaluate_problem_model(
+        compiled_truth_mag.problem, "mag",
+        {spec.name: spec.value for spec in compiled_truth_mag.problem.parameter_specs},
+    )
+
+    ins_fit = PointData4D(ins.H, ins.K, ins.L, ins.E, ins_values,
+                          np.full(ins.size, 0.01), temperature=ins.temperature)
+    mag_fit = _magnetization_points(temps, np.full(temps.size, 1.0), mag_values, sigma=0.001)
+
+    # One shared component fits both datasets. chi0 and J are global; scale is
+    # fixed (=1) so absolute intensity pins chi0 rather than absorbing it.
+    start = _closure_scalar_component(chi0=0.2, J1=0.02)
+    start.parameters["scale"] = 1.0
+    start.fit_parameters = {"chi0": True, "J1": True, "gamma0": True}
+    compiled = compile_fit_problem(
+        [start],
+        [
+            FitDatasetInput("ins", ins_fit, data_type="single_crystal_inelastic"),
+            FitDatasetInput("mag", mag_fit, data_type="magnetization"),
+        ],
+    )
+    assert {d.name for d in compiled.problem.datasets} == {"ins", "mag"}
+    result = fit_problem_least_squares(compiled.problem, config=OptimizationConfig())
+    assert result.success
+    assert result.params["M.chi0"] == pytest.approx(0.4, rel=1e-3)
+    assert result.params["M.J1"] == pytest.approx(0.08, rel=1e-2)

@@ -3415,6 +3415,57 @@ def test_point_list_scale_and_susceptibility_transforms():
     assert prepared.unit(prepared.channel("Susceptibility")["value"]) == "emu/mol/Oe"
 
 
+def test_magnetization_bundle_maps_temperature_and_field():
+    """An imported MPMS dataset produces per-point T and field fit points."""
+    from nfit.project_gui import fit_data_bundle
+
+    group = DataGroup("Datagroup1")
+    dataset = import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")[0]
+    bundle = fit_data_bundle(group, dataset)
+    assert bundle is not None
+    points = bundle.points
+    assert points.metadata["data_type"] == "magnetization"
+    # Momentum coordinates are all zero (magnetization carries no Q).
+    assert np.all(points.H == 0) and np.all(points.E == 0)
+    # Per-point temperature and field are populated.
+    assert isinstance(points.temperature, np.ndarray)
+    assert points.temperature.size == points.size
+    assert points.magnetic_field is not None and points.magnetic_field.ndim == 2
+
+
+def test_magnetization_absolute_units_box(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Datagroup1")
+    dataset = import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")[0]
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    # Select the dataset to build its details pane.
+    dataset_item = explorer.tree.topLevelItem(0).child(0).child(0)
+    explorer.tree.setCurrentItem(dataset_item)
+
+    enable = explorer.window.findChild(
+        QtWidgets.QCheckBox, "magnetization_absolute_enabled"
+    )
+    assert enable is not None and enable.toolTip().strip()
+    mass_edit = explorer.window.findChild(
+        QtWidgets.QLineEdit, "magnetization_sample_mass_mg"
+    )
+    molar_edit = explorer.window.findChild(
+        QtWidgets.QLineEdit, "magnetization_molar_mass_g_mol"
+    )
+    assert mass_edit is not None and molar_edit is not None
+
+    enable.setChecked(True)
+    mass_edit.setText("12.5")
+    mass_edit.editingFinished.emit()
+    molar_edit.setText("250.0")
+    molar_edit.editingFinished.emit()
+    assert dataset.parameters["absolute_units"] is True
+    assert dataset.parameters["sample_mass_mg"] == 12.5
+    assert dataset.parameters["molar_mass_g_mol"] == 250.0
+
+
 def test_powder_wavelength_to_q_and_point_rebin():
     from nfit.project_gui import (
         dataset_for_slice_viewer,

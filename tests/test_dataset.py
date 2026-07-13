@@ -42,3 +42,35 @@ def test_temperature_array_is_masked_with_data():
     valid = data.valid()
     np.testing.assert_allclose(valid.temperature, [10.0])
 
+
+
+def test_per_point_magnetic_field_validated_and_masked():
+    n = 4
+    field = np.zeros((n, 3))
+    field[:, 2] = [1.0, 2.0, np.nan, 4.0]
+    data = PointData4D(
+        H=np.zeros(n), K=np.zeros(n), L=np.zeros(n), E=np.zeros(n),
+        intensity=np.ones(n), sigma=np.full(n, 0.1),
+        magnetic_field=field,
+    )
+    # A NaN field component drops that point.
+    mask = data.valid_mask()
+    assert mask.tolist() == [True, True, False, True]
+    valid = data.valid()
+    assert valid.magnetic_field.shape == (3, 3)
+    np.testing.assert_allclose(valid.magnetic_field[:, 2], [1.0, 2.0, 4.0])
+
+
+def test_magnetic_field_shape_validation():
+    with pytest.raises(ValueError, match="per-point"):
+        PointData4D(
+            H=np.zeros(2), K=np.zeros(2), L=np.zeros(2), E=np.zeros(2),
+            intensity=np.ones(2), sigma=np.ones(2),
+            magnetic_field=np.zeros((3, 3)),  # wrong point count
+        )
+    # A single shared 3-vector is still accepted.
+    data = PointData4D(
+        H=np.zeros(2), K=np.zeros(2), L=np.zeros(2), E=np.zeros(2),
+        intensity=np.ones(2), sigma=np.ones(2), magnetic_field=[0.0, 0.0, 1.5],
+    )
+    assert data.magnetic_field.shape == (3,)

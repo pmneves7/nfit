@@ -2697,16 +2697,118 @@ def fit_data_bundle(
         )
     if isinstance(view, MDHistoData):
         points = _point_data_from_mdhisto_view(view)
+    elif isinstance(view, PointListData) and dataset.data_type == "magnetization":
+        points = _magnetization_point_data(view, group, dataset)
     elif isinstance(view, PointListData):
         points = _point_data_from_point_list_view(view)
     else:
         return None
     _apply_sample_context_to_points(group, dataset, points)
+    # Record the data type so evaluators can branch (e.g. bulk magnetization
+    # vs inelastic intensity) without threading it through every call.
+    points.metadata.setdefault("data_type", dataset.data_type)
     return FitDataBundle(
         dataset=dataset,
         view=view,
         points=points,
         grid_shape=view.shape if isinstance(view, MDHistoData) else None,
+    )
+
+
+def _field_direction_cartesian(group: DataGroup, dataset: DatasetEntry) -> np.ndarray:
+    """Unit Cartesian direction of the applied field, defaulting to z-hat.
+
+    Uses the direction stored in ``dataset.parameters["magnetic_field"]`` (uvw
+    or hkl frame, oriented with the group lattice); falls back to the c*/z axis
+    when no direction or lattice is available (an MPMS scan along the field).
+    """
+
+    payload = dataset.parameters.get("magnetic_field")
+    lattice = group.lattice_parameters
+    if (
+        isinstance(payload, dict)
+        and payload.get("direction") is not None
+        and isinstance(lattice, dict)
+        and all(key in lattice for key in ("a", "b", "c"))
+    ):
+        try:
+            vector = magnetic_field_vector(
+                1.0, payload["direction"], str(payload.get("frame", "uvw")), lattice
+            )
+            norm = float(np.linalg.norm(vector))
+            if norm > 0:
+                return np.asarray(vector, dtype=float) / norm
+        except (TypeError, ValueError):
+            pass
+    return np.array([0.0, 0.0, 1.0])
+
+
+# Column name fragments that identify the MPMS field sweep axis (in oersted).
+_MPMS_FIELD_COLUMN_HINTS = ("magnetic field", "field")
+_OERSTED_PER_TESLA = 1.0e4
+
+
+def _magnetization_point_data(
+    view: PointListData, group: DataGroup, dataset: DatasetEntry
+) -> PointData4D:
+    """Map an MPMS magnetization point list onto fit points.
+
+    Magnetization carries no momentum transfer, so ``H=K=L=E=0``; the
+    Temperature column becomes the per-point temperature and the Magnetic
+    Field column (oersted) becomes the per-point Cartesian field in tesla,
+    oriented along the dataset's field direction. The moment channel is the
+    fitted intensity. Absolute-unit sample metadata is forwarded so the
+    evaluator can pin the emu/mol normalization.
+    """
+
+    if not view.channel_labels:
+        raise ValueError("magnetization dataset defines no moment channel")
+    label = view.channel_labels[0]
+    intensity = np.asarray(view.channel_values(label), dtype=float)
+    errors = view.channel_errors(label)
+    sigma_known = errors is not None
+    sigma = (
+        np.asarray(errors, dtype=float)
+        if sigma_known
+        else np.ones(intensity.shape, dtype=float)
+    )
+    n = intensity.size
+    zeros = np.zeros(n, dtype=float)
+
+    def _find_column(hints: tuple[str, ...]) -> np.ndarray | None:
+        for name in view.columns:
+            lowered = name.strip().lower()
+            if any(hint in lowered for hint in hints):
+                return np.asarray(view.column(name), dtype=float)
+        return None
+
+    temperature = _find_column(("temperature",))
+    field_oe = _find_column(_MPMS_FIELD_COLUMN_HINTS)
+    direction = _field_direction_cartesian(group, dataset)
+    if field_oe is not None:
+        field_tesla = field_oe / _OERSTED_PER_TESLA
+        magnetic_field = field_tesla[:, None] * direction[None, :]
+    else:
+        magnetic_field = None
+
+    mask = np.isfinite(intensity) & np.isfinite(sigma)
+    if sigma_known:
+        mask &= sigma > 0.0
+
+    metadata: dict[str, Any] = {
+        "fit_channel": label,
+        "sigma_known": sigma_known,
+        "data_type": "magnetization",
+    }
+    for key in ("absolute_units", "sample_mass_mg", "molar_mass_g_mol"):
+        if key in dataset.parameters:
+            metadata[key] = dataset.parameters[key]
+    return PointData4D(
+        H=zeros, K=zeros, L=zeros, E=zeros,
+        intensity=intensity, sigma=sigma, mask=mask,
+        temperature=temperature if temperature is not None else dataset.parameters.get("temperature"),
+        magnetic_field=magnetic_field,
+        metadata=metadata,
     )
 
 
@@ -2773,12 +2875,16 @@ def _apply_sample_context_to_points(
     metadata; all are supplied here so models never depend on GUI state.
     """
 
-    override = effective_dataset_temperature(group, dataset)
-    if override is not None:
-        points.temperature = override
-    field_vector = effective_dataset_field(group, dataset)
-    if field_vector is not None:
-        points.magnetic_field = field_vector
+    # Per-point temperature/field (e.g. an MPMS sweep) is the physics axis and
+    # must not be overwritten by a scalar sample-environment override.
+    if not isinstance(points.temperature, np.ndarray):
+        override = effective_dataset_temperature(group, dataset)
+        if override is not None:
+            points.temperature = override
+    if not (isinstance(points.magnetic_field, np.ndarray) and points.magnetic_field.ndim == 2):
+        field_vector = effective_dataset_field(group, dataset)
+        if field_vector is not None:
+            points.magnetic_field = field_vector
     if (
         "rlu_to_inv_angstrom_matrix" not in points.metadata
         and isinstance(group.lattice_parameters, dict)
@@ -3973,6 +4079,13 @@ def _subset_points(points: PointData4D, keep: np.ndarray) -> PointData4D:
         temperature: Any = points.temperature[keep]
     else:
         temperature = points.temperature
+    field = points.magnetic_field
+    if isinstance(field, np.ndarray) and field.ndim == 2:
+        magnetic_field: Any = field[keep]
+    elif field is None:
+        magnetic_field = None
+    else:
+        magnetic_field = np.array(field)
     return PointData4D(
         H=points.H[keep],
         K=points.K[keep],
@@ -3982,7 +4095,7 @@ def _subset_points(points: PointData4D, keep: np.ndarray) -> PointData4D:
         sigma=points.sigma[keep],
         mask=np.ones(int(np.count_nonzero(keep)), dtype=bool),
         temperature=temperature,
-        magnetic_field=None if points.magnetic_field is None else np.array(points.magnetic_field),
+        magnetic_field=magnetic_field,
         metadata=dict(points.metadata),
     )
 
@@ -11028,9 +11141,79 @@ class NfitProjectExplorer:
             layout.addWidget(self._point_list_scale_box(dataset, group, config, columns))
         if definition.get("susceptibility"):
             layout.addWidget(self._point_list_susceptibility_box(dataset, group, config))
+            layout.addWidget(self._magnetization_absolute_box(dataset, group))
         if definition.get("wavelength"):
             layout.addWidget(self._point_list_wavelength_box(dataset, group, config))
         return group_box
+
+    def _magnetization_absolute_box(self, dataset, group) -> Any:
+        """Absolute-unit normalization controls for a magnetization dataset.
+
+        When enabled the model predicts the moment in absolute emu using the
+        sample's mass and molar mass to pin the emu/mol conversion, rather than
+        fitting a free scale factor. Written to ``dataset.parameters`` so the
+        magnetization evaluator can read them.
+        """
+
+        from PySide6 import QtWidgets
+
+        box = QtWidgets.QGroupBox("Absolute units (emu)")
+        grid = QtWidgets.QGridLayout(box)
+        grid.setContentsMargins(8, 6, 8, 6)
+        enable = QtWidgets.QCheckBox("Fit in absolute emu units")
+        enable.setObjectName("magnetization_absolute_enabled")
+        enable.setToolTip(
+            "Predict the moment in absolute emu from the model susceptibility, "
+            "pinning the emu/mol conversion with the sample mass and molar mass "
+            "below, instead of fitting a free per-dataset scale. Leave off to "
+            "fit an arbitrary scale (the default)."
+        )
+        enable.setChecked(bool(dataset.parameters.get("absolute_units", False)))
+        enable.toggled.connect(
+            lambda checked: self._set_magnetization_absolute(
+                dataset, group, "absolute_units", bool(checked)
+            )
+        )
+        grid.addWidget(enable, 0, 0, 1, 2)
+        mass_label = QtWidgets.QLabel("Sample mass (mg)")
+        mass_tooltip = "Sample mass in milligrams, used to convert emu/mol to the measured emu moment."
+        mass_label.setToolTip(mass_tooltip)
+        grid.addWidget(mass_label, 1, 0)
+        mass_edit = QtWidgets.QLineEdit(
+            _parameter_to_text(dataset.parameters.get("sample_mass_mg", ""))
+        )
+        mass_edit.setObjectName("magnetization_sample_mass_mg")
+        mass_edit.setToolTip(mass_tooltip)
+        mass_edit.editingFinished.connect(
+            lambda ed=mass_edit: self._set_magnetization_absolute(
+                dataset, group, "sample_mass_mg", _parse_parameter_text(ed.text())
+            )
+        )
+        grid.addWidget(mass_edit, 1, 1)
+        molar_label = QtWidgets.QLabel("Molar mass (g/mol)")
+        molar_tooltip = "Formula-unit molar mass in grams per mole; sets the amount of substance for the emu/mol conversion."
+        molar_label.setToolTip(molar_tooltip)
+        grid.addWidget(molar_label, 2, 0)
+        molar_edit = QtWidgets.QLineEdit(
+            _parameter_to_text(dataset.parameters.get("molar_mass_g_mol", ""))
+        )
+        molar_edit.setObjectName("magnetization_molar_mass_g_mol")
+        molar_edit.setToolTip(molar_tooltip)
+        molar_edit.editingFinished.connect(
+            lambda ed=molar_edit: self._set_magnetization_absolute(
+                dataset, group, "molar_mass_g_mol", _parse_parameter_text(ed.text())
+            )
+        )
+        grid.addWidget(molar_edit, 2, 1)
+        return box
+
+    def _set_magnetization_absolute(self, dataset, group, key: str, value) -> None:
+        if dataset.parameters.get(key) == value:
+            return
+        dataset.parameters[key] = value
+        self._mark_dirty()
+        if group is not None:
+            self._request_overlay_refresh(group)
 
     def _point_list_scale_box(self, dataset, group, config, columns) -> Any:
         from PySide6 import QtWidgets

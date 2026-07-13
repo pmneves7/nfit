@@ -50,6 +50,19 @@ FloatArray = NDArray[np.float64]
 # terms) because nu_1 = 2 pi k_B T is comparable to the cutoff.
 _DIGAMMA_REGIME_CUTOFF_OVER_KT = 20.0
 
+# Bulk-susceptibility unit conversion. The model susceptibility is the spin
+# susceptibility chi_spin in 1/meV per magnetic site; the molar magnetic
+# susceptibility is chi_molar = N_A (g mu_B)^2 chi_spin. In CGS-emu units
+# (mu_B in erg/G, energy in erg) this is
+#   chi_molar[emu/mol] = EMU_PER_MOL_PER_MODEL_CHI * g^2 * chi_model[1/meV]
+# per magnetic site (divide by sites-per-formula-unit for per-f.u.).
+_MU_B_CGS_ERG_PER_G = 9.2740100783e-21
+_MEV_IN_ERG = 1.602176634e-15
+_AVOGADRO = 6.02214076e23
+# 1 tesla in oersted (CGS field unit MPMS reports).
+OERSTED_PER_TESLA = 1.0e4
+EMU_PER_MOL_PER_MODEL_CHI = _AVOGADRO * _MU_B_CGS_ERG_PER_G**2 / _MEV_IN_ERG
+
 
 def coth_weight(energy_mev: ArrayLike, temperature_K: float) -> FloatArray:
     """``coth(w / 2 k_B T)`` with the T=0 limit (=1) handled exactly.

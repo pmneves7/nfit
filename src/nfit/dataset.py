@@ -30,9 +30,10 @@ class PointData4D:
     temperature
         Sample temperature in K, either scalar or one value per point.
     magnetic_field
-        Applied magnetic field as a Cartesian 3-vector in Tesla (crystal
-        Cartesian frame, a along x), shared by all points. ``None`` when no
-        field was applied or recorded.
+        Applied magnetic field in Tesla (crystal Cartesian frame, a along x),
+        as either a single 3-vector shared by all points or a per-point
+        ``(n, 3)`` array (a field sweep, e.g. magnetization vs field).
+        ``None`` when no field was applied or recorded.
     metadata
         Free-form metadata. Use this for units, sample, scan, and normalization
         notes; do not hide physics assumptions in code.
@@ -80,10 +81,11 @@ class PointData4D:
 
         if self.magnetic_field is not None:
             field_vector = np.asarray(self.magnetic_field, dtype=float)
-            if field_vector.shape != (3,):
+            if field_vector.shape != (3,) and field_vector.shape != shape + (3,):
                 raise ValueError(
-                    "magnetic_field must be a Cartesian 3-vector in Tesla; got "
-                    f"shape {field_vector.shape}"
+                    "magnetic_field must be a Cartesian 3-vector in Tesla or a "
+                    f"per-point ({shape[0]}, 3) array; got shape "
+                    f"{field_vector.shape}"
                 )
             self.magnetic_field = field_vector
 
@@ -111,6 +113,8 @@ class PointData4D:
             mask &= self.sigma > 0.0
         if isinstance(self.temperature, np.ndarray):
             mask &= np.isfinite(self.temperature)
+        if isinstance(self.magnetic_field, np.ndarray) and self.magnetic_field.ndim == 2:
+            mask &= np.all(np.isfinite(self.magnetic_field), axis=1)
         return mask
 
     def valid(self, require_positive_sigma: bool = True) -> PointData4D:
@@ -122,6 +126,12 @@ class PointData4D:
             temp = self.temperature[mask]
         else:
             temp = self.temperature
+        if isinstance(self.magnetic_field, np.ndarray) and self.magnetic_field.ndim == 2:
+            field = self.magnetic_field[mask]
+        elif self.magnetic_field is None:
+            field = None
+        else:
+            field = np.array(self.magnetic_field)
         return PointData4D(
             H=self.H[mask],
             K=self.K[mask],
@@ -131,7 +141,7 @@ class PointData4D:
             sigma=self.sigma[mask],
             mask=np.ones(int(np.count_nonzero(mask)), dtype=bool),
             temperature=temp,
-            magnetic_field=None if self.magnetic_field is None else np.array(self.magnetic_field),
+            magnetic_field=field,
             metadata=dict(self.metadata),
         )
 

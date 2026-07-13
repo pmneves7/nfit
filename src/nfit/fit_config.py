@@ -394,6 +394,9 @@ class _RpaComponentEvaluator:
             )
         self.component = component
         self.config = config
+        # Magnetic sites in the user's cell (before primitive reduction) --
+        # the default sites-per-formula-unit for absolute bulk normalization.
+        self._n_magnetic_sites = len(site_positions)
         self.labels = heisenberg_rpa_orbit_labels(component)
         self.j_keys = {label: qualified_parameter_name(name, label) for label in self.labels}
         self.scale_key = qualified_parameter_name(name, "scale")
@@ -670,7 +673,141 @@ class _RpaComponentEvaluator:
         self._closure_result_cache[key] = result
         return result
 
+    def _bulk_static_chi(
+        self,
+        params: dict[str, float],
+        chi0: float,
+        lambda_shift: float,
+        b_hat: np.ndarray | None,
+    ) -> float:
+        """Uniform static susceptibility at Q=0 (model units) per site.
+
+        For the tensor/Zeeman paths this is the longitudinal component along
+        ``b_hat`` (the magnetization direction) when a field is set, else the
+        powder trace/3; for the scalar path the isotropic value. The Onsager
+        ``lambda_shift`` enters as the rigid eigenvalue shift. This is the
+        longitudinal static limit -- the field's gyrotropic effect on the
+        *dynamic* response does not shift the static magnetization.
+        """
+
+        from .sum_rules import static_chi_modes
+
+        q0_geometry = build_rpa_geometry(
+            [0.0], [0.0], [0.0], self.site_positions, self.orbits
+        )
+        if self.tensor_mode or self.zeeman_mode:
+            from .tensor_rpa import assemble_tensor_exchange, build_tensor_structure
+
+            structure = build_tensor_structure(
+                q0_geometry,
+                self.site_positions,
+                orbits=self.orbits,
+                lattice=self._lattice,
+                anisotropy=self._anisotropy,
+                sia=self._sia,
+                site_rotations=self._site_rotations,
+                dipole=self._dipole,
+            )
+            exchange = assemble_tensor_exchange(structure, self._tensor_values(params))
+            lam, modes = np.linalg.eigh(exchange)
+            n_sites = structure.n_sites
+            amps = modes.reshape(1, n_sites, 3, 3 * n_sites).sum(axis=1)[0]  # (3, 3N)
+            denom = 1.0 - (lam[0] - lambda_shift) * chi0
+            if np.any(denom <= 0.0):
+                raise ValueError("RPA instability at Q=0")
+            chi_modes = chi0 / denom
+            if b_hat is not None:
+                weight = np.abs(np.asarray(b_hat, dtype=float) @ amps) ** 2 / n_sites
+            else:
+                weight = (np.abs(amps) ** 2).sum(axis=0) / (3.0 * n_sites)
+            return float((weight * chi_modes).sum())
+        exchange = rpa_exchange_matrix(q0_geometry, self._j_values(params))
+        lam, modes = np.linalg.eigh(exchange)
+        weights = np.abs(modes.sum(axis=1)) ** 2 / q0_geometry.n_sites
+        return float(static_chi_modes(lam, weights, chi0=chi0, lambda_shift=lambda_shift)[0])
+
+    def _magnetization_value(
+        self, data: PointData4D, params: dict[str, float]
+    ) -> np.ndarray:
+        """Predict the bulk moment M(T, B) for a magnetization dataset.
+
+        ``M = scale * g^2 * chi_uniform(T, B) * B`` (longitudinal), with the
+        closure making ``chi_uniform`` field-dependent (nonlinear M(B)) through
+        the reaction field. In absolute mode the physical emu/mol constant and
+        the sample's molar amount replace the free scale. Closures are solved
+        once per distinct (T, B).
+        """
+
+        from .sum_rules import EMU_PER_MOL_PER_MODEL_CHI, OERSTED_PER_TESLA
+
+        n = data.size
+        temperature = np.broadcast_to(
+            np.atleast_1d(np.asarray(_dataset_temperature(data), dtype=float)), (n,)
+        )
+        raw_field = data.magnetic_field
+        if raw_field is None:
+            field_vecs = np.zeros((n, 3))
+        elif np.ndim(raw_field) == 1:
+            field_vecs = np.broadcast_to(np.asarray(raw_field, dtype=float), (n, 3))
+        else:
+            field_vecs = np.asarray(raw_field, dtype=float)
+        b_mag = np.linalg.norm(field_vecs, axis=1)
+
+        g_factor = (
+            float(params[self._zeeman_keys["g_factor"]]) if self.zeeman_mode else 2.0
+        )
+        scale = float(params[self.scale_key])
+        metadata = data.metadata if isinstance(data.metadata, dict) else {}
+        absolute = bool(metadata.get("absolute_units"))
+        abs_factor = 1.0
+        if absolute:
+            mass_g = float(metadata.get("sample_mass_mg", 0.0)) / 1000.0
+            molar_mass = float(metadata.get("molar_mass_g_mol", 0.0))
+            sites_per_fu = float(
+                (self.config.get("bulk") or {}).get("sites_per_fu")
+                or self._n_magnetic_sites
+            )
+            if molar_mass <= 0 or mass_g <= 0 or sites_per_fu <= 0:
+                raise ValueError(
+                    "absolute magnetization units require a positive sample mass, "
+                    "molar mass, and sites-per-formula-unit"
+                )
+            moles = mass_g / molar_mass
+            abs_factor = (
+                EMU_PER_MOL_PER_MODEL_CHI * moles * OERSTED_PER_TESLA / sites_per_fu
+            )
+
+        keys = np.round(
+            np.column_stack([temperature, field_vecs]), 9
+        )
+        unique_keys, inverse = np.unique(keys, axis=0, return_inverse=True)
+        out = np.empty(n, dtype=float)
+        for index, row in enumerate(unique_keys):
+            sel = inverse == index
+            t = float(row[0])
+            field_vec = row[1:4]
+            magnitude = float(np.linalg.norm(field_vec))
+            b_hat = field_vec / magnitude if magnitude > 0 else None
+            try:
+                chi0 = float(params[self.chi0_key])
+                lambda_shift = 0.0
+                if self.closure_spec is not None:
+                    closure = self._solve_closure(
+                        params, t, field_vec if self.zeeman_mode else None
+                    )
+                    chi0 = closure.chi0_eff
+                    lambda_shift = closure.lambda_shift
+                chi_uniform = self._bulk_static_chi(params, chi0, lambda_shift, b_hat)
+            except ValueError:
+                out[sel] = 1e6
+                continue
+            prediction = g_factor**2 * chi_uniform * b_mag[sel]
+            out[sel] = scale * abs_factor * prediction
+        return out
+
     def value(self, data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        if isinstance(data.metadata, dict) and data.metadata.get("data_type") == "magnetization":
+            return self._magnetization_value(data, params)
         temperature = _dataset_temperature(data)
         # Validate the applied field before the instability guard below, so a
         # missing field raises its actionable error instead of being caught and
@@ -1026,7 +1163,7 @@ MODEL_TYPE_REGISTRY: dict[str, ModelTypeInfo] = {
     ),
     "heisenberg_rpa": ModelTypeInfo(
         parameters=("scale", "chi0", "gamma0"),
-        data_types=("single_crystal_inelastic",),
+        data_types=("single_crystal_inelastic", "magnetization"),
         factory=_heisenberg_rpa_factory,
         dynamic_parameters=heisenberg_rpa_parameter_labels,
         jacobian_factory=_heisenberg_rpa_jacobian_factory,
@@ -1291,6 +1428,7 @@ def compile_fit_problem(
         if (
             components_here
             and dataset.name not in scale_parameters
+            and getattr(dataset, "data_type", None) != "magnetization"
             and all(factory is not None for factory in jacobian_factories)
         ):
             # A registry entry may have a jacobian factory that still declines
