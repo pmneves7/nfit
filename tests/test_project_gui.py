@@ -4368,6 +4368,141 @@ def test_heisenberg_rpa_editor_closure_controls(monkeypatch, tmp_path):
     assert "mode_coupling_u" not in model.parameters
 
 
+def _explorer_with_fit_result(monkeypatch):
+    """Explorer whose tree carries one stored fit result; returns both."""
+    from nfit.pipeline import FitTimelineEntry
+    from nfit.project_gui import ensure_fit_history
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    group = DataGroup("Datagroup1")
+    ensure_fit_history(group)
+    result = FitTimelineEntry(
+        name="fit 1",
+        kind="result",
+        snapshot={
+            "datasets": [{"name": "scan", "parameters": {"temperature": 5.0},
+                          "enabled": True, "fit_weight": 1.0, "scale_factor": 1.0}],
+            "models": [{"name": "bg", "type": "constant_background",
+                        "enabled": True, "parameters": {"constant": 1.0},
+                        "fit_parameters": {}, "global_fit": {}, "sharing": {},
+                        "limits": {}, "constraints": [], "applies_to": None,
+                        "metadata": {}}],
+        },
+        created_at="now",
+        goodness={"status": "converged", "chi2": 1.0, "reduced_chi2": 1.0,
+                  "n_points": 10, "n_variables": 1,
+                  "parameters": {"bg.constant": 1.0}, "stderr": {},
+                  "dataset_chi2": {"scan": 1.0},
+                  "dataset_reduced_chi2": {"scan": 1.0},
+                  "dataset_n_points": {"scan": 10}, "skipped_datasets": []},
+    )
+    group.fits[0].children.append(result)
+    explorer = NfitProjectExplorer(NfitProject([group]))
+
+    def find_item(item):
+        if explorer._fit_entry_for_item(item) is result:
+            return item
+        for index in range(item.childCount()):
+            found = find_item(item.child(index))
+            if found is not None:
+                return found
+        return None
+
+    result_item = None
+    root = explorer.tree
+    for top in range(root.topLevelItemCount()):
+        result_item = find_item(root.topLevelItem(top))
+        if result_item is not None:
+            break
+    assert result_item is not None
+    explorer.tree.setCurrentItem(result_item)
+    # Selection may rebuild the tree (items are recreated); use the live
+    # current item, which the rebuild re-selects.
+    current = explorer.tree.currentItem()
+    assert explorer._fit_entry_for_item(current) is result
+    return explorer, current
+
+
+def test_fit_result_context_menu_offers_report_export(monkeypatch):
+    explorer, result_item = _explorer_with_fit_result(monkeypatch)
+    names = explorer.context_menu_action_names(result_item)
+    assert "Export report..." in names
+    # Not offered for non-fit items.
+    assert "Export report..." not in explorer.context_menu_action_names(
+        explorer.tree.topLevelItem(0)
+    )
+    # The fit details pane carries the export button, tooltipped.
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    button = explorer.window.findChild(QtWidgets.QPushButton, "fit_export_report_button")
+    assert button is not None and button.toolTip().strip()
+
+
+def test_export_fit_report_writes_tex(monkeypatch, tmp_path):
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    explorer, _item = _explorer_with_fit_result(monkeypatch)
+    target = tmp_path / "report.tex"
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog, "getSaveFileName",
+        staticmethod(lambda *args, **kwargs: (str(target), "LaTeX source (*.tex)")),
+    )
+    assert explorer.export_fit_report_for_selection() is True
+    tex = target.read_text()
+    assert tex.startswith("\\documentclass")
+    assert "Fit summary" in tex
+
+
+def test_export_fit_report_pdf_falls_back_to_tex_on_compile_error(monkeypatch, tmp_path):
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    import nfit.report as report_module
+
+    explorer, _item = _explorer_with_fit_result(monkeypatch)
+    target = tmp_path / "report.pdf"
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog, "getSaveFileName",
+        staticmethod(lambda *args, **kwargs: (str(target), "PDF report (*.pdf)")),
+    )
+
+    def boom(_tex, _path):
+        raise report_module.LatexCompileError("no engine", engine=None, log_tail="")
+
+    monkeypatch.setattr(report_module, "compile_latex_pdf", boom)
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox, "warning",
+        staticmethod(lambda _parent, _title, message, *a, **k: warnings.append(message)),
+    )
+    assert explorer.export_fit_report_for_selection() is False
+    assert warnings and "no engine" in warnings[0]
+    # The LaTeX source was written next to the requested PDF.
+    fallback = target.with_suffix(".tex")
+    assert fallback.exists()
+    assert fallback.read_text().startswith("\\documentclass")
+
+
+def test_export_fit_report_pdf_opens_viewer_on_success(monkeypatch, tmp_path):
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    QtGui = pytest.importorskip("PySide6.QtGui")
+    import nfit.report as report_module
+
+    explorer, _item = _explorer_with_fit_result(monkeypatch)
+    target = tmp_path / "report.pdf"
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog, "getSaveFileName",
+        staticmethod(lambda *args, **kwargs: (str(target), "PDF report (*.pdf)")),
+    )
+    monkeypatch.setattr(
+        report_module, "compile_latex_pdf",
+        lambda _tex, path: Path(path).write_bytes(b"%PDF-1.4 fake"),
+    )
+    opened: list[str] = []
+    monkeypatch.setattr(
+        QtGui.QDesktopServices, "openUrl",
+        staticmethod(lambda url: opened.append(url.toLocalFile()) or True),
+    )
+    assert explorer.export_fit_report_for_selection() is True
+    assert opened == [str(target)]
+
+
 def test_fit_details_show_diagnostics_table(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
@@ -4941,3 +5076,59 @@ def test_single_crystal_dataset_and_group_expose_ub_setup(monkeypatch):
     assert explorer.details_widget.findChild(QtWidgets.QPushButton, "open_ub_setup") is not None
     explorer._refresh_tree(select_dataset_group=subgroup)
     assert explorer.details_widget.findChild(QtWidgets.QPushButton, "open_ub_setup") is not None
+
+
+def test_dataset_importing_numor_parser_accepts_ranges_steps_and_gaps():
+    assert project_gui.parse_dataset_numors("409981:409995") == list(range(409981, 409996))
+    assert project_gui.parse_dataset_numors("409981:3:409995") == [409981, 409984, 409987, 409990, 409993]
+    assert project_gui.parse_dataset_numors("409981:409982,409984:409985") == [409981, 409982, 409984, 409985]
+    assert project_gui.parse_dataset_numors("5,5,3:1") == [5, 3, 2, 1]
+    with pytest.raises(ValueError, match="invalid run range"):
+        project_gui.parse_dataset_numors("409981:0:409995")
+
+
+def test_dataset_importing_panel_builds_paths_and_clears_nested_data(tmp_path, monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    for number in (409981, 409982, 409984, 409985):
+        (tmp_path / f"SEQ_{number}.nxs.h5").touch()
+    group = DataGroup("sample")
+    explorer = project_gui.NfitProjectExplorer(NfitProject([group]))
+    explorer._refresh_tree(select_group=group)
+    enabled = explorer.details_widget.findChild(QtWidgets.QCheckBox, "dataset_importing_enabled")
+    controls = explorer.details_widget.findChild(QtWidgets.QWidget, "dataset_importing_controls")
+    assert enabled is not None and controls is not None and not controls.isEnabled()
+    enabled.setChecked(True)
+    assert group.metadata["dataset_importing"]["enabled"] is True
+
+    captured = []
+    monkeypatch.setattr(explorer, "import_dataset_paths", lambda _group, paths, **_kwargs: captured.extend(paths) or [])
+    config = explorer._dataset_importing_config(group)
+    config.update({"path": str(tmp_path), "prefix": "SEQ_", "suffix": ".nxs.h5", "numors": "409981:409982,409984:409985"})
+    explorer._import_dataset_importing_range(group)
+    assert [path.name for path in captured] == ["SEQ_409981.nxs.h5", "SEQ_409982.nxs.h5", "SEQ_409984.nxs.h5", "SEQ_409985.nxs.h5"]
+
+    group.datasets.append(DatasetEntry("direct", _tiny_mdhisto_data(1.0)))
+    group.subgroups.append(DatasetGroup("nested", datasets=[DatasetEntry("nested-data", _tiny_mdhisto_data(1.0))]))
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", lambda *args, **kwargs: QtWidgets.QMessageBox.StandardButton.Yes)
+    explorer._clear_imported_datasets(group)
+    assert not group.datasets and not group.subgroups
+
+
+def test_raw_dgs_nexus_import_is_kept_out_of_reduced_composite_and_viewer(tmp_path):
+    h5py = pytest.importorskip("h5py")
+    source = tmp_path / "SEQ_409981.nxs.h5"
+    with h5py.File(source, "w") as handle:
+        entry = handle.create_group("entry")
+        entry.create_group("bank1_events")
+    group = DataGroup("sample")
+
+    entries = project_gui.import_dataset_paths(
+        group, [source], data_type="single_crystal_inelastic"
+    )
+
+    assert entries[0].kind == "raw_dgs_nexus"
+    assert entries[0].metadata["raw_reduction_required"] is True
+    ok, message = project_gui.data_group_composite_status(group)
+    assert not ok and "time-of-flight-to-HKLE" in message
+    assert project_gui.slice_viewer_datasets(group) == ([], [])

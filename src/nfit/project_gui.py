@@ -7961,6 +7961,71 @@ class NfitProjectExplorer:
         self._sync_details()
         return True
 
+    def export_fit_report_for_selection(self) -> bool:
+        """Export the selected fit result as a LaTeX or PDF report."""
+
+        from PySide6 import QtCore, QtGui, QtWidgets
+
+        from .report import LatexCompileError, compile_latex_pdf, render_fit_report_latex
+
+        group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        fit_entry = self._fit_entry_for_item(self._current_item())
+        if role != "fit" or fit_entry is None or fit_entry.kind != "result":
+            return False
+        group_name = group.name if group is not None else "project"
+        default_name = f"{group_name}_{fit_entry.name}".replace(" ", "_")
+        path, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
+            self.window,
+            "Export fit report",
+            f"{default_name}.pdf",
+            "PDF report (*.pdf);;LaTeX source (*.tex);;All files (*)",
+        )
+        if not path:
+            return False
+        try:
+            tex_source = render_fit_report_latex(fit_entry, group_name=group_name)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Export fit report",
+                f"Could not render the report:\n{exc}",
+            )
+            return False
+        output = Path(path)
+        if output.suffix.lower() != ".pdf":
+            if output.suffix.lower() != ".tex":
+                output = output.with_suffix(".tex")
+            try:
+                output.write_text(tex_source, encoding="utf-8")
+            except OSError as exc:
+                QtWidgets.QMessageBox.warning(
+                    self.window,
+                    "Export fit report",
+                    f"Could not write the LaTeX file:\n{exc}",
+                )
+                return False
+            return True
+        try:
+            compile_latex_pdf(tex_source, output)
+        except LatexCompileError as exc:
+            # The LaTeX source is still valuable: write it next to the
+            # requested PDF and tell the user where it went.
+            tex_path = output.with_suffix(".tex")
+            try:
+                tex_path.write_text(tex_source, encoding="utf-8")
+                fallback = f"\n\nThe LaTeX source was saved to:\n{tex_path}"
+            except OSError:
+                fallback = ""
+            detail = f"\n\nBuild log tail:\n{exc.log_tail}" if exc.log_tail else ""
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Export fit report",
+                f"PDF compilation failed:\n{exc}{detail}{fallback}",
+            )
+            return False
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(output)))
+        return True
+
     def save_dataset_for_selection(self) -> bool:
         from PySide6 import QtWidgets
 
@@ -10902,6 +10967,18 @@ class NfitProjectExplorer:
                     empty_text="No goodness-of-fit values.",
                 )
             )
+        if fit_entry.kind == "result":
+            export_button = QtWidgets.QPushButton("Export report...")
+            export_button.setObjectName("fit_export_report_button")
+            export_button.setToolTip(
+                "Export a publication-grade LaTeX or PDF report of this fit "
+                "result: per-dataset statistics, the model Hamiltonian term "
+                "by term, fitted parameters, and physics diagnostics."
+            )
+            export_button.clicked.connect(
+                lambda _checked=False: self.export_fit_report_for_selection()
+            )
+            lower_widgets.append(export_button)
         diagnostics_group = self._fit_diagnostics_group_box(fit_entry)
         if diagnostics_group is not None:
             lower_widgets.append(diagnostics_group)
@@ -12585,6 +12662,10 @@ class NfitProjectExplorer:
             specs.append(("Add model", True))
         if role == "fit":
             specs.append(("Fit now", True))
+            fit_entry = self._fit_entry_for_item(item)
+            specs.append(
+                ("Export report...", fit_entry is not None and fit_entry.kind == "result")
+            )
         return specs
 
     def _show_context_menu(self, item: Any | None, global_pos: Any) -> None:
@@ -12607,6 +12688,7 @@ class NfitProjectExplorer:
             "New dataset group": self.add_dataset_group_to_selection,
             "Add model": self.add_model_to_selection,
             "Fit now": self.start_fit_for_selection,
+            "Export report...": self.export_fit_report_for_selection,
             "Enable": lambda: self._set_selected_enabled(True),
             "Disable": lambda: self._set_selected_enabled(False),
         }
@@ -12622,6 +12704,11 @@ class NfitProjectExplorer:
             "New dataset group": "Create a nested dataset group under the selected workspace or group.",
             "Add model": "Create a new model component in the selected workspace.",
             "Fit now": "Run the optimizer from the selected fit state and store a new fit result.",
+            "Export report...": (
+                "Export a publication-grade LaTeX or PDF report of this fit "
+                "result: per-dataset statistics, the model Hamiltonian term by "
+                "term, fitted parameters, and physics diagnostics."
+            ),
             "Enable": "Enable this item for viewing and fitting.",
             "Disable": "Disable this item for viewing and fitting.",
         }
