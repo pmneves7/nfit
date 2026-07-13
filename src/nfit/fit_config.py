@@ -515,7 +515,8 @@ class _RpaComponentEvaluator:
         if self._closure_bz_context is None:
             from .sum_rules import bz_sample_hkl
 
-            grid = bz_sample_hkl(self.closure_spec.bz_grid)
+            grid_size = self.closure_spec.bz_grid if self.closure_spec is not None else 12
+            grid = bz_sample_hkl(grid_size)
             bz_geometry = build_rpa_geometry(
                 grid[:, 0], grid[:, 1], grid[:, 2], self.site_positions, self.orbits
             )
@@ -752,6 +753,122 @@ class _RpaComponentEvaluator:
             polarization=polarization,
         )
 
+    def _static_chi_grid_and_q0(
+        self, params: dict[str, float], chi0: float, lambda_shift: float
+    ) -> tuple[float, float]:
+        """Uniform static susceptibility at Q=0 and its peak over the BZ grid.
+
+        Kramers-Kronig of the relaxational modes closes to their static
+        amplitude, so ``chi(Q, 0) = sum_nu w_nu chi0_eff/(1 - lambda' chi0_eff)``
+        with uniform mode weights. The Q=0 value is the (zero-field) bulk
+        susceptibility; the peak locates the incipient ordering vector.
+        Computed from the same J(Q) eigenstructure the closure uses (zero-field
+        limit in Zeeman mode).
+        """
+
+        from .sum_rules import static_chi_modes
+
+        bz_geometry, bz_structure = self._closure_context()
+        q0_geometry = build_rpa_geometry(
+            [0.0], [0.0], [0.0], self.site_positions, self.orbits
+        )
+
+        def eig_weights(geometry: Any) -> tuple[FloatArray, FloatArray]:
+            if self.tensor_mode or self.zeeman_mode:
+                from .tensor_rpa import assemble_tensor_exchange, build_tensor_structure
+
+                structure = (
+                    bz_structure
+                    if geometry is bz_geometry
+                    else build_tensor_structure(
+                        geometry,
+                        self.site_positions,
+                        orbits=self.orbits,
+                        lattice=self._lattice,
+                        anisotropy=self._anisotropy,
+                        sia=self._sia,
+                        site_rotations=self._site_rotations,
+                        dipole=self._dipole,
+                    )
+                )
+                exchange = assemble_tensor_exchange(structure, self._tensor_values(params))
+                lam, modes = np.linalg.eigh(exchange)
+                n_sites = structure.n_sites
+                amps = modes.reshape(geometry.n_q, n_sites, 3, 3 * n_sites).sum(axis=1)
+                weights = (np.abs(amps) ** 2).sum(axis=1) / n_sites
+            else:
+                exchange = rpa_exchange_matrix(geometry, self._j_values(params))
+                lam, modes = np.linalg.eigh(exchange)
+                weights = np.abs(modes.sum(axis=1)) ** 2 / geometry.n_sites
+            return lam, weights
+
+        lam_grid, w_grid = eig_weights(bz_geometry)
+        lam_q0, w_q0 = eig_weights(q0_geometry)
+        chi_grid = static_chi_modes(lam_grid, w_grid, chi0=chi0, lambda_shift=lambda_shift)
+        chi_q0 = static_chi_modes(lam_q0, w_q0, chi0=chi0, lambda_shift=lambda_shift)
+        return float(chi_q0[0]), float(np.max(chi_grid))
+
+    # Default energy cutoff for the moment integral when no closure is active
+    # (diagnostics still report an effective moment). Overridden by the
+    # closure's configured cutoff when present.
+    _DEFAULT_DIAGNOSTIC_CUTOFF_MEV = 100.0
+
+    def diagnostics(self, data: PointData4D, params: dict[str, float]) -> dict[str, float]:
+        """Post-fit physics diagnostics for one dataset (see docs/theory_notes).
+
+        Returns a flat JSON-safe dict: the effective fluctuating moment
+        ``mu_eff_sq`` (its zero-point/thermal split), the closure internals
+        ``lambda_shift``/``chi0_eff``, ``chi0_gamma0``, the distance to the RPA
+        instability, and the static susceptibility at Q=0 and its BZ peak. On
+        unphysical parameters it returns a minimal record flagged ``unstable``.
+        """
+
+        temperature = _dataset_temperature(data)
+        field = _dataset_magnetic_field(data) if self.zeeman_mode else None
+        t_values = np.unique(np.atleast_1d(np.asarray(temperature, dtype=float)))
+        t = float(t_values[0]) if t_values.size else float("nan")
+        chi0 = float(params[self.chi0_key])
+        gamma0 = float(params[self.gamma0_key])
+        lambda_shift = 0.0
+        cutoff = (
+            self.closure_spec.energy_cutoff_mev
+            if self.closure_spec is not None
+            else self._DEFAULT_DIAGNOSTIC_CUTOFF_MEV
+        )
+        record: dict[str, float] = {"temperature": t, "gamma0": gamma0}
+        try:
+            if self.closure_spec is not None:
+                closure = self._solve_closure(params, temperature, field)
+                chi0 = closure.chi0_eff
+                lambda_shift = closure.lambda_shift
+            model = self._closure_moment_model(params, field)
+            zero_point, thermal = model.moment(
+                chi0=chi0,
+                gamma0=gamma0,
+                temperature_K=t,
+                cutoff_mev=cutoff,
+                lambda_shift=lambda_shift,
+            )
+            lam_max = float(model._lambda_max)
+            chi_q0, chi_peak = self._static_chi_grid_and_q0(params, chi0, lambda_shift)
+        except ValueError:
+            record.update({"chi0_eff": chi0, "unstable": 1.0})
+            return record
+        record.update(
+            {
+                "chi0_eff": chi0,
+                "chi0_gamma0": chi0 * gamma0,
+                "lambda_shift": lambda_shift,
+                "mu_eff_sq": zero_point + thermal,
+                "m2_zero_point": zero_point,
+                "m2_thermal": thermal,
+                "distance_to_instability": 1.0 - (lam_max - lambda_shift) * chi0,
+                "chi_static_q0": chi_q0,
+                "chi_static_qpeak": chi_peak,
+            }
+        )
+        return record
+
     def gradients(self, data: PointData4D, params: dict[str, float]) -> dict[str, np.ndarray]:
         """Return ``d(intensity)/d(param)`` keyed by qualified parameter name."""
 
@@ -811,6 +928,27 @@ class _RpaComponentEvaluator:
 
 def _heisenberg_rpa_factory(component: Any) -> ModelFunction:
     return _RpaComponentEvaluator(component).value
+
+
+def compute_component_diagnostics(
+    component: Any, data: PointData4D, params: Mapping[str, float]
+) -> dict[str, float] | None:
+    """Post-fit physics diagnostics for one ``heisenberg_rpa`` component.
+
+    Returns a flat JSON-safe metrics dict (see
+    :meth:`_RpaComponentEvaluator.diagnostics`), or ``None`` when the component
+    is not a ``heisenberg_rpa`` model or cannot be evaluated on ``data``
+    (missing crystal config, incompatible dataset). ``params`` are fully
+    resolved qualified parameter values.
+    """
+
+    if getattr(component, "type", None) != "heisenberg_rpa":
+        return None
+    try:
+        evaluator = _RpaComponentEvaluator(component)
+        return evaluator.diagnostics(data, dict(params))
+    except (ValueError, KeyError):
+        return None
 
 
 def _heisenberg_rpa_jacobian_factory(component: Any) -> "ModelJacobian | None":

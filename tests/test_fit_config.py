@@ -1317,3 +1317,114 @@ def test_zeeman_closure_smoke():
     values = _evaluate(component, points)
     assert np.all(np.isfinite(values))
     assert np.max(np.abs(values)) < 1e5
+
+
+def test_component_diagnostics_static_chi_matches_direct_rpa():
+    """chi_static_q0 (KK of the modes) equals the direct static RPA at Q=0."""
+    from nfit.fit_config import compute_component_diagnostics
+
+    # Single-site FM chain: J(0) = 2 J1, static chi = chi0 / (1 - J(0) chi0).
+    component = ModelComponentSpec(
+        name="M", type="heisenberg_rpa",
+        parameters={"scale": 1.0, "chi0": 0.5, "gamma0": 2.0, "J1": 0.1},
+        fit_parameters={},
+        config={
+            "site_positions": [[0.0, 0.0, 0.0]],
+            "orbits": [{"label": "J1", "bonds": [
+                {"site_i": 0, "site_j": 0, "offset": [1, 0, 0]},
+                {"site_i": 0, "site_j": 0, "offset": [0, 1, 0]},
+                {"site_i": 0, "site_j": 0, "offset": [0, 0, 1]},
+            ]}],
+        },
+    )
+    points = _closure_points(11, n=40)
+    record = compute_component_diagnostics(
+        component, points, {"M.scale": 1.0, "M.chi0": 0.5, "M.gamma0": 2.0, "M.J1": 0.1}
+    )
+    assert record is not None
+    for key in ("mu_eff_sq", "chi_static_q0", "chi_static_qpeak",
+                "distance_to_instability", "chi0_gamma0", "temperature"):
+        assert key in record
+    # J(0) = 2 J1 * 3 bonds = 0.6; chi = 0.5 / (1 - 0.6 * 0.5).
+    expected = 0.5 / (1.0 - 0.6 * 0.5)
+    assert record["chi_static_q0"] == pytest.approx(expected, rel=1e-9)
+    # The FM peak is at Q=0; the shifted BZ grid samples close to but not
+    # exactly at Gamma, so the grid peak approaches the Q=0 value from below.
+    assert 0.9 * expected < record["chi_static_qpeak"] <= expected * (1.0 + 1e-9)
+    assert record["chi0_gamma0"] == pytest.approx(1.0)
+
+
+def test_component_diagnostics_report_closure_internals():
+    from nfit.fit_config import compute_component_diagnostics
+
+    component = _closure_scalar_component(
+        closure={"mode": "onsager", "moment_target": 0.5, "bz_grid": 6}
+    )
+    points = _closure_points(12, n=40)
+    record = compute_component_diagnostics(
+        component, points,
+        {"M.scale": 1.0, "M.chi0": 0.5, "M.gamma0": 2.0, "M.J1": 0.1},
+    )
+    assert record["lambda_shift"] != 0.0
+    assert record["mu_eff_sq"] == pytest.approx(0.5, abs=1e-6)
+    assert record["distance_to_instability"] > 0.0
+    # JSON-serializable (persisted in fit metadata via json.dumps).
+    import json
+
+    assert json.loads(json.dumps(record)) == record
+
+
+def test_component_diagnostics_returns_none_for_non_rpa():
+    from nfit.fit_config import compute_component_diagnostics
+
+    bg = ModelComponentSpec(name="bg", type="constant_background",
+                            parameters={"constant": 1.0}, fit_parameters={})
+    assert compute_component_diagnostics(bg, _closure_points(13, n=10), {}) is None
+
+
+def test_group_fit_stores_and_persists_diagnostics(tmp_path):
+    """A heisenberg_rpa group fit stamps per-dataset diagnostics that survive
+    save/load."""
+    from nfit.mdhisto import MDHistoAxis, MDHistoData
+
+    # A 1D Q-scan MDHisto dataset the RPA model can be evaluated on.
+    n = 24
+    axis_q = MDHistoAxis("H", np.linspace(0.0, 1.0, n + 1), "rlu", "momentum")
+    signal = np.linspace(1.0, 2.0, n).reshape(1, n)
+    axis_e = MDHistoAxis("E", np.linspace(0.5, 5.0, 2), "meV", "energy")
+    data = MDHistoData(
+        axes=(axis_e, axis_q), signal=signal, errors=np.full_like(signal, 0.1),
+        mask=np.zeros_like(signal, dtype=bool), num_events=np.ones_like(signal),
+        metadata={"temperature": 10.0},
+    )
+    group = DataGroup(name="G")
+    group.datasets.append(DatasetEntry("scan", data))
+    group.get_dataset("scan").data_type = "single_crystal_inelastic"
+
+    model = ModelComponentSpec(
+        name="M", type="heisenberg_rpa",
+        parameters={"scale": 1.0, "chi0": 0.3, "gamma0": 2.0, "J1": 0.05},
+        fit_parameters={"scale": True},
+        config={
+            "site_positions": [[0.0, 0.0, 0.0]],
+            "orbits": [{"label": "J1", "bonds": [
+                {"site_i": 0, "site_j": 0, "offset": [1, 0, 0]}]}],
+        },
+    )
+    group.models[model.name] = model
+    ensure_fit_history(group)
+
+    entry = run_group_fit(group, group.fits[0])
+    assert entry.goodness["status"] in ("converged", "not converged")
+    diagnostics = entry.metadata.get("diagnostics")
+    assert diagnostics is not None and "scan" in diagnostics
+    assert "mu_eff_sq" in diagnostics["scan"]
+    assert diagnostics["scan"]["temperature"] == pytest.approx(10.0)
+
+    # The diagnostics survive the fit-entry JSON round-trip used by save/load.
+    from nfit.project_gui import _fit_entry_from_dict, _fit_entry_to_dict
+
+    restored = _fit_entry_from_dict(_fit_entry_to_dict(entry))
+    assert restored.metadata["diagnostics"]["scan"]["mu_eff_sq"] == pytest.approx(
+        diagnostics["scan"]["mu_eff_sq"]
+    )

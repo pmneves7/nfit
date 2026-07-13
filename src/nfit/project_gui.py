@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import copy
 import ast
 import platform
@@ -24,6 +25,7 @@ from .fit_config import (
     FitDatasetInput,
     compile_fit_problem,
     component_parameter_names,
+    compute_component_diagnostics,
     model_supports_data_type,
     qualified_parameter_name,
 )
@@ -43,6 +45,7 @@ from .fitting import (
 from .form_factors import available_ions
 from .importers import IMPORTERS, import_with, importers_for_data_type
 from .mdhisto import MDHistoAxis, MDHistoData, load_mantid_mdhisto_nxs
+from .mdevent import assess_mdevent_memory, bin_mdevent_group, is_mdevent_file, load_mdevent_run_points, mdevent_dataset_group
 from .pipeline import DataGroup, DatasetEntry, DatasetGroup, FitTimelineEntry, MaskSpec, ModelComponentSpec
 from .rebin import rebin_nd
 
@@ -50,11 +53,15 @@ QtMDHistoSliceViewer = None
 RECENT_PROJECT_LIMIT = 10
 RECENT_PROJECTS_KEY = "recent_projects"
 DATASET_REBIN_KEY = "rebin"
+DATASET_MASK_APPLICATION_KEY = "mask_application"
 GROUP_COMPOSITE_KEY = "composite"
 GROUP_COMPOSITE_NAME = "Composite"
 DEFAULT_REBIN_MAX_BATCH_MB = 192
+REBIN_COORDINATE_BASIS_VERSION = 2
+REBIN_RESOLUTION_MODE_KEY = "resolution_mode"
 REBIN_AUTO_MAX_CONTRIBUTIONS = 5_000_000
 REBIN_AUTO_MAX_OUTPUT_BINS = 2_000_000
+MASK_AUTO_MAX_POINTS = 5_000_000
 DATASET_POINT_LIST_KEY = "point_list"
 SUSCEPTIBILITY_CHANNEL_LABEL = "Susceptibility"
 Q_COORDINATE_NAME = "q"
@@ -102,30 +109,30 @@ MASK_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
         "label": "Coordinate range",
         "parameters": {
             "H": {
-                "default": [-1.0e99, 1.0e99],
-                "description": "Inclusive reciprocal-lattice H range to keep. Values outside the range are masked.",
-                "allowed": "Two numbers [min, max], or an empty string to leave H unrestricted.",
+                "default": [0.0, 0.0],
+                "description": "Inclusive reciprocal-lattice H interval to mask out. [0, 0] leaves H inactive.",
+                "allowed": "Two numbers [min, max], with [0, 0] or an empty string meaning no H restriction.",
                 "type": "list[float] | string",
                 "example": "[-0.5, 0.5]",
             },
             "K": {
-                "default": [-1.0e99, 1.0e99],
-                "description": "Inclusive reciprocal-lattice K range to keep. Values outside the range are masked.",
-                "allowed": "Two numbers [min, max], or an empty string to leave K unrestricted.",
+                "default": [0.0, 0.0],
+                "description": "Inclusive reciprocal-lattice K interval to mask out. [0, 0] leaves K inactive.",
+                "allowed": "Two numbers [min, max], with [0, 0] or an empty string meaning no K restriction.",
                 "type": "list[float] | string",
                 "example": "[-0.5, 0.5]",
             },
             "L": {
-                "default": [-1.0e99, 1.0e99],
-                "description": "Inclusive reciprocal-lattice L range to keep. Values outside the range are masked.",
-                "allowed": "Two numbers [min, max], or an empty string to leave L unrestricted.",
+                "default": [0.0, 0.0],
+                "description": "Inclusive reciprocal-lattice L interval to mask out. [0, 0] leaves L inactive.",
+                "allowed": "Two numbers [min, max], with [0, 0] or an empty string meaning no L restriction.",
                 "type": "list[float] | string",
                 "example": "[0, 4]",
             },
             "E": {
-                "default": [-1.0e99, 1.0e99],
-                "description": "Inclusive energy-transfer range to keep. Values outside the range are masked.",
-                "allowed": "Two numbers [min, max] in meV, or an empty string to leave energy unrestricted.",
+                "default": [0.0, 0.0],
+                "description": "Inclusive energy-transfer interval to mask out. [0, 0] leaves energy inactive.",
+                "allowed": "Two numbers [min, max] in meV, with [0, 0] or an empty string meaning no energy restriction.",
                 "type": "list[float] | string",
                 "example": "[-2, 30]",
             },
@@ -135,16 +142,16 @@ MASK_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
         "label": "Energy / |Q| range",
         "parameters": {
             "energy": {
-                "default": [-1.0e99, 1.0e99],
-                "description": "Energy-transfer interval for an energy-|Q| exclusion mask.",
-                "allowed": "Two numbers [min, max] in meV. Use a very broad range for the no-op default.",
+                "default": [0.0, 0.0],
+                "description": "Inclusive energy-transfer interval to mask out; [0, 0] leaves this dimension inactive.",
+                "allowed": "Two numbers [min, max] in meV, with [0, 0] meaning no energy restriction.",
                 "type": "list[float]",
                 "example": "[-2, 1]",
             },
             "q_modulus": {
-                "default": [0.0, 1.0e99],
-                "description": "Magnitude of Q interval for an energy-|Q| exclusion mask.",
-                "allowed": "Two numbers [min, max] in inverse angstrom; |Q| is non-negative so the lower bound defaults to 0.",
+                "default": [0.0, 0.0],
+                "description": "Inclusive |Q| interval to mask out; [0, 0] leaves this dimension inactive.",
+                "allowed": "Two numbers [min, max] in inverse angstrom, with [0, 0] meaning no |Q| restriction.",
                 "type": "list[float]",
                 "example": "[0.2, 1.5]",
             },
@@ -207,21 +214,21 @@ MASK_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
         "parameters": {
             "center": {
                 "default": [0.0, 0.0, 0.0],
-                "description": "Reciprocal-space center of the acoustic phonon cone.",
-                "allowed": "Three numbers [H, K, L] in reciprocal lattice units unless center_units later says otherwise.",
-                "type": "list[float]",
-                "example": "[2, 2, 2]",
+                "description": "One reciprocal-space center or a list of Bragg centers whose acoustic phonon cones are masked out.",
+                "allowed": "One [H, K, L] vector or a nonempty list of [H, K, L] vectors in reciprocal lattice units.",
+                "type": "list[float] | list[list[float]]",
+                "example": "[[1, 1, 0], [2, 2, 0], [3, 3, 0]]",
             },
             "slope": {
                 "default": 0.0,
-                "description": "Cone slope dE/d|Q|. The zero default makes the starter mask effectively inert.",
+                "description": "Cone slope dE/d|Q| defining the area to mask out. Zero disables the starter mask.",
                 "allowed": "Non-negative number in meV per inverse angstrom.",
                 "type": "float",
                 "example": "35.0",
             },
             "radius": {
                 "default": 0.0,
-                "description": "Additional reciprocal-space radius around the cone. The zero default masks no volume by itself.",
+                "description": "Additional reciprocal-space radius included in the area to mask out. Zero adds no extra radius.",
                 "allowed": "Non-negative number in inverse angstrom.",
                 "type": "float",
                 "example": "0.15",
@@ -619,6 +626,7 @@ def import_dataset_paths(
     data_type: str | None = None,
     importer_name: str | None = None,
     into: DatasetGroup | None = None,
+    progress_callback: Any | None = None,
 ) -> list[DatasetEntry]:
     """Add dataset entries for one or more source files.
 
@@ -630,11 +638,48 @@ def import_dataset_paths(
     entries: list[DatasetEntry] = []
     for path in paths:
         source = Path(path)
+        resolved_type = data_type or DEFAULT_DATA_TYPE
+        if resolved_type == "single_crystal_inelastic" and is_mdevent_file(source):
+            subgroup = import_mdevent_dataset_group(
+                group, source, into=into, progress_callback=progress_callback
+            )
+            entries.extend(subgroup.datasets)
+            continue
         entry = dataset_entry_from_path(source, data_type=data_type, importer_name=importer_name)
         entry.name = _unique_dataset_name(entry.name, group.dataset_names)
         group.add_dataset(entry, into=into)
         entries.append(entry)
     return entries
+
+
+def import_mdevent_dataset_group(
+    group: DataGroup,
+    path: str | Path,
+    *,
+    normalization_path: str | Path | None = None,
+    mask_path: str | Path | None = None,
+    into: DatasetGroup | None = None,
+    progress_callback: Any | None = None,
+) -> DatasetGroup:
+    """Import a Mantid MDEvent file as lightweight run datasets sharing setup."""
+
+    if normalization_path is None and mask_path is None:
+        companions = [candidate for candidate in Path(path).parent.glob("van*") if candidate.is_file()]
+        if len(companions) == 1:
+            normalization_path = companions[0]
+            mask_path = companions[0]
+    subgroup = mdevent_dataset_group(
+        path,
+        normalization_path=normalization_path,
+        mask_path=mask_path,
+        progress_callback=progress_callback,
+    )
+    names = {item.name for item in group.iter_subgroups()}
+    subgroup.name = _unique_name(subgroup.name, names)
+    (into.subgroups if into is not None else group.subgroups).append(subgroup)
+    if group.lattice_parameters is None:
+        group.lattice_parameters = dict(subgroup.metadata["mdevent"]["lattice_parameters"])
+    return subgroup
 
 
 def delete_data_group(project: NfitProject, group: DataGroup) -> None:
@@ -1383,11 +1428,11 @@ def mask_parameter_tooltip(type: str, parameter_name: str) -> str:
         return "\n".join(
             [
                 f"Parameter: {parameter_name}",
-                f"Description: Coordinate-axis vector {axis_number}. It defines one mask coordinate as a linear combination of the dataset axes.",
+                f"Description: Physical coordinate vector for source bin axis {axis_number}. It uses the same axis direction shown by the rebinner.",
                 "Allowed values: A list of N finite numbers, where N is the number of dataset dimensions.",
                 "Data type: list[float]",
-                "Default: identity basis vector for the corresponding dataset coordinate.",
-                "Example: [1, 0, 0, 0]",
+                "Default: the corresponding source bin-axis vector, including projected directions such as [1, -1, 0, 0].",
+                "Example: [1, -1, 0, 0]",
             ]
         )
     metadata = MASK_TYPE_DEFINITIONS[type]["parameters"][parameter_name]
@@ -1870,6 +1915,8 @@ def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str,
         group.metadata[GROUP_COMPOSITE_KEY] = config
     config.setdefault("enabled", False)
     config.setdefault("fractional", True)
+    if config.get(REBIN_RESOLUTION_MODE_KEY) not in {"step", "bins"}:
+        config[REBIN_RESOLUTION_MODE_KEY] = "step"
     if config.get("mean_weighting") not in {"inverse_variance", "uniform"}:
         config["mean_weighting"] = "inverse_variance"
     try:
@@ -1877,8 +1924,29 @@ def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str,
     except (TypeError, ValueError):
         config["max_batch_mb"] = DEFAULT_REBIN_MAX_BATCH_MB
     config["normalize"] = True
-    reference = _composite_reference_data(group)
-    default_axes = _default_rebin_axes(reference) if reference is not None else []
+    mdevent = group.metadata.get("mdevent") if isinstance(group.metadata, dict) else None
+    if isinstance(mdevent, dict):
+        dimensions = list(mdevent.get("dimensions", []))
+        hkl_bounds = list(mdevent.get("hkl_bounds", []))
+        names = ("H", "K", "L", "DeltaE")
+        default_axes = []
+        for index, name in enumerate(names):
+            source_dim = dimensions[index] if index < len(dimensions) else {}
+            bounds = hkl_bounds[index] if index < len(hkl_bounds) else None
+            lower = float(bounds[0] if bounds is not None else source_dim.get("lower", -5.0 if index < 3 else -50.0))
+            upper = float(bounds[1] if bounds is not None else source_dim.get("upper", 5.0 if index < 3 else 50.0))
+            default_axes.append({
+                "name": name,
+                "variable": ("H", "K", "L", "E")[index],
+                "vector": _identity_vector(index, 4),
+                "lower": lower,
+                "upper": upper,
+                "num_bins": 50 if index == 3 else 20,
+                "step_size": (upper - lower) / (50.0 if index == 3 else 20.0),
+            })
+    else:
+        reference = _composite_reference_data(group)
+        default_axes = _default_rebin_axes(reference) if reference is not None else []
     axes = config.get("axes")
     if not isinstance(axes, list) or len(axes) != len(default_axes):
         config["axes"] = default_axes
@@ -1892,13 +1960,25 @@ def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str,
             sanitized_axes.append(_sanitize_rebin_axis_config(axis_config))
         config["axes"] = sanitized_axes
     if "auto_rebin" not in config:
-        config["auto_rebin"] = not _composite_rebin_is_large(group, config)
+        # File-backed MDEvent composites require a complete source scan even
+        # when only a few selected events contribute to the current view.
+        config["auto_rebin"] = False if isinstance(mdevent, dict) else not _composite_rebin_is_large(group, config)
     config.setdefault("stale", False)
     return config
 
 
 def _composite_source_points(group: DataGroup) -> int:
+    mdevent = group.metadata.get("mdevent") if isinstance(group.metadata, dict) else None
+    if isinstance(mdevent, dict):
+        return int(mdevent.get("event_count", 0) or 0)
     return sum(_dataset_rebin_source_points(dataset) for dataset in _composite_candidates(group))
+
+
+def _dataset_collection_point_count(node: DataGroup | DatasetGroup) -> int:
+    mdevent = node.metadata.get("mdevent") if isinstance(node.metadata, dict) else None
+    if isinstance(mdevent, dict):
+        return int(mdevent.get("event_count", 0) or 0)
+    return sum(_dataset_data_point_count(dataset) for dataset in node.iter_datasets())
 
 
 def _composite_output_bins(config: dict[str, Any]) -> int:
@@ -1969,6 +2049,8 @@ def _composite_candidates(group: DataGroup) -> list[DatasetEntry]:
 
 
 def _dataset_composite_kind(dataset: DatasetEntry) -> str:
+    if dataset.kind == "mdevent":
+        return "mdevent"
     if data_type_container(dataset.data_type) == "point_list" or isinstance(dataset.data, PointListData):
         return "point_list"
     if isinstance(dataset.data, MDHistoData) or data_type_container(dataset.data_type) == "mdhisto":
@@ -1985,7 +2067,7 @@ def data_group_composite_status(group: DataGroup) -> tuple[bool, str]:
     kinds = {_dataset_composite_kind(dataset) for dataset in datasets}
     if len(kinds) != 1:
         return False, "Composite datasets require all enabled datasets to hold the same kind of data."
-    if next(iter(kinds)) not in {"mdhisto", "point_list", "point_data_4d"}:
+    if next(iter(kinds)) not in {"mdhisto", "point_list", "point_data_4d", "mdevent"}:
         return False, "This dataset kind cannot be composited yet."
     return True, "Ready to combine enabled datasets into one rebinned composite."
 
@@ -2065,6 +2147,30 @@ def composite_dataset_data(
         raise ValueError(message)
     config = data_group_composite_config(group)
     kind = _dataset_composite_kind(_composite_candidates(group)[0])
+    if kind == "mdevent":
+        node = group.node if isinstance(group, _CompositeScope) else group
+        if not isinstance(node, DatasetGroup):
+            raise ValueError("MDEvent composites must be imported inside a dataset group")
+        lower, upper, num_bins = _composite_rebin_bounds(config)
+        allow_overcommit = bool(config.pop("_allow_memory_overcommit_once", False))
+        return bin_mdevent_group(
+            node,
+            lower=lower,
+            upper=upper,
+            num_bins=num_bins,
+            datasets=_composite_candidates(group),
+            vectors=[
+                axis.get("vector", _identity_vector(index, 4))
+                for index, axis in enumerate(config.get("axes", []))
+            ],
+            axis_names=[
+                str(axis.get("name", ("H", "K", "L", "DeltaE")[index]))
+                for index, axis in enumerate(config.get("axes", []))
+            ],
+            max_batch_bytes=_rebin_max_batch_bytes(config),
+            enforce_memory_limit=not allow_overcommit,
+            progress_callback=progress_callback,
+        )
     if kind == "mdhisto":
         return _composite_mdhisto_data(group, config, progress_callback=progress_callback)
     if kind == "point_list":
@@ -2378,6 +2484,7 @@ def _effective_dataset_entries(
     *,
     use_composite: bool,
     force_rebin: bool,
+    force_masks: bool,
     progress_callback: Any | None,
 ):
     scope = _composite_scope(group, node)
@@ -2388,6 +2495,8 @@ def _effective_dataset_entries(
             progress_callback=progress_callback,
         )
         return
+    if isinstance(node, DatasetGroup) and isinstance(node.metadata.get("mdevent"), dict):
+        return
     yield from node.datasets
     for subgroup in node.subgroups:
         yield from _effective_dataset_entries(
@@ -2395,6 +2504,7 @@ def _effective_dataset_entries(
             subgroup,
             use_composite=use_composite,
             force_rebin=force_rebin,
+            force_masks=force_masks,
             progress_callback=progress_callback,
         )
 
@@ -2410,18 +2520,20 @@ def slice_viewer_datasets(
     *,
     use_composite: bool = True,
     force_rebin: bool = True,
+    force_masks: bool = True,
     progress_callback: Any | None = None,
 ) -> tuple[list[MDHistoData], list[str]]:
     """Return data and labels for every dataset in the group tree, with shared masks."""
 
     data: list[MDHistoData] = []
     names: list[str] = []
-    model_channels = current_model_channels(group)
+    model_channels = current_model_channels(group, force_masks=force_masks)
     entries = _effective_dataset_entries(
         group,
         group,
         use_composite=use_composite,
         force_rebin=force_rebin,
+        force_masks=force_masks,
         progress_callback=progress_callback,
     )
     for dataset in entries:
@@ -2431,6 +2543,7 @@ def slice_viewer_datasets(
             dataset,
             extra_masks=extra_masks,
             force_rebin=force_rebin,
+            force_masks=force_masks,
             progress_callback=progress_callback,
         )
         if view_data is not None:
@@ -2450,6 +2563,7 @@ def dataset_for_slice_viewer(
     *,
     extra_masks: list[MaskSpec] | None = None,
     force_rebin: bool = True,
+    force_masks: bool = True,
     progress_callback: Any | None = None,
 ) -> MDHistoData | PointListData | None:
     """Return a viewer-ready dataset, loading from source metadata if needed.
@@ -2462,6 +2576,7 @@ def dataset_for_slice_viewer(
         dataset,
         extra_masks=extra_masks,
         force_rebin=force_rebin,
+        force_masks=force_masks,
         progress_callback=progress_callback,
     )
     if result is None:
@@ -2515,6 +2630,7 @@ def fit_data_bundle(
     dataset: DatasetEntry,
     *,
     force_rebin: bool = True,
+    force_masks: bool = True,
     progress_callback: Any | None = None,
 ) -> FitDataBundle | None:
     """Build the fit-ready views of one dataset, or ``None`` if unsupported."""
@@ -2529,6 +2645,7 @@ def fit_data_bundle(
             dataset,
             extra_masks=extra_masks,
             force_rebin=force_rebin,
+            force_masks=force_masks,
             progress_callback=progress_callback,
         )
         view = _with_viewer_dataset_metadata(dataset, raw_view) if raw_view is not None else None
@@ -2537,6 +2654,7 @@ def fit_data_bundle(
             dataset,
             extra_masks=extra_masks,
             force_rebin=force_rebin,
+            force_masks=force_masks,
             progress_callback=progress_callback,
         )
     if isinstance(view, MDHistoData):
@@ -2744,6 +2862,7 @@ def fit_dataset_inputs(
     group: DataGroup,
     *,
     force_rebin: bool = True,
+    force_masks: bool = True,
     progress_callback: Any | None = None,
 ) -> tuple[list[FitDatasetInput], dict[str, FitDataBundle]]:
     """Prepare every enabled dataset in a group for the fit compiler."""
@@ -2755,6 +2874,7 @@ def fit_dataset_inputs(
         group,
         use_composite=True,
         force_rebin=force_rebin,
+        force_masks=force_masks,
         progress_callback=progress_callback,
     )
     for dataset in entries:
@@ -2764,6 +2884,7 @@ def fit_dataset_inputs(
             group,
             dataset,
             force_rebin=force_rebin,
+            force_masks=force_masks,
             progress_callback=progress_callback,
         )
         if bundle is None:
@@ -2836,6 +2957,200 @@ def _optional_int(value: Any) -> int | None:
     if value in (None, ""):
         return None
     return int(value)
+
+
+def read_isaw_ub(path: str | Path) -> tuple[np.ndarray, dict[str, float]]:
+    """Read an ISAW ``.mat`` file; its first three rows store ``UB.T``."""
+
+    rows = []
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        values = line.split()
+        if values:
+            rows.append([float(value) for value in values])
+    if len(rows) < 4 or any(len(row) < 3 for row in rows[:3]) or len(rows[3]) < 6:
+        raise ValueError("ISAW UB files require three matrix rows and one six-value lattice row")
+    ub = np.asarray([row[:3] for row in rows[:3]], dtype=float).T
+    lattice = dict(zip(("a", "b", "c", "alpha", "beta", "gamma"), rows[3][:6], strict=True))
+    if not np.all(np.isfinite(ub)) or abs(np.linalg.det(ub)) < 1e-14:
+        raise ValueError("ISAW UB matrix must be finite and invertible")
+    return ub, lattice
+
+
+def write_isaw_ub(path: str | Path, ub: Any, lattice: dict[str, Any]) -> None:
+    """Write UB using the transposed IPNS/ISAW matrix convention."""
+
+    matrix = np.asarray(ub, dtype=float)
+    if matrix.shape != (3, 3) or not np.all(np.isfinite(matrix)):
+        raise ValueError("UB must be a finite 3 x 3 matrix")
+    names = ("a", "b", "c", "alpha", "beta", "gamma")
+    values = [float(lattice[name]) for name in names]
+    lines = [" ".join(f"{value: .8f}" for value in row) for row in matrix.T]
+    alpha, beta, gamma = np.deg2rad(values[3:6])
+    volume = values[0] * values[1] * values[2] * np.sqrt(
+        max(1.0 + 2.0 * np.cos(alpha) * np.cos(beta) * np.cos(gamma)
+            - np.cos(alpha) ** 2 - np.cos(beta) ** 2 - np.cos(gamma) ** 2, 0.0)
+    )
+    lines.append(" ".join(f"{value:11.4f}" for value in [*values, volume]))
+    lines.append(" ".join(f"{0.0:11.4f}" for _ in range(7)))
+    Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def ub_from_lattice_orientation(lattice: dict[str, Any], u: Any, v: Any) -> np.ndarray:
+    """Build an IPNS-frame UB with ``u`` along beam x and ``u-v`` plane horizontal."""
+
+    basis = reciprocal_basis_from_lattice_parameters(
+        *(float(lattice[name]) for name in ("a", "b", "c", "alpha", "beta", "gamma"))
+    ) / (2.0 * np.pi)
+    q_u = basis @ np.asarray(u, dtype=float)
+    q_v = basis @ np.asarray(v, dtype=float)
+    if np.linalg.norm(q_u) <= 1e-14 or np.linalg.norm(np.cross(q_u, q_v)) <= 1e-14:
+        raise ValueError("u must be nonzero and u/v must define a plane")
+    x_axis = q_u / np.linalg.norm(q_u)
+    z_axis = np.cross(q_u, q_v)
+    z_axis /= np.linalg.norm(z_axis)
+    y_axis = np.cross(z_axis, x_axis)
+    return np.vstack((x_axis, y_axis, z_axis)) @ basis
+
+
+class UBSetupDialog:
+    """Reusable lattice/orientation editor for single-crystal data scopes."""
+
+    def __init__(self, parent: Any, *, ub: Any, lattice: dict[str, Any] | None, u: Any, v: Any):
+        from PySide6 import QtWidgets
+
+        self.dialog = QtWidgets.QDialog(parent)
+        self.dialog.setWindowTitle("UB setup")
+        self.dialog.setMinimumWidth(620)
+        outer = QtWidgets.QVBoxLayout(self.dialog)
+        form = QtWidgets.QGridLayout()
+        self.lattice_edits = {}
+        defaults = {"a": 1.0, "b": 1.0, "c": 1.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0}
+        values = {**defaults, **(lattice or {})}
+        for index, name in enumerate(("a", "b", "c", "alpha", "beta", "gamma")):
+            row, column = divmod(index, 3)
+            form.addWidget(QtWidgets.QLabel(name), row, column * 2)
+            edit = QtWidgets.QLineEdit(_format_number(values[name]))
+            edit.setObjectName(f"ub_lattice_{name}")
+            edit.setToolTip("Unit-cell length in angstrom." if index < 3 else "Unit-cell angle in degrees.")
+            form.addWidget(edit, row, column * 2 + 1)
+            self.lattice_edits[name] = edit
+        self.orientation_edits = {}
+        for vector_row, (name, vector) in enumerate((("u", u), ("v", v)), start=2):
+            for component, value in enumerate(np.asarray(vector, dtype=float).reshape(3)):
+                label = f"{name}{'xyz'[component]}"
+                form.addWidget(QtWidgets.QLabel(label), vector_row, component * 2)
+                edit = QtWidgets.QLineEdit(_format_number(value))
+                edit.setObjectName(f"ub_orientation_{name}_{component}")
+                edit.setToolTip("Reciprocal-lattice orientation vector. u points along the incident beam (+x); u and v define the horizontal plane, with +z vertical.")
+                form.addWidget(edit, vector_row, component * 2 + 1)
+                self.orientation_edits[(name, component)] = edit
+        outer.addLayout(form)
+        source_row = QtWidgets.QHBoxLayout()
+        for text, slot in (("UB from NeXus", self._load_nexus), ("UB from ISAW", self._load_isaw), ("Calculate from lattice and u/v", self._calculate)):
+            button = QtWidgets.QPushButton(text)
+            button.setToolTip("Load orientation metadata directly from a NeXus file." if "NeXus" in text else "Read or calculate the UB matrix using the displayed convention.")
+            button.clicked.connect(slot)
+            source_row.addWidget(button)
+        outer.addLayout(source_row)
+        outer.addWidget(QtWidgets.QLabel("UB matrix (maps column [h,k,l] to Q' in inverse angstrom)"))
+        self.matrix_table = QtWidgets.QTableWidget(3, 3)
+        self.matrix_table.setObjectName("ub_matrix_table")
+        self.matrix_table.horizontalHeader().setVisible(False)
+        self.matrix_table.verticalHeader().setVisible(False)
+        self.matrix_table.setFixedHeight(132)
+        outer.addWidget(self.matrix_table)
+        self._set_matrix(np.asarray(ub, dtype=float))
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Apply | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
+        save = buttons.addButton("Save ISAW", QtWidgets.QDialogButtonBox.ButtonRole.ActionRole)
+        save.setToolTip("Save a .mat file with UB transposed on disk, using the IPNS x-beam/z-vertical convention.")
+        save.clicked.connect(self._save_isaw)
+        buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Apply).clicked.connect(self._accept)
+        buttons.rejected.connect(self.dialog.reject)
+        outer.addWidget(buttons)
+        self.result = None
+
+    def exec(self):
+        return self.dialog.exec()
+
+    def _lattice(self):
+        return {name: float(edit.text()) for name, edit in self.lattice_edits.items()}
+
+    def _vector(self, name):
+        return np.asarray([float(self.orientation_edits[(name, index)].text()) for index in range(3)])
+
+    def _matrix(self):
+        return np.asarray([[float(self.matrix_table.item(row, column).text()) for column in range(3)] for row in range(3)])
+
+    def _set_matrix(self, matrix):
+        from PySide6 import QtWidgets
+        for row in range(3):
+            for column in range(3):
+                self.matrix_table.setItem(row, column, QtWidgets.QTableWidgetItem(f"{matrix[row, column]:.8g}"))
+
+    def _calculate(self):
+        from PySide6 import QtWidgets
+        try:
+            self._set_matrix(ub_from_lattice_orientation(self._lattice(), self._vector("u"), self._vector("v")))
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self.dialog, "UB setup", f"Could not calculate UB:\n{exc}")
+
+    def _load_isaw(self):
+        from PySide6 import QtWidgets
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self.dialog, "Load ISAW UB", "", "ISAW matrix (*.mat);;All files (*)")
+        if not path:
+            return
+        try:
+            matrix, lattice = read_isaw_ub(path)
+            self._set_matrix(matrix)
+            for name, value in lattice.items():
+                self.lattice_edits[name].setText(_format_number(value))
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self.dialog, "UB setup", f"Could not read ISAW file:\n{exc}")
+
+    def _load_nexus(self):
+        from PySide6 import QtWidgets
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(self.dialog, "Load UB from NeXus", "", "NeXus/HDF5 (*.nxs *.h5 *.hdf5);;All files (*)")
+        if not path:
+            return
+        try:
+            try:
+                info = inspect_mdevent_workspace(path)
+                matrix = info.ub_matrix
+                lattice = info.lattice_parameters
+            except Exception:
+                imported = load_mantid_mdhisto_nxs(path, copy_metadata=True)
+                matrix = _dataset_ub_for_editor(imported.metadata)
+                lattice = imported.metadata.get("lattice_parameters")
+                if matrix is None:
+                    raise ValueError("NeXus file does not contain a UB/orientation matrix")
+            self._set_matrix(np.asarray(matrix, dtype=float))
+            for name, value in (lattice or {}).items():
+                if name not in self.lattice_edits:
+                    continue
+                self.lattice_edits[name].setText(_format_number(value))
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self.dialog, "UB setup", f"Could not read NeXus orientation:\n{exc}")
+
+    def _save_isaw(self):
+        from PySide6 import QtWidgets
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(self.dialog, "Save ISAW UB", "UB.mat", "ISAW matrix (*.mat)")
+        if path:
+            try:
+                write_isaw_ub(path, self._matrix(), self._lattice())
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(self.dialog, "UB setup", f"Could not save ISAW file:\n{exc}")
+
+    def _accept(self):
+        from PySide6 import QtWidgets
+        try:
+            matrix = self._matrix()
+            if matrix.shape != (3, 3) or not np.all(np.isfinite(matrix)) or abs(np.linalg.det(matrix)) < 1e-14:
+                raise ValueError("UB matrix must be finite and invertible")
+            self.result = {"ub_matrix": matrix.tolist(), "lattice_parameters": self._lattice(), "u": self._vector("u").tolist(), "v": self._vector("v").tolist()}
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self.dialog, "UB setup", f"Invalid UB setup:\n{exc}")
+            return
+        self.dialog.accept()
 
 
 def perform_group_fit(
@@ -2927,6 +3242,9 @@ def perform_group_fit(
     parameter_labels = _fit_parameter_labels_from_components(components, compiled, result.variable_names)
     if parameter_labels:
         metadata["parameter_labels"] = parameter_labels
+    diagnostics = _fit_diagnostics_from_result(compiled, result, bundles, components)
+    if diagnostics:
+        metadata["diagnostics"] = diagnostics
     if progress_events:
         metadata["progress_log"] = progress_events
     if sampler_result is not None:
@@ -3038,7 +3356,11 @@ def _overlay_current_params(
     return params
 
 
-def current_model_channels(group: DataGroup) -> dict[str, dict[str, Any]]:
+def current_model_channels(
+    group: DataGroup,
+    *,
+    force_masks: bool = False,
+) -> dict[str, dict[str, Any]]:
     """Evaluate enabled model components at their current parameter values."""
 
     components = [
@@ -3049,12 +3371,21 @@ def current_model_channels(group: DataGroup) -> dict[str, dict[str, Any]]:
         return {}
     signature = _overlay_cache_signature(group)
     cached = _MODEL_OVERLAY_CACHE.get(id(group))
-    if cached is not None and cached["signature"] == signature:
+    pending_masks = any(_dataset_mask_is_stale(dataset) for dataset in group.iter_datasets())
+    if (
+        cached is not None
+        and cached["signature"] == signature
+        and not (force_masks and pending_masks)
+    ):
         compiled = cached["compiled"]
         bundles = cached["bundles"]
         subsets = cached["subsets"]
     else:
-        inputs, bundles = fit_dataset_inputs(group, force_rebin=False)
+        inputs, bundles = fit_dataset_inputs(
+            group,
+            force_rebin=False,
+            force_masks=force_masks,
+        )
         if not inputs:
             _MODEL_OVERLAY_CACHE.pop(id(group), None)
             return {}
@@ -3476,6 +3807,60 @@ def _fit_channels_from_result(
     return _fit_channels_from_params(compiled, result.params, bundles)
 
 
+def _fit_diagnostics_from_result(
+    compiled: CompiledFitProblem,
+    result: Any,
+    bundles: dict[str, FitDataBundle],
+    components: list[ModelComponentSpec],
+) -> dict[str, dict[str, float]]:
+    """Per-dataset physics diagnostics for each fitted heisenberg_rpa component.
+
+    Returns ``{dataset_name: {metric: value}}`` (metrics prefixed by the
+    component name when a dataset carries more than one RPA component). Stored
+    in the fit result's metadata, which round-trips as JSON, so a future
+    diagnostics-vs-temperature plot needs no recomputation. Never raises: a
+    component that cannot be evaluated on a dataset is skipped.
+    """
+
+    rpa_by_name = {
+        component.name: component
+        for component in components
+        if component.type == "heisenberg_rpa" and component.enabled
+    }
+    if not rpa_by_name:
+        return {}
+    resolved = compiled.problem.resolve_parameters(result.params)
+    fitted_names = {dataset.name for dataset in compiled.problem.datasets}
+    diagnostics: dict[str, dict[str, float]] = {}
+    for name, bundle in bundles.items():
+        if name not in fitted_names:
+            continue
+        applicable = [
+            rpa_by_name[component_name]
+            for component_name in compiled.components_by_dataset.get(name, [])
+            if component_name in rpa_by_name
+        ]
+        if not applicable:
+            continue
+        subset = _subset_points(bundle.points, bundle.points.valid_mask())
+        if not subset.size:
+            continue
+        per_dataset: dict[str, float] = {}
+        for component in applicable:
+            record = compute_component_diagnostics(component, subset, resolved)
+            if not record:
+                continue
+            if len(applicable) == 1:
+                per_dataset = {k: float(v) for k, v in record.items()}
+            else:
+                per_dataset.update(
+                    {f"{component.name}.{k}": float(v) for k, v in record.items()}
+                )
+        if per_dataset:
+            diagnostics[name] = per_dataset
+    return diagnostics
+
+
 def _fit_channels_from_params(
     compiled: CompiledFitProblem,
     params: dict[str, float],
@@ -3716,12 +4101,18 @@ def _viewer_data_before_scale(
     *,
     extra_masks: list[MaskSpec] | None = None,
     force_rebin: bool = True,
+    force_masks: bool = True,
     progress_callback: Any | None = None,
 ) -> MDHistoData | PointListData | None:
     key = id(dataset)
     signature = _viewer_view_signature(dataset, extra_masks)
+    deferred_masks = _should_defer_dataset_masks(dataset, force_masks=force_masks)
     cached = _VIEWER_VIEW_CACHE.get(key)
     if cached is not None and cached[0] == signature:
+        if force_masks:
+            dataset_mask_application_config(dataset)["stale"] = False
+        return cached[1]
+    if cached is not None and deferred_masks:
         return cached[1]
     if cached is not None and _should_defer_dataset_rebin(dataset, force_rebin=force_rebin):
         return cached[1]
@@ -3729,15 +4120,17 @@ def _viewer_data_before_scale(
         dataset,
         extra_masks=extra_masks,
         force_rebin=force_rebin,
+        force_masks=force_masks,
         progress_callback=progress_callback,
     )
-    if result is not None:
+    if result is not None and not deferred_masks:
         # Recompute the signature: the uncached path may have lazily loaded the
         # data (changing id(dataset.data)), so key the entry on the loaded id.
         signature = _viewer_view_signature(dataset, extra_masks)
         if len(_VIEWER_VIEW_CACHE) >= _VIEWER_VIEW_CACHE_LIMIT:
             _VIEWER_VIEW_CACHE.clear()
         _VIEWER_VIEW_CACHE[key] = (signature, result)
+        dataset_mask_application_config(dataset)["stale"] = False
     return result
 
 
@@ -3746,6 +4139,7 @@ def _viewer_data_before_scale_uncached(
     *,
     extra_masks: list[MaskSpec] | None = None,
     force_rebin: bool = True,
+    force_masks: bool = True,
     progress_callback: Any | None = None,
 ) -> MDHistoData | PointListData | None:
     if data_type_container(dataset.data_type) == "point_list" or isinstance(dataset.data, PointListData):
@@ -3759,6 +4153,8 @@ def _viewer_data_before_scale_uncached(
             return rebinned_dataset_data(dataset, progress_callback=progress_callback)
         return prepared_point_list_data(dataset)
     if isinstance(dataset.data, MDHistoData):
+        if _should_defer_dataset_masks(dataset, force_masks=force_masks):
+            return _mdhisto_without_nfit_masks(dataset.data)
         if dataset_rebin_enabled(dataset):
             if _should_defer_dataset_rebin(dataset, force_rebin=force_rebin):
                 return _mdhisto_with_nfit_masks(dataset, data=dataset.data, extra_masks=extra_masks)
@@ -3770,15 +4166,40 @@ def _viewer_data_before_scale_uncached(
     source_path = Path(source)
     if source_path.suffix.lower() not in {".nxs", ".h5", ".hdf5"}:
         return None
-    loaded = load_mantid_mdhisto_nxs(source_path, copy_metadata=False)
+    if dataset.kind == "mdevent":
+        loaded = load_mdevent_run_points(dataset)
+    else:
+        loaded = load_mantid_mdhisto_nxs(source_path, copy_metadata=False)
     dataset.data = loaded
     dataset.kind = dataset.kind or source_path.suffix.lstrip(".").lower()
     dataset.metadata["import_status"] = "loaded"
+    if isinstance(loaded, PointData4D):
+        if dataset_rebin_enabled(dataset):
+            return rebinned_dataset_data(
+                dataset, extra_masks=extra_masks, progress_callback=progress_callback
+            )
+        return _point_data_with_nfit_masks(dataset, loaded, extra_masks=extra_masks)
+    if _should_defer_dataset_masks(dataset, force_masks=force_masks):
+        return _mdhisto_without_nfit_masks(dataset.data)
     if dataset_rebin_enabled(dataset):
         if _should_defer_dataset_rebin(dataset, force_rebin=force_rebin):
             return _mdhisto_with_nfit_masks(dataset, data=dataset.data, extra_masks=extra_masks)
         return rebinned_dataset_data(dataset, extra_masks=extra_masks, progress_callback=progress_callback)
     return _mdhisto_with_nfit_masks(dataset, data=dataset.data, extra_masks=extra_masks)
+
+
+def _mdhisto_without_nfit_masks(data: MDHistoData) -> MDHistoData:
+    """Return a cheap file-mask-only view while manual nfit masks are pending."""
+
+    file_mask = np.asarray(data.mask, dtype=bool)
+    metadata = dict(data.metadata)
+    metadata["file_mask"] = file_mask
+    metadata["nfit_mask"] = np.zeros(0, dtype=bool)
+    metadata["file_mask_count"] = int(np.count_nonzero(file_mask))
+    metadata["nfit_mask_count"] = 0
+    metadata["combined_mask_count"] = metadata["file_mask_count"]
+    metadata["mask_application_pending"] = True
+    return replace(data, mask=file_mask, metadata=metadata)
 
 
 def _apply_dataset_scale(
@@ -3826,6 +4247,8 @@ def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
         dataset.parameters[DATASET_REBIN_KEY] = config
     config.setdefault("enabled", False)
     config.setdefault("fractional", True)
+    if config.get(REBIN_RESOLUTION_MODE_KEY) not in {"step", "bins"}:
+        config[REBIN_RESOLUTION_MODE_KEY] = "step"
     try:
         config["max_batch_mb"] = max(int(config.get("max_batch_mb", DEFAULT_REBIN_MAX_BATCH_MB)), 1)
     except (TypeError, ValueError):
@@ -3841,6 +4264,8 @@ def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
         default_axes = _default_rebin_axes(dataset.data)
     if not isinstance(axes, list) or len(axes) != len(default_axes):
         config["axes"] = default_axes
+        if isinstance(dataset.data, MDHistoData) and len(dataset.data.axes) == 4:
+            config["coordinate_basis_version"] = REBIN_COORDINATE_BASIS_VERSION
     else:
         sanitized_axes = []
         for axis_config, default_axis in zip(axes, default_axes, strict=True):
@@ -3848,12 +4273,104 @@ def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
                 axis_config = {}
             for key, value in default_axis.items():
                 axis_config.setdefault(key, value)
+            if isinstance(dataset.data, MDHistoData) and "vector" in axis_config:
+                axis_config["variable"] = str(
+                    axis_config.get("variable") or default_axis.get("variable", "")
+                )
+                axis_config["name"] = _rebin_axis_name(
+                    axis_config["variable"], axis_config.get("vector", [])
+                )
             sanitized_axes.append(_sanitize_rebin_axis_config(axis_config))
         config["axes"] = sanitized_axes
+        if isinstance(dataset.data, MDHistoData) and len(dataset.data.axes) == 4:
+            try:
+                basis_version = int(config.get("coordinate_basis_version", 0) or 0)
+            except (TypeError, ValueError):
+                basis_version = 0
+            if basis_version < REBIN_COORDINATE_BASIS_VERSION:
+                custom_basis = any(
+                    not np.allclose(
+                        _rebin_axis_vector(axis, index, 4),
+                        _rebin_axis_vector(default_axis, index, 4),
+                    )
+                    for index, (axis, default_axis) in enumerate(
+                        zip(sanitized_axes, default_axes, strict=True)
+                    )
+                )
+                if custom_basis:
+                    try:
+                        _update_mdhisto_rebin_basis(
+                            dataset.data,
+                            sanitized_axes,
+                            0,
+                            _rebin_axis_vector(sanitized_axes[0], 0, 4).tolist(),
+                        )
+                    except ValueError:
+                        pass
+                    else:
+                        config["stale"] = True
+                config["coordinate_basis_version"] = REBIN_COORDINATE_BASIS_VERSION
     if "auto_rebin" not in config:
         config["auto_rebin"] = not _dataset_rebin_is_large(dataset, config)
     config.setdefault("stale", False)
     return config
+
+
+def dataset_mask_application_config(dataset: DatasetEntry) -> dict[str, Any]:
+    """Return persistent automatic/manual mask materialization settings."""
+
+    config = dataset.metadata.get(DATASET_MASK_APPLICATION_KEY)
+    if not isinstance(config, dict):
+        config = {}
+        dataset.metadata[DATASET_MASK_APPLICATION_KEY] = config
+    if "auto_apply" not in config:
+        config["auto_apply"] = not _dataset_mask_is_large(dataset)
+    config.setdefault("stale", False)
+    return config
+
+
+def _dataset_mask_point_count(dataset: DatasetEntry) -> int:
+    data = dataset.data
+    if isinstance(data, MDHistoData):
+        return int(np.asarray(data.signal).size)
+    if isinstance(data, PointData4D):
+        return int(data.size)
+    if isinstance(data, PointListData):
+        return int(data.size)
+    return 0
+
+
+def _dataset_mask_is_large(dataset: DatasetEntry) -> bool:
+    return _dataset_mask_point_count(dataset) > MASK_AUTO_MAX_POINTS
+
+
+def _dataset_mask_auto_enabled(dataset: DatasetEntry) -> bool:
+    return bool(dataset_mask_application_config(dataset).get("auto_apply", True))
+
+
+def _dataset_mask_is_stale(dataset: DatasetEntry) -> bool:
+    config = dataset.metadata.get(DATASET_MASK_APPLICATION_KEY)
+    return bool(isinstance(config, dict) and config.get("stale", False))
+
+
+def _should_defer_dataset_masks(dataset: DatasetEntry, *, force_masks: bool) -> bool:
+    # Manual mode only materializes masks at explicit synchronization points.
+    # An exact cached view is still returned before this policy is consulted,
+    # so a current manual result remains cheap to reuse. This also protects a
+    # freshly loaded project, where no process-local masked cache exists yet.
+    return bool(not force_masks and not _dataset_mask_auto_enabled(dataset))
+
+
+def _dataset_mask_status_text(dataset: DatasetEntry) -> str:
+    config = dataset_mask_application_config(dataset)
+    size_note = "large dataset" if _dataset_mask_is_large(dataset) else "small dataset"
+    if bool(config.get("auto_apply", True)):
+        if bool(config.get("stale", False)):
+            return f"Automatic mask application is on ({size_note}); pending masks apply on the next refresh."
+        return f"Automatic mask application is on ({size_note}); applied masks are current."
+    if bool(config.get("stale", False)) or id(dataset) not in _VIEWER_VIEW_CACHE:
+        return "Manual mask application pending; press Apply masks now or start a fit/open the data viewer."
+    return f"Manual mask application is on ({size_note}); applied masks are current."
 
 
 def dataset_rebin_enabled(dataset: DatasetEntry) -> bool:
@@ -4024,6 +4541,12 @@ def _rebin_max_batch_bytes(config: dict[str, Any]) -> int:
     return _rebin_max_batch_mb(config) * 1024 * 1024
 
 
+def _rebin_resolution_mode(config: dict[str, Any]) -> str:
+    """Return the active resolution control mode for a rebin panel."""
+
+    return "bins" if config.get(REBIN_RESOLUTION_MODE_KEY) == "bins" else "step"
+
+
 def create_rebinned_dataset(
     group: DataGroup,
     dataset: DatasetEntry,
@@ -4144,11 +4667,14 @@ def _default_rebin_axes(data: Any) -> list[dict[str, Any]]:
         for index, (axis, size) in enumerate(zip(data.axes, data.shape, strict=True)):
             lower, upper = _axis_bounds(axis, size)
             num_bins = max(int(size), 1)
+            vector = _mdhisto_rebin_axis_vector(axis, index, ndim)
+            variable = _mdhisto_rebin_axis_variable(axis, index, ndim)
             axes.append(
                 {
-                    "name": axis.name,
+                    "name": _rebin_axis_name(variable, vector),
+                    "variable": variable,
                     "units": axis.units,
-                    "vector": _mdhisto_rebin_axis_vector(axis, index, ndim),
+                    "vector": vector,
                     "lower": lower,
                     "upper": upper,
                     "num_bins": num_bins,
@@ -4241,6 +4767,135 @@ def _rebin_axis_vector(axis_config: dict[str, Any], index: int, ndim: int) -> np
     return np.asarray(_identity_vector(index if 0 <= index < ndim else 0, ndim), dtype=float)
 
 
+def _mdhisto_rebin_axis_variable(axis: MDHistoAxis, index: int, ndim: int) -> str:
+    """Return the scalar variable used to parameterize one rebin axis row."""
+
+    role_variables = {"h": "H", "k": "K", "l": "L", "energy_transfer": "E"}
+    if axis.role in role_variables:
+        return role_variables[axis.role]
+    symbols = re.findall(r"[HKL]", str(axis.name).upper())
+    if symbols:
+        return symbols[0]
+    if ndim == 4 and 0 <= index < 4:
+        return ("H", "K", "L", "E")[index]
+    return str(axis.name or f"Axis {index + 1}")
+
+
+def _rebin_axis_name(variable: str, vector: Any) -> str:
+    """Generate the plotted axis name from its variable and HKLE direction."""
+
+    values = np.asarray(vector, dtype=float).reshape(-1)
+    if values.size == 4 and str(variable).upper() == "E":
+        coefficient = _clean_axis_weight(values[3])
+        if coefficient == 1.0:
+            return "DeltaE"
+        return f"{coefficient:g}DeltaE"
+    if values.size == 4:
+        symbol = str(variable).upper()
+        terms = []
+        for value in values[:3]:
+            coefficient = _clean_axis_weight(value)
+            if coefficient == 0.0:
+                terms.append("0")
+            elif coefficient == 1.0:
+                terms.append(symbol)
+            elif coefficient == -1.0:
+                terms.append(f"-{symbol}")
+            else:
+                terms.append(f"{coefficient:g}{symbol}")
+        return f"[{','.join(terms)}]"
+    return str(variable)
+
+
+def _validate_mdhisto_rebin_basis(axes_config: list[dict[str, Any]], ndim: int) -> np.ndarray:
+    """Validate and return the output basis represented by rebin axis rows."""
+
+    basis = np.vstack(
+        [_rebin_axis_vector(axis_config, index, ndim) for index, axis_config in enumerate(axes_config)]
+    )
+    if basis.shape != (ndim, ndim) or not np.all(np.isfinite(basis)):
+        raise ValueError("coordinate axes must form a finite square basis")
+    if ndim == 4:
+        for index, (axis_config, vector) in enumerate(zip(axes_config, basis, strict=True)):
+            variable = str(axis_config.get("variable", "")).upper()
+            if variable == "E":
+                if np.any(vector[:3] != 0.0) or vector[3] == 0.0:
+                    raise ValueError(
+                        f"axis row {index + 1} is the energy variable and must contain only a nonzero E component"
+                    )
+            elif vector[3] != 0.0:
+                raise ValueError(
+                    f"axis row {index + 1} is a momentum variable; momentum and energy components cannot be mixed"
+                )
+    if np.linalg.matrix_rank(basis) != ndim:
+        raise ValueError("coordinate axis vectors must be linearly independent")
+    return basis
+
+
+def _mdhisto_rebin_basis_transform(
+    data: MDHistoData,
+    axes_config: list[dict[str, Any]],
+) -> np.ndarray:
+    """Map source bin coordinates into coordinates of the requested basis."""
+
+    ndim = len(data.axes)
+    output_basis = _validate_mdhisto_rebin_basis(axes_config, ndim)
+    source_vectors = _mdhisto_rebin_source_axis_vectors(data)
+    if any(vector is None for vector in source_vectors):
+        raise ValueError("source axes do not define a complete coordinate basis")
+    source_basis = np.vstack(source_vectors)
+    if source_basis.shape != (ndim, ndim) or np.linalg.matrix_rank(source_basis) != ndim:
+        raise ValueError("source coordinate axes must be linearly independent")
+    return source_basis @ np.linalg.inv(output_basis)
+
+
+def _mdhisto_rebin_basis_bounds(
+    data: MDHistoData,
+    axes_config: list[dict[str, Any]],
+) -> list[tuple[float, float]]:
+    """Return a bounding box containing the full source grid in a new basis."""
+
+    transform = _mdhisto_rebin_basis_transform(data, axes_config)
+    source_bounds = [_axis_bounds(axis, size) for axis, size in zip(data.axes, data.shape, strict=True)]
+    bounds = []
+    for output_index in range(transform.shape[1]):
+        lower = 0.0
+        upper = 0.0
+        for (source_lower, source_upper), coefficient in zip(
+            source_bounds, transform[:, output_index], strict=True
+        ):
+            endpoints = (coefficient * source_lower, coefficient * source_upper)
+            lower += min(endpoints)
+            upper += max(endpoints)
+        bounds.append((float(lower), float(upper)))
+    return bounds
+
+
+def _update_mdhisto_rebin_basis(
+    data: MDHistoData,
+    axes_config: list[dict[str, Any]],
+    index: int,
+    vector: list[float],
+) -> None:
+    """Apply one basis edit, regenerating names and full-data output bounds."""
+
+    candidate = [dict(axis) for axis in axes_config]
+    candidate[index]["vector"] = list(vector)
+    _validate_mdhisto_rebin_basis(candidate, len(data.axes))
+    bounds = _mdhisto_rebin_basis_bounds(data, candidate)
+    for axis_config, (lower, upper) in zip(candidate, bounds, strict=True):
+        previous_step = float(axis_config.get("step_size", 0.0) or 0.0)
+        axis_config["lower"] = lower
+        axis_config["upper"] = upper
+        if previous_step > 0.0 and np.isfinite(previous_step):
+            axis_config["num_bins"] = _num_bins_from_step_size(lower, upper, previous_step)
+        axis_config["name"] = _rebin_axis_name(
+            str(axis_config.get("variable", "")), axis_config.get("vector", [])
+        )
+        axis_config.update(_sanitize_rebin_axis_config(axis_config))
+    axes_config[:] = candidate
+
+
 def _mdhisto_rebin_axis_vector(axis: MDHistoAxis, index: int, ndim: int) -> list[float]:
     """Return a default rebin vector that follows the displayed MDHisto axis."""
 
@@ -4310,9 +4965,22 @@ def _rebin_mdhisto_data(
 
     ndim = len(data.axes)
     source_grids = np.meshgrid(*(axis.centers for axis in data.axes), indexing="ij")
-    projected = []
-    for index, axis_config in enumerate(axes_config):
-        projected.append(_mdhisto_rebin_component(data, list(source_grids), axis_config, index))
+    if ndim == 4:
+        transform = _mdhisto_rebin_basis_transform(data, axes_config)
+        projected = []
+        for output_index in range(ndim):
+            component = np.zeros(data.shape, dtype=float)
+            for source_grid, coefficient in zip(
+                source_grids, transform[:, output_index], strict=True
+            ):
+                if coefficient:
+                    component = component + float(coefficient) * source_grid
+            projected.append(component)
+    else:
+        projected = [
+            _mdhisto_rebin_component(data, list(source_grids), axis_config, index)
+            for index, axis_config in enumerate(axes_config)
+        ]
     coords = np.stack(projected, axis=-1)
     valid = np.isfinite(data.signal) & np.isfinite(data.errors) & ~data.mask
     if data.num_events is not None:
@@ -4468,25 +5136,22 @@ def _evaluate_point_data_mask(data: PointData4D, mask: MaskSpec) -> np.ndarray:
 
 
 def _point_data_coordinate_range_mask(data: PointData4D, parameters: dict[str, Any]) -> np.ndarray:
-    keep = np.ones(data.size, dtype=bool)
+    reject = np.ones(data.size, dtype=bool)
+    active = False
     coords = _point_data_coordinate_values(data)
     for name in COORDINATE_RANGE_PARAMETER_NAMES:
-        bounds = _parameter_range(parameters.get(name))
+        bounds = _exclusion_parameter_range(parameters.get(name))
         if bounds is None or name not in coords:
             continue
-        lower, upper = bounds
-        values = coords[name]
-        if lower is not None:
-            keep &= values >= lower
-        if upper is not None:
-            keep &= values <= upper
-    return ~keep
+        active = True
+        reject &= _values_in_range(coords[name], bounds)
+    return reject if active else np.zeros(data.size, dtype=bool)
 
 
 def _point_data_energy_q_range_mask(data: PointData4D, parameters: dict[str, Any]) -> np.ndarray:
     reject = np.ones(data.size, dtype=bool)
-    energy = _parameter_range(parameters.get("energy"))
-    q_modulus = _parameter_range(parameters.get("q_modulus"))
+    energy = _exclusion_parameter_range(parameters.get("energy"))
+    q_modulus = _exclusion_parameter_range(parameters.get("q_modulus"))
     if energy is None and q_modulus is None:
         return np.zeros(data.size, dtype=bool)
     if energy is not None:
@@ -4553,18 +5218,18 @@ def _point_data_phonon_cone_mask(data: PointData4D, parameters: dict[str, Any]) 
     slope = _parameter_float(parameters.get("slope"))
     if slope is None or slope <= 0.0:
         return np.zeros(data.size, dtype=bool)
-    center = _coordinate_axis_vector(parameters.get("center"), 3)
-    if center is None:
+    centers = _coordinate_centers(parameters.get("center"), 3)
+    if centers is None:
         return np.zeros(data.size, dtype=bool)
     radius = max(_parameter_float(parameters.get("radius")) or 0.0, 0.0)
     q_vectors = _point_data_q_vectors(data)
-    if _metadata_coordinate_units_are_inv_angstrom_for_mdhisto(data.metadata):
-        center_q = center
-    else:
-        center_q = _mdhisto_q_matrix(data.metadata) @ center
     cone_radius = np.abs(np.asarray(data.E, dtype=float)) / slope + radius
-    distance = np.linalg.norm(q_vectors - center_q, axis=-1)
-    return distance <= cone_radius
+    masked = np.zeros(data.size, dtype=bool)
+    matrix = _mdhisto_q_matrix(data.metadata)
+    centers_q = centers if _metadata_coordinate_units_are_inv_angstrom_for_mdhisto(data.metadata) else centers @ matrix.T
+    for center_q in centers_q:
+        masked |= np.linalg.norm(q_vectors - center_q, axis=-1) <= cone_radius
+    return masked
 
 
 def _point_data_coordinate_values(data: PointData4D) -> dict[str, np.ndarray]:
@@ -4801,8 +5466,8 @@ def _mdhisto_phonon_cone_mask(data: MDHistoData, parameters: dict[str, Any]) -> 
     if slope is None or slope <= 0.0:
         # A non-positive slope leaves the starter mask inert (see MASK_TYPE_DEFINITIONS).
         return np.zeros(data.shape, dtype=bool)
-    center = _coordinate_axis_vector(parameters.get("center"), 3)
-    if center is None:
+    centers = _coordinate_centers(parameters.get("center"), 3)
+    if centers is None:
         return np.zeros(data.shape, dtype=bool)
     coords = _mdhisto_coordinate_grids(data)
     if not {"H", "K", "L", "E"}.issubset(coords):
@@ -4813,15 +5478,33 @@ def _mdhisto_phonon_cone_mask(data: MDHistoData, parameters: dict[str, Any]) -> 
     hkl = np.stack([coords["H"], coords["K"], coords["L"]], axis=-1)
     if _metadata_coordinate_units_are_inv_angstrom_for_mdhisto(data.metadata):
         q_vectors = hkl
-        center_q = center
+        centers_q = centers
     else:
         matrix = _mdhisto_q_matrix(data.metadata)
         q_vectors = np.einsum("ij,...j->...i", matrix, hkl)
-        center_q = matrix @ center
+        centers_q = centers @ matrix.T
 
     cone_radius = np.abs(coords["E"]) / slope + radius
-    distance = np.linalg.norm(q_vectors - center_q, axis=-1)
-    return distance <= cone_radius
+    masked = np.zeros(data.shape, dtype=bool)
+    for center_q in centers_q:
+        masked |= np.linalg.norm(q_vectors - center_q, axis=-1) <= cone_radius
+    return masked
+
+
+def _coordinate_centers(value: Any, ndim: int) -> np.ndarray | None:
+    """Parse one coordinate vector or a nonempty list of coordinate vectors."""
+
+    if isinstance(value, str):
+        value = _parse_parameter_text(value)
+    try:
+        centers = np.asarray(value, dtype=float)
+    except (TypeError, ValueError):
+        return None
+    if centers.shape == (ndim,):
+        centers = centers.reshape(1, ndim)
+    if centers.ndim != 2 or centers.shape[0] == 0 or centers.shape[1] != ndim:
+        return None
+    return centers if np.all(np.isfinite(centers)) else None
 
 
 def _parameter_float(value: Any) -> float | None:
@@ -4837,26 +5520,23 @@ def _parameter_float(value: Any) -> float | None:
 
 
 def _mdhisto_coordinate_range_mask(data: MDHistoData, parameters: dict[str, Any]) -> np.ndarray:
-    keep = np.ones(data.shape, dtype=bool)
+    reject = np.ones(data.shape, dtype=bool)
+    active = False
     coords = _mdhisto_coordinate_grids(data)
     coords.update(_mdhisto_coordinate_range_axis_grids(data, parameters))
     for name in COORDINATE_RANGE_PARAMETER_NAMES:
-        bounds = _parameter_range(parameters.get(name))
+        bounds = _exclusion_parameter_range(parameters.get(name))
         if bounds is None or name not in coords:
             continue
-        lower, upper = bounds
-        values = coords[name]
-        if lower is not None:
-            keep &= values >= lower
-        if upper is not None:
-            keep &= values <= upper
-    return ~keep
+        active = True
+        reject &= _values_in_range(coords[name], bounds)
+    return reject if active else np.zeros(data.shape, dtype=bool)
 
 
 def _mdhisto_energy_q_range_mask(data: MDHistoData, parameters: dict[str, Any]) -> np.ndarray:
     reject = np.ones(data.shape, dtype=bool)
-    energy = _parameter_range(parameters.get("energy"))
-    q_modulus = _parameter_range(parameters.get("q_modulus"))
+    energy = _exclusion_parameter_range(parameters.get("energy"))
+    q_modulus = _exclusion_parameter_range(parameters.get("q_modulus"))
     coords = _mdhisto_coordinate_grids(data)
     if energy is None and q_modulus is None:
         return np.zeros(data.shape, dtype=bool)
@@ -4888,6 +5568,21 @@ def _parameter_range(value: Any) -> tuple[float | None, float | None] | None:
     return lower, upper
 
 
+def _exclusion_parameter_range(value: Any) -> tuple[float | None, float | None] | None:
+    """Return an active exclusion interval; [0, 0] is the neutral GUI default."""
+
+    bounds = _parameter_range(value)
+    if bounds is None:
+        return None
+    if bounds[0] == 0.0 and bounds[1] == 0.0:
+        return None
+    if _range_is_unrestricted(bounds):
+        return None
+    if bounds[0] == 0.0 and bounds[1] is not None and bounds[1] >= 1.0e90:
+        return None
+    return bounds
+
+
 def _values_in_range(values: np.ndarray, bounds: tuple[float | None, float | None]) -> np.ndarray:
     lower, upper = bounds
     selected = np.ones(values.shape, dtype=bool)
@@ -4915,12 +5610,24 @@ def _mdhisto_coordinate_range_axis_grids(
     if not specs:
         return {}
     axis_values = np.meshgrid(*(axis.centers for axis in data.axes), indexing="ij")
+    source_vectors = _mdhisto_rebin_source_axis_vectors(data)
     coords: dict[str, np.ndarray] = {}
     for index, spec in enumerate(specs):
         key = f"{COORDINATE_RANGE_AXIS_PREFIX}{index}"
         vector = _coordinate_axis_vector(parameters.get(key), len(data.axes))
         if vector is None:
             vector = np.asarray(spec["vector"], dtype=float)
+        matched_grid = next(
+            (
+                axis_grid
+                for source_vector, axis_grid in zip(source_vectors, axis_values, strict=True)
+                if source_vector is not None and np.allclose(vector, source_vector)
+            ),
+            None,
+        )
+        if matched_grid is not None:
+            coords[str(spec["name"])] = np.asarray(matched_grid, dtype=float)
+            continue
         values = np.zeros(data.shape, dtype=float)
         for axis_weight, axis_grid in zip(vector, axis_values, strict=True):
             if axis_weight:
@@ -4943,42 +5650,25 @@ def _coordinate_range_axis_specs(data: Any) -> list[dict[str, Any]]:
 
 def _mdhisto_coordinate_range_axis_specs(data: MDHistoData) -> list[dict[str, Any]]:
     ndim = len(data.axes)
-    specs_by_name: dict[str, list[float]] = {}
-    projection_rows: list[np.ndarray] = []
-    projection_indices: list[int] = []
-    used_indices: set[int] = set()
+    role_names = {"h": "H", "k": "K", "l": "L", "energy_transfer": "E"}
+    assigned = {
+        role_names[axis.role]
+        for axis in data.axes
+        if axis.role in role_names
+    }
+    remaining_names = iter(name for name in COORDINATE_RANGE_PARAMETER_NAMES if name not in assigned)
+    specs = []
     for index, axis in enumerate(data.axes):
-        role = axis.role
-        if role in {"h", "k", "l", "energy_transfer"}:
-            name = {"h": "H", "k": "K", "l": "L", "energy_transfer": "E"}[role]
-            specs_by_name.setdefault(name, _identity_vector(index, ndim))
-            used_indices.add(index)
-            continue
-        projection = _axis_projection_vector(axis.name)
-        if projection is not None:
-            projection_rows.append(projection)
-            projection_indices.append(index)
-    if projection_rows:
-        matrix = np.vstack(projection_rows)
-        pseudo_inverse = np.linalg.pinv(matrix)
-        for coord_index, name in enumerate(("H", "K", "L")):
-            if name in specs_by_name:
-                continue
-            vector = [0.0] * ndim
-            for projection_index, weight in zip(projection_indices, pseudo_inverse[coord_index], strict=True):
-                vector[projection_index] = _clean_axis_weight(weight)
-                used_indices.add(projection_index)
-            specs_by_name[name] = vector
-    specs = [
-        {"name": name, "vector": specs_by_name[name]}
-        for name in COORDINATE_RANGE_PARAMETER_NAMES
-        if name in specs_by_name
-    ]
-    for index, axis in enumerate(data.axes):
-        if index in used_indices:
-            continue
-        specs.append({"name": str(axis.name or f"Axis {index}"), "vector": _identity_vector(index, ndim)})
-    return specs[:ndim]
+        name = role_names.get(axis.role)
+        if name is None:
+            name = next(remaining_names, str(axis.name or f"Axis {index}"))
+        specs.append(
+            {
+                "name": name,
+                "vector": _mdhisto_rebin_axis_vector(axis, index, ndim),
+            }
+        )
+    return specs
 
 
 def _identity_vector(index: int, ndim: int) -> list[float]:
@@ -6326,6 +7016,7 @@ class NfitProjectExplorer:
         self.mask_type_combo = None
         self.mask_parameter_widget = None
         self.mask_parameter_layout = None
+        self.mask_application_status_label = None
         self.model_type_combo = None
         self.model_parameter_scroll = None
         self.model_parameter_widget = None
@@ -6425,9 +7116,12 @@ class NfitProjectExplorer:
     ) -> list[DatasetEntry]:
         from PySide6 import QtWidgets
 
+        progress = self._make_rebin_progress_callback("Loading datasets...")
+        progress({"stage": "import", "iteration": 0, "total": 0, "message": "opening dataset files"})
         try:
             entries = import_dataset_paths(
-                group, paths, data_type=data_type, importer_name=importer_name, into=into
+                group, paths, data_type=data_type, importer_name=importer_name, into=into,
+                progress_callback=progress,
             )
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
@@ -6436,6 +7130,8 @@ class NfitProjectExplorer:
                 f"Could not import datasets:\n{exc}",
             )
             return []
+        finally:
+            self._close_rebin_progress(progress)
         if entries:
             self._record_data_group_state_change(group)
             self._mark_dirty()
@@ -6570,6 +7266,7 @@ class NfitProjectExplorer:
             return True, group
         if role == "mask" and group is not None and entry is not None and mask is not None:
             delete_mask(entry, mask)
+            self._mark_mask_datasets_stale([entry])
             self._record_data_group_state_change(group)
             return True, group
         if role == "dataset_group" and group is not None:
@@ -6581,6 +7278,7 @@ class NfitProjectExplorer:
         if role == "group_mask" and group is not None and mask is not None:
             subgroup = self._dataset_group_for_item(item)
             if subgroup is not None and mask in subgroup.masks:
+                self._mark_mask_datasets_stale(list(subgroup.iter_datasets()))
                 subgroup.masks.remove(mask)
                 self._record_data_group_state_change(group)
                 return True, group
@@ -6776,6 +7474,7 @@ class NfitProjectExplorer:
             if subgroup is None:
                 return None
             mask = create_group_mask(subgroup, _group_reference_dataset(subgroup))
+            self._mark_mask_datasets_stale(list(subgroup.iter_datasets()))
             self._record_data_group_state_change(group)
             self._mark_dirty()
             self._refresh_tree(select_group=group, select_mask=mask, edit_mask=True)
@@ -6783,6 +7482,7 @@ class NfitProjectExplorer:
         if role not in {"dataset", "masks"} or group is None or entry is None:
             return None
         mask = create_mask(entry)
+        self._mark_mask_datasets_stale([entry])
         self._record_data_group_state_change(group)
         self._mark_dirty()
         self._refresh_tree(select_group=group, select_mask=mask, edit_mask=True)
@@ -6917,7 +7617,28 @@ class NfitProjectExplorer:
         if group is None or not data_group_composite_enabled(group):
             return False
         config = data_group_composite_config(group)
-        progress = self._make_rebin_progress_callback("Rebinning composite dataset...") if _composite_rebin_is_large(group, config) else None
+        if _dataset_composite_kind(_composite_candidates(group)[0]) == "mdevent":
+            _lower, _upper, num_bins = _composite_rebin_bounds(config)
+            estimate, available, warn = assess_mdevent_memory(
+                num_bins, max_batch_bytes=_rebin_max_batch_bytes(config)
+            )
+            if warn:
+                grid = " x ".join(str(value) for value in num_bins)
+                answer = QtWidgets.QMessageBox.warning(
+                    self.window,
+                    "MDEvent memory estimate",
+                    f"The requested {grid} grid ({math.prod(num_bins):,} bins) is estimated to peak at "
+                    f"{estimate / 1024**3:.1f} GB. Currently available RAM is "
+                    f"{available / 1024**3:.1f} GB.\n\nContinuing may cause heavy swapping or terminate nfit. "
+                    "Do you want to continue anyway?",
+                    QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+                    QtWidgets.QMessageBox.StandardButton.No,
+                )
+                if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+                    return False
+                config["_allow_memory_overcommit_once"] = True
+        progress = self._make_rebin_progress_callback("Rebinning composite dataset...")
+        progress({"stage": "prepare", "iteration": 0, "total": 0, "message": "preparing composite rebin"})
         try:
             data = _cached_composite_dataset_data(
                 group,
@@ -7606,6 +8327,7 @@ class NfitProjectExplorer:
                 group,
                 use_composite=use_composite,
                 force_rebin=False,
+                force_masks=False,
             )
         except Exception:
             return None
@@ -7656,7 +8378,12 @@ class NfitProjectExplorer:
             if total > 0:
                 dialog.setMaximum(total)
                 dialog.setValue(min(iteration, total))
-            dialog.setLabelText(str(event.get("message") or title))
+                percentage = 100.0 * min(iteration, total) / total
+                message = str(event.get("message") or title)
+                dialog.setLabelText(f"{message} ({percentage:.1f}%)")
+            else:
+                dialog.setRange(0, 0)
+                dialog.setLabelText(str(event.get("message") or title))
             QtWidgets.QApplication.processEvents()
 
         setattr(callback, "_nfit_progress_dialog", dialog)
@@ -7686,6 +8413,7 @@ class NfitProjectExplorer:
             self._refresh_tree(select_group=group, select_dataset=copied)
         elif clip_role == "mask" and isinstance(payload, MaskSpec) and role in {"dataset", "masks"} and group is not None and entry is not None:
             copied = copy_mask_to_dataset(payload, entry)
+            self._mark_mask_datasets_stale([entry])
             self._record_data_group_state_change(group)
             self._mark_dirty()
             self._refresh_tree(select_group=group, select_mask=copied)
@@ -8254,7 +8982,10 @@ class NfitProjectExplorer:
         mask_combo_class = _make_refreshing_combo_class()
         self.mask_type_combo = mask_combo_class(self._refresh_mask_type_combo)
         self.mask_type_combo.setObjectName("mask_type_combo")
-        self.mask_type_combo.setToolTip("Choose the mask type for the selected mask. The parameter editor updates to match this type.")
+        self.mask_type_combo.setToolTip(
+            "Choose the exclusion-region shape for the selected mask. Parameters describe the area to mask out; "
+            "new masks default to excluding nothing."
+        )
         self.mask_type_combo.currentTextChanged.connect(self._set_selected_mask_type)
         self.mask_parameter_widget = QtWidgets.QWidget()
         self.mask_parameter_layout = QtWidgets.QGridLayout(self.mask_parameter_widget)
@@ -8914,14 +9645,14 @@ class NfitProjectExplorer:
         mask: MaskSpec | None,
         model: ModelComponentSpec | None,
     ) -> None:
-        has_enabled = role in {"dataset", "mask", "model"}
+        has_enabled = role in {"dataset", "mask", "group_mask", "model"}
         self.enabled_check.setVisible(has_enabled)
         self.fit_weight_widget.setVisible(role == "dataset")
         self.enabled_check.blockSignals(True)
         try:
             if role == "dataset" and entry is not None:
                 self.enabled_check.setChecked(bool(entry.enabled))
-            elif role == "mask" and mask is not None:
+            elif role in {"mask", "group_mask"} and mask is not None:
                 self.enabled_check.setChecked(bool(mask.enabled))
             elif role == "model" and model is not None:
                 self.enabled_check.setChecked(bool(model.enabled))
@@ -9007,7 +9738,7 @@ class NfitProjectExplorer:
         if role == "dataset" and entry is not None:
             changed = entry.enabled != bool(checked)
             entry.enabled = bool(checked)
-        elif role == "mask" and mask is not None:
+        elif role in {"mask", "group_mask"} and mask is not None:
             changed = mask.enabled != bool(checked)
             mask.enabled = bool(checked)
         elif role == "model" and model is not None:
@@ -9017,6 +9748,8 @@ class NfitProjectExplorer:
             return
         if group is not None:
             self._record_data_group_state_change(group)
+        if role in {"mask", "group_mask"}:
+            self._mark_mask_datasets_stale(self._selected_mask_datasets(group, entry, role))
         self._mark_dirty()
         if group is not None:
             self.refresh_slice_viewer(group)
@@ -9310,6 +10043,8 @@ class NfitProjectExplorer:
                 ],
             )
         )
+        if any(dataset.data_type.startswith("single_crystal") for dataset in group.iter_datasets()):
+            self.details_layout.addWidget(self._ub_setup_group_box(group, group))
         self.details_layout.addStretch(1)
 
     def _set_dataset_collection_details(
@@ -9320,7 +10055,7 @@ class NfitProjectExplorer:
         datasets = list(node.iter_datasets())
         text = (
             f"Dataset collection\n\nDatasets (incl. nested): {len(datasets)}\n"
-            f"Data points: {_format_number(sum(_dataset_data_point_count(dataset) for dataset in datasets))}\n"
+            f"Data points: {_format_number(_dataset_collection_point_count(node))}\n"
             f"Dataset types: {_group_dataset_type_summary(node)}"
         )
         if isinstance(node, DatasetGroup):
@@ -9329,7 +10064,7 @@ class NfitProjectExplorer:
         self._clear_details_panel()
         summary_lines = [
             f"Datasets (incl. nested): {len(datasets)}",
-            f"Data points: {_format_number(sum(_dataset_data_point_count(dataset) for dataset in datasets))}",
+            f"Data points: {_format_number(_dataset_collection_point_count(node))}",
             f"Dataset types: {_group_dataset_type_summary(node)}",
         ]
         if isinstance(node, DatasetGroup):
@@ -9340,10 +10075,171 @@ class NfitProjectExplorer:
                 summary_lines,
             )
         )
+        if isinstance(node, DatasetGroup) and isinstance(node.metadata.get("mdevent"), dict):
+            self.details_layout.addWidget(self._mdevent_group_box(node))
+        if any(dataset.data_type.startswith("single_crystal") for dataset in node.iter_datasets()):
+            self.details_layout.addWidget(self._ub_setup_group_box(root, node))
         scope = _composite_scope(root, node)
-        self.details_layout.addWidget(self._group_dataset_weights_group_box(scope))
         self.details_layout.addWidget(self._group_composite_group_box(scope))
+        self.details_layout.addWidget(self._group_dataset_weights_group_box(scope))
         self.details_layout.addStretch(1)
+
+    def _mdevent_group_box(self, node: DatasetGroup) -> Any:
+        from PySide6 import QtWidgets
+
+        config = node.metadata["mdevent"]
+        box = QtWidgets.QGroupBox("MDEvent shared setup")
+        box.setToolTip(
+            "Shared configuration for every run in this MDEvent dataset group. "
+            "Orientation, detector mask, vanadium normalization, and overrides are stored once."
+        )
+        layout = QtWidgets.QGridLayout(box)
+        fields = [
+            ("Normalization", "normalization_file", "Vanadium detector workspace read directly by nfit and used for detector efficiency and solid-angle normalization. Mantid is not required."),
+            ("Detector mask", "mask_file", "Detector workspace read directly by nfit; zero, negative, or invalid detector values are excluded from both events and normalization coverage."),
+        ]
+        for row, (label, key, tooltip) in enumerate(fields):
+            layout.addWidget(QtWidgets.QLabel(label), row, 0)
+            edit = QtWidgets.QLineEdit(str(config.get(key) or ""))
+            edit.setObjectName(f"mdevent_{key}")
+            edit.setToolTip(tooltip)
+            edit.editingFinished.connect(
+                lambda edit=edit, key=key: self._set_mdevent_group_value(node, key, edit.text().strip() or None)
+            )
+            layout.addWidget(edit, row, 1, 1, 3)
+
+        layout.addWidget(QtWidgets.QLabel("Ei override"), 2, 0)
+        ei = QtWidgets.QDoubleSpinBox()
+        ei.setObjectName("mdevent_incident_energy_override")
+        ei.setRange(-1.0, 1.0e5)
+        ei.setDecimals(6)
+        ei.setSpecialValueText("(from each run)")
+        ei.setValue(float(config.get("incident_energy_override") or -1.0))
+        ei.setToolTip(
+            "Shared incident-energy override in meV. The run Ei is used at the minimum. "
+            "For an already converted MDEvent file this changes normalization trajectories, not stored event coordinates."
+        )
+        ei.valueChanged.connect(
+            lambda value: self._set_mdevent_group_value(node, "incident_energy_override", None if value < 0.0 else float(value))
+        )
+        layout.addWidget(ei, 2, 1)
+
+        layout.addWidget(QtWidgets.QLabel("T0 override"), 2, 2)
+        t0 = QtWidgets.QDoubleSpinBox()
+        t0.setObjectName("mdevent_t0_override")
+        t0.setRange(-1.0, 1.0e6)
+        t0.setDecimals(6)
+        t0.setSpecialValueText("(from each run)")
+        t0.setValue(float(config.get("t0_override") if config.get("t0_override") is not None else -1.0))
+        t0.setToolTip(
+            "Shared time-zero override in microseconds. It is retained for importing raw individual runs. "
+            "It cannot move coordinates already converted and stored in an MDEvent workspace."
+        )
+        t0.valueChanged.connect(
+            lambda value: self._set_mdevent_group_value(node, "t0_override", None if value < 0.0 else float(value))
+        )
+        layout.addWidget(t0, 2, 3)
+
+        layout.addWidget(QtWidgets.QLabel("UB matrix"), 3, 0)
+        ub = QtWidgets.QLineEdit(_parameter_to_text(config.get("ub_matrix", np.eye(3).tolist())))
+        ub.setObjectName("mdevent_ub_matrix")
+        ub.setToolTip(
+            "Shared Mantid UB matrix. Event Q_sample is converted with (2*pi*UB)^-1; "
+            "normalization trajectories additionally include each run goniometer."
+        )
+        ub.editingFinished.connect(lambda: self._set_mdevent_group_ub(node, ub))
+        layout.addWidget(ub, 3, 1, 1, 3)
+        return box
+
+    def _ub_setup_group_box(
+        self,
+        root: DataGroup,
+        target: DataGroup | DatasetGroup | DatasetEntry,
+    ) -> Any:
+        from PySide6 import QtWidgets
+
+        box = QtWidgets.QGroupBox("Crystal orientation")
+        box.setToolTip(
+            "Edit the unit cell, orientation vectors, and UB matrix for this single-crystal scope. "
+            "UB maps column [h,k,l] to Q' in inverse angstrom with beam +x and vertical +z."
+        )
+        layout = QtWidgets.QHBoxLayout(box)
+        button = QtWidgets.QPushButton("UB setup...")
+        button.setObjectName("open_ub_setup")
+        button.setToolTip(
+            "Open the UB editor. It can calculate UB from lattice and u/v vectors, load NeXus or ISAW .mat files, "
+            "and save the IPNS/ISAW convention where the matrix is transposed on disk."
+        )
+        button.clicked.connect(lambda: self._open_ub_setup(root, target))
+        layout.addWidget(button)
+        layout.addStretch(1)
+        return box
+
+    def _open_ub_setup(
+        self,
+        root: DataGroup,
+        target: DataGroup | DatasetGroup | DatasetEntry,
+    ) -> bool:
+        from PySide6 import QtWidgets
+
+        metadata = target.metadata if isinstance(target.metadata, dict) else {}
+        setup = metadata.get("ub_setup") if isinstance(metadata.get("ub_setup"), dict) else {}
+        if isinstance(target, DatasetGroup) and isinstance(metadata.get("mdevent"), dict):
+            shared = metadata["mdevent"]
+            ub = shared.get("ub_matrix", np.eye(3))
+            lattice = shared.get("lattice_parameters") or root.lattice_parameters
+        elif isinstance(target, DatasetEntry):
+            merged = _merged_dataset_metadata(target)
+            imported = _dataset_ub_for_editor(merged)
+            ub = setup.get("ub_matrix", imported if imported is not None else np.eye(3))
+            lattice = setup.get("lattice_parameters") or merged.get("lattice_parameters") or root.lattice_parameters
+        else:
+            ub = setup.get("ub_matrix", metadata.get("ub_matrix", np.eye(3)))
+            lattice = setup.get("lattice_parameters") or root.lattice_parameters
+        dialog = UBSetupDialog(
+            self.window,
+            ub=ub,
+            lattice=lattice,
+            u=setup.get("u", [1.0, 0.0, 0.0]),
+            v=setup.get("v", [0.0, 1.0, 0.0]),
+        )
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted or dialog.result is None:
+            return False
+        result = dialog.result
+        target.metadata["ub_setup"] = copy.deepcopy(result)
+        target.metadata["ub_matrix"] = copy.deepcopy(result["ub_matrix"])
+        if isinstance(target, DatasetEntry):
+            target.metadata["lattice_parameters"] = copy.deepcopy(result["lattice_parameters"])
+        else:
+            root.lattice_parameters = copy.deepcopy(result["lattice_parameters"])
+        if isinstance(target, DatasetGroup) and isinstance(target.metadata.get("mdevent"), dict):
+            target.metadata["mdevent"]["ub_matrix"] = copy.deepcopy(result["ub_matrix"])
+            target.metadata["mdevent"]["lattice_parameters"] = copy.deepcopy(result["lattice_parameters"])
+            data_group_composite_config(_composite_scope(root, target))["stale"] = True
+        self._record_data_group_state_change(root)
+        self._mark_dirty()
+        self._sync_details()
+        return True
+
+    def _set_mdevent_group_ub(self, node: DatasetGroup, edit: Any) -> None:
+        value = _parse_parameter_text(edit.text())
+        try:
+            matrix = np.asarray(value, dtype=float)
+        except (TypeError, ValueError):
+            matrix = np.empty((0, 0))
+        if matrix.shape != (3, 3) or not np.all(np.isfinite(matrix)) or abs(np.linalg.det(matrix)) < 1e-14:
+            edit.setText(_parameter_to_text(node.metadata["mdevent"].get("ub_matrix")))
+            return
+        self._set_mdevent_group_value(node, "ub_matrix", matrix.tolist())
+
+    def _set_mdevent_group_value(self, node: DatasetGroup, key: str, value: Any) -> None:
+        config = node.metadata["mdevent"]
+        if config.get(key) == value:
+            return
+        config[key] = value
+        composite = data_group_composite_config(_composite_scope(self._objects_for_item(self._current_item())[0], node))
+        composite["stale"] = True
+        self._mark_dirty()
 
     def _group_dataset_weights_group_box(self, group: DataGroup | _CompositeScope) -> Any:
         from PySide6 import QtWidgets
@@ -9401,17 +10297,57 @@ class NfitProjectExplorer:
         controls_layout = QtWidgets.QGridLayout(controls)
         controls_layout.setContentsMargins(0, 0, 0, 0)
         axes = config.get("axes", [])
-        headers = ["Axis", "Lower", "Upper", "Bins", "Step"]
-        for column, label in enumerate(headers):
+        resolution_mode = _rebin_resolution_mode(config)
+        resolution_key = "step_size" if resolution_mode == "step" else "num_bins"
+        show_vectors = isinstance(group.metadata.get("mdevent"), dict)
+        headers = ["Axis"]
+        if show_vectors:
+            headers.append("Coord axis")
+        headers.extend(["Lower", "Upper", "Resolution"])
+        for column, label in enumerate(headers[:-1]):
             controls_layout.addWidget(QtWidgets.QLabel(label), 0, column)
+        resolution_mode_combo = QtWidgets.QComboBox()
+        resolution_mode_combo.setObjectName("group_composite_resolution_mode")
+        resolution_mode_combo.addItem("Step", "step")
+        resolution_mode_combo.addItem("Bins", "bins")
+        resolution_mode_combo.setCurrentIndex(
+            max(resolution_mode_combo.findData(resolution_mode), 0)
+        )
+        resolution_mode_combo.setToolTip(
+            "Choose whether the single Resolution column edits bin step size or bin count. "
+            "Switching modes calculates the displayed value from the current bounds and resolution."
+        )
+        resolution_mode_combo.currentIndexChanged.connect(
+            lambda _index, combo=resolution_mode_combo: self._set_group_composite_resolution_mode(
+                group, str(combo.currentData() or "step")
+            )
+        )
+        controls_layout.addWidget(resolution_mode_combo, 0, len(headers) - 1)
         for row, axis_config in enumerate(axes, start=1):
             axis = _sanitize_rebin_axis_config(axis_config)
             controls_layout.addWidget(QtWidgets.QLabel(str(axis.get("name", f"Axis {row}"))), row, 0)
-            for column, key in enumerate(("lower", "upper", "num_bins", "step_size"), start=1):
+            column_offset = 1
+            if show_vectors:
+                vector_edit = QtWidgets.QLineEdit(_parameter_to_text(axis.get("vector", [])))
+                vector_edit.setObjectName(f"group_composite_axis_vector_{row - 1}")
+                vector_edit.setMinimumWidth(110)
+                vector_edit.setToolTip(
+                    "Direction vector for this output HKLE axis. The four rows must be linearly independent. "
+                    "Momentum rows may combine H, K, and L but cannot include energy; the energy row must be "
+                    "[0, 0, 0, 1]. Examples include [1, 1, 0, 0], [0, 0, 1, 0], and [1, -1, 0, 0]."
+                )
+                vector_edit.editingFinished.connect(
+                    lambda row=row - 1, editor=vector_edit: self._set_group_composite_axis_vector(group, row, editor.text())
+                )
+                controls_layout.addWidget(vector_edit, row, column_offset)
+                column_offset += 1
+            for column, key in enumerate(("lower", "upper", resolution_key), start=column_offset):
                 edit = QtWidgets.QLineEdit(_parameter_to_text(axis.get(key)))
+                if key == resolution_key:
+                    edit.setObjectName(f"group_composite_resolution_value_{row - 1}")
                 edit.setMinimumWidth(72)
                 edit.setToolTip(
-                    f"Composite rebin {key.replace('_', ' ')} for this axis. "
+                    f"Composite rebin {('step size' if key == 'step_size' else 'bin count') if key == resolution_key else key.replace('_', ' ')} for this axis. "
                     "These bounds and bins are applied after all enabled datasets are scaled, weighted, and collected."
                 )
                 edit.editingFinished.connect(
@@ -9501,6 +10437,8 @@ class NfitProjectExplorer:
                 pass
         self.details_label.setText(dataset_details_text(dataset, group=group))
         self._clear_details_panel()
+        if group is not None and dataset.data_type.startswith("single_crystal"):
+            self.details_layout.addWidget(self._ub_setup_group_box(group, dataset))
         is_point_list = isinstance(dataset.data, PointListData)
         for title, lines in dataset_detail_sections(dataset, group=group):
             if title == "Axes":
@@ -9516,6 +10454,40 @@ class NfitProjectExplorer:
             else:
                 self.details_layout.addWidget(self._details_group_box(title, lines))
         self.details_layout.addStretch(1)
+
+    def _set_dataset_details_preserving_scroll(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup | None,
+        *,
+        scroll_position: int | None = None,
+        focus_object_name: str | None = None,
+    ) -> None:
+        """Rebuild dataset details without jumping the right panel to the top."""
+
+        from PySide6 import QtCore, QtWidgets
+
+        scrollbar = self.details_scroll.verticalScrollBar()
+        position = int(scrollbar.value()) if scroll_position is None else int(scroll_position)
+        if focus_object_name is None:
+            focused = self.window.focusWidget()
+            if focused is not None and self.details_widget.isAncestorOf(focused):
+                focus_object_name = str(focused.objectName() or "")
+        self._set_dataset_details(dataset, group)
+
+        def restore_position() -> None:
+            _group, current, _mask, _model, role = self._objects_for_item(self._current_item())
+            if role == "dataset" and current is dataset:
+                self.details_layout.activate()
+                if focus_object_name:
+                    replacement = self.details_widget.findChild(QtWidgets.QWidget, focus_object_name)
+                    if replacement is not None and replacement.isEnabled():
+                        replacement.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+                scrollbar.setValue(min(position, scrollbar.maximum()))
+
+        restore_position()
+        QtCore.QTimer.singleShot(0, restore_position)
+        QtCore.QTimer.singleShot(0, lambda: QtCore.QTimer.singleShot(0, restore_position))
 
     def _set_fit_details(self, fit_entry: FitTimelineEntry) -> None:
         from PySide6 import QtCore, QtWidgets
@@ -10202,25 +11174,61 @@ class NfitProjectExplorer:
         headers = ["Axis"]
         if show_vectors:
             headers.append("Coord axis")
-        headers.extend(["Lower", "Upper", "Bins", "Step"])
+        headers.extend(["Lower", "Upper", "Resolution"])
+        resolution_mode = _rebin_resolution_mode(config)
+        resolution_key = "step_size" if resolution_mode == "step" else "num_bins"
         last_column = len(headers) - 1
         controls_layout.setColumnStretch(last_column, 1)
-        for column, text in enumerate(headers):
+        for column, text in enumerate(headers[:-1]):
             header = QtWidgets.QLabel(text)
             header.setStyleSheet("font-weight: 600")
             controls_layout.addWidget(header, 0, column)
+        resolution_mode_combo = QtWidgets.QComboBox()
+        resolution_mode_combo.setObjectName("dataset_rebin_resolution_mode")
+        resolution_mode_combo.addItem("Step", "step")
+        resolution_mode_combo.addItem("Bins", "bins")
+        resolution_mode_combo.setCurrentIndex(
+            max(resolution_mode_combo.findData(resolution_mode), 0)
+        )
+        resolution_mode_combo.setToolTip(
+            "Choose whether the single Resolution column edits bin step size or bin count. "
+            "Switching modes calculates the displayed value from the current bounds and resolution."
+        )
+        resolution_mode_combo.currentIndexChanged.connect(
+            lambda _index, combo=resolution_mode_combo: self._set_dataset_rebin_resolution_mode(
+                dataset, group, str(combo.currentData() or "step")
+            )
+        )
+        controls_layout.addWidget(resolution_mode_combo, 0, last_column)
         for row, axis_config in enumerate(config.get("axes", []), start=1):
             axis_config = _sanitize_rebin_axis_config(axis_config)
-            axis_label = QtWidgets.QLabel(f"{axis_config.get('name', f'Axis {row}')} ({axis_config.get('units', '-') or '-'})")
+            axis_label = QtWidgets.QLabel(
+                str(axis_config.get("variable") or axis_config.get("name", f"Axis {row}"))
+            )
+            axis_label.setObjectName(f"dataset_rebin_axis_variable_{row - 1}")
+            axis_label.setToolTip(
+                "Scalar variable for this output coordinate. The plotted axis name is generated from this variable "
+                "and the Coord axis vector."
+            )
             lower_edit = QtWidgets.QLineEdit(_format_number(axis_config["lower"]))
             upper_edit = QtWidgets.QLineEdit(_format_number(axis_config["upper"]))
-            bins_edit = QtWidgets.QLineEdit(str(int(axis_config["num_bins"])))
-            step_edit = QtWidgets.QLineEdit(_format_number(axis_config["step_size"]))
+            lower_edit.setObjectName(f"dataset_rebin_axis_lower_{row - 1}")
+            upper_edit.setObjectName(f"dataset_rebin_axis_upper_{row - 1}")
+            resolution_text = (
+                str(int(axis_config["num_bins"]))
+                if resolution_key == "num_bins"
+                else _format_number(axis_config["step_size"])
+            )
+            resolution_edit = QtWidgets.QLineEdit(resolution_text)
+            resolution_edit.setObjectName(f"dataset_rebin_resolution_value_{row - 1}")
             lower_edit.setToolTip("Lower bound of the rebinned axis.")
             upper_edit.setToolTip("Upper bound of the rebinned axis.")
-            bins_edit.setToolTip("Number of bins on this rebinned axis. Editing this updates the step size.")
-            step_edit.setToolTip("Approximate bin step size on this rebinned axis. Editing this updates the number of bins.")
-            for editor in (lower_edit, upper_edit, bins_edit, step_edit):
+            resolution_edit.setToolTip(
+                "Approximate bin step size. Editing it recalculates the bin count."
+                if resolution_key == "step_size"
+                else "Number of bins. Editing it recalculates the displayed step size."
+            )
+            for editor in (lower_edit, upper_edit, resolution_edit):
                 editor.setMinimumWidth(72)
             lower_edit.editingFinished.connect(
                 lambda row=row - 1, editor=lower_edit: self._set_dataset_rebin_axis_value(dataset, group, row, "lower", editor.text())
@@ -10228,22 +11236,29 @@ class NfitProjectExplorer:
             upper_edit.editingFinished.connect(
                 lambda row=row - 1, editor=upper_edit: self._set_dataset_rebin_axis_value(dataset, group, row, "upper", editor.text())
             )
-            bins_edit.editingFinished.connect(
-                lambda row=row - 1, editor=bins_edit: self._set_dataset_rebin_axis_value(dataset, group, row, "num_bins", editor.text())
-            )
-            step_edit.editingFinished.connect(
-                lambda row=row - 1, editor=step_edit: self._set_dataset_rebin_axis_value(dataset, group, row, "step_size", editor.text())
+            resolution_edit.editingFinished.connect(
+                lambda row=row - 1, key=resolution_key, editor=resolution_edit: self._set_dataset_rebin_axis_value(
+                    dataset, group, row, key, editor.text()
+                )
             )
             controls_layout.addWidget(axis_label, row, 0)
             column = 1
             if show_vectors:
                 vector_edit = QtWidgets.QLineEdit(_parameter_to_text(axis_config.get("vector", [])))
+                vector_edit.setObjectName(f"dataset_rebin_axis_vector_{row - 1}")
                 vector_edit.setMinimumWidth(110)
-                vector_edit.setToolTip(
-                    "Projection vector defining this rebin coordinate. For 4D MDHisto data, vectors follow "
-                    "the displayed H,K,L,E coordinate axis when possible, e.g. DeltaE -> [0, 0, 0, 1] "
-                    "and [H,-H,0] -> [1, -1, 0, 0]."
-                )
+                if len(config.get("axes", [])) == 4:
+                    vector_edit.setToolTip(
+                        "Direction vector defining this row of the output HKLE coordinate basis. The four rows must be "
+                        "linearly independent. Momentum rows may use H, K, and L components but must have zero E; the "
+                        "energy row may use only a nonzero E component. Changing a vector regenerates the plotted axis "
+                        "name and expands all rebin bounds to contain the full source dataset while preserving approximate "
+                        "bin resolution. Examples: E -> [0, 0, 0, 1], and H with [1, 1, 1, 0] -> [H,H,H]."
+                    )
+                else:
+                    vector_edit.setToolTip(
+                        "Projection vector defining this output coordinate. Changing it regenerates the plotted axis name."
+                    )
                 vector_edit.editingFinished.connect(
                     lambda row=row - 1, editor=vector_edit: self._set_dataset_rebin_axis_vector(dataset, group, row, editor.text())
                 )
@@ -10251,8 +11266,7 @@ class NfitProjectExplorer:
                 column += 1
             controls_layout.addWidget(lower_edit, row, column)
             controls_layout.addWidget(upper_edit, row, column + 1)
-            controls_layout.addWidget(bins_edit, row, column + 2)
-            controls_layout.addWidget(step_edit, row, column + 3)
+            controls_layout.addWidget(resolution_edit, row, column + 2)
 
         option_row = QtWidgets.QHBoxLayout()
         fractional_check = QtWidgets.QCheckBox("Fractional binning")
@@ -10459,7 +11473,7 @@ class NfitProjectExplorer:
         if group is not None:
             self._record_data_group_state_change(group)
         self._mark_dirty()
-        self._set_dataset_details(dataset, group)
+        self._set_dataset_details_preserving_scroll(dataset, group)
 
     def _set_dataset_rebin_mean_weighting(
         self,
@@ -10535,12 +11549,26 @@ class NfitProjectExplorer:
         config["normalize"] = True
         self._after_group_composite_changed(group)
 
+    def _set_group_composite_resolution_mode(
+        self,
+        group: DataGroup | _CompositeScope,
+        mode: str,
+    ) -> None:
+        mode = "bins" if mode == "bins" else "step"
+        config = data_group_composite_config(group)
+        if _rebin_resolution_mode(config) == mode:
+            return
+        config[REBIN_RESOLUTION_MODE_KEY] = mode
+        self._mark_dirty()
+        self._sync_details()
+
     def _set_group_composite_axis_value(self, group: DataGroup | _CompositeScope, index: int, key: str, text: str) -> None:
         config = data_group_composite_config(group)
         axes = config.get("axes")
         if not isinstance(axes, list) or not (0 <= index < len(axes)):
             return
         axis = dict(axes[index])
+        previous_step = float(axis.get("step_size", 0.0) or 0.0)
         try:
             if key == "num_bins":
                 axis[key] = max(int(float(text)), 1)
@@ -10553,9 +11581,33 @@ class NfitProjectExplorer:
             step = float(axis.get("step_size", 0.0))
             if step > 0.0:
                 axis["num_bins"] = _num_bins_from_step_size(axis.get("lower", 0.0), axis.get("upper", 0.0), step)
+        elif key in {"lower", "upper"} and _rebin_resolution_mode(config) == "step":
+            if previous_step > 0.0 and np.isfinite(previous_step):
+                axis["num_bins"] = _num_bins_from_step_size(
+                    axis.get("lower", 0.0), axis.get("upper", 0.0), previous_step
+                )
         axis.update(_sanitize_rebin_axis_config(axis))
         axes[index] = axis
         config["normalize"] = True
+        self._after_group_composite_changed(group)
+
+    def _set_group_composite_axis_vector(self, group: DataGroup | _CompositeScope, index: int, text: str) -> None:
+        config = data_group_composite_config(group)
+        axes = config.get("axes", [])
+        if not (0 <= index < len(axes)):
+            return
+        try:
+            vector = np.asarray(_parse_parameter_text(text), dtype=float).reshape(-1)
+            candidate = [dict(axis) for axis in axes]
+            candidate[index]["vector"] = vector.tolist()
+            _validate_mdhisto_rebin_basis(candidate, 4)
+        except (TypeError, ValueError):
+            self._sync_details()
+            return
+        axes[index]["vector"] = vector.tolist()
+        axes[index]["name"] = _rebin_axis_name(
+            str(axes[index].get("variable", ("H", "K", "L", "E")[index])), vector
+        )
         self._after_group_composite_changed(group)
 
     def _set_dataset_rebin_axis_value(
@@ -10571,6 +11623,7 @@ class NfitProjectExplorer:
         if not (0 <= index < len(axes)):
             return
         axis = axes[index]
+        previous_step = float(axis.get("step_size", 0.0) or 0.0)
         try:
             if key == "num_bins":
                 value: Any = max(int(float(text)), 1)
@@ -10590,10 +11643,33 @@ class NfitProjectExplorer:
                     if axis.get(key) == value:
                         return
                     axis[key] = value
+                    if (
+                        key in {"lower", "upper"}
+                        and _rebin_resolution_mode(config) == "step"
+                        and previous_step > 0.0
+                        and np.isfinite(previous_step)
+                    ):
+                        axis["num_bins"] = _num_bins_from_step_size(
+                            axis.get("lower", 0.0), axis.get("upper", 0.0), previous_step
+                        )
         except ValueError:
             return
         axis.update(_sanitize_rebin_axis_config(axis))
         self._after_dataset_rebin_changed(dataset, group)
+
+    def _set_dataset_rebin_resolution_mode(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup | None,
+        mode: str,
+    ) -> None:
+        mode = "bins" if mode == "bins" else "step"
+        config = dataset_rebin_config(dataset)
+        if _rebin_resolution_mode(config) == mode:
+            return
+        config[REBIN_RESOLUTION_MODE_KEY] = mode
+        self._mark_dirty()
+        self._set_dataset_details_preserving_scroll(dataset, group)
 
     def _set_dataset_rebin_axis_vector(
         self,
@@ -10609,20 +11685,41 @@ class NfitProjectExplorer:
         ndim = len(dataset.data.axes) if isinstance(dataset.data, MDHistoData) else len(axes)
         parsed = _parse_parameter_text(text)
         if not isinstance(parsed, (list, tuple)) or len(parsed) != ndim:
-            self._set_dataset_details(dataset, group)  # revert editor to the stored vector
+            self._set_dataset_details_preserving_scroll(dataset, group)  # revert the editor
             return
         try:
             vector = [_clean_axis_weight(component) for component in parsed]
         except (TypeError, ValueError):
-            self._set_dataset_details(dataset, group)
+            self._set_dataset_details_preserving_scroll(dataset, group)
             return
-        axis = axes[index]
-        if axis.get("vector") == vector:
+        if axes[index].get("vector") == vector:
             return
-        axis["vector"] = vector
+        if isinstance(dataset.data, MDHistoData) and ndim == 4:
+            try:
+                _update_mdhisto_rebin_basis(dataset.data, axes, index, vector)
+            except ValueError as exc:
+                from PySide6 import QtWidgets
+
+                QtWidgets.QMessageBox.warning(
+                    self.window,
+                    "Rebin coordinate axis",
+                    f"Could not change the coordinate axis:\n{exc}",
+                )
+                self._set_dataset_details_preserving_scroll(dataset, group)
+                return
+        else:
+            axes[index]["vector"] = vector
         self._after_dataset_rebin_changed(dataset, group)
 
     def _after_dataset_rebin_changed(self, dataset: DatasetEntry, group: DataGroup | None) -> None:
+        scrollbar = self.details_scroll.verticalScrollBar()
+        scroll_position = int(scrollbar.value())
+        focused = self.window.focusWidget()
+        focus_object_name = (
+            str(focused.objectName() or "")
+            if focused is not None and self.details_widget.isAncestorOf(focused)
+            else None
+        )
         config = dataset_rebin_config(dataset)
         config["stale"] = True
         if group is not None:
@@ -10630,7 +11727,50 @@ class NfitProjectExplorer:
         self._mark_dirty()
         if group is not None and bool(config.get("auto_rebin", True)):
             self.refresh_slice_viewer(group)
-        self._set_dataset_details(dataset, group)
+        if not self._refresh_dataset_rebin_controls(dataset):
+            self._set_dataset_details_preserving_scroll(
+                dataset,
+                group,
+                scroll_position=scroll_position,
+                focus_object_name=focus_object_name,
+            )
+
+    def _refresh_dataset_rebin_controls(self, dataset: DatasetEntry) -> bool:
+        """Update rebin controls in place so ordinary edits keep their scroll/focus."""
+
+        from PySide6 import QtWidgets
+
+        controls = self.details_widget.findChild(QtWidgets.QWidget, "dataset_rebin_controls")
+        if controls is None:
+            return False
+        config = dataset_rebin_config(dataset)
+        controls.setVisible(bool(config.get("enabled", False)))
+        resolution_key = "step_size" if _rebin_resolution_mode(config) == "step" else "num_bins"
+        for index, axis_config in enumerate(config.get("axes", [])):
+            axis = _sanitize_rebin_axis_config(axis_config)
+            values = {
+                f"dataset_rebin_axis_lower_{index}": _format_number(axis["lower"]),
+                f"dataset_rebin_axis_upper_{index}": _format_number(axis["upper"]),
+                f"dataset_rebin_resolution_value_{index}": (
+                    str(int(axis["num_bins"]))
+                    if resolution_key == "num_bins"
+                    else _format_number(axis["step_size"])
+                ),
+                f"dataset_rebin_axis_vector_{index}": _parameter_to_text(axis.get("vector", [])),
+            }
+            for object_name, text in values.items():
+                editor = self.details_widget.findChild(QtWidgets.QLineEdit, object_name)
+                if editor is None:
+                    continue
+                editor.blockSignals(True)
+                try:
+                    editor.setText(text)
+                finally:
+                    editor.blockSignals(False)
+        status = self.details_widget.findChild(QtWidgets.QLabel, "dataset_rebin_status")
+        if status is not None:
+            status.setText(_dataset_rebin_status_text(dataset, config))
+        return True
 
     def _after_group_composite_changed(self, group: DataGroup | _CompositeScope) -> None:
         config = data_group_composite_config(group)
@@ -11093,6 +12233,8 @@ class NfitProjectExplorer:
         defaults = default_mask_parameters(mask.type)
         mask.parameters = {name: mask.parameters.get(name, value) for name, value in defaults.items()}
         ensure_coordinate_range_mask_axes(mask, entry)
+        affected = self._selected_mask_datasets(group, entry, role)
+        self._mark_mask_datasets_stale(affected)
         branch_created = self._record_data_group_state_change(group) if group is not None else False
         self._mark_dirty()
         self._rebuild_mask_parameter_editor(mask, entry)
@@ -11109,16 +12251,46 @@ class NfitProjectExplorer:
         self._clear_mask_parameter_editor()
         invert_check = QtWidgets.QCheckBox("Invert")
         invert_check.setChecked(bool(mask.invert))
-        invert_check.setToolTip("Flip this mask contribution before applying it: masked bins become unmasked and unmasked bins become masked.")
+        invert_check.setToolTip(
+            "Flip this mask contribution. Normally the specified region is masked out; inverted mode masks everything outside it instead."
+        )
         invert_check.toggled.connect(lambda checked: self._set_mask_invert(checked))
         additive_check = QtWidgets.QCheckBox("Additive")
         additive_check.setChecked(bool(mask.additive))
-        additive_check.setToolTip("Add bins back into the accumulated nfit mask. This never overrides the file mask.")
+        additive_check.setToolTip(
+            "Remove this specified region from masks accumulated earlier, adding those bins back to the analysis. This never overrides the file mask."
+        )
         additive_check.toggled.connect(lambda checked: self._set_mask_additive(checked))
         self.mask_parameter_layout.addWidget(invert_check, 0, 0)
         self.mask_parameter_layout.addWidget(additive_check, 0, 1)
+        affected = self._selected_mask_datasets_for_current_item()
+        auto_check = QtWidgets.QCheckBox("Automatic mask application")
+        auto_check.setObjectName("mask_auto_apply")
+        auto_check.setChecked(bool(affected) and all(_dataset_mask_auto_enabled(item) for item in affected))
+        auto_check.setToolTip(
+            "Automatically apply mask edits to cached viewer/fit data. Large datasets default off. "
+            "When off, edits remain pending until Apply masks now is pressed, a fit starts, or the data viewer is opened."
+        )
+        auto_check.toggled.connect(self._set_selected_mask_auto_apply)
+        apply_button = QtWidgets.QPushButton("Apply masks now")
+        apply_button.setObjectName("mask_apply_now")
+        apply_button.setEnabled(bool(affected))
+        apply_button.setToolTip(
+            "Apply all enabled dataset and inherited masks now and update the cached viewer/fit representation."
+        )
+        apply_button.clicked.connect(self.apply_masks_now_for_selection)
+        status_label = QtWidgets.QLabel(self._mask_status_for_datasets(affected))
+        status_label.setObjectName("mask_application_status")
+        status_label.setWordWrap(True)
+        status_label.setToolTip(
+            "Shows whether mask edits are already materialized. Pending masks are forced current before fitting or opening the data viewer."
+        )
+        self.mask_application_status_label = status_label
+        self.mask_parameter_layout.addWidget(auto_check, 1, 0, 1, 2)
+        self.mask_parameter_layout.addWidget(apply_button, 2, 0, 1, 2)
+        self.mask_parameter_layout.addWidget(status_label, 3, 0, 1, 2)
         parameter_names = _mask_parameter_names(mask, dataset)
-        layout_row = 1
+        layout_row = 4
         added_axis_section = False
         for parameter_name in parameter_names:
             if (
@@ -11148,6 +12320,7 @@ class NfitProjectExplorer:
             item = self.mask_parameter_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                widget.setParent(None)
                 widget.deleteLater()
 
     def _set_mask_parameter(self, name: str, text: str) -> None:
@@ -11155,13 +12328,18 @@ class NfitProjectExplorer:
         if role not in {"mask", "group_mask"} or mask is None:
             return
         value = _parse_parameter_text(text)
+        changed = False
         if mask.parameters.get(name) != value:
             mask.parameters[name] = value
+            changed = True
+            self._mark_mask_datasets_stale(self._selected_mask_datasets(group, _entry, role))
             branch_created = self._record_data_group_state_change(group) if group is not None else False
             self._mark_dirty()
             if group is not None and branch_created:
                 self._refresh_tree(select_group=group, select_mask=mask)
                 return
+        if changed:
+            self._rebuild_mask_parameter_editor(mask, _entry)
         if group is not None:
             self._request_overlay_refresh(group)
 
@@ -11178,6 +12356,7 @@ class NfitProjectExplorer:
         if bool(getattr(mask, name)) == bool(value):
             return
         setattr(mask, name, bool(value))
+        self._mark_mask_datasets_stale(self._selected_mask_datasets(group, _entry, role))
         branch_created = self._record_data_group_state_change(group) if group is not None else False
         self._mark_dirty()
         if group is not None and branch_created:
@@ -11185,6 +12364,114 @@ class NfitProjectExplorer:
             return
         if group is not None:
             self.refresh_slice_viewer(group)
+
+    def _selected_mask_datasets(
+        self,
+        group: DataGroup | None,
+        entry: DatasetEntry | None,
+        role: str,
+    ) -> list[DatasetEntry]:
+        if role == "mask" and entry is not None:
+            return [entry]
+        if role == "group_mask" and group is not None:
+            subgroup = self._dataset_group_for_item(self._current_item())
+            return list(subgroup.iter_datasets()) if subgroup is not None else []
+        return []
+
+    def _selected_mask_datasets_for_current_item(self) -> list[DatasetEntry]:
+        group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        return self._selected_mask_datasets(group, entry, role)
+
+    def _mark_mask_datasets_stale(self, datasets: list[DatasetEntry]) -> None:
+        for dataset in datasets:
+            dataset_mask_application_config(dataset)["stale"] = True
+        if self.mask_application_status_label is not None:
+            self.mask_application_status_label.setText(self._mask_status_for_datasets(datasets))
+
+    def _mask_status_for_datasets(self, datasets: list[DatasetEntry]) -> str:
+        statuses = {_dataset_mask_status_text(item) for item in datasets}
+        if len(statuses) == 1:
+            return next(iter(statuses))
+        if not statuses:
+            return "No datasets are affected by this mask."
+        return "Mask application settings differ across affected datasets."
+
+    def _set_selected_mask_auto_apply(self, checked: bool) -> None:
+        group, _entry, mask, _model, role = self._objects_for_item(self._current_item())
+        if role not in {"mask", "group_mask"} or mask is None:
+            return
+        affected = self._selected_mask_datasets_for_current_item()
+        changed = False
+        for dataset in affected:
+            config = dataset_mask_application_config(dataset)
+            if bool(config.get("auto_apply", True)) != bool(checked):
+                config["auto_apply"] = bool(checked)
+                changed = True
+        if not changed:
+            return
+        self._mark_dirty()
+        if checked and group is not None:
+            self._request_overlay_refresh(group)
+        self._rebuild_mask_parameter_editor(mask, _entry)
+
+    def apply_masks_now_for_selection(self) -> bool:
+        from PySide6 import QtCore, QtWidgets
+
+        group, _entry, mask, _model, role = self._objects_for_item(self._current_item())
+        if role not in {"mask", "group_mask"} or group is None or mask is None:
+            return False
+        affected = self._selected_mask_datasets_for_current_item()
+        progress = QtWidgets.QProgressDialog(
+            "Applying masks...",
+            "",
+            0,
+            len(affected),
+            self.window,
+        )
+        progress.setWindowTitle("Apply masks")
+        progress.setCancelButton(None)
+        progress.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.show()
+        try:
+            for index, dataset in enumerate(affected, start=1):
+                progress.setLabelText(f"Applying masks to {dataset.name}...")
+                QtWidgets.QApplication.processEvents()
+                rebin_progress = None
+                if dataset_rebin_enabled(dataset):
+                    # Applying masks can immediately enter a long rebin. Hide
+                    # the coarse per-dataset mask progress while the rebinner
+                    # reports its own batch-level progress.
+                    progress.hide()
+                    rebin_progress = self._make_rebin_progress_callback(
+                        f"Rebinning {dataset.name}..."
+                    )
+                try:
+                    dataset_for_slice_viewer(
+                        dataset,
+                        extra_masks=effective_dataset_masks(group, dataset),
+                        force_rebin=True,
+                        force_masks=True,
+                        progress_callback=rebin_progress,
+                    )
+                finally:
+                    self._close_rebin_progress(rebin_progress)
+                    if dataset_rebin_enabled(dataset) and index < len(affected):
+                        progress.show()
+                progress.setValue(index)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Apply masks",
+                f"Could not apply masks:\n{exc}",
+            )
+            return False
+        finally:
+            progress.close()
+        self._mark_dirty()
+        self.refresh_slice_viewer(group)
+        self._rebuild_mask_parameter_editor(mask, _entry)
+        return True
 
     def _refresh_model_type_combo(self) -> None:
         current = self.model_type_combo.currentData()
@@ -12372,7 +13659,12 @@ def _dataset_fit_summary_lines(
         return []
     extra_masks = effective_dataset_masks(group, dataset) if group is not None else []
     try:
-        view = dataset_for_slice_viewer(dataset, extra_masks=extra_masks, force_rebin=False)
+        view = dataset_for_slice_viewer(
+            dataset,
+            extra_masks=extra_masks,
+            force_rebin=False,
+            force_masks=False,
+        )
         if isinstance(view, MDHistoData):
             fit_bins = _mdhisto_fit_bin_count(view)
             total_bins = int(np.prod(view.shape))
@@ -12583,6 +13875,27 @@ def _dataset_orientation_matrix(metadata: dict[str, Any]) -> tuple[str, Any | No
             if key in oriented_lattice:
                 return label, oriented_lattice[key]
     return "", None
+
+
+def _dataset_ub_for_editor(metadata: dict[str, Any]) -> np.ndarray | None:
+    """Return UB without 2pi, converting full RLU-to-Q matrices when needed."""
+
+    containers = [metadata]
+    oriented = metadata.get("oriented_lattice")
+    if isinstance(oriented, dict):
+        containers.append(oriented)
+    for container in containers:
+        for key in ("ub_matrix", "orientation_matrix"):
+            if key in container:
+                matrix = np.asarray(container[key], dtype=float)
+                if matrix.shape == (3, 3):
+                    return matrix
+    for container in containers:
+        if "rlu_to_inv_angstrom_matrix" in container:
+            matrix = np.asarray(container["rlu_to_inv_angstrom_matrix"], dtype=float)
+            if matrix.shape == (3, 3):
+                return matrix / (2.0 * np.pi)
+    return None
 
 
 def _matrix_lines(matrix: Any) -> list[str]:
