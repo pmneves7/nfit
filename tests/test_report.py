@@ -1,0 +1,296 @@
+import re
+import shutil
+
+import numpy as np
+import pytest
+
+from nfit.pipeline import FitTimelineEntry
+from nfit.report import (
+    LatexCompileError,
+    compile_latex_pdf,
+    latex_escape,
+    render_fit_report_latex,
+)
+
+
+def _check_balanced_environments(tex: str) -> None:
+    """Every \\begin{X} has a matching \\end{X} (and vice versa)."""
+    begins = re.findall(r"\\begin\{(\w+\*?)\}", tex)
+    ends = re.findall(r"\\end\{(\w+\*?)\}", tex)
+    for env in set(begins) | set(ends):
+        assert begins.count(env) == ends.count(env), f"unbalanced environment {env}"
+    # Escaped \$ is literal text, not a math delimiter.
+    assert tex.replace(r"\$", "").count("$") % 2 == 0, "unbalanced inline math"
+
+
+def _background_entry(**overrides):
+    payload = dict(
+        name="fit 1",
+        kind="result",
+        snapshot={
+            "datasets": [
+                {"name": "scan", "parameters": {"temperature": 5.0},
+                 "enabled": True, "fit_weight": 1.0, "scale_factor": 1.0}
+            ],
+            "models": [
+                {"name": "bg", "type": "constant_background", "enabled": True,
+                 "parameters": {"constant": 1.5},
+                 "fit_parameters": {"constant": True},
+                 "global_fit": {}, "sharing": {}, "limits": {},
+                 "constraints": [], "applies_to": None, "metadata": {}}
+            ],
+        },
+        created_at="2026-07-13 10:00",
+        optimizer="least_squares",
+        goodness={
+            "status": "converged", "chi2": 10.0, "reduced_chi2": 1.1,
+            "n_points": 20, "n_variables": 1,
+            "parameters": {"bg.constant": 1.5},
+            "stderr": {"bg.constant": 0.02},
+            "dataset_chi2": {"scan": 10.0},
+            "dataset_reduced_chi2": {"scan": 1.1},
+            "dataset_n_points": {"scan": 20},
+            "skipped_datasets": [],
+        },
+        metadata={},
+    )
+    payload.update(overrides)
+    return FitTimelineEntry(**payload)
+
+
+def _full_rpa_entry():
+    """A synthetic full-featured heisenberg_rpa fit entry."""
+    sym = [[0.1, 0.2, 0.0], [0.2, -0.1, 0.0], [0.0, 0.0, 0.0]]
+    dm = [[0.0, 0.5, 0.0], [-0.5, 0.0, 0.0], [0.0, 0.0, 0.0]]
+    config = {
+        "crystal": {
+            "lattice": {"a": 10.0, "b": 10.0, "c": 10.0,
+                        "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
+            "spacegroup": "F d -3 m:2",
+            "sites": [{"label": "M1", "position": [0.0, 0.0, 0.0], "ion": "Yb3"}],
+        },
+        "magnetic_sites": ["M1"],
+        "site_positions": [[0, 0, 0]] * 16,
+        "ion": "Yb3",
+        "orbits": [
+            {"label": "J1", "distance_angstrom": 3.5355,
+             "bonds": [{"site_i": 0, "site_j": 1, "offset": [0, 0, 0]}] * 48}
+        ],
+        "anisotropy": {
+            "J1": {"enabled": True, "basis": [
+                {"name": "S1", "kind": "symmetric", "matrix": sym},
+                {"name": "D1", "kind": "dm", "matrix": dm},
+            ]}
+        },
+        "sia": {"M1": {"enabled": True, "sites": list(range(16)),
+                        "basis": [{"name": "K1", "matrix": sym}]}},
+        "dipole": {"enabled": True},
+        "zeeman": {"enabled": True},
+        "closure": {"mode": "onsager", "moment_mode": "fitted",
+                    "moment_target": 1.0, "energy_cutoff_mev": 80.0,
+                    "bz_grid": 8},
+    }
+    model = {
+        "name": "M", "type": "heisenberg_rpa", "enabled": True,
+        "config": config,
+        "parameters": {"scale": 1.0, "chi0": 0.02, "gamma0": 3.0, "J1": 0.05,
+                       "J1_S1": 0.01, "J1_D1": 0.002, "K1_M1": 0.03,
+                       "D_dip": 0.21, "g_factor": 2.1, "chi_perp_ratio": 1.0,
+                       "gamma_perp_ratio": 1.0, "m2_total": 0.9},
+        "fit_parameters": {"J1": True, "J1_S1": True, "m2_total": True},
+        "global_fit": {}, "sharing": {"chi0": {"mode": "per_dataset"}},
+        "limits": {"J1": [-1.0, 1.0]}, "constraints": [], "applies_to": None,
+        "metadata": {"fitted_values": {
+            "chi0": {"T5": 0.021, "T50": 0.018},
+            "gamma0": {"T5": 2.9, "T50": 3.4},
+        }},
+    }
+    goodness = {
+        "status": "converged", "chi2": 240.0, "reduced_chi2": 1.2,
+        "n_points": 210, "n_variables": 5,
+        "parameters": {"M.J1": 0.051, "M.J1_S1": 0.011, "M.J1_D1": 0.002,
+                       "M.K1_M1": 0.031, "M.D_dip": 0.214, "M.g_factor": 2.1,
+                       "M.m2_total": 0.93, "M.scale": 1.0,
+                       "M.chi0[T5]": 0.021, "M.chi0[T50]": 0.018},
+        "stderr": {"M.J1": 0.001, "M.J1_S1": 0.0005, "M.m2_total": 0.04},
+        "dataset_chi2": {"T5": 110.0, "T50": 130.0},
+        "dataset_reduced_chi2": {"T5": 1.1, "T50": 1.3},
+        "dataset_n_points": {"T5": 100, "T50": 110},
+        "skipped_datasets": ["broken"],
+    }
+    return FitTimelineEntry(
+        name="joint fit",
+        kind="result",
+        snapshot={
+            "datasets": [
+                {"name": "T5", "parameters": {
+                    "temperature": 5.0,
+                    "magnetic_field": {"magnitude_T": 4.0,
+                                       "direction": [1, 1, 1], "frame": "uvw"},
+                }, "enabled": True, "fit_weight": 1.0, "scale_factor": 1.0},
+                {"name": "T50", "parameters": {"temperature": 50.0},
+                 "enabled": True, "fit_weight": 0.5, "scale_factor": 1.0},
+            ],
+            "models": [model],
+        },
+        created_at="2026-07-13 11:00",
+        optimizer="least_squares",
+        goodness=goodness,
+        metadata={"diagnostics": {
+            "T5": {"temperature": 5.0, "mu_eff_sq": 0.93, "chi_static_q0": 0.4,
+                    "chi_static_qpeak": 0.9, "chi0_gamma0": 0.06,
+                    "distance_to_instability": 0.2, "lambda_shift": 0.12,
+                    "chi0_eff": 0.021},
+            "T50": {"temperature": 50.0, "mu_eff_sq": 0.93},
+        }},
+    )
+
+
+def test_latex_escape_covers_special_characters():
+    assert latex_escape("a&b_c%d#e") == r"a\&b\_c\%d\#e"
+    assert latex_escape("x^y~z") == r"x\textasciicircum{}y\textasciitilde{}z"
+    assert latex_escape("${}") == r"\$\{\}"
+    assert latex_escape("a\\b") == r"a\textbackslash{}b"
+
+
+def test_adversarial_names_cannot_inject_latex():
+    entry = _background_entry()
+    evil = r"foo_$\input{x}%bar"
+    entry.snapshot["datasets"][0]["name"] = evil
+    entry.goodness["dataset_chi2"] = {evil: 10.0}
+    entry.goodness["dataset_n_points"] = {evil: 20}
+    tex = render_fit_report_latex(entry, group_name=evil, nfit_version="0.8.1")
+    assert "\\input{x}" not in tex
+    assert r"\$\textbackslash{}input\{x\}\%bar" in tex
+    _check_balanced_environments(tex)
+
+
+def test_minimal_background_report_is_complete_document():
+    entry = _background_entry()
+    tex = render_fit_report_latex(entry, group_name="G", nfit_version="0.8.1")
+    assert tex.startswith("\\documentclass")
+    assert tex.rstrip().endswith("\\end{document}")
+    _check_balanced_environments(tex)
+    assert "Fit summary" in tex
+    assert "constant\\_background" in tex or "constant_background" not in tex
+    assert "Fitted parameters" in tex
+    # No RPA component: no Hamiltonian section, no bibliography.
+    assert "Model Hamiltonian" not in tex
+    assert "thebibliography" not in tex
+    # Diagnostics absent: section omitted.
+    assert "Physics diagnostics" not in tex
+
+
+def test_old_entry_without_new_keys_degrades_gracefully():
+    entry = _background_entry()
+    del entry.goodness["dataset_n_points"]
+    tex = render_fit_report_latex(entry, group_name="G")
+    assert "--" in tex
+    _check_balanced_environments(tex)
+
+
+def test_posterior_columns_appear_when_present():
+    entry = _background_entry()
+    entry.goodness["posterior"] = {
+        "parameters": {"bg.constant": {"median": 1.49, "p16": 1.45, "p84": 1.53}}
+    }
+    tex = render_fit_report_latex(entry, group_name="G")
+    assert "Median" in tex and "84\\%" in tex
+    without = render_fit_report_latex(_background_entry(), group_name="G")
+    assert "Median" not in without
+
+
+def test_full_rpa_report_covers_every_term():
+    entry = _full_rpa_entry()
+    tex = render_fit_report_latex(entry, group_name="pyro", nfit_version="0.8.1")
+    _check_balanced_environments(tex)
+    # Crystal section with the awkward spacegroup symbol intact (escaped text).
+    assert "F d -3 m:2" in tex
+    assert "10" in tex  # lattice constant
+    # Hamiltonian terms.
+    assert "Heisenberg exchange" in tex
+    assert "Anisotropic exchange" in tex
+    assert "\\begin{bmatrix}" in tex
+    assert "Dzyaloshinskii--Moriya" in tex
+    assert "Single-ion anisotropy" in tex
+    assert "Dipole--dipole" in tex
+    assert "Zeeman term" in tex
+    assert "\\omega_L = g\\mu_B B" in tex
+    assert "Dynamic response" in tex
+    # Per-dataset chi0/gamma0 table from fitted_values.
+    assert "0.021" in tex and "0.018" in tex
+    # Closure with the Onsager equation and fitted target.
+    assert "Self-consistency closure" in tex
+    assert "Onsager" in tex
+    assert "m^2_{\\mathrm{tot}}" in tex
+    # Tensor polarization convention branch.
+    assert "\\hat Q_\\alpha \\hat Q_\\beta" in tex
+    # Diagnostics table with a missing-value cell for the sparse T50 record.
+    assert "Physics diagnostics" in tex
+    # Only cited references appear, in the bibliography.
+    for key in ("sunny", "ross2011", "enjalran2004", "berlin1952", "moriya1985"):
+        assert f"\\bibitem{{{key}}}" in tex
+    assert "\\bibitem{takahashi1986}" not in tex  # TAC not used
+    # Skipped dataset note.
+    assert "broken" in tex
+
+
+def test_scalar_model_uses_isotropic_polarization_branch():
+    entry = _full_rpa_entry()
+    model = entry.snapshot["models"][0]
+    for key in ("anisotropy", "sia", "dipole", "zeeman", "closure"):
+        model["config"].pop(key, None)
+    tex = render_fit_report_latex(entry, group_name="pyro")
+    assert "polarization factor $2/3$" in tex
+    assert "Anisotropic exchange" not in tex
+    assert "Self-consistency closure" not in tex
+    _check_balanced_environments(tex)
+
+
+def test_two_rpa_components_get_separate_hamiltonians():
+    entry = _full_rpa_entry()
+    import copy
+
+    second = copy.deepcopy(entry.snapshot["models"][0])
+    second["name"] = "M2"
+    entry.snapshot["models"].append(second)
+    tex = render_fit_report_latex(entry, group_name="pyro")
+    assert "Model Hamiltonian (M)" in tex
+    assert "Model Hamiltonian (M2)" in tex
+    _check_balanced_environments(tex)
+
+
+_HAS_TEX = any(shutil.which(name) for name in ("pdflatex", "tectonic", "xelatex", "lualatex"))
+
+
+@pytest.mark.skipif(not _HAS_TEX, reason="no TeX engine installed")
+def test_full_report_compiles_to_pdf(tmp_path):
+    """The real LaTeX-validity referee: the full document must compile."""
+    entry = _full_rpa_entry()
+    entry.goodness["posterior"] = {
+        "parameters": {"M.J1": {"median": 0.05, "p16": 0.049, "p84": 0.052}}
+    }
+    tex = render_fit_report_latex(entry, group_name="pyro", nfit_version="0.8.1")
+    output = tmp_path / "report.pdf"
+    compile_latex_pdf(tex, output)
+    assert output.exists() and output.stat().st_size > 1000
+
+
+@pytest.mark.skipif(not _HAS_TEX, reason="no TeX engine installed")
+def test_compile_error_carries_log_tail(tmp_path):
+    with pytest.raises(LatexCompileError) as excinfo:
+        compile_latex_pdf(
+            "\\documentclass{article}\\begin{document}\\undefinedmacro\\end{document}",
+            tmp_path / "bad.pdf",
+        )
+    assert excinfo.value.engine is not None
+    assert excinfo.value.log_tail.strip()
+
+
+def test_compile_without_engine_names_installs(tmp_path, monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    with pytest.raises(LatexCompileError) as excinfo:
+        compile_latex_pdf("\\documentclass{article}", tmp_path / "x.pdf")
+    assert excinfo.value.engine is None
+    message = str(excinfo.value)
+    assert "basictex" in message and "tectonic" in message
