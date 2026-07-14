@@ -217,6 +217,10 @@ def test_full_rpa_report_covers_every_term():
     assert "Zeeman term" in tex
     assert "\\omega_L = g\\mu_B B" in tex
     assert "Dynamic response" in tex
+    # chi'' is written out explicitly as the relaxational mode sum.
+    assert "\\chi''(\\mathbf{Q}, E) = \\sum_\\nu" in tex
+    assert "\\Gamma_\\nu = \\Gamma_0" in tex
+    assert "w_\\nu(\\mathbf{Q})" in tex
     # Per-dataset chi0/gamma0 table from fitted_values.
     assert "0.021" in tex and "0.018" in tex
     # Closure with the Onsager equation and fitted target.

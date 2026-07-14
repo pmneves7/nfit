@@ -619,6 +619,41 @@ def _section_dynamic_response(
         "\\chi_0(\\omega)\\,J(\\mathbf{Q})\\,\\bigr]^{-1}\\chi_0(\\omega) .\n"
         "\\end{equation}"
     )
+    lines.append(
+        "Diagonalizing the (Hermitian) exchange matrix at each $\\mathbf{Q}$, "
+        "$J(\\mathbf{Q})\\,U_\\nu(\\mathbf{Q}) = \\lambda_\\nu(\\mathbf{Q})\\,"
+        "U_\\nu(\\mathbf{Q})$, decouples the response into $N$ relaxational "
+        "modes, and the measured dissipative susceptibility is their sum with "
+        "neutron structure-factor weights:"
+    )
+    lines.append(
+        "\\begin{equation}\n\\chi''(\\mathbf{Q}, E) = \\sum_\\nu "
+        "w_\\nu(\\mathbf{Q})\\; \\chi_{\\mathbf{Q}\\nu}\\, \\frac{\\Gamma_\\nu\\, "
+        "E}{E^2 + \\Gamma_\\nu^2},\n\\end{equation}"
+    )
+    lines.append(
+        "where the mode susceptibility and relaxation rate are\n"
+        "\\begin{equation}\n\\chi_{\\mathbf{Q}\\nu} = \\frac{\\chi_0}"
+        "{1 - \\lambda_\\nu(\\mathbf{Q})\\,\\chi_0}, \\qquad "
+        "\\Gamma_\\nu = \\Gamma_0\\,\\bigl[\\,1 - \\lambda_\\nu(\\mathbf{Q})\\,"
+        "\\chi_0\\,\\bigr],\n\\end{equation}"
+    )
+    lines.append(
+        "and the weight $w_\\nu(\\mathbf{Q}) = |\\sum_a U_{a\\nu}(\\mathbf{Q})|^2/N$ "
+        "is the uniform sublattice sum (the extended-zone $J(\\mathbf{Q})$ "
+        "already carries the pair phases). The relaxation rate softens as the "
+        "Stoner-like criterion $\\max_{\\mathbf{Q},\\nu}\\lambda_\\nu(\\mathbf{Q})"
+        "\\,\\chi_0 \\to 1$ is approached, at which the RPA denominator "
+        "$1 - \\lambda_\\nu\\chi_0$ vanishes and the system orders."
+    )
+    if _is_tensor_mode(_config(model)):
+        lines.append(
+            "With the anisotropic terms active the modes carry Cartesian spin "
+            "indices ($3N$ modes with vector amplitudes $w_{\\alpha\\nu}$), so "
+            "$\\chi''$ above becomes the $3\\times3$ tensor "
+            "$\\chi''_{\\alpha\\beta}(\\mathbf{Q}, E)$ contracted with the "
+            "polarization weight in the cross section below."
+        )
     chi0_scopes = _per_dataset_values(model, "chi0")
     gamma0_scopes = _per_dataset_values(model, "gamma0")
     if chi0_scopes or gamma0_scopes:
