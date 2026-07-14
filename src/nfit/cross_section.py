@@ -5,6 +5,9 @@ from numpy.typing import ArrayLike, NDArray
 
 
 KB_MEV_PER_K = 0.08617333262
+# Magnetic scattering-length factor in the convention used for chi'' in
+# mu_B^2/meV. Its square is included in the absolute cross section below.
+MAGNETIC_GAMMA0_PER_MU_B = 0.073
 FloatArray = NDArray[np.float64]
 
 
@@ -63,13 +66,15 @@ def intensity_from_chipp(
 
     The convention is
 
-    ``I = scale * |f(Q)|^2 * P(Q) * chi'' / [1 - exp(-E/kBT)] + background``.
+    ``I = scale * gamma_0^2 * |f(Q)|^2 * P(Q) * chi'' /
+    {pi [1 - exp(-E/kBT)]} + background``, where
+    ``gamma_0 = 0.073 / mu_B`` in the magnetic-scattering convention.
 
     ``temperature_K`` may be a scalar or an array broadcastable to ``chipp``
     (per-point temperatures). ``form_factor_sq``, ``polarization``, and
     ``background`` may be scalars or arrays broadcastable to ``chipp``.
-    Absolute prefactors are intentionally not hidden here; users should
-    document the normalization in metadata.
+    The kinematic ``k_f/k_i`` factor is normalized on the dataset side when a
+    dataset declares that it was not already included in its reduction.
     """
 
     signal = np.asarray(chipp, dtype=float)
@@ -77,6 +82,8 @@ def intensity_from_chipp(
         signal = signal / bose_denominator(E_meV, temperature_K)
     return (
         float(scale)
+        * MAGNETIC_GAMMA0_PER_MU_B**2
+        / np.pi
         * np.asarray(form_factor_sq, dtype=float)
         * np.asarray(polarization, dtype=float)
         * signal

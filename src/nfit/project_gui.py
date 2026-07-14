@@ -70,6 +70,7 @@ D_SPACING_COORDINATE_NAME = "d"
 COORDINATE_RANGE_AXIS_PREFIX = "axis_"
 COORDINATE_RANGE_PARAMETER_NAMES = ("H", "K", "L", "E")
 CUSTOM_FORM_FACTOR_CHOICE = "__custom__"
+POSTERIOR_DISPLAY_KEY = "posterior_display"
 
 
 # Data types the GUI can attach to a dataset. ``container`` is "mdhisto" for
@@ -2717,7 +2718,9 @@ def dataset_for_slice_viewer(
     )
     if result is None:
         return None
-    return _with_viewer_dataset_metadata(dataset, _apply_dataset_scale(dataset, result))
+    scaled = _apply_dataset_scale(dataset, result)
+    normalized = _apply_kinematic_normalization_to_view(dataset, scaled)
+    return _with_viewer_dataset_metadata(dataset, normalized)
 
 
 def _with_viewer_dataset_metadata(
@@ -2740,7 +2743,117 @@ def _with_viewer_dataset_metadata(
     return data
 
 
+def _kinematic_energy_metadata(
+    dataset: DatasetEntry,
+    data_metadata: dict[str, Any] | None = None,
+) -> tuple[float | None, float | None]:
+    """Find scalar incident/final energies recorded on a dataset or its data."""
+
+    sources = (dataset.parameters, dataset.metadata, data_metadata or {})
+
+    def value_for(names: tuple[str, ...]) -> float | None:
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            for name in names:
+                try:
+                    value = float(source[name])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if np.isfinite(value) and value > 0.0:
+                    return value
+        return None
+
+    return (
+        value_for(("incident_energy", "incident_energy_meV", "Ei", "ei")),
+        value_for(("final_energy", "final_energy_meV", "Ef", "ef")),
+    )
+
+
+def _kinematic_kf_ki_factor(
+    energy_transfer_meV: Any,
+    *,
+    incident_energy_meV: float | None,
+    final_energy_meV: float | None,
+) -> np.ndarray | None:
+    """Return ``k_f/k_i`` for ``E = E_i - E_f``, if one energy is known."""
+
+    if incident_energy_meV is None and final_energy_meV is None:
+        return None
+    energy = np.asarray(energy_transfer_meV, dtype=float)
+    if incident_energy_meV is not None:
+        ratio_sq = (float(incident_energy_meV) - energy) / float(incident_energy_meV)
+    else:
+        ratio_sq = float(final_energy_meV) / (float(final_energy_meV) + energy)
+    factor = np.full(energy.shape, np.nan, dtype=float)
+    np.sqrt(ratio_sq, out=factor, where=np.isfinite(ratio_sq) & (ratio_sq >= 0.0))
+    return factor
+
+
+def _apply_kinematic_normalization_to_view(
+    dataset: DatasetEntry,
+    data: MDHistoData | PointListData,
+) -> MDHistoData | PointListData:
+    """Normalize binned data to the cross-section ``k_f/k_i`` convention."""
+
+    if bool(dataset.parameters.get(KINEMATIC_KF_KI_INCLUDED_KEY, True)):
+        return data
+    if not isinstance(data, MDHistoData):
+        return data
+    energy_dim = next(
+        (index for index, axis in enumerate(data.axes) if axis.kind == "energy"),
+        None,
+    )
+    if energy_dim is None:
+        return data
+    incident, final = _kinematic_energy_metadata(dataset, data.metadata)
+    factor_1d = _kinematic_kf_ki_factor(
+        data.axes[energy_dim].centers,
+        incident_energy_meV=incident,
+        final_energy_meV=final,
+    )
+    if factor_1d is None:
+        return data
+    shape = [1] * data.signal.ndim
+    shape[energy_dim] = factor_1d.size
+    factor = factor_1d.reshape(shape)
+    metadata = dict(data.metadata)
+    metadata["nfit_kinematic_kf_ki_normalized"] = True
+    metadata["nfit_kinematic_kf_ki_source"] = "Ei" if incident is not None else "Ef"
+    return replace(
+        data,
+        signal=np.asarray(data.signal, dtype=float) * factor,
+        errors=np.asarray(data.errors, dtype=float) * np.abs(factor),
+        metadata=metadata,
+    )
+
+
+def _apply_kinematic_normalization_to_points(
+    dataset: DatasetEntry,
+    points: PointData4D,
+) -> None:
+    """Apply the same kinematic convention to fit points when needed."""
+
+    if bool(dataset.parameters.get(KINEMATIC_KF_KI_INCLUDED_KEY, True)):
+        return
+    if points.metadata.get("nfit_kinematic_kf_ki_normalized"):
+        return
+    incident, final = _kinematic_energy_metadata(dataset, points.metadata)
+    factor = _kinematic_kf_ki_factor(
+        points.E,
+        incident_energy_meV=incident,
+        final_energy_meV=final,
+    )
+    if factor is None:
+        return
+    points.intensity = np.asarray(points.intensity, dtype=float) * factor
+    points.sigma = np.asarray(points.sigma, dtype=float) * np.abs(factor)
+    points.metadata["nfit_kinematic_kf_ki_normalized"] = True
+    points.metadata["nfit_kinematic_kf_ki_source"] = "Ei" if incident is not None else "Ef"
+
+
 FIT_CHANNEL_NAMES = ("fit", "residual")
+KINEMATIC_KF_KI_INCLUDED_KEY = "kf_ki_included"
 
 
 @dataclass
@@ -2773,7 +2886,7 @@ def fit_data_bundle(
 
     extra_masks = effective_dataset_masks(group, dataset)
     if isinstance(dataset.data, PointData4D):
-        points = dataset.data
+        points = copy.deepcopy(dataset.data)
         _apply_sample_context_to_points(group, dataset, points)
         return FitDataBundle(dataset=dataset, view=dataset.data, points=points, grid_shape=None)
     if dataset.scale_factor_vary:
@@ -2784,7 +2897,14 @@ def fit_data_bundle(
             force_masks=force_masks,
             progress_callback=progress_callback,
         )
-        view = _with_viewer_dataset_metadata(dataset, raw_view) if raw_view is not None else None
+        view = (
+            _with_viewer_dataset_metadata(
+                dataset,
+                _apply_kinematic_normalization_to_view(dataset, raw_view),
+            )
+            if raw_view is not None
+            else None
+        )
     else:
         view = dataset_for_slice_viewer(
             dataset,
@@ -3008,6 +3128,7 @@ def _apply_sample_context_to_points(
             "include_2pi": True,
         }
         points.metadata["rlu_to_inv_angstrom_matrix"] = matrix.tolist()
+    _apply_kinematic_normalization_to_points(dataset, points)
 
 
 def _point_data_from_mdhisto_view(data: MDHistoData) -> PointData4D:
@@ -3020,7 +3141,13 @@ def _point_data_from_mdhisto_view(data: MDHistoData) -> PointData4D:
     metadata: dict[str, Any] = {
         "fit_coordinates": sorted(name for name in ("H", "K", "L", "E") if name in coords),
     }
-    for key in ("oriented_lattice", "coordinate_units", "rlu_to_inv_angstrom_matrix"):
+    for key in (
+        "oriented_lattice",
+        "coordinate_units",
+        "rlu_to_inv_angstrom_matrix",
+        "nfit_kinematic_kf_ki_normalized",
+        "nfit_kinematic_kf_ki_source",
+    ):
         if key in data.metadata:
             metadata[key] = data.metadata[key]
     temperature = data.metadata.get("temperature")
@@ -3977,6 +4104,92 @@ def _combined_sampling_result(
 def _store_sampling_result_on_fit_entry(fit_entry: FitTimelineEntry, result: SamplingResult) -> None:
     fit_entry.metadata["posterior_samples"] = _sampling_result_to_dict(result)
     fit_entry.goodness["posterior"] = _posterior_summary(result)
+    display = fit_entry.metadata.get(POSTERIOR_DISPLAY_KEY)
+    if isinstance(display, dict) and display.get("use_best_sample"):
+        best = _best_posterior_sample(result)
+        if best is None:
+            display["use_best_sample"] = False
+            display.pop("best_sample", None)
+        else:
+            params, log_probability, location = best
+            display["best_sample"] = {
+                "parameters": params,
+                "log_probability": log_probability,
+                **location,
+            }
+
+
+def _posterior_display_options(fit_entry: FitTimelineEntry) -> dict[str, Any]:
+    """Return the persisted choice of posterior-derived result values."""
+
+    metadata = fit_entry.metadata if isinstance(fit_entry.metadata, dict) else {}
+    stored = metadata.get(POSTERIOR_DISPLAY_KEY)
+    return dict(stored) if isinstance(stored, dict) else {}
+
+
+def _display_fit_parameters(fit_entry: FitTimelineEntry) -> dict[str, float]:
+    """Return the selected best-fit display values without changing the fit."""
+
+    goodness = fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
+    params = goodness.get("parameters") if isinstance(goodness.get("parameters"), dict) else {}
+    displayed = {str(name): float(value) for name, value in params.items()}
+    options = _posterior_display_options(fit_entry)
+    best = options.get("best_sample") if options.get("use_best_sample") else None
+    best_params = best.get("parameters") if isinstance(best, dict) else None
+    if isinstance(best_params, dict):
+        for name, value in best_params.items():
+            try:
+                displayed[str(name)] = float(value)
+            except (TypeError, ValueError):
+                continue
+    return displayed
+
+
+def _posterior_interval_errors(
+    fit_entry: FitTimelineEntry,
+    name: str,
+    center: float,
+) -> tuple[float, float] | None:
+    """Return asymmetric 68% posterior errors about a displayed parameter value."""
+
+    goodness = fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
+    posterior = goodness.get("posterior") if isinstance(goodness.get("posterior"), dict) else {}
+    rows = posterior.get("parameters") if isinstance(posterior.get("parameters"), dict) else {}
+    row = rows.get(name) if isinstance(rows.get(name), dict) else None
+    if row is None:
+        return None
+    try:
+        lower = float(row["p16"])
+        upper = float(row["p84"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not np.isfinite(lower) or not np.isfinite(upper):
+        return None
+    return max(0.0, center - lower), max(0.0, upper - center)
+
+
+def _posterior_correlation_matrix(
+    fit_entry: FitTimelineEntry,
+) -> tuple[np.ndarray, list[str]] | None:
+    """Return the finite-sample emcee correlation matrix for display."""
+
+    result = _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples"))
+    if result is None:
+        return None
+    samples = np.asarray(result.samples, dtype=float)
+    names = list(result.variable_names)
+    if samples.ndim != 2 or samples.shape[0] < 2 or samples.shape[1] != len(names):
+        return None
+    finite_rows = np.all(np.isfinite(samples), axis=1)
+    samples = samples[finite_rows]
+    if samples.shape[0] < 2:
+        return None
+    if samples.shape[1] == 1:
+        return np.ones((1, 1), dtype=float), names
+    correlation = np.asarray(np.corrcoef(samples, rowvar=False), dtype=float)
+    if correlation.shape != (len(names), len(names)):
+        return None
+    return correlation, names
 
 
 def _best_posterior_sample(
@@ -4951,8 +5164,9 @@ def create_rebinned_dataset(
     if data is dataset.data:
         data = copy.deepcopy(data)
     parameters = {}
-    if "temperature" in dataset.parameters:
-        parameters["temperature"] = copy.deepcopy(dataset.parameters["temperature"])
+    for key in ("temperature", "magnetic_field", KINEMATIC_KF_KI_INCLUDED_KEY):
+        if key in dataset.parameters:
+            parameters[key] = copy.deepcopy(dataset.parameters[key])
     new_entry = DatasetEntry(
         name=_unique_dataset_name(name or f"{dataset.name} rebinned", group.dataset_names),
         data=data,
@@ -4991,7 +5205,7 @@ def save_dataset_file(dataset: DatasetEntry, path: str | Path, *, use_view: bool
     }
     context = {
         key: copy.deepcopy(dataset.parameters[key])
-        for key in ("temperature", "magnetic_field")
+        for key in ("temperature", "magnetic_field", KINEMATIC_KF_KI_INCLUDED_KEY)
         if key in dataset.parameters
     }
     payload["dataset_context_json"] = np.asarray(json.dumps(_json_safe_value(context), sort_keys=True))
@@ -7345,7 +7559,7 @@ def _fit_parameter_plot_labels(
 
 def _fit_parameter_summaries(fit_entry: FitTimelineEntry) -> dict[str, dict[str, float]]:
     goodness = fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
-    params = goodness.get("parameters") if isinstance(goodness.get("parameters"), dict) else {}
+    params = _display_fit_parameters(fit_entry)
     stderr = goodness.get("stderr") if isinstance(goodness.get("stderr"), dict) else {}
     posterior = goodness.get("posterior") if isinstance(goodness.get("posterior"), dict) else {}
     posterior_params = (
@@ -7353,6 +7567,7 @@ def _fit_parameter_summaries(fit_entry: FitTimelineEntry) -> dict[str, dict[str,
         if isinstance(posterior.get("parameters"), dict)
         else {}
     )
+    use_posterior_errors = bool(_posterior_display_options(fit_entry).get("use_posterior_uncertainties"))
     names = set(params) | set(stderr) | set(posterior_params)
     summaries: dict[str, dict[str, float]] = {}
     for name in names:
@@ -7366,7 +7581,7 @@ def _fit_parameter_summaries(fit_entry: FitTimelineEntry) -> dict[str, dict[str,
                 summary.setdefault("low", summary["best"] - err)
                 summary.setdefault("high", summary["best"] + err)
         posterior_row = posterior_params.get(name)
-        if isinstance(posterior_row, dict):
+        if use_posterior_errors and isinstance(posterior_row, dict):
             for source, target in (("median", "median"), ("p16", "low"), ("p84", "high")):
                 if source in posterior_row:
                     summary[target] = float(posterior_row[source])
@@ -7447,6 +7662,11 @@ def _disable_axis_offset_text(ax: Any) -> None:
 def _covariance_matrix_from_fit_entry(
     fit_entry: FitTimelineEntry,
 ) -> tuple[np.ndarray, list[str], str] | None:
+    if _posterior_display_options(fit_entry).get("use_posterior_uncertainties"):
+        posterior = _posterior_correlation_matrix(fit_entry)
+        if posterior is not None:
+            matrix, names = posterior
+            return matrix, names, "Posterior correlation"
     goodness = fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
     covariance = goodness.get("covariance") if isinstance(goodness.get("covariance"), dict) else {}
     names = [str(name) for name in covariance.get("variables", [])]
@@ -7543,6 +7763,7 @@ class NfitProjectExplorer:
         self.fit_weight_spin = None
         self.scale_factor_spin = None
         self.dataset_temperature_spin = None
+        self.dataset_kf_ki_included_check = None
         self.sample_environment_widget = None
         self.dataset_field_magnitude_spin = None
         self.dataset_field_frame_combo = None
@@ -9233,6 +9454,54 @@ class NfitProjectExplorer:
             return (group, node) if node is not None else (None, None)
         return None, None
 
+    def load_dropped_paths(self, paths: list[str | Path], target_item: Any = None) -> bool:
+        """Open one dropped project or import dropped data files into the tree."""
+
+        from PySide6 import QtWidgets
+
+        dropped = [Path(path).expanduser() for path in paths if str(path)]
+        if not dropped:
+            return False
+        project_paths = [path for path in dropped if path.suffix.lower() == ".nfit"]
+        data_paths = [path for path in dropped if path.suffix.lower() != ".nfit"]
+        if project_paths:
+            if len(project_paths) != 1 or data_paths:
+                QtWidgets.QMessageBox.warning(
+                    self.window,
+                    "Open nfit project",
+                    "Drop one nfit project file at a time. Drop datasets separately.",
+                )
+                return False
+            return self.open_project_path(project_paths[0])
+
+        group, node = self._resolve_dataset_drop_target(target_item)
+        if group is None:
+            group, node = self._selected_import_target()
+        created_group = False
+        if group is None and not self.project.data_groups:
+            group = create_data_group(self.project)
+            node = None
+            created_group = True
+        if group is None:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Import datasets",
+                "Drop datasets onto a workspace or dataset group, or select one first.",
+            )
+            return False
+
+        entries = self.import_dataset_paths(
+            group,
+            data_paths,
+            into=node if isinstance(node, DatasetGroup) else None,
+        )
+        if entries:
+            return True
+        if created_group:
+            self.project.data_groups.remove(group)
+            self._refresh_tree()
+        return False
+
     def _tree_item_sort_key(self, item: Any) -> tuple[int, ...]:
         path: list[int] = []
         while item is not None:
@@ -9537,7 +9806,8 @@ class NfitProjectExplorer:
         self.tree = project_tree_class(self)
         self.tree.setToolTip(
             "Project explorer tree. Select items to edit them, expand folders to navigate, "
-            "drag supported items to reorder or move them, and right-click for actions."
+            "drag supported items to reorder or move them, drop data files to import them or an nfit project "
+            "file to open it, and right-click for actions."
         )
         self.tree.setHeaderHidden(True)
         self.tree.setIndentation(18)
@@ -10618,6 +10888,25 @@ class NfitProjectExplorer:
             return
         self._sync_details()
 
+    def _set_selected_dataset_kf_ki_included(self, included: bool) -> None:
+        group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        if role != "dataset" or entry is None:
+            return
+        value = bool(included)
+        if bool(entry.parameters.get(KINEMATIC_KF_KI_INCLUDED_KEY, True)) == value:
+            return
+        entry.parameters[KINEMATIC_KF_KI_INCLUDED_KEY] = value
+        branch_created = False
+        if group is not None:
+            branch_created = self._record_data_group_state_change(group)
+        self._mark_dirty()
+        if group is not None and branch_created:
+            self._refresh_tree(select_group=group, select_dataset=entry)
+            return
+        if group is not None:
+            self.refresh_slice_viewer(group)
+        self._sync_details()
+
     def _build_sample_environment_panel(self) -> None:
         """Build the persistent 'Sample environment' details panel.
 
@@ -10652,7 +10941,19 @@ class NfitProjectExplorer:
         self.dataset_temperature_spin.valueChanged.connect(self._set_selected_dataset_temperature)
         layout.addWidget(self.dataset_temperature_spin, 0, 1, 1, 3)
 
-        layout.addWidget(QtWidgets.QLabel("Field (T)"), 1, 0)
+        self.dataset_kf_ki_included_check = QtWidgets.QCheckBox("k_f/k_i included")
+        self.dataset_kf_ki_included_check.setObjectName("dataset_kf_ki_included")
+        self.dataset_kf_ki_included_check.setToolTip(
+            "Whether the reduced dataset already includes the neutron kinematic k_f/k_i factor. "
+            "Checked is the default. When unchecked, nfit multiplies signal and uncertainty by k_f/k_i "
+            "using the dataset's Ei or Ef and energy transfer before plotting and fitting."
+        )
+        self.dataset_kf_ki_included_check.toggled.connect(
+            self._set_selected_dataset_kf_ki_included
+        )
+        layout.addWidget(self.dataset_kf_ki_included_check, 1, 0, 1, 4)
+
+        layout.addWidget(QtWidgets.QLabel("Field (T)"), 2, 0)
         self.dataset_field_magnitude_spin = QtWidgets.QDoubleSpinBox()
         self.dataset_field_magnitude_spin.setObjectName("dataset_field_magnitude")
         self.dataset_field_magnitude_spin.setToolTip(
@@ -10669,7 +10970,7 @@ class NfitProjectExplorer:
         self.dataset_field_magnitude_spin.valueChanged.connect(
             self._set_selected_dataset_field_magnitude
         )
-        layout.addWidget(self.dataset_field_magnitude_spin, 1, 1)
+        layout.addWidget(self.dataset_field_magnitude_spin, 2, 1)
 
         self.dataset_field_frame_combo = QtWidgets.QComboBox()
         self.dataset_field_frame_combo.setObjectName("dataset_field_frame")
@@ -10684,7 +10985,7 @@ class NfitProjectExplorer:
         self.dataset_field_frame_combo.currentIndexChanged.connect(
             self._set_selected_dataset_field_frame
         )
-        layout.addWidget(self.dataset_field_frame_combo, 1, 2)
+        layout.addWidget(self.dataset_field_frame_combo, 2, 2)
 
         self.dataset_field_direction_edit = QtWidgets.QLineEdit()
         self.dataset_field_direction_edit.setObjectName("dataset_field_direction")
@@ -10697,7 +10998,7 @@ class NfitProjectExplorer:
         self.dataset_field_direction_edit.editingFinished.connect(
             self._set_selected_dataset_field_direction
         )
-        layout.addWidget(self.dataset_field_direction_edit, 1, 3)
+        layout.addWidget(self.dataset_field_direction_edit, 2, 3)
 
         self.sample_environment_widget.setParent(None)
 
@@ -10772,6 +11073,14 @@ class NfitProjectExplorer:
             )
         finally:
             self.dataset_temperature_spin.blockSignals(False)
+
+        self.dataset_kf_ki_included_check.blockSignals(True)
+        try:
+            self.dataset_kf_ki_included_check.setChecked(
+                bool(entry.parameters.get(KINEMATIC_KF_KI_INCLUDED_KEY, True)) if is_dataset else True
+            )
+        finally:
+            self.dataset_kf_ki_included_check.blockSignals(False)
 
         payload = entry.parameters.get("magnetic_field") if is_dataset else None
         if not isinstance(payload, dict):
@@ -11472,17 +11781,24 @@ class NfitProjectExplorer:
         from PySide6 import QtCore, QtGui, QtWidgets
 
         rows = _fit_results_rows(fit_entry)
+        use_posterior_errors = bool(
+            _posterior_display_options(fit_entry).get("use_posterior_uncertainties")
+        )
         group_box = QtWidgets.QGroupBox("Fit results")
         layout = QtWidgets.QVBoxLayout(group_box)
         layout.setContentsMargins(10, 8, 10, 8)
         table = QtWidgets.QTableWidget(len(rows), 6)
         table.setObjectName("fit_results_table")
         table.setToolTip(
-            "Human-readable best-fit parameters. Standard errors come from the least-squares covariance; "
-            "posterior columns come from emcee samples when available."
+            "Human-readable best-fit parameters. The posterior display controls can replace least-squares "
+            "standard errors with asymmetric emcee 68% intervals and replace displayed best fits with the "
+            "highest-probability emcee sample."
         )
         table.setHorizontalHeaderLabels(
-            ["Parameter", "Best fit", "Std err", "Posterior median", "16%", "84%"]
+            [
+                "Parameter", "Best fit", "68% error" if use_posterior_errors else "Std err",
+                "Posterior median", "16%", "84%",
+            ]
         )
         table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
@@ -11496,7 +11812,7 @@ class NfitProjectExplorer:
         table.horizontalHeader().setStretchLastSection(True)
         table.horizontalHeader().setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
         for row_index, row in enumerate(rows):
-            for column_index, key in enumerate(("name", "value", "stderr", "median", "p16", "p84")):
+            for column_index, key in enumerate(("name", "value", "uncertainty", "median", "p16", "p84")):
                 item = QtWidgets.QTableWidgetItem(row.get(key, "-"))
                 item.setToolTip(row.get(key, "-"))
                 if row.get("at_limit"):
@@ -11614,16 +11930,8 @@ class NfitProjectExplorer:
             if chain.ndim == 3:
                 chain_steps = int(chain.shape[0])
                 chain_walkers = int(chain.shape[1])
-        promotion_candidate = _best_posterior_promotion_candidate(fit_entry)
-        promotion_message = "Stored posterior samples do not include a better finite likelihood than this fit result."
-        if promotion_candidate is not None:
-            _params, best_log_probability, baseline_log_probability, location = promotion_candidate
-            location_text = ", ".join(f"{key} {value}" for key, value in location.items())
-            promotion_message = (
-                "Create a Current state from the best stored emcee sample "
-                f"({location_text}; log probability {_format_number(best_log_probability)} "
-                f"vs {_format_number(baseline_log_probability)} for this fit result)."
-            )
+        display_options = _posterior_display_options(fit_entry)
+        best_sample = _best_posterior_sample(stored) if stored is not None else None
         widget = QtWidgets.QWidget()
         widget.setObjectName("fit_posterior_result_actions")
         layout = QtWidgets.QVBoxLayout(widget)
@@ -11635,6 +11943,36 @@ class NfitProjectExplorer:
         )
         status.setToolTip("Current posterior storage for this fit result.")
         layout.addWidget(status)
+
+        use_uncertainties = QtWidgets.QCheckBox("Use emcee uncertainties, correlations, and asymmetry")
+        use_uncertainties.setObjectName("fit_posterior_use_uncertainties_check")
+        use_uncertainties.setChecked(bool(display_options.get("use_posterior_uncertainties")))
+        use_uncertainties.setEnabled(stored is not None and len(stored.samples) > 1)
+        use_uncertainties.setToolTip(
+            "Display 16%--84% emcee intervals instead of least-squares standard errors and use the emcee "
+            "correlation matrix in Fit diagnostics. This affects displayed results and exported reports only."
+        )
+        use_uncertainties.toggled.connect(
+            lambda checked: self._set_posterior_display_option(
+                fit_entry, "use_posterior_uncertainties", checked
+            )
+        )
+        layout.addWidget(use_uncertainties)
+
+        use_best_sample = QtWidgets.QCheckBox("Use best sample")
+        use_best_sample.setObjectName("fit_posterior_use_best_sample_check")
+        use_best_sample.setChecked(bool(display_options.get("use_best_sample")))
+        use_best_sample.setEnabled(best_sample is not None)
+        use_best_sample.setToolTip(
+            "Display the highest-log-probability stored emcee sample as the best fit. This does not alter the "
+            "fit, Current State, model, or datasets; it affects displayed results and exported reports only."
+        )
+        use_best_sample.toggled.connect(
+            lambda checked: self._set_posterior_display_option(
+                fit_entry, "use_best_sample", checked
+            )
+        )
+        layout.addWidget(use_best_sample)
 
         apply_button = QtWidgets.QPushButton("Apply burn-in/thin")
         apply_button.setObjectName("fit_posterior_apply_button")
@@ -11685,24 +12023,42 @@ class NfitProjectExplorer:
             )
         )
 
-        promote_button = QtWidgets.QPushButton("Use best sample")
-        promote_button.setObjectName("fit_posterior_promote_button")
-        promote_button.setToolTip(promotion_message)
-        promote_button.setEnabled(promotion_candidate is not None)
-        promote_button.clicked.connect(
-            lambda _checked=False: self.promote_best_posterior_sample_for_fit(
-                group,
-                fit_entry,
-            )
-        )
-
         button_row = QtWidgets.QHBoxLayout()
         button_row.addWidget(apply_button)
         button_row.addWidget(rerun_button)
         button_row.addWidget(append_button)
-        button_row.addWidget(promote_button)
         layout.addLayout(button_row)
         return widget
+
+    def _set_posterior_display_option(
+        self,
+        fit_entry: FitTimelineEntry,
+        option: str,
+        checked: bool,
+    ) -> None:
+        """Persist a display-only posterior result choice and refresh this fit."""
+
+        display = _posterior_display_options(fit_entry)
+        display[option] = bool(checked)
+        if option == "use_best_sample":
+            if checked:
+                stored = _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples"))
+                best = _best_posterior_sample(stored) if stored is not None else None
+                if best is None:
+                    display[option] = False
+                    display.pop("best_sample", None)
+                else:
+                    params, log_probability, location = best
+                    display["best_sample"] = {
+                        "parameters": params,
+                        "log_probability": log_probability,
+                        **location,
+                    }
+            else:
+                display.pop("best_sample", None)
+        fit_entry.metadata[POSTERIOR_DISPLAY_KEY] = display
+        self._mark_dirty()
+        self._set_fit_details(fit_entry)
 
     def _parameter_values_group_box(self, fit_entry: FitTimelineEntry) -> Any:
         from PySide6 import QtCore, QtGui, QtWidgets
@@ -14677,13 +15033,12 @@ def _make_project_tree_class():
                 return
             if event.mimeData().hasUrls():
                 target_item = self.itemAt(event.position().toPoint())
-                group, node = self.explorer._resolve_dataset_drop_target(target_item)
                 paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
-                if group is not None and paths:
-                    into = node if node is not group else None
-                    self.explorer.import_dataset_paths(group, paths, into=into)
+                if paths and self.explorer.load_dropped_paths(paths, target_item):
                     event.acceptProposedAction()
                     return
+                event.ignore()
+                return
             super().dropEvent(event)
 
     return ProjectTree
@@ -15187,7 +15542,7 @@ def _snapshot_parameter_rows(fit_entry: FitTimelineEntry) -> list[dict[str, str]
 
 def _fit_results_rows(fit_entry: FitTimelineEntry) -> list[dict[str, str]]:
     goodness = fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
-    params = goodness.get("parameters")
+    params = _display_fit_parameters(fit_entry)
     if not isinstance(params, dict) or not params:
         return []
     stderr = goodness.get("stderr") if isinstance(goodness.get("stderr"), dict) else {}
@@ -15197,6 +15552,7 @@ def _fit_results_rows(fit_entry: FitTimelineEntry) -> list[dict[str, str]]:
         if isinstance(posterior.get("parameters"), dict)
         else {}
     )
+    use_posterior_errors = bool(_posterior_display_options(fit_entry).get("use_posterior_uncertainties"))
     limit_hits = _fit_result_limit_hits(fit_entry, params)
     rows: list[dict[str, str]] = []
     for name, value in params.items():
@@ -15206,11 +15562,19 @@ def _fit_results_rows(fit_entry: FitTimelineEntry) -> list[dict[str, str]]:
             if isinstance(posterior_params.get(name), dict)
             else {}
         )
+        interval_errors = _posterior_interval_errors(fit_entry, str(name), float(value))
+        uncertainty = _format_number(stderr[name]) if name in stderr else "-"
+        if use_posterior_errors:
+            uncertainty = (
+                f"-{_format_number(interval_errors[0])} / +{_format_number(interval_errors[1])}"
+                if interval_errors is not None
+                else "-"
+            )
         rows.append(
             {
                 "name": str(name),
                 "value": _format_number(value),
-                "stderr": _format_number(stderr[name]) if name in stderr else "-",
+                "uncertainty": uncertainty,
                 "median": (
                     _format_number(posterior_row["median"])
                     if "median" in posterior_row

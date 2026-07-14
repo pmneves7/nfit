@@ -7,7 +7,12 @@ form-factor, polarization, scale, and background terms.
 """
 
 from .axes import AxisRole, infer_axis_role
-from .cross_section import KB_MEV_PER_K, bose_denominator, intensity_from_chipp
+from .cross_section import (
+    KB_MEV_PER_K,
+    MAGNETIC_GAMMA0_PER_MU_B,
+    bose_denominator,
+    intensity_from_chipp,
+)
 from .dataset import PointData4D, PointListData, from_arrays
 from .importers import (
     IMPORTERS,
@@ -297,6 +302,7 @@ __all__ = [
     "attach_lattice_parameters",
     "attach_ub_matrix",
     "bose_denominator",
+    "MAGNETIC_GAMMA0_PER_MU_B",
     "compound_additive_model",
     "constant_background",
     "constant_fwhm_energy_resolution",

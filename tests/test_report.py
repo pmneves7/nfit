@@ -200,6 +200,23 @@ def test_posterior_columns_appear_when_present():
     assert "Median" not in without
 
 
+def test_report_uses_selected_posterior_best_sample_and_asymmetric_errors():
+    entry = _background_entry()
+    entry.goodness["posterior"] = {
+        "parameters": {"bg.constant": {"median": 1.49, "p16": 1.4, "p84": 1.6}}
+    }
+    entry.metadata["posterior_display"] = {
+        "use_posterior_uncertainties": True,
+        "use_best_sample": True,
+        "best_sample": {"parameters": {"bg.constant": 1.55}},
+    }
+
+    tex = render_fit_report_latex(entry, group_name="G")
+
+    assert "1.55" in tex
+    assert "- 0.15 / + 0.05" in tex
+
+
 def test_full_rpa_report_covers_every_term():
     entry = _full_rpa_entry()
     tex = render_fit_report_latex(entry, group_name="pyro", nfit_version="0.8.1")

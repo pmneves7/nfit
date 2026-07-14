@@ -530,7 +530,7 @@ def test_spin_fluctuation_models_require_temperature():
 
 
 def test_local_relaxational_fit_recovers_synthetic_parameters():
-    from nfit.cross_section import intensity_from_chipp
+    from nfit.cross_section import MAGNETIC_GAMMA0_PER_MU_B, intensity_from_chipp
     from nfit.fit_config import ISOTROPIC_POLARIZATION
     from nfit.spin_fluctuations import local_relaxational_chipp
 
@@ -546,7 +546,7 @@ def test_local_relaxational_fit_recovers_synthetic_parameters():
         polarization=ISOTROPIC_POLARIZATION,
     )
     points = _spin_fluctuation_points(
-        clean + rng.normal(0.0, 0.005, E.size), H, E, temperature=temperature
+        clean + rng.normal(0.0, 0.005 * MAGNETIC_GAMMA0_PER_MU_B**2 / np.pi, E.size), H, E, temperature=temperature
     )
     component = ModelComponentSpec(
         name="loc",
@@ -561,7 +561,7 @@ def test_local_relaxational_fit_recovers_synthetic_parameters():
 
 
 def test_mmp_relaxational_fit_recovers_synthetic_parameters():
-    from nfit.cross_section import intensity_from_chipp
+    from nfit.cross_section import MAGNETIC_GAMMA0_PER_MU_B, intensity_from_chipp
     from nfit.fit_config import ISOTROPIC_POLARIZATION
     from nfit.spin_fluctuations import mmp_chipp
 
@@ -580,7 +580,7 @@ def test_mmp_relaxational_fit_recovers_synthetic_parameters():
         polarization=ISOTROPIC_POLARIZATION,
     )
     points = _spin_fluctuation_points(
-        clean + rng.normal(0.0, 0.005, E.size),
+        clean + rng.normal(0.0, 0.005 * MAGNETIC_GAMMA0_PER_MU_B**2 / np.pi, E.size),
         H,
         E,
         temperature=temperature,
@@ -626,7 +626,7 @@ def _heisenberg_chain_component(**overrides) -> ModelComponentSpec:
 
 
 def test_heisenberg_rpa_fit_recovers_synthetic_parameters():
-    from nfit.cross_section import intensity_from_chipp
+    from nfit.cross_section import MAGNETIC_GAMMA0_PER_MU_B, intensity_from_chipp
     from nfit.fit_config import ISOTROPIC_POLARIZATION
     from nfit.spin_fluctuations import build_rpa_geometry, heisenberg_rpa_chipp
 
@@ -651,7 +651,7 @@ def test_heisenberg_rpa_fit_recovers_synthetic_parameters():
         polarization=ISOTROPIC_POLARIZATION,
     )
     points = _spin_fluctuation_points(
-        clean + rng.normal(0.0, 0.002, E.size), H, E, temperature=temperature
+        clean + rng.normal(0.0, 0.002 * MAGNETIC_GAMMA0_PER_MU_B**2 / np.pi, E.size), H, E, temperature=temperature
     )
     compiled = compile_fit_problem(
         [_heisenberg_chain_component()], [FitDatasetInput("a", points)]
@@ -1089,7 +1089,7 @@ def test_dipole_component_emits_parameter_and_reduces_to_scalar_at_zero():
         spec.name: physical.get(spec.name.split(".")[-1], spec.value)
         for spec in compiled.problem.parameter_specs
     })
-    assert np.max(np.abs(with_dipole - with_zero_dipole)) > 1e-8
+    assert np.max(np.abs(with_dipole - with_zero_dipole)) > 1e-8 * 0.073**2 / np.pi
 
 
 def test_zeeman_component_requires_field_and_reduces_to_scalar_at_g_zero():

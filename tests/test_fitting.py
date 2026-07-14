@@ -17,7 +17,7 @@ from nfit import (
     SamplingCancelled,
     sample_problem_parameters,
 )
-from nfit.cross_section import intensity_from_chipp
+from nfit.cross_section import MAGNETIC_GAMMA0_PER_MU_B, intensity_from_chipp
 from nfit.models import paramagnon_chipp
 
 
@@ -64,7 +64,7 @@ def test_fit_least_squares_recovers_synthetic_single_q_parameters():
     }
     empty = PointData4D(H_flat, K_flat, L_flat, E_flat, np.zeros_like(H_flat), np.ones_like(H_flat))
     clean = measured_model(empty, true)
-    sigma = np.full_like(clean, 0.03)
+    sigma = np.full_like(clean, 0.03 * MAGNETIC_GAMMA0_PER_MU_B**2 / np.pi)
     data = PointData4D(
         H_flat,
         K_flat,

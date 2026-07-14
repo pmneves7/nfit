@@ -1672,10 +1672,11 @@ def test_fit_details_posterior_sampler_controls_update_burn_without_timeline(mon
         explorer.window.findChild(QtWidgets.QSpinBox, "fit_posterior_thin_spin"),
         explorer.window.findChild(QtWidgets.QSpinBox, "fit_posterior_seed_spin"),
         explorer.window.findChild(QtWidgets.QSpinBox, "fit_posterior_workers_spin"),
-        explorer.window.findChild(QtWidgets.QPushButton, "fit_posterior_apply_button"),
-        explorer.window.findChild(QtWidgets.QPushButton, "fit_posterior_rerun_button"),
-        explorer.window.findChild(QtWidgets.QPushButton, "fit_posterior_append_button"),
-        explorer.window.findChild(QtWidgets.QPushButton, "fit_posterior_promote_button"),
+            explorer.window.findChild(QtWidgets.QPushButton, "fit_posterior_apply_button"),
+            explorer.window.findChild(QtWidgets.QPushButton, "fit_posterior_rerun_button"),
+            explorer.window.findChild(QtWidgets.QPushButton, "fit_posterior_append_button"),
+            explorer.window.findChild(QtWidgets.QCheckBox, "fit_posterior_use_uncertainties_check"),
+            explorer.window.findChild(QtWidgets.QCheckBox, "fit_posterior_use_best_sample_check"),
     ]
     assert all(control is not None and control.toolTip() for control in controls)
     workers_spin = explorer.window.findChild(QtWidgets.QSpinBox, "fit_posterior_workers_spin")
@@ -1784,7 +1785,7 @@ def test_posterior_rerun_without_existing_samples_does_not_prompt(monkeypatch):
     assert len(starts) == 1
 
 
-def test_promote_best_posterior_sample_creates_current_state(monkeypatch):
+def test_best_posterior_sample_display_does_not_create_current_state(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
@@ -1807,7 +1808,11 @@ def test_promote_best_posterior_sample_creates_current_state(monkeypatch):
     result = FitTimelineEntry(
         "Fit Result1",
         kind="result",
-        goodness={"chi2": 1.0, "parameters": {parameter_name: 1.0}},
+        goodness={
+            "chi2": 1.0,
+            "parameters": {parameter_name: 1.0},
+            "posterior": project_gui._posterior_summary(sampling),
+        },
         metadata={"posterior_samples": project_gui._sampling_result_to_dict(sampling)},
         snapshot=project_gui.snapshot_data_group_state(group),
         optimizer="custom_optimizer",
@@ -1821,22 +1826,61 @@ def test_promote_best_posterior_sample_creates_current_state(monkeypatch):
 
     fit_item = explorer.tree.topLevelItem(0).child(2).child(0)
     explorer.tree.setCurrentItem(fit_item)
-    promote_button = explorer.window.findChild(QtWidgets.QPushButton, "fit_posterior_promote_button")
+    use_best_sample = explorer.window.findChild(
+        QtWidgets.QCheckBox, "fit_posterior_use_best_sample_check"
+    )
 
-    assert promote_button is not None
-    assert promote_button.isEnabled()
-    assert explorer.promote_best_posterior_sample_for_fit(group, result)
+    assert use_best_sample is not None
+    assert use_best_sample.isEnabled()
+    use_uncertainties = explorer.window.findChild(
+        QtWidgets.QCheckBox, "fit_posterior_use_uncertainties_check"
+    )
+    assert use_uncertainties is not None
+    assert use_uncertainties.isEnabled()
+    use_uncertainties.setChecked(True)
+    use_best_sample = explorer.window.findChild(
+        QtWidgets.QCheckBox, "fit_posterior_use_best_sample_check"
+    )
+    assert use_best_sample is not None
+    use_best_sample.setChecked(True)
 
-    assert model.parameters["constant"] == pytest.approx(2.0)
-    assert [fit.kind for fit in group.fits] == ["result", "current"]
-    current = group.fits[1]
-    assert current.snapshot["models"][0]["parameters"]["constant"] == pytest.approx(2.0)
-    assert current.optimizer == "custom_optimizer"
-    assert current.optimizer_config == result.optimizer_config
-    assert current.optimizer_config is not result.optimizer_config
-    assert current.metadata["promoted_posterior_sample"]["source_fit"] == "Fit Result1"
-    assert current.metadata["promoted_posterior_sample"]["step"] == 1
-    assert explorer._active_fit_entry(group) is current
+    assert model.parameters["constant"] == pytest.approx(1.0)
+    assert [fit.kind for fit in group.fits] == ["result"]
+    display = result.metadata[project_gui.POSTERIOR_DISPLAY_KEY]
+    assert display["use_best_sample"] is True
+    assert display["use_posterior_uncertainties"] is True
+    assert display["best_sample"]["parameters"][parameter_name] == pytest.approx(2.0)
+    assert project_gui._fit_results_rows(result)[0]["value"] == "2"
+    result_table = explorer.window.findChild(QtWidgets.QTableWidget, "fit_results_table")
+    assert result_table.horizontalHeaderItem(2).text() == "68% error"
+    assert explorer._active_fit_entry(group) is result
+
+
+def test_posterior_display_uses_asymmetric_intervals_and_correlations():
+    sampling = project_gui.SamplingResult(
+        samples=np.array([[0.0, 0.0], [1.0, 2.0], [2.0, 4.0], [3.0, 6.0]]),
+        variable_names=["model1.a", "model1.b"],
+    )
+    entry = FitTimelineEntry(
+        "Fit Result1",
+        kind="result",
+        goodness={
+            "parameters": {"model1.a": 1.5, "model1.b": 3.0},
+            "stderr": {"model1.a": 0.2, "model1.b": 0.3},
+            "posterior": project_gui._posterior_summary(sampling),
+        },
+        metadata={
+            "posterior_samples": project_gui._sampling_result_to_dict(sampling),
+            project_gui.POSTERIOR_DISPLAY_KEY: {"use_posterior_uncertainties": True},
+        },
+    )
+
+    rows = project_gui._fit_results_rows(entry)
+    assert rows[0]["uncertainty"].startswith("-")
+    matrix, names, title = project_gui._covariance_matrix_from_fit_entry(entry)
+    assert names == ["model1.a", "model1.b"]
+    assert title == "Posterior correlation"
+    np.testing.assert_allclose(matrix, np.ones((2, 2)))
 
 
 def test_posterior_corner_density_panel_draws_contours():
@@ -2566,6 +2610,28 @@ def test_recent_project_helpers_and_file_menu(monkeypatch, tmp_path):
     assert explorer.project_path == second
     assert [group.name for group in explorer.project.data_groups] == ["Datagroup1"]
     assert recent_project_paths(settings)[0] == second
+
+
+def test_tree_drop_loads_project_or_creates_a_workspace_for_dataset(tmp_path, monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    project_path = tmp_path / "dropped.nfit"
+    save_project(NfitProject([DataGroup("dropped workspace")]), project_path)
+    explorer = NfitProjectExplorer(NfitProject([DataGroup("existing")]))
+    monkeypatch.setattr(explorer, "_confirm_save_before_closing_project", lambda: True)
+
+    assert explorer.load_dropped_paths([project_path], explorer.tree.topLevelItem(0))
+    assert explorer.project_path == project_path
+    assert [group.name for group in explorer.project.data_groups] == ["dropped workspace"]
+
+    dataset_path = tmp_path / "scan.nxs"
+    dataset_path.touch()
+    empty_explorer = NfitProjectExplorer(NfitProject())
+
+    assert empty_explorer.load_dropped_paths([dataset_path])
+    assert [group.name for group in empty_explorer.project.data_groups] == ["Workspace1"]
+    assert empty_explorer.project.data_groups[0].datasets[0].metadata["source_file"] == str(dataset_path)
 
 
 def test_project_explorer_prompts_for_unsaved_close_and_quit(monkeypatch):
@@ -4313,6 +4379,33 @@ def test_fit_points_leave_temperature_unset_without_metadata():
     assert "rlu_to_inv_angstrom_matrix" not in bundle.points.metadata
 
 
+def test_dataset_kinematic_kf_ki_normalization_uses_incident_energy_without_mutating_raw_data():
+    data = MDHistoData(
+        axes=(
+            MDHistoAxis("H", np.array([0.0, 1.0]), "r.l.u.", "momentum"),
+            MDHistoAxis("DeltaE", np.array([0.0, 2.0, 4.0]), "meV", "energy"),
+        ),
+        signal=np.array([[10.0, 10.0]]),
+        errors=np.array([[2.0, 2.0]]),
+        mask=np.zeros((1, 2), dtype=bool),
+        num_events=np.ones((1, 2)),
+    )
+    dataset = DatasetEntry(
+        "scan",
+        data,
+        parameters={project_gui.KINEMATIC_KF_KI_INCLUDED_KEY: False},
+        metadata={"incident_energy": 10.0},
+    )
+
+    view = dataset_for_slice_viewer(dataset)
+
+    factor = np.sqrt(np.array([0.9, 0.7]))
+    np.testing.assert_allclose(view.signal[0], 10.0 * factor)
+    np.testing.assert_allclose(view.errors[0], 2.0 * factor)
+    np.testing.assert_allclose(data.signal, [[10.0, 10.0]])
+    np.testing.assert_allclose(data.errors, [[2.0, 2.0]])
+
+
 def test_dataset_temperature_spin_writes_override(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")
@@ -5331,6 +5424,12 @@ def test_sample_environment_panel_hosts_temperature_and_field(monkeypatch):
     assert temp is explorer.dataset_temperature_spin
     explorer._set_selected_dataset_temperature(12.5)
     assert dataset.parameters["temperature"] == 12.5
+
+    kinematic = explorer.window.findChild(QtWidgets.QCheckBox, "dataset_kf_ki_included")
+    assert kinematic is explorer.dataset_kf_ki_included_check
+    assert kinematic.isChecked()
+    kinematic.setChecked(False)
+    assert dataset.parameters[project_gui.KINEMATIC_KF_KI_INCLUDED_KEY] is False
 
     # Field controls write the structured parameter.
     explorer.dataset_field_magnitude_spin.setValue(2.0)

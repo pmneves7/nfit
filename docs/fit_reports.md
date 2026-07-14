@@ -39,7 +39,11 @@ from any historical fit result, including after reloading a project.
    cross-section convention (polarization factor, form factor, Bose factor).
 4. **Fitted parameters** — every parameter with value, standard error,
    varied/fixed status, sharing scope, and limits; posterior median and
-   16/84 percentiles when emcee sampling ran.
+   16/84 percentiles when emcee sampling ran. When the fit result's posterior
+   display choices are enabled, the report instead uses asymmetric emcee
+   16/84 uncertainties and/or the selected highest-log-probability emcee sample
+   as its displayed best fit. These choices are display-only and do not alter
+   the underlying least-squares result.
 5. **Physics diagnostics** — the per-dataset derived quantities
    ($\mu_{\text{eff}}^2$, static susceptibilities, distance to instability,
    closure internals).

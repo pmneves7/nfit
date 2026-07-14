@@ -78,6 +78,11 @@ def _pm(value: Any, stderr: Any = None) -> str:
         return "\\text{--}"
     if stderr is None:
         return _fmt(value)
+    if isinstance(stderr, Mapping):
+        minus = stderr.get("minus")
+        plus = stderr.get("plus")
+        if minus is not None and plus is not None:
+            return f"{_fmt(value)}^{{+{_fmt(plus)}}}_{{-{_fmt(minus)}}}"
     return f"{_fmt(value)} \\pm {_fmt(stderr)}"
 
 
@@ -87,6 +92,19 @@ def _fmt_pm(value: Any, stderr: Any = None) -> str:
     if value is None:
         return "--"
     return f"${_pm(value, stderr)}$"
+
+
+def _fmt_uncertainty(value: Any, stderr: Any = None) -> str:
+    """Format either a symmetric standard error or asymmetric posterior errors."""
+
+    if stderr is None:
+        return "--"
+    if isinstance(stderr, Mapping):
+        minus = stderr.get("minus")
+        plus = stderr.get("plus")
+        if minus is not None and plus is not None:
+            return f"$- {_fmt(minus)} / + {_fmt(plus)}$"
+    return _fmt(stderr)
 
 
 def _bmatrix(matrix: Any) -> str:
@@ -182,7 +200,38 @@ def _snapshot_datasets(fit_entry: Any) -> list[dict[str, Any]]:
 
 
 def _goodness(fit_entry: Any) -> dict[str, Any]:
-    return fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
+    raw = fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
+    metadata = _entry_metadata(fit_entry)
+    display = metadata.get("posterior_display")
+    if not isinstance(display, dict):
+        return raw
+    goodness = dict(raw)
+    parameters = raw.get("parameters") if isinstance(raw.get("parameters"), dict) else {}
+    displayed = dict(parameters)
+    best = display.get("best_sample") if display.get("use_best_sample") else None
+    best_params = best.get("parameters") if isinstance(best, dict) else None
+    if isinstance(best_params, dict):
+        displayed.update(best_params)
+    goodness["parameters"] = displayed
+    if display.get("use_posterior_uncertainties"):
+        posterior = raw.get("posterior") if isinstance(raw.get("posterior"), dict) else {}
+        posterior_params = posterior.get("parameters") if isinstance(posterior.get("parameters"), dict) else {}
+        errors: dict[str, dict[str, float]] = {}
+        for name, value in displayed.items():
+            row = posterior_params.get(name) if isinstance(posterior_params.get(name), dict) else {}
+            try:
+                lower = float(row["p16"])
+                upper = float(row["p84"])
+                center = float(value)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if np.isfinite(lower) and np.isfinite(upper) and np.isfinite(center):
+                errors[str(name)] = {
+                    "minus": max(0.0, center - lower),
+                    "plus": max(0.0, upper - center),
+                }
+        goodness["stderr"] = errors
+    return goodness
 
 
 def _entry_metadata(fit_entry: Any) -> dict[str, Any]:
@@ -546,8 +595,7 @@ def _section_dipole(
         "Ewald-summed dipole tensor (tinfoil boundary conditions) "
         + cite.cite("enjalran2004")
         + ", multiplied by a single strength "
-        f"$D_{{\\mathrm{{dip}}}} = {_fmt(value)}"
-        + (f" \\pm {_fmt(stderr)}" if stderr is not None else "")
+        f"$D_{{\\mathrm{{dip}}}} = {_pm(value, stderr)}"
         + "$\\,meV\\,\\AA$^3$. The physical point-dipole value is "
         f"$(\\mu_0/4\\pi)(g\\mu_B)^2 = {_fmt(physical)}$\\,meV\\,\\AA$^3$ "
         f"for $g = {_fmt(g_factor)}$."
@@ -858,6 +906,10 @@ def _section_parameters(fit_entry: Any) -> str:
         posterior.get("parameters") if isinstance(posterior.get("parameters"), dict) else {}
     )
     has_posterior = bool(posterior_params)
+    display = _entry_metadata(fit_entry).get("posterior_display")
+    use_posterior_uncertainties = bool(
+        isinstance(display, dict) and display.get("use_posterior_uncertainties")
+    )
 
     models = {model.get("name"): model for model in _snapshot_models(fit_entry)}
 
@@ -881,15 +933,16 @@ def _section_parameters(fit_entry: Any) -> str:
         return ("varied" if varied else "fixed") + f" ({scope})", limits_text
 
     lines = ["\\section{Fitted parameters}"]
+    uncertainty_heading = "68\\% error" if use_posterior_uncertainties else "Std.\\ err."
     if has_posterior:
         lines.append("\\begin{longtable}{l r r l l r r r}")
         header = (
-            "Parameter & Value & Std.\\ err. & Status & Limits & Median & "
+            f"Parameter & Value & {uncertainty_heading} & Status & Limits & Median & "
             "16\\% & 84\\% \\\\"
         )
     else:
         lines.append("\\begin{longtable}{l r r l l}")
-        header = "Parameter & Value & Std.\\ err. & Status & Limits \\\\"
+        header = f"Parameter & Value & {uncertainty_heading} & Status & Limits \\\\"
     lines.append("\\toprule")
     lines.append(header)
     lines.append("\\midrule")
@@ -898,7 +951,7 @@ def _section_parameters(fit_entry: Any) -> str:
         cells = [
             latex_escape(name),
             _fmt(value),
-            _fmt(stderr.get(name)) if name in stderr else "--",
+            _fmt_uncertainty(value, stderr.get(name)) if name in stderr else "--",
             status,
             limits_text,
         ]
@@ -960,12 +1013,21 @@ def _section_diagnostics(fit_entry: Any) -> str:
 
 def _section_methods(fit_entry: Any, nfit_version: str) -> str:
     goodness = _goodness(fit_entry)
+    display = _entry_metadata(fit_entry).get("posterior_display")
+    use_posterior_uncertainties = bool(
+        isinstance(display, dict) and display.get("use_posterior_uncertainties")
+    )
+    use_best_sample = bool(isinstance(display, dict) and display.get("use_best_sample"))
     sampler_note = (
         " Posterior uncertainties were estimated by affine-invariant MCMC "
         "sampling (emcee) started from the least-squares optimum."
         if isinstance(goodness.get("posterior"), dict)
         else ""
     )
+    if use_posterior_uncertainties:
+        sampler_note += " The displayed uncertainties use the emcee 16--84\\% interval."
+    if use_best_sample:
+        sampler_note += " Displayed best-fit values use the highest-log-probability stored emcee sample."
     return (
         "\\section{Methods}\n"
         "Model parameters were optimized by weighted least squares, "

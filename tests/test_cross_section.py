@@ -1,7 +1,12 @@
 import numpy as np
 import pytest
 
-from nfit.cross_section import KB_MEV_PER_K, bose_denominator, intensity_from_chipp
+from nfit.cross_section import (
+    KB_MEV_PER_K,
+    MAGNETIC_GAMMA0_PER_MU_B,
+    bose_denominator,
+    intensity_from_chipp,
+)
 
 
 def test_bose_denominator_small_energy_uses_linear_limit():
@@ -25,7 +30,10 @@ def test_intensity_from_chipp_separates_terms():
         polarization=0.25,
         background=1.0,
     )
-    np.testing.assert_allclose(intensity, [1.0 + 3.0 * 0.5 * 0.25 * 2.0])
+    np.testing.assert_allclose(
+        intensity,
+        [1.0 + 3.0 * MAGNETIC_GAMMA0_PER_MU_B**2 / np.pi * 0.5 * 0.25 * 2.0],
+    )
 
 
 def test_negative_temperature_rejected():
@@ -61,5 +69,7 @@ def test_intensity_from_chipp_accepts_array_temperature():
     E = np.array([1.0, 2.0])
     temperatures = np.array([5.0, 200.0])
     intensity = intensity_from_chipp([1.0, 1.0], E, temperatures)
-    np.testing.assert_allclose(intensity, 1.0 / bose_denominator(E, temperatures))
-
+    np.testing.assert_allclose(
+        intensity,
+        MAGNETIC_GAMMA0_PER_MU_B**2 / np.pi / bose_denominator(E, temperatures),
+    )

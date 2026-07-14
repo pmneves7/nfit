@@ -191,7 +191,10 @@ buttons, keyboard shortcuts, drag and drop, and right-click context menus:
 
 - create, rename, reorder, and delete workspaces, datasets, dataset groups,
   masks, and models where the item type allows it,
-- import datasets from files or drag files into the tree,
+- import datasets from files or drag them into a workspace or dataset group;
+  dropping a dataset into an empty project creates its first workspace. Drop a
+  single `.nfit` project file anywhere in the tree to open it after the usual
+  unsaved-changes prompt,
 - copy and paste datasets between workspaces and masks between datasets,
 - save datasets or whole projects,
 - open or refresh the data viewer for a selected workspace or dataset,
@@ -339,6 +342,19 @@ field:
   of spin-fluctuation models reads it and raises a clear error when it is
   needed but missing. For cubic crystals the two frames give the same
   directions; for lower symmetry they differ.
+- `k_f/k_i included` is checked by default, meaning the reduced intensity
+  already contains the neutron kinematic factor in the magnetic cross-section
+  convention. When unchecked, nfit multiplies the signal and uncertainty by
+  `k_f/k_i` before plotting and fitting, using `Ei`/`incident_energy` or
+  `Ef`/`final_energy` metadata when available. For energy transfer
+  `E = Ei - Ef`, nfit uses `sqrt((Ei - E) / Ei)` from Ei or
+  `sqrt(Ef / (Ef + E))` from Ef. With neither energy recorded, nfit leaves the
+  dataset unchanged.
+
+Magnetic inelastic models use the absolute prefactor
+`gamma_0^2 |f(Q)|^2 / pi`, with `gamma_0 = 0.073 / mu_B`, as well as the Bose
+factor and polarization factor. The dataset-level kinematic option completes
+this convention without embedding instrument metadata in a model component.
 
 When the data group defines lattice parameters, they are attached to the fit
 points automatically so form factors and |Q|-dependent models work without
@@ -568,20 +584,24 @@ allowed range, not a claim that the result is invalid.
 The fit editor and fit results share one `Posterior` panel. It configures emcee
 for sampling immediately after a fit; when a fit result is selected, the same
 controls also rerun emcee from the best-fit parameters, append additional steps
-to a stored raw chain, promote the best stored emcee sample when it has a better
-likelihood than the fit result, or change burn-in/thinning after the fact. These
-posterior-only operations update the selected fit result's posterior summaries
-and diagnostics without running least squares again and without creating a new
-timeline point.
+to a stored raw chain, or change burn-in/thinning after the fact. Result-only
+checkboxes control which stored result representation is displayed and exported:
+`Use emcee uncertainties, correlations, and asymmetry` replaces least-squares
+standard errors with the asymmetric 16--84% emcee interval and uses the emcee
+correlation matrix in `Fit diagnostics`; `Use best sample` displays the
+highest-log-probability stored emcee sample as the best fit. Neither checkbox
+changes the fitted model, datasets, Current state, or timeline. Both choices are
+stored with the fit result, so its table, diagnostics, and exported report remain
+consistent after reopening a project. These posterior-only operations update the
+selected fit result's posterior summaries and diagnostics without running least
+squares again and without creating a new timeline point.
 Changing burn-in or thinning simply reinterprets the stored raw chain; rerun
 replaces the stored posterior after an overwrite-confirmation dialog when
 samples already exist; append continues from the final walker positions
-and extends the stored chain. Promoting a best sample is different: it restores
-the fit result's snapshot, writes that sample into the editable model parameters,
-and records the result through the same `Current state` path as a manual
-parameter edit. Posterior rerun and append also use the background worker/progress
-window. The shared worker control defaults to `-1`, which selects an automatic
-CPU-based worker count; set the value to `1` for serial emcee evaluations.
+and extends the stored chain. Posterior rerun and append also use the background
+worker/progress window. The shared worker control defaults to `-1`, which
+selects an automatic CPU-based worker count; set the value to `1` for serial
+emcee evaluations.
 
 Fit results with covariance estimates or stored emcee samples expose a `Fit
 diagnostics` button. The diagnostics window includes a covariance heatmap when
@@ -599,6 +619,8 @@ uncertainty marker lines plus value/error titles using a proper plus-minus
 symbol with stacked asymmetric bounds. The lower-triangle panels combine
 density shading, iso-density contour lines, faint individual samples, and solid
 best-fit reference crosshairs so overplotted posterior pile-ups remain visible.
+When either posterior display checkbox is selected, those reference lines use
+the corresponding selected emcee values rather than the least-squares values.
 
 ## Data viewer
 
