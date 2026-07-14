@@ -29,6 +29,7 @@ docs/_build/
 data/hyspec/raw/
 data/hyspec/nfit_project_3D.nfit
 data/hyspec/nfit_project_4D.nfit
+data/SEQUOIA/test/
 
 # OS/editor
 .DS_Store

@@ -47,6 +47,7 @@ from .importers import IMPORTERS, import_with, importers_for_data_type
 from .mdhisto import MDHistoAxis, MDHistoData, load_mantid_mdhisto_nxs, mdhisto_measured_bins
 from .mdevent import assess_mdevent_memory, bin_mdevent_group, is_mdevent_file, load_mdevent_run_points, mdevent_dataset_group
 from .pipeline import DataGroup, DatasetEntry, DatasetGroup, FitTimelineEntry, MaskSpec, ModelComponentSpec
+from .qt_controls import configure_numeric_spin_boxes
 from .rebin import rebin_nd
 
 QtMDHistoSliceViewer = None
@@ -214,7 +215,7 @@ MASK_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
         "parameters": {
             "center": {
                 "default": [0.0, 0.0, 0.0],
-                "description": "One reciprocal-space center or a list of Bragg centers whose acoustic phonon cones are masked out.",
+                "description": "One physical HKL reciprocal-space center or a list of Bragg centers whose acoustic phonon cones are masked out. Centers remain in physical HKL coordinates even when the displayed axes are rebinned projections.",
                 "allowed": "One [H, K, L] vector or a nonempty list of [H, K, L] vectors in reciprocal lattice units.",
                 "type": "list[float] | list[list[float]]",
                 "example": "[[1, 1, 0], [2, 2, 0], [3, 3, 0]]",
@@ -1236,14 +1237,19 @@ def run_group_fit(
     return result
 
 
-def current_state_fit_entry(group: DataGroup) -> FitTimelineEntry:
-    """Return a snapshot entry representing the current mutable GUI state."""
+def current_state_fit_entry(
+    group: DataGroup,
+    source: FitTimelineEntry | None = None,
+) -> FitTimelineEntry:
+    """Return a mutable state snapshot, inheriting its source fit configuration."""
 
     return FitTimelineEntry(
         name="Current state",
         kind="current",
         snapshot=snapshot_data_group_state(group),
         created_at=_timestamp_now(),
+        optimizer=str(source.optimizer or "least_squares") if source is not None else "least_squares",
+        optimizer_config=copy.deepcopy(source.optimizer_config) if source is not None else {},
     )
 
 
@@ -1879,6 +1885,7 @@ def fit_details_text(fit_entry: FitTimelineEntry) -> str:
         f"Optimizer: {fit_entry.optimizer or '-'}",
         f"Duration: {_format_number(fit_entry.duration_seconds) + ' s' if fit_entry.duration_seconds is not None else '-'}",
     ]
+    lines.extend(_fit_chi_squared_summary_lines(fit_entry))
     if fit_entry.optimizer_config:
         lines.extend(["", "Optimizer config"])
         lines.extend(_mapping_lines(fit_entry.optimizer_config))
@@ -1899,6 +1906,22 @@ def fit_details_text(fit_entry: FitTimelineEntry) -> str:
     if fit_entry.children:
         lines.extend(["", f"Timeline entries: {len(fit_entry.children)}"])
     return "\n".join(lines)
+
+
+def _fit_chi_squared_summary_lines(fit_entry: FitTimelineEntry) -> list[str]:
+    """Return compact goodness-of-fit rows for a completed fit result."""
+
+    if fit_entry.kind != "result":
+        return []
+    goodness = fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
+
+    def formatted(key: str) -> str:
+        try:
+            return _format_number(float(goodness[key]))
+        except (KeyError, TypeError, ValueError):
+            return "-"
+
+    return [f"Chi^2: {formatted('chi2')}", f"Reduced Chi^2: {formatted('reduced_chi2')}"]
 
 
 def dataset_detail_sections(
@@ -2436,6 +2459,10 @@ def _composite_mdhisto_data(
             "upper": upper,
             "step_size": np.asarray(result.step_size, dtype=float).tolist(),
             "num_bins": np.asarray(result.num_bins, dtype=int).tolist(),
+            "vectors": [
+                _rebin_axis_vector(axis_config, index, len(axes_config)).tolist()
+                for index, axis_config in enumerate(axes_config)
+            ],
             "fractional": bool(config.get("fractional", True)),
             "normalize": True,
             "mean_weighting": _rebin_mean_weighting(config),
@@ -3565,6 +3592,8 @@ def _overlay_cache_signature(group: DataGroup) -> str:
 
     datasets: list[Any] = []
     for dataset in group.iter_datasets():
+        data_metadata = getattr(dataset.data, "metadata", {})
+        data_rebin = data_metadata.get("rebin") if isinstance(data_metadata, dict) else None
         datasets.append(
             [
                 dataset.name,
@@ -3576,6 +3605,11 @@ def _overlay_cache_signature(group: DataGroup) -> str:
                 float(dataset.scale_factor),
                 bool(dataset.scale_factor_vary),
                 json.dumps(dataset.parameters, sort_keys=True, default=str),
+                # Rebin settings and the output basis stored on a materialized
+                # histogram both change physical HKLE coordinates. Either one
+                # must rebuild cached fit points and model geometry.
+                json.dumps(dataset.parameters.get(DATASET_REBIN_KEY), sort_keys=True, default=str),
+                json.dumps(data_rebin, sort_keys=True, default=str),
                 effective_dataset_temperature(group, dataset),
                 [
                     [mask.type, bool(mask.enabled), bool(mask.invert), bool(mask.additive),
@@ -3830,6 +3864,39 @@ def _sampling_result_from_dict(payload: Any) -> SamplingResult | None:
         chain=chain,
         log_probability_chain=log_probability_chain,
     )
+
+
+def _autocorrelation_progress_summary(result: SamplingResult | None) -> list[str]:
+    """Return readable emcee convergence estimates for the progress log."""
+
+    if result is None:
+        return []
+    metadata = result.metadata if isinstance(result.metadata, dict) else {}
+    raw_tau = metadata.get("autocorrelation_time")
+    if not isinstance(raw_tau, (list, tuple)):
+        return []
+    tau = []
+    for value in raw_tau:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(numeric) and numeric > 0.0:
+            tau.append(numeric)
+    if not tau:
+        return [
+            "emcee integrated autocorrelation time is unavailable for this chain; "
+            "run more steps before using it to estimate a chain length."
+        ]
+    recommended = metadata.get("autocorrelation_recommended_steps")
+    additional = metadata.get("autocorrelation_recommended_additional_steps")
+    tau_text = ", ".join(f"{value:.3g}" for value in tau)
+    summary = f"emcee integrated autocorrelation time (steps): [{tau_text}]"
+    if recommended is not None:
+        summary += f"; recommended total chain length: at least {int(recommended):,} steps"
+    if additional is not None:
+        summary += f"; estimated additional steps: {int(additional):,}"
+    return [summary + "."]
 
 
 def _sampling_result_with_window(result: SamplingResult, burn_in: int, thin: int) -> SamplingResult:
@@ -6117,27 +6184,52 @@ def _is_vector_length(value: Any, length: int) -> bool:
 
 
 def _mdhisto_coordinate_grids(data: MDHistoData) -> dict[str, np.ndarray]:
+    """Return physical HKLE grids, reconstructing them from any rebinned basis."""
+
     shape = data.shape
     axis_values = np.meshgrid(*(axis.centers for axis in data.axes), indexing="ij")
     coords: dict[str, np.ndarray] = {}
-    projection_contributions: list[tuple[np.ndarray, np.ndarray]] = []
-    for axis, values in zip(data.axes, axis_values, strict=True):
+    hkle = np.zeros((*shape, 4), dtype=float)
+    hkle_contributions = 0
+    for index, (axis, values) in enumerate(zip(data.axes, axis_values, strict=True)):
         role = axis.role
-        if role in {"h", "k", "l", "energy_transfer", "q_modulus"}:
-            key = {"h": "H", "k": "K", "l": "L", "energy_transfer": "E", "q_modulus": "q_modulus"}[role]
-            coords[key] = values
+        if role == "q_modulus":
+            coords["q_modulus"] = values
             continue
-        projection = _axis_projection_vector(axis.name)
-        if projection is not None:
-            projection_contributions.append((projection, values))
-    if not {"H", "K", "L"}.issubset(coords) and projection_contributions:
-        hkl = np.zeros((*shape, 3), dtype=float)
-        for projection, values in projection_contributions:
-            hkl = hkl + values[..., np.newaxis] * projection
-        coords.setdefault("H", hkl[..., 0])
-        coords.setdefault("K", hkl[..., 1])
-        coords.setdefault("L", hkl[..., 2])
+        vector = _mdhisto_axis_coordinate_vector(data, index)
+        if vector is None:
+            vector = {
+                "h": np.array([1.0, 0.0, 0.0, 0.0]),
+                "k": np.array([0.0, 1.0, 0.0, 0.0]),
+                "l": np.array([0.0, 0.0, 1.0, 0.0]),
+                "energy_transfer": np.array([0.0, 0.0, 0.0, 1.0]),
+            }.get(role)
+        if vector is not None:
+            hkle += values[..., np.newaxis] * vector
+            hkle_contributions += 1
+    if hkle_contributions:
+        coords.update({"H": hkle[..., 0], "K": hkle[..., 1], "L": hkle[..., 2]})
+        if len(data.axes) >= 4 or np.any(hkle[..., 3] != 0.0):
+            coords["E"] = hkle[..., 3]
     return coords
+
+
+def _mdhisto_axis_coordinate_vector(data: MDHistoData, index: int) -> np.ndarray | None:
+    """Return an output-axis vector in physical HKLE coordinates when known."""
+
+    rebin = data.metadata.get("rebin") if isinstance(data.metadata, dict) else None
+    vectors = rebin.get("vectors") if isinstance(rebin, dict) else None
+    if isinstance(vectors, (list, tuple)) and 0 <= index < len(vectors):
+        try:
+            vector = np.asarray(vectors[index], dtype=float).reshape(-1)
+        except (TypeError, ValueError):
+            vector = np.asarray([], dtype=float)
+        if vector.size in {3, 4} and np.all(np.isfinite(vector)):
+            return np.pad(vector, (0, 4 - vector.size))
+    projection = _axis_projection_vector(data.axes[index].name)
+    if projection is not None:
+        return np.pad(projection, (0, 1))
+    return None
 
 
 def _axis_projection_vector(name: str) -> np.ndarray | None:
@@ -6387,7 +6479,7 @@ def _ensure_current_state_after_result(
     existing = _current_state_after_result(group, result)
     if existing is not None:
         return existing, False
-    current = current_state_fit_entry(group)
+    current = current_state_fit_entry(group, result)
     siblings.insert(siblings.index(result) + 1, current)
     return current, True
 
@@ -6889,6 +6981,7 @@ class _FitProgressDialog:
         *,
         parameters: dict[str, Any] | None = None,
         limit_hits: Any = None,
+        summary_lines: Sequence[str] | None = None,
     ) -> None:
         from PySide6 import QtWidgets
 
@@ -6900,6 +6993,9 @@ class _FitProgressDialog:
         self.status_label.setText(f"Done. {warning}" if warning else "Done.")
         if warning:
             self.log.appendPlainText(warning)
+        for line in summary_lines or ():
+            if str(line).strip():
+                self.log.appendPlainText(str(line))
         self.progress.setRange(0, 1)
         self.progress.setValue(1)
         self.cancel_button.setEnabled(False)
@@ -6932,7 +7028,7 @@ class _FitDiagnosticsPlotWindow:
     """Dedicated Matplotlib window for fit covariance and posterior diagnostics."""
 
     def __init__(self, fit_entry: FitTimelineEntry, parent: Any) -> None:
-        from PySide6 import QtGui, QtWidgets
+        from PySide6 import QtCore, QtGui, QtWidgets
 
         self.fit_entry = fit_entry
         self.window = QtWidgets.QMainWindow(parent.window if hasattr(parent, "window") else parent)
@@ -6943,9 +7039,19 @@ class _FitDiagnosticsPlotWindow:
         layout = QtWidgets.QVBoxLayout(central)
         self.tabs = QtWidgets.QTabWidget()
         self.tabs.setToolTip("Fit diagnostics from covariance estimates and stored emcee samples.")
-        layout.addWidget(self.tabs, 1)
         self.label_table = self._make_label_table()
-        layout.addWidget(self.label_table)
+        self.plot_label_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        self.plot_label_splitter.setObjectName("fit_diagnostics_plot_label_splitter")
+        self.plot_label_splitter.setToolTip(
+            "Drag the divider to allocate space between diagnostic plots and editable parameter labels."
+        )
+        self.plot_label_splitter.setChildrenCollapsible(False)
+        self.plot_label_splitter.addWidget(self.tabs)
+        self.plot_label_splitter.addWidget(self.label_table)
+        self.plot_label_splitter.setStretchFactor(0, 4)
+        self.plot_label_splitter.setStretchFactor(1, 1)
+        self.plot_label_splitter.setSizes([520, 180])
+        layout.addWidget(self.plot_label_splitter, 1)
         self.window.setCentralWidget(central)
         self._redraw_plots()
 
@@ -6976,7 +7082,7 @@ class _FitDiagnosticsPlotWindow:
             table.setItem(row, 0, name_item)
             table.setItem(row, 1, label_item)
         table.itemChanged.connect(self._label_table_changed)
-        table.setMaximumHeight(150)
+        table.setMinimumHeight(90)
         table.resizeColumnsToContents()
         _tooltip_table_corner_buttons(table, "Select all parameter-label rows.")
         return table
@@ -7478,7 +7584,10 @@ class NfitProjectExplorer:
         self.fit_emcee_steps_spin = None
         self.fit_emcee_burn_spin = None
         self.fit_emcee_thin_spin = None
+        self.fit_emcee_seed_spin = None
         self.fit_emcee_workers_spin = None
+        self.fit_posterior_layout = None
+        self.fit_posterior_result_actions = None
         self.fit_branch_check = None
         self.fit_now_button = None
         self.fit_corner_button = None
@@ -7521,6 +7630,7 @@ class NfitProjectExplorer:
         self._build()
         self._refresh_tree()
         self._sync_details()
+        configure_numeric_spin_boxes(self.app)
 
     def show(self) -> "NfitProjectExplorer":
         self.window.show()
@@ -8112,12 +8222,21 @@ class NfitProjectExplorer:
         return True
 
     def rebin_now_for_selection(self) -> bool:
-        from PySide6 import QtWidgets
-
         group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
         if role != "dataset" or group is None or entry is None:
             return False
-        progress = self._make_rebin_progress_callback("Rebinning dataset...") if _dataset_rebin_is_large(entry, dataset_rebin_config(entry)) else None
+        return self.rebin_dataset_now(entry, group)
+
+    def rebin_dataset_now(self, entry: DatasetEntry, group: DataGroup | None) -> bool:
+        """Rebin one dataset immediately, independent of the tree selection."""
+
+        from PySide6 import QtWidgets
+
+        if group is None or not _dataset_can_rebin(entry):
+            return False
+        progress = self._make_rebin_progress_callback(
+            "Rebinning dataset..."
+        ) if _dataset_rebin_is_large(entry, dataset_rebin_config(entry)) else None
         try:
             view = dataset_for_slice_viewer(
                 entry,
@@ -8136,8 +8255,7 @@ class NfitProjectExplorer:
             self._close_rebin_progress(progress)
         if view is None:
             return False
-        if group is not None:
-            self.refresh_slice_viewer(group)
+        self.refresh_slice_viewer(group)
         self._set_dataset_details(entry, group)
         return True
 
@@ -8309,6 +8427,9 @@ class NfitProjectExplorer:
                 "Fit pipeline finished.",
                 parameters=result.goodness.get("parameters"),
                 limit_hits=result.goodness.get("parameters_at_limits"),
+                summary_lines=_autocorrelation_progress_summary(
+                    _sampling_result_from_dict(result.metadata.get("posterior_samples"))
+                ),
             )
         self.fit_branch_check.setChecked(False)
         self.refresh_slice_viewer(group)
@@ -8327,6 +8448,7 @@ class NfitProjectExplorer:
         on_success: Any,
         success_message: str,
         close_on_success: bool = True,
+        completion_summary: Any | None = None,
     ) -> bool:
         from PySide6 import QtCore, QtWidgets
 
@@ -8375,7 +8497,8 @@ class NfitProjectExplorer:
             def handle_success(self, result: Any) -> None:
                 should_finish = on_success(result)
                 if should_finish is not False:
-                    progress.finish(success_message)
+                    lines = completion_summary(result) if completion_summary is not None else None
+                    progress.finish(success_message, summary_lines=lines)
                     if close_on_success:
                         progress.close()
                 worker_thread.quit()
@@ -8383,7 +8506,11 @@ class NfitProjectExplorer:
             @QtCore.Slot(object)
             def handle_cancelled(self, result: Any) -> None:
                 on_success(result)
-                progress.finish("emcee posterior sampling cancelled; partial samples saved.")
+                lines = completion_summary(result) if completion_summary is not None else None
+                progress.finish(
+                    "emcee posterior sampling cancelled; partial samples saved.",
+                    summary_lines=lines,
+                )
                 worker_thread.quit()
 
             @QtCore.Slot(str)
@@ -8474,6 +8601,9 @@ class NfitProjectExplorer:
                         str(result.goodness.get("message", "Partial posterior samples were saved.")),
                         parameters=result.goodness.get("parameters"),
                         limit_hits=result.goodness.get("parameters_at_limits"),
+                        summary_lines=_autocorrelation_progress_summary(
+                            _sampling_result_from_dict(result.metadata.get("posterior_samples"))
+                        ),
                     )
             else:
                 progress = self._fit_progress_dialog
@@ -8482,6 +8612,9 @@ class NfitProjectExplorer:
                         "Fit pipeline finished.",
                         parameters=result.goodness.get("parameters"),
                         limit_hits=result.goodness.get("parameters_at_limits"),
+                        summary_lines=_autocorrelation_progress_summary(
+                            _sampling_result_from_dict(result.metadata.get("posterior_samples"))
+                        ),
                     )
             self.fit_branch_check.setChecked(False)
             self.refresh_slice_viewer(group)
@@ -8626,7 +8759,7 @@ class NfitProjectExplorer:
         burn_in: int,
         thin: int,
         random_seed: int | None,
-        workers: int = 1,
+        workers: int = -1,
         append: bool = False,
     ) -> bool:
         from PySide6 import QtWidgets
@@ -8661,7 +8794,10 @@ class NfitProjectExplorer:
             result = exc.result
             _store_sampling_result_on_fit_entry(fit_entry, result)
             self._mark_dirty()
-            progress.finish("emcee posterior sampling cancelled; partial samples saved.")
+            progress.finish(
+                "emcee posterior sampling cancelled; partial samples saved.",
+                summary_lines=_autocorrelation_progress_summary(result),
+            )
             self._set_fit_details(fit_entry)
             return True
         except Exception as exc:
@@ -8674,8 +8810,10 @@ class NfitProjectExplorer:
             return False
         _store_sampling_result_on_fit_entry(fit_entry, result)
         self._mark_dirty()
-        progress.finish("emcee posterior sampling finished.")
-        progress.close()
+        progress.finish(
+            "emcee posterior sampling finished.",
+            summary_lines=_autocorrelation_progress_summary(result),
+        )
         self._set_fit_details(fit_entry)
         return True
 
@@ -8728,6 +8866,8 @@ class NfitProjectExplorer:
             task=task,
             on_success=on_success,
             success_message="emcee posterior sampling finished.",
+            close_on_success=False,
+            completion_summary=_autocorrelation_progress_summary,
         )
 
     def confirm_and_start_posterior_rerun(
@@ -9669,30 +9809,43 @@ class NfitProjectExplorer:
         )
         self.fit_emcee_check.stateChanged.connect(self._set_selected_fit_controls_config)
         self.fit_emcee_walkers_spin = QtWidgets.QSpinBox()
+        self.fit_emcee_walkers_spin.setObjectName("fit_posterior_walkers_spin")
         self.fit_emcee_walkers_spin.setRange(0, 10000)
         self.fit_emcee_walkers_spin.setValue(0)
         self.fit_emcee_walkers_spin.setToolTip("Number of emcee walkers. Use 0 to choose an automatic value from the parameter count.")
         self.fit_emcee_walkers_spin.valueChanged.connect(self._set_selected_fit_controls_config)
         self.fit_emcee_steps_spin = QtWidgets.QSpinBox()
+        self.fit_emcee_steps_spin.setObjectName("fit_posterior_steps_spin")
         self.fit_emcee_steps_spin.setRange(1, 1000000)
         self.fit_emcee_steps_spin.setValue(1000)
         self.fit_emcee_steps_spin.setToolTip("Number of emcee steps per walker.")
         self.fit_emcee_steps_spin.valueChanged.connect(self._set_selected_fit_controls_config)
         self.fit_emcee_burn_spin = QtWidgets.QSpinBox()
+        self.fit_emcee_burn_spin.setObjectName("fit_posterior_burn_spin")
         self.fit_emcee_burn_spin.setRange(0, 1000000)
         self.fit_emcee_burn_spin.setValue(200)
         self.fit_emcee_burn_spin.setToolTip("Initial emcee steps to discard before summarizing posterior samples.")
         self.fit_emcee_burn_spin.valueChanged.connect(self._set_selected_fit_controls_config)
         self.fit_emcee_thin_spin = QtWidgets.QSpinBox()
+        self.fit_emcee_thin_spin.setObjectName("fit_posterior_thin_spin")
         self.fit_emcee_thin_spin.setRange(1, 10000)
         self.fit_emcee_thin_spin.setValue(1)
         self.fit_emcee_thin_spin.setToolTip("Keep every Nth emcee sample after burn-in.")
         self.fit_emcee_thin_spin.valueChanged.connect(self._set_selected_fit_controls_config)
+        self.fit_emcee_seed_spin = QtWidgets.QSpinBox()
+        self.fit_emcee_seed_spin.setObjectName("fit_posterior_seed_spin")
+        self.fit_emcee_seed_spin.setRange(-1, 2147483647)
+        self.fit_emcee_seed_spin.setValue(-1)
+        self.fit_emcee_seed_spin.setToolTip(
+            "Random seed for emcee. Use -1 for a fresh random initialization."
+        )
+        self.fit_emcee_seed_spin.valueChanged.connect(self._set_selected_fit_controls_config)
         self.fit_emcee_workers_spin = QtWidgets.QSpinBox()
+        self.fit_emcee_workers_spin.setObjectName("fit_posterior_workers_spin")
         self.fit_emcee_workers_spin.setRange(-1, 256)
-        self.fit_emcee_workers_spin.setValue(1)
+        self.fit_emcee_workers_spin.setValue(-1)
         self.fit_emcee_workers_spin.setToolTip(
-            "Parallel worker threads for emcee log-probability evaluations. Use 1 for serial execution or -1 for an automatic CPU-based choice."
+            "Parallel worker threads for emcee log-probability evaluations. The default, -1, selects an automatic CPU-based worker count; use 1 for serial execution."
         )
         self.fit_emcee_workers_spin.valueChanged.connect(self._set_selected_fit_controls_config)
         self.fit_optimizer_config_editor = QtWidgets.QLineEdit("{}")
@@ -9763,6 +9916,7 @@ class NfitProjectExplorer:
         posterior_group = QtWidgets.QGroupBox("Posterior")
         posterior_group.setObjectName("fit_posterior_settings_group")
         posterior_layout = QtWidgets.QGridLayout(posterior_group)
+        self.fit_posterior_layout = posterior_layout
         posterior_layout.setColumnStretch(1, 1)
         posterior_layout.addWidget(self.fit_emcee_check, 0, 1)
         posterior_layout.addWidget(QtWidgets.QLabel("Walkers"), 1, 0)
@@ -9773,8 +9927,10 @@ class NfitProjectExplorer:
         posterior_layout.addWidget(self.fit_emcee_burn_spin, 3, 1)
         posterior_layout.addWidget(QtWidgets.QLabel("Thin"), 4, 0)
         posterior_layout.addWidget(self.fit_emcee_thin_spin, 4, 1)
-        posterior_layout.addWidget(QtWidgets.QLabel("emcee workers"), 5, 0)
-        posterior_layout.addWidget(self.fit_emcee_workers_spin, 5, 1)
+        posterior_layout.addWidget(QtWidgets.QLabel("Seed"), 5, 0)
+        posterior_layout.addWidget(self.fit_emcee_seed_spin, 5, 1)
+        posterior_layout.addWidget(QtWidgets.QLabel("emcee workers"), 6, 0)
+        posterior_layout.addWidget(self.fit_emcee_workers_spin, 6, 1)
         fit_settings_layout.addWidget(posterior_group)
 
         right_layout.addLayout(title_row)
@@ -9820,7 +9976,13 @@ class NfitProjectExplorer:
         item_to_select = None
         for group in self.project.data_groups:
             ensure_fit_history(group)
-            refresh_current_state_fit_entries(group)
+            # Selecting a historical result restores its snapshot into the
+            # live group so its fit settings can be inspected. Do not let
+            # that restoration overwrite the separately saved editable
+            # Current state snapshot.
+            active_fit = self._active_fit_entry(group)
+            if active_fit is None or active_fit.kind == "current":
+                refresh_current_state_fit_entries(group)
             group_item = QtWidgets.QTreeWidgetItem([group.name])
             group_item.setFlags(group_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
             _style_tree_hierarchy_item(group_item, bold=True, underline=True)
@@ -9863,8 +10025,8 @@ class NfitProjectExplorer:
                 models_item.addChild(model_item)
 
             group_item.setExpanded(self._expanded_state.get(("group", id(group)), True))
-            datasets_item.setExpanded(self._expanded_state.get(("datasets", id(group)), False))
-            models_item.setExpanded(self._expanded_state.get(("models", id(group)), False))
+            datasets_item.setExpanded(self._expanded_state.get(("datasets", id(group)), True))
+            models_item.setExpanded(self._expanded_state.get(("models", id(group)), True))
             fits_item = QtWidgets.QTreeWidgetItem(["Fits"])
             _style_tree_hierarchy_item(fits_item, bold=True)
             _set_tree_item_icon(fits_item, "fit_folder")
@@ -9874,7 +10036,7 @@ class NfitProjectExplorer:
                 fit_item = self._add_fit_tree_item(fits_item, group, fit_entry, select_fit=select_fit)
                 if item_to_select is None and select_fit is not None:
                     item_to_select = self._selected_fit_tree_item(fit_item, select_fit)
-            fits_item.setExpanded(self._expanded_state.get(("fits", id(group)), False))
+            fits_item.setExpanded(self._expanded_state.get(("fits", id(group)), True))
             if select_group is group and item_to_select is None:
                 item_to_select = group_item
         self.tree.blockSignals(False)
@@ -11183,6 +11345,10 @@ class NfitProjectExplorer:
         from PySide6 import QtCore, QtWidgets
 
         group, _entry, _mask, _model, _role = self._objects_for_item(self._current_item())
+        self._set_fit_posterior_result_actions(
+            group if fit_entry.kind == "result" else None,
+            fit_entry if fit_entry.kind == "result" else None,
+        )
         self.details_label.setText(fit_details_text(fit_entry))
         self._clear_details_panel()
         duration = (
@@ -11190,26 +11356,26 @@ class NfitProjectExplorer:
             if fit_entry.duration_seconds is not None
             else "-"
         )
+        fit_summary_lines = [
+            f"Type: {fit_entry.kind}",
+            f"Created: {fit_entry.created_at or '-'}",
+            f"Optimizer: {fit_entry.optimizer or '-'}",
+            f"Duration: {duration}",
+            *_fit_chi_squared_summary_lines(fit_entry),
+            f"Timeline entries: {len(fit_entry.children)}",
+        ]
         if self.fit_settings_panel is not None:
             self.details_layout.addWidget(self.fit_settings_panel)
         self.details_layout.addWidget(
             self._details_group_box(
                 "Fit",
-                [
-                    f"Type: {fit_entry.kind}",
-                    f"Created: {fit_entry.created_at or '-'}",
-                    f"Optimizer: {fit_entry.optimizer or '-'}",
-                    f"Duration: {duration}",
-                    f"Timeline entries: {len(fit_entry.children)}",
-                ],
+                fit_summary_lines,
             )
         )
         parameter_group = None
         lower_widgets = []
         if _fit_results_rows(fit_entry):
             parameter_group = self._fit_results_group_box(fit_entry)
-            if group is not None and fit_entry.kind == "result":
-                lower_widgets.append(self._posterior_sampler_group_box(group, fit_entry))
         elif _snapshot_parameter_rows(fit_entry):
             parameter_group = self._parameter_values_group_box(fit_entry)
         if fit_entry.optimizer_config:
@@ -11284,6 +11450,24 @@ class NfitProjectExplorer:
                 self.details_layout.addWidget(widget)
         self.details_layout.addStretch(1)
 
+    def _set_fit_posterior_result_actions(
+        self,
+        group: DataGroup | None,
+        fit_entry: FitTimelineEntry | None,
+    ) -> None:
+        """Show result-only posterior actions beneath the shared settings."""
+        if self.fit_posterior_layout is None:
+            return
+        if self.fit_posterior_result_actions is not None:
+            self.fit_posterior_layout.removeWidget(self.fit_posterior_result_actions)
+            self.fit_posterior_result_actions.setParent(None)
+            self.fit_posterior_result_actions.deleteLater()
+            self.fit_posterior_result_actions = None
+        if group is None or fit_entry is None or not _fit_results_rows(fit_entry):
+            return
+        self.fit_posterior_result_actions = self._posterior_sampler_group_box(group, fit_entry)
+        self.fit_posterior_layout.addWidget(self.fit_posterior_result_actions, 7, 0, 1, 2)
+
     def _fit_results_group_box(self, fit_entry: FitTimelineEntry) -> Any:
         from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -11317,7 +11501,8 @@ class NfitProjectExplorer:
                 item.setToolTip(row.get(key, "-"))
                 if row.get("at_limit"):
                     warning = f"Reached the {row.get('limit_side', 'configured')} bound ({row.get('limit_bound', '-')})."
-                    item.setForeground(QtGui.QColor("#c0392b"))
+                    item.setForeground(QtGui.QColor("#ff9c94"))
+                    item.setBackground(QtGui.QColor("#5a2929"))
                     font = item.font()
                     font.setBold(True)
                     item.setFont(font)
@@ -11418,11 +11603,10 @@ class NfitProjectExplorer:
         return group_box
 
     def _posterior_sampler_group_box(self, group: DataGroup, fit_entry: FitTimelineEntry) -> Any:
+        """Return result-only actions for the shared Posterior settings panel."""
         from PySide6 import QtWidgets
 
         stored = _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples"))
-        metadata = dict(stored.metadata) if stored is not None else {}
-        sampler = fit_entry.optimizer_config.get("sampler", {}) if isinstance(fit_entry.optimizer_config, dict) else {}
         chain_steps = 0
         chain_walkers = 0
         if stored is not None and stored.chain is not None:
@@ -11440,83 +11624,17 @@ class NfitProjectExplorer:
                 f"({location_text}; log probability {_format_number(best_log_probability)} "
                 f"vs {_format_number(baseline_log_probability)} for this fit result)."
             )
-        walkers_default = int(metadata.get("n_walkers") or sampler.get("n_walkers") or 0)
-        steps_default = int(metadata.get("n_steps") or sampler.get("n_steps") or 1000)
-        burn_default = int(metadata.get("burn_in") or sampler.get("burn_in") or 0)
-        thin_default = max(1, int(metadata.get("thin") or sampler.get("thin") or 1))
-        workers_default = int(sampler.get("workers", metadata.get("workers", 1)) or 1)
-        seed_value = metadata.get("random_seed", sampler.get("random_seed", None))
-
-        group_box = QtWidgets.QGroupBox("Posterior sampler")
-        group_box.setToolTip(
-            "Inspect or update emcee posterior samples for this fit result without running least squares or creating a timeline entry."
-        )
-        layout = QtWidgets.QGridLayout(group_box)
-        layout.setContentsMargins(10, 8, 10, 8)
+        widget = QtWidgets.QWidget()
+        widget.setObjectName("fit_posterior_result_actions")
+        layout = QtWidgets.QVBoxLayout(widget)
+        layout.setContentsMargins(0, 8, 0, 0)
 
         status = QtWidgets.QLabel(
             f"Stored samples: {0 if stored is None else len(stored.samples):d}    "
             f"Raw chain: {chain_steps:d} steps x {chain_walkers:d} walkers"
         )
         status.setToolTip("Current posterior storage for this fit result.")
-        layout.addWidget(status, 0, 0, 1, 4)
-
-        walkers_spin = QtWidgets.QSpinBox()
-        walkers_spin.setObjectName("fit_posterior_walkers_spin")
-        walkers_spin.setRange(0, 10000)
-        walkers_spin.setValue(max(0, walkers_default))
-        walkers_spin.setToolTip(
-            "Number of walkers for a full emcee rerun. Use 0 to choose an automatic value; append continues from the stored walkers."
-        )
-
-        steps_spin = QtWidgets.QSpinBox()
-        steps_spin.setObjectName("fit_posterior_steps_spin")
-        steps_spin.setRange(1, 1000000)
-        steps_spin.setValue(max(1, steps_default))
-        steps_spin.setToolTip("Number of emcee steps to run. For append, this many new steps are added to the stored chain.")
-
-        burn_spin = QtWidgets.QSpinBox()
-        burn_spin.setObjectName("fit_posterior_burn_spin")
-        burn_spin.setRange(0, 1000000)
-        burn_spin.setValue(max(0, burn_default))
-        burn_spin.setToolTip(
-            "Initial chain steps to discard before computing posterior summaries and diagnostic plots. "
-            "Changing this only changes the view of stored samples."
-        )
-
-        thin_spin = QtWidgets.QSpinBox()
-        thin_spin.setObjectName("fit_posterior_thin_spin")
-        thin_spin.setRange(1, 10000)
-        thin_spin.setValue(thin_default)
-        thin_spin.setToolTip(
-            "Keep every Nth stored sample after burn-in when computing summaries and diagnostic plots."
-        )
-
-        seed_spin = QtWidgets.QSpinBox()
-        seed_spin.setObjectName("fit_posterior_seed_spin")
-        seed_spin.setRange(-1, 2147483647)
-        seed_spin.setValue(-1 if seed_value in (None, "") else int(seed_value))
-        seed_spin.setToolTip("Random seed for a full rerun. Use -1 for a fresh random initialization.")
-
-        workers_spin = QtWidgets.QSpinBox()
-        workers_spin.setObjectName("fit_posterior_workers_spin")
-        workers_spin.setRange(-1, 256)
-        workers_spin.setValue(workers_default)
-        workers_spin.setToolTip(
-            "Parallel worker threads for emcee log-probability evaluations during rerun or append. Use -1 for an automatic CPU-based choice."
-        )
-
-        controls = [
-            ("Walkers", walkers_spin),
-            ("Steps", steps_spin),
-            ("Burn-in", burn_spin),
-            ("Thin", thin_spin),
-            ("Seed", seed_spin),
-            ("Workers", workers_spin),
-        ]
-        for index, (label, widget) in enumerate(controls, start=1):
-            layout.addWidget(QtWidgets.QLabel(label), index, 0)
-            layout.addWidget(widget, index, 1, 1, 3)
+        layout.addWidget(status)
 
         apply_button = QtWidgets.QPushButton("Apply burn-in/thin")
         apply_button.setObjectName("fit_posterior_apply_button")
@@ -11524,7 +11642,7 @@ class NfitProjectExplorer:
         apply_button.setEnabled(stored is not None and stored.chain is not None)
         apply_button.clicked.connect(
             lambda _checked=False: self.apply_posterior_sampling_window(
-                fit_entry, burn_spin.value(), thin_spin.value()
+                fit_entry, self.fit_emcee_burn_spin.value(), self.fit_emcee_thin_spin.value()
             )
         )
 
@@ -11538,12 +11656,12 @@ class NfitProjectExplorer:
             lambda _checked=False: self.confirm_and_start_posterior_rerun(
                 group,
                 fit_entry,
-                n_walkers=walkers_spin.value(),
-                n_steps=steps_spin.value(),
-                burn_in=burn_spin.value(),
-                thin=thin_spin.value(),
-                random_seed=None if seed_spin.value() < 0 else seed_spin.value(),
-                workers=workers_spin.value(),
+                n_walkers=self.fit_emcee_walkers_spin.value(),
+                n_steps=self.fit_emcee_steps_spin.value(),
+                burn_in=self.fit_emcee_burn_spin.value(),
+                thin=self.fit_emcee_thin_spin.value(),
+                random_seed=None if self.fit_emcee_seed_spin.value() < 0 else self.fit_emcee_seed_spin.value(),
+                workers=self.fit_emcee_workers_spin.value(),
             )
         )
 
@@ -11557,12 +11675,12 @@ class NfitProjectExplorer:
             lambda _checked=False: self.start_posterior_sampler_for_fit(
                 group,
                 fit_entry,
-                n_walkers=walkers_spin.value(),
-                n_steps=steps_spin.value(),
-                burn_in=burn_spin.value(),
-                thin=thin_spin.value(),
-                random_seed=None if seed_spin.value() < 0 else seed_spin.value(),
-                workers=workers_spin.value(),
+                n_walkers=self.fit_emcee_walkers_spin.value(),
+                n_steps=self.fit_emcee_steps_spin.value(),
+                burn_in=self.fit_emcee_burn_spin.value(),
+                thin=self.fit_emcee_thin_spin.value(),
+                random_seed=None if self.fit_emcee_seed_spin.value() < 0 else self.fit_emcee_seed_spin.value(),
+                workers=self.fit_emcee_workers_spin.value(),
                 append=True,
             )
         )
@@ -11583,8 +11701,8 @@ class NfitProjectExplorer:
         button_row.addWidget(rerun_button)
         button_row.addWidget(append_button)
         button_row.addWidget(promote_button)
-        layout.addLayout(button_row, len(controls) + 1, 0, 1, 4)
-        return group_box
+        layout.addLayout(button_row)
+        return widget
 
     def _parameter_values_group_box(self, fit_entry: FitTimelineEntry) -> Any:
         from PySide6 import QtCore, QtGui, QtWidgets
@@ -12191,7 +12309,9 @@ class NfitProjectExplorer:
         rebin_now_button.setToolTip(
             "Compute the current rebin immediately and update the cached viewer/fit data. Use this when automatic rebinning is off."
         )
-        rebin_now_button.clicked.connect(self.rebin_now_for_selection)
+        rebin_now_button.clicked.connect(
+            lambda _checked=False: self.rebin_dataset_now(dataset, group)
+        )
         save_rebin_button = QtWidgets.QPushButton("Save rebin to disk")
         save_rebin_button.setObjectName("dataset_rebin_save")
         save_rebin_button.setEnabled(_dataset_can_rebin(dataset))
@@ -12668,6 +12788,9 @@ class NfitProjectExplorer:
         self._sync_details()
 
     def _clear_details_panel(self) -> None:
+        # The mask editor lives inside this panel. Clear its status-label
+        # reference before Qt deletes the old details widgets.
+        self.mask_application_status_label = None
         while self.details_layout.count():
             item = self.details_layout.takeAt(0)
             widget = item.widget()
@@ -12761,7 +12884,7 @@ class NfitProjectExplorer:
                                 "branched_from": self._active_fit_anchor.name,
                             },
                         )
-                        current_entry = current_state_fit_entry(group)
+                        current_entry = current_state_fit_entry(group, self._active_fit_anchor)
                         timeline.children.append(current_entry)
                         self._active_fit_anchor.children.append(timeline)
                         self._active_branch_current = current_entry
@@ -12803,7 +12926,15 @@ class NfitProjectExplorer:
         self.fit_optimizer_combo.blockSignals(True)
         self.fit_optimizer_combo.setCurrentText(fit_entry.optimizer or "least_squares")
         self.fit_optimizer_combo.blockSignals(False)
-        config = fit_entry.optimizer_config if isinstance(fit_entry.optimizer_config, dict) else {}
+        config = dict(fit_entry.optimizer_config) if isinstance(fit_entry.optimizer_config, dict) else {}
+        stored = _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples"))
+        if fit_entry.kind == "result" and stored is not None:
+            sampler = dict(config.get("sampler", {})) if isinstance(config.get("sampler"), dict) else {}
+            for key in ("n_walkers", "n_steps", "burn_in", "thin", "random_seed", "workers"):
+                value = stored.metadata.get(key)
+                if value not in (None, ""):
+                    sampler[key] = value
+            config["sampler"] = sampler
         self._sync_fit_control_values(config)
         self.fit_optimizer_config_editor.blockSignals(True)
         self.fit_optimizer_config_editor.setText(json.dumps(config, sort_keys=True))
@@ -12822,6 +12953,7 @@ class NfitProjectExplorer:
             self.fit_emcee_steps_spin,
             self.fit_emcee_burn_spin,
             self.fit_emcee_thin_spin,
+            self.fit_emcee_seed_spin,
             self.fit_emcee_workers_spin,
         ]
         for widget in widgets:
@@ -12839,7 +12971,10 @@ class NfitProjectExplorer:
         self.fit_emcee_steps_spin.setValue(int(sampler.get("n_steps", 1000) or 1000))
         self.fit_emcee_burn_spin.setValue(int(sampler.get("burn_in", 200) or 0))
         self.fit_emcee_thin_spin.setValue(int(sampler.get("thin", 1) or 1))
-        self.fit_emcee_workers_spin.setValue(int(sampler.get("workers", 1) or 1))
+        seed_value = sampler.get("random_seed", -1)
+        self.fit_emcee_seed_spin.setValue(-1 if seed_value in (None, "") else int(seed_value))
+        workers_value = sampler.get("workers", -1)
+        self.fit_emcee_workers_spin.setValue(-1 if workers_value is None else int(workers_value))
         for widget in widgets:
             widget.blockSignals(False)
 
@@ -12909,6 +13044,8 @@ class NfitProjectExplorer:
                 "thin": int(self.fit_emcee_thin_spin.value()),
                 "workers": int(self.fit_emcee_workers_spin.value()),
             }
+            if self.fit_emcee_seed_spin.value() >= 0:
+                sampler["random_seed"] = int(self.fit_emcee_seed_spin.value())
             walkers = int(self.fit_emcee_walkers_spin.value())
             if walkers > 0:
                 sampler["n_walkers"] = walkers
@@ -13210,6 +13347,7 @@ class NfitProjectExplorer:
             layout_row += 1
 
     def _clear_mask_parameter_editor(self) -> None:
+        self.mask_application_status_label = None
         while self.mask_parameter_layout.count():
             item = self.mask_parameter_layout.takeAt(0)
             widget = item.widget()
@@ -13279,8 +13417,14 @@ class NfitProjectExplorer:
     def _mark_mask_datasets_stale(self, datasets: list[DatasetEntry]) -> None:
         for dataset in datasets:
             dataset_mask_application_config(dataset)["stale"] = True
-        if self.mask_application_status_label is not None:
-            self.mask_application_status_label.setText(self._mask_status_for_datasets(datasets))
+        label = self.mask_application_status_label
+        if label is not None:
+            try:
+                label.setText(self._mask_status_for_datasets(datasets))
+            except RuntimeError:
+                # A queued details-panel deletion can invalidate this widget
+                # before the owning reference is rebuilt.
+                self.mask_application_status_label = None
 
     def _mask_status_for_datasets(self, datasets: list[DatasetEntry]) -> str:
         statuses = {_dataset_mask_status_text(item) for item in datasets}
@@ -15053,7 +15197,7 @@ def _fit_results_rows(fit_entry: FitTimelineEntry) -> list[dict[str, str]]:
         if isinstance(posterior.get("parameters"), dict)
         else {}
     )
-    limit_hits = _fit_limit_hits_from_goodness(goodness)
+    limit_hits = _fit_result_limit_hits(fit_entry, params)
     rows: list[dict[str, str]] = []
     for name, value in params.items():
         limit_hit = limit_hits.get(str(name))
@@ -15080,6 +15224,46 @@ def _fit_results_rows(fit_entry: FitTimelineEntry) -> list[dict[str, str]]:
             }
         )
     return rows
+
+
+def _fit_result_limit_hits(
+    fit_entry: FitTimelineEntry,
+    parameters: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Return saved bound hits, inferring them from legacy fit snapshots too."""
+
+    goodness = fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
+    hits = _fit_limit_hits_from_goodness(goodness)
+    by_casefold = {name.casefold(): name for name in parameters}
+    snapshot = fit_entry.snapshot if isinstance(fit_entry.snapshot, dict) else {}
+    models = snapshot.get("models", [])
+    if not isinstance(models, list):
+        return hits
+
+    for model in models:
+        if not isinstance(model, dict):
+            continue
+        component = str(model.get("name", "")).strip()
+        values = model.get("parameters")
+        limits = model.get("limits")
+        fitted = model.get("fit_parameters")
+        if not isinstance(values, dict) or not isinstance(limits, dict) or not isinstance(fitted, dict):
+            continue
+        for parameter_name in values:
+            if not bool(fitted.get(parameter_name, False)):
+                continue
+            full_name = f"{component}.{parameter_name}" if component else str(parameter_name)
+            result_name = by_casefold.get(full_name.casefold())
+            if result_name is None or result_name in hits:
+                continue
+            bounds = limits.get(parameter_name)
+            if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+                continue
+            for side, bound in (("lower", bounds[0]), ("upper", bounds[1])):
+                if bound not in (None, "") and _parameter_is_at_bound(parameters[result_name], bound):
+                    hits[result_name] = {"name": result_name, "side": side, "bound": bound}
+                    break
+    return hits
 
 
 def _model_parameter_limit_side(model: ModelComponentSpec, parameter_name: str) -> str | None:
@@ -15501,6 +15685,7 @@ def _qt_app():
     app = QtWidgets.QApplication.instance()
     if app is None:
         app = QtWidgets.QApplication([])
+    configure_numeric_spin_boxes(app)
     return app
 
 

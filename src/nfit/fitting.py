@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from multiprocessing.pool import ThreadPool
@@ -711,7 +712,7 @@ def mask_out_ellipsoid(
 def mask_out_phonon_cone(
     data: PointData4D,
     *,
-    center: Sequence[float],
+    center: Sequence[float] | Sequence[Sequence[float]],
     slope: float,
     energy_range: Range | None = None,
     q_matrix: ArrayLike | None = None,
@@ -721,10 +722,10 @@ def mask_out_phonon_cone(
     use_absolute_energy: bool = True,
     energy_range_uses_absolute: bool = True,
 ) -> PointData4D:
-    """Mask a phonon-like cone centered on a reciprocal-space point.
+    """Mask phonon-like cones centered on one or more reciprocal-space points.
 
     ``slope`` is ``dE/d|Q|`` in ``meV / inverse angstrom``. Points are rejected
-    when their distance from ``center`` in reciprocal space is less than
+    when their distance from any ``center`` in reciprocal space is less than
     ``abs(E - energy_offset) / slope + radius_offset``. ``energy_range`` limits
     the energies where the cone is applied, which is useful for stopping the
     acoustic-phonon mask once optical branches or unrelated features dominate.
@@ -735,22 +736,28 @@ def mask_out_phonon_cone(
     if radius_offset < 0.0:
         raise ValueError("radius_offset must be nonnegative")
 
-    q_vectors = q_vectors_inv_angstrom(data, matrix=q_matrix)
     center_arr = np.asarray(center, dtype=float)
-    if center_arr.shape != (3,):
-        raise ValueError("phonon center must contain exactly three coordinates")
+    if center_arr.shape == (3,):
+        center_arr = center_arr.reshape(1, 3)
+    if center_arr.ndim != 2 or center_arr.shape[0] == 0 or center_arr.shape[1] != 3:
+        raise ValueError("phonon center must be one 3-vector or a nonempty list of 3-vectors")
+    if not np.all(np.isfinite(center_arr)):
+        raise ValueError("phonon centers must contain only finite coordinates")
+    q_vectors = q_vectors_inv_angstrom(data, matrix=q_matrix)
     if center_units == "rlu":
         transform = _resolve_q_transform(data, q_matrix)
-        center_q = transform @ center_arr
+        centers_q = center_arr @ transform.T
     elif center_units == "inv_angstrom":
-        center_q = center_arr
+        centers_q = center_arr
     else:
         raise ValueError("center_units must be 'rlu' or 'inv_angstrom'")
 
     energy_delta = data.E - float(energy_offset)
     radius_energy = np.abs(energy_delta) if use_absolute_energy else energy_delta
     cone_radius = radius_energy / float(slope) + float(radius_offset)
-    reject = np.linalg.norm(q_vectors - center_q, axis=1) <= cone_radius
+    reject = np.zeros(data.size, dtype=bool)
+    for center_q in centers_q:
+        reject |= np.linalg.norm(q_vectors - center_q, axis=1) <= cone_radius
 
     if energy_range is not None:
         energy_for_range = np.abs(data.E) if energy_range_uses_absolute else data.E
@@ -1240,11 +1247,25 @@ def sample_problem_parameters(
         )
         acceptance_fraction = np.asarray(emcee_sampler.acceptance_fraction, dtype=float)
         try:
-            autocorrelation_time = [
-                float(value) for value in emcee_sampler.get_autocorr_time(quiet=True)
-            ]
-        except Exception:
-            autocorrelation_time = []
+            # ``quiet=False`` gives us AutocorrError.tau for chains that are
+            # still too short, so users can estimate a useful target length.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                autocorrelation_time = [
+                    float(value) for value in emcee_sampler.get_autocorr_time(quiet=False)
+                ]
+        except Exception as exc:
+            tau = np.asarray(getattr(exc, "tau", []), dtype=float)
+            autocorrelation_time = [float(value) for value in tau]
+        finite_tau = [value for value in autocorrelation_time if np.isfinite(value) and value > 0.0]
+        recommended_steps = (
+            int(np.ceil(50.0 * max(finite_tau))) if finite_tau else None
+        )
+        recommended_additional_steps = (
+            max(0, recommended_steps - actual_steps)
+            if recommended_steps is not None
+            else None
+        )
         metadata: dict[str, Any] = {
             "method": "emcee",
             "n_walkers": n_walkers,
@@ -1262,6 +1283,22 @@ def sample_problem_parameters(
             "acceptance_fraction_max": float(np.max(acceptance_fraction)),
         }
         metadata["autocorrelation_time"] = autocorrelation_time
+        metadata["autocorrelation_recommended_steps"] = recommended_steps
+        metadata["autocorrelation_recommended_additional_steps"] = recommended_additional_steps
+        if finite_tau:
+            tau_text = ", ".join(f"{value:.3g}" for value in autocorrelation_time)
+            autocorrelation_message = (
+                f"emcee integrated autocorrelation time (steps): [{tau_text}]; "
+                f"recommended total chain length: at least {recommended_steps:,} steps "
+                f"(50 x max tau = {max(finite_tau):.3g}); "
+                f"estimated additional steps: {recommended_additional_steps:,}."
+            )
+        else:
+            autocorrelation_message = (
+                "emcee integrated autocorrelation time is unavailable for this chain; "
+                "run more steps before using it to estimate a chain length."
+            )
+        print(autocorrelation_message)
         return SamplingResult(
             samples=samples,
             variable_names=list(names),

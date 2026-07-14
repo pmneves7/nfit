@@ -16,6 +16,7 @@ from nfit.plotting import (
     MDHistoSliceViewer,
     _DropdownSelect,
     mdhisto_with_signal_like,
+    inverse_variance_weighted_profile,
     plot_2d_map,
     plot_energy_cut,
     plot_mdhisto_auto,
@@ -27,6 +28,16 @@ from nfit.plotting import (
     residual_mdhisto,
     gaussian_smooth_nan,
 )
+
+
+def test_inverse_variance_weighted_profile_returns_propagated_error():
+    values = np.asarray([[1.0, 10.0], [3.0, 14.0], [np.nan, 18.0]])
+    errors = np.asarray([[1.0, 2.0], [1.0, 2.0], [1.0, np.nan]])
+
+    mean, uncertainty = inverse_variance_weighted_profile(values, errors, axis=0)
+
+    np.testing.assert_allclose(mean, [2.0, 12.0])
+    np.testing.assert_allclose(uncertainty, [1.0 / np.sqrt(2.0), np.sqrt(2.0)])
 
 
 def test_gaussian_plot_smoothing_preserves_masked_bins():
@@ -119,6 +130,8 @@ def test_plot_mdhisto_slice_renders_static_figure_with_histogram_cuts():
     assert ax_image.yaxis.majorTicks[0].tick2line.get_visible()
     assert len(ax_xcut.lines) == 1
     assert len(ax_ycut.lines) == 1
+    assert len(ax_xcut.containers) == 1
+    assert len(ax_ycut.containers) == 1
 
 
 def test_plot_mdhisto_slice_can_render_non_signal_channel():
@@ -204,6 +217,23 @@ def test_mdhisto_slice_viewer_integrates_hidden_axis_ranges():
     np.testing.assert_allclose(view["signal"], np.sum(data.signal[:, 1, :, :], axis=0))
     np.testing.assert_allclose(view["errors"], np.sqrt(np.sum(data.errors[:, 1, :, :] ** 2, axis=0)))
     np.testing.assert_allclose(view["num_events"], np.sum(data.num_events[:, 1, :, :], axis=0))
+
+
+def test_mdhisto_slice_viewer_reduces_after_fixed_hidden_axis():
+    data = _tiny_mdhisto_data()
+    data.metadata["fit"] = data.signal * 2.0
+    viewer = MDHistoSliceViewer(data, x_dim=1, y_dim=2)
+    viewer.selections[0] = (data.axes[0].centers[1], data.axes[0].centers[1])
+    viewer.selections[3] = (data.axes[3].centers[0], data.axes[3].centers[-1])
+    viewer.integrate_checks[0] = False
+    viewer.integrate_checks[3] = True
+
+    view = viewer.slice_arrays()
+
+    expected_signal = np.sum(data.signal[1], axis=2).T
+    expected_fit = np.sum(data.metadata["fit"][1], axis=2).T
+    np.testing.assert_allclose(view["signal"], expected_signal)
+    np.testing.assert_allclose(view["fit"], expected_fit)
 
 
 def test_mdhisto_slice_viewer_blanks_empty_bins_when_integrating_ranges():
@@ -726,6 +756,8 @@ def test_qt_fit_compare_box_tool_draws_overlaid_data_fit_cut_and_residual_cut():
     assert "fit" in labels  # integrated fit line overlaid on the data cut
     y_labels = [line.get_label() for line in viewer.ax_ycut.get_lines()]
     assert "fit" in y_labels  # vertical fit cut is restored at the far right
+    assert len(viewer.ax_fit_cut.containers) == 1
+    assert len(viewer.ax_ycut.containers) == 1
 
     # Enabling residuals adds a separate residual cut axes.
     viewer.show_residual_check.setChecked(True)
@@ -1143,6 +1175,39 @@ def test_qt_roi_button_enables_rectangle_selector_and_cursor_hkle():
     assert coords["K"] == pytest.approx(-1.5)
     assert coords["L"] == pytest.approx(0.75)
     assert coords["E"] == pytest.approx(0.75)
+
+
+def test_qt_cursor_hkle_uses_rebin_basis_for_projected_axes():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = MDHistoData(
+        axes=(
+            MDHistoAxis("[H,H,H]", np.array([0.0, 1.0, 2.0]), "r.l.u.", "momentum"),
+            MDHistoAxis("[L,L,-2L]", np.array([1.0, 2.0, 3.0]), "r.l.u.", "momentum"),
+            MDHistoAxis("[H,-H,0]", np.array([0.0, 0.5]), "r.l.u.", "momentum"),
+            MDHistoAxis("DeltaE", np.array([1.5, 1.8]), "meV", "energy"),
+        ),
+        signal=np.ones((2, 2, 1, 1)),
+        errors=np.ones((2, 2, 1, 1)),
+        mask=np.zeros((2, 2, 1, 1), dtype=bool),
+        num_events=np.ones((2, 2, 1, 1)),
+        metadata={
+            "rebin": {
+                "vectors": [
+                    [1.0, 1.0, 1.0, 0.0],
+                    [1.0, 1.0, -2.0, 0.0],
+                    [1.0, -1.0, 0.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ]
+            }
+        },
+    )
+    viewer = QtMDHistoSliceViewer(data, x_dim=0, y_dim=1)
+
+    coords = viewer._cursor_hkle(x_idx=1, y_idx=0)
+
+    assert coords == pytest.approx({"H": 3.25, "K": 2.75, "L": -1.5, "E": 1.65})
 
 
 def test_qt_cursor_readout_uses_fixed_labels_and_uncertainty_precision():

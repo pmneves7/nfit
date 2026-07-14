@@ -8,7 +8,8 @@ import numpy as np
 
 from .dataset import PointListData
 from .mdhisto import MDHistoData
-from .plotting import MDHistoSliceViewer, smooth_mdhisto_view
+from .plotting import MDHistoSliceViewer, inverse_variance_weighted_profile, smooth_mdhisto_view
+from .qt_controls import configure_numeric_spin_boxes
 
 
 _MARKER_OPTIONS = {
@@ -261,6 +262,7 @@ class QtMDHistoSliceViewer:
         self._compare_axes = []
         self._compare_colorbars = []
         self._build()
+        configure_numeric_spin_boxes(self.app)
         self.update_plot()
 
     def show(self) -> "QtMDHistoSliceViewer":
@@ -760,7 +762,10 @@ class QtMDHistoSliceViewer:
         tools_layout = QtWidgets.QGridLayout(tools_group)
         self.roi_button = QtWidgets.QPushButton("Box tool")
         self.roi_button.setCheckable(True)
-        self.roi_button.setToolTip("Toggle the rectangle tool used to populate the x/y cut axes.")
+        self.roi_button.setToolTip(
+            "Toggle the rectangle tool used to populate inverse-variance weighted x/y profile cuts "
+            "with propagated error bars."
+        )
         self.roi_button.toggled.connect(self._set_roi_enabled)
         self.show_box_check = QtWidgets.QCheckBox("Show box tool")
         self.show_box_check.setChecked(False)
@@ -768,7 +773,10 @@ class QtMDHistoSliceViewer:
         self.show_box_check.toggled.connect(self._set_box_tool_visible)
         self.hist_axes_check = QtWidgets.QCheckBox("Show histogram axes")
         self.hist_axes_check.setChecked(False)
-        self.hist_axes_check.setToolTip("Show or hide the x/y histogram cut panels beside the image.")
+        self.hist_axes_check.setToolTip(
+            "Show or hide x/y profile cuts beside the image. Each point is an inverse-variance "
+            "weighted mean over the selected box with its propagated standard error."
+        )
         self.hist_axes_check.toggled.connect(self._set_histogram_axes_visible)
         self.xcut_percent_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.ycut_percent_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
@@ -2370,12 +2378,12 @@ class QtMDHistoSliceViewer:
         self.canvas.draw_idle()
 
     def _update_fit_compare_cuts(self, extents: tuple[float, float, float, float] | None) -> None:
-        """Populate the integrated data+fit and residual cut axes from a box.
+        """Populate weighted data+fit and residual cut axes from a box.
 
         The data and fit cuts are overlaid on one axes (markers plus a line,
         like the 1D fit view); the residual cut, when shown, gets its own axes.
-        Each cut integrates the boxed region by summing over the boxed rows,
-        so data, fit, and residual use the same reduction.
+        Data and fit cuts are inverse-variance weighted means over the boxed
+        rows or columns. Residual cuts retain their sigma summation.
         """
 
         if self.ax_fit_cut is None or self._current_slice is None or extents is None:
@@ -2398,11 +2406,15 @@ class QtMDHistoSliceViewer:
             x = x_centers[x_mask]
             y = y_centers[y_mask]
             data_z = self.model._display_values(data_view)
-            data_cut = np.nansum(data_z[np.ix_(y_mask, x_mask)], axis=0)
-            data_y_cut = np.nansum(data_z[np.ix_(y_mask, x_mask)], axis=1)
             errors = np.asarray(data_view.get("errors"), dtype=float)
             if errors.shape == data_z.shape:
-                err_cut = np.sqrt(np.nansum(errors[np.ix_(y_mask, x_mask)] ** 2, axis=0))
+                selected = np.ix_(y_mask, x_mask)
+                data_cut, err_cut = inverse_variance_weighted_profile(
+                    data_z[selected], errors[selected], axis=0
+                )
+                data_y_cut, err_y_cut = inverse_variance_weighted_profile(
+                    data_z[selected], errors[selected], axis=1
+                )
                 self.ax_fit_cut.errorbar(
                     x, data_cut, yerr=err_cut, marker="o", linestyle="None",
                     ms=self.marker_size, mfc=self.marker_face_color or "none",
@@ -2410,6 +2422,9 @@ class QtMDHistoSliceViewer:
                     elinewidth=self.line_plot_width, label="data",
                 )
             else:
+                data_cut = np.nansum(data_z[np.ix_(y_mask, x_mask)], axis=0)
+                data_y_cut = np.nansum(data_z[np.ix_(y_mask, x_mask)], axis=1)
+                err_y_cut = None
                 self.ax_fit_cut.plot(
                     x, data_cut, marker="o", linestyle="None",
                     ms=self.marker_size, mfc=self.marker_face_color or "none",
@@ -2417,16 +2432,22 @@ class QtMDHistoSliceViewer:
                 )
             fit_model = self._comparison_panel_model(self.data, "fit")
             fit_z = fit_model._display_values(self._smoothed_slice_view(fit_model.slice_arrays()))
-            fit_cut = np.nansum(fit_z[np.ix_(y_mask, x_mask)], axis=0)
-            fit_y_cut = np.nansum(fit_z[np.ix_(y_mask, x_mask)], axis=1)
+            if errors.shape == data_z.shape:
+                fit_cut, _ = inverse_variance_weighted_profile(
+                    fit_z[selected], errors[selected], axis=0
+                )
+                fit_y_cut, _ = inverse_variance_weighted_profile(
+                    fit_z[selected], errors[selected], axis=1
+                )
+            else:
+                fit_cut = np.nansum(fit_z[np.ix_(y_mask, x_mask)], axis=0)
+                fit_y_cut = np.nansum(fit_z[np.ix_(y_mask, x_mask)], axis=1)
             self.ax_fit_cut.plot(
                 x, fit_cut, linestyle="-", marker="", color=self.fit_line_color,
                 lw=self.fit_line_width, zorder=1.5, label="fit",
             )
             if self.ax_ycut is not None:
-                self.ax_ycut.plot(
-                    data_y_cut,
-                    y,
+                data_plot = dict(
                     marker="o",
                     linestyle="None",
                     ms=self.marker_size,
@@ -2435,6 +2456,17 @@ class QtMDHistoSliceViewer:
                     color=self.line_color,
                     label="data",
                 )
+                if err_y_cut is None:
+                    self.ax_ycut.plot(data_y_cut, y, **data_plot)
+                else:
+                    self.ax_ycut.errorbar(
+                        data_y_cut,
+                        y,
+                        xerr=err_y_cut,
+                        ecolor=self.line_color,
+                        elinewidth=self.line_plot_width,
+                        **data_plot,
+                    )
                 self.ax_ycut.plot(
                     fit_y_cut,
                     y,
@@ -2471,13 +2503,13 @@ class QtMDHistoSliceViewer:
                     )
 
         x_label = self.model._axis_label(self.model.x_dim)
-        self.ax_fit_cut.set_ylabel("Int.")
+        self.ax_fit_cut.set_ylabel("Weighted mean")
         if self.ax_residual_cut is not None:
             self.ax_residual_cut.set_ylabel("Res. (σ)")
             self.ax_residual_cut.set_xlabel(x_label)
         self.ax_fit_cut.set_xlabel(x_label)
         if self.ax_ycut is not None:
-            self.ax_ycut.set_xlabel("Int.")
+            self.ax_ycut.set_xlabel("Weighted mean")
             self.ax_ycut.set_ylabel(self.model._axis_label(self.model.y_dim))
             self.ax_ycut.tick_params(labelleft=False)
         if self.ax_residual_ycut is not None:
@@ -2856,13 +2888,23 @@ class QtMDHistoSliceViewer:
         self.ax_ycut.clear()
         if np.any(x_mask) and np.any(y_mask):
             z = self.model._display_values(view)
-            x_cut = np.nansum(z[np.ix_(y_mask, x_mask)], axis=0)
-            y_cut = np.nansum(z[np.ix_(y_mask, x_mask)], axis=1)
-            self.ax_xcut.plot(view["x_centers"][x_mask], x_cut, "-", lw=1.2)
-            self.ax_ycut.plot(y_cut, view["y_centers"][y_mask], "-", lw=1.2)
-        self.ax_xcut.set_ylabel("Int.")
+            errors = np.asarray(view["errors"], dtype=float)
+            selected = np.ix_(y_mask, x_mask)
+            x_cut, x_error = inverse_variance_weighted_profile(
+                z[selected], errors[selected], axis=0
+            )
+            y_cut, y_error = inverse_variance_weighted_profile(
+                z[selected], errors[selected], axis=1
+            )
+            self.ax_xcut.errorbar(
+                view["x_centers"][x_mask], x_cut, yerr=x_error, fmt="-", lw=1.2, capsize=0
+            )
+            self.ax_ycut.errorbar(
+                y_cut, view["y_centers"][y_mask], xerr=y_error, fmt="-", lw=1.2, capsize=0
+            )
+        self.ax_xcut.set_ylabel("Weighted mean")
         self.ax_xcut.set_xlabel(self.model._axis_label(self.model.x_dim))
-        self.ax_ycut.set_xlabel("Int.")
+        self.ax_ycut.set_xlabel("Weighted mean")
         self.ax_ycut.set_ylabel(self.model._axis_label(self.model.y_dim))
         self._apply_histogram_axes_layout(draw=False)
 
@@ -2955,7 +2997,8 @@ class QtMDHistoSliceViewer:
         return float(np.linalg.norm(q_vector))
 
     def _cursor_hkle(self, x_idx: int, y_idx: int) -> dict[str, float]:
-        coords = {"H": 0.0, "K": 0.0, "L": 0.0, "E": np.nan}
+        hkle = np.zeros(4, dtype=float)
+        has_energy = False
         hidden = self.model._normalized_selections()
         for dim, axis in enumerate(self.data.axes):
             if dim == self.model.x_dim:
@@ -2970,17 +3013,16 @@ class QtMDHistoSliceViewer:
                     continue
                 else:
                     value = self.data.axes[dim].centers[int(selection)]
-            for component, coefficient in _axis_components(axis.name).items():
-                if component == "E":
-                    coords["E"] = float(value)
-                else:
-                    coords[component] += float(coefficient) * float(value)
-        return coords
+            vector = _cursor_axis_hkle_vector(self.data, dim)
+            hkle += float(value) * vector
+            has_energy = has_energy or bool(vector[3])
+        return {"H": hkle[0], "K": hkle[1], "L": hkle[2], "E": hkle[3] if has_energy else np.nan}
 
     def _cursor_hkle_1d(self, x_idx: int) -> dict[str, float]:
         if getattr(self.model, "is_point_list", False):
             return self._cursor_hkle_point_list_1d(x_idx)
-        coords = {"H": 0.0, "K": 0.0, "L": 0.0, "E": np.nan}
+        hkle = np.zeros(4, dtype=float)
+        has_energy = False
         hidden = self.model._normalized_selections()
         for dim, axis in enumerate(self.data.axes):
             if dim == self.model.x_dim:
@@ -2993,12 +3035,10 @@ class QtMDHistoSliceViewer:
                     value = self.data.axes[dim].centers[0]
                 else:
                     value = self.data.axes[dim].centers[int(selection)]
-            for component, coefficient in _axis_components(axis.name).items():
-                if component == "E":
-                    coords["E"] = float(value)
-                else:
-                    coords[component] += float(coefficient) * float(value)
-        return coords
+            vector = _cursor_axis_hkle_vector(self.data, dim)
+            hkle += float(value) * vector
+            has_energy = has_energy or bool(vector[3])
+        return {"H": hkle[0], "K": hkle[1], "L": hkle[2], "E": hkle[3] if has_energy else np.nan}
 
     def _cursor_hkle_point_list_1d(self, x_idx: int) -> dict[str, float]:
         coords = {"H": 0.0, "K": 0.0, "L": 0.0, "E": np.nan}
@@ -3054,6 +3094,7 @@ def _qt_app():
     app = QtWidgets.QApplication.instance()
     if app is None:
         app = QtWidgets.QApplication([])
+    configure_numeric_spin_boxes(app)
     return app
 
 
@@ -3404,6 +3445,31 @@ def _axis_components(name: str) -> dict[str, float]:
     if text in {"H", "K", "L"}:
         return {text: 1.0}
     return {}
+
+
+def _cursor_axis_hkle_vector(data: MDHistoData, dimension: int) -> np.ndarray:
+    """Return one displayed axis's physical HKLE direction vector.
+
+    Rebinned histograms save their output-axis basis in ``metadata['rebin']``.
+    That basis is authoritative because a human-readable label such as
+    ``[L,L,-2L]`` cannot reliably encode every numeric coefficient.
+    """
+
+    metadata = data.metadata if isinstance(data.metadata, dict) else {}
+    rebin = metadata.get("rebin")
+    vectors = rebin.get("vectors") if isinstance(rebin, dict) else None
+    if isinstance(vectors, (list, tuple)) and 0 <= dimension < len(vectors):
+        try:
+            vector = np.asarray(vectors[dimension], dtype=float).reshape(-1)
+        except (TypeError, ValueError):
+            vector = np.asarray([], dtype=float)
+        if vector.size in {3, 4} and np.all(np.isfinite(vector)):
+            return np.pad(vector, (0, 4 - vector.size))
+
+    vector = np.zeros(4, dtype=float)
+    for component, coefficient in _axis_components(data.axes[dimension].name).items():
+        vector[{"H": 0, "K": 1, "L": 2, "E": 3}[component]] = coefficient
+    return vector
 
 
 def _component_coefficient(part: str, component: str) -> float:

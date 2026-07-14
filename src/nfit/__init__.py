@@ -127,6 +127,20 @@ from .mdhisto import (
     load_mantid_mdhisto_nxs,
     point_data_from_hyspec_hhl,
 )
+from .mdevent import (
+    append_mdevent_file,
+    DetectorNormalization,
+    MDEventRunInfo,
+    MDEventWorkspaceInfo,
+    bin_mdevent_group,
+    assess_mdevent_memory,
+    estimate_mdevent_peak_memory,
+    inspect_mdevent_workspace,
+    is_mdevent_file,
+    load_detector_normalization,
+    load_mdevent_run_points,
+    mdevent_dataset_group,
+)
 from .models import (
     compound_additive_model,
     constant_background,
@@ -214,7 +228,7 @@ from .plotting import (
     residual_mdhisto,
     slice_viewer,
 )
-from .rebin import NDRebin, rebin_nd
+from .rebin import ArrayRebinSource, NDRebin, RebinBatch, rebin_nd, rebin_nd_stream
 from .resolution import (
     EnergyGaussianResolution,
     constant_fwhm_energy_resolution,
@@ -243,12 +257,17 @@ __all__ = [
     "MDHistoAxis",
     "MDHistoData",
     "MDHistoSliceViewer",
+    "MDEventRunInfo",
+    "MDEventWorkspaceInfo",
+    "DetectorNormalization",
     "NfitProjectExplorer",
     "NfitProject",
     "MaskSpec",
     "ModelComponentSpec",
     "ModelSpec",
     "NDRebin",
+    "ArrayRebinSource",
+    "RebinBatch",
     "OptimizationConfig",
     "ParameterSpec",
     "PointData4D",
@@ -425,6 +444,14 @@ __all__ = [
     "relaxational_chipp",
     "residual_mdhisto",
     "rebin_nd",
+    "rebin_nd_stream",
+    "inspect_mdevent_workspace",
+    "is_mdevent_file",
+    "load_detector_normalization",
+    "load_mdevent_run_points",
+    "mdevent_dataset_group",
+    "bin_mdevent_group",
+    "append_mdevent_file",
     "sample_problem_parameters",
     "save_project",
     "save_dataset_file",

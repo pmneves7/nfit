@@ -89,6 +89,17 @@ class MDHistoData:
         return self.signal.shape
 
 
+def mdhisto_measured_bins(data: MDHistoData) -> BoolArray:
+    """Return bins measured by the instrument, including covered zero counts."""
+
+    if bool(data.metadata.get("zero_event_bins_are_measured", False)):
+        coverage = data.metadata.get("normalization_denominator")
+        if isinstance(coverage, np.ndarray) and coverage.shape == data.shape:
+            return np.isfinite(coverage) & (coverage > 0.0) & ~np.asarray(data.mask, dtype=bool)
+        return ~np.asarray(data.mask, dtype=bool)
+    return (np.asarray(data.num_events, dtype=float) > 0.0) & ~np.asarray(data.mask, dtype=bool)
+
+
 def load_mantid_mdhisto_nxs(
     path: str | Path,
     *,
@@ -176,7 +187,7 @@ def point_data_from_hyspec_hhl(
     valid &= np.isfinite(data.errors)
     valid &= data.errors > 0.0
     valid &= ~data.mask
-    valid &= data.num_events > 0.0
+    valid &= mdhisto_measured_bins(data)
 
     trajectory_has_data = np.any(valid, axis=e_dim)
     trajectory_indices = np.argwhere(trajectory_has_data)

@@ -6,7 +6,7 @@ from typing import Any, Sequence
 import numpy as np
 
 from .dataset import PointListData
-from .mdhisto import MDHistoAxis, MDHistoData
+from .mdhisto import MDHistoAxis, MDHistoData, mdhisto_measured_bins
 from .plotting import gaussian_smooth_nan
 
 
@@ -271,7 +271,7 @@ def _reduce_channel(
     variance_channel = channel == "errors"
     valid = None
     if apply_masks and not is_mask:
-        invalid = np.asarray(data.mask, dtype=bool) | (np.asarray(data.num_events) <= 0.0)
+        invalid = ~mdhisto_measured_bins(data)
         values[invalid] = np.nan
         valid = ~invalid
     if variance_channel:
@@ -450,6 +450,8 @@ def _make_volume_panel(
     class Panel(QtWidgets.QWidget):
         def __init__(self):
             super().__init__()
+            from .qt_controls import configure_numeric_spin_boxes
+
             self.datasets = list(datasets)
             self.dataset_names = list(dataset_names)
             self.dataset_index = int(selected_index)
@@ -462,6 +464,7 @@ def _make_volume_panel(
             self.rotation_timer = QtCore.QTimer(self)
             self.rotation_timer.timeout.connect(self._rotate_frame)
             self._build()
+            configure_numeric_spin_boxes(QtWidgets.QApplication.instance())
             self._sync_dataset()
 
         def _build(self):

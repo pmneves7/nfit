@@ -13,6 +13,17 @@ pneves1@jhu.edu) with use of LLM coding tools.
 
 Current package version: 0.8.1.
 
+## MDEvent measured-zero uncertainties
+
+For normalized MDEvent data, a detector-covered bin with zero observed events
+is displayed as a measured signal of zero with a finite conservative Poisson
+uncertainty. An empty bin has no event row or stored event variance of its own;
+nfit estimates its uncertainty scale from accepted events elsewhere in the
+requested volume. Only bins without detector coverage are masked. See
+[Measured-zero uncertainties](gui_workflows.md#measured-zero-uncertainties)
+for a plain-language explanation, the exact convention, and a numerical
+example.
+
 ```{toctree}
 :maxdepth: 2
 

@@ -1,5 +1,60 @@
 # Performance notes
 
+## N-dimensional rebinning
+
+The rebinner follows the same workload-gated backend and CPU-allocation
+conventions as the Heisenberg RPA implementation. Small jobs stay on NumPy;
+large jobs use an optional fused Numba kernel. `NFIT_NUM_THREADS`, process CPU
+affinity, cgroups, and SLURM allocations define the automatic worker ceiling.
+
+Threaded accumulation uses memory-bounded dense private outputs when practical.
+Very sparse, enormous output grids can instead use touched-bin maps; these save
+memory but are substantially slower, so automatic selection requires estimated
+occupancy of 5% or less. If neither threaded strategy meets its memory policy,
+the fused serial kernel is used.
+
+On the July 2026 reference workstation, a five-million-point fractional 4D
+benchmark (`24^4` output bins) accumulated at 6.83, 9.97, 11.33, and 13.36
+million points/s with 1, 2, 4, and 8 dense workers respectively. A 50-million
+point adaptive run selected 16 dense workers and completed in 4.70 seconds at
+about 3.33 GB peak RSS. These measurements depend on the workload and machine;
+use `benchmarks/benchmark_rebin.py` for local sizing.
+
+`rebin_nd_stream` supports sources larger than RAM through repeatable batches,
+including memory maps and custom HDF5, NeXus, or Zarr providers. Coordinate
+projection and binning are batch-local. Automatic limits require a discovery
+pass before accumulation, while explicit limits permit a single pass. Each
+streaming batch can use the same memory-bounded dense or sparse worker strategy.
+
+## MDEvent reduction
+
+MDEvent rows are streamed in bounded chunks, so memory does not scale with the
+complete event table. Runtime is split between HDF5 reads/event binning and
+detector-trajectory normalization. The latter uses the shared nfit CPU budget
+and Numba workers when available. Worker count is capped by a 512 MB private
+accumulator budget because each worker may need an output-sized array.
+
+Trajectory workers use one fixed scratch buffer per worker. They do not allocate
+temporary arrays for every run-detector pair; this is important for scans with
+hundreds of runs and roughly 100,000 detectors, where task-local allocation can
+otherwise drive allocator high-water memory into hundreds of gigabytes.
+
+Output-grid memory still scales with the product of all four bin counts. Start
+with the default 20 x 20 x 20 x 50 grid, restrict HKLE limits, and increase
+resolution after confirming the useful region. Large groups use manual
+rebinning and report file-scan and normalization stages in the progress dialog.
+
+Before allocating output arrays, nfit estimates peak reduction memory from the
+4D bin product, fixed normalization overhead, and selected batch target. It
+warns in the GUI when a request is estimated to exceed 70% of currently
+available RAM and reports the grid, estimated peak, and available memory. The
+user can cancel or explicitly continue. The lower-level API refuses the request
+unless memory enforcement is deliberately disabled. The batch target controls
+event-scan temporary storage; it cannot reduce the persistent memory required
+by the requested output grid.
+
+## Heisenberg RPA
+
 Fitting `heisenberg_rpa` (and future coupled models) evaluates a batched
 Hermitian eigendecomposition of $J(\mathbf{Q})$ at every fitted point, so the
 cost scales with the number of valid points and the cube of the number of

@@ -331,7 +331,7 @@ def test_differential_evolution_reports_starting_model_failure():
         )
 
 
-def test_emcee_sampling_reports_posterior_samples():
+def test_emcee_sampling_reports_posterior_samples(capsys):
     pytest.importorskip("emcee")
     data = PointData4D(
         [0.0, 1.0, 2.0],
@@ -364,6 +364,9 @@ def test_emcee_sampling_reports_posterior_samples():
     assert result.chain.shape == (12, 8, 1)
     assert result.log_probability_chain is not None
     assert result.log_probability_chain.shape == (12, 8)
+    assert "emcee integrated autocorrelation time" in capsys.readouterr().out
+    assert "autocorrelation_recommended_steps" in result.metadata
+    assert "autocorrelation_recommended_additional_steps" in result.metadata
 
 
 def test_emcee_sampling_cancellation_returns_partial_chain():

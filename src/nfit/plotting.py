@@ -6,7 +6,7 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 from .dataset import PointData4D, PointListData
-from .mdhisto import MDHistoData
+from .mdhisto import MDHistoData, mdhisto_measured_bins
 
 
 def _edges_from_centers(centers: np.ndarray) -> np.ndarray:
@@ -595,13 +595,39 @@ def _mdhisto_channel_array(data: MDHistoData, channel: str) -> np.ndarray:
         return np.asarray(data.metadata.get(channel, np.zeros(data.shape, dtype=bool)), dtype=float)
     else:
         raise ValueError(f"unknown channel {channel!r}")
-    empty = np.asarray(data.num_events <= 0.0)
+    empty = ~mdhisto_measured_bins(data)
     return np.where(np.asarray(data.mask, dtype=bool) | empty, np.nan, values)
 
 
 def _panel_ratio(percent: float) -> float:
     fraction = float(np.clip(percent, 1.0, 80.0)) / 100.0
     return fraction / (1.0 - fraction)
+
+
+def inverse_variance_weighted_profile(
+    values: np.ndarray,
+    errors: np.ndarray,
+    *,
+    axis: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return an inverse-variance weighted profile and its standard error.
+
+    Non-finite values, non-finite uncertainties, and non-positive
+    uncertainties do not contribute to the profile.
+    """
+    values = np.asarray(values, dtype=float)
+    errors = np.asarray(errors, dtype=float)
+    valid = np.isfinite(values) & np.isfinite(errors) & (errors > 0.0)
+    weights = np.zeros(values.shape, dtype=float)
+    np.divide(1.0, errors, out=weights, where=valid)
+    np.square(weights, out=weights)
+    weight_sum = np.sum(weights, axis=axis)
+    weighted_sum = np.sum(np.where(valid, values * weights, 0.0), axis=axis)
+    mean = np.full(weight_sum.shape, np.nan, dtype=float)
+    uncertainty = np.full(weight_sum.shape, np.nan, dtype=float)
+    np.divide(weighted_sum, weight_sum, out=mean, where=weight_sum > 0.0)
+    np.divide(1.0, np.sqrt(weight_sum), out=uncertainty, where=weight_sum > 0.0)
+    return mean, uncertainty
 
 
 def _draw_mdhisto_roi_cuts(
@@ -618,13 +644,23 @@ def _draw_mdhisto_roi_cuts(
     y_mask = (view["y_centers"] >= y0) & (view["y_centers"] <= y1)
     if np.any(x_mask) and np.any(y_mask):
         z = model._display_values(view)
-        x_cut = np.nansum(z[np.ix_(y_mask, x_mask)], axis=0)
-        y_cut = np.nansum(z[np.ix_(y_mask, x_mask)], axis=1)
-        ax_xcut.plot(view["x_centers"][x_mask], x_cut, "-", lw=1.2)
-        ax_ycut.plot(y_cut, view["y_centers"][y_mask], "-", lw=1.2)
-    ax_xcut.set_ylabel("Int.")
+        errors = np.asarray(view["errors"], dtype=float)
+        selected = np.ix_(y_mask, x_mask)
+        x_cut, x_error = inverse_variance_weighted_profile(
+            z[selected], errors[selected], axis=0
+        )
+        y_cut, y_error = inverse_variance_weighted_profile(
+            z[selected], errors[selected], axis=1
+        )
+        ax_xcut.errorbar(
+            view["x_centers"][x_mask], x_cut, yerr=x_error, fmt="-", lw=1.2, capsize=0
+        )
+        ax_ycut.errorbar(
+            y_cut, view["y_centers"][y_mask], xerr=y_error, fmt="-", lw=1.2, capsize=0
+        )
+    ax_xcut.set_ylabel("Weighted mean")
     ax_xcut.set_xlabel(model._axis_label(model.x_dim))
-    ax_ycut.set_xlabel("Int.")
+    ax_ycut.set_xlabel("Weighted mean")
     ax_ycut.set_ylabel(model._axis_label(model.y_dim))
 
 
@@ -968,15 +1004,18 @@ class MDHistoSliceViewer:
     def _reduce_arrays(self, selections: dict[int, tuple[int, int] | int]):
         index = []
         reduce_axes = []
+        output_axis = 0
         for dim in range(self.data.signal.ndim):
             if dim in (self.x_dim, self.y_dim):
                 index.append(slice(None))
+                output_axis += 1
             else:
                 selection = selections[dim]
                 if isinstance(selection, tuple):
                     start, stop = selection
                     index.append(slice(start, stop + 1))
-                    reduce_axes.append(len(index) - 1)
+                    reduce_axes.append(output_axis)
+                    output_axis += 1
                 else:
                     index.append(selection)
 
@@ -1042,15 +1081,18 @@ class MDHistoSliceViewer:
         values = np.asarray(self.data.metadata[name], dtype=float)
         index: list[Any] = []
         reduce_axes = []
+        output_axis = 0
         for dim in range(self.data.signal.ndim):
             if dim in (self.x_dim, self.y_dim):
                 index.append(slice(None))
+                output_axis += 1
             else:
                 selection = selections[dim]
                 if isinstance(selection, tuple):
                     start, stop = selection
                     index.append(slice(start, stop + 1))
-                    reduce_axes.append(len(index) - 1)
+                    reduce_axes.append(output_axis)
+                    output_axis += 1
                 else:
                     index.append(selection)
         out = values[tuple(index)]
@@ -1067,15 +1109,18 @@ class MDHistoSliceViewer:
             mask = np.zeros(self.data.shape, dtype=bool)
         index = []
         reduce_axes = []
+        output_axis = 0
         for dim in range(self.data.signal.ndim):
             if dim in (self.x_dim, self.y_dim):
                 index.append(slice(None))
+                output_axis += 1
             else:
                 selection = selections[dim]
                 if isinstance(selection, tuple):
                     start, stop = selection
                     index.append(slice(start, stop + 1))
-                    reduce_axes.append(len(index) - 1)
+                    reduce_axes.append(output_axis)
+                    output_axis += 1
                 else:
                     index.append(selection)
         out = mask[tuple(index)]
@@ -1093,7 +1138,11 @@ class MDHistoSliceViewer:
         events: np.ndarray,
         mask: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        empty = np.asarray(events <= 0.0)
+        empty = (
+            np.zeros(np.asarray(events).shape, dtype=bool)
+            if bool(self.data.metadata.get("zero_event_bins_are_measured", False))
+            else np.asarray(events <= 0.0)
+        )
         if not np.any(empty):
             return signal, variance, mask
         return np.where(empty, np.nan, signal), np.where(empty, np.nan, variance), np.asarray(mask) | empty

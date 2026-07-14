@@ -25,6 +25,162 @@ event loop cleanly with the standard interrupt exit status.
 
 ## Project explorer
 
+### Dataset importing
+
+At the top level of a data group, **Dataset importing** provides a persistent
+file-based import workflow. Enable **Import datasets from files** to use its
+controls. **Add files** opens a standard multi-file browser and adds every
+selected file as a dataset entry in that data group.
+
+For numbered acquisitions, fill in **Path**, **Prefix**, **Suffix**, and
+**Numors**, then press **Import datasets**. Numors accepts inclusive ranges and
+comma-separated pieces:
+
+```text
+409981:409995
+409981:409992,409994:409995
+409981:3:409995
+```
+
+The first imports every number in the interval, the second skips 409993, and
+the third imports every third number. nfit verifies that every constructed file
+exists before importing any of them. **Clear datasets** removes all direct and
+nested datasets from the data group after confirmation, while retaining that
+group's models, masks, and fit history.
+
+Raw time-of-flight NeXus files such as `SEQ_409981.nxs.h5` are imported as
+single-crystal dataset entries. Their conversion to HKLE/energy event data is a
+separate native raw-reduction pathway; the MDEvent composite reducer applies
+after data have been converted to MDEvent form.
+
+### UB setup for single crystals
+
+Every single-crystal dataset and dataset group exposes **Crystal orientation >
+UB setup**. The dialog edits unit-cell lengths and angles, two reciprocal-lattice
+orientation vectors `u` and `v`, and the complete 3 x 3 UB matrix. **Calculate
+from lattice and u/v** places `u` along the incident beam (`+x`), uses `u` and
+`v` to define the horizontal scattering plane, and takes `+z` as vertically
+upward. UB maps the column vector `[h,k,l]` to `Q'` in inverse angstrom, where
+`|Q'| = 1/d`.
+
+**UB from NeXus** reads orientation and lattice metadata from either MDEvent or
+processed MDHisto NeXus files. **UB from ISAW** reads the usual `.mat` format;
+the first three rows in that format are the transpose of UB. **Save ISAW**
+writes the same IPNS convention, followed by lattice parameters, cell volume,
+and the conventional zero row. Hover text on each control summarizes its units
+and coordinate convention.
+
+Applying the dialog to an individual dataset stores a dataset-specific
+orientation. Applying it to a dataset group stores shared orientation metadata;
+for an MDEvent group it also updates the shared UB used for HKL conversion and
+marks the composite rebin stale. Applying it at the top data-group level updates
+the shared sample lattice and orientation.
+
+### MDEvent single-crystal data
+
+Importing an MDEvent NeXus file as **Single-crystal inelastic** creates a
+dataset group containing one lightweight entry per experiment/run. The event
+table stays file-backed: nfit stores the source path and run index instead of
+copying shared instrument, orientation, and event data into every entry.
+
+The **MDEvent shared setup** panel controls the UB matrix, detector mask,
+vanadium normalization, incident-energy override, and time-zero override for
+the whole group. If the source directory contains exactly one file beginning
+with `van`, nfit initially selects it for both masking and normalization. Zero,
+negative, and invalid detector values are omitted from both event data and
+normalization coverage.
+
+Enable **Combine datasets** on the imported group to produce the normalized
+HKLE dataset. Large groups default to manual rebinning: choose the HKLE limits
+and resolution and press **Rebin now**. The initial grid is deliberately modest
+(20 bins on H, K, and L and 50 on DeltaE), since all 4D working arrays scale
+with the product of the four bin counts.
+
+The composite controls appear above the run table. Each **Coord axis** row is a
+four-component HKLE direction and the four rows must form a linearly independent
+basis. Momentum rows may combine H, K, and L, for example `[1, 1, 0, 0]`,
+`[0, 0, 1, 0]`, and `[1, -1, 0, 0]`; the energy row remains
+`[0, 0, 0, 1]`. Bounds and resolution refer to coordinates in this basis.
+
+Individual file-backed MDEvent run entries are not offered to the data viewer:
+they are unnormalized event partitions rather than meaningful plotted datasets.
+Enable compositing and rebin the group to view its normalized HKLE result.
+Import shows progress while run metadata is read. **Rebin now** opens progress
+immediately and reports preparation, event scanning, and detector normalization;
+determinate progress labels show both the completed fraction and percentage.
+
+nfit reads the NeXus/HDF5 structures directly and does not import or invoke
+Mantid. An Ei override changes normalization trajectories. A T0 override is
+retained for future raw-event conversion, but cannot move coordinates already
+stored in an MDEvent workspace.
+
+#### Measured-zero uncertainties
+
+An MDEvent table contains one row for every detected event. It does **not**
+contain a row for every output histogram bin. In each event row, column 0 is
+the event's signal contribution and column 1 is its variance contribution,
+named `errorSquared` in the file. Both values are supplied by the program that
+created the MDEvent file; they are not generated from an nfit fit weight.
+
+nfit keeps two questions separate when it creates a histogram:
+
+1. Did any detector trajectory measure this bin?
+2. If the bin was measured, how many events landed in it?
+
+This distinction produces three cases:
+
+- **One or more events:** nfit sums the events' signal contributions and
+  variance contributions. With normalization denominator `D`, the result is
+  `signal = sum(signal_i) / D` and
+  `sigma = sqrt(sum(errorSquared_i)) / D`.
+- **Detector coverage but no events:** this is a **measured zero**. No event row
+  exists for the bin, so there is no `signal_i` or `errorSquared_i` to read from
+  it. nfit stores signal `0`, preserves `num_events = 0`, and assigns the finite
+  uncertainty described below.
+- **No detector coverage:** this is missing data, not a measured zero. The bin
+  remains NaN/masked and is excluded from viewing and fitting as data.
+
+Assigning uncertainty zero to a measured zero would make it appear to be known
+exactly and would give it infinite statistical influence in a fit. Put simply,
+nfit says: **take the uncertainty this bin would have if it contained one
+representative event, multiply it by `1.29`, and use that as the uncertainty
+for zero observed events.** The factor is the upper endpoint of the
+68.27% Feldman--Cousins confidence interval `[0, 1.29]` for observing zero
+events with zero known background (Table II of
+[Feldman and Cousins](https://arxiv.org/pdf/physics/9711021)). In detail:
+
+```text
+representative_event_scale = sqrt(
+    sum(errorSquared_i for all accepted events) / number_of_accepted_events
+)
+
+sigma_zero = 1.29 * representative_event_scale / D
+```
+
+The representative one-event scale comes from the nonzero accepted events
+elsewhere in the requested MDE volume, because the empty bin itself has no
+event rows. The bin's own normalization `D` is then applied, so this is the
+uncertainty nfit would assign to one representative event in that particular
+bin. When the file uses the common convention `errorSquared_i = signal_i^2`,
+the representative scale is the root-mean-square of those events' signal
+contributions. For ordinary unweighted events, every `signal_i` and
+`errorSquared_i` is `1`, so the rule reduces to `sigma_zero = 1.29 / D`.
+
+For example, if two events in a bin have `(signal, errorSquared)` values
+`(1.2, 1.44)` and `(0.8, 0.64)`, and `D = 1000`, that bin has signal
+`(1.2 + 0.8) / 1000 = 0.002` and uncertainty
+`sqrt(1.44 + 0.64) / 1000 = 0.001442`. A covered bin with no events has no such
+rows. If the representative event scale estimated from the accepted dataset is
+`1.778`, its stored result is signal `0` and uncertainty
+`1.29 * 1.778 / 1000 = 0.00229`.
+
+This zero-count value is an effective, symmetric fitting uncertainty. It does
+not claim that the underlying Poisson interval is symmetric. It is also
+unrelated to the dataset **Fit weight**, dataset scale factor, or detector
+normalization value.
+
+#### Project organization
+
 The left tree organizes a project into top-level workspaces. A workspace holds
 datasets, models, and fit history. Datasets may also contain nested dataset
 groups and masks, so large experiments can be kept close to the physical or
@@ -76,6 +232,11 @@ Axes panel when rebinning is supported. Rebinning can be enabled for viewing and
 fitting. The current rebin can be materialized as a new independent project
 dataset with `Create dataset from rebin`, or written directly to disk with
 `Save rebin to disk`.
+`Save dataset` and `Save rebin to disk` write portable nfit `.npz` archives.
+They can be added back through the normal dataset import flow; the archive
+restores its signal, uncertainties, masks, axes, metadata, and saved dataset
+temperature/field context. Archives saved by older nfit versions may not carry
+temperature or field because those values were not written at the time.
 All enabled file, inherited group, and dataset masks are applied before point or
 MDHisto data are rebinned, so excluded data do not contribute to rebinned bin
 averages; disabled masks are ignored. The materialized dataset keeps the source
@@ -100,10 +261,34 @@ visible until `Rebin now` is pressed. Operations that require current rebinned
 data, including fitting, opening the data viewer, materializing a rebinned
 dataset, and saving a rebinned dataset, force the pending rebin first. Large
 explicit rebin jobs show a progress dialog driven by the rebinner batches.
+The rebin table has one `Resolution` column with a `Step`/`Bins` selector;
+`Step` is the default. Switching the selector derives the displayed quantity
+from the current bounds and resolution. In `Step` mode, changing bounds keeps
+the requested step size exactly; if the range is not an exact multiple of that
+step, the final bin is shorter. In `Bins` mode, changing bounds keeps the bin
+count and updates the displayed step.
 For 4D MDHisto data, the `Coord axis` defaults follow the displayed physical
 axis when possible rather than a blind diagonal matrix: for example `DeltaE`
 starts as `[0, 0, 0, 1]`, `[H,-H,0]` starts as `[1, -1, 0, 0]`, `[0,0,L]`
-starts as `[0, 0, 1, 0]`, and `[H,H,0]` starts as `[1, 1, 0, 0]`.
+starts as `[0, 0, 1, 0]`, and `[H,H,0]` starts as `[1, 1, 0, 0]`. The `Axis`
+column shows only the scalar variable (`H`, `K`, `L`, or `E`). The plotted axis
+name is generated from that variable and its coordinate vector, so an `H` row
+with `[1, 1, 1, 0]` becomes `[H,H,H]`.
+
+Together, the four coordinate vectors define a complete HKLE basis; they are
+not four independent, unnormalized dot products. nfit solves each source point
+in that basis, which prevents a direction such as `[1, 1, 1, 0]` from changing
+scale merely because its vector has length greater than one. Whenever a vector
+is edited, all four output bounds are recalculated to contain the full source
+volume. In `Step` mode, the requested step is preserved by updating bin counts;
+in `Bins` mode, the bin count is preserved and the step is recalculated.
+Once configured, coordinate axes persist across project reloads, fit-history
+selection, and model edits. nfit generates default axes only for a dataset that
+has no saved rebin-axis configuration; changing coordinate vectors remains an
+explicit rebin-panel action.
+The vectors must remain linearly independent. Momentum rows may contain only
+H, K, and L components, while the energy row may contain only a nonzero E
+component; nfit rejects coordinate systems that mix energy and momentum.
 
 Select the top-level `Datasets` node or any nested dataset group to see its
 descendant dataset count, total loaded data points, dataset types, fit weights,
@@ -185,6 +370,43 @@ viewer's `Apply Masks` checkbox controls whether masked regions are hidden in
 the viewer, but fitting still excludes masked data. When a dataset is rebinned,
 these source masks are applied before binning; the rebinned view's output mask
 then marks empty or invalid rebinned bins.
+
+All GUI mask parameters describe the region to exclude. Coordinate and
+energy/`|Q|` ranges mask points inside the intersection of their active
+intervals; `[0, 0]` means that dimension is inactive, and a new range mask with
+only inactive dimensions masks nothing. Zero box widths, zero ellipsoid radii,
+and zero phonon-cone slope are likewise neutral defaults. `Invert` deliberately
+switches to masking outside the specified region. `Additive` removes the
+specified region from earlier nfit-mask contributions, but cannot unmask a
+file-provided mask. Disabled masks never contribute. Older saved broad no-op
+sentinels such as `[-1e99, 1e99]` and `[0, 1e99]` remain recognized as inactive.
+
+For histogram datasets, a coordinate-range mask's **Coordinate axes** default
+to the dataset's physical bin-axis vectors, exactly as they do in the rebinning
+controls. Projected axes are preserved rather than converted to canonical
+coordinates; for example, `[H,-H,0]` defaults to `[1,-1,0,0]`. This makes each
+mask interval operate directly along its corresponding displayed bin axis.
+
+A **Phonon cone** mask can use either one Bragg center, such as `[1,1,0]`, or
+a list of centers, such as `[[1,1,0], [2,2,0], [3,3,0]]`. The same slope and
+radius are applied around every center, and the union of those acoustic-phonon
+cones is masked. Centers are interpreted in physical reciprocal-lattice HKL
+coordinates, even when a histogram is displayed or rebinned using projected
+axes such as `[H,H,H]` or `[L,L,-2L]`; nfit reconstructs physical HKLE before
+evaluating the cone. A legacy single-center value remains fully supported.
+
+Mask application is automatic by default for datasets with at most 5 million
+points. Larger datasets default to manual application so editing a mask does
+not repeatedly scan the full dataset or block the GUI. The mask editor shows
+an **Automatic mask application** checkbox, an **Apply masks now** button, and
+whether mask changes are current or pending. In manual mode, passive GUI
+updates reuse the last exactly matching masked result when one is available;
+otherwise they use an inexpensive file-mask-only view until masks are applied.
+Opening the data viewer, starting a fit, or pressing **Apply masks now** always
+applies every enabled dataset mask and inherited group mask first. Turning on
+automatic application opts the dataset back into recalculation as mask
+settings change. This controls when masks are materialized, not which masks
+participate in viewing, rebinning, or fitting.
 
 Models can have multiple components in one workspace. Model parameters include
 controls for whether they are fitted and whether they are shared globally across
@@ -336,12 +558,21 @@ per-dataset contributions in the structured goodness-of-fit panel. Posterior
 summaries include emcee settings, acceptance fractions, credible intervals, and
 posterior correlations. Stored fit and residual channels are available in the
 data viewer when their shapes still match the current dataset view. Fit results
-with best-fit parameters expose a `Posterior sampler` panel. That panel can
-rerun emcee from the best-fit parameters, append additional steps to a stored
-raw chain, promote the best stored emcee sample when it has a better likelihood
-than the fit result, or change burn-in/thinning after the fact. These posterior-only
-operations update the selected fit result's posterior summaries and diagnostics
-without running least squares again and without creating a new timeline point.
+also record a warning when a variable parameter finishes at a finite configured
+lower or upper limit. The completion state of the fit-progress window names the
+affected parameters, and their final values are shown in red in the progress
+table, saved fit results, current-state parameter table, and model parameter
+editor. A limit hit is a diagnostic that the optimum may lie outside the
+allowed range, not a claim that the result is invalid.
+
+The fit editor and fit results share one `Posterior` panel. It configures emcee
+for sampling immediately after a fit; when a fit result is selected, the same
+controls also rerun emcee from the best-fit parameters, append additional steps
+to a stored raw chain, promote the best stored emcee sample when it has a better
+likelihood than the fit result, or change burn-in/thinning after the fact. These
+posterior-only operations update the selected fit result's posterior summaries
+and diagnostics without running least squares again and without creating a new
+timeline point.
 Changing burn-in or thinning simply reinterprets the stored raw chain; rerun
 replaces the stored posterior after an overwrite-confirmation dialog when
 samples already exist; append continues from the final walker positions
@@ -349,7 +580,8 @@ and extends the stored chain. Promoting a best sample is different: it restores
 the fit result's snapshot, writes that sample into the editable model parameters,
 and records the result through the same `Current state` path as a manual
 parameter edit. Posterior rerun and append also use the background worker/progress
-window and expose their own emcee worker-thread control.
+window. The shared worker control defaults to `-1`, which selects an automatic
+CPU-based worker count; set the value to `1` for serial emcee evaluations.
 
 Fit results with covariance estimates or stored emcee samples expose a `Fit
 diagnostics` button. The diagnostics window includes a covariance heatmap when
@@ -374,6 +606,11 @@ The data viewer supports dataset switching, channel selection, mask toggling,
 axis selection, hidden-axis slicing/integration, color scale and limit controls,
 cursor readouts, histogram box cuts, 1D line styling, model overlays, figure copy,
 and script export.
+Box cuts are inverse-variance weighted profiles rather than summed intensities.
+For each displayed bin, the viewer combines the values across the selected box
+using weights of `1 / sigma^2` and draws the propagated standard error,
+`1 / sqrt(sum(1 / sigma^2))`. Masked bins and bins with non-finite or
+non-positive uncertainties are excluded from both the mean and its error bar.
 `Plot smoothing` provides independent Gaussian sigma controls for the displayed
 X and Y directions, measured in bin widths. A value of zero disables smoothing
 on that direction. Smoothing is applied after slicing/integration and only to
@@ -386,8 +623,9 @@ calculate and show the current model and residual channels from the `Show
 model` control even before an optimization has been run. Stored fit-result
 channels are still reused when no current model can be evaluated and the stored
 channels remain compatible with the current dataset view.
-For 2D fit comparisons, histogram box cuts show integrated data+fit cuts along
-both plotted axes; when residuals are enabled, residual cuts are shown below
+For 2D fit comparisons, histogram box cuts show inverse-variance weighted
+data+fit cuts with propagated data error bars along both plotted axes; when
+residuals are enabled, residual cuts are shown below
 the residual panel and at the far right.
 
 ### 3D PyVista mode

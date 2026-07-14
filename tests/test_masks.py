@@ -102,3 +102,29 @@ def test_phonon_cone_masks_q_sphere_growing_with_energy():
     )
 
     np.testing.assert_array_equal(masked.mask, [False, True, True, True])
+
+
+def test_phonon_cone_accepts_multiple_bragg_centers():
+    data = _point_data(
+        H=[0.0, 1.0, 2.0],
+        K=[0.0, 0.0, 0.0],
+        L=[0.0, 0.0, 0.0],
+        E=[0.0, 0.0, 0.0],
+    )
+    data = attach_lattice_parameters(data, a=2.0 * np.pi, b=2.0 * np.pi, c=2.0 * np.pi)
+
+    masked = mask_out_phonon_cone(
+        data,
+        center=[[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+        slope=10.0,
+        radius_offset=0.1,
+    )
+
+    np.testing.assert_array_equal(masked.mask, [False, True, False])
+
+
+def test_phonon_cone_rejects_malformed_center_lists():
+    data = _point_data([0.0], [0.0], [0.0], [0.0])
+
+    with pytest.raises(ValueError, match="one 3-vector or a nonempty list"):
+        mask_out_phonon_cone(data, center=[[0.0, 0.0]], slope=10.0)

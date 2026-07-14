@@ -16,6 +16,42 @@ default, the importer avoids copying bulky ancillary NeXus groups such as
 Axes expose broad roles inferred from file labels and units, such as `h`, `k`,
 `l`, `q_modulus`, `momentum_projection`, and `energy_transfer`.
 
+MDEvent NeXus files are supported without Mantid through `nfit.mdevent`:
+
+- `inspect_mdevent_workspace(path)` reads run and orientation metadata without
+  loading the event table.
+- `mdevent_dataset_group(...)` creates file-backed run entries sharing one
+  reduction configuration.
+- `append_mdevent_file(group, path)` adds a compatible event file without
+  duplicating shared metadata.
+- `bin_mdevent_group(...)` streams events, converts `Q_sample` to HKL, and
+  performs native proton-charge and detector-trajectory normalization. Its
+  optional `progress_callback` uses the standard rebinner event dictionary.
+- `load_detector_normalization(path)` reads processed detector values for
+  vanadium efficiency and bad-detector masking.
+
+This pathway requires `h5py`. Numba accelerates detector trajectories when
+available and has a NumPy fallback; Mantid is neither imported nor launched.
+The returned `MDHistoData` carries `normalization_denominator` and
+`zero_event_bins_are_measured` metadata. Covered zero-event bins have signal
+zero and a finite 68.27% Feldman--Cousins upper-limit uncertainty; uncovered
+bins remain masked and non-finite. A zero-count bin has no event row and
+therefore has no stored `errorSquared` value of its own. nfit uses `1.29` times
+the uncertainty that one representative event would have in that bin. This is
+the `[0, 1.29]` Feldman--Cousins interval for zero observed counts and zero
+known background (Table II of [Feldman and Cousins](https://arxiv.org/pdf/physics/9711021)). It
+estimates the representative one-event scale from the nonzero accepted events
+in the requested volume as `sqrt(sum(errorSquared_i) / N)`, then divides by the
+bin's normalization. This scale is not an nfit fit weight or dataset scale
+factor. See
+[Measured-zero uncertainties](gui_workflows.md#measured-zero-uncertainties) for
+the three coverage/count cases and a numerical example.
+
+The GUI module also provides `read_isaw_ub`, `write_isaw_ub`, and
+`ub_from_lattice_orientation` for scripting the same UB workflow. ISAW matrices
+are transposed on disk, and orientation construction uses the IPNS frame with
+beam `+x` and vertical `+z`.
+
 Use `slice_viewer(data)` for the PySide6 interactive viewer. The viewer supports
 choosing displayed x/y axes, integrating hidden axes, switching the displayed
 channel (`signal`, `errors`, `num_events`/multiplicity, `combined_mask`,
@@ -95,6 +131,52 @@ smaller target usually reduces temporary memory at the cost of more CPU time,
 while a larger target can reduce batching overhead but raises peak memory. The
 best value depends on the dataset size, output grid size, dimensionality, and
 available memory.
+
+`NDRebin` adaptively selects its CPU implementation. Small jobs use the NumPy
+backend to avoid JIT startup overhead. When optional Numba support is installed,
+jobs with at least 500,000 source points use a fused kernel that streams
+each batch directly into the four output accumulators. This avoids both the
+full point-by-dimension bin-index array and the repeated output-grid-sized
+`bincount` temporaries used by the NumPy implementation. Pass
+`backend="numpy"` or `backend="numba"` to force a backend for testing and
+benchmarking; requesting unavailable Numba falls back to NumPy. The result's
+`resolved_backend` records the implementation used, and `timings` reports
+preparation, accumulation, normalization, and total wall time.
+
+Run `python benchmarks/benchmark_rebin.py` from a source checkout for the
+100-point and 500,000-point benchmark tiers. The memory-intensive 50-million
+point tier is opt-in with `--sizes 100 500000 50000000`.
+
+Large in-memory jobs also use adaptive threaded reduction. Dense reduction gives
+each worker private output accumulators and is selected only when those arrays
+fit within `max_parallel_bytes` (512 MB by default). If dense copies do not fit,
+auto mode uses sparse touched-bin maps only when estimated occupancy is at most
+5% and the maps fit the same budget; otherwise it runs the fused kernel on one
+worker. With `workers=None`, the shared `NFIT_NUM_THREADS` setting, Linux CPU
+affinity, cgroups, and SLURM allocations set the worker ceiling. Explicit worker
+counts and `parallel_strategy="serial"`, `"dense"`, or `"sparse"` are useful
+for controlled benchmarks. Results report `resolved_workers` and
+`resolved_parallel_strategy`.
+
+For data larger than memory, use a rewindable batch source with
+`rebin_nd_stream`. `ArrayRebinSource` wraps arrays and memory maps; custom
+HDF5, NeXus, or Zarr adapters can expose the same `ndim`, `n_points`, and
+`iter_batches()` contract and yield `RebinBatch` objects:
+
+```python
+from nfit import ArrayRebinSource, rebin_nd_stream
+
+source = ArrayRebinSource(signal, coordinates, data_errs=sigma, batch_size=1_000_000)
+result = rebin_nd_stream(source, num_bins=[40, 40, 80, 120])
+```
+
+Explicit limits require one source pass. Missing or non-finite limits trigger a
+first pass over projected coordinate minima and maxima, followed by the
+accumulation pass, so custom sources must be rewindable. Projection, validity
+checks, and accumulation operate only on the current batch. Temporary source
+memory therefore scales with batch size, although output accumulators still
+scale with the complete output grid. Streaming batches use the same `workers`,
+`parallel_strategy`, and `max_parallel_bytes` policy as in-memory rebinning.
 
 ## Modeling and fitting
 

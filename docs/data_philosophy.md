@@ -104,6 +104,15 @@ lists, and dictionaries are preferred over opaque objects. If a new mask type
 needs a richer representation, update the common standard deliberately and keep
 all existing mask types consistent with it.
 
+Registry-backed GUI masks use exclusion semantics: parameters identify the
+region to remove from viewing and fitting. Their defaults must be inert. Range
+parameters use `[0, 0]` for an inactive dimension; zero geometric extent or
+zero phonon-cone slope similarly masks nothing. `invert` and `additive` are
+explicit modifiers to this baseline convention, and disabled masks are ignored.
+The phonon-cone `center` parameter may be one `[H, K, L]` vector or a list of
+such vectors; multiple centers mask the union of equivalent cones around a
+series of Bragg peaks.
+
 Each mask parameter should also declare a default value and standard hover text
 metadata: a short description, allowed values, data type, and example. Defaults
 should be safe starter values, ideally masking no data or almost no data, so the
@@ -115,6 +124,33 @@ added.
 The same restriction should apply to future datasets, models, optimizers, and
 resolution models: GUI controls edit documented, scriptable specifications;
 scientific behavior should not depend on hidden widget state.
+
+## File-backed MDEvent groups
+
+MDEvent imports do not make Mantid a runtime dependency. A group owns shared
+crystallographic orientation, detector mask, vanadium normalization, and
+optional Ei/T0 overrides. Its run entries contain only run-specific metadata
+and references into one or more event files. Reduction streams event chunks
+and converts stored `Q_sample` vectors with `(2*pi*UB)^-1`, avoiding redundant
+copies of the event table and instrument description.
+
+The normalized result is a ratio. Event signal and error-squared accumulate in
+the numerator; detector trajectories contribute proton charge, vanadium
+detector efficiency/solid angle, and energy coverage to the denominator. Bad
+detectors contribute to neither side. nfit masks are then applied through the
+normal dataset-group mask pathway.
+
+Detector coverage and event count remain separate. In particular, a covered
+bin with zero events is a measurement of zero rather than an unmeasured bin.
+An empty bin has no MDEvent row and therefore has no stored event variance of
+its own. Its signal is retained as zero, while its uncertainty is set to `1.29`
+times the uncertainty one representative event would have in that bin. This
+factor is the 68.27% Feldman--Cousins upper endpoint for observing zero events
+with zero known background (Table II of [Feldman and Cousins](https://arxiv.org/pdf/physics/9711021)).
+The representative event scale is estimated from accepted events elsewhere in
+the requested volume. Only bins without detector coverage are masked. The
+complete formula and a numerical example are given in
+[Measured-zero uncertainties](gui_workflows.md#measured-zero-uncertainties).
 
 ## Model Component Standard
 

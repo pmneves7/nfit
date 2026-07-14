@@ -20,6 +20,7 @@ from nfit.project_gui import (
     copy_dataset_to_group,
     copy_mask_to_dataset,
     data_type_label,
+    dataset_entry_from_path,
     dataset_details_text,
     dataset_for_slice_viewer,
     dataset_rebin_config,
@@ -213,6 +214,15 @@ def test_project_explorer_tree_hierarchy_fonts(monkeypatch):
     initial_item = fits_item.child(0)
     result_item = fits_item.child(1)
     current_item = fits_item.child(2)
+
+    # Initial project opening exposes workspace contents without expanding
+    # individual datasets, masks, or nested dataset groups.
+    assert workspace_item.isExpanded()
+    assert datasets_item.isExpanded()
+    assert models_item.isExpanded()
+    assert fits_item.isExpanded()
+    assert not dataset_item.isExpanded()
+    assert not masks_item.isExpanded()
 
     assert workspace_item.font(0).bold()
     assert workspace_item.font(0).underline()
@@ -474,8 +484,47 @@ def test_project_explorer_interactive_controls_have_tooltips(monkeypatch):
     assert missing_tooltips(point_explorer.window) == []
 
 
+def test_project_explorer_numeric_controls_ignore_wheel_and_hide_buttons(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtCore = pytest.importorskip("PySide6.QtCore")
+    QtGui = pytest.importorskip("PySide6.QtGui")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    dataset = DatasetEntry("first", _tiny_mdhisto_data(1.0))
+    explorer = NfitProjectExplorer(NfitProject([DataGroup("Workspace1", datasets=[dataset])]))
+    spin_boxes = explorer.window.findChildren(QtWidgets.QAbstractSpinBox)
+    assert spin_boxes
+    assert all(
+        spin_box.buttonSymbols() == QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons
+        for spin_box in spin_boxes
+    )
+
+    spin_box = explorer.fit_weight_spin
+    spin_box.setValue(2.0)
+    wheel = QtGui.QWheelEvent(
+        QtCore.QPointF(5.0, 5.0),
+        QtCore.QPointF(5.0, 5.0),
+        QtCore.QPoint(0, 0),
+        QtCore.QPoint(0, 120),
+        QtCore.Qt.MouseButton.NoButton,
+        QtCore.Qt.KeyboardModifier.NoModifier,
+        QtCore.Qt.ScrollPhase.ScrollUpdate,
+        False,
+    )
+    QtWidgets.QApplication.sendEvent(spin_box, wheel)
+
+    assert spin_box.value() == 2.0
+
+    later_spin_box = QtWidgets.QSpinBox()
+    later_spin_box.show()
+    QtWidgets.QApplication.processEvents()
+    assert later_spin_box.buttonSymbols() == QtWidgets.QAbstractSpinBox.ButtonSymbols.NoButtons
+    later_spin_box.close()
+
+
 def test_project_explorer_adds_edits_and_copies_masks(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtCore = pytest.importorskip("PySide6.QtCore")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
     first = DatasetEntry("first", _tiny_mdhisto_data(1.0))
@@ -518,6 +567,10 @@ def test_project_explorer_adds_edits_and_copies_masks(monkeypatch):
     explorer.copy_selected()
     second_dataset_item = explorer.tree.topLevelItem(0).child(0).child(1)
     explorer.tree.setCurrentItem(second_dataset_item)
+    # Switching away from the source mask deletes its details-panel label on
+    # the next event cycle. Pasting must not retain and touch that object.
+    QtWidgets.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+    QtWidgets.QApplication.processEvents()
     explorer.paste_into_selection()
 
     assert len(second.masks) == 1
@@ -750,6 +803,43 @@ def test_phonon_cone_mask_combines_multiple_bragg_centers_for_histogram_and_poin
         project_gui._nfit_mask_for_point_data(point_dataset, points),
         [True, False, True],
     )
+
+
+def test_phonon_cone_mask_reconstructs_physical_hkl_from_rebinned_axes():
+    axes = (
+        MDHistoAxis("[H,H,H]", np.array([0.5, 1.5]), "rlu", "h"),
+        MDHistoAxis("[K,-K,0]", np.array([-0.5, 0.5]), "rlu", "k"),
+        MDHistoAxis("[L,L,-2L]", np.array([1.5, 2.5]), "rlu", "l"),
+        MDHistoAxis("DeltaE", np.array([-0.5, 0.5]), "meV", "energy_transfer"),
+    )
+    data = MDHistoData(
+        axes=axes,
+        signal=np.ones((1, 1, 1, 1)),
+        errors=np.ones((1, 1, 1, 1)),
+        mask=np.zeros((1, 1, 1, 1), dtype=bool),
+        num_events=np.ones((1, 1, 1, 1)),
+        metadata={
+            "lattice_parameters": {"a": 2.0 * np.pi, "b": 2.0 * np.pi, "c": 2.0 * np.pi},
+            "rebin": {
+                "vectors": [
+                    [1.0, 1.0, 1.0, 0.0],
+                    [1.0, -1.0, 0.0, 0.0],
+                    [1.0, 1.0, -2.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ]
+            },
+        },
+    )
+    dataset = DatasetEntry("projected", data)
+    mask = create_mask(dataset, type="phonon_cone")
+    mask.parameters.update({"center": [3.0, 3.0, -3.0], "slope": 10.0, "radius": 0.1})
+
+    coords = project_gui._mdhisto_coordinate_grids(data)
+    assert coords["H"].item() == pytest.approx(3.0)
+    assert coords["K"].item() == pytest.approx(3.0)
+    assert coords["L"].item() == pytest.approx(-3.0)
+    viewed = dataset_for_slice_viewer(dataset)
+    assert viewed.metadata["nfit_mask"].item()
 
 
 def test_phonon_cone_mask_is_inert_with_nonpositive_slope():
@@ -1192,6 +1282,43 @@ def test_project_explorer_fit_history_creates_results_branches_and_restores(monk
     assert explorer.import_dataset_button.isHidden()
 
 
+def test_selecting_historic_fit_preserves_saved_current_state_masks(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    dataset = DatasetEntry("scan", _tiny_mdhisto_data(1.0))
+    create_mask(dataset, "Mask1")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    one_mask_snapshot = project_gui.snapshot_data_group_state(group)
+
+    create_mask(dataset, "Mask2")
+    two_mask_snapshot = project_gui.snapshot_data_group_state(group)
+    group.fits = [
+        FitTimelineEntry("Initial", kind="initial", snapshot=one_mask_snapshot),
+        FitTimelineEntry("Fit Result1", kind="result", snapshot=one_mask_snapshot),
+        FitTimelineEntry("Fit Result2", kind="result", snapshot=two_mask_snapshot),
+        FitTimelineEntry("Current state", kind="current", snapshot=two_mask_snapshot),
+    ]
+    explorer = NfitProjectExplorer(NfitProject([group]))
+
+    fits_item = explorer.tree.topLevelItem(0).child(2)
+    explorer.tree.setCurrentItem(fits_item.child(1))
+
+    assert [entry.name for entry in group.fits] == [
+        "Initial", "Fit Result1", "Fit Result2", "Current state"
+    ]
+    assert len(group.datasets[0].masks) == 1
+    assert len(group.fits[2].snapshot["datasets"][0]["masks"]) == 2
+
+    fits_item = explorer.tree.topLevelItem(0).child(2)
+    explorer.tree.setCurrentItem(fits_item.child(3))
+
+    assert [entry.name for entry in group.fits] == [
+        "Initial", "Fit Result1", "Fit Result2", "Current state"
+    ]
+    assert len(group.datasets[0].masks) == 2
+
+
 def test_project_explorer_deletes_a_range_of_selected_fits(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")
@@ -1398,6 +1525,7 @@ def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(
         explorer.fit_emcee_steps_spin,
         explorer.fit_emcee_burn_spin,
         explorer.fit_emcee_thin_spin,
+        explorer.fit_emcee_seed_spin,
         explorer.fit_emcee_workers_spin,
         explorer.fit_optimizer_config_editor,
         explorer.fit_branch_check,
@@ -1410,6 +1538,7 @@ def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(
     assert explorer.details_widget.findChild(QtWidgets.QGroupBox, "fit_optimizer_settings_group") is not None
     assert explorer.details_widget.findChild(QtWidgets.QGroupBox, "fit_de_settings_group") is not None
     assert explorer.details_widget.findChild(QtWidgets.QGroupBox, "fit_posterior_settings_group") is not None
+    assert explorer.fit_emcee_workers_spin.value() == -1
 
     explorer.fit_loss_combo.setCurrentText("soft_l1")
     explorer.fit_f_scale_spin.setValue(2.0)
@@ -1549,6 +1678,11 @@ def test_fit_details_posterior_sampler_controls_update_burn_without_timeline(mon
         explorer.window.findChild(QtWidgets.QPushButton, "fit_posterior_promote_button"),
     ]
     assert all(control is not None and control.toolTip() for control in controls)
+    workers_spin = explorer.window.findChild(QtWidgets.QSpinBox, "fit_posterior_workers_spin")
+    assert workers_spin.value() == -1
+    posterior_group = explorer.window.findChild(QtWidgets.QGroupBox, "fit_posterior_settings_group")
+    assert posterior_group is not None
+    assert explorer.window.findChild(QtWidgets.QWidget, "fit_posterior_result_actions").parentWidget() is posterior_group
 
     burn_spin = explorer.window.findChild(QtWidgets.QSpinBox, "fit_posterior_burn_spin")
     thin_spin = explorer.window.findChild(QtWidgets.QSpinBox, "fit_posterior_thin_spin")
@@ -1676,6 +1810,11 @@ def test_promote_best_posterior_sample_creates_current_state(monkeypatch):
         goodness={"chi2": 1.0, "parameters": {parameter_name: 1.0}},
         metadata={"posterior_samples": project_gui._sampling_result_to_dict(sampling)},
         snapshot=project_gui.snapshot_data_group_state(group),
+        optimizer="custom_optimizer",
+        optimizer_config={
+            "initialization": {"enabled": True, "method": "differential_evolution", "maxiter": 12},
+            "sampler": {"enabled": True, "method": "emcee", "n_steps": 25},
+        },
     )
     group.fits = [result]
     explorer = NfitProjectExplorer(NfitProject([group]))
@@ -1692,6 +1831,9 @@ def test_promote_best_posterior_sample_creates_current_state(monkeypatch):
     assert [fit.kind for fit in group.fits] == ["result", "current"]
     current = group.fits[1]
     assert current.snapshot["models"][0]["parameters"]["constant"] == pytest.approx(2.0)
+    assert current.optimizer == "custom_optimizer"
+    assert current.optimizer_config == result.optimizer_config
+    assert current.optimizer_config is not result.optimizer_config
     assert current.metadata["promoted_posterior_sample"]["source_fit"] == "Fit Result1"
     assert current.metadata["promoted_posterior_sample"]["step"] == 1
     assert explorer._active_fit_entry(group) is current
@@ -1734,6 +1876,23 @@ def test_fit_diagnostics_detects_covariance_without_posterior_samples():
     assert names == ["a", "b"]
     assert title == "Covariance"
     assert _fit_entry_has_diagnostic_plots(entry)
+
+
+def test_fit_result_summary_places_chi_squared_after_duration():
+    entry = FitTimelineEntry(
+        "Fit Result1",
+        kind="result",
+        duration_seconds=12.5,
+        goodness={"chi2": 8.0, "reduced_chi2": 1.25},
+    )
+
+    lines = project_gui.fit_details_text(entry).splitlines()
+
+    duration_index = lines.index("Duration: 12.5 s")
+    assert lines[duration_index + 1 : duration_index + 3] == [
+        "Chi^2: 8",
+        "Reduced Chi^2: 1.25",
+    ]
 
 
 def test_fit_diagnostics_matrix_heatmap_draws_image():
@@ -1857,6 +2016,7 @@ def test_trace_panel_draws_walkers_and_burn_in_marker():
 
 def test_fit_diagnostics_label_table_updates_plot_labels(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtCore = pytest.importorskip("PySide6.QtCore")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
     from nfit.project_gui import _FitDiagnosticsPlotWindow
 
@@ -1887,8 +2047,13 @@ def test_fit_diagnostics_label_table_updates_plot_labels(monkeypatch):
 
     window = _FitDiagnosticsPlotWindow(entry, explorer)
     table = window.window.findChild(QtWidgets.QTableWidget, "fit_diagnostics_label_table")
+    splitter = window.window.findChild(QtWidgets.QSplitter, "fit_diagnostics_plot_label_splitter")
 
     assert table is not None
+    assert splitter is not None
+    assert splitter.orientation() == QtCore.Qt.Orientation.Vertical
+    assert splitter.widget(0) is window.tabs
+    assert splitter.widget(1) is table
     assert table.item(0, 1).text() == "p1"
     corner_index = [window.tabs.tabText(index) for index in range(window.tabs.count())].index("Corner")
     window.tabs.setCurrentIndex(corner_index)
@@ -1928,6 +2093,7 @@ def test_fit_diagnostics_trace_uses_chain_steps_when_available(monkeypatch):
 
 def test_fit_progress_dialog_uses_parameter_table_and_resets(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtGui = pytest.importorskip("PySide6.QtGui")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
     QtCore = pytest.importorskip("PySide6.QtCore")
     from nfit.project_gui import _FitProgressDialog
@@ -1963,6 +2129,18 @@ def test_fit_progress_dialog_uses_parameter_table_and_resets(monkeypatch):
     assert "125 ms/step" in dialog.status_label.text()
     assert "125 ms/step" in dialog.log.toPlainText()
 
+    dialog.finish(
+        "Fit pipeline finished.",
+        parameters={"model.constant[a]": 1.0, "model.constant[b]": 2.5},
+        limit_hits=[{"name": "model.constant[a]", "side": "upper", "bound": 1.0}],
+        summary_lines=["emcee integrated autocorrelation time (steps): [12.3]."],
+    )
+    assert "limit reached" in dialog.status_label.text()
+    assert "fit parameter limit reached" in dialog.log.toPlainText()
+    assert "integrated autocorrelation time" in dialog.log.toPlainText()
+    assert table.item(0, 1).foreground().color() == QtGui.QColor("#c0392b")
+    assert table.item(1, 1).foreground().color() != QtGui.QColor("#c0392b")
+
     dialog.reset()
 
     assert table.rowCount() == 0
@@ -1978,6 +2156,58 @@ def test_fit_progress_dialog_uses_parameter_table_and_resets(monkeypatch):
     )
     assert summary["elapsed_seconds"] == 1.5
     assert summary["seconds_per_step"] == 0.5
+
+
+def test_fit_limit_hits_are_saved_and_rendered_in_fit_results(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtGui = pytest.importorskip("PySide6.QtGui")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    from nfit.fitting import ParameterSpec
+
+    hits = project_gui._fit_parameter_limit_hits(
+        [
+            ParameterSpec("constant.offset", 1.0, min=0.0, max=1.0),
+            ParameterSpec("constant.free", 0.4, min=0.0, max=1.0),
+            ParameterSpec("constant.fixed", 1.0, min=0.0, max=1.0, vary=False),
+        ],
+        {"constant.offset": 1.0, "constant.free": 0.4, "constant.fixed": 1.0},
+    )
+    assert hits == [{"name": "constant.offset", "side": "upper", "bound": 1.0}]
+
+    entry = FitTimelineEntry(
+        name="Fit Result1",
+        kind="result",
+        goodness={
+            "parameters": {"constant.offset": 1.0, "constant.free": 0.4},
+            "parameters_at_limits": hits,
+        },
+    )
+    explorer = NfitProjectExplorer(NfitProject())
+    box = explorer._fit_results_group_box(entry)
+    table = box.findChild(QtWidgets.QTableWidget, "fit_results_table")
+    assert table is not None
+    assert all(table.item(0, column).background().color() == QtGui.QColor("#5a2929") for column in range(6))
+    assert table.item(1, 1).background().color() != QtGui.QColor("#5a2929")
+
+    legacy_entry = FitTimelineEntry(
+        name="Fit Result0",
+        kind="result",
+        goodness={"parameters": {"Model1.gamma0": 10.0}},
+        snapshot={
+            "models": [
+                {
+                    "name": "Model1",
+                    "parameters": {"gamma0": 10.0},
+                    "fit_parameters": {"gamma0": True},
+                    "limits": {"gamma0": [0.0, 10.0]},
+                }
+            ]
+        },
+    )
+    legacy_box = explorer._fit_results_group_box(legacy_entry)
+    legacy_table = legacy_box.findChild(QtWidgets.QTableWidget, "fit_results_table")
+    assert legacy_table is not None
+    assert all(legacy_table.item(0, column).background().color() == QtGui.QColor("#5a2929") for column in range(6))
 
 
 def test_project_explorer_reuses_fit_progress_dialog(monkeypatch):
@@ -2722,7 +2952,7 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     explorer._set_dataset_rebin_axis_value(dataset, group, 0, "step_size", "0.75")
     axis_config = dataset_rebin_config(dataset)["axes"][0]
     assert axis_config["num_bins"] == 3
-    assert axis_config["step_size"] == pytest.approx(2.0 / 3.0)
+    assert axis_config["step_size"] == pytest.approx(0.75)
 
     viewed = dataset_for_slice_viewer(dataset)
 
@@ -2756,6 +2986,33 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     saved = np.load(save_path)
     assert saved["signal"].shape == (3, 1)
     assert int(saved["axis_count"]) == 2
+
+
+def test_saved_nfit_npz_import_restores_mdhisto_axes_data_and_context(tmp_path):
+    data = _grid_mdhisto_data()
+    data.mask[0, 0] = True
+    data.signal[0, 0] = np.nan
+    data.errors[0, 0] = np.nan
+    data.num_events[0, 0] = 0.0
+    dataset = DatasetEntry("scan", data, kind="mdhisto")
+    dataset.parameters["temperature"] = 1.8
+    dataset.parameters["magnetic_field"] = {"magnitude_T": 4.0, "direction": [0.0, 0.0, 1.0], "frame": "uvw"}
+    path = tmp_path / "scan.npz"
+
+    save_dataset_file(dataset, path)
+    imported = dataset_entry_from_path(path)
+
+    assert isinstance(imported.data, MDHistoData)
+    np.testing.assert_allclose(imported.data.signal, data.signal)
+    assert [axis.name for axis in imported.data.axes] == [axis.name for axis in data.axes]
+    assert [axis.units for axis in imported.data.axes] == [axis.units for axis in data.axes]
+    assert imported.parameters["temperature"] == pytest.approx(1.8)
+    assert imported.parameters["magnetic_field"] == dataset.parameters["magnetic_field"]
+    reloaded_view = dataset_for_slice_viewer(imported)
+    np.testing.assert_array_equal(reloaded_view.mask, data.mask)
+    np.testing.assert_allclose(reloaded_view.signal, data.signal, equal_nan=True)
+    np.testing.assert_allclose(reloaded_view.errors, data.errors, equal_nan=True)
+    np.testing.assert_allclose(reloaded_view.num_events, data.num_events)
 
 
 def test_dataset_rebin_edits_preserve_details_scroll_position(monkeypatch):
@@ -2843,7 +3100,10 @@ def test_large_dataset_rebin_defaults_manual_and_defers_refresh(monkeypatch):
     assert deferred.shape == data.shape
     assert dataset_rebin_config(dataset)["stale"] is True
 
-    assert explorer.rebin_now_for_selection()
+    rebin_now_button = rebin_panel.findChild(QtWidgets.QPushButton, "dataset_rebin_now")
+    assert rebin_now_button is not None and rebin_now_button.isEnabled()
+    rebin_now_button.click()
+    QtWidgets.QApplication.processEvents()
     assert dataset_rebin_config(dataset)["stale"] is False
     forced = dataset_for_slice_viewer(dataset)
     assert forced is not None
@@ -2861,6 +3121,7 @@ def test_dataset_rebin_resolution_selector_switches_between_step_and_bins(monkey
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
     config = dataset_rebin_config(dataset)
     config["auto_rebin"] = False
+    config["enabled"] = True
 
     mode_combo = explorer.details_widget.findChild(QtWidgets.QComboBox, "dataset_rebin_resolution_mode")
     value_edit = explorer.details_widget.findChild(
@@ -2887,9 +3148,13 @@ def test_dataset_rebin_resolution_selector_switches_between_step_and_bins(monkey
     QtWidgets.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
     QtWidgets.QApplication.processEvents()
     assert config["resolution_mode"] == "step"
-    explorer._set_dataset_rebin_axis_value(dataset, group, 0, "lower", "-4")
+    explorer._set_dataset_rebin_axis_value(dataset, group, 0, "step_size", "0.75")
+    explorer._set_dataset_rebin_axis_value(dataset, group, 0, "lower", "-0.8")
     assert config["axes"][0]["num_bins"] == 4
-    assert config["axes"][0]["step_size"] == pytest.approx(1.5)
+    assert config["axes"][0]["step_size"] == pytest.approx(0.75)
+    rebinned = dataset_for_slice_viewer(dataset)
+    assert isinstance(rebinned, MDHistoData)
+    assert rebinned.axes[0].values == pytest.approx([-0.8, -0.05, 0.7, 1.45, 2.0])
 
 
 def test_data_group_composite_uses_scale_fit_weight_and_rebinning():
@@ -3079,6 +3344,7 @@ def test_mdhisto_rebin_applies_enabled_masks_before_binning():
     config = dataset_rebin_config(dataset)
     config["enabled"] = True
     config["fractional"] = False
+    config["resolution_mode"] = "bins"
     config["axes"][0].update({"lower": 0.0, "upper": 2.0, "num_bins": 1})
 
     viewed = dataset_for_slice_viewer(dataset)
@@ -3111,6 +3377,7 @@ def test_point_data_rebin_applies_enabled_masks_before_binning():
     config = dataset_rebin_config(dataset)
     config["enabled"] = True
     config["fractional"] = False
+    config["resolution_mode"] = "bins"
     for axis in config["axes"]:
         axis.update({"lower": 0.0, "upper": 1.0, "num_bins": 1})
 
@@ -3675,6 +3942,7 @@ def test_rebin_axis_vector_projects_new_coordinate():
     dataset = DatasetEntry("scan", data)
     config = dataset_rebin_config(dataset)
     config["enabled"] = True
+    config["resolution_mode"] = "bins"
     # Swap which physical coordinate maps to each output axis.
     config["axes"][0].update({"vector": [0.0, 1.0], "lower": 0.0, "upper": 20.0, "num_bins": 2})
     config["axes"][1].update({"vector": [1.0, 0.0], "lower": 0.0, "upper": 2.0, "num_bins": 2})
@@ -3724,6 +3992,39 @@ def test_rebin_defaults_follow_mdhisto_axis_coordinate_vectors():
         [0.0, 0.0, 1.0, 0.0],
         [1.0, 1.0, 0.0, 0.0],
     ]
+
+
+def test_rebin_basis_survives_lazy_dataset_reload():
+    axes = (
+        MDHistoAxis("DeltaE", np.array([0.0, 1.0, 2.0]), "meV", "energy"),
+        MDHistoAxis("[H,-H,0]", np.array([-1.0, 0.0, 1.0]), "rlu", "momentum"),
+        MDHistoAxis("[0,0,L]", np.array([0.0, 1.0, 2.0]), "rlu", "momentum"),
+        MDHistoAxis("[H,H,0]", np.array([0.0, 1.0, 2.0]), "rlu", "momentum"),
+    )
+    data = MDHistoData(
+        axes=axes,
+        signal=np.zeros((2, 2, 2, 2)),
+        errors=np.ones((2, 2, 2, 2)),
+        mask=np.zeros((2, 2, 2, 2), dtype=bool),
+        num_events=np.ones((2, 2, 2, 2)),
+        metadata={},
+    )
+    dataset = DatasetEntry("scan", data)
+    config = dataset_rebin_config(dataset)
+    config["axes"][1]["vector"] = [1.0, 1.0, 1.0, 0.0]
+    config["axes"][1]["name"] = "[H,H,H]"
+    config["axes"][2]["vector"] = [1.0, 1.0, -2.0, 0.0]
+    config["axes"][2]["name"] = "[L,L,-2L]"
+    saved_axes = [dict(axis) for axis in config["axes"]]
+
+    # Project reload and fit-history changes can temporarily leave a
+    # file-backed dataset unloaded before it is drawn again.
+    dataset.data = None
+    assert dataset_rebin_config(dataset)["axes"] == saved_axes
+
+    dataset.data = data
+    restored = dataset_rebin_config(dataset)
+    assert restored["axes"] == saved_axes
 
 
 def test_rebin_basis_change_regenerates_names_and_keeps_full_data_extent():
@@ -4045,6 +4346,10 @@ def test_dataset_temperature_edit_from_active_result_refreshes_current_state(mon
         group.fits[0],
         goodness={"status": "converged", "parameters": {}},
     )
+    result.optimizer_config = {
+        "initialization": {"enabled": True, "method": "differential_evolution", "maxiter": 17},
+        "sampler": {"enabled": True, "method": "emcee", "n_steps": 31},
+    }
     explorer = NfitProjectExplorer(NfitProject([group]))
 
     result_item = explorer.tree.topLevelItem(0).child(2).child(1)
@@ -4056,10 +4361,15 @@ def test_dataset_temperature_edit_from_active_result_refreshes_current_state(mon
 
     assert [fit.kind for fit in group.fits] == ["initial", "result", "current"]
     assert group.fits[2].snapshot["datasets"][0]["parameters"]["temperature"] == 12.5
+    assert group.fits[2].optimizer_config == result.optimizer_config
+    assert group.fits[2].optimizer_config is not result.optimizer_config
     fits_item = explorer.tree.topLevelItem(0).child(2)
     assert fits_item.childCount() == 3
     assert explorer._fit_entry_for_item(fits_item.child(2)) is group.fits[2]
     assert result.children == []
+    explorer.tree.setCurrentItem(fits_item.child(2))
+    assert explorer.fit_de_check.isChecked()
+    assert explorer.fit_emcee_check.isChecked()
 
 
 def test_failed_fit_from_result_creates_current_state_for_temperature_fix(monkeypatch):
@@ -4723,6 +5033,22 @@ def test_overlay_cache_invalidates_on_structural_change():
         {"label": "J2", "bonds": [{"site_i": 0, "site_j": 0, "offset": [0, 0, 1]}]},
     ]
     model.parameters["J2"] = 0.05
+    project_gui.current_model_channels(group)
+    assert project_gui._MODEL_OVERLAY_CACHE[id(group)]["compiled"] is not compiled_first
+
+
+def test_overlay_cache_invalidates_when_rebin_basis_changes():
+    project_gui._MODEL_OVERLAY_CACHE.clear()
+    group, dataset, _model = _rpa_overlay_group()
+    project_gui.current_model_channels(group)
+    compiled_first = project_gui._MODEL_OVERLAY_CACHE[id(group)]["compiled"]
+
+    dataset.parameters[project_gui.DATASET_REBIN_KEY] = {
+        "enabled": False,
+        "axes": [{"vector": [1.0, 1.0, 0.0, 0.0]}],
+    }
+    dataset.data.metadata["rebin"] = {"vectors": [[1.0, 1.0, 0.0, 0.0]]}
+
     project_gui.current_model_channels(group)
     assert project_gui._MODEL_OVERLAY_CACHE[id(group)]["compiled"] is not compiled_first
 
