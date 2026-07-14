@@ -2038,17 +2038,25 @@ def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str,
         reference = _composite_reference_data(group)
         default_axes = _default_rebin_axes(reference) if reference is not None else []
     axes = config.get("axes")
-    if not isinstance(axes, list) or len(axes) != len(default_axes):
-        config["axes"] = default_axes
+    if not isinstance(axes, list) or not axes:
+        # A composite can be restored before its reference data is loaded.
+        # Do not create an empty placeholder that would prevent defaults from
+        # being generated once a reference becomes available.
+        if default_axes:
+            config["axes"] = default_axes
     else:
-        sanitized_axes = []
-        for axis_config, default_axis in zip(axes, default_axes, strict=True):
-            if not isinstance(axis_config, dict):
-                axis_config = {}
-            for key, value in default_axis.items():
-                axis_config.setdefault(key, value)
-            sanitized_axes.append(_sanitize_rebin_axis_config(axis_config))
-        config["axes"] = sanitized_axes
+        if len(axes) == len(default_axes):
+            sanitized_axes = []
+            for axis_config, default_axis in zip(axes, default_axes, strict=True):
+                if not isinstance(axis_config, dict):
+                    axis_config = {}
+                for key, value in default_axis.items():
+                    axis_config.setdefault(key, value)
+                sanitized_axes.append(_sanitize_rebin_axis_config(axis_config))
+            config["axes"] = sanitized_axes
+        # Preserve a saved basis if reference data are temporarily unavailable
+        # or differ during a refresh. A user edit is the only operation that
+        # should replace its coordinate-axis vectors.
     if "auto_rebin" not in config:
         # File-backed MDEvent composites require a complete source scan even
         # when only a few selected events contribute to the current view.
@@ -2185,8 +2193,12 @@ def _ensure_dataset_data_loaded(dataset: DatasetEntry) -> Any:
         if loaded is not None:
             return loaded
     source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
-    if source and Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5"}:
-        loaded = load_mantid_mdhisto_nxs(Path(source), copy_metadata=False)
+    if source and Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5", ".npz"}:
+        if Path(source).suffix.lower() == ".npz":
+            loaded, parameters = _load_nfit_dataset_file(Path(source))
+            dataset.parameters.update(parameters)
+        else:
+            loaded = load_mantid_mdhisto_nxs(Path(source), copy_metadata=False)
         dataset.data = loaded
         dataset.kind = dataset.kind or Path(source).suffix.lstrip(".").lower()
         dataset.metadata["import_status"] = "loaded"
@@ -2252,6 +2264,7 @@ def composite_dataset_data(
             lower=lower,
             upper=upper,
             num_bins=num_bins,
+            step_size=_composite_rebin_step_sizes(config),
             datasets=_composite_candidates(group),
             vectors=[
                 axis.get("vector", _identity_vector(index, 4))
@@ -2351,6 +2364,7 @@ def _composite_mdhisto_data(
     progress_callback: Any | None = None,
 ) -> MDHistoData:
     lower, upper, num_bins = _composite_rebin_bounds(config)
+    axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
     coords_parts: list[np.ndarray] = []
     signal_parts: list[np.ndarray] = []
     error_parts: list[np.ndarray] = []
@@ -2390,7 +2404,7 @@ def _composite_mdhisto_data(
         data_weights=weights_all,
         lower=lower,
         upper=upper,
-        num_bins=num_bins,
+        **_rebin_grid_kwargs(config, axes_config),
         fractional=bool(config.get("fractional", True)),
         normalize=True,
         mean_weighting=_rebin_mean_weighting(config),
@@ -2399,7 +2413,6 @@ def _composite_mdhisto_data(
     )
     if result.binned_data is None or result.binned_data_errs is None or result.n_samples is None or result.bins_list is None:
         raise RuntimeError("composite rebinning did not produce binned data")
-    axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
     axes = tuple(
         MDHistoAxis(
             name=str(axis_config.get("name") or source_axis.name),
@@ -2450,6 +2463,7 @@ def _composite_point_data(
     progress_callback: Any | None = None,
 ) -> PointData4D:
     lower, upper, num_bins = _composite_rebin_bounds(config)
+    axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
     coords_parts: list[np.ndarray] = []
     signal_parts: list[np.ndarray] = []
     error_parts: list[np.ndarray] = []
@@ -2476,7 +2490,7 @@ def _composite_point_data(
         data_weights=np.concatenate(weight_parts),
         lower=lower,
         upper=upper,
-        num_bins=num_bins,
+        **_rebin_grid_kwargs(config, axes_config),
         fractional=bool(config.get("fractional", True)),
         normalize=True,
         mean_weighting=_rebin_mean_weighting(config),
@@ -2518,6 +2532,7 @@ def _composite_point_list_data(
         if list(data.coordinate_names) != coordinate_names or channel_label not in data.channel_labels:
             raise ValueError("point-list composites require matching coordinates and channel labels")
     lower, upper, num_bins = _composite_rebin_bounds(config)
+    axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
     coords_parts: list[np.ndarray] = []
     signal_parts: list[np.ndarray] = []
     error_parts: list[np.ndarray] = []
@@ -2546,7 +2561,7 @@ def _composite_point_list_data(
         data_weights=np.concatenate(weight_parts),
         lower=lower,
         upper=upper,
-        num_bins=num_bins,
+        **_rebin_grid_kwargs(config, axes_config),
         fractional=bool(config.get("fractional", True)),
         normalize=True,
         mean_weighting=_rebin_mean_weighting(config),
@@ -3441,6 +3456,9 @@ def perform_group_fit(
         },
         "skipped_datasets": list(compiled.skipped_datasets),
     }
+    limit_hits = _fit_parameter_limit_hits(compiled.problem.parameter_specs, result.params)
+    if limit_hits:
+        goodness["parameters_at_limits"] = limit_hits
     metadata: dict[str, Any] = {}
     parameter_labels = _fit_parameter_labels_from_components(components, compiled, result.variable_names)
     if parameter_labels:
@@ -3461,6 +3479,69 @@ def perform_group_fit(
         "channels": channels,
         "metadata": metadata,
     }
+
+
+def _fit_parameter_limit_hits(specs: Any, params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return optimized parameters that finish at a finite lower or upper bound."""
+
+    hits: list[dict[str, Any]] = []
+    for spec in specs:
+        if not bool(getattr(spec, "vary", False)):
+            continue
+        name = str(getattr(spec, "name", ""))
+        if name not in params:
+            continue
+        try:
+            value = float(params[name])
+        except (TypeError, ValueError):
+            continue
+        for side, bound in (("lower", getattr(spec, "min", None)), ("upper", getattr(spec, "max", None))):
+            if bound is None:
+                continue
+            try:
+                bound_value = float(bound)
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(bound_value) and _parameter_is_at_bound(value, bound_value):
+                hits.append({"name": name, "side": side, "bound": bound_value})
+                break
+    return hits
+
+
+def _parameter_is_at_bound(value: Any, bound: Any) -> bool:
+    """Return whether a finite parameter value is numerically at a finite bound."""
+
+    try:
+        value_float = float(value)
+        bound_float = float(bound)
+    except (TypeError, ValueError):
+        return False
+    if not np.isfinite(value_float) or not np.isfinite(bound_float):
+        return False
+    return bool(np.isclose(value_float, bound_float, rtol=1.0e-8, atol=1.0e-10 * max(1.0, abs(bound_float))))
+
+
+def _fit_limit_hits_from_goodness(goodness: Any) -> dict[str, dict[str, Any]]:
+    """Index saved fit-bound warnings by parameter name for GUI rendering."""
+
+    if not isinstance(goodness, dict):
+        return {}
+    raw = goodness.get("parameters_at_limits")
+    if not isinstance(raw, list):
+        return {}
+    return {
+        str(hit["name"]): dict(hit)
+        for hit in raw
+        if isinstance(hit, dict) and isinstance(hit.get("name"), str)
+    }
+
+
+def _fit_limit_warning_text(limit_hits: Any) -> str:
+    hits = _fit_limit_hits_from_goodness({"parameters_at_limits": limit_hits})
+    if not hits:
+        return ""
+    descriptions = [f"{name} ({hit.get('side', 'bound')})" for name, hit in hits.items()]
+    return "Warning: fit parameter limit reached: " + ", ".join(descriptions) + "."
 
 
 # Overlay recomputation is dominated by rebuilding the fit bundles (rebinning
@@ -4376,9 +4457,12 @@ def _viewer_data_before_scale_uncached(
     if not source:
         return None
     source_path = Path(source)
-    if source_path.suffix.lower() not in {".nxs", ".h5", ".hdf5"}:
+    if source_path.suffix.lower() not in {".nxs", ".h5", ".hdf5", ".npz"}:
         return None
-    if dataset.kind == "mdevent":
+    if source_path.suffix.lower() == ".npz":
+        loaded, parameters = _load_nfit_dataset_file(source_path)
+        dataset.parameters.update(parameters)
+    elif dataset.kind == "mdevent":
         loaded = load_mdevent_run_points(dataset)
     else:
         loaded = load_mantid_mdhisto_nxs(source_path, copy_metadata=False)
@@ -4474,27 +4558,33 @@ def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
         default_axes = _default_rebin_axes(prepared_point_list_data(dataset))
     else:
         default_axes = _default_rebin_axes(dataset.data)
-    if not isinstance(axes, list) or len(axes) != len(default_axes):
-        config["axes"] = default_axes
-        if isinstance(dataset.data, MDHistoData) and len(dataset.data.axes) == 4:
-            config["coordinate_basis_version"] = REBIN_COORDINATE_BASIS_VERSION
+    if not isinstance(axes, list) or not axes:
+        # A saved project may call this while its file-backed dataset is still
+        # unloaded. Leave axes absent in that state so first data load can
+        # create defaults, but never replace a saved non-empty basis.
+        if default_axes:
+            config["axes"] = default_axes
+            if isinstance(dataset.data, MDHistoData) and len(dataset.data.axes) == 4:
+                config["coordinate_basis_version"] = REBIN_COORDINATE_BASIS_VERSION
     else:
-        sanitized_axes = []
-        for axis_config, default_axis in zip(axes, default_axes, strict=True):
-            if not isinstance(axis_config, dict):
-                axis_config = {}
-            for key, value in default_axis.items():
-                axis_config.setdefault(key, value)
-            if isinstance(dataset.data, MDHistoData) and "vector" in axis_config:
-                axis_config["variable"] = str(
-                    axis_config.get("variable") or default_axis.get("variable", "")
-                )
-                axis_config["name"] = _rebin_axis_name(
-                    axis_config["variable"], axis_config.get("vector", [])
-                )
-            sanitized_axes.append(_sanitize_rebin_axis_config(axis_config))
-        config["axes"] = sanitized_axes
-        if isinstance(dataset.data, MDHistoData) and len(dataset.data.axes) == 4:
+        sanitized_axes = list(axes)
+        if len(axes) == len(default_axes):
+            sanitized_axes = []
+            for axis_config, default_axis in zip(axes, default_axes, strict=True):
+                if not isinstance(axis_config, dict):
+                    axis_config = {}
+                for key, value in default_axis.items():
+                    axis_config.setdefault(key, value)
+                if isinstance(dataset.data, MDHistoData) and "vector" in axis_config:
+                    axis_config["variable"] = str(
+                        axis_config.get("variable") or default_axis.get("variable", "")
+                    )
+                    axis_config["name"] = _rebin_axis_name(
+                        axis_config["variable"], axis_config.get("vector", [])
+                    )
+                sanitized_axes.append(_sanitize_rebin_axis_config(axis_config))
+            config["axes"] = sanitized_axes
+        if len(axes) == len(default_axes) and isinstance(dataset.data, MDHistoData) and len(dataset.data.axes) == 4:
             try:
                 basis_version = int(config.get("coordinate_basis_version", 0) or 0)
             except (TypeError, ValueError):
@@ -4724,12 +4814,11 @@ def _rebin_point_list_data(dataset: DatasetEntry, config: dict[str, Any]) -> Poi
         coordinate_names = list(prepared.coordinate_names)
     lower = [axis["lower"] for axis in axes_config[: len(coordinate_names)]] or None
     upper = [axis["upper"] for axis in axes_config[: len(coordinate_names)]] or None
-    num_bins = [axis["num_bins"] for axis in axes_config[: len(coordinate_names)]] or None
     return prepared.rebin_to_histogram(
         coordinate_names,
         lower=lower,
         upper=upper,
-        num_bins=num_bins,
+        **_rebin_grid_kwargs(config, axes_config[: len(coordinate_names)]),
         fractional=bool(config.get("fractional", False)),
         normalize=True,
         mean_weighting=_rebin_mean_weighting(config),
@@ -4757,6 +4846,25 @@ def _rebin_resolution_mode(config: dict[str, Any]) -> str:
     """Return the active resolution control mode for a rebin panel."""
 
     return "bins" if config.get(REBIN_RESOLUTION_MODE_KEY) == "bins" else "step"
+
+
+def _rebin_grid_kwargs(config: dict[str, Any], axes_config: list[dict[str, Any]]) -> dict[str, list[float] | list[int]]:
+    """Return the active resolution without converting step-mode edges to equal bins."""
+
+    if _rebin_resolution_mode(config) == "step":
+        return {"step_size": [float(axis["step_size"]) for axis in axes_config]}
+    return {"num_bins": [int(axis["num_bins"]) for axis in axes_config]}
+
+
+def _composite_rebin_step_sizes(config: dict[str, Any]) -> list[float] | None:
+    """Return composite step sizes only when the composite is in Step mode."""
+
+    if _rebin_resolution_mode(config) != "step":
+        return None
+    return [
+        float(axis["step_size"])
+        for axis in (_sanitize_rebin_axis_config(axis) for axis in config.get("axes", []))
+    ]
 
 
 def create_rebinned_dataset(
@@ -4795,7 +4903,7 @@ def create_rebinned_dataset(
 
 
 def save_dataset_file(dataset: DatasetEntry, path: str | Path, *, use_view: bool = True) -> None:
-    """Save a supported dataset to a script-readable ``.npz`` file."""
+    """Save a supported dataset to a portable, re-importable ``.npz`` file."""
 
     data = dataset_for_slice_viewer(dataset) if use_view else dataset.data
     if isinstance(data, PointListData):
@@ -4804,6 +4912,9 @@ def save_dataset_file(dataset: DatasetEntry, path: str | Path, *, use_view: bool
     if not isinstance(data, MDHistoData):
         raise TypeError("dataset saving currently supports MDHistoData or PointListData datasets")
     payload: dict[str, Any] = {
+        "nfit_dataset_format": np.asarray("nfit-dataset"),
+        "nfit_dataset_version": np.asarray(1, dtype=int),
+        "nfit_data_container": np.asarray("mdhisto"),
         "signal": data.signal,
         "errors": data.errors,
         "mask": data.mask,
@@ -4811,6 +4922,12 @@ def save_dataset_file(dataset: DatasetEntry, path: str | Path, *, use_view: bool
         "metadata_json": json.dumps(_json_safe_value(data.metadata), sort_keys=True),
         "axis_count": np.asarray(len(data.axes), dtype=int),
     }
+    context = {
+        key: copy.deepcopy(dataset.parameters[key])
+        for key in ("temperature", "magnetic_field")
+        if key in dataset.parameters
+    }
+    payload["dataset_context_json"] = np.asarray(json.dumps(_json_safe_value(context), sort_keys=True))
     for index, axis in enumerate(data.axes):
         payload[f"axis_{index}_values"] = axis.values
         payload[f"axis_{index}_name"] = np.asarray(axis.name)
@@ -4826,6 +4943,9 @@ def _save_point_list_file(data: PointListData, path: str | Path) -> None:
     """Save point-list columns and roles to a script-readable ``.npz`` file."""
 
     payload: dict[str, Any] = {
+        "nfit_dataset_format": np.asarray("nfit-dataset"),
+        "nfit_dataset_version": np.asarray(1, dtype=int),
+        "nfit_data_container": np.asarray("point_list"),
         "column_names_json": json.dumps(list(data.column_names)),
         "coordinate_names_json": json.dumps(list(data.coordinate_names)),
         "channels_json": json.dumps(_json_safe_value(data.channels)),
@@ -4835,6 +4955,85 @@ def _save_point_list_file(data: PointListData, path: str | Path) -> None:
     for index, name in enumerate(data.column_names):
         payload[f"column_{index}"] = np.asarray(data.column(name), dtype=float)
     np.savez_compressed(path, **payload)
+
+
+def _load_nfit_dataset_file(path: str | Path) -> tuple[MDHistoData | PointListData, dict[str, Any]]:
+    """Load an nfit dataset archive written by :func:`save_dataset_file`."""
+
+    source = Path(path)
+    try:
+        archive = np.load(source, allow_pickle=False)
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"could not read nfit dataset archive {source}") from exc
+    with archive:
+        files = set(archive.files)
+        if {"signal", "errors", "mask", "num_events", "axis_count"} <= files:
+            data = _load_nfit_mdhisto_archive(archive, source)
+        elif {"column_names_json", "coordinate_names_json", "channels_json", "units_json"} <= files:
+            data = _load_nfit_point_list_archive(archive, source)
+        else:
+            raise ValueError(f"{source} is not an nfit dataset archive")
+        context = _nfit_archive_json_mapping(archive, "dataset_context_json")
+    return data, context
+
+
+def _load_nfit_mdhisto_archive(archive: Any, source: Path) -> MDHistoData:
+    axis_count = int(np.asarray(archive["axis_count"]).item())
+    axes = []
+    for index in range(axis_count):
+        prefix = f"axis_{index}_"
+        values_key = f"{prefix}values"
+        if values_key not in archive:
+            raise ValueError(f"{source} is missing {values_key}")
+        axes.append(
+            MDHistoAxis(
+                name=_nfit_archive_text(archive, f"{prefix}name", f"Axis {index}"),
+                values=np.asarray(archive[values_key], dtype=float),
+                units=_nfit_archive_text(archive, f"{prefix}units"),
+                kind=_nfit_archive_text(archive, f"{prefix}kind", "unknown"),
+                frame=_nfit_archive_text(archive, f"{prefix}frame") or None,
+                path=_nfit_archive_text(archive, f"{prefix}path") or None,
+                metadata=_nfit_archive_json_mapping(archive, f"{prefix}metadata_json"),
+            )
+        )
+    metadata = _nfit_archive_json_mapping(archive, "metadata_json")
+    metadata["export_file"] = str(source)
+    return MDHistoData(
+        axes=tuple(axes),
+        signal=np.asarray(archive["signal"], dtype=float),
+        errors=np.asarray(archive["errors"], dtype=float),
+        mask=np.asarray(archive["mask"], dtype=bool),
+        num_events=np.asarray(archive["num_events"], dtype=float),
+        metadata=metadata,
+    )
+
+
+def _load_nfit_point_list_archive(archive: Any, source: Path) -> PointListData:
+    names = json.loads(_nfit_archive_text(archive, "column_names_json"))
+    columns = {str(name): np.asarray(archive[f"column_{index}"], dtype=float) for index, name in enumerate(names)}
+    metadata = _nfit_archive_json_mapping(archive, "metadata_json")
+    metadata["export_file"] = str(source)
+    return PointListData(
+        columns=columns,
+        units=_nfit_archive_json_mapping(archive, "units_json"),
+        coordinate_names=json.loads(_nfit_archive_text(archive, "coordinate_names_json")),
+        channels=json.loads(_nfit_archive_text(archive, "channels_json")),
+        metadata=metadata,
+    )
+
+
+def _nfit_archive_text(archive: Any, key: str, default: str = "") -> str:
+    return str(np.asarray(archive[key]).item()) if key in archive else default
+
+
+def _nfit_archive_json_mapping(archive: Any, key: str) -> dict[str, Any]:
+    if key not in archive:
+        return {}
+    try:
+        value = json.loads(_nfit_archive_text(archive, key))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON field {key!r} in nfit dataset archive") from exc
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _json_safe_value(value: Any) -> Any:
@@ -4954,7 +5153,12 @@ def _sanitize_rebin_axis_config(axis_config: dict[str, Any]) -> dict[str, Any]:
     lower = float(axis_config.get("lower", 0.0))
     upper = float(axis_config.get("upper", lower))
     num_bins = max(int(axis_config.get("num_bins", 1)), 1)
-    step_size = _step_size_from_bounds(lower, upper, num_bins)
+    try:
+        step_size = float(axis_config.get("step_size"))
+    except (TypeError, ValueError):
+        step_size = 0.0
+    if not np.isfinite(step_size) or step_size <= 0.0:
+        step_size = _step_size_from_bounds(lower, upper, num_bins)
     sanitized = {
         **axis_config,
         "lower": lower,
@@ -5173,7 +5377,6 @@ def _rebin_mdhisto_data(
         axes_config = _default_rebin_axes(data)
     lower = [axis["lower"] for axis in axes_config]
     upper = [axis["upper"] for axis in axes_config]
-    num_bins = [axis["num_bins"] for axis in axes_config]
 
     ndim = len(data.axes)
     source_grids = np.meshgrid(*(axis.centers for axis in data.axes), indexing="ij")
@@ -5208,7 +5411,7 @@ def _rebin_mdhisto_data(
         data_errs=errors,
         lower=lower,
         upper=upper,
-        num_bins=num_bins,
+        **_rebin_grid_kwargs(config, axes_config),
         fractional=bool(config.get("fractional", False)),
         normalize=True,
         mean_weighting=_rebin_mean_weighting(config),
@@ -5270,12 +5473,11 @@ def _rebin_point_data(
         axes_config = _default_rebin_axes(data)
     lower = [axis["lower"] for axis in axes_config]
     upper = [axis["upper"] for axis in axes_config]
-    num_bins = [axis["num_bins"] for axis in axes_config]
     return rebin_point_data(
         data,
         lower=lower,
         upper=upper,
-        num_bins=num_bins,
+        **_rebin_grid_kwargs(config, axes_config),
         fractional=bool(config.get("fractional", False)),
         normalize=True,
         mean_weighting=_rebin_mean_weighting(config),
@@ -6449,6 +6651,12 @@ def dataset_entry_from_path(
         data_type=resolved_type,
         metadata={"source_file": str(source), "import_status": "pending"},
     )
+    if source.suffix.lower() == ".npz":
+        data, parameters = _load_nfit_dataset_file(source)
+        entry.data = data
+        entry.parameters.update(parameters)
+        entry.metadata["import_status"] = "loaded"
+        return entry
     if data_type_container(resolved_type) == "point_list":
         chosen = importer_name or default_importer_for_data_type(resolved_type)
         if chosen is not None:
@@ -6647,10 +6855,11 @@ class _FitProgressDialog:
             self.progress.setRange(0, 0)
         QtWidgets.QApplication.processEvents()
 
-    def _set_parameters(self, params: dict[str, Any]) -> None:
-        from PySide6 import QtCore, QtWidgets
+    def _set_parameters(self, params: dict[str, Any], limit_hits: Any = None) -> None:
+        from PySide6 import QtCore, QtGui, QtWidgets
 
         items = list(params.items())
+        hits_by_name = _fit_limit_hits_from_goodness({"parameters_at_limits": limit_hits})
         self.parameter_table.setRowCount(len(items))
         for row, (name, value) in enumerate(items):
             name_item = QtWidgets.QTableWidgetItem(str(name))
@@ -6658,6 +6867,15 @@ class _FitProgressDialog:
             value_item = QtWidgets.QTableWidgetItem(value_text)
             name_item.setToolTip(str(name))
             value_item.setToolTip(value_text)
+            hit = hits_by_name.get(str(name))
+            if hit is not None:
+                warning = f"Reached the {hit.get('side', 'configured')} bound ({_format_number(hit.get('bound'))})."
+                for item in (name_item, value_item):
+                    item.setForeground(QtGui.QColor("#c0392b"))
+                    font = item.font()
+                    font.setBold(True)
+                    item.setFont(font)
+                    item.setToolTip(f"{item.toolTip()}\n{warning}")
             value_item.setTextAlignment(
                 QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
             )
@@ -6665,11 +6883,23 @@ class _FitProgressDialog:
             self.parameter_table.setItem(row, 1, value_item)
         self.parameter_table.resizeColumnsToContents()
 
-    def finish(self, message: str) -> None:
+    def finish(
+        self,
+        message: str,
+        *,
+        parameters: dict[str, Any] | None = None,
+        limit_hits: Any = None,
+    ) -> None:
         from PySide6 import QtWidgets
 
         self.stage_label.setText(message)
-        self.status_label.setText("Done.")
+        if parameters:
+            self._set_parameters(parameters, limit_hits)
+        warning = _fit_limit_warning_text(limit_hits)
+        self.status_label.setStyleSheet("color: #c0392b; font-weight: bold;" if warning else "")
+        self.status_label.setText(f"Done. {warning}" if warning else "Done.")
+        if warning:
+            self.log.appendPlainText(warning)
         self.progress.setRange(0, 1)
         self.progress.setValue(1)
         self.cancel_button.setEnabled(False)
@@ -7253,6 +7483,7 @@ class NfitProjectExplorer:
         self.fit_now_button = None
         self.fit_corner_button = None
         self.show_data_fit_button = None
+        self.fit_export_report_button = None
         self._fit_progress_dialog: _FitProgressDialog | None = None
         self._fit_worker_thread = None
         self._fit_worker = None
@@ -8074,7 +8305,11 @@ class NfitProjectExplorer:
         if failed:
             progress.fail(str(result.goodness.get("message", "The fit did not run.")))
         else:
-            progress.finish("Fit pipeline finished.")
+            progress.finish(
+                "Fit pipeline finished.",
+                parameters=result.goodness.get("parameters"),
+                limit_hits=result.goodness.get("parameters_at_limits"),
+            )
         self.fit_branch_check.setChecked(False)
         self.refresh_slice_viewer(group)
         item_to_select = _fit_entry_to_select_after_run(group, fit_entry, result)
@@ -8179,6 +8414,7 @@ class NfitProjectExplorer:
             self.fit_now_button,
             self.fit_corner_button,
             self.show_data_fit_button,
+            self.fit_export_report_button,
             self.delete_button,
         ):
             if widget is not None:
@@ -8234,14 +8470,26 @@ class NfitProjectExplorer:
             elif cancelled:
                 progress = self._fit_progress_dialog
                 if progress is not None:
-                    progress.finish(str(result.goodness.get("message", "Partial posterior samples were saved.")))
+                    progress.finish(
+                        str(result.goodness.get("message", "Partial posterior samples were saved.")),
+                        parameters=result.goodness.get("parameters"),
+                        limit_hits=result.goodness.get("parameters_at_limits"),
+                    )
+            else:
+                progress = self._fit_progress_dialog
+                if progress is not None:
+                    progress.finish(
+                        "Fit pipeline finished.",
+                        parameters=result.goodness.get("parameters"),
+                        limit_hits=result.goodness.get("parameters_at_limits"),
+                    )
             self.fit_branch_check.setChecked(False)
             self.refresh_slice_viewer(group)
             item_to_select = _fit_entry_to_select_after_run(group, fit_entry, result)
             self._set_active_fit_state(group, item_to_select)
             self._mark_dirty()
             self._refresh_tree(select_group=group, select_fit=item_to_select)
-            return not (failed or cancelled)
+            return False
 
         return self._start_background_task(
             title="Starting fit pipeline...",
@@ -9456,6 +9704,8 @@ class NfitProjectExplorer:
         self.fit_now_button = QtWidgets.QPushButton("Fit now")
         self.fit_corner_button = QtWidgets.QPushButton("Fit diagnostics")
         self.show_data_fit_button = QtWidgets.QPushButton("Show data and model")
+        self.fit_export_report_button = QtWidgets.QPushButton("Export report...")
+        self.fit_export_report_button.setObjectName("fit_export_report_button")
         self.fit_branch_check.setToolTip("Start a new nested fit timeline instead of appending to the current timeline.")
         self.fit_now_button.setToolTip("Run the optimizer from the selected fit state and store the result in the fit history.")
         self.fit_corner_button.setToolTip(
@@ -9464,9 +9714,15 @@ class NfitProjectExplorer:
         self.show_data_fit_button.setToolTip(
             "Open the data viewer with the model overlay enabled, using current model parameters or stored fit channels."
         )
+        self.fit_export_report_button.setToolTip(
+            "Export a publication-grade LaTeX or PDF report of this fit result: "
+            "per-dataset statistics, the model Hamiltonian term by term, fitted "
+            "parameters, and physics diagnostics."
+        )
         self.fit_now_button.clicked.connect(self.start_fit_for_selection)
         self.fit_corner_button.clicked.connect(self.open_fit_diagnostics_plots_for_selection)
         self.show_data_fit_button.clicked.connect(self.show_data_and_fit_for_selection)
+        self.fit_export_report_button.clicked.connect(self.export_fit_report_for_selection)
         fit_editor_layout.addWidget(self.fit_branch_check)
         fit_editor_layout.addStretch(1)
         self.fit_editor_widget = fit_editor
@@ -9529,9 +9785,12 @@ class NfitProjectExplorer:
         right_layout.addWidget(self.fit_editor_widget)
         right_layout.addWidget(self.details_scroll, 1)
         right_layout.addLayout(actions_row)
-        right_layout.addWidget(self.fit_now_button)
-        right_layout.addWidget(self.fit_corner_button)
-        right_layout.addWidget(self.show_data_fit_button)
+        fit_actions_grid = QtWidgets.QGridLayout()
+        fit_actions_grid.addWidget(self.fit_now_button, 0, 0)
+        fit_actions_grid.addWidget(self.fit_corner_button, 0, 1)
+        fit_actions_grid.addWidget(self.show_data_fit_button, 1, 0)
+        fit_actions_grid.addWidget(self.fit_export_report_button, 1, 1)
+        right_layout.addLayout(fit_actions_grid)
 
         splitter.addWidget(right_panel)
         splitter.setSizes([360, 760])
@@ -9921,6 +10180,9 @@ class NfitProjectExplorer:
             and fit_entry is not None
             and group is not None
             and (_group_has_fit_channels(group) or _group_has_enabled_model_components(group))
+        )
+        self.fit_export_report_button.setVisible(
+            role == "fit" and fit_entry is not None and fit_entry.kind == "result"
         )
 
         if role == "group" and group is not None:
@@ -10742,7 +11004,8 @@ class NfitProjectExplorer:
         )
         resolution_mode_combo.setToolTip(
             "Choose whether the single Resolution column edits bin step size or bin count. "
-            "Switching modes calculates the displayed value from the current bounds and resolution."
+            "In Step mode, changing limits preserves the requested step and may create a shorter final bin. "
+            "In Bins mode, changing limits preserves the bin count and recalculates the step."
         )
         resolution_mode_combo.currentIndexChanged.connect(
             lambda _index, combo=resolution_mode_combo: self._set_group_composite_resolution_mode(
@@ -10967,18 +11230,6 @@ class NfitProjectExplorer:
                     empty_text="No goodness-of-fit values.",
                 )
             )
-        if fit_entry.kind == "result":
-            export_button = QtWidgets.QPushButton("Export report...")
-            export_button.setObjectName("fit_export_report_button")
-            export_button.setToolTip(
-                "Export a publication-grade LaTeX or PDF report of this fit "
-                "result: per-dataset statistics, the model Hamiltonian term "
-                "by term, fitted parameters, and physics diagnostics."
-            )
-            export_button.clicked.connect(
-                lambda _checked=False: self.export_fit_report_for_selection()
-            )
-            lower_widgets.append(export_button)
         diagnostics_group = self._fit_diagnostics_group_box(fit_entry)
         if diagnostics_group is not None:
             lower_widgets.append(diagnostics_group)
@@ -11034,7 +11285,7 @@ class NfitProjectExplorer:
         self.details_layout.addStretch(1)
 
     def _fit_results_group_box(self, fit_entry: FitTimelineEntry) -> Any:
-        from PySide6 import QtCore, QtWidgets
+        from PySide6 import QtCore, QtGui, QtWidgets
 
         rows = _fit_results_rows(fit_entry)
         group_box = QtWidgets.QGroupBox("Fit results")
@@ -11064,6 +11315,13 @@ class NfitProjectExplorer:
             for column_index, key in enumerate(("name", "value", "stderr", "median", "p16", "p84")):
                 item = QtWidgets.QTableWidgetItem(row.get(key, "-"))
                 item.setToolTip(row.get(key, "-"))
+                if row.get("at_limit"):
+                    warning = f"Reached the {row.get('limit_side', 'configured')} bound ({row.get('limit_bound', '-')})."
+                    item.setForeground(QtGui.QColor("#c0392b"))
+                    font = item.font()
+                    font.setBold(True)
+                    item.setFont(font)
+                    item.setToolTip(f"{item.toolTip()}\n{warning}")
                 if column_index > 0:
                     item.setTextAlignment(
                         QtCore.Qt.AlignmentFlag.AlignRight
@@ -11329,7 +11587,7 @@ class NfitProjectExplorer:
         return group_box
 
     def _parameter_values_group_box(self, fit_entry: FitTimelineEntry) -> Any:
-        from PySide6 import QtCore, QtWidgets
+        from PySide6 import QtCore, QtGui, QtWidgets
 
         rows = _snapshot_parameter_rows(fit_entry)
         group_box = QtWidgets.QGroupBox("Parameter values")
@@ -11356,6 +11614,12 @@ class NfitProjectExplorer:
             for column_index, key in enumerate(("name", "value")):
                 item = QtWidgets.QTableWidgetItem(row.get(key, "-"))
                 item.setToolTip(row.get(key, "-"))
+                if row.get("at_limit"):
+                    item.setForeground(QtGui.QColor("#c0392b"))
+                    font = item.font()
+                    font.setBold(True)
+                    item.setFont(font)
+                    item.setToolTip(f"{item.toolTip()}\nReached a configured parameter bound.")
                 if column_index > 0:
                     item.setTextAlignment(
                         QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
@@ -11788,7 +12052,8 @@ class NfitProjectExplorer:
         )
         resolution_mode_combo.setToolTip(
             "Choose whether the single Resolution column edits bin step size or bin count. "
-            "Switching modes calculates the displayed value from the current bounds and resolution."
+            "In Step mode, changing limits preserves the requested step and may create a shorter final bin. "
+            "In Bins mode, changing limits preserves the bin count and recalculates the step."
         )
         resolution_mode_combo.currentIndexChanged.connect(
             lambda _index, combo=resolution_mode_combo: self._set_dataset_rebin_resolution_mode(
@@ -12155,6 +12420,11 @@ class NfitProjectExplorer:
         if _rebin_resolution_mode(config) == mode:
             return
         config[REBIN_RESOLUTION_MODE_KEY] = mode
+        if mode == "bins":
+            for axis in config.get("axes", []):
+                axis["step_size"] = _step_size_from_bounds(
+                    axis.get("lower", 0.0), axis.get("upper", 0.0), max(int(axis.get("num_bins", 1)), 1)
+                )
         self._mark_dirty()
         self._sync_details()
 
@@ -12168,6 +12438,9 @@ class NfitProjectExplorer:
         try:
             if key == "num_bins":
                 axis[key] = max(int(float(text)), 1)
+                axis["step_size"] = _step_size_from_bounds(
+                    axis.get("lower", 0.0), axis.get("upper", 0.0), axis["num_bins"]
+                )
             else:
                 axis[key] = float(text)
         except ValueError:
@@ -12182,6 +12455,10 @@ class NfitProjectExplorer:
                 axis["num_bins"] = _num_bins_from_step_size(
                     axis.get("lower", 0.0), axis.get("upper", 0.0), previous_step
                 )
+        elif key in {"lower", "upper"}:
+            axis["step_size"] = _step_size_from_bounds(
+                axis.get("lower", 0.0), axis.get("upper", 0.0), axis["num_bins"]
+            )
         axis.update(_sanitize_rebin_axis_config(axis))
         axes[index] = axis
         config["normalize"] = True
@@ -12226,14 +12503,16 @@ class NfitProjectExplorer:
                 if axis.get("num_bins") == value:
                     return
                 axis["num_bins"] = value
+                axis["step_size"] = _step_size_from_bounds(
+                    axis.get("lower", 0.0), axis.get("upper", 0.0), value
+                )
             else:
                 value = float(text)
                 if key == "step_size":
                     if value <= 0.0 or not np.isfinite(value):
                         return
+                    axis["step_size"] = value
                     num_bins = _num_bins_from_step_size(axis.get("lower", 0.0), axis.get("upper", 0.0), value)
-                    if axis.get("num_bins") == num_bins:
-                        return
                     axis["num_bins"] = num_bins
                 else:
                     if axis.get(key) == value:
@@ -12247,6 +12526,10 @@ class NfitProjectExplorer:
                     ):
                         axis["num_bins"] = _num_bins_from_step_size(
                             axis.get("lower", 0.0), axis.get("upper", 0.0), previous_step
+                        )
+                    elif key in {"lower", "upper"}:
+                        axis["step_size"] = _step_size_from_bounds(
+                            axis.get("lower", 0.0), axis.get("upper", 0.0), axis["num_bins"]
                         )
         except ValueError:
             return
@@ -12264,6 +12547,11 @@ class NfitProjectExplorer:
         if _rebin_resolution_mode(config) == mode:
             return
         config[REBIN_RESOLUTION_MODE_KEY] = mode
+        if mode == "bins":
+            for axis in config.get("axes", []):
+                axis["step_size"] = _step_size_from_bounds(
+                    axis.get("lower", 0.0), axis.get("upper", 0.0), max(int(axis.get("num_bins", 1)), 1)
+                )
         self._mark_dirty()
         self._set_dataset_details_preserving_scroll(dataset, group)
 
@@ -13169,6 +13457,12 @@ class NfitProjectExplorer:
             global_check = QtWidgets.QCheckBox("Global fit")
             global_check.setChecked(bool(model.global_fit.get(parameter_name, True)))
             tooltip = model_parameter_tooltip(model.type, parameter_name)
+            limit_side = _model_parameter_limit_side(model, parameter_name)
+            if limit_side is not None:
+                warning = f"Warning: this fitted parameter is at its {limit_side} bound."
+                editor.setStyleSheet("color: #c0392b; font-weight: 600;")
+                label.setStyleSheet("color: #c0392b; font-weight: 600;")
+                tooltip = f"{tooltip}\n{warning}"
             label.setToolTip(tooltip)
             editor.setToolTip(tooltip)
             plot_label_editor.setToolTip(plot_label_tooltip)
@@ -14307,7 +14601,7 @@ def _has_slice_viewer_candidates(group: DataGroup) -> bool:
         if data_type_container(dataset.data_type) == "point_list":
             return True
         source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
-        if source and Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5"}:
+        if source and Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5", ".npz"}:
             return True
     return False
 
@@ -14322,7 +14616,7 @@ def _dataset_can_load(dataset: DatasetEntry) -> bool:
         return False
     if data_type_container(dataset.data_type) == "point_list":
         return True
-    return bool(Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5"})
+    return bool(Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5", ".npz"})
 
 
 def _dataset_can_rebin(dataset: DatasetEntry) -> bool:
@@ -14732,9 +15026,18 @@ def _snapshot_parameter_rows(fit_entry: FitTimelineEntry) -> list[dict[str, str]
         params = model.get("parameters", {})
         if not isinstance(params, dict):
             continue
+        limits = model.get("limits", {}) if isinstance(model.get("limits"), dict) else {}
+        fitted = model.get("fit_parameters", {}) if isinstance(model.get("fit_parameters"), dict) else {}
         for name, value in params.items():
             label = f"{component}.{name}" if component else str(name)
-            rows.append({"name": label, "value": _format_number(value)})
+            raw_limits = limits.get(name)
+            side = None
+            if bool(fitted.get(name, False)) and isinstance(raw_limits, (list, tuple)) and len(raw_limits) == 2:
+                for candidate_side, bound in (("lower", raw_limits[0]), ("upper", raw_limits[1])):
+                    if bound not in (None, "") and _parameter_is_at_bound(value, bound):
+                        side = candidate_side
+                        break
+            rows.append({"name": label, "value": _format_number(value), "at_limit": bool(side), "limit_side": side or ""})
     return rows
 
 
@@ -14750,8 +15053,10 @@ def _fit_results_rows(fit_entry: FitTimelineEntry) -> list[dict[str, str]]:
         if isinstance(posterior.get("parameters"), dict)
         else {}
     )
+    limit_hits = _fit_limit_hits_from_goodness(goodness)
     rows: list[dict[str, str]] = []
     for name, value in params.items():
+        limit_hit = limit_hits.get(str(name))
         posterior_row = (
             posterior_params.get(name)
             if isinstance(posterior_params.get(name), dict)
@@ -14769,9 +15074,27 @@ def _fit_results_rows(fit_entry: FitTimelineEntry) -> list[dict[str, str]]:
                 ),
                 "p16": _format_number(posterior_row["p16"]) if "p16" in posterior_row else "-",
                 "p84": _format_number(posterior_row["p84"]) if "p84" in posterior_row else "-",
+                "at_limit": limit_hit is not None,
+                "limit_side": str(limit_hit.get("side", "")) if limit_hit else "",
+                "limit_bound": _format_number(limit_hit.get("bound")) if limit_hit else "",
             }
         )
     return rows
+
+
+def _model_parameter_limit_side(model: ModelComponentSpec, parameter_name: str) -> str | None:
+    """Return the reached side for a fitted model parameter, if any."""
+
+    if not bool(model.fit_parameters.get(parameter_name, False)):
+        return None
+    raw = model.limits.get(parameter_name)
+    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+        return None
+    value = model.parameters.get(parameter_name)
+    for side, bound in (("lower", raw[0]), ("upper", raw[1])):
+        if bound not in (None, "") and _parameter_is_at_bound(value, bound):
+            return side
+    return None
 
 
 def _metadata_tree_value_summary(value: Any) -> str:
