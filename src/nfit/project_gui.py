@@ -11468,11 +11468,16 @@ class NfitProjectExplorer:
             spin.setValue(float(config.get(key) if config.get(key) is not None else -1.0)); spin.setToolTip(tooltip)
             spin.valueChanged.connect(lambda value, key=key: self._set_raw_dgs_group_value(node, key, None if value < 0.0 else float(value)))
             layout.addWidget(spin, 2, column * 2 + 1)
-        layout.addWidget(QtWidgets.QLabel("UB matrix"), 3, 0)
+        correction = QtWidgets.QCheckBox("Apply kf/ki correction")
+        correction.setChecked(bool(config.get("kf_ki_normalization", True)))
+        correction.setToolTip("Multiply each accepted event by kf/ki, the final-to-incident wavevector ratio. This direct-geometry phase-space correction is recorded in the rebinned dataset metadata.")
+        correction.toggled.connect(lambda checked: self._set_raw_dgs_group_value(node, "kf_ki_normalization", bool(checked)))
+        layout.addWidget(correction, 3, 0, 1, 2)
+        layout.addWidget(QtWidgets.QLabel("UB matrix"), 4, 0)
         ub = QtWidgets.QLineEdit(_parameter_to_text(config.get("ub_matrix", np.eye(3).tolist())))
         ub.setToolTip("Shared IPNS/ISAW UB matrix. Raw Q is rotated into the sample frame and converted with (2*pi*UB)^-1 before binning.")
         ub.editingFinished.connect(lambda: self._set_raw_dgs_group_ub(node, ub))
-        layout.addWidget(ub, 3, 1, 1, 3)
+        layout.addWidget(ub, 4, 1, 1, 3)
         return box
 
     def _ub_setup_group_box(

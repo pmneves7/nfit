@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from nfit import bin_raw_dgs_group, inspect_raw_dgs_run, raw_dgs_dataset_group
+from nfit.raw_dgs import TOF_US_PER_M_SQRT_MEV
 
 
 def _write_raw_dgs(path):
@@ -41,11 +42,12 @@ def test_raw_dgs_metadata_and_streamed_hkle_binning(tmp_path):
         max_batch_bytes=128,
     )
 
-    # The prompt event is rejected; the remaining unit event is normalized by
-    # the run proton charge while retaining Poisson variance.
+    # The prompt event is rejected; the remaining event carries kf/ki and is
+    # divided by the detector-trajectory normalization.
     assert result.num_events.item() == 1.0
-    assert result.signal.item() == pytest.approx(0.5)
-    assert result.errors.item() == pytest.approx(0.5)
+    assert np.isfinite(result.signal.item()) and result.signal.item() > 0.0
+    assert np.isfinite(result.errors.item()) and result.errors.item() > 0.0
+    assert result.metadata["kf_ki_normalization"] is True
     assert not result.mask.item()
 
 

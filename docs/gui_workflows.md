@@ -78,12 +78,14 @@ processed bank by bank and in bounded event chunks, so the source event table is
 never copied into memory.
 
 The signal contribution from an accepted event is divided by its run proton
-charge and, when selected, by its positive vanadium detector value. A mask file
-removes detector IDs before coordinate conversion. Zero, negative, or invalid
-detector values in either file exclude the detector. The **T0 override** is in
-microseconds and is subtracted from each event TOF; leave it unset to use zero
-until an instrument-specific timing calibration is supplied. Progress reports
-the number and percentage of raw events reduced.
+charge and, when selected, by its positive vanadium detector value. **Apply
+kf/ki correction** multiplies each event numerator by the final-to-incident
+wavevector ratio and records that choice in the rebinned dataset metadata. A
+mask file removes detector IDs before coordinate conversion. Zero, negative, or
+invalid detector values in either file exclude the detector. The **T0 override**
+is in microseconds and is subtracted from each event TOF; leave it unset to use
+zero until an instrument-specific timing calibration is supplied. Progress
+reports the number and percentage of raw events reduced.
 
 ### UB setup for single crystals
 

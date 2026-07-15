@@ -257,5 +257,6 @@ the embedded IDF and streams banks into an HKLE histogram. It accepts the same
 coordinate-basis and progress-callback conventions as the MDEvent reducer.
 
 This native first-pass reducer applies proton-charge and optional vanadium
- detector-value normalization event by event. It does not invoke Mantid or build
-a separate MDNorm trajectory denominator.
+detector-value normalization through detector trajectories. By default it also
+applies a `kf/ki` direct-geometry correction to event numerators and records
+`kf_ki_normalization` in the returned metadata. It does not invoke Mantid.

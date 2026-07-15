@@ -19,14 +19,14 @@ import numpy as np
 
 from .mdevent import (
     ENERGY_TO_K2, FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER,
-    _flat_bin_indices, load_detector_normalization,
+    _MDEVENT_NUMBA, _accumulate_detector_trajectory, _flat_bin_indices, load_detector_normalization,
 )
 from .mdhisto import MDHistoAxis, MDHistoData
 from .pipeline import DatasetEntry, DatasetGroup
 
-# Neutron velocity in m/s is 437.393 / wavelength(A); combined with
-# E(meV)=2.072124855 k^2 this is the usual TOF conversion in us/m.
-TOF_US_PER_M_SQRT_MEV = 252.777
+# A neutron with energy E(meV) travels one metre in 2286.4/sqrt(E)
+# microseconds.  This follows directly from v = 437.393 sqrt(E) m/s.
+TOF_US_PER_M_SQRT_MEV = 2286.4
 
 
 @dataclass(frozen=True)
@@ -102,6 +102,7 @@ def raw_dgs_dataset_group(
         "incident_energy_override": None,
         "t0_override": None,
         "bad_pulse_threshold": 0.95,
+        "kf_ki_normalization": True,
         "normalization": "proton_charge_and_detector_vanadium",
     }
     datasets = []
@@ -159,7 +160,6 @@ def bin_raw_dgs_group(
     basis_inverse = np.linalg.inv(basis)
     names = tuple(axis_names or (_axis_name(row, index) for index, row in enumerate(basis)))
     data_sum = np.zeros(shape); variance_sum = np.zeros(shape); event_count = np.zeros(shape)
-    normalization = np.zeros(shape)
     detector_norm = load_detector_normalization(config["normalization_file"]) if config.get("normalization_file") else None
     detector_mask = load_detector_normalization(config["mask_file"]) if config.get("mask_file") else None
     total = sum(int(dataset.metadata.get("event_count", 0)) for dataset in selected)
@@ -207,8 +207,7 @@ def bin_raw_dgs_group(
                             direction = positions / l2[:, None]
                             q_lab = np.column_stack((-kf * direction[:, 0], -kf * direction[:, 1],
                                                      math.sqrt(ei / ENERGY_TO_K2) - kf * direction[:, 2]))
-                            q_ipns = q_lab[:, [2, 0, 1]]
-                            q_sample = q_ipns @ gonio
+                            q_sample = q_lab @ gonio
                             hkl = q_sample @ hkl_transform.T
                             coords = np.column_stack((hkl, energy)) @ basis_inverse
                             flat = _flat_bin_indices(coords, edges, shape)
@@ -216,19 +215,22 @@ def bin_raw_dgs_group(
                             if np.any(keep):
                                 detector_value = (np.ones(ids_valid.size) if detector_norm is None
                                                   else detector_norm.value_for_ids(ids_valid))
-                                weights = 1.0 / (charge * detector_value)
+                                weights = np.ones(ids_valid.size)
+                                if bool(config.get("kf_ki_normalization", True)):
+                                    weights *= kf / math.sqrt(ei / ENERGY_TO_K2)
                                 ravel = data_sum.ravel()
                                 ravel += np.bincount(flat[keep], weights=weights[keep], minlength=ravel.size)
                                 variance_sum.ravel()[:] += np.bincount(flat[keep], weights=weights[keep] ** 2, minlength=variance_sum.size)
                                 event_count.ravel()[:] += np.bincount(flat[keep], minlength=event_count.size)
-                                normalization.ravel()[:] += np.bincount(flat[keep], weights=np.full(np.count_nonzero(keep), charge), minlength=normalization.size)
                     processed += stop - start
                     if progress_callback is not None:
                         progress_callback({"stage": "raw_dgs_events", "iteration": processed, "total": total,
                                            "message": f"reducing raw events {processed}/{total}"})
+    normalization = _trajectory_normalization(group, selected, edges, shape, basis_inverse, detector_norm, detector_mask)
     covered = normalization > 0.0
-    errors = np.sqrt(variance_sum)
-    signal = data_sum
+    with np.errstate(divide="ignore", invalid="ignore"):
+        signal = data_sum / normalization
+        errors = np.sqrt(variance_sum) / normalization
     total_events = float(event_count.sum())
     rms = float(np.sqrt(variance_sum.sum() / total_events)) if total_events else 1.0
     zeros = covered & (event_count == 0)
@@ -242,7 +244,48 @@ def bin_raw_dgs_group(
                                  "normalization_denominator": normalization,
                                  "zero_event_bins_are_measured": True,
                                  "zero_count_error_model": "feldman_cousins_68_percent_upper_limit_scaled_by_rms_event_weight",
-                                 "event_weight_rms": rms})
+                                 "event_weight_rms": rms,
+                                 "kf_ki_normalization": bool(config.get("kf_ki_normalization", True)),
+                                 "proton_charge_units": "microcoulomb (raw NeXus picocoulombs divided by 1e6)"})
+
+
+def _trajectory_normalization(group, datasets, edges, shape, basis_inverse, detector_norm, detector_mask):
+    """Native MDNorm-style detector trajectories for raw direct-geometry runs."""
+    config = group.metadata["raw_dgs"]
+    result = np.zeros(shape)
+    payloads = []
+    detector_payload = None
+    for dataset in datasets:
+        info = inspect_raw_dgs_run(dataset.metadata["source_file"])
+        geometry = _detector_geometry(info.path)
+        direction = geometry.positions / np.linalg.norm(geometry.positions, axis=1)[:, None]
+        solid = np.ones(geometry.detector_ids.size) if detector_norm is None else detector_norm.value_for_ids(geometry.detector_ids)
+        if detector_mask is not None:
+            solid[detector_mask.value_for_ids(geometry.detector_ids) <= 0.0] = 0.0
+        ub = np.asarray(config["ub_matrix"], dtype=float)
+        inverse = basis_inverse[:3, :3].T @ np.linalg.inv(2.0 * np.pi * ub) @ _goniometer(info.omega, info.phi, info.chi).T
+        ei = float(config.get("incident_energy_override") or info.incident_energy)
+        # Raw proton_charge is recorded in pC. Mantid's run log uses the
+        # corresponding microcoulomb-scale number in this validation data.
+        charge = float(info.proton_charge) / 1.0e6
+        if detector_payload is None:
+            theta = np.arccos(np.clip(direction[:, 2], -1.0, 1.0))
+            phi = np.arctan2(direction[:, 1], direction[:, 0])
+            detector_payload = (theta, phi, solid)
+        payloads.append((inverse, ei, (edges[3][0], edges[3][-1]), charge))
+    if _MDEVENT_NUMBA is not None and detector_payload is not None:
+        theta, phi, solid = detector_payload
+        flat = _MDEVENT_NUMBA.run_trajectory_normalization(
+            theta, phi, solid, np.asarray([item[0] for item in payloads]),
+            np.asarray([item[1] for item in payloads]), np.asarray([item[2] for item in payloads]),
+            np.asarray([item[3] for item in payloads]), *[np.asarray(edge) for edge in edges],
+            np.asarray(shape, dtype=np.int64), workers=1,
+        )
+        return np.asarray(flat).reshape(shape)
+    for inverse, ei, energy_bounds, charge in payloads:
+        for index in np.flatnonzero(solid > 0.0):
+            _accumulate_detector_trajectory(result, edges, inverse, direction[index], ei, energy_bounds, charge * solid[index])
+    return result
 
 
 @dataclass(frozen=True)
@@ -374,14 +417,14 @@ def _text_scalar(dataset, default):
 
 
 def _goniometer(omega, phi, chi):
-    # Mantid's common single-axis SNS setup is omega about vertical.  The
-    # additional rotations are retained for files that supply them.
+    # SEQUOIA's NeXus/Mantid convention has beam along lab +z and vertical +y.
+    # Its recorded omega matrix is therefore a rotation around lab y.
     def rot(axis, degrees):
         angle = math.radians(degrees); c, s = math.cos(angle), math.sin(angle)
-        if axis == 2: return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1.]])
         if axis == 1: return np.array([[c, 0, s], [0, 1., 0], [-s, 0, c]])
+        if axis == 2: return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1.]])
         return np.array([[1., 0, 0], [0, c, -s], [0, s, c]])
-    return rot(2, omega) @ rot(1, chi) @ rot(2, phi)
+    return rot(1, omega) @ rot(2, chi) @ rot(1, phi)
 
 
 def _axis_name(vector, index):
