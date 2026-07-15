@@ -233,4 +233,16 @@ posterior checks use `emcee` through `sample_problem_parameters`. See the
 
 .. automodule:: nfit.plotting
    :members:
+
+.. automodule:: nfit.analysis.core
+   :members:
+
+.. automodule:: nfit.analysis.registry
+   :members:
+
+.. automodule:: nfit.analysis.bragg
+   :members:
+
+.. automodule:: nfit.analysis.spectral
+   :members:
 ```

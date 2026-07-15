@@ -3,6 +3,12 @@
 `nfit` should be organized around reduced experimental coordinates and
 models, not around any one instrument, file format, or Mantid workspace type.
 
+Analysis operations are immutable recipes over stable dataset IDs. They do not
+overwrite inputs; successful outputs return as derived datasets with recipe
+hashes, input fingerprints, and relative artifact manifests. The same
+provenance graph is intended to receive future raw-TOF reduction and general
+background-subtraction outputs.
+
 The common assumption is that data reduction has already converted raw detector
 events into physically meaningful axes such as `H`, `K`, `L`, `|Q|`, energy
 transfer `E`, intensity, and uncertainty. Once data are in those coordinates,

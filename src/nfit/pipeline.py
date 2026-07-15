@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 import numpy as np
 
@@ -18,6 +19,9 @@ from .fitting import (
     ParameterSpec,
     fit_problem_least_squares,
 )
+
+if TYPE_CHECKING:
+    from .analysis.core import AnalysisEntry
 
 
 DataTransformAny = Callable[[Any], Any]
@@ -119,6 +123,7 @@ class DatasetEntry:
     scale_factor: float = 1.0
     scale_factor_vary: bool = False
     transforms: Sequence[DataTransformAny] = field(default_factory=tuple)
+    id: str = field(default_factory=lambda: uuid4().hex)
 
     def prepared(self) -> Any:
         """Return data after applying this dataset's transforms."""
@@ -127,6 +132,12 @@ class DatasetEntry:
         for transform in self.transforms:
             prepared = transform(prepared)
         return prepared
+
+    def copy(self, **changes: Any) -> "DatasetEntry":
+        """Return an independent entry with a new stable identifier."""
+
+        changes.pop("id", None)
+        return replace(self, id=uuid4().hex, **changes)
 
 
 @dataclass
@@ -179,6 +190,7 @@ class DataGroup:
     models: dict[str, "FitModelSession | ModelComponentSpec"] = field(default_factory=dict)
     fits: list[FitTimelineEntry] = field(default_factory=list)
     active_fit_path: list[int] | None = None
+    analyses: list["AnalysisEntry"] = field(default_factory=list)
 
     def iter_datasets(self) -> Iterator[DatasetEntry]:
         """Yield every dataset in this group and its nested subgroups."""

@@ -34,6 +34,12 @@ Run the test suite:
 /Users/pmneves/anaconda3/envs/nfit/bin/python -m pytest -q
 ```
 
+Lint the Data Playground implementation:
+
+```bash
+/Users/pmneves/anaconda3/envs/nfit/bin/python -m ruff check
+```
+
 Launch the graphical project explorer:
 
 ```bash

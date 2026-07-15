@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import math
 import copy
@@ -8,6 +9,7 @@ import ast
 import platform
 import re
 import signal
+import shutil
 import subprocess
 import time
 import zlib
@@ -18,6 +20,9 @@ from typing import Any
 
 import numpy as np
 
+from .analysis.core import AnalysisEntry, AnalysisOutputRef, AnalysisResultRecord
+from .analysis.fingerprint import dataset_entry_fingerprint, recipe_hash
+from .analysis.registry import analysis_definition, default_analysis_parameters
 from .dataset import PointData4D, PointListData
 from .fit_config import (
     MODEL_TYPE_REGISTRY,
@@ -44,7 +49,7 @@ from .fitting import (
 )
 from .form_factors import available_ions
 from .importers import IMPORTERS, import_with, importers_for_data_type
-from .mdhisto import MDHistoAxis, MDHistoData, load_mantid_mdhisto_nxs, mdhisto_measured_bins
+from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData, load_mantid_mdhisto_nxs, mdhisto_measured_bins
 from .mdevent import assess_mdevent_memory, bin_mdevent_group, is_mdevent_file, load_mdevent_run_points, mdevent_dataset_group
 from .pipeline import DataGroup, DatasetEntry, DatasetGroup, FitTimelineEntry, MaskSpec, ModelComponentSpec
 from .qt_controls import configure_numeric_spin_boxes
@@ -1428,7 +1433,7 @@ def _move_items_within_list(items: list[Any], moving: list[Any], insert_index: i
 def copy_dataset_to_group(dataset: DatasetEntry, group: DataGroup) -> DatasetEntry:
     """Copy a dataset entry to another data group, choosing a non-conflicting name."""
 
-    copied = copy.deepcopy(dataset)
+    copied = copy.deepcopy(dataset).copy()
     copied.name = _unique_name(copied.name, group.dataset_names)
     group.add_dataset(copied)
     return copied
@@ -5194,7 +5199,7 @@ def save_dataset_file(dataset: DatasetEntry, path: str | Path, *, use_view: bool
         raise TypeError("dataset saving currently supports MDHistoData or PointListData datasets")
     payload: dict[str, Any] = {
         "nfit_dataset_format": np.asarray("nfit-dataset"),
-        "nfit_dataset_version": np.asarray(1, dtype=int),
+        "nfit_dataset_version": np.asarray(2, dtype=int),
         "nfit_data_container": np.asarray("mdhisto"),
         "signal": data.signal,
         "errors": data.errors,
@@ -5217,6 +5222,13 @@ def save_dataset_file(dataset: DatasetEntry, path: str | Path, *, use_view: bool
         payload[f"axis_{index}_frame"] = np.asarray(axis.frame or "")
         payload[f"axis_{index}_path"] = np.asarray(axis.path or "")
         payload[f"axis_{index}_metadata_json"] = np.asarray(json.dumps(_json_safe_value(axis.metadata), sort_keys=True))
+    payload["auxiliary_channel_names_json"] = np.asarray(json.dumps(list(data.auxiliary_channels)))
+    for index, channel in enumerate(data.auxiliary_channels.values()):
+        payload[f"auxiliary_{index}_values"] = channel.values
+        if channel.errors is not None:
+            payload[f"auxiliary_{index}_errors"] = channel.errors
+        payload[f"auxiliary_{index}_label"] = np.asarray(channel.label)
+        payload[f"auxiliary_{index}_unit"] = np.asarray(channel.unit)
     np.savez_compressed(path, **payload)
 
 
@@ -5279,6 +5291,16 @@ def _load_nfit_mdhisto_archive(archive: Any, source: Path) -> MDHistoData:
         )
     metadata = _nfit_archive_json_mapping(archive, "metadata_json")
     metadata["export_file"] = str(source)
+    channel_names = json.loads(_nfit_archive_text(archive, "auxiliary_channel_names_json", "[]"))
+    auxiliary_channels = {
+        str(name): MDHistoChannel(
+            values=np.asarray(archive[f"auxiliary_{index}_values"], dtype=float),
+            errors=(np.asarray(archive[f"auxiliary_{index}_errors"], dtype=float) if f"auxiliary_{index}_errors" in archive else None),
+            label=_nfit_archive_text(archive, f"auxiliary_{index}_label", str(name)),
+            unit=_nfit_archive_text(archive, f"auxiliary_{index}_unit"),
+        )
+        for index, name in enumerate(channel_names)
+    }
     return MDHistoData(
         axes=tuple(axes),
         signal=np.asarray(archive["signal"], dtype=float),
@@ -5286,6 +5308,7 @@ def _load_nfit_mdhisto_archive(archive: Any, source: Path) -> MDHistoData:
         mask=np.asarray(archive["mask"], dtype=bool),
         num_events=np.asarray(archive["num_events"], dtype=float),
         metadata=metadata,
+        auxiliary_channels=auxiliary_channels,
     )
 
 
@@ -6980,10 +7003,59 @@ def save_project(project: NfitProject, path: str | Path) -> None:
     )
 
 
+def _copy_analysis_assets_for_save_as(project: NfitProject, old_path: Path, new_path: Path) -> None:
+    old_root = old_path.with_name(old_path.name + "-assets")
+    new_root = new_path.with_name(new_path.name + "-assets")
+    if old_root.exists():
+        shutil.copytree(old_root, new_root, dirs_exist_ok=True)
+    for group in project.data_groups:
+        for analysis in group.analyses:
+            if analysis.result is None:
+                continue
+            for output in analysis.result.outputs:
+                if not output.artifact_path:
+                    continue
+                relative = Path(output.artifact_path)
+                if relative.parts and relative.parts[0] == old_root.name:
+                    output.artifact_path = str(Path(new_root.name, *relative.parts[1:]))
+        for dataset in group.iter_datasets():
+            if not dataset.metadata.get("derived_from_analysis"):
+                continue
+            source = dataset.metadata.get("source_file")
+            if not source:
+                continue
+            source_path = Path(source)
+            if not source_path.is_absolute() and source_path.parts and source_path.parts[0] == old_root.name:
+                relative_source = str(Path(new_root.name, *source_path.parts[1:]))
+                dataset.metadata["source_file"] = relative_source
+                dataset.metadata["analysis_artifact_path"] = relative_source
+            else:
+                try:
+                    relative = source_path.resolve().relative_to(old_root.resolve())
+                except (OSError, ValueError):
+                    continue
+                dataset.metadata["source_file"] = str(new_root / relative)
+                dataset.metadata["analysis_artifact_path"] = str(Path(new_root.name) / relative)
+
+
+def _resolve_project_analysis_sources(project: NfitProject, project_path: Path) -> None:
+    for group in project.data_groups:
+        for dataset in group.iter_datasets():
+            if not dataset.metadata.get("derived_from_analysis"):
+                continue
+            source = dataset.metadata.get("source_file")
+            if source and not Path(source).is_absolute():
+                dataset.metadata.setdefault("analysis_artifact_path", str(source))
+                dataset.metadata["source_file"] = str(project_path.parent / source)
+
+
 def load_project(path: str | Path) -> NfitProject:
     """Load a project saved by :func:`save_project`."""
 
-    return _project_from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
+    project_path = Path(path)
+    project = _project_from_dict(json.loads(project_path.read_text(encoding="utf-8")))
+    _resolve_project_analysis_sources(project, project_path)
+    return project
 
 
 def recent_project_paths(settings: Any | None = None) -> list[Path]:
@@ -7824,6 +7896,7 @@ class NfitProjectExplorer:
         self.create_group_button = None
         self.delete_button = None
         self._clipboard: tuple[str, DatasetEntry | MaskSpec] | None = None
+        self._analysis_window = None
         self._slice_viewers: dict[int, Any] = {}
         self._overlay_refresh_timer = None
         self._pending_overlay_groups: dict[int, DataGroup] = {}
@@ -7846,6 +7919,7 @@ class NfitProjectExplorer:
             ],
         ] = {}
         self._fit_item_roles: dict[int, FitTimelineEntry] = {}
+        self._analysis_output_roles: dict[int, AnalysisOutputRef] = {}
         self._dataset_group_roles: dict[int, DatasetGroup] = {}
         self._expanded_state: dict[tuple[Any, ...], bool] = {}
         self._build()
@@ -8232,7 +8306,10 @@ class NfitProjectExplorer:
         )
         if not path:
             return False
+        old_path = self.project_path
         self.project_path = Path(path)
+        if old_path is not None and old_path != self.project_path:
+            _copy_analysis_assets_for_save_as(self.project, old_path, self.project_path)
         self._stamp_active_fit_path()
         save_project(self.project, self.project_path)
         self._remember_recent_project(self.project_path)
@@ -8263,6 +8340,7 @@ class NfitProjectExplorer:
             return False
         self._close_all_slice_viewers()
         self.project = load_project(path)
+        _resolve_project_analysis_sources(self.project, path)
         self.project_path = path
         self.has_unsaved_changes = False
         self._clear_active_fit_state()
@@ -9207,6 +9285,19 @@ class NfitProjectExplorer:
 
     def open_slice_viewer_for_selection(self) -> Any | None:
         group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        if role == "analysis_output" and group is not None:
+            output = self._analysis_output_roles.get(id(self._current_item()))
+            if output is None or output.dataset_id is None:
+                return None
+            dataset = next(
+                (item for item in group.iter_datasets() if item.id == output.dataset_id),
+                None,
+            )
+            if dataset is None:
+                return None
+            return self.open_slice_viewer(
+                group, selected_dataset_name=dataset.name, use_composite=False
+            )
         allowed = {"group", "datasets", "dataset", "masks", "mask", "dataset_group", "group_masks", "group_mask"}
         if role not in allowed or group is None:
             return None
@@ -10240,6 +10331,7 @@ class NfitProjectExplorer:
         self._expanded_state = self._current_expanded_state()
         self._item_roles.clear()
         self._fit_item_roles.clear()
+        self._analysis_output_roles.clear()
         self._dataset_group_roles.clear()
         self.tree.blockSignals(True)
         self.tree.clear()
@@ -10307,6 +10399,27 @@ class NfitProjectExplorer:
                 if item_to_select is None and select_fit is not None:
                     item_to_select = self._selected_fit_tree_item(fit_item, select_fit)
             fits_item.setExpanded(self._expanded_state.get(("fits", id(group)), True))
+            analyses_item = QtWidgets.QTreeWidgetItem(["Analyses"])
+            _style_tree_hierarchy_item(analyses_item, bold=True)
+            _set_tree_item_icon(analyses_item, "folder")
+            self._remember_item(analyses_item, "analyses", group)
+            group_item.addChild(analyses_item)
+            for analysis in group.analyses:
+                status = self._analysis_display_status(group, analysis)
+                analysis_item = QtWidgets.QTreeWidgetItem([f"{analysis.name} [{status}]"])
+                analysis_item.setToolTip(0, f"{analysis.type}; status: {status}")
+                _set_tree_item_icon(analysis_item, "model")
+                self._remember_item(analysis_item, "analysis", group)
+                analyses_item.addChild(analysis_item)
+                if analysis.result is not None:
+                    for output in analysis.result.outputs:
+                        output_item = QtWidgets.QTreeWidgetItem([output.label])
+                        output_item.setToolTip(0, f"{output.kind} output: {output.key}")
+                        _set_tree_item_icon(output_item, "dataset")
+                        self._remember_item(output_item, "analysis_output", group)
+                        self._analysis_output_roles[id(output_item)] = output
+                        analysis_item.addChild(output_item)
+            analyses_item.setExpanded(self._expanded_state.get(("analyses", id(group)), True))
             if select_group is group and item_to_select is None:
                 item_to_select = group_item
         self.tree.blockSignals(False)
@@ -13430,8 +13543,11 @@ class NfitProjectExplorer:
         if role in {"group", "dataset", "mask", "model", "fit", "fit_timeline", "dataset_group", "group_mask"}:
             specs.append(("Rename", True))
             specs.append(("Delete", True))
-        if role in {"group", "datasets", "dataset", "masks", "mask", "dataset_group", "group_masks", "group_mask"}:
-            specs.append(("View in data viewer", True))
+        if role in {"group", "datasets", "dataset", "analyses", "analysis", "analysis_output"}:
+            specs.append(("Open in Data Playground", True))
+        if role in {"group", "datasets", "dataset", "masks", "mask", "dataset_group", "group_masks", "group_mask", "analysis_output"}:
+            output = self._analysis_output_roles.get(id(item)) if role == "analysis_output" else None
+            specs.append(("View in data viewer", role != "analysis_output" or bool(output and output.dataset_id)))
         if role == "dataset":
             specs.append(("Show file location", has_source))
             specs.append(("Change file source", True))
@@ -13458,6 +13574,7 @@ class NfitProjectExplorer:
         menu = QtWidgets.QMenu(self.tree)
         menu.setToolTipsVisible(True)
         actions = {
+            "Open in Data Playground": self.open_data_playground_for_selection,
             "Copy": self.copy_selected,
             "Paste": self.paste_into_selection,
             "Rename": self.rename_selected,
@@ -13474,6 +13591,7 @@ class NfitProjectExplorer:
             "Disable": lambda: self._set_selected_enabled(False),
         }
         tooltips = {
+            "Open in Data Playground": "Create, configure, run, and inspect non-fitting dataset analyses.",
             "Copy": "Copy the selected dataset or mask so it can be pasted elsewhere in the project.",
             "Paste": "Paste the copied dataset or mask into the selected compatible destination.",
             "Rename": "Rename the selected tree item.",
@@ -13501,6 +13619,41 @@ class NfitProjectExplorer:
             action.triggered.connect(actions[name])
         if not menu.isEmpty():
             menu.exec(global_pos)
+
+    def open_data_playground_for_selection(self) -> Any | None:
+        group, entry, _mask, _model, _role = self._objects_for_item(self._current_item())
+        if group is None:
+            return None
+        from .analysis_gui import DataPlaygroundWindow
+
+        if self._analysis_window is None:
+            self._analysis_window = DataPlaygroundWindow(self)
+        self._analysis_window.select_group(group, dataset=entry)
+        self._analysis_window.show()
+        self._analysis_window.raise_()
+        return self._analysis_window
+
+    def _analysis_display_status(self, group: DataGroup, analysis: AnalysisEntry) -> str:
+        if analysis.result is None:
+            return "never run"
+        if analysis.result.status != "success":
+            return analysis.result.status
+        try:
+            definition = analysis_definition(analysis.type)
+            datasets = {dataset.id: dataset for dataset in group.iter_datasets()}
+            selected = [datasets[dataset_id] for dataset_id in analysis.input_dataset_ids]
+            parameters = {**default_analysis_parameters(analysis.type), **analysis.parameters}
+            current_recipe = recipe_hash(analysis.type, definition.version, parameters, analysis.input_dataset_ids)
+            fingerprints = {dataset.id: dataset_entry_fingerprint(dataset, group) for dataset in selected}
+        except (KeyError, TypeError, ValueError, OSError):
+            return "unavailable"
+        if self.project_path is not None:
+            for output in analysis.result.outputs:
+                if output.artifact_path and not (self.project_path.parent / output.artifact_path).exists():
+                    return "unavailable artifact"
+        if current_recipe != analysis.result.recipe_hash or fingerprints != analysis.result.input_fingerprints:
+            return "stale"
+        return "fresh"
 
     def _can_paste_into_role(self, role: str, entry: DatasetEntry | None) -> bool:
         if self._clipboard is None:
@@ -15745,7 +15898,7 @@ def _point_data_nbytes(data: PointData4D) -> int:
 def _project_to_dict(project: NfitProject) -> dict[str, Any]:
     return {
         "format": "nfit-project",
-        "version": 1,
+        "version": 2,
         "settings": _json_mapping(project.settings),
         "data_groups": [_data_group_to_dict(group) for group in project.data_groups],
     }
@@ -15754,6 +15907,9 @@ def _project_to_dict(project: NfitProject) -> dict[str, Any]:
 def _project_from_dict(payload: dict[str, Any]) -> NfitProject:
     if payload.get("format") != "nfit-project":
         raise ValueError("not a nfit project file")
+    version = int(payload.get("version", 1))
+    if version not in (1, 2):
+        raise ValueError(f"unsupported nfit project version {version}")
     project = NfitProject(settings=dict(payload.get("settings", {})))
     for group_payload in payload.get("data_groups", []):
         group = DataGroup(
@@ -15799,12 +15955,42 @@ def _project_from_dict(payload: dict[str, Any]) -> NfitProject:
             _fit_entry_from_dict(fit_payload)
             for fit_payload in group_payload.get("fits", [])
         ]
+        group.analyses = [
+            _analysis_from_dict(item) for item in group_payload.get("analyses", [])
+        ]
         active_path = group_payload.get("active_fit_path")
         if isinstance(active_path, list) and all(isinstance(index, int) for index in active_path):
             group.active_fit_path = list(active_path)
         ensure_fit_history(group)
         project.data_groups.append(group)
+    _repair_duplicate_dataset_ids(project)
     return project
+
+
+def _repair_duplicate_dataset_ids(project: NfitProject) -> None:
+    seen: set[str] = set()
+    for group in project.data_groups:
+        repairs = []
+        for index, dataset in enumerate(group.iter_datasets()):
+            if dataset.id not in seen:
+                seen.add(dataset.id)
+                continue
+            original = dataset.id
+            salt = 0
+            while True:
+                candidate = hashlib.sha256(
+                    f"{group.name}:{index}:{original}:{salt}".encode("utf-8")
+                ).hexdigest()[:32]
+                if candidate not in seen:
+                    break
+                salt += 1
+            dataset.id = candidate
+            seen.add(candidate)
+            repairs.append({"dataset": dataset.name, "old_id": original, "new_id": candidate})
+        if repairs:
+            group.metadata.setdefault("project_load_warnings", []).append(
+                {"kind": "duplicate_dataset_ids_repaired", "repairs": repairs}
+            )
 
 
 def _model_limit_texts(model: ModelComponentSpec, parameter_name: str) -> tuple[str, str]:
@@ -15869,6 +16055,7 @@ def _dataset_from_dict(dataset_payload: dict[str, Any]) -> DatasetEntry:
         scale_factor=float(dataset_payload.get("scale_factor", 1.0)),
         scale_factor_vary=bool(dataset_payload.get("scale_factor_vary", False)),
         masks=[_mask_from_dict(mask_payload) for mask_payload in dataset_payload.get("masks", [])],
+        id=str(dataset_payload.get("id") or DatasetEntry("", None).id),
     )
 
 
@@ -15915,6 +16102,7 @@ def _data_group_to_dict(group: DataGroup) -> dict[str, Any]:
         "active_fit_path": (
             list(group.active_fit_path) if group.active_fit_path is not None else None
         ),
+        "analyses": [_analysis_to_dict(analysis) for analysis in group.analyses],
     }
 
 
@@ -15924,11 +16112,15 @@ def _dataset_to_dict(dataset: DatasetEntry) -> dict[str, Any]:
         raise TypeError("project JSON save does not yet support embedded dataset objects")
     if dataset.transforms:
         raise TypeError("project JSON save does not yet support dataset transforms")
+    serialized_metadata = copy.deepcopy(dataset.metadata)
+    if serialized_metadata.get("derived_from_analysis") and serialized_metadata.get("analysis_artifact_path"):
+        serialized_metadata["source_file"] = serialized_metadata["analysis_artifact_path"]
     return {
+        "id": dataset.id,
         "name": dataset.name,
         "kind": dataset.kind,
         "data_type": dataset.data_type,
-        "metadata": _json_mapping(dataset.metadata),
+        "metadata": _json_mapping(serialized_metadata),
         "parameters": _json_mapping(dataset.parameters),
         "enabled": bool(dataset.enabled),
         "fit_weight": float(dataset.fit_weight),
@@ -15936,6 +16128,48 @@ def _dataset_to_dict(dataset: DatasetEntry) -> dict[str, Any]:
         "scale_factor_vary": bool(dataset.scale_factor_vary),
         "masks": [_mask_to_dict(mask) for mask in dataset.masks],
     }
+
+
+def _analysis_to_dict(analysis: AnalysisEntry) -> dict[str, Any]:
+    payload = {
+        "id": analysis.id, "name": analysis.name, "type": analysis.type,
+        "input_dataset_ids": list(analysis.input_dataset_ids),
+        "parameters": _json_mapping(analysis.parameters),
+        "operation_version": analysis.operation_version, "enabled": analysis.enabled,
+        "metadata": _json_mapping(analysis.metadata), "result": None,
+    }
+    if analysis.result is not None:
+        result = analysis.result
+        payload["result"] = {
+            "recipe_hash": result.recipe_hash,
+            "input_fingerprints": dict(result.input_fingerprints),
+            "outputs": [vars(output) for output in result.outputs],
+            "status": result.status, "created_at": result.created_at,
+            "duration_seconds": result.duration_seconds, "warnings": list(result.warnings),
+            "diagnostics": _json_mapping(result.diagnostics), "error": result.error,
+        }
+    return payload
+
+
+def _analysis_from_dict(payload: dict[str, Any]) -> AnalysisEntry:
+    result_payload = payload.get("result")
+    result = None
+    if isinstance(result_payload, dict):
+        result = AnalysisResultRecord(
+            recipe_hash=str(result_payload["recipe_hash"]),
+            input_fingerprints={str(k): str(v) for k, v in result_payload.get("input_fingerprints", {}).items()},
+            outputs=[AnalysisOutputRef(**item) for item in result_payload.get("outputs", [])],
+            status=str(result_payload.get("status", "success")), created_at=str(result_payload.get("created_at", "")),
+            duration_seconds=result_payload.get("duration_seconds"), warnings=list(result_payload.get("warnings", [])),
+            diagnostics=dict(result_payload.get("diagnostics", {})), error=result_payload.get("error"),
+        )
+    return AnalysisEntry(
+        name=str(payload["name"]), type=str(payload["type"]),
+        input_dataset_ids=[str(value) for value in payload.get("input_dataset_ids", [])],
+        parameters=dict(payload.get("parameters", {})), id=str(payload.get("id") or AnalysisEntry("", "", [], {}).id),
+        operation_version=int(payload.get("operation_version", 1)), enabled=bool(payload.get("enabled", True)),
+        result=result, metadata=dict(payload.get("metadata", {})),
+    )
 
 
 def _mask_to_dict(mask: MaskSpec) -> dict[str, Any]:

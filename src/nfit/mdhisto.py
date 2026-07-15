@@ -16,6 +16,19 @@ FloatArray = NDArray[np.float64]
 BoolArray = NDArray[np.bool_]
 
 
+@dataclass
+class MDHistoChannel:
+    values: FloatArray
+    errors: FloatArray | None = None
+    label: str = ""
+    unit: str = ""
+
+    def __post_init__(self) -> None:
+        self.values = np.asarray(self.values, dtype=float)
+        if self.errors is not None:
+            self.errors = np.asarray(self.errors, dtype=float)
+
+
 @dataclass(frozen=True)
 class MDHistoAxis:
     """One binned reduced-data axis from a Mantid MDHistoWorkspace."""
@@ -60,6 +73,7 @@ class MDHistoData:
     coordinate_system: int | None = None
     visual_normalization: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    auxiliary_channels: dict[str, MDHistoChannel] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.signal = np.asarray(self.signal, dtype=float)
@@ -81,6 +95,11 @@ class MDHistoData:
                 raise ValueError(
                     f"axis {axis.name!r} has {axis.values.size} values for dimension size {size}"
                 )
+        for key, channel in self.auxiliary_channels.items():
+            if channel.values.shape != shape:
+                raise ValueError(f"auxiliary channel {key!r} shape does not match signal shape")
+            if channel.errors is not None and channel.errors.shape != shape:
+                raise ValueError(f"auxiliary channel {key!r} error shape does not match signal shape")
 
     @property
     def shape(self) -> tuple[int, ...]:

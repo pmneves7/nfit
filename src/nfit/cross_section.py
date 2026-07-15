@@ -89,3 +89,36 @@ def intensity_from_chipp(
         * signal
         + np.asarray(background, dtype=float)
     )
+
+
+def chipp_from_intensity(
+    intensity: ArrayLike,
+    E_meV: ArrayLike,
+    temperature_K: float | ArrayLike,
+    *,
+    scale: float = 1.0,
+    form_factor_sq: float | ArrayLike = 1.0,
+    polarization: float | ArrayLike = 1.0,
+    background: float | ArrayLike = 0.0,
+    include_bose: bool = True,
+) -> FloatArray:
+    """Invert :func:`intensity_from_chipp` under the same convention."""
+
+    if not np.isfinite(scale) or scale <= 0.0:
+        raise ValueError("scale must be finite and positive")
+    form_factor = np.asarray(form_factor_sq, dtype=float)
+    polarization_array = np.asarray(polarization, dtype=float)
+    if np.any(~np.isfinite(form_factor)) or np.any(form_factor <= 0.0):
+        raise ValueError("form_factor_sq must be finite and positive")
+    if np.any(~np.isfinite(polarization_array)) or np.any(polarization_array <= 0.0):
+        raise ValueError("polarization must be finite and positive")
+    signal = (np.asarray(intensity, dtype=float) - np.asarray(background, dtype=float))
+    signal = signal * np.pi / (
+        float(scale)
+        * MAGNETIC_GAMMA0_PER_MU_B**2
+        * form_factor
+        * polarization_array
+    )
+    if include_bose:
+        signal = signal * bose_denominator(E_meV, temperature_K)
+    return np.asarray(signal, dtype=float)

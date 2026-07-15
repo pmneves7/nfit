@@ -70,6 +70,12 @@ documentation extras.
 /Users/pmneves/anaconda3/envs/nfit/bin/python -m pytest -q
 ```
 
+Lint the Data Playground implementation:
+
+```bash
+/Users/pmneves/anaconda3/envs/nfit/bin/python -m ruff check
+```
+
 Agents and local automation should use the explicit `nfit` conda
 interpreter above rather than the shell's default `python`.
 

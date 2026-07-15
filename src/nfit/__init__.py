@@ -11,8 +11,29 @@ from .cross_section import (
     KB_MEV_PER_K,
     MAGNETIC_GAMMA0_PER_MU_B,
     bose_denominator,
+    chipp_from_intensity,
     intensity_from_chipp,
 )
+from .analysis import (
+    AnalysisContext,
+    AnalysisEntry,
+    AnalysisExecution,
+    AnalysisInput,
+    AnalysisOutputRef,
+    AnalysisResultRecord,
+    DatasetOutput,
+    ScalarOutput,
+    SpectralConvention,
+    TableOutput,
+    analysis_definition,
+    analysis_parameter_tooltip,
+    available_analysis_types,
+    default_analysis_parameters,
+    run_analysis_operation,
+    validate_analysis,
+)
+from .analysis.bragg import generate_bragg_peaks, integrate_bragg_peaks
+from .analysis.spectral import integrate_total_moment_by_zone, spectral_energy_reduce
 from .dataset import PointData4D, PointListData, from_arrays
 from .importers import (
     IMPORTERS,
@@ -255,6 +276,27 @@ def __getattr__(name: str):
     raise AttributeError(f"module 'nfit' has no attribute {name!r}")
 
 __all__ = [
+    "AnalysisContext",
+    "AnalysisEntry",
+    "AnalysisExecution",
+    "AnalysisInput",
+    "AnalysisOutputRef",
+    "AnalysisResultRecord",
+    "DatasetOutput",
+    "ScalarOutput",
+    "SpectralConvention",
+    "TableOutput",
+    "analysis_definition",
+    "analysis_parameter_tooltip",
+    "available_analysis_types",
+    "default_analysis_parameters",
+    "generate_bragg_peaks",
+    "integrate_bragg_peaks",
+    "integrate_total_moment_by_zone",
+    "run_analysis_operation",
+    "spectral_energy_reduce",
+    "validate_analysis",
+    "chipp_from_intensity",
     "FitResult",
     "FitDataset",
     "FitProblem",

@@ -85,7 +85,8 @@ def test_project_helpers_name_import_and_round_trip(tmp_path):
     mask.additive = True
     copy_mask_to_dataset(mask, second)
     copied_group = create_data_group(project, "copied_group")
-    copy_dataset_to_group(first, copied_group)
+    copied = copy_dataset_to_group(first, copied_group)
+    assert copied.id != first.id
     model = create_model_component(group)
     model.parameters["constant"] = 0.25
     model.config["script_note"] = "fixed"
@@ -2511,8 +2512,9 @@ def test_project_explorer_context_menu_actions_and_source_change(monkeypatch, tm
         "Paste",
         "Enable",
         "Rename",
-        "Delete",
-        "View in data viewer",
+            "Delete",
+            "Open in Data Playground",
+            "View in data viewer",
         "Show file location",
         "Change file source",
         "Add mask",

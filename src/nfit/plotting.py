@@ -1046,6 +1046,7 @@ class MDHistoSliceViewer:
             value = self.data.metadata.get(name)
             if isinstance(value, np.ndarray) and value.shape == self.data.shape:
                 names.append(name)
+        names.extend(self.data.auxiliary_channels)
         return tuple(names)
 
     def refresh_metadata_channels(self) -> None:
@@ -1065,6 +1066,14 @@ class MDHistoSliceViewer:
                 if extra_channels
                 else {}
             ),
+            **{
+                name: (
+                    f"{channel.label} ({channel.unit})"
+                    if channel.label and channel.unit
+                    else channel.label or name
+                )
+                for name, channel in self.data.auxiliary_channels.items()
+            },
         }
         if hasattr(self, "channel") and self.channel not in self.CHANNELS:
             self.channel = self._resolve_channel("signal")
@@ -1078,7 +1087,11 @@ class MDHistoSliceViewer:
         channel accumulates over an integration range.
         """
 
-        values = np.asarray(self.data.metadata[name], dtype=float)
+        auxiliary = self.data.auxiliary_channels.get(name)
+        values = np.asarray(
+            auxiliary.values if auxiliary is not None else self.data.metadata[name],
+            dtype=float,
+        )
         index: list[Any] = []
         reduce_axes = []
         output_axis = 0
@@ -1097,7 +1110,11 @@ class MDHistoSliceViewer:
                     index.append(selection)
         out = values[tuple(index)]
         for axis in sorted(reduce_axes, reverse=True):
-            out = np.nansum(out, axis=axis)
+            out = (
+                np.nanmean(out, axis=axis)
+                if auxiliary is not None
+                else np.nansum(out, axis=axis)
+            )
         remaining = [dim for dim in range(self.data.signal.ndim) if dim in (self.x_dim, self.y_dim)]
         y_pos = remaining.index(self.y_dim)
         x_pos = remaining.index(self.x_dim)
