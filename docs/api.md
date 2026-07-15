@@ -246,3 +246,16 @@ posterior checks use `emcee` through `sample_problem_parameters`. See the
 .. automodule:: nfit.analysis.spectral
    :members:
 ```
+
+## Raw direct-geometry TOF reduction
+
+Raw direct-geometry SNS event NeXus files are supported through `nfit.raw_dgs`.
+`inspect_raw_dgs_run(path)` reads run metadata without reading event arrays;
+`raw_dgs_dataset_group(paths, ...)` creates lightweight entries sharing one raw
+reduction setup; and `bin_raw_dgs_group(...)` resolves detector positions from
+the embedded IDF and streams banks into an HKLE histogram. It accepts the same
+coordinate-basis and progress-callback conventions as the MDEvent reducer.
+
+This native first-pass reducer applies proton-charge and optional vanadium
+ detector-value normalization event by event. It does not invoke Mantid or build
+a separate MDNorm trajectory denominator.

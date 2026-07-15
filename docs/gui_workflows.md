@@ -59,10 +59,31 @@ exists before importing any of them. **Clear datasets** removes all direct and
 nested datasets from the data group after confirmation, while retaining that
 group's models, masks, and fit history.
 
-Raw time-of-flight NeXus files such as `SEQ_409981.nxs.h5` are imported as
-single-crystal dataset entries. Their conversion to HKLE/energy event data is a
-separate native raw-reduction pathway; the MDEvent composite reducer applies
-after data have been converted to MDEvent form.
+Raw direct-geometry time-of-flight NeXus files such as `SEQ_409981.nxs.h5`
+are imported together as a file-backed raw-run dataset group. Enable its
+composite and choose the four HKLE coordinate axes, limits, and resolution to
+stream the event banks directly into a plotted and fitted HKLE histogram. Raw
+runs are intentionally not listed in the data viewer by themselves: detector
+events are not yet a meaningful plotted dataset until this reduction completes.
+
+### Raw direct-geometry TOF data
+
+The **Raw TOF shared setup** panel stores one UB matrix, optional vanadium
+normalization file, optional detector mask, and Ei/T0 overrides for all selected
+runs. nfit reads the source-to-sample distance and detector pixel positions from
+each file's NeXus instrument definition, calculates final energy from the TOF
+remaining after the incident flight path, forms `Q = k_i - k_f`, rotates into
+the sample frame, and converts to HKL using `(2*pi*UB)^-1`. Raw IDs are
+processed bank by bank and in bounded event chunks, so the source event table is
+never copied into memory.
+
+The signal contribution from an accepted event is divided by its run proton
+charge and, when selected, by its positive vanadium detector value. A mask file
+removes detector IDs before coordinate conversion. Zero, negative, or invalid
+detector values in either file exclude the detector. The **T0 override** is in
+microseconds and is subtracted from each event TOF; leave it unset to use zero
+until an instrument-specific timing calibration is supplied. Progress reports
+the number and percentage of raw events reduced.
 
 ### UB setup for single crystals
 
@@ -83,9 +104,9 @@ and coordinate convention.
 
 Applying the dialog to an individual dataset stores a dataset-specific
 orientation. Applying it to a dataset group stores shared orientation metadata;
-for an MDEvent group it also updates the shared UB used for HKL conversion and
-marks the composite rebin stale. Applying it at the top data-group level updates
-the shared sample lattice and orientation.
+for an MDEvent or raw-TOF group it also updates the shared UB used for HKL
+conversion and marks the composite rebin stale. Applying it at the top data-group
+level updates the shared sample lattice and orientation.
 
 ### MDEvent single-crystal data
 

@@ -51,6 +51,7 @@ from .form_factors import available_ions
 from .importers import IMPORTERS, import_with, importers_for_data_type
 from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData, load_mantid_mdhisto_nxs, mdhisto_measured_bins
 from .mdevent import assess_mdevent_memory, bin_mdevent_group, is_mdevent_file, load_mdevent_run_points, mdevent_dataset_group
+from .raw_dgs import bin_raw_dgs_group, is_raw_dgs_nexus_file, raw_dgs_dataset_group
 from .pipeline import DataGroup, DatasetEntry, DatasetGroup, FitTimelineEntry, MaskSpec, ModelComponentSpec
 from .qt_controls import configure_numeric_spin_boxes
 from .rebin import rebin_nd
@@ -643,9 +644,19 @@ def import_dataset_paths(
     """
 
     entries: list[DatasetEntry] = []
+    resolved_type = data_type or DEFAULT_DATA_TYPE
+    raw_sources = [Path(path) for path in paths if resolved_type == "single_crystal_inelastic" and is_raw_dgs_nexus_file(path)]
+    if raw_sources:
+        companions = [candidate for candidate in raw_sources[0].parent.glob("van*") if candidate.is_file()]
+        normalization = companions[0] if len(companions) == 1 else None
+        subgroup = raw_dgs_dataset_group(raw_sources, normalization_path=normalization, mask_path=normalization, progress_callback=progress_callback)
+        subgroup.name = _unique_name(subgroup.name, {item.name for item in group.iter_subgroups()})
+        (into.subgroups if into is not None else group.subgroups).append(subgroup)
+        entries.extend(subgroup.datasets)
     for path in paths:
         source = Path(path)
-        resolved_type = data_type or DEFAULT_DATA_TYPE
+        if source in raw_sources:
+            continue
         if resolved_type == "single_crystal_inelastic" and is_mdevent_file(source):
             subgroup = import_mdevent_dataset_group(
                 group, source, into=into, progress_callback=progress_callback
@@ -653,25 +664,10 @@ def import_dataset_paths(
             entries.extend(subgroup.datasets)
             continue
         entry = dataset_entry_from_path(source, data_type=data_type, importer_name=importer_name)
-        if resolved_type == "single_crystal_inelastic" and is_raw_dgs_nexus_file(source):
-            entry.kind = "raw_dgs_nexus"
-            entry.metadata["raw_reduction_required"] = True
         entry.name = _unique_dataset_name(entry.name, group.dataset_names)
         group.add_dataset(entry, into=into)
         entries.append(entry)
     return entries
-
-
-def is_raw_dgs_nexus_file(path: str | Path) -> bool:
-    """Return whether a NeXus file holds raw event banks rather than reduced data."""
-
-    try:
-        import h5py
-        with h5py.File(path, "r") as handle:
-            entry = handle.get("entry")
-            return entry is not None and any(name.startswith("bank") and name.endswith("_events") for name in entry)
-    except (ImportError, OSError):
-        return False
 
 
 def parse_dataset_numors(text: str) -> list[int]:
@@ -2044,9 +2040,11 @@ def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str,
         config["max_batch_mb"] = DEFAULT_REBIN_MAX_BATCH_MB
     config["normalize"] = True
     mdevent = group.metadata.get("mdevent") if isinstance(group.metadata, dict) else None
-    if isinstance(mdevent, dict):
-        dimensions = list(mdevent.get("dimensions", []))
-        hkl_bounds = list(mdevent.get("hkl_bounds", []))
+    raw_dgs = group.metadata.get("raw_dgs") if isinstance(group.metadata, dict) else None
+    event_config = mdevent if isinstance(mdevent, dict) else raw_dgs if isinstance(raw_dgs, dict) else None
+    if isinstance(event_config, dict):
+        dimensions = list(event_config.get("dimensions", []))
+        hkl_bounds = list(event_config.get("hkl_bounds", []))
         names = ("H", "K", "L", "DeltaE")
         default_axes = []
         for index, name in enumerate(names):
@@ -2089,7 +2087,7 @@ def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str,
     if "auto_rebin" not in config:
         # File-backed MDEvent composites require a complete source scan even
         # when only a few selected events contribute to the current view.
-        config["auto_rebin"] = False if isinstance(mdevent, dict) else not _composite_rebin_is_large(group, config)
+        config["auto_rebin"] = False if isinstance(event_config, dict) else not _composite_rebin_is_large(group, config)
     config.setdefault("stale", False)
     return config
 
@@ -2098,6 +2096,9 @@ def _composite_source_points(group: DataGroup) -> int:
     mdevent = group.metadata.get("mdevent") if isinstance(group.metadata, dict) else None
     if isinstance(mdevent, dict):
         return int(mdevent.get("event_count", 0) or 0)
+    raw_dgs = group.metadata.get("raw_dgs") if isinstance(group.metadata, dict) else None
+    if isinstance(raw_dgs, dict):
+        return int(raw_dgs.get("event_count", 0) or 0)
     return sum(_dataset_rebin_source_points(dataset) for dataset in _composite_candidates(group))
 
 
@@ -2105,6 +2106,9 @@ def _dataset_collection_point_count(node: DataGroup | DatasetGroup) -> int:
     mdevent = node.metadata.get("mdevent") if isinstance(node.metadata, dict) else None
     if isinstance(mdevent, dict):
         return int(mdevent.get("event_count", 0) or 0)
+    raw_dgs = node.metadata.get("raw_dgs") if isinstance(node.metadata, dict) else None
+    if isinstance(raw_dgs, dict):
+        return int(raw_dgs.get("event_count", 0) or 0)
     return sum(_dataset_data_point_count(dataset) for dataset in node.iter_datasets())
 
 
@@ -2197,8 +2201,10 @@ def data_group_composite_status(group: DataGroup) -> tuple[bool, str]:
     if len(kinds) != 1:
         return False, "Composite datasets require all enabled datasets to hold the same kind of data."
     if next(iter(kinds)) == "raw_dgs_nexus":
-        return False, "Raw DGS NeXus files require native time-of-flight-to-HKLE reduction before they can be composited."
-    if next(iter(kinds)) not in {"mdhisto", "point_list", "point_data_4d", "mdevent"}:
+        node = group.node if isinstance(group, _CompositeScope) else group
+        if not isinstance(node, DatasetGroup):
+            return False, "Select the raw TOF dataset group to configure its HKLE composite."
+    if next(iter(kinds)) not in {"mdhisto", "point_list", "point_data_4d", "mdevent", "raw_dgs_nexus"}:
         return False, "This dataset kind cannot be composited yet."
     return True, "Ready to combine enabled datasets into one rebinned composite."
 
@@ -2306,6 +2312,18 @@ def composite_dataset_data(
             max_batch_bytes=_rebin_max_batch_bytes(config),
             enforce_memory_limit=not allow_overcommit,
             progress_callback=progress_callback,
+        )
+    if kind == "raw_dgs_nexus":
+        node = group.node if isinstance(group, _CompositeScope) else group
+        if not isinstance(node, DatasetGroup):
+            raise ValueError("raw direct-geometry composites must be imported inside a dataset group")
+        lower, upper, num_bins = _composite_rebin_bounds(config)
+        return bin_raw_dgs_group(
+            node, lower=lower, upper=upper, num_bins=num_bins,
+            step_size=_composite_rebin_step_sizes(config), datasets=_composite_candidates(group),
+            vectors=[axis.get("vector", _identity_vector(index, 4)) for index, axis in enumerate(config.get("axes", []))],
+            axis_names=[str(axis.get("name", ("H", "K", "L", "DeltaE")[index])) for index, axis in enumerate(config.get("axes", []))],
+            max_batch_bytes=_rebin_max_batch_bytes(config), progress_callback=progress_callback,
         )
     if kind == "mdhisto":
         return _composite_mdhisto_data(group, config, progress_callback=progress_callback)
@@ -11348,6 +11366,8 @@ class NfitProjectExplorer:
         )
         if isinstance(node, DatasetGroup) and isinstance(node.metadata.get("mdevent"), dict):
             self.details_layout.addWidget(self._mdevent_group_box(node))
+        if isinstance(node, DatasetGroup) and isinstance(node.metadata.get("raw_dgs"), dict):
+            self.details_layout.addWidget(self._raw_dgs_group_box(node))
         if any(dataset.data_type.startswith("single_crystal") for dataset in node.iter_datasets()):
             self.details_layout.addWidget(self._ub_setup_group_box(root, node))
         scope = _composite_scope(root, node)
@@ -11422,6 +11442,39 @@ class NfitProjectExplorer:
         layout.addWidget(ub, 3, 1, 1, 3)
         return box
 
+    def _raw_dgs_group_box(self, node: DatasetGroup) -> Any:
+        """Shared controls for streamed native raw TOF reduction."""
+        from PySide6 import QtWidgets
+
+        config = node.metadata["raw_dgs"]
+        box = QtWidgets.QGroupBox("Raw TOF shared setup")
+        box.setToolTip("Shared configuration for all raw direct-geometry runs. nfit reads the detector geometry from each NeXus file and streams events directly into the HKLE composite.")
+        layout = QtWidgets.QGridLayout(box)
+        for row, (label, key, tooltip) in enumerate((
+            ("Normalization", "normalization_file", "Optional vanadium detector workspace. Its positive detector values scale the proton-charge-normalized event signal; invalid or zero values exclude that detector."),
+            ("Detector mask", "mask_file", "Optional detector workspace. Zero, negative, or invalid values exclude detector events before TOF-to-HKLE conversion."),
+        )):
+            layout.addWidget(QtWidgets.QLabel(label), row, 0)
+            edit = QtWidgets.QLineEdit(str(config.get(key) or ""))
+            edit.setToolTip(tooltip)
+            edit.editingFinished.connect(lambda edit=edit, key=key: self._set_raw_dgs_group_value(node, key, edit.text().strip() or None))
+            layout.addWidget(edit, row, 1, 1, 3)
+        for column, (label, key, tooltip) in enumerate((
+            ("Ei override", "incident_energy_override", "Shared incident-energy override in meV. The run log is used when this is left unset."),
+            ("T0 override", "t0_override", "Shared time-zero correction in microseconds, subtracted from raw event TOF before calculating final energy."),
+        )):
+            layout.addWidget(QtWidgets.QLabel(label), 2, column * 2)
+            spin = QtWidgets.QDoubleSpinBox(); spin.setRange(-1.0, 1e6); spin.setDecimals(6); spin.setSpecialValueText("(from each run)")
+            spin.setValue(float(config.get(key) if config.get(key) is not None else -1.0)); spin.setToolTip(tooltip)
+            spin.valueChanged.connect(lambda value, key=key: self._set_raw_dgs_group_value(node, key, None if value < 0.0 else float(value)))
+            layout.addWidget(spin, 2, column * 2 + 1)
+        layout.addWidget(QtWidgets.QLabel("UB matrix"), 3, 0)
+        ub = QtWidgets.QLineEdit(_parameter_to_text(config.get("ub_matrix", np.eye(3).tolist())))
+        ub.setToolTip("Shared IPNS/ISAW UB matrix. Raw Q is rotated into the sample frame and converted with (2*pi*UB)^-1 before binning.")
+        ub.editingFinished.connect(lambda: self._set_raw_dgs_group_ub(node, ub))
+        layout.addWidget(ub, 3, 1, 1, 3)
+        return box
+
     def _ub_setup_group_box(
         self,
         root: DataGroup,
@@ -11459,6 +11512,10 @@ class NfitProjectExplorer:
             shared = metadata["mdevent"]
             ub = shared.get("ub_matrix", np.eye(3))
             lattice = shared.get("lattice_parameters") or root.lattice_parameters
+        elif isinstance(target, DatasetGroup) and isinstance(metadata.get("raw_dgs"), dict):
+            shared = metadata["raw_dgs"]
+            ub = shared.get("ub_matrix", np.eye(3))
+            lattice = shared.get("lattice_parameters") or root.lattice_parameters
         elif isinstance(target, DatasetEntry):
             merged = _merged_dataset_metadata(target)
             imported = _dataset_ub_for_editor(merged)
@@ -11487,6 +11544,10 @@ class NfitProjectExplorer:
             target.metadata["mdevent"]["ub_matrix"] = copy.deepcopy(result["ub_matrix"])
             target.metadata["mdevent"]["lattice_parameters"] = copy.deepcopy(result["lattice_parameters"])
             data_group_composite_config(_composite_scope(root, target))["stale"] = True
+        if isinstance(target, DatasetGroup) and isinstance(target.metadata.get("raw_dgs"), dict):
+            target.metadata["raw_dgs"]["ub_matrix"] = copy.deepcopy(result["ub_matrix"])
+            target.metadata["raw_dgs"]["lattice_parameters"] = copy.deepcopy(result["lattice_parameters"])
+            data_group_composite_config(_composite_scope(root, target))["stale"] = True
         self._record_data_group_state_change(root)
         self._mark_dirty()
         self._sync_details()
@@ -11505,6 +11566,25 @@ class NfitProjectExplorer:
 
     def _set_mdevent_group_value(self, node: DatasetGroup, key: str, value: Any) -> None:
         config = node.metadata["mdevent"]
+        if config.get(key) == value:
+            return
+        config[key] = value
+        composite = data_group_composite_config(_composite_scope(self._objects_for_item(self._current_item())[0], node))
+        composite["stale"] = True
+        self._mark_dirty()
+
+    def _set_raw_dgs_group_ub(self, node: DatasetGroup, edit: Any) -> None:
+        try:
+            matrix = np.asarray(_parse_parameter_text(edit.text()), dtype=float)
+        except (TypeError, ValueError):
+            matrix = np.empty((0, 0))
+        if matrix.shape != (3, 3) or not np.all(np.isfinite(matrix)) or abs(np.linalg.det(matrix)) < 1e-14:
+            edit.setText(_parameter_to_text(node.metadata["raw_dgs"].get("ub_matrix")))
+            return
+        self._set_raw_dgs_group_value(node, "ub_matrix", matrix.tolist())
+
+    def _set_raw_dgs_group_value(self, node: DatasetGroup, key: str, value: Any) -> None:
+        config = node.metadata["raw_dgs"]
         if config.get(key) == value:
             return
         config[key] = value
@@ -11572,7 +11652,7 @@ class NfitProjectExplorer:
         axes = config.get("axes", [])
         resolution_mode = _rebin_resolution_mode(config)
         resolution_key = "step_size" if resolution_mode == "step" else "num_bins"
-        show_vectors = isinstance(group.metadata.get("mdevent"), dict)
+        show_vectors = isinstance(group.metadata.get("mdevent"), dict) or isinstance(group.metadata.get("raw_dgs"), dict)
         headers = ["Axis"]
         if show_vectors:
             headers.append("Coord axis")
