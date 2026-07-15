@@ -256,7 +256,22 @@ reduction setup; and `bin_raw_dgs_group(...)` resolves detector positions from
 the embedded IDF and streams banks into an HKLE histogram. It accepts the same
 coordinate-basis and progress-callback conventions as the MDEvent reducer.
 
-This native first-pass reducer applies proton-charge and optional vanadium
-detector-value normalization through detector trajectories. By default it also
-applies a `kf/ki` direct-geometry correction to event numerators and records
-`kf_ki_normalization` in the returned metadata. It does not invoke Mantid.
+This native reducer integrates retained raw proton-pulse charge in
+microampere-hours and builds an MDNorm-style detector-trajectory denominator.
+For Shiver-compatible raw imports, processed vanadium and explicit mask files
+are binary detector masks rather than detector-value weights. By default it
+applies Mantid's wavelength-dependent He-3 tube-efficiency correction, when
+the embedded IDF supplies tube geometry and pressure, thickness, and
+temperature parameters, followed by the `ki/kf` direct-geometry correction.
+Both corrections multiply the event uncertainty by the same factor and are
+recorded in returned metadata. Incident energy and
+T0 follow Mantid GetEi v2 for each run from monitor locations in its embedded
+instrument definition. For parameter-defined paths such as CNCS and HYSPEC,
+nfit applies Mantid's published `t0_formula` using the requested incident
+energy; it does not use empirical per-instrument timing offsets.
+Covered bins with zero accepted events retain a zero signal and use nfit's
+normalization-scaled 68% Feldman-Cousins upper-limit uncertainty. It does not
+invoke Mantid. The full ordered raw-event reduction, including detector masking,
+bad-pulse charge selection, TOF-to-HKLE conversion, He-3 and `ki/kf` event
+weights, trajectory normalization, and measured-zero handling, is documented
+in [Raw TOF reduction sequence](gui_workflows.md#raw-tof-reduction-sequence).

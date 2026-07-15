@@ -11451,8 +11451,8 @@ class NfitProjectExplorer:
         box.setToolTip("Shared configuration for all raw direct-geometry runs. nfit reads the detector geometry from each NeXus file and streams events directly into the HKLE composite.")
         layout = QtWidgets.QGridLayout(box)
         for row, (label, key, tooltip) in enumerate((
-            ("Normalization", "normalization_file", "Optional vanadium detector workspace. Its positive detector values scale the proton-charge-normalized event signal; invalid or zero values exclude that detector."),
-            ("Detector mask", "mask_file", "Optional detector workspace. Zero, negative, or invalid values exclude detector events before TOF-to-HKLE conversion."),
+            ("Normalization mask", "normalization_file", "Optional processed vanadium workspace. For the Shiver-compatible raw TOF workflow, zero or negative spectra exclude those detectors; positive values are not used as signal weights."),
+            ("Detector mask", "mask_file", "Optional detector workspace. Zero, negative, or invalid values exclude detector events before TOF-to-HKLE conversion and trajectory normalization."),
         )):
             layout.addWidget(QtWidgets.QLabel(label), row, 0)
             edit = QtWidgets.QLineEdit(str(config.get(key) or ""))
@@ -11460,18 +11460,18 @@ class NfitProjectExplorer:
             edit.editingFinished.connect(lambda edit=edit, key=key: self._set_raw_dgs_group_value(node, key, edit.text().strip() or None))
             layout.addWidget(edit, row, 1, 1, 3)
         for column, (label, key, tooltip) in enumerate((
-            ("Ei override", "incident_energy_override", "Shared incident-energy override in meV. The run log is used when this is left unset."),
-            ("T0 override", "t0_override", "Shared time-zero correction in microseconds, subtracted from raw event TOF before calculating final energy."),
+            ("Ei override", "incident_energy_override", "Shared incident-energy override in meV. Leave unset to apply Mantid's local GetEi path for each run: monitor fitting where applicable, or the instrument's requested-Ei formula."),
+            ("T0 override", "t0_override", "Shared time-zero correction in microseconds, subtracted from raw event TOF before calculating final energy. Leave unset to apply Mantid's local GetEi path per run, including formula-derived T0 on instruments that define one."),
         )):
             layout.addWidget(QtWidgets.QLabel(label), 2, column * 2)
             spin = QtWidgets.QDoubleSpinBox(); spin.setRange(-1.0, 1e6); spin.setDecimals(6); spin.setSpecialValueText("(from each run)")
             spin.setValue(float(config.get(key) if config.get(key) is not None else -1.0)); spin.setToolTip(tooltip)
             spin.valueChanged.connect(lambda value, key=key: self._set_raw_dgs_group_value(node, key, None if value < 0.0 else float(value)))
             layout.addWidget(spin, 2, column * 2 + 1)
-        correction = QtWidgets.QCheckBox("Apply kf/ki correction")
-        correction.setChecked(bool(config.get("kf_ki_normalization", True)))
-        correction.setToolTip("Multiply each accepted event by kf/ki, the final-to-incident wavevector ratio. This direct-geometry phase-space correction is recorded in the rebinned dataset metadata.")
-        correction.toggled.connect(lambda checked: self._set_raw_dgs_group_value(node, "kf_ki_normalization", bool(checked)))
+        correction = QtWidgets.QCheckBox("Apply ki/kf correction")
+        correction.setChecked(bool(config.get("ki_kf_normalization", config.get("kf_ki_normalization", True))))
+        correction.setToolTip("Multiply each accepted event by ki/kf, the incident-to-final wavevector ratio used by Mantid direct-geometry reduction. Event variances receive the square of this factor; the choice is recorded in rebinned metadata.")
+        correction.toggled.connect(lambda checked: self._set_raw_dgs_group_value(node, "ki_kf_normalization", bool(checked)))
         layout.addWidget(correction, 3, 0, 1, 2)
         layout.addWidget(QtWidgets.QLabel("UB matrix"), 4, 0)
         ub = QtWidgets.QLineEdit(_parameter_to_text(config.get("ub_matrix", np.eye(3).tolist())))
