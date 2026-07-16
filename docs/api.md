@@ -218,6 +218,9 @@ posterior checks use `emcee` through `sample_problem_parameters`. See the
 .. automodule:: nfit.cross_section
    :members:
 
+.. automodule:: nfit.quantities
+   :members:
+
 .. automodule:: nfit.spin_fluctuations
    :members:
 

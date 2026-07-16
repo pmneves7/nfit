@@ -561,13 +561,17 @@ imported through `import_mpms_dat`) are fit **jointly** with inelastic data in
 one problem, sharing $J$/`chi0`/`gamma0`; the momentum coordinates are zero and
 the temperature/field are the per-point axes.
 
-Units: the model $\chi$ is in 1/meV per magnetic site; the molar susceptibility
-is $\chi_{\text{mol}} = C\,g^2\,\chi_{\text{model}}$ per site,
+Units: the model $\chi$ is in 1/meV per magnetic site; the CGS molar
+susceptibility is $\chi_{\text{mol}} = C\,g^2\,\chi_{\text{model}}$ per site,
 $C=N_A\mu_{B,\text{cgs}}^2/(\text{meV in erg})\approx0.0323$ emu·meV/mol
 (`nfit.sum_rules.EMU_PER_MOL_PER_MODEL_CHI`). By default a free per-dataset
 `scale` absorbs the constant and the sample amount. In **absolute mode**
 (dataset panel: sample mass + molar mass) the emu/mol conversion is pinned and
-the fit runs in absolute emu.
+the fit runs in absolute emu. Selecting **Plot and fit susceptibility** instead
+predicts $\chi_{\text{mol}}$ directly, without multiplying by field. The data
+panel offers `cm^3/mol` and SI `m^3/mol`; their conversion includes
+$4\pi\times10^{-6}$. MPMS header mass and molecular weight seed the sample
+normalization automatically when present.
 
 ## Temperature-dependent fitting
 

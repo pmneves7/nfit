@@ -213,6 +213,7 @@ class PointListData:
     coordinate_names: list[str] = field(default_factory=list)
     channels: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    quantity_types: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         columns: dict[str, FloatArray] = {}
@@ -228,6 +229,16 @@ class PointListData:
             columns[str(name)] = arr
         self.columns = columns
         self.units = {str(key): str(value) for key, value in dict(self.units).items()}
+        from .quantities import infer_quantity_type, normalize_unit
+
+        self.units = {
+            name: normalize_unit(self.units.get(name, "")) for name in self.columns
+        }
+        declared = {str(key): str(value) for key, value in self.quantity_types.items()}
+        self.quantity_types = {
+            name: declared.get(name) or infer_quantity_type(name, self.units.get(name, ""))
+            for name in self.columns
+        }
         for name in self.coordinate_names:
             if name not in self.columns:
                 raise ValueError(f"coordinate {name!r} is not a known column")
@@ -239,6 +250,8 @@ class PointListData:
             if error_name is not None and error_name not in self.columns:
                 raise ValueError(f"channel error column {error_name!r} is not a known column")
             channel.setdefault("label", str(value_name))
+            channel.setdefault("quantity_type", self.quantity_types.get(value_name, "unknown"))
+            channel.setdefault("unit", self.units.get(value_name, ""))
 
     @property
     def size(self) -> int:
@@ -295,6 +308,17 @@ class PointListData:
         """Return the unit for a column, or an empty string when unknown."""
 
         return self.units.get(name, "")
+
+    def quantity_type(self, name: str) -> str:
+        """Return the physical quantity type declared for a column."""
+
+        return self.quantity_types.get(name, "unknown")
+
+    def channel_quantity_type(self, label: str) -> str:
+        """Return the physical quantity type of a dependent channel."""
+
+        channel = self.channel(label)
+        return str(channel.get("quantity_type") or self.quantity_type(channel["value"]))
 
     def rebin_to_histogram(
         self,
@@ -405,6 +429,9 @@ class PointListData:
             coordinate_names=list(coordinate_names),
             channels=new_channels,
             metadata=metadata,
+            quantity_types={
+                name: self.quantity_type(name) for name in new_columns
+            },
         )
 
 

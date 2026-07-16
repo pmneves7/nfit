@@ -16,7 +16,11 @@ from .registry import (
     AnalysisParameterDefinition,
     register_analysis_operation,
 )
-from .spectral import integrate_total_moment_by_zone, spectral_energy_reduce
+from .spectral import (
+    convert_spectral_representation,
+    integrate_total_moment_by_zone,
+    spectral_energy_reduce,
+)
 
 
 def _p(name: str, default: Any, description: str, *, kind: str = "value", choices=(), required=False) -> AnalysisParameterDefinition:
@@ -56,8 +60,66 @@ def register_builtin_operations() -> None:
         _p("minimum_zone_coverage", 0.8, "Minimum measured zone fraction."), _p("partial_zone_policy", "report", "Report or reject partial zones."),
         _p("scale", 1.0, "Absolute intensity scale."), _p("form_factor_sq", 1.0, "Form-factor squared correction."), _p("power", 0, "Energy moment power."),
     )
+    conversion_parameters = (
+        _p("target_representation", "chi_double_prime", "Output physical representation.", choices=(("chi_double_prime", "Dynamic susceptibility"), ("cross_section", "Absolute cross section"))),
+        _p("spectral_convention", {"representation": "measured_intensity", "unit": "counts", "normalization_basis": "unknown", "magnetic_ions_per_basis": None, "moment_unit": "mu_B_squared", "g_factor": None, "form_factor_state": "included", "polarization_state": "included", "bose_state": "included", "kf_ki_state": "removed", "absolute_scale": False}, "Complete input intensity convention.", required=True),
+        _p("temperature_source", "dataset", "Read temperature from data or use fixed value.", choices=(("dataset", "Dataset"), ("fixed", "Fixed"))),
+        _p("temperature_K", None, "Fixed temperature in kelvin."),
+        _p("scale", 1.0, "Measured signal units per barn/(sr meV); may come from a vanadium or nuclear-Bragg normalization."),
+        _p("background", 0.0, "Constant background in measured signal units, subtracted before conversion."),
+        _p("form_factor_ion", "", "Magnetic ion form-factor key."),
+        _p("custom_form_factor", None, "Optional seven form-factor coefficients."),
+        _p("polarization_mode", "already_corrected", "Polarization correction assumption.", choices=(("already_corrected", "Already corrected"), ("isotropic_single_component", "Isotropic single component"), ("isotropic_trace", "Isotropic trace"), ("custom_scalar", "Custom scalar"))),
+        _p("polarization_scalar", 1.0, "Custom polarization factor."),
+    )
     register_analysis_operation(AnalysisOperationDefinition("bragg_integration", "Bragg integration", 1, "Integrate crystallographic peaks.", 1, 2, ("MDHistoData", "PointListData"), bragg_parameters, _validate_bragg, _execute_bragg))
     register_analysis_operation(AnalysisOperationDefinition("spectral_integration", "Spectral integration", 1, "Reduce spectra using physical kernels.", 1, 1, ("MDHistoData",), spectral_parameters, _validate_spectral, _execute_spectral))
+    register_analysis_operation(AnalysisOperationDefinition("spectral_conversion", "INS absolute conversion", 1, "Convert measured INS intensity to an absolute cross section or dynamic susceptibility.", 1, 1, ("MDHistoData",), conversion_parameters, _validate_conversion, _execute_conversion))
+
+
+def _validate_conversion(inputs, parameters):
+    convention = SpectralConvention.from_dict(dict(parameters["spectral_convention"]))
+    if convention.representation == "measured_intensity" and convention.normalization_basis == "unknown":
+        raise ValueError("absolute INS conversion requires a known normalization basis")
+    if float(parameters["scale"]) <= 0.0:
+        raise ValueError("absolute INS scale must be positive")
+
+
+def _execute_conversion(inputs, parameters, **callbacks):
+    convention = SpectralConvention.from_dict(dict(parameters["spectral_convention"]))
+    temperature = parameters["temperature_K"] if parameters["temperature_source"] == "fixed" else inputs[0].context.temperature_K
+    if temperature is None:
+        raise ValueError("INS conversion requires temperature")
+    data = inputs[0].data
+    q = q_modulus_for_spectral(data, inputs[0].context)
+    form_factor = evaluate_form_factor_sq(
+        q,
+        ion=parameters["form_factor_ion"] or None,
+        coefficients=parameters["custom_form_factor"],
+    )
+    mode = parameters["polarization_mode"]
+    polarization = {
+        "already_corrected": 1.0,
+        "isotropic_single_component": 2.0,
+        "isotropic_trace": 2.0 / 3.0,
+        "custom_scalar": parameters["polarization_scalar"],
+    }.get(mode)
+    if polarization is None:
+        raise ValueError(f"unknown polarization mode {mode!r}")
+    converted = convert_spectral_representation(
+        data,
+        convention=convention,
+        target_representation=parameters["target_representation"],
+        temperature_K=float(temperature),
+        scale=float(parameters["scale"]),
+        background=parameters["background"],
+        form_factor_sq=form_factor,
+        polarization=polarization,
+    )
+    label = "Dynamic susceptibility" if parameters["target_representation"] == "chi_double_prime" else "Absolute cross section"
+    from .core import DatasetOutput
+
+    return AnalysisExecution({"converted": DatasetOutput(converted, label, "derived_analysis")})
 
 
 def _validate_bragg(inputs, parameters):

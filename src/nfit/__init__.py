@@ -9,9 +9,12 @@ form-factor, polarization, scale, and background terms.
 from .axes import AxisRole, infer_axis_role
 from .cross_section import (
     KB_MEV_PER_K,
+    MAGNETIC_CROSS_SECTION_BARN_PER_MU_B_SQ,
     MAGNETIC_GAMMA0_PER_MU_B,
     bose_denominator,
+    chipp_from_cross_section,
     chipp_from_intensity,
+    cross_section_from_chipp,
     intensity_from_chipp,
 )
 from .analysis import (
@@ -33,7 +36,7 @@ from .analysis import (
     validate_analysis,
 )
 from .analysis.bragg import generate_bragg_peaks, integrate_bragg_peaks
-from .analysis.spectral import integrate_total_moment_by_zone, spectral_energy_reduce
+from .analysis.spectral import convert_spectral_representation, integrate_total_moment_by_zone, spectral_energy_reduce
 from .dataset import PointData4D, PointListData, from_arrays
 from .importers import (
     IMPORTERS,
@@ -44,6 +47,13 @@ from .importers import (
     importers_for_data_type,
     read_delimited_text,
     split_name_and_unit,
+)
+from .quantities import (
+    QUANTITY_TYPES,
+    convert_quantity,
+    infer_quantity_type,
+    normalize_unit,
+    require_quantity_unit,
 )
 from .fit_config import (
     ISOTROPIC_POLARIZATION,

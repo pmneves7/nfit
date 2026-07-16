@@ -8,17 +8,30 @@ The package separates dynamical susceptibility from measured neutron intensity.
 - E is energy transfer in meV. Positive E denotes neutron energy loss.
 - Temperature is in K.
 
-The initial intensity convention is
+The absolute magnetic cross-section convention is
 
 $$
-I(Q,E) =
-s |f(Q)|^2 P(Q)
-\frac{\chi''(Q,E)}{1-\exp[-E/(k_B T)]}
-+ B(Q,E).
+\frac{d^2\sigma}{d\Omega\,dE} =
+\frac{k_f}{k_i}\frac{C}{\pi}|f(Q)|^2 P(Q)
+\frac{\chi''(Q,E)}{1-\exp[-E/(k_B T)]},
+\qquad C=0.07265\;\mathrm{barn}/\mu_B^2.
 $$
 
 The scale, magnetic form factor, polarization factor, and background are kept
 explicit so that normalization assumptions remain visible.
+
+Measured counts are related to the absolute cross section by an explicit scale
+in measured signal units per `barn/(sr meV)`. Dynamic susceptibility is stored
+in `mu_B^2/meV` per the declared normalization basis. The point-list quantity
+contract also distinguishes magnetic moment, bulk susceptibility, applied
+field, temperature, momentum, energy transfer, scattering intensity, and
+differential cross section.
+
+Bulk magnetic data use explicit CGS/SI conversions: `1 emu = 10^-3 A m^2`,
+`1 T = 10^4 Oe` for the applied-field convention, and molar susceptibility
+obeys `1 cm^3/mol (CGS) = 4 pi 10^-6 m^3/mol (SI)`.
+For a sample with `n` moles of formula units, a measured magnetic moment in
+emu is normalized as `M / (n N_A mu_B)` to obtain `mu_B/f.u.`.
 
 Additional conventions used by the spin-fluctuation model family (see
 [Spin-fluctuation models](spin_fluctuation_models.md) for the full math):
@@ -74,4 +87,3 @@ single-ion anisotropy, dipole–dipole, or Zeeman terms (see
   eigenvalue $\lambda_{\max}(\mathbf{Q})$ of $\mathbb{J}(\mathbf{Q})$ peaks; the
   RPA instability is at $\lambda_{\max}\chi_0 \to 1$. This continues the scalar
   convention and is pinned by limiting-case tests.
-

@@ -814,6 +814,10 @@ def _load_point_list_dataset(dataset: DatasetEntry) -> PointListData | None:
     dataset.data = data
     dataset.metadata["importer"] = importer_name
     dataset.metadata["import_status"] = "loaded"
+    if dataset.data_type == "magnetization":
+        for key in ("sample_mass_mg", "molar_mass_g_mol"):
+            if key not in dataset.parameters and key in data.metadata:
+                dataset.parameters[key] = float(data.metadata[key])
     if not dataset.kind:
         dataset.kind = Path(source).suffix.lstrip(".").lower()
     return data
@@ -858,6 +862,12 @@ def point_list_config(dataset: DatasetEntry) -> dict[str, Any]:
         susc.setdefault("field", field_default)
         moment_default = config["channels"][0]["label"] if config["channels"] else ""
         susc.setdefault("moment", moment_default)
+        susc.setdefault("output_unit", "cm^3/mol")
+    if definition.get("susceptibility"):
+        # This is deliberately separate from the input moment unit above: the
+        # MPMS column is ordinarily a sample moment in emu, while a user may
+        # choose to view and fit the same measurement per formula unit.
+        dataset.parameters.setdefault("magnetization_output_unit", "emu")
     if definition.get("wavelength"):
         wavelength = config.get("wavelength")
         if not isinstance(wavelength, dict):
@@ -881,6 +891,7 @@ def prepared_point_list_data(dataset: DatasetEntry) -> PointListData:
     base = dataset.data
     columns = {name: np.array(values, dtype=float) for name, values in base.columns.items()}
     units = dict(base.units)
+    quantity_types = dict(base.quantity_types)
 
     coordinate_names = [name for name in config.get("coordinate_names", []) if name in columns]
     if not coordinate_names:
@@ -892,6 +903,22 @@ def prepared_point_list_data(dataset: DatasetEntry) -> PointListData:
     ]
     if not channels:
         channels = [dict(channel) for channel in base.channels]
+    for channel in channels:
+        value_name = channel.get("value")
+        if value_name not in columns:
+            continue
+        declared_unit = str(channel.get("unit", "") or "")
+        declared_type = str(channel.get("quantity_type", "") or "")
+        if declared_unit:
+            units[value_name] = declared_unit
+            error_name = channel.get("error")
+            if error_name in columns:
+                units[error_name] = declared_unit
+        if declared_type:
+            quantity_types[value_name] = declared_type
+            error_name = channel.get("error")
+            if error_name in columns:
+                quantity_types[error_name] = declared_type
 
     definition = DATA_TYPE_DEFINITIONS.get(dataset.data_type, {})
 
@@ -944,30 +971,144 @@ def prepared_point_list_data(dataset: DatasetEntry) -> PointListData:
     # Magnetization susceptibility: moment / field (value and error divided by field).
     if definition.get("susceptibility"):
         susc = config.get("susceptibility", {})
+        field_name = str(susc.get("field", ""))
+        if field_name in columns and susc.get("field_unit"):
+            units[field_name] = str(susc["field_unit"])
+            quantity_types[field_name] = "magnetic_field"
+        moment_label = susc.get("moment")
+        moment_channel = next((c for c in channels if c.get("label") == moment_label), None)
+        if moment_channel is not None:
+            source_value = moment_channel.get("value")
+            if source_value in columns and susc.get("moment_unit"):
+                units[source_value] = str(susc["moment_unit"])
+                quantity_types[source_value] = "magnetic_moment"
+                source_error = moment_channel.get("error")
+                if source_error in columns:
+                    units[source_error] = units[source_value]
+                    quantity_types[source_error] = "magnetic_moment"
         if susc.get("enabled"):
-            field_name = susc.get("field")
-            moment_label = susc.get("moment")
-            moment_channel = next((c for c in channels if c.get("label") == moment_label), None)
             if moment_channel is not None and field_name in columns:
+                moment = columns[moment_channel["value"]]
                 field = columns[field_name]
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    susc_value = columns[moment_channel["value"]] / field
-                value_col = f"{SUSCEPTIBILITY_CHANNEL_LABEL} value"
-                columns[value_col] = susc_value
+                moment_error_name = moment_channel.get("error")
+                moment_error = columns.get(moment_error_name) if moment_error_name else None
                 moment_unit = units.get(moment_channel["value"], "")
                 field_unit = units.get(field_name, "")
-                susc_unit = f"{moment_unit}/{field_unit}" if moment_unit and field_unit else ""
-                units[value_col] = susc_unit
-                error_name = moment_channel.get("error")
-                error_col = None
-                if error_name in columns:
-                    error_col = f"{SUSCEPTIBILITY_CHANNEL_LABEL} error"
+                absolute = bool(dataset.parameters.get("absolute_units", False))
+                if absolute:
+                    from .quantities import convert_quantity
+
+                    mass_g = float(dataset.parameters.get("sample_mass_mg", 0.0) or 0.0) / 1000.0
+                    molar_mass = float(dataset.parameters.get("molar_mass_g_mol", 0.0) or 0.0)
+                    if mass_g <= 0.0 or molar_mass <= 0.0:
+                        raise ValueError(
+                            "absolute susceptibility requires positive sample mass and molar mass"
+                        )
+                    moles = mass_g / molar_mass
+                    moment = convert_quantity(moment, "magnetic_moment", moment_unit, "emu")
+                    if moment_error is not None:
+                        moment_error = np.abs(
+                            convert_quantity(moment_error, "magnetic_moment", moment_unit, "emu")
+                        )
+                    field = convert_quantity(field, "magnetic_field", field_unit, "Oe")
+                    output_unit = str(susc.get("output_unit", "cm^3/mol"))
                     with np.errstate(divide="ignore", invalid="ignore"):
-                        columns[error_col] = columns[error_name] / np.abs(field)
+                        susc_value = moment / field / moles
+                    if output_unit == "m^3/mol":
+                        susc_value = convert_quantity(
+                            susc_value, "bulk_susceptibility", "cm^3/mol", output_unit
+                        )
+                    elif output_unit != "cm^3/mol":
+                        raise ValueError(
+                            "absolute susceptibility output must be cm^3/mol or m^3/mol"
+                        )
+                    susc_unit = output_unit
+                else:
+                    with np.errstate(divide="ignore", invalid="ignore"):
+                        susc_value = moment / field
+                    susc_unit = f"{moment_unit}/{field_unit}" if moment_unit and field_unit else ""
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    error_values = (
+                        None if moment_error is None else moment_error / np.abs(field)
+                    )
+                if absolute and error_values is not None:
+                    error_values = error_values / moles
+                    if susc_unit == "m^3/mol":
+                        error_values = convert_quantity(
+                            error_values, "bulk_susceptibility", "cm^3/mol", susc_unit
+                        )
+                value_col = f"{SUSCEPTIBILITY_CHANNEL_LABEL} value"
+                columns[value_col] = susc_value
+                units[value_col] = susc_unit
+                quantity_types[value_col] = "bulk_susceptibility"
+                error_col = None
+                if error_values is not None:
+                    error_col = f"{SUSCEPTIBILITY_CHANNEL_LABEL} error"
+                    columns[error_col] = error_values
                     units[error_col] = susc_unit
+                    quantity_types[error_col] = "bulk_susceptibility"
                 channels.append(
-                    {"label": SUSCEPTIBILITY_CHANNEL_LABEL, "value": value_col, "error": error_col}
+                    {
+                        "label": SUSCEPTIBILITY_CHANNEL_LABEL,
+                        "value": value_col,
+                        "error": error_col,
+                        "quantity_type": "bulk_susceptibility",
+                        "unit": susc_unit,
+                    }
                 )
+
+        # Convert the displayed/fitted moment after deriving susceptibility so
+        # susceptibility always uses the declared *input* moment unit.
+        output_unit = str(dataset.parameters.get("magnetization_output_unit", "emu"))
+        absolute = bool(dataset.parameters.get("absolute_units", False))
+        if moment_channel is not None and output_unit != "emu":
+            value_name = str(moment_channel.get("value", ""))
+            error_name = moment_channel.get("error")
+            if value_name in columns:
+                from .quantities import convert_quantity
+                from .sum_rules import EMU_PER_MOL_PER_MU_B
+
+                input_unit = units.get(value_name, "emu")
+                moment_emu = convert_quantity(
+                    columns[value_name], "magnetic_moment", input_unit, "emu"
+                )
+                error_emu = (
+                    None
+                    if error_name not in columns
+                    else np.abs(convert_quantity(
+                        columns[error_name], "magnetic_moment", input_unit, "emu"
+                    ))
+                )
+                if output_unit == "A m^2":
+                    columns[value_name] = convert_quantity(
+                        moment_emu, "magnetic_moment", "emu", output_unit
+                    )
+                    if error_emu is not None:
+                        columns[error_name] = convert_quantity(
+                            error_emu, "magnetic_moment", "emu", output_unit
+                        )
+                elif output_unit in {"emu/mol", "mu_B/f.u."}:
+                    mass_g = float(dataset.parameters.get("sample_mass_mg", 0.0) or 0.0) / 1000.0
+                    molar_mass = float(dataset.parameters.get("molar_mass_g_mol", 0.0) or 0.0)
+                    if not absolute or mass_g <= 0.0 or molar_mass <= 0.0:
+                        raise ValueError(
+                            "formula-unit moment normalization requires absolute units and positive sample mass and molar mass"
+                        )
+                    moles = mass_g / molar_mass
+                    divisor = moles
+                    if output_unit == "mu_B/f.u.":
+                        divisor *= EMU_PER_MOL_PER_MU_B
+                    columns[value_name] = moment_emu / divisor
+                    if error_emu is not None:
+                        columns[error_name] = error_emu / divisor
+                else:
+                    raise ValueError(f"unsupported magnetization output unit {output_unit!r}")
+                units[value_name] = output_unit
+                quantity_types[value_name] = "magnetic_moment"
+                if error_name in columns:
+                    units[error_name] = output_unit
+                    quantity_types[error_name] = "magnetic_moment"
+                moment_channel["unit"] = output_unit
 
     return PointListData(
         columns=columns,
@@ -975,6 +1116,7 @@ def prepared_point_list_data(dataset: DatasetEntry) -> PointListData:
         coordinate_names=coordinate_names,
         channels=channels,
         metadata=dict(base.metadata),
+        quantity_types=quantity_types,
     )
 
 
@@ -2642,6 +2784,11 @@ def _composite_point_list_data(
         coordinate_names=coordinate_names,
         channels=[{"label": channel_label, "value": value_name, "error": error_name}],
         metadata={"composite": True, "source_group": group.name, "source_datasets": [dataset.name for dataset in datasets]},
+        quantity_types={
+            name: point_lists[0].quantity_type(name)
+            for name in columns
+            if name in point_lists[0].columns
+        },
     )
 
 
@@ -2769,6 +2916,7 @@ def _with_viewer_dataset_metadata(
             coordinate_names=list(data.coordinate_names),
             channels=[dict(channel) for channel in data.channels],
             metadata=metadata,
+            quantity_types=dict(data.quantity_types),
         )
     return data
 
@@ -3011,7 +3159,14 @@ def _magnetization_point_data(
 
     if not view.channel_labels:
         raise ValueError("magnetization dataset defines no moment channel")
-    label = view.channel_labels[0]
+    config = point_list_config(dataset)
+    susc = config.get("susceptibility", {})
+    preferred = (
+        SUSCEPTIBILITY_CHANNEL_LABEL
+        if susc.get("enabled") and SUSCEPTIBILITY_CHANNEL_LABEL in view.channel_labels
+        else str(susc.get("moment") or view.channel_labels[0])
+    )
+    label = preferred if preferred in view.channel_labels else view.channel_labels[0]
     intensity = np.asarray(view.channel_values(label), dtype=float)
     errors = view.channel_errors(label)
     sigma_known = errors is not None
@@ -3023,18 +3178,24 @@ def _magnetization_point_data(
     n = intensity.size
     zeros = np.zeros(n, dtype=float)
 
-    def _find_column(hints: tuple[str, ...]) -> np.ndarray | None:
+    def _find_column(hints: tuple[str, ...]) -> tuple[str, np.ndarray] | None:
         for name in view.columns:
             lowered = name.strip().lower()
             if any(hint in lowered for hint in hints):
-                return np.asarray(view.column(name), dtype=float)
+                return name, np.asarray(view.column(name), dtype=float)
         return None
 
-    temperature = _find_column(("temperature",))
-    field_oe = _find_column(_MPMS_FIELD_COLUMN_HINTS)
+    temperature_match = _find_column(("temperature",))
+    field_match = _find_column(_MPMS_FIELD_COLUMN_HINTS)
+    temperature = None if temperature_match is None else temperature_match[1]
     direction = _field_direction_cartesian(group, dataset)
-    if field_oe is not None:
-        field_tesla = field_oe / _OERSTED_PER_TESLA
+    if field_match is not None:
+        from .quantities import convert_quantity
+
+        field_name, field_values = field_match
+        field_tesla = convert_quantity(
+            field_values, "magnetic_field", view.unit(field_name), "T"
+        )
         magnetic_field = field_tesla[:, None] * direction[None, :]
     else:
         magnetic_field = None
@@ -3047,6 +3208,8 @@ def _magnetization_point_data(
         "fit_channel": label,
         "sigma_known": sigma_known,
         "data_type": "magnetization",
+        "quantity_type": view.channel_quantity_type(label),
+        "unit": view.unit(view.channel(label)["value"]),
     }
     for key in ("absolute_units", "sample_mass_mg", "molar_mass_g_mol"):
         if key in dataset.parameters:
@@ -4871,6 +5034,7 @@ def _apply_dataset_scale(
             coordinate_names=list(data.coordinate_names),
             channels=[dict(channel) for channel in data.channels],
             metadata=dict(data.metadata),
+            quantity_types=dict(data.quantity_types),
         )
     return data
 
@@ -5358,6 +5522,7 @@ def _save_point_list_file(data: PointListData, path: str | Path) -> None:
         "coordinate_names_json": json.dumps(list(data.coordinate_names)),
         "channels_json": json.dumps(_json_safe_value(data.channels)),
         "units_json": json.dumps(_json_safe_value(data.units)),
+        "quantity_types_json": json.dumps(_json_safe_value(data.quantity_types)),
         "metadata_json": json.dumps(_json_safe_value(data.metadata), sort_keys=True),
     }
     for index, name in enumerate(data.column_names):
@@ -5438,6 +5603,7 @@ def _load_nfit_point_list_archive(archive: Any, source: Path) -> PointListData:
         coordinate_names=json.loads(_nfit_archive_text(archive, "coordinate_names_json")),
         channels=json.loads(_nfit_archive_text(archive, "channels_json")),
         metadata=metadata,
+        quantity_types=_nfit_archive_json_mapping(archive, "quantity_types_json"),
     )
 
 
@@ -12202,7 +12368,8 @@ class NfitProjectExplorer:
             elif title == "Dataset":
                 self.details_layout.addWidget(self._dataset_type_group_box(dataset, group, lines))
                 # Sample environment sits between the Dataset and Axes panels.
-                self.details_layout.addWidget(self.sample_environment_widget)
+                if dataset.data_type != "magnetization":
+                    self.details_layout.addWidget(self.sample_environment_widget)
             elif title == "Metadata":
                 self.details_layout.addWidget(self._dataset_metadata_group_box(dataset))
             else:
@@ -12742,6 +12909,8 @@ class NfitProjectExplorer:
         channels_layout.setContentsMargins(8, 6, 8, 6)
         channels_layout.addWidget(_bold_label(QtWidgets, "Value"), 0, 0)
         channels_layout.addWidget(_bold_label(QtWidgets, "Error"), 0, 1)
+        channels_layout.addWidget(_bold_label(QtWidgets, "Quantity"), 0, 2)
+        channels_layout.addWidget(_bold_label(QtWidgets, "Units"), 0, 3)
         for row, channel in enumerate(config.get("channels", []), start=1):
             value_combo = QtWidgets.QComboBox()
             value_combo.addItems(columns)
@@ -12759,12 +12928,38 @@ class NfitProjectExplorer:
             )
             channels_layout.addWidget(value_combo, row, 0)
             channels_layout.addWidget(error_combo, row, 1)
+            quantity_combo = QtWidgets.QComboBox()
+            from .quantities import QUANTITY_TYPES
+
+            quantity_combo.addItems(QUANTITY_TYPES)
+            quantity_combo.setCurrentText(str(channel.get("quantity_type", "unknown")))
+            quantity_combo.setToolTip(
+                "Physical quantity represented by this channel. Models use it "
+                "to validate that their output is comparable to the data."
+            )
+            quantity_combo.currentTextChanged.connect(
+                lambda text, index=row - 1: self._set_point_list_channel(
+                    dataset, group, index, "quantity_type", text
+                )
+            )
+            channels_layout.addWidget(quantity_combo, row, 2)
+            unit_edit = QtWidgets.QLineEdit(str(channel.get("unit", "")))
+            unit_edit.setToolTip(
+                "Physical unit of the value and uncertainty columns. Unit text "
+                "is normalized and checked when a model predicts this channel."
+            )
+            unit_edit.editingFinished.connect(
+                lambda editor=unit_edit, index=row - 1: self._set_point_list_channel(
+                    dataset, group, index, "unit", editor.text()
+                )
+            )
+            channels_layout.addWidget(unit_edit, row, 3)
             remove_button = QtWidgets.QPushButton("Remove")
             remove_button.setToolTip("Remove this channel definition from the dataset configuration.")
             remove_button.clicked.connect(
                 lambda _checked=False, index=row - 1: self._remove_point_list_channel(dataset, group, index)
             )
-            channels_layout.addWidget(remove_button, row, 2)
+            channels_layout.addWidget(remove_button, row, 4)
         add_button = QtWidgets.QPushButton("Add channel")
         add_button.setToolTip("Add another signal channel using columns from this point-list dataset.")
         add_button.clicked.connect(lambda: self._add_point_list_channel(dataset, group))
@@ -12791,16 +12986,15 @@ class NfitProjectExplorer:
 
         from PySide6 import QtWidgets
 
-        box = QtWidgets.QGroupBox("Absolute units (emu)")
+        box = QtWidgets.QGroupBox("Moment normalization")
         grid = QtWidgets.QGridLayout(box)
         grid.setContentsMargins(8, 6, 8, 6)
-        enable = QtWidgets.QCheckBox("Fit in absolute emu units")
+        enable = QtWidgets.QCheckBox("Use sample mass and molar mass")
         enable.setObjectName("magnetization_absolute_enabled")
         enable.setToolTip(
-            "Predict the moment in absolute emu from the model susceptibility, "
-            "pinning the emu/mol conversion with the sample mass and molar mass "
-            "below, instead of fitting a free per-dataset scale. Leave off to "
-            "fit an arbitrary scale (the default)."
+            "Use the sample mass and formula-unit molar mass to put the measured "
+            "moment and model prediction on an absolute scale. This is required "
+            "for emu/mol and mu_B/f.u. output. Leave off to fit an arbitrary scale."
         )
         enable.setChecked(bool(dataset.parameters.get("absolute_units", False)))
         enable.toggled.connect(
@@ -12809,10 +13003,31 @@ class NfitProjectExplorer:
             )
         )
         grid.addWidget(enable, 0, 0, 1, 2)
+        grid.addWidget(QtWidgets.QLabel("Moment display / fit units"), 1, 0)
+        output_combo = QtWidgets.QComboBox()
+        output_combo.setObjectName("magnetization_output_unit")
+        output_combo.addItem("Sample moment (emu)", "emu")
+        output_combo.addItem("Sample moment (A m^2)", "A m^2")
+        output_combo.addItem("Molar moment (emu/mol)", "emu/mol")
+        output_combo.addItem("Formula-unit moment (mu_B/f.u.)", "mu_B/f.u.")
+        output_index = output_combo.findData(
+            str(dataset.parameters.get("magnetization_output_unit", "emu"))
+        )
+        output_combo.setCurrentIndex(max(output_index, 0))
+        output_combo.setToolTip(
+            "Unit used for the magnetic-moment plot and fit. Formula-unit moment "
+            "is normalized using the sample mass and the formula-unit molar mass."
+        )
+        output_combo.currentIndexChanged.connect(
+            lambda _index, combo=output_combo: self._set_magnetization_absolute(
+                dataset, group, "magnetization_output_unit", combo.currentData()
+            )
+        )
+        grid.addWidget(output_combo, 1, 1)
         mass_label = QtWidgets.QLabel("Sample mass (mg)")
         mass_tooltip = "Sample mass in milligrams, used to convert emu/mol to the measured emu moment."
         mass_label.setToolTip(mass_tooltip)
-        grid.addWidget(mass_label, 1, 0)
+        grid.addWidget(mass_label, 2, 0)
         mass_edit = QtWidgets.QLineEdit(
             _parameter_to_text(dataset.parameters.get("sample_mass_mg", ""))
         )
@@ -12823,11 +13038,11 @@ class NfitProjectExplorer:
                 dataset, group, "sample_mass_mg", _parse_parameter_text(ed.text())
             )
         )
-        grid.addWidget(mass_edit, 1, 1)
+        grid.addWidget(mass_edit, 2, 1)
         molar_label = QtWidgets.QLabel("Molar mass (g/mol)")
         molar_tooltip = "Formula-unit molar mass in grams per mole; sets the amount of substance for the emu/mol conversion."
         molar_label.setToolTip(molar_tooltip)
-        grid.addWidget(molar_label, 2, 0)
+        grid.addWidget(molar_label, 3, 0)
         molar_edit = QtWidgets.QLineEdit(
             _parameter_to_text(dataset.parameters.get("molar_mass_g_mol", ""))
         )
@@ -12838,7 +13053,7 @@ class NfitProjectExplorer:
                 dataset, group, "molar_mass_g_mol", _parse_parameter_text(ed.text())
             )
         )
-        grid.addWidget(molar_edit, 2, 1)
+        grid.addWidget(molar_edit, 3, 1)
         return box
 
     def _set_magnetization_absolute(self, dataset, group, key: str, value) -> None:
@@ -12892,10 +13107,13 @@ class NfitProjectExplorer:
         box = QtWidgets.QGroupBox("Susceptibility (moment / field)")
         grid = QtWidgets.QGridLayout(box)
         grid.setContentsMargins(8, 6, 8, 6)
-        enable = QtWidgets.QCheckBox("Divide moment by field")
+        enable = QtWidgets.QCheckBox("Plot and fit susceptibility")
         enable.setObjectName("point_list_susceptibility_enabled")
         enable.setChecked(bool(susc.get("enabled", False)))
-        enable.setToolTip("Convert a moment channel to susceptibility by dividing by the selected field column.")
+        enable.setToolTip(
+            "Use susceptibility rather than magnetic moment for viewing and fitting. "
+            "The selected moment is divided by the selected applied-field column."
+        )
         enable.toggled.connect(lambda checked: self._set_point_list_susceptibility(dataset, group, "enabled", checked))
         grid.addWidget(enable, 0, 0, 1, 2)
         grid.addWidget(QtWidgets.QLabel("Moment"), 1, 0)
@@ -12916,6 +13134,59 @@ class NfitProjectExplorer:
             lambda text: self._set_point_list_susceptibility(dataset, group, "field", text)
         )
         grid.addWidget(field_combo, 2, 1)
+        grid.addWidget(QtWidgets.QLabel("Moment input unit"), 3, 0)
+        moment_unit_combo = QtWidgets.QComboBox()
+        moment_unit_combo.setObjectName("point_list_moment_input_unit")
+        moment_unit_combo.addItem("emu", "emu")
+        moment_unit_combo.addItem("A m^2", "A m^2")
+        current_moment_unit = str(susc.get("moment_unit") or "emu")
+        moment_unit_index = moment_unit_combo.findData(current_moment_unit)
+        moment_unit_combo.setCurrentIndex(max(moment_unit_index, 0))
+        moment_unit_combo.setToolTip(
+            "Unit in which the selected raw moment column is recorded. MPMS moment data are normally emu."
+        )
+        moment_unit_combo.currentIndexChanged.connect(
+            lambda _index, combo=moment_unit_combo: self._set_point_list_susceptibility(
+                dataset, group, "moment_unit", combo.currentData()
+            )
+        )
+        grid.addWidget(moment_unit_combo, 3, 1)
+        grid.addWidget(QtWidgets.QLabel("Field input unit"), 4, 0)
+        field_unit_combo = QtWidgets.QComboBox()
+        field_unit_combo.setObjectName("point_list_field_input_unit")
+        field_unit_combo.addItem("Oe", "Oe")
+        field_unit_combo.addItem("T", "T")
+        field_unit_combo.addItem("A/m", "A/m")
+        current_field_unit = str(susc.get("field_unit") or "Oe")
+        field_unit_index = field_unit_combo.findData(current_field_unit)
+        field_unit_combo.setCurrentIndex(max(field_unit_index, 0))
+        field_unit_combo.setToolTip(
+            "Unit in which the selected raw applied-field column is recorded. MPMS field data are normally Oe."
+        )
+        field_unit_combo.currentIndexChanged.connect(
+            lambda _index, combo=field_unit_combo: self._set_point_list_susceptibility(
+                dataset, group, "field_unit", combo.currentData()
+            )
+        )
+        grid.addWidget(field_unit_combo, 4, 1)
+        grid.addWidget(QtWidgets.QLabel("Absolute susceptibility units"), 5, 0)
+        unit_combo = QtWidgets.QComboBox()
+        unit_combo.setObjectName("point_list_susceptibility_output_unit")
+        unit_combo.addItem("CGS molar (cm^3/mol)", "cm^3/mol")
+        unit_combo.addItem("SI molar (m^3/mol)", "m^3/mol")
+        unit_index = unit_combo.findData(str(susc.get("output_unit", "cm^3/mol")))
+        unit_combo.setCurrentIndex(max(unit_index, 0))
+        unit_combo.setToolTip(
+            "Output convention used when absolute units are enabled. CGS molar "
+            "susceptibility is numerically cm^3/mol; conversion to rationalized "
+            "SI m^3/mol includes the 4 pi factor."
+        )
+        unit_combo.currentIndexChanged.connect(
+            lambda _index, combo=unit_combo: self._set_point_list_susceptibility(
+                dataset, group, "output_unit", combo.currentData()
+            )
+        )
+        grid.addWidget(unit_combo, 5, 1)
         return box
 
     def _point_list_wavelength_box(self, dataset, group, config) -> Any:
@@ -12968,6 +13239,9 @@ class NfitProjectExplorer:
         channels[index][key] = value
         if key == "value":
             channels[index]["label"] = value
+            if isinstance(dataset.data, PointListData):
+                channels[index]["quantity_type"] = dataset.data.quantity_type(str(value))
+                channels[index]["unit"] = dataset.data.unit(str(value))
         self._after_point_list_changed(dataset, group)
 
     def _add_point_list_channel(self, dataset, group) -> None:
@@ -16118,7 +16392,8 @@ def _point_list_summary_lines(data: PointListData) -> list[str]:
         label = str(channel["label"])
         unit = data.unit(str(channel["value"]))
         error = "with error" if channel.get("error") else "no error"
-        lines.append(f"channel {label} ({unit or '-'}) - {error}")
+        quantity = data.channel_quantity_type(label)
+        lines.append(f"channel {label} [{quantity}] ({unit or '-'}) - {error}")
     return lines
 
 

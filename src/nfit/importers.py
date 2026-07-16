@@ -195,7 +195,28 @@ def _mpms_header_metadata(header_lines: list[str]) -> dict[str, Any]:
             value = ",".join(parts[1:-1])
             if key:
                 info[key] = value
-    return {"instrument_header": list(header_lines), "mpms_info": info}
+    metadata: dict[str, Any] = {
+        "instrument_header": list(header_lines),
+        "mpms_info": info,
+    }
+    numeric_fields = {
+        "SAMPLE_MASS": ("sample_mass_mg", "mg"),
+        "SAMPLE_MOLECULAR_WEIGHT": ("molar_mass_g_mol", "g/mol"),
+        # Quantum Design exports this as a sample property without embedding a
+        # unit in the INFO row. Preserve it, but do not use it in conversions.
+        "SAMPLE_VOLUME": ("sample_volume_mpms", "MPMS sample-volume unit"),
+    }
+    for source_name, (target_name, unit) in numeric_fields.items():
+        raw = info.get(source_name)
+        if raw is None:
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        metadata[target_name] = value
+        metadata[f"{target_name}_unit"] = unit
+    return metadata
 
 
 def import_mpms_dat(path: str | Path) -> PointListData:
@@ -222,6 +243,11 @@ def import_mpms_dat(path: str | Path) -> PointListData:
         coordinate_names=coordinate_names or [next(iter(columns))],
         channels=channels,
         metadata=metadata,
+        quantity_types={
+            **{name: "temperature" for name in columns if "temperature" in name.lower()},
+            **{name: "magnetic_field" for name in columns if "field" in name.lower()},
+            **{name: "magnetic_moment" for name in columns if "moment" in name.lower()},
+        },
     )
 
 
@@ -247,6 +273,7 @@ def import_hb2a_powder(path: str | Path) -> PointListData:
         coordinate_names=["2theta"],
         channels=[{"label": "I", "value": "I", "error": "dI"}],
         metadata=metadata,
+        quantity_types={"2theta": "unknown", "I": "scattering_intensity", "dI": "scattering_intensity"},
     )
 
 
