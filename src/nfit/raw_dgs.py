@@ -19,7 +19,8 @@ import numpy as np
 
 from .mdevent import (
     ENERGY_TO_K2, FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER,
-    _MDEVENT_NUMBA, _accumulate_detector_trajectory, _flat_bin_indices, load_detector_normalization,
+    _MDEVENT_NUMBA, _accumulate_detector_trajectory, _flat_bin_indices, _symmetry_matrices,
+    load_detector_normalization,
 )
 from .mdhisto import MDHistoAxis, MDHistoData
 from .pipeline import DatasetEntry, DatasetGroup
@@ -127,7 +128,7 @@ def bin_raw_dgs_group(
     num_bins: Iterable[int], step_size: Iterable[float] | None = None,
     datasets: Iterable[DatasetEntry] | None = None, vectors: Iterable[Iterable[float]] | None = None,
     axis_names: Iterable[str] | None = None, max_batch_bytes: int = 192 * 1024 * 1024,
-    progress_callback: Any | None = None,
+    progress_callback: Any | None = None, symmetry_operations: Iterable[np.ndarray] | None = None,
 ) -> MDHistoData:
     """Reduce raw direct-geometry event banks into an HKLE histogram.
 
@@ -158,10 +159,14 @@ def bin_raw_dgs_group(
     if np.any(basis[:3, 3]) or np.any(basis[3, :3]) or basis[3, 3] != 1.0:
         raise ValueError("raw direct-geometry momentum axes cannot mix energy")
     basis_inverse = np.linalg.inv(basis)
+    symmetry = _symmetry_matrices(symmetry_operations)
     names = tuple(axis_names or (_axis_name(row, index) for index, row in enumerate(basis)))
     data_sum = np.zeros(shape); variance_sum = np.zeros(shape); event_count = np.zeros(shape)
-    detector_norm = load_detector_normalization(config["normalization_file"]) if config.get("normalization_file") else None
-    detector_mask = load_detector_normalization(config["mask_file"]) if config.get("mask_file") else None
+    # Shiver's GenerateDGSMDE uses NormFilename only to construct a detector
+    # mask. Its MakeSlice call does not pass this workspace to MDNorm as a
+    # SolidAngleWorkspace, so matching that path must not weight by vanadium.
+    detector_norm = None
+    detector_mask = _combined_detector_mask(config)
     total = sum(int(dataset.metadata.get("event_count", 0)) for dataset in selected)
     processed = 0
     for dataset in selected:
@@ -181,15 +186,20 @@ def bin_raw_dgs_group(
         rows = max(1, int(max_batch_bytes) // 96)
         import h5py
         with h5py.File(source, "r") as handle:
+            pulse_keep = _good_pulses(handle["entry"], float(config.get("bad_pulse_threshold", 0.0)))
             for bank_name, bank in handle["entry"].items():
                 if not (bank_name.startswith("bank") and bank_name.endswith("_events") and "event_id" in bank):
                     continue
                 ids = bank["event_id"]; tofs = bank["event_time_offset"]
+                event_index = np.asarray(bank["event_index"], dtype=np.int64) if pulse_keep is not None else None
                 for start in range(0, ids.shape[0], rows):
                     stop = min(start + rows, ids.shape[0])
                     event_ids = np.asarray(ids[start:stop], dtype=np.int64)
                     event_tof = np.asarray(tofs[start:stop], dtype=float) - t0
                     positions, valid = geometry.positions_for_ids(event_ids)
+                    if pulse_keep is not None:
+                        pulse_index = np.searchsorted(event_index, np.arange(start, stop), side="right") - 1
+                        valid &= pulse_keep[np.clip(pulse_index, 0, pulse_keep.size - 1)]
                     if detector_norm is not None:
                         valid &= detector_norm.value_for_ids(event_ids) > 0.0
                     if detector_mask is not None:
@@ -209,24 +219,23 @@ def bin_raw_dgs_group(
                                                      math.sqrt(ei / ENERGY_TO_K2) - kf * direction[:, 2]))
                             q_sample = q_lab @ gonio
                             hkl = q_sample @ hkl_transform.T
-                            coords = np.column_stack((hkl, energy)) @ basis_inverse
-                            flat = _flat_bin_indices(coords, edges, shape)
-                            keep = flat >= 0
-                            if np.any(keep):
-                                detector_value = (np.ones(ids_valid.size) if detector_norm is None
-                                                  else detector_norm.value_for_ids(ids_valid))
-                                weights = np.ones(ids_valid.size)
-                                if bool(config.get("kf_ki_normalization", True)):
-                                    weights *= kf / math.sqrt(ei / ENERGY_TO_K2)
-                                ravel = data_sum.ravel()
-                                ravel += np.bincount(flat[keep], weights=weights[keep], minlength=ravel.size)
-                                variance_sum.ravel()[:] += np.bincount(flat[keep], weights=weights[keep] ** 2, minlength=variance_sum.size)
-                                event_count.ravel()[:] += np.bincount(flat[keep], minlength=event_count.size)
+                            for operation in symmetry:
+                                coords = np.column_stack((hkl @ operation.T, energy)) @ basis_inverse
+                                flat = _flat_bin_indices(coords, edges, shape)
+                                keep = flat >= 0
+                                if np.any(keep):
+                                    weights = np.ones(ids_valid.size)
+                                    if bool(config.get("kf_ki_normalization", True)):
+                                        weights *= kf / math.sqrt(ei / ENERGY_TO_K2)
+                                    ravel = data_sum.ravel()
+                                    ravel += np.bincount(flat[keep], weights=weights[keep], minlength=ravel.size)
+                                    variance_sum.ravel()[:] += np.bincount(flat[keep], weights=weights[keep] ** 2, minlength=variance_sum.size)
+                                    event_count.ravel()[:] += np.bincount(flat[keep], minlength=event_count.size)
                     processed += stop - start
                     if progress_callback is not None:
                         progress_callback({"stage": "raw_dgs_events", "iteration": processed, "total": total,
                                            "message": f"reducing raw events {processed}/{total}"})
-    normalization = _trajectory_normalization(group, selected, edges, shape, basis_inverse, detector_norm, detector_mask)
+    normalization = _trajectory_normalization(group, selected, edges, shape, basis_inverse, detector_norm, detector_mask, symmetry)
     covered = normalization > 0.0
     with np.errstate(divide="ignore", invalid="ignore"):
         signal = data_sum / normalization
@@ -245,14 +254,16 @@ def bin_raw_dgs_group(
                                  "zero_event_bins_are_measured": True,
                                  "zero_count_error_model": "feldman_cousins_68_percent_upper_limit_scaled_by_rms_event_weight",
                                  "event_weight_rms": rms,
+                                 "symmetry_operations_hkl": [operation.tolist() for operation in symmetry],
                                  "kf_ki_normalization": bool(config.get("kf_ki_normalization", True)),
                                  "proton_charge_units": "microcoulomb (raw NeXus picocoulombs divided by 1e6)"})
 
 
-def _trajectory_normalization(group, datasets, edges, shape, basis_inverse, detector_norm, detector_mask):
+def _trajectory_normalization(group, datasets, edges, shape, basis_inverse, detector_norm, detector_mask, symmetry_operations=None):
     """Native MDNorm-style detector trajectories for raw direct-geometry runs."""
     config = group.metadata["raw_dgs"]
     result = np.zeros(shape)
+    symmetry = _symmetry_matrices(symmetry_operations)
     payloads = []
     detector_payload = None
     for dataset in datasets:
@@ -263,7 +274,8 @@ def _trajectory_normalization(group, datasets, edges, shape, basis_inverse, dete
         if detector_mask is not None:
             solid[detector_mask.value_for_ids(geometry.detector_ids) <= 0.0] = 0.0
         ub = np.asarray(config["ub_matrix"], dtype=float)
-        inverse = basis_inverse[:3, :3].T @ np.linalg.inv(2.0 * np.pi * ub) @ _goniometer(info.omega, info.phi, info.chi).T
+        canonical_inverse = np.linalg.inv(2.0 * np.pi * ub) @ _goniometer(info.omega, info.phi, info.chi).T
+        inverses = [basis_inverse[:3, :3].T @ operation @ canonical_inverse for operation in symmetry]
         ei = float(config.get("incident_energy_override") or info.incident_energy)
         # Raw proton_charge is recorded in pC. Mantid's run log uses the
         # corresponding microcoulomb-scale number in this validation data.
@@ -272,8 +284,8 @@ def _trajectory_normalization(group, datasets, edges, shape, basis_inverse, dete
             theta = np.arccos(np.clip(direction[:, 2], -1.0, 1.0))
             phi = np.arctan2(direction[:, 1], direction[:, 0])
             detector_payload = (theta, phi, solid)
-        payloads.append((inverse, ei, (edges[3][0], edges[3][-1]), charge))
-    if _MDEVENT_NUMBA is not None and detector_payload is not None:
+        payloads.extend((inverse, ei, (edges[3][0], edges[3][-1]), charge) for inverse in inverses)
+    if _MDEVENT_NUMBA is not None and detector_payload is not None and len(symmetry) == 1:
         theta, phi, solid = detector_payload
         flat = _MDEVENT_NUMBA.run_trajectory_normalization(
             theta, phi, solid, np.asarray([item[0] for item in payloads]),
@@ -286,6 +298,28 @@ def _trajectory_normalization(group, datasets, edges, shape, basis_inverse, dete
         for index in np.flatnonzero(solid > 0.0):
             _accumulate_detector_trajectory(result, edges, inverse, direction[index], ei, energy_bounds, charge * solid[index])
     return result
+
+
+def _combined_detector_mask(config):
+    paths = [config.get("normalization_file"), config.get("mask_file")]
+    masks = [load_detector_normalization(path) for path in dict.fromkeys(path for path in paths if path)]
+    if not masks:
+        return None
+    ids = np.unique(np.concatenate([mask.detector_ids for mask in masks]))
+    values = np.ones(ids.size)
+    for mask in masks:
+        values[mask.value_for_ids(ids) <= 0.0] = 0.0
+    return type(masks[0])(Path("combined_mask"), ids, values, np.zeros(ids.size))
+
+
+def _good_pulses(entry, threshold):
+    if threshold <= 0.0 or "proton_charge" not in entry:
+        return None
+    values = np.asarray(entry["proton_charge/value"], dtype=float).reshape(-1)
+    if values.size == 0:
+        return None
+    cutoff = float(threshold) / 100.0 * float(np.mean(values))
+    return values >= cutoff
 
 
 @dataclass(frozen=True)

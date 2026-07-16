@@ -42,6 +42,7 @@ def read_dataset_artifact(path: str | Path) -> MDHistoData | PointListData:
                 units=json.loads(str(np.asarray(archive["units_json"]).item())),
                 coordinate_names=json.loads(str(np.asarray(archive["coordinate_names_json"]).item())),
                 channels=json.loads(str(np.asarray(archive["channels_json"]).item())), metadata=metadata,
+                quantity_types=(json.loads(str(np.asarray(archive["quantity_types_json"]).item())) if "quantity_types_json" in archive else {}),
             )
         if kind != "mdhisto":
             raise ValueError(f"unknown analysis artifact container {kind!r}")
@@ -69,7 +70,7 @@ def output_data(output: DatasetOutput | TableOutput) -> MDHistoData | PointListD
 def _payload(data: MDHistoData | PointListData) -> dict[str, Any]:
     common: dict[str, Any] = {"format": np.asarray("nfit-analysis-artifact"), "version": np.asarray(1), "metadata_json": np.asarray(json.dumps(_json_metadata(data.metadata), sort_keys=True))}
     if isinstance(data, PointListData):
-        common.update({"container": np.asarray("point_list"), "column_names_json": np.asarray(json.dumps(data.column_names)), "units_json": np.asarray(json.dumps(data.units)), "coordinate_names_json": np.asarray(json.dumps(data.coordinate_names)), "channels_json": np.asarray(json.dumps(data.channels))})
+        common.update({"container": np.asarray("point_list"), "column_names_json": np.asarray(json.dumps(data.column_names)), "units_json": np.asarray(json.dumps(data.units)), "quantity_types_json": np.asarray(json.dumps(data.quantity_types)), "coordinate_names_json": np.asarray(json.dumps(data.coordinate_names)), "channels_json": np.asarray(json.dumps(data.channels))})
         common.update({f"column_{i}": data.column(name) for i, name in enumerate(data.column_names)})
         return common
     common.update({"container": np.asarray("mdhisto"), "signal": data.signal, "errors": data.errors, "mask": data.mask, "num_events": data.num_events, "axis_count": np.asarray(len(data.axes)), "coordinate_system": np.asarray(-1 if data.coordinate_system is None else data.coordinate_system), "visual_normalization": np.asarray(-1 if data.visual_normalization is None else data.visual_normalization)})

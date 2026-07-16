@@ -738,7 +738,11 @@ class _RpaComponentEvaluator:
         once per distinct (T, B).
         """
 
-        from .sum_rules import EMU_PER_MOL_PER_MODEL_CHI, OERSTED_PER_TESLA
+        from .sum_rules import (
+            EMU_PER_MOL_PER_MODEL_CHI,
+            EMU_PER_MOL_PER_MU_B,
+            OERSTED_PER_TESLA,
+        )
 
         n = data.size
         temperature = np.broadcast_to(
@@ -759,6 +763,12 @@ class _RpaComponentEvaluator:
         scale = float(params[self.scale_key])
         metadata = data.metadata if isinstance(data.metadata, dict) else {}
         absolute = bool(metadata.get("absolute_units"))
+        quantity_type = str(metadata.get("quantity_type", "magnetic_moment"))
+        target_unit = str(metadata.get("unit", ""))
+        if quantity_type not in {"magnetic_moment", "magnetization", "bulk_susceptibility"}:
+            raise ValueError(
+                f"bulk model cannot predict quantity type {quantity_type!r}"
+            )
         abs_factor = 1.0
         if absolute:
             mass_g = float(metadata.get("sample_mass_mg", 0.0)) / 1000.0
@@ -773,9 +783,16 @@ class _RpaComponentEvaluator:
                     "molar mass, and sites-per-formula-unit"
                 )
             moles = mass_g / molar_mass
-            abs_factor = (
-                EMU_PER_MOL_PER_MODEL_CHI * moles * OERSTED_PER_TESLA / sites_per_fu
-            )
+            if quantity_type == "bulk_susceptibility":
+                abs_factor = EMU_PER_MOL_PER_MODEL_CHI / sites_per_fu
+            else:
+                abs_factor = (
+                    EMU_PER_MOL_PER_MODEL_CHI * moles * OERSTED_PER_TESLA / sites_per_fu
+                )
+                if target_unit == "emu/mol":
+                    abs_factor /= moles
+                elif target_unit == "mu_B/f.u.":
+                    abs_factor /= moles * EMU_PER_MOL_PER_MU_B
 
         keys = np.round(
             np.column_stack([temperature, field_vecs]), 9
@@ -801,8 +818,19 @@ class _RpaComponentEvaluator:
             except ValueError:
                 out[sel] = 1e6
                 continue
-            prediction = g_factor**2 * chi_uniform * b_mag[sel]
+            prediction = g_factor**2 * chi_uniform
+            if quantity_type != "bulk_susceptibility":
+                prediction = prediction * b_mag[sel]
             out[sel] = scale * abs_factor * prediction
+        if absolute:
+            from .quantities import convert_quantity
+
+            if quantity_type == "bulk_susceptibility" and target_unit == "m^3/mol":
+                out = convert_quantity(
+                    out, "bulk_susceptibility", "cm^3/mol", target_unit
+                )
+            elif quantity_type in {"magnetic_moment", "magnetization"} and target_unit == "A m^2":
+                out = convert_quantity(out, "magnetic_moment", "emu", target_unit)
         return out
 
     def value(self, data: PointData4D, params: dict[str, float]) -> np.ndarray:

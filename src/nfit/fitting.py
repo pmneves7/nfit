@@ -13,7 +13,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from .dataset import PointData4D
-from .rebin import rebin_nd
+from .rebin import rebin_nd, rebin_nd_symmetry
 
 try:  # pragma: no cover - exercised only when SciPy is importable.
     from scipy.optimize import least_squares as _scipy_least_squares
@@ -830,6 +830,7 @@ def rebin_point_data(
     mean_weighting: str = "inverse_variance",
     max_batch_bytes: int = 192 * 1024 * 1024,
     progress_callback: ProgressCallback | None = None,
+    symmetry_operations: Sequence[ArrayLike] | None = None,
 ) -> PointData4D:
     """Rebin flattened ``(H,K,L,E)`` point data onto a regular 4D grid.
 
@@ -844,9 +845,7 @@ def rebin_point_data(
         raise ValueError("no valid data points remain before rebinning")
 
     coords = np.column_stack(source.coordinates())
-    result = rebin_nd(
-        source.intensity,
-        coords,
+    kwargs = dict(
         data_errs=source.sigma,
         lower=lower,
         upper=upper,
@@ -857,6 +856,11 @@ def rebin_point_data(
         mean_weighting=mean_weighting,
         max_batch_bytes=max_batch_bytes,
         progress_callback=progress_callback,
+    )
+    result = (
+        rebin_nd_symmetry(source.intensity, coords, symmetry_operations, **kwargs)
+        if symmetry_operations is not None
+        else rebin_nd(source.intensity, coords, **kwargs)
     )
     if result.bin_centers_list is None:
         raise RuntimeError("rebinning did not produce bin centers")

@@ -54,7 +54,8 @@ from .mdevent import assess_mdevent_memory, bin_mdevent_group, is_mdevent_file, 
 from .raw_dgs import bin_raw_dgs_group, is_raw_dgs_nexus_file, raw_dgs_dataset_group
 from .pipeline import DataGroup, DatasetEntry, DatasetGroup, FitTimelineEntry, MaskSpec, ModelComponentSpec
 from .qt_controls import configure_numeric_spin_boxes
-from .rebin import rebin_nd
+from .rebin import rebin_nd, rebin_nd_symmetry
+from .symmetry import SymmetrySpec, resolve_symmetry, symmetry_config, symmetry_spec_from_config
 
 QtMDHistoSliceViewer = None
 RECENT_PROJECT_LIMIT = 10
@@ -811,6 +812,10 @@ def _load_point_list_dataset(dataset: DatasetEntry) -> PointListData | None:
     dataset.data = data
     dataset.metadata["importer"] = importer_name
     dataset.metadata["import_status"] = "loaded"
+    if dataset.data_type == "magnetization":
+        for key in ("sample_mass_mg", "molar_mass_g_mol"):
+            if key not in dataset.parameters and key in data.metadata:
+                dataset.parameters[key] = float(data.metadata[key])
     if not dataset.kind:
         dataset.kind = Path(source).suffix.lstrip(".").lower()
     return data
@@ -855,6 +860,12 @@ def point_list_config(dataset: DatasetEntry) -> dict[str, Any]:
         susc.setdefault("field", field_default)
         moment_default = config["channels"][0]["label"] if config["channels"] else ""
         susc.setdefault("moment", moment_default)
+        susc.setdefault("output_unit", "cm^3/mol")
+    if definition.get("susceptibility"):
+        # This is deliberately separate from the input moment unit above: the
+        # MPMS column is ordinarily a sample moment in emu, while a user may
+        # choose to view and fit the same measurement per formula unit.
+        dataset.parameters.setdefault("magnetization_output_unit", "emu")
     if definition.get("wavelength"):
         wavelength = config.get("wavelength")
         if not isinstance(wavelength, dict):
@@ -878,6 +889,7 @@ def prepared_point_list_data(dataset: DatasetEntry) -> PointListData:
     base = dataset.data
     columns = {name: np.array(values, dtype=float) for name, values in base.columns.items()}
     units = dict(base.units)
+    quantity_types = dict(base.quantity_types)
 
     coordinate_names = [name for name in config.get("coordinate_names", []) if name in columns]
     if not coordinate_names:
@@ -889,6 +901,22 @@ def prepared_point_list_data(dataset: DatasetEntry) -> PointListData:
     ]
     if not channels:
         channels = [dict(channel) for channel in base.channels]
+    for channel in channels:
+        value_name = channel.get("value")
+        if value_name not in columns:
+            continue
+        declared_unit = str(channel.get("unit", "") or "")
+        declared_type = str(channel.get("quantity_type", "") or "")
+        if declared_unit:
+            units[value_name] = declared_unit
+            error_name = channel.get("error")
+            if error_name in columns:
+                units[error_name] = declared_unit
+        if declared_type:
+            quantity_types[value_name] = declared_type
+            error_name = channel.get("error")
+            if error_name in columns:
+                quantity_types[error_name] = declared_type
 
     definition = DATA_TYPE_DEFINITIONS.get(dataset.data_type, {})
 
@@ -941,30 +969,144 @@ def prepared_point_list_data(dataset: DatasetEntry) -> PointListData:
     # Magnetization susceptibility: moment / field (value and error divided by field).
     if definition.get("susceptibility"):
         susc = config.get("susceptibility", {})
+        field_name = str(susc.get("field", ""))
+        if field_name in columns and susc.get("field_unit"):
+            units[field_name] = str(susc["field_unit"])
+            quantity_types[field_name] = "magnetic_field"
+        moment_label = susc.get("moment")
+        moment_channel = next((c for c in channels if c.get("label") == moment_label), None)
+        if moment_channel is not None:
+            source_value = moment_channel.get("value")
+            if source_value in columns and susc.get("moment_unit"):
+                units[source_value] = str(susc["moment_unit"])
+                quantity_types[source_value] = "magnetic_moment"
+                source_error = moment_channel.get("error")
+                if source_error in columns:
+                    units[source_error] = units[source_value]
+                    quantity_types[source_error] = "magnetic_moment"
         if susc.get("enabled"):
-            field_name = susc.get("field")
-            moment_label = susc.get("moment")
-            moment_channel = next((c for c in channels if c.get("label") == moment_label), None)
             if moment_channel is not None and field_name in columns:
+                moment = columns[moment_channel["value"]]
                 field = columns[field_name]
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    susc_value = columns[moment_channel["value"]] / field
-                value_col = f"{SUSCEPTIBILITY_CHANNEL_LABEL} value"
-                columns[value_col] = susc_value
+                moment_error_name = moment_channel.get("error")
+                moment_error = columns.get(moment_error_name) if moment_error_name else None
                 moment_unit = units.get(moment_channel["value"], "")
                 field_unit = units.get(field_name, "")
-                susc_unit = f"{moment_unit}/{field_unit}" if moment_unit and field_unit else ""
-                units[value_col] = susc_unit
-                error_name = moment_channel.get("error")
-                error_col = None
-                if error_name in columns:
-                    error_col = f"{SUSCEPTIBILITY_CHANNEL_LABEL} error"
+                absolute = bool(dataset.parameters.get("absolute_units", False))
+                if absolute:
+                    from .quantities import convert_quantity
+
+                    mass_g = float(dataset.parameters.get("sample_mass_mg", 0.0) or 0.0) / 1000.0
+                    molar_mass = float(dataset.parameters.get("molar_mass_g_mol", 0.0) or 0.0)
+                    if mass_g <= 0.0 or molar_mass <= 0.0:
+                        raise ValueError(
+                            "absolute susceptibility requires positive sample mass and molar mass"
+                        )
+                    moles = mass_g / molar_mass
+                    moment = convert_quantity(moment, "magnetic_moment", moment_unit, "emu")
+                    if moment_error is not None:
+                        moment_error = np.abs(
+                            convert_quantity(moment_error, "magnetic_moment", moment_unit, "emu")
+                        )
+                    field = convert_quantity(field, "magnetic_field", field_unit, "Oe")
+                    output_unit = str(susc.get("output_unit", "cm^3/mol"))
                     with np.errstate(divide="ignore", invalid="ignore"):
-                        columns[error_col] = columns[error_name] / np.abs(field)
+                        susc_value = moment / field / moles
+                    if output_unit == "m^3/mol":
+                        susc_value = convert_quantity(
+                            susc_value, "bulk_susceptibility", "cm^3/mol", output_unit
+                        )
+                    elif output_unit != "cm^3/mol":
+                        raise ValueError(
+                            "absolute susceptibility output must be cm^3/mol or m^3/mol"
+                        )
+                    susc_unit = output_unit
+                else:
+                    with np.errstate(divide="ignore", invalid="ignore"):
+                        susc_value = moment / field
+                    susc_unit = f"{moment_unit}/{field_unit}" if moment_unit and field_unit else ""
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    error_values = (
+                        None if moment_error is None else moment_error / np.abs(field)
+                    )
+                if absolute and error_values is not None:
+                    error_values = error_values / moles
+                    if susc_unit == "m^3/mol":
+                        error_values = convert_quantity(
+                            error_values, "bulk_susceptibility", "cm^3/mol", susc_unit
+                        )
+                value_col = f"{SUSCEPTIBILITY_CHANNEL_LABEL} value"
+                columns[value_col] = susc_value
+                units[value_col] = susc_unit
+                quantity_types[value_col] = "bulk_susceptibility"
+                error_col = None
+                if error_values is not None:
+                    error_col = f"{SUSCEPTIBILITY_CHANNEL_LABEL} error"
+                    columns[error_col] = error_values
                     units[error_col] = susc_unit
+                    quantity_types[error_col] = "bulk_susceptibility"
                 channels.append(
-                    {"label": SUSCEPTIBILITY_CHANNEL_LABEL, "value": value_col, "error": error_col}
+                    {
+                        "label": SUSCEPTIBILITY_CHANNEL_LABEL,
+                        "value": value_col,
+                        "error": error_col,
+                        "quantity_type": "bulk_susceptibility",
+                        "unit": susc_unit,
+                    }
                 )
+
+        # Convert the displayed/fitted moment after deriving susceptibility so
+        # susceptibility always uses the declared *input* moment unit.
+        output_unit = str(dataset.parameters.get("magnetization_output_unit", "emu"))
+        absolute = bool(dataset.parameters.get("absolute_units", False))
+        if moment_channel is not None and output_unit != "emu":
+            value_name = str(moment_channel.get("value", ""))
+            error_name = moment_channel.get("error")
+            if value_name in columns:
+                from .quantities import convert_quantity
+                from .sum_rules import EMU_PER_MOL_PER_MU_B
+
+                input_unit = units.get(value_name, "emu")
+                moment_emu = convert_quantity(
+                    columns[value_name], "magnetic_moment", input_unit, "emu"
+                )
+                error_emu = (
+                    None
+                    if error_name not in columns
+                    else np.abs(convert_quantity(
+                        columns[error_name], "magnetic_moment", input_unit, "emu"
+                    ))
+                )
+                if output_unit == "A m^2":
+                    columns[value_name] = convert_quantity(
+                        moment_emu, "magnetic_moment", "emu", output_unit
+                    )
+                    if error_emu is not None:
+                        columns[error_name] = convert_quantity(
+                            error_emu, "magnetic_moment", "emu", output_unit
+                        )
+                elif output_unit in {"emu/mol", "mu_B/f.u."}:
+                    mass_g = float(dataset.parameters.get("sample_mass_mg", 0.0) or 0.0) / 1000.0
+                    molar_mass = float(dataset.parameters.get("molar_mass_g_mol", 0.0) or 0.0)
+                    if not absolute or mass_g <= 0.0 or molar_mass <= 0.0:
+                        raise ValueError(
+                            "formula-unit moment normalization requires absolute units and positive sample mass and molar mass"
+                        )
+                    moles = mass_g / molar_mass
+                    divisor = moles
+                    if output_unit == "mu_B/f.u.":
+                        divisor *= EMU_PER_MOL_PER_MU_B
+                    columns[value_name] = moment_emu / divisor
+                    if error_emu is not None:
+                        columns[error_name] = error_emu / divisor
+                else:
+                    raise ValueError(f"unsupported magnetization output unit {output_unit!r}")
+                units[value_name] = output_unit
+                quantity_types[value_name] = "magnetic_moment"
+                if error_name in columns:
+                    units[error_name] = output_unit
+                    quantity_types[error_name] = "magnetic_moment"
+                moment_channel["unit"] = output_unit
 
     return PointListData(
         columns=columns,
@@ -972,6 +1114,7 @@ def prepared_point_list_data(dataset: DatasetEntry) -> PointListData:
         coordinate_names=coordinate_names,
         channels=channels,
         metadata=dict(base.metadata),
+        quantity_types=quantity_types,
     )
 
 
@@ -2030,6 +2173,8 @@ def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str,
         group.metadata[GROUP_COMPOSITE_KEY] = config
     config.setdefault("enabled", False)
     config.setdefault("fractional", True)
+    if not isinstance(config.get("symmetry"), dict):
+        config["symmetry"] = symmetry_config(SymmetrySpec())
     if config.get(REBIN_RESOLUTION_MODE_KEY) not in {"step", "bins"}:
         config[REBIN_RESOLUTION_MODE_KEY] = "step"
     if config.get("mean_weighting") not in {"inverse_variance", "uniform"}:
@@ -2312,6 +2457,7 @@ def composite_dataset_data(
             max_batch_bytes=_rebin_max_batch_bytes(config),
             enforce_memory_limit=not allow_overcommit,
             progress_callback=progress_callback,
+            symmetry_operations=_rebin_symmetry_matrices(config, _composite_root(group).lattice_parameters),
         )
     if kind == "raw_dgs_nexus":
         node = group.node if isinstance(group, _CompositeScope) else group
@@ -2324,6 +2470,7 @@ def composite_dataset_data(
             vectors=[axis.get("vector", _identity_vector(index, 4)) for index, axis in enumerate(config.get("axes", []))],
             axis_names=[str(axis.get("name", ("H", "K", "L", "DeltaE")[index])) for index, axis in enumerate(config.get("axes", []))],
             max_batch_bytes=_rebin_max_batch_bytes(config), progress_callback=progress_callback,
+            symmetry_operations=_rebin_symmetry_matrices(config, _composite_root(group).lattice_parameters),
         )
     if kind == "mdhisto":
         return _composite_mdhisto_data(group, config, progress_callback=progress_callback)
@@ -2635,6 +2782,11 @@ def _composite_point_list_data(
         coordinate_names=coordinate_names,
         channels=[{"label": channel_label, "value": value_name, "error": error_name}],
         metadata={"composite": True, "source_group": group.name, "source_datasets": [dataset.name for dataset in datasets]},
+        quantity_types={
+            name: point_lists[0].quantity_type(name)
+            for name in columns
+            if name in point_lists[0].columns
+        },
     )
 
 
@@ -2762,6 +2914,7 @@ def _with_viewer_dataset_metadata(
             coordinate_names=list(data.coordinate_names),
             channels=[dict(channel) for channel in data.channels],
             metadata=metadata,
+            quantity_types=dict(data.quantity_types),
         )
     return data
 
@@ -3004,7 +3157,14 @@ def _magnetization_point_data(
 
     if not view.channel_labels:
         raise ValueError("magnetization dataset defines no moment channel")
-    label = view.channel_labels[0]
+    config = point_list_config(dataset)
+    susc = config.get("susceptibility", {})
+    preferred = (
+        SUSCEPTIBILITY_CHANNEL_LABEL
+        if susc.get("enabled") and SUSCEPTIBILITY_CHANNEL_LABEL in view.channel_labels
+        else str(susc.get("moment") or view.channel_labels[0])
+    )
+    label = preferred if preferred in view.channel_labels else view.channel_labels[0]
     intensity = np.asarray(view.channel_values(label), dtype=float)
     errors = view.channel_errors(label)
     sigma_known = errors is not None
@@ -3016,18 +3176,24 @@ def _magnetization_point_data(
     n = intensity.size
     zeros = np.zeros(n, dtype=float)
 
-    def _find_column(hints: tuple[str, ...]) -> np.ndarray | None:
+    def _find_column(hints: tuple[str, ...]) -> tuple[str, np.ndarray] | None:
         for name in view.columns:
             lowered = name.strip().lower()
             if any(hint in lowered for hint in hints):
-                return np.asarray(view.column(name), dtype=float)
+                return name, np.asarray(view.column(name), dtype=float)
         return None
 
-    temperature = _find_column(("temperature",))
-    field_oe = _find_column(_MPMS_FIELD_COLUMN_HINTS)
+    temperature_match = _find_column(("temperature",))
+    field_match = _find_column(_MPMS_FIELD_COLUMN_HINTS)
+    temperature = None if temperature_match is None else temperature_match[1]
     direction = _field_direction_cartesian(group, dataset)
-    if field_oe is not None:
-        field_tesla = field_oe / _OERSTED_PER_TESLA
+    if field_match is not None:
+        from .quantities import convert_quantity
+
+        field_name, field_values = field_match
+        field_tesla = convert_quantity(
+            field_values, "magnetic_field", view.unit(field_name), "T"
+        )
         magnetic_field = field_tesla[:, None] * direction[None, :]
     else:
         magnetic_field = None
@@ -3040,6 +3206,8 @@ def _magnetization_point_data(
         "fit_channel": label,
         "sigma_known": sigma_known,
         "data_type": "magnetization",
+        "quantity_type": view.channel_quantity_type(label),
+        "unit": view.unit(view.channel(label)["value"]),
     }
     for key in ("absolute_units", "sample_mass_mg", "molar_mass_g_mol"):
         if key in dataset.parameters:
@@ -4833,6 +5001,7 @@ def _apply_dataset_scale(
             coordinate_names=list(data.coordinate_names),
             channels=[dict(channel) for channel in data.channels],
             metadata=dict(data.metadata),
+            quantity_types=dict(data.quantity_types),
         )
     return data
 
@@ -4846,6 +5015,8 @@ def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
         dataset.parameters[DATASET_REBIN_KEY] = config
     config.setdefault("enabled", False)
     config.setdefault("fractional", True)
+    if not isinstance(config.get("symmetry"), dict):
+        config["symmetry"] = symmetry_config(SymmetrySpec())
     if config.get(REBIN_RESOLUTION_MODE_KEY) not in {"step", "bins"}:
         config[REBIN_RESOLUTION_MODE_KEY] = "step"
     try:
@@ -5015,7 +5186,57 @@ def _dataset_rebin_estimated_contributions(dataset: DatasetEntry, config: dict[s
     source_points = _dataset_rebin_source_points(dataset)
     ndim = max(len(config.get("axes", []) or []), 1)
     multiplier = 2**ndim if bool(config.get("fractional", True)) else 1
-    return int(source_points * multiplier)
+    return int(source_points * multiplier * _rebin_symmetry_count(config, _dataset_lattice_parameters(dataset)))
+
+
+def _dataset_lattice_parameters(dataset: DatasetEntry) -> dict[str, Any] | None:
+    data = dataset.data
+    metadata = getattr(data, "metadata", None)
+    return metadata.get("lattice_parameters") if isinstance(metadata, dict) and isinstance(metadata.get("lattice_parameters"), dict) else None
+
+
+def _rebin_symmetry_operations(
+    config: dict[str, Any],
+    lattice_parameters: dict[str, Any] | None = None,
+) -> tuple:
+    payload = config.get("symmetry")
+    spec = symmetry_spec_from_config(payload)
+    stored_lattice = payload.get("lattice_parameters") if isinstance(payload, dict) else None
+    lattice = lattice_parameters if lattice_parameters is not None else stored_lattice
+    return resolve_symmetry(spec, lattice_parameters=lattice)
+
+
+def _rebin_symmetry_count(config: dict[str, Any], lattice_parameters: dict[str, Any] | None = None) -> int:
+    try:
+        return len(_rebin_symmetry_operations(config, lattice_parameters))
+    except (ImportError, ValueError):
+        return 1
+
+
+def _rebin_symmetry_matrices(
+    config: dict[str, Any], lattice_parameters: dict[str, Any] | None = None
+) -> tuple[np.ndarray, ...] | None:
+    operations = _rebin_symmetry_operations(config, lattice_parameters)
+    if len(operations) == 1 and np.allclose(operations[0].matrix_hkl, np.eye(3)):
+        return None
+    return tuple(np.asarray(operation.matrix_hkl, dtype=float) for operation in operations)
+
+
+def _rebin_symmetry_metadata(
+    config: dict[str, Any], lattice_parameters: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
+    spec = symmetry_spec_from_config(config.get("symmetry"))
+    if not spec.enabled:
+        return None
+    operations = _rebin_symmetry_operations(config, lattice_parameters)
+    return {
+        "mode": spec.mode,
+        "expression": spec.expression,
+        "operation_count": len(operations),
+        "operations_hkl": [np.asarray(operation.matrix_hkl, dtype=float).tolist() for operation in operations],
+        "labels": [operation.label for operation in operations],
+        "energy_unchanged": True,
+    }
 
 
 def _dataset_rebin_is_large(dataset: DatasetEntry, config: dict[str, Any]) -> bool:
@@ -5117,7 +5338,7 @@ def _rebin_point_list_data(dataset: DatasetEntry, config: dict[str, Any]) -> Poi
         coordinate_names = list(prepared.coordinate_names)
     lower = [axis["lower"] for axis in axes_config[: len(coordinate_names)]] or None
     upper = [axis["upper"] for axis in axes_config[: len(coordinate_names)]] or None
-    return prepared.rebin_to_histogram(
+    result = prepared.rebin_to_histogram(
         coordinate_names,
         lower=lower,
         upper=upper,
@@ -5126,7 +5347,14 @@ def _rebin_point_list_data(dataset: DatasetEntry, config: dict[str, Any]) -> Poi
         normalize=True,
         mean_weighting=_rebin_mean_weighting(config),
         max_batch_bytes=_rebin_max_batch_bytes(config),
+        symmetry_operations=_rebin_symmetry_matrices(config, prepared.metadata.get("lattice_parameters")),
     )
+    metadata = dict(result.metadata)
+    symmetry_metadata = _rebin_symmetry_metadata(config, prepared.metadata.get("lattice_parameters"))
+    if symmetry_metadata is not None:
+        metadata.setdefault("rebin", {})["symmetry"] = symmetry_metadata
+    result.metadata = metadata
+    return result
 
 
 def _rebin_mean_weighting(config: dict[str, Any]) -> str:
@@ -5261,6 +5489,7 @@ def _save_point_list_file(data: PointListData, path: str | Path) -> None:
         "coordinate_names_json": json.dumps(list(data.coordinate_names)),
         "channels_json": json.dumps(_json_safe_value(data.channels)),
         "units_json": json.dumps(_json_safe_value(data.units)),
+        "quantity_types_json": json.dumps(_json_safe_value(data.quantity_types)),
         "metadata_json": json.dumps(_json_safe_value(data.metadata), sort_keys=True),
     }
     for index, name in enumerate(data.column_names):
@@ -5341,6 +5570,7 @@ def _load_nfit_point_list_archive(archive: Any, source: Path) -> PointListData:
         coordinate_names=json.loads(_nfit_archive_text(archive, "coordinate_names_json")),
         channels=json.loads(_nfit_archive_text(archive, "channels_json")),
         metadata=metadata,
+        quantity_types=_nfit_archive_json_mapping(archive, "quantity_types_json"),
     )
 
 
@@ -5719,6 +5949,16 @@ def _rebin_mdhisto_data(
             for index, axis_config in enumerate(axes_config)
         ]
     coords = np.stack(projected, axis=-1)
+    symmetry = _rebin_symmetry_matrices(config, data.metadata.get("lattice_parameters"))
+    output_axes = None
+    if symmetry is not None:
+        if ndim != 4:
+            raise ValueError("rebin symmetry requires a four-dimensional HKLE dataset")
+        physical = _mdhisto_coordinate_grids(data)
+        if not all(name in physical for name in ("H", "K", "L", "E")):
+            raise ValueError("rebin symmetry requires reconstructable H, K, L, and energy coordinates")
+        coords = np.stack([physical[name] for name in ("H", "K", "L", "E")], axis=-1)
+        output_axes = _validate_mdhisto_rebin_basis(axes_config, ndim)
     valid = np.isfinite(data.signal) & np.isfinite(data.errors) & ~data.mask
     if data.num_events is not None:
         valid &= mdhisto_measured_bins(data)
@@ -5727,9 +5967,7 @@ def _rebin_mdhisto_data(
     coords_valid = coords[valid]
     if signal.size == 0:
         raise ValueError("no valid data points remain before rebinning")
-    result = rebin_nd(
-        signal,
-        coords_valid,
+    kwargs = dict(
         data_errs=errors,
         lower=lower,
         upper=upper,
@@ -5739,6 +5977,11 @@ def _rebin_mdhisto_data(
         mean_weighting=_rebin_mean_weighting(config),
         max_batch_bytes=_rebin_max_batch_bytes(config),
         progress_callback=progress_callback,
+    )
+    result = (
+        rebin_nd_symmetry(signal, coords_valid, symmetry, axes=output_axes, **kwargs)
+        if symmetry is not None
+        else rebin_nd(signal, coords_valid, **kwargs)
     )
     if result.binned_data is None or result.binned_data_errs is None or result.n_samples is None:
         raise RuntimeError("rebinning did not produce binned data")
@@ -5772,6 +6015,9 @@ def _rebin_mdhisto_data(
         "max_batch_mb": _rebin_max_batch_mb(config),
         "max_batch_bytes": _rebin_max_batch_bytes(config),
     }
+    symmetry_metadata = _rebin_symmetry_metadata(config, data.metadata.get("lattice_parameters"))
+    if symmetry_metadata is not None:
+        metadata["rebin"]["symmetry"] = symmetry_metadata
     return MDHistoData(
         axes=rebinned_axes,
         signal=np.asarray(result.binned_data, dtype=float),
@@ -5795,7 +6041,8 @@ def _rebin_point_data(
         axes_config = _default_rebin_axes(data)
     lower = [axis["lower"] for axis in axes_config]
     upper = [axis["upper"] for axis in axes_config]
-    return rebin_point_data(
+    symmetry = _rebin_symmetry_matrices(config, data.metadata.get("lattice_parameters"))
+    result = rebin_point_data(
         data,
         lower=lower,
         upper=upper,
@@ -5805,7 +6052,14 @@ def _rebin_point_data(
         mean_weighting=_rebin_mean_weighting(config),
         max_batch_bytes=_rebin_max_batch_bytes(config),
         progress_callback=progress_callback,
+        symmetry_operations=symmetry,
     )
+    metadata = dict(result.metadata)
+    symmetry_metadata = _rebin_symmetry_metadata(config, data.metadata.get("lattice_parameters"))
+    if symmetry_metadata is not None:
+        metadata.setdefault("rebin", {})["symmetry"] = symmetry_metadata
+    result.metadata = metadata
+    return result
 
 
 def _point_data_with_nfit_masks(
@@ -11757,6 +12011,24 @@ class NfitProjectExplorer:
         batch_label.setToolTip(batch_tooltip)
         batch_spin.setToolTip(batch_tooltip)
         batch_spin.valueChanged.connect(lambda value: self._set_group_composite_max_batch_mb(group, int(value)))
+        symmetry = symmetry_spec_from_config(config.get("symmetry"))
+        symmetry_check = QtWidgets.QCheckBox("Apply symmetry")
+        symmetry_check.setObjectName("group_composite_symmetry_enabled")
+        symmetry_check.setChecked(symmetry.enabled)
+        symmetry_check.setToolTip("Apply reciprocal-HKL point-group operations before composite binning; energy is unchanged.")
+        symmetry_check.toggled.connect(lambda checked: self._set_group_composite_symmetry_enabled(group, checked))
+        symmetry_mode = QtWidgets.QComboBox()
+        symmetry_mode.setObjectName("group_composite_symmetry_mode")
+        for label, value in (("Space group", "space_group"), ("Point group", "point_group"), ("Operations", "operations"), ("Generators", "generators")):
+            symmetry_mode.addItem(label, value)
+        symmetry_mode.setCurrentIndex(max(symmetry_mode.findData(symmetry.mode if symmetry.mode != "none" else "space_group"), 0))
+        symmetry_mode.setToolTip("Select the notation used by the symmetry expression.")
+        symmetry_mode.currentIndexChanged.connect(lambda _index, combo=symmetry_mode: self._set_group_composite_symmetry_mode(group, str(combo.currentData())))
+        symmetry_expression = QtWidgets.QLineEdit(symmetry.expression)
+        symmetry_expression.setObjectName("group_composite_symmetry_expression")
+        symmetry_expression.setPlaceholderText("P -1")
+        symmetry_expression.setToolTip("Examples: P -1; -1; x,y,z;-x,-y,-z; rotate(order=3, axis=[1,1,1]).")
+        symmetry_expression.editingFinished.connect(lambda editor=symmetry_expression: self._set_group_composite_symmetry_expression(group, editor.text()))
         option_row.addWidget(fractional_check)
         option_row.addWidget(auto_check)
         option_row.addWidget(mean_label)
@@ -11765,13 +12037,18 @@ class NfitProjectExplorer:
         option_row.addWidget(batch_spin)
         option_row.addStretch(1)
         controls_layout.addLayout(option_row, len(axes) + 1, 0, 1, len(headers))
+        symmetry_row = QtWidgets.QHBoxLayout()
+        symmetry_row.addWidget(symmetry_check)
+        symmetry_row.addWidget(symmetry_mode)
+        symmetry_row.addWidget(symmetry_expression, 1)
+        controls_layout.addLayout(symmetry_row, len(axes) + 2, 0, 1, len(headers))
         status_label = QtWidgets.QLabel(_composite_rebin_status_text(group, config))
         status_label.setObjectName("group_composite_status")
         status_label.setWordWrap(True)
         status_label.setToolTip(
             "Shows whether the cached composite rebin is current. Pending manual rebinning will be forced automatically for fit and viewer operations."
         )
-        controls_layout.addWidget(status_label, len(axes) + 2, 0, 1, len(headers))
+        controls_layout.addWidget(status_label, len(axes) + 3, 0, 1, len(headers))
         action_row = QtWidgets.QHBoxLayout()
         rebin_now_button = QtWidgets.QPushButton("Rebin now")
         rebin_now_button.setObjectName("group_composite_rebin_now")
@@ -11782,7 +12059,7 @@ class NfitProjectExplorer:
         rebin_now_button.clicked.connect(lambda: self.rebin_composite_now(group))
         action_row.addWidget(rebin_now_button)
         action_row.addStretch(1)
-        controls_layout.addLayout(action_row, len(axes) + 3, 0, 1, len(headers))
+        controls_layout.addLayout(action_row, len(axes) + 4, 0, 1, len(headers))
         layout.addWidget(controls)
         return box
 
@@ -11807,7 +12084,8 @@ class NfitProjectExplorer:
             elif title == "Dataset":
                 self.details_layout.addWidget(self._dataset_type_group_box(dataset, group, lines))
                 # Sample environment sits between the Dataset and Axes panels.
-                self.details_layout.addWidget(self.sample_environment_widget)
+                if dataset.data_type != "magnetization":
+                    self.details_layout.addWidget(self.sample_environment_widget)
             elif title == "Metadata":
                 self.details_layout.addWidget(self._dataset_metadata_group_box(dataset))
             else:
@@ -12332,6 +12610,8 @@ class NfitProjectExplorer:
         channels_layout.setContentsMargins(8, 6, 8, 6)
         channels_layout.addWidget(_bold_label(QtWidgets, "Value"), 0, 0)
         channels_layout.addWidget(_bold_label(QtWidgets, "Error"), 0, 1)
+        channels_layout.addWidget(_bold_label(QtWidgets, "Quantity"), 0, 2)
+        channels_layout.addWidget(_bold_label(QtWidgets, "Units"), 0, 3)
         for row, channel in enumerate(config.get("channels", []), start=1):
             value_combo = QtWidgets.QComboBox()
             value_combo.addItems(columns)
@@ -12349,12 +12629,38 @@ class NfitProjectExplorer:
             )
             channels_layout.addWidget(value_combo, row, 0)
             channels_layout.addWidget(error_combo, row, 1)
+            quantity_combo = QtWidgets.QComboBox()
+            from .quantities import QUANTITY_TYPES
+
+            quantity_combo.addItems(QUANTITY_TYPES)
+            quantity_combo.setCurrentText(str(channel.get("quantity_type", "unknown")))
+            quantity_combo.setToolTip(
+                "Physical quantity represented by this channel. Models use it "
+                "to validate that their output is comparable to the data."
+            )
+            quantity_combo.currentTextChanged.connect(
+                lambda text, index=row - 1: self._set_point_list_channel(
+                    dataset, group, index, "quantity_type", text
+                )
+            )
+            channels_layout.addWidget(quantity_combo, row, 2)
+            unit_edit = QtWidgets.QLineEdit(str(channel.get("unit", "")))
+            unit_edit.setToolTip(
+                "Physical unit of the value and uncertainty columns. Unit text "
+                "is normalized and checked when a model predicts this channel."
+            )
+            unit_edit.editingFinished.connect(
+                lambda editor=unit_edit, index=row - 1: self._set_point_list_channel(
+                    dataset, group, index, "unit", editor.text()
+                )
+            )
+            channels_layout.addWidget(unit_edit, row, 3)
             remove_button = QtWidgets.QPushButton("Remove")
             remove_button.setToolTip("Remove this channel definition from the dataset configuration.")
             remove_button.clicked.connect(
                 lambda _checked=False, index=row - 1: self._remove_point_list_channel(dataset, group, index)
             )
-            channels_layout.addWidget(remove_button, row, 2)
+            channels_layout.addWidget(remove_button, row, 4)
         add_button = QtWidgets.QPushButton("Add channel")
         add_button.setToolTip("Add another signal channel using columns from this point-list dataset.")
         add_button.clicked.connect(lambda: self._add_point_list_channel(dataset, group))
@@ -12381,16 +12687,15 @@ class NfitProjectExplorer:
 
         from PySide6 import QtWidgets
 
-        box = QtWidgets.QGroupBox("Absolute units (emu)")
+        box = QtWidgets.QGroupBox("Moment normalization")
         grid = QtWidgets.QGridLayout(box)
         grid.setContentsMargins(8, 6, 8, 6)
-        enable = QtWidgets.QCheckBox("Fit in absolute emu units")
+        enable = QtWidgets.QCheckBox("Use sample mass and molar mass")
         enable.setObjectName("magnetization_absolute_enabled")
         enable.setToolTip(
-            "Predict the moment in absolute emu from the model susceptibility, "
-            "pinning the emu/mol conversion with the sample mass and molar mass "
-            "below, instead of fitting a free per-dataset scale. Leave off to "
-            "fit an arbitrary scale (the default)."
+            "Use the sample mass and formula-unit molar mass to put the measured "
+            "moment and model prediction on an absolute scale. This is required "
+            "for emu/mol and mu_B/f.u. output. Leave off to fit an arbitrary scale."
         )
         enable.setChecked(bool(dataset.parameters.get("absolute_units", False)))
         enable.toggled.connect(
@@ -12399,10 +12704,31 @@ class NfitProjectExplorer:
             )
         )
         grid.addWidget(enable, 0, 0, 1, 2)
+        grid.addWidget(QtWidgets.QLabel("Moment display / fit units"), 1, 0)
+        output_combo = QtWidgets.QComboBox()
+        output_combo.setObjectName("magnetization_output_unit")
+        output_combo.addItem("Sample moment (emu)", "emu")
+        output_combo.addItem("Sample moment (A m^2)", "A m^2")
+        output_combo.addItem("Molar moment (emu/mol)", "emu/mol")
+        output_combo.addItem("Formula-unit moment (mu_B/f.u.)", "mu_B/f.u.")
+        output_index = output_combo.findData(
+            str(dataset.parameters.get("magnetization_output_unit", "emu"))
+        )
+        output_combo.setCurrentIndex(max(output_index, 0))
+        output_combo.setToolTip(
+            "Unit used for the magnetic-moment plot and fit. Formula-unit moment "
+            "is normalized using the sample mass and the formula-unit molar mass."
+        )
+        output_combo.currentIndexChanged.connect(
+            lambda _index, combo=output_combo: self._set_magnetization_absolute(
+                dataset, group, "magnetization_output_unit", combo.currentData()
+            )
+        )
+        grid.addWidget(output_combo, 1, 1)
         mass_label = QtWidgets.QLabel("Sample mass (mg)")
         mass_tooltip = "Sample mass in milligrams, used to convert emu/mol to the measured emu moment."
         mass_label.setToolTip(mass_tooltip)
-        grid.addWidget(mass_label, 1, 0)
+        grid.addWidget(mass_label, 2, 0)
         mass_edit = QtWidgets.QLineEdit(
             _parameter_to_text(dataset.parameters.get("sample_mass_mg", ""))
         )
@@ -12413,11 +12739,11 @@ class NfitProjectExplorer:
                 dataset, group, "sample_mass_mg", _parse_parameter_text(ed.text())
             )
         )
-        grid.addWidget(mass_edit, 1, 1)
+        grid.addWidget(mass_edit, 2, 1)
         molar_label = QtWidgets.QLabel("Molar mass (g/mol)")
         molar_tooltip = "Formula-unit molar mass in grams per mole; sets the amount of substance for the emu/mol conversion."
         molar_label.setToolTip(molar_tooltip)
-        grid.addWidget(molar_label, 2, 0)
+        grid.addWidget(molar_label, 3, 0)
         molar_edit = QtWidgets.QLineEdit(
             _parameter_to_text(dataset.parameters.get("molar_mass_g_mol", ""))
         )
@@ -12428,7 +12754,7 @@ class NfitProjectExplorer:
                 dataset, group, "molar_mass_g_mol", _parse_parameter_text(ed.text())
             )
         )
-        grid.addWidget(molar_edit, 2, 1)
+        grid.addWidget(molar_edit, 3, 1)
         return box
 
     def _set_magnetization_absolute(self, dataset, group, key: str, value) -> None:
@@ -12482,10 +12808,13 @@ class NfitProjectExplorer:
         box = QtWidgets.QGroupBox("Susceptibility (moment / field)")
         grid = QtWidgets.QGridLayout(box)
         grid.setContentsMargins(8, 6, 8, 6)
-        enable = QtWidgets.QCheckBox("Divide moment by field")
+        enable = QtWidgets.QCheckBox("Plot and fit susceptibility")
         enable.setObjectName("point_list_susceptibility_enabled")
         enable.setChecked(bool(susc.get("enabled", False)))
-        enable.setToolTip("Convert a moment channel to susceptibility by dividing by the selected field column.")
+        enable.setToolTip(
+            "Use susceptibility rather than magnetic moment for viewing and fitting. "
+            "The selected moment is divided by the selected applied-field column."
+        )
         enable.toggled.connect(lambda checked: self._set_point_list_susceptibility(dataset, group, "enabled", checked))
         grid.addWidget(enable, 0, 0, 1, 2)
         grid.addWidget(QtWidgets.QLabel("Moment"), 1, 0)
@@ -12506,6 +12835,59 @@ class NfitProjectExplorer:
             lambda text: self._set_point_list_susceptibility(dataset, group, "field", text)
         )
         grid.addWidget(field_combo, 2, 1)
+        grid.addWidget(QtWidgets.QLabel("Moment input unit"), 3, 0)
+        moment_unit_combo = QtWidgets.QComboBox()
+        moment_unit_combo.setObjectName("point_list_moment_input_unit")
+        moment_unit_combo.addItem("emu", "emu")
+        moment_unit_combo.addItem("A m^2", "A m^2")
+        current_moment_unit = str(susc.get("moment_unit") or "emu")
+        moment_unit_index = moment_unit_combo.findData(current_moment_unit)
+        moment_unit_combo.setCurrentIndex(max(moment_unit_index, 0))
+        moment_unit_combo.setToolTip(
+            "Unit in which the selected raw moment column is recorded. MPMS moment data are normally emu."
+        )
+        moment_unit_combo.currentIndexChanged.connect(
+            lambda _index, combo=moment_unit_combo: self._set_point_list_susceptibility(
+                dataset, group, "moment_unit", combo.currentData()
+            )
+        )
+        grid.addWidget(moment_unit_combo, 3, 1)
+        grid.addWidget(QtWidgets.QLabel("Field input unit"), 4, 0)
+        field_unit_combo = QtWidgets.QComboBox()
+        field_unit_combo.setObjectName("point_list_field_input_unit")
+        field_unit_combo.addItem("Oe", "Oe")
+        field_unit_combo.addItem("T", "T")
+        field_unit_combo.addItem("A/m", "A/m")
+        current_field_unit = str(susc.get("field_unit") or "Oe")
+        field_unit_index = field_unit_combo.findData(current_field_unit)
+        field_unit_combo.setCurrentIndex(max(field_unit_index, 0))
+        field_unit_combo.setToolTip(
+            "Unit in which the selected raw applied-field column is recorded. MPMS field data are normally Oe."
+        )
+        field_unit_combo.currentIndexChanged.connect(
+            lambda _index, combo=field_unit_combo: self._set_point_list_susceptibility(
+                dataset, group, "field_unit", combo.currentData()
+            )
+        )
+        grid.addWidget(field_unit_combo, 4, 1)
+        grid.addWidget(QtWidgets.QLabel("Absolute susceptibility units"), 5, 0)
+        unit_combo = QtWidgets.QComboBox()
+        unit_combo.setObjectName("point_list_susceptibility_output_unit")
+        unit_combo.addItem("CGS molar (cm^3/mol)", "cm^3/mol")
+        unit_combo.addItem("SI molar (m^3/mol)", "m^3/mol")
+        unit_index = unit_combo.findData(str(susc.get("output_unit", "cm^3/mol")))
+        unit_combo.setCurrentIndex(max(unit_index, 0))
+        unit_combo.setToolTip(
+            "Output convention used when absolute units are enabled. CGS molar "
+            "susceptibility is numerically cm^3/mol; conversion to rationalized "
+            "SI m^3/mol includes the 4 pi factor."
+        )
+        unit_combo.currentIndexChanged.connect(
+            lambda _index, combo=unit_combo: self._set_point_list_susceptibility(
+                dataset, group, "output_unit", combo.currentData()
+            )
+        )
+        grid.addWidget(unit_combo, 5, 1)
         return box
 
     def _point_list_wavelength_box(self, dataset, group, config) -> Any:
@@ -12558,6 +12940,9 @@ class NfitProjectExplorer:
         channels[index][key] = value
         if key == "value":
             channels[index]["label"] = value
+            if isinstance(dataset.data, PointListData):
+                channels[index]["quantity_type"] = dataset.data.quantity_type(str(value))
+                channels[index]["unit"] = dataset.data.unit(str(value))
         self._after_point_list_changed(dataset, group)
 
     def _add_point_list_channel(self, dataset, group) -> None:
@@ -12852,6 +13237,42 @@ class NfitProjectExplorer:
         batch_spin.valueChanged.connect(
             lambda value: self._set_dataset_rebin_max_batch_mb(dataset, group, int(value))
         )
+        symmetry = symmetry_spec_from_config(config.get("symmetry"))
+        symmetry_check = QtWidgets.QCheckBox("Apply symmetry")
+        symmetry_check.setObjectName("dataset_rebin_symmetry_enabled")
+        symmetry_check.setChecked(symmetry.enabled)
+        symmetry_check.setToolTip(
+            "Transform HKL coordinates by a crystallographic point group before binning. "
+            "Energy is unchanged and space-group translations are ignored."
+        )
+        symmetry_check.toggled.connect(
+            lambda checked: self._set_dataset_rebin_symmetry_enabled(dataset, group, checked)
+        )
+        symmetry_mode = QtWidgets.QComboBox()
+        symmetry_mode.setObjectName("dataset_rebin_symmetry_mode")
+        symmetry_mode.addItem("Space group", "space_group")
+        symmetry_mode.addItem("Point group", "point_group")
+        symmetry_mode.addItem("Operations", "operations")
+        symmetry_mode.addItem("Generators", "generators")
+        symmetry_mode.setCurrentIndex(max(symmetry_mode.findData(symmetry.mode if symmetry.mode != "none" else "space_group"), 0))
+        symmetry_mode.setToolTip(
+            "Choose a space group, point group, semicolon-separated Jones-faithful operations, or geometric generators."
+        )
+        symmetry_mode.currentIndexChanged.connect(
+            lambda _index, combo=symmetry_mode: self._set_dataset_rebin_symmetry_mode(dataset, group, str(combo.currentData()))
+        )
+        symmetry_expression = QtWidgets.QLineEdit(symmetry.expression)
+        symmetry_expression.setObjectName("dataset_rebin_symmetry_expression")
+        symmetry_expression.setPlaceholderText("P -1")
+        symmetry_expression.setToolTip(
+            "Examples: P -1; -1; x,y,z;-x,-y,-z; rotate(order=3, axis=[1,1,1]); mirror(plane=(0,0,1))."
+        )
+        symmetry_expression.editingFinished.connect(
+            lambda editor=symmetry_expression: self._set_dataset_rebin_symmetry_expression(dataset, group, editor.text())
+        )
+        symmetry_preview = QtWidgets.QLabel(self._dataset_rebin_symmetry_preview(dataset, group))
+        symmetry_preview.setObjectName("dataset_rebin_symmetry_preview")
+        symmetry_preview.setToolTip("Resolved reciprocal-HKL operation count and any syntax error.")
         create_button = QtWidgets.QPushButton("Create dataset from rebin")
         create_button.setObjectName("dataset_rebin_create")
         create_button.setEnabled(_dataset_can_rebin(dataset))
@@ -12879,19 +13300,25 @@ class NfitProjectExplorer:
         option_row.addWidget(batch_spin)
         option_row.addStretch(1)
         controls_layout.addLayout(option_row, len(config.get("axes", [])) + 1, 0, 1, last_column + 1)
+        symmetry_row = QtWidgets.QHBoxLayout()
+        symmetry_row.addWidget(symmetry_check)
+        symmetry_row.addWidget(symmetry_mode)
+        symmetry_row.addWidget(symmetry_expression, 1)
+        symmetry_row.addWidget(symmetry_preview)
+        controls_layout.addLayout(symmetry_row, len(config.get("axes", [])) + 2, 0, 1, last_column + 1)
         status_label = QtWidgets.QLabel(_dataset_rebin_status_text(dataset, config))
         status_label.setObjectName("dataset_rebin_status")
         status_label.setWordWrap(True)
         status_label.setToolTip(
             "Shows whether the cached rebinned data is current. Pending manual rebinning will be forced automatically for fit, view, and export operations."
         )
-        controls_layout.addWidget(status_label, len(config.get("axes", [])) + 2, 0, 1, last_column + 1)
+        controls_layout.addWidget(status_label, len(config.get("axes", [])) + 3, 0, 1, last_column + 1)
         action_row = QtWidgets.QHBoxLayout()
         action_row.addWidget(rebin_now_button)
         action_row.addWidget(create_button)
         action_row.addWidget(save_rebin_button)
         action_row.addStretch(1)
-        controls_layout.addLayout(action_row, len(config.get("axes", [])) + 3, 0, 1, last_column + 1)
+        controls_layout.addLayout(action_row, len(config.get("axes", [])) + 4, 0, 1, last_column + 1)
         rebin_layout.addWidget(controls)
         layout.addWidget(rebin_box)
         return group_box
@@ -13038,6 +13465,53 @@ class NfitProjectExplorer:
         config["normalize"] = True
         self._after_dataset_rebin_changed(dataset, group)
 
+    def _dataset_rebin_symmetry_preview(
+        self, dataset: DatasetEntry, group: DataGroup | None
+    ) -> str:
+        config = dataset_rebin_config(dataset)
+        lattice = _dataset_lattice_parameters(dataset)
+        if lattice is None and group is not None:
+            lattice = group.lattice_parameters
+        try:
+            operations = _rebin_symmetry_operations(config, lattice)
+        except (ImportError, ValueError) as exc:
+            return f"Invalid: {exc}"
+        spec = symmetry_spec_from_config(config.get("symmetry"))
+        return "No symmetry" if not spec.enabled else f"{len(operations)} operations"
+
+    def _set_dataset_rebin_symmetry_enabled(
+        self, dataset: DatasetEntry, group: DataGroup | None, checked: bool
+    ) -> None:
+        config = dataset_rebin_config(dataset)
+        payload = config["symmetry"]
+        if checked:
+            payload["mode"] = "space_group"
+            payload["expression"] = str(group.spacegroup if group is not None and group.spacegroup else "P 1")
+        else:
+            payload["mode"] = "none"
+        if group is not None and isinstance(group.lattice_parameters, dict):
+            payload["lattice_parameters"] = copy.deepcopy(group.lattice_parameters)
+        self._after_dataset_rebin_changed(dataset, group)
+
+    def _set_dataset_rebin_symmetry_mode(
+        self, dataset: DatasetEntry, group: DataGroup | None, mode: str
+    ) -> None:
+        config = dataset_rebin_config(dataset)
+        payload = config["symmetry"]
+        payload["mode"] = mode if mode in {"space_group", "point_group", "operations", "generators"} else "space_group"
+        if group is not None and isinstance(group.lattice_parameters, dict):
+            payload["lattice_parameters"] = copy.deepcopy(group.lattice_parameters)
+        self._after_dataset_rebin_changed(dataset, group)
+
+    def _set_dataset_rebin_symmetry_expression(
+        self, dataset: DatasetEntry, group: DataGroup | None, expression: str
+    ) -> None:
+        config = dataset_rebin_config(dataset)
+        config["symmetry"]["expression"] = str(expression).strip()
+        if group is not None and isinstance(group.lattice_parameters, dict):
+            config["symmetry"]["lattice_parameters"] = copy.deepcopy(group.lattice_parameters)
+        self._after_dataset_rebin_changed(dataset, group)
+
     def _set_group_composite_enabled(self, group: DataGroup | _CompositeScope, checked: bool) -> None:
         config = data_group_composite_config(group)
         if bool(config.get("enabled", False)) == bool(checked):
@@ -13082,6 +13556,33 @@ class NfitProjectExplorer:
             return
         config["max_batch_mb"] = value
         config["normalize"] = True
+        self._after_group_composite_changed(group)
+
+    def _set_group_composite_symmetry_enabled(self, group: DataGroup | _CompositeScope, checked: bool) -> None:
+        config = data_group_composite_config(group)
+        payload = config["symmetry"]
+        root = _composite_root(group)
+        payload["mode"] = "space_group" if checked else "none"
+        if checked:
+            payload["expression"] = str(root.spacegroup or "P 1")
+        if isinstance(root.lattice_parameters, dict):
+            payload["lattice_parameters"] = copy.deepcopy(root.lattice_parameters)
+        self._after_group_composite_changed(group)
+
+    def _set_group_composite_symmetry_mode(self, group: DataGroup | _CompositeScope, mode: str) -> None:
+        config = data_group_composite_config(group)
+        config["symmetry"]["mode"] = mode if mode in {"space_group", "point_group", "operations", "generators"} else "space_group"
+        root = _composite_root(group)
+        if isinstance(root.lattice_parameters, dict):
+            config["symmetry"]["lattice_parameters"] = copy.deepcopy(root.lattice_parameters)
+        self._after_group_composite_changed(group)
+
+    def _set_group_composite_symmetry_expression(self, group: DataGroup | _CompositeScope, expression: str) -> None:
+        config = data_group_composite_config(group)
+        config["symmetry"]["expression"] = str(expression).strip()
+        root = _composite_root(group)
+        if isinstance(root.lattice_parameters, dict):
+            config["symmetry"]["lattice_parameters"] = copy.deepcopy(root.lattice_parameters)
         self._after_group_composite_changed(group)
 
     def _set_group_composite_resolution_mode(
@@ -15575,7 +16076,8 @@ def _point_list_summary_lines(data: PointListData) -> list[str]:
         label = str(channel["label"])
         unit = data.unit(str(channel["value"]))
         error = "with error" if channel.get("error") else "no error"
-        lines.append(f"channel {label} ({unit or '-'}) - {error}")
+        quantity = data.channel_quantity_type(label)
+        lines.append(f"channel {label} [{quantity}] ({unit or '-'}) - {error}")
     return lines
 
 

@@ -272,6 +272,7 @@ def bin_mdevent_group(
     max_batch_bytes: int = 192 * 1024 * 1024,
     enforce_memory_limit: bool = True,
     progress_callback: Any | None = None,
+    symmetry_operations: Iterable[np.ndarray] | None = None,
 ) -> MDHistoData:
     """Locally bin event data and a detector-trajectory MDNorm denominator."""
 
@@ -314,6 +315,7 @@ def bin_mdevent_group(
     if np.any(basis[:3, 3] != 0.0) or np.any(basis[3, :3] != 0.0) or basis[3, 3] != 1.0:
         raise ValueError("MDEvent momentum axes cannot mix energy; the energy axis must be [0, 0, 0, 1]")
     basis_inverse = np.linalg.inv(basis)
+    symmetry = _symmetry_matrices(symmetry_operations)
     names = (
         tuple(str(name) for name in axis_names)
         if axis_names is not None
@@ -348,18 +350,20 @@ def bin_mdevent_group(
                         chosen = chosen[detector_values > 0.0]
                     if chosen.size:
                         hkl = chosen[:, 5:8] @ transform.T
-                        coords = np.column_stack((hkl, chosen[:, 8])) @ basis_inverse
-                        flat = _flat_bin_indices(coords, edges, shape)
-                        valid = flat >= 0
-                        data_sum.ravel()[:] += np.bincount(flat[valid], weights=chosen[valid, 0], minlength=data_sum.size)
-                        variance_sum.ravel()[:] += np.bincount(flat[valid], weights=chosen[valid, 1], minlength=data_sum.size)
-                        event_count.ravel()[:] += np.bincount(flat[valid], minlength=data_sum.size)
+                        for operation in symmetry:
+                            transformed_hkl = hkl @ operation.T
+                            coords = np.column_stack((transformed_hkl, chosen[:, 8])) @ basis_inverse
+                            flat = _flat_bin_indices(coords, edges, shape)
+                            valid = flat >= 0
+                            data_sum.ravel()[:] += np.bincount(flat[valid], weights=chosen[valid, 0], minlength=data_sum.size)
+                            variance_sum.ravel()[:] += np.bincount(flat[valid], weights=chosen[valid, 1], minlength=data_sum.size)
+                            event_count.ravel()[:] += np.bincount(flat[valid], minlength=data_sum.size)
                 processed += stop - start
                 if progress_callback is not None:
                     progress_callback({"stage": "mdevent_scan", "iteration": processed, "total": scan_total + 1, "message": f"reading MDEvents {processed}/{scan_total}"})
     if progress_callback is not None:
         progress_callback({"stage": "mdevent_normalization", "iteration": scan_total, "total": scan_total + 1, "message": "calculating detector normalization"})
-    normalization = _trajectory_normalization(group, selected_runs, edges, shape, basis_inverse)
+    normalization = _trajectory_normalization(group, selected_runs, edges, shape, basis_inverse, symmetry)
     if progress_callback is not None:
         progress_callback({"stage": "mdevent_normalization", "iteration": scan_total + 1, "total": scan_total + 1, "message": "MDEvent reduction complete"})
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -393,6 +397,7 @@ def bin_mdevent_group(
             "zero_event_bins_are_measured": True,
             "zero_count_error_model": "feldman_cousins_68_percent_upper_limit_scaled_by_rms_event_weight",
             "event_weight_rms": event_weight_rms,
+            "symmetry_operations_hkl": [operation.tolist() for operation in symmetry],
         },
     )
 
@@ -435,13 +440,14 @@ def _available_memory_bytes():
             return None
 
 
-def _trajectory_normalization(group, datasets, edges, shape, basis_inverse):
+def _trajectory_normalization(group, datasets, edges, shape, basis_inverse, symmetry_operations=None):
     import h5py
 
     config = group.metadata["mdevent"]
     detector_norm = load_detector_normalization(config["normalization_file"]) if config.get("normalization_file") else None
     detector_mask = load_detector_normalization(config["mask_file"]) if config.get("mask_file") else None
     result = np.zeros(shape)
+    symmetry = _symmetry_matrices(symmetry_operations)
     run_payloads = []
     detector_payload = None
     for source_text in sorted({str(dataset.metadata["source_file"]) for dataset in datasets}):
@@ -462,11 +468,12 @@ def _trajectory_normalization(group, datasets, edges, shape, basis_inverse):
                 original_bounds = np.asarray(experiment["logs/processed_histogram_bins/value"][()], dtype=float)
                 gonio = np.asarray(experiment["logs/goniometer/rotation_matrix"][()], dtype=float).reshape(3, 3)
                 ub = np.asarray(config["ub_matrix"], dtype=float)
-                inverse = basis_inverse[:3, :3].T @ np.linalg.inv(gonio @ (2.0 * np.pi * ub))
+                canonical_inverse = np.linalg.inv(gonio @ (2.0 * np.pi * ub))
+                inverses = [basis_inverse[:3, :3].T @ operation @ canonical_inverse for operation in symmetry]
                 if detector_payload is None:
                     detector_payload = (theta, phi, solid)
-                run_payloads.append((inverse, ei, original_bounds, charge))
-                if _MDEVENT_NUMBA is not None:
+                run_payloads.extend((inverse, ei, original_bounds, charge) for inverse in inverses)
+                if _MDEVENT_NUMBA is not None and len(symmetry) == 1:
                     continue
                 for det_index in np.flatnonzero(solid > 0.0):
                     direction = np.array([
@@ -474,11 +481,12 @@ def _trajectory_normalization(group, datasets, edges, shape, basis_inverse):
                         np.sin(theta[det_index]) * np.sin(phi[det_index]),
                         np.cos(theta[det_index]),
                     ])
-                    _accumulate_detector_trajectory(
-                        result, edges, inverse, direction, ei, original_bounds,
-                        charge * solid[det_index],
-                    )
-    if _MDEVENT_NUMBA is not None and detector_payload is not None and run_payloads:
+                    for inverse in inverses:
+                        _accumulate_detector_trajectory(
+                            result, edges, inverse, direction, ei, original_bounds,
+                            charge * solid[det_index],
+                        )
+    if _MDEVENT_NUMBA is not None and detector_payload is not None and run_payloads and len(symmetry) == 1:
         output_size = int(np.prod(shape))
         memory_workers = max(1, (512 * 1024 * 1024) // max(output_size * 8, 1))
         workers = min(_parallel.num_threads(), memory_workers)
@@ -495,6 +503,17 @@ def _trajectory_normalization(group, datasets, edges, shape, basis_inverse):
         )
         result = np.asarray(flat, dtype=float).reshape(shape)
     return result
+
+
+def _symmetry_matrices(operations) -> tuple[np.ndarray, ...]:
+    if operations is None:
+        return (np.eye(3),)
+    matrices = tuple(np.asarray(operation, dtype=float) for operation in operations)
+    if not matrices:
+        return (np.eye(3),)
+    if any(matrix.shape != (3, 3) or not np.all(np.isfinite(matrix)) for matrix in matrices):
+        raise ValueError("symmetry operations must be finite 3x3 HKL matrices")
+    return matrices
 
 
 def _mdevent_axis_name(vector, index):

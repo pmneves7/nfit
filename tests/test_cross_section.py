@@ -6,6 +6,8 @@ from nfit.cross_section import (
     MAGNETIC_GAMMA0_PER_MU_B,
     bose_denominator,
     intensity_from_chipp,
+    chipp_from_cross_section,
+    cross_section_from_chipp,
 )
 
 
@@ -73,3 +75,28 @@ def test_intensity_from_chipp_accepts_array_temperature():
         intensity,
         MAGNETIC_GAMMA0_PER_MU_B**2 / np.pi / bose_denominator(E, temperatures),
     )
+
+
+def test_absolute_cross_section_uses_standard_magnetic_constant_and_round_trips():
+    chipp = np.array([2.0, 3.0])
+    energy = np.array([4.0, 7.0])
+    cross_section = cross_section_from_chipp(
+        chipp, energy, 20.0, form_factor_sq=[0.8, 0.6], polarization=2.0 / 3.0
+    )
+    expected = (
+        MAGNETIC_GAMMA0_PER_MU_B**2
+        / np.pi
+        * np.array([0.8, 0.6])
+        * (2.0 / 3.0)
+        * chipp
+        / bose_denominator(energy, 20.0)
+    )
+    np.testing.assert_allclose(cross_section, expected)
+    recovered = chipp_from_cross_section(
+        cross_section,
+        energy,
+        20.0,
+        form_factor_sq=[0.8, 0.6],
+        polarization=2.0 / 3.0,
+    )
+    np.testing.assert_allclose(recovered, chipp)

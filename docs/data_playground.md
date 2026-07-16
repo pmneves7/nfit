@@ -26,6 +26,24 @@ coverage, and status. Dataset metadata must declare `signal_semantics` as
 
 ## Spectral integration
 
+The **INS absolute conversion** operation creates a derived dataset before any
+integration. It converts a measured signal to either an absolute differential
+cross section in `barn/(sr meV)` or dynamic susceptibility in `mu_B^2/meV`, per
+the selected normalization basis. Supply the measured-signal scale in signal
+units per `barn/(sr meV)` (for example from vanadium or nuclear-Bragg
+normalization), temperature, magnetic form factor, and polarization convention.
+The output records the complete source and target conventions in provenance.
+The converter uses
+
+```text
+d2sigma/dOmega/dE = (kf/ki) (0.07265 barn/mu_B^2)
+                     |f(Q)|^2 P(Q) chi''
+                     / [pi (1 - exp(-E/k_B T))].
+```
+
+The cross section carries steradians; `chi''` does not. A result is marked
+absolute only when its normalization basis is known.
+
 Physical total-moment, QFI, and static-susceptibility results require absolute
 scale, a known normalization basis, and an explicit `spectral_convention`.
 Uncalibrated data may use `weighted_integral_arbitrary_units`.

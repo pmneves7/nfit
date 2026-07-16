@@ -64,12 +64,14 @@ def test_point_list_artifact_round_trip(tmp_path):
         units={"Q": "1/angstrom"}, coordinate_names=["Q"],
         channels=[{"label": "QFI", "value": "QFI", "error": "dQFI"}],
         metadata={"kernel": "qfi"},
+        quantity_types={"Q": "momentum", "QFI": "dynamic_susceptibility", "dQFI": "dynamic_susceptibility"},
     )
     path = tmp_path / "qfi.npz"
     write_dataset_artifact(data, path)
     restored = read_dataset_artifact(path)
     assert restored.channel_values("QFI").tolist() == [0.2, 0.3]
     assert restored.metadata == {"kernel": "qfi"}
+    assert restored.quantity_type("Q") == "momentum"
 
 
 def test_mdhisto_artifact_preserves_axes_and_auxiliary_channels(tmp_path):

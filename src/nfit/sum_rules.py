@@ -62,6 +62,8 @@ _AVOGADRO = 6.02214076e23
 # 1 tesla in oersted (CGS field unit MPMS reports).
 OERSTED_PER_TESLA = 1.0e4
 EMU_PER_MOL_PER_MODEL_CHI = _AVOGADRO * _MU_B_CGS_ERG_PER_G**2 / _MEV_IN_ERG
+# One Bohr magneton per formula unit, expressed as an emu molar moment.
+EMU_PER_MOL_PER_MU_B = _AVOGADRO * _MU_B_CGS_ERG_PER_G
 
 
 def coth_weight(energy_mev: ArrayLike, temperature_K: float) -> FloatArray:
