@@ -11857,9 +11857,48 @@ class NfitProjectExplorer:
             )
         )
         self.details_layout.addWidget(self._dataset_importing_group_box(group))
+        self.details_layout.addWidget(self._group_crystal_symmetry_group_box(group))
         if any(dataset.data_type.startswith("single_crystal") for dataset in group.iter_datasets()):
             self.details_layout.addWidget(self._ub_setup_group_box(group, group))
         self.details_layout.addStretch(1)
+
+    def _group_crystal_symmetry_group_box(self, group: DataGroup) -> Any:
+        """Return the workspace-wide lattice-symmetry controls."""
+
+        from PySide6 import QtWidgets
+
+        box = QtWidgets.QGroupBox("Crystal symmetry")
+        layout = QtWidgets.QGridLayout(box)
+        layout.setColumnStretch(1, 1)
+        label = QtWidgets.QLabel("Space group")
+        tooltip = (
+            "Workspace Hermann-Mauguin space group used by Bragg peak generation and "
+            "Brillouin-zone analyses. Enter an IT number (for example 227) or a Gemmi "
+            "symbol such as 'F d -3 m:2'. CIF imports normalize legacy suffixes such as 'Z'."
+        )
+        label.setToolTip(tooltip)
+        editor = QtWidgets.QLineEdit(str(group.spacegroup or "P 1"))
+        editor.setObjectName("group_spacegroup_editor")
+        editor.setToolTip(tooltip)
+        editor.editingFinished.connect(
+            lambda editor=editor: self._set_group_spacegroup(group, editor.text())
+        )
+        layout.addWidget(label, 0, 0)
+        layout.addWidget(editor, 0, 1)
+        return box
+
+    def _set_group_spacegroup(self, group: DataGroup, text: str) -> None:
+        """Store a user-supplied workspace symmetry expression."""
+
+        value = text.strip() or "P 1"
+        if group.spacegroup == value:
+            return
+        group.spacegroup = value
+        crystal = group.metadata.get("crystal")
+        if isinstance(crystal, dict):
+            crystal["spacegroup"] = value
+        self._mark_dirty()
+        self._sync_details()
 
     def _dataset_importing_group_box(self, group: DataGroup) -> Any:
         from PySide6 import QtWidgets

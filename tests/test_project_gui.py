@@ -5220,6 +5220,22 @@ Ni1 Ni 0 0 0
     assert model.parameters["J1"] == 0.0
 
 
+def test_workspace_spacegroup_editor_updates_bragg_analysis_context(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    group = DataGroup("Datagroup1", spacegroup="F d -3 m:2")
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
+
+    editor = explorer.window.findChild(QtWidgets.QLineEdit, "group_spacegroup_editor")
+    assert editor is not None
+    assert editor.text() == "F d -3 m:2"
+    assert editor.toolTip()
+    editor.setText("227")
+    editor.editingFinished.emit()
+    assert group.spacegroup == "227"
+
+
 def test_generate_model_bond_orbits_requires_magnetic_site():
     from nfit.pipeline import ModelComponentSpec
     from nfit.project_gui import generate_model_bond_orbits, model_crystal_config

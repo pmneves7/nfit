@@ -134,7 +134,15 @@ def crystal_from_cif(path: str) -> dict[str, Any]:
     if not structure.sites:
         raise ValueError(f"CIF file {path!r} defines no atomic sites")
     cell = structure.cell
-    spacegroup = structure.spacegroup_hm or "P 1"
+    # Some legacy CIFs append a setting marker such as ``Z`` to the
+    # Hermann-Mauguin field. Gemmi intentionally does not treat that text as
+    # part of a standard symbol, while the IT number remains unambiguous.
+    # Prefer its reference setting so the serialized project has a valid,
+    # explicit origin choice (for example, ``F d -3 m:2`` for No. 227).
+    try:
+        spacegroup = gemmi.get_spacegroup_reference_setting(structure.spacegroup_number).xhm()
+    except (RuntimeError, ValueError):
+        spacegroup = structure.spacegroup_hm or "P 1"
     sites = [
         {
             "label": site.label or site.type_symbol,

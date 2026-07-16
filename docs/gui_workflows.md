@@ -17,6 +17,11 @@ Tree labels distinguish never-run, fresh, stale, failed, and unavailable results
 See [Analysis Window](data_playground.md) for normalization, coverage, output,
 and script conventions.
 
+Select a workspace to view and edit its **Crystal symmetry / Space group**.
+Bragg peak generation reads this workspace value. Use an International Tables
+number (such as `227`) or a Hermann-Mauguin symbol (such as `F d -3 m:2`);
+CIF imports normalize legacy suffixes such as `F d -3 m Z` automatically.
+
 ## Launch
 
 After installing the package in the `nfit` environment, launch the project
