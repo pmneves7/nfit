@@ -17,6 +17,7 @@ from .analysis.artifacts import read_dataset_artifact
 from .analysis.fingerprint import dataset_entry_fingerprint
 from .analysis.runner import execute_to_artifacts
 from .pipeline import DatasetEntry, DatasetGroup
+from .quantities import display_unit
 
 
 class DataPlaygroundWindow:
@@ -323,7 +324,7 @@ class DataPlaygroundWindow:
                     if output.scalar_uncertainty is not None:
                         lines[-1] += f" +/- {output.scalar_uncertainty:.2g}"
                     if output.unit:
-                        lines[-1] += f" {output.unit}"
+                        lines[-1] += f" {display_unit(output.unit)}"
             self.results.setPlainText("\n".join(lines + result.warnings))
             self.diagnostics.setPlainText(json.dumps(result.diagnostics, indent=2, sort_keys=True))
             self.provenance.setPlainText(json.dumps({"recipe_hash": result.recipe_hash, "input_fingerprints": result.input_fingerprints}, indent=2, sort_keys=True))

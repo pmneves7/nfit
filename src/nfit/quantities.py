@@ -76,6 +76,19 @@ def normalize_unit(unit: str | None) -> str:
     return _UNIT_ALIASES.get(text.lower(), text)
 
 
+def display_unit(unit: str | None) -> str:
+    """Return a publication-style label without changing stored unit keys."""
+
+    normalized = normalize_unit(unit)
+    labels = {
+        "cm^3/mol": "emu/(mol Oe)",
+        "mol/cm^3": "mol Oe/emu",
+        "mu_B/f.u.": "μ$_{B}$/f.u.",
+        "mu_B^2/meV": "μ$_{B}^2$/meV",
+    }
+    return labels.get(normalized, normalized)
+
+
 def infer_quantity_type(name: str, unit: str = "") -> str:
     """Infer a conservative quantity type from a column name and unit."""
 

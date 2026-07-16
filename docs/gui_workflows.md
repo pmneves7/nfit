@@ -488,7 +488,7 @@ The **Plot and fit susceptibility** control chooses the fitted observable. Off,
 the viewer and bulk model use the magnetic-moment channel; on, both use moment
 divided by the selected field. With absolute units enabled, nfit additionally
 divides by the imported or edited number of moles and displays either CGS molar
-susceptibility (`cm^3/mol`) or rationalized SI (`m^3/mol`). The CGS-to-SI
+susceptibility (`emu/(mol Oe)`, stored canonically as `cm^3/mol`) or rationalized SI (`m^3/mol`). The CGS-to-SI
 conversion is `chi_SI = 4 pi 10^-6 chi_CGS`; it is not a prefix-only unit
 conversion. MPMS `emu` and `Oe` columns are converted explicitly rather than
 being treated as SI quantities.
@@ -501,12 +501,12 @@ The magnetization panel also declares the **Moment input unit** (`emu` or
 `A m^2`) and **Field input unit** (`Oe`, `T`, or `A/m`), so a file with an
 unusual convention is interpreted correctly. Its **Moment display / fit
 units** selector can retain the sample moment, convert it to `A m^2`, report a
-molar moment (`emu/mol`), or normalize it to `mu_B/f.u.`. Formula-unit output
+molar moment (`emu/mol`), or normalize it to `μ<sub>B</sub>/f.u.`. Formula-unit output
 requires the sample mass and formula-unit molar mass and is used consistently
 by both the viewer and the bulk-model fit.
 When **Plot and fit susceptibility** is selected, the viewer shows the derived
 susceptibility channel; choose **Moment** in the data-viewer channel selector
-to inspect the simultaneously available `emu/mol` or `mu_B/f.u.` moment.
+to inspect the simultaneously available `emu/mol` or `μ<sub>B</sub>/f.u.` moment.
 
 When the data group defines lattice parameters, they are attached to the fit
 points automatically so form factors and |Q|-dependent models work without

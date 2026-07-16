@@ -13045,7 +13045,7 @@ class NfitProjectExplorer:
         output_combo.addItem("Sample moment (emu)", "emu")
         output_combo.addItem("Sample moment (A m^2)", "A m^2")
         output_combo.addItem("Molar moment (emu/mol)", "emu/mol")
-        output_combo.addItem("Formula-unit moment (mu_B/f.u.)", "mu_B/f.u.")
+        output_combo.addItem("Formula-unit moment (μ_B/f.u.)", "mu_B/f.u.")
         output_index = output_combo.findData(
             str(dataset.parameters.get("magnetization_output_unit", "emu"))
         )
@@ -13208,7 +13208,7 @@ class NfitProjectExplorer:
         grid.addWidget(QtWidgets.QLabel("Absolute susceptibility units"), 5, 0)
         unit_combo = QtWidgets.QComboBox()
         unit_combo.setObjectName("point_list_susceptibility_output_unit")
-        unit_combo.addItem("CGS molar (cm^3/mol)", "cm^3/mol")
+        unit_combo.addItem("CGS molar (emu/(mol Oe))", "cm^3/mol")
         unit_combo.addItem("SI molar (m^3/mol)", "m^3/mol")
         unit_index = unit_combo.findData(str(susc.get("output_unit", "cm^3/mol")))
         unit_combo.setCurrentIndex(max(unit_index, 0))

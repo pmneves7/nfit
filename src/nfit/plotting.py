@@ -7,6 +7,7 @@ from numpy.typing import ArrayLike
 
 from .dataset import PointData4D, PointListData
 from .mdhisto import MDHistoData, mdhisto_measured_bins
+from .quantities import display_unit
 
 
 def _edges_from_centers(centers: np.ndarray) -> np.ndarray:
@@ -1226,9 +1227,9 @@ class MDHistoSliceViewer:
     def _axis_label(self, dim: int) -> str:
         if getattr(self, "is_point_list", False):
             unit = self.data.unit(self.x_key)
-            return f"{self.x_key} ({unit})" if unit else self.x_key
+            return f"{self.x_key} ({display_unit(unit)})" if unit else self.x_key
         axis = self.data.axes[dim]
-        return f"{axis.name} ({axis.units})" if axis.units else axis.name
+        return f"{axis.name} ({display_unit(axis.units)})" if axis.units else axis.name
 
     def _resolve_channel(self, channel: str) -> str:
         normalized = self.CHANNEL_ALIASES.get(str(channel), str(channel))
@@ -1239,7 +1240,7 @@ class MDHistoSliceViewer:
     def _channel_label(self) -> str:
         if getattr(self, "is_point_list", False):
             unit = self._point_channel_unit()
-            return f"{self.channel} ({unit})" if unit else self.channel
+            return f"{self.channel} ({display_unit(unit)})" if unit else self.channel
         return self.CHANNEL_LABELS.get(self.channel, self.channel)
 
     def _display_values(self, view: dict[str, np.ndarray]) -> np.ndarray:

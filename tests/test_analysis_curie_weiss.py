@@ -129,4 +129,4 @@ def test_curie_weiss_diagnostic_viewer_shows_fit_and_window(monkeypatch):
     assert len([line for line in viewer.ax_image.lines if line.get_linestyle() == "--"]) == 2
     assert len([line for line in viewer.ax_image.lines if line.get_label() == "fit"]) == 1
     viewer._set_channel("Inverse susceptibility")
-    assert viewer.model._channel_label() == "Inverse susceptibility (mol/cm^3)"
+    assert viewer.model._channel_label() == "Inverse susceptibility (mol Oe/emu)"

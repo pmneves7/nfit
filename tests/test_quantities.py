@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from nfit.quantities import convert_quantity, infer_quantity_type, normalize_unit
+from nfit.quantities import convert_quantity, display_unit, infer_quantity_type, normalize_unit
 
 
 def test_cgs_si_bulk_conversions_include_four_pi():
@@ -23,3 +23,8 @@ def test_inference_and_unknown_conversion_are_conservative():
     assert infer_quantity_type("Inverse susceptibility") == "inverse_bulk_susceptibility"
     with pytest.raises(ValueError, match="cannot convert"):
         convert_quantity([1.0], "magnetic_moment", "counts", "emu")
+
+
+def test_display_units_use_conventional_cgs_and_bohr_magneton_labels():
+    assert display_unit("cm^3/mol") == "emu/(mol Oe)"
+    assert display_unit("mu_B/f.u.") == "μ$_{B}$/f.u."
