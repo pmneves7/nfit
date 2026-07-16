@@ -30,7 +30,7 @@ class DataPlaygroundWindow:
         self.group = None
         self.parameter_widgets: dict[str, Any] = {}
         self.window = QtWidgets.QMainWindow(explorer.window)
-        self.window.setWindowTitle("nfit Data Playground")
+        self.window.setWindowTitle("nfit Analysis Window")
         self.window.resize(900, 650)
         central = QtWidgets.QWidget()
         self.window.setCentralWidget(central)
@@ -261,7 +261,7 @@ class DataPlaygroundWindow:
         dataset_id = self.dataset_combo.currentData()
         dataset = next(item for item in self.group.iter_datasets() if item.id == dataset_id)
         if dataset.data is None:
-            QtWidgets.QMessageBox.warning(self.window, "Data Playground", "Load the selected dataset before running the analysis.")
+            QtWidgets.QMessageBox.warning(self.window, "Analysis Window", "Load the selected dataset before running the analysis.")
             return False
         analysis_data = dataset.data
         if self.operation_combo.currentData() == "curie_weiss_fit":
@@ -286,7 +286,7 @@ class DataPlaygroundWindow:
             secondary_id = self.secondary_dataset_combo.currentData()
             secondary = next((item for item in self.group.iter_datasets() if item.id == secondary_id), None)
             if secondary is None or secondary.data is None:
-                QtWidgets.QMessageBox.warning(self.window, "Data Playground", "Select and load a secondary H, K, L peak-table dataset.")
+                QtWidgets.QMessageBox.warning(self.window, "Analysis Window", "Select and load a secondary H, K, L peak-table dataset.")
                 return False
             parameters["peak_table_dataset_id"] = secondary.id
             analysis_inputs.append(AnalysisInput(secondary.id, secondary.name, secondary.data, context, dataset_entry_fingerprint(secondary, self.group)))

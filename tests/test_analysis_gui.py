@@ -35,6 +35,33 @@ def test_analysis_tree_and_playground_controls_have_tooltips(monkeypatch):
     playground.window.close()
 
 
+def test_analyses_branch_new_analysis_button_opens_fresh_recipe(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+    group = DataGroup("Workspace1", datasets=[DatasetEntry("scan", None)])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    analyses_item = explorer.tree.topLevelItem(0).child(3)
+    explorer.tree.setCurrentItem(analyses_item)
+
+    button = explorer.new_analysis_button
+    assert button is not None
+    assert not button.isHidden()
+    assert button.toolTip()
+    button.click()
+
+    playground = explorer._analysis_window
+    assert playground is not None
+    assert playground.group is group
+    assert playground.window.windowTitle() == "nfit Analysis Window"
+    assert playground.analysis_combo.currentData() is None
+    assert playground.name_edit.text() == "Analysis"
+    assert explorer.context_menu_action_names(analyses_item) == [
+        "Open Analysis Window",
+        "New analysis",
+    ]
+    playground.window.close()
+
+
 def test_analysis_tree_marks_changed_inputs_stale(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")

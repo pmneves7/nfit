@@ -2536,7 +2536,7 @@ def test_project_explorer_context_menu_actions_and_source_change(monkeypatch, tm
         "Enable",
         "Rename",
             "Delete",
-            "Open in Data Playground",
+            "Open Analysis Window",
             "View in data viewer",
         "Show file location",
         "Change file source",

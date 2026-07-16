@@ -8225,6 +8225,7 @@ class NfitProjectExplorer:
         self.details_layout = None
         self.import_dataset_button = None
         self.add_model_button = None
+        self.new_analysis_button = None
         self.view_slice_button = None
         self.load_dataset_button = None
         self.add_mask_button = None
@@ -10595,6 +10596,7 @@ class NfitProjectExplorer:
         actions_row = QtWidgets.QHBoxLayout()
         self.import_dataset_button = QtWidgets.QPushButton("Import dataset")
         self.add_model_button = QtWidgets.QPushButton("Add model")
+        self.new_analysis_button = QtWidgets.QPushButton("New analysis")
         self.view_slice_button = QtWidgets.QPushButton("View in data viewer")
         self.load_dataset_button = QtWidgets.QPushButton("Load now")
         self.add_mask_button = QtWidgets.QPushButton("Add mask")
@@ -10602,6 +10604,9 @@ class NfitProjectExplorer:
         self.save_dataset_button = QtWidgets.QPushButton("Save dataset")
         self.import_dataset_button.setToolTip("Import one or more data files into the selected workspace or dataset group.")
         self.add_model_button.setToolTip("Add a new model component to the selected workspace.")
+        self.new_analysis_button.setToolTip(
+            "Open the Analysis Window for this workspace with a fresh analysis recipe."
+        )
         self.view_slice_button.setToolTip("Open or refresh the data viewer for the selected workspace or dataset.")
         self.load_dataset_button.setToolTip("Load this dataset from disk now so its axes, data, and metadata are available.")
         self.add_mask_button.setToolTip("Create a new mask under the selected dataset or shared mask folder.")
@@ -10609,6 +10614,7 @@ class NfitProjectExplorer:
         self.save_dataset_button.setToolTip("Export the selected dataset, including current nfit processing, to a data file.")
         self.import_dataset_button.clicked.connect(self.import_dataset_dialog)
         self.add_model_button.clicked.connect(self.add_model_to_selection)
+        self.new_analysis_button.clicked.connect(self.new_analysis_for_selection)
         self.view_slice_button.clicked.connect(self.open_slice_viewer_for_selection)
         self.load_dataset_button.clicked.connect(self.load_dataset_for_selection)
         self.add_mask_button.clicked.connect(self.add_mask_to_selection)
@@ -10616,6 +10622,7 @@ class NfitProjectExplorer:
         self.save_dataset_button.clicked.connect(self.save_dataset_for_selection)
         actions_row.addWidget(self.import_dataset_button)
         actions_row.addWidget(self.add_model_button)
+        actions_row.addWidget(self.new_analysis_button)
         actions_row.addWidget(self.view_slice_button)
         actions_row.addWidget(self.load_dataset_button)
         actions_row.addWidget(self.add_mask_button)
@@ -11264,6 +11271,7 @@ class NfitProjectExplorer:
         self._sync_selected_state_controls(role, entry, mask, model)
         self.import_dataset_button.setVisible(can_import)
         self.add_model_button.setVisible(can_add_model)
+        self.new_analysis_button.setVisible(role == "analyses" and group is not None)
         self.view_slice_button.setVisible(
             role in {"group", "datasets", "dataset", "masks", "mask", "dataset_group", "group_masks", "group_mask"}
         )
@@ -14473,7 +14481,9 @@ class NfitProjectExplorer:
             specs.append(("Rename", True))
             specs.append(("Delete", True))
         if role in {"group", "datasets", "dataset", "analyses", "analysis", "analysis_output"}:
-            specs.append(("Open in Data Playground", True))
+            specs.append(("Open Analysis Window", True))
+        if role == "analyses":
+            specs.append(("New analysis", True))
         if role in {"group", "datasets", "dataset", "masks", "mask", "dataset_group", "group_masks", "group_mask", "analysis_output"}:
             output = self._analysis_output_roles.get(id(item)) if role == "analysis_output" else None
             specs.append(("View in data viewer", role != "analysis_output" or bool(output and output.dataset_id)))
@@ -14507,7 +14517,8 @@ class NfitProjectExplorer:
         menu = QtWidgets.QMenu(self.tree)
         menu.setToolTipsVisible(True)
         actions = {
-            "Open in Data Playground": self.open_data_playground_for_selection,
+            "Open Analysis Window": self.open_data_playground_for_selection,
+            "New analysis": self.new_analysis_for_selection,
             "Copy": self.copy_selected,
             "Paste": self.paste_into_selection,
             "Rename": self.rename_selected,
@@ -14528,7 +14539,8 @@ class NfitProjectExplorer:
             "Disable": lambda: self._set_selected_enabled(False),
         }
         tooltips = {
-            "Open in Data Playground": "Create, configure, run, and inspect non-fitting dataset analyses.",
+            "Open Analysis Window": "Create, configure, run, and inspect non-fitting dataset analyses.",
+            "New analysis": "Open the Analysis Window with a fresh analysis recipe for this workspace.",
             "Copy": "Copy the selected dataset or mask so it can be pasted elsewhere in the project.",
             "Paste": "Paste the copied dataset or mask into the selected compatible destination.",
             "Rename": "Rename the selected tree item.",
@@ -14580,6 +14592,17 @@ class NfitProjectExplorer:
         self._analysis_window.show()
         self._analysis_window.raise_()
         return self._analysis_window
+
+    def new_analysis_for_selection(self) -> Any | None:
+        """Open a fresh Analysis Window recipe for the selected Analyses branch."""
+
+        group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        if role != "analyses" or group is None:
+            return None
+        playground = self.open_data_playground_for_selection()
+        if playground is not None:
+            playground.new_analysis()
+        return playground
 
     def _analysis_display_status(self, group: DataGroup, analysis: AnalysisEntry) -> str:
         if analysis.result is None:

@@ -1,8 +1,8 @@
-# Data Playground
+# Analysis Window
 
-The Data Playground runs non-fitting operations on reduced datasets while
+The Analysis Window runs non-fitting operations on reduced datasets while
 keeping inputs unchanged. Open it from a workspace, dataset, or `Analyses` node
-with **Open in Data Playground**. Successful dataset-like results appear in
+with **Open Analysis Window**. Successful dataset-like results appear in
 `Datasets / Derived data`; the authoritative recipe remains under `Analyses`.
 
 Projects must be saved before a run. Array outputs live in

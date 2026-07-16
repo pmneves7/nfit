@@ -5,15 +5,16 @@ to make common exploratory work easier without replacing scripts: every GUI
 operation should correspond to a readable project file or a Python operation
 that can be repeated later.
 
-## Data Playground analyses
+## Analysis Window
 
-The project tree includes an `Analyses` branch after `Fits`. Use **Open in Data
-Playground** on a workspace, dataset, or analysis node for non-fitting Bragg and
-spectral operations. Recipes are non-destructive, run through the background
-task framework, and create linked `Derived data` entries. Tree labels
-distinguish never-run, fresh, stale, failed, and unavailable results.
+The project tree includes an `Analyses` branch after `Fits`. Select it and use
+**New analysis** to open a fresh Analysis Window recipe for that workspace, or
+use **Open Analysis Window** on a workspace, dataset, or analysis node for
+non-fitting Bragg and spectral operations. Recipes are non-destructive, run
+through the background task framework, and create linked `Derived data` entries.
+Tree labels distinguish never-run, fresh, stale, failed, and unavailable results.
 
-See [Data Playground](data_playground.md) for normalization, coverage, output,
+See [Analysis Window](data_playground.md) for normalization, coverage, output,
 and script conventions.
 
 ## Launch
