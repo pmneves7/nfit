@@ -42,8 +42,9 @@ from any historical fit result, including after reloading a project.
    16/84 percentiles when emcee sampling ran. When the fit result's posterior
    display choices are enabled, the report instead uses asymmetric emcee
    16/84 uncertainties and/or the selected highest-log-probability emcee sample
-   as its displayed best fit. These choices are display-only and do not alter
-   the underlying least-squares result.
+   as its displayed best fit. Selecting the best sample also applies it to the
+   live selected model; the saved least-squares result remains unchanged and is
+   restored when the selection is cleared.
 5. **Physics diagnostics** — the per-dataset derived quantities
    ($\mu_{\text{eff}}^2$, static susceptibilities, distance to instability,
    closure internals).

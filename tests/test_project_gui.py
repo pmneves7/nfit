@@ -1786,8 +1786,9 @@ def test_posterior_rerun_without_existing_samples_does_not_prompt(monkeypatch):
     assert len(starts) == 1
 
 
-def test_best_posterior_sample_display_does_not_create_current_state(monkeypatch):
+def test_best_posterior_sample_updates_live_model_and_restores_lm_values(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtGui = pytest.importorskip("PySide6.QtGui")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
     dataset = DatasetEntry("first", _tiny_mdhisto_data(2.0))
@@ -1795,6 +1796,7 @@ def test_best_posterior_sample_display_does_not_create_current_state(monkeypatch
     model = create_model_component(group)
     model.parameters["constant"] = 1.0
     model.fit_parameters["constant"] = True
+    model.limits["constant"] = [0.0, 2.0]
     parameter_name = f"{model.name}.constant"
     chain = np.array([[[1.0]], [[2.0]]], dtype=float)
     log_probability_chain = np.array([[-0.5], [0.0]], dtype=float)
@@ -1824,6 +1826,12 @@ def test_best_posterior_sample_display_does_not_create_current_state(monkeypatch
     )
     group.fits = [result]
     explorer = NfitProjectExplorer(NfitProject([group]))
+    refreshed_groups = []
+    monkeypatch.setattr(
+        explorer,
+        "_request_overlay_refresh",
+        lambda refreshed_group: refreshed_groups.append(refreshed_group),
+    )
 
     fit_item = explorer.tree.topLevelItem(0).child(2).child(0)
     explorer.tree.setCurrentItem(fit_item)
@@ -1845,7 +1853,7 @@ def test_best_posterior_sample_display_does_not_create_current_state(monkeypatch
     assert use_best_sample is not None
     use_best_sample.setChecked(True)
 
-    assert model.parameters["constant"] == pytest.approx(1.0)
+    assert model.parameters["constant"] == pytest.approx(2.0)
     assert [fit.kind for fit in group.fits] == ["result"]
     display = result.metadata[project_gui.POSTERIOR_DISPLAY_KEY]
     assert display["use_best_sample"] is True
@@ -1854,7 +1862,22 @@ def test_best_posterior_sample_display_does_not_create_current_state(monkeypatch
     assert project_gui._fit_results_rows(result)[0]["value"] == "2"
     result_table = explorer.window.findChild(QtWidgets.QTableWidget, "fit_results_table")
     assert result_table.horizontalHeaderItem(2).text() == "68% error"
+    assert result_table.item(0, 1).foreground().color() == QtGui.QColor("#ff9c94")
     assert explorer._active_fit_entry(group) is result
+    assert refreshed_groups and all(refreshed_group is group for refreshed_group in refreshed_groups)
+    refresh_count = len(refreshed_groups)
+
+    model_item = explorer.tree.topLevelItem(0).child(1).child(0)
+    explorer.tree.setCurrentItem(model_item)
+    value_editor = explorer.window.findChild(
+        QtWidgets.QLineEdit, "model_parameter_value_constant"
+    )
+    assert value_editor is not None
+    assert "#c0392b" in value_editor.styleSheet()
+
+    explorer._set_posterior_display_option(group, result, "use_best_sample", False)
+    assert model.parameters["constant"] == pytest.approx(1.0)
+    assert len(refreshed_groups) == refresh_count + 1
 
 
 def test_posterior_display_uses_asymmetric_intervals_and_correlations():

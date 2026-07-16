@@ -1,0 +1,236 @@
+"""Backend plot recipes shared by saved plots, the data viewer, and scripts."""
+
+from __future__ import annotations
+
+from dataclasses import asdict
+from pathlib import Path
+from pprint import pformat
+from typing import Any
+
+import numpy as np
+
+from .mdhisto import MDHistoData
+from .pipeline import PlotEntry, PlotSourceRef
+from .plotting import plot_mdhisto_fit_comparison, plot_mdhisto_line, plot_mdhisto_slice
+
+PLOT_TYPE_LABELS = {
+    "mdhisto_slice": "MDHisto slice",
+    "mdhisto_line": "MDHisto line",
+    "fit_comparison": "Data, fit, and residual",
+    "fit_covariance": "Fit covariance or correlation",
+}
+
+
+def new_plot_entry(
+    name: str,
+    dataset_id: str | None,
+    settings: dict[str, Any],
+    *,
+    plot_type: str,
+    fit_id: str | None = None,
+) -> PlotEntry:
+    """Create a plot entry using only stable source identifiers."""
+
+    if plot_type not in PLOT_TYPE_LABELS:
+        raise ValueError(f"unknown plot type {plot_type!r}")
+    return PlotEntry(
+        name=name,
+        type=plot_type,
+        sources=[PlotSourceRef(dataset_id=dataset_id, fit_id=fit_id)],
+        settings=dict(settings),
+    )
+
+
+def render_plot(entry: PlotEntry, data: MDHistoData | None = None, *, fit_entry: Any | None = None):
+    """Return the Matplotlib figure for a saved MDHisto plot without Qt."""
+
+    settings = dict(entry.settings)
+    plot_type = entry.type
+    if plot_type == "fit_covariance":
+        if fit_entry is None:
+            raise ValueError("fit covariance plot requires a fit result")
+        figure = _render_fit_covariance(fit_entry, settings)
+    elif data is None:
+        raise ValueError("saved plot requires MDHisto data")
+    elif plot_type == "mdhisto_line":
+        axis = settings.get("x_dim")
+        ax = plot_mdhisto_line(
+            data,
+            axis_dim=axis,
+            channel=settings.get("channel", "signal"),
+            smoothing_sigma=float(settings.get("smoothing_x", 0.0)),
+        )
+        figure = ax.figure
+    elif plot_type == "fit_comparison":
+        fit = _channel_data(data, "fit")
+        residual = _channel_data(data, "residual")
+        figure = plot_mdhisto_fit_comparison(
+            data,
+            fit,
+            residual=residual,
+            show_residual=bool(settings.get("show_residual", True)),
+            x_dim=settings.get("x_dim", -1),
+            y_dim=settings.get("y_dim", 0),
+            channel=settings.get("channel", "signal"),
+            selections=_selections(settings),
+            integrate_checks=_integrate_checks(settings),
+            cmap=settings.get("cmap", "viridis"),
+            color_scale=settings.get("color_scale", "linear"),
+            auto_limits=settings.get("auto_limits", "min/max"),
+            figsize=tuple(settings.get("figsize", (8.0, 6.5))),
+        )
+    elif plot_type == "mdhisto_slice":
+        figure = plot_mdhisto_slice(
+            data,
+            x_dim=settings.get("x_dim", -1),
+            y_dim=settings.get("y_dim", 0),
+            channel=settings.get("channel", "signal"),
+            selections=_selections(settings),
+            integrate_checks=_integrate_checks(settings),
+            cmap=settings.get("cmap", "viridis"),
+            color_scale=settings.get("color_scale", "linear"),
+            auto_limits=settings.get("auto_limits", "min/max"),
+            autoscale=bool(settings.get("autoscale", True)),
+            manual_vmin=settings.get("manual_vmin"),
+            manual_vmax=settings.get("manual_vmax"),
+            smoothing_sigma_x=float(settings.get("smoothing_x", 0.0)),
+            smoothing_sigma_y=float(settings.get("smoothing_y", 0.0)),
+            xlim=_pair(settings.get("xlim")),
+            ylim=_pair(settings.get("ylim")),
+            font_size=float(settings.get("font_size", 12.0)),
+            axes_linewidth=float(settings.get("axis_linewidth", 1.5)),
+            show_histogram_axes=bool(settings.get("show_histogram_axes", False)),
+            roi_extents=_quad(settings.get("roi_extents")),
+            xcut_percent=float(settings.get("xcut_percent", 20.0)),
+            ycut_percent=float(settings.get("ycut_percent", 16.0)),
+            figsize=tuple(settings.get("figsize", (8.0, 6.5))),
+        )
+    else:
+        raise ValueError(f"unsupported plot type {plot_type!r}")
+    _apply_presentation(figure, settings)
+    return figure
+
+
+def plot_script(entry: PlotEntry, *, project_path: str | Path) -> str:
+    """Generate an editable backend-only Python script for a saved plot."""
+
+    source = entry.sources[0] if entry.sources else PlotSourceRef()
+    settings = pformat(entry.settings, sort_dicts=False, width=88)
+    return "\n".join(
+        [
+            "from pathlib import Path",
+            "",
+            "from nfit import load_project, render_project_plot",
+            "",
+            f"PROJECT_PATH = Path({str(project_path)!r})",
+            f"PLOT_ID = {entry.id!r}",
+            f"DATASET_ID = {source.dataset_id!r}",
+            f"PLOT_SETTINGS = {settings}",
+            "",
+            "def make_figure():",
+            "    project = load_project(PROJECT_PATH)",
+            "    # The project resolves masks, scale factors, derived data, and fit channels.",
+            "    return render_project_plot(project, PLOT_ID, settings=PLOT_SETTINGS)",
+            "",
+            "if __name__ == '__main__':",
+            "    figure = make_figure()",
+            "    figure.savefig('plot.png', dpi=300)",
+            "",
+        ]
+    )
+
+
+def plot_entry_to_dict(entry: PlotEntry) -> dict[str, Any]:
+    """Return a JSON-ready plot entry representation."""
+
+    payload = asdict(entry)
+    payload["sources"] = [asdict(source) for source in entry.sources]
+    return payload
+
+
+def plot_entry_from_dict(payload: dict[str, Any]) -> PlotEntry:
+    """Restore a plot entry, tolerating early project files without IDs."""
+
+    return PlotEntry(
+        name=str(payload.get("name", "Plot")),
+        type=str(payload.get("type", "mdhisto_slice")),
+        sources=[PlotSourceRef(**source) for source in payload.get("sources", []) if isinstance(source, dict)],
+        settings=dict(payload.get("settings", {})),
+        renderer_version=int(payload.get("renderer_version", 1)),
+        source_fingerprints=dict(payload.get("source_fingerprints", {})),
+        metadata=dict(payload.get("metadata", {})),
+        id=str(payload.get("id") or PlotEntry("").id),
+    )
+
+
+def _channel_data(data: MDHistoData, name: str) -> MDHistoData:
+    channel = data.auxiliary_channels.get(name)
+    if channel is None:
+        raise ValueError(f"plot requires a stored {name!r} channel")
+    return MDHistoData(
+        data.axes,
+        channel.values,
+        channel.errors if channel.errors is not None else data.errors,
+        data.mask,
+        data.num_events,
+        metadata=dict(data.metadata),
+    )
+
+
+def _selections(settings: dict[str, Any]) -> dict[int, tuple[float, float]]:
+    return {int(dim): tuple(values) for dim, values in dict(settings.get("selections", {})).items()}
+
+
+def _integrate_checks(settings: dict[str, Any]) -> dict[int, bool]:
+    return {int(dim): bool(value) for dim, value in dict(settings.get("integrate_checks", {})).items()}
+
+
+def _pair(value: Any) -> tuple[float, float] | None:
+    return tuple(value) if isinstance(value, (list, tuple)) and len(value) == 2 else None
+
+
+def _quad(value: Any) -> tuple[float, float, float, float] | None:
+    return tuple(value) if isinstance(value, (list, tuple)) and len(value) == 4 else None
+
+
+def _apply_presentation(figure: Any, settings: dict[str, Any]) -> None:
+    title = str(settings.get("title", "")).strip()
+    if title:
+        figure.axes[0].set_title(title)
+    xlabel = str(settings.get("xlabel", "")).strip()
+    ylabel = str(settings.get("ylabel", "")).strip()
+    if xlabel:
+        figure.axes[0].set_xlabel(xlabel)
+    if ylabel:
+        figure.axes[0].set_ylabel(ylabel)
+
+
+def _render_fit_covariance(fit_entry: Any, settings: dict[str, Any]):
+    """Draw a fit covariance/correlation matrix from the persisted fit result."""
+
+    import matplotlib.pyplot as plt
+
+    goodness = getattr(fit_entry, "goodness", {})
+    covariance = goodness.get("covariance", {}) if isinstance(goodness, dict) else {}
+    names = [str(name) for name in covariance.get("variables", [])]
+    matrix = covariance.get("matrix")
+    title = "Covariance"
+    if matrix is None:
+        matrix = covariance.get("correlation")
+        title = "Correlation"
+        if isinstance(matrix, dict):
+            names = names or [str(name) for name in matrix]
+            matrix = [[dict(matrix.get(row, {})).get(col, np.nan) for col in names] for row in names]
+    array = np.asarray(matrix, dtype=float)
+    if array.ndim != 2 or array.shape[0] != array.shape[1]:
+        raise ValueError("fit result does not contain a square covariance or correlation matrix")
+    if len(names) != array.shape[0]:
+        names = [f"p{index + 1}" for index in range(array.shape[0])]
+    figure, axes = plt.subplots(figsize=tuple(settings.get("figsize", (7.0, 6.0))))
+    limit = 1.0 if title == "Correlation" else max(1.0, float(np.nanmax(np.abs(array))))
+    image = axes.imshow(array, cmap="coolwarm", vmin=-limit, vmax=limit)
+    axes.set_xticks(np.arange(len(names)), names, rotation=45, ha="right")
+    axes.set_yticks(np.arange(len(names)), names)
+    axes.set_title(title)
+    figure.colorbar(image, ax=axes, label=title)
+    return figure

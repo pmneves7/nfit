@@ -84,6 +84,10 @@ plot for exactly-one-non-singleton data or a slice figure otherwise. The
 exported scripts from the GUI call `plot_mdhisto_slice` and include the current
 display settings.
 
+Saved workspace plots use `PlotEntry`, `render_plot`, and `render_project_plot`.
+They return Matplotlib figures and never construct Qt widgets, so generated plot
+scripts run in batch or headless environments as well as interactive Python.
+
 Fit-comparison views can be attached to `MDHistoData` with
 `attach_fit_comparisons`. Project GUI fit results can also store fit and
 residual channels directly. When the Qt viewer sees compatible stored channels,

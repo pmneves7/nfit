@@ -24,7 +24,7 @@ from nfit.project_gui import (
 )
 
 
-def test_project_v2_round_trips_analysis_ids_and_results():
+def test_project_v3_round_trips_analysis_ids_and_results():
     dataset = DatasetEntry("scan", None, metadata={"source_file": "scan.npz"})
     analysis = AnalysisEntry("QFI", "spectral_integration", [dataset.id], {"kernel": "qfi"})
     analysis.result = AnalysisResultRecord(
@@ -35,7 +35,7 @@ def test_project_v2_round_trips_analysis_ids_and_results():
     payload = _project_to_dict(NfitProject(data_groups=[DataGroup("group", datasets=[dataset], analyses=[analysis])]))
     restored = _project_from_dict(payload).data_groups[0]
 
-    assert payload["version"] == 2
+    assert payload["version"] == 3
     assert restored.datasets[0].id == dataset.id
     assert restored.analyses[0] == analysis
 

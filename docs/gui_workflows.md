@@ -592,6 +592,14 @@ table, saved fit results, current-state parameter table, and model parameter
 editor. A limit hit is a diagnostic that the optimum may lie outside the
 allowed range, not a claim that the result is invalid.
 
+When a fit state or result is selected, **Copy fit script** and **Save fit
+script** generate a readable Python program that loads the saved project and
+restores that exact state without constructing a GUI. The script defaults to
+restoring the stored state and printing its fit metadata. Set its explicit
+`RUN_FIT = True` option to rerun the optimizer and append a new result. These
+actions require saving the project first so dataset sources and the selected
+fit ID have portable references.
+
 The fit editor and fit results share one `Posterior` panel. It configures emcee
 for sampling immediately after a fit; when a fit result is selected, the same
 controls also rerun emcee from the best-fit parameters, append additional steps
@@ -599,13 +607,15 @@ to a stored raw chain, or change burn-in/thinning after the fact. Result-only
 checkboxes control which stored result representation is displayed and exported:
 `Use emcee uncertainties, correlations, and asymmetry` replaces least-squares
 standard errors with the asymmetric 16--84% emcee interval and uses the emcee
-correlation matrix in `Fit diagnostics`; `Use best sample` displays the
-highest-log-probability stored emcee sample as the best fit. Neither checkbox
-changes the fitted model, datasets, Current state, or timeline. Both choices are
-stored with the fit result, so its table, diagnostics, and exported report remain
-consistent after reopening a project. These posterior-only operations update the
-selected fit result's posterior summaries and diagnostics without running least
-squares again and without creating a new timeline point.
+correlation matrix in `Fit diagnostics`; `Use best sample` applies the
+highest-log-probability stored emcee sample to the selected result's live model
+and any open data-viewer overlay. Unchecking it restores the saved
+least-squares values. The least-squares snapshot and timeline remain unchanged,
+and both choices are stored with the fit result so its table, diagnostics, and
+exported report remain consistent after reopening a project. These
+posterior-only operations update the selected fit result's posterior summaries
+and diagnostics without running least squares again and without creating a new
+timeline point.
 Changing burn-in or thinning simply reinterprets the stored raw chain; rerun
 replaces the stored posterior after an overwrite-confirmation dialog when
 samples already exist; append continues from the final walker positions
@@ -634,6 +644,16 @@ When either posterior display checkbox is selected, those reference lines use
 the corresponding selected emcee values rather than the least-squares values.
 
 ## Data viewer
+
+## Saved plots
+
+Every workspace has a **Plots** tree section. Use the data viewer's **Plot /
+Create saved plot** action to preserve the current visual state as an editable
+figure recipe. Open the tree entry for a clean presentation window, or choose
+**Edit in data viewer** to restore the recipe into the full interactive controls.
+The saved-plot window keeps controls hidden until **Plot / Open plot controls**
+is selected; its same menu can copy/save the figure or a backend-only generating
+script.
 
 The data viewer supports dataset switching, channel selection, mask toggling,
 axis selection, hidden-axis slicing/integration, color scale and limit controls,

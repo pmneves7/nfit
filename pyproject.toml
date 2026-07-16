@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nfit"
-version = "0.9.1"
+version = "0.10.0"
 description = "Reduced magnetic-scattering analysis for nearly magnetic metals"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -96,7 +96,12 @@ include = [
   "pyproject.toml",
   "src/nfit/analysis/**/*.py",
   "src/nfit/analysis_gui.py",
+  "src/nfit/plot_recipes.py",
+  "src/nfit/plot_gui.py",
+  "src/nfit/fit_scripts.py",
   "tests/test_analysis_*.py",
+  "tests/test_plot_recipes.py",
+  "tests/test_fit_scripts.py",
   "examples/data_playground.py",
   "benchmarks/benchmark_analysis.py",
 ]

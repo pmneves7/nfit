@@ -34,6 +34,7 @@ from .fit_config import (
     model_supports_data_type,
     qualified_parameter_name,
 )
+from .fit_scripts import fit_state_script
 from .fitting import (
     OptimizationConfig,
     SamplerConfig,
@@ -51,7 +52,8 @@ from .form_factors import available_ions
 from .importers import IMPORTERS, import_with, importers_for_data_type
 from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData, load_mantid_mdhisto_nxs, mdhisto_measured_bins
 from .mdevent import assess_mdevent_memory, bin_mdevent_group, is_mdevent_file, load_mdevent_run_points, mdevent_dataset_group
-from .pipeline import DataGroup, DatasetEntry, DatasetGroup, FitTimelineEntry, MaskSpec, ModelComponentSpec
+from .pipeline import DataGroup, DatasetEntry, DatasetGroup, FitTimelineEntry, MaskSpec, ModelComponentSpec, PlotEntry, PlotSourceRef
+from .plot_recipes import new_plot_entry, plot_entry_from_dict, plot_entry_to_dict, render_plot
 from .qt_controls import configure_numeric_spin_boxes
 from .rebin import rebin_nd
 
@@ -1378,7 +1380,7 @@ def delete_model_component(group: DataGroup, model: ModelComponentSpec) -> None:
 # single logical role so that a range selection of, for example, fit results
 # never sweeps in the enclosing workspace or folder headers.
 _DELETABLE_TREE_ROLES = frozenset(
-    {"group", "dataset", "mask", "dataset_group", "group_mask", "model", "fit", "fit_timeline"}
+    {"group", "dataset", "mask", "dataset_group", "group_mask", "model", "fit", "fit_timeline", "plot"}
 )
 
 # Roles that should be treated as interchangeable when deciding which items a
@@ -4133,7 +4135,7 @@ def _posterior_display_options(fit_entry: FitTimelineEntry) -> dict[str, Any]:
 
 
 def _display_fit_parameters(fit_entry: FitTimelineEntry) -> dict[str, float]:
-    """Return the selected best-fit display values without changing the fit."""
+    """Return the parameter values selected for the active fit result."""
 
     goodness = fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
     params = goodness.get("parameters") if isinstance(goodness.get("parameters"), dict) else {}
@@ -4345,6 +4347,37 @@ def _write_back_fitted_parameters(
 
     _write_back_parameter_values(group, components, compiled, result.params)
     _write_back_dataset_scale_factors(group, compiled, result.params)
+
+
+def _apply_displayed_fit_parameters(
+    group: DataGroup,
+    fit_entry: FitTimelineEntry,
+) -> None:
+    """Apply a result's selected parameter values to its restored live state.
+
+    The fit snapshot is the least-squares state.  When the user selects the
+    best emcee sample, its values are written on top of that state without
+    changing the saved snapshot, so unselecting it can restore the exact LM
+    result.
+    """
+
+    components = [
+        model for model in group.models.values() if isinstance(model, ModelComponentSpec)
+    ]
+    if not components:
+        return
+    inputs, _bundles = fit_dataset_inputs(group)
+    if not inputs:
+        return
+    compiled = compile_fit_problem(components, inputs, description=group.name)
+    params = {
+        spec.name: float(spec.value)
+        for spec in compiled.problem.parameter_specs
+    }
+    params.update(_display_fit_parameters(fit_entry))
+    resolved = compiled.problem.resolve_parameters(params)
+    _write_back_parameter_values(group, components, compiled, resolved)
+    _write_back_dataset_scale_factors(group, compiled, resolved)
 
 
 def _write_back_dataset_scale_factors(
@@ -7058,6 +7091,44 @@ def load_project(path: str | Path) -> NfitProject:
     return project
 
 
+def render_project_plot(
+    project: NfitProject,
+    plot_id: str,
+    *,
+    settings: dict[str, Any] | None = None,
+):
+    """Render a saved plot through project data preparation without opening Qt."""
+
+    for group in project.data_groups:
+        for plot in group.plots:
+            if plot.id != plot_id:
+                continue
+            if plot.type == "fit_covariance":
+                fit_id = plot.sources[0].fit_id if plot.sources else None
+                fit_entry = next((fit for fit in _walk_fit_entries(group.fits) if fit.id == fit_id), None)
+                if fit_entry is None:
+                    raise ValueError("saved plot source fit is missing")
+                if settings is not None:
+                    plot = replace(plot, settings=dict(settings))
+                return render_plot(plot, fit_entry=fit_entry)
+            if not plot.sources or not plot.sources[0].dataset_id:
+                raise ValueError("saved plot has no dataset source")
+            dataset = next(
+                (item for item in group.iter_datasets() if item.id == plot.sources[0].dataset_id),
+                None,
+            )
+            if dataset is None:
+                raise ValueError("saved plot source dataset is missing")
+            views, names = slice_viewer_datasets(group, use_composite=False)
+            view = views[names.index(dataset.name)] if dataset.name in names else None
+            if not isinstance(view, MDHistoData):
+                raise TypeError("saved plots currently require MDHisto data")
+            if settings is not None:
+                plot = replace(plot, settings=dict(settings))
+            return render_plot(plot, view)
+    raise ValueError(f"unknown saved plot {plot_id!r}")
+
+
 def recent_project_paths(settings: Any | None = None) -> list[Path]:
     """Return recently opened project paths from app settings."""
 
@@ -7886,6 +7957,8 @@ class NfitProjectExplorer:
         self.fit_corner_button = None
         self.show_data_fit_button = None
         self.fit_export_report_button = None
+        self.fit_copy_script_button = None
+        self.fit_save_script_button = None
         self._fit_progress_dialog: _FitProgressDialog | None = None
         self._fit_worker_thread = None
         self._fit_worker = None
@@ -7920,6 +7993,8 @@ class NfitProjectExplorer:
         ] = {}
         self._fit_item_roles: dict[int, FitTimelineEntry] = {}
         self._analysis_output_roles: dict[int, AnalysisOutputRef] = {}
+        self._plot_item_roles: dict[int, PlotEntry] = {}
+        self._plot_windows: dict[str, Any] = {}
         self._dataset_group_roles: dict[int, DatasetGroup] = {}
         self._expanded_state: dict[tuple[Any, ...], bool] = {}
         self._build()
@@ -8227,6 +8302,12 @@ class NfitProjectExplorer:
             if fit_entry is not None and delete_fit_entry(group, fit_entry):
                 return True, group
             return False, None
+        if role == "plot" and group is not None:
+            plot = self._plot_for_item(item)
+            if plot is not None and plot in group.plots:
+                group.plots.remove(plot)
+                self._plot_windows.pop(plot.id, None)
+                return True, group
         return False, None
 
     def new_project(self) -> bool:
@@ -8672,6 +8753,58 @@ class NfitProjectExplorer:
             )
             return False
         QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(output)))
+        return True
+
+    def fit_script_for_selection(self) -> str | None:
+        """Return a backend-only script for the selected fit or current state."""
+
+        group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        fit_entry = self._fit_entry_for_item(self._current_item())
+        if role != "fit" or group is None or fit_entry is None or self.project_path is None:
+            return None
+        return fit_state_script(
+            project_path=self.project_path,
+            group_name=group.name,
+            fit_id=fit_entry.id,
+        )
+
+    def copy_fit_script_for_selection(self) -> bool:
+        from PySide6 import QtWidgets
+
+        script = self.fit_script_for_selection()
+        if script is None:
+            QtWidgets.QMessageBox.information(
+                self.window,
+                "Copy fit script",
+                "Save the project first so the generated script can load its data and fit state.",
+            )
+            return False
+        QtWidgets.QApplication.clipboard().setText(script)
+        return True
+
+    def save_fit_script_for_selection(self) -> bool:
+        from PySide6 import QtWidgets
+
+        script = self.fit_script_for_selection()
+        if script is None:
+            QtWidgets.QMessageBox.information(
+                self.window,
+                "Save fit script",
+                "Save the project first so the generated script can load its data and fit state.",
+            )
+            return False
+        group, _entry, _mask, _model, _role = self._objects_for_item(self._current_item())
+        fit_entry = self._fit_entry_for_item(self._current_item())
+        stem = f"{group.name}_{fit_entry.name}".replace(" ", "_") if group is not None and fit_entry is not None else "fit"
+        path, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
+            self.window,
+            "Save fit script",
+            f"{stem}.py",
+            "Python scripts (*.py);;All files (*)",
+        )
+        if not path:
+            return False
+        Path(path).write_text(script, encoding="utf-8")
         return True
 
     def save_dataset_for_selection(self) -> bool:
@@ -9337,10 +9470,103 @@ class NfitProjectExplorer:
             return None
         viewer = self._replace_slice_viewer(group, datasets, names)
         setattr(viewer, "_nfit_use_composite", bool(use_composite))
+        viewer._nfit_group = group
+        viewer._nfit_dataset_ids = {dataset.name: dataset.id for dataset in group.iter_datasets()}
+        if hasattr(viewer, "set_save_plot_callback"):
+            viewer.set_save_plot_callback(lambda viewer=viewer, group=group: self.save_plot_from_viewer(group, viewer))
         if selected_dataset_name in names:
             viewer.dataset_combo.setCurrentIndex(names.index(selected_dataset_name))
         viewer.show()
         return viewer
+
+    def save_plot_from_viewer(self, group: DataGroup, viewer: Any) -> PlotEntry | None:
+        """Create or update a workspace plot using the interactive viewer state."""
+
+        name = viewer.dataset_combo.currentText() if viewer.dataset_combo is not None else "Plot"
+        dataset_id = getattr(viewer, "_nfit_dataset_ids", {}).get(name)
+        if not dataset_id:
+            return None
+        settings = viewer.current_plot_settings()
+        plot_type = (
+            "fit_comparison" if bool(settings.get("show_fit")) else
+            "mdhisto_line" if viewer._is_effective_1d() else "mdhisto_slice"
+        )
+        editing_id = getattr(viewer, "_nfit_editing_plot_id", None)
+        existing = next((plot for plot in group.plots if plot.id == editing_id), None)
+        if existing is None:
+            plot = new_plot_entry(
+                _unique_name(f"{name} plot", [item.name for item in group.plots]),
+                dataset_id,
+                settings,
+                plot_type=plot_type,
+            )
+            group.plots.append(plot)
+            viewer._nfit_editing_plot_id = plot.id
+        else:
+            existing.type = plot_type
+            existing.settings = settings
+            existing.sources[0].dataset_id = dataset_id
+            plot = existing
+        self._mark_dirty()
+        self._refresh_tree(select_group=group)
+        return plot
+
+    def open_saved_plot_for_selection(self) -> Any | None:
+        group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        plot = self._plot_for_item(self._current_item())
+        if role != "plot" or group is None or plot is None or not plot.sources:
+            return None
+        if plot.type == "fit_covariance":
+            fit_entry = next((fit for fit in _walk_fit_entries(group.fits) if fit.id == plot.sources[0].fit_id), None)
+            if fit_entry is None:
+                return None
+            from .plot_gui import PlotWindow
+
+            window = PlotWindow(plot, None, fit_entry=fit_entry, project_path=self.project_path, on_update=lambda _plot: self._mark_dirty())
+            self._plot_windows[plot.id] = window
+            return window.show()
+        dataset_id = plot.sources[0].dataset_id
+        dataset = next((item for item in group.iter_datasets() if item.id == dataset_id), None)
+        if dataset is None:
+            return None
+        views, names = slice_viewer_datasets(group, use_composite=False)
+        data = views[names.index(dataset.name)] if dataset.name in names else None
+        if not isinstance(data, MDHistoData):
+            return None
+        from .plot_gui import PlotWindow
+
+        window = PlotWindow(plot, data, project_path=self.project_path, on_update=lambda _plot: self._mark_dirty())
+        self._plot_windows[plot.id] = window
+        return window.show()
+
+    def edit_saved_plot_in_viewer(self) -> Any | None:
+        group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        plot = self._plot_for_item(self._current_item())
+        if role != "plot" or group is None or plot is None or not plot.sources:
+            return None
+        dataset = next((item for item in group.iter_datasets() if item.id == plot.sources[0].dataset_id), None)
+        if dataset is None:
+            return None
+        viewer = self.open_slice_viewer(group, selected_dataset_name=dataset.name, use_composite=False)
+        if viewer is not None:
+            viewer._nfit_editing_plot_id = plot.id
+            viewer.apply_plot_settings(plot.settings)
+        return viewer
+
+    def create_fit_covariance_plot_for_selection(self) -> PlotEntry | None:
+        group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        fit_entry = self._fit_entry_for_item(self._current_item())
+        if role != "fit" or group is None or fit_entry is None or _covariance_matrix_from_fit_entry(fit_entry) is None:
+            return None
+        plot = PlotEntry(
+            name=_unique_name(f"{fit_entry.name} covariance", [item.name for item in group.plots]),
+            type="fit_covariance",
+            sources=[PlotSourceRef(fit_id=fit_entry.id)],
+        )
+        group.plots.append(plot)
+        self._mark_dirty()
+        self._refresh_tree(select_group=group)
+        return plot
 
     def _request_overlay_refresh(self, group: DataGroup) -> None:
         """Debounce a slice-viewer refresh, coalescing rapid triggers.
@@ -10237,6 +10463,20 @@ class NfitProjectExplorer:
         self.fit_corner_button.clicked.connect(self.open_fit_diagnostics_plots_for_selection)
         self.show_data_fit_button.clicked.connect(self.show_data_and_fit_for_selection)
         self.fit_export_report_button.clicked.connect(self.export_fit_report_for_selection)
+        self.fit_copy_script_button = QtWidgets.QPushButton("Copy fit script")
+        self.fit_copy_script_button.setObjectName("fit_copy_script_button")
+        self.fit_copy_script_button.setToolTip(
+            "Copy a GUI-free Python script that restores this saved fit state. "
+            "Set RUN_FIT=True in the script to rerun the optimizer."
+        )
+        self.fit_copy_script_button.clicked.connect(self.copy_fit_script_for_selection)
+        self.fit_save_script_button = QtWidgets.QPushButton("Save fit script...")
+        self.fit_save_script_button.setObjectName("fit_save_script_button")
+        self.fit_save_script_button.setToolTip(
+            "Save a GUI-free Python script that restores this saved fit state. "
+            "The project must be saved so the script has a portable project path."
+        )
+        self.fit_save_script_button.clicked.connect(self.save_fit_script_for_selection)
         fit_editor_layout.addWidget(self.fit_branch_check)
         fit_editor_layout.addStretch(1)
         self.fit_editor_widget = fit_editor
@@ -10307,6 +10547,8 @@ class NfitProjectExplorer:
         fit_actions_grid.addWidget(self.fit_corner_button, 0, 1)
         fit_actions_grid.addWidget(self.show_data_fit_button, 1, 0)
         fit_actions_grid.addWidget(self.fit_export_report_button, 1, 1)
+        fit_actions_grid.addWidget(self.fit_copy_script_button, 2, 0)
+        fit_actions_grid.addWidget(self.fit_save_script_button, 2, 1)
         right_layout.addLayout(fit_actions_grid)
 
         splitter.addWidget(right_panel)
@@ -10332,6 +10574,7 @@ class NfitProjectExplorer:
         self._item_roles.clear()
         self._fit_item_roles.clear()
         self._analysis_output_roles.clear()
+        self._plot_item_roles.clear()
         self._dataset_group_roles.clear()
         self.tree.blockSignals(True)
         self.tree.clear()
@@ -10420,6 +10663,20 @@ class NfitProjectExplorer:
                         self._analysis_output_roles[id(output_item)] = output
                         analysis_item.addChild(output_item)
             analyses_item.setExpanded(self._expanded_state.get(("analyses", id(group)), True))
+            plots_item = QtWidgets.QTreeWidgetItem(["Plots"])
+            _style_tree_hierarchy_item(plots_item, bold=True)
+            _set_tree_item_icon(plots_item, "folder")
+            self._remember_item(plots_item, "plots", group)
+            group_item.addChild(plots_item)
+            for plot in group.plots:
+                plot_item = QtWidgets.QTreeWidgetItem([plot.name])
+                plot_item.setFlags(plot_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
+                plot_item.setToolTip(0, f"{plot.type}; reopen, edit, export, or render this saved plot")
+                _set_tree_item_icon(plot_item, "dataset")
+                self._remember_item(plot_item, "plot", group)
+                self._plot_item_roles[id(plot_item)] = plot
+                plots_item.addChild(plot_item)
+            plots_item.setExpanded(self._expanded_state.get(("plots", id(group)), True))
             if select_group is group and item_to_select is None:
                 item_to_select = group_item
         self.tree.blockSignals(False)
@@ -10661,6 +10918,13 @@ class NfitProjectExplorer:
                 changed = fit_entry.name != new_name
                 fit_entry.name = new_name
                 item.setText(0, fit_entry.name)
+        elif role == "plot" and group is not None:
+            plot = self._plot_for_item(item)
+            if plot is not None:
+                new_name = _unique_name(item.text(0).strip() or plot.name, [value.name for value in group.plots if value is not plot])
+                changed = plot.name != new_name
+                plot.name = new_name
+                item.setText(0, plot.name)
         if changed:
             if role in {"dataset", "mask", "model", "dataset_group", "group_mask"} and group is not None:
                 self._record_data_group_state_change(group)
@@ -10684,6 +10948,9 @@ class NfitProjectExplorer:
             return None
         return self._fit_item_roles.get(id(item))
 
+    def _plot_for_item(self, item: Any) -> PlotEntry | None:
+        return None if item is None else self._plot_item_roles.get(id(item))
+
     def _sync_details(self) -> None:
         group, entry, mask, model, role = self._objects_for_item(self._current_item())
         fit_entry = self._fit_entry_for_item(self._current_item())
@@ -10706,7 +10973,7 @@ class NfitProjectExplorer:
             bool(role == "dataset" and entry is not None and _dataset_can_save(entry))
         )
         self.delete_button.setEnabled(
-            role in {"group", "dataset", "mask", "model", "fit", "fit_timeline", "dataset_group", "group_mask"}
+            role in {"group", "dataset", "mask", "model", "fit", "fit_timeline", "dataset_group", "group_mask", "plot"}
         )
         mask_editing = role in {"mask", "group_mask"}
         self.mask_type_combo.setVisible(mask_editing)
@@ -10729,6 +10996,11 @@ class NfitProjectExplorer:
         self.fit_export_report_button.setVisible(
             role == "fit" and fit_entry is not None and fit_entry.kind == "result"
         )
+        fit_script_available = role == "fit" and fit_entry is not None
+        self.fit_copy_script_button.setVisible(fit_script_available)
+        self.fit_save_script_button.setVisible(fit_script_available)
+        self.fit_copy_script_button.setEnabled(self.project_path is not None)
+        self.fit_save_script_button.setEnabled(self.project_path is not None)
 
         if role == "group" and group is not None:
             self.title_label.setText(group.name)
@@ -10781,6 +11053,18 @@ class NfitProjectExplorer:
             self.title_label.setText(f"{group.name} / Fits")
             result_count = sum(1 for fit in _walk_fit_entries(group.fits) if fit.kind == "result")
             self._set_details_text(f"Fit history\n\nResults: {result_count}")
+        elif role == "plots" and group is not None:
+            self.title_label.setText(f"{group.name} / Plots")
+            self._set_details_text(f"Saved plots: {len(group.plots)}")
+        elif role == "plot" and group is not None:
+            plot = self._plot_for_item(self._current_item())
+            if plot is not None:
+                source = plot.sources[0].dataset_id if plot.sources else "missing"
+                self.title_label.setText(plot.name)
+                self._set_details_text(
+                    f"Saved plot\n\nType: {plot.type}\nSource dataset ID: {source}\n"
+                    "Open it for a clean figure or edit it in the data viewer."
+                )
         elif role in {"fit", "fit_timeline"} and group is not None and fit_entry is not None:
             self.title_label.setText(fit_entry.name)
             if (
@@ -12067,7 +12351,7 @@ class NfitProjectExplorer:
         )
         use_uncertainties.toggled.connect(
             lambda checked: self._set_posterior_display_option(
-                fit_entry, "use_posterior_uncertainties", checked
+                group, fit_entry, "use_posterior_uncertainties", checked
             )
         )
         layout.addWidget(use_uncertainties)
@@ -12077,12 +12361,12 @@ class NfitProjectExplorer:
         use_best_sample.setChecked(bool(display_options.get("use_best_sample")))
         use_best_sample.setEnabled(best_sample is not None)
         use_best_sample.setToolTip(
-            "Display the highest-log-probability stored emcee sample as the best fit. This does not alter the "
-            "fit, Current State, model, or datasets; it affects displayed results and exported reports only."
+            "Apply the highest-log-probability stored emcee sample to the live model and data-viewer overlay. "
+            "Uncheck to restore the saved least-squares fit values."
         )
         use_best_sample.toggled.connect(
             lambda checked: self._set_posterior_display_option(
-                fit_entry, "use_best_sample", checked
+                group, fit_entry, "use_best_sample", checked
             )
         )
         layout.addWidget(use_best_sample)
@@ -12145,11 +12429,12 @@ class NfitProjectExplorer:
 
     def _set_posterior_display_option(
         self,
+        group: DataGroup,
         fit_entry: FitTimelineEntry,
         option: str,
         checked: bool,
     ) -> None:
-        """Persist a display-only posterior result choice and refresh this fit."""
+        """Persist a posterior result choice and update the active live state."""
 
         display = _posterior_display_options(fit_entry)
         display[option] = bool(checked)
@@ -12170,6 +12455,20 @@ class NfitProjectExplorer:
             else:
                 display.pop("best_sample", None)
         fit_entry.metadata[POSTERIOR_DISPLAY_KEY] = display
+        if option == "use_best_sample" and self._active_fit_entry(group) is fit_entry:
+            if fit_entry.snapshot:
+                restore_data_group_state(group, fit_entry.snapshot)
+            if display.get("use_best_sample"):
+                try:
+                    _apply_displayed_fit_parameters(group, fit_entry)
+                except Exception:
+                    # Keep the known-good least-squares snapshot live if an
+                    # old or incomplete saved posterior cannot be compiled.
+                    restore_data_group_state(group, fit_entry.snapshot)
+                    display[option] = False
+                    display.pop("best_sample", None)
+                    fit_entry.metadata[POSTERIOR_DISPLAY_KEY] = display
+            self._request_overlay_refresh(group)
         self._mark_dirty()
         self._set_fit_details(fit_entry)
 
@@ -13277,6 +13576,13 @@ class NfitProjectExplorer:
         self._restoring_fit_selection = True
         try:
             restore_data_group_state(group, fit_entry.snapshot)
+            if _posterior_display_options(fit_entry).get("use_best_sample"):
+                try:
+                    _apply_displayed_fit_parameters(group, fit_entry)
+                except Exception:
+                    # A project may contain a legacy/incomplete posterior.
+                    # Its least-squares snapshot remains usable.
+                    restore_data_group_state(group, fit_entry.snapshot)
             # _refresh_tree already refreshes every open slice viewer for the
             # restored state; an explicit refresh here would recompute the
             # (expensive) overlay a second time.
@@ -13540,7 +13846,7 @@ class NfitProjectExplorer:
             specs.append(("Paste", can_paste))
         if enabled_state is not None:
             specs.append(("Disable" if enabled_state else "Enable", True))
-        if role in {"group", "dataset", "mask", "model", "fit", "fit_timeline", "dataset_group", "group_mask"}:
+        if role in {"group", "dataset", "mask", "model", "fit", "fit_timeline", "dataset_group", "group_mask", "plot"}:
             specs.append(("Rename", True))
             specs.append(("Delete", True))
         if role in {"group", "datasets", "dataset", "analyses", "analysis", "analysis_output"}:
@@ -13563,6 +13869,9 @@ class NfitProjectExplorer:
             specs.append(
                 ("Export report...", fit_entry is not None and fit_entry.kind == "result")
             )
+            specs.append(("Create covariance plot", fit_entry is not None and _covariance_matrix_from_fit_entry(fit_entry) is not None))
+        if role == "plot":
+            specs.extend([("Open plot", True), ("Edit in data viewer", True)])
         return specs
 
     def _show_context_menu(self, item: Any | None, global_pos: Any) -> None:
@@ -13587,6 +13896,9 @@ class NfitProjectExplorer:
             "Add model": self.add_model_to_selection,
             "Fit now": self.start_fit_for_selection,
             "Export report...": self.export_fit_report_for_selection,
+            "Create covariance plot": self.create_fit_covariance_plot_for_selection,
+            "Open plot": self.open_saved_plot_for_selection,
+            "Edit in data viewer": self.edit_saved_plot_in_viewer,
             "Enable": lambda: self._set_selected_enabled(True),
             "Disable": lambda: self._set_selected_enabled(False),
         }
@@ -13608,6 +13920,9 @@ class NfitProjectExplorer:
                 "result: per-dataset statistics, the model Hamiltonian term by "
                 "term, fitted parameters, and physics diagnostics."
             ),
+            "Create covariance plot": "Save this fit's covariance or correlation matrix as an editable plot recipe.",
+            "Open plot": "Open this saved plot in the clean presentation window.",
+            "Edit in data viewer": "Reopen this saved plot in the data viewer so every viewer control can be adjusted.",
             "Enable": "Enable this item for viewing and fitting.",
             "Disable": "Disable this item for viewing and fitting.",
         }
@@ -14088,6 +14403,7 @@ class NfitProjectExplorer:
             row = index + 1
             label = QtWidgets.QLabel(parameter_name)
             editor = QtWidgets.QLineEdit(_parameter_to_text(model.parameters.get(parameter_name, "")))
+            editor.setObjectName(f"model_parameter_value_{parameter_name}")
             parameter_labels = model.metadata.get("parameter_labels")
             plot_label_editor = QtWidgets.QLineEdit(
                 str(parameter_labels.get(parameter_name, ""))
@@ -15204,7 +15520,7 @@ def _bold_label(QtWidgets: Any, text: str) -> Any:
 
 
 def _is_renameable_role(role: str) -> bool:
-    return role in {"group", "dataset", "mask", "model", "fit", "fit_timeline", "dataset_group", "group_mask"}
+    return role in {"group", "dataset", "mask", "model", "fit", "fit_timeline", "dataset_group", "group_mask", "plot"}
 
 
 def _dataset_source_path(dataset: DatasetEntry) -> Path | None:
@@ -15750,7 +16066,11 @@ def _fit_result_limit_hits(
     """Return saved bound hits, inferring them from legacy fit snapshots too."""
 
     goodness = fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
-    hits = _fit_limit_hits_from_goodness(goodness)
+    # Stored LM hits describe the least-squares result.  When the best emcee
+    # sample is active, evaluate its displayed values against the same saved
+    # limits instead.
+    use_best_sample = bool(_posterior_display_options(fit_entry).get("use_best_sample"))
+    hits = {} if use_best_sample else _fit_limit_hits_from_goodness(goodness)
     by_casefold = {name.casefold(): name for name in parameters}
     snapshot = fit_entry.snapshot if isinstance(fit_entry.snapshot, dict) else {}
     models = snapshot.get("models", [])
@@ -15898,7 +16218,7 @@ def _point_data_nbytes(data: PointData4D) -> int:
 def _project_to_dict(project: NfitProject) -> dict[str, Any]:
     return {
         "format": "nfit-project",
-        "version": 2,
+        "version": 3,
         "settings": _json_mapping(project.settings),
         "data_groups": [_data_group_to_dict(group) for group in project.data_groups],
     }
@@ -15908,7 +16228,7 @@ def _project_from_dict(payload: dict[str, Any]) -> NfitProject:
     if payload.get("format") != "nfit-project":
         raise ValueError("not a nfit project file")
     version = int(payload.get("version", 1))
-    if version not in (1, 2):
+    if version not in (1, 2, 3):
         raise ValueError(f"unsupported nfit project version {version}")
     project = NfitProject(settings=dict(payload.get("settings", {})))
     for group_payload in payload.get("data_groups", []):
@@ -15957,6 +16277,9 @@ def _project_from_dict(payload: dict[str, Any]) -> NfitProject:
         ]
         group.analyses = [
             _analysis_from_dict(item) for item in group_payload.get("analyses", [])
+        ]
+        group.plots = [
+            plot_entry_from_dict(item) for item in group_payload.get("plots", [])
         ]
         active_path = group_payload.get("active_fit_path")
         if isinstance(active_path, list) and all(isinstance(index, int) for index in active_path):
@@ -16103,6 +16426,7 @@ def _data_group_to_dict(group: DataGroup) -> dict[str, Any]:
             list(group.active_fit_path) if group.active_fit_path is not None else None
         ),
         "analyses": [_analysis_to_dict(analysis) for analysis in group.analyses],
+        "plots": [plot_entry_to_dict(plot) for plot in group.plots],
     }
 
 
@@ -16214,6 +16538,7 @@ def _fit_entry_to_dict(fit_entry: FitTimelineEntry) -> dict[str, Any]:
         "channels": _fit_channels_to_dict(fit_entry.channels),
         "children": [_fit_entry_to_dict(child) for child in fit_entry.children],
         "metadata": _json_mapping(fit_entry.metadata),
+        "id": fit_entry.id,
     }
 
 
@@ -16260,6 +16585,7 @@ def _fit_entry_from_dict(payload: dict[str, Any]) -> FitTimelineEntry:
             for child in payload.get("children", [])
         ],
         metadata=dict(payload.get("metadata", {})),
+        id=str(payload.get("id") or FitTimelineEntry("").id),
     )
 
 

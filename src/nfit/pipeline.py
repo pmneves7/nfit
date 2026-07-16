@@ -100,6 +100,29 @@ class FitTimelineEntry:
     channels: dict[str, dict[str, Any]] = field(default_factory=dict)
     children: list["FitTimelineEntry"] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    id: str = field(default_factory=lambda: uuid4().hex)
+
+
+@dataclass
+class PlotSourceRef:
+    """A stable project object used by a saved plotting recipe."""
+
+    dataset_id: str | None = None
+    fit_id: str | None = None
+
+
+@dataclass
+class PlotEntry:
+    """A serializable, GUI-independent figure recipe owned by a workspace."""
+
+    name: str
+    type: str = "mdhisto_slice"
+    sources: list[PlotSourceRef] = field(default_factory=list)
+    settings: dict[str, Any] = field(default_factory=dict)
+    renderer_version: int = 1
+    source_fingerprints: dict[str, str] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    id: str = field(default_factory=lambda: uuid4().hex)
 
 
 @dataclass
@@ -191,6 +214,7 @@ class DataGroup:
     fits: list[FitTimelineEntry] = field(default_factory=list)
     active_fit_path: list[int] | None = None
     analyses: list["AnalysisEntry"] = field(default_factory=list)
+    plots: list[PlotEntry] = field(default_factory=list)
 
     def iter_datasets(self) -> Iterator[DatasetEntry]:
         """Yield every dataset in this group and its nested subgroups."""
