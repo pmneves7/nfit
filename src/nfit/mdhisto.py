@@ -156,6 +156,12 @@ def load_mantid_mdhisto_nxs(
             "workspace_attrs": _decode_attrs(workspace.attrs),
             "data_attrs": _decode_attrs(data.attrs),
             "signal_attrs": _decode_attrs(signal_dataset.attrs),
+            # MDHistoWorkspace stores its signal array as the bin value.
+            # visual_normalization controls Mantid's display transform and is
+            # deliberately retained separately below; it does not alter the
+            # saved array that nfit imports.
+            "signal_semantics": "bin_integral",
+            "signal_semantics_source": "mantid_mdhisto_workspace",
         }
 
         coordinate_system = _read_optional_scalar(workspace, "coordinate_system")
