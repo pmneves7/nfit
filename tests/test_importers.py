@@ -42,7 +42,7 @@ def test_import_mpms_dat_retains_all_columns_and_roles():
 
     assert isinstance(data, PointListData)
     assert data.coordinate_names == ["Temperature", "Magnetic Field"]
-    assert data.channels == [{"label": "Moment", "value": "Moment", "error": "M. Std. Err."}]
+    assert data.channels == [{"label": "Moment", "value": "Moment", "error": "M. Std. Err.", "quantity_type": "magnetic_moment", "unit": "emu"}]
     assert data.unit("Temperature") == "K"
     assert data.unit("Magnetic Field") == "Oe"
     assert data.unit("Moment") == "emu"
@@ -52,6 +52,9 @@ def test_import_mpms_dat_retains_all_columns_and_roles():
     assert data.size > 5000
     # Header metadata is captured.
     assert data.metadata["mpms_info"]["SAMPLE_MATERIAL"].startswith("EXT_Rodriguez")
+    assert data.metadata["sample_mass_mg"] == pytest.approx(9.73)
+    assert data.metadata["molar_mass_g_mol"] == pytest.approx(172.8)
+    assert data.metadata["sample_volume_mpms"] == pytest.approx(2.16)
     np.testing.assert_allclose(data.column("Temperature")[0], 299.499588, rtol=1e-6)
 
 

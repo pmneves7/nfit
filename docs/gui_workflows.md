@@ -327,7 +327,10 @@ and invalid uncertainties are reflected in the number of bins that actually
 participate in a fit.
 
 Point-list datasets such as magnetization or powder elastic data expose editable
-coordinate/channel configuration. MDHisto datasets expose rebin settings in the
+coordinate/channel configuration. Every configured channel carries an editable
+physical quantity type and unit; those declarations are persisted and passed to
+the fitting layer so a bulk-susceptibility channel cannot silently be treated as
+a magnetic-moment channel. MDHisto datasets expose rebin settings in the
 Axes panel when rebinning is supported. Rebinning can be enabled for viewing and
 fitting. The current rebin can be materialized as a new independent project
 dataset with `Create dataset from rebin`, or written directly to disk with
@@ -361,6 +364,23 @@ visible until `Rebin now` is pressed. Operations that require current rebinned
 data, including fitting, opening the data viewer, materializing a rebinned
 dataset, and saving a rebinned dataset, force the pending rebin first. Large
 explicit rebin jobs show a progress dialog driven by the rebinner batches.
+The Rebin panel can also apply symmetry before binning. A space-group entry
+uses its point-group rotations only: screw/glide translations are deliberately
+discarded and nfit does not add inversion unless it belongs to the selected
+point group. Symmetry always acts on physical HKL coordinates before any custom
+output-axis projection; energy transfer is unchanged. Choose the input mode
+and enter one of the following forms:
+
+- `P -1` as a space group, or `-1` as a point group.
+- `x,y,z;-x,-y,-z` as an exact semicolon-separated Jones-faithful operation list.
+- `rotate(order=3, axis=[1,1,1])` for a geometric generator about a direct-lattice direction.
+- `mirror(plane=(0,0,1))` for a geometric generator across a reciprocal-lattice plane.
+
+Multiple geometric generators are separated with semicolons and nfit closes the
+generated group. Geometric generators require complete lattice parameters.
+The resolved operation count is shown beside the editor and contributes to the
+rebin work estimate. Symmetry-expanded rebins stream one transformed batch at a
+time rather than materializing every image in memory.
 The rebin table has one `Resolution` column with a `Step`/`Bins` selector;
 `Step` is the default. Switching the selector derives the displayed quantity
 from the current bounds and resolution. In `Step` mode, changing bounds keeps
@@ -418,8 +438,10 @@ are marked pending, the cached composite is reused during passive refreshes,
 and `Rebin now`, fitting, or opening the data viewer forces the current
 composite rebin. Large composite rebins also report progress by batch.
 
-A **Sample environment** panel sits between the Dataset and Axes panels of the
-dataset details. It holds the per-dataset temperature and applied magnetic
+A **Sample environment** panel sits between the Dataset and Axes panels of
+scattering datasets. It is hidden for magnetization datasets because their
+temperature and field are measured columns rather than dataset-wide overrides.
+For scattering data it holds the per-dataset temperature and applied magnetic
 field:
 
 - `T (K)` sets a per-dataset sample temperature override, stored in
@@ -449,9 +471,35 @@ field:
   dataset unchanged.
 
 Magnetic inelastic models use the absolute prefactor
-`gamma_0^2 |f(Q)|^2 / pi`, with `gamma_0 = 0.073 / mu_B`, as well as the Bose
-factor and polarization factor. The dataset-level kinematic option completes
-this convention without embedding instrument metadata in a model component.
+`C |f(Q)|^2 / pi`, with
+`C = (gamma r_0 / 2)^2 = 0.07265 barn / mu_B^2`, as well as the Bose factor and
+polarization factor. The dataset-level kinematic option completes this
+convention without embedding instrument metadata in a model component.
+
+### MPMS quantities and units
+
+MPMS imports identify temperature, applied field, magnetic moment, and
+susceptibility columns explicitly. `SAMPLE_MASS` and
+`SAMPLE_MOLECULAR_WEIGHT` header values seed the absolute-normalization fields
+as milligrams and grams per mole. `SAMPLE_VOLUME` is preserved as raw MPMS
+metadata but is not used because its INFO row does not declare a unit.
+
+The **Plot and fit susceptibility** control chooses the fitted observable. Off,
+the viewer and bulk model use the magnetic-moment channel; on, both use moment
+divided by the selected field. With absolute units enabled, nfit additionally
+divides by the imported or edited number of moles and displays either CGS molar
+susceptibility (`cm^3/mol`) or rationalized SI (`m^3/mol`). The CGS-to-SI
+conversion is `chi_SI = 4 pi 10^-6 chi_CGS`; it is not a prefix-only unit
+conversion. MPMS `emu` and `Oe` columns are converted explicitly rather than
+being treated as SI quantities.
+
+The magnetization panel also declares the **Moment input unit** (`emu` or
+`A m^2`) and **Field input unit** (`Oe`, `T`, or `A/m`), so a file with an
+unusual convention is interpreted correctly. Its **Moment display / fit
+units** selector can retain the sample moment, convert it to `A m^2`, report a
+molar moment (`emu/mol`), or normalize it to `mu_B/f.u.`. Formula-unit output
+requires the sample mass and formula-unit molar mass and is used consistently
+by both the viewer and the bulk-model fit.
 
 When the data group defines lattice parameters, they are attached to the fit
 points automatically so form factors and |Q|-dependent models work without

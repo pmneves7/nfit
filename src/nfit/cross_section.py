@@ -4,9 +4,11 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 KB_MEV_PER_K = 0.08617333262
-# Magnetic scattering-length factor in the convention used for chi'' in
-# mu_B^2/meV. Its square is included in the absolute cross section below.
-MAGNETIC_GAMMA0_PER_MU_B = 0.073
+# Standard magnetic neutron cross-section constant
+# (gamma r_0 / 2)^2 = 0.07265 barn / mu_B^2.  Keep the historical square-root
+# name as a compatibility alias; callers that square it obtain the constant.
+MAGNETIC_CROSS_SECTION_BARN_PER_MU_B_SQ = 0.07265
+MAGNETIC_GAMMA0_PER_MU_B = np.sqrt(MAGNETIC_CROSS_SECTION_BARN_PER_MU_B_SQ)
 FloatArray = NDArray[np.float64]
 
 
@@ -67,7 +69,7 @@ def intensity_from_chipp(
 
     ``I = scale * gamma_0^2 * |f(Q)|^2 * P(Q) * chi'' /
     {pi [1 - exp(-E/kBT)]} + background``, where
-    ``gamma_0 = 0.073 / mu_B`` in the magnetic-scattering convention.
+    ``gamma_0^2 = (gamma r_0 / 2)^2 = 0.07265 barn / mu_B^2``.
 
     ``temperature_K`` may be a scalar or an array broadcastable to ``chipp``
     (per-point temperatures). ``form_factor_sq``, ``polarization``, and
@@ -121,3 +123,57 @@ def chipp_from_intensity(
     if include_bose:
         signal = signal * bose_denominator(E_meV, temperature_K)
     return np.asarray(signal, dtype=float)
+
+
+def cross_section_from_chipp(
+    chipp: ArrayLike,
+    E_meV: ArrayLike,
+    temperature_K: float | ArrayLike,
+    *,
+    form_factor_sq: float | ArrayLike = 1.0,
+    polarization: float | ArrayLike = 1.0,
+    kf_ki: float | ArrayLike = 1.0,
+    include_bose: bool = True,
+) -> FloatArray:
+    """Return absolute magnetic ``d2sigma/dOmega/dE`` in barn/(sr meV).
+
+    ``chipp`` is in ``mu_B^2/meV`` per declared normalization basis.  The
+    returned cross section has the same basis.  ``kf_ki`` is explicit so data
+    normalized to remove the kinematic factor can leave it at one.
+    """
+
+    return np.asarray(kf_ki, dtype=float) * intensity_from_chipp(
+        chipp,
+        E_meV,
+        temperature_K,
+        scale=1.0,
+        form_factor_sq=form_factor_sq,
+        polarization=polarization,
+        include_bose=include_bose,
+    )
+
+
+def chipp_from_cross_section(
+    cross_section: ArrayLike,
+    E_meV: ArrayLike,
+    temperature_K: float | ArrayLike,
+    *,
+    form_factor_sq: float | ArrayLike = 1.0,
+    polarization: float | ArrayLike = 1.0,
+    kf_ki: float | ArrayLike = 1.0,
+    include_bose: bool = True,
+) -> FloatArray:
+    """Invert :func:`cross_section_from_chipp` to ``mu_B^2/meV``."""
+
+    ratio = np.asarray(kf_ki, dtype=float)
+    if np.any(~np.isfinite(ratio)) or np.any(ratio <= 0.0):
+        raise ValueError("kf_ki must be finite and positive")
+    return chipp_from_intensity(
+        np.asarray(cross_section, dtype=float) / ratio,
+        E_meV,
+        temperature_K,
+        scale=1.0,
+        form_factor_sq=form_factor_sq,
+        polarization=polarization,
+        include_bose=include_bose,
+    )

@@ -1506,6 +1506,63 @@ def test_magnetization_absolute_normalization():
     np.testing.assert_allclose(values, expected, rtol=1e-9)
 
 
+def test_magnetization_absolute_normalization_can_return_mu_b_per_formula_unit():
+    """Formula-unit output removes the sample amount and divides by one mu_B."""
+    from nfit.fitting import evaluate_problem_model
+    from nfit.sum_rules import EMU_PER_MOL_PER_MODEL_CHI, EMU_PER_MOL_PER_MU_B
+
+    component = _magnetization_component(chi0=0.3, J1=0.0)
+    component.config["bulk"] = {"enabled": True, "sites_per_fu": 2}
+    fields = np.array([0.5, 1.0])
+    points = _magnetization_points([5.0, 5.0], fields, np.zeros(2))
+    points.metadata.update(
+        {
+            "absolute_units": True,
+            "sample_mass_mg": 10.0,
+            "molar_mass_g_mol": 200.0,
+            "quantity_type": "magnetic_moment",
+            "unit": "mu_B/f.u.",
+        }
+    )
+    compiled = compile_fit_problem(
+        [component], [FitDatasetInput("m", points, data_type="magnetization")]
+    )
+    values = evaluate_problem_model(
+        compiled.problem, "m",
+        {spec.name: spec.value for spec in compiled.problem.parameter_specs},
+    )
+    factor = EMU_PER_MOL_PER_MODEL_CHI * 1.0e4 / (2.0 * EMU_PER_MOL_PER_MU_B)
+    expected = factor * (2.0**2) * 0.3 * fields
+    np.testing.assert_allclose(values, expected, rtol=1e-9)
+
+
+def test_absolute_bulk_susceptibility_prediction_does_not_multiply_by_field():
+    from nfit.fitting import evaluate_problem_model
+    from nfit.sum_rules import EMU_PER_MOL_PER_MODEL_CHI
+
+    component = _magnetization_component(chi0=0.3, J1=0.0)
+    component.config["bulk"] = {"enabled": True, "sites_per_fu": 2}
+    points = _magnetization_points([5.0, 5.0], np.array([0.5, 2.0]), np.zeros(2))
+    points.metadata.update(
+        {
+            "absolute_units": True,
+            "sample_mass_mg": 10.0,
+            "molar_mass_g_mol": 200.0,
+            "quantity_type": "bulk_susceptibility",
+            "unit": "cm^3/mol",
+        }
+    )
+    compiled = compile_fit_problem(
+        [component], [FitDatasetInput("m", points, data_type="magnetization")]
+    )
+    values = evaluate_problem_model(
+        compiled.problem, "m",
+        {spec.name: spec.value for spec in compiled.problem.parameter_specs},
+    )
+    expected = EMU_PER_MOL_PER_MODEL_CHI / 2.0 * (2.0**2) * 0.3
+    np.testing.assert_allclose(values, expected, rtol=1e-9)
+
+
 def test_magnetization_point_data_maps_temperature_and_field():
     from nfit.dataset import PointListData
     from nfit.pipeline import DataGroup, DatasetEntry

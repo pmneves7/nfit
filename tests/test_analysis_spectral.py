@@ -3,6 +3,7 @@ import pytest
 
 from nfit.analysis import SpectralConvention
 from nfit.analysis.spectral import (
+    convert_spectral_representation,
     integrate_total_moment_by_zone,
     spectral_energy_reduce,
     spectral_kernel,
@@ -61,3 +62,39 @@ def test_arbitrary_integral_accepts_uncalibrated_counts_without_corrections():
     convention = SpectralConvention("measured_intensity", "counts", "unknown", None, "mu_B_squared", None, "included", "included", "included", "removed", False)
     output = spectral_energy_reduce(data, kernel="weighted_integral_arbitrary_units", convention=convention, temperature_K=10.0, energy_max_meV=2.0)
     assert output.data.column("Weighted Integral Arbitrary Units")[0] == 6.0
+
+
+def test_absolute_ins_conversion_returns_chipp_with_explicit_metadata():
+    axes = (
+        MDHistoAxis("Q", np.array([0.0, 1.0]), "1/angstrom", "momentum"),
+        MDHistoAxis("DeltaE", np.array([1.0, 3.0]), "meV", "energy"),
+    )
+    original = np.array([[1.7]])
+    from nfit.cross_section import cross_section_from_chipp
+
+    cross = cross_section_from_chipp(original, np.array([[2.0]]), 25.0, form_factor_sq=0.8, polarization=2.0 / 3.0)
+    counts_per_cross_section = 2500.0
+    data = MDHistoData(
+        axes,
+        cross * counts_per_cross_section,
+        cross * counts_per_cross_section * 0.1,
+        np.zeros((1, 1), bool),
+        np.ones((1, 1)),
+    )
+    input_convention = SpectralConvention(
+        "measured_intensity", "counts", "per_formula_unit", 2.0,
+        "mu_B_squared", 2.0, "included", "included", "included", "removed", False,
+    )
+    converted = convert_spectral_representation(
+        data,
+        convention=input_convention,
+        target_representation="chi_double_prime",
+        temperature_K=25.0,
+        scale=counts_per_cross_section,
+        form_factor_sq=0.8,
+        polarization=2.0 / 3.0,
+    )
+    np.testing.assert_allclose(converted.signal, original)
+    assert converted.metadata["signal_quantity_type"] == "dynamic_susceptibility"
+    assert converted.metadata["signal_unit"] == "mu_B^2/meV"
+    assert converted.metadata["spectral_convention"]["absolute_scale"] is True

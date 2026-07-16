@@ -3770,7 +3770,88 @@ def test_point_list_scale_and_susceptibility_transforms():
     assert "Susceptibility" in prepared.channel_labels
     expected = raw.channel_values("Moment") * 2.0 / raw.column("Magnetic Field")
     np.testing.assert_allclose(prepared.channel_values("Susceptibility"), expected)
-    assert prepared.unit(prepared.channel("Susceptibility")["value"]) == "emu/mol/Oe"
+    assert prepared.unit(prepared.channel("Susceptibility")["value"]) == "cm^3/mol"
+
+
+def test_mpms_import_seeds_sample_normalization_metadata():
+    group = DataGroup("Datagroup1")
+    dataset = import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")[0]
+    assert dataset.parameters["sample_mass_mg"] == pytest.approx(9.73)
+    assert dataset.parameters["molar_mass_g_mol"] == pytest.approx(172.8)
+
+
+def test_absolute_mpms_susceptibility_is_molar_and_becomes_fit_channel():
+    from nfit.project_gui import fit_data_bundle, point_list_config, prepared_point_list_data
+
+    group = DataGroup("Datagroup1")
+    dataset = import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")[0]
+    dataset.parameters.update(
+        {"absolute_units": True, "sample_mass_mg": 10.0, "molar_mass_g_mol": 200.0}
+    )
+    config = point_list_config(dataset)
+    config["susceptibility"].update(
+        {"enabled": True, "field": "Magnetic Field", "moment": "Moment", "output_unit": "cm^3/mol"}
+    )
+    prepared = prepared_point_list_data(dataset)
+    moles = (10.0 / 1000.0) / 200.0
+    expected = dataset.data.column("Moment") / dataset.data.column("Magnetic Field") / moles
+    np.testing.assert_allclose(prepared.channel_values("Susceptibility"), expected)
+    assert prepared.unit(prepared.channel("Susceptibility")["value"]) == "cm^3/mol"
+    assert prepared.channel_quantity_type("Susceptibility") == "bulk_susceptibility"
+
+    bundle = fit_data_bundle(group, dataset)
+    assert bundle.points.metadata["fit_channel"] == "Susceptibility"
+    assert bundle.points.metadata["quantity_type"] == "bulk_susceptibility"
+    assert bundle.points.metadata["unit"] == "cm^3/mol"
+
+
+def test_absolute_mpms_susceptibility_can_use_si_units():
+    from nfit.project_gui import point_list_config, prepared_point_list_data
+
+    group = DataGroup("Datagroup1")
+    dataset = import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")[0]
+    dataset.parameters.update(
+        {"absolute_units": True, "sample_mass_mg": 10.0, "molar_mass_g_mol": 200.0}
+    )
+    config = point_list_config(dataset)
+    config["susceptibility"].update(
+        {"enabled": True, "field": "Magnetic Field", "moment": "Moment", "output_unit": "m^3/mol"}
+    )
+    prepared = prepared_point_list_data(dataset)
+    moles = (10.0 / 1000.0) / 200.0
+    expected_cgs = dataset.data.column("Moment") / dataset.data.column("Magnetic Field") / moles
+    np.testing.assert_allclose(
+        prepared.channel_values("Susceptibility"), expected_cgs * 4.0 * np.pi * 1.0e-6
+    )
+    assert prepared.unit(prepared.channel("Susceptibility")["value"]) == "m^3/mol"
+
+
+def test_absolute_mpms_moment_can_be_normalized_per_formula_unit():
+    from nfit.project_gui import fit_data_bundle, point_list_config, prepared_point_list_data
+    from nfit.sum_rules import EMU_PER_MOL_PER_MU_B
+
+    group = DataGroup("Datagroup1")
+    dataset = import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")[0]
+    dataset.parameters.update(
+        {
+            "absolute_units": True,
+            "sample_mass_mg": 10.0,
+            "molar_mass_g_mol": 200.0,
+            "magnetization_output_unit": "mu_B/f.u.",
+        }
+    )
+    config = point_list_config(dataset)
+    config["susceptibility"].update({"moment_unit": "emu", "field_unit": "Oe"})
+
+    prepared = prepared_point_list_data(dataset)
+    moles = (10.0 / 1000.0) / 200.0
+    expected = dataset.data.column("Moment") / (moles * EMU_PER_MOL_PER_MU_B)
+    np.testing.assert_allclose(prepared.channel_values("Moment"), expected)
+    assert prepared.unit(prepared.channel("Moment")["value"]) == "mu_B/f.u."
+
+    bundle = fit_data_bundle(group, dataset)
+    assert bundle.points.metadata["fit_channel"] == "Moment"
+    assert bundle.points.metadata["unit"] == "mu_B/f.u."
 
 
 def test_magnetization_bundle_maps_temperature_and_field():
@@ -3812,16 +3893,39 @@ def test_magnetization_absolute_units_box(monkeypatch):
     molar_edit = explorer.window.findChild(
         QtWidgets.QLineEdit, "magnetization_molar_mass_g_mol"
     )
-    assert mass_edit is not None and molar_edit is not None
+    output_combo = explorer.window.findChild(QtWidgets.QComboBox, "magnetization_output_unit")
+    moment_unit_combo = explorer.window.findChild(
+        QtWidgets.QComboBox, "point_list_moment_input_unit"
+    )
+    field_unit_combo = explorer.window.findChild(
+        QtWidgets.QComboBox, "point_list_field_input_unit"
+    )
+    assert mass_edit is not None and molar_edit is not None and output_combo is not None
+    assert moment_unit_combo is not None and moment_unit_combo.toolTip().strip()
+    assert field_unit_combo is not None and field_unit_combo.toolTip().strip()
 
     enable.setChecked(True)
     mass_edit.setText("12.5")
     mass_edit.editingFinished.emit()
     molar_edit.setText("250.0")
     molar_edit.editingFinished.emit()
+    output_combo.setCurrentIndex(output_combo.findData("mu_B/f.u."))
     assert dataset.parameters["absolute_units"] is True
     assert dataset.parameters["sample_mass_mg"] == 12.5
     assert dataset.parameters["molar_mass_g_mol"] == 250.0
+    assert dataset.parameters["magnetization_output_unit"] == "mu_B/f.u."
+
+
+def test_sample_environment_panel_is_hidden_for_magnetization(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Datagroup1")
+    import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
+    titles = [box.title() for box in explorer.details_widget.findChildren(QtWidgets.QGroupBox)]
+    assert "Sample environment" not in titles
 
 
 def test_powder_wavelength_to_q_and_point_rebin():
