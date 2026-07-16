@@ -514,6 +514,17 @@ When **Plot and fit susceptibility** is selected, the viewer shows the derived
 susceptibility channel; choose **Moment** in the data-viewer channel selector
 to inspect the simultaneously available `emu/mol` or `μ<sub>B</sub>/f.u.` moment.
 
+### PPMS heat capacity
+
+PPMS Heat Capacity `.dat` imports preserve every raw column and seed sample
+mass and formula weight from the header. The heat-capacity normalization panel
+selects the exact PPMS export unit, allows mass, molar mass, and atom count to
+be corrected manually, and derives molar **Heat capacity** and **C/T** channels.
+Choose the fitted channel in that panel. The derived **Temperature squared**
+coordinate appears in the normal viewer coordinate selector, providing C/T
+versus T squared without an extra permanent plotting control. All controls
+include hover descriptions of when each normalization value is required.
+
 When the data group defines lattice parameters, they are attached to the fit
 points automatically so form factors and |Q|-dependent models work without
 per-dataset setup.

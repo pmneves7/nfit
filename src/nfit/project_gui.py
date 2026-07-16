@@ -75,6 +75,9 @@ MASK_AUTO_MAX_POINTS = 5_000_000
 DATASET_POINT_LIST_KEY = "point_list"
 SUSCEPTIBILITY_CHANNEL_LABEL = "Susceptibility"
 INVERSE_SUSCEPTIBILITY_CHANNEL_LABEL = "Inverse susceptibility"
+HEAT_CAPACITY_CHANNEL_LABEL = "Heat capacity"
+HEAT_CAPACITY_OVER_T_CHANNEL_LABEL = "C/T"
+TEMPERATURE_SQUARED_COLUMN = "Temperature squared"
 Q_COORDINATE_NAME = "q"
 D_SPACING_COORDINATE_NAME = "d"
 COORDINATE_RANGE_AXIS_PREFIX = "axis_"
@@ -110,6 +113,11 @@ DATA_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
         "container": "point_list",
         "scale": True,
         "susceptibility": True,
+    },
+    "heat_capacity": {
+        "label": "Heat capacity",
+        "container": "point_list",
+        "heat_capacity": True,
     },
 }
 
@@ -583,6 +591,78 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "debye_heat_capacity": {
+        "label": "Debye phonon heat capacity",
+        "description": (
+            "Debye lattice heat capacity C_D(T). The oscillator count is the number of "
+            "atoms represented per formula unit, so the high-temperature limit is 3 n R."
+        ),
+        "parameters": {
+            "debye_temperature": {
+                "default": 300.0,
+                "description": "Debye temperature theta_D.",
+                "allowed": "Positive finite temperature in kelvin.",
+                "type": "float",
+                "example": "420.0",
+                "global_fit": True,
+            },
+            "oscillator_count": {
+                "default": 1.0,
+                "description": "Number of Debye atoms per formula unit (7 for LiV2O4).",
+                "allowed": "Positive finite dimensionless number.",
+                "type": "float",
+                "example": "7.0",
+                "global_fit": True,
+            },
+        },
+        "config": {},
+    },
+    "low_temperature_heat_capacity": {
+        "label": "Low-temperature heat capacity",
+        "description": "Electronic plus leading Debye term: C = gamma T + beta T^3.",
+        "parameters": {
+            "sommerfeld_gamma": {
+                "default": 100.0,
+                "description": "Sommerfeld coefficient gamma.",
+                "allowed": "Non-negative finite number in mJ/(mol K^2).",
+                "type": "float",
+                "example": "400.0",
+                "global_fit": True,
+            },
+            "debye_beta": {
+                "default": 0.1,
+                "description": "Leading Debye coefficient beta multiplying T^3.",
+                "allowed": "Non-negative finite number in mJ/(mol K^4).",
+                "type": "float",
+                "example": "0.08",
+                "global_fit": True,
+            },
+        },
+        "config": {},
+    },
+    "curie_weiss": {
+        "label": "Curie-Weiss susceptibility",
+        "description": "Absolute molar susceptibility chi = C / (T - theta_CW).",
+        "parameters": {
+            "curie_constant": {
+                "default": 1.0,
+                "description": "Molar Curie constant C in cm^3 K/mol.",
+                "allowed": "Positive finite number.",
+                "type": "float",
+                "example": "0.42",
+                "global_fit": True,
+            },
+            "theta_CW": {
+                "default": 0.0,
+                "description": "Curie-Weiss temperature theta_CW in kelvin.",
+                "allowed": "Finite number below the fitted temperature interval.",
+                "type": "float",
+                "example": "-18.0",
+                "global_fit": True,
+            },
+        },
+        "config": {},
+    },
 }
 
 
@@ -815,10 +895,18 @@ def _load_point_list_dataset(dataset: DatasetEntry) -> PointListData | None:
     dataset.data = data
     dataset.metadata["importer"] = importer_name
     dataset.metadata["import_status"] = "loaded"
-    if dataset.data_type == "magnetization":
-        for key in ("sample_mass_mg", "molar_mass_g_mol"):
+    if dataset.data_type in {"magnetization", "heat_capacity"}:
+        keys = ["sample_mass_mg", "molar_mass_g_mol"]
+        if dataset.data_type == "heat_capacity":
+            keys.append("atoms_per_formula_unit")
+        for key in keys:
             if key not in dataset.parameters and key in data.metadata:
                 dataset.parameters[key] = float(data.metadata[key])
+    if dataset.data_type == "heat_capacity" and all(
+        float(dataset.parameters.get(key, 0.0) or 0.0) > 0.0
+        for key in ("sample_mass_mg", "molar_mass_g_mol")
+    ):
+        dataset.parameters.setdefault("absolute_units", True)
     if not dataset.kind:
         dataset.kind = Path(source).suffix.lstrip(".").lower()
     return data
@@ -869,6 +957,26 @@ def point_list_config(dataset: DatasetEntry) -> dict[str, Any]:
         # MPMS column is ordinarily a sample moment in emu, while a user may
         # choose to view and fit the same measurement per formula unit.
         dataset.parameters.setdefault("magnetization_output_unit", "emu")
+    if definition.get("heat_capacity"):
+        hc = config.get("heat_capacity")
+        if not isinstance(hc, dict):
+            hc = {}
+            config["heat_capacity"] = hc
+        temperature_default = next(
+            (name for name in config["coordinate_names"] if "temp" in name.lower()),
+            (config["coordinate_names"][0] if config["coordinate_names"] else ""),
+        )
+        hc.setdefault("temperature", temperature_default)
+        hc.setdefault("source_channel", config["channels"][0]["label"] if config["channels"] else "")
+        source_channel = next(
+            (item for item in config["channels"] if item.get("label") == hc["source_channel"]),
+            None,
+        )
+        hc.setdefault(
+            "source_unit",
+            str(source_channel.get("unit", "uJ/K")) if source_channel is not None else "uJ/K",
+        )
+        hc.setdefault("fit_channel", HEAT_CAPACITY_CHANNEL_LABEL)
     if definition.get("wavelength"):
         wavelength = config.get("wavelength")
         if not isinstance(wavelength, dict):
@@ -922,6 +1030,69 @@ def prepared_point_list_data(dataset: DatasetEntry) -> PointListData:
                 quantity_types[error_name] = declared_type
 
     definition = DATA_TYPE_DEFINITIONS.get(dataset.data_type, {})
+
+    if definition.get("heat_capacity"):
+        hc = config.get("heat_capacity", {})
+        temperature_name = str(hc.get("temperature", ""))
+        source_label = str(hc.get("source_channel", ""))
+        source_channel = next((c for c in channels if c.get("label") == source_label), None)
+        if temperature_name in columns and source_channel is not None:
+            source_value = str(source_channel.get("value", ""))
+            source_error = source_channel.get("error")
+            temperature = np.asarray(columns[temperature_name], dtype=float)
+            columns[TEMPERATURE_SQUARED_COLUMN] = temperature**2
+            units[TEMPERATURE_SQUARED_COLUMN] = "K^2"
+            quantity_types[TEMPERATURE_SQUARED_COLUMN] = "unknown"
+            if TEMPERATURE_SQUARED_COLUMN not in coordinate_names:
+                coordinate_names.append(TEMPERATURE_SQUARED_COLUMN)
+            if bool(dataset.parameters.get("absolute_units", False)):
+                from .heat_capacity import ppms_heat_capacity_to_molar_mJ
+
+                source_unit = str(hc.get("source_unit") or units.get(source_value, ""))
+                conversion = {
+                    "source_unit": source_unit,
+                    "sample_mass_mg": dataset.parameters.get("sample_mass_mg"),
+                    "molar_mass_g_mol": dataset.parameters.get("molar_mass_g_mol"),
+                    "atoms_per_formula_unit": dataset.parameters.get("atoms_per_formula_unit"),
+                }
+                heat_capacity = ppms_heat_capacity_to_molar_mJ(
+                    np.asarray(columns[source_value], dtype=float), **conversion
+                )
+                heat_capacity_error = (
+                    None if source_error not in columns
+                    else np.abs(ppms_heat_capacity_to_molar_mJ(
+                        np.asarray(columns[source_error], dtype=float), **conversion
+                    ))
+                )
+                c_name = f"{HEAT_CAPACITY_CHANNEL_LABEL} value"
+                dc_name = f"{HEAT_CAPACITY_CHANNEL_LABEL} error"
+                ct_name = f"{HEAT_CAPACITY_OVER_T_CHANNEL_LABEL} value"
+                dct_name = f"{HEAT_CAPACITY_OVER_T_CHANNEL_LABEL} error"
+                columns[c_name] = heat_capacity
+                columns[ct_name] = heat_capacity / temperature
+                units[c_name] = "mJ/(mol K)"
+                units[ct_name] = "mJ/(mol K^2)"
+                quantity_types[c_name] = "heat_capacity"
+                quantity_types[ct_name] = "heat_capacity_over_temperature"
+                if heat_capacity_error is not None:
+                    columns[dc_name] = heat_capacity_error
+                    columns[dct_name] = heat_capacity_error / np.abs(temperature)
+                    units[dc_name] = "mJ/(mol K)"
+                    units[dct_name] = "mJ/(mol K^2)"
+                    quantity_types[dc_name] = "heat_capacity"
+                    quantity_types[dct_name] = "heat_capacity_over_temperature"
+                derived = [
+                    {"label": HEAT_CAPACITY_CHANNEL_LABEL, "value": c_name,
+                     "error": dc_name if heat_capacity_error is not None else None,
+                     "quantity_type": "heat_capacity", "unit": "mJ/(mol K)"},
+                    {"label": HEAT_CAPACITY_OVER_T_CHANNEL_LABEL, "value": ct_name,
+                     "error": dct_name if heat_capacity_error is not None else None,
+                     "quantity_type": "heat_capacity_over_temperature", "unit": "mJ/(mol K^2)"},
+                ]
+                labels = {item["label"] for item in derived}
+                channels = derived + [item for item in channels if item.get("label") not in labels]
+                selected = str(hc.get("fit_channel", HEAT_CAPACITY_CHANNEL_LABEL))
+                channels.sort(key=lambda item: item.get("label") != selected)
 
     # Powder wavelength -> q and d-spacing coordinates (created if absent).
     if definition.get("wavelength"):
@@ -3128,6 +3299,8 @@ def fit_data_bundle(
         points = _point_data_from_mdhisto_view(view)
     elif isinstance(view, PointListData) and dataset.data_type == "magnetization":
         points = _magnetization_point_data(view, group, dataset)
+    elif isinstance(view, PointListData) and dataset.data_type == "heat_capacity":
+        points = _heat_capacity_point_data(view, dataset)
     elif isinstance(view, PointListData):
         points = _point_data_from_point_list_view(view)
     else:
@@ -3253,6 +3426,53 @@ def _magnetization_point_data(
         temperature=temperature if temperature is not None else dataset.parameters.get("temperature"),
         magnetic_field=magnetic_field,
         metadata=metadata,
+    )
+
+
+def _heat_capacity_point_data(view: PointListData, dataset: DatasetEntry) -> PointData4D:
+    """Map a molar heat-capacity or C/T channel onto fit points."""
+
+    config = point_list_config(dataset).get("heat_capacity", {})
+    preferred = str(config.get("fit_channel", HEAT_CAPACITY_CHANNEL_LABEL))
+    label = preferred if preferred in view.channel_labels else view.channel_labels[0]
+    channel = view.channel(label)
+    quantity_type = view.channel_quantity_type(label)
+    if quantity_type not in {"heat_capacity", "heat_capacity_over_temperature"}:
+        raise ValueError("heat-capacity fitting requires a molar C or C/T channel")
+    temperature_name = str(config.get("temperature", ""))
+    if temperature_name not in view.columns:
+        temperature_name = next(
+            (name for name in view.columns if "temp" in name.lower() and view.unit(name) == "K"),
+            "",
+        )
+    if not temperature_name:
+        raise ValueError("heat-capacity dataset requires a temperature column")
+    temperature = np.asarray(view.column(temperature_name), dtype=float)
+    intensity = np.asarray(view.channel_values(label), dtype=float)
+    errors = view.channel_errors(label)
+    sigma_known = errors is not None
+    sigma = np.asarray(errors, dtype=float) if sigma_known else np.ones(intensity.shape)
+    mask = np.isfinite(temperature) & np.isfinite(intensity) & np.isfinite(sigma)
+    if sigma_known:
+        mask &= sigma > 0.0
+    zeros = np.zeros(intensity.shape, dtype=float)
+    return PointData4D(
+        H=zeros,
+        K=zeros,
+        L=zeros,
+        E=temperature,
+        intensity=intensity,
+        sigma=sigma,
+        mask=mask,
+        temperature=temperature,
+        metadata={
+            "fit_coordinate_mapping": {"E": temperature_name},
+            "fit_channel": label,
+            "sigma_known": sigma_known,
+            "data_type": "heat_capacity",
+            "quantity_type": quantity_type,
+            "unit": view.unit(channel["value"]),
+        },
     )
 
 
@@ -13059,9 +13279,131 @@ class NfitProjectExplorer:
         if definition.get("susceptibility"):
             layout.addWidget(self._point_list_susceptibility_box(dataset, group, config))
             layout.addWidget(self._magnetization_absolute_box(dataset, group))
+        if definition.get("heat_capacity"):
+            layout.addWidget(self._heat_capacity_box(dataset, group, config))
         if definition.get("wavelength"):
             layout.addWidget(self._point_list_wavelength_box(dataset, group, config))
         return group_box
+
+    def _heat_capacity_box(self, dataset, group, config) -> Any:
+        from PySide6 import QtWidgets
+
+        box = QtWidgets.QGroupBox("Heat-capacity normalization")
+        grid = QtWidgets.QGridLayout(box)
+        grid.setContentsMargins(8, 6, 8, 6)
+        grid.setColumnStretch(1, 1)
+        enabled = QtWidgets.QCheckBox("Use sample mass and molar mass")
+        enabled.setObjectName("heat_capacity_absolute_enabled")
+        enabled.setChecked(bool(dataset.parameters.get("absolute_units", False)))
+        enabled.setToolTip(
+            "Convert the PPMS sample heat capacity from microjoules per kelvin "
+            "to mJ/(mol K). Required by the Debye and low-temperature models."
+        )
+        enabled.toggled.connect(
+            lambda checked: self._set_heat_capacity_setting(dataset, group, "absolute_units", bool(checked))
+        )
+        grid.addWidget(enabled, 0, 0, 1, 2)
+        for row, (key, label, object_name, tooltip) in enumerate((
+            ("sample_mass_mg", "Sample mass (mg)", "heat_capacity_sample_mass_mg",
+             "Measured sample mass in milligrams."),
+            ("molar_mass_g_mol", "Molar mass (g/mol)", "heat_capacity_molar_mass_g_mol",
+             "Formula-unit molar mass in grams per mole."),
+        ), start=1):
+            widget_label = QtWidgets.QLabel(label)
+            widget_label.setToolTip(tooltip)
+            editor = QtWidgets.QLineEdit(_parameter_to_text(dataset.parameters.get(key, "")))
+            editor.setObjectName(object_name)
+            editor.setToolTip(tooltip)
+            editor.editingFinished.connect(
+                lambda ed=editor, setting=key: self._set_heat_capacity_setting(
+                    dataset, group, setting, _parse_parameter_text(ed.text())
+                )
+            )
+            grid.addWidget(widget_label, row, 0)
+            grid.addWidget(editor, row, 1)
+        grid.addWidget(QtWidgets.QLabel("Plot and fit channel"), 3, 0)
+        channel_combo = QtWidgets.QComboBox()
+        channel_combo.setObjectName("heat_capacity_fit_channel")
+        channel_combo.addItems([HEAT_CAPACITY_CHANNEL_LABEL, HEAT_CAPACITY_OVER_T_CHANNEL_LABEL])
+        channel_combo.setCurrentText(
+            str(config.get("heat_capacity", {}).get("fit_channel", HEAT_CAPACITY_CHANNEL_LABEL))
+        )
+        channel_combo.setToolTip(
+            "Choose molar heat capacity C or C/T for the viewer and fit. Both physical models "
+            "evaluate consistently in either representation."
+        )
+        channel_combo.currentTextChanged.connect(
+            lambda text: self._set_heat_capacity_fit_channel(dataset, group, text)
+        )
+        grid.addWidget(channel_combo, 3, 1)
+        grid.addWidget(QtWidgets.QLabel("PPMS source units"), 4, 0)
+        unit_combo = QtWidgets.QComboBox()
+        unit_combo.setObjectName("heat_capacity_source_unit")
+        from .heat_capacity import PPMS_HEAT_CAPACITY_UNITS
+
+        for unit in PPMS_HEAT_CAPACITY_UNITS:
+            unit_combo.addItem(unit.replace("uJ", "µJ"), unit)
+        current_unit = str(config.get("heat_capacity", {}).get("source_unit", "uJ/K"))
+        unit_combo.setCurrentIndex(max(unit_combo.findData(current_unit), 0))
+        unit_combo.setToolTip(
+            "Unit selected when the PPMS heat-capacity file was exported. The file header "
+            "seeds this value when possible; change it here if the header is ambiguous."
+        )
+        unit_combo.currentIndexChanged.connect(
+            lambda _index, combo=unit_combo: self._set_heat_capacity_source_unit(
+                dataset, group, str(combo.currentData())
+            )
+        )
+        grid.addWidget(unit_combo, 4, 1)
+        atoms_label = QtWidgets.QLabel("Atoms / formula unit")
+        atoms_tooltip = (
+            "Required only for PPMS gram-atom units and used in Debye beta conversions; "
+            "LiV2O4 has 7 atoms per formula unit."
+        )
+        atoms_label.setToolTip(atoms_tooltip)
+        atoms_edit = QtWidgets.QLineEdit(
+            _parameter_to_text(dataset.parameters.get("atoms_per_formula_unit", ""))
+        )
+        atoms_edit.setObjectName("heat_capacity_atoms_per_formula_unit")
+        atoms_edit.setToolTip(atoms_tooltip)
+        atoms_edit.editingFinished.connect(
+            lambda ed=atoms_edit: self._set_heat_capacity_setting(
+                dataset, group, "atoms_per_formula_unit", _parse_parameter_text(ed.text())
+            )
+        )
+        grid.addWidget(atoms_label, 5, 0)
+        grid.addWidget(atoms_edit, 5, 1)
+        hint = QtWidgets.QLabel("Choose Temperature squared as the viewer x coordinate for C/T vs T².")
+        hint.setWordWrap(True)
+        hint.setToolTip(
+            "T² is a derived coordinate, so the existing coordinate selector can switch axes "
+            "without adding another permanent toolbar control."
+        )
+        grid.addWidget(hint, 6, 0, 1, 2)
+        _compact_point_list_form(box, QtWidgets)
+        return box
+
+    def _set_heat_capacity_setting(self, dataset, group, key: str, value) -> None:
+        if dataset.parameters.get(key) == value:
+            return
+        dataset.parameters[key] = value
+        self._after_point_list_changed(dataset, group)
+
+    def _set_heat_capacity_fit_channel(self, dataset, group, value: str) -> None:
+        config = point_list_config(dataset)
+        hc = config.setdefault("heat_capacity", {})
+        if hc.get("fit_channel") == value:
+            return
+        hc["fit_channel"] = value
+        self._after_point_list_changed(dataset, group)
+
+    def _set_heat_capacity_source_unit(self, dataset, group, value: str) -> None:
+        config = point_list_config(dataset)
+        hc = config.setdefault("heat_capacity", {})
+        if hc.get("source_unit") == value:
+            return
+        hc["source_unit"] = value
+        self._after_point_list_changed(dataset, group)
 
     def _magnetization_absolute_box(self, dataset, group) -> Any:
         """Absolute-unit normalization controls for a magnetization dataset.

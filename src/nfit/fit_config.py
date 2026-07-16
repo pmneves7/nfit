@@ -52,6 +52,8 @@ from .fitting import (
     _resolve_q_transform,
 )
 from .form_factors import form_factor_sq
+from .heat_capacity import debye_heat_capacity, low_temperature_heat_capacity
+from .quantities import convert_quantity
 from .models import paramagnon_chipp
 from .spin_fluctuations import (
     build_rpa_geometry,
@@ -128,6 +130,76 @@ def _linear_background_jacobian_factory(component: Any) -> ModelJacobian:
         }
 
     return jacobian
+
+
+def _point_temperature(data: PointData4D) -> np.ndarray:
+    if data.temperature is None:
+        raise ValueError("model requires a per-point temperature axis")
+    if np.isscalar(data.temperature):
+        return np.full(data.size, float(data.temperature), dtype=float)
+    return np.asarray(data.temperature, dtype=float)
+
+
+def _heat_capacity_observable(data: PointData4D, molar_heat_capacity: np.ndarray) -> np.ndarray:
+    quantity = str(data.metadata.get("quantity_type", "heat_capacity"))
+    unit = str(data.metadata.get("unit", "mJ/(mol K)"))
+    values = np.asarray(molar_heat_capacity, dtype=float)
+    if quantity == "heat_capacity_over_temperature":
+        values = values / _point_temperature(data)
+        if unit not in {"", "mJ/(mol K^2)"}:
+            raise ValueError(f"heat-capacity-over-temperature model cannot output {unit!r}")
+        return values
+    if quantity != "heat_capacity":
+        raise ValueError("heat-capacity model requires C or C/T data")
+    if unit in {"", "mJ/(mol K)"}:
+        return values
+    return convert_quantity(values, "heat_capacity", "mJ/(mol K)", unit)
+
+
+def _debye_heat_capacity_factory(component: Any) -> ModelFunction:
+    theta_key = qualified_parameter_name(component.name, "debye_temperature")
+    count_key = qualified_parameter_name(component.name, "oscillator_count")
+
+    def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        values = debye_heat_capacity(
+            _point_temperature(data),
+            float(params[theta_key]),
+            float(params[count_key]),
+        )
+        return _heat_capacity_observable(data, values)
+
+    return model
+
+
+def _low_temperature_heat_capacity_factory(component: Any) -> ModelFunction:
+    gamma_key = qualified_parameter_name(component.name, "sommerfeld_gamma")
+    beta_key = qualified_parameter_name(component.name, "debye_beta")
+
+    def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        values = low_temperature_heat_capacity(
+            _point_temperature(data), float(params[gamma_key]), float(params[beta_key])
+        )
+        return _heat_capacity_observable(data, values)
+
+    return model
+
+
+def _curie_weiss_factory(component: Any) -> ModelFunction:
+    curie_key = qualified_parameter_name(component.name, "curie_constant")
+    theta_key = qualified_parameter_name(component.name, "theta_CW")
+
+    def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        if data.metadata.get("quantity_type") != "bulk_susceptibility":
+            raise ValueError("Curie-Weiss model requires a bulk-susceptibility channel")
+        temperature = _point_temperature(data)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            values = float(params[curie_key]) / (temperature - float(params[theta_key]))
+        unit = str(data.metadata.get("unit", "cm^3/mol"))
+        if unit == "cm^3/mol":
+            return values
+        return convert_quantity(values, "bulk_susceptibility", "cm^3/mol", unit)
+
+    return model
 
 
 def _single_q_paramagnon_factory(component: Any) -> ModelFunction:
@@ -1195,6 +1267,21 @@ MODEL_TYPE_REGISTRY: dict[str, ModelTypeInfo] = {
         factory=_heisenberg_rpa_factory,
         dynamic_parameters=heisenberg_rpa_parameter_labels,
         jacobian_factory=_heisenberg_rpa_jacobian_factory,
+    ),
+    "debye_heat_capacity": ModelTypeInfo(
+        parameters=("debye_temperature", "oscillator_count"),
+        data_types=("heat_capacity",),
+        factory=_debye_heat_capacity_factory,
+    ),
+    "low_temperature_heat_capacity": ModelTypeInfo(
+        parameters=("sommerfeld_gamma", "debye_beta"),
+        data_types=("heat_capacity",),
+        factory=_low_temperature_heat_capacity_factory,
+    ),
+    "curie_weiss": ModelTypeInfo(
+        parameters=("curie_constant", "theta_CW"),
+        data_types=("magnetization",),
+        factory=_curie_weiss_factory,
     ),
 }
 

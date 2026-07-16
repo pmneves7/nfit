@@ -269,16 +269,18 @@ class DataPlaygroundWindow:
             )
             QtWidgets.QMessageBox.warning(self.window, "Analysis Window", message)
             return False
-        if self.operation_combo.currentData() == "curie_weiss_fit":
-            # Curie-Weiss fitting consumes the same derived, unit-aware
-            # susceptibility that the dataset viewer presents.
+        if self.operation_combo.currentData() in {
+            "curie_weiss_fit", "low_temperature_heat_capacity_fit"
+        }:
+            # These fits consume the same derived, unit-aware physical channel
+            # that the dataset viewer presents.
             from .project_gui import prepared_point_list_data
 
             try:
                 analysis_data = prepared_point_list_data(dataset)
             except (TypeError, ValueError) as exc:
                 QtWidgets.QMessageBox.warning(
-                    self.window, "Curie-Weiss fit", str(exc)
+                    self.window, "Point-data analysis", str(exc)
                 )
                 return False
         if not self._confirm_memory(analysis_data):

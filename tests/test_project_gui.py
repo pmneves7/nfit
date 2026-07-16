@@ -3872,6 +3872,38 @@ def test_absolute_mpms_susceptibility_can_use_si_units():
     assert prepared.unit(prepared.channel("Susceptibility")["value"]) == "m^3/mol"
 
 
+def test_heat_capacity_transform_and_unit_selector_tooltips(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    from nfit.project_gui import point_list_config, prepared_point_list_data
+
+    data = PointListData(
+        {"Sample Temp": [2.0, 3.0], "Samp HC": [1.0, 2.0], "Samp HC Err": [0.1, 0.2]},
+        units={"Sample Temp": "K", "Samp HC": "J/(mol K)", "Samp HC Err": "J/(mol K)"},
+        coordinate_names=["Sample Temp"],
+        channels=[{"label": "Sample heat capacity", "value": "Samp HC", "error": "Samp HC Err",
+                   "quantity_type": "heat_capacity", "unit": "J/(mol K)"}],
+    )
+    dataset = DatasetEntry("HC", data, data_type="heat_capacity")
+    dataset.parameters["absolute_units"] = True
+    config = point_list_config(dataset)
+    config["heat_capacity"]["source_unit"] = "J/(mol K)"
+    prepared = prepared_point_list_data(dataset)
+    np.testing.assert_allclose(prepared.channel_values("Heat capacity"), [1000.0, 2000.0])
+    np.testing.assert_allclose(prepared.channel_values("C/T"), [500.0, 2000.0 / 3.0])
+    np.testing.assert_allclose(prepared.column("Temperature squared"), [4.0, 9.0])
+
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
+    unit_combo = explorer.details_widget.findChild(QtWidgets.QComboBox, "heat_capacity_source_unit")
+    fit_combo = explorer.details_widget.findChild(QtWidgets.QComboBox, "heat_capacity_fit_channel")
+    atoms_edit = explorer.details_widget.findChild(QtWidgets.QLineEdit, "heat_capacity_atoms_per_formula_unit")
+    assert unit_combo is not None and unit_combo.count() == 10 and unit_combo.toolTip()
+    assert fit_combo is not None and fit_combo.toolTip()
+    assert atoms_edit is not None and atoms_edit.toolTip()
+
+
 def test_absolute_mpms_moment_can_be_normalized_per_formula_unit():
     from nfit.project_gui import fit_data_bundle, point_list_config, prepared_point_list_data
     from nfit.sum_rules import EMU_PER_MOL_PER_MU_B

@@ -31,6 +31,19 @@ it in the data viewer and switch the channel between **Susceptibility** and
 **Inverse susceptibility**. The matching fitted curve is shown automatically,
 and dashed vertical lines mark the fitted `Tmin` and `Tmax`.
 
+The same expression is also available as the ordinary **Curie-Weiss
+susceptibility** model component. It applies only to magnetization datasets
+whose selected fit channel is absolute molar susceptibility.
+
+## Low-temperature heat-capacity fitting
+
+The **Low-temperature C/T fit** operation accepts molar heat capacity or C/T,
+fits `C/T = gamma + beta T^2` between editable `Tmin` and `Tmax`, and reports
+the Sommerfeld coefficient, Debye coefficient, and the Debye temperature for
+the supplied atom count. Its diagnostic defaults to C/T versus T squared.
+See [Heat-capacity data and models](heat_capacity.md) for import units and the
+ordinary Debye and low-temperature fit components.
+
 ## Bragg integration
 
 Bragg integration accepts three momentum dimensions, or 4D data. For 4D data,

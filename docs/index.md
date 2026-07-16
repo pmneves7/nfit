@@ -13,6 +13,9 @@ pneves1@jhu.edu) with use of LLM coding tools.
 
 Current package version: 0.10.0.
 
+Heat-capacity import, normalization, fitting, and analysis are documented in
+[Heat-capacity data and models](heat_capacity.md).
+
 ## MDEvent measured-zero uncertainties
 
 For normalized MDEvent data, a detector-covered bin with zero observed events
@@ -31,6 +34,7 @@ getting_started
 data_philosophy
 gui_workflows
 data_playground
+heat_capacity
 plotting
 physics_conventions
 spin_fluctuation_models

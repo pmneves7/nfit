@@ -12,6 +12,10 @@ from .coordinates import q_modulus_for_spectral
 from .core import AnalysisExecution, TableOutput
 from .corrections import SpectralConvention
 from .curie_weiss import execute_curie_weiss, validate_curie_weiss
+from .heat_capacity import (
+    execute_low_temperature_heat_capacity,
+    validate_low_temperature_heat_capacity,
+)
 from .registry import (
     AnalysisOperationDefinition,
     AnalysisParameterDefinition,
@@ -93,6 +97,23 @@ def register_builtin_operations() -> None:
             "300.0",
         ),
     )
+    low_temperature_heat_capacity_parameters = (
+        AnalysisParameterDefinition(
+            "temperature_min_K", "Tmin (K)", "value", 2.0,
+            "Lowest temperature included in the C/T versus T^2 fit.",
+            "Finite temperature in kelvin below Tmax.", "2.0",
+        ),
+        AnalysisParameterDefinition(
+            "temperature_max_K", "Tmax (K)", "value", 10.0,
+            "Highest temperature included in the C/T versus T^2 fit.",
+            "Finite temperature in kelvin above Tmin.", "10.0",
+        ),
+        AnalysisParameterDefinition(
+            "atoms_per_formula_unit", "Atoms / formula unit", "value", 1.0,
+            "Atom count used only to convert beta to a Debye temperature.",
+            "Positive number; use 7 for LiV2O4.", "7.0",
+        ),
+    )
     register_analysis_operation(AnalysisOperationDefinition("bragg_integration", "Bragg integration", 1, "Integrate crystallographic peaks.", 1, 2, ("MDHistoData", "PointListData"), bragg_parameters, _validate_bragg, _execute_bragg))
     register_analysis_operation(AnalysisOperationDefinition("spectral_integration", "Spectral integration", 1, "Reduce spectra using physical kernels.", 1, 1, ("MDHistoData",), spectral_parameters, _validate_spectral, _execute_spectral))
     register_analysis_operation(AnalysisOperationDefinition("spectral_conversion", "INS absolute conversion", 1, "Convert measured INS intensity to an absolute cross section or dynamic susceptibility.", 1, 1, ("MDHistoData",), conversion_parameters, _validate_conversion, _execute_conversion))
@@ -108,6 +129,20 @@ def register_builtin_operations() -> None:
             curie_weiss_parameters,
             validate_curie_weiss,
             execute_curie_weiss,
+        )
+    )
+    register_analysis_operation(
+        AnalysisOperationDefinition(
+            "low_temperature_heat_capacity_fit",
+            "Low-temperature C/T fit",
+            1,
+            "Fit C/T = gamma + beta T^2 over a selected temperature range.",
+            1,
+            1,
+            ("PointListData",),
+            low_temperature_heat_capacity_parameters,
+            validate_low_temperature_heat_capacity,
+            execute_low_temperature_heat_capacity,
         )
     )
 

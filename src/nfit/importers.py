@@ -17,6 +17,7 @@ from typing import Any, Callable
 import numpy as np
 
 from .dataset import PointListData
+from .quantities import normalize_unit
 
 
 # ``Name (unit)`` -> ("Name", "unit"). The unit is the last parenthesized group.
@@ -251,6 +252,78 @@ def import_mpms_dat(path: str | Path) -> PointListData:
     )
 
 
+def _ppms_heat_capacity_header_metadata(header_lines: list[str]) -> dict[str, Any]:
+    """Extract sample normalization from a Quantum Design PPMS HC header."""
+
+    metadata: dict[str, Any] = {"instrument_header": list(header_lines)}
+    info: dict[str, str] = {}
+    for line in header_lines:
+        parts = [cell.strip() for cell in line.split(",")]
+        if len(parts) < 3 or parts[0] != "INFO":
+            continue
+        value = parts[1]
+        key = parts[2].split(":", 1)[0].strip()
+        if key:
+            info[key] = value
+    metadata["ppms_info"] = info
+    for key, target, unit in (
+        ("MASS", "sample_mass_mg", "mg"),
+        ("MOLWGHT", "molar_mass_g_mol", "g/mol"),
+        ("ATOMS", "atoms_per_formula_unit", "1"),
+    ):
+        try:
+            value = float(info[key])
+        except (KeyError, TypeError, ValueError):
+            continue
+        metadata[target] = value
+        metadata[f"{target}_unit"] = unit
+    return metadata
+
+
+def import_ppms_heat_capacity_dat(path: str | Path) -> PointListData:
+    """Import a Quantum Design PPMS Heat Capacity ``.dat`` file.
+
+    Every exported column is retained.  The canonical coordinate and raw
+    channel use ``Sample Temp`` and ``Samp HC``; molar normalization is applied
+    later by the dataset transform so edited mass metadata takes effect.
+    """
+
+    parsed = read_delimited_text(path, data_marker="[Data]", has_header_row=True, delimiter=",")
+    columns = {name: values for name, values in parsed.columns.items()}
+    metadata = _ppms_heat_capacity_header_metadata(parsed.header_lines)
+    metadata["source_file"] = str(Path(path))
+    temperature = next(
+        (name for name in ("Sample Temp", "Temperature", "System Temp") if name in columns),
+        next((name for name in columns if "temp" in name.lower()), next(iter(columns))),
+    )
+    value = next(
+        (name for name in ("Samp HC", "Sample HC") if name in columns),
+        next((name for name in columns if "hc" in name.lower()), next(iter(columns))),
+    )
+    error = next(
+        (name for name in ("Samp HC Err", "Sample HC Err") if name in columns),
+        None,
+    )
+    units = dict(parsed.units)
+    units[temperature] = "K"
+    source_unit = normalize_unit(parsed.units.get(value, ""))
+    units[value] = source_unit or "uJ/K"
+    if error is not None:
+        units[error] = units[value]
+    return PointListData(
+        columns=columns,
+        units=units,
+        coordinate_names=[temperature],
+        channels=[{"label": "Sample heat capacity", "value": value, "error": error}],
+        metadata=metadata,
+        quantity_types={
+            **{name: "temperature" for name in columns if "temp" in name.lower()},
+            value: "heat_capacity",
+            **({error: "heat_capacity"} if error is not None else {}),
+        },
+    )
+
+
 def import_hb2a_powder(path: str | Path) -> PointListData:
     """Import an HB2A-style powder diffraction file: ``2theta, I, dI`` columns.
 
@@ -326,6 +399,13 @@ IMPORTERS: dict[str, ImporterSpec] = {
         loader=import_hb2a_powder,
         data_types=("powder_elastic",),
         extensions=(".dat", ".txt", ""),
+    ),
+    "ppms_heat_capacity_dat": ImporterSpec(
+        name="ppms_heat_capacity_dat",
+        label="Quantum Design PPMS Heat Capacity (.dat)",
+        loader=import_ppms_heat_capacity_dat,
+        data_types=("heat_capacity",),
+        extensions=(".dat",),
     ),
 }
 

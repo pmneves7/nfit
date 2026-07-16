@@ -28,6 +28,8 @@ QUANTITY_TYPES: Final[tuple[str, ...]] = (
     "magnetization",
     "bulk_susceptibility",
     "inverse_bulk_susceptibility",
+    "heat_capacity",
+    "heat_capacity_over_temperature",
 )
 
 _UNIT_ALIASES = {
@@ -66,6 +68,29 @@ _UNIT_ALIASES = {
     "barn/(sr mev)": "barn/sr/meV",
     "mu_b^2/mev": "mu_B^2/meV",
     "mub^2/mev": "mu_B^2/meV",
+    "uj/k": "uJ/K",
+    "µj/k": "uJ/K",
+    "�j/k": "uJ/K",
+    "uj/mol-k": "uJ/(mol K)",
+    "uj/mole-k": "uJ/(mol K)",
+    "µj/mol-k": "uJ/(mol K)",
+    "µj/mole-k": "uJ/(mol K)",
+    "mj/g-k": "mJ/(g K)",
+    "j/g-k": "J/(g K)",
+    "cal/g-k": "cal/(g K)",
+    "mj/mol-k": "mJ/(mol K)",
+    "mj/mole-k": "mJ/(mol K)",
+    "mj/(mol k)": "mJ/(mol K)",
+    "j/mol-k": "J/(mol K)",
+    "j/mole-k": "J/(mol K)",
+    "j/(mol k)": "J/(mol K)",
+    "mj/mol-k^2": "mJ/(mol K^2)",
+    "mj/(mol k^2)": "mJ/(mol K^2)",
+    "cal/mol-k": "cal/(mol K)",
+    "cal/mole-k": "cal/(mol K)",
+    "j/gat-k": "J/(gat K)",
+    "cal/gat-k": "cal/(gat K)",
+    "k^2": "K^2",
 }
 
 
@@ -100,6 +125,12 @@ def infer_quantity_type(name: str, unit: str = "") -> str:
         return "magnetic_field"
     if "inverse susceptibility" in lowered:
         return "inverse_bulk_susceptibility"
+    if "heat capacity" in lowered or "samp hc" in lowered or normalized in {
+        "uJ/K", "mJ/(mol K)", "J/(mol K)"
+    }:
+        return "heat_capacity"
+    if "c/t" in lowered or "hc/temp" in lowered or normalized == "mJ/(mol K^2)":
+        return "heat_capacity_over_temperature"
     if "suscept" in lowered or normalized in {
         "emu/Oe", "cm^3/mol", "m^3/mol", "cm^3/g", "m^3/kg"
     }:
@@ -145,6 +176,10 @@ def _conversion_factor(quantity_type: str, source: str, target: str) -> float:
             ("m^3/mol", "cm^3/mol"): 1.0e6 / (4.0 * np.pi),
             ("cm^3/g", "m^3/kg"): 4.0 * np.pi * 1.0e-3,
             ("m^3/kg", "cm^3/g"): 1.0e3 / (4.0 * np.pi),
+        },
+        "heat_capacity": {
+            ("J/(mol K)", "mJ/(mol K)"): 1.0e3,
+            ("mJ/(mol K)", "J/(mol K)"): 1.0e-3,
         },
     }
     try:

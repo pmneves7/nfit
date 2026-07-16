@@ -261,6 +261,8 @@ posterior checks use `emcee` through `sample_problem_parameters`. See the
    :members:
 
 .. automodule:: nfit.analysis.curie_weiss
+
+.. automodule:: nfit.analysis.heat_capacity
    :members:
 ```
 

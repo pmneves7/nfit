@@ -8,6 +8,7 @@ from nfit.importers import (
     IMPORTERS,
     import_hb2a_powder,
     import_mpms_dat,
+    import_ppms_heat_capacity_dat,
     importers_for_data_type,
     import_with,
     read_delimited_text,
@@ -68,6 +69,27 @@ def test_import_hb2a_powder():
     np.testing.assert_allclose(data.column("2theta")[0], 2.15)
 
 
+def test_import_ppms_heat_capacity_retains_columns_and_normalization(tmp_path):
+    path = tmp_path / "heat_capacity.dat"
+    path.write_text(
+        "[Header]\n"
+        "INFO,5.3,MASS:Sample Mass (mg)\n"
+        "INFO,172.896,MOLWGHT:Formula Weight (g/mole)\n"
+        "[Data]\n"
+        "Sample Temp (Kelvin),Samp HC (uJ/K),Samp HC Err (uJ/K),Field (Oersted)\n"
+        "2.5,32.4,0.04,0\n3.5,41.5,0.06,0\n",
+        encoding="utf-8",
+    )
+    data = import_ppms_heat_capacity_dat(path)
+    assert data.coordinate_names == ["Sample Temp"]
+    assert data.channel_labels == ["Sample heat capacity"]
+    assert data.unit("Samp HC") == "uJ/K"
+    assert data.metadata["sample_mass_mg"] == pytest.approx(5.3)
+    assert data.metadata["molar_mass_g_mol"] == pytest.approx(172.896)
+    assert "Field" in data.columns
+    np.testing.assert_allclose(data.column("Samp HC"), [32.4, 41.5])
+
+
 def test_pointlistdata_rebin_reduces_points():
     data = import_hb2a_powder(HB2A_FILE)
     rebinned = data.rebin_to_histogram(["2theta"], num_bins=[40])
@@ -85,6 +107,7 @@ def test_pointlistdata_rebin_reduces_points():
 def test_importer_registry_lookup():
     assert [spec.name for spec in importers_for_data_type("magnetization")] == ["mpms_dat"]
     assert [spec.name for spec in importers_for_data_type("powder_elastic")] == ["hb2a_powder"]
+    assert [spec.name for spec in importers_for_data_type("heat_capacity")] == ["ppms_heat_capacity_dat"]
     assert IMPORTERS["mpms_dat"].can_read(MPMS_FILE)
     data = import_with("hb2a_powder", HB2A_FILE)
     assert data.coordinate_names == ["2theta"]
