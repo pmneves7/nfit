@@ -62,6 +62,51 @@ class ArrayRebinSource:
             )
 
 
+class SymmetryRebinSource:
+    """Apply reciprocal-HKL operations to each source batch lazily.
+
+    The first three source coordinates are interpreted as ``H, K, L`` and all
+    remaining coordinates, typically energy, are left unchanged.  Operations
+    are supplied as column-vector matrices; row-major coordinate arrays are
+    therefore multiplied by their transpose.
+    """
+
+    def __init__(self, source, operations: Iterable[ArrayLike]):
+        self.source = source
+        self.operations = tuple(np.asarray(operation, dtype=float) for operation in operations)
+        if not self.operations:
+            raise ValueError("symmetry requires at least one operation")
+        if int(source.ndim) < 3:
+            raise ValueError("symmetry rebinning requires at least three HKL coordinates")
+        for operation in self.operations:
+            if operation.shape != (3, 3) or not np.all(np.isfinite(operation)):
+                raise ValueError("symmetry operations must be finite 3x3 HKL matrices")
+        self.ndim = int(source.ndim)
+        self.n_points = int(source.n_points) * len(self.operations)
+
+    def iter_batches(self) -> Iterable[RebinBatch]:
+        for batch in self.source.iter_batches():
+            coordinates = np.asarray(batch.coords, dtype=float)
+            if coordinates.ndim != 2 or coordinates.shape[1] != self.ndim:
+                raise ValueError("each symmetry source batch must have shape (batch_points, ndim)")
+            previous_hkl: list[np.ndarray] = []
+            for operation in self.operations:
+                transformed = np.array(coordinates, dtype=float, copy=True)
+                transformed[:, :3] = coordinates[:, :3] @ operation.T
+                duplicate = np.zeros(transformed.shape[0], dtype=bool)
+                for earlier in previous_hkl:
+                    duplicate |= np.all(np.isclose(transformed[:, :3], earlier, atol=1e-12, rtol=1e-12), axis=1)
+                previous_hkl.append(transformed[:, :3])
+                keep = ~duplicate
+                if np.any(keep):
+                    yield RebinBatch(
+                        np.asarray(batch.data)[keep],
+                        transformed[keep],
+                        None if batch.data_errs is None else np.asarray(batch.data_errs)[keep],
+                        None if batch.data_weights is None else np.asarray(batch.data_weights)[keep],
+                    )
+
+
 def _split_range(start: int, stop: int, parts: int) -> list[tuple[int, int]]:
     boundaries = np.linspace(start, stop, min(parts, stop - start) + 1, dtype=int)
     return [
@@ -946,6 +991,64 @@ def rebin_nd_stream(
     template._norm_data()
     template.bin_inds = None
     return template
+
+
+def rebin_nd_symmetry(
+    data: ArrayLike,
+    coords: ArrayLike,
+    symmetry_operations: Iterable[ArrayLike],
+    *,
+    data_errs: ArrayLike | None = None,
+    data_weights: ArrayLike | None = None,
+    axes: ArrayLike | None = None,
+    upper: ArrayLike | None = None,
+    lower: ArrayLike | None = None,
+    step_size: ArrayLike | None = None,
+    num_bins: ArrayLike | None = None,
+    fractional: bool = True,
+    normalize: bool = True,
+    mean_weighting: MeanWeighting = "inverse_variance",
+    max_batch_bytes: int = 192 * 1024 * 1024,
+    backend: RebinBackend = "auto",
+    workers: int | None = None,
+    parallel_strategy: ParallelStrategy = "auto",
+    max_parallel_bytes: int = 512 * 1024 * 1024,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> NDRebin:
+    """Rebin symmetry-expanded HKL data without materializing all images."""
+
+    values = np.asarray(data, dtype=float).reshape(-1)
+    coordinates = np.asarray(coords, dtype=float)
+    operations = tuple(np.asarray(operation, dtype=float) for operation in symmetry_operations)
+    if coordinates.ndim != 2 or coordinates.shape[0] != values.size:
+        raise ValueError("coords must have shape (n_points, n_dimensions)")
+    # Account for input coordinates, signal, errors, weights, and one output
+    # copy while leaving headroom for the rebinner's fractional contributions.
+    bytes_per_point = max(1, 8 * (coordinates.shape[1] + 4))
+    batch_size = max(1, int(max_batch_bytes) // max(bytes_per_point * max(len(operations), 1), 1))
+    source = ArrayRebinSource(
+        values,
+        coordinates,
+        data_errs=data_errs,
+        data_weights=data_weights,
+        batch_size=batch_size,
+    )
+    return rebin_nd_stream(
+        SymmetryRebinSource(source, operations),
+        axes=axes,
+        upper=upper,
+        lower=lower,
+        step_size=step_size,
+        num_bins=num_bins,
+        fractional=fractional,
+        normalize=normalize,
+        mean_weighting=mean_weighting,
+        backend=backend,
+        workers=workers,
+        parallel_strategy=parallel_strategy,
+        max_parallel_bytes=max_parallel_bytes,
+        progress_callback=progress_callback,
+    )
 
 
 def _stream_limits(source, lower, upper, axes_inv) -> tuple[np.ndarray, np.ndarray]:

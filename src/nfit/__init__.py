@@ -261,7 +261,8 @@ from .plotting import (
     residual_mdhisto,
     slice_viewer,
 )
-from .rebin import ArrayRebinSource, NDRebin, RebinBatch, rebin_nd, rebin_nd_stream
+from .rebin import ArrayRebinSource, NDRebin, RebinBatch, SymmetryRebinSource, rebin_nd, rebin_nd_stream, rebin_nd_symmetry
+from .symmetry import ReciprocalSymmetryOperation, SymmetrySpec, resolve_symmetry
 from .resolution import (
     EnergyGaussianResolution,
     constant_fwhm_energy_resolution,
