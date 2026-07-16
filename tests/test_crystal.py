@@ -198,6 +198,31 @@ V1 V 0.5 0.5 0.5
     assert crystal_from_cif(str(cif))["spacegroup"] == "F d -3 m:2"
 
 
+def test_crystal_from_cif_preserves_explicit_spacegroup_origin_choice(tmp_path):
+    cif = tmp_path / "spinel_origin_one.cif"
+    cif.write_text(
+        """
+data_spinel
+_cell_length_a 8.24
+_cell_length_b 8.24
+_cell_length_c 8.24
+_cell_angle_alpha 90
+_cell_angle_beta 90
+_cell_angle_gamma 90
+_space_group_name_H-M_alt 'F d -3 m:1'
+_space_group_IT_number 227
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+V1 V 0.5 0.5 0.5
+"""
+    )
+    assert crystal_from_cif(str(cif))["spacegroup"] == "F d -3 m:1"
+
+
 def test_generate_bond_orbits_validates_cutoff():
     with pytest.raises(ValueError, match="cutoff"):
         generate_bond_orbits(FCC, ["Ni1"], cutoff_angstrom=0.0)
