@@ -2590,6 +2590,8 @@ def test_project_explorer_context_menu_actions_and_source_change(monkeypatch, tm
 
     models_item = explorer.tree.topLevelItem(0).child(1)
     assert explorer.context_menu_action_names(models_item) == ["Add model"]
+    datasets_item = explorer.tree.topLevelItem(0).child(0)
+    assert "Add dataset" in explorer.context_menu_action_names(datasets_item)
     assert model.name in group.models
 
 
@@ -3982,13 +3984,13 @@ def test_point_list_variables_panel_edits_config(monkeypatch):
         if box.title() == "Variables and Channels"
     )
     assert panel is not None
-    factor_spin = explorer.details_widget.findChild(QtWidgets.QDoubleSpinBox, "point_list_scale_factor")
-    factor_spin.setValue(4.0)
+    assert explorer.details_widget.findChild(
+        QtWidgets.QDoubleSpinBox, "point_list_scale_factor"
+    ) is None
     susc_check = explorer.details_widget.findChild(QtWidgets.QCheckBox, "point_list_susceptibility_enabled")
     susc_check.setChecked(True)
 
     config = point_list_config(dataset)
-    assert config["scale"]["factor"] == 4.0
     assert config["susceptibility"]["enabled"] is True
     assert "Susceptibility" in prepared_point_list_data(dataset).channel_labels
 
@@ -4039,6 +4041,19 @@ def test_point_list_dataset_opens_in_data_viewer_as_1d(monkeypatch):
     assert viewer.cursor_hkle_label.isHidden()
     assert viewer.cursor_q_label.isHidden()
     assert viewer.cursor_intensity_label.text().startswith("Signal = ")
+
+
+def test_data_viewer_channel_change_resets_limits(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_mdhisto_data(1.0)
+    viewer = QtMDHistoSliceViewer(data)
+    calls = []
+    monkeypatch.setattr(viewer, "update_plot", lambda **kwargs: calls.append(kwargs))
+    viewer._set_channel("signal")
+    assert calls[-1] == {"preserve_view": False}
 
 
 def test_energy_q_range_mask_defaults_are_neutral():

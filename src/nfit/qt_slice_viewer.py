@@ -1639,10 +1639,10 @@ class QtMDHistoSliceViewer:
         if getattr(self.model, "is_point_list", False):
             if channel in self.model.point_channels:
                 self.model.channel = channel
-                self.update_plot()
+                self.update_plot(preserve_view=False)
             return
         self.model.channel = self.model._resolve_channel(channel)
-        self.update_plot()
+        self.update_plot(preserve_view=False)
 
     def _set_apply_masks(self, checked: bool) -> None:
         self.model.masked = bool(checked)

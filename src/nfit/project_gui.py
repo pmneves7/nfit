@@ -12966,7 +12966,9 @@ class NfitProjectExplorer:
         channels_layout.addWidget(add_button, len(config.get("channels", [])) + 1, 0)
         layout.addWidget(channels_box)
 
-        if definition.get("scale"):
+        # Magnetization already has dedicated physical-unit and normalization
+        # controls, so the generic scale/unit transform would be redundant.
+        if definition.get("scale") and not definition.get("susceptibility"):
             layout.addWidget(self._point_list_scale_box(dataset, group, config, columns))
         if definition.get("susceptibility"):
             layout.addWidget(self._point_list_susceptibility_box(dataset, group, config))
@@ -12989,6 +12991,7 @@ class NfitProjectExplorer:
         box = QtWidgets.QGroupBox("Moment normalization")
         grid = QtWidgets.QGridLayout(box)
         grid.setContentsMargins(8, 6, 8, 6)
+        grid.setColumnStretch(1, 1)
         enable = QtWidgets.QCheckBox("Use sample mass and molar mass")
         enable.setObjectName("magnetization_absolute_enabled")
         enable.setToolTip(
@@ -13054,15 +13057,14 @@ class NfitProjectExplorer:
             )
         )
         grid.addWidget(molar_edit, 3, 1)
+        _compact_point_list_form(box, QtWidgets)
         return box
 
     def _set_magnetization_absolute(self, dataset, group, key: str, value) -> None:
         if dataset.parameters.get(key) == value:
             return
         dataset.parameters[key] = value
-        self._mark_dirty()
-        if group is not None:
-            self._request_overlay_refresh(group)
+        self._after_point_list_changed(dataset, group)
 
     def _point_list_scale_box(self, dataset, group, config, columns) -> Any:
         from PySide6 import QtWidgets
@@ -13107,6 +13109,7 @@ class NfitProjectExplorer:
         box = QtWidgets.QGroupBox("Susceptibility (moment / field)")
         grid = QtWidgets.QGridLayout(box)
         grid.setContentsMargins(8, 6, 8, 6)
+        grid.setColumnStretch(1, 1)
         enable = QtWidgets.QCheckBox("Plot and fit susceptibility")
         enable.setObjectName("point_list_susceptibility_enabled")
         enable.setChecked(bool(susc.get("enabled", False)))
@@ -13187,6 +13190,7 @@ class NfitProjectExplorer:
             )
         )
         grid.addWidget(unit_combo, 5, 1)
+        _compact_point_list_form(box, QtWidgets)
         return box
 
     def _point_list_wavelength_box(self, dataset, group, config) -> Any:
@@ -14446,6 +14450,7 @@ class NfitProjectExplorer:
         if role in {"dataset", "masks", "group_masks", "dataset_group"}:
             specs.append(("Add mask", True))
         if role in {"group", "datasets", "dataset_group"}:
+            specs.append(("Add dataset", True))
             specs.append(("New dataset group", True))
         if role in {"group", "models"}:
             specs.append(("Add model", True))
@@ -14477,6 +14482,7 @@ class NfitProjectExplorer:
             "View in data viewer": self.open_slice_viewer_for_selection,
             "Show file location": self.show_file_location_for_selection,
             "Change file source": self.change_file_source_for_selection,
+            "Add dataset": self.add_dataset_to_selection,
             "Add mask": self.add_mask_to_selection,
             "New dataset group": self.add_dataset_group_to_selection,
             "Add model": self.add_model_to_selection,
@@ -14497,6 +14503,7 @@ class NfitProjectExplorer:
             "View in data viewer": "Open or refresh the data viewer for this selection.",
             "Show file location": "Reveal the selected dataset's source file in the operating system file browser.",
             "Change file source": "Point this dataset at a different source file on disk.",
+            "Add dataset": "Choose data files to import into this dataset collection.",
             "Add mask": "Create a new mask for the selected dataset or shared mask folder.",
             "New dataset group": "Create a nested dataset group under the selected workspace or group.",
             "Add model": "Create a new model component in the selected workspace.",
@@ -14520,6 +14527,13 @@ class NfitProjectExplorer:
             action.triggered.connect(actions[name])
         if not menu.isEmpty():
             menu.exec(global_pos)
+
+    def add_dataset_to_selection(self) -> None:
+        """Open the file importer for the selected workspace or dataset folder."""
+
+        group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        if group is not None and role in {"group", "datasets", "dataset_group"}:
+            self._add_dataset_import_files(group)
 
     def open_data_playground_for_selection(self) -> Any | None:
         group, entry, _mask, _model, _role = self._objects_for_item(self._current_item())
@@ -16103,6 +16117,23 @@ def _bold_label(QtWidgets: Any, text: str) -> Any:
     label = QtWidgets.QLabel(text)
     label.setStyleSheet("font-weight: 600")
     return label
+
+
+def _compact_point_list_form(box: Any, QtWidgets: Any) -> None:
+    """Let point-list controls shrink inside the details scroll area."""
+
+    ignored = QtWidgets.QSizePolicy.Policy.Ignored
+    preferred = QtWidgets.QSizePolicy.Policy.Preferred
+    for combo in box.findChildren(QtWidgets.QComboBox):
+        combo.setSizeAdjustPolicy(
+            QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        combo.setMinimumContentsLength(10)
+        combo.setMinimumWidth(0)
+        combo.setSizePolicy(ignored, preferred)
+    for edit in box.findChildren(QtWidgets.QLineEdit):
+        edit.setMinimumWidth(0)
+        edit.setSizePolicy(ignored, preferred)
 
 
 def _is_renameable_role(role: str) -> bool:

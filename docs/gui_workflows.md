@@ -500,6 +500,9 @@ units** selector can retain the sample moment, convert it to `A m^2`, report a
 molar moment (`emu/mol`), or normalize it to `mu_B/f.u.`. Formula-unit output
 requires the sample mass and formula-unit molar mass and is used consistently
 by both the viewer and the bulk-model fit.
+When **Plot and fit susceptibility** is selected, the viewer shows the derived
+susceptibility channel; choose **Moment** in the data-viewer channel selector
+to inspect the simultaneously available `emu/mol` or `mu_B/f.u.` moment.
 
 When the data group defines lattice parameters, they are attached to the fit
 points automatically so form factors and |Q|-dependent models work without
