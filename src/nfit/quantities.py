@@ -27,6 +27,7 @@ QUANTITY_TYPES: Final[tuple[str, ...]] = (
     "magnetic_moment",
     "magnetization",
     "bulk_susceptibility",
+    "inverse_bulk_susceptibility",
 )
 
 _UNIT_ALIASES = {
@@ -84,6 +85,8 @@ def infer_quantity_type(name: str, unit: str = "") -> str:
         return "temperature"
     if "field" in lowered or normalized in {"Oe", "T", "A/m"}:
         return "magnetic_field"
+    if "inverse susceptibility" in lowered:
+        return "inverse_bulk_susceptibility"
     if "suscept" in lowered or normalized in {
         "emu/Oe", "cm^3/mol", "m^3/mol", "cm^3/g", "m^3/kg"
     }:

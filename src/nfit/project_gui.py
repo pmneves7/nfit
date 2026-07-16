@@ -74,6 +74,7 @@ REBIN_AUTO_MAX_OUTPUT_BINS = 2_000_000
 MASK_AUTO_MAX_POINTS = 5_000_000
 DATASET_POINT_LIST_KEY = "point_list"
 SUSCEPTIBILITY_CHANNEL_LABEL = "Susceptibility"
+INVERSE_SUSCEPTIBILITY_CHANNEL_LABEL = "Inverse susceptibility"
 Q_COORDINATE_NAME = "q"
 D_SPACING_COORDINATE_NAME = "d"
 COORDINATE_RANGE_AXIS_PREFIX = "axis_"
@@ -1054,6 +1055,38 @@ def prepared_point_list_data(dataset: DatasetEntry) -> PointListData:
                         "error": error_col,
                         "quantity_type": "bulk_susceptibility",
                         "unit": susc_unit,
+                    }
+                )
+                inverse_unit = {
+                    "cm^3/mol": "mol/cm^3",
+                    "m^3/mol": "mol/m^3",
+                    "emu/Oe": "Oe/emu",
+                }.get(susc_unit, f"1/({susc_unit})" if susc_unit else "")
+                inverse_value_col = f"{INVERSE_SUSCEPTIBILITY_CHANNEL_LABEL} value"
+                inverse_values = np.full(susc_value.shape, np.nan, dtype=float)
+                valid_inverse = np.isfinite(susc_value) & (susc_value != 0.0)
+                inverse_values[valid_inverse] = 1.0 / susc_value[valid_inverse]
+                columns[inverse_value_col] = inverse_values
+                units[inverse_value_col] = inverse_unit
+                quantity_types[inverse_value_col] = "inverse_bulk_susceptibility"
+                inverse_error_col = None
+                if error_values is not None:
+                    inverse_error_col = f"{INVERSE_SUSCEPTIBILITY_CHANNEL_LABEL} error"
+                    inverse_errors = np.full(error_values.shape, np.nan, dtype=float)
+                    inverse_errors[valid_inverse] = (
+                        np.abs(error_values[valid_inverse])
+                        / susc_value[valid_inverse] ** 2
+                    )
+                    columns[inverse_error_col] = inverse_errors
+                    units[inverse_error_col] = inverse_unit
+                    quantity_types[inverse_error_col] = "inverse_bulk_susceptibility"
+                channels.append(
+                    {
+                        "label": INVERSE_SUSCEPTIBILITY_CHANNEL_LABEL,
+                        "value": inverse_value_col,
+                        "error": inverse_error_col,
+                        "quantity_type": "inverse_bulk_susceptibility",
+                        "unit": inverse_unit,
                     }
                 )
 

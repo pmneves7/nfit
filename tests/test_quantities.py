@@ -20,5 +20,6 @@ def test_inference_and_unknown_conversion_are_conservative():
     assert normalize_unit("emu/mol/Oe") == "cm^3/mol"
     assert infer_quantity_type("Magnetic Field", "Oe") == "magnetic_field"
     assert infer_quantity_type("AC Susceptibility", "emu/Oe") == "bulk_susceptibility"
+    assert infer_quantity_type("Inverse susceptibility") == "inverse_bulk_susceptibility"
     with pytest.raises(ValueError, match="cannot convert"):
         convert_quantity([1.0], "magnetic_moment", "counts", "emu")

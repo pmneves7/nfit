@@ -492,6 +492,10 @@ susceptibility (`cm^3/mol`) or rationalized SI (`m^3/mol`). The CGS-to-SI
 conversion is `chi_SI = 4 pi 10^-6 chi_CGS`; it is not a prefix-only unit
 conversion. MPMS `emu` and `Oe` columns are converted explicitly rather than
 being treated as SI quantities.
+The same transform also provides an **Inverse susceptibility** channel with
+propagated uncertainty, in `mol/cm^3` or `mol/m^3`, for direct Curie-Weiss
+plots in the data viewer. Zero or non-finite susceptibility values are left
+undefined in that derived channel.
 
 The magnetization panel also declares the **Moment input unit** (`emu` or
 `A m^2`) and **Field input unit** (`Oe`, `T`, or `A/m`), so a file with an

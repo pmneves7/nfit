@@ -3800,6 +3800,19 @@ def test_absolute_mpms_susceptibility_is_molar_and_becomes_fit_channel():
     np.testing.assert_allclose(prepared.channel_values("Susceptibility"), expected)
     assert prepared.unit(prepared.channel("Susceptibility")["value"]) == "cm^3/mol"
     assert prepared.channel_quantity_type("Susceptibility") == "bulk_susceptibility"
+    assert "Inverse susceptibility" in prepared.channel_labels
+    np.testing.assert_allclose(
+        prepared.channel_values("Inverse susceptibility"), 1.0 / expected
+    )
+    np.testing.assert_allclose(
+        prepared.channel_errors("Inverse susceptibility"),
+        prepared.channel_errors("Susceptibility") / expected**2,
+    )
+    assert prepared.unit(prepared.channel("Inverse susceptibility")["value"]) == "mol/cm^3"
+    assert (
+        prepared.channel_quantity_type("Inverse susceptibility")
+        == "inverse_bulk_susceptibility"
+    )
 
     bundle = fit_data_bundle(group, dataset)
     assert bundle.points.metadata["fit_channel"] == "Susceptibility"
