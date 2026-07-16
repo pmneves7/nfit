@@ -42,6 +42,13 @@ points but not a concrete backend yet; Dask, Numba, and JAX are not included.
 Nfit was authored by Paul M. Neves (Johns Hopkins University,
 pneves1@jhu.edu) with use of LLM coding tools.
 
+## First-time installation
+
+If you are new to GitHub, Python, and Conda, follow the step-by-step
+[first-time setup guide](docs/getting_started.md#first-time-collaborator-setup).
+It covers accepting a GitHub invitation (or downloading a ZIP), installing Git
+and Miniforge, creating the `nfit` environment, and launching the application.
+
 ## Recommended development environment
 
 Use a project-specific conda environment from conda-forge. This keeps compiled
