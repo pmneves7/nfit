@@ -11,6 +11,7 @@ from .bragg import generate_bragg_peaks, integrate_bragg_peaks
 from .coordinates import q_modulus_for_spectral
 from .core import AnalysisExecution, TableOutput
 from .corrections import SpectralConvention
+from .curie_weiss import execute_curie_weiss, validate_curie_weiss
 from .registry import (
     AnalysisOperationDefinition,
     AnalysisParameterDefinition,
@@ -72,9 +73,43 @@ def register_builtin_operations() -> None:
         _p("polarization_mode", "already_corrected", "Polarization correction assumption.", choices=(("already_corrected", "Already corrected"), ("isotropic_single_component", "Isotropic single component"), ("isotropic_trace", "Isotropic trace"), ("custom_scalar", "Custom scalar"))),
         _p("polarization_scalar", 1.0, "Custom polarization factor."),
     )
+    curie_weiss_parameters = (
+        AnalysisParameterDefinition(
+            "temperature_min_K",
+            "Tmin (K)",
+            "value",
+            2.0,
+            "Lowest temperature included in the Curie-Weiss fit.",
+            "Finite temperature in kelvin below Tmax.",
+            "50.0",
+        ),
+        AnalysisParameterDefinition(
+            "temperature_max_K",
+            "Tmax (K)",
+            "value",
+            300.0,
+            "Highest temperature included in the Curie-Weiss fit.",
+            "Finite temperature in kelvin above Tmin.",
+            "300.0",
+        ),
+    )
     register_analysis_operation(AnalysisOperationDefinition("bragg_integration", "Bragg integration", 1, "Integrate crystallographic peaks.", 1, 2, ("MDHistoData", "PointListData"), bragg_parameters, _validate_bragg, _execute_bragg))
     register_analysis_operation(AnalysisOperationDefinition("spectral_integration", "Spectral integration", 1, "Reduce spectra using physical kernels.", 1, 1, ("MDHistoData",), spectral_parameters, _validate_spectral, _execute_spectral))
     register_analysis_operation(AnalysisOperationDefinition("spectral_conversion", "INS absolute conversion", 1, "Convert measured INS intensity to an absolute cross section or dynamic susceptibility.", 1, 1, ("MDHistoData",), conversion_parameters, _validate_conversion, _execute_conversion))
+    register_analysis_operation(
+        AnalysisOperationDefinition(
+            "curie_weiss_fit",
+            "Curie-Weiss fit",
+            1,
+            "Fit absolute molar susceptibility to chi = C / (T - theta_CW).",
+            1,
+            1,
+            ("PointListData",),
+            curie_weiss_parameters,
+            validate_curie_weiss,
+            execute_curie_weiss,
+        )
+    )
 
 
 def _validate_conversion(inputs, parameters):

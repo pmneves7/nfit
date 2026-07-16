@@ -10,6 +10,27 @@ Projects must be saved before a run. Array outputs live in
 manifests and provenance. **Save As** copies the asset tree. Changing a recipe
 or input marks the latest result stale without deleting it.
 
+## Curie-Weiss fitting
+
+The **Curie-Weiss fit** operation accepts unit-aware point-list susceptibility
+data and exposes only `Tmin` and `Tmax` as fit controls. The input must be an
+absolute molar susceptibility in `cm^3/mol` or rationalized SI `m^3/mol`; for
+MPMS magnetization data, first enable **Plot and fit susceptibility** and the
+sample mass/molar-mass normalization in the dataset panel.
+
+The operation fits the untransformed susceptibility to
+`chi(T) = C / (T - theta_CW)`. This avoids the statistical bias introduced by
+least-squares fitting after taking `1/chi`. If point uncertainties are
+available, the fit is weighted with them and treats them as absolute standard
+uncertainties. The parameter covariance is propagated to `C`, `theta_CW`, and
+`mu_eff = sqrt(3 k_B C / (N_A mu_B^2))`; results report `C` in `cm^3 K/mol`,
+`theta_CW` in K, and `mu_eff` in `mu_B/f.u.`.
+
+The **Curie-Weiss diagnostic** output retains the full temperature range. Open
+it in the data viewer and switch the channel between **Susceptibility** and
+**Inverse susceptibility**. The matching fitted curve is shown automatically,
+and dashed vertical lines mark the fitted `Tmin` and `Tmax`.
+
 ## Bragg integration
 
 Bragg integration accepts three momentum dimensions, or 4D data with an

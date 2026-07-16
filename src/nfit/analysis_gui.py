@@ -262,11 +262,24 @@ class DataPlaygroundWindow:
         if dataset.data is None:
             QtWidgets.QMessageBox.warning(self.window, "Data Playground", "Load the selected dataset before running the analysis.")
             return False
-        if not self._confirm_memory(dataset.data):
+        analysis_data = dataset.data
+        if self.operation_combo.currentData() == "curie_weiss_fit":
+            # Curie-Weiss fitting consumes the same derived, unit-aware
+            # susceptibility that the dataset viewer presents.
+            from .project_gui import prepared_point_list_data
+
+            try:
+                analysis_data = prepared_point_list_data(dataset)
+            except (TypeError, ValueError) as exc:
+                QtWidgets.QMessageBox.warning(
+                    self.window, "Curie-Weiss fit", str(exc)
+                )
+                return False
+        if not self._confirm_memory(analysis_data):
             return False
         context = AnalysisContext(self.group.name, self.group.lattice_parameters, self.group.spacegroup, self.group.metadata.get("crystal"), dataset.parameters.get("temperature"), {"dataset_metadata": dataset.metadata})
         data_fingerprint = dataset_entry_fingerprint(dataset, self.group)
-        analysis_inputs = [AnalysisInput(dataset.id, dataset.name, dataset.data, context, data_fingerprint)]
+        analysis_inputs = [AnalysisInput(dataset.id, dataset.name, analysis_data, context, data_fingerprint)]
         parameters = self._parameters()
         if self.operation_combo.currentData() == "bragg_integration" and parameters.get("peak_source") == "table":
             secondary_id = self.secondary_dataset_combo.currentData()
@@ -306,7 +319,11 @@ class DataPlaygroundWindow:
                     data = read_dataset_artifact(path)
                     derived.datasets.append(DatasetEntry(_unique_output_name(output.label, self.group.dataset_names), data, kind="analysis", data_type="derived_analysis", metadata={"source_file": output.artifact_path, "analysis_artifact_path": output.artifact_path, "derived_from_analysis": {"analysis_id": analysis.id, "output_key": output.key, "recipe_hash": result.recipe_hash}}, id=output.dataset_id))
                 elif output.scalar_value is not None:
-                    lines[-1] += f" = {output.scalar_value:.6g} {output.unit}"
+                    lines[-1] += f" = {output.scalar_value:.6g}"
+                    if output.scalar_uncertainty is not None:
+                        lines[-1] += f" +/- {output.scalar_uncertainty:.2g}"
+                    if output.unit:
+                        lines[-1] += f" {output.unit}"
             self.results.setPlainText("\n".join(lines + result.warnings))
             self.diagnostics.setPlainText(json.dumps(result.diagnostics, indent=2, sort_keys=True))
             self.provenance.setPlainText(json.dumps({"recipe_hash": result.recipe_hash, "input_fingerprints": result.input_fingerprints}, indent=2, sort_keys=True))

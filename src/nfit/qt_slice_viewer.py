@@ -240,7 +240,7 @@ class QtMDHistoSliceViewer:
         self.show_errorbars = True
         self.show_errorbar_caps = False
         self.errorbar_cap_size = 3.0
-        self.show_fit = False
+        self.show_fit = bool(initial_data.metadata.get("viewer_show_fit", False))
         self.show_residual = False
         self.fit_line_color = "#d62728"
         self.fit_line_width = 2.0
@@ -259,7 +259,10 @@ class QtMDHistoSliceViewer:
         self._roi_extents: tuple[float, float, float, float] | None = None
         self._view_limit_callback_ids: list[int] = []
         self._dataset_states: list[_DatasetViewState | None] = [None] * len(self.datasets)
-        self._dataset_states[0] = _DatasetViewState(model=self.model)
+        self._dataset_states[0] = _DatasetViewState(
+            model=self.model,
+            show_fit=self.show_fit,
+        )
         self._plot_layout_mode: tuple[Any, ...] | None = None
         self._compare_axes = []
         self._compare_colorbars = []
@@ -1406,6 +1409,7 @@ class QtMDHistoSliceViewer:
         return _DatasetViewState(
             model=model,
             apply_masks=bool(model.masked),
+            show_fit=bool(data.metadata.get("viewer_show_fit", False)),
         )
 
     def _restore_dataset_state(self, state: _DatasetViewState) -> None:
@@ -1656,7 +1660,10 @@ class QtMDHistoSliceViewer:
 
     def _channel_available(self, name: str) -> bool:
         if getattr(self.model, "is_point_list", False):
-            return name in self.model.point_channels
+            return (
+                self.model.point_overlay_channel(name) is not None
+                or name in self.model.point_channels
+            )
         return name in self.model.CHANNELS
 
     def _fit_panels_active(self) -> bool:
@@ -2689,6 +2696,33 @@ class QtMDHistoSliceViewer:
             )
         else:
             self.ax_image.plot(x, y, **common)
+        reference_lines = self.data.metadata.get("vertical_reference_lines", [])
+        drew_reference = False
+        if isinstance(reference_lines, list):
+            for reference in reference_lines:
+                if isinstance(reference, dict):
+                    value = reference.get("value")
+                    label = str(reference.get("label", ""))
+                else:
+                    value = reference
+                    label = ""
+                try:
+                    position = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if not np.isfinite(position):
+                    continue
+                self.ax_image.axvline(
+                    position,
+                    color="0.35",
+                    linestyle="--",
+                    linewidth=1.25,
+                    label=label or None,
+                    zorder=1.0,
+                )
+                drew_reference = True
+        if drew_reference:
+            self.ax_image.legend()
         self.ax_image.set_xlabel(self.model._axis_label(self.model.x_dim))
         self.ax_image.set_ylabel(self.model._channel_label())
         if self.model._is_boolean_channel():

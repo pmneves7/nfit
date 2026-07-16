@@ -777,7 +777,10 @@ class MDHistoSliceViewer:
         self.is_point_list = isinstance(data, PointListData)
         if self.is_point_list:
             coordinates = list(data.coordinate_names) or list(data.column_names)
-            channels = list(data.channel_labels) or [
+            hidden_channels = set(data.metadata.get("viewer_hidden_channels", []))
+            channels = [
+                label for label in data.channel_labels if label not in hidden_channels
+            ] or [
                 name for name in data.column_names if name not in coordinates
             ] or list(data.column_names)
             # x-axis choices are the coordinates plus any other non-channel column
@@ -1078,6 +1081,17 @@ class MDHistoSliceViewer:
         if hasattr(self, "channel") and self.channel not in self.CHANNELS:
             self.channel = self._resolve_channel("signal")
 
+    def point_overlay_channel(self, name: str) -> str | None:
+        """Return the mapped point-list overlay channel for the selected data channel."""
+
+        if not getattr(self, "is_point_list", False):
+            return None
+        mapping = self.data.metadata.get(f"viewer_{name}_channel_map", {})
+        if not isinstance(mapping, dict):
+            return None
+        label = mapping.get(self.channel)
+        return str(label) if label in self.data.channel_labels else None
+
     def _slice_metadata_channel(
         self, name: str, selections: dict[int, tuple[int, int] | int]
     ) -> np.ndarray:
@@ -1266,7 +1280,10 @@ class MDHistoSliceViewer:
             "nfit_mask": np.zeros_like(x, dtype=bool),
         }
         for name in ("fit", "residual"):
-            if name in self.data.channel_labels:
+            label = self.point_overlay_channel(name)
+            if label is not None:
+                view[name] = np.asarray(self.data.channel_values(label), dtype=float)[order]
+            elif name in self.data.channel_labels:
                 view[name] = np.asarray(self.data.channel_values(name), dtype=float)[order]
         return view
 

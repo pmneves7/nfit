@@ -259,6 +259,9 @@ posterior checks use `emcee` through `sample_problem_parameters`. See the
 
 .. automodule:: nfit.analysis.spectral
    :members:
+
+.. automodule:: nfit.analysis.curie_weiss
+   :members:
 ```
 
 ## Raw direct-geometry TOF reduction
