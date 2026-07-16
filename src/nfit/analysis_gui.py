@@ -260,10 +260,15 @@ class DataPlaygroundWindow:
                 return False
         dataset_id = self.dataset_combo.currentData()
         dataset = next(item for item in self.group.iter_datasets() if item.id == dataset_id)
-        if dataset.data is None:
-            QtWidgets.QMessageBox.warning(self.window, "Analysis Window", "Load the selected dataset before running the analysis.")
+        analysis_data = self._primary_analysis_data(dataset)
+        if analysis_data is None:
+            message = (
+                "Could not load the selected dataset for Bragg integration."
+                if self.operation_combo.currentData() == "bragg_integration"
+                else "Load the selected dataset before running the analysis."
+            )
+            QtWidgets.QMessageBox.warning(self.window, "Analysis Window", message)
             return False
-        analysis_data = dataset.data
         if self.operation_combo.currentData() == "curie_weiss_fit":
             # Curie-Weiss fitting consumes the same derived, unit-aware
             # susceptibility that the dataset viewer presents.
@@ -334,6 +339,21 @@ class DataPlaygroundWindow:
             return True
 
         return self.explorer._start_background_task(title=f"Running {analysis.name}", failure_title="Analysis failed", task=task, on_success=success, success_message="Analysis complete")
+
+    def _primary_analysis_data(self, dataset: DatasetEntry) -> Any | None:
+        """Return primary input data, loading a lazy Bragg source when possible."""
+
+        if dataset.data is not None:
+            return dataset.data
+        if self.operation_combo.currentData() != "bragg_integration":
+            return None
+        from .project_gui import dataset_for_slice_viewer
+
+        try:
+            loaded = dataset_for_slice_viewer(dataset)
+        except (OSError, TypeError, ValueError):
+            return None
+        return dataset.data if dataset.data is not None else loaded
 
     def _confirm_memory(self, data: Any) -> bool:
         from PySide6 import QtWidgets

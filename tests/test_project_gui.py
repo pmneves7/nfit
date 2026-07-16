@@ -2423,6 +2423,37 @@ def test_background_posterior_cancel_saves_partial_chain_and_reenables_gui(monke
     assert explorer._fit_progress_dialog.close_button.isEnabled()
 
 
+def test_background_task_failure_reenables_gui(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    explorer = NfitProjectExplorer(NfitProject())
+    messages = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "warning",
+        lambda parent, title, message: messages.append((parent, title, message)),
+    )
+
+    def fail(_progress_callback):
+        raise ValueError("analysis failure")
+
+    assert explorer._start_background_task(
+        title="Running analysis",
+        failure_title="Analysis failed",
+        task=fail,
+        on_success=lambda _result: True,
+        success_message="Analysis complete",
+    )
+    deadline = time.monotonic() + 3.0
+    while explorer._fit_worker_thread is not None and time.monotonic() < deadline:
+        QtWidgets.QApplication.processEvents()
+
+    assert explorer._fit_worker_thread is None
+    assert explorer.tree.isEnabled()
+    assert explorer.details_scroll.isEnabled()
+    assert messages == [(explorer.window, "Analysis failed", "analysis failure")]
+
+
 def test_project_explorer_edits_initial_state_in_place_without_results(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")

@@ -35,7 +35,7 @@ def register_builtin_operations() -> None:
         _p("peak_positions_hkl", [], "Script-provided H, K, L peak positions."),
         _p("include_systematic_absences", False, "Include reflections forbidden by the space group.", kind="bool"),
         _p("d_min_angstrom", None, "Minimum d spacing in angstrom."), _p("d_max_angstrom", None, "Maximum d spacing in angstrom."),
-        _p("energy_min_meV", None, "Lower elastic energy boundary."), _p("energy_max_meV", None, "Upper elastic energy boundary."),
+        _p("energy_min_meV", None, "Lower elastic energy boundary; leave both bounds blank to use the bin nearest zero."), _p("energy_max_meV", None, "Upper elastic energy boundary; leave both bounds blank to use the bin nearest zero."),
         _p("method", "box_sum", "Peak integration method.", choices=(("box_sum", "Box"), ("ellipsoid_sum", "Ellipsoid"), ("gaussian_fit", "Gaussian fit"))),
         _p("coordinate_frame", "hkl", "Coordinate frame for region widths."),
         _p("box_half_widths", [0.1, 0.1, 0.1], "Positive box half widths."), _p("ellipsoid_semiaxes", [0.1, 0.1, 0.1], "Positive ellipsoid semiaxes."),

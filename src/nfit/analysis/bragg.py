@@ -28,6 +28,7 @@ def generate_bragg_peaks(
 
     import gemmi
 
+    data = _bragg_volume(data)
     vectors = physical_axis_vectors(data)[:, :3]
     if data.signal.ndim != 3 or abs(float(np.linalg.det(vectors))) <= 1e-12:
         raise ValueError("automatic peak generation requires three independent HKL projections")
@@ -89,10 +90,7 @@ def integrate_bragg_peaks(
 ) -> PointListData:
     """Integrate axis-aligned HKL boxes with optional surrounding shell background."""
 
-    if data.signal.ndim == 4:
-        if energy_min_meV is None or energy_max_meV is None:
-            raise ValueError("4D Bragg integration requires an explicit elastic energy window")
-        data = _elastic_reduce(data, energy_min_meV, energy_max_meV)
+    data = _bragg_volume(data, energy_min_meV, energy_max_meV)
     if data.signal.ndim != 3 or len([axis for axis in data.axes if axis.kind == "momentum"]) != 3:
         raise ValueError("Bragg box integration requires a three-dimensional momentum histogram")
     semantics = signal_semantics(data)
@@ -340,6 +338,34 @@ def _elastic_reduce(data: MDHistoData, lower: float, upper: float) -> MDHistoDat
     axes = tuple(axis for i, axis in enumerate(data.axes) if i != dim)
     metadata = {**data.metadata, "elastic_energy_window_meV": [lower, upper], "energy_coverage": coverage.tolist()}
     return MDHistoData(axes, signal, errors, coverage <= 0, np.where(coverage > 0, 1.0, 0.0), coordinate_system=data.coordinate_system, visual_normalization=data.visual_normalization, metadata=metadata)
+
+
+def _bragg_volume(
+    data: MDHistoData,
+    energy_min_meV: float | None = None,
+    energy_max_meV: float | None = None,
+) -> MDHistoData:
+    """Return a 3D Bragg volume, defaulting to the energy bin nearest zero."""
+
+    if data.signal.ndim != 4:
+        return data
+    dimensions = [
+        index
+        for index, axis in enumerate(data.axes)
+        if axis.kind == "energy" or axis.role == "energy_transfer"
+    ]
+    if len(dimensions) != 1:
+        raise ValueError("4D Bragg integration requires exactly one energy axis")
+    if (energy_min_meV is None) != (energy_max_meV is None):
+        raise ValueError("set both elastic energy boundaries or leave both blank")
+    if energy_min_meV is None:
+        dimension = dimensions[0]
+        edges = bin_edges(data.axes[dimension], data.shape[dimension])
+        centers = 0.5 * (edges[:-1] + edges[1:])
+        index = int(np.argmin(np.abs(centers)))
+        energy_min_meV = float(edges[index])
+        energy_max_meV = float(edges[index + 1])
+    return _elastic_reduce(data, float(energy_min_meV), float(energy_max_meV))
 
 
 def _centroid_center(data, edges, vectors, center, radius, measured, transform=None):

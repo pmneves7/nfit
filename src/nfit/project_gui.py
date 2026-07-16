@@ -9227,6 +9227,10 @@ class NfitProjectExplorer:
                 self.cancel_requested = True
 
         class Handler(QtCore.QObject):
+            def __init__(self, parent_window: Any) -> None:
+                super().__init__(parent_window)
+                self._parent_window = parent_window
+
             @QtCore.Slot(dict)
             def handle_progress(self, event: dict[str, Any]) -> None:
                 progress.update_progress(event)
@@ -9254,8 +9258,10 @@ class NfitProjectExplorer:
             @QtCore.Slot(str)
             def handle_failure(self, message: str) -> None:
                 progress.fail(message)
-                QtWidgets.QMessageBox.warning(self.window, failure_title, message)
-                worker_thread.quit()
+                try:
+                    QtWidgets.QMessageBox.warning(self._parent_window, failure_title, message)
+                finally:
+                    worker_thread.quit()
 
         progress = self._fit_progress_dialog
         if progress is None:

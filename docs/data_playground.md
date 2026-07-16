@@ -33,8 +33,9 @@ and dashed vertical lines mark the fitted `Tmin` and `Tmax`.
 
 ## Bragg integration
 
-Bragg integration accepts three momentum dimensions, or 4D data with an
-explicit elastic energy window. Peaks come from space-group-filtered crystal
+Bragg integration accepts three momentum dimensions, or 4D data. For 4D data,
+leaving both elastic-energy bounds blank uses the measured energy bin nearest
+zero; set both bounds to integrate an explicit elastic window. Peaks come from space-group-filtered crystal
 HKLs or supplied H, K, L positions. Methods are exact-overlap HKL boxes,
 deterministic subvoxel ellipsoids, and local Gaussian fits. Regions may use HKL
 or inverse-angstrom widths. Optional shells subtract a volume-scaled local

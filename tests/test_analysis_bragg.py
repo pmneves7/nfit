@@ -77,6 +77,21 @@ def test_four_dimensional_input_uses_fractional_energy_overlap():
     assert result.column("I")[0] == 4.0
 
 
+def test_four_dimensional_input_defaults_to_energy_bin_nearest_zero():
+    q_axes = tuple(MDHistoAxis(name, np.array([0.0, 1.0]), "rlu", "momentum") for name in ("H", "K", "L"))
+    energy = MDHistoAxis("DeltaE", np.array([-2.0, -1.0, 1.0]), "meV", "energy")
+    data = MDHistoData(
+        (*q_axes, energy),
+        np.array([[[[2.0, 4.0]]]]),
+        np.ones((1, 1, 1, 2)),
+        np.zeros((1, 1, 1, 2), bool),
+        np.ones((1, 1, 1, 2)),
+        metadata={"signal_semantics": "density", "lattice_parameters": {"a": 2 * np.pi, "b": 2 * np.pi, "c": 2 * np.pi}},
+    )
+    result = integrate_bragg_peaks(data, [[0.5, 0.5, 0.5]], box_half_widths=[0.5] * 3)
+    assert result.column("I")[0] == 8.0
+
+
 def test_projected_hkl_axes_integrate_supplied_peak():
     edges = np.linspace(-1.0, 1.0, 9)
     axes = (

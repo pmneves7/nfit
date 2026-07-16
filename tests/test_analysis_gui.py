@@ -1,5 +1,6 @@
 import pytest
 
+import nfit.project_gui as project_gui
 from nfit.analysis import (
     AnalysisEntry,
     AnalysisOutputRef,
@@ -80,3 +81,26 @@ def test_analysis_tree_marks_changed_inputs_stale(monkeypatch):
     dataset.scale_factor = 2.0
     explorer._refresh_tree()
     assert "[stale]" in explorer.tree.topLevelItem(0).child(3).child(0).text(0)
+
+
+def test_bragg_analysis_loads_a_lazy_primary_dataset(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+    dataset = DatasetEntry("lazy scan", None, metadata={"source_file": "scan.nxs"})
+    group = DataGroup("Workspace1", datasets=[dataset])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
+    analysis_window = explorer.open_data_playground_for_selection()
+    assert analysis_window is not None
+    loaded = object()
+    calls = []
+
+    def load(entry):
+        calls.append(entry)
+        entry.data = loaded
+        return loaded
+
+    monkeypatch.setattr(project_gui, "dataset_for_slice_viewer", load)
+    assert analysis_window._primary_analysis_data(dataset) is loaded
+    assert calls == [dataset]
+    analysis_window.window.close()
