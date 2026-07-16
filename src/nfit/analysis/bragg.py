@@ -336,7 +336,23 @@ def _elastic_reduce(data: MDHistoData, lower: float, upper: float) -> MDHistoDat
     requested = upper - lower
     coverage = np.sum(np.where(valid, overlaps.reshape(shape), 0.0), axis=dim) / requested
     axes = tuple(axis for i, axis in enumerate(data.axes) if i != dim)
-    metadata = {**data.metadata, "elastic_energy_window_meV": [lower, upper], "energy_coverage": coverage.tolist()}
+    metadata = dict(data.metadata)
+    rebin = metadata.get("rebin")
+    if isinstance(rebin, dict) and isinstance(rebin.get("vectors"), (list, tuple)):
+        # Rebin vectors are indexed by the original axes.  Removing the energy
+        # dimension without removing its vector pairs the surviving momentum
+        # axes with the wrong physical HKL directions.
+        rebin = dict(rebin)
+        rebin["vectors"] = [
+            vector for index, vector in enumerate(rebin["vectors"]) if index != dim
+        ]
+        metadata["rebin"] = rebin
+    metadata.update(
+        {
+            "elastic_energy_window_meV": [lower, upper],
+            "energy_coverage": coverage.tolist(),
+        }
+    )
     return MDHistoData(axes, signal, errors, coverage <= 0, np.where(coverage > 0, 1.0, 0.0), coordinate_system=data.coordinate_system, visual_normalization=data.visual_normalization, metadata=metadata)
 
 

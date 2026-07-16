@@ -1,6 +1,7 @@
 import numpy as np
 
-from nfit.analysis.bragg import generate_bragg_peaks, integrate_bragg_peaks
+from nfit.analysis.bragg import _elastic_reduce, generate_bragg_peaks, integrate_bragg_peaks
+from nfit.analysis.coordinates import physical_axis_vectors
 from nfit.mdhisto import MDHistoAxis, MDHistoData
 
 
@@ -90,6 +91,39 @@ def test_four_dimensional_input_defaults_to_energy_bin_nearest_zero():
     )
     result = integrate_bragg_peaks(data, [[0.5, 0.5, 0.5]], box_half_widths=[0.5] * 3)
     assert result.column("I")[0] == 8.0
+
+
+def test_four_dimensional_rebin_vectors_keep_independent_hkl_directions():
+    momentum_axes = (
+        MDHistoAxis("[H,H,H]", np.array([0.0, 1.0]), "r.l.u.", "momentum"),
+        MDHistoAxis("[L,L,-2L]", np.array([0.0, 1.0]), "r.l.u.", "momentum"),
+        MDHistoAxis("[H,-H,0]", np.array([0.0, 1.0]), "r.l.u.", "momentum"),
+    )
+    energy = MDHistoAxis("DeltaE", np.array([-1.0, 1.0]), "meV", "energy")
+    data = MDHistoData(
+        (energy, *momentum_axes),
+        np.ones((1, 1, 1, 1)),
+        np.ones((1, 1, 1, 1)),
+        np.zeros((1, 1, 1, 1), bool),
+        np.ones((1, 1, 1, 1)),
+        metadata={
+            "signal_semantics": "density",
+            "lattice_parameters": {"a": 2 * np.pi, "b": 2 * np.pi, "c": 2 * np.pi},
+            "rebin": {
+                "vectors": [
+                    [0.0, 0.0, 0.0, 1.0],
+                    [1.0, 1.0, 1.0, 0.0],
+                    [1.0, 1.0, -2.0, 0.0],
+                    [1.0, -1.0, 0.0, 0.0],
+                ]
+            },
+        },
+    )
+    reduced = _elastic_reduce(data, -1.0, 1.0)
+    np.testing.assert_allclose(
+        physical_axis_vectors(reduced)[:, :3],
+        [[1.0, 1.0, 1.0], [1.0, 1.0, -2.0], [1.0, -1.0, 0.0]],
+    )
 
 
 def test_projected_hkl_axes_integrate_supplied_peak():
