@@ -59,10 +59,96 @@ exists before importing any of them. **Clear datasets** removes all direct and
 nested datasets from the data group after confirmation, while retaining that
 group's models, masks, and fit history.
 
-Raw time-of-flight NeXus files such as `SEQ_409981.nxs.h5` are imported as
-single-crystal dataset entries. Their conversion to HKLE/energy event data is a
-separate native raw-reduction pathway; the MDEvent composite reducer applies
-after data have been converted to MDEvent form.
+Raw direct-geometry time-of-flight NeXus files such as `SEQ_409981.nxs.h5`
+are imported together as a file-backed raw-run dataset group. Enable its
+composite and choose the four HKLE coordinate axes, limits, and resolution to
+stream the event banks directly into a plotted and fitted HKLE histogram. Raw
+runs are intentionally not listed in the data viewer by themselves: detector
+events are not yet a meaningful plotted dataset until this reduction completes.
+
+### Raw direct-geometry TOF data
+
+The **Raw TOF shared setup** panel stores one UB matrix, optional vanadium
+normalization file, optional detector mask, and Ei/T0 overrides for all selected
+runs. nfit reads the source-to-sample distance and detector pixel positions from
+each file's NeXus instrument definition, calculates final energy from the TOF
+remaining after the incident flight path, forms `Q = k_i - k_f`, rotates into
+the sample frame, and converts to HKL using `(2*pi*UB)^-1`. Raw IDs are
+processed bank by bank and in bounded event chunks, so the source event table is
+never copied into memory.
+
+Each run is normalized by its retained proton-pulse charge in microampere-hours.
+Before this kinematic factor, nfit applies Mantid's wavelength-dependent He-3
+tube-efficiency correction whenever the embedded instrument definition supplies
+the tube pressure, temperature, wall thickness, diameter, and orientation. It
+multiplies both the event and its uncertainty by the inverse detector
+efficiency; unsupported detector definitions are left unchanged. The default
+**Apply ki/kf correction** then multiplies an accepted event by the
+incident-to-final wavevector ratio; its variance receives the squared total
+factor, matching Mantid direct-geometry reduction. Both a processed vanadium
+file and a mask file act as detector masks in this Shiver-compatible workflow: zero,
+negative, or invalid values exclude the detector from events and trajectory
+coverage rather than rescaling its signal.
+
+When available, nfit estimates Ei and T0 separately for each run from monitor
+locations in its embedded instrument definition, using one-microsecond bins and
+Mantid GetEi v2's peak-width, rebinning, background, and first-moment analysis.
+The calculation is not tied to a particular monitor name: it follows IDF
+monitor order, including IDs whose locations are defined from a run log. For
+instruments such as CNCS and HYSPEC that define Mantid's `t0_formula`, nfit
+uses the requested Ei and evaluates that formula instead of fitting two monitor
+peaks. The **T0 override** is in microseconds and is subtracted from each
+raw event TOF. Bins with trajectory coverage but no accepted events retain a
+zero signal and receive nfit's 68% Feldman-Cousins upper-limit uncertainty,
+scaled by that bin's normalization. Progress reports the number and percentage
+of raw events reduced.
+
+#### Raw TOF reduction sequence
+
+For a raw direct-geometry group, nfit performs the following operations in this
+order for every selected run:
+
+1. It reads the run logs, embedded instrument definition (IDF), detector IDs and
+   pixel positions, source-to-sample distance, and sample orientation. Event
+   banks remain on disk and are read in bounded chunks.
+2. It determines `Ei` and `T0`. An explicit group override wins; otherwise nfit
+   uses Mantid GetEi v2 from the IDF monitor layout, or the IDF's Mantid
+   `t0_formula` for formula-driven instruments such as CNCS and HYSPEC.
+3. It combines the processed-vanadium and explicit-mask files as binary detector
+   exclusions. A detector with a zero, negative, invalid, or explicitly masked
+   value is excluded from both the event numerator and normalization coverage.
+4. It applies the bad-pulse rule to raw events. With the default 95% threshold,
+   a pulse is retained when its proton charge is at least 95% of the run's mean
+   pulse charge. The denominator uses the sum of those same retained charges,
+   converted from pC to microampere-hours.
+5. For each retained detector event, it subtracts `T0`, subtracts the incident
+   flight time `2286.4 * L1 / sqrt(Ei)` microseconds, and obtains
+   `Ef = (2286.4 * L2 / t_f)^2`. Events with nonpositive final time or outside
+   the default energy range `-0.95 Ei <= DeltaE = Ei - Ef <= 0.95 Ei` are
+   discarded.
+6. It converts accepted events to `Q = k_i - k_f` in the laboratory frame,
+   rotates by the run goniometer, converts to HKL with `(2*pi*UB)^-1`, and then
+   projects HKLE into the four configured rebin coordinate axes.
+7. When an IDF defines a cylindrical He-3 detector with tube pressure,
+   temperature, wall thickness, and radius, nfit multiplies the event by
+   `1 / (1 - exp(-alpha * lambda_f))`, where `lambda_f = 2*pi/k_f` and `alpha`
+   is Mantid's path-length-dependent tube coefficient. It then applies the
+   optional `ki/kf` factor. The event variance receives the square of the full
+   product of these corrections. Detectors without complete He-3 IDF metadata
+   retain unit efficiency.
+8. It sums corrected event weights and their squared weights in each output
+   bin, while recording the unweighted number of accepted events separately.
+9. It constructs the MDNorm-style denominator independently by tracing every
+   unmasked detector's allowed `-0.95 Ei` to `+0.95 Ei` trajectory through HKLE
+   bins and accumulating its retained proton charge times the energy interval.
+10. Finally, it divides the event sum and square-root variance by that
+    denominator. Bins without trajectory coverage are masked; covered bins with
+    zero accepted events retain signal zero and receive the documented 68%
+    Feldman-Cousins upper-limit uncertainty.
+
+This mirrors the relevant Shiver/Mantid direct-geometry sequence without
+requiring Mantid at runtime. The result metadata records whether the He-3 and
+`ki/kf` corrections were enabled.
 
 ### UB setup for single crystals
 
@@ -83,9 +169,9 @@ and coordinate convention.
 
 Applying the dialog to an individual dataset stores a dataset-specific
 orientation. Applying it to a dataset group stores shared orientation metadata;
-for an MDEvent group it also updates the shared UB used for HKL conversion and
-marks the composite rebin stale. Applying it at the top data-group level updates
-the shared sample lattice and orientation.
+for an MDEvent or raw-TOF group it also updates the shared UB used for HKL
+conversion and marks the composite rebin stale. Applying it at the top data-group
+level updates the shared sample lattice and orientation.
 
 ### MDEvent single-crystal data
 

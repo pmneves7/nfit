@@ -141,10 +141,13 @@ and converts stored `Q_sample` vectors with `(2*pi*UB)^-1`, avoiding redundant
 copies of the event table and instrument description.
 
 The normalized result is a ratio. Event signal and error-squared accumulate in
-the numerator; detector trajectories contribute proton charge, vanadium
-detector efficiency/solid angle, and energy coverage to the denominator. Bad
-detectors contribute to neither side. nfit masks are then applied through the
-normal dataset-group mask pathway.
+the numerator after raw direct-geometry events receive the IDF-defined,
+wavelength-dependent He-3 tube-efficiency correction and the kinematic
+`ki/kf` correction. Detector trajectories contribute proton charge and energy
+coverage to the denominator. In Shiver-compatible imports, vanadium supplies a
+binary detector mask rather than a detector-value weight. Bad detectors
+contribute to neither side. nfit masks are then applied through the normal
+dataset-group mask pathway.
 
 Detector coverage and event count remain separate. In particular, a covered
 bin with zero events is a measurement of zero rather than an unmeasured bin.

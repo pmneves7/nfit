@@ -3,7 +3,6 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-
 KB_MEV_PER_K = 0.08617333262
 # Magnetic scattering-length factor in the convention used for chi'' in
 # mu_B^2/meV. Its square is included in the absolute cross section below.

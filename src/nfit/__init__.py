@@ -168,6 +168,13 @@ from .mdevent import (
     load_mdevent_run_points,
     mdevent_dataset_group,
 )
+from .raw_dgs import (
+    RawDGSRunInfo,
+    bin_raw_dgs_group,
+    inspect_raw_dgs_run,
+    is_raw_dgs_nexus_file,
+    raw_dgs_dataset_group,
+)
 from .models import (
     compound_additive_model,
     constant_background,
@@ -513,6 +520,11 @@ __all__ = [
     "mdevent_dataset_group",
     "bin_mdevent_group",
     "append_mdevent_file",
+    "RawDGSRunInfo",
+    "bin_raw_dgs_group",
+    "inspect_raw_dgs_run",
+    "is_raw_dgs_nexus_file",
+    "raw_dgs_dataset_group",
     "sample_problem_parameters",
     "save_project",
     "save_dataset_file",

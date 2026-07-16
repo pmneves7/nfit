@@ -5565,7 +5565,7 @@ def test_dataset_importing_panel_builds_paths_and_clears_nested_data(tmp_path, m
     assert not group.datasets and not group.subgroups
 
 
-def test_raw_dgs_nexus_import_is_kept_out_of_reduced_composite_and_viewer(tmp_path):
+def test_raw_dgs_nexus_import_creates_a_file_backed_reduction_group(tmp_path):
     h5py = pytest.importorskip("h5py")
     source = tmp_path / "SEQ_409981.nxs.h5"
     with h5py.File(source, "w") as handle:
@@ -5578,7 +5578,8 @@ def test_raw_dgs_nexus_import_is_kept_out_of_reduced_composite_and_viewer(tmp_pa
     )
 
     assert entries[0].kind == "raw_dgs_nexus"
-    assert entries[0].metadata["raw_reduction_required"] is True
-    ok, message = project_gui.data_group_composite_status(group)
-    assert not ok and "time-of-flight-to-HKLE" in message
+    assert len(group.subgroups) == 1
+    assert "raw_dgs" in group.subgroups[0].metadata
+    ok, _message = project_gui.data_group_composite_status(group.subgroups[0])
+    assert ok
     assert project_gui.slice_viewer_datasets(group) == ([], [])
