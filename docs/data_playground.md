@@ -57,7 +57,12 @@ peak regions can be excluded.
 
 Results contain `H`, `K`, `L`, `I`, `dI`, `Background`, `I/dI`, peak/background
 coverage, and status. Dataset metadata must declare `signal_semantics` as
-`density` or `bin_integral`; quantitative integration refuses `unknown`.
+`density` or `bin_integral`. nfit imports Mantid MDHistoWorkspace and legacy
+nfit dataset archives as `bin_integral`, and retains that convention in new
+portable archives. Use the dataset **Signal convention** control to correct an
+upstream reduction that instead stores a reciprocal-space density. Quantitative
+integration refuses an explicitly `unknown` convention rather than silently
+choosing a normalization.
 
 ## Spectral integration
 

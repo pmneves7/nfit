@@ -2949,6 +2949,7 @@ def test_dataset_details_text_summarizes_axes_source_and_metadata(tmp_path, monk
     assert panel_titles == [
         "Dataset",
         "Sample environment",
+        "Signal convention",
         "Axes",
         "Rebin",
         "Crystal",
@@ -3114,6 +3115,9 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
 
 def test_saved_nfit_npz_import_restores_mdhisto_axes_data_and_context(tmp_path):
     data = _grid_mdhisto_data()
+    data.metadata["signal_semantics"] = "density"
+    data.coordinate_system = 2
+    data.visual_normalization = 1
     data.mask[0, 0] = True
     data.signal[0, 0] = np.nan
     data.errors[0, 0] = np.nan
@@ -3132,11 +3136,58 @@ def test_saved_nfit_npz_import_restores_mdhisto_axes_data_and_context(tmp_path):
     assert [axis.units for axis in imported.data.axes] == [axis.units for axis in data.axes]
     assert imported.parameters["temperature"] == pytest.approx(1.8)
     assert imported.parameters["magnetic_field"] == dataset.parameters["magnetic_field"]
+    assert imported.data.metadata["signal_semantics"] == "density"
+    assert imported.data.coordinate_system == 2
+    assert imported.data.visual_normalization == 1
     reloaded_view = dataset_for_slice_viewer(imported)
     np.testing.assert_array_equal(reloaded_view.mask, data.mask)
     np.testing.assert_allclose(reloaded_view.signal, data.signal, equal_nan=True)
     np.testing.assert_allclose(reloaded_view.errors, data.errors, equal_nan=True)
     np.testing.assert_allclose(reloaded_view.num_events, data.num_events)
+
+
+def test_legacy_nfit_npz_import_defaults_to_bin_integral_signal(tmp_path):
+    data = _grid_mdhisto_data()
+    dataset = DatasetEntry("scan", data, kind="mdhisto")
+    modern_path = tmp_path / "modern.npz"
+    legacy_path = tmp_path / "legacy.npz"
+    save_dataset_file(dataset, modern_path)
+
+    with np.load(modern_path) as archive:
+        payload = {
+            key: archive[key]
+            for key in archive.files
+            if key not in {"coordinate_system", "visual_normalization"}
+        }
+    np.savez_compressed(legacy_path, **payload)
+
+    imported = dataset_entry_from_path(legacy_path)
+
+    assert isinstance(imported.data, MDHistoData)
+    assert imported.data.metadata["signal_semantics"] == "bin_integral"
+    assert imported.data.metadata["signal_semantics_source"] == "legacy_nfit_archive_default"
+    assert imported.data.coordinate_system is None
+    assert imported.data.visual_normalization is None
+
+
+def test_dataset_signal_semantics_control_is_documented_and_updates_data(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    data = _grid_mdhisto_data()
+    data.metadata["signal_semantics"] = "bin_integral"
+    dataset = DatasetEntry("scan", data, kind="mdhisto")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+
+    explorer._set_dataset_details(dataset, group)
+    combo = explorer.details_widget.findChild(QtWidgets.QComboBox, "dataset_signal_semantics")
+    assert combo is not None
+    assert "Bin-integral" in combo.toolTip()
+    combo.setCurrentIndex(combo.findData("density"))
+
+    assert data.metadata["signal_semantics"] == "density"
+    assert data.metadata["signal_semantics_source"] == "user_selected"
 
 
 def test_dataset_rebin_edits_preserve_details_scroll_position(monkeypatch):

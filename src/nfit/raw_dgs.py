@@ -280,6 +280,8 @@ def bin_raw_dgs_group(
                  for index, (name, edge) in enumerate(zip(names, edges, strict=True)))
     return MDHistoData(axes=axes, signal=signal, errors=errors, mask=mask, num_events=event_count,
                        metadata={"raw_dgs": config, "rebin": {"vectors": basis.tolist()},
+                                 "signal_semantics": "density",
+                                 "signal_semantics_source": "nfit_raw_tof_reduction",
                                  "normalization_denominator": normalization,
                                  "zero_event_bins_are_measured": True,
                                  "zero_count_error_model": "feldman_cousins_68_percent_upper_limit_scaled_by_rms_event_weight",

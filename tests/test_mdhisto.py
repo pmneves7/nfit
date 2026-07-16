@@ -51,6 +51,8 @@ def test_load_mantid_mdhisto_nxs_reads_axes_and_arrays(tmp_path):
     np.testing.assert_allclose(imported.num_events, 7.0)
     assert imported.coordinate_system == 2
     assert imported.visual_normalization == 1
+    assert imported.metadata["signal_semantics"] == "bin_integral"
+    assert imported.metadata["signal_semantics_source"] == "mantid_mdhisto_workspace"
 
     assert [axis.name for axis in imported.axes] == [
         "DeltaE",

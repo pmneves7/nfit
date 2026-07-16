@@ -5731,7 +5731,7 @@ def save_dataset_file(dataset: DatasetEntry, path: str | Path, *, use_view: bool
         raise TypeError("dataset saving currently supports MDHistoData or PointListData datasets")
     payload: dict[str, Any] = {
         "nfit_dataset_format": np.asarray("nfit-dataset"),
-        "nfit_dataset_version": np.asarray(2, dtype=int),
+        "nfit_dataset_version": np.asarray(3, dtype=int),
         "nfit_data_container": np.asarray("mdhisto"),
         "signal": data.signal,
         "errors": data.errors,
@@ -5739,6 +5739,10 @@ def save_dataset_file(dataset: DatasetEntry, path: str | Path, *, use_view: bool
         "num_events": data.num_events,
         "metadata_json": json.dumps(_json_safe_value(data.metadata), sort_keys=True),
         "axis_count": np.asarray(len(data.axes), dtype=int),
+        "coordinate_system": np.asarray(-1 if data.coordinate_system is None else data.coordinate_system),
+        "visual_normalization": np.asarray(
+            -1 if data.visual_normalization is None else data.visual_normalization
+        ),
     }
     context = {
         key: copy.deepcopy(dataset.parameters[key])
@@ -5824,6 +5828,12 @@ def _load_nfit_mdhisto_archive(archive: Any, source: Path) -> MDHistoData:
         )
     metadata = _nfit_archive_json_mapping(archive, "metadata_json")
     metadata["export_file"] = str(source)
+    if "signal_semantics" not in metadata:
+        # Dataset archives written before format 3 did not preserve this
+        # quantitative convention. They contain binned signal values, the
+        # same convention as an un-normalized Mantid MDHistoWorkspace.
+        metadata["signal_semantics"] = "bin_integral"
+        metadata["signal_semantics_source"] = "legacy_nfit_archive_default"
     channel_names = json.loads(_nfit_archive_text(archive, "auxiliary_channel_names_json", "[]"))
     auxiliary_channels = {
         str(name): MDHistoChannel(
@@ -5840,6 +5850,8 @@ def _load_nfit_mdhisto_archive(archive: Any, source: Path) -> MDHistoData:
         errors=np.asarray(archive["errors"], dtype=float),
         mask=np.asarray(archive["mask"], dtype=bool),
         num_events=np.asarray(archive["num_events"], dtype=float),
+        coordinate_system=_nfit_archive_optional_int(archive, "coordinate_system"),
+        visual_normalization=_nfit_archive_optional_int(archive, "visual_normalization"),
         metadata=metadata,
         auxiliary_channels=auxiliary_channels,
     )
@@ -5862,6 +5874,15 @@ def _load_nfit_point_list_archive(archive: Any, source: Path) -> PointListData:
 
 def _nfit_archive_text(archive: Any, key: str, default: str = "") -> str:
     return str(np.asarray(archive[key]).item()) if key in archive else default
+
+
+def _nfit_archive_optional_int(archive: Any, key: str) -> int | None:
+    """Read an optional archive integer, where ``-1`` represents ``None``."""
+
+    if key not in archive:
+        return None
+    value = int(np.asarray(archive[key]).item())
+    return None if value < 0 else value
 
 
 def _nfit_archive_json_mapping(archive: Any, key: str) -> dict[str, Any]:
@@ -12676,6 +12697,7 @@ class NfitProjectExplorer:
                 # Sample environment sits between the Dataset and Axes panels.
                 if dataset.data_type != "magnetization":
                     self.details_layout.addWidget(self.sample_environment_widget)
+                self.details_layout.addWidget(self._dataset_signal_semantics_group_box(dataset, group))
             elif title == "Metadata":
                 self.details_layout.addWidget(self._dataset_metadata_group_box(dataset))
             else:
@@ -14078,6 +14100,58 @@ class NfitProjectExplorer:
             object_name="dataset_metadata_tree",
             empty_text="No additional metadata.",
         )
+
+    def _dataset_signal_semantics_group_box(
+        self, dataset: DatasetEntry, group: DataGroup | None
+    ) -> Any:
+        """Build the explicit signal-value convention control for histogram data."""
+
+        from PySide6 import QtWidgets
+
+        box = QtWidgets.QGroupBox("Signal convention")
+        layout = QtWidgets.QFormLayout(box)
+        layout.setContentsMargins(10, 8, 10, 8)
+        combo = QtWidgets.QComboBox()
+        combo.setObjectName("dataset_signal_semantics")
+        combo.addItem("Bin-integral signal", "bin_integral")
+        combo.addItem("Density-valued signal", "density")
+        combo.addItem("Unspecified", "unknown")
+        data = dataset.data
+        semantics = (
+            str(data.metadata.get("signal_semantics", "unknown"))
+            if isinstance(data, MDHistoData)
+            else "unknown"
+        )
+        combo.setCurrentIndex(max(combo.findData(semantics), 0))
+        combo.setEnabled(isinstance(data, MDHistoData))
+        combo.setToolTip(
+            "Choose how each histogram signal value is interpreted. Bin-integral values are summed; "
+            "density-valued signals are weighted by reciprocal-space bin volume during quantitative integration."
+        )
+        combo.currentIndexChanged.connect(
+            lambda _index, selector=combo: self._set_dataset_signal_semantics(
+                dataset, group, str(selector.currentData())
+            )
+        )
+        layout.addRow("Signal values", combo)
+        return box
+
+    def _set_dataset_signal_semantics(
+        self, dataset: DatasetEntry, group: DataGroup | None, semantics: str
+    ) -> None:
+        if not isinstance(dataset.data, MDHistoData):
+            return
+        if semantics not in {"density", "bin_integral", "unknown"}:
+            return
+        if dataset.data.metadata.get("signal_semantics") == semantics:
+            return
+        dataset.data.metadata["signal_semantics"] = semantics
+        dataset.data.metadata["signal_semantics_source"] = "user_selected"
+        if group is not None:
+            self._record_data_group_state_change(group)
+            self.refresh_slice_viewer(group)
+        self._mark_dirty()
+        self._set_dataset_details_preserving_scroll(dataset, group)
 
     def _metadata_tree_group_box(
         self,
