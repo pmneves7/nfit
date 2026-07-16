@@ -94,9 +94,16 @@ line-length = 100
 extend-exclude = ["src/nfit.egg-info"]
 include = [
   "pyproject.toml",
+  "src/nfit/axes.py",
+  "src/nfit/cross_section.py",
   "src/nfit/analysis/**/*.py",
   "src/nfit/analysis_gui.py",
+  "src/nfit/plot_recipes.py",
+  "src/nfit/plot_gui.py",
+  "src/nfit/fit_scripts.py",
   "tests/test_analysis_*.py",
+  "tests/test_plot_recipes.py",
+  "tests/test_fit_scripts.py",
   "examples/data_playground.py",
   "benchmarks/benchmark_analysis.py",
 ]

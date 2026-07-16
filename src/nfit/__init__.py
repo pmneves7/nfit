@@ -61,6 +61,7 @@ from .fit_config import (
     qualified_parameter_name,
     sharing_mode,
 )
+from .fit_scripts import fit_state_script
 from .crystal import (
     Bond,
     BondOrbit,
@@ -194,6 +195,8 @@ from .pipeline import (
     FitTimelineEntry,
     MaskSpec,
     ModelComponentSpec,
+    PlotEntry,
+    PlotSourceRef,
 )
 from .project_gui import (
     DATA_TYPE_DEFINITIONS,
@@ -242,6 +245,7 @@ from .project_gui import (
     recent_project_paths,
     rebinned_dataset_data,
     remember_recent_project,
+    render_project_plot,
     save_project,
     save_dataset_file,
     set_dataset_data_type,
@@ -250,6 +254,7 @@ from .project_gui import (
     copy_mask_to_dataset,
     copy_dataset_to_group,
 )
+from .plot_recipes import PLOT_TYPE_LABELS, new_plot_entry, plot_script, render_plot
 from .plotting import (
     MDHistoSliceViewer,
     mdhisto_with_signal_like,
@@ -306,6 +311,7 @@ __all__ = [
     "validate_analysis",
     "chipp_from_intensity",
     "FitResult",
+    "fit_state_script",
     "FitDataset",
     "FitProblem",
     "KB_MEV_PER_K",
@@ -319,6 +325,13 @@ __all__ = [
     "NfitProject",
     "MaskSpec",
     "ModelComponentSpec",
+    "PlotEntry",
+    "PlotSourceRef",
+    "PLOT_TYPE_LABELS",
+    "new_plot_entry",
+    "plot_script",
+    "render_plot",
+    "render_project_plot",
     "ModelSpec",
     "NDRebin",
     "ArrayRebinSource",

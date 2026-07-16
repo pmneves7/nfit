@@ -31,6 +31,7 @@ getting_started
 data_philosophy
 gui_workflows
 data_playground
+plotting
 physics_conventions
 spin_fluctuation_models
 theory_notes

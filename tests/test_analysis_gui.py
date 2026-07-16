@@ -18,7 +18,7 @@ def test_analysis_tree_and_playground_controls_have_tooltips(monkeypatch):
     group = DataGroup("Workspace1", datasets=[DatasetEntry("scan", None)])
     explorer = NfitProjectExplorer(NfitProject([group]))
     workspace = explorer.tree.topLevelItem(0)
-    assert [workspace.child(i).text(0) for i in range(workspace.childCount())] == ["Datasets", "Models", "Fits", "Analyses"]
+    assert [workspace.child(i).text(0) for i in range(workspace.childCount())] == ["Datasets", "Models", "Fits", "Analyses", "Plots"]
 
     explorer.tree.setCurrentItem(workspace)
     playground = explorer.open_data_playground_for_selection()

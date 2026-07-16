@@ -77,15 +77,78 @@ the sample frame, and converts to HKL using `(2*pi*UB)^-1`. Raw IDs are
 processed bank by bank and in bounded event chunks, so the source event table is
 never copied into memory.
 
-The signal contribution from an accepted event is divided by its run proton
-charge and, when selected, by its positive vanadium detector value. **Apply
-kf/ki correction** multiplies each event numerator by the final-to-incident
-wavevector ratio and records that choice in the rebinned dataset metadata. A
-mask file removes detector IDs before coordinate conversion. Zero, negative, or
-invalid detector values in either file exclude the detector. The **T0 override**
-is in microseconds and is subtracted from each event TOF; leave it unset to use
-zero until an instrument-specific timing calibration is supplied. Progress
-reports the number and percentage of raw events reduced.
+Each run is normalized by its retained proton-pulse charge in microampere-hours.
+Before this kinematic factor, nfit applies Mantid's wavelength-dependent He-3
+tube-efficiency correction whenever the embedded instrument definition supplies
+the tube pressure, temperature, wall thickness, diameter, and orientation. It
+multiplies both the event and its uncertainty by the inverse detector
+efficiency; unsupported detector definitions are left unchanged. The default
+**Apply ki/kf correction** then multiplies an accepted event by the
+incident-to-final wavevector ratio; its variance receives the squared total
+factor, matching Mantid direct-geometry reduction. Both a processed vanadium
+file and a mask file act as detector masks in this Shiver-compatible workflow: zero,
+negative, or invalid values exclude the detector from events and trajectory
+coverage rather than rescaling its signal.
+
+When available, nfit estimates Ei and T0 separately for each run from monitor
+locations in its embedded instrument definition, using one-microsecond bins and
+Mantid GetEi v2's peak-width, rebinning, background, and first-moment analysis.
+The calculation is not tied to a particular monitor name: it follows IDF
+monitor order, including IDs whose locations are defined from a run log. For
+instruments such as CNCS and HYSPEC that define Mantid's `t0_formula`, nfit
+uses the requested Ei and evaluates that formula instead of fitting two monitor
+peaks. The **T0 override** is in microseconds and is subtracted from each
+raw event TOF. Bins with trajectory coverage but no accepted events retain a
+zero signal and receive nfit's 68% Feldman-Cousins upper-limit uncertainty,
+scaled by that bin's normalization. Progress reports the number and percentage
+of raw events reduced.
+
+#### Raw TOF reduction sequence
+
+For a raw direct-geometry group, nfit performs the following operations in this
+order for every selected run:
+
+1. It reads the run logs, embedded instrument definition (IDF), detector IDs and
+   pixel positions, source-to-sample distance, and sample orientation. Event
+   banks remain on disk and are read in bounded chunks.
+2. It determines `Ei` and `T0`. An explicit group override wins; otherwise nfit
+   uses Mantid GetEi v2 from the IDF monitor layout, or the IDF's Mantid
+   `t0_formula` for formula-driven instruments such as CNCS and HYSPEC.
+3. It combines the processed-vanadium and explicit-mask files as binary detector
+   exclusions. A detector with a zero, negative, invalid, or explicitly masked
+   value is excluded from both the event numerator and normalization coverage.
+4. It applies the bad-pulse rule to raw events. With the default 95% threshold,
+   a pulse is retained when its proton charge is at least 95% of the run's mean
+   pulse charge. The denominator uses the sum of those same retained charges,
+   converted from pC to microampere-hours.
+5. For each retained detector event, it subtracts `T0`, subtracts the incident
+   flight time `2286.4 * L1 / sqrt(Ei)` microseconds, and obtains
+   `Ef = (2286.4 * L2 / t_f)^2`. Events with nonpositive final time or outside
+   the default energy range `-0.95 Ei <= DeltaE = Ei - Ef <= 0.95 Ei` are
+   discarded.
+6. It converts accepted events to `Q = k_i - k_f` in the laboratory frame,
+   rotates by the run goniometer, converts to HKL with `(2*pi*UB)^-1`, and then
+   projects HKLE into the four configured rebin coordinate axes.
+7. When an IDF defines a cylindrical He-3 detector with tube pressure,
+   temperature, wall thickness, and radius, nfit multiplies the event by
+   `1 / (1 - exp(-alpha * lambda_f))`, where `lambda_f = 2*pi/k_f` and `alpha`
+   is Mantid's path-length-dependent tube coefficient. It then applies the
+   optional `ki/kf` factor. The event variance receives the square of the full
+   product of these corrections. Detectors without complete He-3 IDF metadata
+   retain unit efficiency.
+8. It sums corrected event weights and their squared weights in each output
+   bin, while recording the unweighted number of accepted events separately.
+9. It constructs the MDNorm-style denominator independently by tracing every
+   unmasked detector's allowed `-0.95 Ei` to `+0.95 Ei` trajectory through HKLE
+   bins and accumulating its retained proton charge times the energy interval.
+10. Finally, it divides the event sum and square-root variance by that
+    denominator. Bins without trajectory coverage are masked; covered bins with
+    zero accepted events retain signal zero and receive the documented 68%
+    Feldman-Cousins upper-limit uncertainty.
+
+This mirrors the relevant Shiver/Mantid direct-geometry sequence without
+requiring Mantid at runtime. The result metadata records whether the He-3 and
+`ki/kf` corrections were enabled.
 
 ### UB setup for single crystals
 
@@ -632,6 +695,14 @@ table, saved fit results, current-state parameter table, and model parameter
 editor. A limit hit is a diagnostic that the optimum may lie outside the
 allowed range, not a claim that the result is invalid.
 
+When a fit state or result is selected, **Copy fit script** and **Save fit
+script** generate a readable Python program that loads the saved project and
+restores that exact state without constructing a GUI. The script defaults to
+restoring the stored state and printing its fit metadata. Set its explicit
+`RUN_FIT = True` option to rerun the optimizer and append a new result. These
+actions require saving the project first so dataset sources and the selected
+fit ID have portable references.
+
 The fit editor and fit results share one `Posterior` panel. It configures emcee
 for sampling immediately after a fit; when a fit result is selected, the same
 controls also rerun emcee from the best-fit parameters, append additional steps
@@ -639,13 +710,15 @@ to a stored raw chain, or change burn-in/thinning after the fact. Result-only
 checkboxes control which stored result representation is displayed and exported:
 `Use emcee uncertainties, correlations, and asymmetry` replaces least-squares
 standard errors with the asymmetric 16--84% emcee interval and uses the emcee
-correlation matrix in `Fit diagnostics`; `Use best sample` displays the
-highest-log-probability stored emcee sample as the best fit. Neither checkbox
-changes the fitted model, datasets, Current state, or timeline. Both choices are
-stored with the fit result, so its table, diagnostics, and exported report remain
-consistent after reopening a project. These posterior-only operations update the
-selected fit result's posterior summaries and diagnostics without running least
-squares again and without creating a new timeline point.
+correlation matrix in `Fit diagnostics`; `Use best sample` applies the
+highest-log-probability stored emcee sample to the selected result's live model
+and any open data-viewer overlay. Unchecking it restores the saved
+least-squares values. The least-squares snapshot and timeline remain unchanged,
+and both choices are stored with the fit result so its table, diagnostics, and
+exported report remain consistent after reopening a project. These
+posterior-only operations update the selected fit result's posterior summaries
+and diagnostics without running least squares again and without creating a new
+timeline point.
 Changing burn-in or thinning simply reinterprets the stored raw chain; rerun
 replaces the stored posterior after an overwrite-confirmation dialog when
 samples already exist; append continues from the final walker positions
@@ -674,6 +747,16 @@ When either posterior display checkbox is selected, those reference lines use
 the corresponding selected emcee values rather than the least-squares values.
 
 ## Data viewer
+
+## Saved plots
+
+Every workspace has a **Plots** tree section. Use the data viewer's **Plot /
+Create saved plot** action to preserve the current visual state as an editable
+figure recipe. Open the tree entry for a clean presentation window, or choose
+**Edit in data viewer** to restore the recipe into the full interactive controls.
+The saved-plot window keeps controls hidden until **Plot / Open plot controls**
+is selected; its same menu can copy/save the figure or a backend-only generating
+script.
 
 The data viewer supports dataset switching, channel selection, mask toggling,
 axis selection, hidden-axis slicing/integration, color scale and limit controls,

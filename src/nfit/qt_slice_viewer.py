@@ -219,6 +219,8 @@ class QtMDHistoSliceViewer:
         self.copy_figure_button = None
         self.copy_script_button = None
         self.save_script_button = None
+        self.save_plot_action = None
+        self._save_plot_callback = None
         self.view_mode_combo = None
         self.content_stack = None
         self.volume_panel = None
@@ -337,6 +339,72 @@ class QtMDHistoSliceViewer:
         from PySide6 import QtWidgets
 
         QtWidgets.QApplication.clipboard().setText(self.figure_script())
+
+    def current_plot_settings(self) -> dict[str, object]:
+        """Capture the current viewer state as a JSON-ready saved-plot recipe."""
+
+        xlim = self._export_limits("x") if self.ax_image is not None else None
+        ylim = self._export_limits("y") if self.ax_image is not None else None
+        return {
+            "x_dim": self.data.axes[self.model.x_dim].name,
+            "y_dim": self.data.axes[self.model.y_dim].name,
+            "channel": self.model.channel,
+            "selections": self._export_selections(),
+            "integrate_checks": self._export_integrate_checks(),
+            "cmap": self.model._effective_cmap(),
+            "color_scale": self.model.color_scale,
+            "auto_limits": self.model.auto_limits,
+            "autoscale": self.model.autoscale,
+            "manual_vmin": self.model.manual_vmin,
+            "manual_vmax": self.model.manual_vmax,
+            "smoothing_x": self.smoothing_x,
+            "smoothing_y": self.smoothing_y,
+            "xlim": xlim,
+            "ylim": ylim,
+            "font_size": self.font_size,
+            "axis_linewidth": self.axis_linewidth,
+            "show_histogram_axes": bool(self.hist_axes_check and self.hist_axes_check.isChecked()),
+            "roi_extents": self._roi_extents,
+            "xcut_percent": self.xcut_percent,
+            "ycut_percent": self.ycut_percent,
+            "show_fit": self.show_fit,
+            "show_residual": self.show_residual,
+            "figsize": tuple(self.figure.get_size_inches()) if self.figure is not None else (8.0, 6.5),
+        }
+
+    def apply_plot_settings(self, settings: dict[str, object]) -> None:
+        """Restore a saved plot recipe into the interactive controls."""
+
+        x_name = settings.get("x_dim")
+        y_name = settings.get("y_dim")
+        names = [axis.name for axis in self.data.axes]
+        if x_name in names:
+            self._set_display_dim("x", names.index(x_name))
+        if y_name in names and len(names) > 1:
+            self._set_display_dim("y", names.index(y_name))
+        if settings.get("channel") in self.model.CHANNELS:
+            self._set_channel(str(settings["channel"]))
+        self.model.selections.update({int(key): tuple(value) for key, value in dict(settings.get("selections", {})).items()})
+        self.model.integrate_checks.update({int(key): bool(value) for key, value in dict(settings.get("integrate_checks", {})).items()})
+        self._set_cmap(str(settings.get("cmap", self.model.cmap)).removesuffix("_r"))
+        self._set_color_scale(str(settings.get("color_scale", self.model.color_scale)))
+        self._set_auto_limits(str(settings.get("auto_limits", self.model.auto_limits)))
+        self._set_autoscale(bool(settings.get("autoscale", self.model.autoscale)))
+        self.smoothing_x = float(settings.get("smoothing_x", self.smoothing_x))
+        self.smoothing_y = float(settings.get("smoothing_y", self.smoothing_y))
+        self._set_font_size(float(settings.get("font_size", self.font_size)))
+        self._set_axis_linewidth(float(settings.get("axis_linewidth", self.axis_linewidth)))
+        self._set_show_fit(bool(settings.get("show_fit", self.show_fit)))
+        self._set_show_residual(bool(settings.get("show_residual", self.show_residual)))
+        self._roi_extents = settings.get("roi_extents", self._roi_extents)
+        self._redraw()
+
+    def set_save_plot_callback(self, callback) -> None:
+        """Expose project-bound saved-plot creation when a callback is supplied."""
+
+        self._save_plot_callback = callback
+        if self.save_plot_action is not None:
+            self.save_plot_action.setEnabled(callback is not None)
 
     def save_script(self) -> None:
         from pathlib import Path
@@ -478,6 +546,17 @@ class QtMDHistoSliceViewer:
         self.view_mode_combo.currentIndexChanged.connect(self._set_view_mode)
         mode_layout.addWidget(self.view_mode_combo)
         mode_layout.addStretch(1)
+        plot_menu = QtWidgets.QToolButton()
+        plot_menu.setText("Plot")
+        plot_menu.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        plot_menu.setToolTip("Create a reusable saved plot from the current data-viewer settings.")
+        menu = QtWidgets.QMenu(plot_menu)
+        self.save_plot_action = menu.addAction("Create saved plot")
+        self.save_plot_action.setToolTip("Store the current view as an editable plot in this workspace.")
+        self.save_plot_action.setEnabled(False)
+        self.save_plot_action.triggered.connect(lambda: self._save_plot_callback() if self._save_plot_callback else None)
+        plot_menu.setMenu(menu)
+        mode_layout.addWidget(plot_menu)
         main_layout.addWidget(mode_bar)
         self.content_stack = QtWidgets.QStackedWidget()
         main_layout.addWidget(self.content_stack, 1)
