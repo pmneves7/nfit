@@ -367,6 +367,15 @@ fitting. The current rebin can be materialized as a new independent project
 dataset with `Create dataset from rebin`, or written directly to disk with
 `Save rebin to disk`.
 
+Use `Copy settings` and `Paste settings` to transfer the complete rebin recipe
+between compatible individual-dataset and composite dataset-group panels. The
+clipboard payload includes enablement, coordinate axes, limits, resolution
+mode, bin sizes or counts, fractional and automatic behavior, mean weighting,
+batch target, and symmetry. The destination must have the same number of axes
+and compatible coordinate-vector dimensions. Pasting marks the destination
+rebin pending and follows its pasted automatic/manual rebin setting; invalid or
+incompatible clipboard content leaves the destination unchanged.
+
 MDHisto signal values default to the **Density-valued signal** convention.
 Normalized rebins, including the default inverse-variance mean, always produce
 density-valued output regardless of the source convention. Mantid MDHisto

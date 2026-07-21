@@ -3486,6 +3486,89 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     assert int(saved["axis_count"]) == 2
 
 
+def test_rebin_settings_copy_and_paste_between_datasets(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    source = DatasetEntry("source", _grid_mdhisto_data(), kind="mdhisto")
+    target = DatasetEntry("target", _grid_mdhisto_data(), kind="mdhisto")
+    source_config = dataset_rebin_config(source)
+    source_config.update(
+        {
+            "enabled": True,
+            "fractional": False,
+            "auto_rebin": False,
+            "mean_weighting": "uniform",
+            "max_batch_mb": 64,
+            "resolution_mode": "bins",
+            "stale": False,
+        }
+    )
+    source_config["axes"][0].update(
+        {"lower": -3.0, "upper": 4.0, "num_bins": 14, "step_size": 0.5}
+    )
+    source_config["symmetry"] = {
+        "mode": "point_group",
+        "expression": "-1",
+    }
+    group = DataGroup("Datagroup1", datasets=[source, target])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    datasets_item = explorer.tree.topLevelItem(0).child(0)
+
+    explorer.tree.setCurrentItem(datasets_item.child(0))
+    copy_button = explorer.details_widget.findChild(
+        QtWidgets.QPushButton, "dataset_rebin_copy_settings"
+    )
+    assert copy_button is not None
+    assert copy_button.toolTip()
+    copy_button.click()
+    clipboard_payload = json.loads(QtWidgets.QApplication.clipboard().text())
+    assert clipboard_payload["schema"] == "nfit.rebin-settings"
+    assert "stale" not in clipboard_payload["settings"]
+
+    explorer.tree.setCurrentItem(datasets_item.child(1))
+    paste_button = explorer.details_widget.findChild(
+        QtWidgets.QPushButton, "dataset_rebin_paste_settings"
+    )
+    assert paste_button is not None
+    assert paste_button.toolTip()
+    paste_button.click()
+
+    pasted = dataset_rebin_config(target)
+    for key in project_gui.REBIN_SETTINGS_KEYS:
+        if key in source_config:
+            assert pasted[key] == source_config[key]
+    assert pasted["stale"] is True
+    assert explorer.details_widget.findChild(
+        QtWidgets.QCheckBox, "dataset_rebin_enabled"
+    ).isChecked()
+    assert explorer.details_widget.findChild(
+        QtWidgets.QComboBox, "dataset_rebin_resolution_mode"
+    ).currentData() == "bins"
+
+
+def test_rebin_settings_paste_rejects_incompatible_axis_count():
+    source = {
+        "enabled": True,
+        "axes": [
+            {"name": "H", "lower": -1.0, "upper": 1.0, "num_bins": 2},
+            {"name": "K", "lower": -1.0, "upper": 1.0, "num_bins": 2},
+        ],
+    }
+    target = {
+        "enabled": False,
+        "axes": [{"name": "q", "lower": 0.0, "upper": 2.0, "num_bins": 2}],
+    }
+
+    with pytest.raises(ValueError, match="2 axes.*1 axes"):
+        project_gui._rebin_config_from_clipboard_text(
+            project_gui._rebin_settings_clipboard_text(source),
+            target,
+        )
+
+    assert target["enabled"] is False
+
+
 def test_saved_nfit_npz_import_restores_mdhisto_axes_data_and_context(tmp_path):
     data = _grid_mdhisto_data()
     data.metadata["signal_semantics"] = "density"
@@ -3767,6 +3850,14 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
     rebin_now_button = explorer.details_widget.findChild(QtWidgets.QPushButton, "group_composite_rebin_now")
     assert rebin_now_button is not None
     assert rebin_now_button.toolTip()
+    copy_button = explorer.details_widget.findChild(
+        QtWidgets.QPushButton, "group_composite_copy_settings"
+    )
+    paste_button = explorer.details_widget.findChild(
+        QtWidgets.QPushButton, "group_composite_paste_settings"
+    )
+    assert copy_button is not None and copy_button.toolTip()
+    assert paste_button is not None and paste_button.toolTip()
 
     checkbox.setChecked(True)
 
@@ -3779,6 +3870,19 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
     assert resolution_mode is not None and resolution_mode.currentData() == "step"
     resolution_mode.setCurrentIndex(resolution_mode.findData("bins"))
     assert config["resolution_mode"] == "bins"
+    copy_button = explorer.details_widget.findChild(
+        QtWidgets.QPushButton, "group_composite_copy_settings"
+    )
+    paste_button = explorer.details_widget.findChild(
+        QtWidgets.QPushButton, "group_composite_paste_settings"
+    )
+    copied_lower = config["axes"][0]["lower"]
+    copy_button.click()
+    config["axes"][0]["lower"] = copied_lower - 10.0
+    paste_button.click()
+    pasted = project_gui.data_group_composite_config(group)
+    assert pasted["axes"][0]["lower"] == copied_lower
+    assert pasted["stale"] is True
 
 
 def test_large_data_group_composite_defaults_manual_and_defers_refresh(monkeypatch):

@@ -99,6 +99,20 @@ GROUP_COMPOSITE_NAME = "Composite"
 DEFAULT_REBIN_MAX_BATCH_MB = 192
 REBIN_COORDINATE_BASIS_VERSION = 2
 REBIN_RESOLUTION_MODE_KEY = "resolution_mode"
+REBIN_SETTINGS_CLIPBOARD_SCHEMA = "nfit.rebin-settings"
+REBIN_SETTINGS_CLIPBOARD_VERSION = 1
+REBIN_SETTINGS_KEYS = (
+    "enabled",
+    "axes",
+    "fractional",
+    "auto_rebin",
+    "mean_weighting",
+    "max_batch_mb",
+    "normalize",
+    "symmetry",
+    REBIN_RESOLUTION_MODE_KEY,
+    "coordinate_basis_version",
+)
 REBIN_AUTO_MAX_CONTRIBUTIONS = 5_000_000
 REBIN_AUTO_MAX_OUTPUT_BINS = 2_000_000
 MASK_AUTO_MAX_POINTS = 5_000_000
@@ -5812,6 +5826,77 @@ def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
         config["auto_rebin"] = not _dataset_rebin_is_large(dataset, config)
     config.setdefault("stale", False)
     return config
+
+
+def _rebin_settings_clipboard_text(config: dict[str, Any]) -> str:
+    """Serialize user-editable rebin settings for the system clipboard."""
+
+    settings = {
+        key: copy.deepcopy(config[key])
+        for key in REBIN_SETTINGS_KEYS
+        if key in config
+    }
+    return json.dumps(
+        {
+            "schema": REBIN_SETTINGS_CLIPBOARD_SCHEMA,
+            "version": REBIN_SETTINGS_CLIPBOARD_VERSION,
+            "settings": settings,
+        },
+        indent=2,
+        sort_keys=True,
+    )
+
+
+def _rebin_config_from_clipboard_text(
+    text: str,
+    target_config: dict[str, Any],
+) -> dict[str, Any]:
+    """Return a pasted rebin config after validating target compatibility."""
+
+    try:
+        payload = json.loads(text)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("The clipboard does not contain valid nfit rebin settings.") from exc
+    if not isinstance(payload, dict) or payload.get("schema") != REBIN_SETTINGS_CLIPBOARD_SCHEMA:
+        raise ValueError("The clipboard does not contain nfit rebin settings.")
+    if payload.get("version") != REBIN_SETTINGS_CLIPBOARD_VERSION:
+        raise ValueError("The clipboard rebin-settings version is not supported.")
+    settings = payload.get("settings")
+    if not isinstance(settings, dict):
+        raise ValueError("The clipboard rebin settings are incomplete.")
+    source_axes = settings.get("axes")
+    target_axes = target_config.get("axes")
+    if not isinstance(source_axes, list) or not source_axes:
+        raise ValueError("The copied rebin settings do not contain any axes.")
+    if isinstance(target_axes, list) and target_axes and len(source_axes) != len(target_axes):
+        raise ValueError(
+            f"The copied settings have {len(source_axes)} axes, but this rebin panel has "
+            f"{len(target_axes)} axes."
+        )
+    for index, source_axis in enumerate(source_axes):
+        if not isinstance(source_axis, dict):
+            raise ValueError(f"Copied rebin axis {index + 1} is invalid.")
+        source_vector = source_axis.get("vector")
+        target_vector = (
+            target_axes[index].get("vector")
+            if isinstance(target_axes, list)
+            and index < len(target_axes)
+            and isinstance(target_axes[index], dict)
+            else None
+        )
+        if isinstance(source_vector, list) and isinstance(target_vector, list):
+            if len(source_vector) != len(target_vector):
+                raise ValueError(
+                    f"Copied rebin axis {index + 1} uses a {len(source_vector)}-component "
+                    f"coordinate vector, but this panel expects {len(target_vector)} components."
+                )
+    pasted = copy.deepcopy(target_config)
+    for key in REBIN_SETTINGS_KEYS:
+        if key in settings:
+            pasted[key] = copy.deepcopy(settings[key])
+    pasted["normalize"] = True
+    pasted["stale"] = True
+    return pasted
 
 
 def dataset_mask_application_config(dataset: DatasetEntry) -> dict[str, Any]:
@@ -13657,7 +13742,30 @@ class NfitProjectExplorer:
             "All enabled datasets must have the same data kind. Negative dataset scale factors subtract data."
         )
         enable_check.toggled.connect(lambda checked: self._set_group_composite_enabled(group, checked))
-        layout.addWidget(enable_check)
+        settings_row = QtWidgets.QHBoxLayout()
+        settings_row.addWidget(enable_check)
+        settings_row.addStretch(1)
+        copy_settings_button = QtWidgets.QPushButton("Copy settings")
+        copy_settings_button.setObjectName("group_composite_copy_settings")
+        copy_settings_button.setToolTip(
+            "Copy every setting in this composite rebin panel to the system clipboard. "
+            "The copied JSON can be pasted into a compatible dataset or dataset-group rebin panel."
+        )
+        copy_settings_button.clicked.connect(
+            lambda _checked=False: self._copy_rebin_settings(config)
+        )
+        paste_settings_button = QtWidgets.QPushButton("Paste settings")
+        paste_settings_button.setObjectName("group_composite_paste_settings")
+        paste_settings_button.setToolTip(
+            "Replace every setting in this composite rebin panel with compatible nfit rebin settings "
+            "from the system clipboard."
+        )
+        paste_settings_button.clicked.connect(
+            lambda _checked=False: self._paste_group_composite_settings(group)
+        )
+        settings_row.addWidget(copy_settings_button)
+        settings_row.addWidget(paste_settings_button)
+        layout.addLayout(settings_row)
         message_label = QtWidgets.QLabel(message)
         message_label.setWordWrap(True)
         message_label.setToolTip("Composite status. All enabled datasets must have the same data kind before they can be combined.")
@@ -14983,7 +15091,30 @@ class NfitProjectExplorer:
         enable_check.setChecked(bool(config.get("enabled", False)))
         enable_check.setToolTip("Use the rebinned version of this dataset for viewing and fitting.")
         enable_check.toggled.connect(lambda checked: self._set_dataset_rebin_enabled(dataset, group, checked))
-        rebin_layout.addWidget(enable_check)
+        settings_row = QtWidgets.QHBoxLayout()
+        settings_row.addWidget(enable_check)
+        settings_row.addStretch(1)
+        copy_settings_button = QtWidgets.QPushButton("Copy settings")
+        copy_settings_button.setObjectName("dataset_rebin_copy_settings")
+        copy_settings_button.setToolTip(
+            "Copy every setting in this rebin panel to the system clipboard. The copied JSON can be "
+            "pasted into a compatible dataset or dataset-group rebin panel."
+        )
+        copy_settings_button.clicked.connect(
+            lambda _checked=False: self._copy_rebin_settings(config)
+        )
+        paste_settings_button = QtWidgets.QPushButton("Paste settings")
+        paste_settings_button.setObjectName("dataset_rebin_paste_settings")
+        paste_settings_button.setToolTip(
+            "Replace every setting in this rebin panel with compatible nfit rebin settings from the "
+            "system clipboard."
+        )
+        paste_settings_button.clicked.connect(
+            lambda _checked=False: self._paste_dataset_rebin_settings(dataset, group)
+        )
+        settings_row.addWidget(copy_settings_button)
+        settings_row.addWidget(paste_settings_button)
+        rebin_layout.addLayout(settings_row)
 
         controls = QtWidgets.QWidget()
         controls.setObjectName("dataset_rebin_controls")
@@ -15416,6 +15547,60 @@ class NfitProjectExplorer:
         tree.resizeColumnToContents(0)
         layout.addWidget(tree)
         return group_box
+
+    def _copy_rebin_settings(self, config: dict[str, Any]) -> None:
+        """Copy one dataset or composite rebin recipe to the system clipboard."""
+
+        from PySide6 import QtWidgets
+
+        QtWidgets.QApplication.clipboard().setText(
+            _rebin_settings_clipboard_text(config)
+        )
+
+    def _pasted_rebin_config(self, target_config: dict[str, Any]) -> dict[str, Any] | None:
+        """Read and validate rebin settings from the system clipboard."""
+
+        from PySide6 import QtWidgets
+
+        try:
+            return _rebin_config_from_clipboard_text(
+                QtWidgets.QApplication.clipboard().text(),
+                target_config,
+            )
+        except ValueError as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Paste rebin settings",
+                str(exc),
+            )
+            return None
+
+    def _paste_dataset_rebin_settings(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup | None,
+    ) -> bool:
+        pasted = self._pasted_rebin_config(dataset_rebin_config(dataset))
+        if pasted is None:
+            return False
+        dataset.parameters[DATASET_REBIN_KEY] = pasted
+        self._after_dataset_rebin_changed(dataset, group)
+        # Pasting can change every control, including enablement and resolution
+        # mode, so rebuild the panel instead of relying on the lightweight
+        # numeric-field refresh used for ordinary single-value edits.
+        self._set_dataset_details_preserving_scroll(dataset, group)
+        return True
+
+    def _paste_group_composite_settings(
+        self,
+        group: DataGroup | _CompositeScope,
+    ) -> bool:
+        pasted = self._pasted_rebin_config(data_group_composite_config(group))
+        if pasted is None:
+            return False
+        group.metadata[GROUP_COMPOSITE_KEY] = pasted
+        self._after_group_composite_changed(group)
+        return True
 
     def _set_dataset_rebin_enabled(
         self,
