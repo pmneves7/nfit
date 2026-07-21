@@ -41,6 +41,11 @@ def execute_to_artifacts(
     backup = root.parent / f".{analysis.id}-{uuid4().hex}.backup"
     staging.mkdir(parents=True, exist_ok=False)
     refs: list[AnalysisOutputRef] = []
+    existing_dataset_ids = {
+        output.key: output.dataset_id
+        for output in (analysis.result.outputs if analysis.result is not None else [])
+        if output.dataset_id
+    }
     try:
         for key, output in execution.outputs.items():
             if isinstance(output, ScalarOutput):
@@ -52,7 +57,7 @@ def execute_to_artifacts(
             data_type = getattr(output, "data_type", "")
             if data_type:
                 metadata.setdefault("data_type", data_type)
-            refs.append(AnalysisOutputRef(key, output.label, "table" if output.__class__.__name__ == "TableOutput" else "dataset", artifact_path=artifact.name, dataset_id=uuid4().hex, metadata=metadata))
+            refs.append(AnalysisOutputRef(key, output.label, "table" if output.__class__.__name__ == "TableOutput" else "dataset", artifact_path=artifact.name, dataset_id=existing_dataset_ids.get(key, uuid4().hex), metadata=metadata))
         if root.exists():
             root.replace(backup)
         try:

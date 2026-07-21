@@ -19,10 +19,11 @@ in the regular data viewer, or **Add to datasets** to create a disabled
 The project tree includes an `Analyses` branch after `Fits`. Select it and use
 **New analysis** to open a fresh Analysis Window recipe for that workspace, or
 use **Open Analysis Window** on a workspace, dataset, or analysis node for
-non-fitting Bragg and spectral operations. Recipes are non-destructive, run
-through the background task framework, and persist linked output artifacts.
-Dataset-valued outputs may create disabled `Derived data` entries; table outputs
-remain under their analysis until explicitly added to Datasets.
+non-fitting Bragg, spectral, Bose-separation, spherical-average, and
+angle-background operations. Recipes are non-destructive, run through the
+background task framework, and persist linked output artifacts. Dataset-valued
+outputs may create disabled `Derived data` entries; table outputs remain under
+their analysis until explicitly added to Datasets.
 Tree labels distinguish never-run, fresh, stale, failed, and unavailable results.
 
 See [Analysis Window](data_playground.md) for normalization, coverage, output,
@@ -574,7 +575,7 @@ the uncertainty. After the fit, the optimized scale is written back to the
 dataset and stored in the fit snapshot. Because zero scale makes the data-side
 uncertainty singular, use a nonzero initial scale.
 
-## Masks and models
+## Masks
 
 Selecting a mask or model shows its type selector and parameter editor at the
 top of the right panel. Parameter tooltips come from the same registry that
@@ -628,6 +629,25 @@ automatic application opts the dataset back into recalculation as mask
 settings change. This controls when masks are materialized, not which masks
 participate in viewing, rebinning, or fitting.
 
+## Dataset backgrounds
+
+Every dataset has a **Backgrounds** branch beside **Masks**. Use **Add
+background** to choose a powder inelastic dataset from the same workspace.
+Each background entry has its own enabled state, scale, and linear/nearest
+interpolation setting, so several corrections can be stacked and temporarily
+bypassed without deleting their configuration.
+
+For a single-crystal target, nfit computes `|Q|` at every target bin,
+interpolates the powder background in `|Q|` and energy, and subtracts
+`scale * background`. Independent uncertainties are propagated as
+`sigma_corrected^2 = sigma_data^2 + scale^2 sigma_background^2`. Target bins
+outside the background domain or over missing background values are masked
+rather than extrapolated. Background subtraction occurs before the target
+dataset scale factor and is therefore shared by viewing, fitting, saved fit
+states, and GUI-free scripts that load the project.
+
+## Models
+
 Models can have multiple components in one workspace. Model parameters include
 controls for whether they are fitted and whether they are shared globally across
 datasets. Each parameter can also define an optional plot label used as the
@@ -652,6 +672,15 @@ expression language, validation rules, reduced-chi-squared accounting, and
 script examples. The model editor scrolls when a
 component has many sections or parameters, so fit-parameter rows keep normal
 editor height as generated Heisenberg RPA exchange orbits are added.
+
+For a Heisenberg RPA self-consistency closure, the solved reaction field or
+effective susceptibility remains an internal derived value. Onsager and TAC
+offer **Fit moment target** to expose their conserved amplitude as a model
+parameter; Moriya SCR exposes its mode-coupling `u` automatically. These
+parameters use the same **Fit**, bounds, and **Global fit** controls as every
+other model parameter. TAC replaces the model's bare `chi0` with its solved
+effective susceptibility, so the `chi0` **Fit** checkbox is disabled for that
+closure rather than sending an unidentifiable parameter to the optimizer.
 
 The spin-fluctuation models (`local_relaxational`, `mmp_relaxational`,
 `heisenberg_rpa`; see [Spin-fluctuation models](spin_fluctuation_models.md))

@@ -107,6 +107,58 @@ integration multiplies these values by the physical bin volume. Use the dataset
 array value is already the total intensity contained in that bin. An explicitly
 `unknown` convention still blocks quantitative integration.
 
+## Bose-Einstein elastic separation
+
+**Bose-Einstein elastic separation** accepts two identically binned histogram
+datasets. Select the dataset whose temperature should define the output as the
+primary input and the other temperature as the secondary input. Both datasets
+must have positive temperatures in their **Sample environment** fields, and
+the temperatures must differ.
+
+For each nonzero energy-transfer bin, nfit solves
+
+```text
+I_1(Q,E) = I_elastic(Q,E) + f(E,T_1) A(Q,E)
+I_2(Q,E) = I_elastic(Q,E) + f(E,T_2) A(Q,E)
+```
+
+where `f(E,T)` is `n(E,T)+1` on the neutron-energy-loss side and `n(|E|,T)`
+on the energy-gain side. The main output is `f(E,T_1) A`, the inelastic signal
+at the primary dataset temperature; a second output stores the inferred
+temperature-independent component. Exactly zero-transfer bins are assigned to
+the temperature-independent output because the Bose factor is singular there.
+Input variances are propagated through the two linear combinations under the
+assumption that the measurements are statistically independent.
+
+## Spherical averaging
+
+**Spherical average** converts a single-crystal inelastic histogram to a
+powder inelastic `|Q|, DeltaE` dataset. The energy bins are preserved and the
+number of radial bins is editable. Source bins are combined with
+inverse-variance weights; the output uncertainty is the standard uncertainty
+of that weighted mean. A lattice or UB matrix is required when the source
+momentum coordinates are in reciprocal-lattice units.
+
+## Angle-energy background
+
+**Angle-energy background** operates on two or more MDEvent runs. Use **Select
+runs...** to choose the sample-rotation measurements. Each run is reduced to a
+common `|Q|, DeltaE` grid and normalized by its proton charge. In every bin,
+the run intensities are sorted and the lowest fraction is averaged; the default
+is 20 percent. This follows the per-bin low-intensity selection used by
+Shiver's Mantid
+[`GenerateGoniometerIndependentBackground`](https://docs.mantidproject.org/v6.11.0/algorithms/GenerateGoniometerIndependentBackground-v1.html)
+workflow. The
+statistical variances of the selected runs are propagated, while the additional
+uncertainty from deciding which runs belong to the selected order statistic is
+reported as excluded from the error model.
+
+The result is a powder inelastic dataset that can be inspected directly or
+attached to another dataset through its **Backgrounds** branch. For raw events,
+nfit's current implementation uses proton-charge normalization; future
+instrument-specific reduction can replace that normalization without changing
+the saved analysis recipe or background interface.
+
 ## Spectral integration
 
 The **INS absolute conversion** operation creates a derived dataset before any
@@ -162,6 +214,6 @@ Pure functions such as `integrate_bragg_peaks()` and
 `available_analysis_types()`, `default_analysis_parameters()`,
 `validate_analysis()`, and `run_analysis_operation()`.
 
-Future raw-TOF reduction and general dataset subtraction remain upstream and
-can emit reduced derived datasets through the same recipe, artifact,
-fingerprint, and coverage system.
+Future raw-TOF reduction and single-crystal-to-single-crystal subtraction can
+emit corrected derived datasets through the same recipe, artifact, fingerprint,
+and coverage system.

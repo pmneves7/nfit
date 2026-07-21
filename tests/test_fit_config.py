@@ -1323,6 +1323,20 @@ def test_closure_exposes_parameters_and_declines_analytic_jacobian():
     assert not problem_supports_analytic_jacobian(compiled.problem)
 
 
+def test_tac_forces_unidentifiable_bare_chi0_fixed():
+    component = _closure_scalar_component(
+        closure={"mode": "tac", "moment_target": 1.0, "bz_grid": 6}
+    )
+    component.fit_parameters = {"chi0": True, "gamma0": True}
+    compiled = compile_fit_problem(
+        [component],
+        [FitDatasetInput("d", _closure_points(1), data_type="single_crystal_inelastic")],
+    )
+    specs = {spec.name: spec for spec in compiled.problem.parameter_specs}
+    assert specs["M.chi0"].vary is False
+    assert specs["M.gamma0"].vary is True
+
+
 def test_onsager_closure_changes_intensity_and_stays_finite():
     points = _closure_points(2)
     plain = _evaluate(_closure_scalar_component(), points)

@@ -331,8 +331,13 @@ per-dataset scale absorbs this constant and the sample amount; the optional
 absolute mode pins it from the sample mass and molar mass and fits in emu.
 
 **Cost.** Tier A amortizes one BZ-grid eigendecomposition across every solver
-probe (the Onsager $\lambda$ is a rigid eigenvalue shift), so a full
-$M(T)$ sweep costs one decomposition plus a vectorized root-find. Tier B has
+probe (the Onsager $\lambda$ is a rigid eigenvalue shift). Dense Tier-A
+Onsager, SCR, and TAC temperature sweeps use continuation from neighboring
+temperatures, a shared fused Numba finite-cutoff Matsubara kernel, and exact
+closure-result caching. SCR's `u = 0` limit bypasses root finding entirely.
+TAC's stored `chi0` is only a root-search seed, so it is excluded from the
+cache key and cannot be varied by the optimizer; the conserved total amplitude
+replaces it physically. Tier B has
 no such shortcut: each closure iteration is a batched LU over the
 $(\text{BZ}\times\omega)$ grid per distinct $(T,B)$ — the default
 $16^3\times200 \approx 8\times10^5$ solves per iteration, so drop `bz_grid` to

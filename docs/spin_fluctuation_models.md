@@ -541,7 +541,17 @@ config["closure"] = {
   m^2\rangle(T)$, exposing `mode_coupling_u`; here **`chi0` is the $T=0$ bare
   value**. `u = 0` reduces exactly to the bare RPA.
 - **TAC** (Takahashi) solves $\chi_{0,\text{eff}}(T)$ so the zero-point plus
-  thermal amplitude equals `total_amplitude`.
+  thermal amplitude equals `total_amplitude`. The stored `chi0` only seeds the
+  numerical root search and is not identifiable under TAC, so its GUI **Fit**
+  checkbox is disabled while TAC is active.
+
+The closure's internally solved reaction field or effective susceptibility is
+not a fit parameter. The adjustable closure parameter is `m2_total` for
+Onsager, `mode_coupling_u` for SCR, or `total_amplitude` for TAC. In the GUI,
+Onsager and TAC use **Fit moment target** to expose their budget in **Fit
+Parameters**; the ordinary **Fit** checkbox then varies it. SCR exposes
+`mode_coupling_u` directly, with the same **Fit**, bounds, and sharing controls.
+Leaving **Fit** unchecked holds the displayed value fixed.
 
 Absent config or `mode: "none"` runs the *exact* bare path (bit-identical).
 Closures use finite-difference gradients and work with every interaction term
@@ -549,6 +559,12 @@ Closures use finite-difference gradients and work with every interaction term
 **Self-consistency closure** box of the model editor; solved internals
 ($\lambda(T)$, $\chi_{0,\text{eff}}$, $\mu_{\text{eff}}^2$) appear in the
 **Physics diagnostics** table of the fit result.
+
+For dense bulk-susceptibility temperature curves, all three Tier-A closures
+reuse the BZ eigensystem, continue the solved closure variable from neighboring
+temperatures, and cache exact results across optimizer probes that do not
+change the closure. The finite-cutoff moment sum uses the same fused Numba
+kernel for Onsager, SCR, and TAC.
 
 ### Bulk susceptibility and MPMS co-fit
 

@@ -45,6 +45,24 @@ class MaskSpec:
 
 
 @dataclass
+class BackgroundSpec:
+    """Serializable scaled background attached to a dataset.
+
+    ``source_dataset_id`` is the stable project reference. ``source_entry`` is
+    relinked at runtime after loading and is deliberately omitted from project
+    serialization.
+    """
+
+    name: str
+    source_dataset_id: str
+    scale: float = 1.0
+    enabled: bool = True
+    interpolation: str = "linear"
+    metadata: dict[str, Any] = field(default_factory=dict)
+    source_entry: DatasetEntry | None = field(default=None, repr=False, compare=False)
+
+
+@dataclass
 class ModelComponentSpec:
     """Serializable model component configuration attached to a data group.
 
@@ -142,6 +160,7 @@ class DatasetEntry:
     metadata: dict[str, Any] = field(default_factory=dict)
     parameters: dict[str, Any] = field(default_factory=dict)
     masks: list[MaskSpec] = field(default_factory=list)
+    backgrounds: list[BackgroundSpec] = field(default_factory=list)
     enabled: bool = True
     fit_weight: float = 1.0
     scale_factor: float = 1.0

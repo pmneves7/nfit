@@ -720,18 +720,7 @@ class _RpaComponentEvaluator:
                 "datasets"
             )
         t = float(unique_t[0])
-        relevant = sorted(
-            set(self.j_keys.values())
-            | set(self.tensor_keys.values())
-            | set(self._closure_keys.values())
-            | {self.chi0_key, self.gamma0_key}
-            | (set(self._zeeman_keys.values()) if self.zeeman_mode else set())
-        )
-        key = (
-            t,
-            tuple(np.asarray(field, dtype=float)) if field is not None else None,
-            tuple(float(params[k]) for k in relevant),
-        )
+        key = self._closure_cache_key(params, t, field)
         cached = self._closure_result_cache.get(key)
         if cached is not None:
             self._closure_result_cache.move_to_end(key)
@@ -802,6 +791,130 @@ class _RpaComponentEvaluator:
             result = ("scalar", lam, weights)
         self._bulk_q0_cache = (key, result)
         return result
+
+    def _closure_cache_key(
+        self,
+        params: dict[str, float],
+        temperature: float,
+        field: np.ndarray | None,
+    ) -> tuple[Any, ...]:
+        """Exact inputs that can change a solved closure result.
+
+        Under TAC, the model's ``chi0`` is only a numerical root seed and is
+        deliberately excluded: changing it cannot change the physical root.
+        This also prevents a formally unidentifiable fitted ``chi0`` from
+        invalidating a full temperature-sweep cache.
+        """
+
+        relevant = (
+            set(self.j_keys.values())
+            | set(self.tensor_keys.values())
+            | set(self._closure_keys.values())
+            | {self.gamma0_key}
+            | (set(self._zeeman_keys.values()) if self.zeeman_mode else set())
+        )
+        if self.closure_spec.mode != "tac":
+            relevant.add(self.chi0_key)
+        return (
+            float(temperature),
+            tuple(np.asarray(field, dtype=float)) if field is not None else None,
+            tuple(float(params[key]) for key in sorted(relevant)),
+        )
+
+    def _solve_closures_at_temperatures(
+        self,
+        params: dict[str, float],
+        temperatures: np.ndarray,
+        field: np.ndarray | None,
+    ) -> dict[float, Any]:
+        """Solve a closure over a temperature sweep, batching Tier-A TAC."""
+
+        unique = np.unique(np.asarray(temperatures, dtype=float))
+        if unique.size == 0:
+            return {}
+        cached_results: dict[float, Any] = {}
+        missing: list[float] = []
+        for temperature in unique:
+            key = self._closure_cache_key(params, float(temperature), field)
+            cached = self._closure_result_cache.get(key)
+            if cached is None:
+                missing.append(float(temperature))
+            else:
+                cached_results[float(temperature)] = cached
+        if not missing:
+            return cached_results
+        model = self._closure_moment_model(params, field)
+        from .closures import (
+            TierAMoments,
+            solve_onsager_temperatures,
+            solve_scr_temperatures,
+            solve_tac_temperatures,
+        )
+
+        if not isinstance(model, TierAMoments):
+            cached_results.update(
+                {
+                    temperature: self._solve_closure(params, temperature, field)
+                    for temperature in missing
+                }
+            )
+            return cached_results
+        common = {
+            "model": model,
+            "gamma0": float(params[self.gamma0_key]),
+            "temperature_K": np.asarray(missing, dtype=float),
+            "cutoff_mev": self.closure_spec.energy_cutoff_mev,
+        }
+        if self.closure_spec.mode == "onsager":
+            target = (
+                float(
+                    params.get(
+                        self._closure_keys.get("m2_total", ""),
+                        self.closure_spec.moment_target,
+                    )
+                )
+                if self.closure_spec.moment_mode == "fitted"
+                else self.closure_spec.moment_target
+            )
+            results = solve_onsager_temperatures(
+                **common,
+                chi0=float(params[self.chi0_key]),
+                target=target,
+            )
+        elif self.closure_spec.mode == "scr":
+            results = solve_scr_temperatures(
+                **common,
+                chi0_bare=float(params[self.chi0_key]),
+                mode_coupling_u=float(
+                    params.get(
+                        self._closure_keys.get("mode_coupling_u", ""), 0.0
+                    )
+                ),
+            )
+        else:
+            target = (
+                float(
+                    params.get(
+                        self._closure_keys.get("total_amplitude", ""),
+                        self.closure_spec.moment_target,
+                    )
+                )
+                if self.closure_spec.moment_mode == "fitted"
+                else self.closure_spec.moment_target
+            )
+            results = solve_tac_temperatures(
+                **common,
+                total_amplitude=target,
+                guess=float(params[self.chi0_key]),
+            )
+        for temperature, result in zip(missing, results, strict=True):
+            cached_results[temperature] = result
+            self._closure_result_cache[
+                self._closure_cache_key(params, temperature, field)
+            ] = result
+        if len(self._closure_result_cache) > 16384:
+            self._closure_result_cache.clear()
+        return cached_results
 
     def _bulk_static_chi(
         self,
@@ -924,6 +1037,11 @@ class _RpaComponentEvaluator:
         )
         unique_keys, inverse = np.unique(keys, axis=0, return_inverse=True)
         out = np.empty(n, dtype=float)
+        closure_by_temperature: dict[float, Any] = {}
+        if self.closure_spec is not None and not self.zeeman_mode:
+            closure_by_temperature = self._solve_closures_at_temperatures(
+                params, unique_keys[:, 0], None
+            )
         for index, _row in enumerate(unique_keys):
             sel = inverse == index
             representative = int(np.flatnonzero(sel)[0])
@@ -935,8 +1053,10 @@ class _RpaComponentEvaluator:
                 chi0 = float(params[self.chi0_key])
                 lambda_shift = 0.0
                 if self.closure_spec is not None:
-                    closure = self._solve_closure(
-                        params, t, field_vec if self.zeeman_mode else None
+                    closure = (
+                        self._solve_closure(params, t, field_vec)
+                        if self.zeeman_mode
+                        else closure_by_temperature[t]
                     )
                     chi0 = closure.chi0_eff
                     lambda_shift = closure.lambda_shift
@@ -1441,6 +1561,16 @@ def _parameter_value(component: Any, parameter: str) -> float:
         ) from exc
 
 
+def parameter_is_derived_by_closure(component: Any, parameter: str) -> bool:
+    """Whether an active closure makes a stored model parameter non-fittable."""
+
+    if getattr(component, "type", None) != "heisenberg_rpa" or parameter != "chi0":
+        return False
+    config = component.config if isinstance(component.config, dict) else {}
+    closure = config.get("closure") if isinstance(config, dict) else None
+    return isinstance(closure, dict) and str(closure.get("mode", "none")).lower() == "tac"
+
+
 def _tie_keys(component: Any, parameter: str, dataset_names: Sequence[str]) -> dict[str, str]:
     """Return dataset name -> tie key for per_dataset/grouped instancing."""
 
@@ -1518,7 +1648,9 @@ def compile_fit_problem(
         for parameter in component_parameter_names(component):
             qualified = qualified_parameter_name(component.name, parameter)
             value = _parameter_value(component, parameter)
-            vary = bool(component.fit_parameters.get(parameter, False))
+            vary = bool(component.fit_parameters.get(parameter, False)) and not (
+                parameter_is_derived_by_closure(component, parameter)
+            )
             lower, upper = parameter_limits(component, parameter)
             mode = sharing_mode(component, parameter)
             if mode == "global":

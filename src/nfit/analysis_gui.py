@@ -17,7 +17,7 @@ from .analysis import (
 from .analysis.artifacts import read_dataset_artifact
 from .analysis.fingerprint import dataset_entry_fingerprint
 from .analysis.runner import execute_to_artifacts
-from .dataset import PointListData
+from .dataset import PointData4D, PointListData
 from .mdhisto import MDHistoData
 from .pipeline import DatasetEntry, DatasetGroup
 from .quantities import display_unit
@@ -35,6 +35,7 @@ class DataPlaygroundWindow:
         self.parameter_rows: dict[str, tuple[Any, Any]] = {}
         self._current_result_data: PointListData | MDHistoData | None = None
         self._current_result_output = None
+        self.additional_input_ids: list[str] = []
         self.window = QtWidgets.QMainWindow(explorer.window)
         self.window.setWindowTitle("nfit Analysis Window")
         self.window.resize(900, 650)
@@ -60,6 +61,11 @@ class DataPlaygroundWindow:
         self.dataset_combo.setToolTip("Dataset used as the primary analysis input.")
         self.secondary_dataset_combo = QtWidgets.QComboBox()
         self.secondary_dataset_combo.setToolTip("Optional secondary input, such as an H, K, L peak table.")
+        self.additional_inputs_button = QtWidgets.QPushButton("Select runs...")
+        self.additional_inputs_button.setToolTip(
+            "Choose all MDEvent rotation-angle datasets used by the angle-energy background estimator."
+        )
+        self.additional_inputs_button.setVisible(False)
         self.operation_combo = QtWidgets.QComboBox()
         for key in available_analysis_types():
             self.operation_combo.addItem(analysis_definition(key).label, key)
@@ -68,6 +74,7 @@ class DataPlaygroundWindow:
         self.name_edit.setToolTip("Editable name stored with this analysis recipe.")
         selectors.addWidget(self.dataset_combo, 2)
         selectors.addWidget(self.secondary_dataset_combo, 2)
+        selectors.addWidget(self.additional_inputs_button, 2)
         selectors.addWidget(self.operation_combo, 2)
         selectors.addWidget(self.name_edit, 2)
         layout.addLayout(selectors)
@@ -160,13 +167,14 @@ class DataPlaygroundWindow:
         self.run_button.setToolTip("Run this recipe without modifying the input dataset.")
         commands.addWidget(self.run_button)
         layout.addLayout(commands)
-        self.operation_combo.currentIndexChanged.connect(self._rebuild_parameters)
+        self.operation_combo.currentIndexChanged.connect(self._operation_changed)
         self.analysis_combo.currentIndexChanged.connect(self._select_analysis)
         self.new_button.clicked.connect(self.new_analysis)
         self.duplicate_button.clicked.connect(self.duplicate_analysis)
         self.delete_button.clicked.connect(self.delete_analysis)
         self.run_button.clicked.connect(self.run)
         self.result_table.itemSelectionChanged.connect(self._result_row_selected)
+        self.additional_inputs_button.clicked.connect(self._choose_additional_inputs)
         self._rebuild_parameters()
 
     def show(self) -> None:
@@ -188,6 +196,8 @@ class DataPlaygroundWindow:
             self.secondary_dataset_combo.addItem(entry.name, entry.id)
         if dataset in entries:
             self.dataset_combo.setCurrentIndex(entries.index(dataset))
+        self.additional_input_ids = [entry.id for entry in entries if entry.kind == "mdevent"]
+        self._update_additional_inputs_button()
 
     def _refresh_analysis_list(self, selected_id: str | None = None) -> None:
         self.analysis_combo.blockSignals(True)
@@ -222,6 +232,8 @@ class DataPlaygroundWindow:
             secondary_index = self.secondary_dataset_combo.findData(analysis.input_dataset_ids[1])
             if secondary_index >= 0:
                 self.secondary_dataset_combo.setCurrentIndex(secondary_index)
+        self.additional_input_ids = list(analysis.input_dataset_ids)
+        self._update_additional_inputs_button()
         self._set_parameter_values(analysis.parameters)
         self._render_analysis_result(analysis)
 
@@ -324,6 +336,65 @@ class DataPlaygroundWindow:
                 if isinstance(widget, QtWidgets.QComboBox):
                     widget.currentIndexChanged.connect(self._sync_bragg_parameter_visibility)
             self._sync_bragg_parameter_visibility()
+
+    def _operation_changed(self) -> None:
+        self._rebuild_parameters()
+        is_multi = self.operation_combo.currentData() == "angle_energy_background"
+        self.secondary_dataset_combo.setVisible(not is_multi)
+        self.additional_inputs_button.setVisible(is_multi)
+        self._update_additional_inputs_button()
+
+    def _update_additional_inputs_button(self) -> None:
+        if not hasattr(self, "additional_inputs_button"):
+            return
+        count = len(set(self.additional_input_ids))
+        self.additional_inputs_button.setText(f"Select runs... ({count})")
+
+    def _choose_additional_inputs(self) -> None:
+        from PySide6 import QtCore, QtWidgets
+
+        if self.group is None:
+            return
+        dialog = QtWidgets.QDialog(self.window)
+        dialog.setWindowTitle("Angle-energy background inputs")
+        layout = QtWidgets.QVBoxLayout(dialog)
+        label = QtWidgets.QLabel(
+            "Select the MDEvent runs measured at different sample rotation angles."
+        )
+        layout.addWidget(label)
+        choices = QtWidgets.QListWidget()
+        choices.setToolTip(
+            "Every checked run is independently reduced before the lowest-intensity fraction is averaged."
+        )
+        selected = set(self.additional_input_ids)
+        for entry in self.group.iter_datasets():
+            if entry.kind != "mdevent" and not isinstance(entry.data, PointData4D):
+                continue
+            item = QtWidgets.QListWidgetItem(entry.name)
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, entry.id)
+            item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(
+                QtCore.Qt.CheckState.Checked
+                if entry.id in selected
+                else QtCore.Qt.CheckState.Unchecked
+            )
+            choices.addItem(item)
+        layout.addWidget(choices)
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok
+            | QtWidgets.QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        self.additional_input_ids = [
+            str(choices.item(index).data(QtCore.Qt.ItemDataRole.UserRole))
+            for index in range(choices.count())
+            if choices.item(index).checkState() == QtCore.Qt.CheckState.Checked
+        ]
+        self._update_additional_inputs_button()
 
     def _parameters(self) -> dict[str, Any]:
         from PySide6 import QtWidgets
@@ -668,7 +739,7 @@ class DataPlaygroundWindow:
                 return False
         if not self._confirm_memory(analysis_data):
             return False
-        context = AnalysisContext(self.group.name, self.group.lattice_parameters, self.group.spacegroup, self.group.metadata.get("crystal"), dataset.parameters.get("temperature"), {"dataset_metadata": dataset.metadata})
+        context = self._analysis_context(dataset)
         data_fingerprint = dataset_entry_fingerprint(dataset, self.group)
         analysis_inputs = [AnalysisInput(dataset.id, dataset.name, analysis_data, context, data_fingerprint)]
         parameters = self._parameters()
@@ -680,6 +751,65 @@ class DataPlaygroundWindow:
                 return False
             parameters["peak_table_dataset_id"] = secondary.id
             analysis_inputs.append(AnalysisInput(secondary.id, secondary.name, secondary.data, context, dataset_entry_fingerprint(secondary, self.group)))
+        elif self.operation_combo.currentData() == "bose_elastic_separation":
+            secondary_id = self.secondary_dataset_combo.currentData()
+            secondary = next(
+                (item for item in self.group.iter_datasets() if item.id == secondary_id),
+                None,
+            )
+            if secondary is None:
+                QtWidgets.QMessageBox.warning(
+                    self.window,
+                    "Bose-Einstein elastic separation",
+                    "Select the second-temperature dataset.",
+                )
+                return False
+            secondary_data = self._primary_analysis_data(secondary)
+            if secondary_data is None:
+                QtWidgets.QMessageBox.warning(
+                    self.window,
+                    "Bose-Einstein elastic separation",
+                    "Could not load the second-temperature dataset.",
+                )
+                return False
+            analysis_inputs.append(
+                AnalysisInput(
+                    secondary.id,
+                    secondary.name,
+                    secondary_data,
+                    self._analysis_context(secondary),
+                    dataset_entry_fingerprint(secondary, self.group),
+                )
+            )
+        elif self.operation_combo.currentData() == "angle_energy_background":
+            selected_ids = list(dict.fromkeys(self.additional_input_ids))
+            if dataset.id not in selected_ids:
+                selected_ids.insert(0, dataset.id)
+            analysis_inputs = []
+            for selected_id in selected_ids:
+                selected = next(
+                    (item for item in self.group.iter_datasets() if item.id == selected_id),
+                    None,
+                )
+                if selected is None:
+                    continue
+                selected_data = self._primary_analysis_data(selected)
+                if selected_data is None:
+                    QtWidgets.QMessageBox.warning(
+                        self.window,
+                        "Angle-energy background",
+                        f"Could not load {selected.name!r}.",
+                    )
+                    return False
+                analysis_inputs.append(
+                    AnalysisInput(
+                        selected.id,
+                        selected.name,
+                        selected_data,
+                        self._analysis_context(selected),
+                        dataset_entry_fingerprint(selected, self.group),
+                    )
+                )
         analysis = self._selected_analysis()
         is_new = analysis is None
         if analysis is None:
@@ -725,6 +855,9 @@ class DataPlaygroundWindow:
                             id=output.dataset_id,
                         )
                     )
+            from .project_gui import _link_group_backgrounds
+
+            _link_group_backgrounds(self.group)
             self._render_analysis_result(analysis)
             self.explorer._mark_dirty()
             self._refresh_analysis_list(analysis.id)
@@ -760,8 +893,6 @@ class DataPlaygroundWindow:
 
         if dataset.data is not None:
             return dataset.data
-        if self.operation_combo.currentData() != "bragg_integration":
-            return None
         from .project_gui import dataset_for_slice_viewer
 
         try:
@@ -769,6 +900,16 @@ class DataPlaygroundWindow:
         except (OSError, TypeError, ValueError):
             return None
         return dataset.data if dataset.data is not None else loaded
+
+    def _analysis_context(self, dataset: DatasetEntry) -> AnalysisContext:
+        return AnalysisContext(
+            self.group.name,
+            self.group.lattice_parameters,
+            self.group.spacegroup,
+            self.group.metadata.get("crystal"),
+            dataset.parameters.get("temperature"),
+            {"dataset_metadata": dataset.metadata},
+        )
 
     def _confirm_memory(self, data: Any) -> bool:
         from PySide6 import QtWidgets
