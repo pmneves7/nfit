@@ -40,6 +40,23 @@ def test_projected_coordinates_and_q_volume():
     assert signal_semantics(data) == "density"
 
 
+def test_signal_semantics_defaults_and_legacy_automatic_labels_are_density():
+    data = _data()
+    data.metadata.pop("signal_semantics")
+    assert signal_semantics(data) == "density"
+
+    data.metadata.update(
+        {
+            "signal_semantics": "bin_integral",
+            "signal_semantics_source": "mantid_mdhisto_workspace",
+        }
+    )
+    assert signal_semantics(data) == "density"
+
+    data.metadata["signal_semantics_source"] = "user_selected"
+    assert signal_semantics(data) == "bin_integral"
+
+
 def test_center_axis_edges_are_reconstructed():
     axis = MDHistoAxis("H", np.array([1.0, 2.0, 4.0]), "rlu", "momentum")
     np.testing.assert_allclose(bin_edges(axis, 3), [0.5, 1.5, 3.0, 5.0])

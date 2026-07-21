@@ -3,8 +3,8 @@ import numpy as np
 
 from nfit import (
     attach_fit_comparisons,
-    hyspec_hhl_point_indices,
     hyspec_hhl_fit_comparison_from_points,
+    hyspec_hhl_point_indices,
     load_mantid_mdhisto_nxs,
     point_data_from_hyspec_hhl,
 )
@@ -51,7 +51,7 @@ def test_load_mantid_mdhisto_nxs_reads_axes_and_arrays(tmp_path):
     np.testing.assert_allclose(imported.num_events, 7.0)
     assert imported.coordinate_system == 2
     assert imported.visual_normalization == 1
-    assert imported.metadata["signal_semantics"] == "bin_integral"
+    assert imported.metadata["signal_semantics"] == "density"
     assert imported.metadata["signal_semantics_source"] == "mantid_mdhisto_workspace"
 
     assert [axis.name for axis in imported.axes] == [

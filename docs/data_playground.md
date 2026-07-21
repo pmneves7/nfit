@@ -5,6 +5,10 @@ keeping inputs unchanged. Open it from a workspace, dataset, or `Analyses` node
 with **Open Analysis Window**. Successful dataset-like results appear in
 `Datasets / Derived data`; the authoritative recipe remains under `Analyses`.
 
+The configuration and output areas are separated by a draggable horizontal
+divider. The initial layout favors the configuration area; drag the divider to
+make more room for a results table or diagnostic view when needed.
+
 Projects must be saved before a run. Array outputs live in
 `<project>.nfit-assets/analyses/<analysis-id>/`; project JSON stores relative
 manifests and provenance. **Save As** copies the asset tree. Changing a recipe
@@ -55,14 +59,53 @@ or inverse-angstrom widths. Optional shells subtract a volume-scaled local
 background and propagate peak and background variance in quadrature. Neighbor
 peak regions can be excluded.
 
+The Bragg controls are grouped into peak selection, elastic volume, integration
+region, background, quality filters, Gaussian fit, and numerical settings.
+Controls that do not apply to the selected method are hidden. The default is an
+ellipsoidal integration with a local background shell, partial-edge reporting,
+and moderately permissive coverage thresholds so a first run normally produces
+inspectable results rather than silently discarding most reflections.
+
 Results contain `H`, `K`, `L`, `I`, `dI`, `Background`, `I/dI`, peak/background
-coverage, and status. Dataset metadata must declare `signal_semantics` as
-`density` or `bin_integral`. nfit imports Mantid MDHistoWorkspace and legacy
-nfit dataset archives as `bin_integral`, and retains that convention in new
-portable archives. Use the dataset **Signal convention** control to correct an
-upstream reduction that instead stores a reciprocal-space density. Quantitative
-integration refuses an explicitly `unknown` convention rather than silently
-choosing a normalization.
+coverage, acceptance, and a rejection status bitmask. Gaussian results also
+retain fitted center, amplitude, baseline, three widths, and reduced chi-square.
+Optional quality filters reject peaks below a selected `I/dI`, above an
+absolute background threshold, or below either coverage threshold. Rejected
+measurements remain in the output for diagnosis; they are not replaced by
+`NaN`. Status bits identify low peak coverage (1), low background coverage (2),
+low or non-finite `I/dI` (4), excessive background (8), and Gaussian failure
+(16). Multiple reasons are combined by addition.
+
+The **Results** and **Diagnostics** tables can be sorted in ascending or
+descending order by clicking a column header. Both keep `I` and `dI` beside
+the H, K, L indices. The **Export .int** action writes accepted reflections as
+a CSV-formatted `.int` file with `H,K,L,I,dI` columns. The **Diagnostics** tab
+keeps a second selectable table beside three local data planes and three axis
+profiles. Integration and background regions are drawn over the data; Gaussian
+runs also overlay the fitted profiles. These diagnostics are rebuilt from the
+saved recipe, input dataset, and output artifact, so they remain available when
+the project is reopened. **View input with peaks** opens the ordinary data
+viewer with accepted reflections as green open circles and rejected reflections
+as red crosses.
+
+The **Analysis progress** window records the current reflection, its HKL,
+coverage, `I/dI`, and running accepted/rejected counts. On completion it stays
+open with the generated, integrated, accepted, and rejected reflection totals;
+use **Close** when you have finished reviewing the activity log.
+
+Analysis tables remain owned by the analysis and are not automatically inserted
+into the workspace's fitting datasets. **Add to datasets** explicitly creates a
+disabled **Bragg reflections** dataset when a table is needed elsewhere.
+
+Dataset metadata may declare `signal_semantics` as `density` or `bin_integral`.
+Density is the nfit default because normalized rebinning returns a
+variance-weighted mean rather than a sum. Mantid MDHistoWorkspace imports,
+native MDEvent/raw-TOF reductions, normalized rebins, and legacy archives
+without an explicit convention therefore use `density`. Quantitative
+integration multiplies these values by the physical bin volume. Use the dataset
+**Signal convention** control to select `bin_integral` only when each upstream
+array value is already the total intensity contained in that bin. An explicitly
+`unknown` convention still blocks quantitative integration.
 
 ## Spectral integration
 

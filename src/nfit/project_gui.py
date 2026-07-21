@@ -1,18 +1,19 @@
 from __future__ import annotations
 
+import ast
 import base64
+import copy
 import hashlib
 import json
 import math
-import copy
-import ast
 import platform
 import re
-import signal
 import shutil
+import signal
 import subprocess
 import time
 import zlib
+from collections import OrderedDict
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,8 @@ from typing import Any
 
 import numpy as np
 
+from .analysis.artifacts import read_dataset_artifact
+from .analysis.coordinates import signal_semantics
 from .analysis.core import AnalysisEntry, AnalysisOutputRef, AnalysisResultRecord
 from .analysis.fingerprint import dataset_entry_fingerprint, recipe_hash
 from .analysis.registry import analysis_definition, default_analysis_parameters
@@ -33,6 +36,7 @@ from .fit_config import (
     compute_component_diagnostics,
     model_supports_data_type,
     qualified_parameter_name,
+    sharing_mode,
 )
 from .fit_scripts import fit_state_script
 from .fitting import (
@@ -42,20 +46,43 @@ from .fitting import (
     SamplingResult,
     _evaluate_problem,
     evaluate_problem_model,
+    evaluate_parameter_expression,
     fit_problem_least_squares,
     magnetic_field_vector,
+    parameter_expression_names,
     rebin_point_data,
     reciprocal_basis_from_lattice_parameters,
     sample_problem_parameters,
 )
 from .form_factors import available_ions
 from .importers import IMPORTERS, import_with, importers_for_data_type
-from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData, load_mantid_mdhisto_nxs, mdhisto_measured_bins
-from .mdevent import assess_mdevent_memory, bin_mdevent_group, is_mdevent_file, load_mdevent_run_points, mdevent_dataset_group
-from .raw_dgs import bin_raw_dgs_group, is_raw_dgs_nexus_file, raw_dgs_dataset_group
-from .pipeline import DataGroup, DatasetEntry, DatasetGroup, FitTimelineEntry, MaskSpec, ModelComponentSpec, PlotEntry, PlotSourceRef
+from .mdevent import (
+    assess_mdevent_memory,
+    bin_mdevent_group,
+    is_mdevent_file,
+    load_mdevent_run_points,
+    mdevent_dataset_group,
+)
+from .mdhisto import (
+    MDHistoAxis,
+    MDHistoChannel,
+    MDHistoData,
+    load_mantid_mdhisto_nxs,
+    mdhisto_measured_bins,
+)
+from .pipeline import (
+    DataGroup,
+    DatasetEntry,
+    DatasetGroup,
+    FitTimelineEntry,
+    MaskSpec,
+    ModelComponentSpec,
+    PlotEntry,
+    PlotSourceRef,
+)
 from .plot_recipes import new_plot_entry, plot_entry_from_dict, plot_entry_to_dict, render_plot
 from .qt_controls import configure_numeric_spin_boxes
+from .raw_dgs import bin_raw_dgs_group, is_raw_dgs_nexus_file, raw_dgs_dataset_group
 from .rebin import rebin_nd, rebin_nd_symmetry
 from .symmetry import SymmetrySpec, resolve_symmetry, symmetry_config, symmetry_spec_from_config
 
@@ -118,6 +145,10 @@ DATA_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
         "label": "Heat capacity",
         "container": "point_list",
         "heat_capacity": True,
+    },
+    "bragg_reflections": {
+        "label": "Bragg reflections",
+        "container": "point_list",
     },
 }
 
@@ -991,11 +1022,43 @@ def point_list_config(dataset: DatasetEntry) -> dict[str, Any]:
     return config
 
 
+_PREPARED_POINT_LIST_CACHE: OrderedDict[int, tuple[str, PointListData]] = OrderedDict()
+_PREPARED_POINT_LIST_CACHE_LIMIT = 16
+
+
+def _prepared_point_list_signature(dataset: DatasetEntry) -> str:
+    """Cheap identity/config signature for immutable prepared point-list views."""
+
+    data = dataset.data
+    columns = getattr(data, "columns", {})
+    payload = (
+        id(data),
+        tuple((name, id(values), np.asarray(values).shape, str(np.asarray(values).dtype)) for name, values in columns.items()),
+        repr(dataset.parameters),
+        repr(dataset.transforms),
+        dataset.data_type,
+    )
+    return repr(payload)
+
+
+def _lru_store(cache: OrderedDict, key: Any, value: Any, limit: int) -> None:
+    cache[key] = value
+    cache.move_to_end(key)
+    while len(cache) > limit:
+        cache.popitem(last=False)
+
+
 def prepared_point_list_data(dataset: DatasetEntry) -> PointListData:
     """Return the point-list data after applying role overrides and transforms."""
 
     if not isinstance(dataset.data, PointListData):
         raise TypeError("dataset does not contain PointListData")
+    cache_key = id(dataset)
+    signature = _prepared_point_list_signature(dataset)
+    cached = _PREPARED_POINT_LIST_CACHE.get(cache_key)
+    if cached is not None and cached[0] == signature:
+        _PREPARED_POINT_LIST_CACHE.move_to_end(cache_key)
+        return cached[1]
     config = point_list_config(dataset)
     base = dataset.data
     columns = {name: np.array(values, dtype=float) for name, values in base.columns.items()}
@@ -1314,7 +1377,7 @@ def prepared_point_list_data(dataset: DatasetEntry) -> PointListData:
                     quantity_types[error_name] = "magnetic_moment"
                 moment_channel["unit"] = output_unit
 
-    return PointListData(
+    result = PointListData(
         columns=columns,
         units=units,
         coordinate_names=coordinate_names,
@@ -1322,6 +1385,13 @@ def prepared_point_list_data(dataset: DatasetEntry) -> PointListData:
         metadata=dict(base.metadata),
         quantity_types=quantity_types,
     )
+    _lru_store(
+        _PREPARED_POINT_LIST_CACHE,
+        cache_key,
+        (_prepared_point_list_signature(dataset), result),
+        _PREPARED_POINT_LIST_CACHE_LIMIT,
+    )
+    return result
 
 
 def create_mask(dataset: DatasetEntry, name: str | None = None, *, type: str = "coordinate_range") -> MaskSpec:
@@ -1887,6 +1957,146 @@ def model_parameter_names(model: ModelComponentSpec) -> list[str]:
     return list(component_parameter_names(model))
 
 
+def _model_parameter_from_qualified_name(
+    group: DataGroup, qualified: str
+) -> tuple[ModelComponentSpec, str]:
+    for model in group.models.values():
+        if not isinstance(model, ModelComponentSpec):
+            continue
+        for parameter in model_parameter_names(model):
+            if qualified_parameter_name(model.name, parameter) == qualified:
+                return model, parameter
+    raise ValueError(f"unknown model parameter {qualified!r}")
+
+
+def _rename_model_constraint_references(
+    group: DataGroup,
+    renamed: ModelComponentSpec,
+    old_name: str,
+    new_name: str,
+) -> None:
+    replacements = {
+        qualified_parameter_name(old_name, parameter): qualified_parameter_name(new_name, parameter)
+        for parameter in model_parameter_names(renamed)
+    }
+    for model in group.models.values():
+        if not isinstance(model, ModelComponentSpec):
+            continue
+        for constraint in model.constraints:
+            reference = constraint.get("reference")
+            if isinstance(reference, str) and reference in replacements:
+                constraint["reference"] = replacements[reference]
+            expression = constraint.get("expression")
+            if not isinstance(expression, str):
+                continue
+            for old, new in replacements.items():
+                expression = expression.replace(f"`{old}`", f"`{new}`")
+                expression = re.sub(
+                    rf"(?<![A-Za-z0-9_.]){re.escape(old)}(?![A-Za-z0-9_.])",
+                    new,
+                    expression,
+                )
+            constraint["expression"] = expression
+
+
+def _validate_model_constraints(group: DataGroup) -> None:
+    """Validate workspace constraints without requiring loaded fit datasets."""
+
+    available = {
+        qualified_parameter_name(model.name, parameter)
+        for model in group.models.values()
+        if isinstance(model, ModelComponentSpec)
+        for parameter in model_parameter_names(model)
+    }
+    exact_dependencies: dict[str, tuple[str, ...]] = {}
+    targets: set[str] = set()
+    for model in group.models.values():
+        if not isinstance(model, ModelComponentSpec):
+            continue
+        for constraint in model.constraints:
+            parameter = str(constraint.get("parameter", ""))
+            target = qualified_parameter_name(model.name, parameter)
+            if target not in available:
+                raise ValueError(f"constraint target {target!r} is not a model parameter")
+            if target in targets:
+                raise ValueError(f"parameter {target!r} has more than one constraint")
+            targets.add(target)
+            if not bool(model.fit_parameters.get(parameter, False)):
+                raise ValueError(f"dependent parameter {target!r} must be enabled for fitting")
+            if sharing_mode(model, parameter) != "global":
+                raise ValueError(f"dependent parameter {target!r} must use global sharing")
+            lower, upper = _model_limit_texts(model, parameter)
+            if lower or upper:
+                raise ValueError(f"constrained parameter {target!r} cannot also have min/max bounds")
+            op = str(constraint.get("op", "="))
+            if op == "=":
+                expression = str(constraint.get("expression", "")).strip()
+                dependencies = parameter_expression_names(expression)
+                unknown = [name for name in dependencies if name not in available]
+                if unknown:
+                    raise ValueError(f"constraint on {target!r} references unknown parameter {unknown[0]!r}")
+                for dependency in dependencies:
+                    dependency_model, dependency_parameter = _model_parameter_from_qualified_name(
+                        group, dependency
+                    )
+                    if sharing_mode(dependency_model, dependency_parameter) != "global":
+                        raise ValueError(
+                            f"constraint reference {dependency!r} must use global sharing"
+                        )
+                exact_dependencies[target] = dependencies
+            elif op in (">=", "<="):
+                reference = constraint.get("reference")
+                if isinstance(reference, str) and reference not in available:
+                    raise ValueError(f"constraint on {target!r} references unknown parameter {reference!r}")
+                if isinstance(reference, str):
+                    reference_model, reference_parameter = _model_parameter_from_qualified_name(
+                        group, reference
+                    )
+                    if sharing_mode(reference_model, reference_parameter) != "global":
+                        raise ValueError(
+                            f"constraint reference {reference!r} must use global sharing"
+                        )
+                if not isinstance(reference, (str, int, float)):
+                    raise ValueError(f"constraint on {target!r} requires one parameter or numeric constant")
+            else:
+                raise ValueError(f"unsupported constraint relation {op!r}")
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(name: str) -> None:
+        if name in visiting:
+            raise ValueError(f"cyclic exact constraint involving {name!r}")
+        if name in visited:
+            return
+        visiting.add(name)
+        for dependency in exact_dependencies.get(name, ()):
+            if dependency in exact_dependencies:
+                visit(dependency)
+        visiting.remove(name)
+        visited.add(name)
+
+    for target in exact_dependencies:
+        visit(target)
+
+    values = {
+        qualified_parameter_name(model.name, parameter): float(model.parameters.get(parameter, 0.0))
+        for model in group.models.values()
+        if isinstance(model, ModelComponentSpec)
+        for parameter in model_parameter_names(model)
+    }
+    pending = dict(exact_dependencies)
+    while pending:
+        for target, dependencies in list(pending.items()):
+            if any(dependency in pending for dependency in dependencies):
+                continue
+            model, parameter = _model_parameter_from_qualified_name(group, target)
+            constraint = next(item for item in model.constraints if item.get("parameter") == parameter)
+            values[target] = evaluate_parameter_expression(str(constraint["expression"]), values)
+            del pending[target]
+            break
+
+
 DEFAULT_BOND_CUTOFF_ANGSTROM = 6.0
 
 
@@ -2393,6 +2603,7 @@ def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str,
     mdevent = group.metadata.get("mdevent") if isinstance(group.metadata, dict) else None
     raw_dgs = group.metadata.get("raw_dgs") if isinstance(group.metadata, dict) else None
     event_config = mdevent if isinstance(mdevent, dict) else raw_dgs if isinstance(raw_dgs, dict) else None
+    axes = config.get("axes")
     if isinstance(event_config, dict):
         dimensions = list(event_config.get("dimensions", []))
         hkl_bounds = list(event_config.get("hkl_bounds", []))
@@ -2413,9 +2624,11 @@ def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str,
                 "step_size": (upper - lower) / (50.0 if index == 3 else 20.0),
             })
     else:
-        reference = _composite_reference_data(group)
-        default_axes = _default_rebin_axes(reference) if reference is not None else []
-    axes = config.get("axes")
+        if not isinstance(axes, list) or not axes:
+            reference = _composite_reference_data(group)
+            default_axes = _default_rebin_axes(reference) if reference is not None else []
+        else:
+            default_axes = []
     if not isinstance(axes, list) or not axes:
         # A composite can be restored before its reference data is loaded.
         # Do not create an empty placeholder that would prevent defaults from
@@ -2697,6 +2910,7 @@ def _cached_composite_dataset_data(
     cache_key = _composite_cache_key(group)
     cached = _COMPOSITE_DATA_CACHE.get(cache_key)
     if cached is not None and cached[0] == signature:
+        _COMPOSITE_DATA_CACHE.move_to_end(cache_key)
         return cached[1]
     if cached is not None and _should_defer_composite_rebin(group, force_rebin=force_rebin):
         return cached[1]
@@ -2706,9 +2920,12 @@ def _cached_composite_dataset_data(
     config = data_group_composite_config(group)
     config["stale"] = False
     signature = _composite_cache_signature(group)
-    if len(_COMPOSITE_DATA_CACHE) >= _COMPOSITE_DATA_CACHE_LIMIT:
-        _COMPOSITE_DATA_CACHE.clear()
-    _COMPOSITE_DATA_CACHE[cache_key] = (signature, result)
+    _lru_store(
+        _COMPOSITE_DATA_CACHE,
+        cache_key,
+        (signature, result),
+        _COMPOSITE_DATA_CACHE_LIMIT,
+    )
     return result
 
 
@@ -2831,6 +3048,8 @@ def _composite_mdhisto_data(
         "composite": True,
         "source_group": group.name,
         "source_datasets": [dataset.name for dataset in _composite_candidates(group)],
+        "signal_semantics": "density",
+        "signal_semantics_source": "nfit_normalized_rebin",
         "rebin": {
             "lower": lower,
             "upper": upper,
@@ -3831,7 +4050,7 @@ class UBSetupDialog:
     """Reusable lattice/orientation editor for single-crystal data scopes."""
 
     def __init__(self, parent: Any, *, ub: Any, lattice: dict[str, Any] | None, u: Any, v: Any):
-        from PySide6 import QtWidgets
+        from PySide6 import QtCore, QtWidgets
 
         self.dialog = QtWidgets.QDialog(parent)
         self.dialog.setWindowTitle("UB setup")
@@ -4040,6 +4259,9 @@ def perform_group_fit(
         "reduced_chi2": float(result.reduced_chi2),
         "n_points": int(sum(result.dataset_sizes.values())),
         "n_variables": len(result.variable_names),
+        "degrees_of_freedom": int(
+            sum(result.dataset_sizes.values()) - len(result.variable_names)
+        ),
         "parameters": {name: float(value) for name, value in result.params.items()},
         "stderr": (
             {name: float(value) for name, value in result.stderr.items()}
@@ -4150,7 +4372,7 @@ def _fit_limit_warning_text(limit_hits: Any) -> str:
 # parameter changes -- turning an O(10 s) rebuild on every edit into an O(0.1 s)
 # re-evaluation. The cache is keyed on a structural signature that excludes
 # parameter values (see _overlay_cache_signature).
-_MODEL_OVERLAY_CACHE: dict[int, dict[str, Any]] = {}
+_MODEL_OVERLAY_CACHE: OrderedDict[int, dict[str, Any]] = OrderedDict()
 _MODEL_OVERLAY_CACHE_LIMIT = 6
 
 
@@ -4268,6 +4490,7 @@ def current_model_channels(
         and cached["signature"] == signature
         and not (force_masks and pending_masks)
     ):
+        _MODEL_OVERLAY_CACHE.move_to_end(id(group))
         compiled = cached["compiled"]
         bundles = cached["bundles"]
         subsets = cached["subsets"]
@@ -4285,14 +4508,12 @@ def current_model_channels(
         except Exception:
             return {}
         subsets = {}
-        if len(_MODEL_OVERLAY_CACHE) >= _MODEL_OVERLAY_CACHE_LIMIT:
-            _MODEL_OVERLAY_CACHE.clear()
-        _MODEL_OVERLAY_CACHE[id(group)] = {
+        _lru_store(_MODEL_OVERLAY_CACHE, id(group), {
             "signature": signature,
             "compiled": compiled,
             "bundles": bundles,
             "subsets": subsets,
-        }
+        }, _MODEL_OVERLAY_CACHE_LIMIT)
     try:
         params = _overlay_current_params(group, compiled)
         return _fit_channels_from_params(compiled, params, bundles, subset_cache=subsets)
@@ -4965,6 +5186,7 @@ def _fit_channels_from_params(
             "kind": "grid" if bundle.grid_shape is not None else "points",
             "fit": fit_values,
             "residual": residual_values,
+            "fit_channel": str(points.metadata.get("fit_channel", "")),
         }
     return channels
 
@@ -5058,12 +5280,62 @@ def attach_fit_channels_to_view(
         if any(array.shape != (view.size,) for array in arrays.values()):
             return
         existing = set(view.channel_labels)
+        fit_channel = _point_fit_channel_label(group, dataset_name, view, payload)
         for channel_name, array in arrays.items():
             view.columns[channel_name] = array
             if channel_name not in existing:
                 view.channels.append(
                     {"label": channel_name, "value": channel_name, "error": None}
                 )
+        for channel_name in FIT_CHANNEL_NAMES:
+            key = f"viewer_{channel_name}_channel_map"
+            stored = view.metadata.get(key, {})
+            mapping = dict(stored) if isinstance(stored, dict) else {}
+            mapping = {
+                label: target
+                for label, target in mapping.items()
+                if target != channel_name
+            }
+            if fit_channel:
+                mapping[fit_channel] = channel_name
+            if mapping:
+                view.metadata[key] = mapping
+            else:
+                view.metadata.pop(key, None)
+
+
+def _point_fit_channel_label(
+    group: DataGroup,
+    dataset_name: str,
+    view: PointListData,
+    payload: dict[str, Any],
+) -> str:
+    """Return the data channel predicted by a point-list fit payload."""
+
+    explicit = str(payload.get("fit_channel", "")).strip()
+    if explicit in view.channel_labels:
+        return explicit
+    try:
+        dataset = group.get_dataset(dataset_name)
+    except KeyError:
+        return ""
+    config = point_list_config(dataset)
+    if dataset.data_type == "magnetization":
+        susceptibility = config.get("susceptibility", {})
+        preferred = (
+            SUSCEPTIBILITY_CHANNEL_LABEL
+            if susceptibility.get("enabled")
+            else str(susceptibility.get("moment", ""))
+        )
+    elif dataset.data_type == "heat_capacity":
+        preferred = str(
+            config.get("heat_capacity", {}).get(
+                "fit_channel", HEAT_CAPACITY_CHANNEL_LABEL
+            )
+        )
+    else:
+        return ""
+    return preferred if preferred in view.channel_labels else ""
 
 
 def _fit_channel_array(value: Any) -> np.ndarray | None:
@@ -5111,9 +5383,9 @@ def _decode_float_array(payload: dict[str, Any]) -> np.ndarray:
 # result depends only on the dataset's data, rebin config, and masks (not on the
 # selection or model parameters), so it is cached and reused. The signature
 # excludes the dataset scale factor, which is applied cheaply afterward.
-_VIEWER_VIEW_CACHE: dict[int, tuple[str, Any]] = {}
+_VIEWER_VIEW_CACHE: OrderedDict[int, tuple[str, Any]] = OrderedDict()
 _VIEWER_VIEW_CACHE_LIMIT = 8
-_COMPOSITE_DATA_CACHE: dict[int, tuple[str, Any]] = {}
+_COMPOSITE_DATA_CACHE: OrderedDict[int, tuple[str, Any]] = OrderedDict()
 _COMPOSITE_DATA_CACHE_LIMIT = 4
 
 
@@ -5157,6 +5429,7 @@ def _viewer_data_before_scale(
     deferred_masks = _should_defer_dataset_masks(dataset, force_masks=force_masks)
     cached = _VIEWER_VIEW_CACHE.get(key)
     if cached is not None and cached[0] == signature:
+        _VIEWER_VIEW_CACHE.move_to_end(key)
         if force_masks:
             dataset_mask_application_config(dataset)["stale"] = False
         return cached[1]
@@ -5175,9 +5448,12 @@ def _viewer_data_before_scale(
         # Recompute the signature: the uncached path may have lazily loaded the
         # data (changing id(dataset.data)), so key the entry on the loaded id.
         signature = _viewer_view_signature(dataset, extra_masks)
-        if len(_VIEWER_VIEW_CACHE) >= _VIEWER_VIEW_CACHE_LIMIT:
-            _VIEWER_VIEW_CACHE.clear()
-        _VIEWER_VIEW_CACHE[key] = (signature, result)
+        _lru_store(
+            _VIEWER_VIEW_CACHE,
+            key,
+            (signature, result),
+            _VIEWER_VIEW_CACHE_LIMIT,
+        )
         dataset_mask_application_config(dataset)["stale"] = False
     return result
 
@@ -5313,9 +5589,12 @@ def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
         config["mean_weighting"] = "inverse_variance"
     config["normalize"] = True
     axes = config.get("axes")
-    # Point-list rebin binds over the transformed coordinates (e.g. a derived q).
-    if isinstance(dataset.data, PointListData):
+    # Only materialize transformed coordinates when defaults are actually
+    # needed. Existing axes already carry their complete saved basis.
+    if isinstance(dataset.data, PointListData) and (not isinstance(axes, list) or not axes):
         default_axes = _default_rebin_axes(prepared_point_list_data(dataset))
+    elif isinstance(dataset.data, PointListData):
+        default_axes = []
     else:
         default_axes = _default_rebin_axes(dataset.data)
     if not isinstance(axes, list) or not axes:
@@ -5449,10 +5728,7 @@ def _dataset_rebin_source_points(dataset: DatasetEntry) -> int:
     if isinstance(data, PointData4D):
         return int(data.size)
     if isinstance(data, PointListData):
-        try:
-            return int(prepared_point_list_data(dataset).size)
-        except Exception:
-            return 0
+        return int(data.size)
     return 0
 
 
@@ -5829,11 +6105,15 @@ def _load_nfit_mdhisto_archive(archive: Any, source: Path) -> MDHistoData:
     metadata = _nfit_archive_json_mapping(archive, "metadata_json")
     metadata["export_file"] = str(source)
     if "signal_semantics" not in metadata:
-        # Dataset archives written before format 3 did not preserve this
-        # quantitative convention. They contain binned signal values, the
-        # same convention as an un-normalized Mantid MDHistoWorkspace.
-        metadata["signal_semantics"] = "bin_integral"
-        metadata["signal_semantics_source"] = "legacy_nfit_archive_default"
+        metadata["signal_semantics"] = "density"
+        metadata["signal_semantics_source"] = "legacy_nfit_archive_density_default"
+    elif (
+        metadata.get("signal_semantics") == "bin_integral"
+        and metadata.get("signal_semantics_source")
+        in {"mantid_mdhisto_workspace", "legacy_nfit_archive_default"}
+    ):
+        metadata["signal_semantics"] = "density"
+        metadata["signal_semantics_source"] = "migrated_density_default"
     channel_names = json.loads(_nfit_archive_text(archive, "auxiliary_channel_names_json", "[]"))
     auxiliary_channels = {
         str(name): MDHistoChannel(
@@ -6310,6 +6590,8 @@ def _rebin_mdhisto_data(
     mask = ~np.isfinite(result.binned_data) | ~np.isfinite(result.binned_data_errs)
     mask |= result.n_samples <= 0.0
     metadata = dict(data.metadata)
+    metadata["signal_semantics"] = "density"
+    metadata["signal_semantics_source"] = "nfit_normalized_rebin"
     metadata["rebin"] = {
         "lower": lower,
         "upper": upper,
@@ -7675,8 +7957,21 @@ def render_project_plot(
     raise ValueError(f"unknown saved plot {plot_id!r}")
 
 
+def _is_pytest_temporary_project(path: Path) -> bool:
+    """Return whether *path* belongs to pytest's per-run temporary hierarchy."""
+
+    parts = path.expanduser().parts
+    return any(part.startswith("pytest-of-") for part in parts) and any(
+        part.startswith("pytest-") for part in parts
+    )
+
+
 def recent_project_paths(settings: Any | None = None) -> list[Path]:
-    """Return recently opened project paths from app settings."""
+    """Return recently opened project paths from app settings.
+
+    Pytest opens temporary projects through the ordinary GUI paths. Excluding
+    those entries here also removes stale test entries created by older runs.
+    """
 
     settings = _settings() if settings is None else settings
     value = settings.value(RECENT_PROJECTS_KEY, [])
@@ -7684,7 +7979,11 @@ def recent_project_paths(settings: Any | None = None) -> list[Path]:
         values = [value]
     else:
         values = list(value or [])
-    return [Path(str(path)) for path in values]
+    recent = [Path(str(path)) for path in values]
+    filtered = [path for path in recent if not _is_pytest_temporary_project(path)]
+    if filtered != recent:
+        settings.setValue(RECENT_PROJECTS_KEY, [str(path) for path in filtered])
+    return filtered
 
 
 def remember_recent_project(path: str | Path, settings: Any | None = None) -> list[Path]:
@@ -7693,6 +7992,8 @@ def remember_recent_project(path: str | Path, settings: Any | None = None) -> li
     settings = _settings() if settings is None else settings
     resolved = Path(path).expanduser()
     recent = [existing for existing in recent_project_paths(settings) if existing != resolved]
+    if _is_pytest_temporary_project(resolved):
+        return recent
     recent.insert(0, resolved)
     recent = recent[:RECENT_PROJECT_LIMIT]
     settings.setValue(RECENT_PROJECTS_KEY, [str(path) for path in recent])
@@ -7709,7 +8010,7 @@ def forget_missing_recent_projects(settings: Any | None = None) -> list[Path]:
 
 
 class _FitProgressDialog:
-    """Small live progress window for optimizer and sampler runs."""
+    """Small live progress window for fits, analyses, and samplers."""
 
     def __init__(self, parent: Any) -> None:
         from PySide6 import QtCore, QtGui, QtWidgets
@@ -7812,11 +8113,12 @@ class _FitProgressDialog:
         from PySide6 import QtWidgets
 
         stage = str(event.get("stage", "fit"))
-        iteration = event.get("iteration")
+        iteration = event.get("iteration", event.get("completed"))
         total = event.get("total")
         message = str(event.get("message", stage))
         stage_title = {
             "initialization": "Initialization: differential evolution",
+            "bragg_integration": "Bragg integration",
             "rebin": "Rebinning data",
             "least_squares": "Least-squares fit",
             "emcee": "Posterior sampling: emcee",
@@ -7824,7 +8126,12 @@ class _FitProgressDialog:
         self.stage_label.setText(stage_title)
         status_parts: list[str] = []
         if iteration is not None:
-            status_parts.append(f"Step {iteration}" + (f" of {total}" if total else ""))
+            counter = "Reflection" if stage == "bragg_integration" else "Step"
+            status_parts.append(f"{counter} {iteration}" + (f" of {total}" if total else ""))
+        if event.get("accepted_count") is not None:
+            status_parts.append(f"{event['accepted_count']} accepted")
+        if event.get("rejected_count") is not None:
+            status_parts.append(f"{event['rejected_count']} rejected")
         if event.get("cost") is not None:
             status_parts.append(f"cost {_format_number(float(event['cost']))}")
         if event.get("convergence") is not None:
@@ -7837,7 +8144,14 @@ class _FitProgressDialog:
             self._set_parameters(params)
         log_parts = [stage_title]
         if iteration is not None:
-            log_parts.append(f"step {iteration}" + (f"/{total}" if total else ""))
+            counter = "reflection" if stage == "bragg_integration" else "step"
+            log_parts.append(f"{counter} {iteration}" + (f"/{total}" if total else ""))
+        if message and message != stage:
+            log_parts.append(message)
+        if event.get("accepted_count") is not None:
+            log_parts.append(f"{event['accepted_count']} accepted")
+        if event.get("rejected_count") is not None:
+            log_parts.append(f"{event['rejected_count']} rejected")
         if event.get("cost") is not None:
             log_parts.append(f"cost {_format_number(float(event['cost']))}")
         if event.get("seconds_per_step") is not None:
@@ -8540,6 +8854,7 @@ class NfitProjectExplorer:
         ] = {}
         self._fit_item_roles: dict[int, FitTimelineEntry] = {}
         self._analysis_output_roles: dict[int, AnalysisOutputRef] = {}
+        self._analysis_item_roles: dict[int, AnalysisEntry] = {}
         self._plot_item_roles: dict[int, PlotEntry] = {}
         self._plot_windows: dict[str, Any] = {}
         self._dataset_group_roles: dict[int, DatasetGroup] = {}
@@ -8608,6 +8923,62 @@ class NfitProjectExplorer:
             self._refresh_tree(select_group=group)
         return entries
 
+    def _request_dataset_import(
+        self,
+        group: DataGroup,
+        paths: list[str | Path],
+        *,
+        data_type: str | None = None,
+        importer_name: str | None = None,
+        into: DatasetGroup | None = None,
+    ) -> bool:
+        """Import from GUI actions without blocking the Qt event loop."""
+
+        if not self._interactive:
+            return bool(
+                self.import_dataset_paths(
+                    group,
+                    paths,
+                    data_type=data_type,
+                    importer_name=importer_name,
+                    into=into,
+                )
+            )
+
+        def task(progress_callback: Any) -> DataGroup:
+            staging = DataGroup("Import staging")
+            import_dataset_paths(
+                staging,
+                paths,
+                data_type=data_type,
+                importer_name=importer_name,
+                progress_callback=progress_callback,
+            )
+            return staging
+
+        def on_success(staging: DataGroup) -> None:
+            parent = into if into is not None else group
+            for dataset in list(staging.datasets):
+                dataset.name = _unique_dataset_name(dataset.name, group.dataset_names)
+                group.add_dataset(dataset, into=into)
+            existing_groups = {subgroup.name for subgroup in parent.subgroups}
+            for subgroup in list(staging.subgroups):
+                subgroup.name = _unique_name(subgroup.name, existing_groups)
+                existing_groups.add(subgroup.name)
+                parent.subgroups.append(subgroup)
+            if any(True for _dataset in staging.iter_datasets()):
+                self._record_data_group_state_change(group)
+                self._mark_dirty()
+                self._refresh_tree(select_group=group, select_dataset_group=into)
+
+        return self._start_background_task(
+            title="Loading datasets...",
+            failure_title="Import datasets",
+            task=task,
+            on_success=on_success,
+            success_message="Dataset import finished.",
+        )
+
     def _dataset_importing_config(self, group: DataGroup) -> dict[str, Any]:
         config = group.metadata.get("dataset_importing")
         if not isinstance(config, dict):
@@ -8645,7 +9016,7 @@ class NfitProjectExplorer:
             self.window, "Add datasets", "", "Data files (*);;All files (*)"
         )
         if paths:
-            self.import_dataset_paths(group, paths, data_type=DEFAULT_DATA_TYPE)
+            self._request_dataset_import(group, paths, data_type=DEFAULT_DATA_TYPE)
 
     def _import_dataset_importing_range(self, group: DataGroup) -> None:
         from PySide6 import QtWidgets
@@ -8672,7 +9043,7 @@ class NfitProjectExplorer:
                 f"The requested files do not exist:\n{shown}{suffix_text}",
             )
             return
-        self.import_dataset_paths(group, paths, data_type=DEFAULT_DATA_TYPE)
+        self._request_dataset_import(group, paths, data_type=DEFAULT_DATA_TYPE)
 
     def _clear_imported_datasets(self, group: DataGroup) -> None:
         from PySide6 import QtWidgets
@@ -8890,6 +9261,26 @@ class NfitProjectExplorer:
         group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
         if role != "dataset" or entry is None:
             return False
+        if self._interactive:
+            def task(progress_callback: Any) -> Any:
+                return dataset_for_slice_viewer(
+                    entry,
+                    progress_callback=progress_callback,
+                )
+
+            def on_success(loaded: Any) -> None:
+                if loaded is not None:
+                    self._sync_details()
+                    if group is not None:
+                        self.refresh_slice_viewer(group)
+
+            return self._start_background_task(
+                title="Loading dataset...",
+                failure_title="Load dataset",
+                task=task,
+                on_success=on_success,
+                success_message="Dataset load finished.",
+            )
         try:
             loaded = dataset_for_slice_viewer(entry)
         except Exception as exc:
@@ -8997,7 +9388,13 @@ class NfitProjectExplorer:
         if choice is None:
             return
         data_type, importer_name = choice
-        self.import_dataset_paths(group, paths, data_type=data_type, importer_name=importer_name, into=into)
+        self._request_dataset_import(
+            group,
+            paths,
+            data_type=data_type,
+            importer_name=importer_name,
+            into=into,
+        )
 
     def _prompt_import_data_type(self) -> tuple[str, str | None] | None:
         from PySide6 import QtWidgets
@@ -9161,6 +9558,27 @@ class NfitProjectExplorer:
 
         if group is None or not _dataset_can_rebin(entry):
             return False
+        if self._interactive:
+            def task(progress_callback: Any) -> Any:
+                return dataset_for_slice_viewer(
+                    entry,
+                    extra_masks=effective_dataset_masks(group, entry),
+                    force_rebin=True,
+                    progress_callback=progress_callback,
+                )
+
+            def on_success(view: Any) -> None:
+                if view is not None:
+                    self.refresh_slice_viewer(group)
+                    self._set_dataset_details(entry, group)
+
+            return self._start_background_task(
+                title="Rebinning dataset...",
+                failure_title="Rebin now",
+                task=task,
+                on_success=on_success,
+                success_message="Dataset rebin finished.",
+            )
         progress = self._make_rebin_progress_callback(
             "Rebinning dataset..."
         ) if _dataset_rebin_is_large(entry, dataset_rebin_config(entry)) else None
@@ -9212,6 +9630,27 @@ class NfitProjectExplorer:
                 if answer != QtWidgets.QMessageBox.StandardButton.Yes:
                     return False
                 config["_allow_memory_overcommit_once"] = True
+        if self._interactive:
+            def task(progress_callback: Any) -> Any:
+                return _cached_composite_dataset_data(
+                    group,
+                    force_rebin=True,
+                    progress_callback=progress_callback,
+                )
+
+            def on_success(data: Any) -> None:
+                if data is not None:
+                    root = _composite_root(group)
+                    self.refresh_slice_viewer(root)
+                    self._sync_details()
+
+            return self._start_background_task(
+                title="Rebinning composite dataset...",
+                failure_title="Rebin composite",
+                task=task,
+                on_success=on_success,
+                success_message="Composite rebin finished.",
+            )
         progress = self._make_rebin_progress_callback("Rebinning composite dataset...")
         progress({"stage": "prepare", "iteration": 0, "total": 0, "message": "preparing composite rebin"})
         try:
@@ -9428,6 +9867,7 @@ class NfitProjectExplorer:
         success_message: str,
         close_on_success: bool = True,
         completion_summary: Any | None = None,
+        progress_window_title: str | None = None,
     ) -> bool:
         from PySide6 import QtCore, QtWidgets
 
@@ -9436,7 +9876,7 @@ class NfitProjectExplorer:
             QtWidgets.QMessageBox.warning(
                 self.window,
                 failure_title,
-                "Another fit or posterior sampler is already running.",
+                "Another background operation is already running.",
             )
             return False
 
@@ -9508,6 +9948,8 @@ class NfitProjectExplorer:
         if progress is None:
             progress = _FitProgressDialog(self)
             self._fit_progress_dialog = progress
+        if progress_window_title is not None:
+            progress.dialog.setWindowTitle(progress_window_title)
         progress.reset(title)
         progress.show()
 
@@ -10360,12 +10802,12 @@ class NfitProjectExplorer:
             )
             return False
 
-        entries = self.import_dataset_paths(
+        started = self._request_dataset_import(
             group,
             data_paths,
             into=node if isinstance(node, DatasetGroup) else None,
         )
-        if entries:
+        if started:
             return True
         if created_group:
             self.project.data_groups.remove(group)
@@ -11133,6 +11575,7 @@ class NfitProjectExplorer:
         self._item_roles.clear()
         self._fit_item_roles.clear()
         self._analysis_output_roles.clear()
+        self._analysis_item_roles.clear()
         self._plot_item_roles.clear()
         self._dataset_group_roles.clear()
         self.tree.blockSignals(True)
@@ -11212,6 +11655,7 @@ class NfitProjectExplorer:
                 analysis_item.setToolTip(0, f"{analysis.type}; status: {status}")
                 _set_tree_item_icon(analysis_item, "model")
                 self._remember_item(analysis_item, "analysis", group)
+                self._analysis_item_roles[id(analysis_item)] = analysis
                 analyses_item.addChild(analysis_item)
                 if analysis.result is not None:
                     for output in analysis.result.outputs:
@@ -11464,6 +11908,7 @@ class NfitProjectExplorer:
             old_name = _model_key(group, model)
             new_name = _unique_name(item.text(0).strip() or model.name, [name for name in group.models if name != old_name])
             if old_name is not None and old_name != new_name:
+                _rename_model_constraint_references(group, model, old_name, new_name)
                 del group.models[old_name]
                 group.models[new_name] = model
                 changed = True
@@ -11607,12 +12052,11 @@ class NfitProjectExplorer:
             self._sync_mask_editor(mask, reference)
         elif role == "models" and group is not None:
             self.title_label.setText(f"{group.name} / Models")
-            self._set_details_text(f"{len(group.models)} model(s)")
+            self._set_model_collection_details(group)
         elif role == "fits" and group is not None:
             ensure_fit_history(group)
             self.title_label.setText(f"{group.name} / Fits")
-            result_count = sum(1 for fit in _walk_fit_entries(group.fits) if fit.kind == "result")
-            self._set_details_text(f"Fit history\n\nResults: {result_count}")
+            self._set_fit_history_details(group)
         elif role == "plots" and group is not None:
             self.title_label.setText(f"{group.name} / Plots")
             self._set_details_text(f"Saved plots: {len(group.plots)}")
@@ -11625,6 +12069,29 @@ class NfitProjectExplorer:
                     f"Saved plot\n\nType: {plot.type}\nSource dataset ID: {source}\n"
                     "Open it for a clean figure or edit it in the data viewer."
                 )
+        elif role == "analysis_output" and group is not None:
+            output = self._analysis_output_roles.get(id(self._current_item()))
+            if output is not None:
+                self._set_analysis_output_details(output)
+        elif role == "analysis" and group is not None:
+            analysis = self._analysis_item_roles.get(id(self._current_item()))
+            if analysis is not None:
+                self.title_label.setText(analysis.name)
+                result = analysis.result
+                lines = [
+                    f"Operation: {analysis_definition(analysis.type).label}",
+                    f"Inputs: {len(analysis.input_dataset_ids)}",
+                    f"Status: {result.status if result is not None else 'never run'}",
+                ]
+                if result is not None:
+                    lines.extend(
+                        [
+                            f"Created: {result.created_at}",
+                            f"Outputs: {len(result.outputs)}",
+                            *[f"{key}: {_metadata_value_text(value)}" for key, value in sorted(result.diagnostics.items()) if key != "status_bits"],
+                        ]
+                    )
+                self._set_details_text("\n".join(lines))
         elif role in {"fit", "fit_timeline"} and group is not None and fit_entry is not None:
             self.title_label.setText(fit_entry.name)
             if (
@@ -11766,8 +12233,8 @@ class NfitProjectExplorer:
         if role in {"mask", "group_mask"}:
             self._mark_mask_datasets_stale(self._selected_mask_datasets(group, entry, role))
         self._mark_dirty()
-        if group is not None:
-            self.refresh_slice_viewer(group)
+        # _refresh_tree refreshes open viewers once after the tree state is
+        # rebuilt. Avoid doing the same full-volume refresh twice here.
         self._refresh_tree(select_group=group, select_dataset=entry, select_mask=mask, select_model=model)
 
     def _set_selected_dataset_fit_weight(self, value: float) -> None:
@@ -12075,6 +12542,292 @@ class NfitProjectExplorer:
         label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
         self.details_layout.addWidget(label)
         self.details_layout.addStretch(1)
+
+    def _set_model_collection_details(self, group: DataGroup) -> None:
+        """Build the workspace-level editor for hard parameter constraints."""
+
+        from PySide6 import QtCore, QtWidgets
+
+        self.details_label.setText(f"{len(group.models)} model(s)")
+        self._clear_details_panel()
+        parameters = [
+            qualified_parameter_name(model.name, parameter)
+            for model in group.models.values()
+            if isinstance(model, ModelComponentSpec)
+            for parameter in model_parameter_names(model)
+        ]
+        constraint_group = QtWidgets.QGroupBox("Fit constraints")
+        constraint_group.setObjectName("model_constraints_group")
+        layout = QtWidgets.QVBoxLayout(constraint_group)
+        table = QtWidgets.QTableWidget()
+        table.setObjectName("model_constraints_table")
+        table.setColumnCount(4)
+        table.setHorizontalHeaderLabels(["Dependent parameter", "Relation", "Expression", ""])
+        table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        table.verticalHeader().setVisible(False)
+        table.horizontalHeader().setStretchLastSection(False)
+        table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        table.horizontalHeader().setSectionResizeMode(3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        table.setToolTip(
+            "Hard relationships between globally shared fit parameters. Exact relationships "
+            "remove the dependent parameter from the optimizer; inequalities constrain it "
+            "through a nonnegative offset."
+        )
+        rows = [
+            (model, dict(constraint))
+            for model in group.models.values()
+            if isinstance(model, ModelComponentSpec)
+            for constraint in model.constraints
+        ]
+        table.setRowCount(len(rows))
+        for row, (owner, constraint) in enumerate(rows):
+            self._populate_model_constraint_row(
+                group, table, row, parameters, owner, constraint
+            )
+        layout.addWidget(table)
+
+        examples = QtWidgets.QLabel(
+            "Examples: A.x = `B.y`; A.x = 10 - `B.y` (fixed sum); "
+            "A.x = 10 / `B.y` (fixed product); A.x >= `B.y`."
+        )
+        examples.setWordWrap(True)
+        examples.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        examples.setToolTip(
+            "Use backticks around a parameter reference. Exact expressions support +, -, *, /, **, "
+            "abs, sqrt, exp, log, log10, sin, cos, and tan."
+        )
+        layout.addWidget(examples)
+
+        controls = QtWidgets.QHBoxLayout()
+        add_button = QtWidgets.QPushButton("Add constraint")
+        add_button.setObjectName("add_model_constraint_button")
+        add_button.setToolTip(
+            "Add a hard relationship. The dependent parameter must be globally shared and enabled for fitting."
+        )
+        check_button = QtWidgets.QPushButton("Check constraints")
+        check_button.setObjectName("check_model_constraints_button")
+        check_button.setToolTip("Validate parameter references, expressions, and dependency cycles without running a fit.")
+        status = QtWidgets.QLabel()
+        status.setObjectName("model_constraints_status")
+        status.setWordWrap(True)
+        controls.addWidget(add_button)
+        controls.addWidget(check_button)
+        controls.addWidget(status, 1)
+        layout.addLayout(controls)
+        add_button.setEnabled(bool(parameters))
+        add_button.clicked.connect(
+            lambda: self._add_model_constraint_row(group, table, parameters)
+        )
+        check_button.clicked.connect(lambda: self._check_model_constraints(group, status))
+        self.details_layout.addWidget(
+            self._details_group_box("Models", [f"Components: {len(group.models)}"])
+        )
+        self.details_layout.addWidget(constraint_group)
+        self.details_layout.addStretch(1)
+
+    def _populate_model_constraint_row(
+        self,
+        group: DataGroup,
+        table: Any,
+        row: int,
+        parameters: list[str],
+        owner: ModelComponentSpec,
+        constraint: dict[str, Any],
+    ) -> None:
+        from PySide6 import QtCore, QtWidgets
+
+        target = qualified_parameter_name(owner.name, str(constraint.get("parameter", "")))
+        target_combo = QtWidgets.QComboBox()
+        target_combo.addItems(parameters)
+        target_combo.setCurrentIndex(max(target_combo.findText(target), 0))
+        target_combo.setToolTip("Parameter determined or bounded by this relationship.")
+        relation_combo = QtWidgets.QComboBox()
+        for label, value in (("=", "="), (">=", ">="), ("<=", "<=")):
+            relation_combo.addItem(label, value)
+        relation_combo.setCurrentIndex(max(relation_combo.findData(str(constraint.get("op", "="))), 0))
+        relation_combo.setToolTip(
+            "Exact equality removes one independent fit parameter. An inequality preserves the independent-parameter count."
+        )
+        if relation_combo.currentData() == "=":
+            expression_text = str(constraint.get("expression", constraint.get("reference", "0")))
+        else:
+            reference = constraint.get("reference", 0.0)
+            expression_text = f"`{reference}`" if isinstance(reference, str) else _format_number(float(reference))
+        expression = QtWidgets.QLineEdit(expression_text)
+        expression.setPlaceholderText("constant or expression")
+        expression.setToolTip(
+            "Right-hand side. Use backticks around qualified parameters, for example `Model1.scale`. "
+            "Start typing a backtick to choose a parameter from completion suggestions. "
+            "Inequalities currently accept one parameter or one numeric constant."
+        )
+        completer = QtWidgets.QCompleter([f"`{name}`" for name in parameters], expression)
+        completer.setCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
+        completer.setCompletionMode(QtWidgets.QCompleter.CompletionMode.PopupCompletion)
+        expression.setCompleter(completer)
+        remove = QtWidgets.QToolButton()
+        remove.setText("Remove")
+        remove.setToolTip("Delete this fit constraint.")
+        table.setCellWidget(row, 0, target_combo)
+        table.setCellWidget(row, 1, relation_combo)
+        table.setCellWidget(row, 2, expression)
+        table.setCellWidget(row, 3, remove)
+        target_combo.currentIndexChanged.connect(lambda: self._store_model_constraint_table(group, table))
+        relation_combo.currentIndexChanged.connect(lambda: self._store_model_constraint_table(group, table))
+        expression.editingFinished.connect(lambda: self._store_model_constraint_table(group, table))
+        remove.clicked.connect(lambda: self._remove_model_constraint_row(group, table, remove))
+
+    def _add_model_constraint_row(self, group: DataGroup, table: Any, parameters: list[str]) -> None:
+        if not parameters:
+            return
+        row = table.rowCount()
+        table.insertRow(row)
+        owner, parameter = _model_parameter_from_qualified_name(group, parameters[0])
+        self._populate_model_constraint_row(
+            group,
+            table,
+            row,
+            parameters,
+            owner,
+            {"parameter": parameter, "op": "=", "expression": "0"},
+        )
+        self._store_model_constraint_table(group, table)
+
+    def _remove_model_constraint_row(self, group: DataGroup, table: Any, button: Any) -> None:
+        for row in range(table.rowCount()):
+            if table.cellWidget(row, 3) is button:
+                table.removeRow(row)
+                self._store_model_constraint_table(group, table)
+                return
+
+    def _store_model_constraint_table(self, group: DataGroup, table: Any) -> None:
+        constraints: dict[str, list[dict[str, Any]]] = {name: [] for name in group.models}
+        for row in range(table.rowCount()):
+            target = table.cellWidget(row, 0).currentText()
+            relation = str(table.cellWidget(row, 1).currentData())
+            expression = table.cellWidget(row, 2).text().strip()
+            owner, parameter = _model_parameter_from_qualified_name(group, target)
+            entry: dict[str, Any] = {"parameter": parameter, "op": relation}
+            if relation == "=":
+                entry["expression"] = expression
+            else:
+                reference = expression
+                if len(reference) >= 2 and reference.startswith("`") and reference.endswith("`"):
+                    reference = reference[1:-1].strip()
+                try:
+                    entry["reference"] = float(reference)
+                except ValueError:
+                    entry["reference"] = reference
+            constraints[owner.name].append(entry)
+        changed = False
+        for name, model in group.models.items():
+            if not isinstance(model, ModelComponentSpec):
+                continue
+            updated = constraints.get(name, [])
+            if model.constraints != updated:
+                model.constraints = updated
+                changed = True
+        if changed:
+            self._record_data_group_state_change(group)
+            self._mark_dirty()
+            self._request_overlay_refresh(group)
+
+    def _check_model_constraints(self, group: DataGroup, status: Any) -> None:
+        try:
+            _validate_model_constraints(group)
+        except (TypeError, ValueError) as exc:
+            status.setStyleSheet("color: #c0392b; font-weight: 600;")
+            status.setText(str(exc))
+            return
+        count = sum(
+            len(model.constraints)
+            for model in group.models.values()
+            if isinstance(model, ModelComponentSpec)
+        )
+        status.setStyleSheet("color: #1f9d68; font-weight: 600;")
+        status.setText(f"{count} constraint(s) valid")
+
+    def _set_fit_history_details(self, group: DataGroup) -> None:
+        """Show fit-history summary and its destructive compaction action."""
+
+        from PySide6 import QtWidgets
+
+        result_count = sum(1 for fit in _walk_fit_entries(group.fits) if fit.kind == "result")
+        self.details_label.setText(f"Fit history\n\nResults: {result_count}")
+        self._clear_details_panel()
+        self.details_layout.addWidget(
+            self._details_group_box("Fit history", [f"Results: {result_count}"])
+        )
+        self.clear_fit_history_button = QtWidgets.QPushButton("Clear history")
+        self.clear_fit_history_button.setObjectName("clear_fit_history_button")
+        self.clear_fit_history_button.setToolTip(
+            "Delete every saved fit result and make the currently selected fit result or "
+            "Current state the new Initial state."
+        )
+        self.clear_fit_history_button.setEnabled(bool(group.fits))
+        self.clear_fit_history_button.clicked.connect(lambda: self.clear_fit_history(group))
+        self.details_layout.addWidget(self.clear_fit_history_button)
+        self.details_layout.addStretch(1)
+
+    def clear_fit_history(self, group: DataGroup | None = None) -> bool:
+        """Replace a group's fit tree with the selected state as its Initial state."""
+
+        from PySide6 import QtWidgets
+
+        if group is None:
+            selected_group, _entry, _mask, _model, role = self._objects_for_item(
+                self._current_item()
+            )
+            if role != "fits":
+                return False
+            group = selected_group
+        if group is None:
+            return False
+        ensure_fit_history(group)
+        selected = self._active_fit_entry(group)
+        if selected is None or selected.kind not in {"initial", "result", "current"}:
+            results = [entry for entry in _walk_fit_entries(group.fits) if entry.kind == "result"]
+            selected = results[-1] if results else _top_level_current_state_entry(group)
+            if selected is None:
+                selected = group.fits[0]
+        results = [entry for entry in _walk_fit_entries(group.fits) if entry.kind == "result"]
+        latest_result = results[-1] if results else None
+        if latest_result is not None and selected is not latest_result:
+            answer = QtWidgets.QMessageBox.question(
+                self.window,
+                "Clear fit history",
+                f"{selected.name} is not the most recent fit result ({latest_result.name}). "
+                "Clear all saved fit results and use the selected state as the new Initial state?",
+                QtWidgets.QMessageBox.StandardButton.Yes
+                | QtWidgets.QMessageBox.StandardButton.Cancel,
+                QtWidgets.QMessageBox.StandardButton.Cancel,
+            )
+            if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+                return False
+        snapshot = (
+            copy.deepcopy(selected.snapshot)
+            if selected.snapshot
+            else snapshot_data_group_state(group)
+        )
+        self._restoring_fit_selection = True
+        try:
+            restore_data_group_state(group, snapshot)
+        finally:
+            self._restoring_fit_selection = False
+        initial = FitTimelineEntry(
+            name="Initial",
+            kind="initial",
+            snapshot=copy.deepcopy(snapshot),
+            created_at=_timestamp_now(),
+            optimizer=str(selected.optimizer or "least_squares"),
+            optimizer_config=copy.deepcopy(selected.optimizer_config),
+        )
+        group.fits[:] = [initial]
+        self._set_active_fit_state(group, initial)
+        self._mark_dirty()
+        self._refresh_tree(select_group=group, select_fit=initial)
+        return True
 
     def _set_group_details(self, group: DataGroup) -> None:
         result_count = sum(1 for fit in _walk_fit_entries(group.fits) if fit.kind == "result")
@@ -12675,19 +13428,20 @@ class NfitProjectExplorer:
         return box
 
     def _set_dataset_details(self, dataset: DatasetEntry, group: DataGroup | None) -> None:
-        # Point-list data is cheap to load; populate it lazily (e.g. after a
-        # project reload) so the details and rebin panels have real columns.
-        if dataset.data is None and data_type_container(dataset.data_type) == "point_list":
-            try:
-                _load_point_list_dataset(dataset)
-            except Exception:
-                pass
-        self.details_label.setText(dataset_details_text(dataset, group=group))
+        # Selection must remain a metadata-only operation. File-backed point
+        # lists are loaded by the explicit Load action or a viewer/fit job.
+        sections = dataset_detail_sections(dataset, group=group)
+        summary_lines: list[str] = []
+        for title, lines in sections:
+            if summary_lines:
+                summary_lines.append("")
+            summary_lines.extend([title, *lines])
+        self.details_label.setText("\n".join(summary_lines))
         self._clear_details_panel()
         if group is not None and dataset.data_type.startswith("single_crystal"):
             self.details_layout.addWidget(self._ub_setup_group_box(group, dataset))
         is_point_list = isinstance(dataset.data, PointListData)
-        for title, lines in dataset_detail_sections(dataset, group=group):
+        for title, lines in sections:
             if title == "Axes":
                 self.details_layout.addWidget(self._dataset_axes_group_box(dataset, group, lines))
                 if is_point_list:
@@ -14101,6 +14855,74 @@ class NfitProjectExplorer:
             empty_text="No additional metadata.",
         )
 
+    def _set_analysis_output_details(self, output: AnalysisOutputRef) -> None:
+        """Show persisted analysis table values and metadata in the project panel."""
+
+        self.title_label.setText(output.label)
+        self._clear_details_panel()
+        summary = [f"Kind: {output.kind}", f"Output key: {output.key}"]
+        if output.scalar_value is not None:
+            summary.append(f"Value: {_format_number(output.scalar_value)} {output.unit}")
+        self.details_layout.addWidget(self._details_group_box("Analysis output", summary))
+        data = None
+        if self.project_path is not None and output.artifact_path:
+            try:
+                data = read_dataset_artifact(self.project_path.parent / output.artifact_path)
+            except (OSError, TypeError, ValueError) as exc:
+                self.details_layout.addWidget(
+                    self._details_group_box("Artifact", [f"Could not load output: {exc}"])
+                )
+        if isinstance(data, PointListData):
+            self.details_layout.addWidget(self._analysis_table_group_box(data))
+            metadata = {**dict(output.metadata), **dict(data.metadata)}
+            self.details_layout.addWidget(
+                self._metadata_tree_group_box(
+                    "Metadata",
+                    metadata,
+                    object_name="analysis_output_metadata_tree",
+                    empty_text="No output metadata.",
+                )
+            )
+        elif isinstance(data, MDHistoData):
+            axes, lines = _dataset_axes_and_data_lines(data)
+            self.details_layout.addWidget(self._details_group_box("Axes", axes))
+            self.details_layout.addWidget(self._details_group_box("Data", lines))
+            self.details_layout.addWidget(
+                self._metadata_tree_group_box(
+                    "Metadata",
+                    {**dict(output.metadata), **dict(data.metadata)},
+                    object_name="analysis_output_metadata_tree",
+                    empty_text="No output metadata.",
+                )
+            )
+        self.details_layout.addStretch(1)
+
+    def _analysis_table_group_box(self, data: PointListData) -> Any:
+        from PySide6 import QtCore, QtGui, QtWidgets
+
+        box = QtWidgets.QGroupBox("Results table")
+        layout = QtWidgets.QVBoxLayout(box)
+        table = QtWidgets.QTableWidget(data.size, len(data.column_names))
+        table.setObjectName("analysis_output_table")
+        table.setToolTip("Persisted analysis values. Rejected Bragg reflections are shown in red.")
+        table.setHorizontalHeaderLabels(data.column_names)
+        accepted = data.column("Accepted") if "Accepted" in data.columns else np.ones(data.size)
+        for row in range(data.size):
+            for column, name in enumerate(data.column_names):
+                value = float(data.column(name)[row])
+                item = QtWidgets.QTableWidgetItem(_format_number(value) if np.isfinite(value) else "-")
+                item.setTextAlignment(
+                    QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
+                )
+                if not bool(accepted[row]):
+                    item.setForeground(QtGui.QColor("#d94b45"))
+                table.setItem(row, column, item)
+        table.resizeColumnsToContents()
+        table.setMinimumHeight(180)
+        table.setMaximumHeight(420)
+        layout.addWidget(table)
+        return box
+
     def _dataset_signal_semantics_group_box(
         self, dataset: DatasetEntry, group: DataGroup | None
     ) -> Any:
@@ -14113,20 +14935,21 @@ class NfitProjectExplorer:
         layout.setContentsMargins(10, 8, 10, 8)
         combo = QtWidgets.QComboBox()
         combo.setObjectName("dataset_signal_semantics")
-        combo.addItem("Bin-integral signal", "bin_integral")
         combo.addItem("Density-valued signal", "density")
+        combo.addItem("Bin-integral signal", "bin_integral")
         combo.addItem("Unspecified", "unknown")
         data = dataset.data
         semantics = (
-            str(data.metadata.get("signal_semantics", "unknown"))
+            signal_semantics(data)
             if isinstance(data, MDHistoData)
-            else "unknown"
+            else "density"
         )
         combo.setCurrentIndex(max(combo.findData(semantics), 0))
         combo.setEnabled(isinstance(data, MDHistoData))
         combo.setToolTip(
-            "Choose how each histogram signal value is interpreted. Bin-integral values are summed; "
-            "density-valued signals are weighted by reciprocal-space bin volume during quantitative integration."
+            "Choose how each histogram signal value is interpreted. Density is the default for normalized, "
+            "variance-weighted rebins and is weighted by reciprocal-space bin volume during integration. "
+            "Use Bin-integral only when each stored value is already the total for its bin."
         )
         combo.currentIndexChanged.connect(
             lambda _index, selector=combo: self._set_dataset_signal_semantics(
@@ -15042,7 +15865,8 @@ class NfitProjectExplorer:
             self._add_dataset_import_files(group)
 
     def open_data_playground_for_selection(self) -> Any | None:
-        group, entry, _mask, _model, _role = self._objects_for_item(self._current_item())
+        item = self._current_item()
+        group, entry, _mask, _model, role = self._objects_for_item(item)
         if group is None:
             return None
         from .analysis_gui import DataPlaygroundWindow
@@ -15050,6 +15874,14 @@ class NfitProjectExplorer:
         if self._analysis_window is None:
             self._analysis_window = DataPlaygroundWindow(self)
         self._analysis_window.select_group(group, dataset=entry)
+        selected_analysis = self._analysis_item_roles.get(id(item)) if role == "analysis" else None
+        if selected_analysis is None and role == "analysis_output" and item.parent() is not None:
+            selected_analysis = self._analysis_item_roles.get(id(item.parent()))
+        if selected_analysis is not None:
+            index = self._analysis_window.analysis_combo.findData(selected_analysis.id)
+            if index >= 0:
+                self._analysis_window.analysis_combo.setCurrentIndex(index)
+                self._analysis_window._select_analysis()
         self._analysis_window.show()
         self._analysis_window.raise_()
         return self._analysis_window
@@ -17681,6 +18513,8 @@ def _fit_channels_to_dict(channels: dict[str, dict[str, Any]]) -> dict[str, Any]
     payload: dict[str, Any] = {}
     for dataset_name, entry in (channels or {}).items():
         encoded: dict[str, Any] = {"kind": str(entry.get("kind", "points"))}
+        if entry.get("fit_channel"):
+            encoded["fit_channel"] = str(entry["fit_channel"])
         for channel_name in FIT_CHANNEL_NAMES:
             if entry.get(channel_name) is not None:
                 encoded[channel_name] = _encode_float_array(entry[channel_name])
@@ -17696,6 +18530,8 @@ def _fit_channels_from_dict(payload: Any) -> dict[str, dict[str, Any]]:
         if not isinstance(entry, dict):
             continue
         decoded: dict[str, Any] = {"kind": str(entry.get("kind", "points"))}
+        if entry.get("fit_channel"):
+            decoded["fit_channel"] = str(entry["fit_channel"])
         for channel_name in FIT_CHANNEL_NAMES:
             array = _fit_channel_array(entry.get(channel_name))
             if array is not None:

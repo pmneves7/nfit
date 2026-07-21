@@ -7,11 +7,22 @@ that can be repeated later.
 
 ## Analysis Window
 
+Bragg integration results are stored under **Analyses**, not automatically as
+fit-enabled datasets. Selecting an analysis output in the project tree shows
+its persisted table and metadata. Open the saved analysis to recover its
+grouped controls, sortable accepted/rejected reflection table, and per-peak
+diagnostic plots. Select a row to inspect the corresponding integration region
+or Gaussian widths. Use **View input with peaks** for accepted/rejected markers
+in the regular data viewer, or **Add to datasets** to create a disabled
+**Bragg reflections** dataset explicitly.
+
 The project tree includes an `Analyses` branch after `Fits`. Select it and use
 **New analysis** to open a fresh Analysis Window recipe for that workspace, or
 use **Open Analysis Window** on a workspace, dataset, or analysis node for
 non-fitting Bragg and spectral operations. Recipes are non-destructive, run
-through the background task framework, and create linked `Derived data` entries.
+through the background task framework, and persist linked output artifacts.
+Dataset-valued outputs may create disabled `Derived data` entries; table outputs
+remain under their analysis until explicitly added to Datasets.
 Tree labels distinguish never-run, fresh, stale, failed, and unavailable results.
 
 See [Analysis Window](data_playground.md) for normalization, coverage, output,
@@ -297,7 +308,9 @@ buttons, keyboard shortcuts, drag and drop, and right-click context menus:
 - import datasets from files or drag them into a workspace or dataset group;
   dropping a dataset into an empty project creates its first workspace. Drop a
   single `.nfit` project file anywhere in the tree to open it after the usual
-  unsaved-changes prompt,
+  unsaved-changes prompt. In an interactive session, dataset parsing and file
+  loading continue in a background worker so the project window remains
+  responsive,
 - copy and paste datasets between workspaces and masks between datasets,
 - save datasets or whole projects,
 - open or refresh the data viewer for a selected workspace or dataset,
@@ -317,7 +330,15 @@ selection to prune old history stays fast.
 The `File` menu supports New, Open, Recent projects, Save, Save As, Close, and
 Quit. On platforms with standard shortcuts, these use the expected New/Open/Save
 bindings, with Command as the default modifier on macOS and Control elsewhere.
-Close and Quit prompt before discarding unsaved project changes.
+Close and Quit prompt before discarding unsaved project changes. Projects opened
+from pytest's temporary test directories are never added to **Recent projects**;
+entries left by older test runs are removed automatically when the menu is read.
+
+Selecting the top-level `Fits` folder shows the result count and a **Clear
+history** action. It replaces the entire saved fit tree with the active selected
+fit result or Current state as the new `Initial` state. When that selection is
+not the most recent fit result, nfit asks for confirmation before removing the
+history.
 
 ## Dataset details
 
@@ -336,11 +357,23 @@ Point-list datasets such as magnetization or powder elastic data expose editable
 coordinate/channel configuration. Every configured channel carries an editable
 physical quantity type and unit; those declarations are persisted and passed to
 the fitting layer so a bulk-susceptibility channel cannot silently be treated as
-a magnetic-moment channel. MDHisto datasets expose rebin settings in the
+a magnetic-moment channel. Model overlays are likewise shown only on the
+point-list channel that was fitted. A Heisenberg RPA susceptibility curve is not
+reused as a Moment curve; Moment shows no model until nfit evaluates a genuine
+moment prediction for that channel. MDHisto datasets expose rebin settings in the
 Axes panel when rebinning is supported. Rebinning can be enabled for viewing and
 fitting. The current rebin can be materialized as a new independent project
 dataset with `Create dataset from rebin`, or written directly to disk with
 `Save rebin to disk`.
+
+MDHisto signal values default to the **Density-valued signal** convention.
+Normalized rebins, including the default inverse-variance mean, always produce
+density-valued output regardless of the source convention. Mantid MDHisto
+imports and native MDEvent/raw-TOF reductions use the same default. Select
+**Bin-integral signal** only for an upstream array whose stored value is already
+the total intensity inside that bin; this explicit choice is preserved until a
+new normalized rebin is created.
+
 `Save dataset` and `Save rebin to disk` write portable nfit `.npz` archives.
 They can be added back through the normal dataset import flow; the archive
 restores its signal, uncertainties, masks, axes, metadata, and saved dataset
@@ -370,6 +403,8 @@ visible until `Rebin now` is pressed. Operations that require current rebinned
 data, including fitting, opening the data viewer, materializing a rebinned
 dataset, and saving a rebinned dataset, force the pending rebin first. Large
 explicit rebin jobs show a progress dialog driven by the rebinner batches.
+`Rebin now` runs in a background worker in the interactive GUI; the completed
+view is installed and any open data viewer is refreshed on the Qt thread.
 The Rebin panel can also apply symmetry before binning. A space-group entry
 uses its point-group rotations only: screw/glide translations are deliberately
 discarded and nfit does not add inversion unless it belongs to the selected
@@ -597,9 +632,24 @@ Models can have multiple components in one workspace. Model parameters include
 controls for whether they are fitted and whether they are shared globally across
 datasets. Each parameter can also define an optional plot label used as the
 default nickname in fit diagnostics; plain text and Matplotlib mathtext/LaTeX
-style labels such as `$\\Gamma$` are accepted. More granular constraints and
-linking should continue to be expressed as explicit, scriptable model
-configuration rather than hidden widget state. The model editor scrolls when a
+style labels such as `$\\Gamma$` are accepted. Selecting the top-level
+**Models** folder opens the workspace constraint table. Each row chooses a
+dependent parameter, a relation (`=`, `>=`, or `<=`), and a right-hand side.
+Parameter references use readable backtick notation such as `` `Model1.scale` ``.
+Exact expressions support arithmetic and common scalar functions, so
+`A.x = 10 - B.y` fixes a sum and `A.x = 10 / B.y` fixes a product. The
+**Check constraints** action reports unknown parameters, incompatible bounds or
+sharing, invalid expressions, and cycles before fitting. Every relationship is
+stored as scriptable model configuration rather than hidden widget state.
+
+An exact relationship removes its dependent parameter from the optimizer and
+therefore from the fitted-parameter count used for reduced chi-squared. A hard
+inequality is implemented with a nonnegative offset; it limits the feasible
+region but does not reduce the number of independent fitted parameters. A
+dependent parameter must be enabled for fitting, globally shared, and free of
+separate min/max bounds. See [Fit constraints](fit_constraints.md) for the full
+expression language, validation rules, reduced-chi-squared accounting, and
+script examples. The model editor scrolls when a
 component has many sections or parameters, so fit-parameter rows keep normal
 editor height as generated Heisenberg RPA exchange orbits are added.
 

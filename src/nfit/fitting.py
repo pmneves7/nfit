@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import ast
+import math
 import os
+import re
 import time
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from multiprocessing.pool import ThreadPool
-from typing import Any
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -126,23 +128,159 @@ class ResolutionSpec:
 class DerivedParameter:
     """A parameter computed from other parameters instead of the optimizer.
 
-    The derived value is ``base + sign * offset``, where ``base`` is either a
-    numeric constant or the name of another (non-derived) parameter, and
-    ``offset`` optionally names another parameter. This linear form is enough
-    to express hard inequality constraints by reparameterization: for example
-    ``p1 >= p2`` becomes ``p1 = p2 + delta`` with ``delta`` bounded at zero.
+    The legacy linear form is ``base + sign * offset``. An exact relationship
+    may instead supply ``expression`` and ``dependencies``; the target is then
+    removed from the optimizer and evaluated from the remaining parameters.
+    Backtick-delimited names allow readable qualified references such as
+    ``10 / `Model 1.scale``` when component names contain spaces.
     """
 
     name: str
     base: str | float
     offset: str | None = None
     sign: float = 1.0
+    expression: str | None = None
+    dependencies: tuple[str, ...] = ()
 
     def evaluate(self, params: dict[str, float]) -> float:
+        if self.expression is not None:
+            return evaluate_parameter_expression(self.expression, params)
         base = float(params[self.base]) if isinstance(self.base, str) else float(self.base)
         if self.offset is None:
             return base
         return base + float(self.sign) * float(params[self.offset])
+
+
+_EXPRESSION_FUNCTIONS: dict[str, Callable[..., float]] = {
+    "abs": abs,
+    "sqrt": math.sqrt,
+    "exp": math.exp,
+    "log": math.log,
+    "log10": math.log10,
+    "sin": math.sin,
+    "cos": math.cos,
+    "tan": math.tan,
+}
+_BACKTICK_PARAMETER = re.compile(r"`([^`]+)`")
+
+
+def parameter_expression_names(expression: str) -> tuple[str, ...]:
+    """Return parameter references used by a safe arithmetic expression."""
+
+    tree, aliases = _parameter_expression_tree(expression)
+    names: list[str] = []
+
+    def visit(node: ast.AST) -> None:
+        if isinstance(node, ast.Call):
+            if not isinstance(node.func, ast.Name) or node.func.id not in _EXPRESSION_FUNCTIONS:
+                raise ValueError("constraint expressions only allow common scalar functions")
+            for argument in node.args:
+                visit(argument)
+            if node.keywords:
+                raise ValueError("constraint expression functions do not accept keywords")
+            return
+        reference = _expression_reference(node, aliases)
+        if reference is not None:
+            if reference not in names:
+                names.append(reference)
+            return
+        if isinstance(node, ast.Expression):
+            visit(node.body)
+        elif isinstance(node, ast.BinOp) and isinstance(
+            node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Pow, ast.Mod)
+        ):
+            visit(node.left)
+            visit(node.right)
+        elif isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            visit(node.operand)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return
+        else:
+            raise ValueError("constraint expressions only allow arithmetic and scalar functions")
+
+    visit(tree)
+    return tuple(names)
+
+
+def evaluate_parameter_expression(expression: str, params: Mapping[str, float]) -> float:
+    """Safely evaluate a constraint expression against named parameters."""
+
+    tree, aliases = _parameter_expression_tree(expression)
+
+    def evaluate(node: ast.AST) -> float:
+        if isinstance(node, ast.Expression):
+            return evaluate(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return float(node.value)
+        reference = _expression_reference(node, aliases)
+        if reference is not None:
+            if reference not in params:
+                raise ValueError(f"constraint expression references unknown parameter {reference!r}")
+            return float(params[reference])
+        if isinstance(node, ast.UnaryOp):
+            value = evaluate(node.operand)
+            if isinstance(node.op, ast.UAdd):
+                return value
+            if isinstance(node.op, ast.USub):
+                return -value
+        if isinstance(node, ast.BinOp):
+            left, right = evaluate(node.left), evaluate(node.right)
+            operations = {
+                ast.Add: lambda: left + right,
+                ast.Sub: lambda: left - right,
+                ast.Mult: lambda: left * right,
+                ast.Div: lambda: left / right,
+                ast.Pow: lambda: left**right,
+                ast.Mod: lambda: left % right,
+            }
+            operation = operations.get(type(node.op))
+            if operation is not None:
+                return float(operation())
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            function = _EXPRESSION_FUNCTIONS.get(node.func.id)
+            if function is not None and not node.keywords:
+                return float(function(*(evaluate(argument) for argument in node.args)))
+        raise ValueError("unsupported syntax in constraint expression")
+
+    value = float(evaluate(tree))
+    if not np.isfinite(value):
+        raise ValueError("constraint expression produced a non-finite value")
+    return value
+
+
+def _parameter_expression_tree(expression: str) -> tuple[ast.Expression, dict[str, str]]:
+    aliases: dict[str, str] = {}
+
+    def replace(match: re.Match[str]) -> str:
+        alias = f"__parameter_{len(aliases)}"
+        aliases[alias] = match.group(1).strip()
+        return alias
+
+    source = _BACKTICK_PARAMETER.sub(replace, str(expression).strip())
+    if not source:
+        raise ValueError("constraint expression cannot be empty")
+    try:
+        tree = ast.parse(source, mode="eval")
+    except SyntaxError as exc:
+        raise ValueError(f"invalid constraint expression: {exc.msg}") from exc
+    return tree, aliases
+
+
+def _expression_reference(node: ast.AST, aliases: Mapping[str, str]) -> str | None:
+    if isinstance(node, ast.Name):
+        if node.id in _EXPRESSION_FUNCTIONS:
+            return None
+        return aliases.get(node.id, node.id)
+    if isinstance(node, ast.Attribute):
+        parts: list[str] = []
+        current: ast.AST = node
+        while isinstance(current, ast.Attribute):
+            parts.append(current.attr)
+            current = current.value
+        if isinstance(current, ast.Name):
+            parts.append(aliases.get(current.id, current.id))
+            return ".".join(reversed(parts))
+    return None
 
 
 @dataclass(frozen=True)
@@ -326,17 +464,26 @@ class FitProblem:
                     f"dataset {dataset.name!r} has no model and the problem has no shared model"
                 )
         spec_names = {spec.name for spec in self.parameter_specs}
+        derived_names = {derived.name for derived in self.derived_parameters}
+        available_names = spec_names | derived_names
         for derived in self.derived_parameters:
             if derived.name in spec_names:
                 raise ValueError(
                     f"derived parameter {derived.name!r} collides with a parameter spec"
                 )
-            for reference in (derived.base, derived.offset):
+            references = (
+                derived.dependencies
+                if derived.expression is not None
+                else (derived.base, derived.offset)
+            )
+            for reference in references:
                 if isinstance(reference, str) and reference not in spec_names:
-                    raise ValueError(
-                        f"derived parameter {derived.name!r} references unknown parameter "
-                        f"{reference!r}"
-                    )
+                    if reference not in available_names:
+                        raise ValueError(
+                            f"derived parameter {derived.name!r} references unknown parameter "
+                            f"{reference!r}"
+                        )
+        self.resolve_parameters({spec.name: float(spec.value) for spec in self.parameter_specs})
 
     def predict(self, data: PointData4D, params: dict[str, float]) -> FloatArray:
         """Evaluate the shared physics model."""
@@ -353,8 +500,27 @@ class FitProblem:
         if not self.derived_parameters:
             return params
         resolved = dict(params)
-        for derived in self.derived_parameters:
-            resolved[derived.name] = derived.evaluate(params)
+        pending = list(self.derived_parameters)
+        while pending:
+            progressed = False
+            for derived in list(pending):
+                references = (
+                    derived.dependencies
+                    if derived.expression is not None
+                    else tuple(
+                        reference
+                        for reference in (derived.base, derived.offset)
+                        if isinstance(reference, str)
+                    )
+                )
+                if any(reference not in resolved for reference in references):
+                    continue
+                resolved[derived.name] = derived.evaluate(resolved)
+                pending.remove(derived)
+                progressed = True
+            if not progressed:
+                names = ", ".join(derived.name for derived in pending)
+                raise ValueError(f"cyclic derived parameter constraints: {names}")
         return resolved
 
 
@@ -1041,13 +1207,14 @@ def fit_problem_least_squares(
             require_positive_sigma=opt.require_positive_sigma,
         )
         chi2 = float(np.sum(residuals * residuals))
+        dof = sum(evaluation.dataset_sizes.values())
         return FitResult(
             params=params,
             success=True,
             message="no variable parameters",
             cost=0.5 * chi2,
             chi2=chi2,
-            reduced_chi2=np.nan,
+            reduced_chi2=float(chi2 / dof) if dof > 0 else np.nan,
             residuals=residuals,
             model_values=evaluation.model_values,
             covariance=None,
@@ -1540,6 +1707,8 @@ def problem_supports_analytic_jacobian(problem: FitProblem) -> bool:
     well, which the bare model Jacobian does not do).
     """
 
+    if any(derived.expression is not None for derived in problem.derived_parameters):
+        return False
     return all(
         dataset.model_jacobian is not None and dataset.resolution is None
         for dataset in problem.datasets

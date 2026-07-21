@@ -33,7 +33,6 @@ from nfit.project_gui import (
     slice_viewer_datasets,
 )
 
-
 RNG = np.random.default_rng(7)
 
 
@@ -174,6 +173,106 @@ def test_constraint_between_two_component_parameters():
     # component must stay at or above the shared floor value.
     assert result.params["top.constant"] >= result.params["floor.constant"] - 1e-9
     assert result.params["top.constant"] == pytest.approx(2.0, abs=0.05)
+
+
+def test_exact_expression_constraint_removes_dependent_parameter_and_sets_dof():
+    first = ModelComponentSpec(
+        name="first",
+        type="constant_background",
+        parameters={"constant": 1.0},
+        fit_parameters={"constant": True},
+    )
+    second = ModelComponentSpec(
+        name="second",
+        type="constant_background",
+        parameters={"constant": 2.0},
+        fit_parameters={"constant": True},
+        constraints=[
+            {
+                "parameter": "constant",
+                "op": "=",
+                "expression": "10 / `first.constant`",
+            }
+        ],
+    )
+    compiled = compile_fit_problem(
+        [first, second], [FitDatasetInput("a", _points(6.0, n=12))]
+    )
+
+    assert [spec.name for spec in compiled.problem.parameter_specs] == ["first.constant"]
+    result = fit_problem_least_squares(compiled.problem)
+
+    assert result.params["second.constant"] == pytest.approx(
+        10.0 / result.params["first.constant"]
+    )
+    assert result.reduced_chi2 == pytest.approx(result.chi2 / 11.0)
+
+
+def test_exact_constraints_can_depend_on_other_exact_constraints():
+    components = [
+        ModelComponentSpec(
+            name=name,
+            type="constant_background",
+            parameters={"constant": value},
+            fit_parameters={"constant": True},
+            constraints=constraints,
+        )
+        for name, value, constraints in (
+            ("a", 1.0, []),
+            ("b", 2.0, [{"parameter": "constant", "op": "=", "expression": "2 * `a.constant`"}]),
+            ("c", 3.0, [{"parameter": "constant", "op": "=", "expression": "`b.constant` + 1"}]),
+        )
+    ]
+    compiled = compile_fit_problem(components, [FitDatasetInput("scan", _points(7.0))])
+    resolved = compiled.problem.resolve_parameters({"a.constant": 2.0})
+
+    assert resolved["b.constant"] == pytest.approx(4.0)
+    assert resolved["c.constant"] == pytest.approx(5.0)
+
+
+def test_exact_constraint_rejects_cycles():
+    first = ModelComponentSpec(
+        name="a",
+        type="constant_background",
+        parameters={"constant": 1.0},
+        fit_parameters={"constant": True},
+        constraints=[{"parameter": "constant", "op": "=", "expression": "`b.constant`"}],
+    )
+    second = ModelComponentSpec(
+        name="b",
+        type="constant_background",
+        parameters={"constant": 1.0},
+        fit_parameters={"constant": True},
+        constraints=[{"parameter": "constant", "op": "=", "expression": "`a.constant`"}],
+    )
+
+    with pytest.raises(ValueError, match="cyclic derived parameter constraints"):
+        compile_fit_problem([first, second], [FitDatasetInput("scan", _points(2.0))])
+
+
+def test_exact_constraint_with_no_independent_variables_uses_all_points_for_dof():
+    fixed = ModelComponentSpec(
+        name="fixed",
+        type="constant_background",
+        parameters={"constant": 1.0},
+        fit_parameters={"constant": False},
+    )
+    dependent = ModelComponentSpec(
+        name="dependent",
+        type="constant_background",
+        parameters={"constant": 1.0},
+        fit_parameters={"constant": True},
+        constraints=[
+            {"parameter": "constant", "op": "=", "expression": "`fixed.constant`"}
+        ],
+    )
+    compiled = compile_fit_problem(
+        [fixed, dependent], [FitDatasetInput("scan", _points(2.1, n=10))]
+    )
+    result = fit_problem_least_squares(compiled.problem)
+
+    assert result.variable_names == []
+    assert result.reduced_chi2 == pytest.approx(result.chi2 / 10.0)
 
 
 def test_constraint_requires_global_mode():
@@ -984,8 +1083,8 @@ def test_tensor_component_emits_anisotropy_parameters_and_declines_analytic_jaco
 
 def test_disabled_anisotropy_takes_scalar_path_bit_identical():
     """A component whose anisotropy sections are all disabled must be scalar."""
-    from nfit.fitting import evaluate_problem_model, problem_supports_analytic_jacobian
     from nfit.fit_config import _RpaComponentEvaluator
+    from nfit.fitting import evaluate_problem_model, problem_supports_analytic_jacobian
 
     _crystal, component = _pyrochlore_tensor_component()
     # Disable the anisotropy section entirely.
@@ -1479,6 +1578,64 @@ def test_magnetization_supported_and_linear_response():
     )
     expected = 1.0 * (2.0**2) * 0.4 * fields  # g=2 default
     np.testing.assert_allclose(values, expected, rtol=1e-9)
+
+
+def test_scalar_bulk_susceptibility_does_not_recompute_for_each_temperature(monkeypatch):
+    from nfit.fit_config import _RpaComponentEvaluator
+
+    evaluator = _RpaComponentEvaluator(_magnetization_component(chi0=0.4, J1=0.0))
+    calls = 0
+    original = evaluator._bulk_static_chi
+
+    def counted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(evaluator, "_bulk_static_chi", counted)
+    temperatures = np.linspace(2.0, 300.0, 500)
+    fields = np.linspace(0.0099, 0.0101, temperatures.size)
+    points = _magnetization_points(
+        temperatures,
+        fields,
+        np.zeros(temperatures.size),
+    )
+    params = {
+        evaluator.scale_key: 1.0,
+        evaluator.chi0_key: 0.4,
+        evaluator.gamma0_key: 2.0,
+        evaluator.j_keys["J1"]: 0.0,
+    }
+
+    evaluator.value(points, params)
+
+    assert calls == 1
+
+
+def test_bulk_q0_eigensystem_is_reused_across_closure_states(monkeypatch):
+    import nfit.fit_config as fit_config
+    from nfit.fit_config import _RpaComponentEvaluator
+
+    evaluator = _RpaComponentEvaluator(_magnetization_component(chi0=0.4, J1=0.05))
+    params = {
+        evaluator.scale_key: 1.0,
+        evaluator.chi0_key: 0.4,
+        evaluator.gamma0_key: 2.0,
+        evaluator.j_keys["J1"]: 0.05,
+    }
+    calls = 0
+    original = fit_config.np.linalg.eigh
+
+    def counted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(fit_config.np.linalg, "eigh", counted)
+    evaluator._bulk_static_chi(params, 0.4, 0.0, None)
+    evaluator._bulk_static_chi(params, 0.35, 0.02, None)
+
+    assert calls == 1
 
 
 def test_magnetization_absolute_normalization():

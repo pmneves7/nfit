@@ -258,6 +258,7 @@ class QtMDHistoSliceViewer:
         self._restoring_dataset_state = False
         self._roi_extents: tuple[float, float, float, float] | None = None
         self._view_limit_callback_ids: list[int] = []
+        self.bragg_peak_overlay: dict[str, Any] | None = None
         self._dataset_states: list[_DatasetViewState | None] = [None] * len(self.datasets)
         self._dataset_states[0] = _DatasetViewState(
             model=self.model,
@@ -328,6 +329,28 @@ class QtMDHistoSliceViewer:
         self.dataset_index = new_index
         self._set_combo_items_silent(self.dataset_combo, self.dataset_names, self.dataset_names[new_index])
         self._restore_dataset_state(state)
+
+    def set_bragg_peak_overlay(self, peaks: Any | None, *, dataset_name: str | None = None) -> None:
+        """Overlay accepted and rejected Bragg reflections on 2D momentum views."""
+
+        if peaks is None:
+            self.bragg_peak_overlay = None
+        else:
+            try:
+                hkl = np.column_stack([peaks.column(name) for name in ("H", "K", "L")])
+                accepted = (
+                    np.asarray(peaks.column("Accepted"), dtype=bool)
+                    if "Accepted" in peaks.columns
+                    else np.ones(hkl.shape[0], dtype=bool)
+                )
+            except (AttributeError, KeyError, TypeError, ValueError) as exc:
+                raise ValueError("Bragg overlay requires H, K, and L table columns") from exc
+            self.bragg_peak_overlay = {
+                "hkl": np.asarray(hkl, dtype=float),
+                "accepted": accepted,
+                "dataset_name": dataset_name,
+            }
+        self.update_plot()
 
     @property
     def image_norm(self):
@@ -1660,10 +1683,7 @@ class QtMDHistoSliceViewer:
 
     def _channel_available(self, name: str) -> bool:
         if getattr(self.model, "is_point_list", False):
-            return (
-                self.model.point_overlay_channel(name) is not None
-                or name in self.model.point_channels
-            )
+            return self.model.point_overlay_channel(name) is not None
         return name in self.model.CHANNELS
 
     def _fit_panels_active(self) -> bool:
@@ -2790,6 +2810,64 @@ class QtMDHistoSliceViewer:
         )
         self.ax_image.set_xlabel(self.model._axis_label(self.model.x_dim))
         self.ax_image.set_ylabel(self.model._axis_label(self.model.y_dim))
+        self._draw_bragg_peak_overlay()
+
+    def _draw_bragg_peak_overlay(self) -> None:
+        """Project stored HKLs into the active histogram-axis coordinates."""
+
+        overlay = self.bragg_peak_overlay
+        if overlay is None or getattr(self.model, "is_point_list", False):
+            return
+        overlay_dataset = overlay.get("dataset_name")
+        if overlay_dataset is not None and self.dataset_names[self.dataset_index] != overlay_dataset:
+            return
+        if self.model.x_dim == self.model.y_dim:
+            return
+        axes = self.data.axes
+        if axes[self.model.x_dim].kind != "momentum" or axes[self.model.y_dim].kind != "momentum":
+            return
+        try:
+            from .analysis.coordinates import physical_axis_vectors
+
+            vectors = physical_axis_vectors(self.data)[:, :3]
+            momentum_dims = [index for index, axis in enumerate(axes) if axis.kind == "momentum"]
+            if len(momentum_dims) != 3:
+                return
+            momentum_vectors = vectors[momentum_dims]
+            axis_coordinates = np.asarray(overlay["hkl"], dtype=float) @ np.linalg.inv(momentum_vectors)
+            x_column = momentum_dims.index(self.model.x_dim)
+            y_column = momentum_dims.index(self.model.y_dim)
+        except (ValueError, np.linalg.LinAlgError):
+            return
+        accepted = np.asarray(overlay["accepted"], dtype=bool)
+        finite = np.all(np.isfinite(axis_coordinates), axis=1)
+        accepted &= finite
+        rejected = finite & ~accepted
+        if np.any(accepted):
+            self.ax_image.scatter(
+                axis_coordinates[accepted, x_column],
+                axis_coordinates[accepted, y_column],
+                s=48,
+                marker="o",
+                facecolors="none",
+                edgecolors="#2f9e68",
+                linewidths=1.7,
+                label="Accepted Bragg peaks",
+                zorder=6,
+            )
+        if np.any(rejected):
+            self.ax_image.scatter(
+                axis_coordinates[rejected, x_column],
+                axis_coordinates[rejected, y_column],
+                s=48,
+                marker="x",
+                color="#d94b45",
+                linewidths=1.7,
+                label="Rejected Bragg peaks",
+                zorder=6,
+            )
+        if np.any(accepted) or np.any(rejected):
+            self.ax_image.legend(loc="upper right", fontsize=max(self.font_size - 3, 7))
 
     def _sync_limit_spinboxes(self, vmin: float, vmax: float) -> None:
         if not self.model.autoscale:

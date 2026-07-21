@@ -40,16 +40,18 @@ def register_builtin_operations() -> None:
         _p("include_systematic_absences", False, "Include reflections forbidden by the space group.", kind="bool"),
         _p("d_min_angstrom", None, "Minimum d spacing in angstrom."), _p("d_max_angstrom", None, "Maximum d spacing in angstrom."),
         _p("energy_min_meV", None, "Lower elastic energy boundary; leave both bounds blank to use the bin nearest zero."), _p("energy_max_meV", None, "Upper elastic energy boundary; leave both bounds blank to use the bin nearest zero."),
-        _p("method", "box_sum", "Peak integration method.", choices=(("box_sum", "Box"), ("ellipsoid_sum", "Ellipsoid"), ("gaussian_fit", "Gaussian fit"))),
-        _p("coordinate_frame", "hkl", "Coordinate frame for region widths."),
+        _p("method", "ellipsoid_sum", "Peak integration method.", choices=(("box_sum", "Box"), ("ellipsoid_sum", "Ellipsoid"), ("gaussian_fit", "Gaussian fit"))),
+        _p("coordinate_frame", "hkl", "Coordinate frame for region widths.", choices=(("hkl", "HKL (r.l.u.)"), ("q_angstrom_inverse", "Q (1/angstrom)"))),
         _p("box_half_widths", [0.1, 0.1, 0.1], "Positive box half widths."), _p("ellipsoid_semiaxes", [0.1, 0.1, 0.1], "Positive ellipsoid semiaxes."),
-        _p("ellipsoid_rotation", np.eye(3).tolist(), "Orthonormal ellipsoid rotation matrix."), _p("center_mode", "nominal", "Use nominal or centroid-refined centers."),
-        _p("centroid_search_radius", 0.1, "Centroid search radius."), _p("background_mode", "none", "Optional local shell background."),
+        _p("ellipsoid_rotation", np.eye(3).tolist(), "Orthonormal ellipsoid rotation matrix."), _p("center_mode", "nominal", "Use nominal or centroid-refined centers.", choices=(("nominal", "Nominal HKL"), ("centroid", "Refine centroid"))),
+        _p("centroid_search_radius", 0.1, "Centroid search radius."), _p("background_mode", "shell", "Optional local shell background.", choices=(("none", "No subtraction"), ("shell", "Local shell"))),
         _p("background_inner_scale", 1.5, "Inner shell scale."), _p("background_outer_scale", 2.0, "Outer shell scale."),
         _p("exclude_neighbor_regions", True, "Exclude neighboring peak regions from background.", kind="bool"),
-        _p("minimum_peak_coverage", 0.9, "Minimum measured peak fraction."), _p("minimum_background_coverage", 0.7, "Minimum measured shell fraction."),
-        _p("edge_policy", "reject", "Reject or report partially covered peaks."), _p("gaussian_background", "constant", "Gaussian background model."),
-        _p("gaussian_max_nfev", 1000, "Maximum Gaussian optimizer evaluations."), _p("gaussian_fallback", "none", "Fallback when Gaussian fitting fails."),
+        _p("minimum_peak_coverage", 0.5, "Minimum measured peak fraction."), _p("minimum_background_coverage", 0.3, "Minimum measured shell fraction."),
+        _p("minimum_signal_to_noise", None, "Optional minimum accepted I/dI; leave blank to report all signal-to-noise values."),
+        _p("maximum_background", None, "Optional maximum accepted absolute integrated background; leave blank for no background threshold."),
+        _p("edge_policy", "report_partial", "Reject or report partially covered peaks.", choices=(("report_partial", "Report partial"), ("reject", "Reject partial"))), _p("gaussian_background", "constant", "Gaussian background model.", choices=(("constant", "Constant"), ("linear", "Linear"))),
+        _p("gaussian_max_nfev", 1000, "Maximum Gaussian optimizer evaluations."), _p("gaussian_fallback", "none", "Fallback when Gaussian fitting fails.", choices=(("none", "None"),)),
         _p("subvoxel_samples", 3, "Odd samples per voxel dimension."),
     )
     spectral_parameters = (
@@ -114,7 +116,7 @@ def register_builtin_operations() -> None:
             "Positive number; use 7 for LiV2O4.", "7.0",
         ),
     )
-    register_analysis_operation(AnalysisOperationDefinition("bragg_integration", "Bragg integration", 1, "Integrate crystallographic peaks.", 1, 2, ("MDHistoData", "PointListData"), bragg_parameters, _validate_bragg, _execute_bragg))
+    register_analysis_operation(AnalysisOperationDefinition("bragg_integration", "Bragg integration", 2, "Integrate crystallographic peaks.", 1, 2, ("MDHistoData", "PointListData"), bragg_parameters, _validate_bragg, _execute_bragg))
     register_analysis_operation(AnalysisOperationDefinition("spectral_integration", "Spectral integration", 1, "Reduce spectra using physical kernels.", 1, 1, ("MDHistoData",), spectral_parameters, _validate_spectral, _execute_spectral))
     register_analysis_operation(AnalysisOperationDefinition("spectral_conversion", "INS absolute conversion", 1, "Convert measured INS intensity to an absolute cross section or dynamic susceptibility.", 1, 1, ("MDHistoData",), conversion_parameters, _validate_conversion, _execute_conversion))
     register_analysis_operation(
@@ -213,8 +215,41 @@ def _execute_bragg(inputs, parameters, **callbacks):
         if not spacegroup:
             raise ValueError("crystal peak generation requires a space group")
         peaks = generate_bragg_peaks(data, spacegroup, include_systematic_absences=parameters["include_systematic_absences"], d_min_angstrom=parameters["d_min_angstrom"], d_max_angstrom=parameters["d_max_angstrom"])
-    allowed = {key: parameters[key] for key in ("method", "coordinate_frame", "box_half_widths", "ellipsoid_semiaxes", "ellipsoid_rotation", "subvoxel_samples", "background_mode", "background_inner_scale", "background_outer_scale", "minimum_peak_coverage", "minimum_background_coverage", "edge_policy", "exclude_neighbor_regions", "center_mode", "centroid_search_radius", "gaussian_background", "gaussian_max_nfev", "energy_min_meV", "energy_max_meV")}
-    return AnalysisExecution({"peak_table": TableOutput(integrate_bragg_peaks(data, peaks, progress_callback=callbacks.get("progress_callback"), cancel_callback=callbacks.get("cancel_callback"), **allowed), "Integrated Bragg peaks")})
+    allowed = {key: parameters[key] for key in ("method", "coordinate_frame", "box_half_widths", "ellipsoid_semiaxes", "ellipsoid_rotation", "subvoxel_samples", "background_mode", "background_inner_scale", "background_outer_scale", "minimum_peak_coverage", "minimum_background_coverage", "minimum_signal_to_noise", "maximum_background", "edge_policy", "exclude_neighbor_regions", "center_mode", "centroid_search_radius", "gaussian_background", "gaussian_max_nfev", "energy_min_meV", "energy_max_meV")}
+    table = integrate_bragg_peaks(
+        data,
+        peaks,
+        progress_callback=callbacks.get("progress_callback"),
+        cancel_callback=callbacks.get("cancel_callback"),
+        **allowed,
+    )
+    peak_count = int(table.metadata["peak_count"])
+    accepted_count = int(table.metadata["accepted_count"])
+    rejected_count = int(table.metadata["rejected_count"])
+    warnings = []
+    if peak_count == 0:
+        warnings.append("No crystallographic peaks intersect the selected data volume and d-spacing limits.")
+    elif accepted_count == 0:
+        warnings.append("All generated peaks were rejected by the configured quality thresholds.")
+    diagnostics = {
+        "generated_peaks": int(len(peaks)),
+        "integrated_peaks": peak_count,
+        "accepted_peaks": accepted_count,
+        "rejected_peaks": rejected_count,
+        "acceptance_fraction": accepted_count / peak_count if peak_count else 0.0,
+        "status_bits": table.metadata["status_bits"],
+    }
+    return AnalysisExecution(
+        {
+            "peak_table": TableOutput(
+                table,
+                "Integrated Bragg peaks",
+                {"data_type": "bragg_reflections", "fit_enabled": False},
+            )
+        },
+        warnings=warnings,
+        diagnostics=diagnostics,
+    )
 
 
 def _validate_spectral(inputs, parameters):

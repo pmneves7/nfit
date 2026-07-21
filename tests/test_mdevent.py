@@ -10,16 +10,19 @@ from nfit import (
     inspect_mdevent_workspace,
     load_detector_normalization,
     load_mdevent_run_points,
-    mdevent_dataset_group,
     load_project,
+    mdevent_dataset_group,
     save_project,
 )
-from nfit.project_gui import import_dataset_paths
-from nfit.project_gui import (
-    NfitProjectExplorer, data_group_composite_config, slice_viewer_datasets,
-    _composite_scope, _point_data_from_mdhisto_view,
-)
 from nfit.plotting import _mdhisto_channel_array
+from nfit.project_gui import (
+    NfitProjectExplorer,
+    _composite_scope,
+    _point_data_from_mdhisto_view,
+    data_group_composite_config,
+    import_dataset_paths,
+    slice_viewer_datasets,
+)
 
 
 def _write_mdevent(path):
@@ -149,6 +152,8 @@ def test_native_mdevent_binning_uses_proton_charge_and_vanadium_coverage(tmp_pat
     np.testing.assert_allclose(result.errors, [[[[np.sqrt(2.0) / 12.0]]]])
     np.testing.assert_allclose(result.num_events, [[[[2.0]]]])
     assert not result.mask.item()
+    assert result.metadata["signal_semantics"] == "density"
+    assert result.metadata["signal_semantics_source"] == "nfit_mdevent_reduction"
 
 
 def test_native_mdevent_covered_zero_bins_are_finite_measured_zeros(tmp_path):

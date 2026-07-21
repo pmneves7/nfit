@@ -48,7 +48,11 @@ def execute_to_artifacts(
                 continue
             artifact = staging / f"{key}.npz"
             write_dataset_artifact(output_data(output), artifact)
-            refs.append(AnalysisOutputRef(key, output.label, "table" if output.__class__.__name__ == "TableOutput" else "dataset", artifact_path=artifact.name, dataset_id=uuid4().hex, metadata=output.metadata))
+            metadata = dict(output.metadata)
+            data_type = getattr(output, "data_type", "")
+            if data_type:
+                metadata.setdefault("data_type", data_type)
+            refs.append(AnalysisOutputRef(key, output.label, "table" if output.__class__.__name__ == "TableOutput" else "dataset", artifact_path=artifact.name, dataset_id=uuid4().hex, metadata=metadata))
         if root.exists():
             root.replace(backup)
         try:

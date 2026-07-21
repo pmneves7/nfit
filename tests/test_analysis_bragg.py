@@ -15,6 +15,36 @@ def test_box_integration_uses_exact_partial_bin_overlap():
     assert result.column("Coverage")[0] == 1.0
 
 
+def test_bragg_progress_reports_reflection_quality_and_running_counts():
+    axes = tuple(
+        MDHistoAxis(name, np.array([0.0, 1.0, 2.0]), "rlu", "momentum")
+        for name in ("H", "K", "L")
+    )
+    data = MDHistoData(
+        axes,
+        np.ones((2, 2, 2)),
+        np.ones((2, 2, 2)),
+        np.zeros((2, 2, 2), bool),
+        np.ones((2, 2, 2)),
+        metadata={"signal_semantics": "density", "lattice_parameters": {"a": 2 * np.pi, "b": 2 * np.pi, "c": 2 * np.pi}},
+    )
+    events = []
+
+    integrate_bragg_peaks(
+        data,
+        [[0.5, 0.5, 0.5], [1.5, 1.5, 1.5]],
+        box_half_widths=[0.5, 0.5, 0.5],
+        progress_callback=events.append,
+    )
+
+    assert events[0]["message"] == "Preparing 2 reflections using box sum."
+    reflection_events = [event for event in events if event["message"].startswith("Reflection")]
+    assert len(reflection_events) == 2
+    assert "(0.5, 0.5, 0.5) accepted" in reflection_events[0]["message"]
+    assert reflection_events[-1]["accepted_count"] == 2
+    assert events[-1]["message"] == "Bragg integration complete: 2 accepted, 0 rejected."
+
+
 def test_shell_background_subtracts_constant_density():
     edges = np.arange(0.0, 6.0)
     axes = tuple(MDHistoAxis(name, edges, "rlu", "momentum") for name in ("H", "K", "L"))
@@ -46,6 +76,68 @@ def test_gaussian_fit_recovers_integrated_intensity():
     result = integrate_bragg_peaks(data, [[0, 0, 0]], method="gaussian_fit", ellipsoid_semiaxes=[sigma] * 3)
     expected = amplitude * (2 * np.pi) ** 1.5 * sigma**3
     np.testing.assert_allclose(result.column("I"), expected, rtol=1e-3)
+    np.testing.assert_allclose(result.column("FitAmplitude"), amplitude, rtol=1e-3)
+    np.testing.assert_allclose(result.column("FitBaseline"), 2.0, rtol=1e-3)
+    np.testing.assert_allclose(
+        [result.column("FitSigma1")[0], result.column("FitSigma2")[0], result.column("FitSigma3")[0]],
+        [sigma, sigma, sigma],
+        rtol=1e-3,
+    )
+    assert result.column("Accepted")[0] == 1.0
+
+
+def test_quality_thresholds_reject_without_discarding_peak_measurement():
+    edges = np.arange(0.0, 4.0)
+    axes = tuple(MDHistoAxis(name, edges, "rlu", "momentum") for name in ("H", "K", "L"))
+    shape = (3, 3, 3)
+    data = MDHistoData(
+        axes,
+        np.ones(shape),
+        np.full(shape, 10.0),
+        np.zeros(shape, bool),
+        np.ones(shape),
+        metadata={
+            "signal_semantics": "density",
+            "lattice_parameters": {"a": 2 * np.pi, "b": 2 * np.pi, "c": 2 * np.pi},
+        },
+    )
+
+    result = integrate_bragg_peaks(
+        data,
+        [[1.5, 1.5, 1.5]],
+        box_half_widths=[0.5] * 3,
+        minimum_signal_to_noise=2.0,
+    )
+
+    assert result.column("Accepted")[0] == 0.0
+    assert int(result.column("Status")[0]) & 4
+    assert np.isfinite(result.column("I")[0])
+    assert np.isfinite(result.column("dI")[0])
+    assert result.metadata["accepted_count"] == 0
+    assert result.metadata["rejected_count"] == 1
+
+
+def test_empty_peak_list_returns_a_complete_diagnostic_table():
+    edges = np.arange(0.0, 3.0)
+    axes = tuple(MDHistoAxis(name, edges, "rlu", "momentum") for name in ("H", "K", "L"))
+    shape = (2, 2, 2)
+    data = MDHistoData(
+        axes,
+        np.ones(shape),
+        np.ones(shape),
+        np.zeros(shape, bool),
+        np.ones(shape),
+        metadata={
+            "signal_semantics": "density",
+            "lattice_parameters": {"a": 2 * np.pi, "b": 2 * np.pi, "c": 2 * np.pi},
+        },
+    )
+
+    result = integrate_bragg_peaks(data, np.empty((0, 3)))
+
+    assert result.size == 0
+    assert {"H", "K", "L", "I", "Accepted", "Status", "FitSigma1"} <= set(result.columns)
+    assert result.metadata["peak_count"] == 0
 
 
 def test_gaussian_fit_supports_linear_background():

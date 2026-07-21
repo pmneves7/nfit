@@ -28,11 +28,14 @@ Constraints
     ``{"parameter": p, "op": ">=", "reference": r}`` reparameterizes the
     target as ``p = r + delta`` with ``delta >= 0`` (``"<="`` uses ``-``), so
     the constraint is hard: the optimizer cannot violate it. ``r`` is a number
-    or the qualified name of another global parameter.
+    or the qualified name of another global parameter. Exact constraints use
+    ``{"parameter": p, "op": "=", "expression": "..."}``; the dependent
+    parameter is removed from the optimizer and derived from the expression.
 """
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -50,11 +53,12 @@ from .fitting import (
     ParameterSpec,
     _metadata_coordinate_units_are_inv_angstrom,
     _resolve_q_transform,
+    parameter_expression_names,
 )
 from .form_factors import form_factor_sq
 from .heat_capacity import debye_heat_capacity, low_temperature_heat_capacity
-from .quantities import convert_quantity
 from .models import paramagnon_chipp
+from .quantities import convert_quantity
 from .spin_fluctuations import (
     build_rpa_geometry,
     heisenberg_rpa_chipp,
@@ -499,9 +503,11 @@ class _RpaComponentEvaluator:
         # Closure solve/eigenvalue caches (see _solve_closure). Keyed by exact
         # parameter tuples: scipy evaluates value and FD columns back to back
         # at identical floats, so exact keys hit without rounding tolerance.
-        self._closure_moment_cache: dict[tuple, Any] = {}
-        self._closure_result_cache: dict[tuple, Any] = {}
+        self._closure_moment_cache: OrderedDict[tuple, Any] = OrderedDict()
+        self._closure_result_cache: OrderedDict[tuple, Any] = OrderedDict()
         self._closure_bz_context: Any = None
+        self._bulk_q0_context: Any = None
+        self._bulk_q0_cache: tuple[tuple[Any, ...], Any] | None = None
         if self.tensor_mode:
             # Fold onto the primitive cell carrying the tensor payloads: pure
             # lattice translations do not rotate spins, so anisotropic exchange,
@@ -690,9 +696,10 @@ class _RpaComponentEvaluator:
                     bz_geometry.n_sites,
                     isotropic_components=3,
                 )
-        if len(self._closure_moment_cache) > 8:
-            self._closure_moment_cache.clear()
         self._closure_moment_cache[key] = model
+        self._closure_moment_cache.move_to_end(key)
+        while len(self._closure_moment_cache) > 16:
+            self._closure_moment_cache.popitem(last=False)
         return model
 
     def _solve_closure(
@@ -727,6 +734,7 @@ class _RpaComponentEvaluator:
         )
         cached = self._closure_result_cache.get(key)
         if cached is not None:
+            self._closure_result_cache.move_to_end(key)
             return cached
         model = self._closure_moment_model(params, field)
         result = solve_closure(
@@ -740,9 +748,59 @@ class _RpaComponentEvaluator:
                 for label, key_ in self._closure_keys.items()
             },
         )
-        if len(self._closure_result_cache) > 256:
-            self._closure_result_cache.clear()
         self._closure_result_cache[key] = result
+        self._closure_result_cache.move_to_end(key)
+        while len(self._closure_result_cache) > 8192:
+            self._closure_result_cache.popitem(last=False)
+        return result
+
+    def _bulk_q0_modes(self, params: dict[str, float]) -> Any:
+        """Return the Q=0 eigensystem, once per exchange parameter vector."""
+
+        if self.tensor_mode or self.zeeman_mode:
+            values = self._tensor_values(params)
+            key = ("tensor", *sorted(values.items()))
+        else:
+            values = self._j_values(params)
+            key = ("scalar", *sorted(values.items()))
+        if self._bulk_q0_cache is not None and self._bulk_q0_cache[0] == key:
+            return self._bulk_q0_cache[1]
+
+        if self._bulk_q0_context is None:
+            geometry = build_rpa_geometry(
+                [0.0], [0.0], [0.0], self.site_positions, self.orbits
+            )
+            structure = None
+            if self.tensor_mode or self.zeeman_mode:
+                from .tensor_rpa import build_tensor_structure
+
+                structure = build_tensor_structure(
+                    geometry,
+                    self.site_positions,
+                    orbits=self.orbits,
+                    lattice=self._lattice,
+                    anisotropy=self._anisotropy,
+                    sia=self._sia,
+                    site_rotations=self._site_rotations,
+                    dipole=self._dipole,
+                )
+            self._bulk_q0_context = (geometry, structure)
+        geometry, structure = self._bulk_q0_context
+
+        if structure is not None:
+            from .tensor_rpa import assemble_tensor_exchange
+
+            exchange = assemble_tensor_exchange(structure, values)
+            lam, modes = np.linalg.eigh(exchange)
+            n_sites = structure.n_sites
+            amps = modes.reshape(1, n_sites, 3, 3 * n_sites).sum(axis=1)[0]
+            result = ("tensor", lam[0], amps, n_sites)
+        else:
+            exchange = rpa_exchange_matrix(geometry, values)
+            lam, modes = np.linalg.eigh(exchange)
+            weights = np.abs(modes.sum(axis=1)) ** 2 / geometry.n_sites
+            result = ("scalar", lam, weights)
+        self._bulk_q0_cache = (key, result)
         return result
 
     def _bulk_static_chi(
@@ -764,27 +822,10 @@ class _RpaComponentEvaluator:
 
         from .sum_rules import static_chi_modes
 
-        q0_geometry = build_rpa_geometry(
-            [0.0], [0.0], [0.0], self.site_positions, self.orbits
-        )
-        if self.tensor_mode or self.zeeman_mode:
-            from .tensor_rpa import assemble_tensor_exchange, build_tensor_structure
-
-            structure = build_tensor_structure(
-                q0_geometry,
-                self.site_positions,
-                orbits=self.orbits,
-                lattice=self._lattice,
-                anisotropy=self._anisotropy,
-                sia=self._sia,
-                site_rotations=self._site_rotations,
-                dipole=self._dipole,
-            )
-            exchange = assemble_tensor_exchange(structure, self._tensor_values(params))
-            lam, modes = np.linalg.eigh(exchange)
-            n_sites = structure.n_sites
-            amps = modes.reshape(1, n_sites, 3, 3 * n_sites).sum(axis=1)[0]  # (3, 3N)
-            denom = 1.0 - (lam[0] - lambda_shift) * chi0
+        mode, *payload = self._bulk_q0_modes(params)
+        if mode == "tensor":
+            lam, amps, n_sites = payload
+            denom = 1.0 - (lam - lambda_shift) * chi0
             if np.any(denom <= 0.0):
                 raise ValueError("RPA instability at Q=0")
             chi_modes = chi0 / denom
@@ -793,9 +834,7 @@ class _RpaComponentEvaluator:
             else:
                 weight = (np.abs(amps) ** 2).sum(axis=0) / (3.0 * n_sites)
             return float((weight * chi_modes).sum())
-        exchange = rpa_exchange_matrix(q0_geometry, self._j_values(params))
-        lam, modes = np.linalg.eigh(exchange)
-        weights = np.abs(modes.sum(axis=1)) ** 2 / q0_geometry.n_sites
+        lam, weights = payload
         return float(static_chi_modes(lam, weights, chi0=chi0, lambda_shift=lambda_shift)[0])
 
     def _magnetization_value(
@@ -866,15 +905,30 @@ class _RpaComponentEvaluator:
                 elif target_unit == "mu_B/f.u.":
                     abs_factor /= moles * EMU_PER_MOL_PER_MU_B
 
+        # Group by quantities that can actually change chi. In particular,
+        # small MPMS field readback variations must not turn an otherwise
+        # one-dimensional chi(T) calculation into one solve per raw row.
+        key_columns: list[np.ndarray] = []
+        if self.closure_spec is not None:
+            key_columns.append(temperature)
+        if self.zeeman_mode and self.closure_spec is not None:
+            key_columns.extend(field_vecs[:, axis] for axis in range(3))
+        elif self.tensor_mode or self.zeeman_mode:
+            directions = np.zeros_like(field_vecs)
+            nonzero = b_mag > 0.0
+            directions[nonzero] = field_vecs[nonzero] / b_mag[nonzero, None]
+            key_columns.extend(directions[:, axis] for axis in range(3))
         keys = np.round(
-            np.column_stack([temperature, field_vecs]), 9
+            np.column_stack(key_columns) if key_columns else np.zeros((n, 1)),
+            9,
         )
         unique_keys, inverse = np.unique(keys, axis=0, return_inverse=True)
         out = np.empty(n, dtype=float)
-        for index, row in enumerate(unique_keys):
+        for index, _row in enumerate(unique_keys):
             sel = inverse == index
-            t = float(row[0])
-            field_vec = row[1:4]
+            representative = int(np.flatnonzero(sel)[0])
+            t = float(temperature[representative])
+            field_vec = field_vecs[representative]
             magnitude = float(np.linalg.norm(field_vec))
             b_hat = field_vec / magnitude if magnitude > 0 else None
             try:
@@ -923,9 +977,9 @@ class _RpaComponentEvaluator:
                 lambda_shift = closure.lambda_shift
             if self.zeeman_mode:
                 from .tensor_rpa import (
+                    MU_B_MEV_PER_T,
                     tensor_rpa_zeeman_unpolarized_chipp,
                     zeeman_cartesian_propagator,
-                    MU_B_MEV_PER_T,
                 )
 
                 structure, q_hat = tensor_context
@@ -1612,10 +1666,13 @@ def _compile_constraints(
     specs: list[ParameterSpec],
     instances: dict[str, ParameterInstance],
 ) -> list[DerivedParameter]:
-    """Reparameterize inequality constraints as bounded offset parameters."""
+    """Compile exact expressions and inequalities as derived parameters."""
 
     derived: list[DerivedParameter] = []
     specs_by_name = {spec.name: spec for spec in specs}
+    original_specs_by_name = dict(specs_by_name)
+    original_names = set(specs_by_name)
+    constrained_targets: set[str] = set()
     for component in components:
         if not applicable.get(component.name):
             continue
@@ -1624,6 +1681,8 @@ def _compile_constraints(
             op = str(constraint.get("op", ">="))
             reference = constraint.get("reference")
             qualified = qualified_parameter_name(component.name, parameter)
+            if qualified in constrained_targets:
+                raise ValueError(f"parameter {qualified!r} has more than one constraint")
             target = specs_by_name.get(qualified)
             if target is None:
                 if any(name.startswith(f"{qualified}[") for name in specs_by_name):
@@ -1631,17 +1690,41 @@ def _compile_constraints(
                         f"constraint on {qualified!r} requires global sharing mode"
                     )
                 raise ValueError(f"constraint references unknown parameter {qualified!r}")
-            if op not in (">=", "<="):
+            if op not in ("=", ">=", "<="):
                 raise ValueError(f"unsupported constraint operator {op!r} on {qualified!r}")
             if target.min is not None or target.max is not None:
                 raise ValueError(
                     f"parameter {qualified!r} cannot have both limits and a constraint"
                 )
             if not target.vary:
+                raise ValueError(
+                    f"constrained parameter {qualified!r} must be enabled for fitting"
+                )
+
+            if op == "=":
+                expression = str(constraint.get("expression", constraint.get("reference", ""))).strip()
+                dependencies = parameter_expression_names(expression)
+                unknown = [name for name in dependencies if name not in original_names]
+                if unknown:
+                    raise ValueError(
+                        f"constraint on {qualified!r} references unknown parameter {unknown[0]!r}"
+                    )
+                specs.remove(target)
+                del specs_by_name[qualified]
+                del instances[qualified]
+                constrained_targets.add(qualified)
+                derived.append(
+                    DerivedParameter(
+                        name=qualified,
+                        base=0.0,
+                        expression=expression,
+                        dependencies=dependencies,
+                    )
+                )
                 continue
 
             if isinstance(reference, str):
-                reference_spec = specs_by_name.get(reference)
+                reference_spec = original_specs_by_name.get(reference)
                 if reference_spec is None:
                     raise ValueError(
                         f"constraint on {qualified!r} references unknown parameter "
@@ -1679,4 +1762,5 @@ def _compile_constraints(
             derived.append(
                 DerivedParameter(name=qualified, base=base, offset=offset_name, sign=sign)
             )
+            constrained_targets.add(qualified)
     return derived

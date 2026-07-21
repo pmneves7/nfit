@@ -124,7 +124,8 @@ The current project explorer launches with `nfit` and lets a user:
 - edit and attach dataset or shared masks,
 - attach one or more model components,
 - configure optimizer settings, dataset weights, parameter bounds, fitted/fixed
-  parameters, and global/per-dataset parameter sharing,
+  parameters, global/per-dataset parameter sharing, and hard parameter
+  relationships,
 - run fits, branch fit timelines, restore earlier fit states, and inspect
   structured fit metadata,
 - compare data, model, and residual channels visually in the data viewer.
@@ -134,6 +135,8 @@ current model channels and stored fit channels from GUI fit history, but
 script-created datasets with attached fit comparisons should continue to
 produce the same viewer behavior.
 See [GUI workflows](gui_workflows.md) for current user-facing details.
+See [Fit constraints](fit_constraints.md) for exact relationships,
+inequalities, expression syntax, degrees of freedom, and backend examples.
 
 ## Masking
 

@@ -58,9 +58,10 @@ class ModelComponentSpec:
     Parameters without a ``sharing`` entry fall back to the legacy
     ``global_fit`` booleans. ``limits`` maps a parameter name to
     ``[min, max]`` bounds where either side may be ``None``. ``constraints``
-    holds entries like ``{"parameter": "c0", "op": ">=", "reference": ...}``
-    where the reference is a number or a qualified ``"component.param"``
-    name. ``applies_to`` restricts the component to the named datasets
+    holds inequalities such as ``{"parameter": "c0", "op": ">=",
+    "reference": ...}`` or exact derived relationships such as
+    ``{"parameter": "c0", "op": "=", "expression": "10 - `other.c0`"}``.
+    ``applies_to`` restricts the component to the named datasets
     (``None`` means all compatible datasets).
     """
 

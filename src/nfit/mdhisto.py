@@ -10,7 +10,6 @@ from numpy.typing import NDArray
 from .axes import AxisRole, infer_axis_role
 from .dataset import PointData4D
 
-
 AxisKind = Literal["momentum", "energy", "unknown"]
 FloatArray = NDArray[np.float64]
 BoolArray = NDArray[np.bool_]
@@ -156,11 +155,10 @@ def load_mantid_mdhisto_nxs(
             "workspace_attrs": _decode_attrs(workspace.attrs),
             "data_attrs": _decode_attrs(data.attrs),
             "signal_attrs": _decode_attrs(signal_dataset.attrs),
-            # MDHistoWorkspace stores its signal array as the bin value.
-            # visual_normalization controls Mantid's display transform and is
-            # deliberately retained separately below; it does not alter the
-            # saved array that nfit imports.
-            "signal_semantics": "bin_integral",
+            # Reduced MD histograms are normally normalized/averaged values.
+            # Treat them as densities by default; users can still declare a
+            # genuinely pre-integrated source explicitly in the dataset GUI.
+            "signal_semantics": "density",
             "signal_semantics_source": "mantid_mdhisto_workspace",
         }
 

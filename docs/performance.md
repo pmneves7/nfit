@@ -113,6 +113,29 @@ automatically — none of them changes the fit result or requires configuration.
   instead of materializing coordinate grids. On the 4D reference dataset (59M
   bins) this takes selecting a fit result from several seconds to ~0.4 s and the
   dataset-details panel from ~5 s to well under 0.1 s.
+- **LRU GUI caches and prepared point lists.** Viewer, composite, overlay, and
+  transformed point-list caches evict only their least-recently-used entry.
+  Workspaces with more cached datasets therefore do not repeatedly discard and
+  rebuild every large view. Point-list role/unit transforms are reused until
+  their source data or configuration changes; merely inspecting rebin status
+  reads the source row count without copying every column.
+- **Incremental analysis fingerprints.** Array content hashes are retained by
+  immutable data identity. Changing enablement, fit weight, scale, masks, or
+  other configuration still produces a new complete fingerprint, but does not
+  reread and SHA-256 hash unchanged multidimensional arrays during a tree
+  refresh.
+- **Bulk-susceptibility grouping.** The Q=0 exchange eigensystem is computed
+  once per exchange parameter vector and reused for every temperature and
+  closure state. Scalar bulk curves group only by the quantities that can
+  affect the result: temperature when a closure is active, and one evaluation
+  for a closure-free curve. Small measured-field readback variations therefore
+  do not create thousands of identical static calculations. Exact closure
+  results use an LRU sized for complete temperature sweeps.
+
+GUI file imports, explicit lazy-dataset loads, and rebin operations run in the
+background during an interactive session. This keeps Qt responsive; it does not promise linear
+speedup from parallel disk reads or unbounded rebin workers. The numerical
+rebinner retains its own memory-bounded threading policy.
 
 Together these took the reference pyrochlore project (162k fitted points) from
 ~1.8 s per model evaluation with per-iteration finite differences to well under

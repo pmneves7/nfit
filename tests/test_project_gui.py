@@ -10,39 +10,6 @@ import nfit
 import nfit.project_gui as project_gui
 from nfit.dataset import PointData4D, PointListData
 from nfit.mdhisto import MDHistoAxis, MDHistoData
-from nfit.project_gui import (
-    NfitProject,
-    NfitProjectExplorer,
-    available_data_types,
-    create_mask,
-    create_data_group,
-    create_model_component,
-    copy_dataset_to_group,
-    copy_mask_to_dataset,
-    data_type_label,
-    dataset_entry_from_path,
-    dataset_details_text,
-    dataset_for_slice_viewer,
-    dataset_rebin_config,
-    default_mask_parameters,
-    default_model_config,
-    default_model_fit_parameters,
-    default_model_global_fit,
-    default_model_parameters,
-    import_dataset_paths,
-    load_project,
-    model_config_tooltip,
-    mask_parameter_tooltip,
-    model_parameter_tooltip,
-    next_data_group_name,
-    recent_project_paths,
-    remember_recent_project,
-    forget_missing_recent_projects,
-    save_dataset_file,
-    save_project,
-    set_dataset_data_type,
-    set_dataset_source,
-)
 from nfit.pipeline import (
     DataGroup,
     DatasetEntry,
@@ -51,7 +18,39 @@ from nfit.pipeline import (
     MaskSpec,
     ModelComponentSpec,
 )
-
+from nfit.project_gui import (
+    NfitProject,
+    NfitProjectExplorer,
+    available_data_types,
+    copy_dataset_to_group,
+    copy_mask_to_dataset,
+    create_data_group,
+    create_mask,
+    create_model_component,
+    data_type_label,
+    dataset_details_text,
+    dataset_entry_from_path,
+    dataset_for_slice_viewer,
+    dataset_rebin_config,
+    default_mask_parameters,
+    default_model_config,
+    default_model_fit_parameters,
+    default_model_global_fit,
+    default_model_parameters,
+    forget_missing_recent_projects,
+    import_dataset_paths,
+    load_project,
+    mask_parameter_tooltip,
+    model_config_tooltip,
+    model_parameter_tooltip,
+    next_data_group_name,
+    recent_project_paths,
+    remember_recent_project,
+    save_dataset_file,
+    save_project,
+    set_dataset_data_type,
+    set_dataset_source,
+)
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 MPMS_FILE = DATA_DIR / "MPMS" / "test_MPMS.dat"
@@ -1070,6 +1069,78 @@ def test_project_explorer_adds_and_edits_models(monkeypatch):
     assert not explorer.add_model_button.isHidden()
 
 
+def test_models_folder_edits_and_validates_fit_constraints(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    group = DataGroup("Datagroup1")
+    first = create_model_component(group, "A")
+    second = create_model_component(group, "B")
+    first.fit_parameters["constant"] = True
+    second.fit_parameters["constant"] = True
+    second.constraints = [
+        {"parameter": "constant", "op": "=", "expression": "10 - `A.constant`"}
+    ]
+    explorer = NfitProjectExplorer(NfitProject([group]))
+
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(1))
+    table = explorer.details_widget.findChild(
+        QtWidgets.QTableWidget, "model_constraints_table"
+    )
+    add_button = explorer.details_widget.findChild(
+        QtWidgets.QPushButton, "add_model_constraint_button"
+    )
+    check_button = explorer.details_widget.findChild(
+        QtWidgets.QPushButton, "check_model_constraints_button"
+    )
+    status = explorer.details_widget.findChild(
+        QtWidgets.QLabel, "model_constraints_status"
+    )
+
+    assert table is not None and table.rowCount() == 1
+    assert table.cellWidget(0, 0).currentText() == "B.constant"
+    assert table.cellWidget(0, 1).currentData() == "="
+    assert table.cellWidget(0, 2).text() == "10 - `A.constant`"
+    assert all(widget.toolTip() for widget in (table, add_button, check_button))
+
+    check_button.click()
+    assert status.text() == "1 constraint(s) valid"
+    add_button.click()
+    assert table.rowCount() == 2
+    assert len(first.constraints) + len(second.constraints) == 2
+
+
+def test_model_constraint_validation_rejects_cycles():
+    group = DataGroup("Datagroup1")
+    first = create_model_component(group, "A")
+    second = create_model_component(group, "B")
+    first.fit_parameters["constant"] = True
+    second.fit_parameters["constant"] = True
+    first.constraints = [
+        {"parameter": "constant", "op": "=", "expression": "`B.constant`"}
+    ]
+    second.constraints = [
+        {"parameter": "constant", "op": "=", "expression": "`A.constant`"}
+    ]
+
+    with pytest.raises(ValueError, match="cyclic exact constraint"):
+        project_gui._validate_model_constraints(group)
+
+
+def test_renaming_model_updates_constraint_parameter_references():
+    group = DataGroup("Datagroup1")
+    first = create_model_component(group, "A")
+    second = create_model_component(group, "B")
+    second.constraints = [
+        {"parameter": "constant", "op": "=", "expression": "10 - `A.constant`"},
+        {"parameter": "constant", "op": ">=", "reference": "A.constant"},
+    ]
+
+    project_gui._rename_model_constraint_references(group, first, "A", "Signal")
+
+    assert second.constraints[0]["expression"] == "10 - `Signal.constant`"
+    assert second.constraints[1]["reference"] == "Signal.constant"
+
+
 def test_project_explorer_model_limits_and_applies_to_controls(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")
@@ -1320,6 +1391,70 @@ def test_selecting_historic_fit_preserves_saved_current_state_masks(monkeypatch)
     assert len(group.datasets[0].masks) == 2
 
 
+def test_clear_fit_history_uses_selected_fit_as_new_initial_state(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    dataset = DatasetEntry("scan", _tiny_mdhisto_data(1.0))
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    model = create_model_component(group)
+    model.parameters["constant"] = 1.0
+    first_snapshot = project_gui.snapshot_data_group_state(group)
+    model.parameters["constant"] = 2.0
+    second_snapshot = project_gui.snapshot_data_group_state(group)
+    group.fits = [
+        FitTimelineEntry("Initial", kind="initial", snapshot=first_snapshot),
+        FitTimelineEntry("Fit Result1", kind="result", snapshot=first_snapshot),
+        FitTimelineEntry("Fit Result2", kind="result", snapshot=second_snapshot),
+        FitTimelineEntry("Current state", kind="current", snapshot=second_snapshot),
+    ]
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    fits_item = explorer.tree.topLevelItem(0).child(2)
+    latest_item = fits_item.child(2)
+    explorer.tree.setCurrentItem(latest_item)
+    fits_item = explorer.tree.topLevelItem(0).child(2)
+    explorer.tree.setCurrentItem(fits_item)
+
+    button = explorer.details_widget.findChild(QtWidgets.QPushButton, "clear_fit_history_button")
+    assert button is not None and button.toolTip()
+    assert explorer.clear_fit_history()
+
+    assert [entry.name for entry in group.fits] == ["Initial"]
+    assert group.fits[0].snapshot == second_snapshot
+    assert group.models[model.name].parameters["constant"] == 2.0
+    assert group.active_fit_path == [0]
+
+
+def test_clear_fit_history_confirms_when_selected_fit_is_not_latest(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup(
+        "Datagroup1", datasets=[DatasetEntry("scan", _tiny_mdhisto_data(1.0))]
+    )
+    first_snapshot = project_gui.snapshot_data_group_state(group)
+    group.fits = [
+        FitTimelineEntry("Initial", kind="initial", snapshot=first_snapshot),
+        FitTimelineEntry("Fit Result1", kind="result", snapshot=first_snapshot),
+        FitTimelineEntry("Fit Result2", kind="result", snapshot=first_snapshot),
+    ]
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    fits_item = explorer.tree.topLevelItem(0).child(2)
+    explorer.tree.setCurrentItem(fits_item.child(1))
+    fits_item = explorer.tree.topLevelItem(0).child(2)
+    explorer.tree.setCurrentItem(fits_item)
+    prompts = []
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox,
+        "question",
+        lambda *args: prompts.append(args) or QtWidgets.QMessageBox.StandardButton.Cancel,
+    )
+
+    assert not explorer.clear_fit_history()
+    assert [entry.name for entry in group.fits] == ["Initial", "Fit Result1", "Fit Result2"]
+    assert prompts
+
+
 def test_project_explorer_deletes_a_range_of_selected_fits(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")
@@ -1501,6 +1636,103 @@ def test_slice_viewer_datasets_prefer_current_model_over_stored_fit_channels():
     assert names == ["scan"]
     np.testing.assert_allclose(datasets[0].metadata["fit"], np.full(dataset.data.shape, 7.0))
     np.testing.assert_allclose(datasets[0].metadata["residual"], dataset.data.signal - 7.0)
+
+
+def test_point_fit_overlay_is_only_mapped_to_its_fitted_channel():
+    from nfit.plotting import MDHistoSliceViewer
+
+    temperature = np.array([10.0, 20.0, 30.0])
+    view = PointListData(
+        columns={
+            "Temperature": temperature,
+            "Moment": np.array([1.0, 0.8, 0.6]),
+            "Susceptibility": np.array([0.1, 0.08, 0.06]),
+        },
+        units={"Temperature": "K", "Moment": "emu", "Susceptibility": "emu/Oe"},
+        coordinate_names=["Temperature"],
+        channels=[
+            {"label": "Moment", "value": "Moment", "error": None},
+            {
+                "label": "Susceptibility",
+                "value": "Susceptibility",
+                "error": None,
+            },
+        ],
+    )
+    group = DataGroup("Datagroup1")
+    project_gui.attach_fit_channels_to_view(
+        group,
+        "scan",
+        view,
+        fallback_payload={
+            "kind": "points",
+            "fit_channel": "Susceptibility",
+            "fit": np.array([0.11, 0.09, 0.07]),
+            "residual": np.array([-1.0, -1.0, -1.0]),
+        },
+    )
+
+    viewer = MDHistoSliceViewer(view)
+    assert viewer.channel == "Moment"
+    assert viewer.point_overlay_channel("fit") is None
+    assert "fit" not in viewer.slice_arrays()
+    viewer.channel = "Susceptibility"
+    assert viewer.point_overlay_channel("fit") == "fit"
+    np.testing.assert_allclose(viewer.slice_arrays()["fit"], [0.11, 0.09, 0.07])
+
+
+def test_point_fit_channel_round_trips_with_saved_fit_channels():
+    encoded = project_gui._fit_channels_to_dict(
+        {
+            "scan": {
+                "kind": "points",
+                "fit_channel": "Susceptibility",
+                "fit": np.array([1.0, 2.0]),
+                "residual": np.array([0.0, 0.0]),
+            }
+        }
+    )
+
+    decoded = project_gui._fit_channels_from_dict(encoded)
+    assert decoded["scan"]["fit_channel"] == "Susceptibility"
+
+
+def test_legacy_magnetization_fit_infers_saved_susceptibility_channel():
+    view = PointListData(
+        columns={
+            "Temperature": np.array([10.0, 20.0]),
+            "Moment": np.array([1.0, 0.8]),
+            "Susceptibility": np.array([0.1, 0.08]),
+        },
+        coordinate_names=["Temperature"],
+        channels=[
+            {"label": "Moment", "value": "Moment", "error": None},
+            {
+                "label": "Susceptibility",
+                "value": "Susceptibility",
+                "error": None,
+            },
+        ],
+    )
+    dataset = DatasetEntry("scan", view, data_type="magnetization")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    config = project_gui.point_list_config(dataset)["susceptibility"]
+    config.update({"enabled": True, "moment": "Moment"})
+
+    project_gui.attach_fit_channels_to_view(
+        group,
+        "scan",
+        view,
+        fallback_payload={
+            "kind": "points",
+            "fit": np.array([0.11, 0.09]),
+            "residual": np.array([-1.0, -1.0]),
+        },
+    )
+
+    assert view.metadata["viewer_fit_channel_map"] == {
+        "Susceptibility": "fit"
+    }
 
 
 def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(monkeypatch):
@@ -1912,6 +2144,7 @@ def test_posterior_corner_density_panel_draws_contours():
 
     matplotlib.use("Agg", force=True)
     from matplotlib.figure import Figure
+
     from nfit.project_gui import _draw_corner_density_panel
 
     rng = np.random.default_rng(12)
@@ -1968,6 +2201,7 @@ def test_fit_diagnostics_matrix_heatmap_draws_image():
 
     matplotlib.use("Agg", force=True)
     from matplotlib.figure import Figure
+
     from nfit.project_gui import _draw_matrix_heatmap
 
     fig = Figure()
@@ -1991,6 +2225,7 @@ def test_fit_diagnostics_matrix_heatmap_is_centered_in_figure():
 
     matplotlib.use("Agg", force=True)
     from matplotlib.figure import Figure
+
     from nfit.project_gui import _draw_centered_matrix_heatmap
 
     fig = Figure(figsize=(8, 6))
@@ -2012,6 +2247,7 @@ def test_corner_histogram_panel_draws_step_histogram_and_reference_lines():
 
     matplotlib.use("Agg", force=True)
     from matplotlib.figure import Figure
+
     from nfit.project_gui import _draw_corner_histogram_panel
 
     fig = Figure()
@@ -2037,6 +2273,7 @@ def test_corner_reference_lines_are_solid_only():
 
     matplotlib.use("Agg", force=True)
     from matplotlib.figure import Figure
+
     from nfit.project_gui import _draw_corner_reference_lines
 
     fig = Figure()
@@ -2057,6 +2294,7 @@ def test_trace_panel_draws_walkers_and_burn_in_marker():
 
     matplotlib.use("Agg", force=True)
     from matplotlib.figure import Figure
+
     from nfit.project_gui import _draw_trace_panel
 
     chain = np.stack(
@@ -2196,6 +2434,21 @@ def test_fit_progress_dialog_uses_parameter_table_and_resets(monkeypatch):
     assert "Least-squares fit" in dialog.stage_label.text()
     assert "125 ms/step" in dialog.status_label.text()
     assert "125 ms/step" in dialog.log.toPlainText()
+
+    dialog.update_progress(
+        {
+            "stage": "bragg_integration",
+            "completed": 3,
+            "total": 12,
+            "accepted_count": 2,
+            "rejected_count": 1,
+            "message": "Reflection 3/12: (1, 1, 1) accepted; coverage 100%; I/dI 8.2",
+        }
+    )
+    assert dialog.stage_label.text() == "Bragg integration"
+    assert "Reflection 3 of 12" in dialog.status_label.text()
+    assert "2 accepted" in dialog.status_label.text()
+    assert "(1, 1, 1) accepted" in dialog.log.toPlainText()
 
     dialog.finish(
         "Fit pipeline finished.",
@@ -2454,6 +2707,48 @@ def test_background_task_failure_reenables_gui(monkeypatch):
     assert messages == [(explorer.window, "Analysis failed", "analysis failure")]
 
 
+def test_background_task_can_keep_completed_analysis_log_open(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    explorer = NfitProjectExplorer(NfitProject())
+
+    def complete(progress_callback):
+        progress_callback(
+            {
+                "stage": "bragg_integration",
+                "completed": 1,
+                "total": 1,
+                "accepted_count": 1,
+                "rejected_count": 0,
+                "message": "Reflection 1/1: (1, 1, 1) accepted; coverage 100%",
+            }
+        )
+        return {"complete": True}
+
+    assert explorer._start_background_task(
+        title="Preparing bragg integration...",
+        failure_title="Analysis failed",
+        task=complete,
+        on_success=lambda _result: True,
+        success_message="Analysis complete.",
+        close_on_success=False,
+        completion_summary=lambda _result: ["Integrated 1: 1 accepted, 0 rejected."],
+        progress_window_title="Analysis progress",
+    )
+    deadline = time.monotonic() + 3.0
+    while explorer._fit_worker_thread is not None and time.monotonic() < deadline:
+        QtWidgets.QApplication.processEvents()
+
+    progress = explorer._fit_progress_dialog
+    assert progress is not None
+    assert progress.dialog.windowTitle() == "Analysis progress"
+    assert progress.dialog.isVisible()
+    assert progress.close_button.isEnabled()
+    assert "Reflection 1/1" in progress.log.toPlainText()
+    assert "Integrated 1: 1 accepted, 0 rejected." in progress.log.toPlainText()
+    progress.close()
+
+
 def test_project_explorer_edits_initial_state_in_place_without_results(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")
@@ -2641,6 +2936,7 @@ def test_recent_project_helpers_and_file_menu(monkeypatch, tmp_path):
             self.values[key] = value
 
     settings = FakeSettings()
+    monkeypatch.setattr(project_gui, "_is_pytest_temporary_project", lambda path: False)
     first = tmp_path / "first.nfit"
     second = tmp_path / "second.nfit"
     missing = tmp_path / "missing.nfit"
@@ -2668,6 +2964,28 @@ def test_recent_project_helpers_and_file_menu(monkeypatch, tmp_path):
     assert explorer.project_path == second
     assert [group.name for group in explorer.project.data_groups] == ["Datagroup1"]
     assert recent_project_paths(settings)[0] == second
+
+
+def test_recent_projects_ignore_and_purge_pytest_temporary_projects(tmp_path):
+    class FakeSettings:
+        def __init__(self):
+            self.values = {}
+
+        def value(self, key, default=None):
+            return self.values.get(key, default)
+
+        def setValue(self, key, value):
+            self.values[key] = value
+
+    settings = FakeSettings()
+    temporary = tmp_path / "dropped.nfit"
+    durable = Path("/research/fit.nfit")
+    settings.setValue(project_gui.RECENT_PROJECTS_KEY, [str(temporary), str(durable)])
+
+    assert recent_project_paths(settings) == [durable]
+    assert settings.value(project_gui.RECENT_PROJECTS_KEY) == [str(durable)]
+    assert remember_recent_project(temporary, settings) == [durable]
+    assert settings.value(project_gui.RECENT_PROJECTS_KEY) == [str(durable)]
 
 
 def test_tree_drop_loads_project_or_creates_a_workspace_for_dataset(tmp_path, monkeypatch):
@@ -3146,7 +3464,7 @@ def test_saved_nfit_npz_import_restores_mdhisto_axes_data_and_context(tmp_path):
     np.testing.assert_allclose(reloaded_view.num_events, data.num_events)
 
 
-def test_legacy_nfit_npz_import_defaults_to_bin_integral_signal(tmp_path):
+def test_legacy_nfit_npz_import_defaults_to_density_signal(tmp_path):
     data = _grid_mdhisto_data()
     dataset = DatasetEntry("scan", data, kind="mdhisto")
     modern_path = tmp_path / "modern.npz"
@@ -3164,8 +3482,8 @@ def test_legacy_nfit_npz_import_defaults_to_bin_integral_signal(tmp_path):
     imported = dataset_entry_from_path(legacy_path)
 
     assert isinstance(imported.data, MDHistoData)
-    assert imported.data.metadata["signal_semantics"] == "bin_integral"
-    assert imported.data.metadata["signal_semantics_source"] == "legacy_nfit_archive_default"
+    assert imported.data.metadata["signal_semantics"] == "density"
+    assert imported.data.metadata["signal_semantics_source"] == "legacy_nfit_archive_density_default"
     assert imported.data.coordinate_system is None
     assert imported.data.visual_normalization is None
 
@@ -3840,6 +4158,7 @@ def test_point_list_scale_and_susceptibility_transforms():
     config["susceptibility"] = {"enabled": True, "field": "Magnetic Field", "moment": "Moment"}
 
     prepared = prepared_point_list_data(dataset)
+    assert prepared_point_list_data(dataset) is prepared
 
     # Scale multiplies value and error and relabels units.
     np.testing.assert_allclose(
@@ -3855,6 +4174,13 @@ def test_point_list_scale_and_susceptibility_transforms():
     expected = raw.channel_values("Moment") * 2.0 / raw.column("Magnetic Field")
     np.testing.assert_allclose(prepared.channel_values("Susceptibility"), expected)
     assert prepared.unit(prepared.channel("Susceptibility")["value"]) == "cm^3/mol"
+
+    config["scale"]["factor"] = 3.0
+    updated = prepared_point_list_data(dataset)
+    assert updated is not prepared
+    np.testing.assert_allclose(
+        updated.channel_values("Moment"), raw.channel_values("Moment") * 3.0
+    )
 
 
 def test_mpms_import_seeds_sample_normalization_metadata():
@@ -4274,7 +4600,10 @@ def test_rebin_axis_vector_projects_new_coordinate():
         errors=np.ones((2, 2)),
         mask=np.zeros((2, 2), dtype=bool),
         num_events=np.ones((2, 2)),
-        metadata={},
+        metadata={
+            "signal_semantics": "bin_integral",
+            "signal_semantics_source": "user_selected",
+        },
     )
     dataset = DatasetEntry("scan", data)
     config = dataset_rebin_config(dataset)
@@ -4289,6 +4618,8 @@ def test_rebin_axis_vector_projects_new_coordinate():
     assert rebinned.shape == (2, 2)
     np.testing.assert_allclose(rebinned.signal, signal.T)
     assert rebinned.metadata["rebin"]["vectors"] == [[0.0, 1.0], [1.0, 0.0]]
+    assert rebinned.metadata["signal_semantics"] == "density"
+    assert rebinned.metadata["signal_semantics_source"] == "nfit_normalized_rebin"
 
 
 def test_rebin_defaults_follow_mdhisto_axis_coordinate_vectors():
@@ -5510,6 +5841,26 @@ def test_viewer_view_cache_reuses_and_invalidates():
     assert project_gui._viewer_data_before_scale(dataset) is third
 
 
+def test_viewer_view_cache_uses_lru_eviction_instead_of_clear_all(monkeypatch):
+    project_gui._VIEWER_VIEW_CACHE.clear()
+    monkeypatch.setattr(project_gui, "_VIEWER_VIEW_CACHE_LIMIT", 3)
+    datasets = [
+        DatasetEntry(f"scan-{index}", _grid_mdhisto_data(), kind="mdhisto")
+        for index in range(4)
+    ]
+
+    for dataset in datasets[:3]:
+        project_gui._viewer_data_before_scale(dataset)
+    project_gui._viewer_data_before_scale(datasets[0])
+    project_gui._viewer_data_before_scale(datasets[3])
+
+    assert list(project_gui._VIEWER_VIEW_CACHE) == [
+        id(datasets[2]),
+        id(datasets[0]),
+        id(datasets[3]),
+    ]
+
+
 def test_large_dataset_manual_masks_defer_passive_evaluation_and_force_for_fit(monkeypatch):
     project_gui._VIEWER_VIEW_CACHE.clear()
     monkeypatch.setattr(project_gui, "MASK_AUTO_MAX_POINTS", 1)
@@ -5825,6 +6176,30 @@ def test_dataset_importing_panel_builds_paths_and_clears_nested_data(tmp_path, m
     monkeypatch.setattr(QtWidgets.QMessageBox, "question", lambda *args, **kwargs: QtWidgets.QMessageBox.StandardButton.Yes)
     explorer._clear_imported_datasets(group)
     assert not group.datasets and not group.subgroups
+
+
+def test_interactive_dataset_import_stages_work_before_main_thread_attach(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+    group = DataGroup("sample")
+    explorer = project_gui.NfitProjectExplorer(NfitProject([group]))
+    explorer._interactive = True
+
+    def staged_import(staging, _paths, **_kwargs):
+        entry = DatasetEntry("scan", _tiny_mdhisto_data(1.0))
+        staging.datasets.append(entry)
+        return [entry]
+
+    def run_now(**kwargs):
+        result = kwargs["task"](lambda _event: None)
+        kwargs["on_success"](result)
+        return True
+
+    monkeypatch.setattr(project_gui, "import_dataset_paths", staged_import)
+    monkeypatch.setattr(explorer, "_start_background_task", run_now)
+
+    assert explorer._request_dataset_import(group, ["scan.dat"])
+    assert [dataset.name for dataset in group.datasets] == ["scan"]
 
 
 def test_raw_dgs_nexus_import_creates_a_file_backed_reduction_group(tmp_path):

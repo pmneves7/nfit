@@ -1088,10 +1088,10 @@ class MDHistoSliceViewer:
         if not getattr(self, "is_point_list", False):
             return None
         mapping = self.data.metadata.get(f"viewer_{name}_channel_map", {})
-        if not isinstance(mapping, dict):
-            return None
-        label = mapping.get(self.channel)
-        return str(label) if label in self.data.channel_labels else None
+        if isinstance(mapping, dict) and mapping:
+            label = mapping.get(self.channel)
+            return str(label) if label in self.data.channel_labels else None
+        return name if name in self.data.channel_labels else None
 
     def _slice_metadata_channel(
         self, name: str, selections: dict[int, tuple[int, int] | int]
@@ -1284,8 +1284,6 @@ class MDHistoSliceViewer:
             label = self.point_overlay_channel(name)
             if label is not None:
                 view[name] = np.asarray(self.data.channel_values(label), dtype=float)[order]
-            elif name in self.data.channel_labels:
-                view[name] = np.asarray(self.data.channel_values(name), dtype=float)[order]
         return view
 
     def _resolve_dim(self, dim: int | str) -> int:

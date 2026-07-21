@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 
-import re
-import os
 import math
+import os
+import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Iterable
 from itertools import product
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 
+from . import _parallel
 from .dataset import PointData4D
 from .mdhisto import MDHistoAxis, MDHistoData
 from .pipeline import DatasetEntry, DatasetGroup
-from . import _parallel
 
 try:
     from . import _mdevent_numba as _MDEVENT_NUMBA
@@ -393,6 +394,8 @@ def bin_mdevent_group(
         metadata={
             "mdevent": config,
             "rebin": {"vectors": basis.tolist()},
+            "signal_semantics": "density",
+            "signal_semantics_source": "nfit_mdevent_reduction",
             "normalization_denominator": normalization,
             "zero_event_bins_are_measured": True,
             "zero_count_error_model": "feldman_cousins_68_percent_upper_limit_scaled_by_rms_event_weight",

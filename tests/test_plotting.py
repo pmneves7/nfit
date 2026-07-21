@@ -1330,6 +1330,54 @@ def test_qt_point_list_show_fit_draws_line_and_residual_axes():
     assert viewer.ax_residual is not None
 
 
+def test_qt_point_list_model_control_follows_fitted_channel():
+    pytest.importorskip("PySide6")
+
+    from nfit.dataset import PointListData
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    temperature = np.linspace(10.0, 30.0, 3)
+    data = PointListData(
+        columns={
+            "Temperature": temperature,
+            "Moment": np.array([1.0, 0.8, 0.6]),
+            "Susceptibility": np.array([0.1, 0.08, 0.06]),
+            "fit": np.array([0.11, 0.09, 0.07]),
+            "residual": np.array([-1.0, -1.0, -1.0]),
+        },
+        units={"Temperature": "K"},
+        coordinate_names=["Temperature"],
+        channels=[
+            {"label": "Moment", "value": "Moment", "error": None},
+            {
+                "label": "Susceptibility",
+                "value": "Susceptibility",
+                "error": None,
+            },
+            {"label": "fit", "value": "fit", "error": None},
+            {"label": "residual", "value": "residual", "error": None},
+        ],
+        metadata={
+            "viewer_fit_channel_map": {"Susceptibility": "fit"},
+            "viewer_residual_channel_map": {"Susceptibility": "residual"},
+        },
+    )
+    viewer = QtMDHistoSliceViewer(data)
+
+    assert viewer.channel_combo.currentText() == "Moment"
+    assert not viewer.show_fit_check.isEnabled()
+    viewer.channel_combo.setCurrentText("Susceptibility")
+    assert viewer.show_fit_check.isEnabled()
+    viewer.show_fit_check.setChecked(True)
+    assert len(
+        [line for line in viewer.ax_image.get_lines() if line.get_label() == "fit"]
+    ) == 1
+    viewer.channel_combo.setCurrentText("Moment")
+    assert not viewer.show_fit_check.isEnabled()
+    assert not viewer.show_fit_check.isChecked()
+    viewer.window.close()
+
+
 def test_qt_powder_point_cursor_readout_uses_q_column():
     pytest.importorskip("PySide6")
     from types import SimpleNamespace
