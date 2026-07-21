@@ -24,6 +24,9 @@ minimizes one concatenated weighted residual vector.
 : One measured dataset in the global objective. It stores the data, a
   chi-squared weight, an ordered list of preprocessing transforms, optional
   dataset-specific resolution, and metadata such as instrument or scan settings.
+  At the project-dataset level, an enabled dataset with zero fit weight is
+  visualization-only: it is excluded before fit preparation and evaluated once
+  after optimization for model/residual plotting.
 
 `ModelSpec`
 : A callable physics model plus descriptive metadata. The callable receives
@@ -129,6 +132,14 @@ The current project explorer launches with `nfit` and lets a user:
 - run fits, branch fit timelines, restore earlier fit states, and inspect
   structured fit metadata,
 - compare data, model, and residual channels visually in the data viewer.
+
+For workflows with a small symmetry-reduced fitting volume and a much larger
+display volume, set the display dataset's fit weight to zero. Positive-weight
+datasets alone define the objective and degrees of freedom. Once their fitted
+parameters have been written back, the display dataset is prepared and its
+model channel is calculated exactly once. The lower-level `FitModelSession`
+likewise omits zero-weight entries from its `FitProblem`; post-fit visualization
+channel generation is provided by the project fitting pipeline.
 
 The data viewer remains driven by reusable data/model objects. It can display
 current model channels and stored fit channels from GUI fit history, but

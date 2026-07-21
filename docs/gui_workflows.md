@@ -566,6 +566,22 @@ points automatically so form factors and |Q|-dependent models work without
 per-dataset setup.
 
 The dataset title row includes dataset `Fit weight` and `Scale` controls. With
+`Fit weight` set to zero, an enabled non-composite dataset is
+**visualization-only**: nfit does not load, rebin, mask, compile, or evaluate it
+during optimization, so a large full-volume dataset does not slow a fit to a
+smaller symmetry-reduced dataset. After the fit parameters are written back,
+nfit prepares the zero-weight dataset and evaluates its model once. The model
+and residual channels are stored with the fit result and can be opened in the
+data viewer normally. Zero-weight datasets do not contribute points,
+chi-squared, degrees of freedom, or fitted dataset scale parameters. At least
+one enabled dataset must have positive weight.
+
+This visualization-only rule applies to datasets that are separate effective
+fit/viewer inputs. Inside an active composite, constituent fit weights retain
+their existing role as composite averaging weights; a zero-weight constituent
+does not contribute to that composite.
+
+With
 `Fit scale` unchecked, `Scale` is a fixed data transform: nfit multiplies the
 dataset signal by the scale factor and its uncertainty by the absolute value of
 the scale factor before viewing and fitting. With `Fit scale` checked, `Scale`
@@ -794,15 +810,18 @@ current time per step plus current parameter values in a table, with a short
 stage log below; the divider between the table and log is draggable. The
 time-per-step value is reported for differential-evolution
 initialization, least-squares residual evaluations, and emcee posterior
-sampling. The `Cancel` button requests cancellation at the next optimizer or
-sampler progress update. If cancellation happens during emcee after one or more
-samples have been recorded, nfit stores the partial raw chain on the fit result
-just like a completed posterior run; the posterior diagnostics can inspect it,
-and `Append emcee` can continue from the last saved walker positions. Starting
-another fit resets the same progress window instead of opening duplicates. When
-a fit pipeline finishes, the progress window stays open so the final stage,
-parameters, and log remain available until the user closes it. A compact
-progress log is also stored in the fit metadata.
+sampling. The `Terminate` button requests that the active optimizer or sampler
+stop at its next progress update. It does not discard a least-squares result
+that has already completed. If termination happens during emcee after one or
+more samples have been recorded, nfit stores the partial raw chain on the fit
+result just like a completed posterior run; the posterior diagnostics can
+inspect it, and `Append emcee` can continue from the last saved walker
+positions. The configured emcee step count remains unchanged in the fit editor;
+the saved posterior metadata separately records the number of steps actually
+completed. Starting another fit resets the same progress window instead of
+opening duplicates. When a fit pipeline finishes, the progress window stays
+open so the final stage, parameters, and log remain available until the user
+closes it. A compact progress log is also stored in the fit metadata.
 
 `DE workers` and `emcee workers` control optional parallel worker threads for
 differential-evolution objective evaluations and emcee log-probability

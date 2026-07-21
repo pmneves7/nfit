@@ -91,3 +91,32 @@ def test_fit_model_session_skips_disabled_datasets_and_uses_dataset_fit_weight()
     assert [dataset.name for dataset in problem.datasets] == ["enabled"]
     assert problem.datasets[0].weight == 2.5
     assert group.select(["enabled", "disabled"]) == [group.datasets[0]]
+
+
+def test_fit_model_session_does_not_prepare_zero_weight_dataset():
+    data = PointData4D([0.0], [0.0], [0.0], [1.0], [2.0], [0.1])
+
+    def should_not_prepare(_data):
+        raise AssertionError("visualization-only dataset was prepared for fitting")
+
+    group = DataGroup(
+        name="field_series",
+        datasets=[
+            DatasetEntry("fit", data),
+            DatasetEntry(
+                "visualization",
+                data,
+                fit_weight=0.0,
+                transforms=[should_not_prepare],
+            ),
+        ],
+    )
+    session = FitModelSession(
+        name="constant",
+        model=make_constant_intensity_model("constant"),
+        parameter_specs=[ParameterSpec("constant", 1.0)],
+    )
+
+    problem = session.build_problem(group)
+
+    assert [dataset.name for dataset in problem.datasets] == ["fit"]

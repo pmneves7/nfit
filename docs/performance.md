@@ -67,6 +67,10 @@ automatically — none of them changes the fit result or requires configuration.
   points are computed once per fit and reused across every optimizer iteration
   (`FitDataset.prepared_valid`), rather than re-running the transform chain each
   time.
+- **Visualization-only datasets.** Enabled datasets with zero fit weight are
+  excluded before fit preparation, compilation, and residual evaluation. They
+  are prepared and evaluated once after optimization so their stored model
+  channels can visualize a full volume without putting that volume in the fit.
 - **Per-dataset geometry cache.** The $\mathbf{Q}$-dependent, exchange-
   independent phase arrays and the magnetic form factor are built once per
   dataset and cached (identity-checked against the data object).

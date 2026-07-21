@@ -2430,6 +2430,8 @@ def test_fit_progress_dialog_uses_parameter_table_and_resets(monkeypatch):
     assert splitter.indexOf(table) == 0
     assert splitter.indexOf(log) == 1
     assert table.rowCount() == 2
+    assert dialog.cancel_button.text() == "Terminate"
+    assert "completed least-squares result is kept" in dialog.cancel_button.toolTip()
     assert "model.constant" not in dialog.log.toPlainText()
     assert "Least-squares fit" in dialog.stage_label.text()
     assert "125 ms/step" in dialog.status_label.text()
@@ -2674,6 +2676,58 @@ def test_background_posterior_cancel_saves_partial_chain_and_reenables_gui(monke
     assert result_entry.goodness["posterior"]["samples"] == 6
     assert explorer._fit_progress_dialog is not None
     assert explorer._fit_progress_dialog.close_button.isEnabled()
+
+
+def test_partial_emcee_chain_does_not_overwrite_requested_steps_in_fit_editor(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    group = DataGroup("Datagroup1", datasets=[DatasetEntry("first", _tiny_mdhisto_data(1.0))])
+    create_model_component(group)
+    chain = np.arange(6, dtype=float).reshape(3, 2, 1)
+    partial = project_gui.SamplingResult(
+        samples=chain.reshape(-1, 1),
+        variable_names=["model1.constant"],
+        log_probability=np.zeros(6, dtype=float),
+        metadata={
+            "method": "emcee",
+            "n_walkers": 2,
+            "n_steps": 3,
+            "requested_n_steps": 20,
+            "burn_in": 0,
+            "thin": 1,
+            "cancelled": True,
+            "completed": False,
+        },
+        chain=chain,
+        log_probability_chain=np.zeros((3, 2), dtype=float),
+    )
+    result = FitTimelineEntry(
+        "Fit Result1",
+        kind="result",
+        goodness={"parameters": {"model1.constant": 1.0}},
+        optimizer_config={
+            "sampler": {
+                "enabled": True,
+                "method": "emcee",
+                "n_walkers": 2,
+                "n_steps": 20,
+                "burn_in": 0,
+                "thin": 1,
+            }
+        },
+        metadata={"posterior_samples": project_gui._sampling_result_to_dict(partial)},
+        snapshot=project_gui.snapshot_data_group_state(group),
+    )
+    group.fits = [result]
+    explorer = NfitProjectExplorer(NfitProject([group]))
+
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(2).child(0))
+
+    assert explorer.fit_emcee_steps_spin.value() == 20
+    assert result.optimizer_config["sampler"]["n_steps"] == 20
+    stored = project_gui._sampling_result_from_dict(result.metadata["posterior_samples"])
+    assert stored is not None
+    assert stored.metadata["n_steps"] == 3
 
 
 def test_background_task_failure_reenables_gui(monkeypatch):

@@ -335,6 +335,13 @@ class FitModelSession:
         selected = data_group.select(dataset_names)
         fit_datasets: list[FitDataset] = []
         for entry in selected:
+            weight = float(self.weights_by_dataset.get(entry.name, entry.fit_weight))
+            if not np.isfinite(weight) or weight < 0.0:
+                raise ValueError(
+                    f"dataset {entry.name!r} fit weight must be finite and non-negative"
+                )
+            if weight == 0.0:
+                continue
             prepared = entry.prepared()
             if not isinstance(prepared, PointData4D):
                 raise TypeError(
@@ -352,12 +359,14 @@ class FitModelSession:
                 FitDataset(
                     name=entry.name,
                     data=prepared,
-                    weight=float(self.weights_by_dataset.get(entry.name, entry.fit_weight)),
+                    weight=weight,
                     resolution=self._dataset_lookup(self.resolution_by_dataset, entry.name),
                     parameter_bindings=self.parameter_bindings_by_dataset.get(entry.name, {}),
                     metadata={**entry.metadata, "parameters": dict(entry.parameters)},
                 )
             )
+        if not fit_datasets:
+            raise ValueError("no enabled positive-weight dataset is available for fitting")
         return FitProblem(
             datasets=fit_datasets,
             model=self.model,
@@ -376,9 +385,9 @@ class FitModelSession:
     ) -> FitResult:
         """Run one fit, append it to history, and optionally update parameters."""
 
-        selected_names = tuple(entry.name for entry in data_group.select(dataset_names))
         before = tuple(self.parameter_specs)
-        problem = self.build_problem(data_group, dataset_names=selected_names)
+        problem = self.build_problem(data_group, dataset_names=dataset_names)
+        selected_names = tuple(dataset.name for dataset in problem.datasets)
         result = fit_problem_least_squares(problem, config=self.optimizer)
         after = (
             tuple(_updated_parameter_specs(before, result.params))

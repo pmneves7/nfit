@@ -2537,6 +2537,7 @@ def dataset_detail_sections(
                 f"Kind: {dataset.kind or '-'}",
                 f"Enabled for fitting: {dataset.enabled}",
                 f"Fit weight: {_format_number(dataset.fit_weight)}",
+                f"Visualization only: {bool(dataset.enabled and dataset.fit_weight == 0.0)}",
                 f"Scale factor: {_format_number(dataset.scale_factor)}",
                 f"Scale fitted: {bool(dataset.scale_factor_vary)}",
             ],
@@ -3923,11 +3924,21 @@ def _point_data_from_point_list_view(data: PointListData) -> PointData4D:
 def fit_dataset_inputs(
     group: DataGroup,
     *,
+    purpose: str = "all",
     force_rebin: bool = True,
     force_masks: bool = True,
     progress_callback: Any | None = None,
 ) -> tuple[list[FitDatasetInput], dict[str, FitDataBundle]]:
-    """Prepare every enabled dataset in a group for the fit compiler."""
+    """Prepare enabled datasets for fitting, visualization, or both.
+
+    A non-composite dataset with zero fit weight is visualization-only. It is
+    omitted entirely when ``purpose="fit"`` and selected exclusively when
+    ``purpose="visualization"``. The default keeps the historical all-dataset
+    behavior used by live model overlays.
+    """
+
+    if purpose not in {"all", "fit", "visualization"}:
+        raise ValueError("dataset input purpose must be 'all', 'fit', or 'visualization'")
 
     inputs: list[FitDatasetInput] = []
     bundles: dict[str, FitDataBundle] = {}
@@ -3942,6 +3953,15 @@ def fit_dataset_inputs(
     for dataset in entries:
         if not dataset.enabled:
             continue
+        is_composite = bool(dataset.metadata.get("composite"))
+        fit_weight = 1.0 if is_composite else float(dataset.fit_weight)
+        if not np.isfinite(fit_weight) or fit_weight < 0.0:
+            raise ValueError(f"dataset {dataset.name!r} fit weight must be finite and non-negative")
+        visualization_only = not is_composite and fit_weight == 0.0
+        if purpose == "fit" and visualization_only:
+            continue
+        if purpose == "visualization" and not visualization_only:
+            continue
         bundle = fit_data_bundle(
             group,
             dataset,
@@ -3955,10 +3975,10 @@ def fit_dataset_inputs(
             FitDatasetInput(
                 name=dataset.name,
                 data=bundle.points,
-                weight=(1.0 if dataset.metadata.get("composite") else float(dataset.fit_weight)),
+                weight=fit_weight,
                 data_type=dataset.data_type or DEFAULT_DATA_TYPE,
-                scale_value=(1.0 if dataset.metadata.get("composite") else float(dataset.scale_factor)),
-                scale_vary=(False if dataset.metadata.get("composite") else bool(dataset.scale_factor_vary)),
+                scale_value=(1.0 if is_composite else float(dataset.scale_factor)),
+                scale_vary=(False if is_composite else bool(dataset.scale_factor_vary)),
             )
         )
         bundles[dataset.name] = bundle
@@ -4243,9 +4263,13 @@ def perform_group_fit(
         if progress_callback is not None:
             progress_callback(event)
 
-    inputs, bundles = fit_dataset_inputs(group, progress_callback=record_progress)
+    inputs, bundles = fit_dataset_inputs(
+        group,
+        purpose="fit",
+        progress_callback=record_progress,
+    )
     if not inputs:
-        raise ValueError("no enabled dataset could be prepared for fitting")
+        raise ValueError("no enabled positive-weight dataset could be prepared for fitting")
 
     compiled = compile_fit_problem(components, inputs, description=group.name)
     config = OptimizationConfig(kwargs=_optimizer_kwargs(optimizer_config))
@@ -4272,6 +4296,20 @@ def perform_group_fit(
             sampler_cancelled = True
     _write_back_fitted_parameters(group, components, compiled, result)
     channels = _fit_channels_from_result(compiled, result, bundles)
+    visualization_error = None
+    visualization_names: list[str] = []
+    try:
+        visualization_channels = _visualization_only_channels(
+            group,
+            components,
+            progress_callback=record_progress,
+        )
+        visualization_names = list(visualization_channels)
+        channels.update(visualization_channels)
+    except Exception as exc:
+        # A plotting-only dataset must never turn a completed optimization into
+        # a failed fit. Preserve the fit and record the post-fit failure.
+        visualization_error = str(exc)
     goodness: dict[str, Any] = {
         "status": (
             "cancelled"
@@ -4310,6 +4348,10 @@ def perform_group_fit(
     if limit_hits:
         goodness["parameters_at_limits"] = limit_hits
     metadata: dict[str, Any] = {}
+    if visualization_names:
+        metadata["visualization_only_datasets"] = visualization_names
+    if visualization_error:
+        metadata["visualization_only_error"] = visualization_error
     parameter_labels = _fit_parameter_labels_from_components(components, compiled, result.variable_names)
     if parameter_labels:
         metadata["parameter_labels"] = parameter_labels
@@ -4487,7 +4529,19 @@ def _overlay_current_params(
         component = group.models.get(instance.component)
         if not isinstance(component, ModelComponentSpec):
             continue
-        value = component.parameters.get(instance.parameter)
+        fitted_values = component.metadata.get("fitted_values", {})
+        per_scope = (
+            fitted_values.get(instance.parameter, {})
+            if isinstance(fitted_values, dict)
+            else {}
+        )
+        value = (
+            per_scope.get(instance.scope)
+            if instance.scope != "global" and isinstance(per_scope, dict)
+            else component.parameters.get(instance.parameter)
+        )
+        if value is None:
+            value = component.parameters.get(instance.parameter)
         if value is None:
             continue
         try:
@@ -4562,7 +4616,7 @@ def _compiled_problem_for_fit_entry(
         components = [
             model for model in group.models.values() if isinstance(model, ModelComponentSpec)
         ]
-        inputs, _bundles = fit_dataset_inputs(group)
+        inputs, _bundles = fit_dataset_inputs(group, purpose="fit")
         if not inputs:
             raise ValueError("no enabled dataset could be prepared for posterior sampling")
         return compile_fit_problem(components, inputs, description=group.name)
@@ -5054,7 +5108,7 @@ def _apply_displayed_fit_parameters(
     ]
     if not components:
         return
-    inputs, _bundles = fit_dataset_inputs(group)
+    inputs, _bundles = fit_dataset_inputs(group, purpose="fit")
     if not inputs:
         return
     compiled = compile_fit_problem(components, inputs, description=group.name)
@@ -5085,6 +5139,38 @@ def _write_back_dataset_scale_factors(
         except KeyError:
             continue
         dataset.scale_factor = float(params[instance.name])
+
+
+def _visualization_only_channels(
+    group: DataGroup,
+    components: list[ModelComponentSpec],
+    *,
+    progress_callback: Any | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Evaluate zero-weight datasets once using the current fitted state."""
+
+    inputs, bundles = fit_dataset_inputs(
+        group,
+        purpose="visualization",
+        progress_callback=progress_callback,
+    )
+    if not inputs:
+        return {}
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "stage": "visualization",
+                "iteration": 0,
+                "total": len(inputs),
+                "message": "evaluating visualization-only datasets",
+            }
+        )
+    compiled = compile_fit_problem(components, inputs, description=group.name)
+    params = compiled.problem.resolve_parameters(_overlay_current_params(group, compiled))
+    channels = _fit_channels_from_params(compiled, params, bundles)
+    for payload in channels.values():
+        payload["visualization_only"] = True
+    return channels
 
 
 def _fit_channels_from_result(
@@ -8126,11 +8212,12 @@ class _FitProgressDialog:
         self.panel_splitter.setStretchFactor(0, 1)
         self.panel_splitter.setStretchFactor(1, 1)
         self.panel_splitter.setSizes([240, 220])
-        self.cancel_button = QtWidgets.QPushButton("Cancel")
+        self.cancel_button = QtWidgets.QPushButton("Terminate")
         self.cancel_button.setEnabled(False)
         self.cancel_button.setToolTip(
-            "Request cancellation of the active fit or posterior sampler. If emcee has already recorded samples, "
-            "the partial chain is saved so it can be inspected or appended later."
+            "Terminate the active optimization or posterior sampler at its next progress update. "
+            "A completed least-squares result is kept; if emcee has recorded samples, its partial "
+            "chain is also saved for inspection or continuation."
         )
         self.cancel_button.clicked.connect(self._cancel_requested)
         self.close_button = QtWidgets.QPushButton("Close")
@@ -8169,7 +8256,7 @@ class _FitProgressDialog:
         if self._cancel_callback is None:
             return
         self._cancel_callback()
-        self.status_label.setText("Cancellation requested. Waiting for the active step to stop...")
+        self.status_label.setText("Termination requested. Waiting for the active step to stop...")
         self.cancel_button.setEnabled(False)
 
     def show(self) -> None:
@@ -10259,7 +10346,7 @@ class NfitProjectExplorer:
             components = [
                 model for model in group.models.values() if isinstance(model, ModelComponentSpec)
             ]
-            inputs, _bundles = fit_dataset_inputs(group)
+            inputs, _bundles = fit_dataset_inputs(group, purpose="fit")
             compiled_for_state = compile_fit_problem(components, inputs, description=group.name)
             promoted_params = {
                 spec.name: float(spec.value)
@@ -11323,7 +11410,11 @@ class NfitProjectExplorer:
         fit_weight_layout.setSpacing(6)
         fit_weight_layout.addWidget(QtWidgets.QLabel("Fit weight"))
         self.fit_weight_spin = QtWidgets.QDoubleSpinBox()
-        self.fit_weight_spin.setToolTip("Relative fitting weight for the selected dataset. Larger values make this dataset count more in the fit.")
+        self.fit_weight_spin.setToolTip(
+            "Relative fitting weight for the selected dataset. Larger values make this dataset "
+            "count more in the fit. Set zero to omit it from optimization and evaluate its model "
+            "once afterward for visualization."
+        )
         self.fit_weight_spin.setRange(0.0, 1.0e12)
         self.fit_weight_spin.setDecimals(6)
         self.fit_weight_spin.setSingleStep(0.1)
@@ -15923,12 +16014,21 @@ class NfitProjectExplorer:
         self.fit_optimizer_combo.blockSignals(False)
         config = dict(fit_entry.optimizer_config) if isinstance(fit_entry.optimizer_config, dict) else {}
         stored = _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples"))
-        if fit_entry.kind == "result" and stored is not None:
-            sampler = dict(config.get("sampler", {})) if isinstance(config.get("sampler"), dict) else {}
-            for key in ("n_walkers", "n_steps", "burn_in", "thin", "random_seed", "workers"):
+        if fit_entry.kind == "result" and stored is not None and not isinstance(config.get("sampler"), dict):
+            # A stored chain records what actually happened. In particular, a
+            # cancelled run has fewer completed steps than the configured
+            # request. Only use it as a legacy fallback when this result lacks
+            # sampler configuration altogether; never let it rewrite controls.
+            sampler = {"enabled": True, "method": "emcee"}
+            for key in ("n_walkers", "burn_in", "thin", "random_seed", "workers"):
                 value = stored.metadata.get(key)
                 if value not in (None, ""):
                     sampler[key] = value
+            requested_steps = stored.metadata.get(
+                "requested_n_steps", stored.metadata.get("n_steps")
+            )
+            if requested_steps not in (None, ""):
+                sampler["n_steps"] = requested_steps
             config["sampler"] = sampler
         self._sync_fit_control_values(config)
         self.fit_optimizer_config_editor.blockSignals(True)
@@ -18878,6 +18978,8 @@ def _fit_channels_to_dict(channels: dict[str, dict[str, Any]]) -> dict[str, Any]
     payload: dict[str, Any] = {}
     for dataset_name, entry in (channels or {}).items():
         encoded: dict[str, Any] = {"kind": str(entry.get("kind", "points"))}
+        if entry.get("visualization_only"):
+            encoded["visualization_only"] = True
         if entry.get("fit_channel"):
             encoded["fit_channel"] = str(entry["fit_channel"])
         for channel_name in FIT_CHANNEL_NAMES:
@@ -18895,6 +18997,8 @@ def _fit_channels_from_dict(payload: Any) -> dict[str, dict[str, Any]]:
         if not isinstance(entry, dict):
             continue
         decoded: dict[str, Any] = {"kind": str(entry.get("kind", "points"))}
+        if entry.get("visualization_only"):
+            decoded["visualization_only"] = True
         if entry.get("fit_channel"):
             decoded["fit_channel"] = str(entry["fit_channel"])
         for channel_name in FIT_CHANNEL_NAMES:

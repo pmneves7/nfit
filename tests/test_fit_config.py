@@ -445,6 +445,41 @@ def test_run_group_fit_weights_change_global_compromise():
     assert model.parameters["constant"] == pytest.approx(3.0, abs=0.01)
 
 
+def test_zero_weight_dataset_is_evaluated_only_for_post_fit_visualization():
+    from nfit.project_gui import (
+        _fit_channels_from_dict,
+        _fit_channels_to_dict,
+        fit_dataset_inputs,
+    )
+
+    group = _fit_ready_group({"fit_octant": 1.0, "full_volume": 9.0})
+    group.get_dataset("full_volume").fit_weight = 0.0
+    model = create_model_component(group)
+    model.fit_parameters["constant"] = True
+    ensure_fit_history(group)
+
+    fit_inputs, fit_bundles = fit_dataset_inputs(group, purpose="fit")
+    view_inputs, view_bundles = fit_dataset_inputs(group, purpose="visualization")
+    assert [item.name for item in fit_inputs] == ["fit_octant"]
+    assert list(fit_bundles) == ["fit_octant"]
+    assert [item.name for item in view_inputs] == ["full_volume"]
+    assert list(view_bundles) == ["full_volume"]
+
+    entry = run_group_fit(group, group.fits[0])
+
+    assert entry.goodness["status"] == "converged"
+    assert model.parameters["constant"] == pytest.approx(1.0, abs=0.01)
+    assert entry.goodness["dataset_n_points"] == {"fit_octant": 20}
+    assert set(entry.channels) == {"fit_octant", "full_volume"}
+    assert entry.channels["full_volume"]["visualization_only"] is True
+    assert entry.channels["full_volume"]["fit"] == pytest.approx(
+        np.ones((4, 5)), abs=0.01
+    )
+    assert entry.metadata["visualization_only_datasets"] == ["full_volume"]
+    restored = _fit_channels_from_dict(_fit_channels_to_dict(entry.channels))
+    assert restored["full_volume"]["visualization_only"] is True
+
+
 def test_run_group_fit_failure_is_recorded_not_raised():
     group = _fit_ready_group({"first": 1.0})
     ensure_fit_history(group)
