@@ -2570,9 +2570,10 @@ def test_project_explorer_context_menu_actions_and_source_change(monkeypatch, tm
             "Open Analysis Window",
             "View in data viewer",
         "Show file location",
-        "Change file source",
-        "Add mask",
-    ]
+            "Change file source",
+            "Add mask",
+            "Add background",
+        ]
 
     dataset_item = explorer.tree.currentItem()
     dataset_item.setText(0, "renamed")
@@ -5002,12 +5003,19 @@ def test_heisenberg_rpa_editor_closure_controls(monkeypatch, tmp_path):
     # Select the fitted-target Onsager closure.
     mode_combo.setCurrentIndex(mode_combo.findData("onsager"))
     assert model.config["closure"]["mode"] == "onsager"
-    moment_combo = explorer.model_parameter_widget.findChild(
-        QtWidgets.QComboBox, "model_closure_moment_mode"
+    moment_check = explorer.model_parameter_widget.findChild(
+        QtWidgets.QCheckBox, "model_closure_moment_mode"
     )
-    moment_combo.setCurrentIndex(moment_combo.findData("fitted"))
+    assert moment_check is not None and moment_check.toolTip().strip()
+    moment_check.setChecked(True)
     assert model.config["closure"]["moment_mode"] == "fitted"
     assert "m2_total" in model.parameters
+    fit_check = explorer.model_parameter_widget.findChild(
+        QtWidgets.QCheckBox, "model_parameter_fit_m2_total"
+    )
+    assert fit_check is not None and fit_check.toolTip().strip()
+    fit_check.setChecked(True)
+    assert model.fit_parameters["m2_total"] is True
 
     cutoff_editor = explorer.model_parameter_widget.findChild(
         QtWidgets.QLineEdit, "model_closure_energy_cutoff_mev"
@@ -5024,14 +5032,40 @@ def test_heisenberg_rpa_editor_closure_controls(monkeypatch, tmp_path):
     mode_combo.setCurrentIndex(mode_combo.findData("scr"))
     assert "mode_coupling_u" in model.parameters
     assert "m2_total" not in model.parameters
+    scr_fit_check = explorer.model_parameter_widget.findChild(
+        QtWidgets.QCheckBox, "model_parameter_fit_mode_coupling_u"
+    )
+    assert scr_fit_check is not None and scr_fit_check.toolTip().strip()
+    scr_fit_check.setChecked(True)
+    assert model.fit_parameters["mode_coupling_u"] is True
+
+    # TAC exposes its conserved total amplitude through the same fit controls.
+    mode_combo = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox, "model_closure_mode"
+    )
+    mode_combo.setCurrentIndex(mode_combo.findData("tac"))
+    assert "mode_coupling_u" not in model.parameters
+    assert "total_amplitude" in model.parameters
+    tac_fit_check = explorer.model_parameter_widget.findChild(
+        QtWidgets.QCheckBox, "model_parameter_fit_total_amplitude"
+    )
+    assert tac_fit_check is not None and tac_fit_check.toolTip().strip()
+    tac_fit_check.setChecked(True)
+    assert model.fit_parameters["total_amplitude"] is True
+    chi0_fit_check = explorer.model_parameter_widget.findChild(
+        QtWidgets.QCheckBox, "model_parameter_fit_chi0"
+    )
+    assert chi0_fit_check is not None
+    assert not chi0_fit_check.isEnabled()
+    assert "root-search seed" in chi0_fit_check.toolTip()
 
     # Round-trips through save/load.
     path = tmp_path / "closure.json"
     save_project(NfitProject([group]), path)
     loaded_model = next(iter(load_project(path).data_groups[0].models.values()))
-    assert loaded_model.config["closure"]["mode"] == "scr"
+    assert loaded_model.config["closure"]["mode"] == "tac"
     assert loaded_model.config["closure"]["energy_cutoff_mev"] == 50.0
-    assert "mode_coupling_u" in loaded_model.parameters
+    assert "total_amplitude" in loaded_model.parameters
 
     # Back to none: config section and closure params are cleared.
     mode_combo = explorer.model_parameter_widget.findChild(
@@ -5039,7 +5073,7 @@ def test_heisenberg_rpa_editor_closure_controls(monkeypatch, tmp_path):
     )
     mode_combo.setCurrentIndex(mode_combo.findData("none"))
     assert "closure" not in model.config
-    assert "mode_coupling_u" not in model.parameters
+    assert "total_amplitude" not in model.parameters
 
 
 def _explorer_with_fit_result(monkeypatch):

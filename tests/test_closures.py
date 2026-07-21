@@ -7,8 +7,11 @@ from nfit.closures import (
     TierBMoments,
     solve_closure,
     solve_onsager,
+    solve_onsager_temperatures,
     solve_scr,
+    solve_scr_temperatures,
     solve_tac,
+    solve_tac_temperatures,
 )
 from nfit.spin_fluctuations import build_rpa_geometry, rpa_exchange_matrix
 from nfit.sum_rules import bz_sample_hkl
@@ -54,6 +57,36 @@ def test_onsager_temperature_raises_lambda():
     assert hot.m2_total == pytest.approx(cold.m2_total, abs=1e-9)
 
 
+def test_onsager_temperature_continuation_matches_scalar_solver():
+    model = _scalar_tier_a(n=8)
+    temperatures = np.array([300.0, 5.0, 80.0, 20.0, 150.0])
+    batch = solve_onsager_temperatures(
+        model,
+        chi0=0.8,
+        gamma0=2.0,
+        temperature_K=temperatures,
+        cutoff_mev=80.0,
+        target=1.2,
+    )
+    scalar = [
+        solve_onsager(
+            model,
+            chi0=0.8,
+            gamma0=2.0,
+            temperature_K=float(temperature),
+            cutoff_mev=80.0,
+            target=1.2,
+        )
+        for temperature in temperatures
+    ]
+    np.testing.assert_allclose(
+        [result.lambda_shift for result in batch],
+        [result.lambda_shift for result in scalar],
+        rtol=2e-10,
+        atol=2e-12,
+    )
+
+
 def test_onsager_unreachable_target_raises():
     model = _scalar_tier_a()
     with pytest.raises(ValueError, match="unreachable"):
@@ -84,6 +117,36 @@ def test_scr_suppresses_chi_and_obeys_equation():
     assert hot.chi0_eff < result.chi0_eff
 
 
+def test_scr_temperature_continuation_matches_scalar_solver():
+    model = _scalar_tier_a(n=8)
+    temperatures = np.array([300.0, 5.0, 80.0, 20.0, 150.0])
+    batch = solve_scr_temperatures(
+        model,
+        chi0_bare=0.8,
+        gamma0=2.0,
+        temperature_K=temperatures,
+        cutoff_mev=80.0,
+        mode_coupling_u=0.3,
+    )
+    scalar = [
+        solve_scr(
+            model,
+            chi0_bare=0.8,
+            gamma0=2.0,
+            temperature_K=float(temperature),
+            cutoff_mev=80.0,
+            mode_coupling_u=0.3,
+        )
+        for temperature in temperatures
+    ]
+    np.testing.assert_allclose(
+        [result.chi0_eff for result in batch],
+        [result.chi0_eff for result in scalar],
+        rtol=2e-10,
+        atol=2e-12,
+    )
+
+
 def test_tac_conserves_total_amplitude():
     model = _scalar_tier_a()
     budget = 1.5
@@ -96,6 +159,36 @@ def test_tac_conserves_total_amplitude():
     # Thermal weight grows with T, so the zero-point share (and chi0_eff) drop.
     assert hot.m2_thermal > cold.m2_thermal
     assert hot.chi0_eff < cold.chi0_eff
+
+
+def test_tac_temperature_continuation_matches_scalar_solver():
+    model = _scalar_tier_a(n=8)
+    temperatures = np.array([300.0, 5.0, 80.0, 20.0, 150.0])
+    batch = solve_tac_temperatures(
+        model,
+        gamma0=2.0,
+        temperature_K=temperatures,
+        cutoff_mev=80.0,
+        total_amplitude=1.2,
+        guess=0.5,
+    )
+    scalar = [
+        solve_tac(
+            model,
+            gamma0=2.0,
+            temperature_K=float(temperature),
+            cutoff_mev=80.0,
+            total_amplitude=1.2,
+            guess=0.5,
+        )
+        for temperature in temperatures
+    ]
+    np.testing.assert_allclose(
+        [result.chi0_eff for result in batch],
+        [result.chi0_eff for result in scalar],
+        rtol=2e-10,
+        atol=2e-12,
+    )
 
 
 def test_closure_spec_parsing_and_parameters():

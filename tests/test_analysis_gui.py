@@ -26,7 +26,8 @@ def test_analysis_tree_and_playground_controls_have_tooltips(monkeypatch):
     assert playground is not None
     controls = [
         playground.analysis_combo, playground.new_button, playground.duplicate_button,
-        playground.delete_button, playground.dataset_combo, playground.secondary_dataset_combo, playground.operation_combo,
+        playground.delete_button, playground.dataset_combo, playground.secondary_dataset_combo,
+        playground.additional_inputs_button, playground.operation_combo,
         playground.name_edit, playground.result_tabs, playground.results,
         playground.diagnostics, playground.provenance, playground.run_button,
         *playground.parameter_widgets.values(),

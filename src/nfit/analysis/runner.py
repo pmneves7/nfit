@@ -12,6 +12,7 @@ from .core import (
     AnalysisInput,
     AnalysisOutputRef,
     AnalysisResultRecord,
+    DatasetOutput,
     ScalarOutput,
 )
 from .fingerprint import recipe_hash
@@ -41,6 +42,11 @@ def execute_to_artifacts(
     backup = root.parent / f".{analysis.id}-{uuid4().hex}.backup"
     staging.mkdir(parents=True, exist_ok=False)
     refs: list[AnalysisOutputRef] = []
+    existing_dataset_ids = {
+        output.key: output.dataset_id
+        for output in (analysis.result.outputs if analysis.result is not None else [])
+        if output.dataset_id
+    }
     try:
         for key, output in execution.outputs.items():
             if isinstance(output, ScalarOutput):
@@ -48,7 +54,10 @@ def execute_to_artifacts(
                 continue
             artifact = staging / f"{key}.npz"
             write_dataset_artifact(output_data(output), artifact)
-            refs.append(AnalysisOutputRef(key, output.label, "table" if output.__class__.__name__ == "TableOutput" else "dataset", artifact_path=artifact.name, dataset_id=uuid4().hex, metadata=output.metadata))
+            metadata = dict(output.metadata)
+            if isinstance(output, DatasetOutput) and output.data_type:
+                metadata["data_type"] = output.data_type
+            refs.append(AnalysisOutputRef(key, output.label, "table" if output.__class__.__name__ == "TableOutput" else "dataset", artifact_path=artifact.name, dataset_id=existing_dataset_ids.get(key, uuid4().hex), metadata=metadata))
         if root.exists():
             root.replace(backup)
         try:

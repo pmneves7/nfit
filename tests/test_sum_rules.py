@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+import nfit.sum_rules as sum_rules
 from nfit.cross_section import KB_MEV_PER_K
 from nfit.spin_fluctuations import build_rpa_geometry, rpa_exchange_matrix
 from nfit.sum_rules import (
@@ -190,6 +191,25 @@ def test_mode_amplitude_decreases_with_onsager_shift():
         for shift in (0.0, 0.2, 0.5)
     ]
     assert values[0] > values[1] > values[2] > 0.0
+
+
+def test_numba_matsubara_moment_matches_numpy_fallback(monkeypatch):
+    if sum_rules.tier_a_matsubara_moment_sums is None:
+        pytest.skip("Numba sum-rule kernel is unavailable")
+    rng = np.random.default_rng(31)
+    eigenvalues = rng.uniform(-0.4, 0.3, size=(512, 3))
+    kwargs = dict(
+        chi0=0.7,
+        gamma0=2.3,
+        temperature_K=240.0,
+        cutoff_mev=100.0,
+        n_sites=3,
+        parts=True,
+    )
+    accelerated = mode_amplitude_per_site(eigenvalues, **kwargs)
+    monkeypatch.setattr(sum_rules, "tier_a_matsubara_moment_sums", None)
+    reference = mode_amplitude_per_site(eigenvalues, **kwargs)
+    np.testing.assert_allclose(accelerated, reference, rtol=2e-13, atol=2e-13)
 
 
 def test_static_chi_modes_matches_uniform_mode():

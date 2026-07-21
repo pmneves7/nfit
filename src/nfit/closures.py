@@ -35,7 +35,7 @@ from typing import Any, Callable, Mapping
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.optimize import brentq
+from scipy.optimize import brentq, newton
 
 from .sum_rules import (
     mode_amplitude_per_site,
@@ -337,6 +337,17 @@ def _bisect_to_boundary(
     raise ValueError("closure solver failed to bracket the sum-rule target")
 
 
+def _restore_temperature_order(
+    order: NDArray[np.intp], sorted_results: list[ClosureResult]
+) -> list[ClosureResult]:
+    """Return continuation results in the caller's original order."""
+
+    results: list[ClosureResult | None] = [None] * len(sorted_results)
+    for original_index, result in zip(order, sorted_results, strict=True):
+        results[int(original_index)] = result
+    return [result for result in results if result is not None]
+
+
 def solve_onsager(
     model: TierAMoments | TierBMoments,
     *,
@@ -406,6 +417,106 @@ def solve_onsager(
     )
     zero_point, thermal = moment_at(lam)
     return ClosureResult(float(lam), float(chi0), zero_point + thermal, zero_point, thermal)
+
+
+def solve_onsager_temperatures(
+    model: TierAMoments,
+    *,
+    chi0: float,
+    gamma0: float,
+    temperature_K: FloatArray,
+    cutoff_mev: float,
+    target: float,
+) -> list[ClosureResult]:
+    """Solve a Tier-A Onsager sweep by continuation in temperature."""
+
+    temperatures = np.atleast_1d(np.asarray(temperature_K, dtype=float))
+    if temperatures.size == 0:
+        return []
+    if target <= 0 or chi0 <= 0 or gamma0 <= 0:
+        raise ValueError("Onsager closure requires positive target, chi0, and gamma0")
+    order = np.argsort(temperatures)
+    sorted_temperatures = temperatures[order]
+    floor = model.lambda_floor(chi0)
+    scale = max(abs(floor), 1.0 / chi0, 1e-3)
+    sorted_results: list[ClosureResult] = []
+    previous_roots: list[float] = []
+    for index, temperature_value in enumerate(sorted_temperatures):
+        temperature = float(temperature_value)
+        if index == 0:
+            result = solve_onsager(
+                model,
+                chi0=chi0,
+                gamma0=gamma0,
+                temperature_K=temperature,
+                cutoff_mev=cutoff_mev,
+                target=target,
+            )
+        else:
+            predicted = previous_roots[-1]
+            if index >= 2:
+                delta_t = sorted_temperatures[index - 1] - sorted_temperatures[index - 2]
+                if delta_t != 0.0:
+                    predicted += (
+                        (previous_roots[-1] - previous_roots[-2])
+                        * (temperature - sorted_temperatures[index - 1])
+                        / delta_t
+                    )
+            predicted = max(float(predicted), floor + 1e-10 * scale)
+
+            def residual(lambda_shift: float, temperature_K: float) -> float:
+                return (
+                    sum(
+                        model.moment(
+                            chi0=chi0,
+                            gamma0=gamma0,
+                            temperature_K=temperature_K,
+                            cutoff_mev=cutoff_mev,
+                            lambda_shift=lambda_shift,
+                        )
+                    )
+                    - target
+                )
+
+            try:
+                root = float(
+                    newton(
+                        residual,
+                        predicted,
+                        x1=predicted + max(abs(predicted) * 1e-4, 1e-8 * scale),
+                        args=(temperature,),
+                        tol=_ROOT_XTOL * scale,
+                        maxiter=12,
+                    )
+                )
+                zero_point, thermal = model.moment(
+                    chi0=chi0,
+                    gamma0=gamma0,
+                    temperature_K=temperature,
+                    cutoff_mev=cutoff_mev,
+                    lambda_shift=root,
+                )
+                if (
+                    root <= floor
+                    or abs(zero_point + thermal - target)
+                    > 1e-9 * max(target, 1.0)
+                ):
+                    raise ValueError("continuation residual exceeds tolerance")
+                result = ClosureResult(
+                    root, chi0, zero_point + thermal, zero_point, thermal
+                )
+            except (RuntimeError, ValueError, OverflowError, ZeroDivisionError):
+                result = solve_onsager(
+                    model,
+                    chi0=chi0,
+                    gamma0=gamma0,
+                    temperature_K=temperature,
+                    cutoff_mev=cutoff_mev,
+                    target=target,
+                )
+        sorted_results.append(result)
+        previous_roots.append(result.lambda_shift)
+    return _restore_temperature_order(order, sorted_results)
 
 
 def _solve_chi0_equation(
@@ -522,6 +633,117 @@ def solve_scr(
     )
 
 
+def solve_scr_temperatures(
+    model: TierAMoments,
+    *,
+    chi0_bare: float,
+    gamma0: float,
+    temperature_K: FloatArray,
+    cutoff_mev: float,
+    mode_coupling_u: float,
+) -> list[ClosureResult]:
+    """Solve a Tier-A SCR sweep by continuation in temperature."""
+
+    temperatures = np.atleast_1d(np.asarray(temperature_K, dtype=float))
+    if temperatures.size == 0:
+        return []
+    if chi0_bare <= 0 or gamma0 <= 0 or mode_coupling_u < 0:
+        raise ValueError("SCR closure requires positive chi0/gamma0 and non-negative u")
+    order = np.argsort(temperatures)
+    sorted_temperatures = temperatures[order]
+    sorted_results: list[ClosureResult] = []
+    previous_roots: list[float] = []
+    for index, temperature_value in enumerate(sorted_temperatures):
+        temperature = float(temperature_value)
+        if mode_coupling_u == 0.0:
+            zero_point, thermal = model.moment(
+                chi0=chi0_bare,
+                gamma0=gamma0,
+                temperature_K=temperature,
+                cutoff_mev=cutoff_mev,
+            )
+            result = ClosureResult(
+                0.0,
+                chi0_bare,
+                zero_point + thermal,
+                zero_point,
+                thermal,
+            )
+        elif index == 0:
+            result = solve_scr(
+                model,
+                chi0_bare=chi0_bare,
+                gamma0=gamma0,
+                temperature_K=temperature,
+                cutoff_mev=cutoff_mev,
+                mode_coupling_u=mode_coupling_u,
+            )
+        else:
+            predicted = previous_roots[-1]
+            if index >= 2:
+                delta_t = sorted_temperatures[index - 1] - sorted_temperatures[index - 2]
+                if delta_t != 0.0:
+                    predicted += (
+                        (previous_roots[-1] - previous_roots[-2])
+                        * (temperature - sorted_temperatures[index - 1])
+                        / delta_t
+                    )
+            predicted = max(float(predicted), 1e-14)
+
+            def residual(chi0_eff: float, temperature_K: float) -> float:
+                zero_point, thermal = model.moment(
+                    chi0=chi0_eff,
+                    gamma0=gamma0,
+                    temperature_K=temperature_K,
+                    cutoff_mev=cutoff_mev,
+                )
+                return (
+                    1.0 / chi0_eff
+                    - 1.0 / chi0_bare
+                    - mode_coupling_u * (zero_point + thermal)
+                )
+
+            try:
+                root = float(
+                    newton(
+                        residual,
+                        predicted,
+                        x1=max(predicted * (1.0 - 1e-4), 1e-14),
+                        args=(temperature,),
+                        tol=_ROOT_XTOL * max(predicted, 1.0),
+                        maxiter=12,
+                    )
+                )
+                zero_point, thermal = model.moment(
+                    chi0=root,
+                    gamma0=gamma0,
+                    temperature_K=temperature,
+                    cutoff_mev=cutoff_mev,
+                )
+                equation = (
+                    1.0 / root
+                    - 1.0 / chi0_bare
+                    - mode_coupling_u * (zero_point + thermal)
+                )
+                if root <= 0.0 or abs(equation) > 1e-9:
+                    raise ValueError("continuation residual exceeds tolerance")
+                result = ClosureResult(
+                    0.0, root, zero_point + thermal, zero_point, thermal
+                )
+            except (RuntimeError, ValueError, OverflowError, ZeroDivisionError):
+                result = solve_scr(
+                    model,
+                    chi0_bare=chi0_bare,
+                    gamma0=gamma0,
+                    temperature_K=temperature,
+                    cutoff_mev=cutoff_mev,
+                    mode_coupling_u=mode_coupling_u,
+                )
+        sorted_results.append(result)
+        previous_roots.append(result.chi0_eff)
+    return _restore_temperature_order(order, sorted_results)
+
+
 def solve_tac(
     model: TierAMoments | TierBMoments,
     *,
@@ -556,6 +778,120 @@ def solve_tac(
         guess=max(guess, 1e-12),
         description="TAC closure",
     )
+
+
+def solve_tac_temperatures(
+    model: TierAMoments,
+    *,
+    gamma0: float,
+    temperature_K: FloatArray,
+    cutoff_mev: float,
+    total_amplitude: float,
+    guess: float,
+) -> list[ClosureResult]:
+    """Solve a Tier-A TAC sweep by continuation in sorted temperature.
+
+    The exact scalar equation is retained, but each root starts from a linear
+    extrapolation of the preceding solutions. Dense susceptibility curves then
+    need only a few moment evaluations per temperature instead of rebuilding a
+    wide bracket for every point. Any failed or inaccurate secant step falls
+    back to :func:`solve_tac`.
+    """
+
+    temperatures = np.atleast_1d(np.asarray(temperature_K, dtype=float))
+    if temperatures.size == 0:
+        return []
+    if total_amplitude <= 0:
+        raise ValueError("closure total_amplitude must be positive")
+    if gamma0 <= 0:
+        raise ValueError("gamma0 must be positive")
+
+    order = np.argsort(temperatures)
+    sorted_temperatures = temperatures[order]
+    sorted_results: list[ClosureResult] = []
+    previous_roots: list[float] = []
+    for index, temperature in enumerate(sorted_temperatures):
+        temperature = float(temperature)
+        if index == 0:
+            result = solve_tac(
+                model,
+                gamma0=gamma0,
+                temperature_K=temperature,
+                cutoff_mev=cutoff_mev,
+                total_amplitude=total_amplitude,
+                guess=guess,
+            )
+        else:
+            predicted = previous_roots[-1]
+            if index >= 2:
+                delta_t = sorted_temperatures[index - 1] - sorted_temperatures[index - 2]
+                if delta_t != 0.0:
+                    predicted += (
+                        (previous_roots[-1] - previous_roots[-2])
+                        * (temperature - sorted_temperatures[index - 1])
+                        / delta_t
+                    )
+            predicted = max(float(predicted), 1e-14)
+
+            def residual(
+                chi0_eff: float, temperature_K: float = temperature
+            ) -> float:
+                return (
+                    sum(
+                        model.moment(
+                            chi0=chi0_eff,
+                            gamma0=gamma0,
+                            temperature_K=temperature_K,
+                            cutoff_mev=cutoff_mev,
+                            lambda_shift=0.0,
+                        )
+                    )
+                    - total_amplitude
+                )
+
+            try:
+                root = float(
+                    newton(
+                        residual,
+                        predicted,
+                        x1=max(predicted * (1.0 - 1e-4), 1e-14),
+                        tol=_ROOT_XTOL * max(predicted, 1.0),
+                        maxiter=12,
+                    )
+                )
+                zero_point, thermal = model.moment(
+                    chi0=root,
+                    gamma0=gamma0,
+                    temperature_K=temperature,
+                    cutoff_mev=cutoff_mev,
+                    lambda_shift=0.0,
+                )
+                if (
+                    root <= 0.0
+                    or abs(zero_point + thermal - total_amplitude)
+                    > 1e-9 * max(total_amplitude, 1.0)
+                ):
+                    raise ValueError("continuation residual exceeds tolerance")
+                result = ClosureResult(
+                    0.0,
+                    root,
+                    zero_point + thermal,
+                    zero_point,
+                    thermal,
+                )
+            except (RuntimeError, ValueError, OverflowError, ZeroDivisionError):
+                result = solve_tac(
+                    model,
+                    gamma0=gamma0,
+                    temperature_K=temperature,
+                    cutoff_mev=cutoff_mev,
+                    total_amplitude=total_amplitude,
+                    guess=previous_roots[-1],
+                )
+        sorted_results.append(result)
+        previous_roots.append(result.chi0_eff)
+
+    return _restore_temperature_order(order, sorted_results)
 
 
 def solve_closure(

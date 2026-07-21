@@ -42,6 +42,11 @@ from scipy.special import digamma, zeta
 
 from .cross_section import KB_MEV_PER_K
 
+try:
+    from ._sum_rules_numba import tier_a_matsubara_moment_sums
+except Exception:  # pragma: no cover - Numba is an optional runtime fallback.
+    tier_a_matsubara_moment_sums = None
+
 FloatArray = NDArray[np.float64]
 
 # Above this Lambda / k_B T the thermal weight beyond the cutoff is < e^-20 of
@@ -288,13 +293,47 @@ def mode_amplitude_per_site(
             "RPA instability on the BZ grid: 1 - (lambda - lambda_shift) * chi0 "
             f"<= 0 (max lambda' * chi0 = {float(np.max(lam * chi0)):.6g})"
         )
+    n_q = lam.shape[0]
+    norm = float(isotropic_components) / (n_q * n_sites)
+    kt = KB_MEV_PER_K * max(float(temperature_K), 0.0)
+    use_numba_matsubara = (
+        tier_a_matsubara_moment_sums is not None
+        and kt > 0.0
+        and cutoff_mev / kt < _DIGAMMA_REGIME_CUTOFF_OVER_KT
+    )
+    if use_numba_matsubara:
+        gamma_max = float(np.max(float(gamma0) * denominator))
+        nu1 = 2.0 * np.pi * kt
+        n_terms = max(
+            32,
+            int(np.ceil(4.0 * max(float(cutoff_mev), gamma_max) / nu1)),
+        )
+        tail2 = float(zeta(2, n_terms + 1) / nu1**2)
+        tail4 = float(zeta(4, n_terms + 1) / nu1**4)
+        tail6 = float(zeta(6, n_terms + 1) / nu1**6)
+        zero_sum, total_sum = tier_a_matsubara_moment_sums(
+            np.ascontiguousarray(lam.ravel()),
+            float(chi0),
+            float(gamma0),
+            float(temperature_K),
+            float(cutoff_mev),
+            KB_MEV_PER_K,
+            tail2,
+            tail4,
+            tail6,
+            n_terms,
+        )
+        zero_total = float(zero_sum * norm)
+        thermal_total = float((total_sum - zero_sum) * norm)
+        if parts:
+            return zero_total, thermal_total
+        return zero_total + thermal_total
+
     chi_modes = float(chi0) / denominator
     gamma_modes = float(gamma0) * denominator
     zero_point, thermal = lorentzian_moment(
         chi_modes, gamma_modes, temperature_K, cutoff_mev, parts=True
     )
-    n_q = lam.shape[0]
-    norm = float(isotropic_components) / (n_q * n_sites)
     if parts:
         return float(zero_point.sum() * norm), float(thermal.sum() * norm)
     return float((zero_point + thermal).sum() * norm)
