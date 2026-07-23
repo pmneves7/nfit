@@ -54,7 +54,13 @@ from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData, load_mantid_mdhis
 from .mdevent import assess_mdevent_memory, bin_mdevent_group, is_mdevent_file, load_mdevent_run_points, mdevent_dataset_group
 from .raw_dgs import bin_raw_dgs_group, is_raw_dgs_nexus_file, raw_dgs_dataset_group
 from .pipeline import DataGroup, DatasetEntry, DatasetGroup, FitTimelineEntry, MaskSpec, ModelComponentSpec, PlotEntry, PlotSourceRef
-from .plot_recipes import new_plot_entry, plot_entry_from_dict, plot_entry_to_dict, render_plot
+from .plot_recipes import (
+    new_plot_entry,
+    plot_entry_from_dict,
+    plot_entry_to_dict,
+    plot_script,
+    render_plot,
+)
 from .qt_controls import configure_numeric_spin_boxes
 from .rebin import rebin_nd
 
@@ -590,6 +596,12 @@ class NfitProject:
 
     data_groups: list[DataGroup] = field(default_factory=list)
     settings: dict[str, Any] = field(default_factory=dict)
+
+
+def _new_gui_project() -> NfitProject:
+    """Return the clean initial project shown by the GUI."""
+
+    return NfitProject(data_groups=[DataGroup(name="Workspace1")])
 
 
 def create_data_group(project: NfitProject, name: str | None = None) -> DataGroup:
@@ -7910,7 +7922,7 @@ class NfitProjectExplorer:
 
     def __init__(self, project: NfitProject | None = None) -> None:
         self.app = _qt_app()
-        self.project = NfitProject() if project is None else project
+        self.project = _new_gui_project() if project is None else project
         self.project_path: Path | None = None
         self.has_unsaved_changes = False
         self._allow_window_close = False
@@ -7977,6 +7989,10 @@ class NfitProjectExplorer:
         self.fit_export_report_button = None
         self.fit_copy_script_button = None
         self.fit_save_script_button = None
+        self.plot_open_button = None
+        self.plot_edit_button = None
+        self.plot_copy_script_button = None
+        self.plot_save_script_button = None
         self._fit_progress_dialog: _FitProgressDialog | None = None
         self._fit_worker_thread = None
         self._fit_worker = None
@@ -8332,7 +8348,7 @@ class NfitProjectExplorer:
         if not self._confirm_save_before_closing_project():
             return False
         self._close_all_slice_viewers()
-        self.project = NfitProject()
+        self.project = _new_gui_project()
         self.project_path = None
         self.has_unsaved_changes = False
         self._clear_active_fit_state()
@@ -9571,6 +9587,57 @@ class NfitProjectExplorer:
             viewer.apply_plot_settings(plot.settings)
         return viewer
 
+    def plot_script_for_selection(self) -> str | None:
+        """Return a backend-only script for the selected saved plot."""
+
+        _group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        plot = self._plot_for_item(self._current_item())
+        if role != "plot" or plot is None or self.project_path is None:
+            return None
+        return plot_script(plot, project_path=self.project_path)
+
+    def copy_plot_script_for_selection(self) -> bool:
+        """Copy the selected plot's backend-only generating script."""
+
+        from PySide6 import QtWidgets
+
+        script = self.plot_script_for_selection()
+        if script is None:
+            QtWidgets.QMessageBox.information(
+                self.window,
+                "Copy plot script",
+                "Save the project first so the generated script can load its data and plot recipe.",
+            )
+            return False
+        QtWidgets.QApplication.clipboard().setText(script)
+        return True
+
+    def save_plot_script_for_selection(self) -> bool:
+        """Save the selected plot's backend-only generating script."""
+
+        from PySide6 import QtWidgets
+
+        script = self.plot_script_for_selection()
+        if script is None:
+            QtWidgets.QMessageBox.information(
+                self.window,
+                "Save plot script",
+                "Save the project first so the generated script can load its data and plot recipe.",
+            )
+            return False
+        plot = self._plot_for_item(self._current_item())
+        stem = plot.name.replace(" ", "_") if plot is not None else "plot"
+        path, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
+            self.window,
+            "Save plot script",
+            f"{stem}.py",
+            "Python scripts (*.py);;All files (*)",
+        )
+        if not path:
+            return False
+        Path(path).write_text(script, encoding="utf-8")
+        return True
+
     def create_fit_covariance_plot_for_selection(self) -> PlotEntry | None:
         group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
         fit_entry = self._fit_entry_for_item(self._current_item())
@@ -10495,6 +10562,31 @@ class NfitProjectExplorer:
             "The project must be saved so the script has a portable project path."
         )
         self.fit_save_script_button.clicked.connect(self.save_fit_script_for_selection)
+        self.plot_open_button = QtWidgets.QPushButton("Open plot")
+        self.plot_open_button.setObjectName("plot_open_button")
+        self.plot_open_button.setToolTip(
+            "Open this saved plot in a clean presentation window without viewer controls."
+        )
+        self.plot_open_button.clicked.connect(self.open_saved_plot_for_selection)
+        self.plot_edit_button = QtWidgets.QPushButton("Open in data viewer")
+        self.plot_edit_button.setObjectName("plot_edit_button")
+        self.plot_edit_button.setToolTip(
+            "Reopen this saved plot in the data viewer and restore its editable controls."
+        )
+        self.plot_edit_button.clicked.connect(self.edit_saved_plot_in_viewer)
+        self.plot_copy_script_button = QtWidgets.QPushButton("Copy script")
+        self.plot_copy_script_button.setObjectName("plot_copy_script_button")
+        self.plot_copy_script_button.setToolTip(
+            "Copy an editable, GUI-free Python script that recreates this saved plot."
+        )
+        self.plot_copy_script_button.clicked.connect(self.copy_plot_script_for_selection)
+        self.plot_save_script_button = QtWidgets.QPushButton("Save script...")
+        self.plot_save_script_button.setObjectName("plot_save_script_button")
+        self.plot_save_script_button.setToolTip(
+            "Save an editable, GUI-free Python script that recreates this saved plot. "
+            "The project must be saved first."
+        )
+        self.plot_save_script_button.clicked.connect(self.save_plot_script_for_selection)
         fit_editor_layout.addWidget(self.fit_branch_check)
         fit_editor_layout.addStretch(1)
         self.fit_editor_widget = fit_editor
@@ -10568,6 +10660,12 @@ class NfitProjectExplorer:
         fit_actions_grid.addWidget(self.fit_copy_script_button, 2, 0)
         fit_actions_grid.addWidget(self.fit_save_script_button, 2, 1)
         right_layout.addLayout(fit_actions_grid)
+        plot_actions_grid = QtWidgets.QGridLayout()
+        plot_actions_grid.addWidget(self.plot_open_button, 0, 0)
+        plot_actions_grid.addWidget(self.plot_edit_button, 0, 1)
+        plot_actions_grid.addWidget(self.plot_copy_script_button, 1, 0)
+        plot_actions_grid.addWidget(self.plot_save_script_button, 1, 1)
+        right_layout.addLayout(plot_actions_grid)
 
         splitter.addWidget(right_panel)
         splitter.setSizes([360, 760])
@@ -11019,6 +11117,28 @@ class NfitProjectExplorer:
         self.fit_save_script_button.setVisible(fit_script_available)
         self.fit_copy_script_button.setEnabled(self.project_path is not None)
         self.fit_save_script_button.setEnabled(self.project_path is not None)
+        selected_plot = self._plot_for_item(self._current_item()) if role == "plot" else None
+        plot_available = selected_plot is not None
+        plot_has_dataset = bool(
+            selected_plot is not None
+            and selected_plot.sources
+            and selected_plot.sources[0].dataset_id
+        )
+        for button in (
+            self.plot_open_button,
+            self.plot_edit_button,
+            self.plot_copy_script_button,
+            self.plot_save_script_button,
+        ):
+            button.setVisible(plot_available)
+        self.plot_open_button.setEnabled(plot_available)
+        self.plot_edit_button.setEnabled(plot_has_dataset)
+        self.plot_copy_script_button.setEnabled(
+            plot_available and self.project_path is not None
+        )
+        self.plot_save_script_button.setEnabled(
+            plot_available and self.project_path is not None
+        )
 
         if role == "group" and group is not None:
             self.title_label.setText(group.name)

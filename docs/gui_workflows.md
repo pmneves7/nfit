@@ -735,11 +735,19 @@ the corresponding selected emcee values rather than the least-squares values.
 
 Every workspace has a **Plots** tree section. Use the data viewer's **Plot /
 Create saved plot** action to preserve the current visual state as an editable
-figure recipe. Open the tree entry for a clean presentation window, or choose
-**Edit in data viewer** to restore the recipe into the full interactive controls.
+figure recipe. Selecting a saved plot exposes **Open plot**, **Open in data
+viewer**, **Copy script**, and **Save script** buttons in its detail page. Open
+the plot for a clean presentation window, or reopen it in the data viewer to
+restore the recipe into the full interactive controls. Script actions become
+available after the project is saved, giving the generated script a stable
+project path.
 The saved-plot window keeps controls hidden until **Plot / Open plot controls**
 is selected; its same menu can copy/save the figure or a backend-only generating
 script.
+
+Opening nfit or choosing **File / New** starts with one empty **Workspace1**,
+ready for datasets, models, fits, analyses, and plots. This initial workspace is
+part of the clean project state and does not add an unsaved-change marker.
 
 The data viewer supports dataset switching, channel selection, mask toggling,
 axis selection, hidden-axis slicing/integration, color scale and limit controls,
