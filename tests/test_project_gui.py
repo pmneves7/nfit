@@ -17,6 +17,8 @@ from nfit.pipeline import (
     FitTimelineEntry,
     MaskSpec,
     ModelComponentSpec,
+    PlotEntry,
+    PlotSourceRef,
 )
 from nfit.project_gui import (
     NfitProject,
@@ -3070,9 +3072,12 @@ def test_project_explorer_prompts_for_unsaved_close_and_quit(monkeypatch):
     pytest.importorskip("PySide6.QtWidgets")
 
     explorer = NfitProjectExplorer()
+    assert [item.name for item in explorer.project.data_groups] == ["Workspace1"]
+    assert explorer.has_unsaved_changes is False
+
     group = explorer.create_data_group()
 
-    assert group.name == "Workspace1"
+    assert group.name == "Workspace2"
     assert explorer.has_unsaved_changes is True
     assert explorer.window.windowTitle().endswith("*")
 
@@ -3084,7 +3089,10 @@ def test_project_explorer_prompts_for_unsaved_close_and_quit(monkeypatch):
     )
 
     assert explorer.close_project() is False
-    assert explorer.project.data_groups == [group]
+    assert [item.name for item in explorer.project.data_groups] == [
+        "Workspace1",
+        "Workspace2",
+    ]
     assert explorer.quit_application() is False
     assert prompts == ["prompt", "prompt"]
 
@@ -3099,8 +3107,76 @@ def test_project_explorer_prompts_for_unsaved_close_and_quit(monkeypatch):
     monkeypatch.setattr(explorer, "_confirm_save_before_closing_project", lambda: True)
 
     assert explorer.close_project() is True
-    assert explorer.project.data_groups == []
+    assert [item.name for item in explorer.project.data_groups] == ["Workspace1"]
     assert explorer.has_unsaved_changes is False
+
+
+def test_saved_plot_details_offer_open_edit_and_script_actions(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    dataset = DatasetEntry("scan", _tiny_mdhisto_data(1.0))
+    plot = PlotEntry(
+        "scan plot",
+        type="mdhisto_line",
+        sources=[PlotSourceRef(dataset_id=dataset.id)],
+        settings={"x_dim": 0, "channel": "signal"},
+    )
+    group = DataGroup("Workspace1", datasets=[dataset], plots=[plot])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+
+    def find_plot_item(item):
+        if explorer._plot_for_item(item) is plot:
+            return item
+        for index in range(item.childCount()):
+            found = find_plot_item(item.child(index))
+            if found is not None:
+                return found
+        return None
+
+    plot_item = find_plot_item(explorer.tree.topLevelItem(0))
+    assert plot_item is not None
+    explorer.tree.setCurrentItem(plot_item)
+
+    buttons = {
+        name: explorer.window.findChild(QtWidgets.QPushButton, object_name)
+        for name, object_name in {
+            "Open plot": "plot_open_button",
+            "Open in data viewer": "plot_edit_button",
+            "Copy script": "plot_copy_script_button",
+            "Save script...": "plot_save_script_button",
+        }.items()
+    }
+    assert all(button is not None for button in buttons.values())
+    assert all(button.text() == name for name, button in buttons.items())
+    assert all(button.toolTip().strip() for button in buttons.values())
+    assert all(not button.isHidden() for button in buttons.values())
+    assert buttons["Open plot"].isEnabled()
+    assert buttons["Open in data viewer"].isEnabled()
+    assert not buttons["Copy script"].isEnabled()
+    assert not buttons["Save script..."].isEnabled()
+
+    explorer.project_path = tmp_path / "plots.nfit"
+    explorer._sync_details()
+    assert buttons["Copy script"].isEnabled()
+    assert buttons["Save script..."].isEnabled()
+
+    assert explorer.copy_plot_script_for_selection()
+    copied = QtWidgets.QApplication.clipboard().text()
+    assert f"PLOT_ID = {plot.id!r}" in copied
+    assert str(explorer.project_path) in copied
+
+    target = tmp_path / "scan_plot.py"
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getSaveFileName",
+        staticmethod(lambda *args, **kwargs: (str(target), "Python scripts (*.py)")),
+    )
+    assert explorer.save_plot_script_for_selection()
+    assert target.read_text(encoding="utf-8") == copied
 
 
 def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
