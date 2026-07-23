@@ -1728,7 +1728,6 @@ def compile_fit_problem(
         model_jacobian = None
         if (
             components_here
-            and dataset.name not in scale_parameters
             and getattr(dataset, "data_type", None) != "magnetization"
             and all(factory is not None for factory in jacobian_factories)
         ):

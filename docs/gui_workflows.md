@@ -598,7 +598,10 @@ is instead the initial guess for an optimizer parameter named for that dataset;
 the fit compares `scale * signal` to the model and uses `abs(scale) * sigma` as
 the uncertainty. After the fit, the optimized scale is written back to the
 dataset and stored in the fit snapshot. Because zero scale makes the data-side
-uncertainty singular, use a nonzero initial scale.
+uncertainty singular, use a nonzero initial scale. Changing `Fit scale` only
+controls the next fit; it does not rebuild or alter the current data-viewer
+plot. Fitted scales are supported by both numerical and analytic model
+Jacobians.
 
 ## Masks
 
@@ -881,6 +884,16 @@ exported report remain consistent after reopening a project. These
 posterior-only operations update the selected fit result's posterior summaries
 and diagnostics without running least squares again and without creating a new
 timeline point.
+
+Fit reports round each displayed parameter uncertainty to two significant
+figures and round its parameter value to the corresponding decimal place.
+Asymmetric posterior errors retain two significant figures on each side, with
+the larger side setting the displayed precision of the central value. This is
+presentation-only: project data, fit metadata, and generated scripts retain
+their full stored floating-point precision. The report identifies
+least-squares errors as local covariance estimates conditional on the model and
+data uncertainties, and emcee errors as conditional 16--84% intervals.
+
 Changing burn-in or thinning simply reinterprets the stored raw chain; rerun
 replaces the stored posterior after an overwrite-confirmation dialog when
 samples already exist; append continues from the final walker positions
@@ -949,6 +962,15 @@ calculate and show the current model and residual channels from the `Show
 model` control even before an optimization has been run. Stored fit-result
 channels are still reused when no current model can be evaluated and the stored
 channels remain compatible with the current dataset view.
+`Unmask model`, directly below `Show model`, evaluates the model over every
+finite coordinate in the plotted dataset instead of restricting evaluation to
+fit-valid bins. The data remain masked. The extrapolated model is used in 1D
+lines, 2D comparison panels, hidden-axis integrations, and box-integrated model
+profiles. Residuals are also extended into masked regions when the underlying
+data value and positive uncertainty are available; bins without usable data
+remain blank. Full-grid model evaluation is performed lazily when this control
+is enabled because it can be substantially more expensive for heavily masked
+volumes. Saved plot recipes preserve this choice for GUI and backend rendering.
 For 2D fit comparisons, histogram box cuts show inverse-variance weighted
 data+fit cuts with propagated data error bars along both plotted axes; when
 residuals are enabled, residual cuts are shown below

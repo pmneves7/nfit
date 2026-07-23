@@ -912,6 +912,92 @@ def test_analytic_jacobian_matches_finite_differences_with_grouped_sharing():
     np.testing.assert_allclose(analytic, fd, rtol=2e-6, atol=1e-6)
 
 
+@pytest.mark.parametrize("scale_value", [1.3, -1.3])
+def test_analytic_jacobian_includes_fitted_dataset_scale(scale_value):
+    from nfit.fitting import (
+        _evaluate_problem,
+        _evaluate_problem_jacobian,
+        _finite_difference_jacobian,
+        pack_parameters,
+        problem_supports_analytic_jacobian,
+        unpack_parameters,
+    )
+
+    compiled = compile_fit_problem(
+        [_rpa_component()],
+        [
+            FitDatasetInput(
+                "T5",
+                _rpa_points(5.0, 17),
+                data_type="single_crystal_inelastic",
+                scale_value=scale_value,
+                scale_vary=True,
+            )
+        ],
+    )
+    problem = compiled.problem
+    assert problem_supports_analytic_jacobian(problem)
+    x0, bounds, names, fixed = pack_parameters(problem.parameter_specs)
+    params = unpack_parameters(x0, names, fixed)
+    analytic = _evaluate_problem_jacobian(problem, params, names, require_positive_sigma=True)
+
+    def residual_fn(x):
+        return _evaluate_problem(
+            problem, unpack_parameters(x, names, fixed), require_positive_sigma=True
+        ).residuals
+
+    fd = _finite_difference_jacobian(residual_fn, x0, residual_fn(x0), bounds)
+    scale_index = names.index(dataset_scale_parameter_name("T5"))
+    assert np.any(np.abs(analytic[:, scale_index]) > 0.0)
+    np.testing.assert_allclose(analytic, fd, rtol=2e-6, atol=1e-6)
+
+
+def test_analytic_model_fits_dataset_scale():
+    from nfit.fitting import evaluate_problem_model, problem_supports_analytic_jacobian
+
+    fixed = {name: False for name in ("scale", "chi0", "gamma0", "J1", "J2")}
+    component = _rpa_component(fit_parameters=fixed)
+    data = _rpa_points(5.0, 23)
+    truth = compile_fit_problem(
+        [component],
+        [FitDatasetInput("T5", data, data_type="single_crystal_inelastic")],
+    )
+    model_values = evaluate_problem_model(
+        truth.problem,
+        "T5",
+        {spec.name: spec.value for spec in truth.problem.parameter_specs},
+    )
+    target_scale = 0.4
+    observed = PointData4D(
+        data.H,
+        data.K,
+        data.L,
+        data.E,
+        model_values / target_scale,
+        np.full(data.size, 0.02),
+        temperature=data.temperature,
+        metadata=dict(data.metadata),
+    )
+    compiled = compile_fit_problem(
+        [component],
+        [
+            FitDatasetInput(
+                "T5",
+                observed,
+                data_type="single_crystal_inelastic",
+                scale_value=1.0,
+                scale_vary=True,
+            )
+        ],
+    )
+    assert problem_supports_analytic_jacobian(compiled.problem)
+    result = fit_problem_least_squares(compiled.problem)
+    assert result.success
+    assert result.params[dataset_scale_parameter_name("T5")] == pytest.approx(
+        target_scale, abs=1e-6
+    )
+
+
 def test_analytic_jacobian_matches_finite_differences_with_constraint():
     from nfit.fitting import (
         _evaluate_problem,

@@ -646,13 +646,17 @@ def test_qt_show_fit_draws_side_by_side_panels_with_shared_view():
     viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
 
     assert viewer.show_fit_check.text() == "Show model"
+    assert viewer.unmask_model_check.text() == "Unmask model"
+    assert viewer.unmask_model_check.toolTip()
     assert viewer.show_fit_check.isEnabled()
+    assert not viewer.unmask_model_check.isEnabled()
     assert not viewer.show_fit_check.isChecked()
     assert not viewer.show_residual_check.isEnabled()
 
     viewer.show_fit_check.setChecked(True)
 
     assert viewer.show_residual_check.isEnabled()
+    assert viewer.unmask_model_check.isEnabled()
     assert [axis.get_title() for axis in viewer._compare_axes] == ["Data", "Fit"]
     # The box tool remains available in fit compare so cuts can be integrated.
     assert not viewer.tools_group.isHidden()
@@ -673,6 +677,68 @@ def test_qt_show_fit_draws_side_by_side_panels_with_shared_view():
     assert not viewer.show_residual_check.isChecked()
     assert not viewer.show_residual_check.isEnabled()
     assert not viewer.tools_group.isHidden()
+
+
+def test_qt_unmask_model_extends_2d_panels_box_cuts_and_residuals():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _with_fit_channels(_tiny_mdhisto_data())
+    data.mask[..., 2] = True
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    viewer.show_fit_check.setChecked(True)
+    viewer.show_residual_check.setChecked(True)
+    viewer.hist_axes_check.setChecked(True)
+
+    masked_fit = viewer._comparison_panel_model(data, "fit").slice_arrays()["fit"]
+    masked_residual = viewer._comparison_panel_model(data, "residual").slice_arrays()[
+        "residual"
+    ]
+    assert np.all(np.isnan(masked_fit[:, 2]))
+    assert np.all(np.isnan(masked_residual[:, 2]))
+
+    callback_values = []
+    viewer.set_unmask_model_callback(callback_values.append)
+    viewer.unmask_model_check.setChecked(True)
+
+    unmasked_fit = viewer._comparison_panel_model(data, "fit").slice_arrays()["fit"]
+    unmasked_residual = viewer._comparison_panel_model(data, "residual").slice_arrays()[
+        "residual"
+    ]
+    assert np.all(np.isfinite(unmasked_fit[:, 2]))
+    assert np.all(np.isfinite(unmasked_residual[:, 2]))
+    fit_cut = next(
+        line for line in viewer.ax_fit_cut.get_lines() if line.get_label() == "fit"
+    )
+    assert np.isfinite(np.asarray(fit_cut.get_ydata(), dtype=float)[2])
+    assert callback_values == [True]
+
+
+def test_qt_unmask_model_extends_1d_model_and_residual():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _with_fit_channels(_tiny_1d_mdhisto_data())
+    data.mask[0, 0, 0, 2] = True
+    viewer = QtMDHistoSliceViewer(data)
+    viewer.show_fit_check.setChecked(True)
+
+    masked_fit = next(
+        line for line in viewer.ax_image.get_lines() if line.get_label() == "fit"
+    )
+    assert np.isnan(np.asarray(masked_fit.get_ydata(), dtype=float)[2])
+
+    viewer.unmask_model_check.setChecked(True)
+    unmasked_fit = next(
+        line for line in viewer.ax_image.get_lines() if line.get_label() == "fit"
+    )
+    assert np.isfinite(np.asarray(unmasked_fit.get_ydata(), dtype=float)[2])
+    assert viewer.current_plot_settings()["unmask_model"] is True
+
+    viewer.show_residual_check.setChecked(True)
+    residual = viewer._slice_1d_channel(viewer._current_slice, "residual")
+    assert residual is not None
+    assert np.isfinite(residual[2])
 
 
 def test_qt_histogram_layout_noop_outside_standard_grid():

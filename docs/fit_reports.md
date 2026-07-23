@@ -55,6 +55,23 @@ The document is a plain `article` and needs only the `amsmath`, `amssymb`,
 `booktabs`, `longtable`, and `geometry` packages — present in any standard
 TeX distribution, including minimal ones.
 
+### Reported precision
+
+Human-facing parameter values in the report use uncertainty-aware rounding.
+Each symmetric standard error, or each side of an asymmetric posterior error,
+is rounded to two significant figures. The associated parameter value is
+rounded to the decimal place supported by that uncertainty; for asymmetric
+errors, the larger-sided uncertainty sets the value's displayed precision.
+Posterior median and 16/84 percentiles use the same convention. Values without
+an uncertainty retain the general six-significant-digit display.
+
+This formatting changes only the generated report. Project files, fit result
+metadata, scripts, and other machine-readable exports retain the stored
+floating-point values. Least-squares standard errors are local covariance
+estimates conditional on the model and supplied data uncertainties; posterior
+intervals are likewise conditional on the model and priors. Neither includes
+unmodeled systematic uncertainty merely because more digits are stored.
+
 ## TeX engine requirement
 
 PDF compilation uses whichever of `pdflatex`, `tectonic`, `xelatex`, or

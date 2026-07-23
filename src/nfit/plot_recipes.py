@@ -62,8 +62,9 @@ def render_plot(entry: PlotEntry, data: MDHistoData | None = None, *, fit_entry:
         )
         figure = ax.figure
     elif plot_type == "fit_comparison":
-        fit = _channel_data(data, "fit")
-        residual = _channel_data(data, "residual")
+        unmask_model = bool(settings.get("unmask_model", False))
+        fit = _channel_data(data, "fit", unmasked=unmask_model)
+        residual = _channel_data(data, "residual", unmasked=unmask_model)
         figure = plot_mdhisto_fit_comparison(
             data,
             fit,
@@ -163,15 +164,25 @@ def plot_entry_from_dict(payload: dict[str, Any]) -> PlotEntry:
     )
 
 
-def _channel_data(data: MDHistoData, name: str) -> MDHistoData:
+def _channel_data(
+    data: MDHistoData,
+    name: str,
+    *,
+    unmasked: bool = False,
+) -> MDHistoData:
     channel = data.auxiliary_channels.get(name)
-    if channel is None:
+    metadata_values = data.metadata.get(name)
+    if channel is None and not (
+        isinstance(metadata_values, np.ndarray) and metadata_values.shape == data.shape
+    ):
         raise ValueError(f"plot requires a stored {name!r} channel")
+    values = channel.values if channel is not None else metadata_values
+    errors = channel.errors if channel is not None else None
     return MDHistoData(
         data.axes,
-        channel.values,
-        channel.errors if channel.errors is not None else data.errors,
-        data.mask,
+        values,
+        errors if errors is not None else data.errors,
+        np.zeros(data.shape, dtype=bool) if unmasked else data.mask,
         data.num_events,
         metadata=dict(data.metadata),
     )

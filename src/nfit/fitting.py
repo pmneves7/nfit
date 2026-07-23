@@ -1679,7 +1679,8 @@ def _evaluate_problem(
         residual_blocks.append(weighted_residual)
         model_blocks.append(model_values)
 
-        chi2 = float(np.sum(weighted_residual * weighted_residual))
+        with np.errstate(over="ignore", invalid="ignore"):
+            chi2 = float(np.sum(weighted_residual * weighted_residual))
         dataset_chi2[dataset.name] = chi2
         dataset_reduced_chi2[dataset.name] = chi2 / prepared.size
         dataset_sizes[dataset.name] = prepared.size
@@ -1776,7 +1777,13 @@ def _evaluate_problem_jacobian(
         block = np.zeros((prepared.size, len(names)), dtype=float)
         dataset_params = _apply_parameter_bindings(resolved, dataset.parameter_bindings)
         columns = dataset.model_jacobian(prepared, dataset_params)
-        residual_factor = -np.sqrt(dataset.weight) / np.asarray(prepared.sigma, dtype=float)
+        sigma = np.asarray(prepared.sigma, dtype=float)
+        weight_factor = np.sqrt(dataset.weight)
+        scale_magnitude = 1.0
+        if dataset.data_scale_parameter:
+            scale = float(resolved[dataset.data_scale_parameter])
+            scale_magnitude = max(abs(scale), np.finfo(float).tiny)
+        residual_factor = -weight_factor / (scale_magnitude * sigma)
         for qualified, d_model in columns.items():
             binding = dataset.parameter_bindings.get(qualified)
             if isinstance(binding, str):
@@ -1791,6 +1798,22 @@ def _evaluate_problem_jacobian(
             residual_column = residual_factor * np.asarray(d_model, dtype=float)
             for variable, coeff in sensitivities.items():
                 block[:, name_index[variable]] += coeff * residual_column
+
+        if dataset.data_scale_parameter:
+            scale_sensitivities = resolve(dataset.data_scale_parameter)
+            if scale_sensitivities:
+                model_values = _evaluate_dataset_model(
+                    problem, dataset, prepared, dataset_params
+                )
+                scale_direction = np.copysign(1.0, scale)
+                scale_column = (
+                    weight_factor
+                    * scale_direction
+                    * model_values
+                    / (scale_magnitude * scale_magnitude * sigma)
+                )
+                for variable, coeff in scale_sensitivities.items():
+                    block[:, name_index[variable]] += coeff * scale_column
         blocks.append(block)
 
     if not blocks:

@@ -1615,6 +1615,21 @@ def test_slice_viewer_datasets_attach_current_model_before_fit():
     np.testing.assert_allclose(datasets[0].metadata["residual"], dataset.data.signal - 7.0)
 
 
+def test_slice_viewer_unmasked_model_evaluates_masked_grid_bins():
+    dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
+    dataset.data.mask[0, 0] = True
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    model = create_model_component(group)
+    model.parameters["constant"] = 7.0
+
+    masked, _names = project_gui.slice_viewer_datasets(group)
+    assert np.isnan(masked[0].metadata["fit"][0, 0])
+
+    unmasked, _names = project_gui.slice_viewer_datasets(group, unmask_model=True)
+    assert unmasked[0].metadata["fit"][0, 0] == pytest.approx(7.0)
+    assert np.isfinite(unmasked[0].metadata["residual"][0, 0])
+
+
 def test_slice_viewer_datasets_prefer_current_model_over_stored_fit_channels():
     dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
     group = DataGroup("Datagroup1", datasets=[dataset])
@@ -4359,9 +4374,31 @@ def test_dataset_scale_factor_scales_viewed_data_and_round_trips(monkeypatch, tm
     assert scale_spin.value() == 1.0
     assert not scale_fit_check.isChecked()
     scale_spin.setValue(3.0)
+    refresh_calls = []
+    monkeypatch.setattr(explorer, "refresh_slice_viewer", refresh_calls.append)
     scale_fit_check.setChecked(True)
     assert dataset.scale_factor == 3.0
     assert dataset.scale_factor_vary is True
+    assert refresh_calls == []
+    with monkeypatch.context() as scale_guard:
+        scale_guard.setattr(
+            project_gui,
+            "_apply_dataset_scale",
+            lambda *_args, **_kwargs: pytest.fail("fit summary reapplied dataset scale"),
+        )
+        assert project_gui._dataset_fit_summary_lines(dataset, group=group)
+
+    refresh_tree_calls = []
+    monkeypatch.setattr(explorer, "_record_data_group_state_change", lambda _group: True)
+    monkeypatch.setattr(explorer, "_refresh_tree", lambda **kwargs: refresh_tree_calls.append(kwargs))
+    scale_fit_check.setChecked(False)
+    assert refresh_tree_calls == [
+        {
+            "select_group": group,
+            "select_dataset": dataset,
+            "refresh_viewers": False,
+        }
+    ]
 
     viewed = dataset_for_slice_viewer(dataset)
     np.testing.assert_allclose(viewed.signal, np.asarray(data.signal, dtype=float) * 3.0)

@@ -79,6 +79,7 @@ class _DatasetViewState:
     show_errorbar_caps: bool = False
     errorbar_cap_size: float = 3.0
     show_fit: bool = False
+    unmask_model: bool = False
     show_residual: bool = False
     fit_line_color: str = "#d62728"
     fit_line_width: float = 2.0
@@ -147,6 +148,7 @@ class QtMDHistoSliceViewer:
         self.dataset_combo = None
         self.axes_group = None
         self.show_fit_check = None
+        self.unmask_model_check = None
         self.show_residual_check = None
         self.residual_split_slider = None
         self.residual_split_label = None
@@ -221,6 +223,7 @@ class QtMDHistoSliceViewer:
         self.save_script_button = None
         self.save_plot_action = None
         self._save_plot_callback = None
+        self._unmask_model_callback = None
         self.view_mode_combo = None
         self.content_stack = None
         self.volume_panel = None
@@ -241,6 +244,7 @@ class QtMDHistoSliceViewer:
         self.show_errorbar_caps = False
         self.errorbar_cap_size = 3.0
         self.show_fit = bool(initial_data.metadata.get("viewer_show_fit", False))
+        self.unmask_model = False
         self.show_residual = False
         self.fit_line_color = "#d62728"
         self.fit_line_width = 2.0
@@ -394,6 +398,7 @@ class QtMDHistoSliceViewer:
             "xcut_percent": self.xcut_percent,
             "ycut_percent": self.ycut_percent,
             "show_fit": self.show_fit,
+            "unmask_model": self.unmask_model,
             "show_residual": self.show_residual,
             "figsize": tuple(self.figure.get_size_inches()) if self.figure is not None else (8.0, 6.5),
         }
@@ -421,6 +426,7 @@ class QtMDHistoSliceViewer:
         self._set_font_size(float(settings.get("font_size", self.font_size)))
         self._set_axis_linewidth(float(settings.get("axis_linewidth", self.axis_linewidth)))
         self._set_show_fit(bool(settings.get("show_fit", self.show_fit)))
+        self._set_unmask_model(bool(settings.get("unmask_model", self.unmask_model)))
         self._set_show_residual(bool(settings.get("show_residual", self.show_residual)))
         self._roi_extents = settings.get("roi_extents", self._roi_extents)
         self._redraw()
@@ -431,6 +437,11 @@ class QtMDHistoSliceViewer:
         self._save_plot_callback = callback
         if self.save_plot_action is not None:
             self.save_plot_action.setEnabled(callback is not None)
+
+    def set_unmask_model_callback(self, callback) -> None:
+        """Set the project callback that rebuilds full-grid model channels."""
+
+        self._unmask_model_callback = callback
 
     def save_script(self) -> None:
         from pathlib import Path
@@ -681,6 +692,13 @@ class QtMDHistoSliceViewer:
             "Enabled once current model channels or stored fit channels are available for this dataset."
         )
         self.show_fit_check.toggled.connect(self._set_show_fit)
+        self.unmask_model_check = QtWidgets.QCheckBox("Unmask model")
+        self.unmask_model_check.setObjectName("viewer_unmask_model_check")
+        self.unmask_model_check.setToolTip(
+            "Evaluate and draw the model outside data masks across the full plotted region. "
+            "Data remain masked; residuals extend only where underlying data and uncertainties are finite."
+        )
+        self.unmask_model_check.toggled.connect(self._set_unmask_model)
         self.show_residual_check = QtWidgets.QCheckBox("Show residual")
         self.show_residual_check.setToolTip(
             "Also show the normalized residual: a third panel (2D) or axes below the data (1D)."
@@ -688,6 +706,7 @@ class QtMDHistoSliceViewer:
         self.show_residual_check.toggled.connect(self._set_show_residual)
         dataset_layout.addWidget(self.show_fit_check, 2, 1)
         dataset_layout.addWidget(self.show_residual_check, 2, 2)
+        dataset_layout.addWidget(self.unmask_model_check, 3, 1)
         self.residual_split_label = QtWidgets.QLabel()
         self.residual_split_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.residual_split_slider.setMinimumWidth(80)
@@ -699,8 +718,8 @@ class QtMDHistoSliceViewer:
             "Vertical position of the separator between the data and residual axes."
         )
         self.residual_split_slider.valueChanged.connect(self._set_residual_percent)
-        dataset_layout.addWidget(self.residual_split_label, 3, 0)
-        dataset_layout.addWidget(self.residual_split_slider, 3, 1, 1, 2)
+        dataset_layout.addWidget(self.residual_split_label, 4, 0)
+        dataset_layout.addWidget(self.residual_split_slider, 4, 1, 1, 2)
         dataset_layout.setColumnStretch(1, 1)
         controls_layout.addWidget(dataset_group)
 
@@ -1405,6 +1424,7 @@ class QtMDHistoSliceViewer:
             show_errorbar_caps=bool(self.show_errorbar_caps),
             errorbar_cap_size=float(self.errorbar_cap_size),
             show_fit=bool(self.show_fit),
+            unmask_model=bool(self.unmask_model),
             show_residual=bool(self.show_residual),
             fit_line_color=str(self.fit_line_color),
             fit_line_width=float(self.fit_line_width),
@@ -1456,6 +1476,7 @@ class QtMDHistoSliceViewer:
             self.show_errorbar_caps = bool(state.show_errorbar_caps)
             self.errorbar_cap_size = float(state.errorbar_cap_size)
             self.show_fit = bool(state.show_fit)
+            self.unmask_model = bool(state.unmask_model)
             self.show_residual = bool(state.show_residual)
             self.fit_line_color = str(state.fit_line_color)
             self.fit_line_width = float(state.fit_line_width)
@@ -1726,8 +1747,10 @@ class QtMDHistoSliceViewer:
         if not (self.show_fit and has_residual):
             self.show_residual = False
         self._set_checkbox_silent(self.show_fit_check, self.show_fit)
+        self._set_checkbox_silent(self.unmask_model_check, self.unmask_model)
         self._set_checkbox_silent(self.show_residual_check, self.show_residual)
         self.show_fit_check.setEnabled(has_fit)
+        self.unmask_model_check.setEnabled(bool(self.show_fit and has_fit))
         self.show_residual_check.setEnabled(bool(self.show_fit and has_residual))
         residual_split = self._residual_axes_active()
         self.residual_split_label.setVisible(residual_split)
@@ -1746,6 +1769,18 @@ class QtMDHistoSliceViewer:
     def _set_show_fit(self, enabled: bool) -> None:
         self.show_fit = bool(enabled)
         self._sync_fit_channel_controls()
+        self.update_plot(preserve_view=False)
+
+    def _set_unmask_model(self, enabled: bool) -> None:
+        changed = self.unmask_model != bool(enabled)
+        self.unmask_model = bool(enabled)
+        self._sync_fit_channel_controls()
+        if (
+            changed
+            and not self._restoring_dataset_state
+            and self._unmask_model_callback is not None
+        ):
+            self._unmask_model_callback(self.unmask_model)
         self.update_plot(preserve_view=False)
 
     def _set_show_residual(self, enabled: bool) -> None:
@@ -2538,12 +2573,21 @@ class QtMDHistoSliceViewer:
                 )
             fit_model = self._comparison_panel_model(self.data, "fit")
             fit_z = fit_model._display_values(self._smoothed_slice_view(fit_model.slice_arrays()))
-            if errors.shape == data_z.shape:
+            fit_errors = errors
+            if self.unmask_model:
+                raw_data_model = self._comparison_panel_model(
+                    self.data,
+                    self.model.channel,
+                    masked=False,
+                )
+                raw_data_view = self._smoothed_slice_view(raw_data_model.slice_arrays())
+                fit_errors = np.asarray(raw_data_view.get("errors"), dtype=float)
+            if fit_errors.shape == data_z.shape:
                 fit_cut, _ = inverse_variance_weighted_profile(
-                    fit_z[selected], errors[selected], axis=0
+                    fit_z[selected], fit_errors[selected], axis=0
                 )
                 fit_y_cut, _ = inverse_variance_weighted_profile(
-                    fit_z[selected], errors[selected], axis=1
+                    fit_z[selected], fit_errors[selected], axis=1
                 )
             else:
                 fit_cut = np.nansum(fit_z[np.ix_(y_mask, x_mask)], axis=0)
@@ -2623,7 +2667,17 @@ class QtMDHistoSliceViewer:
             self.ax_residual_ycut.set_ylabel(self.model._axis_label(self.model.y_dim))
             self.ax_residual_ycut.tick_params(labelleft=False)
 
-    def _comparison_panel_model(self, data: MDHistoData, channel: str) -> MDHistoSliceViewer:
+    def _comparison_panel_model(
+        self,
+        data: MDHistoData,
+        channel: str,
+        *,
+        masked: bool | None = None,
+    ) -> MDHistoSliceViewer:
+        if masked is None:
+            masked = self.model.masked and not (
+                self.unmask_model and channel in {"fit", "residual"}
+            )
         model = MDHistoSliceViewer(
             data,
             x_dim=self.model.x_dim,
@@ -2633,7 +2687,7 @@ class QtMDHistoSliceViewer:
             color_scale=self.model.color_scale,
             auto_limits=self.model.auto_limits,
             integrate=self.model.integrate,
-            masked=self.model.masked,
+            masked=masked,
         )
         model.selections.update(dict(self.model.selections))
         model.integrate_checks.update(dict(self.model.integrate_checks))
@@ -2655,7 +2709,15 @@ class QtMDHistoSliceViewer:
     def _slice_1d_channel(self, view: dict[str, np.ndarray], name: str) -> np.ndarray | None:
         """Return a fit/residual channel from the current slice as a 1D array."""
 
-        values = view.get(name)
+        channel_view = view
+        if (
+            self.unmask_model
+            and name in {"fit", "residual"}
+            and not getattr(self.model, "is_point_list", False)
+        ):
+            channel_model = self._comparison_panel_model(self.data, name, masked=False)
+            channel_view = self._smoothed_slice_view(channel_model.slice_arrays())
+        values = channel_view.get(name)
         if values is None:
             return None
         flattened = np.asarray(values, dtype=float).reshape(-1)

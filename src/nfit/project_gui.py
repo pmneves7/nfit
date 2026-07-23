@@ -3311,6 +3311,7 @@ def slice_viewer_datasets(
     group: DataGroup,
     *,
     use_composite: bool = True,
+    unmask_model: bool = False,
     force_rebin: bool = True,
     force_masks: bool = True,
     progress_callback: Any | None = None,
@@ -3319,7 +3320,11 @@ def slice_viewer_datasets(
 
     data: list[MDHistoData] = []
     names: list[str] = []
-    model_channels = current_model_channels(group, force_masks=force_masks)
+    model_channels = current_model_channels(
+        group,
+        force_masks=force_masks,
+        unmask_model=unmask_model,
+    )
     entries = _effective_dataset_entries(
         group,
         group,
@@ -4581,8 +4586,15 @@ def current_model_channels(
     group: DataGroup,
     *,
     force_masks: bool = False,
+    unmask_model: bool = False,
 ) -> dict[str, dict[str, Any]]:
-    """Evaluate enabled model components at their current parameter values."""
+    """Evaluate enabled model components at their current parameter values.
+
+    When ``unmask_model`` is true, model values are extrapolated over every
+    finite HKLE coordinate in the prepared dataset rather than only fit-valid
+    data points. Residuals are likewise retained wherever the underlying data
+    and uncertainty are finite.
+    """
 
     components = [
         model for model in group.models.values() if isinstance(model, ModelComponentSpec)
@@ -4624,7 +4636,13 @@ def current_model_channels(
         }, _MODEL_OVERLAY_CACHE_LIMIT)
     try:
         params = _overlay_current_params(group, compiled)
-        return _fit_channels_from_params(compiled, params, bundles, subset_cache=subsets)
+        return _fit_channels_from_params(
+            compiled,
+            params,
+            bundles,
+            subset_cache=subsets,
+            evaluate_masked=unmask_model,
+        )
     except Exception:
         return {}
 
@@ -5267,7 +5285,9 @@ def _fit_channels_from_params(
     compiled: CompiledFitProblem,
     params: dict[str, float],
     bundles: dict[str, FitDataBundle],
-    subset_cache: dict[str, tuple[np.ndarray, PointData4D]] | None = None,
+    subset_cache: dict[Any, tuple[np.ndarray, PointData4D]] | None = None,
+    *,
+    evaluate_masked: bool = False,
 ) -> dict[str, dict[str, Any]]:
     """Evaluate fit and residual channels for a compiled problem.
 
@@ -5283,19 +5303,25 @@ def _fit_channels_from_params(
         if name not in fitted_names:
             continue
         points = bundle.points
-        # Evaluate the model only where the data is valid (unmasked, finite,
-        # positive sigma) and scatter back onto the full grid with NaN
-        # elsewhere. Masked cells display as NaN regardless, so this avoids
-        # running the model over the (often 10x larger) masked remainder and
-        # over the extra unique Q those masked shells introduce.
-        cached_subset = subset_cache.get(name) if subset_cache is not None else None
+        # Normally evaluate only fit-valid data and scatter back with NaN
+        # elsewhere. The viewer's explicit unmask option instead evaluates all
+        # finite HKLE coordinates; keeping the paths separate avoids paying for
+        # the often much larger masked volume during ordinary interaction.
+        cache_key: Any = (name, "unmasked") if evaluate_masked else name
+        cached_subset = subset_cache.get(cache_key) if subset_cache is not None else None
         if cached_subset is not None:
             keep, subset = cached_subset
         else:
-            keep = points.valid_mask()
+            if evaluate_masked:
+                keep = np.isfinite(points.H) & np.isfinite(points.K)
+                keep &= np.isfinite(points.L) & np.isfinite(points.E)
+                if isinstance(points.temperature, np.ndarray):
+                    keep &= np.isfinite(points.temperature)
+            else:
+                keep = points.valid_mask()
             subset = _subset_points(points, keep)
             if subset_cache is not None:
-                subset_cache[name] = (keep, subset)
+                subset_cache[cache_key] = (keep, subset)
         fit_values = np.full(points.size, np.nan, dtype=float)
         if subset.size:
             fit_values[keep] = np.asarray(
@@ -8185,13 +8211,13 @@ def render_project_plot(
         for plot in group.plots:
             if plot.id != plot_id:
                 continue
+            if settings is not None:
+                plot = replace(plot, settings=dict(settings))
             if plot.type == "fit_covariance":
                 fit_id = plot.sources[0].fit_id if plot.sources else None
                 fit_entry = next((fit for fit in _walk_fit_entries(group.fits) if fit.id == fit_id), None)
                 if fit_entry is None:
                     raise ValueError("saved plot source fit is missing")
-                if settings is not None:
-                    plot = replace(plot, settings=dict(settings))
                 return render_plot(plot, fit_entry=fit_entry)
             if not plot.sources or not plot.sources[0].dataset_id:
                 raise ValueError("saved plot has no dataset source")
@@ -8201,12 +8227,14 @@ def render_project_plot(
             )
             if dataset is None:
                 raise ValueError("saved plot source dataset is missing")
-            views, names = slice_viewer_datasets(group, use_composite=False)
+            views, names = slice_viewer_datasets(
+                group,
+                use_composite=False,
+                unmask_model=bool(plot.settings.get("unmask_model", False)),
+            )
             view = views[names.index(dataset.name)] if dataset.name in names else None
             if not isinstance(view, MDHistoData):
                 raise TypeError("saved plots currently require MDHisto data")
-            if settings is not None:
-                plot = replace(plot, settings=dict(settings))
             return render_plot(plot, view)
     raise ValueError(f"unknown saved plot {plot_id!r}")
 
@@ -10780,6 +10808,10 @@ class NfitProjectExplorer:
         viewer._nfit_dataset_ids = {dataset.name: dataset.id for dataset in group.iter_datasets()}
         if hasattr(viewer, "set_save_plot_callback"):
             viewer.set_save_plot_callback(lambda viewer=viewer, group=group: self.save_plot_from_viewer(group, viewer))
+        if hasattr(viewer, "set_unmask_model_callback"):
+            viewer.set_unmask_model_callback(
+                lambda _enabled, group=group: self._request_overlay_refresh(group)
+            )
         if selected_dataset_name in names:
             viewer.dataset_combo.setCurrentIndex(names.index(selected_dataset_name))
         viewer.show()
@@ -10835,7 +10867,11 @@ class NfitProjectExplorer:
         dataset = next((item for item in group.iter_datasets() if item.id == dataset_id), None)
         if dataset is None:
             return None
-        views, names = slice_viewer_datasets(group, use_composite=False)
+        views, names = slice_viewer_datasets(
+            group,
+            use_composite=False,
+            unmask_model=bool(plot.settings.get("unmask_model", False)),
+        )
         data = views[names.index(dataset.name)] if dataset.name in names else None
         if not isinstance(data, MDHistoData):
             return None
@@ -10973,6 +11009,7 @@ class NfitProjectExplorer:
             datasets, names = slice_viewer_datasets(
                 group,
                 use_composite=use_composite,
+                unmask_model=bool(getattr(current_viewer, "unmask_model", False)),
                 force_rebin=False,
                 force_masks=False,
             )
@@ -11591,7 +11628,8 @@ class NfitProjectExplorer:
         self.scale_factor_fit_check.setToolTip(
             "Treat the selected dataset's scale as a fitted parameter. The Scale value is used as the initial guess, "
             "then the fitted value is written back to the dataset. The fitted scale multiplies the signal and its "
-            "absolute value multiplies the uncertainty; avoid an initial value of zero."
+            "absolute value multiplies the uncertainty; avoid an initial value of zero. Changing this option controls "
+            "the next fit and does not alter the current plot."
         )
         self.scale_factor_fit_check.toggled.connect(self._set_selected_dataset_scale_factor_vary)
         fit_weight_layout.addWidget(self.scale_factor_fit_check)
@@ -11972,6 +12010,7 @@ class NfitProjectExplorer:
         edit_group: bool = False,
         edit_mask: bool = False,
         edit_model: bool = False,
+        refresh_viewers: bool = True,
     ) -> None:
         from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -12098,7 +12137,8 @@ class NfitProjectExplorer:
             if edit_model:
                 self.tree.editItem(item_to_select, 0)
         self._sync_details()
-        self.refresh_open_slice_viewers()
+        if refresh_viewers:
+            self.refresh_open_slice_viewers()
 
     def _render_dataset_node(
         self,
@@ -12759,10 +12799,12 @@ class NfitProjectExplorer:
             branch_created = self._record_data_group_state_change(group)
         self._mark_dirty()
         if group is not None and branch_created:
-            self._refresh_tree(select_group=group, select_dataset=entry)
+            self._refresh_tree(
+                select_group=group,
+                select_dataset=entry,
+                refresh_viewers=False,
+            )
             return
-        if group is not None:
-            self.refresh_slice_viewer(group)
         self._sync_details()
 
     def _set_selected_dataset_temperature(self, value: float) -> None:
@@ -18354,12 +18396,20 @@ def _dataset_fit_summary_lines(
         return []
     extra_masks = effective_dataset_masks(group, dataset) if group is not None else []
     try:
-        view = dataset_for_slice_viewer(
-            dataset,
-            extra_masks=extra_masks,
-            force_rebin=False,
-            force_masks=False,
-        )
+        if dataset.scale_factor_vary:
+            view = _viewer_data_before_scale(
+                dataset,
+                extra_masks=extra_masks,
+                force_rebin=False,
+                force_masks=False,
+            )
+        else:
+            view = dataset_for_slice_viewer(
+                dataset,
+                extra_masks=extra_masks,
+                force_rebin=False,
+                force_masks=False,
+            )
         if isinstance(view, MDHistoData):
             fit_bins = _mdhisto_fit_bin_count(view)
             total_bins = int(np.prod(view.shape))

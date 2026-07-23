@@ -19,8 +19,11 @@ from __future__ import annotations
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Iterable, Mapping
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from math import floor, log10
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 import numpy as np
 
@@ -71,6 +74,112 @@ def _fmt(value: Any) -> str:
     return f"{number:.6g}"
 
 
+def _uncertainty_rounding_exponent(value: Any, significant_digits: int = 2) -> int | None:
+    """Return the base-10 rounding place for a positive finite uncertainty."""
+
+    try:
+        magnitude = abs(float(value))
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(magnitude) or magnitude == 0.0:
+        return None
+    return floor(log10(magnitude)) - significant_digits + 1
+
+
+def _fmt_at_exponent(value: Any, exponent: int) -> str:
+    """Round a finite number half-up at a base-10 exponent, retaining zeros."""
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return _fmt(value)
+    if not np.isfinite(number):
+        return "--"
+    try:
+        rounded = Decimal(str(number)).quantize(
+            Decimal(1).scaleb(exponent),
+            rounding=ROUND_HALF_UP,
+        )
+    except (InvalidOperation, ValueError):
+        return _fmt(number)
+
+    use_scientific = exponent < -6 or exponent > 6 or (
+        abs(number) >= 1.0e7 and exponent >= 0
+    )
+    if number != 0.0 and use_scientific:
+        power = floor(log10(abs(number)))
+        places = max(0, power - exponent)
+        mantissa = rounded.scaleb(-power)
+        return f"{mantissa:.{places}f} \\times 10^{{{power}}}"
+    places = max(0, -exponent)
+    return f"{rounded:.{places}f}"
+
+
+def _measurement_parts(value: Any, stderr: Any) -> tuple[str, Any]:
+    """Format a value and uncertainty with uncertainty-motivated precision.
+
+    Symmetric errors use one rounding place for both fields. Asymmetric errors
+    retain two significant figures independently; the central value uses the
+    coarser decimal place set by the larger-sided uncertainty.
+    """
+
+    if isinstance(stderr, Mapping):
+        minus = stderr.get("minus")
+        plus = stderr.get("plus")
+        minus_exp = _uncertainty_rounding_exponent(minus)
+        plus_exp = _uncertainty_rounding_exponent(plus)
+        if minus_exp is not None and plus_exp is not None:
+            value_exp = max(minus_exp, plus_exp)
+            return (
+                _fmt_at_exponent(value, value_exp),
+                {
+                    "minus": _fmt_at_exponent(abs(float(minus)), minus_exp),
+                    "plus": _fmt_at_exponent(abs(float(plus)), plus_exp),
+                },
+            )
+        try:
+            minus_number = abs(float(minus))
+            plus_number = abs(float(plus))
+        except (TypeError, ValueError):
+            return _fmt(value), None
+        if np.isfinite(minus_number) and np.isfinite(plus_number):
+            return _fmt(value), {"minus": _fmt(minus_number), "plus": _fmt(plus_number)}
+        return _fmt(value), None
+
+    exponent = _uncertainty_rounding_exponent(stderr)
+    if exponent is None:
+        try:
+            error_number = abs(float(stderr))
+        except (TypeError, ValueError):
+            return _fmt(value), None
+        return (
+            (_fmt(value), _fmt(error_number))
+            if np.isfinite(error_number)
+            else (_fmt(value), None)
+        )
+    return _fmt_at_exponent(value, exponent), _fmt_at_exponent(abs(float(stderr)), exponent)
+
+
+def _posterior_quantile_parts(median: Any, p16: Any, p84: Any) -> list[str]:
+    """Format posterior quantiles at the precision supported by their interval."""
+
+    try:
+        median_number = float(median)
+        p16_number = float(p16)
+        p84_number = float(p84)
+    except (TypeError, ValueError):
+        return [_fmt(median), _fmt(p16), _fmt(p84)]
+    lower_exp = _uncertainty_rounding_exponent(median_number - p16_number)
+    upper_exp = _uncertainty_rounding_exponent(p84_number - median_number)
+    if lower_exp is None or upper_exp is None:
+        return [_fmt(median), _fmt(p16), _fmt(p84)]
+    exponent = max(lower_exp, upper_exp)
+    return [
+        f"${_fmt_at_exponent(item, exponent)}$"
+        for item in (median_number, p16_number, p84_number)
+    ]
+
+
 def _pm(value: Any, stderr: Any = None) -> str:
     """Inner math-mode ``value \\pm stderr`` (``\\text{--}`` when unknown)."""
 
@@ -78,12 +187,12 @@ def _pm(value: Any, stderr: Any = None) -> str:
         return "\\text{--}"
     if stderr is None:
         return _fmt(value)
-    if isinstance(stderr, Mapping):
-        minus = stderr.get("minus")
-        plus = stderr.get("plus")
-        if minus is not None and plus is not None:
-            return f"{_fmt(value)}^{{+{_fmt(plus)}}}_{{-{_fmt(minus)}}}"
-    return f"{_fmt(value)} \\pm {_fmt(stderr)}"
+    value_text, error_text = _measurement_parts(value, stderr)
+    if isinstance(error_text, Mapping):
+        return f"{value_text}^{{+{error_text['plus']}}}_{{-{error_text['minus']}}}"
+    if error_text is not None:
+        return f"{value_text} \\pm {error_text}"
+    return value_text
 
 
 def _fmt_pm(value: Any, stderr: Any = None) -> str:
@@ -99,12 +208,10 @@ def _fmt_uncertainty(value: Any, stderr: Any = None) -> str:
 
     if stderr is None:
         return "--"
-    if isinstance(stderr, Mapping):
-        minus = stderr.get("minus")
-        plus = stderr.get("plus")
-        if minus is not None and plus is not None:
-            return f"$- {_fmt(minus)} / + {_fmt(plus)}$"
-    return _fmt(stderr)
+    _value_text, error_text = _measurement_parts(value, stderr)
+    if isinstance(error_text, Mapping):
+        return f"$- {error_text['minus']} / + {error_text['plus']}$"
+    return f"${error_text}$" if error_text is not None else "--"
 
 
 def _bmatrix(matrix: Any) -> str:
@@ -948,10 +1055,12 @@ def _section_parameters(fit_entry: Any) -> str:
     lines.append("\\midrule")
     for name, value in parameters.items():
         status, limits_text = _row_meta(str(name))
+        error = stderr.get(name) if name in stderr else None
+        value_text, _error_text = _measurement_parts(value, error)
         cells = [
             latex_escape(name),
-            _fmt(value),
-            _fmt_uncertainty(value, stderr.get(name)) if name in stderr else "--",
+            f"${value_text}$" if error is not None else _fmt(value),
+            _fmt_uncertainty(value, error) if error is not None else "--",
             status,
             limits_text,
         ]
@@ -959,7 +1068,9 @@ def _section_parameters(fit_entry: Any) -> str:
             row = posterior_params.get(name)
             row = row if isinstance(row, dict) else {}
             cells.extend(
-                [_fmt(row.get("median")), _fmt(row.get("p16")), _fmt(row.get("p84"))]
+                _posterior_quantile_parts(
+                    row.get("median"), row.get("p16"), row.get("p84")
+                )
             )
         lines.append(" & ".join(cells) + " \\\\")
     lines.append("\\bottomrule")
@@ -1028,6 +1139,15 @@ def _section_methods(fit_entry: Any, nfit_version: str) -> str:
         sampler_note += " The displayed uncertainties use the emcee 16--84\\% interval."
     if use_best_sample:
         sampler_note += " Displayed best-fit values use the highest-log-probability stored emcee sample."
+    if not use_posterior_uncertainties:
+        sampler_note += (
+            " Reported standard errors are local covariance estimates conditional "
+            "on the fitted model and data uncertainty."
+        )
+    sampler_note += (
+        " Parameter uncertainties are shown with two significant figures, and "
+        "parameter values are rounded to the corresponding decimal place."
+    )
     return (
         "\\section{Methods}\n"
         "Model parameters were optimized by weighted least squares, "

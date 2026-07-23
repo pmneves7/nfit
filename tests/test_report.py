@@ -1,7 +1,6 @@
 import re
 import shutil
 
-import numpy as np
 import pytest
 
 from nfit.pipeline import FitTimelineEntry
@@ -200,6 +199,30 @@ def test_posterior_columns_appear_when_present():
     assert "Median" not in without
 
 
+def test_posterior_quantiles_use_interval_supported_precision():
+    entry = _background_entry()
+    entry.goodness["posterior"] = {
+        "parameters": {
+            "bg.constant": {"median": 1.234567, "p16": 1.16789, "p84": 1.31001}
+        }
+    }
+
+    tex = render_fit_report_latex(entry, group_name="G")
+
+    assert "$1.235$" in tex
+    assert "$1.168$" in tex
+    assert "$1.310$" in tex
+
+
+def test_zero_standard_error_remains_visible():
+    entry = _background_entry()
+    entry.goodness["stderr"]["bg.constant"] = 0.0
+
+    tex = render_fit_report_latex(entry, group_name="G")
+
+    assert "$0$" in tex
+
+
 def test_report_uses_selected_posterior_best_sample_and_asymmetric_errors():
     entry = _background_entry()
     entry.goodness["posterior"] = {
@@ -214,7 +237,42 @@ def test_report_uses_selected_posterior_best_sample_and_asymmetric_errors():
     tex = render_fit_report_latex(entry, group_name="G")
 
     assert "1.55" in tex
-    assert "- 0.15 / + 0.05" in tex
+    assert "- 0.15 / + 0.050" in tex
+
+
+@pytest.mark.parametrize(
+    ("value", "error", "value_text", "error_text"),
+    [
+        (1.234567, 0.067891, "1.235", "0.068"),
+        (1234.5, 21.7, "1235", "22"),
+        (0.0062831, 0.0001247, "0.00628", "0.00012"),
+        (1.5, 0.02, "1.500", "0.020"),
+    ],
+)
+def test_report_rounds_parameter_values_to_uncertainty_precision(
+    value, error, value_text, error_text
+):
+    entry = _background_entry()
+    entry.goodness["parameters"]["bg.constant"] = value
+    entry.goodness["stderr"]["bg.constant"] = error
+
+    tex = render_fit_report_latex(entry, group_name="G")
+
+    assert f"${value_text}$" in tex
+    assert f"${error_text}$" in tex
+
+
+def test_report_keeps_full_precision_outside_generated_display():
+    entry = _background_entry()
+    value = 1.23456789
+    error = 0.06789123
+    entry.goodness["parameters"]["bg.constant"] = value
+    entry.goodness["stderr"]["bg.constant"] = error
+
+    render_fit_report_latex(entry, group_name="G")
+
+    assert entry.goodness["parameters"]["bg.constant"] == value
+    assert entry.goodness["stderr"]["bg.constant"] == error
 
 
 def test_full_rpa_report_covers_every_term():
