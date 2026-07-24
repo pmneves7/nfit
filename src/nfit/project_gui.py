@@ -916,6 +916,12 @@ def delete_dataset(group: DataGroup, dataset: DatasetEntry) -> None:
             for background in candidate.backgrounds
             if background.source_dataset_id != dataset.id
         ]
+    for node in (group, *group.iter_subgroups()):
+        node.backgrounds[:] = [
+            background
+            for background in node.backgrounds
+            if background.source_dataset_id != dataset.id
+        ]
     parent.datasets.remove(dataset)
 
 
@@ -1772,6 +1778,12 @@ def snapshot_data_group_state(group: DataGroup) -> dict[str, Any]:
             node_name: [_mask_to_dict(mask) for mask in node.masks]
             for node_name, node in _named_group_nodes(group)
         },
+        "group_backgrounds": {
+            node_name: [
+                _background_to_dict(background) for background in node.backgrounds
+            ]
+            for node_name, node in _named_group_nodes(group)
+        },
         "models": [
             _model_to_dict(model)
             for model in group.models.values()
@@ -1807,6 +1819,15 @@ def restore_data_group_state(group: DataGroup, snapshot: dict[str, Any]) -> None
         for node_name, node in _named_group_nodes(group):
             if node_name in group_masks:
                 node.masks = [_mask_from_dict(mask_payload) for mask_payload in group_masks[node_name]]
+    group_backgrounds = snapshot.get("group_backgrounds", {})
+    if isinstance(group_backgrounds, dict):
+        for node_name, node in _named_group_nodes(group):
+            if node_name in group_backgrounds:
+                node.backgrounds = [
+                    _background_from_dict(background_payload)
+                    for background_payload in group_backgrounds[node_name]
+                ]
+    _link_group_backgrounds(group)
     for model_payload in snapshot.get("models", []):
         name = str(model_payload.get("name", ""))
         existing = group.models.get(name)
@@ -1861,7 +1882,10 @@ def delete_model_component(group: DataGroup, model: ModelComponentSpec) -> None:
 # single logical role so that a range selection of, for example, fit results
 # never sweeps in the enclosing workspace or folder headers.
 _DELETABLE_TREE_ROLES = frozenset(
-    {"group", "dataset", "mask", "background", "dataset_group", "group_mask", "model", "fit", "fit_timeline", "plot"}
+    {
+        "group", "dataset", "mask", "background", "group_background",
+        "dataset_group", "group_mask", "model", "fit", "fit_timeline", "plot",
+    }
 )
 
 # Roles that should be treated as interchangeable when deciding which items a
@@ -2631,6 +2655,13 @@ class _CompositeScope:
             masks.extend(self.node.masks)
         return masks
 
+    @property
+    def backgrounds(self) -> list[BackgroundSpec]:
+        backgrounds = list(self.root.backgrounds)
+        if self.node is not self.root:
+            backgrounds.extend(self.node.backgrounds)
+        return backgrounds
+
     def iter_datasets(self):
         return self.node.iter_datasets()
 
@@ -2810,7 +2841,16 @@ def _composite_dataset_name(group: DataGroup) -> str:
 
 
 def _composite_candidates(group: DataGroup) -> list[DatasetEntry]:
-    return [dataset for dataset in group.iter_datasets() if dataset.enabled]
+    background_ids = {
+        background.source_dataset_id
+        for background in getattr(group, "backgrounds", [])
+        if background.enabled
+    }
+    return [
+        dataset
+        for dataset in group.iter_datasets()
+        if dataset.enabled and dataset.id not in background_ids
+    ]
 
 
 def _dataset_composite_kind(dataset: DatasetEntry) -> str:
@@ -2906,6 +2946,20 @@ def _composite_cache_signature(group: DataGroup) -> str:
             for dataset in _composite_candidates(group)
         ],
         _mask_signature(getattr(group, "masks", None)),
+        [
+            [
+                background.source_dataset_id,
+                bool(background.enabled),
+                float(background.scale),
+                background.interpolation,
+                (
+                    id(background.source_entry.data)
+                    if background.source_entry is not None
+                    else None
+                ),
+            ]
+            for background in getattr(group, "backgrounds", [])
+        ],
     ]
     return json.dumps(payload, sort_keys=True, default=str)
 
@@ -2922,13 +2976,14 @@ def composite_dataset_data(
         raise ValueError(message)
     config = data_group_composite_config(group)
     kind = _dataset_composite_kind(_composite_candidates(group)[0])
+    result: MDHistoData | PointListData | PointData4D
     if kind == "mdevent":
         node = group.node if isinstance(group, _CompositeScope) else group
         if not isinstance(node, DatasetGroup):
             raise ValueError("MDEvent composites must be imported inside a dataset group")
         lower, upper, num_bins = _composite_rebin_bounds(config)
         allow_overcommit = bool(config.pop("_allow_memory_overcommit_once", False))
-        return bin_mdevent_group(
+        result = bin_mdevent_group(
             node,
             lower=lower,
             upper=upper,
@@ -2948,12 +3003,12 @@ def composite_dataset_data(
             progress_callback=progress_callback,
             symmetry_operations=_rebin_symmetry_matrices(config, _composite_root(group).lattice_parameters),
         )
-    if kind == "raw_dgs_nexus":
+    elif kind == "raw_dgs_nexus":
         node = group.node if isinstance(group, _CompositeScope) else group
         if not isinstance(node, DatasetGroup):
             raise ValueError("raw direct-geometry composites must be imported inside a dataset group")
         lower, upper, num_bins = _composite_rebin_bounds(config)
-        return bin_raw_dgs_group(
+        result = bin_raw_dgs_group(
             node, lower=lower, upper=upper, num_bins=num_bins,
             step_size=_composite_rebin_step_sizes(config), datasets=_composite_candidates(group),
             vectors=[axis.get("vector", _identity_vector(index, 4)) for index, axis in enumerate(config.get("axes", []))],
@@ -2961,13 +3016,65 @@ def composite_dataset_data(
             max_batch_bytes=_rebin_max_batch_bytes(config), progress_callback=progress_callback,
             symmetry_operations=_rebin_symmetry_matrices(config, _composite_root(group).lattice_parameters),
         )
-    if kind == "mdhisto":
-        return _composite_mdhisto_data(group, config, progress_callback=progress_callback)
-    if kind == "point_list":
-        return _composite_point_list_data(group, config, progress_callback=progress_callback)
-    if kind == "point_data_4d":
-        return _composite_point_data(group, config, progress_callback=progress_callback)
-    raise ValueError(f"unsupported composite dataset kind {kind!r}")
+    elif kind == "mdhisto":
+        result = _composite_mdhisto_data(
+            group, config, progress_callback=progress_callback
+        )
+    elif kind == "point_list":
+        result = _composite_point_list_data(
+            group, config, progress_callback=progress_callback
+        )
+    elif kind == "point_data_4d":
+        result = _composite_point_data(
+            group, config, progress_callback=progress_callback
+        )
+    else:
+        raise ValueError(f"unsupported composite dataset kind {kind!r}")
+    return _apply_composite_backgrounds(group, result)
+
+
+def _apply_composite_backgrounds(
+    group: DataGroup | _CompositeScope,
+    data: MDHistoData | PointListData | PointData4D,
+) -> MDHistoData | PointListData | PointData4D:
+    """Apply backgrounds owned by a composite scope after it is combined."""
+
+    backgrounds = list(getattr(group, "backgrounds", []))
+    if not backgrounds:
+        return data
+    if not isinstance(data, MDHistoData):
+        raise TypeError("group powder backgrounds require a gridded composite")
+    root = _composite_root(group)
+    metadata = dict(data.metadata)
+    if root.lattice_parameters and not isinstance(
+        metadata.get("lattice_parameters"), dict
+    ):
+        metadata["lattice_parameters"] = dict(root.lattice_parameters)
+    result = replace(data, metadata=metadata)
+    for background in backgrounds:
+        if not background.enabled:
+            continue
+        source = background.source_entry
+        if source is None:
+            raise ValueError(
+                f"background {background.name!r} refers to a missing dataset"
+            )
+        source_data = _viewer_data_before_scale(
+            source,
+            force_rebin=True,
+            force_masks=True,
+        )
+        if not isinstance(source_data, MDHistoData):
+            raise TypeError(
+                f"background {background.name!r} must refer to gridded powder data"
+            )
+        result = subtract_powder_background(
+            result,
+            source_data,
+            scale=background.scale,
+            interpolation=background.interpolation,
+        )
+    return result
 
 
 def _cached_composite_dataset_data(
@@ -3146,6 +3253,18 @@ def _composite_mdhisto_data(
             "weighted_by_fit_weight": True,
         },
     }
+    for key in (
+        "lattice_parameters",
+        "oriented_lattice",
+        "rlu_to_inv_angstrom_matrix",
+        "ub_matrix",
+        "orientation_matrix",
+    ):
+        if key in first_data.metadata:
+            metadata[key] = copy.deepcopy(first_data.metadata[key])
+    root = _composite_root(group)
+    if root.lattice_parameters and "lattice_parameters" not in metadata:
+        metadata["lattice_parameters"] = dict(root.lattice_parameters)
     return MDHistoData(
         axes=axes,
         signal=np.asarray(result.binned_data, dtype=float),
@@ -4457,7 +4576,7 @@ def perform_group_fit(
 
 
 def _fit_parameter_limit_hits(specs: Any, params: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return optimized parameters that finish at a finite lower or upper bound."""
+    """Return optimized parameters that finish at or effectively pin a bound."""
 
     hits: list[dict[str, Any]] = []
     for spec in specs:
@@ -4470,21 +4589,38 @@ def _fit_parameter_limit_hits(specs: Any, params: dict[str, Any]) -> list[dict[s
             value = float(params[name])
         except (TypeError, ValueError):
             continue
-        for side, bound in (("lower", getattr(spec, "min", None)), ("upper", getattr(spec, "max", None))):
+        lower = getattr(spec, "min", None)
+        upper = getattr(spec, "max", None)
+        for side, bound, other_bound in (
+            ("lower", lower, upper),
+            ("upper", upper, lower),
+        ):
             if bound is None:
                 continue
             try:
                 bound_value = float(bound)
             except (TypeError, ValueError):
                 continue
-            if np.isfinite(bound_value) and _parameter_is_at_bound(value, bound_value):
+            if np.isfinite(bound_value) and _parameter_is_at_bound(
+                value, bound_value, other_bound
+            ):
                 hits.append({"name": name, "side": side, "bound": bound_value})
                 break
     return hits
 
 
-def _parameter_is_at_bound(value: Any, bound: Any) -> bool:
-    """Return whether a finite parameter value is numerically at a finite bound."""
+def _parameter_is_at_bound(
+    value: Any,
+    bound: Any,
+    other_bound: Any = None,
+) -> bool:
+    """Return whether a fitted value is effectively pinned to a finite bound.
+
+    For two-sided bounds, proximity is measured against the allowed interval.
+    This catches optimizer solutions that stop very close to a boundary without
+    requiring bit-for-bit equality. One-sided bounds retain a small
+    scale-aware numerical tolerance.
+    """
 
     try:
         value_float = float(value)
@@ -4493,7 +4629,16 @@ def _parameter_is_at_bound(value: Any, bound: Any) -> bool:
         return False
     if not np.isfinite(value_float) or not np.isfinite(bound_float):
         return False
-    return bool(np.isclose(value_float, bound_float, rtol=1.0e-8, atol=1.0e-10 * max(1.0, abs(bound_float))))
+    tolerance = 1.0e-10 * max(1.0, abs(bound_float))
+    try:
+        other_float = float(other_bound)
+    except (TypeError, ValueError):
+        other_float = np.nan
+    if np.isfinite(other_float):
+        span = abs(other_float - bound_float)
+        if span > 0.0:
+            tolerance = max(tolerance, 1.0e-4 * span)
+    return bool(abs(value_float - bound_float) <= tolerance)
 
 
 def _fit_limit_hits_from_goodness(goodness: Any) -> dict[str, dict[str, Any]]:
@@ -9573,6 +9718,13 @@ class NfitProjectExplorer:
                 entry.backgrounds.remove(background)
                 self._record_data_group_state_change(group)
                 return True, group
+        if role == "group_background" and group is not None:
+            owner = self._background_owner_for_item(item)
+            background = self._background_for_item(item)
+            if owner is not None and background is not None and background in owner.backgrounds:
+                owner.backgrounds.remove(background)
+                self._record_data_group_state_change(group)
+                return True, group
         if role == "dataset_group" and group is not None:
             subgroup = self._dataset_group_for_item(item)
             if subgroup is not None and delete_dataset_group(group, subgroup):
@@ -9834,12 +9986,22 @@ class NfitProjectExplorer:
         group, entry, _mask, _model, role = self._objects_for_item(
             self._current_item()
         )
-        if role not in {"dataset", "backgrounds"} or group is None or entry is None:
+        if group is None:
+            return None
+        if role in {"dataset", "backgrounds"} and entry is not None:
+            owner: DatasetEntry | DataGroup | DatasetGroup = entry
+        elif role in {"dataset_group", "group_backgrounds"}:
+            owner = self._background_owner_for_item(self._current_item())
+            if owner is None:
+                return None
+        elif role == "datasets":
+            owner = group
+        else:
             return None
         candidates = [
             candidate
             for candidate in group.iter_datasets()
-            if candidate is not entry and candidate.data_type == "powder_inelastic"
+            if candidate is not owner and candidate.data_type == "powder_inelastic"
         ]
         if not candidates:
             QtWidgets.QMessageBox.information(
@@ -9860,13 +10022,13 @@ class NfitProjectExplorer:
         if not accepted:
             return None
         source = candidates[labels.index(label)]
-        name = _unique_name(source.name, [item.name for item in entry.backgrounds])
+        name = _unique_name(source.name, [item.name for item in owner.backgrounds])
         background = BackgroundSpec(
             name=name,
             source_dataset_id=source.id,
             source_entry=source,
         )
-        entry.backgrounds.append(background)
+        owner.backgrounds.append(background)
         self._record_data_group_state_change(group)
         self._mark_dirty()
         self._refresh_tree(select_group=group, select_background=background)
@@ -10846,7 +11008,11 @@ class NfitProjectExplorer:
             return self.open_slice_viewer(
                 group, selected_dataset_name=dataset.name, use_composite=False
             )
-        allowed = {"group", "datasets", "dataset", "masks", "mask", "backgrounds", "background", "dataset_group", "group_masks", "group_mask"}
+        allowed = {
+            "group", "datasets", "dataset", "masks", "mask", "backgrounds",
+            "background", "group_backgrounds", "group_background",
+            "dataset_group", "group_masks", "group_mask",
+        }
         if role not in allowed or group is None:
             return None
         # For a mask or the Masks node, entry is the owning dataset.
@@ -11786,7 +11952,8 @@ class NfitProjectExplorer:
         self.load_dataset_button.setToolTip("Load this dataset from disk now so its axes, data, and metadata are available.")
         self.add_mask_button.setToolTip("Create a new mask under the selected dataset or shared mask folder.")
         self.add_background_button.setToolTip(
-            "Attach a powder |Q|-energy dataset as a scaled background to subtract from the selected dataset."
+            "Attach a powder |Q|-energy dataset as a scaled background for the "
+            "selected dataset or composite dataset group."
         )
         self.add_dataset_group_button.setToolTip("Create a nested dataset group for organizing related datasets and shared masks.")
         self.save_dataset_button.setToolTip("Export the selected dataset, including current nfit processing, to a data file.")
@@ -12283,6 +12450,37 @@ class NfitProjectExplorer:
                 self._expanded_state.get(("backgrounds", id(dataset)), False)
             )
 
+        group_backgrounds_item = QtWidgets.QTreeWidgetItem(["Backgrounds"])
+        group_backgrounds_item.setToolTip(
+            0,
+            "Powder backgrounds subtracted after the enabled datasets in this group are combined.",
+        )
+        _set_tree_item_icon(group_backgrounds_item, "folder")
+        self._remember_item(
+            group_backgrounds_item, "group_backgrounds", group, node=node
+        )
+        parent_item.addChild(group_backgrounds_item)
+        for background in node.backgrounds:
+            background_item = QtWidgets.QTreeWidgetItem([background.name])
+            background_item.setFlags(
+                background_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable
+            )
+            background_item.setToolTip(
+                0, "Powder background applied once to this group's composite."
+            )
+            _set_tree_item_icon(background_item, "dataset")
+            self._remember_item(
+                background_item, "group_background", group, node=node
+            )
+            self._background_item_roles[id(background_item)] = background
+            _style_enabled_tree_item(background_item, background.enabled)
+            group_backgrounds_item.addChild(background_item)
+            if select_background is background and found is None:
+                found = background_item
+        group_backgrounds_item.setExpanded(
+            self._expanded_state.get(("group_backgrounds", id(node)), False)
+        )
+
         for subgroup in node.subgroups:
             subgroup_item = QtWidgets.QTreeWidgetItem([subgroup.name])
             subgroup_item.setFlags(subgroup_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
@@ -12369,7 +12567,7 @@ class NfitProjectExplorer:
         entry: DatasetEntry | None = None,
         mask: MaskSpec | None = None,
         model: ModelComponentSpec | None = None,
-        node: DatasetGroup | None = None,
+        node: DataGroup | DatasetGroup | None = None,
     ) -> None:
         self._item_roles[id(item)] = (role, group, entry, mask, model)
         if node is not None:
@@ -12379,6 +12577,18 @@ class NfitProjectExplorer:
         if item is None:
             return None
         return self._dataset_group_roles.get(id(item))
+
+    def _background_owner_for_item(
+        self, item: Any
+    ) -> DatasetEntry | DataGroup | DatasetGroup | None:
+        group, entry, _mask, _model, role = self._objects_for_item(item)
+        if role in {"dataset", "backgrounds", "background"}:
+            return entry
+        if role == "datasets":
+            return group
+        if role in {"dataset_group", "group_backgrounds", "group_background"}:
+            return self._dataset_group_roles.get(id(item)) or group
+        return None
 
     def _add_fit_tree_item(
         self,
@@ -12447,7 +12657,7 @@ class NfitProjectExplorer:
             changed = mask.name != new_name
             mask.name = new_name
             item.setText(0, mask.name)
-        elif role == "background":
+        elif role in {"background", "group_background"}:
             background = self._background_for_item(item)
             if background is not None:
                 new_name = item.text(0).strip() or "Background"
@@ -12488,7 +12698,7 @@ class NfitProjectExplorer:
                 plot.name = new_name
                 item.setText(0, plot.name)
         if changed:
-            if role in {"dataset", "mask", "background", "model", "dataset_group", "group_mask"} and group is not None:
+            if role in {"dataset", "mask", "background", "group_background", "model", "dataset_group", "group_mask"} and group is not None:
                 self._record_data_group_state_change(group)
             self._mark_dirty()
         self._sync_details()
@@ -12528,21 +12738,23 @@ class NfitProjectExplorer:
         self.add_model_button.setVisible(can_add_model)
         self.new_analysis_button.setVisible(role == "analyses" and group is not None)
         self.view_slice_button.setVisible(
-            role in {"group", "datasets", "dataset", "masks", "mask", "backgrounds", "background", "dataset_group", "group_masks", "group_mask"}
+            role in {"group", "datasets", "dataset", "masks", "mask", "backgrounds", "background", "group_backgrounds", "group_background", "dataset_group", "group_masks", "group_mask"}
         )
         self.view_slice_button.setEnabled(bool(group is not None and _has_slice_viewer_candidates(group)))
         self.load_dataset_button.setVisible(
             role == "dataset" and entry is not None and _dataset_can_load(entry)
         )
         self.add_mask_button.setVisible(role in {"dataset", "masks", "group_masks", "dataset_group"})
-        self.add_background_button.setVisible(role in {"dataset", "backgrounds"})
+        self.add_background_button.setVisible(
+            role in {"datasets", "dataset", "backgrounds", "dataset_group", "group_backgrounds"}
+        )
         self.add_dataset_group_button.setVisible(role in {"group", "datasets", "dataset_group"})
         self.save_dataset_button.setVisible(role == "dataset")
         self.save_dataset_button.setEnabled(
             bool(role == "dataset" and entry is not None and _dataset_can_save(entry))
         )
         self.delete_button.setEnabled(
-            role in {"group", "dataset", "mask", "background", "model", "fit", "fit_timeline", "dataset_group", "group_mask", "plot"}
+            role in {"group", "dataset", "mask", "background", "group_background", "model", "fit", "fit_timeline", "dataset_group", "group_mask", "plot"}
         )
         mask_editing = role in {"mask", "group_mask"}
         self.mask_type_combo.setVisible(mask_editing)
@@ -12621,6 +12833,21 @@ class NfitProjectExplorer:
             if background is not None:
                 self.title_label.setText(background.name)
                 self._set_background_details(group, entry, background)
+        elif role == "group_backgrounds" and group is not None:
+            owner = self._background_owner_for_item(self._current_item())
+            if owner is not None:
+                self.title_label.setText(f"{owner.name} / Backgrounds")
+                self._set_details_text(
+                    f"{len(owner.backgrounds)} background(s)\n\n"
+                    "Enabled powder backgrounds are subtracted once, after this "
+                    "group's enabled datasets are combined."
+                )
+        elif role == "group_background" and group is not None:
+            owner = self._background_owner_for_item(self._current_item())
+            background = self._background_for_item(self._current_item())
+            if owner is not None and background is not None:
+                self.title_label.setText(background.name)
+                self._set_background_details(group, owner, background)
         elif role == "dataset_group":
             subgroup = self._dataset_group_for_item(self._current_item())
             name = subgroup.name if subgroup is not None else "Dataset group"
@@ -13438,7 +13665,7 @@ class NfitProjectExplorer:
     def _set_background_details(
         self,
         group: DataGroup | None,
-        dataset: DatasetEntry,
+        owner: DatasetEntry | DataGroup | DatasetGroup,
         background: BackgroundSpec,
     ) -> None:
         from PySide6 import QtWidgets
@@ -13455,7 +13682,7 @@ class NfitProjectExplorer:
         enabled.setToolTip("Enable or temporarily bypass this background subtraction.")
         enabled.toggled.connect(
             lambda checked: self._update_background(
-                group, dataset, background, enabled=bool(checked)
+                group, owner, background, enabled=bool(checked)
             )
         )
         layout.addWidget(enabled, 0, 0, 1, 2)
@@ -13468,7 +13695,7 @@ class NfitProjectExplorer:
         candidates = [] if group is None else [
             candidate
             for candidate in group.iter_datasets()
-            if candidate is not dataset and candidate.data_type == "powder_inelastic"
+            if candidate is not owner and candidate.data_type == "powder_inelastic"
         ]
         for candidate in candidates:
             source_combo.addItem(candidate.name, candidate.id)
@@ -13477,7 +13704,7 @@ class NfitProjectExplorer:
             source_combo.setCurrentIndex(source_index)
         source_combo.currentIndexChanged.connect(
             lambda _index: self._set_background_source(
-                group, dataset, background, source_combo.currentData()
+                group, owner, background, source_combo.currentData()
             )
         )
         layout.addWidget(source_combo, 1, 1)
@@ -13492,7 +13719,7 @@ class NfitProjectExplorer:
         )
         scale.valueChanged.connect(
             lambda value: self._update_background(
-                group, dataset, background, scale=float(value)
+                group, owner, background, scale=float(value)
             )
         )
         layout.addWidget(scale, 2, 1)
@@ -13509,7 +13736,7 @@ class NfitProjectExplorer:
         interpolation.currentIndexChanged.connect(
             lambda _index: self._update_background(
                 group,
-                dataset,
+                owner,
                 background,
                 interpolation=str(interpolation.currentData()),
             )
@@ -13521,7 +13748,7 @@ class NfitProjectExplorer:
     def _set_background_source(
         self,
         group: DataGroup | None,
-        dataset: DatasetEntry,
+        owner: DatasetEntry | DataGroup | DatasetGroup,
         background: BackgroundSpec,
         source_id: Any,
     ) -> None:
@@ -13531,16 +13758,16 @@ class NfitProjectExplorer:
             (candidate for candidate in group.iter_datasets() if candidate.id == source_id),
             None,
         )
-        if source is None or source is dataset:
+        if source is None or source is owner:
             return
         background.source_dataset_id = source.id
         background.source_entry = source
-        self._background_changed(group, dataset)
+        self._background_changed(group, owner)
 
     def _update_background(
         self,
         group: DataGroup | None,
-        dataset: DatasetEntry,
+        owner: DatasetEntry | DataGroup | DatasetGroup,
         background: BackgroundSpec,
         **changes: Any,
     ) -> None:
@@ -13550,12 +13777,16 @@ class NfitProjectExplorer:
                 setattr(background, name, value)
                 changed = True
         if changed:
-            self._background_changed(group, dataset)
+            self._background_changed(group, owner)
 
     def _background_changed(
-        self, group: DataGroup | None, dataset: DatasetEntry
+        self,
+        group: DataGroup | None,
+        owner: DatasetEntry | DataGroup | DatasetGroup,
     ) -> None:
         if group is not None:
+            if not isinstance(owner, DatasetEntry):
+                data_group_composite_config(_composite_scope(group, owner))["stale"] = True
             self._record_data_group_state_change(group)
             self.refresh_slice_viewer(group)
         self._mark_dirty()
@@ -16999,14 +17230,14 @@ class NfitProjectExplorer:
             specs.append(("Paste", can_paste))
         if enabled_state is not None:
             specs.append(("Disable" if enabled_state else "Enable", True))
-        if role in {"group", "dataset", "mask", "background", "model", "fit", "fit_timeline", "dataset_group", "group_mask", "plot"}:
+        if role in {"group", "dataset", "mask", "background", "group_background", "model", "fit", "fit_timeline", "dataset_group", "group_mask", "plot"}:
             specs.append(("Rename", True))
             specs.append(("Delete", True))
         if role in {"group", "datasets", "dataset", "analyses", "analysis", "analysis_output"}:
             specs.append(("Open Analysis Window", True))
         if role == "analyses":
             specs.append(("New analysis", True))
-        if role in {"group", "datasets", "dataset", "masks", "mask", "backgrounds", "background", "dataset_group", "group_masks", "group_mask", "analysis_output"}:
+        if role in {"group", "datasets", "dataset", "masks", "mask", "backgrounds", "background", "group_backgrounds", "group_background", "dataset_group", "group_masks", "group_mask", "analysis_output"}:
             output = self._analysis_output_roles.get(id(item)) if role == "analysis_output" else None
             specs.append(("View in data viewer", role != "analysis_output" or bool(output and output.dataset_id)))
         if role == "dataset":
@@ -17014,7 +17245,7 @@ class NfitProjectExplorer:
             specs.append(("Change file source", True))
         if role in {"dataset", "masks", "group_masks", "dataset_group"}:
             specs.append(("Add mask", True))
-        if role in {"dataset", "backgrounds"}:
+        if role in {"datasets", "dataset", "backgrounds", "dataset_group", "group_backgrounds"}:
             specs.append(("Add background", True))
         if role in {"group", "datasets", "dataset_group"}:
             specs.append(("Add dataset", True))
@@ -17075,7 +17306,10 @@ class NfitProjectExplorer:
             "Change file source": "Point this dataset at a different source file on disk.",
             "Add dataset": "Choose data files to import into this dataset collection.",
             "Add mask": "Create a new mask for the selected dataset or shared mask folder.",
-            "Add background": "Attach a scaled powder |Q|-energy background to the selected dataset.",
+            "Add background": (
+                "Attach a scaled powder |Q|-energy background to the selected "
+                "dataset or composite dataset group."
+            ),
             "New dataset group": "Create a nested dataset group under the selected workspace or group.",
             "Add model": "Create a new model component in the selected workspace.",
             "Fit now": "Run the optimizer from the selected fit state and store a new fit result.",
@@ -19232,8 +19466,13 @@ def _snapshot_parameter_rows(fit_entry: FitTimelineEntry) -> list[dict[str, str]
             raw_limits = limits.get(name)
             side = None
             if bool(fitted.get(name, False)) and isinstance(raw_limits, (list, tuple)) and len(raw_limits) == 2:
-                for candidate_side, bound in (("lower", raw_limits[0]), ("upper", raw_limits[1])):
-                    if bound not in (None, "") and _parameter_is_at_bound(value, bound):
+                for candidate_side, bound, other_bound in (
+                    ("lower", raw_limits[0], raw_limits[1]),
+                    ("upper", raw_limits[1], raw_limits[0]),
+                ):
+                    if bound not in (None, "") and _parameter_is_at_bound(
+                        value, bound, other_bound
+                    ):
                         side = candidate_side
                         break
             rows.append({"name": label, "value": _format_number(value), "at_limit": bool(side), "limit_side": side or ""})
@@ -19327,8 +19566,13 @@ def _fit_result_limit_hits(
             bounds = limits.get(parameter_name)
             if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
                 continue
-            for side, bound in (("lower", bounds[0]), ("upper", bounds[1])):
-                if bound not in (None, "") and _parameter_is_at_bound(parameters[result_name], bound):
+            for side, bound, other_bound in (
+                ("lower", bounds[0], bounds[1]),
+                ("upper", bounds[1], bounds[0]),
+            ):
+                if bound not in (None, "") and _parameter_is_at_bound(
+                    parameters[result_name], bound, other_bound
+                ):
                     hits[result_name] = {"name": result_name, "side": side, "bound": bound}
                     break
     return hits
@@ -19343,8 +19587,13 @@ def _model_parameter_limit_side(model: ModelComponentSpec, parameter_name: str) 
     if not isinstance(raw, (list, tuple)) or len(raw) != 2:
         return None
     value = model.parameters.get(parameter_name)
-    for side, bound in (("lower", raw[0]), ("upper", raw[1])):
-        if bound not in (None, "") and _parameter_is_at_bound(value, bound):
+    for side, bound, other_bound in (
+        ("lower", raw[0], raw[1]),
+        ("upper", raw[1], raw[0]),
+    ):
+        if bound not in (None, "") and _parameter_is_at_bound(
+            value, bound, other_bound
+        ):
             return side
     return None
 
@@ -19468,6 +19717,10 @@ def _project_from_dict(payload: dict[str, Any]) -> NfitProject:
             datasets=[_dataset_from_dict(d) for d in group_payload.get("datasets", [])],
             subgroups=[_dataset_group_from_dict(s) for s in group_payload.get("subgroups", [])],
             masks=[_mask_from_dict(m) for m in group_payload.get("masks", [])],
+            backgrounds=[
+                _background_from_dict(background)
+                for background in group_payload.get("backgrounds", [])
+            ],
             lattice_parameters=group_payload.get("lattice_parameters"),
             spacegroup=group_payload.get("spacegroup"),
             metadata=dict(group_payload.get("metadata", {})),
@@ -19531,6 +19784,9 @@ def _link_group_backgrounds(group: DataGroup) -> None:
     by_id = {dataset.id: dataset for dataset in group.iter_datasets()}
     for dataset in by_id.values():
         for background in dataset.backgrounds:
+            background.source_entry = by_id.get(background.source_dataset_id)
+    for node in (group, *group.iter_subgroups()):
+        for background in node.backgrounds:
             background.source_entry = by_id.get(background.source_dataset_id)
 
 
@@ -19647,6 +19903,10 @@ def _dataset_group_from_dict(payload: dict[str, Any]) -> DatasetGroup:
         datasets=[_dataset_from_dict(d) for d in payload.get("datasets", [])],
         subgroups=[_dataset_group_from_dict(s) for s in payload.get("subgroups", [])],
         masks=[_mask_from_dict(m) for m in payload.get("masks", [])],
+        backgrounds=[
+            _background_from_dict(background)
+            for background in payload.get("backgrounds", [])
+        ],
         resolution=dict(payload.get("resolution", {})),
         metadata=dict(payload.get("metadata", {})),
     )
@@ -19658,6 +19918,9 @@ def _dataset_group_to_dict(group: DatasetGroup) -> dict[str, Any]:
         "datasets": [_dataset_to_dict(dataset) for dataset in group.datasets],
         "subgroups": [_dataset_group_to_dict(sub) for sub in group.subgroups],
         "masks": [_mask_to_dict(mask) for mask in group.masks],
+        "backgrounds": [
+            _background_to_dict(background) for background in group.backgrounds
+        ],
         "resolution": _json_mapping(group.resolution),
         "metadata": _json_mapping(group.metadata),
     }
@@ -19679,6 +19942,9 @@ def _data_group_to_dict(group: DataGroup) -> dict[str, Any]:
         "datasets": [_dataset_to_dict(dataset) for dataset in group.datasets],
         "subgroups": [_dataset_group_to_dict(sub) for sub in group.subgroups],
         "masks": [_mask_to_dict(mask) for mask in group.masks],
+        "backgrounds": [
+            _background_to_dict(background) for background in group.backgrounds
+        ],
         "models": model_payloads,
         "fits": [_fit_entry_to_dict(fit_entry) for fit_entry in group.fits],
         "active_fit_path": (

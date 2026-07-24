@@ -687,8 +687,10 @@ participate in viewing, rebinning, or fitting.
 
 ## Dataset backgrounds
 
-Every dataset has a **Backgrounds** branch beside **Masks**. Use **Add
-background** to choose a powder inelastic dataset from the same workspace.
+Every dataset has a **Backgrounds** branch beside **Masks**. Dataset groups
+also have a **Backgrounds** branch for corrections that belong to the combined
+rotation series or other composite. Use **Add background** to choose a powder
+inelastic dataset from the same workspace.
 Each background entry has its own enabled state, scale, and linear/nearest
 interpolation setting, so several corrections can be stacked and temporarily
 bypassed without deleting their configuration.
@@ -701,6 +703,22 @@ outside the background domain or over missing background values are masked
 rather than extrapolated. Background subtraction occurs before the target
 dataset scale factor and is therefore shared by viewing, fitting, saved fit
 states, and GUI-free scripts that load the project.
+
+A dataset background is applied to that dataset before its scale factor. A
+group background is different: its source dataset is excluded from the
+group's signal inputs, the enabled member datasets are combined and rebinned,
+and the powder background is then subtracted exactly once from the resulting
+composite. The group relationship, scale, interpolation mode, and enabled
+state are saved in the project and restored with fit-history snapshots.
+
+To convert single-crystal inelastic data to powder inelastic data, open the
+**Analysis Window**, choose **Spherical average**, and select the HKL/E
+dataset or composite. The conversion requires an attached UB matrix or lattice
+parameters so `|Q|` can be calculated. It creates an inverse-variance-weighted,
+density-valued `|Q|, E` dataset that can be viewed normally or selected as a
+background. This is also the route for producing a powder background from a
+single-crystal rotation series before assigning it to another dataset or
+composite.
 
 ## Models
 
@@ -725,9 +743,16 @@ region but does not reduce the number of independent fitted parameters. A
 dependent parameter must be enabled for fitting, globally shared, and free of
 separate min/max bounds. See [Fit constraints](fit_constraints.md) for the full
 expression language, validation rules, reduced-chi-squared accounting, and
-script examples. The model editor scrolls when a
-component has many sections or parameters, so fit-parameter rows keep normal
-editor height as generated Heisenberg RPA exchange orbits are added.
+script examples. The model editor scrolls when a component has many sections
+or parameters, so fit-parameter rows keep normal editor height as generated
+Heisenberg RPA exchange orbits are added.
+
+Fitted parameters at a bound, or within `1e-4` of the total finite allowed
+range from a bound, are shown in red in both the model editor and fit-results
+table. This range-relative tolerance identifies optimizer results that are
+effectively boundary-pinned even when floating-point convergence leaves the
+reported value slightly inside the bound. For one-sided bounds, only the small
+scale-aware numerical tolerance is used.
 
 For a Heisenberg RPA self-consistency closure, the solved reaction field or
 effective susceptibility remains an internal derived value. Onsager and TAC

@@ -2507,12 +2507,23 @@ def test_fit_limit_hits_are_saved_and_rendered_in_fit_results(monkeypatch):
     hits = project_gui._fit_parameter_limit_hits(
         [
             ParameterSpec("constant.offset", 1.0, min=0.0, max=1.0),
+            ParameterSpec("constant.near", -99.9957, min=-100.0, max=100.0),
+            ParameterSpec("constant.edgeward", -99.9, min=-100.0, max=100.0),
             ParameterSpec("constant.free", 0.4, min=0.0, max=1.0),
             ParameterSpec("constant.fixed", 1.0, min=0.0, max=1.0, vary=False),
         ],
-        {"constant.offset": 1.0, "constant.free": 0.4, "constant.fixed": 1.0},
+        {
+            "constant.offset": 1.0,
+            "constant.near": -99.9957,
+            "constant.edgeward": -99.9,
+            "constant.free": 0.4,
+            "constant.fixed": 1.0,
+        },
     )
-    assert hits == [{"name": "constant.offset", "side": "upper", "bound": 1.0}]
+    assert hits == [
+        {"name": "constant.offset", "side": "upper", "bound": 1.0},
+        {"name": "constant.near", "side": "lower", "bound": -100.0},
+    ]
 
     entry = FitTimelineEntry(
         name="Fit Result1",
@@ -2548,6 +2559,31 @@ def test_fit_limit_hits_are_saved_and_rendered_in_fit_results(monkeypatch):
     legacy_table = legacy_box.findChild(QtWidgets.QTableWidget, "fit_results_table")
     assert legacy_table is not None
     assert all(legacy_table.item(0, column).background().color() == QtGui.QColor("#5a2929") for column in range(6))
+
+
+def test_model_editor_marks_effectively_boundary_pinned_parameter_red(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    model = ModelComponentSpec(
+        "Model1",
+        parameters={"constant": -99.9957},
+        fit_parameters={"constant": True},
+        global_fit={"constant": True},
+        limits={"constant": [-100.0, 100.0]},
+    )
+    group = DataGroup("Datagroup1", models={model.name: model})
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    model_item = explorer.tree.topLevelItem(0).child(1).child(0)
+
+    explorer.tree.setCurrentItem(model_item)
+
+    editor = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "model_parameter_value_constant"
+    )
+    assert editor is not None
+    assert "#c0392b" in editor.styleSheet()
+    assert "lower bound" in editor.toolTip()
 
 
 def test_project_explorer_reuses_fit_progress_dialog(monkeypatch):
@@ -4027,7 +4063,11 @@ def test_composite_controls_live_on_dataset_collections_not_workspace(monkeypatc
     explorer = NfitProjectExplorer(NfitProject([group]))
     workspace_item = explorer.tree.topLevelItem(0)
     datasets_item = workspace_item.child(0)
-    subgroup_item = datasets_item.child(1)
+    subgroup_item = next(
+        datasets_item.child(index)
+        for index in range(datasets_item.childCount())
+        if datasets_item.child(index).text(0) == "Group1"
+    )
 
     def flush_deletes():
         QtWidgets.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
@@ -4331,9 +4371,19 @@ def test_project_explorer_nested_group_bulk_edit_and_tree(monkeypatch):
     explorer = NfitProjectExplorer(NfitProject([group]))
 
     datasets_item = explorer.tree.topLevelItem(0).child(0)
-    assert [datasets_item.child(i).text(0) for i in range(datasets_item.childCount())] == ["d1", "Group1"]
-    subgroup_item = datasets_item.child(1)
-    assert [subgroup_item.child(i).text(0) for i in range(subgroup_item.childCount())] == ["Masks", "d2"]
+    assert [
+        datasets_item.child(i).text(0)
+        for i in range(datasets_item.childCount())
+    ] == ["d1", "Backgrounds", "Group1"]
+    subgroup_item = next(
+        datasets_item.child(index)
+        for index in range(datasets_item.childCount())
+        if datasets_item.child(index).text(0) == "Group1"
+    )
+    assert [
+        subgroup_item.child(i).text(0)
+        for i in range(subgroup_item.childCount())
+    ] == ["Masks", "d2", "Backgrounds"]
 
     # Bulk-set scale on the subgroup overwrites all descendants.
     explorer.tree.setCurrentItem(subgroup_item)

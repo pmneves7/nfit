@@ -185,17 +185,20 @@ class DatasetEntry:
 
 @dataclass
 class DatasetGroup:
-    """A nested group of datasets sharing masks and (later) a resolution model.
+    """A nested group of datasets sharing masks, backgrounds, and configuration.
 
     Groups may nest via ``subgroups``. ``masks`` on a group apply to every
-    descendant dataset. Fit weights and scale factors are *not* stored here; the
-    GUI edits those in bulk across a group's descendant datasets.
+    descendant dataset. ``backgrounds`` are applied once to the group's
+    composite, after its enabled datasets have been combined. Fit weights and
+    scale factors are *not* stored here; the GUI edits those in bulk across a
+    group's descendant datasets.
     """
 
     name: str
     datasets: list[DatasetEntry] = field(default_factory=list)
     subgroups: list["DatasetGroup"] = field(default_factory=list)
     masks: list[MaskSpec] = field(default_factory=list)
+    backgrounds: list[BackgroundSpec] = field(default_factory=list)
     resolution: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -227,6 +230,7 @@ class DataGroup:
     datasets: list[DatasetEntry] = field(default_factory=list)
     subgroups: list[DatasetGroup] = field(default_factory=list)
     masks: list[MaskSpec] = field(default_factory=list)
+    backgrounds: list[BackgroundSpec] = field(default_factory=list)
     lattice_parameters: dict[str, float] | None = None
     spacegroup: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
