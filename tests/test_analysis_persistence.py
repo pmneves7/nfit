@@ -77,13 +77,14 @@ def test_point_list_artifact_round_trip(tmp_path):
 def test_mdhisto_artifact_preserves_axes_and_auxiliary_channels(tmp_path):
     axes = (MDHistoAxis("H", np.array([0.0, 1.0, 2.0]), "rlu", "momentum", frame="HKL"), MDHistoAxis("K", np.array([0.0, 1.0]), "rlu", "momentum"))
     shape = (2, 1)
-    data = MDHistoData(axes, np.ones(shape), np.ones(shape), np.zeros(shape, bool), np.ones(shape), coordinate_system=1, auxiliary_channels={"coverage": MDHistoChannel(np.full(shape, 0.5), label="Coverage", unit="fraction")})
+    data = MDHistoData(axes, np.ones(shape), np.ones(shape), np.zeros(shape, bool), np.ones(shape), coordinate_system=1, auxiliary_channels={"coverage": MDHistoChannel(np.full(shape, 0.5), label="Coverage", unit="fraction", quantity_type="scattering_intensity")})
     path = tmp_path / "map.npz"
     write_dataset_artifact(data, path)
     restored = read_dataset_artifact(path)
     assert restored.axes[0].frame == "HKL"
     assert restored.coordinate_system == 1
     assert restored.auxiliary_channels["coverage"].label == "Coverage"
+    assert restored.auxiliary_channels["coverage"].quantity_type == "scattering_intensity"
 
 
 def test_runner_publishes_artifact_and_fresh_result(tmp_path):

@@ -161,6 +161,12 @@ the saved analysis recipe or background interface.
 
 ## Spectral integration
 
+The dataset details panel now provides the ordinary import/view/fit route:
+temperature-aware inelastic datasets expose paired scattering-cross-section and
+$\chi''$ channels in arbitrary or absolute units. Use that path when the same
+dataset should be switchable between representations during plotting or
+fitting.
+
 The **INS absolute conversion** operation creates a derived dataset before any
 integration. It converts a measured signal to either an absolute differential
 cross section in `barn/(sr meV)` or dynamic susceptibility in `mu_B^2/meV`, per
@@ -168,6 +174,9 @@ the selected normalization basis. Supply the measured-signal scale in signal
 units per `barn/(sr meV)` (for example from vanadium or nuclear-Bragg
 normalization), temperature, magnetic form factor, and polarization convention.
 The output records the complete source and target conventions in provenance.
+Use this analysis operation when an immutable converted dataset is desired for
+downstream analysis recipes rather than a paired channel on the imported
+dataset.
 The converter uses
 
 ```text

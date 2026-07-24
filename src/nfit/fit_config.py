@@ -42,7 +42,12 @@ from typing import Any
 
 import numpy as np
 
-from .cross_section import intensity_from_chipp
+from .cross_section import (
+    MILLIBARN_PER_BARN,
+    cross_section_from_chipp,
+    intensity_from_chipp,
+    kf_over_ki,
+)
 from .dataset import PointData4D
 from .fitting import (
     DerivedParameter,
@@ -210,7 +215,7 @@ def _single_q_paramagnon_factory(component: Any) -> ModelFunction:
     name = component.name
 
     def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
-        return paramagnon_chipp(
+        chipp = paramagnon_chipp(
             data.H,
             data.K,
             data.L,
@@ -223,6 +228,14 @@ def _single_q_paramagnon_factory(component: Any) -> ModelFunction:
             ),
             kappa=float(params[qualified_parameter_name(name, "kappa")]),
             omega_sf=float(params[qualified_parameter_name(name, "omega_sf")]),
+        )
+        return _spectral_model_observable(
+            data,
+            chipp,
+            scale=1.0,
+            form_factor_sq=1.0,
+            polarization=ISOTROPIC_POLARIZATION,
+            legacy="chipp",
         )
 
     return model
@@ -247,6 +260,57 @@ def _dataset_temperature(data: PointData4D) -> float | np.ndarray:
             "data that carries temperature metadata"
         )
     return temperature
+
+
+def _spectral_model_observable(
+    data: PointData4D,
+    chipp: np.ndarray,
+    *,
+    scale: float,
+    form_factor_sq: float | np.ndarray,
+    polarization: float | np.ndarray,
+    legacy: str = "intensity",
+) -> np.ndarray:
+    """Map a model's canonical ``chi''`` to the selected dataset channel."""
+
+    convention = data.metadata.get("spectral_observable")
+    if not isinstance(convention, dict):
+        if legacy == "chipp":
+            return float(scale) * np.asarray(chipp, dtype=float)
+        return intensity_from_chipp(
+            chipp,
+            data.E,
+            _dataset_temperature(data),
+            scale=scale,
+            form_factor_sq=form_factor_sq,
+            polarization=polarization,
+        )
+    if convention.get("fit_representation") == "chi_double_prime":
+        return float(scale) * np.asarray(chipp, dtype=float)
+
+    kinematic: float | np.ndarray = 1.0
+    if convention.get("kf_ki_state") == "included":
+        incident = convention.get("incident_energy_meV")
+        final = convention.get("final_energy_meV")
+        kinematic = kf_over_ki(
+            data.E,
+            incident_energy_meV=None if incident in (None, "") else float(incident),
+            final_energy_meV=None if final in (None, "") else float(final),
+        )
+    values = cross_section_from_chipp(
+        chipp,
+        data.E,
+        _dataset_temperature(data),
+        form_factor_sq=form_factor_sq,
+        polarization=polarization,
+        kf_ki=kinematic,
+        moment_unit=str(convention.get("moment_unit", "mu_B_squared")),
+        g_factor=convention.get("g_factor"),
+    )
+    unit = str(convention.get("unit", ""))
+    if unit.startswith("mbarn/"):
+        values = values * MILLIBARN_PER_BARN
+    return float(scale) * np.asarray(values, dtype=float)
 
 
 def _dataset_magnetic_field(data: PointData4D) -> np.ndarray:
@@ -317,10 +381,9 @@ def _local_relaxational_factory(component: Any) -> ModelFunction:
             chi_loc=float(params[chi_key]),
             gamma=float(params[gamma_key]),
         )
-        return intensity_from_chipp(
+        return _spectral_model_observable(
+            data,
             chipp,
-            data.E,
-            _dataset_temperature(data),
             scale=float(params[scale_key]),
             form_factor_sq=_form_factor_sq_from_config(component, data),
             polarization=ISOTROPIC_POLARIZATION,
@@ -349,10 +412,9 @@ def _mmp_relaxational_factory(component: Any) -> ModelFunction:
             xi=float(params[keys["xi"]]),
             omega_sf=float(params[keys["omega_sf"]]),
         )
-        return intensity_from_chipp(
+        return _spectral_model_observable(
+            data,
             chipp,
-            data.E,
-            _dataset_temperature(data),
             scale=float(params[keys["scale"]]),
             form_factor_sq=_form_factor_sq_from_config(component, data),
             polarization=ISOTROPIC_POLARIZATION,
@@ -1155,10 +1217,9 @@ class _RpaComponentEvaluator:
             # searching; a huge finite misfit steers them back without
             # aborting the fit.
             return np.full(data.size, 1e6, dtype=float)
-        return intensity_from_chipp(
+        return _spectral_model_observable(
+            data,
             chipp,
-            data.E,
-            temperature,
             scale=float(params[self.scale_key]),
             form_factor_sq=form_factor_sq,
             polarization=polarization,
@@ -1283,7 +1344,7 @@ class _RpaComponentEvaluator:
     def gradients(self, data: PointData4D, params: dict[str, float]) -> dict[str, np.ndarray]:
         """Return ``d(intensity)/d(param)`` keyed by qualified parameter name."""
 
-        temperature = _dataset_temperature(data)
+        _dataset_temperature(data)
         geometry, form_factor_sq, _tensor_context = self._geometry(data)
         scale = float(params[self.scale_key])
         try:
@@ -1308,10 +1369,9 @@ class _RpaComponentEvaluator:
         # singular at nodes where chipp = 0 but the sensitivity is finite.
         ones = np.ones(data.size, dtype=float)
         scale_column = np.asarray(
-            intensity_from_chipp(
+            _spectral_model_observable(
+                data,
                 chipp,
-                data.E,
-                temperature,
                 scale=1.0,
                 form_factor_sq=form_factor_sq,
                 polarization=ISOTROPIC_POLARIZATION,
@@ -1319,10 +1379,9 @@ class _RpaComponentEvaluator:
             dtype=float,
         )
         d_intensity_d_chipp = np.asarray(
-            intensity_from_chipp(
+            _spectral_model_observable(
+                data,
                 ones,
-                data.E,
-                temperature,
                 scale=scale,
                 form_factor_sq=form_factor_sq,
                 polarization=ISOTROPIC_POLARIZATION,

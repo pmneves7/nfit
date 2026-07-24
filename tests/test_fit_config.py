@@ -694,6 +694,55 @@ def test_local_relaxational_fit_recovers_synthetic_parameters():
     assert result.params["loc.gamma"] == pytest.approx(truth["gamma"], rel=0.02)
 
 
+def test_local_relaxational_model_can_emit_selected_chipp_or_mbarn_channel():
+    from nfit.fitting import evaluate_problem_model
+    from nfit.spin_fluctuations import local_relaxational_chipp
+
+    energy = np.array([1.0, 3.0])
+    points = _spin_fluctuation_points(
+        np.ones(2), np.zeros(2), energy, temperature=20.0
+    )
+    component = ModelComponentSpec(
+        name="loc",
+        type="local_relaxational",
+        parameters={"scale": 2.0, "chi_loc": 1.5, "gamma": 2.5},
+        fit_parameters={},
+    )
+    convention = {
+        "fit_representation": "chi_double_prime",
+        "unit": "mu_B^2/meV/f.u.",
+        "moment_unit": "mu_B_squared",
+        "g_factor": 2.0,
+        "kf_ki_state": "removed",
+    }
+    points.metadata["spectral_observable"] = convention
+    compiled = compile_fit_problem([component], [FitDatasetInput("a", points)])
+    params = {spec.name: spec.value for spec in compiled.problem.parameter_specs}
+    chipp = local_relaxational_chipp(energy, chi_loc=1.5, gamma=2.5)
+    np.testing.assert_allclose(
+        evaluate_problem_model(compiled.problem, "a", params), 2.0 * chipp
+    )
+
+    convention.update(
+        {
+            "fit_representation": "cross_section",
+            "unit": "mbarn/sr/meV/f.u.",
+        }
+    )
+    from nfit.cross_section import cross_section_from_chipp
+
+    expected = (
+        2.0
+        * cross_section_from_chipp(
+            chipp, energy, 20.0, polarization=2.0 / 3.0
+        )
+        * 1000.0
+    )
+    np.testing.assert_allclose(
+        evaluate_problem_model(compiled.problem, "a", params), expected
+    )
+
+
 def test_mmp_relaxational_fit_recovers_synthetic_parameters():
     from nfit.cross_section import MAGNETIC_GAMMA0_PER_MU_B, intensity_from_chipp
     from nfit.fit_config import ISOTROPIC_POLARIZATION

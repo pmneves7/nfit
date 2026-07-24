@@ -66,8 +66,13 @@ _UNIT_ALIASES = {
     "count": "counts",
     "barn/sr/mev": "barn/sr/meV",
     "barn/(sr mev)": "barn/sr/meV",
+    "mbarn/sr/mev/f.u.": "mbarn/sr/meV/f.u.",
+    "mbarn/(sr mev f.u.)": "mbarn/sr/meV/f.u.",
+    "barn/sr/mev/f.u.": "barn/sr/meV/f.u.",
     "mu_b^2/mev": "mu_B^2/meV",
     "mub^2/mev": "mu_B^2/meV",
+    "mu_b^2/mev/f.u.": "mu_B^2/meV/f.u.",
+    "mub^2/mev/f.u.": "mu_B^2/meV/f.u.",
     "uj/k": "uJ/K",
     "µj/k": "uJ/K",
     "�j/k": "uJ/K",
@@ -110,6 +115,8 @@ def display_unit(unit: str | None) -> str:
         "mol/cm^3": "mol Oe/emu",
         "mu_B/f.u.": "μ$_{B}$/f.u.",
         "mu_B^2/meV": "μ$_{B}^2$/meV",
+        "mu_B^2/meV/f.u.": "μ$_{B}^2$/meV/f.u.",
+        "mbarn/sr/meV/f.u.": "mbarn/(sr meV f.u.)",
     }
     return labels.get(normalized, normalized)
 
@@ -143,9 +150,9 @@ def infer_quantity_type(name: str, unit: str = "") -> str:
         return "energy_transfer"
     if lowered in {"q", "|q|"} or normalized == "Å⁻¹":
         return "momentum"
-    if normalized == "barn/sr/meV":
+    if normalized in {"barn/sr/meV", "barn/sr/meV/f.u.", "mbarn/sr/meV/f.u."}:
         return "differential_cross_section"
-    if normalized == "mu_B^2/meV":
+    if normalized in {"mu_B^2/meV", "mu_B^2/meV/f.u."}:
         return "dynamic_susceptibility"
     if any(token in lowered for token in ("intensity", "signal", "counts")):
         return "scattering_intensity"

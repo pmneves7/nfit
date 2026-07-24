@@ -21,11 +21,17 @@ class MDHistoChannel:
     errors: FloatArray | None = None
     label: str = ""
     unit: str = ""
+    quantity_type: str = "unknown"
 
     def __post_init__(self) -> None:
         self.values = np.asarray(self.values, dtype=float)
         if self.errors is not None:
             self.errors = np.asarray(self.errors, dtype=float)
+        from .quantities import QUANTITY_TYPES, normalize_unit
+
+        self.unit = normalize_unit(self.unit)
+        if self.quantity_type not in QUANTITY_TYPES:
+            raise ValueError(f"unknown channel quantity type {self.quantity_type!r}")
 
 
 @dataclass(frozen=True)
@@ -105,6 +111,20 @@ class MDHistoData:
         """Shape of the imported binned arrays."""
 
         return self.signal.shape
+
+    def channel_unit(self, name: str = "signal") -> str:
+        """Return the explicit unit for the primary or an auxiliary channel."""
+
+        if name == "signal":
+            return str(self.metadata.get("signal_unit", ""))
+        return self.auxiliary_channels[name].unit
+
+    def channel_quantity_type(self, name: str = "signal") -> str:
+        """Return the physical quantity type for one channel."""
+
+        if name == "signal":
+            return str(self.metadata.get("signal_quantity_type", "unknown"))
+        return self.auxiliary_channels[name].quantity_type
 
 
 def mdhisto_measured_bins(data: MDHistoData) -> BoolArray:

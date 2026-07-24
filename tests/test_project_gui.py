@@ -6406,6 +6406,79 @@ def test_sample_environment_panel_hosts_temperature_and_field(monkeypatch):
     }
 
 
+def test_inelastic_dataset_panel_creates_typed_cross_section_and_chipp_channels(
+    monkeypatch,
+):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6 import QtWidgets
+
+    data = _grid_mdhisto_data()
+    dataset = DatasetEntry("scan", data, kind="mdhisto")
+    dataset.data_type = "single_crystal_inelastic"
+    dataset.parameters["temperature"] = 25.0
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
+
+    panel = next(
+        box
+        for box in explorer.details_widget.findChildren(QtWidgets.QGroupBox)
+        if box.title() == "INS representations"
+    )
+    controls = (
+        "ins_channels_enabled",
+        "ins_source_representation",
+        "ins_source_unit",
+        "ins_fit_representation",
+        "ins_normalization_basis",
+        "ins_signal_per_mbarn",
+        "ins_form_factor_ion",
+        "ins_polarization_mode",
+        "ins_polarization_scalar",
+        "ins_moment_unit",
+        "ins_g_factor",
+        "ins_kf_ki_state",
+        "ins_incident_energy",
+        "ins_final_energy",
+    )
+    for name in controls:
+        widget = panel.findChild(QtWidgets.QWidget, name)
+        assert widget is not None
+        assert widget.toolTip()
+
+    fit_combo = panel.findChild(QtWidgets.QComboBox, "ins_fit_representation")
+    fit_combo.setCurrentIndex(fit_combo.findData("chi_double_prime"))
+    view = project_gui.dataset_for_slice_viewer(dataset)
+    assert view.channel_quantity_type() == "dynamic_susceptibility"
+    assert view.channel_quantity_type("scattering_cross_section") == "differential_cross_section"
+    assert "dynamic_susceptibility" in view.auxiliary_channels
+
+
+def test_saved_spectral_view_reimports_without_double_conversion(tmp_path):
+    data = _grid_mdhisto_data()
+    dataset = DatasetEntry("scan", data, kind="mdhisto")
+    dataset.data_type = "single_crystal_inelastic"
+    dataset.parameters["temperature"] = 25.0
+    config = project_gui.default_spectral_channel_config()
+    config.update(
+        {
+            "source_unit": "mbarn/sr/meV/f.u.",
+            "fit_representation": "chi_double_prime",
+        }
+    )
+    dataset.parameters[project_gui.SPECTRAL_CHANNEL_CONFIG_KEY] = config
+    expected = project_gui.dataset_for_slice_viewer(dataset)
+    path = tmp_path / "spectral_view.npz"
+    project_gui.save_dataset_file(dataset, path)
+
+    restored = project_gui.dataset_entry_from_path(
+        path, data_type="single_crystal_inelastic"
+    )
+    actual = project_gui.dataset_for_slice_viewer(restored)
+    np.testing.assert_allclose(actual.signal, expected.signal)
+    assert actual.channel_unit() == expected.channel_unit()
+
+
 def test_isaw_ub_round_trip_uses_transposed_file_convention(tmp_path):
     path = tmp_path / "orientation.mat"
     path.write_text(

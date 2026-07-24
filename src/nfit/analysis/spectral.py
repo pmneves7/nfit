@@ -89,6 +89,8 @@ def convert_spectral_representation(
             form_factor_sq=ff,
             polarization=pol,
             include_bose=True,
+            moment_unit=convention.moment_unit,
+            g_factor=convention.g_factor,
         )
         cross_error = np.abs(
             cross_section_from_chipp(
@@ -98,6 +100,8 @@ def convert_spectral_representation(
                 form_factor_sq=ff,
                 polarization=pol,
                 include_bose=True,
+                moment_unit=convention.moment_unit,
+                g_factor=convention.g_factor,
             )
         )
     else:  # guarded by SpectralConvention, retained for defensive clarity.
@@ -131,6 +135,8 @@ def convert_spectral_representation(
             form_factor_sq=ff_inverse,
             polarization=pol_inverse,
             include_bose=convention.bose_state == "included",
+            moment_unit=convention.moment_unit,
+            g_factor=convention.g_factor,
         )
         uncertainty = np.abs(
             chipp_from_cross_section(
@@ -140,6 +146,8 @@ def convert_spectral_representation(
                 form_factor_sq=ff_inverse,
                 polarization=pol_inverse,
                 include_bose=convention.bose_state == "included",
+                moment_unit=convention.moment_unit,
+                g_factor=convention.g_factor,
             )
         )
         unit = "mu_B^2/meV"
