@@ -389,6 +389,34 @@ They can be added back through the normal dataset import flow; the archive
 restores its signal, uncertainties, masks, axes, metadata, and saved dataset
 temperature/field context. Archives saved by older nfit versions may not carry
 temperature or field because those values were not written at the time.
+
+For **single-crystal inelastic** and **powder inelastic** datasets, the
+**INS representations** panel defines the physical meaning of that signal:
+
+1. Select whether the imported values are scattering cross section/intensity
+   or dynamical susceptibility $\chi''$.
+2. Choose arbitrary units or an absolute per-formula-unit unit. For
+   uncalibrated counts, leave `Signal units / mbarn` at zero; a positive value
+   converts counts to absolute mbarn.
+3. Choose the amount-of-sample basis, magnetic form factor, polarization
+   convention, and whether $\chi''$ is a magnetic-moment (`μ_B²`) or
+   spin-operator (`spin²`) response. The Landé factor is used only for the
+   latter.
+4. State whether $k_f/k_i$ remains in the input. An included factor requires
+   fixed incident energy for direct geometry or fixed final energy for
+   indirect geometry.
+5. Set the dataset temperature in **Sample environment**, then choose cross
+   section or $\chi''$ under **Plot and fit**.
+
+The imported signal is retained. With temperature available, the data viewer's
+channel selector exposes **Scattering cross section** and **Dynamical
+susceptibility χ″** simultaneously, including their propagated uncertainties.
+Changing **Plot and fit** changes the primary quantity seen by physics models;
+it does not destroy either viewer channel. Absolute labels include the declared
+formula-unit, magnetic-ion, or unit-cell basis. See
+[Physics conventions](physics_conventions.md#inelastic-magnetic-neutron-scattering)
+for the complete equation and references.
+
 All enabled file, inherited group, and dataset masks are applied before point or
 MDHisto data are rebinned, so excluded data do not contribute to rebinned bin
 averages; disabled masks are ignored. The materialized dataset keeps the source

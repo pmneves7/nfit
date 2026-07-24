@@ -4,21 +4,27 @@ This page documents the physics models for itinerant, nearly magnetically
 ordered systems: a fully local relaxational spin, the Millis–Monien–Pines
 (MMP) nearly-antiferromagnetic form, and a Heisenberg-coupled RPA model whose
 exchange constants live on symmetry-distinct bond orbits. All three compute
-the imaginary part of the dynamic susceptibility $\chi''(\mathbf{Q}, E)$ and
-convert it to measured intensity through the shared cross-section convention.
+the imaginary part of the dynamic susceptibility $\chi''(\mathbf{Q}, E)$.
+The dataset's selected physical channel then either uses that response directly
+or converts it through the shared cross-section convention.
 
 ## From susceptibility to intensity
 
-Every model in this family produces
+For the scalar isotropic-trace convention, a cross-section dataset receives
 
 $$
-I(\mathbf{Q}, E) = s\, \tfrac{2}{3}\, |f(Q)|^2\,
+\frac{d^2\sigma}{d\Omega\,dE}
+=s\,\frac{k_f}{k_i}\frac{0.07265\ {\rm barn}/\mu_B^2}{\pi}
+\,\tfrac{2}{3}\, |f(Q)|^2
 \frac{\chi''(\mathbf{Q}, E)}{1 - e^{-E/k_B T}},
 $$
 
 where
 
-- $s$ is a fittable overall **scale** for unnormalized data,
+- $s$ is a fittable overall **scale** for unnormalized data (fix it to one
+  only when the model amplitudes and data share an absolute convention),
+- $k_f/k_i$ is included only when the dataset declares that the imported
+  cross section still carries that factor,
 - $2/3$ is the polarization (orientation) factor for **isotropic (Heisenberg)
   spins**: unpolarized neutrons couple only to spin components perpendicular
   to $\mathbf{Q}$, and the isotropic average of
@@ -28,12 +34,23 @@ where
   $\chi''$ to $S(\mathbf{Q}, E)$; the odd-in-$E$ $\chi''$ times this factor
   satisfies detailed balance automatically.
 
+When the dataset selects **Dynamical susceptibility χ″**, the model returns
+$s\chi''$ directly: no Bose, form-factor, polarization, $k_f/k_i$, or magnetic
+cross-section constant is applied. Absolute cross-section plots are converted
+to mbarn; arbitrary cross sections retain an arbitrary overall scale.
+
 The **temperature** is read from each dataset (`PointData4D.temperature`).
 Fitting a spin-fluctuation model against a dataset without a valid temperature
 raises an error naming the fix: set the per-dataset temperature in the GUI
 (dataset details, "T (K)") or import data carrying temperature metadata.
 Backgrounds are separate additive components (`constant_background`,
 `linear_background`), not part of these models.
+
+The scalar models define $\chi''$ as the isotropic three-component trace, hence
+$P=2/3$. A dataset converted to $\chi''$ should use the same trace convention.
+If a dataset conversion removes a magnetic form factor, use the same ion as
+the corresponding model component. The full convention and primary references
+are in [Physics conventions](physics_conventions.md#inelastic-magnetic-neutron-scattering).
 
 ## Magnetic form factor
 

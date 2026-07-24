@@ -10,6 +10,63 @@ KB_MEV_PER_K = 0.08617333262
 MAGNETIC_CROSS_SECTION_BARN_PER_MU_B_SQ = 0.07265
 MAGNETIC_GAMMA0_PER_MU_B = np.sqrt(MAGNETIC_CROSS_SECTION_BARN_PER_MU_B_SQ)
 FloatArray = NDArray[np.float64]
+MILLIBARN_PER_BARN = 1000.0
+
+
+def magnetic_moment_factor(
+    moment_unit: str = "mu_B_squared",
+    g_factor: float | None = None,
+) -> float:
+    """Return the factor converting the declared response to ``mu_B^2``.
+
+    A susceptibility already expressed for the magnetic moment in
+    ``mu_B^2/meV`` carries no additional Landé factor.  A spin-operator
+    susceptibility in ``spin^2/meV`` is multiplied by ``g^2``.  Keeping these
+    conventions distinct prevents the common accidental double application of
+    the Landé factor.
+    """
+
+    if moment_unit == "mu_B_squared":
+        return 1.0
+    if moment_unit != "spin_squared":
+        raise ValueError("moment_unit must be 'mu_B_squared' or 'spin_squared'")
+    if g_factor is None or not np.isfinite(g_factor) or g_factor <= 0.0:
+        raise ValueError("spin_squared susceptibility requires a finite positive g_factor")
+    return float(g_factor) ** 2
+
+
+def kf_over_ki(
+    E_meV: ArrayLike,
+    *,
+    incident_energy_meV: float | None = None,
+    final_energy_meV: float | None = None,
+) -> FloatArray:
+    """Return ``k_f/k_i`` for ``E = E_i - E_f``.
+
+    Direct geometry supplies fixed ``E_i`` and indirect geometry supplies
+    fixed ``E_f``.  Energetically inaccessible points are returned as NaN.
+    """
+
+    if incident_energy_meV is None and final_energy_meV is None:
+        raise ValueError("provide incident_energy_meV or final_energy_meV")
+    energy = np.asarray(E_meV, dtype=float)
+    if incident_energy_meV is not None:
+        incident = float(incident_energy_meV)
+        if not np.isfinite(incident) or incident <= 0.0:
+            raise ValueError("incident_energy_meV must be finite and positive")
+        ratio_sq = (incident - energy) / incident
+    else:
+        final = float(final_energy_meV)
+        if not np.isfinite(final) or final <= 0.0:
+            raise ValueError("final_energy_meV must be finite and positive")
+        ratio_sq = final / (final + energy)
+    ratio = np.full(np.shape(ratio_sq), np.nan, dtype=float)
+    np.sqrt(
+        ratio_sq,
+        out=ratio,
+        where=np.isfinite(ratio_sq) & (ratio_sq >= 0.0),
+    )
+    return ratio
 
 
 def bose_denominator(
@@ -134,6 +191,8 @@ def cross_section_from_chipp(
     polarization: float | ArrayLike = 1.0,
     kf_ki: float | ArrayLike = 1.0,
     include_bose: bool = True,
+    moment_unit: str = "mu_B_squared",
+    g_factor: float | None = None,
 ) -> FloatArray:
     """Return absolute magnetic ``d2sigma/dOmega/dE`` in barn/(sr meV).
 
@@ -143,7 +202,7 @@ def cross_section_from_chipp(
     """
 
     return np.asarray(kf_ki, dtype=float) * intensity_from_chipp(
-        chipp,
+        np.asarray(chipp, dtype=float) * magnetic_moment_factor(moment_unit, g_factor),
         E_meV,
         temperature_K,
         scale=1.0,
@@ -162,13 +221,15 @@ def chipp_from_cross_section(
     polarization: float | ArrayLike = 1.0,
     kf_ki: float | ArrayLike = 1.0,
     include_bose: bool = True,
+    moment_unit: str = "mu_B_squared",
+    g_factor: float | None = None,
 ) -> FloatArray:
     """Invert :func:`cross_section_from_chipp` to ``mu_B^2/meV``."""
 
     ratio = np.asarray(kf_ki, dtype=float)
     if np.any(~np.isfinite(ratio)) or np.any(ratio <= 0.0):
         raise ValueError("kf_ki must be finite and positive")
-    return chipp_from_intensity(
+    response = chipp_from_intensity(
         np.asarray(cross_section, dtype=float) / ratio,
         E_meV,
         temperature_K,
@@ -177,3 +238,4 @@ def chipp_from_cross_section(
         polarization=polarization,
         include_bose=include_bose,
     )
+    return response / magnetic_moment_factor(moment_unit, g_factor)

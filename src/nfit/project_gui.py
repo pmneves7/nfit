@@ -93,6 +93,12 @@ from .plot_recipes import (
 from .qt_controls import configure_numeric_spin_boxes
 from .raw_dgs import bin_raw_dgs_group, is_raw_dgs_nexus_file, raw_dgs_dataset_group
 from .rebin import rebin_nd, rebin_nd_symmetry
+from .spectral_channels import (
+    SPECTRAL_CHANNEL_CONFIG_KEY,
+    default_spectral_channel_config,
+    normalized_spectral_channel_config,
+    with_paired_spectral_channels,
+)
 from .symmetry import SymmetrySpec, resolve_symmetry, symmetry_config, symmetry_spec_from_config
 
 QtMDHistoSliceViewer = None
@@ -815,6 +821,11 @@ def import_dataset_paths(
         entry.name = _unique_dataset_name(entry.name, group.dataset_names)
         group.add_dataset(entry, into=into)
         entries.append(entry)
+    for entry in entries:
+        if entry.data_type in {"single_crystal_inelastic", "powder_inelastic"}:
+            entry.parameters.setdefault(
+                SPECTRAL_CHANNEL_CONFIG_KEY, default_spectral_channel_config()
+            )
     return entries
 
 
@@ -932,6 +943,10 @@ def set_dataset_data_type(
         raise ValueError(f"unknown data type {data_type!r}")
     dataset.data_type = data_type
     dataset.metadata.pop("import_error", None)
+    if data_type in {"single_crystal_inelastic", "powder_inelastic"}:
+        dataset.parameters.setdefault(
+            SPECTRAL_CHANNEL_CONFIG_KEY, default_spectral_channel_config()
+        )
     if data_type_container(data_type) == "point_list":
         chosen = importer_name or default_importer_for_data_type(data_type)
         if chosen is not None:
@@ -3002,7 +3017,16 @@ def composite_dataset_entry(
         kind=(first.kind if first is not None else ""),
         data_type=(first.data_type if first is not None else ""),
         metadata={"source_group": group.name, "composite": True},
-        parameters={},
+        parameters=(
+            {
+                SPECTRAL_CHANNEL_CONFIG_KEY: copy.deepcopy(
+                    first.parameters[SPECTRAL_CHANNEL_CONFIG_KEY]
+                )
+            }
+            if first is not None
+            and SPECTRAL_CHANNEL_CONFIG_KEY in first.parameters
+            else {}
+        ),
         enabled=True,
         fit_weight=1.0,
         scale_factor=1.0,
@@ -3379,8 +3403,29 @@ def dataset_for_slice_viewer(
     if result is None:
         return None
     scaled = _apply_dataset_scale(dataset, result)
-    normalized = _apply_kinematic_normalization_to_view(dataset, scaled)
-    return _with_viewer_dataset_metadata(dataset, normalized)
+    prepared = _apply_spectral_channel_view(dataset, scaled)
+    return _with_viewer_dataset_metadata(dataset, prepared)
+
+
+def _apply_spectral_channel_view(
+    dataset: DatasetEntry,
+    data: MDHistoData | PointListData,
+) -> MDHistoData | PointListData:
+    """Apply paired INS channels, falling back to the legacy kinematic path."""
+
+    config = dataset.parameters.get(SPECTRAL_CHANNEL_CONFIG_KEY)
+    if (
+        isinstance(data, MDHistoData)
+        and dataset.data_type in {"single_crystal_inelastic", "powder_inelastic"}
+        and isinstance(config, dict)
+    ):
+        temperature = dataset.parameters.get("temperature", data.metadata.get("temperature"))
+        return with_paired_spectral_channels(
+            data,
+            config,
+            temperature_K=None if temperature in (None, "") else float(temperature),
+        )
+    return _apply_kinematic_normalization_to_view(dataset, data)
 
 
 def _with_viewer_dataset_metadata(
@@ -3561,7 +3606,7 @@ def fit_data_bundle(
         view = (
             _with_viewer_dataset_metadata(
                 dataset,
-                _apply_kinematic_normalization_to_view(dataset, raw_view),
+                _apply_spectral_channel_view(dataset, raw_view),
             )
             if raw_view is not None
             else None
@@ -3872,9 +3917,16 @@ def _point_data_from_mdhisto_view(data: MDHistoData) -> PointData4D:
         "rlu_to_inv_angstrom_matrix",
         "nfit_kinematic_kf_ki_normalized",
         "nfit_kinematic_kf_ki_source",
+        "signal_quantity_type",
+        "signal_unit",
+        "spectral_observable",
     ):
         if key in data.metadata:
             metadata[key] = data.metadata[key]
+    if "signal_quantity_type" in metadata:
+        metadata["quantity_type"] = metadata["signal_quantity_type"]
+    if "signal_unit" in metadata:
+        metadata["unit"] = metadata["signal_unit"]
     temperature = data.metadata.get("temperature")
     return PointData4D(
         H=coords.get("H", zeros).ravel(),
@@ -6257,7 +6309,12 @@ def create_rebinned_dataset(
     if data is dataset.data:
         data = copy.deepcopy(data)
     parameters = {}
-    for key in ("temperature", "magnetic_field", KINEMATIC_KF_KI_INCLUDED_KEY):
+    for key in (
+        "temperature",
+        "magnetic_field",
+        KINEMATIC_KF_KI_INCLUDED_KEY,
+        SPECTRAL_CHANNEL_CONFIG_KEY,
+    ):
         if key in dataset.parameters:
             parameters[key] = copy.deepcopy(dataset.parameters[key])
     new_entry = DatasetEntry(
@@ -6302,9 +6359,25 @@ def save_dataset_file(dataset: DatasetEntry, path: str | Path, *, use_view: bool
     }
     context = {
         key: copy.deepcopy(dataset.parameters[key])
-        for key in ("temperature", "magnetic_field", KINEMATIC_KF_KI_INCLUDED_KEY)
+        for key in (
+            "temperature",
+            "magnetic_field",
+            KINEMATIC_KF_KI_INCLUDED_KEY,
+            SPECTRAL_CHANNEL_CONFIG_KEY,
+        )
         if key in dataset.parameters
     }
+    observable = data.metadata.get("spectral_observable")
+    if isinstance(observable, dict) and SPECTRAL_CHANNEL_CONFIG_KEY in context:
+        saved_config = dict(context[SPECTRAL_CHANNEL_CONFIG_KEY])
+        saved_config["source_representation"] = str(
+            observable.get("fit_representation", saved_config["source_representation"])
+        )
+        saved_config["source_unit"] = (
+            str(data.metadata.get("signal_unit", "arbitrary")) or "arbitrary"
+        )
+        saved_config["signal_per_mbarn"] = 0.0
+        context[SPECTRAL_CHANNEL_CONFIG_KEY] = saved_config
     payload["dataset_context_json"] = np.asarray(json.dumps(_json_safe_value(context), sort_keys=True))
     for index, axis in enumerate(data.axes):
         payload[f"axis_{index}_values"] = axis.values
@@ -6321,6 +6394,9 @@ def save_dataset_file(dataset: DatasetEntry, path: str | Path, *, use_view: bool
             payload[f"auxiliary_{index}_errors"] = channel.errors
         payload[f"auxiliary_{index}_label"] = np.asarray(channel.label)
         payload[f"auxiliary_{index}_unit"] = np.asarray(channel.unit)
+        payload[f"auxiliary_{index}_quantity_type"] = np.asarray(
+            channel.quantity_type
+        )
     np.savez_compressed(path, **payload)
 
 
@@ -6401,6 +6477,9 @@ def _load_nfit_mdhisto_archive(archive: Any, source: Path) -> MDHistoData:
             errors=(np.asarray(archive[f"auxiliary_{index}_errors"], dtype=float) if f"auxiliary_{index}_errors" in archive else None),
             label=_nfit_archive_text(archive, f"auxiliary_{index}_label", str(name)),
             unit=_nfit_archive_text(archive, f"auxiliary_{index}_unit"),
+            quantity_type=_nfit_archive_text(
+                archive, f"auxiliary_{index}_quantity_type", "unknown"
+            ),
         )
         for index, name in enumerate(channel_names)
     }
@@ -8121,6 +8200,8 @@ def dataset_entry_from_path(
         data_type=resolved_type,
         metadata={"source_file": str(source), "import_status": "pending"},
     )
+    if resolved_type in {"single_crystal_inelastic", "powder_inelastic"}:
+        entry.parameters[SPECTRAL_CHANNEL_CONFIG_KEY] = default_spectral_channel_config()
     if source.suffix.lower() == ".npz":
         data, parameters = _load_nfit_dataset_file(source)
         entry.data = data
@@ -13018,6 +13099,16 @@ class NfitProjectExplorer:
             self.dataset_kf_ki_included_check.setChecked(
                 bool(entry.parameters.get(KINEMATIC_KF_KI_INCLUDED_KEY, True)) if is_dataset else True
             )
+            self.dataset_kf_ki_included_check.setVisible(
+                not (
+                    is_dataset
+                    and entry.data_type
+                    in {"single_crystal_inelastic", "powder_inelastic"}
+                    and isinstance(
+                        entry.parameters.get(SPECTRAL_CHANNEL_CONFIG_KEY), dict
+                    )
+                )
+            )
         finally:
             self.dataset_kf_ki_included_check.blockSignals(False)
 
@@ -14114,6 +14205,10 @@ class NfitProjectExplorer:
                 # Sample environment sits between the Dataset and Axes panels.
                 if dataset.data_type != "magnetization":
                     self.details_layout.addWidget(self.sample_environment_widget)
+                if dataset.data_type in {"single_crystal_inelastic", "powder_inelastic"}:
+                    self.details_layout.addWidget(
+                        self._dataset_spectral_channels_group_box(dataset, group)
+                    )
                 self.details_layout.addWidget(self._dataset_signal_semantics_group_box(dataset, group))
             elif title == "Metadata":
                 self.details_layout.addWidget(self._dataset_metadata_group_box(dataset))
@@ -15643,6 +15738,400 @@ class NfitProjectExplorer:
             )
         )
         layout.addRow("Signal values", combo)
+        return box
+
+    def _dataset_spectral_channel_config(
+        self, dataset: DatasetEntry
+    ) -> dict[str, Any]:
+        """Return the normalized paired-channel INS configuration."""
+
+        config = normalized_spectral_channel_config(
+            dataset.parameters.get(SPECTRAL_CHANNEL_CONFIG_KEY)
+        )
+        if config["source_unit"] != "arbitrary":
+            suffix = {
+                "per_formula_unit": "/f.u.",
+                "per_magnetic_ion": "/magnetic ion",
+                "per_unit_cell": "/unit cell",
+                "unknown": "",
+            }[config["normalization_basis"]]
+            unit = str(config["source_unit"])
+            prefix = next(
+                (
+                    candidate
+                    for candidate in (
+                        "mbarn/sr/meV",
+                        "barn/sr/meV",
+                        "mu_B^2/meV",
+                        "spin^2/meV",
+                    )
+                    if unit.startswith(candidate)
+                ),
+                unit,
+            )
+            config["source_unit"] = prefix + suffix
+        for target, names in (
+            ("incident_energy_meV", ("incident_energy_meV", "incident_energy", "Ei", "ei")),
+            ("final_energy_meV", ("final_energy_meV", "final_energy", "Ef", "ef")),
+        ):
+            if config.get(target) not in (None, ""):
+                continue
+            for source in (dataset.metadata, getattr(dataset.data, "metadata", {})):
+                if not isinstance(source, dict):
+                    continue
+                value = next((source[name] for name in names if name in source), None)
+                try:
+                    value = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if np.isfinite(value) and value > 0.0:
+                    config[target] = value
+                    break
+        dataset.parameters[SPECTRAL_CHANNEL_CONFIG_KEY] = config
+        return config
+
+    def _set_dataset_spectral_channel_setting(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup | None,
+        key: str,
+        value: Any,
+    ) -> None:
+        config = self._dataset_spectral_channel_config(dataset)
+        if key == "source_representation" and value != config.get(key):
+            config["source_unit"] = "arbitrary"
+        if key == "source_unit":
+            if str(value).startswith("spin^2/"):
+                config["moment_unit"] = "spin_squared"
+            elif str(value).startswith("mu_B^2/"):
+                config["moment_unit"] = "mu_B_squared"
+        if key == "normalization_basis" and config["source_unit"] != "arbitrary":
+            suffix = {
+                "per_formula_unit": "/f.u.",
+                "per_magnetic_ion": "/magnetic ion",
+                "per_unit_cell": "/unit cell",
+                "unknown": "",
+            }[str(value)]
+            if config["source_representation"] == "cross_section":
+                prefix = (
+                    "mbarn/sr/meV"
+                    if str(config["source_unit"]).startswith("mbarn/")
+                    else "barn/sr/meV"
+                )
+            else:
+                prefix = (
+                    "spin^2/meV"
+                    if str(config["source_unit"]).startswith("spin^2/")
+                    else "mu_B^2/meV"
+                )
+            config["source_unit"] = prefix + suffix
+        if config.get(key) == value:
+            return
+        config[key] = value
+        dataset.parameters[SPECTRAL_CHANNEL_CONFIG_KEY] = (
+            normalized_spectral_channel_config(config)
+        )
+        if group is not None:
+            self._record_data_group_state_change(group)
+            self.refresh_slice_viewer(group)
+        self._mark_dirty()
+        self._set_dataset_details_preserving_scroll(dataset, group)
+
+    def _dataset_spectral_channels_group_box(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup | None,
+    ) -> Any:
+        """Build INS representation, unit, and correction controls."""
+
+        from PySide6 import QtWidgets
+
+        config = self._dataset_spectral_channel_config(dataset)
+        box = QtWidgets.QGroupBox("INS representations")
+        form = QtWidgets.QFormLayout(box)
+        form.setContentsMargins(10, 8, 10, 8)
+        form.setFieldGrowthPolicy(
+            QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
+        )
+
+        enabled = QtWidgets.QCheckBox("Create paired cross-section and χ″ channels")
+        enabled.setObjectName("ins_channels_enabled")
+        enabled.setChecked(bool(config["enabled"]))
+        enabled.setToolTip(
+            "Keep the imported signal and create named scattering-cross-section "
+            "and dynamical-susceptibility channels. A temperature is required "
+            "to convert between them."
+        )
+        enabled.toggled.connect(
+            lambda checked: self._set_dataset_spectral_channel_setting(
+                dataset, group, "enabled", bool(checked)
+            )
+        )
+        form.addRow(enabled)
+
+        source = QtWidgets.QComboBox()
+        source.setObjectName("ins_source_representation")
+        source.addItem("Scattering cross section / intensity", "cross_section")
+        source.addItem("Dynamical susceptibility χ″", "chi_double_prime")
+        source.setCurrentIndex(max(source.findData(config["source_representation"]), 0))
+        source.setToolTip(
+            "Physical meaning of the imported signal. Counts and arbitrary "
+            "intensity are treated as cross-section-shaped data with an unknown scale."
+        )
+        source.currentIndexChanged.connect(
+            lambda _index, combo=source: self._set_dataset_spectral_channel_setting(
+                dataset, group, "source_representation", str(combo.currentData())
+            )
+        )
+        form.addRow("Imported quantity", source)
+
+        units = QtWidgets.QComboBox()
+        units.setObjectName("ins_source_unit")
+        basis_suffix = {
+            "per_formula_unit": (" / f.u.", "/f.u."),
+            "per_magnetic_ion": (" / magnetic ion", "/magnetic ion"),
+            "per_unit_cell": (" / unit cell", "/unit cell"),
+            "unknown": ("", ""),
+        }[config["normalization_basis"]]
+        if config["source_representation"] == "cross_section":
+            units.addItem("Arbitrary units", "arbitrary")
+            units.addItem(
+                f"mbarn / sr / meV{basis_suffix[0]}",
+                f"mbarn/sr/meV{basis_suffix[1]}",
+            )
+            units.addItem(
+                f"barn / sr / meV{basis_suffix[0]}",
+                f"barn/sr/meV{basis_suffix[1]}",
+            )
+        else:
+            units.addItem("Arbitrary units", "arbitrary")
+            units.addItem(
+                f"μ_B² / meV{basis_suffix[0]}",
+                f"mu_B^2/meV{basis_suffix[1]}",
+            )
+            units.addItem(
+                f"spin² / meV{basis_suffix[0]}",
+                f"spin^2/meV{basis_suffix[1]}",
+            )
+        units.setCurrentIndex(max(units.findData(config["source_unit"]), 0))
+        units.setToolTip(
+            "Units carried by the imported signal. Choose arbitrary units when "
+            "the beam flux and illuminated formula-unit count are not calibrated."
+        )
+        units.currentIndexChanged.connect(
+            lambda _index, combo=units: self._set_dataset_spectral_channel_setting(
+                dataset, group, "source_unit", str(combo.currentData())
+            )
+        )
+        form.addRow("Imported units", units)
+
+        fit_representation = QtWidgets.QComboBox()
+        fit_representation.setObjectName("ins_fit_representation")
+        fit_representation.addItem("Scattering cross section", "cross_section")
+        fit_representation.addItem("Dynamical susceptibility χ″", "chi_double_prime")
+        fit_representation.setCurrentIndex(
+            max(fit_representation.findData(config["fit_representation"]), 0)
+        )
+        fit_representation.setToolTip(
+            "Representation used as the dataset signal for fitting and the default "
+            "viewer channel. Both named channels remain selectable in the viewer."
+        )
+        fit_representation.currentIndexChanged.connect(
+            lambda _index, combo=fit_representation: self._set_dataset_spectral_channel_setting(
+                dataset, group, "fit_representation", str(combo.currentData())
+            )
+        )
+        form.addRow("Plot and fit", fit_representation)
+
+        basis = QtWidgets.QComboBox()
+        basis.setObjectName("ins_normalization_basis")
+        for label, value in (
+            ("Per formula unit", "per_formula_unit"),
+            ("Per magnetic ion", "per_magnetic_ion"),
+            ("Per unit cell", "per_unit_cell"),
+            ("Unknown", "unknown"),
+        ):
+            basis.addItem(label, value)
+        basis.setCurrentIndex(max(basis.findData(config["normalization_basis"]), 0))
+        basis.setToolTip(
+            "Amount-of-sample basis for absolute channels. This label does not "
+            "perform a hidden rescaling; the upstream calibration must use the same basis."
+        )
+        basis.currentIndexChanged.connect(
+            lambda _index, combo=basis: self._set_dataset_spectral_channel_setting(
+                dataset, group, "normalization_basis", str(combo.currentData())
+            )
+        )
+        form.addRow("Normalization", basis)
+
+        calibration = QtWidgets.QLineEdit(
+            _parameter_to_text(config.get("signal_per_mbarn", 0.0))
+        )
+        calibration.setObjectName("ins_signal_per_mbarn")
+        calibration.setToolTip(
+            "For an arbitrary imported cross section, the number of imported "
+            "signal units corresponding to 1 mbarn/(sr meV) on the selected basis. "
+            "Leave 0 to retain arbitrary units."
+        )
+        calibration.editingFinished.connect(
+            lambda editor=calibration: self._set_dataset_spectral_channel_setting(
+                dataset,
+                group,
+                "signal_per_mbarn",
+                float(_parse_parameter_text(editor.text()) or 0.0),
+            )
+        )
+        form.addRow("Signal units / mbarn", calibration)
+
+        ion = QtWidgets.QComboBox()
+        ion.setObjectName("ins_form_factor_ion")
+        ion.addItem("No form-factor correction", "")
+        for ion_name in available_ions():
+            ion.addItem(ion_name, ion_name)
+        ion.setCurrentIndex(max(ion.findData(config.get("form_factor_ion", "")), 0))
+        ion.setToolTip(
+            "Magnetic ion used for |f(Q)|². Selecting none leaves the form factor "
+            "in both representations; choose an ion to remove it from χ″."
+        )
+        ion.currentIndexChanged.connect(
+            lambda _index, combo=ion: self._set_dataset_spectral_channel_setting(
+                dataset, group, "form_factor_ion", str(combo.currentData())
+            )
+        )
+        form.addRow("Magnetic form factor", ion)
+
+        polarization = QtWidgets.QComboBox()
+        polarization.setObjectName("ins_polarization_mode")
+        for label, value in (
+            ("Already corrected", "already_corrected"),
+            ("Isotropic χ″ per component (P = 2)", "isotropic_single_component"),
+            ("Isotropic trace χ″ (P = 2/3)", "isotropic_trace"),
+            ("Custom scalar", "custom_scalar"),
+        ):
+            polarization.addItem(label, value)
+        polarization.setCurrentIndex(
+            max(polarization.findData(config["polarization_mode"]), 0)
+        )
+        polarization.setToolTip(
+            "Contraction with δαβ − Q̂αQ̂β. For χ″ defined as the isotropic "
+            "three-component trace, use 2/3; for one Cartesian component, use 2."
+        )
+        polarization.currentIndexChanged.connect(
+            lambda _index, combo=polarization: self._set_dataset_spectral_channel_setting(
+                dataset, group, "polarization_mode", str(combo.currentData())
+            )
+        )
+        form.addRow("Polarization convention", polarization)
+
+        polarization_scalar = QtWidgets.QLineEdit(
+            _parameter_to_text(config["polarization_scalar"])
+        )
+        polarization_scalar.setObjectName("ins_polarization_scalar")
+        polarization_scalar.setToolTip(
+            "Positive custom polarization factor P(Q), used only with Custom scalar."
+        )
+        polarization_scalar.editingFinished.connect(
+            lambda editor=polarization_scalar: self._set_dataset_spectral_channel_setting(
+                dataset,
+                group,
+                "polarization_scalar",
+                float(_parse_parameter_text(editor.text())),
+            )
+        )
+        form.addRow("Custom P", polarization_scalar)
+
+        moment = QtWidgets.QComboBox()
+        moment.setObjectName("ins_moment_unit")
+        moment.addItem("Magnetic-moment χ″ (μ_B²)", "mu_B_squared")
+        moment.addItem("Spin-operator χ″ (spin²)", "spin_squared")
+        moment.setCurrentIndex(max(moment.findData(config["moment_unit"]), 0))
+        moment.setToolTip(
+            "μ_B² susceptibility already contains the magnetic moment and receives "
+            "no extra g². Spin-operator susceptibility is multiplied by g²."
+        )
+        moment.currentIndexChanged.connect(
+            lambda _index, combo=moment: self._set_dataset_spectral_channel_setting(
+                dataset, group, "moment_unit", str(combo.currentData())
+            )
+        )
+        form.addRow("χ″ convention", moment)
+
+        g_factor = QtWidgets.QLineEdit(_parameter_to_text(config["g_factor"]))
+        g_factor.setObjectName("ins_g_factor")
+        g_factor.setToolTip(
+            "Landé g factor. It is applied exactly once, and only when χ″ is "
+            "declared in spin² rather than magnetic-moment μ_B²."
+        )
+        g_factor.editingFinished.connect(
+            lambda editor=g_factor: self._set_dataset_spectral_channel_setting(
+                dataset, group, "g_factor", float(_parse_parameter_text(editor.text()))
+            )
+        )
+        form.addRow("Landé g", g_factor)
+
+        kinematic = QtWidgets.QComboBox()
+        kinematic.setObjectName("ins_kf_ki_state")
+        kinematic.addItem("Removed upstream (S(Q,E)-like)", "removed")
+        kinematic.addItem("Included in imported cross section", "included")
+        kinematic.setCurrentIndex(max(kinematic.findData(config["kf_ki_state"]), 0))
+        kinematic.setToolTip(
+            "Whether the imported signal still contains the k_f/k_i phase-space "
+            "factor. Included data require fixed Ei or Ef so nfit can remove it from χ″."
+        )
+        kinematic.currentIndexChanged.connect(
+            lambda _index, combo=kinematic: self._set_dataset_spectral_channel_setting(
+                dataset, group, "kf_ki_state", str(combo.currentData())
+            )
+        )
+        form.addRow("k_f/k_i state", kinematic)
+
+        for label, key, object_name, tooltip in (
+            (
+                "Fixed Ei (meV)",
+                "incident_energy_meV",
+                "ins_incident_energy",
+                "Fixed incident energy for direct-geometry data. Leave blank when k_f/k_i was removed upstream.",
+            ),
+            (
+                "Fixed Ef (meV)",
+                "final_energy_meV",
+                "ins_final_energy",
+                "Fixed final energy for indirect-geometry data. Leave blank when k_f/k_i was removed upstream.",
+            ),
+        ):
+            editor = QtWidgets.QLineEdit(_parameter_to_text(config.get(key, "")))
+            editor.setObjectName(object_name)
+            editor.setToolTip(tooltip)
+            editor.editingFinished.connect(
+                lambda ed=editor, setting=key: self._set_dataset_spectral_channel_setting(
+                    dataset,
+                    group,
+                    setting,
+                    _parse_parameter_text(ed.text()),
+                )
+            )
+            form.addRow(label, editor)
+        temperature = dataset.parameters.get(
+            "temperature", getattr(dataset.data, "metadata", {}).get("temperature")
+        )
+        if temperature in (None, ""):
+            status_text = "Set T in Sample environment to create the paired channel."
+        elif (
+            config["kf_ki_state"] == "included"
+            and config.get("incident_energy_meV") in (None, "")
+            and config.get("final_energy_meV") in (None, "")
+        ):
+            status_text = "Provide fixed Ei or Ef to remove k_f/k_i."
+        else:
+            status_text = "Cross-section and χ″ channels are available."
+        status = QtWidgets.QLabel(status_text)
+        status.setObjectName("ins_channel_status")
+        status.setWordWrap(True)
+        status.setToolTip(
+            "Readiness of the paired INS conversion. The imported signal remains "
+            "available even when a required conversion input is missing."
+        )
+        form.addRow("Status", status)
         return box
 
     def _set_dataset_signal_semantics(

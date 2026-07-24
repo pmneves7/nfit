@@ -10,6 +10,12 @@ from nfit.analysis.spectral import (
 )
 from nfit.mdhisto import MDHistoAxis, MDHistoData
 from nfit.plotting import MDHistoSliceViewer
+from nfit.spectral_channels import (
+    CHIPP_CHANNEL,
+    CROSS_SECTION_CHANNEL,
+    default_spectral_channel_config,
+    with_paired_spectral_channels,
+)
 
 
 def _convention():
@@ -98,3 +104,114 @@ def test_absolute_ins_conversion_returns_chipp_with_explicit_metadata():
     assert converted.metadata["signal_quantity_type"] == "dynamic_susceptibility"
     assert converted.metadata["signal_unit"] == "mu_B^2/meV"
     assert converted.metadata["spectral_convention"]["absolute_scale"] is True
+
+
+def test_arbitrary_ins_view_exposes_cross_section_and_chipp_channels():
+    axes = (
+        MDHistoAxis("Q", np.array([0.0, 1.0]), "1/angstrom", "momentum"),
+        MDHistoAxis("DeltaE", np.array([1.0, 3.0]), "meV", "energy"),
+    )
+    data = MDHistoData(
+        axes,
+        np.array([[12.0]]),
+        np.array([[1.2]]),
+        np.zeros((1, 1), bool),
+        np.ones((1, 1)),
+    )
+    config = default_spectral_channel_config()
+    config["fit_representation"] = "chi_double_prime"
+    converted = with_paired_spectral_channels(data, config, temperature_K=25.0)
+    expected = (
+        data.signal
+        * (1.0 - np.exp(-2.0 / (0.08617333262 * 25.0)))
+        / (2.0 / 3.0)
+    )
+    np.testing.assert_allclose(converted.signal, expected)
+    assert CROSS_SECTION_CHANNEL in converted.auxiliary_channels
+    assert CHIPP_CHANNEL in converted.auxiliary_channels
+    assert converted.channel_quantity_type() == "dynamic_susceptibility"
+    assert (
+        converted.channel_quantity_type(CROSS_SECTION_CHANNEL)
+        == "differential_cross_section"
+    )
+    assert converted.channel_unit(CHIPP_CHANNEL) == "arb. units"
+
+
+def test_absolute_mbarn_ins_channels_round_trip_and_keep_formula_unit_basis():
+    axes = (
+        MDHistoAxis("Q", np.array([0.0, 1.0]), "1/angstrom", "momentum"),
+        MDHistoAxis("DeltaE", np.array([1.0, 3.0]), "meV", "energy"),
+    )
+    original_chipp = np.array([[1.7]])
+    from nfit.cross_section import cross_section_from_chipp
+
+    cross_mbarn = (
+        cross_section_from_chipp(
+            original_chipp,
+            np.array([[2.0]]),
+            25.0,
+            polarization=2.0 / 3.0,
+        )
+        * 1000.0
+    )
+    data = MDHistoData(
+        axes,
+        cross_mbarn,
+        cross_mbarn * 0.1,
+        np.zeros((1, 1), bool),
+        np.ones((1, 1)),
+    )
+    config = default_spectral_channel_config()
+    config.update(
+        {
+            "source_unit": "mbarn/sr/meV/f.u.",
+            "fit_representation": "chi_double_prime",
+        }
+    )
+    converted = with_paired_spectral_channels(data, config, temperature_K=25.0)
+    np.testing.assert_allclose(converted.signal, original_chipp)
+    assert converted.channel_unit() == "mu_B^2/meV/f.u."
+    assert (
+        converted.channel_unit(CROSS_SECTION_CHANNEL)
+        == "mbarn/sr/meV/f.u."
+    )
+
+
+def test_spin_susceptibility_applies_g_squared_exactly_once():
+    axes = (
+        MDHistoAxis("Q", np.array([0.0, 1.0]), "1/angstrom", "momentum"),
+        MDHistoAxis("DeltaE", np.array([1.0, 3.0]), "meV", "energy"),
+    )
+    data = MDHistoData(
+        axes,
+        np.array([[2.0]]),
+        np.array([[0.2]]),
+        np.zeros((1, 1), bool),
+        np.ones((1, 1)),
+    )
+    config = default_spectral_channel_config()
+    config.update(
+        {
+            "source_representation": "chi_double_prime",
+            "source_unit": "spin^2/meV/f.u.",
+            "moment_unit": "spin_squared",
+            "g_factor": 2.5,
+        }
+    )
+    converted = with_paired_spectral_channels(data, config, temperature_K=20.0)
+    from nfit.cross_section import cross_section_from_chipp
+
+    expected = (
+        cross_section_from_chipp(
+            data.signal,
+            np.array([[2.0]]),
+            20.0,
+            polarization=2.0 / 3.0,
+            moment_unit="spin_squared",
+            g_factor=2.5,
+        )
+        * 1000.0
+    )
+    np.testing.assert_allclose(
+        converted.auxiliary_channels[CROSS_SECTION_CHANNEL].values, expected
+    )

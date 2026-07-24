@@ -260,7 +260,7 @@ def plot_mdhisto_line(
         axis_index = non_singleton[0]
     else:
         axis_index = _resolve_mdhisto_dim(data, axis_dim)
-    channel_name = _resolve_mdhisto_channel(channel)
+    channel_name = _resolve_mdhisto_channel(channel, data)
     values = _mdhisto_channel_array(data, channel_name)
     index = [0] * data.signal.ndim
     index[axis_index] = slice(None)
@@ -278,7 +278,16 @@ def plot_mdhisto_line(
     axis = data.axes[axis_index]
     xlabel = f"{axis.name} ({axis.units})" if axis.units else axis.name
     ax.set_xlabel(xlabel)
-    ax.set_ylabel(MDHistoSliceViewer.CHANNEL_LABELS[channel_name])
+    auxiliary = data.auxiliary_channels.get(channel_name)
+    ax.set_ylabel(
+        f"{auxiliary.label} ({display_unit(auxiliary.unit)})"
+        if auxiliary is not None and auxiliary.unit
+        else (
+            auxiliary.label
+            if auxiliary is not None and auxiliary.label
+            else MDHistoSliceViewer.CHANNEL_LABELS[channel_name]
+        )
+    )
     return ax
 
 
@@ -430,7 +439,17 @@ def plot_mdhisto_fit_line_comparison(
         ax.plot(x, r + offset, "o", ms=4.0, mfc="none", color="0.25", label="residual")
     axis = data.axes[axis_index]
     ax.set_xlabel(f"{axis.name} ({axis.units})" if axis.units else axis.name)
-    ax.set_ylabel(MDHistoSliceViewer.CHANNEL_LABELS[_resolve_mdhisto_channel(channel)])
+    channel_name = _resolve_mdhisto_channel(channel, data)
+    auxiliary = data.auxiliary_channels.get(channel_name)
+    ax.set_ylabel(
+        f"{auxiliary.label} ({display_unit(auxiliary.unit)})"
+        if auxiliary is not None and auxiliary.unit
+        else (
+            auxiliary.label
+            if auxiliary is not None and auxiliary.label
+            else MDHistoSliceViewer.CHANNEL_LABELS[channel_name]
+        )
+    )
     ax.legend()
     return ax
 
@@ -546,7 +565,7 @@ def _mdhisto_1d_values(
     axis_index: int,
     channel: str,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
-    channel_name = _resolve_mdhisto_channel(channel)
+    channel_name = _resolve_mdhisto_channel(channel, data)
     values = _mdhisto_channel_array(data, channel_name)
     index = [0] * data.signal.ndim
     index[axis_index] = slice(None)
@@ -554,6 +573,13 @@ def _mdhisto_1d_values(
     yerr = None
     if channel_name == "signal":
         yerr = np.asarray(_mdhisto_channel_array(data, "errors")[tuple(index)], dtype=float)
+    elif (
+        channel_name in data.auxiliary_channels
+        and data.auxiliary_channels[channel_name].errors is not None
+    ):
+        yerr = np.asarray(
+            data.auxiliary_channels[channel_name].errors[tuple(index)], dtype=float
+        )
     return data.axes[axis_index].centers, y, yerr
 
 
@@ -576,10 +602,17 @@ def _resolve_mdhisto_dim(data: MDHistoData, dim: int | str) -> int:
     return names.index(dim)
 
 
-def _resolve_mdhisto_channel(channel: str) -> str:
+def _resolve_mdhisto_channel(
+    channel: str, data: MDHistoData | None = None
+) -> str:
     normalized = MDHistoSliceViewer.CHANNEL_ALIASES.get(str(channel), str(channel))
-    if normalized not in MDHistoSliceViewer.CHANNELS:
-        raise ValueError(f"unknown channel {channel!r}; choose one of {MDHistoSliceViewer.CHANNELS}")
+    choices = (
+        (*MDHistoSliceViewer.CHANNELS, *data.auxiliary_channels)
+        if data is not None
+        else MDHistoSliceViewer.CHANNELS
+    )
+    if normalized not in choices:
+        raise ValueError(f"unknown channel {channel!r}; choose one of {choices}")
     return normalized
 
 
@@ -594,6 +627,8 @@ def _mdhisto_channel_array(data: MDHistoData, channel: str) -> np.ndarray:
         return np.asarray(data.mask, dtype=float)
     elif channel in {"file_mask", "nfit_mask"}:
         return np.asarray(data.metadata.get(channel, np.zeros(data.shape, dtype=bool)), dtype=float)
+    elif channel in data.auxiliary_channels:
+        values = np.asarray(data.auxiliary_channels[channel].values, dtype=float)
     else:
         raise ValueError(f"unknown channel {channel!r}")
     empty = ~mdhisto_measured_bins(data)
@@ -1062,6 +1097,11 @@ class MDHistoSliceViewer:
         self.CHANNELS = (*type(self).CHANNELS, *extra_channels)
         self.CHANNEL_LABELS = {
             **type(self).CHANNEL_LABELS,
+            **(
+                {"signal": str(self.data.metadata["signal_label"])}
+                if self.data.metadata.get("signal_label")
+                else {}
+            ),
             **(
                 {
                     "fit": "Fit",

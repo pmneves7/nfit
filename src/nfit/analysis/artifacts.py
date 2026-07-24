@@ -57,7 +57,20 @@ def read_dataset_artifact(path: str | Path) -> MDHistoData | PointListData:
             ) for i in range(count)
         )
         channel_names = json.loads(str(np.asarray(archive["auxiliary_names"]).item())) if "auxiliary_names" in archive else []
-        channels = {name: MDHistoChannel(np.asarray(archive[f"aux_{i}_values"]), np.asarray(archive[f"aux_{i}_errors"]) if f"aux_{i}_errors" in archive else None, str(np.asarray(archive[f"aux_{i}_label"]).item()), str(np.asarray(archive[f"aux_{i}_unit"]).item())) for i, name in enumerate(channel_names)}
+        channels = {
+            name: MDHistoChannel(
+                np.asarray(archive[f"aux_{i}_values"]),
+                np.asarray(archive[f"aux_{i}_errors"])
+                if f"aux_{i}_errors" in archive
+                else None,
+                str(np.asarray(archive[f"aux_{i}_label"]).item()),
+                str(np.asarray(archive[f"aux_{i}_unit"]).item()),
+                str(np.asarray(archive[f"aux_{i}_quantity_type"]).item())
+                if f"aux_{i}_quantity_type" in archive
+                else "unknown",
+            )
+            for i, name in enumerate(channel_names)
+        }
         coordinate = int(np.asarray(archive["coordinate_system"]).item()) if "coordinate_system" in archive else -1
         visual = int(np.asarray(archive["visual_normalization"]).item()) if "visual_normalization" in archive else -1
         return MDHistoData(axes, archive["signal"], archive["errors"], archive["mask"], archive["num_events"], coordinate_system=None if coordinate < 0 else coordinate, visual_normalization=None if visual < 0 else visual, metadata=metadata, auxiliary_channels=channels)
@@ -78,7 +91,7 @@ def _payload(data: MDHistoData | PointListData) -> dict[str, Any]:
         common.update({f"axis_{i}_name": np.asarray(axis.name), f"axis_{i}_values": axis.values, f"axis_{i}_units": np.asarray(axis.units), f"axis_{i}_kind": np.asarray(axis.kind), f"axis_{i}_frame": np.asarray(axis.frame or ""), f"axis_{i}_path": np.asarray(axis.path or ""), f"axis_{i}_metadata": np.asarray(json.dumps(_json_metadata(axis.metadata), sort_keys=True))})
     common["auxiliary_names"] = np.asarray(json.dumps(list(data.auxiliary_channels)))
     for i, channel in enumerate(data.auxiliary_channels.values()):
-        common.update({f"aux_{i}_values": channel.values, f"aux_{i}_label": np.asarray(channel.label), f"aux_{i}_unit": np.asarray(channel.unit)})
+        common.update({f"aux_{i}_values": channel.values, f"aux_{i}_label": np.asarray(channel.label), f"aux_{i}_unit": np.asarray(channel.unit), f"aux_{i}_quantity_type": np.asarray(channel.quantity_type)})
         if channel.errors is not None:
             common[f"aux_{i}_errors"] = channel.errors
     return common
