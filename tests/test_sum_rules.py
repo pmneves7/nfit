@@ -5,6 +5,8 @@ import nfit.sum_rules as sum_rules
 from nfit.cross_section import KB_MEV_PER_K
 from nfit.spin_fluctuations import build_rpa_geometry, rpa_exchange_matrix
 from nfit.sum_rules import (
+    EMU_PER_MOL_PER_MODEL_CHI,
+    SI_M3_PER_MOL_PER_MODEL_CHI,
     bz_sample_hkl,
     coth_weight,
     kk_static_chi,
@@ -14,6 +16,14 @@ from nfit.sum_rules import (
     tier_b_omega_grid,
     trace_moment_quadrature,
 )
+
+
+def test_si_bulk_susceptibility_factor_contains_mu0():
+    np.testing.assert_allclose(
+        SI_M3_PER_MOL_PER_MODEL_CHI,
+        4.0 * np.pi * 1.0e-6 * EMU_PER_MOL_PER_MODEL_CHI,
+        rtol=1.0e-14,
+    )
 
 
 def _quad_reference(chi, gamma, temperature_K, cutoff):

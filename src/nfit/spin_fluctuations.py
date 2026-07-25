@@ -75,9 +75,12 @@ tests. The sum rule ``sum_nu w_nu(Q) = 1`` holds because ``U`` is unitary.
 
 Units
 -----
-Energies (``E``, ``Gamma``, ``omega_sf``, ``J``) in meV; ``chi0``/``chi_loc``/
-``chi_pk`` in 1/meV (so that ``J * chi0`` is dimensionless) up to the overall
-intensity normalization; ``xi`` in Angstrom; Q in r.l.u.
+Energies (``E``, ``Gamma``, ``omega_sf``, ``J``) are in meV;
+``chi0``/``chi_loc``/``chi_pk`` are the susceptibility of one Cartesian
+spin-operator component in 1/meV (so that ``J * chi0`` is dimensionless), up
+to the overall intensity normalization. Conversion to a magnetic-moment
+response multiplies by ``g^2``; conversion to rationalized SI ``M/H`` also
+contains ``mu_0``. ``xi`` is in Angstrom and Q is in r.l.u.
 
 References
 ----------

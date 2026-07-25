@@ -10,13 +10,16 @@ or converts it through the shared cross-section convention.
 
 ## From susceptibility to intensity
 
-For the scalar isotropic-trace convention, a cross-section dataset receives
+The scalar kernels return one Cartesian component of the spin susceptibility,
+$\chi''_s=\chi''_{s,xx}=\chi''_{s,yy}=\chi''_{s,zz}$. A cross-section dataset
+therefore receives
 
 $$
 \frac{d^2\sigma}{d\Omega\,dE}
-=s\,\frac{k_f}{k_i}\frac{0.07265\ {\rm barn}/\mu_B^2}{\pi}
-\,\tfrac{2}{3}\, |f(Q)|^2
-\frac{\chi''(\mathbf{Q}, E)}{1 - e^{-E/k_B T}},
+=s\,\frac{k_f}{k_i}\frac{(\gamma r_0)^2}{\pi}
+\left(\frac{g}{2}\right)^2
+\,2\, |f(Q)|^2
+\frac{\chi''_s(\mathbf{Q}, E)}{1 - e^{-E/k_B T}},
 $$
 
 where
@@ -25,10 +28,10 @@ where
   only when the model amplitudes and data share an absolute convention),
 - $k_f/k_i$ is included only when the dataset declares that the imported
   cross section still carries that factor,
-- $2/3$ is the polarization (orientation) factor for **isotropic (Heisenberg)
-  spins**: unpolarized neutrons couple only to spin components perpendicular
-  to $\mathbf{Q}$, and the isotropic average of
-  $\sum_{\alpha} (1 - \hat{Q}_\alpha^2)$ is $2/3$,
+- $2$ is the polarization factor for one isotropic Cartesian component:
+  $\sum_\alpha(1-\hat Q_\alpha^2)\chi''_s=2\chi''_s$,
+- $(\gamma r_0)^2(g/2)^2$ is implemented equivalently as
+  $0.07265\,g^2$ barn; the dataset Landé factor is user-set and defaults to 2,
 - $|f(Q)|^2$ is the magnetic form factor (below),
 - $[1 - e^{-E/k_B T}]^{-1}$ is the detailed-balance (Bose) factor connecting
   $\chi''$ to $S(\mathbf{Q}, E)$; the odd-in-$E$ $\chi''$ times this factor
@@ -46,8 +49,10 @@ raises an error naming the fix: set the per-dataset temperature in the GUI
 Backgrounds are separate additive components (`constant_background`,
 `linear_background`), not part of these models.
 
-The scalar models define $\chi''$ as the isotropic three-component trace, hence
-$P=2/3$. A dataset converted to $\chi''$ should use the same trace convention.
+The scalar models define $\chi''_s$ as one isotropic Cartesian component, hence
+$P=2$. A dataset converted to $\chi''$ should use the same per-component
+convention. The legacy/import option $P=2/3$ is only for a stored
+three-component trace.
 If a dataset conversion removes a magnetic form factor, use the same ion as
 the corresponding model component. The full convention and primary references
 are in [Physics conventions](physics_conventions.md#inelastic-magnetic-neutron-scattering).
@@ -185,7 +190,7 @@ relaxational modes:
 
 $$
 \chi''(\mathbf{Q}, E) = \sum_\nu w_\nu(\mathbf{Q})\,
-\chi_{\mathbf{Q}\nu}\, \frac{\Gamma_\nu E}{E^2 + \Gamma_\nu^2},
+\frac{\chi_0\Gamma_0 E}{E^2 + \Gamma_\nu^2},
 $$
 
 $$
@@ -196,8 +201,11 @@ $$
 
 where $\chi_{\mathbf{Q}\nu}$ is the static susceptibility of mode $\nu$ at
 $\mathbf{Q}$ and $\Gamma_\nu$ is that mode's exchange-renormalized relaxation
-energy. The entry $U_{a\nu}$ is the amplitude of mode $\nu$ on magnetic site
-$a$. The neutron structure-factor weights are
+energy. The numerator has been simplified using the exact identity
+$\chi_{\mathbf Q\nu}\Gamma_\nu=\chi_0\Gamma_0$; retaining the two factors
+separately is equivalent but hides that the exchange dependence enters this
+Lorentzian only through $\Gamma_\nu$. The entry $U_{a\nu}$ is the amplitude of
+mode $\nu$ on magnetic site $a$. The neutron structure-factor weights are
 
 $$
 w_\nu(\mathbf{Q}) = \frac{1}{N}
@@ -492,10 +500,10 @@ $\chi''_{\alpha\beta} = (\chi_{\alpha\beta} - \chi^*_{\beta\alpha})/2i$ and
 contracts it against a per-channel weight matrix — it never collapses to a
 scalar internally, so polarized channels can be added later without a kernel
 rewrite. The only user-facing channel now is unpolarized,
-$W = \tfrac13(\delta_{\alpha\beta} - \hat Q_\alpha \hat Q_\beta)$. The $1/3$
-normalization makes the isotropic limit **exactly** equal the scalar model's
-$\tfrac23\chi''$, so enabling an $\varepsilon$-small anisotropy produces no
-intensity jump (locked by tests). See
+$W = \delta_{\alpha\beta} - \hat Q_\alpha \hat Q_\beta$. Its isotropic limit is
+**exactly** $2\chi''_s$, matching the scalar model's one-component convention,
+so enabling an $\varepsilon$-small anisotropy produces no intensity jump
+(locked by tests). See
 [physics_conventions](physics_conventions.md) for the sign and frame
 conventions.
 

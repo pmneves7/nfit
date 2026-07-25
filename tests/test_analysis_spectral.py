@@ -119,12 +119,13 @@ def test_arbitrary_ins_view_exposes_cross_section_and_chipp_channels():
         np.ones((1, 1)),
     )
     config = default_spectral_channel_config()
+    assert config["polarization_mode"] == "isotropic_single_component"
     config["fit_representation"] = "chi_double_prime"
     converted = with_paired_spectral_channels(data, config, temperature_K=25.0)
     expected = (
         data.signal
         * (1.0 - np.exp(-2.0 / (0.08617333262 * 25.0)))
-        / (2.0 / 3.0)
+        / 2.0
     )
     np.testing.assert_allclose(converted.signal, expected)
     assert CROSS_SECTION_CHANNEL in converted.auxiliary_channels
@@ -150,7 +151,7 @@ def test_absolute_mbarn_ins_channels_round_trip_and_keep_formula_unit_basis():
             original_chipp,
             np.array([[2.0]]),
             25.0,
-            polarization=2.0 / 3.0,
+            polarization=2.0,
         )
         * 1000.0
     )
@@ -206,7 +207,7 @@ def test_spin_susceptibility_applies_g_squared_exactly_once():
             data.signal,
             np.array([[2.0]]),
             20.0,
-            polarization=2.0 / 3.0,
+            polarization=2.0,
             moment_unit="spin_squared",
             g_factor=2.5,
         )

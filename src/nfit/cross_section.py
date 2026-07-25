@@ -5,8 +5,10 @@ from numpy.typing import ArrayLike, NDArray
 
 KB_MEV_PER_K = 0.08617333262
 # Standard magnetic neutron cross-section constant
-# (gamma r_0 / 2)^2 = 0.07265 barn / mu_B^2.  Keep the historical square-root
-# name as a compatibility alias; callers that square it obtain the constant.
+# (gamma r_0 / 2)^2 = 0.07265 barn / mu_B^2. Equivalently, a spin-operator
+# response carries (gamma r_0)^2 (g/2)^2 = 0.07265 g^2 barn. Keep the
+# historical square-root name as a compatibility alias; callers that square it
+# obtain the constant.
 MAGNETIC_CROSS_SECTION_BARN_PER_MU_B_SQ = 0.07265
 MAGNETIC_GAMMA0_PER_MU_B = np.sqrt(MAGNETIC_CROSS_SECTION_BARN_PER_MU_B_SQ)
 FloatArray = NDArray[np.float64]
@@ -20,10 +22,15 @@ def magnetic_moment_factor(
     """Return the factor converting the declared response to ``mu_B^2``.
 
     A susceptibility already expressed for the magnetic moment in
-    ``mu_B^2/meV`` carries no additional Landé factor.  A spin-operator
-    susceptibility in ``spin^2/meV`` is multiplied by ``g^2``.  Keeping these
-    conventions distinct prevents the common accidental double application of
-    the Landé factor.
+    ``mu_B^2/meV`` carries no additional Landé factor. A spin-operator
+    susceptibility in ``spin^2/meV`` is multiplied by ``g^2``. With nfit's
+    constant ``(gamma r_0 / 2)^2``, this is algebraically identical to writing
+    the cross section with ``(gamma r_0)^2 (g/2)^2``.
+
+    No vacuum-permeability factor belongs here. ``mu_0`` enters when converting
+    microscopic moment susceptibility to rationalized SI ``M/H`` units, not
+    when converting a response already in ``spin^2/meV`` or ``mu_B^2/meV`` to
+    a neutron cross section.
     """
 
     if moment_unit == "mu_B_squared":

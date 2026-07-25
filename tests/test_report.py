@@ -293,7 +293,8 @@ def test_full_rpa_report_covers_every_term():
     assert "\\omega_L = g\\mu_B B" in tex
     assert "Dynamic response" in tex
     # chi'' is written out explicitly as the relaxational mode sum.
-    assert "\\chi''(\\mathbf{Q}, E) = \\sum_\\nu" in tex
+    assert "\\chi''_{s}(\\mathbf{Q}, E) = \\sum_\\nu" in tex
+    assert "\\chi_0\\Gamma_0\\,E" in tex
     assert "\\Gamma_\\nu = \\Gamma_0" in tex
     assert "w_\\nu(\\mathbf{Q})" in tex
     # Per-dataset chi0/gamma0 table from fitted_values.
@@ -307,7 +308,15 @@ def test_full_rpa_report_covers_every_term():
     # Diagnostics table with a missing-value cell for the sparse T50 record.
     assert "Physics diagnostics" in tex
     # Only cited references appear, in the bibliography.
-    for key in ("sunny", "ross2011", "enjalran2004", "berlin1952", "moriya1985"):
+    for key in (
+        "sunny",
+        "ross2011",
+        "enjalran2004",
+        "berlin1952",
+        "moriya1985",
+        "squires",
+        "welch2022",
+    ):
         assert f"\\bibitem{{{key}}}" in tex
     assert "\\bibitem{takahashi1986}" not in tex  # TAC not used
     # Skipped dataset note.
@@ -320,7 +329,10 @@ def test_scalar_model_uses_isotropic_polarization_branch():
     for key in ("anisotropy", "sia", "dipole", "zeeman", "closure"):
         model["config"].pop(key, None)
     tex = render_fit_report_latex(entry, group_name="pyro")
-    assert "polarization factor $2/3$" in tex
+    assert "\\mathcal P[\\chi''_s]=2\\chi''_s" in tex
+    assert "\\frac{g}{2}" in tex
+    assert "\\pi\\,[1 - e^{-E/k_BT}]" in tex
+    assert "\\mu_0(g\\mu_B)^2\\chi''_s" in tex
     assert "Anisotropic exchange" not in tex
     assert "Self-consistency closure" not in tex
     _check_balanced_environments(tex)

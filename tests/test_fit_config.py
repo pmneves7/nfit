@@ -720,7 +720,7 @@ def test_local_relaxational_model_can_emit_selected_chipp_or_mbarn_channel():
     params = {spec.name: spec.value for spec in compiled.problem.parameter_specs}
     chipp = local_relaxational_chipp(energy, chi_loc=1.5, gamma=2.5)
     np.testing.assert_allclose(
-        evaluate_problem_model(compiled.problem, "a", params), 2.0 * chipp
+        evaluate_problem_model(compiled.problem, "a", params), 2.0 * 2.0**2 * chipp
     )
 
     convention.update(
@@ -734,7 +734,12 @@ def test_local_relaxational_model_can_emit_selected_chipp_or_mbarn_channel():
     expected = (
         2.0
         * cross_section_from_chipp(
-            chipp, energy, 20.0, polarization=2.0 / 3.0
+            chipp,
+            energy,
+            20.0,
+            polarization=2.0,
+            moment_unit="spin_squared",
+            g_factor=2.0,
         )
         * 1000.0
     )

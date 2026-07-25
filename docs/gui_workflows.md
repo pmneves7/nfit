@@ -400,8 +400,10 @@ For **single-crystal inelastic** and **powder inelastic** datasets, the
    converts counts to absolute mbarn.
 3. Choose the amount-of-sample basis, magnetic form factor, polarization
    convention, and whether $\chi''$ is a magnetic-moment (`μ_B²`) or
-   spin-operator (`spin²`) response. The Landé factor is used only for the
-   latter.
+   spin-operator (`spin²`) response. Imported moment response already contains
+   $g^2$; imported spin response receives it exactly once. Model kernels are
+   spin responses and use the displayed Landé factor when predicting either
+   absolute $\chi''$ or cross section.
 4. State whether $k_f/k_i$ remains in the input. An included factor requires
    fixed incident energy for direct geometry or fixed final energy for
    indirect geometry.
@@ -549,11 +551,13 @@ field:
   `sqrt(Ef / (Ef + E))` from Ef. With neither energy recorded, nfit leaves the
   dataset unchanged.
 
-Magnetic inelastic models use the absolute prefactor
-`C |f(Q)|^2 / pi`, with
-`C = (gamma r_0 / 2)^2 = 0.07265 barn / mu_B^2`, as well as the Bose factor and
-polarization factor. The dataset-level kinematic option completes this
-convention without embedding instrument metadata in a model component.
+Magnetic inelastic models use the absolute spin-response prefactor
+`(gamma r_0)^2 (g/2)^2 |f(Q)|^2 / pi`, implemented equivalently as
+`0.07265 g^2 barn |f(Q)|^2 / pi`, as well as the Bose and polarization factors.
+The scalar models use one Cartesian component and therefore default to `P = 2`;
+`P = 2/3` remains available only for imported three-component trace data. The
+dataset-level kinematic option completes this convention without embedding
+instrument metadata in a model component.
 
 ### MPMS quantities and units
 

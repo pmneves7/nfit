@@ -265,6 +265,17 @@ _REFERENCES: dict[str, str] = {
         "P. J. Brown, ``Magnetic form factors'', \\emph{International Tables "
         "for Crystallography}, Vol.\\ C, Section 4.4.5."
     ),
+    "squires": (
+        "G. L. Squires, \\emph{Introduction to the Theory of Thermal Neutron "
+        "Scattering}, 3rd ed. (Cambridge University Press, 2012), Chap. 8, "
+        "doi:10.1017/CBO9781139107808.009."
+    ),
+    "welch2022": (
+        "P. G. Welch \\emph{et al.}, ``Magnetic structure and exchange "
+        "interactions in the Heisenberg pyrochlore antiferromagnet "
+        "Gd$_2$Pt$_2$O$_7$'', Phys.\\ Rev.\\ B \\textbf{105}, 094402 (2022), "
+        "doi:10.1103/PhysRevB.105.094402."
+    ),
 }
 
 
@@ -782,9 +793,9 @@ def _section_dynamic_response(
         "neutron structure-factor weights:"
     )
     lines.append(
-        "\\begin{equation}\n\\chi''(\\mathbf{Q}, E) = \\sum_\\nu "
-        "w_\\nu(\\mathbf{Q})\\; \\chi_{\\mathbf{Q}\\nu}\\, \\frac{\\Gamma_\\nu\\, "
-        "E}{E^2 + \\Gamma_\\nu^2},\n\\end{equation}"
+        "\\begin{equation}\n\\chi''_{s}(\\mathbf{Q}, E) = \\sum_\\nu "
+        "w_\\nu(\\mathbf{Q})\\; \\frac{\\chi_0\\Gamma_0\\,E}"
+        "{E^2 + \\Gamma_\\nu^2},\n\\end{equation}"
     )
     lines.append(
         "where the mode susceptibility and relaxation rate are\n"
@@ -794,7 +805,10 @@ def _section_dynamic_response(
         "\\chi_0\\,\\bigr],\n\\end{equation}"
     )
     lines.append(
-        "and the weight $w_\\nu(\\mathbf{Q}) = |\\sum_a U_{a\\nu}(\\mathbf{Q})|^2/N$ "
+        "The simplified numerator follows exactly from "
+        "$\\chi_{\\mathbf{Q}\\nu}\\Gamma_\\nu=\\chi_0\\Gamma_0$. The scalar "
+        "$\\chi''_s$ is one Cartesian component of the spin-operator response. "
+        "The weight $w_\\nu(\\mathbf{Q}) = |\\sum_a U_{a\\nu}(\\mathbf{Q})|^2/N$ "
         "is the uniform sublattice sum (the extended-zone $J(\\mathbf{Q})$ "
         "already carries the pair phases). The relaxation rate softens as the "
         "Stoner-like criterion $\\max_{\\mathbf{Q},\\nu}\\lambda_\\nu(\\mathbf{Q})"
@@ -946,24 +960,35 @@ def _section_cross_section(
     ion = config.get("ion")
     if tensor:
         polarization = (
-            "the unpolarized channel is computed from the dissipative tensor, "
-            "$I \\propto \\sum_{\\alpha\\beta} \\tfrac{1}{3}"
-            "(\\delta_{\\alpha\\beta} - \\hat Q_\\alpha \\hat Q_\\beta)\\,"
-            "\\chi''_{\\alpha\\beta}$ (this reduces to the isotropic factor "
-            "$2/3$ in the Heisenberg limit)"
+            "the unpolarized response is computed from the full dissipative "
+            "spin tensor, $\\mathcal P[\\chi''_s] = "
+            "\\sum_{\\alpha\\beta}(\\delta_{\\alpha\\beta} - "
+            "\\hat Q_\\alpha \\hat Q_\\beta)\\chi''_{s,\\alpha\\beta}$"
         )
     else:
         polarization = (
-            "the isotropic (Heisenberg) polarization factor $2/3$ multiplies "
-            "$\\chi''$"
+            "$\\chi''_s$ denotes one Cartesian component of the isotropic "
+            "spin response, so $\\mathcal P[\\chi''_s]=2\\chi''_s$"
         )
     lines.append(
         "Measured intensity follows"
-        "\n\\begin{equation}\nI(\\mathbf{Q}, E) = s\\, P(\\hat{\\mathbf{Q}})\\, "
-        "|f(Q)|^2\\, \\frac{\\chi''(\\mathbf{Q}, E)}{1 - e^{-E/k_BT}},\n"
+        "\n\\begin{equation}\n\\frac{d^2\\sigma}{d\\Omega\\,dE} = "
+        "s\\,\\frac{k_f}{k_i}(\\gamma r_0)^2\\left(\\frac{g}{2}\\right)^2 "
+        "|f(Q)|^2\\, \\frac{\\mathcal P[\\chi''_s(\\mathbf{Q}, E)]}"
+        "{\\pi\\,[1 - e^{-E/k_BT}]},\n"
         "\\end{equation}\n"
         f"where {polarization}, "
-        f"$s = {_pm(scale, scale_err)}$ is the overall scale"
+        "the $1/\\pi$ is fixed by the fluctuation--dissipation convention "
+        + cite.cite("squires")
+        + ", and $(\\gamma r_0)^2(g/2)^2$ is equivalently "
+        "$(\\gamma r_0/2)^2g^2$ with $(\\gamma r_0/2)^2=0.07265$ barn "
+        + cite.cite("welch2022")
+        + ". The microscopic $\\chi''_s$ is not dimensionless MKS "
+        "susceptibility: per magnetic ion, "
+        "$\\chi''_{\\rm SI}=\\mu_0(g\\mu_B)^2\\chi''_s/"
+        "(1\\,\\mathrm{meV\\ in\\ joules})$. Thus $\\mu_0$ enters conversion "
+        "to SI $M/H$, not as an extra neutron cross-section factor. "
+        + f"$s = {_pm(scale, scale_err)}$ is the overall scale"
         + (
             f", and $|f(Q)|^2$ is the {latex_escape(ion)} magnetic form factor "
             "in the $\\langle j_0\\rangle$ analytic approximation "

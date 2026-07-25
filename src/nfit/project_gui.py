@@ -428,8 +428,8 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
         "label": "Local relaxational spin",
         "description": (
             "Fully local spin relaxing at rate Gamma: chi'' = chi_loc * Gamma * E / (E^2 + Gamma^2), "
-            "converted to intensity with the Bose factor, magnetic form factor, and isotropic "
-            "polarization factor 2/3. Requires a dataset temperature."
+            "converted to intensity with the Bose factor, magnetic form factor, and "
+            "one-component isotropic polarization factor P = 2. Requires a dataset temperature."
         ),
         "parameters": {
             "scale": {
@@ -490,7 +490,7 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
         "description": (
             "Millis-Monien-Pines susceptibility of a nearly antiferromagnetic metal: "
             "chi(q,w) = chi_pk / (1 + xi^2 |q-Q0|^2 - i w/omega_sf), converted to intensity "
-            "with Bose, form-factor, and isotropic polarization factors. "
+            "with Bose, form-factor, and one-component isotropic polarization P = 2. "
             "Requires dataset temperature and lattice metadata."
         ),
         "parameters": {

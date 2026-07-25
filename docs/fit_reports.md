@@ -36,7 +36,9 @@ from any historical fit result, including after reloading a project.
    Zeeman term with per-dataset fields, the RPA dynamic-response equations
    with the fitted $\chi_0$/$\Gamma_0$ (per dataset when shared that way),
    the self-consistency closure with its defining equation, and the
-   cross-section convention (polarization factor, form factor, Bose factor).
+   cross-section convention (the fluctuation-dissipation $1/\pi$, the
+   one-component $P=2$ polarization factor, $(g/2)^2$, form factor, Bose
+   factor, and the separate $\mu_0$ conversion to SI $M/H$).
 4. **Fitted parameters** — every parameter with value, standard error,
    varied/fixed status, sharing scope, and limits; posterior median and
    16/84 percentiles when emcee sampling ran. When the fit result's posterior

@@ -19,10 +19,10 @@ blocks with unit phase.
 The response is computed **polarization-resolved**: the full ``3x3`` dynamic
 susceptibility tensor ``chi''_{alpha beta}(Q, E)`` is formed and contracted
 against per-channel weight matrices. The only channel wired up now is the
-unpolarized cross section ``W = (1/3)(delta_{alpha beta} - Qhat_alpha
-Qhat_beta)``, whose isotropic limit equals the scalar model's ``2/3 chi''``, but
-the tensor ``chi''`` is available internally so polarized channels can be added
-without touching the kernel.
+unpolarized cross section ``W = delta_{alpha beta} - Qhat_alpha Qhat_beta``,
+whose isotropic limit equals the scalar model's ``2 chi''``. The tensor
+``chi''`` is available internally so polarized channels can be added without
+touching the kernel.
 """
 
 from __future__ import annotations
@@ -378,11 +378,11 @@ def cartesian_qhat_per_point(
 
 
 def _unpolarized_weight(q_hat: FloatArray) -> FloatArray:
-    """``W_{alpha beta} = (1/3)(delta - Qhat Qhat)`` per point, (n_points, 3, 3)."""
+    """``W_{alpha beta} = delta - Qhat Qhat`` per point, (n_points, 3, 3)."""
 
     identity = np.eye(3)[None, :, :]
     outer = q_hat[:, :, None] * q_hat[:, None, :]
-    return (identity - outer) / 3.0
+    return identity - outer
 
 
 _ZEEMAN_SOLVE_BLOCK = 200_000
@@ -480,7 +480,7 @@ def tensor_rpa_unpolarized_chipp(
     """Unpolarized ``chi''`` per point: ``sum_{ab} W_{ab}(Qhat) chi''_{ab}``.
 
     ``q_hat`` is the Cartesian unit momentum-transfer direction per fitted
-    point. The isotropic limit equals ``(2/3) chi''_scalar`` (continuity lock).
+    point. The isotropic limit equals ``2 chi''_scalar`` (continuity lock).
     """
 
     chi = tensor_susceptibility(

@@ -185,8 +185,12 @@ d2sigma/dOmega/dE = (kf/ki) (0.07265 barn/mu_B^2)
                      / [pi (1 - exp(-E/k_B T))].
 ```
 
-The cross section carries steradians; `chi''` does not. A result is marked
-absolute only when its normalization basis is known.
+This form takes `chi''` in `mu_B^2/meV`. For a spin response, replace
+`chi''` by `g^2 chi''_spin`, equivalently using
+`(gamma r_0)^2 (g/2)^2`. The default scalar convention is one isotropic
+Cartesian component and therefore `P = 2`; `P = 2/3` denotes a
+three-component trace. The cross section carries steradians; `chi''` does not.
+A result is marked absolute only when its normalization basis is known.
 
 Physical total-moment, QFI, and static-susceptibility results require absolute
 scale, a known normalization basis, and an explicit `spectral_convention`.

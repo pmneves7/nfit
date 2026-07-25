@@ -5,9 +5,10 @@ from nfit.cross_section import (
     KB_MEV_PER_K,
     MAGNETIC_GAMMA0_PER_MU_B,
     bose_denominator,
-    intensity_from_chipp,
     chipp_from_cross_section,
     cross_section_from_chipp,
+    intensity_from_chipp,
+    magnetic_moment_factor,
 )
 
 
@@ -100,3 +101,28 @@ def test_absolute_cross_section_uses_standard_magnetic_constant_and_round_trips(
         polarization=2.0 / 3.0,
     )
     np.testing.assert_allclose(recovered, chipp)
+
+
+def test_spin_response_g_factor_matches_gamma_r0_g_over_two_convention():
+    g_factor = 2.37
+    spin_chipp = np.array([1.4])
+    cross_section = cross_section_from_chipp(
+        spin_chipp,
+        [3.0],
+        0.0,
+        polarization=2.0,
+        moment_unit="spin_squared",
+        g_factor=g_factor,
+    )
+    # (gamma r0)^2 (g/2)^2 = (gamma r0/2)^2 g^2.
+    expected = (
+        MAGNETIC_GAMMA0_PER_MU_B**2
+        * g_factor**2
+        * 2.0
+        * spin_chipp
+        / np.pi
+    )
+    np.testing.assert_allclose(cross_section, expected)
+    assert magnetic_moment_factor("spin_squared", g_factor) == pytest.approx(
+        g_factor**2
+    )

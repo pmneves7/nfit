@@ -8,30 +8,56 @@ means neutron energy loss. Momentum is in reciprocal-lattice units or
 steradian and per meV. Model kernels produce the dissipative response
 $\chi''(\mathbf Q,E)$ before instrumental factors.
 
-For an unpolarized measurement in the dipole approximation, nfit uses
+The scalar spin-fluctuation kernels return a **single Cartesian component** of
+the spin-operator susceptibility,
+$\chi''_s=\chi''_{s,xx}=\chi''_{s,yy}=\chi''_{s,zz}$, in
+`spin^2/meV`. For an unpolarized measurement in the dipole approximation, nfit
+uses
 
 $$
 \frac{d^2\sigma}{d\Omega\,dE} =
-\frac{k_f}{k_i}\frac{C}{\pi}|f(Q)|^2
+\frac{k_f}{k_i}\frac{(\gamma r_0)^2}{\pi}
+\left(\frac{g}{2}\right)^2 |f(Q)|^2
 \sum_{\alpha\beta}
 (\delta_{\alpha\beta}-\hat Q_\alpha\hat Q_\beta)
 \frac{\chi''_{\alpha\beta}(\mathbf Q,E)}
 {1-\exp[-E/(k_B T)]},
-\qquad
-C=\left(\frac{\gamma r_0}{2}\right)^2
-=0.07265\ {\rm barn}/\mu_B^2.
 $$
 
-This is a susceptibility **per unit energy** convention. The $1/\pi$ belongs
-to nfit's fluctuation-dissipation convention; it must not be inserted a second
-time when importing an already calculated $\chi''$. The Bose/detailed-balance
-factor uses a numerically stable $1-\exp(-E/k_BT)$ evaluation. The odd-in-$E$
-$\chi''$ then produces the correct detailed balance between energy loss and
-gain. See Berk's NIST review for the general double-differential and magnetic
-correlation-function formalism and Squires for the magnetic cross section and
-linear-response convention
+where $\chi''_{\alpha\beta}$ is the dimensionless-spin response per unit energy.
+Since
+
+$$
+(\gamma r_0)^2\left(\frac{g}{2}\right)^2
+=\left(\frac{\gamma r_0}{2}\right)^2g^2,
+\qquad
+\left(\frac{\gamma r_0}{2}\right)^2=0.07265\ {\rm barn},
+$$
+
+the code uses the numerically equivalent $0.07265\,g^2$ barn form. If the
+susceptibility is already expressed as a magnetic-moment response
+$\chi''_\mu=g^2\chi''_s$ in `mu_B^2/meV`, no additional $g^2$ is applied.
+
+This is a susceptibility **per unit energy** convention. The fluctuation-
+dissipation theorem is
+
+$$
+S^{\alpha\beta}(\mathbf Q,E)=
+\frac{1}{\pi}\,
+\frac{\chi''_{s,\alpha\beta}(\mathbf Q,E)}
+{1-\exp[-E/(k_BT)]}.
+$$
+
+The $1/\pi$ must appear exactly once; it is not part of $\chi''$ itself. The
+Bose/detailed-balance factor uses a numerically stable
+$1-\exp(-E/k_BT)$ evaluation. The odd-in-$E$ $\chi''$ then produces the correct
+detailed balance between energy loss and gain. See Berk's NIST review for the
+general double-differential and magnetic correlation-function formalism,
+Squires for the magnetic cross section and linear-response convention, and
+Welch *et al.* for an explicit absolute-unit derivation
 ([Berk 1993](https://doi.org/10.6028/jres.098.002);
-[Squires, chapter 8](https://doi.org/10.1017/CBO9781139107808.009)).
+[Squires, chapter 8](https://doi.org/10.1017/CBO9781139107808.009);
+[Welch *et al.* 2022](https://doi.org/10.1103/PhysRevB.105.094402)).
 
 ### Polarization convention
 
@@ -39,11 +65,12 @@ The tensor projector is always
 $\delta_{\alpha\beta}-\hat Q_\alpha\hat Q_\beta$. A scalar polarization factor
 depends on what the scalar $\chi''$ means:
 
-- **Isotropic trace:** $\chi''=\sum_\alpha\chi''_{\alpha\alpha}$ gives
-  $P=2/3$. This is the scalar convention used by nfit's Heisenberg, MMP, and
-  local-relaxational models.
 - **One isotropic Cartesian component:** $\chi''=\chi''_{xx}=\chi''_{yy}
-  =\chi''_{zz}$ gives $P=2$.
+  =\chi''_{zz}$ gives $P=2$. This is the scalar convention used by nfit's
+  Heisenberg, MMP, local-relaxational, and paramagnon models.
+- **Isotropic trace:** $\chi''=\sum_\alpha\chi''_{\alpha\alpha}$ gives
+  $P=2/3$. This remains available for imported data that were reduced with a
+  trace convention.
 - **Already corrected:** use $P=1$ only when the stored response has already
   had the polarization contraction removed.
 - **Custom scalar:** a positive user-supplied factor is recorded in the
@@ -54,17 +81,50 @@ scalar $P$ is not generally physical.
 
 ### Magnetic moment, spin, and the Landé factor
 
-If $\chi''$ is expressed in `mu_B^2/meV`, it is a **magnetic-moment**
-susceptibility and already contains the moment conversion. nfit therefore
-applies no additional $g^2$. If the response is instead declared in
-`spin^2/meV`, nfit multiplies it by $g^2$ exactly once when calculating the
-cross section:
+If imported $\chi''$ is expressed in `mu_B^2/meV`, it is a
+**magnetic-moment** susceptibility and already contains the moment conversion.
+nfit therefore applies no additional $g^2$ when converting that imported
+channel. If the imported response is instead declared in `spin^2/meV`, nfit
+multiplies it by $g^2$ exactly once when calculating the cross section:
 
 $$
 \chi''_{\mu_B^2}=g^2\chi''_{\rm spin^2}.
 $$
 
-This explicit choice avoids both omitting $g^2$ and double counting it.
+The model kernels themselves are spin responses. When a dataset requests a
+model curve in `mu_B^2/meV`, nfit multiplies the model by the dataset's Landé
+$g^2$; when it requests `spin^2/meV`, it does not. This explicit choice avoids
+both omitting $g^2$ and double counting it. The user-set Landé factor may differ
+from 2.
+
+### Relation to SI susceptibility and the role of $\mu_0$
+
+The microscopic spin susceptibility above responds to the conjugate Zeeman
+energy. Rationalized SI bulk susceptibility instead uses $M=\chi_{\rm SI}H$.
+For a response per magnetic ion,
+
+$$
+\chi_{\rm SI,ion}(\mathbf Q,E)
+=\frac{\mu_0(g\mu_B)^2}{1\ {\rm meV\ in\ joules}}\,
+\chi_s(\mathbf Q,E),
+$$
+
+and a molar value additionally carries Avogadro's number and the chosen number
+of magnetic ions per formula unit. Equivalently,
+
+$$
+\chi_{\rm SI,ion}
+=\frac{\mu_0\mu_B^2}{1\ {\rm meV\ in\ joules}}\,\chi_\mu .
+$$
+
+Thus the user's $\mu_0$ observation is correct for conversion to proper MKS/SI
+$M/H$ units. It is **not** an additional factor in the neutron cross section
+once $\chi''$ is already in `spin^2/meV` or `mu_B^2/meV`; inserting it there
+would mix SI bulk and microscopic neutron conventions. nfit's molar
+`cm^3/mol` to `m^3/mol` conversion includes the rationalized-SI $4\pi$ factor,
+and the Heisenberg RPA bulk prediction includes the corresponding
+$\mu_0(g\mu_B)^2$ conversion. Welch *et al.* derive this relation explicitly
+for susceptibility per magnetic ion.
 
 ### Form factor and kinematics
 
@@ -151,12 +211,12 @@ single-ion anisotropy, dipole–dipole, or Zeeman terms (see
 [Spin-fluctuation models](spin_fluctuation_models.md#tensor-anisotropic-interactions)).
 
 - **Polarization weight.** The unpolarized channel uses
-  $W_{\alpha\beta} = \tfrac13(\delta_{\alpha\beta} - \hat Q_\alpha \hat Q_\beta)$
+  $W_{\alpha\beta} = \delta_{\alpha\beta} - \hat Q_\alpha \hat Q_\beta$
   with $\hat Q$ the Cartesian unit momentum transfer (from
-  `rlu_to_inv_angstrom_matrix`, stamped on each fit point). The per-component
-  $1/3$ makes the isotropic limit reduce **exactly** to the scalar model's
-  $P = 2/3$ polarization factor, so there is no intensity jump when an
-  infinitesimal anisotropy is switched on. The dissipative tensor is
+  `rlu_to_inv_angstrom_matrix`, stamped on each fit point). The isotropic limit
+  reduces **exactly** to the scalar model's $P = 2$ one-component polarization
+  factor, so there is no intensity jump when an infinitesimal anisotropy is
+  switched on. The dissipative tensor is
   $\chi''_{\alpha\beta} = (\chi_{\alpha\beta} - \chi^*_{\beta\alpha})/2i$; its
   antisymmetric (chiral) part is nonzero only when time reversal is broken (a
   Zeeman field or a DM term). Channels are computed internally so polarized

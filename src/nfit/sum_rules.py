@@ -64,9 +64,19 @@ _DIGAMMA_REGIME_CUTOFF_OVER_KT = 20.0
 _MU_B_CGS_ERG_PER_G = 9.2740100783e-21
 _MEV_IN_ERG = 1.602176634e-15
 _AVOGADRO = 6.02214076e23
+_MU_0_SI = 4.0 * np.pi * 1.0e-7
+_MU_B_SI_J_PER_T = 9.2740100783e-24
+_MEV_IN_J = 1.602176634e-22
 # 1 tesla in oersted (CGS field unit MPMS reports).
 OERSTED_PER_TESLA = 1.0e4
 EMU_PER_MOL_PER_MODEL_CHI = _AVOGADRO * _MU_B_CGS_ERG_PER_G**2 / _MEV_IN_ERG
+# Rationalized SI M/H susceptibility explicitly contains mu_0:
+#   chi_molar[m^3/mol] = SI_M3_PER_MOL_PER_MODEL_CHI
+#                        * g^2 * chi_spin[1/meV].
+# This equals 4 pi 10^-6 times the CGS molar factor above.
+SI_M3_PER_MOL_PER_MODEL_CHI = (
+    _MU_0_SI * _AVOGADRO * _MU_B_SI_J_PER_T**2 / _MEV_IN_J
+)
 # One Bohr magneton per formula unit, expressed as an emu molar moment.
 EMU_PER_MOL_PER_MU_B = _AVOGADRO * _MU_B_CGS_ERG_PER_G
 

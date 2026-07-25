@@ -47,6 +47,7 @@ from .cross_section import (
     cross_section_from_chipp,
     intensity_from_chipp,
     kf_over_ki,
+    magnetic_moment_factor,
 )
 from .dataset import PointData4D
 from .fitting import (
@@ -241,11 +242,13 @@ def _single_q_paramagnon_factory(component: Any) -> ModelFunction:
     return model
 
 
-ISOTROPIC_POLARIZATION = 2.0 / 3.0
-"""Polarization factor for isotropic (Heisenberg) spins.
+ISOTROPIC_POLARIZATION = 2.0
+"""Polarization factor for one component of an isotropic susceptibility.
 
-Unpolarized neutrons couple only to spin components perpendicular to Q; for an
-isotropic spin system the orientation factor averages to ``2/3``.
+The scalar spin-fluctuation kernels return
+``chi_xx = chi_yy = chi_zz`` rather than their three-component trace.
+Contracting that response with ``delta_ab - Qhat_a Qhat_b`` therefore gives
+``P = 2``. A scalar defined as the trace would instead use ``P = 2/3``.
 """
 
 
@@ -285,8 +288,20 @@ def _spectral_model_observable(
             form_factor_sq=form_factor_sq,
             polarization=polarization,
         )
+    # Model kernels return a spin-operator response. Convert it to the
+    # dataset's declared response convention exactly once.
+    g_value = convention.get("g_factor", 2.0)
+    g_factor = 2.0 if g_value in (None, "") else float(g_value)
+    target_moment_unit = str(convention.get("moment_unit", "mu_B_squared"))
     if convention.get("fit_representation") == "chi_double_prime":
-        return float(scale) * np.asarray(chipp, dtype=float)
+        response = np.asarray(chipp, dtype=float)
+        if target_moment_unit == "mu_B_squared":
+            response = response * magnetic_moment_factor("spin_squared", g_factor)
+        elif target_moment_unit != "spin_squared":
+            raise ValueError(
+                "spectral moment_unit must be 'mu_B_squared' or 'spin_squared'"
+            )
+        return float(scale) * response
 
     kinematic: float | np.ndarray = 1.0
     if convention.get("kf_ki_state") == "included":
@@ -304,8 +319,10 @@ def _spectral_model_observable(
         form_factor_sq=form_factor_sq,
         polarization=polarization,
         kf_ki=kinematic,
-        moment_unit=str(convention.get("moment_unit", "mu_B_squared")),
-        g_factor=convention.get("g_factor"),
+        # Model chi'' is a spin response regardless of the stored data
+        # channel's display convention.
+        moment_unit="spin_squared",
+        g_factor=g_factor,
     )
     unit = str(convention.get("unit", ""))
     if unit.startswith("mbarn/"):
@@ -1362,7 +1379,7 @@ class _RpaComponentEvaluator:
             columns = {self.scale_key: zero, self.chi0_key: zero, self.gamma0_key: zero}
             columns.update({key: zero for key in self.j_keys.values()})
             return columns
-        # I = scale * (2/3) * |f|^2 * chipp / bose(E, T), linear in chipp. The
+        # I = scale * 2 * |f|^2 * chipp / bose(E, T), linear in chipp. The
         # scale column is I evaluated at unit scale; d(I)/d(chipp) is I with
         # chipp replaced by 1 (the Bose/form-factor/scale prefactor). Both are
         # computed directly -- never by dividing by chipp, which would be
