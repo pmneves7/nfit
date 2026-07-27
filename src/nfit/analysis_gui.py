@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import json
 from typing import Any
 
@@ -120,7 +119,8 @@ class DataPlaygroundWindow:
         self.view_peak_overlay_button.clicked.connect(self.view_input_with_peaks)
         self.export_bragg_button = QtWidgets.QPushButton("Export .int")
         self.export_bragg_button.setToolTip(
-            "Export accepted Bragg reflections as a CSV-formatted .int file with H, K, L, I, and dI columns."
+            "Export accepted Bragg reflections as a headerless, space-delimited .int file "
+            "containing H, K, L, I, and dI."
         )
         self.export_bragg_button.setEnabled(False)
         self.export_bragg_button.clicked.connect(self.export_current_bragg_int)
@@ -634,7 +634,7 @@ class DataPlaygroundWindow:
         return True
 
     def export_current_bragg_int(self) -> bool:
-        """Export accepted reflections with integer HKL in a CSV-formatted .int file."""
+        """Export accepted reflections as headerless, whitespace-delimited intensity data."""
 
         from PySide6 import QtWidgets
 
@@ -657,11 +657,11 @@ class DataPlaygroundWindow:
             self.window,
             "Export integrated Bragg peaks",
             suggested_name,
-            "Intensity files (*.int);;CSV files (*.csv)",
+            "Intensity files (*.int)",
         )
         if not filename:
             return False
-        if not filename.lower().endswith((".int", ".csv")):
+        if not filename.lower().endswith(".int"):
             filename += ".int"
         accepted = (
             np.asarray(data.column("Accepted"), dtype=bool)
@@ -669,21 +669,18 @@ class DataPlaygroundWindow:
             else np.ones(data.size, dtype=bool)
         )
         try:
-            with open(filename, "w", newline="", encoding="utf-8") as handle:
-                writer = csv.writer(handle)
-                writer.writerow(required)
+            with open(filename, "w", encoding="utf-8") as handle:
                 for row in np.flatnonzero(accepted):
                     hkl = [
                         int(np.rint(float(data.column(name)[row])))
                         for name in ("H", "K", "L")
                     ]
-                    writer.writerow(
-                        [
-                            *hkl,
-                            float(data.column("I")[row]),
-                            float(data.column("dI")[row]),
-                        ]
-                    )
+                    values = [
+                        *hkl,
+                        float(data.column("I")[row]),
+                        float(data.column("dI")[row]),
+                    ]
+                    handle.write(" ".join(str(value) for value in values) + "\n")
         except OSError as exc:
             QtWidgets.QMessageBox.warning(
                 self.window, "Export Bragg reflections", f"Could not write {filename}: {exc}"

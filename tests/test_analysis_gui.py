@@ -1,5 +1,3 @@
-import csv
-
 import numpy as np
 import pytest
 
@@ -314,9 +312,9 @@ def test_bragg_result_export_writes_accepted_reflections_as_int(monkeypatch, tmp
     )
 
     assert window.export_current_bragg_int()
-    rows = list(csv.reader(output_path.open(newline="", encoding="utf-8")))
-    assert rows[0] == ["H", "K", "L", "I", "dI"]
-    assert len(rows) == int(np.count_nonzero(table.column("Accepted"))) + 1
+    rows = [line.split() for line in output_path.read_text(encoding="utf-8").splitlines()]
+    assert all(len(row) == 5 for row in rows)
+    assert len(rows) == int(np.count_nonzero(table.column("Accepted")))
     window.window.close()
 
 
@@ -346,10 +344,9 @@ def test_bragg_int_export_rounds_hkl_and_preserves_intensity(monkeypatch, tmp_pa
     )
 
     assert window.export_current_bragg_int()
-    rows = list(csv.reader(output_path.open(newline="", encoding="utf-8")))
+    rows = [line.split() for line in output_path.read_text(encoding="utf-8").splitlines()]
 
     assert rows == [
-        ["H", "K", "L", "I", "dI"],
         ["1", "-2", "0", "12.345", "0.123"],
         ["-2", "3", "-1", "67.89", "0.456"],
     ]
