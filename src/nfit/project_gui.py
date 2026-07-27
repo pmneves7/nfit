@@ -54,7 +54,8 @@ from .mdevent import assess_mdevent_memory, bin_mdevent_group, is_mdevent_file, 
 from .raw_dgs import bin_raw_dgs_group, is_raw_dgs_nexus_file, raw_dgs_dataset_group
 from .pipeline import DataGroup, DatasetEntry, DatasetGroup, FitTimelineEntry, MaskSpec, ModelComponentSpec
 from .qt_controls import configure_numeric_spin_boxes
-from .rebin import rebin_nd
+from .rebin import rebin_nd, rebin_nd_symmetry
+from .symmetry import SymmetrySpec, resolve_symmetry, symmetry_config, symmetry_spec_from_config
 
 QtMDHistoSliceViewer = None
 RECENT_PROJECT_LIMIT = 10
@@ -2030,6 +2031,8 @@ def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str,
         group.metadata[GROUP_COMPOSITE_KEY] = config
     config.setdefault("enabled", False)
     config.setdefault("fractional", True)
+    if not isinstance(config.get("symmetry"), dict):
+        config["symmetry"] = symmetry_config(SymmetrySpec())
     if config.get(REBIN_RESOLUTION_MODE_KEY) not in {"step", "bins"}:
         config[REBIN_RESOLUTION_MODE_KEY] = "step"
     if config.get("mean_weighting") not in {"inverse_variance", "uniform"}:
@@ -2312,6 +2315,7 @@ def composite_dataset_data(
             max_batch_bytes=_rebin_max_batch_bytes(config),
             enforce_memory_limit=not allow_overcommit,
             progress_callback=progress_callback,
+            symmetry_operations=_rebin_symmetry_matrices(config, _composite_root(group).lattice_parameters),
         )
     if kind == "raw_dgs_nexus":
         node = group.node if isinstance(group, _CompositeScope) else group
@@ -2324,6 +2328,7 @@ def composite_dataset_data(
             vectors=[axis.get("vector", _identity_vector(index, 4)) for index, axis in enumerate(config.get("axes", []))],
             axis_names=[str(axis.get("name", ("H", "K", "L", "DeltaE")[index])) for index, axis in enumerate(config.get("axes", []))],
             max_batch_bytes=_rebin_max_batch_bytes(config), progress_callback=progress_callback,
+            symmetry_operations=_rebin_symmetry_matrices(config, _composite_root(group).lattice_parameters),
         )
     if kind == "mdhisto":
         return _composite_mdhisto_data(group, config, progress_callback=progress_callback)
@@ -4846,6 +4851,8 @@ def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
         dataset.parameters[DATASET_REBIN_KEY] = config
     config.setdefault("enabled", False)
     config.setdefault("fractional", True)
+    if not isinstance(config.get("symmetry"), dict):
+        config["symmetry"] = symmetry_config(SymmetrySpec())
     if config.get(REBIN_RESOLUTION_MODE_KEY) not in {"step", "bins"}:
         config[REBIN_RESOLUTION_MODE_KEY] = "step"
     try:
@@ -5015,7 +5022,57 @@ def _dataset_rebin_estimated_contributions(dataset: DatasetEntry, config: dict[s
     source_points = _dataset_rebin_source_points(dataset)
     ndim = max(len(config.get("axes", []) or []), 1)
     multiplier = 2**ndim if bool(config.get("fractional", True)) else 1
-    return int(source_points * multiplier)
+    return int(source_points * multiplier * _rebin_symmetry_count(config, _dataset_lattice_parameters(dataset)))
+
+
+def _dataset_lattice_parameters(dataset: DatasetEntry) -> dict[str, Any] | None:
+    data = dataset.data
+    metadata = getattr(data, "metadata", None)
+    return metadata.get("lattice_parameters") if isinstance(metadata, dict) and isinstance(metadata.get("lattice_parameters"), dict) else None
+
+
+def _rebin_symmetry_operations(
+    config: dict[str, Any],
+    lattice_parameters: dict[str, Any] | None = None,
+) -> tuple:
+    payload = config.get("symmetry")
+    spec = symmetry_spec_from_config(payload)
+    stored_lattice = payload.get("lattice_parameters") if isinstance(payload, dict) else None
+    lattice = lattice_parameters if lattice_parameters is not None else stored_lattice
+    return resolve_symmetry(spec, lattice_parameters=lattice)
+
+
+def _rebin_symmetry_count(config: dict[str, Any], lattice_parameters: dict[str, Any] | None = None) -> int:
+    try:
+        return len(_rebin_symmetry_operations(config, lattice_parameters))
+    except (ImportError, ValueError):
+        return 1
+
+
+def _rebin_symmetry_matrices(
+    config: dict[str, Any], lattice_parameters: dict[str, Any] | None = None
+) -> tuple[np.ndarray, ...] | None:
+    operations = _rebin_symmetry_operations(config, lattice_parameters)
+    if len(operations) == 1 and np.allclose(operations[0].matrix_hkl, np.eye(3)):
+        return None
+    return tuple(np.asarray(operation.matrix_hkl, dtype=float) for operation in operations)
+
+
+def _rebin_symmetry_metadata(
+    config: dict[str, Any], lattice_parameters: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
+    spec = symmetry_spec_from_config(config.get("symmetry"))
+    if not spec.enabled:
+        return None
+    operations = _rebin_symmetry_operations(config, lattice_parameters)
+    return {
+        "mode": spec.mode,
+        "expression": spec.expression,
+        "operation_count": len(operations),
+        "operations_hkl": [np.asarray(operation.matrix_hkl, dtype=float).tolist() for operation in operations],
+        "labels": [operation.label for operation in operations],
+        "energy_unchanged": True,
+    }
 
 
 def _dataset_rebin_is_large(dataset: DatasetEntry, config: dict[str, Any]) -> bool:
@@ -5117,7 +5174,7 @@ def _rebin_point_list_data(dataset: DatasetEntry, config: dict[str, Any]) -> Poi
         coordinate_names = list(prepared.coordinate_names)
     lower = [axis["lower"] for axis in axes_config[: len(coordinate_names)]] or None
     upper = [axis["upper"] for axis in axes_config[: len(coordinate_names)]] or None
-    return prepared.rebin_to_histogram(
+    result = prepared.rebin_to_histogram(
         coordinate_names,
         lower=lower,
         upper=upper,
@@ -5126,7 +5183,14 @@ def _rebin_point_list_data(dataset: DatasetEntry, config: dict[str, Any]) -> Poi
         normalize=True,
         mean_weighting=_rebin_mean_weighting(config),
         max_batch_bytes=_rebin_max_batch_bytes(config),
+        symmetry_operations=_rebin_symmetry_matrices(config, prepared.metadata.get("lattice_parameters")),
     )
+    metadata = dict(result.metadata)
+    symmetry_metadata = _rebin_symmetry_metadata(config, prepared.metadata.get("lattice_parameters"))
+    if symmetry_metadata is not None:
+        metadata.setdefault("rebin", {})["symmetry"] = symmetry_metadata
+    result.metadata = metadata
+    return result
 
 
 def _rebin_mean_weighting(config: dict[str, Any]) -> str:
@@ -5719,6 +5783,16 @@ def _rebin_mdhisto_data(
             for index, axis_config in enumerate(axes_config)
         ]
     coords = np.stack(projected, axis=-1)
+    symmetry = _rebin_symmetry_matrices(config, data.metadata.get("lattice_parameters"))
+    output_axes = None
+    if symmetry is not None:
+        if ndim != 4:
+            raise ValueError("rebin symmetry requires a four-dimensional HKLE dataset")
+        physical = _mdhisto_coordinate_grids(data)
+        if not all(name in physical for name in ("H", "K", "L", "E")):
+            raise ValueError("rebin symmetry requires reconstructable H, K, L, and energy coordinates")
+        coords = np.stack([physical[name] for name in ("H", "K", "L", "E")], axis=-1)
+        output_axes = _validate_mdhisto_rebin_basis(axes_config, ndim)
     valid = np.isfinite(data.signal) & np.isfinite(data.errors) & ~data.mask
     if data.num_events is not None:
         valid &= mdhisto_measured_bins(data)
@@ -5727,9 +5801,7 @@ def _rebin_mdhisto_data(
     coords_valid = coords[valid]
     if signal.size == 0:
         raise ValueError("no valid data points remain before rebinning")
-    result = rebin_nd(
-        signal,
-        coords_valid,
+    kwargs = dict(
         data_errs=errors,
         lower=lower,
         upper=upper,
@@ -5739,6 +5811,11 @@ def _rebin_mdhisto_data(
         mean_weighting=_rebin_mean_weighting(config),
         max_batch_bytes=_rebin_max_batch_bytes(config),
         progress_callback=progress_callback,
+    )
+    result = (
+        rebin_nd_symmetry(signal, coords_valid, symmetry, axes=output_axes, **kwargs)
+        if symmetry is not None
+        else rebin_nd(signal, coords_valid, **kwargs)
     )
     if result.binned_data is None or result.binned_data_errs is None or result.n_samples is None:
         raise RuntimeError("rebinning did not produce binned data")
@@ -5772,6 +5849,9 @@ def _rebin_mdhisto_data(
         "max_batch_mb": _rebin_max_batch_mb(config),
         "max_batch_bytes": _rebin_max_batch_bytes(config),
     }
+    symmetry_metadata = _rebin_symmetry_metadata(config, data.metadata.get("lattice_parameters"))
+    if symmetry_metadata is not None:
+        metadata["rebin"]["symmetry"] = symmetry_metadata
     return MDHistoData(
         axes=rebinned_axes,
         signal=np.asarray(result.binned_data, dtype=float),
@@ -5795,7 +5875,8 @@ def _rebin_point_data(
         axes_config = _default_rebin_axes(data)
     lower = [axis["lower"] for axis in axes_config]
     upper = [axis["upper"] for axis in axes_config]
-    return rebin_point_data(
+    symmetry = _rebin_symmetry_matrices(config, data.metadata.get("lattice_parameters"))
+    result = rebin_point_data(
         data,
         lower=lower,
         upper=upper,
@@ -5805,7 +5886,14 @@ def _rebin_point_data(
         mean_weighting=_rebin_mean_weighting(config),
         max_batch_bytes=_rebin_max_batch_bytes(config),
         progress_callback=progress_callback,
+        symmetry_operations=symmetry,
     )
+    metadata = dict(result.metadata)
+    symmetry_metadata = _rebin_symmetry_metadata(config, data.metadata.get("lattice_parameters"))
+    if symmetry_metadata is not None:
+        metadata.setdefault("rebin", {})["symmetry"] = symmetry_metadata
+    result.metadata = metadata
+    return result
 
 
 def _point_data_with_nfit_masks(
@@ -11757,6 +11845,24 @@ class NfitProjectExplorer:
         batch_label.setToolTip(batch_tooltip)
         batch_spin.setToolTip(batch_tooltip)
         batch_spin.valueChanged.connect(lambda value: self._set_group_composite_max_batch_mb(group, int(value)))
+        symmetry = symmetry_spec_from_config(config.get("symmetry"))
+        symmetry_check = QtWidgets.QCheckBox("Apply symmetry")
+        symmetry_check.setObjectName("group_composite_symmetry_enabled")
+        symmetry_check.setChecked(symmetry.enabled)
+        symmetry_check.setToolTip("Apply reciprocal-HKL point-group operations before composite binning; energy is unchanged.")
+        symmetry_check.toggled.connect(lambda checked: self._set_group_composite_symmetry_enabled(group, checked))
+        symmetry_mode = QtWidgets.QComboBox()
+        symmetry_mode.setObjectName("group_composite_symmetry_mode")
+        for label, value in (("Space group", "space_group"), ("Point group", "point_group"), ("Operations", "operations"), ("Generators", "generators")):
+            symmetry_mode.addItem(label, value)
+        symmetry_mode.setCurrentIndex(max(symmetry_mode.findData(symmetry.mode if symmetry.mode != "none" else "space_group"), 0))
+        symmetry_mode.setToolTip("Select the notation used by the symmetry expression.")
+        symmetry_mode.currentIndexChanged.connect(lambda _index, combo=symmetry_mode: self._set_group_composite_symmetry_mode(group, str(combo.currentData())))
+        symmetry_expression = QtWidgets.QLineEdit(symmetry.expression)
+        symmetry_expression.setObjectName("group_composite_symmetry_expression")
+        symmetry_expression.setPlaceholderText("P -1")
+        symmetry_expression.setToolTip("Examples: P -1; -1; x,y,z;-x,-y,-z; rotate(order=3, axis=[1,1,1]).")
+        symmetry_expression.editingFinished.connect(lambda editor=symmetry_expression: self._set_group_composite_symmetry_expression(group, editor.text()))
         option_row.addWidget(fractional_check)
         option_row.addWidget(auto_check)
         option_row.addWidget(mean_label)
@@ -11765,13 +11871,18 @@ class NfitProjectExplorer:
         option_row.addWidget(batch_spin)
         option_row.addStretch(1)
         controls_layout.addLayout(option_row, len(axes) + 1, 0, 1, len(headers))
+        symmetry_row = QtWidgets.QHBoxLayout()
+        symmetry_row.addWidget(symmetry_check)
+        symmetry_row.addWidget(symmetry_mode)
+        symmetry_row.addWidget(symmetry_expression, 1)
+        controls_layout.addLayout(symmetry_row, len(axes) + 2, 0, 1, len(headers))
         status_label = QtWidgets.QLabel(_composite_rebin_status_text(group, config))
         status_label.setObjectName("group_composite_status")
         status_label.setWordWrap(True)
         status_label.setToolTip(
             "Shows whether the cached composite rebin is current. Pending manual rebinning will be forced automatically for fit and viewer operations."
         )
-        controls_layout.addWidget(status_label, len(axes) + 2, 0, 1, len(headers))
+        controls_layout.addWidget(status_label, len(axes) + 3, 0, 1, len(headers))
         action_row = QtWidgets.QHBoxLayout()
         rebin_now_button = QtWidgets.QPushButton("Rebin now")
         rebin_now_button.setObjectName("group_composite_rebin_now")
@@ -11782,7 +11893,7 @@ class NfitProjectExplorer:
         rebin_now_button.clicked.connect(lambda: self.rebin_composite_now(group))
         action_row.addWidget(rebin_now_button)
         action_row.addStretch(1)
-        controls_layout.addLayout(action_row, len(axes) + 3, 0, 1, len(headers))
+        controls_layout.addLayout(action_row, len(axes) + 4, 0, 1, len(headers))
         layout.addWidget(controls)
         return box
 
@@ -12852,6 +12963,42 @@ class NfitProjectExplorer:
         batch_spin.valueChanged.connect(
             lambda value: self._set_dataset_rebin_max_batch_mb(dataset, group, int(value))
         )
+        symmetry = symmetry_spec_from_config(config.get("symmetry"))
+        symmetry_check = QtWidgets.QCheckBox("Apply symmetry")
+        symmetry_check.setObjectName("dataset_rebin_symmetry_enabled")
+        symmetry_check.setChecked(symmetry.enabled)
+        symmetry_check.setToolTip(
+            "Transform HKL coordinates by a crystallographic point group before binning. "
+            "Energy is unchanged and space-group translations are ignored."
+        )
+        symmetry_check.toggled.connect(
+            lambda checked: self._set_dataset_rebin_symmetry_enabled(dataset, group, checked)
+        )
+        symmetry_mode = QtWidgets.QComboBox()
+        symmetry_mode.setObjectName("dataset_rebin_symmetry_mode")
+        symmetry_mode.addItem("Space group", "space_group")
+        symmetry_mode.addItem("Point group", "point_group")
+        symmetry_mode.addItem("Operations", "operations")
+        symmetry_mode.addItem("Generators", "generators")
+        symmetry_mode.setCurrentIndex(max(symmetry_mode.findData(symmetry.mode if symmetry.mode != "none" else "space_group"), 0))
+        symmetry_mode.setToolTip(
+            "Choose a space group, point group, semicolon-separated Jones-faithful operations, or geometric generators."
+        )
+        symmetry_mode.currentIndexChanged.connect(
+            lambda _index, combo=symmetry_mode: self._set_dataset_rebin_symmetry_mode(dataset, group, str(combo.currentData()))
+        )
+        symmetry_expression = QtWidgets.QLineEdit(symmetry.expression)
+        symmetry_expression.setObjectName("dataset_rebin_symmetry_expression")
+        symmetry_expression.setPlaceholderText("P -1")
+        symmetry_expression.setToolTip(
+            "Examples: P -1; -1; x,y,z;-x,-y,-z; rotate(order=3, axis=[1,1,1]); mirror(plane=(0,0,1))."
+        )
+        symmetry_expression.editingFinished.connect(
+            lambda editor=symmetry_expression: self._set_dataset_rebin_symmetry_expression(dataset, group, editor.text())
+        )
+        symmetry_preview = QtWidgets.QLabel(self._dataset_rebin_symmetry_preview(dataset, group))
+        symmetry_preview.setObjectName("dataset_rebin_symmetry_preview")
+        symmetry_preview.setToolTip("Resolved reciprocal-HKL operation count and any syntax error.")
         create_button = QtWidgets.QPushButton("Create dataset from rebin")
         create_button.setObjectName("dataset_rebin_create")
         create_button.setEnabled(_dataset_can_rebin(dataset))
@@ -12879,19 +13026,25 @@ class NfitProjectExplorer:
         option_row.addWidget(batch_spin)
         option_row.addStretch(1)
         controls_layout.addLayout(option_row, len(config.get("axes", [])) + 1, 0, 1, last_column + 1)
+        symmetry_row = QtWidgets.QHBoxLayout()
+        symmetry_row.addWidget(symmetry_check)
+        symmetry_row.addWidget(symmetry_mode)
+        symmetry_row.addWidget(symmetry_expression, 1)
+        symmetry_row.addWidget(symmetry_preview)
+        controls_layout.addLayout(symmetry_row, len(config.get("axes", [])) + 2, 0, 1, last_column + 1)
         status_label = QtWidgets.QLabel(_dataset_rebin_status_text(dataset, config))
         status_label.setObjectName("dataset_rebin_status")
         status_label.setWordWrap(True)
         status_label.setToolTip(
             "Shows whether the cached rebinned data is current. Pending manual rebinning will be forced automatically for fit, view, and export operations."
         )
-        controls_layout.addWidget(status_label, len(config.get("axes", [])) + 2, 0, 1, last_column + 1)
+        controls_layout.addWidget(status_label, len(config.get("axes", [])) + 3, 0, 1, last_column + 1)
         action_row = QtWidgets.QHBoxLayout()
         action_row.addWidget(rebin_now_button)
         action_row.addWidget(create_button)
         action_row.addWidget(save_rebin_button)
         action_row.addStretch(1)
-        controls_layout.addLayout(action_row, len(config.get("axes", [])) + 3, 0, 1, last_column + 1)
+        controls_layout.addLayout(action_row, len(config.get("axes", [])) + 4, 0, 1, last_column + 1)
         rebin_layout.addWidget(controls)
         layout.addWidget(rebin_box)
         return group_box
@@ -13038,6 +13191,53 @@ class NfitProjectExplorer:
         config["normalize"] = True
         self._after_dataset_rebin_changed(dataset, group)
 
+    def _dataset_rebin_symmetry_preview(
+        self, dataset: DatasetEntry, group: DataGroup | None
+    ) -> str:
+        config = dataset_rebin_config(dataset)
+        lattice = _dataset_lattice_parameters(dataset)
+        if lattice is None and group is not None:
+            lattice = group.lattice_parameters
+        try:
+            operations = _rebin_symmetry_operations(config, lattice)
+        except (ImportError, ValueError) as exc:
+            return f"Invalid: {exc}"
+        spec = symmetry_spec_from_config(config.get("symmetry"))
+        return "No symmetry" if not spec.enabled else f"{len(operations)} operations"
+
+    def _set_dataset_rebin_symmetry_enabled(
+        self, dataset: DatasetEntry, group: DataGroup | None, checked: bool
+    ) -> None:
+        config = dataset_rebin_config(dataset)
+        payload = config["symmetry"]
+        if checked:
+            payload["mode"] = "space_group"
+            payload["expression"] = str(group.spacegroup if group is not None and group.spacegroup else "P 1")
+        else:
+            payload["mode"] = "none"
+        if group is not None and isinstance(group.lattice_parameters, dict):
+            payload["lattice_parameters"] = copy.deepcopy(group.lattice_parameters)
+        self._after_dataset_rebin_changed(dataset, group)
+
+    def _set_dataset_rebin_symmetry_mode(
+        self, dataset: DatasetEntry, group: DataGroup | None, mode: str
+    ) -> None:
+        config = dataset_rebin_config(dataset)
+        payload = config["symmetry"]
+        payload["mode"] = mode if mode in {"space_group", "point_group", "operations", "generators"} else "space_group"
+        if group is not None and isinstance(group.lattice_parameters, dict):
+            payload["lattice_parameters"] = copy.deepcopy(group.lattice_parameters)
+        self._after_dataset_rebin_changed(dataset, group)
+
+    def _set_dataset_rebin_symmetry_expression(
+        self, dataset: DatasetEntry, group: DataGroup | None, expression: str
+    ) -> None:
+        config = dataset_rebin_config(dataset)
+        config["symmetry"]["expression"] = str(expression).strip()
+        if group is not None and isinstance(group.lattice_parameters, dict):
+            config["symmetry"]["lattice_parameters"] = copy.deepcopy(group.lattice_parameters)
+        self._after_dataset_rebin_changed(dataset, group)
+
     def _set_group_composite_enabled(self, group: DataGroup | _CompositeScope, checked: bool) -> None:
         config = data_group_composite_config(group)
         if bool(config.get("enabled", False)) == bool(checked):
@@ -13082,6 +13282,33 @@ class NfitProjectExplorer:
             return
         config["max_batch_mb"] = value
         config["normalize"] = True
+        self._after_group_composite_changed(group)
+
+    def _set_group_composite_symmetry_enabled(self, group: DataGroup | _CompositeScope, checked: bool) -> None:
+        config = data_group_composite_config(group)
+        payload = config["symmetry"]
+        root = _composite_root(group)
+        payload["mode"] = "space_group" if checked else "none"
+        if checked:
+            payload["expression"] = str(root.spacegroup or "P 1")
+        if isinstance(root.lattice_parameters, dict):
+            payload["lattice_parameters"] = copy.deepcopy(root.lattice_parameters)
+        self._after_group_composite_changed(group)
+
+    def _set_group_composite_symmetry_mode(self, group: DataGroup | _CompositeScope, mode: str) -> None:
+        config = data_group_composite_config(group)
+        config["symmetry"]["mode"] = mode if mode in {"space_group", "point_group", "operations", "generators"} else "space_group"
+        root = _composite_root(group)
+        if isinstance(root.lattice_parameters, dict):
+            config["symmetry"]["lattice_parameters"] = copy.deepcopy(root.lattice_parameters)
+        self._after_group_composite_changed(group)
+
+    def _set_group_composite_symmetry_expression(self, group: DataGroup | _CompositeScope, expression: str) -> None:
+        config = data_group_composite_config(group)
+        config["symmetry"]["expression"] = str(expression).strip()
+        root = _composite_root(group)
+        if isinstance(root.lattice_parameters, dict):
+            config["symmetry"]["lattice_parameters"] = copy.deepcopy(root.lattice_parameters)
         self._after_group_composite_changed(group)
 
     def _set_group_composite_resolution_mode(

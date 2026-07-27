@@ -298,6 +298,23 @@ visible until `Rebin now` is pressed. Operations that require current rebinned
 data, including fitting, opening the data viewer, materializing a rebinned
 dataset, and saving a rebinned dataset, force the pending rebin first. Large
 explicit rebin jobs show a progress dialog driven by the rebinner batches.
+The Rebin panel can also apply symmetry before binning. A space-group entry
+uses its point-group rotations only: screw/glide translations are deliberately
+discarded and nfit does not add inversion unless it belongs to the selected
+point group. Symmetry always acts on physical HKL coordinates before any custom
+output-axis projection; energy transfer is unchanged. Choose the input mode
+and enter one of the following forms:
+
+- `P -1` as a space group, or `-1` as a point group.
+- `x,y,z;-x,-y,-z` as an exact semicolon-separated Jones-faithful operation list.
+- `rotate(order=3, axis=[1,1,1])` for a geometric generator about a direct-lattice direction.
+- `mirror(plane=(0,0,1))` for a geometric generator across a reciprocal-lattice plane.
+
+Multiple geometric generators are separated with semicolons and nfit closes the
+generated group. Geometric generators require complete lattice parameters.
+The resolved operation count is shown beside the editor and contributes to the
+rebin work estimate. Symmetry-expanded rebins stream one transformed batch at a
+time rather than materializing every image in memory.
 The rebin table has one `Resolution` column with a `Step`/`Bins` selector;
 `Step` is the default. Switching the selector derives the displayed quantity
 from the current bounds and resolution. In `Step` mode, changing bounds keeps

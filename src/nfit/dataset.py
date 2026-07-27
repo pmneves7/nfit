@@ -308,6 +308,7 @@ class PointListData:
         normalize: bool = True,
         mean_weighting: str = "inverse_variance",
         max_batch_bytes: int = 192 * 1024 * 1024,
+        symmetry_operations: list[ArrayLike] | tuple[ArrayLike, ...] | None = None,
     ) -> "PointListData":
         """Bin the points onto a regular grid, returning occupied bin centers.
 
@@ -317,7 +318,7 @@ class PointListData:
         reducing the number of fit points.
         """
 
-        from .rebin import rebin_nd
+        from .rebin import rebin_nd, rebin_nd_symmetry
 
         if not coordinate_names:
             raise ValueError("at least one coordinate is required to rebin")
@@ -325,6 +326,8 @@ class PointListData:
             if name not in self.columns:
                 raise ValueError(f"coordinate {name!r} is not a known column")
         coords = np.column_stack([self.columns[name] for name in coordinate_names])
+        if symmetry_operations is not None and coordinate_names[:3] != ["H", "K", "L"]:
+            raise ValueError("point-list symmetry requires H, K, and L as the first three rebin coordinates")
         finite = np.all(np.isfinite(coords), axis=1)
         if not np.any(finite):
             raise ValueError("no finite coordinate points remain before rebinning")
@@ -336,9 +339,7 @@ class PointListData:
             value = self.columns[channel["value"]][finite]
             error_name = channel.get("error")
             errors = self.columns[error_name][finite] if error_name is not None else None
-            result = rebin_nd(
-                value,
-                coords[finite],
+            kwargs = dict(
                 data_errs=errors,
                 lower=lower,
                 upper=upper,
@@ -348,6 +349,11 @@ class PointListData:
                 normalize=normalize,
                 mean_weighting=mean_weighting,
                 max_batch_bytes=max_batch_bytes,
+            )
+            result = (
+                rebin_nd_symmetry(value, coords[finite], symmetry_operations, **kwargs)
+                if symmetry_operations is not None
+                else rebin_nd(value, coords[finite], **kwargs)
             )
             if result.binned_data is None or result.n_samples is None or result.bin_centers_list is None:
                 raise RuntimeError("rebinning did not produce binned data")

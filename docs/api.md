@@ -114,6 +114,13 @@ Optional `data_weights` multiply each point's statistical weight; the GUI uses
 this for workspace composites so dataset fit weights enter as
 `fit_weight / sigma**2`.
 
+`rebin_nd_symmetry` accepts reciprocal-HKL operation matrices and streams each
+transformed image through the same accumulator. The project GUI resolves
+space-group, point-group, Jones-faithful operation-list, and geometric-generator
+syntax through `SymmetrySpec` and `resolve_symmetry`. A space group contributes
+only its point-group rotations: translations are not applied to reciprocal-space
+coordinates, and energy transfer remains unchanged.
+
 Set `mean_weighting="uniform"` to keep the legacy simple mean behavior. In that
 mode, each point has equal statistical weight and fractional binning contributes
 only the spatial fraction. If `normalize=False`, rebinning returns weighted sums
