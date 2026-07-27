@@ -17,9 +17,11 @@ in the regular data viewer, or **Add to datasets** to create a disabled
 **Bragg reflections** dataset explicitly.
 
 The project tree includes an `Analyses` branch after `Fits`. Select it and use
-**Open Analysis Window** to resume the workspace's analysis recipes or **New
-analysis** to start a fresh recipe. The same window can be opened from a
-workspace, dataset, or analysis node for
+**Open Analysis Window** in the control strip below the tree to resume the
+workspace's analysis recipes, or **New analysis** in the details panel to start
+a fresh recipe. When an analysis-related row is selected, **Open Analysis
+Window** occupies the position immediately left of **Delete**. The same window
+can be opened from a workspace, dataset, or analysis node for
 non-fitting Bragg, spectral, Bose-separation, spherical-average, and
 angle-background operations. Recipes are non-destructive, run through the
 background task framework, and persist linked output artifacts. Dataset-valued

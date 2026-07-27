@@ -79,6 +79,10 @@ def test_analyses_branch_new_analysis_button_opens_fresh_recipe(monkeypatch):
     new_button = explorer.new_analysis_button
     assert not open_button.isHidden()
     assert open_button.toolTip()
+    assert explorer.create_group_button.isHidden()
+    assert explorer.tree_action_layout.indexOf(open_button) + 1 == (
+        explorer.tree_action_layout.indexOf(explorer.delete_button)
+    )
     assert not new_button.isHidden()
     assert new_button.toolTip()
     open_button.click()
@@ -117,6 +121,12 @@ def test_delete_key_removes_selected_analysis_and_linked_datasets(monkeypatch):
     explorer.tree.setCurrentItem(analysis_item)
     explorer.tree.setFocus()
 
+    assert not explorer.open_analysis_button.isHidden()
+    assert explorer.create_group_button.isHidden()
+    explorer.open_analysis_button.click()
+    assert explorer._analysis_window is not None
+    assert explorer._analysis_window.analysis_combo.currentData() == analysis.id
+    explorer._analysis_window.window.close()
     assert explorer.delete_button.isEnabled()
     assert "Delete" in explorer.context_menu_action_names(analysis_item)
     QtTest.QTest.keyClick(explorer.tree, QtCore.Qt.Key.Key_Delete)

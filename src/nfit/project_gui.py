@@ -12438,17 +12438,25 @@ class NfitProjectExplorer:
         left_layout.addLayout(tree_expand_row)
 
         tree_button_row = QtWidgets.QHBoxLayout()
+        self.tree_action_layout = tree_button_row
         tree_button_row.setContentsMargins(8, 0, 8, 8)
         self.create_group_button = QtWidgets.QPushButton("Create workspace")
+        self.open_analysis_button = QtWidgets.QPushButton("Open Analysis Window")
+        self.open_analysis_button.setObjectName("tree_open_analysis_button")
         self.delete_button = QtWidgets.QPushButton("Delete")
         self.create_group_button.setToolTip("Create a new top-level workspace and immediately rename it.")
+        self.open_analysis_button.setToolTip(
+            "Open the Analysis Window for this workspace and resume the selected analysis recipe."
+        )
         self.delete_button.setToolTip(
-            "Delete the selected workspace, dataset, mask, model, or fit item(s) when allowed. "
+            "Delete the selected workspace, dataset, mask, model, fit, analysis, or plot item(s) when allowed. "
             "Shift- or Ctrl/Command-click to select and delete several items of the same kind at once."
         )
         self.create_group_button.clicked.connect(self.create_data_group)
+        self.open_analysis_button.clicked.connect(self.open_data_playground_for_selection)
         self.delete_button.clicked.connect(self.delete_selected)
         tree_button_row.addWidget(self.create_group_button)
+        tree_button_row.addWidget(self.open_analysis_button)
         tree_button_row.addWidget(self.delete_button)
         left_layout.addLayout(tree_button_row)
         splitter.addWidget(left_panel)
@@ -12569,7 +12577,6 @@ class NfitProjectExplorer:
         actions_row = QtWidgets.QHBoxLayout()
         self.import_dataset_button = QtWidgets.QPushButton("Import dataset")
         self.add_model_button = QtWidgets.QPushButton("Add model")
-        self.open_analysis_button = QtWidgets.QPushButton("Open Analysis Window")
         self.new_analysis_button = QtWidgets.QPushButton("New analysis")
         self.view_slice_button = QtWidgets.QPushButton("View in data viewer")
         self.load_dataset_button = QtWidgets.QPushButton("Load now")
@@ -12579,9 +12586,6 @@ class NfitProjectExplorer:
         self.save_dataset_button = QtWidgets.QPushButton("Save dataset")
         self.import_dataset_button.setToolTip("Import one or more data files into the selected workspace or dataset group.")
         self.add_model_button.setToolTip("Add a new model component to the selected workspace.")
-        self.open_analysis_button.setToolTip(
-            "Open the Analysis Window for this workspace and resume its selected recipe."
-        )
         self.new_analysis_button.setToolTip(
             "Open the Analysis Window for this workspace with a fresh analysis recipe."
         )
@@ -12596,7 +12600,6 @@ class NfitProjectExplorer:
         self.save_dataset_button.setToolTip("Export the selected dataset, including current nfit processing, to a data file.")
         self.import_dataset_button.clicked.connect(self.import_dataset_dialog)
         self.add_model_button.clicked.connect(self.add_model_to_selection)
-        self.open_analysis_button.clicked.connect(self.open_data_playground_for_selection)
         self.new_analysis_button.clicked.connect(self.new_analysis_for_selection)
         self.view_slice_button.clicked.connect(self.open_slice_viewer_for_selection)
         self.load_dataset_button.clicked.connect(self.load_dataset_for_selection)
@@ -12606,7 +12609,6 @@ class NfitProjectExplorer:
         self.save_dataset_button.clicked.connect(self.save_dataset_for_selection)
         actions_row.addWidget(self.import_dataset_button)
         actions_row.addWidget(self.add_model_button)
-        actions_row.addWidget(self.open_analysis_button)
         actions_row.addWidget(self.new_analysis_button)
         actions_row.addWidget(self.view_slice_button)
         actions_row.addWidget(self.load_dataset_button)
@@ -13373,10 +13375,12 @@ class NfitProjectExplorer:
         fit_entry = self._fit_entry_for_item(self._current_item())
         can_import = role in {"group", "datasets", "dataset_group"}
         can_add_model = role in {"group", "models"}
+        analysis_selection = role in {"analyses", "analysis", "analysis_output"}
         self._sync_selected_state_controls(role, entry, mask, model)
         self.import_dataset_button.setVisible(can_import)
         self.add_model_button.setVisible(can_add_model)
-        self.open_analysis_button.setVisible(role == "analyses" and group is not None)
+        self.create_group_button.setVisible(not analysis_selection)
+        self.open_analysis_button.setVisible(analysis_selection and group is not None)
         self.new_analysis_button.setVisible(role == "analyses" and group is not None)
         self.view_slice_button.setVisible(
             role in {"group", "datasets", "dataset", "masks", "mask", "backgrounds", "background", "group_backgrounds", "group_background", "dataset_group", "group_masks", "group_mask"}
