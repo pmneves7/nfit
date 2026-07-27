@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 
 from .dataset import PointListData
 from .mdhisto import MDHistoAxis, MDHistoData, mdhisto_measured_bins
 from .plotting import gaussian_smooth_nan
-
 
 TRANSFER_SAMPLES = 256
 COLORMAPS = ("viridis", "magma", "plasma", "cividis", "turbo", "coolwarm", "grey")
@@ -45,6 +45,29 @@ def default_volume_axes(data: MDHistoData) -> tuple[int, int, int]:
         return tuple(non_singleton[-3:])
     singleton = [dim for dim in range(data.signal.ndim) if dim not in non_singleton]
     return tuple((non_singleton + singleton)[:3])
+
+
+def default_hidden_axis_index(
+    data: MDHistoData,
+    dim: int,
+    *,
+    apply_masks: bool = True,
+) -> int:
+    """Choose the nearest central hidden-axis bin containing measured data."""
+
+    dim = int(dim)
+    if not 0 <= dim < data.signal.ndim:
+        raise ValueError(f"hidden axis {dim} is outside the dataset dimensions")
+    valid = np.isfinite(np.asarray(data.signal, dtype=float))
+    if apply_masks:
+        valid &= mdhisto_measured_bins(data)
+    reduce_axes = tuple(axis for axis in range(valid.ndim) if axis != dim)
+    counts = np.sum(valid, axis=reduce_axes) if reduce_axes else valid.astype(int)
+    if not np.any(counts > 0):
+        return int(data.shape[dim] // 2)
+    candidates = np.flatnonzero(counts == np.max(counts))
+    midpoint = 0.5 * (data.shape[dim] - 1)
+    return int(candidates[np.argmin(np.abs(candidates - midpoint))])
 
 
 def sample_transfer_curve(
@@ -475,6 +498,16 @@ def _make_volume_panel(
             render_layout = QtWidgets.QVBoxLayout(render_frame)
             render_layout.setContentsMargins(8, 8, 8, 8)
             self.plotter = QtInteractor(render_frame)
+            self.render_status = QtWidgets.QLabel()
+            self.render_status.setObjectName("volume_render_status")
+            self.render_status.setWordWrap(True)
+            self.render_status.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            self.render_status.setStyleSheet(
+                "QLabel { color: #7a2e00; background: #fff4e5; "
+                "border: 1px solid #d9a441; padding: 6px; }"
+            )
+            self.render_status.hide()
+            render_layout.addWidget(self.render_status)
             render_layout.addWidget(self.plotter.interactor)
             self.plotter.set_background("white")
             self.plotter.add_axes(color="black")
@@ -858,6 +891,10 @@ def _make_volume_panel(
                 self._render()
 
         def _rebuild_hidden_controls(self):
+            # Reuse the slice viewer's range widget so hidden-axis selection has
+            # identical handles and drag behavior in both visualization modes.
+            from .qt_slice_viewer import _IntegratedAxisSlider
+
             while self.hidden_layout.count():
                 item = self.hidden_layout.takeAt(0)
                 if item.widget() is not None:
@@ -869,27 +906,44 @@ def _make_volume_panel(
                 axis = self.data.axes[dim]
                 group = QtWidgets.QGroupBox(axis.name)
                 row = QtWidgets.QGridLayout(group)
+                row.setContentsMargins(8, 4, 8, 4)
+                row.setHorizontalSpacing(6)
+                row.setVerticalSpacing(3)
                 centers = np.asarray(axis.centers, dtype=float)
                 low_bound, high_bound = float(np.nanmin(centers)), float(np.nanmax(centers))
-                midpoint = float(centers[centers.size // 2])
+                default_index = default_hidden_axis_index(
+                    self.data,
+                    dim,
+                    apply_masks=self.apply_masks_check.isChecked(),
+                )
                 value_spin = _float_spin(low_bound, high_bound)
                 width_spin = _float_spin(0.0, max(high_bound - low_bound, 0.0))
                 low_spin = _float_spin(low_bound, high_bound)
                 high_spin = _float_spin(low_bound, high_bound)
-                value_spin.setValue(midpoint)
-                low_spin.setValue(midpoint)
-                high_spin.setValue(midpoint)
+                range_slider = _IntegratedAxisSlider(centers.size)
                 value_spin.setObjectName(f"volume_hidden_{dim}_value_spin")
                 width_spin.setObjectName(f"volume_hidden_{dim}_width_spin")
                 low_spin.setObjectName(f"volume_hidden_{dim}_low_spin")
                 high_spin.setObjectName(f"volume_hidden_{dim}_high_spin")
+                range_slider.setObjectName(f"volume_hidden_{dim}_range_slider")
                 value_spin.setToolTip(f"Center value selected along hidden axis {axis.name}.")
-                width_spin.setToolTip(f"Integration width along hidden axis {axis.name}.")
-                low_spin.setToolTip(f"Lower integration bound along hidden axis {axis.name}.")
-                high_spin.setToolTip(f"Upper integration bound along hidden axis {axis.name}.")
+                width_spin.setToolTip(f"Width integrated along hidden axis {axis.name}.")
+                low_spin.setToolTip(f"Lower bound of the integrated range along hidden axis {axis.name}.")
+                high_spin.setToolTip(f"Upper bound of the integrated range along hidden axis {axis.name}.")
+                range_slider.setToolTip(
+                    f"Drag to choose the selected or integrated range along hidden axis {axis.name}."
+                )
                 integrate = QtWidgets.QCheckBox("Integrate range")
                 integrate.setObjectName(f"volume_hidden_{dim}_integrate_check")
-                integrate.setToolTip("Sum bins in the specified low/high range instead of taking one slice position.")
+                integrate.setToolTip(
+                    "Integrate over the selected range on this hidden axis instead of taking "
+                    "one slice position."
+                )
+                low_index = high_index = default_index
+                if centers.size > 1:
+                    high_index = min(default_index + 1, centers.size - 1)
+                    if high_index == default_index:
+                        low_index = max(default_index - 1, 0)
                 controls = {
                     "centers": centers,
                     "value": value_spin,
@@ -897,61 +951,150 @@ def _make_volume_panel(
                     "low": low_spin,
                     "high": high_spin,
                     "integrate": integrate,
+                    "slider": range_slider,
+                    "syncing": True,
                 }
                 self.hidden_controls[dim] = controls
-                value_spin.valueChanged.connect(lambda _value, d=dim: self._hidden_changed(d, "value"))
-                width_spin.valueChanged.connect(lambda _value, d=dim: self._hidden_changed(d, "width"))
-                low_spin.valueChanged.connect(lambda _value, d=dim: self._hidden_changed(d, "low"))
-                high_spin.valueChanged.connect(lambda _value, d=dim: self._hidden_changed(d, "high"))
+                self._set_hidden_control_indices(dim, default_index, low_index, high_index)
+                controls["syncing"] = False
+                value_spin.valueChanged.connect(
+                    lambda _value, d=dim: self._hidden_changed(d, "value_spin")
+                )
+                width_spin.valueChanged.connect(
+                    lambda _value, d=dim: self._hidden_changed(d, "width_spin")
+                )
+                low_spin.valueChanged.connect(
+                    lambda _value, d=dim: self._hidden_changed(d, "low_spin")
+                )
+                high_spin.valueChanged.connect(
+                    lambda _value, d=dim: self._hidden_changed(d, "high_spin")
+                )
+                range_slider.changed.connect(lambda source, d=dim: self._hidden_changed(d, source))
                 integrate.toggled.connect(lambda _value, d=dim: self._hidden_changed(d, "integrate"))
                 row.addWidget(QtWidgets.QLabel("Value"), 0, 0)
                 row.addWidget(value_spin, 0, 1)
-                row.addWidget(QtWidgets.QLabel("Width"), 1, 0)
-                row.addWidget(width_spin, 1, 1)
-                row.addWidget(QtWidgets.QLabel("Range low"), 2, 0)
-                row.addWidget(low_spin, 2, 1)
-                row.addWidget(QtWidgets.QLabel("Range high"), 3, 0)
-                row.addWidget(high_spin, 3, 1)
-                row.addWidget(integrate, 4, 0, 1, 2)
-                row.setColumnStretch(1, 1)
+                row.addWidget(QtWidgets.QLabel("Width"), 0, 2)
+                row.addWidget(width_spin, 0, 3)
+                row.addWidget(QtWidgets.QLabel("Range low"), 1, 0)
+                row.addWidget(low_spin, 1, 1)
+                row.addWidget(QtWidgets.QLabel("Range high"), 1, 2)
+                row.addWidget(high_spin, 1, 3)
+                row.addWidget(range_slider, 2, 0, 1, 4)
+                row.addWidget(integrate, 3, 0, 1, 4)
+                row.setColumnMinimumWidth(1, 82)
+                row.setColumnMinimumWidth(3, 82)
+                for column in range(4):
+                    row.setColumnStretch(column, 0)
                 self.hidden_layout.addWidget(group)
             if not self.hidden_controls:
                 self.hidden_layout.addWidget(QtWidgets.QLabel("All dimensions are displayed."))
 
         def _hidden_changed(self, dim, source):
             controls = self.hidden_controls[dim]
-            if source in {"value", "width"}:
-                center = float(controls["value"].value())
-                half_width = 0.5 * float(controls["width"].value())
-                low_bound = float(np.nanmin(controls["centers"]))
-                high_bound = float(np.nanmax(controls["centers"]))
-                low = max(low_bound, center - half_width)
-                high = min(high_bound, center + half_width)
-                self._set_spin_value(controls["low"], low)
-                self._set_spin_value(controls["high"], high)
+            if controls["syncing"]:
+                return
+            centers = controls["centers"]
+            slider = controls["slider"]
+            value_index = slider.value_index
+            low_index = slider.low_index
+            high_index = slider.high_index
+            if source == "value_spin":
+                new_value = int(np.nanargmin(np.abs(centers - float(controls["value"].value()))))
+                value_index, low_index, high_index = self._shift_hidden_range(
+                    centers, new_value, low_index, high_index
+                )
+            elif source == "value":
+                value_index, low_index, high_index = self._shift_hidden_range(
+                    centers, value_index, low_index, high_index
+                )
+            elif source == "width_spin":
+                self._set_hidden_integrate(controls, True)
+                low_index, high_index = self._hidden_range_from_width(
+                    centers, value_index, float(controls["width"].value())
+                )
+            elif source == "low_spin":
+                self._set_hidden_integrate(controls, True)
+                low_index = int(np.nanargmin(np.abs(centers - float(controls["low"].value()))))
+                low_index, high_index = sorted((low_index, high_index))
+                value_index = int(round(0.5 * (low_index + high_index)))
+            elif source == "high_spin":
+                self._set_hidden_integrate(controls, True)
+                high_index = int(np.nanargmin(np.abs(centers - float(controls["high"].value()))))
+                low_index, high_index = sorted((low_index, high_index))
+                value_index = int(round(0.5 * (low_index + high_index)))
             elif source in {"low", "high"}:
-                low, high = sorted((float(controls["low"].value()), float(controls["high"].value())))
-                self._set_spin_value(controls["low"], low)
-                self._set_spin_value(controls["high"], high)
-                self._set_spin_value(controls["value"], 0.5 * (low + high))
-                self._set_spin_value(controls["width"], high - low)
+                self._set_hidden_integrate(controls, True)
+                low_index, high_index = sorted((low_index, high_index))
+                value_index = int(round(0.5 * (low_index + high_index)))
+            self._set_hidden_control_indices(dim, value_index, low_index, high_index)
             self._channel_changed()
 
-        def _set_spin_value(self, spin, value):
-            blocked = spin.blockSignals(True)
-            spin.setValue(float(value))
-            spin.blockSignals(blocked)
+        def _set_hidden_control_indices(self, dim, value_index, low_index, high_index):
+            controls = self.hidden_controls[dim]
+            centers = controls["centers"]
+            value_index = int(np.clip(value_index, 0, centers.size - 1))
+            low_index = int(np.clip(low_index, 0, centers.size - 1))
+            high_index = int(np.clip(high_index, 0, centers.size - 1))
+            low_index, high_index = sorted((low_index, high_index))
+            controls["syncing"] = True
+            try:
+                controls["slider"].set_indices(value_index, low_index, high_index)
+                controls["slider"].set_integrate_range(controls["integrate"].isChecked())
+                controls["value"].setValue(float(centers[value_index]))
+                controls["low"].setValue(float(centers[low_index]))
+                controls["high"].setValue(float(centers[high_index]))
+                controls["width"].setValue(float(centers[high_index] - centers[low_index]))
+            finally:
+                controls["syncing"] = False
+
+        @staticmethod
+        def _shift_hidden_range(centers, value_index, low_index, high_index):
+            width = max(high_index - low_index, 0)
+            half_low = width // 2
+            half_high = width - half_low
+            low_index = value_index - half_low
+            high_index = value_index + half_high
+            if low_index < 0:
+                high_index -= low_index
+                low_index = 0
+            if high_index >= centers.size:
+                low_index -= high_index - (centers.size - 1)
+                high_index = centers.size - 1
+            return value_index, max(low_index, 0), high_index
+
+        @staticmethod
+        def _hidden_range_from_width(centers, value_index, width):
+            if centers.size <= 1:
+                return 0, 0
+            value = float(centers[value_index])
+            low = int(np.nanargmin(np.abs(centers - (value - 0.5 * max(width, 0.0)))))
+            high = int(np.nanargmin(np.abs(centers - (value + 0.5 * max(width, 0.0)))))
+            if low == high and width > 0:
+                if high < centers.size - 1:
+                    high += 1
+                elif low > 0:
+                    low -= 1
+            return tuple(sorted((low, high)))
+
+        @staticmethod
+        def _set_hidden_integrate(controls, checked):
+            was_syncing = controls["syncing"]
+            controls["syncing"] = True
+            try:
+                controls["integrate"].setChecked(bool(checked))
+            finally:
+                controls["syncing"] = was_syncing
 
         def _selections(self):
             selections = {}
             for dim, controls in self.hidden_controls.items():
-                centers = controls["centers"]
                 if controls["integrate"].isChecked():
-                    low = int(np.argmin(np.abs(centers - controls["low"].value())))
-                    high = int(np.argmin(np.abs(centers - controls["high"].value())))
-                    selections[dim] = tuple(sorted((low, high)))
+                    selections[dim] = (
+                        controls["slider"].low_index,
+                        controls["slider"].high_index,
+                    )
                 else:
-                    selections[dim] = int(np.argmin(np.abs(centers - controls["value"].value())))
+                    selections[dim] = controls["slider"].value_index
             return selections
 
         def _link_changed(self, checked):
@@ -1037,7 +1180,19 @@ def _make_volume_panel(
             self.current_render_grid = scale_rectilinear_grid(render_grid, self._axis_scale())
             self.current_surface = None
             self.plotter.clear()
-            if self.render_combo.currentText() == "Isosurface":
+            has_finite_voxels = bool(
+                np.any(
+                    np.isfinite(render_arrays.color)
+                    & np.isfinite(render_arrays.opacity)
+                )
+            )
+            self.render_status.setVisible(not has_finite_voxels)
+            if not has_finite_voxels:
+                self.render_status.setText(
+                    "No finite voxels are available in this selection. "
+                    "Change the remaining-axis range or turn off Apply masks."
+                )
+            elif self.render_combo.currentText() == "Isosurface":
                 low, high = self.opacity_min.value(), self.opacity_max.value()
                 fraction = self.surface_slider.value() / 1000.0
                 level = low + fraction * (high - low)

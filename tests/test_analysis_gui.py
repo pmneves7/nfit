@@ -14,6 +14,7 @@ from nfit.analysis import (
 from nfit.analysis.artifacts import write_dataset_artifact
 from nfit.analysis.bragg import integrate_bragg_peaks
 from nfit.analysis.fingerprint import dataset_entry_fingerprint, recipe_hash
+from nfit.dataset import PointListData
 from nfit.mdhisto import MDHistoAxis, MDHistoData
 from nfit.pipeline import DataGroup, DatasetEntry
 from nfit.project_gui import NfitProject, NfitProjectExplorer
@@ -316,6 +317,42 @@ def test_bragg_result_export_writes_accepted_reflections_as_int(monkeypatch, tmp
     rows = list(csv.reader(output_path.open(newline="", encoding="utf-8")))
     assert rows[0] == ["H", "K", "L", "I", "dI"]
     assert len(rows) == int(np.count_nonzero(table.column("Accepted"))) + 1
+    window.window.close()
+
+
+def test_bragg_int_export_rounds_hkl_and_preserves_intensity(monkeypatch, tmp_path):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    group = DataGroup("Workspace1")
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
+    window = explorer.open_data_playground_for_selection()
+    window._current_result_data = PointListData(
+        columns={
+            "H": [1.49, -1.51, 8.2],
+            "K": [-2.49, 2.51, 8.2],
+            "L": [0.2, -0.8, 8.2],
+            "I": [12.345, 67.89, 100.0],
+            "dI": [0.123, 0.456, 1.0],
+            "Accepted": [1.0, 1.0, 0.0],
+        },
+        metadata={"analysis_kind": "bragg_peak_integration"},
+    )
+    output_path = tmp_path / "rounded.int"
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(output_path), "Intensity files (*.int)"),
+    )
+
+    assert window.export_current_bragg_int()
+    rows = list(csv.reader(output_path.open(newline="", encoding="utf-8")))
+
+    assert rows == [
+        ["H", "K", "L", "I", "dI"],
+        ["1", "-2", "0", "12.345", "0.123"],
+        ["-2", "3", "-1", "67.89", "0.456"],
+    ]
     window.window.close()
 
 

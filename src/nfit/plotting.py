@@ -22,6 +22,7 @@ class WaterfallTrace:
     model_values: np.ndarray | None
     label: str
     waterfall_coordinate: float | None = None
+    waterfall_unit: str = ""
 
 
 def _edges_from_centers(centers: np.ndarray) -> np.ndarray:
@@ -691,8 +692,17 @@ def draw_waterfall_traces(
             valid = np.isfinite(x) & np.isfinite(shifted)
             if np.any(valid):
                 first = int(np.flatnonzero(valid)[0])
+                label = f"{trace.label}{trace_label_suffix}"
+                if (
+                    trace.waterfall_coordinate is not None
+                    and trace_label_suffix
+                ):
+                    label = (
+                        f"{trace.waterfall_coordinate:.5g}"
+                        f"{trace_label_suffix}"
+                    )
                 ax.annotate(
-                    f"{trace.label}{trace_label_suffix}",
+                    label,
                     (float(x[first]), float(shifted[first])),
                     xytext=(4, 5),
                     textcoords="offset points",
@@ -818,16 +828,17 @@ def _coarsen_waterfall_view(
             selected_model = np.asarray(model_values[selected, :], dtype=float)
             model_profile = _waterfall_profile_with_weights(selected_model, weights)
         coordinate = float(np.nanmean(y[selected]))
-        unit_suffix = f" {display_unit(axis_units)}" if axis_units else ""
-        display_name = waterfall_axis_display_name(axis_name)
+        displayed_unit = display_unit(axis_units) if axis_units else ""
+        unit_suffix = f" {displayed_unit}" if displayed_unit else ""
         traces.append(
             WaterfallTrace(
                 x=x,
                 values=profile,
                 errors=uncertainty,
                 model_values=model_profile,
-                label=f"{display_name} = {coordinate:.5g}{unit_suffix}",
+                label=f"{coordinate:.5g}{unit_suffix}",
                 waterfall_coordinate=coordinate,
+                waterfall_unit=displayed_unit,
             )
         )
     return traces

@@ -8,11 +8,12 @@ from nfit.mdhisto import MDHistoAxis, MDHistoData
 from nfit.qt_volume_viewer import (
     build_rectilinear_volume_grid,
     crop_volume_arrays,
+    default_hidden_axis_index,
     default_volume_axes,
     extract_volume_arrays,
     map_volume_rgba,
-    rotation_frame_angles,
     rotate_camera,
+    rotation_frame_angles,
     sample_transfer_curve,
     supports_volume_view,
     volume_channel_names,
@@ -56,6 +57,14 @@ def test_volume_support_and_default_axes_require_three_grid_dimensions():
     two_dimensional.num_events = two_dimensional.num_events[:, :, 0, 0]
     two_dimensional.axes = two_dimensional.axes[:2]
     assert not supports_volume_view(two_dimensional)
+
+
+def test_default_hidden_axis_uses_nearest_measured_bin():
+    data = _volume_data((5, 3, 4, 5))
+    data.mask[1:4] = True
+
+    assert default_hidden_axis_index(data, 0) == 0
+    assert default_hidden_axis_index(data, 0, apply_masks=False) == 2
 
 
 def test_extract_volume_selects_or_integrates_hidden_dimensions_and_orders_xyz():
@@ -175,7 +184,7 @@ def test_camera_rotation_supports_displayed_axes_and_screen_vertical():
     assert camera.azimuth == pytest.approx(15.0)
 
 
-def test_data_viewer_exposes_3d_mode_for_nd_histograms(monkeypatch):
+def test_data_viewer_exposes_volumetric_mode_for_nd_histograms(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer
@@ -184,7 +193,7 @@ def test_data_viewer_exposes_3d_mode_for_nd_histograms(monkeypatch):
     mode = viewer.window.findChild(QtWidgets.QComboBox, "data_viewer_mode_combo")
     assert mode is not None
     assert mode.itemText(1) == "Waterfall"
-    assert mode.itemText(2) == "3D PyVista"
+    assert mode.itemText(2) == "Volumetric"
     assert mode.model().item(1).isEnabled()
     assert mode.model().item(2).isEnabled()
     assert "three dimensions" in mode.toolTip()
@@ -290,13 +299,31 @@ def test_volume_panel_exposes_independent_channels_curves_and_camera_exports(mon
     assert panel.plotter.background == "white"
     assert panel.plotter.axes_color == "black"
 
+    volume_count = len(panel.plotter.added_volumes)
+    panel.data.mask[:] = True
+    panel._channel_changed()
+    assert panel.render_status.isVisible()
+    assert "No finite voxels" in panel.render_status.text()
+    assert len(panel.plotter.added_volumes) == volume_count
+    panel.data.mask[:] = False
+    panel._channel_changed()
+    assert not panel.render_status.isVisible()
+    assert len(panel.plotter.added_volumes) == volume_count + 1
+
     hidden_low = panel.findChild(QtWidgets.QDoubleSpinBox, "volume_hidden_0_low_spin")
     hidden_high = panel.findChild(QtWidgets.QDoubleSpinBox, "volume_hidden_0_high_spin")
     hidden_integrate = panel.findChild(QtWidgets.QCheckBox, "volume_hidden_0_integrate_check")
-    hidden_low.setValue(0.5)
-    hidden_high.setValue(1.5)
-    hidden_integrate.setChecked(True)
+    hidden_slider = panel.findChild(QtWidgets.QWidget, "volume_hidden_0_range_slider")
+    assert hidden_slider is not None
+    assert hidden_slider.toolTip()
+    hidden_low.setValue(1.5)
+    assert hidden_integrate.isChecked()
+    hidden_high.setValue(0.5)
     assert panel._selections()[0] == (0, 1)
+    hidden_integrate.setChecked(False)
+    hidden_slider.set_indices(1, 0, 1)
+    hidden_slider.changed.emit("value")
+    assert panel._selections()[0] == 1
 
     x_min = panel.findChild(QtWidgets.QDoubleSpinBox, "volume_x_min_spin")
     x_max = panel.findChild(QtWidgets.QDoubleSpinBox, "volume_x_max_spin")

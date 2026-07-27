@@ -64,7 +64,8 @@ specified in bin-width units and is visual only; source arrays and fitting data
 are never modified.
 
 For gridded data with at least three dimensions, the same viewer exposes a
-PyVista 3D mode. It supports independent X/Y/Z selection, slicing or integrating
+Volumetric mode backed by PyVista. It supports independent X/Y/Z selection,
+slicing or integrating
 specified ranges on remaining dimensions, viewed-axis limits, equal-data-unit
 or custom visual axis scaling, volume and isosurface rendering, separate color
 and opacity channels, editable color/opacity transfer curves, and mask-aware

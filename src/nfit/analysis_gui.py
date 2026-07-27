@@ -634,7 +634,7 @@ class DataPlaygroundWindow:
         return True
 
     def export_current_bragg_int(self) -> bool:
-        """Export accepted integrated reflections in a simple CSV-formatted .int file."""
+        """Export accepted reflections with integer HKL in a CSV-formatted .int file."""
 
         from PySide6 import QtWidgets
 
@@ -673,7 +673,17 @@ class DataPlaygroundWindow:
                 writer = csv.writer(handle)
                 writer.writerow(required)
                 for row in np.flatnonzero(accepted):
-                    writer.writerow([float(data.column(name)[row]) for name in required])
+                    hkl = [
+                        int(np.rint(float(data.column(name)[row])))
+                        for name in ("H", "K", "L")
+                    ]
+                    writer.writerow(
+                        [
+                            *hkl,
+                            float(data.column("I")[row]),
+                            float(data.column("dI")[row]),
+                        ]
+                    )
         except OSError as exc:
             QtWidgets.QMessageBox.warning(
                 self.window, "Export Bragg reflections", f"Could not write {filename}: {exc}"

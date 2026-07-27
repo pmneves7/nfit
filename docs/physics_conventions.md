@@ -176,8 +176,11 @@ physical quantity type, and unit.
 
 The imported signal is retained as a named channel. When temperature is known,
 the paired scattering-cross-section and $\chi''$ channels are generated with
-propagated one-sigma errors. `Plot and fit` chooses the primary observable;
-both remain independently selectable in the data viewer. Models read the
+propagated one-sigma errors. Each standard error is multiplied by the absolute
+value of the same pointwise conversion Jacobian as its signal, including the
+Bose, form-factor, polarization, Landé-factor, calibration, and kinematic
+terms. `Plot and fit` chooses the primary observable; both remain independently
+selectable with their error bars in the data viewer. Models read the
 primary channel's quantity and unit and evaluate in that representation.
 
 The normalization basis is metadata, not a hidden atom-count conversion.

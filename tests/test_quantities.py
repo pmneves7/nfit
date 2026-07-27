@@ -27,4 +27,5 @@ def test_inference_and_unknown_conversion_are_conservative():
 
 def test_display_units_use_conventional_cgs_and_bohr_magneton_labels():
     assert display_unit("cm^3/mol") == "emu/(mol Oe)"
-    assert display_unit("mu_B/f.u.") == "μ$_{B}$/f.u."
+    assert display_unit("mu_B/f.u.") == r"μ$_{\mathrm{B}}$/f.u."
+    assert display_unit("mu_B^2/meV/V") == r"μ$_{\mathrm{B}}^2$/meV/V"

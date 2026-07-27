@@ -1061,6 +1061,12 @@ cursor readouts, histogram box cuts, 1D line styling, waterfall plots, model
 overlays, figure copy, and script export. **Ctrl+S** (**Command+S** on macOS)
 saves the owning nfit project; for a project without a path, it opens the
 standard **Save As** dialog.
+
+In **Volumetric** mode, a remaining-axis control initially selects the nearest
+central bin containing measured, unmasked data. If the selected point or
+integration range contains no finite voxels, the viewer displays a diagnostic
+instead of a dark empty volume. Change the remaining-axis selection or turn off
+**Apply masks** to inspect the excluded region.
 Choose **Visualization / Waterfall** to stack offset 1D traces. For a
 multidimensional MDHisto dataset, **x** chooses the horizontal axis and **y**
 becomes the waterfall axis. The **Bin width** coarsens that axis into
@@ -1071,9 +1077,11 @@ in the selected dataset's immediate project data group with a compatible x axis
 and selected channel contributes one trace. Switching the dataset selector to a
 member of another group switches the waterfall source group as well.
 
-The waterfall trace offset defaults to half the largest absolute intensity and
-can be entered manually or adjusted from zero to that absolute maximum with the
-offset slider. The bin-width slider spans one native waterfall-axis bin through
+Waterfall markers default to hollow faces (**Marker face / none**),
+independently of the marker-face choice used in the slice viewer. The waterfall
+trace offset defaults to half the largest absolute intensity and can be entered
+manually or adjusted from zero to that absolute maximum with the offset slider.
+The bin-width slider spans one native waterfall-axis bin through
 the complete axis span. **Colors** samples a selected Matplotlib sequence
 uniformly across traces; continuous maps also expose a two-handle range slider
 for excluding pale or dark endpoint colors. **Marker face** selects no fill,
@@ -1083,9 +1091,10 @@ width. Trace labels show the waterfall-bin center or 1D dataset name. **Show
 model** overlays a model line for every available trace; model lines may match
 trace colors or share one selected color. Figure copy, viewer script export,
 and **Figure / Save plot** include the waterfall settings and all contributing
-dataset references. Energy-bin trace labels use `ΔE` by default. **Label
-suffix** appends custom text verbatim to every trace annotation, while **Label
-size** and **Label color** style those annotations independently of the axes.
+dataset references. Coordinate-derived trace labels use the bin center and
+axis unit, such as `3.2 meV` or `0.5 r.l.u.`. **Label suffix** replaces that
+generated unit; for grouped 1D datasets it is appended to the dataset label.
+**Label size** and **Label color** style those annotations independently of the axes.
 Box cuts are inverse-variance weighted profiles rather than summed intensities.
 For each displayed bin, the viewer combines the values across the selected box
 using weights of `1 / sigma^2` and draws the propagated standard error,
@@ -1117,17 +1126,17 @@ data+fit cuts with propagated data error bars along both plotted axes; when
 residuals are enabled, residual cuts are shown below
 the residual panel and at the far right.
 
-### 3D PyVista mode
+### Volumetric mode
 
 For a gridded dataset with three or more dimensions, the `Visualization`
-selector enables `3D PyVista`. This mode renders the selected dataset in the
+selector enables `Volumetric`. This mode uses PyVista to render the selected dataset in the
 same data-viewer window and leaves the standard `Slice viewer` mode available for
 cuts and detailed inspection. Point-list datasets must first be rebinned onto a
 regular grid before volumetric rendering.
 
 Choose three distinct dataset axes for the displayed X, Y, and Z coordinates.
 Every remaining dimension has the same center, width, low/high range, and
-`Integrate range` controls used by the 2D slicer. With integration off, the
+graphical range slider used by the slice viewer. With integration off, the
 nearest bin to `Value` is selected. With integration on, bins between `Range
 low` and `Range high` are summed into the 3D volume. This is how, for example,
 an adjustable energy interval of a 4D reciprocal-space dataset can be viewed

@@ -79,7 +79,9 @@ low or non-finite `I/dI` (4), excessive background (8), and Gaussian failure
 The **Results** and **Diagnostics** tables can be sorted in ascending or
 descending order by clicking a column header. Both keep `I` and `dI` beside
 the H, K, L indices. The **Export .int** action writes accepted reflections as
-a CSV-formatted `.int` file with `H,K,L,I,dI` columns. The **Diagnostics** tab
+a CSV-formatted `.int` file with `H,K,L,I,dI` columns. Exported H, K, and L
+values are rounded to their nearest integer, while `I` and `dI` retain their
+floating-point precision. The **Diagnostics** tab
 keeps a second selectable table beside three local data planes and three axis
 profiles. Integration and background regions are drawn over the data; Gaussian
 runs also overlay the fitted profiles. These diagnostics are rebuilt from the

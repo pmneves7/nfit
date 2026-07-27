@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from nfit import PointData4D
-from nfit.mdhisto import MDHistoAxis, MDHistoData
+from nfit.mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
 from nfit.plotting import (
     MDHistoSliceViewer,
     _DropdownSelect,
@@ -181,7 +181,7 @@ def test_prepare_mdhisto_waterfall_coarsens_axis_with_propagated_errors():
     assert traces[0].label.endswith("r.l.u.")
 
 
-def test_prepare_mdhisto_waterfall_uses_delta_symbol_for_energy_labels():
+def test_prepare_mdhisto_waterfall_uses_value_and_energy_units_for_labels():
     traces = prepare_mdhisto_waterfall(
         _tiny_mdhisto_data(),
         x_dim=3,
@@ -189,7 +189,25 @@ def test_prepare_mdhisto_waterfall_uses_delta_symbol_for_energy_labels():
         waterfall_step=0.5,
     )
 
-    assert traces[0].label.startswith("ΔE = ")
+    assert traces[0].label.endswith(" meV")
+    assert "ΔE" not in traces[0].label
+    assert "DeltaE" not in traces[0].label
+
+
+def test_waterfall_custom_suffix_replaces_generated_axis_units():
+    ax = plot_mdhisto_waterfall(
+        _tiny_mdhisto_data(),
+        x_dim=3,
+        waterfall_dim=0,
+        waterfall_step=0.5,
+        trace_offset=1.0,
+        trace_label_suffix=" K",
+    )
+
+    labels = [text.get_text() for text in ax.texts]
+    assert labels
+    assert all(label.endswith(" K") for label in labels)
+    assert all("meV" not in label for label in labels)
 
 
 def test_plot_mdhisto_waterfall_supports_grouped_1d_data_and_model_lines():
@@ -1179,6 +1197,32 @@ def test_qt_1d_line_plot_errorbar_caps_share_linewidth():
     assert all(capline.get_linewidth() == pytest.approx(2.25) for capline in caplines)
 
 
+def test_qt_1d_auxiliary_channel_draws_propagated_errorbars():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_1d_mdhisto_data()
+    propagated = np.asarray(data.errors, dtype=float) * 2.5
+    data.auxiliary_channels["derived"] = MDHistoChannel(
+        values=np.asarray(data.signal, dtype=float) * 3.0,
+        errors=propagated,
+        label="Derived",
+        unit="arb. units",
+    )
+    viewer = QtMDHistoSliceViewer(data)
+
+    viewer.channel_combo.setCurrentText("derived")
+
+    np.testing.assert_allclose(
+        viewer._current_slice["derived_errors"].reshape(-1),
+        propagated.reshape(-1),
+    )
+    assert len(viewer.ax_image.containers) == 1
+    data_line, _caplines, bar_collections = viewer.ax_image.containers[0].lines
+    assert data_line.get_ydata().size == propagated.size
+    assert len(bar_collections[0].get_segments()) == propagated.size
+
+
 def test_qt_waterfall_mode_exposes_controls_and_exports_script():
     pytest.importorskip("PySide6")
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer
@@ -1186,9 +1230,17 @@ def test_qt_waterfall_mode_exposes_controls_and_exports_script():
     data = _with_fit_channels(_tiny_2d_mdhisto_data_with_singletons())
     viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
 
+    viewer.marker_face_color_combo.setCurrentText("orange")
     viewer.view_mode_combo.setCurrentIndex(1)
 
     assert viewer._plot_layout_mode == ("waterfall", 1)
+    assert viewer.marker_face_color == "none"
+    assert viewer.marker_face_color_combo.currentText() == "none"
+    assert all(
+        line.get_markerfacecolor() == "none"
+        for line in viewer.ax_image.lines
+        if line.get_marker() not in {"None", "none", ""}
+    )
     assert not viewer.waterfall_group.isHidden()
     assert not viewer.waterfall_step_spin.isHidden()
     for control in (
@@ -1265,6 +1317,11 @@ def test_qt_waterfall_mode_exposes_controls_and_exports_script():
     assert restored.waterfall_trace_label_font_size == pytest.approx(14.0)
     assert restored.waterfall_trace_label_color == "#d62728"
     assert restored.marker_face_color == "outline"
+
+    viewer.view_mode_combo.setCurrentIndex(0)
+    assert viewer.marker_face_color == "#ff7f0e"
+    viewer.view_mode_combo.setCurrentIndex(1)
+    assert viewer.marker_face_color == "outline"
 
 
 def test_qt_waterfall_mode_groups_compatible_1d_datasets():

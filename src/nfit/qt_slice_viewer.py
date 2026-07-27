@@ -295,6 +295,9 @@ class QtMDHistoSliceViewer:
         self.line_plot_width = 1.5
         self.marker_edge_width = 1.5
         self.marker_face_color = "none"
+        self._slice_marker_face_color = "none"
+        self._waterfall_marker_face_color = "none"
+        self._active_plot_view_mode = 0
         self.line_color = "#1f77b4"
         self.show_errorbars = True
         self.show_errorbar_caps = False
@@ -622,7 +625,7 @@ class QtMDHistoSliceViewer:
         self.marker_edge_width = float(
             settings.get("marker_edge_width", self.marker_edge_width)
         )
-        self.marker_face_color = str(
+        marker_face_color = str(
             settings.get("marker_face_color", self.marker_face_color)
         )
         self.show_errorbars = bool(
@@ -637,9 +640,23 @@ class QtMDHistoSliceViewer:
         self.fit_line_width = float(
             settings.get("fit_line_width", self.fit_line_width)
         )
-        self._sync_waterfall_controls()
         mode = 1 if settings.get("view_mode") == "waterfall" else 0
+        if mode == 1:
+            self._waterfall_marker_face_color = marker_face_color
+        else:
+            self._slice_marker_face_color = marker_face_color
+        if self.view_mode_combo.currentIndex() == mode:
+            self.marker_face_color = marker_face_color
+        self._sync_waterfall_controls()
         self.view_mode_combo.setCurrentIndex(mode)
+        self._set_combo_silent(
+            self.marker_face_color_combo,
+            (
+                "outline"
+                if self.marker_face_color == "outline"
+                else _option_name(_COLOR_OPTIONS, self.marker_face_color)
+            ),
+        )
         self._roi_extents = settings.get("roi_extents", self._roi_extents)
         self.update_plot(preserve_view=False)
 
@@ -879,11 +896,12 @@ class QtMDHistoSliceViewer:
         mode_layout.addWidget(QtWidgets.QLabel("Visualization"))
         self.view_mode_combo = QtWidgets.QComboBox()
         self.view_mode_combo.setObjectName("data_viewer_mode_combo")
-        self.view_mode_combo.addItems(["Slice viewer", "Waterfall", "3D PyVista"])
+        self.view_mode_combo.addItems(["Slice viewer", "Waterfall", "Volumetric"])
         self.view_mode_combo.setToolTip(
-            "Switch between standard slices, offset waterfall traces, and PyVista "
+            "Switch between standard slices, offset waterfall traces, and volumetric "
             "volume/isosurface rendering. Waterfall mode accepts one multidimensional "
-            "MDHisto dataset or compatible 1D datasets; 3D mode requires at least three dimensions."
+            "MDHisto dataset or compatible 1D datasets; volumetric mode requires at least "
+            "three dimensions."
         )
         self.view_mode_combo.currentIndexChanged.connect(self._set_view_mode)
         mode_layout.addWidget(self.view_mode_combo)
@@ -1519,11 +1537,12 @@ class QtMDHistoSliceViewer:
             self.waterfall_trace_label_suffix
         )
         self.waterfall_trace_label_suffix_edit.setPlaceholderText(
-            "Optional text appended to every trace label"
+            "Optional replacement for generated axis units"
         )
         self.waterfall_trace_label_suffix_edit.setToolTip(
-            "Text appended verbatim to every waterfall trace label, including "
-            "labels derived from an energy-bin center or a 1D dataset name."
+            "For coordinate-derived traces, replace the default axis units "
+            "(for example meV or r.l.u.) with this text. For grouped 1D "
+            "datasets, append it verbatim to the dataset label."
         )
         self.waterfall_trace_label_suffix_edit.textChanged.connect(
             self._set_waterfall_trace_label_suffix
@@ -1693,6 +1712,26 @@ class QtMDHistoSliceViewer:
     def _set_view_mode(self, index: int) -> None:
         index = int(index)
         if index in {0, 1}:
+            previous = self._active_plot_view_mode
+            if index != previous:
+                if previous == 1:
+                    self._waterfall_marker_face_color = self.marker_face_color
+                else:
+                    self._slice_marker_face_color = self.marker_face_color
+                self.marker_face_color = (
+                    self._waterfall_marker_face_color
+                    if index == 1
+                    else self._slice_marker_face_color
+                )
+                self._active_plot_view_mode = index
+                self._set_combo_silent(
+                    self.marker_face_color_combo,
+                    (
+                        "outline"
+                        if self.marker_face_color == "outline"
+                        else _option_name(_COLOR_OPTIONS, self.marker_face_color)
+                    ),
+                )
             self.content_stack.setCurrentIndex(0)
             self.update_plot(preserve_view=False)
             return
@@ -2052,6 +2091,10 @@ class QtMDHistoSliceViewer:
             self.line_plot_width = float(state.line_plot_width)
             self.marker_edge_width = float(state.marker_edge_width)
             self.marker_face_color = str(state.marker_face_color)
+            if self._active_plot_view_mode == 1:
+                self._waterfall_marker_face_color = self.marker_face_color
+            else:
+                self._slice_marker_face_color = self.marker_face_color
             self.line_color = str(state.line_color)
             self.show_errorbars = bool(state.show_errorbars)
             self.show_errorbar_caps = bool(state.show_errorbar_caps)
@@ -2561,6 +2604,10 @@ class QtMDHistoSliceViewer:
             if color_name == "outline"
             else _COLOR_OPTIONS.get(str(color_name), "#1f77b4")
         )
+        if self._waterfall_mode_active():
+            self._waterfall_marker_face_color = self.marker_face_color
+        else:
+            self._slice_marker_face_color = self.marker_face_color
         if self._is_effective_1d() or self._waterfall_mode_active():
             self.update_plot()
 
@@ -3860,12 +3907,18 @@ class QtMDHistoSliceViewer:
             "mec": self.line_color,
             "color": self.line_color,
         }
-        # Errorbars apply to the MDHisto "signal" channel and to any point-list
-        # channel that carries an error column.
-        errorbar_channel = self.model.channel == "signal" or getattr(self.model, "is_point_list", False)
-        errors = np.asarray(view.get("errors", []), dtype=float).reshape(-1)
+        # Primary and point-list channels use ``errors``; derived MDHisto
+        # channels carry their independently propagated uncertainty alongside
+        # the selected values.
+        error_key = (
+            "errors"
+            if self.model.channel == "signal"
+            or getattr(self.model, "is_point_list", False)
+            else f"{self.model.channel}_errors"
+        )
+        errors = np.asarray(view.get(error_key, []), dtype=float).reshape(-1)
         has_errors = errors.size == x.size and bool(np.any(np.isfinite(errors)))
-        if errorbar_channel and self.show_errorbars and has_errors:
+        if self.show_errorbars and has_errors:
             self.ax_image.errorbar(
                 x,
                 y,
