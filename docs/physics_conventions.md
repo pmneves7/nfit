@@ -163,6 +163,10 @@ physical quantity type, and unit.
   magnetic-ion/unit-cell basis).
 - Absolute dynamical susceptibility is displayed as
   `mu_B^2/meV/f.u.` (or `spin^2/meV/f.u.` when explicitly selected).
+- Published normalized intensity such as `1/meV/V` is retained as a
+  dimensionful but non-cross-section signal. Its paired $\chi''$ channel has
+  the correct Bose/correction shape but remains arbitrary unless an absolute
+  cross-section calibration is supplied.
 - Uncalibrated data remain `arb. units`. nfit can remove or apply the Bose,
   form-factor, polarization, and kinematic **shape**, but does not label the
   result absolute.
@@ -172,13 +176,51 @@ physical quantity type, and unit.
 
 The imported signal is retained as a named channel. When temperature is known,
 the paired scattering-cross-section and $\chi''$ channels are generated with
-propagated one-sigma errors. `Plot and fit` chooses the primary observable;
-both remain independently selectable in the data viewer. Models read the
+propagated one-sigma errors. Each standard error is multiplied by the absolute
+value of the same pointwise conversion Jacobian as its signal, including the
+Bose, form-factor, polarization, Landé-factor, calibration, and kinematic
+terms. `Plot and fit` chooses the primary observable; both remain independently
+selectable with their error bars in the data viewer. Models read the
 primary channel's quantity and unit and evaluate in that representation.
 
 The normalization basis is metadata, not a hidden atom-count conversion.
 Beam-flux and illuminated-sample calibration must already refer to the same
 formula-unit, magnetic-ion, or unit-cell basis selected in the GUI.
+For per-atom data, an optional label such as `V` changes the displayed suffix
+from `/magnetic ion` to `/V`; it does not multiply or divide the data.
+These definitions and the distinction between correlation functions,
+$\chi''$, cross section, and absolute normalization follow general neutron
+scattering references rather than any material-specific paper
+([Squires, chapters 7-8](https://doi.org/10.1017/CBO9781139107808.009);
+[Xu, Xu, and Tranquada 2013](https://doi.org/10.1063/1.4818323)).
+
+### Digitized powder data and the LiV2O4 examples
+
+The digitizer CSV importer is general: it records the quantity, units,
+normalization basis, temperature, fixed cut coordinate, and kinematic state
+specified by the user. It does not infer a convention from a material, author,
+or filename. The following papers are therefore provenance and worked import
+examples, not the sources of nfit's physical conventions.
+
+For the supplied LiV2O4 files, Lee *et al.* report Q-E maps and constant-E
+intensity cuts as normalized magnetic intensity in `1/meV/V`, while their
+constant-Q spectra are $\chi''$ in `mu_B^2/meV/V`
+([Lee *et al.* 2001](https://doi.org/10.1103/PhysRevLett.86.5554), especially
+Figs. 1 and 2). Here `V` means per vanadium atom, not per LiV2O4 formula unit.
+
+Tomiyasu *et al.* report absolute constant-E cuts as
+$(k_i/k_f)d^2\sigma/(d\Omega\,dE)$ in `mbarn/sr/meV/V`
+([Tomiyasu *et al.* 2014](https://doi.org/10.1103/PhysRevLett.113.236402),
+Fig. 1). Because the published ordinate has already been multiplied by
+$k_i/k_f$, import it with **k_f/k_i removed upstream**. Their derived
+$\chi''$ is in `mu_B^2/meV/V` (Fig. 2). The importer records these choices but
+does not silently apply paper-specific conventions.
+
+Digitized three-column cuts carry the digitized one-sigma error bars. Color-map
+matrices do not contain an uncertainty layer, so import assigns the explicit
+user-selected uniform map uncertainty and masks NaN pixels. Consequently, an
+absolute intensity scale does not by itself imply statistically calibrated
+map uncertainties.
 
 Bulk magnetic data use explicit CGS/SI conversions: `1 emu = 10^-3 A m^2`,
 `1 T = 10^4 Oe` for the applied-field convention, and molar susceptibility

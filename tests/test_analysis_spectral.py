@@ -128,6 +128,20 @@ def test_arbitrary_ins_view_exposes_cross_section_and_chipp_channels():
         / 2.0
     )
     np.testing.assert_allclose(converted.signal, expected)
+    expected_error = (
+        data.errors
+        * (1.0 - np.exp(-2.0 / (0.08617333262 * 25.0)))
+        / 2.0
+    )
+    np.testing.assert_allclose(converted.errors, expected_error)
+    np.testing.assert_allclose(
+        converted.auxiliary_channels[CHIPP_CHANNEL].errors,
+        expected_error,
+    )
+    np.testing.assert_allclose(
+        converted.auxiliary_channels[CROSS_SECTION_CHANNEL].errors,
+        data.errors,
+    )
     assert CROSS_SECTION_CHANNEL in converted.auxiliary_channels
     assert CHIPP_CHANNEL in converted.auxiliary_channels
     assert converted.channel_quantity_type() == "dynamic_susceptibility"

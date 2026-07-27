@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -8,6 +10,19 @@ from numpy.typing import ArrayLike
 from .dataset import PointData4D, PointListData
 from .mdhisto import MDHistoData, mdhisto_measured_bins
 from .quantities import display_unit
+
+
+@dataclass(frozen=True)
+class WaterfallTrace:
+    """One prepared trace in a waterfall plot."""
+
+    x: np.ndarray
+    values: np.ndarray
+    errors: np.ndarray | None
+    model_values: np.ndarray | None
+    label: str
+    waterfall_coordinate: float | None = None
+    waterfall_unit: str = ""
 
 
 def _edges_from_centers(centers: np.ndarray) -> np.ndarray:
@@ -289,6 +304,646 @@ def plot_mdhisto_line(
         )
     )
     return ax
+
+
+def prepare_mdhisto_waterfall(
+    data: MDHistoData | Sequence[MDHistoData],
+    *,
+    dataset_labels: Sequence[str] | None = None,
+    x_dim: int | str = -1,
+    waterfall_dim: int | str = 0,
+    channel: str = "signal",
+    selections: dict[int, tuple[float, float]] | None = None,
+    integrate_checks: dict[int, bool] | None = None,
+    waterfall_step: float | None = None,
+    masked: bool = True,
+    smoothing_sigma_x: float = 0.0,
+    smoothing_sigma_waterfall: float = 0.0,
+    include_model: bool = False,
+    unmask_model: bool = False,
+) -> list[WaterfallTrace]:
+    """Prepare one multidimensional dataset or several 1D datasets as traces.
+
+    For multidimensional data, hidden dimensions use the ordinary slice-viewer
+    selections and the waterfall dimension is grouped into bins of
+    ``waterfall_step``. Each profile is an inverse-variance weighted mean, so
+    its units remain those of the displayed channel. For a sequence of 1D
+    datasets, each dataset contributes one trace.
+    """
+
+    datasets = [data] if isinstance(data, MDHistoData) else list(data)
+    if not datasets or not all(isinstance(item, MDHistoData) for item in datasets):
+        raise TypeError("waterfall plots require one or more MDHistoData objects")
+    labels = (
+        [str(label) for label in dataset_labels]
+        if dataset_labels is not None
+        else [f"dataset {index + 1}" for index in range(len(datasets))]
+    )
+    if len(labels) != len(datasets):
+        raise ValueError("dataset_labels length must match the number of datasets")
+
+    all_one_dimensional = all(_mdhisto_non_singleton_count(item) == 1 for item in datasets)
+    if len(datasets) > 1 and not all_one_dimensional:
+        raise ValueError("multiple-source waterfall plots require one-dimensional datasets")
+    if all_one_dimensional:
+        traces: list[WaterfallTrace] = []
+        expected_axis: tuple[str, str] | None = None
+        for dataset, label in zip(datasets, labels, strict=True):
+            axis_index = _waterfall_1d_axis(dataset, x_dim)
+            axis = dataset.axes[axis_index]
+            axis_identity = (axis.name, axis.units)
+            if expected_axis is None:
+                expected_axis = axis_identity
+            elif axis_identity != expected_axis:
+                raise ValueError(
+                    "grouped 1D waterfall datasets must share the same x-axis name and units"
+                )
+            model = MDHistoSliceViewer(
+                dataset,
+                x_dim=axis_index,
+                y_dim=_waterfall_other_axis(dataset, axis_index),
+                channel=channel,
+                masked=masked,
+            )
+            view = smooth_mdhisto_view(
+                model.slice_arrays(),
+                sigma_x=smoothing_sigma_x,
+                sigma_y=0.0,
+            )
+            values = np.asarray(model._display_values(view), dtype=float).reshape(-1)
+            errors = _waterfall_channel_errors(model, view, values.shape)
+            model_values = _waterfall_model_values(view, values.shape) if include_model else None
+            if include_model and unmask_model and "fit" in model.CHANNELS:
+                fit_model = MDHistoSliceViewer(
+                    dataset,
+                    x_dim=axis_index,
+                    y_dim=_waterfall_other_axis(dataset, axis_index),
+                    channel="fit",
+                    masked=False,
+                )
+                fit_view = smooth_mdhisto_view(
+                    fit_model.slice_arrays(),
+                    sigma_x=smoothing_sigma_x,
+                    sigma_y=0.0,
+                )
+                model_values = np.asarray(
+                    fit_model._display_values(fit_view),
+                    dtype=float,
+                ).reshape(values.shape)
+            traces.append(
+                WaterfallTrace(
+                    x=np.asarray(view["x_centers"], dtype=float),
+                    values=values,
+                    errors=errors,
+                    model_values=model_values,
+                    label=label,
+                )
+            )
+        return traces
+
+    dataset = datasets[0]
+    x_index = _resolve_mdhisto_dim(dataset, x_dim)
+    waterfall_index = _resolve_mdhisto_dim(dataset, waterfall_dim)
+    if x_index == waterfall_index:
+        raise ValueError("x_dim and waterfall_dim must be different")
+    model = MDHistoSliceViewer(
+        dataset,
+        x_dim=x_index,
+        y_dim=waterfall_index,
+        channel=channel,
+        masked=masked,
+    )
+    if selections:
+        model.selections.update(
+            {int(dim): tuple(value) for dim, value in selections.items()}
+        )
+    if integrate_checks:
+        model.integrate_checks.update(
+            {int(dim): bool(value) for dim, value in integrate_checks.items()}
+        )
+    view = smooth_mdhisto_view(
+        model.slice_arrays(),
+        sigma_x=smoothing_sigma_x,
+        sigma_y=smoothing_sigma_waterfall,
+    )
+    values = np.asarray(model._display_values(view), dtype=float)
+    errors = _waterfall_channel_errors(model, view, values.shape)
+    model_values = _waterfall_model_values(view, values.shape) if include_model else None
+    if include_model and unmask_model and "fit" in model.CHANNELS:
+        fit_model = MDHistoSliceViewer(
+            dataset,
+            x_dim=x_index,
+            y_dim=waterfall_index,
+            channel="fit",
+            masked=False,
+        )
+        if selections:
+            fit_model.selections.update(
+                {int(dim): tuple(value) for dim, value in selections.items()}
+            )
+        if integrate_checks:
+            fit_model.integrate_checks.update(
+                {int(dim): bool(value) for dim, value in integrate_checks.items()}
+            )
+        fit_view = smooth_mdhisto_view(
+            fit_model.slice_arrays(),
+            sigma_x=smoothing_sigma_x,
+            sigma_y=smoothing_sigma_waterfall,
+        )
+        model_values = np.asarray(
+            fit_model._display_values(fit_view),
+            dtype=float,
+        )
+    axis = dataset.axes[waterfall_index]
+    return _coarsen_waterfall_view(
+        view,
+        values,
+        errors,
+        model_values,
+        step=waterfall_step,
+        axis_name=axis.name,
+        axis_units=axis.units,
+    )
+
+
+def plot_mdhisto_waterfall(
+    data: MDHistoData | Sequence[MDHistoData],
+    *,
+    dataset_labels: Sequence[str] | None = None,
+    x_dim: int | str = -1,
+    waterfall_dim: int | str = 0,
+    channel: str = "signal",
+    selections: dict[int, tuple[float, float]] | None = None,
+    integrate_checks: dict[int, bool] | None = None,
+    waterfall_step: float | None = None,
+    trace_offset: float | None = None,
+    cmap: str = "viridis",
+    color_range: tuple[float, float] = (0.0, 1.0),
+    reverse_colors: bool = False,
+    marker: str = "o",
+    line_style: str = "none",
+    marker_size: float = 5.0,
+    line_width: float = 1.5,
+    marker_edge_width: float = 1.5,
+    marker_face: str = "none",
+    show_errorbars: bool = True,
+    errorbar_caps: bool = False,
+    errorbar_cap_size: float = 3.0,
+    show_zero_lines: bool = True,
+    zero_line_color: str = "#7f7f7f",
+    zero_line_style: str = "--",
+    zero_line_width: float = 0.8,
+    show_model: bool = False,
+    unmask_model: bool = False,
+    model_color: str | None = None,
+    model_line_width: float = 2.0,
+    show_trace_labels: bool = True,
+    trace_label_suffix: str = "",
+    trace_label_font_size: float = 10.0,
+    trace_label_color: str | None = None,
+    smoothing_sigma_x: float = 0.0,
+    smoothing_sigma_waterfall: float = 0.0,
+    masked: bool = True,
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
+    font_size: float = 12.0,
+    axes_linewidth: float = 1.5,
+    figsize: tuple[float, float] = (8.0, 6.5),
+    ax=None,
+):
+    """Render stacked, offset traces from MDHisto data."""
+
+    import matplotlib.pyplot as plt
+
+    datasets = [data] if isinstance(data, MDHistoData) else list(data)
+    traces = prepare_mdhisto_waterfall(
+        datasets,
+        dataset_labels=dataset_labels,
+        x_dim=x_dim,
+        waterfall_dim=waterfall_dim,
+        channel=channel,
+        selections=selections,
+        integrate_checks=integrate_checks,
+        waterfall_step=waterfall_step,
+        masked=masked,
+        smoothing_sigma_x=smoothing_sigma_x,
+        smoothing_sigma_waterfall=smoothing_sigma_waterfall,
+        include_model=show_model,
+        unmask_model=unmask_model,
+    )
+    if ax is None:
+        _, ax = plt.subplots(figsize=figsize, constrained_layout=True)
+    colors = waterfall_colors(
+        cmap,
+        len(traces),
+        low=color_range[0],
+        high=color_range[1],
+        reverse=reverse_colors,
+    )
+    offset = (
+        default_waterfall_offset(traces)
+        if trace_offset is None
+        else float(trace_offset)
+    )
+    draw_waterfall_traces(
+        ax,
+        traces,
+        colors=colors,
+        trace_offset=offset,
+        marker=marker,
+        line_style=line_style,
+        marker_size=marker_size,
+        line_width=line_width,
+        marker_edge_width=marker_edge_width,
+        marker_face=marker_face,
+        show_errorbars=show_errorbars,
+        errorbar_caps=errorbar_caps,
+        errorbar_cap_size=errorbar_cap_size,
+        show_zero_lines=show_zero_lines,
+        zero_line_color=zero_line_color,
+        zero_line_style=zero_line_style,
+        zero_line_width=zero_line_width,
+        show_model=show_model,
+        model_color=model_color,
+        model_line_width=model_line_width,
+        show_trace_labels=show_trace_labels,
+        trace_label_suffix=trace_label_suffix,
+        trace_label_font_size=trace_label_font_size,
+        trace_label_color=trace_label_color,
+    )
+    first = datasets[0]
+    x_index = _waterfall_1d_axis(first, x_dim) if _mdhisto_non_singleton_count(first) == 1 else _resolve_mdhisto_dim(first, x_dim)
+    axis = first.axes[x_index]
+    axis_name = waterfall_axis_display_name(axis.name)
+    ax.set_xlabel(
+        f"{axis_name} ({display_unit(axis.units)})" if axis.units else axis_name
+    )
+    channel_model = MDHistoSliceViewer(
+        first,
+        x_dim=x_index,
+        y_dim=_waterfall_other_axis(first, x_index),
+        channel=channel,
+    )
+    ax.set_ylabel(channel_model._channel_label())
+    if xlim is not None:
+        ax.set_xlim(*xlim)
+    if ylim is not None:
+        ax.set_ylim(*ylim)
+    ax.figure.set_size_inches(*figsize)
+    with plt.rc_context({"font.size": float(font_size)}):
+        _apply_axes_linewidth((ax,), None, axes_linewidth)
+        for item in (ax.xaxis.label, ax.yaxis.label, *ax.get_xticklabels(), *ax.get_yticklabels()):
+            item.set_fontsize(float(font_size))
+    ax._nfit_waterfall_traces = traces
+    ax._nfit_waterfall_offset = offset
+    return ax
+
+
+def draw_waterfall_traces(
+    ax,
+    traces: Sequence[WaterfallTrace],
+    *,
+    colors: Sequence[Any],
+    trace_offset: float,
+    marker: str,
+    line_style: str,
+    marker_size: float,
+    line_width: float,
+    marker_edge_width: float,
+    marker_face: str,
+    show_errorbars: bool,
+    errorbar_caps: bool,
+    errorbar_cap_size: float,
+    show_zero_lines: bool,
+    zero_line_color: str,
+    zero_line_style: str,
+    zero_line_width: float,
+    show_model: bool,
+    model_color: str | None,
+    model_line_width: float,
+    show_trace_labels: bool,
+    trace_label_suffix: str = "",
+    trace_label_font_size: float = 10.0,
+    trace_label_color: str | None = None,
+) -> None:
+    """Draw already prepared waterfall traces on one Matplotlib axes."""
+
+    style = "None" if str(line_style).lower() == "none" else line_style
+    for index, (trace, color) in enumerate(zip(traces, colors, strict=True)):
+        baseline = float(index) * float(trace_offset)
+        x = np.asarray(trace.x, dtype=float)
+        values = np.asarray(trace.values, dtype=float)
+        shifted = values + baseline
+        finite_x = x[np.isfinite(x)]
+        if show_zero_lines and finite_x.size:
+            ax.plot(
+                [float(np.min(finite_x)), float(np.max(finite_x))],
+                [baseline, baseline],
+                color=zero_line_color,
+                linestyle=zero_line_style,
+                linewidth=float(zero_line_width),
+                zorder=0.5,
+            )
+        if show_model and trace.model_values is not None:
+            ax.plot(
+                x,
+                np.asarray(trace.model_values, dtype=float) + baseline,
+                color=color if model_color is None else model_color,
+                linestyle="-",
+                marker="",
+                linewidth=float(model_line_width),
+                zorder=1.5,
+            )
+        common = {
+            "marker": marker,
+            "linestyle": style,
+            "ms": float(marker_size),
+            "lw": float(line_width),
+            "mew": float(marker_edge_width),
+            "mfc": (
+                color
+                if marker_face == "outline"
+                else marker_face if marker else "none"
+            ),
+            "mec": color,
+            "color": color,
+            "zorder": 2.0,
+        }
+        errors = None if trace.errors is None else np.asarray(trace.errors, dtype=float)
+        if (
+            show_errorbars
+            and errors is not None
+            and errors.shape == shifted.shape
+            and np.any(np.isfinite(errors))
+        ):
+            ax.errorbar(
+                x,
+                shifted,
+                yerr=errors,
+                ecolor=color,
+                capsize=float(errorbar_cap_size) if errorbar_caps else 0.0,
+                capthick=float(line_width),
+                elinewidth=float(line_width),
+                **common,
+            )
+        else:
+            ax.plot(x, shifted, **common)
+        if show_trace_labels and trace.label:
+            valid = np.isfinite(x) & np.isfinite(shifted)
+            if np.any(valid):
+                first = int(np.flatnonzero(valid)[0])
+                label = f"{trace.label}{trace_label_suffix}"
+                if (
+                    trace.waterfall_coordinate is not None
+                    and trace_label_suffix
+                ):
+                    label = (
+                        f"{trace.waterfall_coordinate:.5g}"
+                        f"{trace_label_suffix}"
+                    )
+                ax.annotate(
+                    label,
+                    (float(x[first]), float(shifted[first])),
+                    xytext=(4, 5),
+                    textcoords="offset points",
+                    color=color if trace_label_color is None else trace_label_color,
+                    fontsize=float(trace_label_font_size),
+                    ha="left",
+                    va="bottom",
+                )
+
+
+def waterfall_colors(
+    cmap: str,
+    count: int,
+    *,
+    low: float = 0.0,
+    high: float = 1.0,
+    reverse: bool = False,
+) -> list[Any]:
+    """Return colors sampled uniformly from a selected colormap interval."""
+
+    from matplotlib import colormaps
+
+    if count <= 0:
+        return []
+    name = "gray" if cmap == "grey" else str(cmap)
+    color_map = colormaps.get_cmap(name)
+    lower, upper = sorted(
+        (
+            float(np.clip(low, 0.0, 1.0)),
+            float(np.clip(high, 0.0, 1.0)),
+        )
+    )
+    positions = np.linspace(lower, upper, max(int(count), 1))
+    if reverse:
+        positions = positions[::-1]
+    return [color_map(float(position)) for position in positions]
+
+
+def waterfall_absolute_max(traces: Sequence[WaterfallTrace]) -> float:
+    """Return the largest finite absolute data value across prepared traces."""
+
+    maxima = [
+        float(np.nanmax(np.abs(trace.values)))
+        for trace in traces
+        if np.any(np.isfinite(trace.values))
+    ]
+    return max(maxima, default=0.0)
+
+
+def default_waterfall_offset(traces: Sequence[WaterfallTrace]) -> float:
+    """Return half the largest finite absolute trace intensity."""
+
+    maximum = waterfall_absolute_max(traces)
+    return 0.5 * maximum if maximum > 0.0 else 1.0
+
+
+def default_waterfall_step(data: MDHistoData, waterfall_dim: int | str) -> float:
+    """Choose a bin width that yields approximately ten waterfall traces."""
+
+    index = _resolve_mdhisto_dim(data, waterfall_dim)
+    centers = np.asarray(data.axes[index].centers, dtype=float)
+    if centers.size == 0:
+        return 1.0
+    edges = _edges_from_centers(centers)
+    span = float(edges[-1] - edges[0])
+    target = max(min(int(centers.size), 10), 1)
+    return span / target if np.isfinite(span) and span > 0.0 else 1.0
+
+
+def waterfall_step_bounds(
+    data: MDHistoData,
+    waterfall_dim: int | str,
+) -> tuple[float, float]:
+    """Return native-bin and full-span limits for waterfall bin width."""
+
+    index = _resolve_mdhisto_dim(data, waterfall_dim)
+    edges = np.asarray(data.axes[index].values, dtype=float)
+    finite_edges = edges[np.isfinite(edges)]
+    if finite_edges.size < 2:
+        return 1.0, 1.0
+    widths = np.abs(np.diff(finite_edges))
+    positive = widths[np.isfinite(widths) & (widths > 0.0)]
+    span = float(np.max(finite_edges) - np.min(finite_edges))
+    minimum = float(np.min(positive)) if positive.size else span
+    maximum = span if np.isfinite(span) and span > 0.0 else minimum
+    minimum = minimum if np.isfinite(minimum) and minimum > 0.0 else maximum
+    return min(minimum, maximum), max(minimum, maximum)
+
+
+def _coarsen_waterfall_view(
+    view: dict[str, np.ndarray],
+    values: np.ndarray,
+    errors: np.ndarray | None,
+    model_values: np.ndarray | None,
+    *,
+    step: float | None,
+    axis_name: str,
+    axis_units: str,
+) -> list[WaterfallTrace]:
+    x = np.asarray(view["x_centers"], dtype=float)
+    y = np.asarray(view["y_centers"], dtype=float)
+    y_edges = np.asarray(view["y_edges"], dtype=float)
+    width = float(step) if step is not None else float(y_edges[-1] - y_edges[0]) / max(min(y.size, 10), 1)
+    if not np.isfinite(width) or width <= 0.0:
+        raise ValueError("waterfall_step must be positive")
+    start = float(y_edges[0])
+    stop = float(y_edges[-1])
+    boundaries = start + np.arange(max(int(np.ceil((stop - start) / width)), 1) + 1) * width
+    boundaries[-1] = max(boundaries[-1], stop)
+    traces: list[WaterfallTrace] = []
+    for index, (low, high) in enumerate(zip(boundaries[:-1], boundaries[1:], strict=True)):
+        selected = (y >= low) & ((y < high) if index < len(boundaries) - 2 else (y <= high))
+        if not np.any(selected):
+            continue
+        selected_values = np.asarray(values[selected, :], dtype=float)
+        selected_errors = None if errors is None else np.asarray(errors[selected, :], dtype=float)
+        profile, uncertainty, weights = _waterfall_weighted_profile(
+            selected_values,
+            selected_errors,
+        )
+        model_profile = None
+        if model_values is not None:
+            selected_model = np.asarray(model_values[selected, :], dtype=float)
+            model_profile = _waterfall_profile_with_weights(selected_model, weights)
+        coordinate = float(np.nanmean(y[selected]))
+        displayed_unit = display_unit(axis_units) if axis_units else ""
+        unit_suffix = f" {displayed_unit}" if displayed_unit else ""
+        traces.append(
+            WaterfallTrace(
+                x=x,
+                values=profile,
+                errors=uncertainty,
+                model_values=model_profile,
+                label=f"{coordinate:.5g}{unit_suffix}",
+                waterfall_coordinate=coordinate,
+                waterfall_unit=displayed_unit,
+            )
+        )
+    return traces
+
+
+def waterfall_axis_display_name(name: str) -> str:
+    """Use compact scientific notation for waterfall energy labels."""
+
+    return (
+        "ΔE"
+        if str(name).strip().casefold().replace("_", "") == "deltae"
+        else str(name)
+    )
+
+
+def _waterfall_weighted_profile(
+    values: np.ndarray,
+    errors: np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray | None, np.ndarray | None]:
+    if errors is None or errors.shape != values.shape:
+        return _nanmean_axis0(values), None, None
+    valid = np.isfinite(values) & np.isfinite(errors) & (errors > 0.0)
+    weights = np.zeros(values.shape, dtype=float)
+    np.divide(1.0, errors, out=weights, where=valid)
+    np.square(weights, out=weights)
+    weight_sum = np.sum(weights, axis=0)
+    weighted_sum = np.sum(np.where(valid, values * weights, 0.0), axis=0)
+    profile = np.full(weight_sum.shape, np.nan, dtype=float)
+    uncertainty = np.full(weight_sum.shape, np.nan, dtype=float)
+    np.divide(weighted_sum, weight_sum, out=profile, where=weight_sum > 0.0)
+    np.divide(1.0, np.sqrt(weight_sum), out=uncertainty, where=weight_sum > 0.0)
+    fallback = _nanmean_axis0(values)
+    profile = np.where(np.isfinite(profile), profile, fallback)
+    return profile, uncertainty, weights
+
+
+def _waterfall_profile_with_weights(
+    values: np.ndarray,
+    weights: np.ndarray | None,
+) -> np.ndarray:
+    if weights is None or weights.shape != values.shape:
+        return _nanmean_axis0(values)
+    valid = np.isfinite(values) & (weights > 0.0)
+    weight_sum = np.sum(np.where(valid, weights, 0.0), axis=0)
+    weighted_sum = np.sum(np.where(valid, values * weights, 0.0), axis=0)
+    profile = np.full(weight_sum.shape, np.nan, dtype=float)
+    np.divide(weighted_sum, weight_sum, out=profile, where=weight_sum > 0.0)
+    fallback = _nanmean_axis0(values)
+    return np.where(np.isfinite(profile), profile, fallback)
+
+
+def _nanmean_axis0(values: np.ndarray) -> np.ndarray:
+    finite = np.isfinite(values)
+    counts = np.sum(finite, axis=0)
+    totals = np.sum(np.where(finite, values, 0.0), axis=0)
+    result = np.full(counts.shape, np.nan, dtype=float)
+    np.divide(totals, counts, out=result, where=counts > 0)
+    return result
+
+
+def _waterfall_channel_errors(
+    model: MDHistoSliceViewer,
+    view: dict[str, np.ndarray],
+    shape: tuple[int, ...],
+) -> np.ndarray | None:
+    key = f"{model.channel}_errors"
+    values = view.get(key, view.get("errors") if model.channel == "signal" else None)
+    if values is None:
+        return None
+    errors = np.asarray(values, dtype=float)
+    return errors.reshape(shape) if errors.size == int(np.prod(shape)) else None
+
+
+def _waterfall_model_values(
+    view: dict[str, np.ndarray],
+    shape: tuple[int, ...],
+) -> np.ndarray | None:
+    values = view.get("fit")
+    if values is None:
+        return None
+    model = np.asarray(values, dtype=float)
+    return model.reshape(shape) if model.size == int(np.prod(shape)) else None
+
+
+def _mdhisto_non_singleton_count(data: MDHistoData) -> int:
+    return sum(size > 1 for size in data.shape)
+
+
+def _waterfall_1d_axis(data: MDHistoData, requested: int | str) -> int:
+    non_singleton = [index for index, size in enumerate(data.shape) if size > 1]
+    if len(non_singleton) != 1:
+        return _resolve_mdhisto_dim(data, requested)
+    if isinstance(requested, str) and requested in [axis.name for axis in data.axes]:
+        candidate = _resolve_mdhisto_dim(data, requested)
+        if data.shape[candidate] > 1:
+            return candidate
+    if isinstance(requested, int):
+        candidate = int(requested) % data.signal.ndim
+        if data.shape[candidate] > 1:
+            return candidate
+    return non_singleton[0]
+
+
+def _waterfall_other_axis(data: MDHistoData, x_dim: int) -> int:
+    return next((index for index in range(data.signal.ndim) if index != x_dim), x_dim)
 
 
 def plot_mdhisto_auto(data: MDHistoData, **kwargs):
@@ -667,7 +1322,7 @@ def inverse_variance_weighted_profile(
 
 
 def _draw_mdhisto_roi_cuts(
-    model: "MDHistoSliceViewer",
+    model: MDHistoSliceViewer,
     view: dict[str, np.ndarray],
     roi_extents: tuple[float, float, float, float],
     ax_xcut,
@@ -1008,6 +1663,11 @@ class MDHistoSliceViewer:
             if self.masked:
                 values2d = np.where(mask2d, np.nan, values2d)
             view[name] = values2d
+            errors2d = self._slice_auxiliary_channel_errors(name, selections)
+            if errors2d is not None:
+                if self.masked:
+                    errors2d = np.where(mask2d, np.nan, errors2d)
+                view[f"{name}_errors"] = errors2d
         return view
 
     def update(self) -> None:
@@ -1171,6 +1831,48 @@ class MDHistoSliceViewer:
                 else np.nansum(out, axis=axis)
             )
         remaining = [dim for dim in range(self.data.signal.ndim) if dim in (self.x_dim, self.y_dim)]
+        y_pos = remaining.index(self.y_dim)
+        x_pos = remaining.index(self.x_dim)
+        return np.moveaxis(out, (y_pos, x_pos), (0, 1))
+
+    def _slice_auxiliary_channel_errors(
+        self,
+        name: str,
+        selections: dict[int, tuple[int, int] | int],
+    ) -> np.ndarray | None:
+        """Slice and propagate an auxiliary channel's one-sigma errors."""
+
+        auxiliary = self.data.auxiliary_channels.get(name)
+        if auxiliary is None or auxiliary.errors is None:
+            return None
+        errors = np.asarray(auxiliary.errors, dtype=float)
+        index: list[Any] = []
+        reduce_axes = []
+        output_axis = 0
+        for dim in range(self.data.signal.ndim):
+            if dim in (self.x_dim, self.y_dim):
+                index.append(slice(None))
+                output_axis += 1
+            else:
+                selection = selections[dim]
+                if isinstance(selection, tuple):
+                    start, stop = selection
+                    index.append(slice(start, stop + 1))
+                    reduce_axes.append(output_axis)
+                    output_axis += 1
+                else:
+                    index.append(selection)
+        out = errors[tuple(index)]
+        for axis in sorted(reduce_axes, reverse=True):
+            count = np.sum(np.isfinite(out), axis=axis)
+            variance = np.nansum(np.square(out), axis=axis)
+            out = np.full(variance.shape, np.nan, dtype=float)
+            np.divide(np.sqrt(variance), count, out=out, where=count > 0)
+        remaining = [
+            dim
+            for dim in range(self.data.signal.ndim)
+            if dim in (self.x_dim, self.y_dim)
+        ]
         y_pos = remaining.index(self.y_dim)
         x_pos = remaining.index(self.x_dim)
         return np.moveaxis(out, (y_pos, x_pos), (0, 1))

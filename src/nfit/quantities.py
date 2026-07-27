@@ -113,11 +113,12 @@ def display_unit(unit: str | None) -> str:
     labels = {
         "cm^3/mol": "emu/(mol Oe)",
         "mol/cm^3": "mol Oe/emu",
-        "mu_B/f.u.": "μ$_{B}$/f.u.",
-        "mu_B^2/meV": "μ$_{B}^2$/meV",
-        "mu_B^2/meV/f.u.": "μ$_{B}^2$/meV/f.u.",
         "mbarn/sr/meV/f.u.": "mbarn/(sr meV f.u.)",
     }
+    if normalized.startswith("mu_B^2"):
+        return normalized.replace("mu_B^2", r"μ$_{\mathrm{B}}^2$", 1)
+    if normalized.startswith("mu_B"):
+        return normalized.replace("mu_B", r"μ$_{\mathrm{B}}$", 1)
     return labels.get(normalized, normalized)
 
 

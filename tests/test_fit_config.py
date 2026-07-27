@@ -27,7 +27,6 @@ from nfit.project_gui import (
     fit_data_bundle,
     latest_fit_channels,
     load_project,
-    perform_group_fit,
     run_group_fit,
     save_project,
     slice_viewer_datasets,
@@ -871,12 +870,110 @@ def test_heisenberg_rpa_blank_custom_form_factor_uses_selected_ion():
     assert np.all(np.isfinite(result.model_values))
 
 
+def test_heisenberg_rpa_evaluates_powder_chipp_with_spherical_average():
+    from nfit.fitting import evaluate_problem_model
+    from nfit.spin_fluctuations import (
+        build_rpa_geometry,
+        heisenberg_rpa_chipp,
+    )
+
+    q = np.array([0.35, 0.6, 0.9])
+    energy = np.array([0.5, 1.5, 3.0])
+    points = _spin_fluctuation_points(
+        np.ones(q.size),
+        q,
+        energy,
+        temperature=10.0,
+    )
+    points.metadata.update(
+        {
+            "data_type": "powder_inelastic",
+            "coordinate_units": "1/angstrom",
+            "powder_q_modulus_axis": True,
+            "spectral_observable": {
+                "fit_representation": "chi_double_prime",
+                "unit": "mu_B^2/meV/f.u.",
+                "moment_unit": "mu_B_squared",
+                "g_factor": 2.0,
+                "kf_ki_state": "removed",
+            },
+        }
+    )
+    component = _heisenberg_chain_component()
+    component.parameters.update({"chi0": 0.4, "gamma0": 2.0, "J1": 0.0})
+    component.fit_parameters = {}
+    component.config["crystal"] = {
+        "lattice": {
+            "a": 8.0,
+            "b": 8.0,
+            "c": 8.0,
+            "alpha": 90.0,
+            "beta": 90.0,
+            "gamma": 90.0,
+        }
+    }
+    component.config["powder_orientations"] = 18
+
+    compiled = compile_fit_problem(
+        [component],
+        [FitDatasetInput("powder", points, data_type="powder_inelastic")],
+    )
+    params = {spec.name: spec.value for spec in compiled.problem.parameter_specs}
+    result = evaluate_problem_model(compiled.problem, "powder", params)
+
+    reference_geometry = build_rpa_geometry(
+        np.zeros(q.size),
+        np.zeros(q.size),
+        np.zeros(q.size),
+        [[0.0, 0.0, 0.0]],
+        component.config["orbits"],
+    )
+    expected_spin_chipp = heisenberg_rpa_chipp(
+        reference_geometry,
+        energy,
+        chi0=0.4,
+        gamma0=2.0,
+        j_values={"J1": 0.0},
+    )
+    np.testing.assert_allclose(result, 4.0 * expected_spin_chipp)
+
+    points.metadata["spectral_observable"].update(
+        {
+            "fit_representation": "cross_section",
+            "unit": "mbarn/sr/meV/f.u.",
+        }
+    )
+    compiled = compile_fit_problem(
+        [component],
+        [FitDatasetInput("powder", points, data_type="powder_inelastic")],
+    )
+    params = {spec.name: spec.value for spec in compiled.problem.parameter_specs}
+    result = evaluate_problem_model(compiled.problem, "powder", params)
+    from nfit.cross_section import cross_section_from_chipp
+
+    expected_cross_section = 1000.0 * cross_section_from_chipp(
+        expected_spin_chipp,
+        energy,
+        10.0,
+        polarization=2.0,
+        moment_unit="spin_squared",
+        g_factor=2.0,
+    )
+    np.testing.assert_allclose(result, expected_cross_section)
+
+
 def test_heisenberg_rpa_dynamic_parameter_supports_per_dataset_sharing():
     component = _heisenberg_chain_component(
         sharing={"chi0": {"mode": "per_dataset"}},
     )
     H = np.linspace(0.0, 1.0, 10)
-    make = lambda: _spin_fluctuation_points(np.ones(10), H, np.ones(10), temperature=5.0)
+    def make():
+        return _spin_fluctuation_points(
+            np.ones(10),
+            H,
+            np.ones(10),
+            temperature=5.0,
+        )
     compiled = compile_fit_problem(
         [component],
         [FitDatasetInput("cold", make()), FitDatasetInput("hot", make())],
@@ -1189,7 +1286,7 @@ def test_dataset_magnetic_field_validator_gives_actionable_error():
     from nfit.fit_config import _dataset_magnetic_field
 
     points = _rpa_points(5.0, 3)
-    with pytest.raises(ValueError, match="Sample\\s*environment"):
+    with pytest.raises(ValueError, match="Conditions"):
         _dataset_magnetic_field(points)
     points.magnetic_field = np.array([0.0, 0.0, 1.5])
     np.testing.assert_array_equal(
@@ -1419,7 +1516,7 @@ def test_zeeman_component_requires_field_and_reduces_to_scalar_at_g_zero():
     compiled_missing = compile_fit_problem(
         [component], [FitDatasetInput("d", no_field, data_type="single_crystal_inelastic")]
     )
-    with pytest.raises(ValueError, match="Sample\\s*environment"):
+    with pytest.raises(ValueError, match="Conditions"):
         evaluate_problem_model(
             compiled_missing.problem, "d",
             {spec.name: spec.value for spec in compiled_missing.problem.parameter_specs},

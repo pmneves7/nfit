@@ -226,6 +226,26 @@ phase vector whose entries all have magnitude one), which is why cell
 invariance is the decisive phase-convention check. The sum rule itself holds
 because $U$ is unitary.
 
+### Powder average
+
+For a powder inelastic dataset, the measured momentum coordinate is the scalar
+$Q=|\mathbf Q|$ rather than a crystallographic direction. nfit evaluates
+$\chi''(\mathbf Q,E)$ on 50 deterministic, approximately equal-area Fibonacci
+sphere directions at every measured $Q$, converts each Cartesian momentum
+vector to model HKL using the reciprocal-basis matrix, and returns their
+arithmetic mean. The same average is used for constant-$Q$ energy cuts,
+constant-energy $Q$ cuts, and two-dimensional $Q$-$E$ maps. Tensor models
+contract the neutron polarization projector at each sampled direction before
+averaging; the scalar isotropic model retains its polarization factor of 2.
+The magnetic form factor depends only on $Q$ and is applied once after the
+orientation average.
+
+The orientation count can be overridden by the advanced model configuration
+key `powder_orientations` (minimum 6). Increasing it improves angular
+convergence at proportional computational cost. A valid model or workspace
+crystal lattice is required; nfit reports this explicitly rather than treating
+$Q$ as the artificial single-crystal point $(H,0,0)$.
+
 ### Physics and conventions
 
 - **Sign convention:** positive $J$ favors ordering at the wavevector where
@@ -521,7 +541,7 @@ along $\hat z$ and transverse circular $\chi_\perp/(1 - i(\omega \mp \omega_L)/\
 in the plane, with Larmor frequency $\omega_L = g\,\mu_B\,B$ and
 $\mu_B = 0.05788\,\text{meV/T}$. Fitted parameters are `g_factor` (default 2),
 `chi_perp_ratio`, and `gamma_perp_ratio` (both default 1). The term needs a
-valid per-dataset field (`Dataset details → Sample environment`, or
+valid per-dataset field (`Dataset details → Conditions`, or
 `dataset.parameters["magnetic_field"]`); a missing field raises a clear error.
 
 **Primitive-cell reduction.** Pure lattice translations do not rotate spins, so
@@ -536,7 +556,7 @@ symmetry bond orbits, then use the **Interactions** box to toggle anisotropic
 exchange, single-ion anisotropy, dipole–dipole, and Zeeman. Enabling a term
 snapshots the symmetry-allowed tensor basis into the component config and adds
 the corresponding fit parameters (`J1_S1`, `J1_D1`, `K1_<class>`, `D_dip`,
-`g_factor`, …). The per-dataset field lives in the `Sample environment` panel of
+`g_factor`, …). The per-dataset field lives in the `Conditions` panel of
 the dataset details.
 
 ### Self-consistency closures

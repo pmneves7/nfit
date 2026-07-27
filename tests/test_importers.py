@@ -8,13 +8,14 @@ from nfit.importers import (
     IMPORTERS,
     import_hb2a_powder,
     import_mpms_dat,
+    import_powder_ins_csv,
     import_ppms_heat_capacity_dat,
-    importers_for_data_type,
     import_with,
+    importers_for_data_type,
+    inspect_powder_ins_csv,
     read_delimited_text,
     split_name_and_unit,
 )
-
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 MPMS_FILE = DATA_DIR / "MPMS" / "test_MPMS.dat"
@@ -108,9 +109,75 @@ def test_importer_registry_lookup():
     assert [spec.name for spec in importers_for_data_type("magnetization")] == ["mpms_dat"]
     assert [spec.name for spec in importers_for_data_type("powder_elastic")] == ["hb2a_powder"]
     assert [spec.name for spec in importers_for_data_type("heat_capacity")] == ["ppms_heat_capacity_dat"]
+    assert [spec.name for spec in importers_for_data_type("powder_inelastic")] == [
+        "powder_ins_csv"
+    ]
     assert IMPORTERS["mpms_dat"].can_read(MPMS_FILE)
     data = import_with("hb2a_powder", HB2A_FILE)
     assert data.coordinate_names == ["2theta"]
+
+
+def test_import_powder_ins_matrix_sorts_axes_and_masks_nan(tmp_path):
+    path = tmp_path / "map.csv"
+    path.write_text(
+        "y\\x,0.5,1.0\n"
+        "2.0,3.0,NaN\n"
+        "1.0,1.0,2.0\n",
+        encoding="utf-8",
+    )
+    assert inspect_powder_ins_csv(path)["layout"] == "matrix_q_energy"
+    data = import_powder_ins_csv(
+        path,
+        {
+            "temperature_K": 6.0,
+            "default_uncertainty": 0.25,
+            "source_unit": "mbarn/sr/meV/V",
+            "normalization_basis": "per_magnetic_ion",
+            "normalization_label": "V",
+        },
+    )
+    assert data.shape == (2, 2)
+    np.testing.assert_allclose(data.axes[0].centers, [0.5, 1.0])
+    np.testing.assert_allclose(data.axes[1].centers, [1.0, 2.0])
+    np.testing.assert_allclose(data.signal[0], [1.0, 3.0])
+    assert data.mask[1, 1]
+    assert data.metadata["dataset_parameters"]["temperature"] == 6.0
+    config = data.metadata["dataset_parameters"]["spectral_channels"]
+    assert config["source_unit"] == "mbarn/sr/meV/V"
+    assert config["normalization_label"] == "V"
+
+
+@pytest.mark.parametrize(
+    ("cut_type", "fixed_value", "shape", "q", "energy"),
+    [
+        ("constant_energy", 0.5, (2, 1), [0.4, 0.6], [0.5]),
+        ("constant_q", 0.6, (1, 2), [0.6], [0.4, 0.6]),
+    ],
+)
+def test_import_powder_ins_cut_keeps_fixed_axis_and_uncertainty(
+    tmp_path, cut_type, fixed_value, shape, q, energy
+):
+    path = tmp_path / "cut.csv"
+    path.write_text("0.6,2.0,0.2\n0.4,1.0,0.1\n", encoding="utf-8")
+    data = import_with(
+        "powder_ins_csv",
+        path,
+        {
+            "cut_type": cut_type,
+            "fixed_value": fixed_value,
+            "temperature_K": 10.0,
+            "source_representation": "chi_double_prime",
+            "source_unit": "mu_B^2/meV/V",
+            "fit_representation": "chi_double_prime",
+            "normalization_basis": "per_magnetic_ion",
+            "normalization_label": "V",
+        },
+    )
+    assert data.shape == shape
+    np.testing.assert_allclose(data.axes[0].centers, q)
+    np.testing.assert_allclose(data.axes[1].centers, energy)
+    np.testing.assert_allclose(data.signal.ravel(), [1.0, 2.0])
+    np.testing.assert_allclose(data.errors.ravel(), [0.1, 0.2])
 
 
 def test_pointlistdata_validates_column_lengths():

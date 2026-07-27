@@ -117,7 +117,7 @@ class FitTimelineEntry:
     optimizer_config: dict[str, Any] = field(default_factory=dict)
     goodness: dict[str, Any] = field(default_factory=dict)
     channels: dict[str, dict[str, Any]] = field(default_factory=dict)
-    children: list["FitTimelineEntry"] = field(default_factory=list)
+    children: list[FitTimelineEntry] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     id: str = field(default_factory=lambda: uuid4().hex)
 
@@ -176,7 +176,7 @@ class DatasetEntry:
             prepared = transform(prepared)
         return prepared
 
-    def copy(self, **changes: Any) -> "DatasetEntry":
+    def copy(self, **changes: Any) -> DatasetEntry:
         """Return an independent entry with a new stable identifier."""
 
         changes.pop("id", None)
@@ -187,16 +187,19 @@ class DatasetEntry:
 class DatasetGroup:
     """A nested group of datasets sharing masks, backgrounds, and configuration.
 
-    Groups may nest via ``subgroups``. ``masks`` on a group apply to every
-    descendant dataset. ``backgrounds`` are applied once to the group's
-    composite, after its enabled datasets have been combined. Fit weights and
-    scale factors are *not* stored here; the GUI edits those in bulk across a
-    group's descendant datasets.
+    Groups may nest via ``subgroups``. A disabled group and all of its
+    descendants are omitted from fitting without changing the descendants'
+    individual enabled states. ``masks`` on a group apply to every descendant
+    dataset. ``backgrounds`` are applied once to the group's composite, after
+    its enabled datasets have been combined. Fit weights and scale factors are
+    *not* stored here; the GUI edits those in bulk across a group's descendant
+    datasets.
     """
 
     name: str
     datasets: list[DatasetEntry] = field(default_factory=list)
-    subgroups: list["DatasetGroup"] = field(default_factory=list)
+    subgroups: list[DatasetGroup] = field(default_factory=list)
+    enabled: bool = True
     masks: list[MaskSpec] = field(default_factory=list)
     backgrounds: list[BackgroundSpec] = field(default_factory=list)
     resolution: dict[str, Any] = field(default_factory=dict)
@@ -209,7 +212,7 @@ class DatasetGroup:
         for subgroup in self.subgroups:
             yield from subgroup.iter_datasets()
 
-    def iter_subgroups(self) -> Iterator["DatasetGroup"]:
+    def iter_subgroups(self) -> Iterator[DatasetGroup]:
         """Yield this group's subgroups recursively."""
 
         for subgroup in self.subgroups:
@@ -234,10 +237,10 @@ class DataGroup:
     lattice_parameters: dict[str, float] | None = None
     spacegroup: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
-    models: dict[str, "FitModelSession | ModelComponentSpec"] = field(default_factory=dict)
+    models: dict[str, FitModelSession | ModelComponentSpec] = field(default_factory=dict)
     fits: list[FitTimelineEntry] = field(default_factory=list)
     active_fit_path: list[int] | None = None
-    analyses: list["AnalysisEntry"] = field(default_factory=list)
+    analyses: list[AnalysisEntry] = field(default_factory=list)
     plots: list[PlotEntry] = field(default_factory=list)
 
     def iter_datasets(self) -> Iterator[DatasetEntry]:
@@ -261,7 +264,7 @@ class DataGroup:
             raise ValueError(f"duplicate dataset name {dataset.name!r}")
         (into or self).datasets.append(dataset)
 
-    def add_model(self, model: "FitModelSession") -> None:
+    def add_model(self, model: FitModelSession) -> None:
         """Associate a model session with this group."""
 
         if model.name in self.models:

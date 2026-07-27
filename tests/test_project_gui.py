@@ -29,7 +29,6 @@ from nfit.project_gui import (
     create_data_group,
     create_mask,
     create_model_component,
-    data_type_label,
     dataset_details_text,
     dataset_entry_from_path,
     dataset_for_slice_viewer,
@@ -51,7 +50,6 @@ from nfit.project_gui import (
     save_dataset_file,
     save_project,
     set_dataset_data_type,
-    set_dataset_source,
 )
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
@@ -137,6 +135,21 @@ def test_project_helpers_name_import_and_round_trip(tmp_path):
     assert loaded.data_groups[3].datasets[0].name == "scan"
 
 
+def test_waterfall_group_keys_follow_immediate_dataset_groups():
+    direct = DatasetEntry("direct", _grid_mdhisto_data(), kind="mdhisto")
+    nested = DatasetEntry("nested", _grid_mdhisto_data(), kind="mdhisto")
+    group = DataGroup(
+        "Workspace1",
+        datasets=[direct],
+        subgroups=[DatasetGroup("Group1", datasets=[nested])],
+    )
+
+    assert project_gui._waterfall_group_keys(
+        group,
+        ["direct", "nested"],
+    ) == ["root", "Group1"]
+
+
 def test_project_explorer_preserves_tree_expansion_and_toolbar_font(monkeypatch, tmp_path):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtGui = pytest.importorskip("PySide6.QtGui")
@@ -184,6 +197,36 @@ def test_project_explorer_preserves_tree_expansion_and_toolbar_font(monkeypatch,
         "Close": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.Close),
         "Quit": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.Quit),
     }
+
+
+def test_import_and_reenable_advance_to_evaluated_current_state(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+    group = DataGroup("Datagroup1")
+    explorer = NfitProjectExplorer(NfitProject([group]))
+
+    explorer.import_dataset_paths(
+        group,
+        [tmp_path / "scan.nxs"],
+        data_type="single_crystal_inelastic",
+    )
+
+    current = group.fits[-1]
+    assert current.kind == "current"
+    assert current.metadata["model_evaluation_status"] == "no compatible model prediction"
+
+    dataset = group.datasets[0]
+    dataset.data = _grid_mdhisto_data()
+    dataset.enabled = False
+    explorer._refresh_tree(select_group=group, select_dataset=dataset)
+    explorer.enabled_check.setChecked(True)
+
+    assert dataset.enabled
+    assert group.fits[-1].kind == "current"
+    assert "model_evaluation_status" in group.fits[-1].metadata
 
 
 def test_project_explorer_tree_hierarchy_fonts(monkeypatch):
@@ -279,7 +322,7 @@ def test_project_explorer_opens_and_reloads_group_slice_viewer(monkeypatch):
             self.title = title
 
     class FakeViewer:
-        def __init__(self, datasets, *, dataset_names):
+        def __init__(self, datasets, *, dataset_names, dataset_group_keys=None):
             self.datasets = list(datasets)
             self.dataset_names = list(dataset_names)
             self.dataset_combo = FakeCombo(dataset_names)
@@ -291,7 +334,14 @@ def test_project_explorer_opens_and_reloads_group_slice_viewer(monkeypatch):
         def show(self):
             self.shown = True
 
-        def replace_datasets(self, datasets, *, dataset_names, selected_dataset_name=None):
+        def replace_datasets(
+            self,
+            datasets,
+            *,
+            dataset_names,
+            dataset_group_keys=None,
+            selected_dataset_name=None,
+        ):
             self.replaced = True
             self.datasets = list(datasets)
             self.dataset_names = list(dataset_names)
@@ -385,7 +435,7 @@ def test_project_explorer_refreshes_details_after_slice_viewer_lazy_load(monkeyp
             return "scan"
 
     class FakeViewer:
-        def __init__(self, datasets, *, dataset_names):
+        def __init__(self, datasets, *, dataset_names, dataset_group_keys=None):
             self.datasets = list(datasets)
             self.dataset_names = list(dataset_names)
             self.dataset_combo = FakeCombo()
@@ -1230,7 +1280,7 @@ def test_spin_model_form_factor_custom_choice_controls_coefficients(monkeypatch)
 def test_project_explorer_fit_history_creates_results_branches_and_restores(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
-    QtCore = pytest.importorskip("PySide6.QtCore")
+    pytest.importorskip("PySide6.QtCore")
 
     dataset = DatasetEntry("first", _tiny_mdhisto_data(1.0))
     mask = create_mask(dataset)
@@ -2733,7 +2783,7 @@ def test_background_posterior_cancel_saves_partial_chain_and_reenables_gui(monke
 
 def test_partial_emcee_chain_does_not_overwrite_requested_steps_in_fit_editor(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    pytest.importorskip("PySide6.QtWidgets")
     group = DataGroup("Datagroup1", datasets=[DatasetEntry("first", _tiny_mdhisto_data(1.0))])
     create_model_component(group)
     chain = np.arange(6, dtype=float).reshape(3, 2, 1)
@@ -3230,6 +3280,56 @@ def test_saved_plot_details_offer_open_edit_and_script_actions(
     assert target.read_text(encoding="utf-8") == copied
 
 
+def test_project_explorer_saves_grouped_waterfall_sources(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    axes = (
+        MDHistoAxis("fixed E", np.array([0.0, 1.0]), "meV", "energy"),
+        MDHistoAxis("Q", np.linspace(0.0, 1.0, 5), "1/angstrom", "momentum"),
+    )
+
+    def cut(value):
+        signal = np.full((1, 4), value, dtype=float)
+        return MDHistoData(
+            axes,
+            signal,
+            np.ones_like(signal),
+            np.zeros_like(signal, dtype=bool),
+            np.ones_like(signal),
+        )
+
+    first = DatasetEntry("0.5 meV", cut(1.0))
+    second = DatasetEntry("1.4 meV", cut(2.0))
+    group = DataGroup("Workspace1", datasets=[first, second])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    viewer = QtMDHistoSliceViewer(
+        [first.data, second.data],
+        dataset_names=[first.name, second.name],
+    )
+    viewer._nfit_dataset_ids = {
+        first.name: first.id,
+        second.name: second.id,
+    }
+    viewer.view_mode_combo.setCurrentIndex(1)
+
+    plot = explorer.save_plot_from_viewer(group, viewer)
+
+    assert plot is not None
+    assert plot.type == "mdhisto_waterfall"
+    assert [source.dataset_id for source in plot.sources] == [
+        first.id,
+        second.id,
+    ]
+    assert plot.settings["waterfall_dataset_names"] == [
+        first.name,
+        second.name,
+    ]
+    rendered = project_gui.render_project_plot(explorer.project, plot.id)
+    assert len(rendered.axes[0]._nfit_waterfall_traces) == 2
+
+
 def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtGui = pytest.importorskip("PySide6.QtGui")
@@ -3448,7 +3548,7 @@ def test_dataset_details_text_summarizes_axes_source_and_metadata(tmp_path, monk
 
     assert panel_titles == [
         "Dataset",
-        "Sample environment",
+        "Conditions",
         "Signal convention",
         "Axes",
         "Rebin",
@@ -4199,6 +4299,132 @@ def test_import_dataset_paths_dispatches_by_data_type_and_round_trips(tmp_path):
     assert reloaded.data_groups[0].datasets[0].metadata["importer"] == "mpms_dat"
 
 
+def test_powder_ins_csv_import_round_trips_conditions_and_paired_channels(tmp_path):
+    path = tmp_path / "constant_e.csv"
+    path.write_text("0.4,1.0,0.1\n0.6,2.0,0.2\n", encoding="utf-8")
+    options = {
+        str(path): {
+            "layout": "cut",
+            "cut_type": "constant_energy",
+            "fixed_value": 0.5,
+            "temperature_K": 6.0,
+            "source_representation": "cross_section",
+            "source_unit": "1/meV/V",
+            "fit_representation": "cross_section",
+            "normalization_basis": "per_magnetic_ion",
+            "normalization_label": "V",
+            "kf_ki_state": "removed",
+        }
+    }
+    group = DataGroup("Powder")
+    dataset = import_dataset_paths(
+        group,
+        [path],
+        data_type="powder_inelastic",
+        importer_name="powder_ins_csv",
+        importer_options=options,
+    )[0]
+    assert isinstance(dataset.data, MDHistoData)
+    assert dataset.parameters["temperature"] == 6.0
+    assert dataset.parameters["constant_energy_meV"] == 0.5
+    assert dataset.metadata["import_options"]["normalization_label"] == "V"
+    view = dataset_for_slice_viewer(dataset)
+    assert view.channel_unit("scattering_cross_section") == "1/meV/V"
+    assert "dynamic_susceptibility" in view.auxiliary_channels
+    assert view.channel_unit("dynamic_susceptibility") == "arb. units"
+    points = project_gui._point_data_from_mdhisto_view(view)
+    np.testing.assert_allclose(points.H, [0.4, 0.6])
+    np.testing.assert_allclose(points.E, [0.5, 0.5])
+    assert points.metadata["coordinate_units"] == "1/angstrom"
+
+    dataset.parameters["temperature"] = 8.0
+    project_path = tmp_path / "powder.nfit"
+    save_project(NfitProject([group]), project_path)
+    restored = load_project(project_path).data_groups[0].datasets[0]
+    assert restored.data is None
+    restored_view = dataset_for_slice_viewer(restored)
+    np.testing.assert_allclose(restored_view.signal, view.signal)
+    assert restored.parameters["temperature"] == 8.0
+    assert restored.parameters["constant_energy_meV"] == 0.5
+
+
+def test_powder_ins_csv_dialog_controls_have_tooltips(monkeypatch, tmp_path):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6 import QtWidgets
+
+    path = tmp_path / "cut.csv"
+    path.write_text("0.4,1.0,0.1\n", encoding="utf-8")
+    explorer = NfitProjectExplorer(NfitProject([DataGroup("Powder")]))
+    checked = []
+
+    def reject_after_inspection(dialog):
+        for name in (
+            "powder_csv_observable",
+            "powder_csv_units",
+            "powder_csv_basis",
+            "powder_csv_atom_label",
+            "powder_csv_kinematic",
+            "powder_csv_map_sigma",
+            "powder_csv_cut_type_0",
+            "powder_csv_temperature_0",
+            "powder_csv_fixed_value_0",
+            "powder_csv_observable_0",
+            "powder_csv_units_0",
+        ):
+            widget = dialog.findChild(QtWidgets.QWidget, name)
+            assert widget is not None
+            assert widget.toolTip()
+            checked.append(name)
+        return QtWidgets.QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(QtWidgets.QDialog, "exec", reject_after_inspection)
+    assert explorer._prompt_powder_ins_csv_options([path]) is False
+    assert len(checked) == 11
+
+
+def test_powder_ins_csv_dialog_allows_mixed_observables(monkeypatch, tmp_path):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6 import QtWidgets
+
+    intensity = tmp_path / "constant_e.csv"
+    chipp = tmp_path / "constant_q.csv"
+    for path in (intensity, chipp):
+        path.write_text("0.4,1.0,0.1\n", encoding="utf-8")
+    explorer = NfitProjectExplorer(NfitProject([DataGroup("Powder")]))
+
+    def configure_and_accept(dialog):
+        basis = dialog.findChild(QtWidgets.QComboBox, "powder_csv_basis")
+        basis.setCurrentIndex(basis.findData("per_magnetic_ion"))
+        dialog.findChild(QtWidgets.QLineEdit, "powder_csv_atom_label").setText("V")
+        defaults = dialog.findChild(QtWidgets.QComboBox, "powder_csv_units")
+        defaults.setCurrentIndex(defaults.findData("1/meV"))
+        for row, fixed in ((0, "0.5"), (1, "0.6")):
+            dialog.findChild(
+                QtWidgets.QLineEdit, f"powder_csv_temperature_{row}"
+            ).setText("6")
+            dialog.findChild(
+                QtWidgets.QLineEdit, f"powder_csv_fixed_value_{row}"
+            ).setText(fixed)
+        cut = dialog.findChild(QtWidgets.QComboBox, "powder_csv_cut_type_1")
+        cut.setCurrentIndex(cut.findData("constant_q"))
+        observable = dialog.findChild(
+            QtWidgets.QComboBox, "powder_csv_observable_1"
+        )
+        observable.setCurrentIndex(observable.findData("chi_double_prime"))
+        units = dialog.findChild(QtWidgets.QComboBox, "powder_csv_units_1")
+        units.setCurrentIndex(units.findData("mu_B^2/meV"))
+        dialog.findChild(QtWidgets.QDialogButtonBox).accepted.emit()
+        return QtWidgets.QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(QtWidgets.QDialog, "exec", configure_and_accept)
+    options = explorer._prompt_powder_ins_csv_options([intensity, chipp])
+    assert options[str(intensity)]["source_unit"] == "1/meV/V"
+    assert options[str(intensity)]["cut_type"] == "constant_energy"
+    assert options[str(chipp)]["source_representation"] == "chi_double_prime"
+    assert options[str(chipp)]["source_unit"] == "mu_B^2/meV/V"
+    assert options[str(chipp)]["cut_type"] == "constant_q"
+
+
 def test_set_dataset_data_type_reloads_and_resets():
     group = DataGroup("Datagroup1")
     entry = import_dataset_paths(group, [HB2A_FILE], data_type="powder_elastic")[0]
@@ -4257,14 +4483,14 @@ def test_nested_dataset_groups_share_masks_and_round_trip(tmp_path):
     assert [m.name for m in effective_dataset_masks(group, d2)] == ["Mask1"]
     assert effective_dataset_masks(group, d1) == []
     data, names = slice_viewer_datasets(group)
-    by_name = dict(zip(names, data))
+    by_name = dict(zip(names, data, strict=False))
     assert by_name["d2"].metadata["nfit_mask_count"] > 0
     assert by_name["d1"].metadata["nfit_mask_count"] == 0
 
     # Round-trip nesting + shared masks through JSON (lazy placeholders).
     save_group = DataGroup("Datagroup2")
-    p1 = import_dataset_paths(save_group, [tmp_path / "a.nxs"])[0]
-    save_sub = DatasetGroup("SubB")
+    import_dataset_paths(save_group, [tmp_path / "a.nxs"])[0]
+    save_sub = DatasetGroup("SubB", enabled=False)
     save_group.subgroups.append(save_sub)
     p2 = DatasetEntry("b", None, kind="nxs", metadata={"source_file": str(tmp_path / "b.nxs"), "import_status": "pending"})
     save_sub.datasets.append(p2)
@@ -4274,7 +4500,31 @@ def test_nested_dataset_groups_share_masks_and_round_trip(tmp_path):
     reloaded = load_project(path).data_groups[0]
     assert reloaded.dataset_names == ["a", "b"]
     assert reloaded.subgroups[0].name == "SubB"
+    assert reloaded.subgroups[0].enabled is False
     assert reloaded.subgroups[0].masks[0].name == "Mask1"
+
+
+def test_disabled_dataset_group_is_omitted_from_fit_inputs_without_changing_children():
+    direct = DatasetEntry("direct", _grid_mdhisto_data(), kind="mdhisto")
+    nested = DatasetEntry("nested", _grid_mdhisto_data(), kind="mdhisto")
+    deeper = DatasetEntry("deeper", _grid_mdhisto_data(), kind="mdhisto")
+    subgroup = DatasetGroup(
+        "Group1",
+        datasets=[nested],
+        subgroups=[DatasetGroup("Group2", datasets=[deeper])],
+        enabled=False,
+    )
+    group = DataGroup("Workspace1", datasets=[direct], subgroups=[subgroup])
+
+    inputs, _bundles = project_gui.fit_dataset_inputs(group)
+
+    assert [item.name for item in inputs] == ["direct"]
+    assert nested.enabled is True
+    assert deeper.enabled is True
+
+    subgroup.enabled = True
+    inputs, _bundles = project_gui.fit_dataset_inputs(group)
+    assert [item.name for item in inputs] == ["direct", "nested", "deeper"]
 
 
 def test_multi_select_move_and_import_into_subgroup(monkeypatch):
@@ -4322,9 +4572,9 @@ def test_project_explorer_drag_reorders_groups_datasets_and_masks(monkeypatch):
     d1 = DatasetEntry("d1", _grid_mdhisto_data(), kind="mdhisto")
     d2 = DatasetEntry("d2", _grid_mdhisto_data(), kind="mdhisto")
     d3 = DatasetEntry("d3", _grid_mdhisto_data(), kind="mdhisto")
-    m1 = create_mask(d1, "Mask1")
-    m2 = create_mask(d1, "Mask2")
-    m3 = create_mask(d1, "Mask3")
+    create_mask(d1, "Mask1")
+    create_mask(d1, "Mask2")
+    create_mask(d1, "Mask3")
     group1 = DataGroup("Datagroup1", datasets=[d1, d2, d3])
     group2 = DataGroup("Datagroup2")
     group3 = DataGroup("Datagroup3")
@@ -4405,6 +4655,15 @@ def test_project_explorer_nested_group_bulk_edit_and_tree(monkeypatch):
     explorer._sync_details()
     assert not explorer.group_bulk_widget.isHidden()
     assert explorer.group_fit_weight_edit.text() == "1"
+    assert not explorer.enabled_check.isHidden()
+    assert explorer.enabled_check.isChecked()
+
+    explorer.enabled_check.setChecked(False)
+
+    assert sub.enabled is False
+    assert d2.enabled is True
+    assert explorer.tree.currentItem().text(0) == "Group1"
+    assert not explorer.enabled_check.isChecked()
 
 
 def test_dataset_scale_factor_scales_viewed_data_and_round_trips(monkeypatch, tmp_path):
@@ -4702,7 +4961,7 @@ def test_sample_environment_panel_is_hidden_for_magnetization(monkeypatch):
     explorer = NfitProjectExplorer(NfitProject([group]))
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
     titles = [box.title() for box in explorer.details_widget.findChildren(QtWidgets.QGroupBox)]
-    assert "Sample environment" not in titles
+    assert "Conditions" not in titles
 
 
 def test_powder_wavelength_to_q_and_point_rebin():
@@ -5149,7 +5408,7 @@ def test_add_mask_and_slice_viewer_from_masks_node(monkeypatch):
     opened = []
 
     class FakeViewer:
-        def __init__(self, datasets, *, dataset_names):
+        def __init__(self, datasets, *, dataset_names, dataset_group_keys=None):
             self.dataset_names = list(dataset_names)
             self.selected = None
             self.shown = False
@@ -6066,6 +6325,87 @@ def _rpa_overlay_group():
     return group, dataset, model
 
 
+def test_heisenberg_rpa_overlay_evaluates_powder_inelastic_grid():
+    q_edges = np.linspace(0.2, 1.0, 5)
+    energy_edges = np.linspace(0.5, 3.5, 4)
+    signal = np.ones((4, 3), dtype=float)
+    data = MDHistoData(
+        axes=(
+            MDHistoAxis("Q", q_edges, "1/angstrom", "q_modulus"),
+            MDHistoAxis("DeltaE", energy_edges, "meV", "energy"),
+        ),
+        signal=signal,
+        errors=np.full_like(signal, 0.1),
+        mask=np.zeros_like(signal, dtype=bool),
+        num_events=np.ones_like(signal),
+    )
+    dataset = DatasetEntry(
+        "powder",
+        data,
+        kind="mdhisto",
+        data_type="powder_inelastic",
+        parameters={
+            "temperature": 10.0,
+            project_gui.SPECTRAL_CHANNEL_CONFIG_KEY: (
+                project_gui.default_spectral_channel_config()
+            ),
+        },
+    )
+    model = ModelComponentSpec(
+        name="M",
+        type="heisenberg_rpa",
+        parameters={
+            "scale": 1.0,
+            "chi0": 0.3,
+            "gamma0": 2.0,
+            "J1": 0.05,
+        },
+        fit_parameters={},
+        config={
+            "site_positions": [[0.0, 0.0, 0.0]],
+            "orbits": [
+                {
+                    "label": "J1",
+                    "bonds": [
+                        {"site_i": 0, "site_j": 0, "offset": [1, 0, 0]}
+                    ],
+                }
+            ],
+            "powder_orientations": 12,
+            "crystal": {
+                "lattice": {
+                    "a": 8.0,
+                    "b": 8.0,
+                    "c": 8.0,
+                    "alpha": 90.0,
+                    "beta": 90.0,
+                    "gamma": 90.0,
+                }
+            },
+        },
+    )
+    group = DataGroup(
+        "Workspace1",
+        datasets=[dataset],
+        lattice_parameters={
+            "a": 8.0,
+            "b": 8.0,
+            "c": 8.0,
+            "alpha": 90.0,
+            "beta": 90.0,
+            "gamma": 90.0,
+        },
+    )
+    group.models[model.name] = model
+
+    channels = project_gui.current_model_channels(group)
+
+    assert "powder" in channels
+    fit = np.asarray(channels["powder"]["fit"], dtype=float)
+    assert fit.shape == signal.shape
+    assert np.all(np.isfinite(fit))
+
+
 def test_overlay_cache_reuses_compiled_problem_across_parameter_edits():
     project_gui._MODEL_OVERLAY_CACHE.clear()
     group, _dataset, model = _rpa_overlay_group()
@@ -6117,6 +6457,32 @@ def test_overlay_cache_invalidates_when_rebin_basis_changes():
 
     project_gui.current_model_channels(group)
     assert project_gui._MODEL_OVERLAY_CACHE[id(group)]["compiled"] is not compiled_first
+
+
+def test_dataset_activation_evaluation_creates_current_state_with_channels(
+    monkeypatch,
+):
+    group = DataGroup(
+        "Datagroup1",
+        datasets=[DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")],
+    )
+    project_gui.ensure_fit_history(group)
+    payload = {
+        "scan": {
+            "kind": "grid",
+            "fit": np.ones((2, 2)),
+            "residual": np.zeros((2, 2)),
+        }
+    }
+    monkeypatch.setattr(project_gui, "current_model_channels", lambda _group: payload)
+
+    current = project_gui.evaluate_current_state_model(group)
+
+    assert current.kind == "current"
+    assert current.channels is payload
+    assert current.metadata["model_evaluation_status"] == "evaluated"
+    assert current.metadata["model_evaluation_datasets"] == ["scan"]
+    assert group.fits[-1] is current
 
 
 def test_overlay_evaluates_only_valid_points(monkeypatch):
@@ -6180,7 +6546,7 @@ def test_viewer_view_cache_reuses_and_invalidates():
     project_gui._VIEWER_VIEW_CACHE.clear()
     data = _grid_mdhisto_data()
     dataset = DatasetEntry("scan", data, kind="mdhisto", data_type="single_crystal_inelastic")
-    group = DataGroup("Datagroup1", datasets=[dataset])
+    DataGroup("Datagroup1", datasets=[dataset])
 
     first = project_gui._viewer_data_before_scale(dataset)
     second = project_gui._viewer_data_before_scale(dataset)
@@ -6345,7 +6711,7 @@ def test_mdhisto_fit_bin_count_matches_point_based_count():
     data.mask[0, 0] = True
     data.signal[1, 1] = np.nan
     dataset = DatasetEntry("scan", data, kind="mdhisto", data_type="single_crystal_inelastic")
-    group = DataGroup("Datagroup1", datasets=[dataset])
+    DataGroup("Datagroup1", datasets=[dataset])
     view = project_gui.dataset_for_slice_viewer(dataset)
     fast = project_gui._mdhisto_fit_bin_count(view)
     reference = int(np.count_nonzero(project_gui._point_data_from_mdhisto_view(view).valid_mask()))
@@ -6409,14 +6775,18 @@ def test_sample_environment_panel_hosts_temperature_and_field(monkeypatch):
     panel = explorer.details_widget.findChild(QtWidgets.QGroupBox, "dataset_sample_environment_group")
     assert panel is not None
     titles = [box.title() for box in explorer.details_widget.findChildren(QtWidgets.QGroupBox)]
-    assert titles.index("Sample environment") == titles.index("Dataset") + 1
-    assert titles.index("Sample environment") < titles.index("Axes")
+    assert titles.index("Conditions") == titles.index("Dataset") + 1
+    assert titles.index("Conditions") < titles.index("Axes")
 
     # Temperature control relocated but keeps its objectName + behavior.
     temp = explorer.window.findChild(QtWidgets.QDoubleSpinBox, "dataset_temperature")
     assert temp is explorer.dataset_temperature_spin
     explorer._set_selected_dataset_temperature(12.5)
     assert dataset.parameters["temperature"] == 12.5
+    for name in ("dataset_fixed_q", "dataset_fixed_energy"):
+        editor = explorer.window.findChild(QtWidgets.QLineEdit, name)
+        assert editor is not None
+        assert editor.toolTip()
 
     kinematic = explorer.window.findChild(QtWidgets.QCheckBox, "dataset_kf_ki_included")
     assert kinematic is explorer.dataset_kf_ki_included_check
@@ -6481,6 +6851,7 @@ def test_inelastic_dataset_panel_creates_typed_cross_section_and_chipp_channels(
         "ins_source_unit",
         "ins_fit_representation",
         "ins_normalization_basis",
+        "ins_normalization_label",
         "ins_signal_per_mbarn",
         "ins_form_factor_ion",
         "ins_polarization_mode",

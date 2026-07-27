@@ -112,7 +112,7 @@ array value is already the total intensity contained in that bin. An explicitly
 **Bose-Einstein elastic separation** accepts two identically binned histogram
 datasets. Select the dataset whose temperature should define the output as the
 primary input and the other temperature as the secondary input. Both datasets
-must have positive temperatures in their **Sample environment** fields, and
+must have positive temperatures in their **Conditions** fields, and
 the temperatures must differ.
 
 For each nonzero energy-transfer bin, nfit solves

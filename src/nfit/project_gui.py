@@ -14,6 +14,7 @@ import subprocess
 import time
 import zlib
 from collections import OrderedDict
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
@@ -29,13 +30,11 @@ from .analysis.registry import analysis_definition, default_analysis_parameters
 from .backgrounds import subtract_powder_background
 from .dataset import PointData4D, PointListData
 from .fit_config import (
-    MODEL_TYPE_REGISTRY,
     CompiledFitProblem,
     FitDatasetInput,
     compile_fit_problem,
     component_parameter_names,
     compute_component_diagnostics,
-    model_supports_data_type,
     parameter_is_derived_by_closure,
     qualified_parameter_name,
     sharing_mode,
@@ -47,8 +46,8 @@ from .fitting import (
     SamplingCancelled,
     SamplingResult,
     _evaluate_problem,
-    evaluate_problem_model,
     evaluate_parameter_expression,
+    evaluate_problem_model,
     fit_problem_least_squares,
     magnetic_field_vector,
     parameter_expression_names,
@@ -57,10 +56,16 @@ from .fitting import (
     sample_problem_parameters,
 )
 from .form_factors import available_ions
-from .importers import IMPORTERS, import_with, importers_for_data_type
+from .importers import (
+    IMPORTERS,
+    import_with,
+    importers_for_data_type,
+    inspect_powder_ins_csv,
+)
 from .mdevent import (
     assess_mdevent_memory,
     bin_mdevent_group,
+    inspect_mdevent_workspace,
     is_mdevent_file,
     load_mdevent_run_points,
     mdevent_dataset_group,
@@ -774,10 +779,15 @@ def data_type_container(data_type: str) -> str:
     return str(definition.get("container", "mdhisto"))
 
 
-def default_importer_for_data_type(data_type: str) -> str | None:
+def default_importer_for_data_type(
+    data_type: str,
+    path: str | Path | None = None,
+) -> str | None:
     """Return the default importer name for a data type, or ``None``."""
 
     specs = importers_for_data_type(data_type)
+    if path is not None:
+        specs = [spec for spec in specs if spec.can_read(path)]
     return specs[0].name if specs else None
 
 
@@ -787,6 +797,7 @@ def import_dataset_paths(
     *,
     data_type: str | None = None,
     importer_name: str | None = None,
+    importer_options: dict[str, dict[str, Any]] | None = None,
     into: DatasetGroup | None = None,
     progress_callback: Any | None = None,
 ) -> list[DatasetEntry]:
@@ -817,7 +828,15 @@ def import_dataset_paths(
             )
             entries.extend(subgroup.datasets)
             continue
-        entry = dataset_entry_from_path(source, data_type=data_type, importer_name=importer_name)
+        options = None
+        if isinstance(importer_options, dict):
+            options = importer_options.get(str(source))
+        entry = dataset_entry_from_path(
+            source,
+            data_type=data_type,
+            importer_name=importer_name,
+            importer_options=options,
+        )
         entry.name = _unique_dataset_name(entry.name, group.dataset_names)
         group.add_dataset(entry, into=into)
         entries.append(entry)
@@ -933,7 +952,9 @@ def set_dataset_source(dataset: DatasetEntry, path: str | Path) -> None:
     dataset.metadata["import_status"] = "pending"
     dataset.kind = source.suffix.lstrip(".").lower()
     dataset.data = None
-    if data_type_container(dataset.data_type) == "point_list":
+    if dataset.metadata.get("importer"):
+        _load_registered_importer_dataset(dataset)
+    elif data_type_container(dataset.data_type) == "point_list":
         _load_point_list_dataset(dataset)
 
 
@@ -953,8 +974,21 @@ def set_dataset_data_type(
         dataset.parameters.setdefault(
             SPECTRAL_CHANNEL_CONFIG_KEY, default_spectral_channel_config()
         )
-    if data_type_container(data_type) == "point_list":
-        chosen = importer_name or default_importer_for_data_type(data_type)
+    chosen = importer_name or default_importer_for_data_type(
+        data_type, dataset.metadata.get("source_file")
+    )
+    if chosen is not None:
+        dataset.metadata["importer"] = chosen
+        dataset.data = None
+        if dataset.metadata.get("source_file"):
+            try:
+                _load_registered_importer_dataset(dataset)
+            except Exception as exc:
+                dataset.data = None
+                dataset.metadata["import_status"] = "error"
+                dataset.metadata["import_error"] = str(exc)
+    elif data_type_container(data_type) == "point_list":
+        chosen = default_importer_for_data_type(data_type)
         if chosen is not None:
             dataset.metadata["importer"] = chosen
         dataset.data = None
@@ -967,7 +1001,7 @@ def set_dataset_data_type(
                 dataset.data = None
                 dataset.metadata["import_status"] = "error"
                 dataset.metadata["import_error"] = str(exc)
-    else:
+    elif chosen is None:
         dataset.metadata.pop("importer", None)
         # Fall back to the lazy MDHisto/.nxs loader on next view.
         if not isinstance(dataset.data, MDHistoData):
@@ -975,19 +1009,35 @@ def set_dataset_data_type(
             dataset.metadata["import_status"] = "pending"
 
 
-def _load_point_list_dataset(dataset: DatasetEntry) -> PointListData | None:
-    """Load a point-list dataset from its source file using a registered importer."""
+def _load_registered_importer_dataset(
+    dataset: DatasetEntry,
+) -> PointListData | MDHistoData | None:
+    """Load a dataset through its registered importer and apply import metadata."""
 
     source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
     if not source:
         return None
-    importer_name = dataset.metadata.get("importer") or default_importer_for_data_type(dataset.data_type)
+    importer_name = dataset.metadata.get("importer") or default_importer_for_data_type(
+        dataset.data_type, source
+    )
     if importer_name is None:
         return None
-    data = import_with(importer_name, source)
+    options = dataset.metadata.get("import_options")
+    data = import_with(
+        importer_name,
+        source,
+        options if isinstance(options, dict) else None,
+    )
     dataset.data = data
     dataset.metadata["importer"] = importer_name
     dataset.metadata["import_status"] = "loaded"
+    imported_parameters = data.metadata.get("dataset_parameters")
+    if (
+        isinstance(imported_parameters, dict)
+        and not bool(dataset.metadata.get("import_parameters_applied", False))
+    ):
+        dataset.parameters.update(copy.deepcopy(imported_parameters))
+        dataset.metadata["import_parameters_applied"] = True
     if dataset.data_type in {"magnetization", "heat_capacity"}:
         keys = ["sample_mass_mg", "molar_mass_g_mol"]
         if dataset.data_type == "heat_capacity":
@@ -1002,6 +1052,15 @@ def _load_point_list_dataset(dataset: DatasetEntry) -> PointListData | None:
         dataset.parameters.setdefault("absolute_units", True)
     if not dataset.kind:
         dataset.kind = Path(source).suffix.lstrip(".").lower()
+    return data
+
+
+def _load_point_list_dataset(dataset: DatasetEntry) -> PointListData | None:
+    """Load a point-list dataset from its source file using a registered importer."""
+
+    data = _load_registered_importer_dataset(dataset)
+    if data is not None and not isinstance(data, PointListData):
+        raise TypeError(f"importer for {dataset.data_type!r} did not return point-list data")
     return data
 
 
@@ -1754,6 +1813,21 @@ def _named_group_nodes(group: DataGroup) -> list[tuple[str, Any]]:
     return nodes
 
 
+def _dataset_group_paths(group: DataGroup) -> list[tuple[str, DatasetGroup]]:
+    """Return stable name paths for every nested dataset group."""
+
+    nodes: list[tuple[str, DatasetGroup]] = []
+
+    def visit(node: DatasetGroup, path: tuple[str, ...]) -> None:
+        nodes.append(("/".join(path), node))
+        for subgroup in node.subgroups:
+            visit(subgroup, (*path, subgroup.name))
+
+    for subgroup in group.subgroups:
+        visit(subgroup, (subgroup.name,))
+    return nodes
+
+
 def snapshot_data_group_state(group: DataGroup) -> dict[str, Any]:
     """Capture serializable dataset mask and model configuration state."""
 
@@ -1777,6 +1851,10 @@ def snapshot_data_group_state(group: DataGroup) -> dict[str, Any]:
         "group_masks": {
             node_name: [_mask_to_dict(mask) for mask in node.masks]
             for node_name, node in _named_group_nodes(group)
+        },
+        "dataset_group_enabled": {
+            path: bool(node.enabled)
+            for path, node in _dataset_group_paths(group)
         },
         "group_backgrounds": {
             node_name: [
@@ -1814,6 +1892,11 @@ def restore_data_group_state(group: DataGroup, snapshot: dict[str, Any]) -> None
     for dataset in by_id.values():
         for background in dataset.backgrounds:
             background.source_entry = by_id.get(background.source_dataset_id)
+    dataset_group_enabled = snapshot.get("dataset_group_enabled", {})
+    if isinstance(dataset_group_enabled, dict):
+        for path, node in _dataset_group_paths(group):
+            if path in dataset_group_enabled:
+                node.enabled = bool(dataset_group_enabled[path])
     group_masks = snapshot.get("group_masks", {})
     if isinstance(group_masks, dict):
         for node_name, node in _named_group_nodes(group):
@@ -2841,14 +2924,25 @@ def _composite_dataset_name(group: DataGroup) -> str:
 
 
 def _composite_candidates(group: DataGroup) -> list[DatasetEntry]:
+    node = group.node if isinstance(group, _CompositeScope) else group
     background_ids = {
         background.source_dataset_id
         for background in getattr(group, "backgrounds", [])
         if background.enabled
     }
+
+    def considered_datasets(
+        current: DataGroup | DatasetGroup,
+    ) -> Iterator[DatasetEntry]:
+        if isinstance(current, DatasetGroup) and not current.enabled:
+            return
+        yield from current.datasets
+        for subgroup in current.subgroups:
+            yield from considered_datasets(subgroup)
+
     return [
         dataset
-        for dataset in group.iter_datasets()
+        for dataset in considered_datasets(node)
         if dataset.enabled and dataset.id not in background_ids
     ]
 
@@ -2897,6 +2991,10 @@ def _composite_reference_data(group: DataGroup) -> Any | None:
 def _ensure_dataset_data_loaded(dataset: DatasetEntry) -> Any:
     if dataset.data is not None:
         return dataset.data
+    if dataset.metadata.get("importer"):
+        loaded = _load_registered_importer_dataset(dataset)
+        if loaded is not None:
+            return loaded
     if data_type_container(dataset.data_type) == "point_list":
         loaded = _load_point_list_dataset(dataset)
         if loaded is not None:
@@ -3421,7 +3519,14 @@ def _effective_dataset_entries(
     force_rebin: bool,
     force_masks: bool,
     progress_callback: Any | None,
+    include_disabled_groups: bool = True,
 ):
+    if (
+        isinstance(node, DatasetGroup)
+        and not node.enabled
+        and not include_disabled_groups
+    ):
+        return
     scope = _composite_scope(group, node)
     if use_composite and data_group_composite_enabled(scope):
         yield composite_dataset_entry(
@@ -3441,6 +3546,7 @@ def _effective_dataset_entries(
             force_rebin=force_rebin,
             force_masks=force_masks,
             progress_callback=progress_callback,
+            include_disabled_groups=include_disabled_groups,
         )
 
 
@@ -3496,6 +3602,23 @@ def slice_viewer_datasets(
             data.append(view_data)
             names.append(dataset.name)
     return data, names
+
+
+def _waterfall_group_keys(group: DataGroup, names: list[str]) -> list[str]:
+    """Return the immediate project data-group key for each viewer dataset."""
+
+    by_name = {dataset.name: "root" for dataset in group.datasets}
+
+    def visit(node: DatasetGroup, path: tuple[str, ...]) -> None:
+        key = "/".join(path)
+        for dataset in node.datasets:
+            by_name[dataset.name] = key
+        for subgroup in node.subgroups:
+            visit(subgroup, (*path, subgroup.name))
+
+    for subgroup in group.subgroups:
+        visit(subgroup, (subgroup.name,))
+    return [by_name.get(name, name) for name in names]
 
 
 def dataset_for_slice_viewer(
@@ -4028,7 +4151,9 @@ def _point_data_from_mdhisto_view(data: MDHistoData) -> PointData4D:
     keep = ~np.asarray(data.mask, dtype=bool)
     keep &= mdhisto_measured_bins(data)
     metadata: dict[str, Any] = {
-        "fit_coordinates": sorted(name for name in ("H", "K", "L", "E") if name in coords),
+        "fit_coordinates": sorted(
+            name for name in ("H", "K", "L", "E", "q_modulus") if name in coords
+        ),
     }
     for key in (
         "oriented_lattice",
@@ -4047,8 +4172,22 @@ def _point_data_from_mdhisto_view(data: MDHistoData) -> PointData4D:
     if "signal_unit" in metadata:
         metadata["unit"] = metadata["signal_unit"]
     temperature = data.metadata.get("temperature")
+    powder_q = coords.get("q_modulus")
+    powder_only = powder_q is not None and not any(
+        axis.role in {"h", "k", "l"} for axis in data.axes
+    )
+    if powder_only:
+        metadata["coordinate_units"] = "1/angstrom"
+        metadata["powder_q_modulus_axis"] = True
     return PointData4D(
-        H=coords.get("H", zeros).ravel(),
+        # PointData4D has a Cartesian-vector momentum slot. For powder data,
+        # place |Q| on x and tag the coordinates as inverse angstroms so
+        # q_modulus_inv_angstrom recovers the measured scalar without a lattice.
+        H=(
+            powder_q
+            if powder_only
+            else coords.get("H", zeros)
+        ).ravel(),
         K=coords.get("K", zeros).ravel(),
         L=coords.get("L", zeros).ravel(),
         E=coords.get("E", zeros).ravel(),
@@ -4151,6 +4290,7 @@ def fit_dataset_inputs(
         force_rebin=force_rebin,
         force_masks=force_masks,
         progress_callback=progress_callback,
+        include_disabled_groups=False,
     )
     for dataset in entries:
         if not dataset.enabled:
@@ -4300,7 +4440,7 @@ class UBSetupDialog:
     """Reusable lattice/orientation editor for single-crystal data scopes."""
 
     def __init__(self, parent: Any, *, ub: Any, lattice: dict[str, Any] | None, u: Any, v: Any):
-        from PySide6 import QtCore, QtWidgets
+        from PySide6 import QtWidgets
 
         self.dialog = QtWidgets.QDialog(parent)
         self.dialog.setWindowTitle("UB setup")
@@ -4401,12 +4541,14 @@ class UBSetupDialog:
                 info = inspect_mdevent_workspace(path)
                 matrix = info.ub_matrix
                 lattice = info.lattice_parameters
-            except Exception:
+            except Exception as mdevent_error:
                 imported = load_mantid_mdhisto_nxs(path, copy_metadata=True)
                 matrix = _dataset_ub_for_editor(imported.metadata)
                 lattice = imported.metadata.get("lattice_parameters")
                 if matrix is None:
-                    raise ValueError("NeXus file does not contain a UB/orientation matrix")
+                    raise ValueError(
+                        "NeXus file does not contain a UB/orientation matrix"
+                    ) from mdevent_error
             self._set_matrix(np.asarray(matrix, dtype=float))
             for name, value in (lattice or {}).items():
                 if name not in self.lattice_edits:
@@ -4728,6 +4870,10 @@ def _overlay_cache_signature(group: DataGroup) -> str:
         )
     payload = [
         datasets,
+        [
+            [path, bool(subgroup.enabled)]
+            for path, subgroup in _dataset_group_paths(group)
+        ],
         models,
         json.dumps(group.lattice_parameters, sort_keys=True, default=str),
         group.spacegroup,
@@ -4842,6 +4988,41 @@ def current_model_channels(
         )
     except Exception:
         return {}
+
+
+def evaluate_current_state_model(
+    group: DataGroup,
+    current: FitTimelineEntry | None = None,
+) -> FitTimelineEntry:
+    """Evaluate live model channels and record them on a Current state entry."""
+
+    ensure_fit_history(group)
+    if current is None or current.kind != "current":
+        current = _top_level_current_state_entry(group)
+    if current is None:
+        source = _last_result_at_level(group.fits) or group.fits[0]
+        current = current_state_fit_entry(group, source)
+        group.fits.append(current)
+    error = ""
+    try:
+        channels = current_model_channels(group)
+    except Exception as exc:
+        channels = {}
+        error = str(exc)
+    current.channels = channels
+    current.metadata = dict(current.metadata)
+    current.metadata["model_evaluation_status"] = (
+        "failed"
+        if error
+        else "evaluated" if channels else "no compatible model prediction"
+    )
+    current.metadata["model_evaluation_datasets"] = sorted(channels)
+    if error:
+        current.metadata["model_evaluation_error"] = error
+    else:
+        current.metadata.pop("model_evaluation_error", None)
+    _set_fit_current_snapshot(current, group)
+    return current
 
 
 def _compiled_problem_for_fit_entry(
@@ -5874,6 +6055,8 @@ def _viewer_data_before_scale_uncached(
 ) -> MDHistoData | PointListData | None:
     if dataset.kind == "raw_dgs_nexus":
         return None
+    if dataset.data is None and dataset.metadata.get("importer"):
+        _load_registered_importer_dataset(dataset)
     if data_type_container(dataset.data_type) == "point_list" or isinstance(dataset.data, PointListData):
         if dataset.data is None:
             _load_point_list_dataset(dataset)
@@ -8329,6 +8512,7 @@ def dataset_entry_from_path(
     *,
     data_type: str | None = None,
     importer_name: str | None = None,
+    importer_options: dict[str, Any] | None = None,
 ) -> DatasetEntry:
     """Create a dataset entry for a file selected in the GUI.
 
@@ -8347,14 +8531,22 @@ def dataset_entry_from_path(
     )
     if resolved_type in {"single_crystal_inelastic", "powder_inelastic"}:
         entry.parameters[SPECTRAL_CHANNEL_CONFIG_KEY] = default_spectral_channel_config()
+    if importer_name is not None:
+        entry.metadata["importer"] = importer_name
+        if importer_options is not None:
+            entry.metadata["import_options"] = copy.deepcopy(importer_options)
     if source.suffix.lower() == ".npz":
         data, parameters = _load_nfit_dataset_file(source)
         entry.data = data
         entry.parameters.update(parameters)
         entry.metadata["import_status"] = "loaded"
         return entry
-    if data_type_container(resolved_type) == "point_list":
-        chosen = importer_name or default_importer_for_data_type(resolved_type)
+    chosen = importer_name or default_importer_for_data_type(resolved_type, source)
+    if chosen is not None:
+        entry.metadata["importer"] = chosen
+        _load_registered_importer_dataset(entry)
+    elif data_type_container(resolved_type) == "point_list":
+        chosen = default_importer_for_data_type(resolved_type)
         if chosen is not None:
             entry.metadata["importer"] = chosen
         _load_point_list_dataset(entry)
@@ -8445,23 +8637,37 @@ def render_project_plot(
                 if fit_entry is None:
                     raise ValueError("saved plot source fit is missing")
                 return render_plot(plot, fit_entry=fit_entry)
-            if not plot.sources or not plot.sources[0].dataset_id:
+            source_ids = [
+                source.dataset_id
+                for source in plot.sources
+                if source.dataset_id
+            ]
+            if not source_ids:
                 raise ValueError("saved plot has no dataset source")
-            dataset = next(
-                (item for item in group.iter_datasets() if item.id == plot.sources[0].dataset_id),
-                None,
-            )
-            if dataset is None:
+            entries_by_id = {
+                item.id: item for item in group.iter_datasets()
+            }
+            datasets = [entries_by_id.get(source_id) for source_id in source_ids]
+            if any(dataset is None for dataset in datasets):
                 raise ValueError("saved plot source dataset is missing")
             views, names = slice_viewer_datasets(
                 group,
                 use_composite=False,
                 unmask_model=bool(plot.settings.get("unmask_model", False)),
             )
-            view = views[names.index(dataset.name)] if dataset.name in names else None
-            if not isinstance(view, MDHistoData):
+            prepared = [
+                views[names.index(dataset.name)]
+                for dataset in datasets
+                if dataset is not None and dataset.name in names
+            ]
+            if len(prepared) != len(datasets) or not all(
+                isinstance(view, MDHistoData) for view in prepared
+            ):
                 raise TypeError("saved plots currently require MDHisto data")
-            return render_plot(plot, view)
+            return render_plot(
+                plot,
+                prepared if plot.type == "mdhisto_waterfall" else prepared[0],
+            )
     raise ValueError(f"unknown saved plot {plot_id!r}")
 
 
@@ -8932,7 +9138,14 @@ def _draw_matrix_heatmap(
     arr = np.asarray(matrix, dtype=float)
     if arr.size == 0:
         return
-    plot_labels = labels or {name: label for name, label in zip(names, _compact_diagnostic_labels(names))}
+    plot_labels = labels or {
+        name: label
+        for name, label in zip(
+            names,
+            _compact_diagnostic_labels(names),
+            strict=True,
+        )
+    }
     finite = arr[np.isfinite(arr)]
     if title.lower().startswith("correlation"):
         vmin, vmax = -1.0, 1.0
@@ -9379,7 +9592,7 @@ class NfitProjectExplorer:
         self._sync_details()
         configure_numeric_spin_boxes(self.app)
 
-    def show(self) -> "NfitProjectExplorer":
+    def show(self) -> NfitProjectExplorer:
         self.window.show()
         self.window.raise_()
         self.window.activateWindow()
@@ -9412,6 +9625,7 @@ class NfitProjectExplorer:
         *,
         data_type: str | None = None,
         importer_name: str | None = None,
+        importer_options: dict[str, dict[str, Any]] | None = None,
         into: DatasetGroup | None = None,
     ) -> list[DatasetEntry]:
         from PySide6 import QtWidgets
@@ -9420,7 +9634,12 @@ class NfitProjectExplorer:
         progress({"stage": "import", "iteration": 0, "total": 0, "message": "opening dataset files"})
         try:
             entries = import_dataset_paths(
-                group, paths, data_type=data_type, importer_name=importer_name, into=into,
+                group,
+                paths,
+                data_type=data_type,
+                importer_name=importer_name,
+                importer_options=importer_options,
+                into=into,
                 progress_callback=progress,
             )
         except Exception as exc:
@@ -9434,6 +9653,7 @@ class NfitProjectExplorer:
             self._close_rebin_progress(progress)
         if entries:
             self._record_data_group_state_change(group)
+            self._evaluate_model_after_dataset_activation(group)
             self._mark_dirty()
             self._refresh_tree(select_group=group)
         return entries
@@ -9445,6 +9665,7 @@ class NfitProjectExplorer:
         *,
         data_type: str | None = None,
         importer_name: str | None = None,
+        importer_options: dict[str, dict[str, Any]] | None = None,
         into: DatasetGroup | None = None,
     ) -> bool:
         """Import from GUI actions without blocking the Qt event loop."""
@@ -9456,6 +9677,7 @@ class NfitProjectExplorer:
                     paths,
                     data_type=data_type,
                     importer_name=importer_name,
+                    importer_options=importer_options,
                     into=into,
                 )
             )
@@ -9467,6 +9689,7 @@ class NfitProjectExplorer:
                 paths,
                 data_type=data_type,
                 importer_name=importer_name,
+                importer_options=importer_options,
                 progress_callback=progress_callback,
             )
             return staging
@@ -9483,6 +9706,7 @@ class NfitProjectExplorer:
                 parent.subgroups.append(subgroup)
             if any(True for _dataset in staging.iter_datasets()):
                 self._record_data_group_state_change(group)
+                self._evaluate_model_after_dataset_activation(group)
                 self._mark_dirty()
                 self._refresh_tree(select_group=group, select_dataset_group=into)
 
@@ -9916,11 +10140,21 @@ class NfitProjectExplorer:
         if choice is None:
             return
         data_type, importer_name = choice
+        if importer_name is not None and not all(
+            IMPORTERS[importer_name].can_read(path) for path in paths
+        ):
+            importer_name = None
+        importer_options = self._prompt_importer_options(importer_name, paths)
+        if importer_options is False:
+            return
         self._request_dataset_import(
             group,
             paths,
             data_type=data_type,
             importer_name=importer_name,
+            importer_options=(
+                importer_options if isinstance(importer_options, dict) else None
+            ),
             into=into,
         )
 
@@ -9957,6 +10191,341 @@ class NfitProjectExplorer:
                 return None
             importer_name = importer_specs[importer_labels.index(picked)].name
         return data_type, importer_name
+
+    def _prompt_importer_options(
+        self,
+        importer_name: str | None,
+        paths: list[str | Path],
+    ) -> dict[str, dict[str, Any]] | bool | None:
+        """Collect importer-specific options through a reusable dispatch hook."""
+
+        if importer_name is None:
+            return None
+        spec = IMPORTERS[importer_name]
+        if spec.options_kind == "powder_ins_csv":
+            return self._prompt_powder_ins_csv_options(paths)
+        return None
+
+    def _prompt_powder_ins_csv_options(
+        self,
+        paths: list[str | Path],
+    ) -> dict[str, dict[str, Any]] | bool:
+        """Configure a batch of digitized powder INS cuts and maps."""
+
+        from PySide6 import QtCore, QtWidgets
+
+        dialog = QtWidgets.QDialog(self.window)
+        dialog.setWindowTitle("Import powder INS CSV")
+        dialog.resize(980, 520)
+        outer = QtWidgets.QVBoxLayout(dialog)
+
+        common = QtWidgets.QGroupBox("Signal convention")
+        form = QtWidgets.QFormLayout(common)
+        observable = QtWidgets.QComboBox()
+        observable.setObjectName("powder_csv_observable")
+        observable.addItem("Scattering cross section / intensity", "cross_section")
+        observable.addItem("Dynamical susceptibility χ″", "chi_double_prime")
+        observable.setToolTip(
+            "Choose what the digitized y values represent. Temperature then "
+            "allows nfit to create the paired cross-section or χ″ channel."
+        )
+        form.addRow("Imported quantity", observable)
+
+        units = QtWidgets.QComboBox()
+        units.setObjectName("powder_csv_units")
+        units.setToolTip(
+            "Unit before the amount-of-sample denominator. Use normalized "
+            "intensity for published 1/meV data that are not cross sections."
+        )
+        form.addRow("Signal units", units)
+
+        basis = QtWidgets.QComboBox()
+        basis.setObjectName("powder_csv_basis")
+        for label, value in (
+            ("Unknown / none", "unknown"),
+            ("Per formula unit", "per_formula_unit"),
+            ("Per atom or magnetic ion", "per_magnetic_ion"),
+            ("Per unit cell", "per_unit_cell"),
+        ):
+            basis.addItem(label, value)
+        basis.setToolTip(
+            "Denominator already present in the digitized values. This labels "
+            "the data and does not apply a hidden numerical rescaling."
+        )
+        form.addRow("Normalization", basis)
+
+        atom_label = QtWidgets.QLineEdit()
+        atom_label.setObjectName("powder_csv_atom_label")
+        atom_label.setPlaceholderText("V")
+        atom_label.setToolTip(
+            "Atom or ion named by a per-atom denominator, for example V. "
+            "Leave blank to display 'per magnetic ion'."
+        )
+        form.addRow("Atom / ion label", atom_label)
+
+        kinematic = QtWidgets.QComboBox()
+        kinematic.setObjectName("powder_csv_kinematic")
+        kinematic.addItem("Removed upstream (S(Q,E)-like)", "removed")
+        kinematic.addItem("k_f/k_i remains in the values", "included")
+        kinematic.setToolTip(
+            "Choose Removed when the published ordinate is (k_i/k_f)d²σ/dΩdE, "
+            "as in Tomiyasu et al. Included data later require fixed Ei or Ef."
+        )
+        form.addRow("k_f/k_i state", kinematic)
+
+        map_sigma = QtWidgets.QDoubleSpinBox()
+        map_sigma.setObjectName("powder_csv_map_sigma")
+        map_sigma.setRange(1.0e-12, 1.0e12)
+        map_sigma.setDecimals(6)
+        map_sigma.setValue(1.0)
+        map_sigma.setToolTip(
+            "Uniform one-sigma uncertainty assigned only to digitized maps, "
+            "which do not contain an error layer. It controls fit weighting."
+        )
+        form.addRow("Map σ", map_sigma)
+        outer.addWidget(common)
+
+        table = QtWidgets.QTableWidget(len(paths), 6)
+        table.setObjectName("powder_csv_conditions")
+        table.setHorizontalHeaderLabels(
+            [
+                "File",
+                "Layout / cut",
+                "Temperature (K)",
+                "Fixed Q or E",
+                "Quantity",
+                "Units",
+            ]
+        )
+        table.horizontalHeader().setSectionResizeMode(
+            0, QtWidgets.QHeaderView.ResizeMode.Stretch
+        )
+        for column in (1, 2, 3, 4, 5):
+            table.horizontalHeader().setSectionResizeMode(
+                column, QtWidgets.QHeaderView.ResizeMode.ResizeToContents
+            )
+        row_controls: list[tuple[Path, str, Any, Any, Any, Any, Any]] = []
+
+        def populate_units(
+            combo: Any,
+            representation: str,
+            *,
+            current: str | None = None,
+        ) -> None:
+            combo.blockSignals(True)
+            try:
+                combo.clear()
+                combo.addItem("Arbitrary", "arbitrary")
+                if representation == "cross_section":
+                    combo.addItem("1/meV", "1/meV")
+                    combo.addItem("mbarn/sr/meV", "mbarn/sr/meV")
+                    combo.addItem("barn/sr/meV", "barn/sr/meV")
+                else:
+                    combo.addItem("μ_B²/meV", "mu_B^2/meV")
+                    combo.addItem("spin²/meV", "spin^2/meV")
+                index = combo.findData(current)
+                combo.setCurrentIndex(index if index >= 0 else 0)
+            finally:
+                combo.blockSignals(False)
+
+        for row, raw_path in enumerate(paths):
+            path = Path(raw_path)
+            inspection = inspect_powder_ins_csv(path)
+            filename = QtWidgets.QTableWidgetItem(path.name)
+            filename.setFlags(filename.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+            filename.setToolTip(str(path))
+            table.setItem(row, 0, filename)
+
+            cut = QtWidgets.QComboBox()
+            cut.setObjectName(f"powder_csv_cut_type_{row}")
+            cut.setToolTip(
+                "For a 1D file, specify whether x is Q at fixed E or E at fixed Q."
+            )
+            if inspection["layout"] == "matrix_q_energy":
+                cut.addItem("Q-E map", "matrix_q_energy")
+                cut.setEnabled(False)
+            else:
+                cut.addItem("Constant E (x = Q)", "constant_energy")
+                cut.addItem("Constant Q (x = E)", "constant_q")
+            table.setCellWidget(row, 1, cut)
+
+            temperature = QtWidgets.QLineEdit()
+            temperature.setObjectName(f"powder_csv_temperature_{row}")
+            temperature.setPlaceholderText("required")
+            temperature.setToolTip(
+                "Sample temperature in kelvin for this file. It is required "
+                "because digitizer CSV files contain no experimental metadata."
+            )
+            table.setCellWidget(row, 2, temperature)
+
+            fixed = QtWidgets.QLineEdit()
+            fixed.setObjectName(f"powder_csv_fixed_value_{row}")
+            fixed.setPlaceholderText(
+                "meV" if inspection["layout"] == "cut" else "not applicable"
+            )
+            fixed.setEnabled(inspection["layout"] == "cut")
+            fixed.setToolTip(
+                "Fixed E in meV for a constant-E cut, or fixed Q in Å⁻¹ for a "
+                "constant-Q cut."
+            )
+            table.setCellWidget(row, 3, fixed)
+            cut.currentIndexChanged.connect(
+                lambda _index, selector=cut, editor=fixed: editor.setPlaceholderText(
+                    "meV" if selector.currentData() == "constant_energy" else "Å⁻¹"
+                )
+            )
+            row_observable = QtWidgets.QComboBox()
+            row_observable.setObjectName(f"powder_csv_observable_{row}")
+            row_observable.addItem("Intensity / cross section", "cross_section")
+            row_observable.addItem("χ″", "chi_double_prime")
+            row_observable.setToolTip(
+                "Physical quantity digitized in this file. This per-file choice "
+                "allows one batch to contain intensity and χ″ datasets."
+            )
+            table.setCellWidget(row, 4, row_observable)
+
+            row_units = QtWidgets.QComboBox()
+            row_units.setObjectName(f"powder_csv_units_{row}")
+            row_units.setToolTip(
+                "Signal units for this file, before the common amount-of-sample denominator."
+            )
+            populate_units(row_units, "cross_section")
+            row_observable.currentIndexChanged.connect(
+                lambda _index, source=row_observable, target=row_units: populate_units(
+                    target, str(source.currentData()), current=str(target.currentData())
+                )
+            )
+            table.setCellWidget(row, 5, row_units)
+            row_controls.append(
+                (
+                    path,
+                    inspection["layout"],
+                    cut,
+                    temperature,
+                    fixed,
+                    row_observable,
+                    row_units,
+                )
+            )
+        outer.addWidget(table, 1)
+
+        note = QtWidgets.QLabel(
+            "Matrix CSVs use Q across columns and energy down rows. "
+            "Three-column cuts use x, signal, and one-sigma uncertainty."
+        )
+        note.setWordWrap(True)
+        note.setToolTip(
+            "The importer recognizes the plot digitizer's y\\x matrix header; "
+            "it does not infer temperatures or fixed conditions from filenames."
+        )
+        outer.addWidget(note)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Cancel
+            | QtWidgets.QDialogButtonBox.StandardButton.Ok
+        )
+        outer.addWidget(buttons)
+        result: dict[str, dict[str, Any]] = {}
+
+        def rebuild_units() -> None:
+            current = units.currentData()
+            populate_units(
+                units,
+                str(observable.currentData()),
+                current=None if current is None else str(current),
+            )
+
+        def apply_default_observable() -> None:
+            rebuild_units()
+            for *_prefix, row_observable, row_units in row_controls:
+                row_observable.setCurrentIndex(
+                    row_observable.findData(observable.currentData())
+                )
+                populate_units(
+                    row_units,
+                    str(row_observable.currentData()),
+                    current=str(units.currentData()),
+                )
+
+        def apply_default_units() -> None:
+            for *_prefix, row_observable, row_units in row_controls:
+                index = row_units.findData(units.currentData())
+                if index >= 0 and row_observable.currentData() == observable.currentData():
+                    row_units.setCurrentIndex(index)
+
+        def basis_suffix() -> str:
+            value = str(basis.currentData())
+            if value == "per_formula_unit":
+                return "/f.u."
+            if value == "per_unit_cell":
+                return "/unit cell"
+            if value == "per_magnetic_ion":
+                label = atom_label.text().strip()
+                return f"/{label}" if label else "/magnetic ion"
+            return ""
+
+        def accept() -> None:
+            result.clear()
+            try:
+                for (
+                    path,
+                    layout,
+                    cut,
+                    temperature,
+                    fixed,
+                    row_observable,
+                    row_units,
+                ) in row_controls:
+                    temperature_K = float(temperature.text())
+                    if not np.isfinite(temperature_K) or temperature_K <= 0.0:
+                        raise ValueError(f"{path.name}: enter a positive temperature")
+                    cut_type = (
+                        str(cut.currentData()) if layout == "cut" else ""
+                    )
+                    fixed_value = None
+                    if layout == "cut":
+                        fixed_value = float(fixed.text())
+                        if not np.isfinite(fixed_value):
+                            raise ValueError(f"{path.name}: enter a finite fixed value")
+                    base_unit = str(row_units.currentData())
+                    source_unit = (
+                        base_unit
+                        if base_unit == "arbitrary"
+                        else base_unit + basis_suffix()
+                    )
+                    result[str(path)] = {
+                        "layout": layout,
+                        "cut_type": cut_type,
+                        "fixed_value": fixed_value,
+                        "temperature_K": temperature_K,
+                        "source_representation": str(row_observable.currentData()),
+                        "source_unit": source_unit,
+                        "fit_representation": str(row_observable.currentData()),
+                        "normalization_basis": str(basis.currentData()),
+                        "normalization_label": atom_label.text().strip(),
+                        "kf_ki_state": str(kinematic.currentData()),
+                        "default_uncertainty": float(map_sigma.value()),
+                    }
+            except ValueError as exc:
+                QtWidgets.QMessageBox.warning(dialog, "Import powder INS CSV", str(exc))
+                return
+            dialog.accept()
+
+        observable.currentIndexChanged.connect(apply_default_observable)
+        units.currentIndexChanged.connect(apply_default_units)
+        basis.currentIndexChanged.connect(
+            lambda _index: atom_label.setEnabled(
+                basis.currentData() == "per_magnetic_ion"
+            )
+        )
+        basis.setCurrentIndex(basis.findData("unknown"))
+        atom_label.setEnabled(False)
+        apply_default_observable()
+        buttons.accepted.connect(accept)
+        buttons.rejected.connect(dialog.reject)
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return False
+        return result
 
     def add_mask_to_selection(self) -> MaskSpec | None:
         item = self._current_item()
@@ -11050,11 +11619,13 @@ class NfitProjectExplorer:
         if not datasets:
             return None
         viewer = self._replace_slice_viewer(group, datasets, names)
-        setattr(viewer, "_nfit_use_composite", bool(use_composite))
+        viewer._nfit_use_composite = bool(use_composite)
         viewer._nfit_group = group
         viewer._nfit_dataset_ids = {dataset.name: dataset.id for dataset in group.iter_datasets()}
         if hasattr(viewer, "set_save_plot_callback"):
             viewer.set_save_plot_callback(lambda viewer=viewer, group=group: self.save_plot_from_viewer(group, viewer))
+        if hasattr(viewer, "set_save_project_callback"):
+            viewer.set_save_project_callback(self.save)
         if hasattr(viewer, "set_unmask_model_callback"):
             viewer.set_unmask_model_callback(
                 lambda _enabled, group=group: self._request_overlay_refresh(group)
@@ -11068,11 +11639,23 @@ class NfitProjectExplorer:
         """Create or update a workspace plot using the interactive viewer state."""
 
         name = viewer.dataset_combo.currentText() if viewer.dataset_combo is not None else "Plot"
-        dataset_id = getattr(viewer, "_nfit_dataset_ids", {}).get(name)
-        if not dataset_id:
+        source_names = (
+            viewer.waterfall_source_dataset_names()
+            if getattr(viewer, "_waterfall_mode_active", lambda: False)()
+            else [name]
+        )
+        id_by_name = getattr(viewer, "_nfit_dataset_ids", {})
+        dataset_ids = [
+            id_by_name[source_name]
+            for source_name in source_names
+            if source_name in id_by_name
+        ]
+        if not dataset_ids:
             return None
+        dataset_id = dataset_ids[0]
         settings = viewer.current_plot_settings()
         plot_type = (
+            "mdhisto_waterfall" if settings.get("view_mode") == "waterfall" else
             "fit_comparison" if bool(settings.get("show_fit")) else
             "mdhisto_line" if viewer._is_effective_1d() else "mdhisto_slice"
         )
@@ -11084,13 +11667,17 @@ class NfitProjectExplorer:
                 dataset_id,
                 settings,
                 plot_type=plot_type,
+                dataset_ids=dataset_ids,
             )
             group.plots.append(plot)
             viewer._nfit_editing_plot_id = plot.id
         else:
             existing.type = plot_type
             existing.settings = settings
-            existing.sources[0].dataset_id = dataset_id
+            existing.sources = [
+                PlotSourceRef(dataset_id=source_id)
+                for source_id in dataset_ids
+            ]
             plot = existing
         self._mark_dirty()
         self._refresh_tree(select_group=group)
@@ -11110,21 +11697,31 @@ class NfitProjectExplorer:
             window = PlotWindow(plot, None, fit_entry=fit_entry, project_path=self.project_path, on_update=lambda _plot: self._mark_dirty())
             self._plot_windows[plot.id] = window
             return window.show()
-        dataset_id = plot.sources[0].dataset_id
-        dataset = next((item for item in group.iter_datasets() if item.id == dataset_id), None)
-        if dataset is None:
+        source_ids = [
+            source.dataset_id for source in plot.sources if source.dataset_id
+        ]
+        entries_by_id = {item.id: item for item in group.iter_datasets()}
+        datasets = [entries_by_id.get(source_id) for source_id in source_ids]
+        if not datasets or any(dataset is None for dataset in datasets):
             return None
         views, names = slice_viewer_datasets(
             group,
             use_composite=False,
             unmask_model=bool(plot.settings.get("unmask_model", False)),
         )
-        data = views[names.index(dataset.name)] if dataset.name in names else None
-        if not isinstance(data, MDHistoData):
+        prepared = [
+            views[names.index(dataset.name)]
+            for dataset in datasets
+            if dataset is not None and dataset.name in names
+        ]
+        if len(prepared) != len(datasets) or not all(
+            isinstance(data, MDHistoData) for data in prepared
+        ):
             return None
         from .plot_gui import PlotWindow
 
-        window = PlotWindow(plot, data, project_path=self.project_path, on_update=lambda _plot: self._mark_dirty())
+        plot_data = prepared if plot.type == "mdhisto_waterfall" else prepared[0]
+        window = PlotWindow(plot, plot_data, project_path=self.project_path, on_update=lambda _plot: self._mark_dirty())
         self._plot_windows[plot.id] = window
         return window.show()
 
@@ -11269,6 +11866,7 @@ class NfitProjectExplorer:
             current_viewer.replace_datasets(
                 datasets,
                 dataset_names=names,
+                dataset_group_keys=_waterfall_group_keys(group, names),
                 selected_dataset_name=selected_name,
             )
         else:
@@ -11317,7 +11915,7 @@ class NfitProjectExplorer:
                 dialog.setLabelText(str(event.get("message") or title))
             QtWidgets.QApplication.processEvents()
 
-        setattr(callback, "_nfit_progress_dialog", dialog)
+        callback._nfit_progress_dialog = dialog
         return callback
 
     def _close_rebin_progress(self, callback: Any | None) -> None:
@@ -11837,7 +12435,11 @@ class NfitProjectExplorer:
         title_row = QtWidgets.QHBoxLayout()
         title_row.addWidget(self.title_label, 1)
         self.enabled_check = QtWidgets.QCheckBox("Enabled")
-        self.enabled_check.setToolTip("Include or exclude the selected dataset, mask, or model from viewing and fitting.")
+        self.enabled_check.setToolTip(
+            "Include or exclude the selected dataset, dataset group, mask, or "
+            "model. Disabling a dataset group omits all descendants from "
+            "fitting without changing their individual enabled states."
+        )
         self.enabled_check.toggled.connect(self._set_selected_enabled)
         title_row.addWidget(self.enabled_check)
         self.fit_weight_widget = QtWidgets.QWidget()
@@ -11881,7 +12483,7 @@ class NfitProjectExplorer:
         self.scale_factor_fit_check.toggled.connect(self._set_selected_dataset_scale_factor_vary)
         fit_weight_layout.addWidget(self.scale_factor_fit_check)
         title_row.addWidget(self.fit_weight_widget)
-        # Temperature and applied field live in the Sample environment panel
+        # Temperature and applied field live in the Conditions panel
         # (built below), between the Dataset and Axes detail panels, to keep
         # this top row uncluttered.
         self._build_sample_environment_panel()
@@ -12260,7 +12862,7 @@ class NfitProjectExplorer:
         edit_model: bool = False,
         refresh_viewers: bool = True,
     ) -> None:
-        from PySide6 import QtCore, QtGui, QtWidgets
+        from PySide6 import QtCore, QtWidgets
 
         self._expanded_state = self._current_expanded_state()
         self._item_roles.clear()
@@ -12486,6 +13088,7 @@ class NfitProjectExplorer:
             subgroup_item.setFlags(subgroup_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
             _set_tree_item_icon(subgroup_item, "folder")
             self._remember_item(subgroup_item, "dataset_group", group, node=subgroup)
+            _style_enabled_tree_item(subgroup_item, subgroup.enabled)
             parent_item.addChild(subgroup_item)
             gmasks_item = QtWidgets.QTreeWidgetItem(["Masks"])
             _set_tree_item_icon(gmasks_item, "mask_folder")
@@ -12948,13 +13551,24 @@ class NfitProjectExplorer:
         mask: MaskSpec | None,
         model: ModelComponentSpec | None,
     ) -> None:
-        has_enabled = role in {"dataset", "mask", "group_mask", "model"}
+        has_enabled = role in {
+            "dataset",
+            "dataset_group",
+            "mask",
+            "group_mask",
+            "model",
+        }
         self.enabled_check.setVisible(has_enabled)
         self.fit_weight_widget.setVisible(role == "dataset")
         self.enabled_check.blockSignals(True)
         try:
             if role == "dataset" and entry is not None:
                 self.enabled_check.setChecked(bool(entry.enabled))
+            elif role == "dataset_group":
+                subgroup = self._dataset_group_for_item(self._current_item())
+                self.enabled_check.setChecked(
+                    bool(subgroup.enabled) if subgroup is not None else False
+                )
             elif role in {"mask", "group_mask"} and mask is not None:
                 self.enabled_check.setChecked(bool(mask.enabled))
             elif role == "model" and model is not None:
@@ -13037,10 +13651,18 @@ class NfitProjectExplorer:
 
     def _set_selected_enabled(self, checked: bool) -> None:
         group, entry, mask, model, role = self._objects_for_item(self._current_item())
+        subgroup = (
+            self._dataset_group_for_item(self._current_item())
+            if role == "dataset_group"
+            else None
+        )
         changed = False
         if role == "dataset" and entry is not None:
             changed = entry.enabled != bool(checked)
             entry.enabled = bool(checked)
+        elif role == "dataset_group" and subgroup is not None:
+            changed = subgroup.enabled != bool(checked)
+            subgroup.enabled = bool(checked)
         elif role in {"mask", "group_mask"} and mask is not None:
             changed = mask.enabled != bool(checked)
             mask.enabled = bool(checked)
@@ -13051,12 +13673,20 @@ class NfitProjectExplorer:
             return
         if group is not None:
             self._record_data_group_state_change(group)
+            if role in {"dataset", "dataset_group"} and bool(checked):
+                self._evaluate_model_after_dataset_activation(group)
         if role in {"mask", "group_mask"}:
             self._mark_mask_datasets_stale(self._selected_mask_datasets(group, entry, role))
         self._mark_dirty()
         # _refresh_tree refreshes open viewers once after the tree state is
         # rebuilt. Avoid doing the same full-volume refresh twice here.
-        self._refresh_tree(select_group=group, select_dataset=entry, select_mask=mask, select_model=model)
+        self._refresh_tree(
+            select_group=group,
+            select_dataset=entry,
+            select_mask=mask,
+            select_model=model,
+            select_dataset_group=subgroup,
+        )
 
     def _set_selected_dataset_fit_weight(self, value: float) -> None:
         group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
@@ -13155,9 +13785,9 @@ class NfitProjectExplorer:
         self._sync_details()
 
     def _build_sample_environment_panel(self) -> None:
-        """Build the persistent 'Sample environment' details panel.
+        """Build the persistent dataset conditions details panel.
 
-        Holds the per-dataset temperature and applied-magnetic-field controls.
+        Holds per-dataset temperature, fixed-cut, and applied-field controls.
         It is a persistent widget (like the fit-settings panel) inserted into
         the dataset-details column between the Dataset and Axes panels; it is
         removed but not destroyed on each details refresh.
@@ -13165,7 +13795,7 @@ class NfitProjectExplorer:
 
         from PySide6 import QtWidgets
 
-        self.sample_environment_widget = QtWidgets.QGroupBox("Sample environment")
+        self.sample_environment_widget = QtWidgets.QGroupBox("Conditions")
         self.sample_environment_widget.setObjectName("dataset_sample_environment_group")
         layout = QtWidgets.QGridLayout(self.sample_environment_widget)
         layout.setContentsMargins(8, 6, 8, 6)
@@ -13188,6 +13818,36 @@ class NfitProjectExplorer:
         self.dataset_temperature_spin.valueChanged.connect(self._set_selected_dataset_temperature)
         layout.addWidget(self.dataset_temperature_spin, 0, 1, 1, 3)
 
+        self.dataset_fixed_q_label = QtWidgets.QLabel("Fixed Q (Å⁻¹)")
+        self.dataset_fixed_q_edit = QtWidgets.QLineEdit()
+        self.dataset_fixed_q_edit.setObjectName("dataset_fixed_q")
+        self.dataset_fixed_q_edit.setToolTip(
+            "Fixed momentum transfer for an imported constant-Q powder cut. "
+            "Editing this value updates the singleton Q axis used for plotting and fitting."
+        )
+        self.dataset_fixed_q_edit.editingFinished.connect(
+            lambda: self._set_selected_dataset_fixed_condition(
+                "constant_q_inv_angstrom", "q_modulus", self.dataset_fixed_q_edit
+            )
+        )
+        layout.addWidget(self.dataset_fixed_q_label, 1, 0)
+        layout.addWidget(self.dataset_fixed_q_edit, 1, 1, 1, 3)
+
+        self.dataset_fixed_energy_label = QtWidgets.QLabel("Fixed E (meV)")
+        self.dataset_fixed_energy_edit = QtWidgets.QLineEdit()
+        self.dataset_fixed_energy_edit.setObjectName("dataset_fixed_energy")
+        self.dataset_fixed_energy_edit.setToolTip(
+            "Fixed energy transfer for an imported constant-E powder cut. "
+            "Editing this value updates the singleton energy axis used for plotting and fitting."
+        )
+        self.dataset_fixed_energy_edit.editingFinished.connect(
+            lambda: self._set_selected_dataset_fixed_condition(
+                "constant_energy_meV", "energy_transfer", self.dataset_fixed_energy_edit
+            )
+        )
+        layout.addWidget(self.dataset_fixed_energy_label, 2, 0)
+        layout.addWidget(self.dataset_fixed_energy_edit, 2, 1, 1, 3)
+
         self.dataset_kf_ki_included_check = QtWidgets.QCheckBox("k_f/k_i included")
         self.dataset_kf_ki_included_check.setObjectName("dataset_kf_ki_included")
         self.dataset_kf_ki_included_check.setToolTip(
@@ -13198,9 +13858,9 @@ class NfitProjectExplorer:
         self.dataset_kf_ki_included_check.toggled.connect(
             self._set_selected_dataset_kf_ki_included
         )
-        layout.addWidget(self.dataset_kf_ki_included_check, 1, 0, 1, 4)
+        layout.addWidget(self.dataset_kf_ki_included_check, 3, 0, 1, 4)
 
-        layout.addWidget(QtWidgets.QLabel("Field (T)"), 2, 0)
+        layout.addWidget(QtWidgets.QLabel("Field (T)"), 4, 0)
         self.dataset_field_magnitude_spin = QtWidgets.QDoubleSpinBox()
         self.dataset_field_magnitude_spin.setObjectName("dataset_field_magnitude")
         self.dataset_field_magnitude_spin.setToolTip(
@@ -13217,7 +13877,7 @@ class NfitProjectExplorer:
         self.dataset_field_magnitude_spin.valueChanged.connect(
             self._set_selected_dataset_field_magnitude
         )
-        layout.addWidget(self.dataset_field_magnitude_spin, 2, 1)
+        layout.addWidget(self.dataset_field_magnitude_spin, 4, 1)
 
         self.dataset_field_frame_combo = QtWidgets.QComboBox()
         self.dataset_field_frame_combo.setObjectName("dataset_field_frame")
@@ -13232,7 +13892,7 @@ class NfitProjectExplorer:
         self.dataset_field_frame_combo.currentIndexChanged.connect(
             self._set_selected_dataset_field_frame
         )
-        layout.addWidget(self.dataset_field_frame_combo, 2, 2)
+        layout.addWidget(self.dataset_field_frame_combo, 4, 2)
 
         self.dataset_field_direction_edit = QtWidgets.QLineEdit()
         self.dataset_field_direction_edit.setObjectName("dataset_field_direction")
@@ -13245,7 +13905,7 @@ class NfitProjectExplorer:
         self.dataset_field_direction_edit.editingFinished.connect(
             self._set_selected_dataset_field_direction
         )
-        layout.addWidget(self.dataset_field_direction_edit, 2, 3)
+        layout.addWidget(self.dataset_field_direction_edit, 4, 3)
 
         self.sample_environment_widget.setParent(None)
 
@@ -13254,6 +13914,48 @@ class NfitProjectExplorer:
         if isinstance(payload, dict):
             return dict(payload)
         return {"magnitude_T": 0.0, "direction": [1.0, 1.0, 1.0], "frame": "uvw"}
+
+    def _set_selected_dataset_fixed_condition(
+        self,
+        parameter_name: str,
+        axis_role: str,
+        editor: Any,
+    ) -> None:
+        group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
+        if role != "dataset" or entry is None:
+            return
+        try:
+            value = float(editor.text())
+        except ValueError:
+            self._sync_details()
+            return
+        if not np.isfinite(value) or entry.parameters.get(parameter_name) == value:
+            return
+        entry.parameters[parameter_name] = value
+        if isinstance(entry.data, MDHistoData):
+            axes = list(entry.data.axes)
+            for index, axis in enumerate(axes):
+                if axis.role == axis_role and axis.centers.size == 1:
+                    shift = value - float(axis.centers[0])
+                    axes[index] = replace(
+                        axis,
+                        values=np.asarray(axis.values, dtype=float) + shift,
+                    )
+                    entry.data.axes = tuple(axes)
+                    break
+        import_options = entry.metadata.get("import_options")
+        if isinstance(import_options, dict):
+            import_options["fixed_value"] = value
+        branch_created = False
+        if group is not None:
+            branch_created = self._record_data_group_state_change(group)
+        self._mark_dirty()
+        if group is not None and branch_created:
+            self._refresh_tree(select_group=group, select_dataset=entry)
+            return
+        if group is not None:
+            self.refresh_slice_viewer(group)
+        self._sync_details()
 
     def _commit_field_payload(
         self, group: DataGroup | None, entry: DatasetEntry, payload: dict[str, Any]
@@ -13320,6 +14022,25 @@ class NfitProjectExplorer:
             )
         finally:
             self.dataset_temperature_spin.blockSignals(False)
+
+        fixed_q = entry.parameters.get("constant_q_inv_angstrom") if is_dataset else None
+        fixed_energy = entry.parameters.get("constant_energy_meV") if is_dataset else None
+        for label, editor, value in (
+            (self.dataset_fixed_q_label, self.dataset_fixed_q_edit, fixed_q),
+            (
+                self.dataset_fixed_energy_label,
+                self.dataset_fixed_energy_edit,
+                fixed_energy,
+            ),
+        ):
+            visible = value not in (None, "")
+            label.setVisible(visible)
+            editor.setVisible(visible)
+            editor.blockSignals(True)
+            try:
+                editor.setText("" if not visible else _format_number(float(value)))
+            finally:
+                editor.blockSignals(False)
 
         self.dataset_kf_ki_included_check.blockSignals(True)
         try:
@@ -14044,8 +14765,14 @@ class NfitProjectExplorer:
             ("T0 override", "t0_override", "Shared time-zero correction in microseconds, subtracted from raw event TOF before calculating final energy. Leave unset to apply Mantid's local GetEi path per run, including formula-derived T0 on instruments that define one."),
         )):
             layout.addWidget(QtWidgets.QLabel(label), 2, column * 2)
-            spin = QtWidgets.QDoubleSpinBox(); spin.setRange(-1.0, 1e6); spin.setDecimals(6); spin.setSpecialValueText("(from each run)")
-            spin.setValue(float(config.get(key) if config.get(key) is not None else -1.0)); spin.setToolTip(tooltip)
+            spin = QtWidgets.QDoubleSpinBox()
+            spin.setRange(-1.0, 1e6)
+            spin.setDecimals(6)
+            spin.setSpecialValueText("(from each run)")
+            spin.setValue(
+                float(config.get(key) if config.get(key) is not None else -1.0)
+            )
+            spin.setToolTip(tooltip)
             spin.valueChanged.connect(lambda value, key=key: self._set_raw_dgs_group_value(node, key, None if value < 0.0 else float(value)))
             layout.addWidget(spin, 2, column * 2 + 1)
         correction = QtWidgets.QCheckBox("Apply ki/kf correction")
@@ -14433,7 +15160,7 @@ class NfitProjectExplorer:
                     self.details_layout.addWidget(self._dataset_point_list_group_box(dataset, group))
             elif title == "Dataset":
                 self.details_layout.addWidget(self._dataset_type_group_box(dataset, group, lines))
-                # Sample environment sits between the Dataset and Axes panels.
+                # Conditions sit between the Dataset and Axes panels.
                 if dataset.data_type != "magnetization":
                     self.details_layout.addWidget(self.sample_environment_widget)
                 if dataset.data_type in {"single_crystal_inelastic", "powder_inelastic"}:
@@ -15980,12 +16707,15 @@ class NfitProjectExplorer:
             dataset.parameters.get(SPECTRAL_CHANNEL_CONFIG_KEY)
         )
         if config["source_unit"] != "arbitrary":
-            suffix = {
-                "per_formula_unit": "/f.u.",
-                "per_magnetic_ion": "/magnetic ion",
-                "per_unit_cell": "/unit cell",
-                "unknown": "",
-            }[config["normalization_basis"]]
+            if config["normalization_basis"] == "per_magnetic_ion":
+                label = str(config.get("normalization_label", "") or "").strip()
+                suffix = f"/{label}" if label else "/magnetic ion"
+            else:
+                suffix = {
+                    "per_formula_unit": "/f.u.",
+                    "per_unit_cell": "/unit cell",
+                    "unknown": "",
+                }[config["normalization_basis"]]
             unit = str(config["source_unit"])
             prefix = next(
                 (
@@ -15995,6 +16725,7 @@ class NfitProjectExplorer:
                         "barn/sr/meV",
                         "mu_B^2/meV",
                         "spin^2/meV",
+                        "1/meV",
                     )
                     if unit.startswith(candidate)
                 ),
@@ -16037,18 +16768,23 @@ class NfitProjectExplorer:
             elif str(value).startswith("mu_B^2/"):
                 config["moment_unit"] = "mu_B_squared"
         if key == "normalization_basis" and config["source_unit"] != "arbitrary":
-            suffix = {
-                "per_formula_unit": "/f.u.",
-                "per_magnetic_ion": "/magnetic ion",
-                "per_unit_cell": "/unit cell",
-                "unknown": "",
-            }[str(value)]
+            if value == "per_magnetic_ion":
+                label = str(config.get("normalization_label", "") or "").strip()
+                suffix = f"/{label}" if label else "/magnetic ion"
+            else:
+                suffix = {
+                    "per_formula_unit": "/f.u.",
+                    "per_unit_cell": "/unit cell",
+                    "unknown": "",
+                }[str(value)]
             if config["source_representation"] == "cross_section":
-                prefix = (
-                    "mbarn/sr/meV"
-                    if str(config["source_unit"]).startswith("mbarn/")
-                    else "barn/sr/meV"
-                )
+                source_unit = str(config["source_unit"])
+                if source_unit.startswith("1/meV"):
+                    prefix = "1/meV"
+                elif source_unit.startswith("mbarn/"):
+                    prefix = "mbarn/sr/meV"
+                else:
+                    prefix = "barn/sr/meV"
             else:
                 prefix = (
                     "spin^2/meV"
@@ -16056,6 +16792,18 @@ class NfitProjectExplorer:
                     else "mu_B^2/meV"
                 )
             config["source_unit"] = prefix + suffix
+        if key == "normalization_label" and config["source_unit"] != "arbitrary":
+            suffix = f"/{str(value).strip()}" if str(value).strip() else "/magnetic ion"
+            for prefix in (
+                "mbarn/sr/meV",
+                "barn/sr/meV",
+                "mu_B^2/meV",
+                "spin^2/meV",
+                "1/meV",
+            ):
+                if str(config["source_unit"]).startswith(prefix):
+                    config["source_unit"] = prefix + suffix
+                    break
         if config.get(key) == value:
             return
         config[key] = value
@@ -16118,12 +16866,18 @@ class NfitProjectExplorer:
 
         units = QtWidgets.QComboBox()
         units.setObjectName("ins_source_unit")
-        basis_suffix = {
-            "per_formula_unit": (" / f.u.", "/f.u."),
-            "per_magnetic_ion": (" / magnetic ion", "/magnetic ion"),
-            "per_unit_cell": (" / unit cell", "/unit cell"),
-            "unknown": ("", ""),
-        }[config["normalization_basis"]]
+        if config["normalization_basis"] == "per_magnetic_ion":
+            label = str(config.get("normalization_label", "") or "").strip()
+            basis_suffix = (
+                f" / {label}" if label else " / magnetic ion",
+                f"/{label}" if label else "/magnetic ion",
+            )
+        else:
+            basis_suffix = {
+                "per_formula_unit": (" / f.u.", "/f.u."),
+                "per_unit_cell": (" / unit cell", "/unit cell"),
+                "unknown": ("", ""),
+            }[config["normalization_basis"]]
         if config["source_representation"] == "cross_section":
             units.addItem("Arbitrary units", "arbitrary")
             units.addItem(
@@ -16133,6 +16887,10 @@ class NfitProjectExplorer:
             units.addItem(
                 f"barn / sr / meV{basis_suffix[0]}",
                 f"barn/sr/meV{basis_suffix[1]}",
+            )
+            units.addItem(
+                f"Normalized intensity (1 / meV{basis_suffix[0]})",
+                f"1/meV{basis_suffix[1]}",
             )
         else:
             units.addItem("Arbitrary units", "arbitrary")
@@ -16194,6 +16952,26 @@ class NfitProjectExplorer:
             )
         )
         form.addRow("Normalization", basis)
+
+        normalization_label = QtWidgets.QLineEdit(
+            str(config.get("normalization_label", "") or "")
+        )
+        normalization_label.setObjectName("ins_normalization_label")
+        normalization_label.setPlaceholderText("for example V")
+        normalization_label.setEnabled(
+            config["normalization_basis"] == "per_magnetic_ion"
+        )
+        normalization_label.setToolTip(
+            "Optional atom or ion label for per-ion data, for example V. "
+            "It changes the displayed denominator from 'magnetic ion' to '/V' "
+            "without rescaling the imported values."
+        )
+        normalization_label.editingFinished.connect(
+            lambda editor=normalization_label: self._set_dataset_spectral_channel_setting(
+                dataset, group, "normalization_label", editor.text().strip()
+            )
+        )
+        form.addRow("Atom / ion label", normalization_label)
 
         calibration = QtWidgets.QLineEdit(
             _parameter_to_text(config.get("signal_per_mbarn", 0.0))
@@ -16346,7 +17124,7 @@ class NfitProjectExplorer:
             "temperature", getattr(dataset.data, "metadata", {}).get("temperature")
         )
         if temperature in (None, ""):
-            status_text = "Set T in Sample environment to create the paired channel."
+            status_text = "Set T in Conditions to create the paired channel."
         elif (
             config["kf_ki_state"] == "included"
             and config.get("incident_energy_meV") in (None, "")
@@ -17053,6 +17831,18 @@ class NfitProjectExplorer:
         if current_entry is not None:
             _set_fit_current_snapshot(current_entry, group)
         return tree_changed
+
+    def _evaluate_model_after_dataset_activation(
+        self,
+        group: DataGroup,
+    ) -> FitTimelineEntry:
+        """Record a live model evaluation after importing or enabling data."""
+
+        current = self._active_fit_entry(group)
+        current = evaluate_current_state_model(group, current)
+        self._set_active_fit_state(group, current)
+        self._request_overlay_refresh(group)
+        return current
 
     def _clear_active_fit_state(self) -> None:
         self._active_fit_group = None
@@ -18314,12 +19104,12 @@ class NfitProjectExplorer:
             "zeeman",
             "Zeeman (applied field)",
             "Enable the applied-field (Larmor) term. Uses the per-dataset "
-            "magnetic field from Sample environment and fits g_factor plus "
+            "magnetic field from Conditions and fits g_factor plus "
             "transverse chi/gamma ratios. Datasets fitted with this on must "
             "have a field set.",
             bool((model.config.get("zeeman") or {}).get("enabled")),
             True,
-            "Needs a per-dataset field (Dataset details -> Sample environment).",
+            "Needs a per-dataset field (Dataset details -> Conditions).",
         )
 
         self.model_parameter_layout.addWidget(group, 6, 0, 1, 4)
@@ -18822,13 +19612,22 @@ class NfitProjectExplorer:
 
             QtMDHistoSliceViewer = viewer_class
         existing = self._slice_viewers.get(id(group))
+        group_keys = _waterfall_group_keys(group, names)
         if existing is not None and hasattr(existing, "replace_datasets"):
-            existing.replace_datasets(datasets, dataset_names=names)
+            existing.replace_datasets(
+                datasets,
+                dataset_names=names,
+                dataset_group_keys=group_keys,
+            )
             viewer = existing
         else:
             if existing is not None and existing.window is not None:
                 existing.window.close()
-            viewer = QtMDHistoSliceViewer(datasets, dataset_names=names)
+            viewer = QtMDHistoSliceViewer(
+                datasets,
+                dataset_names=names,
+                dataset_group_keys=group_keys,
+            )
             self._slice_viewers[id(group)] = viewer
         if viewer.window is not None:
             viewer.window.setWindowTitle(f"nfit Data Viewer - {group.name}")
@@ -19802,7 +20601,7 @@ def _repair_duplicate_dataset_ids(project: NfitProject) -> None:
             salt = 0
             while True:
                 candidate = hashlib.sha256(
-                    f"{group.name}:{index}:{original}:{salt}".encode("utf-8")
+                    f"{group.name}:{index}:{original}:{salt}".encode()
                 ).hexdigest()[:32]
                 if candidate not in seen:
                     break
@@ -19902,6 +20701,7 @@ def _dataset_group_from_dict(payload: dict[str, Any]) -> DatasetGroup:
         name=str(payload["name"]),
         datasets=[_dataset_from_dict(d) for d in payload.get("datasets", [])],
         subgroups=[_dataset_group_from_dict(s) for s in payload.get("subgroups", [])],
+        enabled=bool(payload.get("enabled", True)),
         masks=[_mask_from_dict(m) for m in payload.get("masks", [])],
         backgrounds=[
             _background_from_dict(background)
@@ -19917,6 +20717,7 @@ def _dataset_group_to_dict(group: DatasetGroup) -> dict[str, Any]:
         "name": group.name,
         "datasets": [_dataset_to_dict(dataset) for dataset in group.datasets],
         "subgroups": [_dataset_group_to_dict(sub) for sub in group.subgroups],
+        "enabled": bool(group.enabled),
         "masks": [_mask_to_dict(mask) for mask in group.masks],
         "backgrounds": [
             _background_to_dict(background) for background in group.backgrounds

@@ -334,7 +334,7 @@ def _dataset_magnetic_field(data: PointData4D) -> np.ndarray:
     """Return the applied field of a fitted dataset, validating it.
 
     Zeeman-enabled models require a Cartesian Tesla 3-vector on every fitted
-    dataset (stamped from the dataset's Sample environment settings).
+    dataset (stamped from the dataset's Conditions settings).
     """
 
     field_vector = data.magnetic_field
@@ -342,8 +342,8 @@ def _dataset_magnetic_field(data: PointData4D) -> np.ndarray:
         raise ValueError(
             "this model has the Zeeman term enabled and requires a valid "
             "applied magnetic field for every fitted dataset: set the field "
-            "magnitude and direction in the dataset details (Sample "
-            "environment), and make sure the data group has lattice "
+            "magnitude and direction in the dataset details (Conditions), "
+            "and make sure the data group has lattice "
             "parameters to orient the direction"
         )
     return np.asarray(field_vector, dtype=float)
@@ -367,6 +367,52 @@ def _form_factor_sq_from_config(component: Any, data: PointData4D) -> float | np
 
     q = q_modulus_inv_angstrom(data)
     return form_factor_sq(q, ion=ion or None, coefficients=coefficients)
+
+
+def _powder_sphere_directions(count: int) -> np.ndarray:
+    """Return deterministic equal-area directions for a powder average."""
+
+    count = max(int(count), 6)
+    index = np.arange(count, dtype=float)
+    z = 1.0 - 2.0 * (index + 0.5) / count
+    radius = np.sqrt(np.maximum(1.0 - z * z, 0.0))
+    azimuth = np.pi * (3.0 - np.sqrt(5.0)) * index
+    return np.column_stack(
+        [radius * np.cos(azimuth), radius * np.sin(azimuth), z]
+    )
+
+
+def _powder_reciprocal_matrix(
+    data: PointData4D,
+    lattice: Mapping[str, Any] | None,
+) -> np.ndarray:
+    """Return the matrix mapping model HKL to Cartesian inverse angstroms."""
+
+    matrix = data.metadata.get("rlu_to_inv_angstrom_matrix")
+    if matrix is None and isinstance(lattice, Mapping):
+        from .fitting import reciprocal_basis_from_lattice_parameters
+
+        required = ("a", "b", "c")
+        if all(name in lattice for name in required):
+            matrix = reciprocal_basis_from_lattice_parameters(
+                float(lattice["a"]),
+                float(lattice["b"]),
+                float(lattice["c"]),
+                float(lattice.get("alpha", 90.0)),
+                float(lattice.get("beta", 90.0)),
+                float(lattice.get("gamma", 90.0)),
+            )
+    result = np.asarray(matrix, dtype=float) if matrix is not None else np.empty(0)
+    if (
+        result.shape != (3, 3)
+        or not np.all(np.isfinite(result))
+        or abs(float(np.linalg.det(result))) < 1.0e-14
+    ):
+        raise ValueError(
+            "powder Heisenberg RPA evaluation requires valid crystal lattice "
+            "parameters on the model or workspace"
+        )
+    return result
 
 
 def _q_offset_sq_inv_angstrom(
@@ -587,6 +633,7 @@ class _RpaComponentEvaluator:
         self._closure_bz_context: Any = None
         self._bulk_q0_context: Any = None
         self._bulk_q0_cache: tuple[tuple[Any, ...], Any] | None = None
+        self._lattice = (config.get("crystal") or {}).get("lattice")
         if self.tensor_mode:
             # Fold onto the primitive cell carrying the tensor payloads: pure
             # lattice translations do not rotate spins, so anisotropic exchange,
@@ -609,7 +656,6 @@ class _RpaComponentEvaluator:
             )
             self._anisotropy = config.get("anisotropy")
             self._dipole = config.get("dipole")
-            self._lattice = (config.get("crystal") or {}).get("lattice")
         else:
             # Fold the network onto its primitive translational cell (exact:
             # identical chi'' at far lower eigendecomposition cost). Purely an
@@ -620,26 +666,77 @@ class _RpaComponentEvaluator:
         # factor) are expensive to build but constant for a given dataset. The
         # cache holds a reference to the data object and verifies identity on
         # lookup, so the id() key can never alias a freed-then-reused object.
-        self._geometry_cache: dict[int, tuple[PointData4D, Any, Any, Any]] = {}
+        self._geometry_cache: dict[int, tuple[PointData4D, Any, Any, Any, int]] = {}
 
-    def _geometry(self, data: PointData4D) -> tuple[Any, Any, Any]:
+    def _geometry(self, data: PointData4D) -> tuple[Any, Any, Any, int]:
         cached = self._geometry_cache.get(id(data))
         if cached is not None and cached[0] is data:
-            return cached[1], cached[2], cached[3]
+            return cached[1], cached[2], cached[3], cached[4]
         if len(self._geometry_cache) > 32:
             self._geometry_cache.clear()
-        geometry = build_rpa_geometry(data.H, data.K, data.L, self.site_positions, self.orbits)
+        powder = (
+            data.metadata.get("data_type") == "powder_inelastic"
+            or bool(data.metadata.get("powder_q_modulus_axis"))
+        )
+        powder_count = 1
+        reciprocal_matrix = None
+        if powder:
+            from .fitting import q_modulus_inv_angstrom
+
+            powder_count = max(int(self.config.get("powder_orientations", 50)), 6)
+            reciprocal_matrix = _powder_reciprocal_matrix(data, self._lattice)
+            directions = _powder_sphere_directions(powder_count)
+            q_modulus = np.asarray(q_modulus_inv_angstrom(data), dtype=float)
+            q_cartesian = (
+                q_modulus[:, None, None] * directions[None, :, :]
+            ).reshape(-1, 3)
+            hkl = q_cartesian @ np.linalg.inv(reciprocal_matrix).T
+            geometry = build_rpa_geometry(
+                hkl[:, 0],
+                hkl[:, 1],
+                hkl[:, 2],
+                self.site_positions,
+                self.orbits,
+            )
+        else:
+            geometry = build_rpa_geometry(
+                data.H,
+                data.K,
+                data.L,
+                self.site_positions,
+                self.orbits,
+            )
         form_factor_sq = _form_factor_sq_from_config(self.component, data)
         tensor_context = None
         if self.tensor_mode:
-            tensor_context = self._build_tensor_context(geometry, data)
-        self._geometry_cache[id(data)] = (data, geometry, form_factor_sq, tensor_context)
-        return geometry, form_factor_sq, tensor_context
+            tensor_context = self._build_tensor_context(
+                geometry,
+                data,
+                reciprocal_matrix=reciprocal_matrix,
+            )
+        self._geometry_cache[id(data)] = (
+            data,
+            geometry,
+            form_factor_sq,
+            tensor_context,
+            powder_count,
+        )
+        return geometry, form_factor_sq, tensor_context, powder_count
 
-    def _build_tensor_context(self, geometry: Any, data: PointData4D) -> tuple[Any, Any]:
+    def _build_tensor_context(
+        self,
+        geometry: Any,
+        data: PointData4D,
+        *,
+        reciprocal_matrix: np.ndarray | None = None,
+    ) -> tuple[Any, Any]:
         from .tensor_rpa import build_tensor_structure, cartesian_qhat_per_point
 
-        matrix = data.metadata.get("rlu_to_inv_angstrom_matrix")
+        matrix = (
+            reciprocal_matrix
+            if reciprocal_matrix is not None
+            else data.metadata.get("rlu_to_inv_angstrom_matrix")
+        )
         if matrix is None:
             raise ValueError(
                 f"heisenberg_rpa component {self.component.name!r} has anisotropic "
@@ -658,6 +755,13 @@ class _RpaComponentEvaluator:
         )
         q_hat = cartesian_qhat_per_point(geometry, np.asarray(matrix, dtype=float))
         return structure, q_hat
+
+    @staticmethod
+    def _powder_average(values: np.ndarray, data_size: int, count: int) -> np.ndarray:
+        result = np.asarray(values, dtype=float)
+        if count == 1:
+            return result
+        return np.mean(result.reshape(data_size, count), axis=1)
 
     def _j_values(self, params: dict[str, float]) -> dict[str, float]:
         return {label: float(params[key]) for label, key in self.j_keys.items()}
@@ -1166,7 +1270,12 @@ class _RpaComponentEvaluator:
         # missing field raises its actionable error instead of being caught and
         # turned into the 1e6 sentinel.
         field = _dataset_magnetic_field(data) if self.zeeman_mode else None
-        geometry, form_factor_sq, tensor_context = self._geometry(data)
+        geometry, form_factor_sq, tensor_context, powder_count = self._geometry(data)
+        energy = (
+            np.repeat(np.asarray(data.E, dtype=float), powder_count)
+            if powder_count > 1
+            else np.asarray(data.E, dtype=float)
+        )
         try:
             chi0 = float(params[self.chi0_key])
             lambda_shift = 0.0
@@ -1185,7 +1294,6 @@ class _RpaComponentEvaluator:
                 magnitude = float(np.linalg.norm(field))
                 b_hat = field / magnitude if magnitude > 0 else np.array([0.0, 0.0, 1.0])
                 g_factor = float(params[self._zeeman_keys["g_factor"]])
-                energy = np.asarray(data.E, dtype=float)
                 propagator = zeeman_cartesian_propagator(
                     energy,
                     b_hat,
@@ -1208,7 +1316,7 @@ class _RpaComponentEvaluator:
                 chipp = tensor_rpa_unpolarized_chipp(
                     structure,
                     geometry,
-                    np.asarray(data.E, dtype=float),
+                    energy,
                     q_hat,
                     chi0=chi0,
                     gamma0=float(params[self.gamma0_key]),
@@ -1221,7 +1329,7 @@ class _RpaComponentEvaluator:
             else:
                 chipp = heisenberg_rpa_chipp(
                     geometry,
-                    data.E,
+                    energy,
                     chi0=chi0,
                     gamma0=float(params[self.gamma0_key]),
                     j_values=self._j_values(params),
@@ -1234,6 +1342,7 @@ class _RpaComponentEvaluator:
             # searching; a huge finite misfit steers them back without
             # aborting the fit.
             return np.full(data.size, 1e6, dtype=float)
+        chipp = self._powder_average(chipp, data.size, powder_count)
         return _spectral_model_observable(
             data,
             chipp,
@@ -1262,7 +1371,7 @@ class _RpaComponentEvaluator:
             [0.0], [0.0], [0.0], self.site_positions, self.orbits
         )
 
-        def eig_weights(geometry: Any) -> tuple[FloatArray, FloatArray]:
+        def eig_weights(geometry: Any) -> tuple[np.ndarray, np.ndarray]:
             if self.tensor_mode or self.zeeman_mode:
                 from .tensor_rpa import assemble_tensor_exchange, build_tensor_structure
 
@@ -1362,12 +1471,17 @@ class _RpaComponentEvaluator:
         """Return ``d(intensity)/d(param)`` keyed by qualified parameter name."""
 
         _dataset_temperature(data)
-        geometry, form_factor_sq, _tensor_context = self._geometry(data)
+        geometry, form_factor_sq, _tensor_context, powder_count = self._geometry(data)
+        energy = (
+            np.repeat(np.asarray(data.E, dtype=float), powder_count)
+            if powder_count > 1
+            else np.asarray(data.E, dtype=float)
+        )
         scale = float(params[self.scale_key])
         try:
             chipp, chipp_grads = heisenberg_rpa_chipp_and_gradients(
                 geometry,
-                data.E,
+                energy,
                 chi0=float(params[self.chi0_key]),
                 gamma0=float(params[self.gamma0_key]),
                 j_values=self._j_values(params),
@@ -1379,6 +1493,11 @@ class _RpaComponentEvaluator:
             columns = {self.scale_key: zero, self.chi0_key: zero, self.gamma0_key: zero}
             columns.update({key: zero for key in self.j_keys.values()})
             return columns
+        chipp = self._powder_average(chipp, data.size, powder_count)
+        chipp_grads = {
+            name: self._powder_average(values, data.size, powder_count)
+            for name, values in chipp_grads.items()
+        }
         # I = scale * 2 * |f|^2 * chipp / bose(E, T), linear in chipp. The
         # scale column is I evaluated at unit scale; d(I)/d(chipp) is I with
         # chipp replaced by 1 (the Bose/form-factor/scale prefactor). Both are
@@ -1438,7 +1557,7 @@ def compute_component_diagnostics(
         return None
 
 
-def _heisenberg_rpa_jacobian_factory(component: Any) -> "ModelJacobian | None":
+def _heisenberg_rpa_jacobian_factory(component: Any) -> ModelJacobian | None:
     # Analytic gradients are implemented for the scalar Heisenberg path only;
     # components with anisotropic tensor terms fall back to finite differences
     # (the fit engine gates on every component providing a Jacobian). Sum-rule
@@ -1513,7 +1632,7 @@ MODEL_TYPE_REGISTRY: dict[str, ModelTypeInfo] = {
     ),
     "heisenberg_rpa": ModelTypeInfo(
         parameters=("scale", "chi0", "gamma0"),
-        data_types=("single_crystal_inelastic", "magnetization"),
+        data_types=("single_crystal_inelastic", "powder_inelastic", "magnetization"),
         factory=_heisenberg_rpa_factory,
         dynamic_parameters=heisenberg_rpa_parameter_labels,
         jacobian_factory=_heisenberg_rpa_jacobian_factory,
@@ -1811,7 +1930,14 @@ def compile_fit_problem(
             # (returns None) for a particular component configuration (e.g. a
             # heisenberg_rpa component with anisotropic tensor terms). Only use
             # analytic Jacobians when every component actually yields one.
-            built = [factory(component) for factory, component in zip(jacobian_factories, components_here)]
+            built = [
+                factory(component)
+                for factory, component in zip(
+                    jacobian_factories,
+                    components_here,
+                    strict=True,
+                )
+            ]
             if all(jacobian is not None for jacobian in built):
                 model_jacobian = _additive_jacobian(built)
         fit_datasets.append(

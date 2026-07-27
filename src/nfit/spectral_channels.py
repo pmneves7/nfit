@@ -28,7 +28,7 @@ def _unit_matches_representation(unit: str, representation: str) -> bool:
     if unit == "arbitrary":
         return True
     if representation == "cross_section":
-        return unit.startswith(("mbarn/sr/meV", "barn/sr/meV"))
+        return unit.startswith(("mbarn/sr/meV", "barn/sr/meV", "1/meV"))
     return unit.startswith(("mu_B^2/meV", "spin^2/meV"))
 
 
@@ -41,6 +41,7 @@ def default_spectral_channel_config() -> dict[str, Any]:
         "source_unit": "arbitrary",
         "fit_representation": "cross_section",
         "normalization_basis": "per_formula_unit",
+        "normalization_label": "",
         "signal_per_mbarn": 0.0,
         "form_factor_ion": "",
         "custom_form_factor": None,
@@ -144,21 +145,29 @@ def _kinematic_factor(
     )
 
 
-def _basis_suffix(normalization_basis: str) -> str:
+def _basis_suffix(config: dict[str, Any]) -> str:
+    normalization_basis = str(config["normalization_basis"])
+    if normalization_basis == "per_magnetic_ion":
+        label = str(config.get("normalization_label", "") or "").strip()
+        return f"/{label}" if label else "/magnetic ion"
     return {
         "per_formula_unit": "/f.u.",
-        "per_magnetic_ion": "/magnetic ion",
         "per_unit_cell": "/unit cell",
         "unknown": "",
     }[normalization_basis]
 
 
-def _output_units(config: dict[str, Any], absolute: bool) -> tuple[str, str]:
-    if not absolute:
-        return "arb. units", "arb. units"
-    suffix = _basis_suffix(str(config["normalization_basis"]))
+def _output_units(
+    config: dict[str, Any],
+    *,
+    absolute_cross_section: bool,
+    absolute_chipp: bool,
+) -> tuple[str, str]:
+    suffix = _basis_suffix(config)
     moment = "mu_B^2" if config["moment_unit"] == "mu_B_squared" else "spin^2"
-    return f"mbarn/sr/meV{suffix}", f"{moment}/meV{suffix}"
+    cross = f"mbarn/sr/meV{suffix}" if absolute_cross_section else "arb. units"
+    chipp = f"{moment}/meV{suffix}" if absolute_chipp else "arb. units"
+    return cross, chipp
 
 
 def _arbitrary_cross_from_chipp(
@@ -241,7 +250,15 @@ def with_paired_spectral_channels(
     source_representation = str(convention["source_representation"])
     source_unit = str(convention["source_unit"])
     calibration = float(convention.get("signal_per_mbarn", 0.0) or 0.0)
-    absolute = source_unit != "arbitrary" or calibration > 0.0
+    absolute_cross_section = (
+        source_unit.startswith(("mbarn/sr/meV", "barn/sr/meV"))
+        or calibration > 0.0
+    )
+    absolute_chipp = source_unit.startswith(("mu_B^2/meV", "spin^2/meV"))
+    if source_representation == "cross_section":
+        absolute_chipp = absolute_cross_section
+    else:
+        absolute_cross_section = absolute_chipp
     moment_unit = str(convention["moment_unit"])
     g_factor = float(convention["g_factor"]) if convention.get("g_factor") is not None else None
 
@@ -319,7 +336,7 @@ def with_paired_spectral_channels(
     else:
         chipp, chipp_error = values, errors
         if temperature_K is not None and kinematic is not None:
-            if absolute:
+            if absolute_chipp:
                 cross = (
                     cross_section_from_chipp(
                         values,
@@ -372,7 +389,17 @@ def with_paired_spectral_channels(
         elif temperature_K is None:
             channel_error = "Set a dataset temperature to calculate scattering cross section."
 
-    cross_unit, chipp_unit = _output_units(convention, absolute)
+    cross_unit, chipp_unit = _output_units(
+        convention,
+        absolute_cross_section=absolute_cross_section,
+        absolute_chipp=absolute_chipp,
+    )
+    if (
+        source_representation == "cross_section"
+        and source_unit not in {"arbitrary"}
+        and not absolute_cross_section
+    ):
+        cross_unit = source_unit
     channels = dict(data.auxiliary_channels)
     channels[IMPORTED_SIGNAL_CHANNEL] = MDHistoChannel(
         values,
@@ -424,7 +451,7 @@ def with_paired_spectral_channels(
             "spectral_channel_error": channel_error,
             "spectral_observable": {
                 **convention,
-                "absolute_scale": absolute,
+                "absolute_scale": absolute_cross_section or absolute_chipp,
                 "quantity_type": quantity_type,
                 "unit": unit,
                 "temperature_K": temperature_K,

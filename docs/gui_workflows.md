@@ -77,6 +77,53 @@ exists before importing any of them. **Clear datasets** removes all direct and
 nested datasets from the data group after confirmation, while retaining that
 group's models, masks, and fit history.
 
+Nested dataset groups expose an **Enabled** checkbox beside their bulk **Fit
+weight** and **Scale** controls. Disabling a group excludes its complete
+subtree from fitting and fit composites without changing the individual
+enabled states of its datasets or nested groups. Re-enabling the group
+therefore restores the previous descendant selection.
+
+#### Digitized powder INS CSV
+
+Choose **Powder inelastic** and **Powder INS digitizer CSV** to import either of
+the plot-digitizer layouts:
+
+- a headerless `x, signal, sigma` table for a one-dimensional cut; or
+- a `y\x` matrix with Q values across the first row, energy values down the
+  first column, and signal values in the matrix.
+
+The batch import dialog requires a temperature for every file. For each 1D file,
+also choose **Constant E (x = Q)** and enter the fixed energy in meV, or
+**Constant Q (x = E)** and enter the fixed Q in Å⁻¹. These values are not
+inferred from filenames. Every cut is stored with both a Q and an energy axis;
+the fixed coordinate is a singleton axis, so maps and both cut orientations use
+the same plotting and fitting path. The fixed value remains editable in the
+dataset's **Conditions** panel. One-dimensional cuts always use their sole
+varying axis as the line-plot x axis, so constant-Q data plot against energy and
+constant-E data plot against Q without relying on axis-name special cases.
+
+The common signal controls provide batch defaults, while each file row can
+override whether its ordinate is scattering intensity/cross section or
+dynamical susceptibility χ″ and choose its units. This lets one selection mix,
+for example, intensity constant-E cuts and χ″ constant-Q cuts. Available inputs
+include arbitrary units, normalized `1/meV` intensity, `mbarn/sr/meV`, and
+`μ_B²/meV` or `spin²/meV`. Select the existing formula-unit, atom/ion, or
+unit-cell denominator; enter an atom label such as `V` to preserve a published
+per-V convention. The label does not rescale the values.
+
+The three-column cut uncertainty is imported directly. A digitized matrix has
+no error layer, so **Map σ** assigns an explicit uniform one-sigma uncertainty
+used for fitting; its default is 1 in the imported signal units. NaNs are masked.
+With temperature set, the regular **INS representations** machinery creates the
+paired cross-section and χ″ channels. Use **Removed upstream** when the plotted
+quantity has already been multiplied by $k_i/k_f$.
+
+Heisenberg RPA models evaluate these powder cuts and maps by averaging the
+single-crystal response over momentum directions at each measured $|Q|$.
+Crystal lattice parameters are required to convert the sampled Cartesian
+directions to model reciprocal coordinates. Both the scattering-cross-section
+and χ″ fit representations use the same powder-averaged response.
+
 Raw direct-geometry time-of-flight NeXus files such as `SEQ_409981.nxs.h5`
 are imported together as a file-backed raw-run dataset group. Enable its
 composite and choose the four HKLE coordinate axes, limits, and resolution to
@@ -407,7 +454,7 @@ For **single-crystal inelastic** and **powder inelastic** datasets, the
 4. State whether $k_f/k_i$ remains in the input. An included factor requires
    fixed incident energy for direct geometry or fixed final energy for
    indirect geometry.
-5. Set the dataset temperature in **Sample environment**, then choose cross
+5. Set the dataset temperature in **Conditions**, then choose cross
    section or $\chi''$ under **Plot and fit**.
 
 The imported signal is retained. With temperature available, the data viewer's
@@ -519,17 +566,20 @@ are marked pending, the cached composite is reused during passive refreshes,
 and `Rebin now`, fitting, or opening the data viewer forces the current
 composite rebin. Large composite rebins also report progress by batch.
 
-A **Sample environment** panel sits between the Dataset and Axes panels of
+A **Conditions** panel sits between the Dataset and Axes panels of
 scattering datasets. It is hidden for magnetization datasets because their
 temperature and field are measured columns rather than dataset-wide overrides.
-For scattering data it holds the per-dataset temperature and applied magnetic
-field:
+For scattering data it holds the per-dataset temperature, imported fixed-cut
+coordinates, and applied magnetic field:
 
 - `T (K)` sets a per-dataset sample temperature override, stored in
   `dataset.parameters["temperature"]`. Spin down to the minimum ("(from data)")
   to defer to any temperature imported with the data. Physics models that need
   the Bose factor read the temperature from the fit points and raise a clear
   error when no valid temperature is available.
+- `Fixed Q (Å⁻¹)` or `Fixed E (meV)` appears for an imported one-dimensional
+  powder cut. Editing it updates the singleton Q or energy axis used by the
+  viewer and fitter as well as the saved import condition.
 - `Field (T)` sets the applied magnetic field magnitude in tesla; `(none)` (the
   minimum) means zero field. The frame selector chooses whether the direction
   is a direct-lattice `[u v w]` vector (the usual experimental statement, e.g.
@@ -838,6 +888,13 @@ not create an edit branch by itself. This lets users rerun the same scientific
 state with a different loss, initializer, or posterior sampler and compare the
 resulting fit entries side by side.
 
+Importing a dataset, or re-enabling a disabled dataset, creates or advances to
+a `Current state` and attempts a live model evaluation at the current parameter
+values. Successful predictions are stored on that state for the newly active
+dataset alongside the other compatible enabled datasets. If no enabled model
+can predict the data, the activation still succeeds and the state records that
+no compatible prediction was available.
+
 The fit editor follows a simple opt-in pipeline:
 
 1. `Least squares` always runs and is the default fast workflow.
@@ -982,14 +1039,14 @@ the corresponding selected emcee values rather than the least-squares values.
 
 ## Saved plots
 
-Every workspace has a **Plots** tree section. Use the data viewer's **Plot /
-Create saved plot** action to preserve the current visual state as an editable
-figure recipe. Selecting a saved plot exposes **Open plot**, **Open in data
-viewer**, **Copy script**, and **Save script** buttons in its detail page. Open
-the plot for a clean presentation window, or reopen it in the data viewer to
-restore the recipe into the full interactive controls. Script actions become
-available after the project is saved, giving the generated script a stable
-project path.
+Every workspace has a **Plots** tree section. Use **Save plot** beside **Copy
+figure** in the data viewer's **Figure** panel to preserve the current visual
+state as an editable figure recipe. Selecting a saved plot exposes **Open
+plot**, **Open in data viewer**, **Copy script**, and **Save script** buttons in
+its detail page. Open the plot for a clean presentation window, or reopen it in
+the data viewer to restore the recipe into the full interactive controls.
+Script actions become available after the project is saved, giving the
+generated script a stable project path.
 The saved-plot window keeps controls hidden until **Plot / Open plot controls**
 is selected; its same menu can copy/save the figure or a backend-only generating
 script.
@@ -1000,8 +1057,44 @@ part of the clean project state and does not add an unsaved-change marker.
 
 The data viewer supports dataset switching, channel selection, mask toggling,
 axis selection, hidden-axis slicing/integration, color scale and limit controls,
-cursor readouts, histogram box cuts, 1D line styling, model overlays, figure copy,
-and script export.
+cursor readouts, histogram box cuts, 1D line styling, waterfall plots, model
+overlays, figure copy, and script export. **Ctrl+S** (**Command+S** on macOS)
+saves the owning nfit project; for a project without a path, it opens the
+standard **Save As** dialog.
+
+In **Volumetric** mode, a remaining-axis control initially selects the nearest
+central bin containing measured, unmasked data. If the selected point or
+integration range contains no finite voxels, the viewer displays a diagnostic
+instead of a dark empty volume. Change the remaining-axis selection or turn off
+**Apply masks** to inspect the excluded region.
+Choose **Visualization / Waterfall** to stack offset 1D traces. For a
+multidimensional MDHisto dataset, **x** chooses the horizontal axis and **y**
+becomes the waterfall axis. The **Bin width** coarsens that axis into
+inverse-variance weighted profiles with propagated errors; **Auto (~10)**
+chooses about ten traces. All other dimensions retain the ordinary hidden-axis
+point/range integration controls. For a 1D selection, every loaded 1D dataset
+in the selected dataset's immediate project data group with a compatible x axis
+and selected channel contributes one trace. Switching the dataset selector to a
+member of another group switches the waterfall source group as well.
+
+Waterfall markers default to hollow faces (**Marker face / none**),
+independently of the marker-face choice used in the slice viewer. The waterfall
+trace offset defaults to half the largest absolute intensity and can be entered
+manually or adjusted from zero to that absolute maximum with the offset slider.
+The bin-width slider spans one native waterfall-axis bin through
+the complete axis span. **Colors** samples a selected Matplotlib sequence
+uniformly across traces; continuous maps also expose a two-handle range slider
+for excluding pale or dark endpoint colors. **Marker face** selects no fill,
+the per-trace outline color, or a common named color. Optional zero references
+are thin dashed gray lines by default, with controls for color, style, and
+width. Trace labels show the waterfall-bin center or 1D dataset name. **Show
+model** overlays a model line for every available trace; model lines may match
+trace colors or share one selected color. Figure copy, viewer script export,
+and **Figure / Save plot** include the waterfall settings and all contributing
+dataset references. Coordinate-derived trace labels use the bin center and
+axis unit, such as `3.2 meV` or `0.5 r.l.u.`. **Label suffix** replaces that
+generated unit; for grouped 1D datasets it is appended to the dataset label.
+**Label size** and **Label color** style those annotations independently of the axes.
 Box cuts are inverse-variance weighted profiles rather than summed intensities.
 For each displayed bin, the viewer combines the values across the selected box
 using weights of `1 / sigma^2` and draws the propagated standard error,
@@ -1033,17 +1126,17 @@ data+fit cuts with propagated data error bars along both plotted axes; when
 residuals are enabled, residual cuts are shown below
 the residual panel and at the far right.
 
-### 3D PyVista mode
+### Volumetric mode
 
 For a gridded dataset with three or more dimensions, the `Visualization`
-selector enables `3D PyVista`. This mode renders the selected dataset in the
-same data-viewer window and leaves the standard `2D slices` mode available for
+selector enables `Volumetric`. This mode uses PyVista to render the selected dataset in the
+same data-viewer window and leaves the standard `Slice viewer` mode available for
 cuts and detailed inspection. Point-list datasets must first be rebinned onto a
 regular grid before volumetric rendering.
 
 Choose three distinct dataset axes for the displayed X, Y, and Z coordinates.
 Every remaining dimension has the same center, width, low/high range, and
-`Integrate range` controls used by the 2D slicer. With integration off, the
+graphical range slider used by the slice viewer. With integration off, the
 nearest bin to `Value` is selected. With integration on, bins between `Range
 low` and `Range high` are summed into the 3D volume. This is how, for example,
 an adjustable energy interval of a 4D reciprocal-space dataset can be viewed

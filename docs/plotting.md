@@ -5,13 +5,44 @@ records its dataset source by stable project ID and its displayed axes, channel,
 integrations, color settings, limits, smoothing, figure size, and labels. It
 does not duplicate the dataset or save an image in the project file.
 
-Create a plot from the data viewer's **Plot** menu. Open a saved plot from the
-tree to see a clean figure window. Its only visible command is the **Plot**
-menu, which can copy or save the figure, open the hidden controls dock, and
-copy or save a GUI-free generating script.
+The data viewer's **Waterfall** visualization stores the same kind of recipe.
+For one multidimensional MDHisto dataset, choose the horizontal axis and
+waterfall axis; hidden axes keep their normal point/range controls. The
+waterfall-axis bin width defaults to approximately ten traces. Each coarse bin
+is an inverse-variance weighted mean with propagated one-sigma errors.
+
+When the selected dataset is 1D, every sibling in its immediate project data
+group with the same horizontal-axis name, unit, and selected channel contributes
+one trace. The saved recipe retains every contributing dataset by stable project
+ID. Marker faces default to **none** in Waterfall mode, independently of the
+Slice viewer marker-face setting. Trace offset defaults to half the largest
+absolute intensity; its slider spans zero through that absolute maximum. The
+bin-width slider spans one native
+waterfall-axis bin through the complete axis. Continuous colormaps have a
+two-handle sampling-range control, and marker interiors may be empty, match
+each trace outline, or use one named color. The controls also provide optional
+per-trace zero references, reference style, trace labels, data error bars, and
+model-line color behavior. Multidimensional trace labels use only the coarse
+bin center and displayed axis unit, such as `3.2 meV` or `0.5 r.l.u.`. A custom
+label suffix replaces that generated unit; font size and common or per-trace
+font color can also be stored with the waterfall recipe.
+
+The **Volumetric** viewer chooses measured, unmasked bins for the initial
+remaining-axis positions. A selection fully removed by masks is reported in
+the render panel rather than drawn as an opaque-looking empty volume; changing
+the selection or clearing **Apply masks** makes finite voxels available again.
+Its remaining-axis controls use the same compact value/width, low/high, and
+graphical point-or-range slider layout as the slice viewer.
+
+Create a plot with **Save plot** beside **Copy figure** in the data viewer's
+**Figure** panel. Open a saved plot from the tree to see a clean figure window.
+Its only visible command is the **Plot** menu, which can copy or save the
+figure, open the hidden controls dock, and copy or save a GUI-free generating
+script. **Ctrl+S** (**Command+S** on macOS) in the interactive data viewer saves
+the owning nfit project.
 
 Choose **Edit in data viewer** on a saved plot to restore its recipe into the
-interactive viewer. Use **Create saved plot** there to update that same plot;
+interactive viewer. Use **Save plot** there to update that same plot;
 rename or duplicate a tree entry before making a variant. Missing sources leave
 the recipe intact and report an error instead of silently changing its dataset.
 
