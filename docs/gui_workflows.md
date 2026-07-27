@@ -17,14 +17,17 @@ in the regular data viewer, or **Add to datasets** to create a disabled
 **Bragg reflections** dataset explicitly.
 
 The project tree includes an `Analyses` branch after `Fits`. Select it and use
-**New analysis** to open a fresh Analysis Window recipe for that workspace, or
-use **Open Analysis Window** on a workspace, dataset, or analysis node for
+**Open Analysis Window** to resume the workspace's analysis recipes or **New
+analysis** to start a fresh recipe. The same window can be opened from a
+workspace, dataset, or analysis node for
 non-fitting Bragg, spectral, Bose-separation, spherical-average, and
 angle-background operations. Recipes are non-destructive, run through the
 background task framework, and persist linked output artifacts. Dataset-valued
 outputs may create disabled `Derived data` entries; table outputs remain under
 their analysis until explicitly added to Datasets.
 Tree labels distinguish never-run, fresh, stale, failed, and unavailable results.
+With an analysis recipe selected in the project tree, press **Delete** or use
+the tree's **Delete** button to remove the recipe and datasets derived from it.
 
 See [Analysis Window](data_playground.md) for normalization, coverage, output,
 and script conventions.

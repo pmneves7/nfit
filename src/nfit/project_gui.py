@@ -1967,7 +1967,8 @@ def delete_model_component(group: DataGroup, model: ModelComponentSpec) -> None:
 _DELETABLE_TREE_ROLES = frozenset(
     {
         "group", "dataset", "mask", "background", "group_background",
-        "dataset_group", "group_mask", "model", "fit", "fit_timeline", "plot",
+        "dataset_group", "group_mask", "model", "fit", "fit_timeline",
+        "analysis", "plot",
     }
 )
 
@@ -9841,6 +9842,25 @@ class NfitProjectExplorer:
         select_group = affected_groups[0] if len(affected_groups) == 1 else None
         self._refresh_tree(select_group=select_group)
 
+    def _delete_analysis_entry(
+        self,
+        group: DataGroup,
+        analysis: AnalysisEntry,
+    ) -> bool:
+        """Delete an analysis recipe and datasets explicitly derived from it."""
+
+        if analysis not in group.analyses:
+            return False
+        group.analyses.remove(analysis)
+        for collection in (group, *group.iter_subgroups()):
+            collection.datasets[:] = [
+                dataset
+                for dataset in collection.datasets
+                if dataset.metadata.get("derived_from_analysis", {}).get("analysis_id")
+                != analysis.id
+            ]
+        return True
+
     def _is_multi_select_gesture(self) -> bool:
         """True while the user extends a selection with shift/ctrl/cmd.
 
@@ -9970,6 +9990,17 @@ class NfitProjectExplorer:
         if role in {"fit", "fit_timeline"} and group is not None:
             fit_entry = self._fit_entry_for_item(item)
             if fit_entry is not None and delete_fit_entry(group, fit_entry):
+                return True, group
+            return False, None
+        if role == "analysis" and group is not None:
+            analysis = self._analysis_item_roles.get(id(item))
+            if analysis is not None and self._delete_analysis_entry(group, analysis):
+                if (
+                    self._analysis_window is not None
+                    and self._analysis_window.group is group
+                ):
+                    self._analysis_window._refresh_analysis_list()
+                    self._analysis_window._clear_result_views()
                 return True, group
             return False, None
         if role == "plot" and group is not None:
@@ -12538,6 +12569,7 @@ class NfitProjectExplorer:
         actions_row = QtWidgets.QHBoxLayout()
         self.import_dataset_button = QtWidgets.QPushButton("Import dataset")
         self.add_model_button = QtWidgets.QPushButton("Add model")
+        self.open_analysis_button = QtWidgets.QPushButton("Open Analysis Window")
         self.new_analysis_button = QtWidgets.QPushButton("New analysis")
         self.view_slice_button = QtWidgets.QPushButton("View in data viewer")
         self.load_dataset_button = QtWidgets.QPushButton("Load now")
@@ -12547,6 +12579,9 @@ class NfitProjectExplorer:
         self.save_dataset_button = QtWidgets.QPushButton("Save dataset")
         self.import_dataset_button.setToolTip("Import one or more data files into the selected workspace or dataset group.")
         self.add_model_button.setToolTip("Add a new model component to the selected workspace.")
+        self.open_analysis_button.setToolTip(
+            "Open the Analysis Window for this workspace and resume its selected recipe."
+        )
         self.new_analysis_button.setToolTip(
             "Open the Analysis Window for this workspace with a fresh analysis recipe."
         )
@@ -12561,6 +12596,7 @@ class NfitProjectExplorer:
         self.save_dataset_button.setToolTip("Export the selected dataset, including current nfit processing, to a data file.")
         self.import_dataset_button.clicked.connect(self.import_dataset_dialog)
         self.add_model_button.clicked.connect(self.add_model_to_selection)
+        self.open_analysis_button.clicked.connect(self.open_data_playground_for_selection)
         self.new_analysis_button.clicked.connect(self.new_analysis_for_selection)
         self.view_slice_button.clicked.connect(self.open_slice_viewer_for_selection)
         self.load_dataset_button.clicked.connect(self.load_dataset_for_selection)
@@ -12570,6 +12606,7 @@ class NfitProjectExplorer:
         self.save_dataset_button.clicked.connect(self.save_dataset_for_selection)
         actions_row.addWidget(self.import_dataset_button)
         actions_row.addWidget(self.add_model_button)
+        actions_row.addWidget(self.open_analysis_button)
         actions_row.addWidget(self.new_analysis_button)
         actions_row.addWidget(self.view_slice_button)
         actions_row.addWidget(self.load_dataset_button)
@@ -13339,6 +13376,7 @@ class NfitProjectExplorer:
         self._sync_selected_state_controls(role, entry, mask, model)
         self.import_dataset_button.setVisible(can_import)
         self.add_model_button.setVisible(can_add_model)
+        self.open_analysis_button.setVisible(role == "analyses" and group is not None)
         self.new_analysis_button.setVisible(role == "analyses" and group is not None)
         self.view_slice_button.setVisible(
             role in {"group", "datasets", "dataset", "masks", "mask", "backgrounds", "background", "group_backgrounds", "group_background", "dataset_group", "group_masks", "group_mask"}
@@ -13357,7 +13395,7 @@ class NfitProjectExplorer:
             bool(role == "dataset" and entry is not None and _dataset_can_save(entry))
         )
         self.delete_button.setEnabled(
-            role in {"group", "dataset", "mask", "background", "group_background", "model", "fit", "fit_timeline", "dataset_group", "group_mask", "plot"}
+            role in _DELETABLE_TREE_ROLES
         )
         mask_editing = role in {"mask", "group_mask"}
         self.mask_type_combo.setVisible(mask_editing)
@@ -18022,6 +18060,7 @@ class NfitProjectExplorer:
             specs.append(("Disable" if enabled_state else "Enable", True))
         if role in {"group", "dataset", "mask", "background", "group_background", "model", "fit", "fit_timeline", "dataset_group", "group_mask", "plot"}:
             specs.append(("Rename", True))
+        if role in _DELETABLE_TREE_ROLES:
             specs.append(("Delete", True))
         if role in {"group", "datasets", "dataset", "analyses", "analysis", "analysis_output"}:
             specs.append(("Open Analysis Window", True))

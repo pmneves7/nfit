@@ -274,9 +274,8 @@ class DataPlaygroundWindow:
         analysis = self._selected_analysis()
         if analysis is None:
             return
-        self.group.analyses.remove(analysis)
-        for subgroup in self.group.subgroups:
-            subgroup.datasets[:] = [dataset for dataset in subgroup.datasets if dataset.metadata.get("derived_from_analysis", {}).get("analysis_id") != analysis.id]
+        if not self.explorer._delete_analysis_entry(self.group, analysis):
+            return
         self._refresh_analysis_list()
         self._clear_result_views()
         self.explorer._mark_dirty()

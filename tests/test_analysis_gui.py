@@ -14,7 +14,7 @@ from nfit.analysis.bragg import integrate_bragg_peaks
 from nfit.analysis.fingerprint import dataset_entry_fingerprint, recipe_hash
 from nfit.dataset import PointListData
 from nfit.mdhisto import MDHistoAxis, MDHistoData
-from nfit.pipeline import DataGroup, DatasetEntry
+from nfit.pipeline import DataGroup, DatasetEntry, DatasetGroup
 from nfit.project_gui import NfitProject, NfitProjectExplorer
 
 
@@ -75,16 +75,19 @@ def test_analyses_branch_new_analysis_button_opens_fresh_recipe(monkeypatch):
     analyses_item = explorer.tree.topLevelItem(0).child(3)
     explorer.tree.setCurrentItem(analyses_item)
 
-    button = explorer.new_analysis_button
-    assert button is not None
-    assert not button.isHidden()
-    assert button.toolTip()
-    button.click()
+    open_button = explorer.open_analysis_button
+    new_button = explorer.new_analysis_button
+    assert not open_button.isHidden()
+    assert open_button.toolTip()
+    assert not new_button.isHidden()
+    assert new_button.toolTip()
+    open_button.click()
 
     playground = explorer._analysis_window
     assert playground is not None
     assert playground.group is group
     assert playground.window.windowTitle() == "nfit Analysis Window"
+    new_button.click()
     assert playground.analysis_combo.currentData() is None
     assert playground.name_edit.text() == "Analysis"
     assert explorer.context_menu_action_names(analyses_item) == [
@@ -92,6 +95,35 @@ def test_analyses_branch_new_analysis_button_opens_fresh_recipe(monkeypatch):
         "New analysis",
     ]
     playground.window.close()
+
+
+def test_delete_key_removes_selected_analysis_and_linked_datasets(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtCore = pytest.importorskip("PySide6.QtCore")
+    QtTest = pytest.importorskip("PySide6.QtTest")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    analysis = AnalysisEntry("Peaks", "bragg_integration", [], {})
+    linked = DatasetEntry(
+        "Integrated peaks",
+        None,
+        metadata={"derived_from_analysis": {"analysis_id": analysis.id}},
+    )
+    unrelated = DatasetEntry("Keep me", None)
+    subgroup = DatasetGroup("Derived data", datasets=[linked, unrelated])
+    group = DataGroup("Workspace1", subgroups=[subgroup], analyses=[analysis])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    analysis_item = explorer.tree.topLevelItem(0).child(3).child(0)
+    explorer.tree.setCurrentItem(analysis_item)
+    explorer.tree.setFocus()
+
+    assert explorer.delete_button.isEnabled()
+    assert "Delete" in explorer.context_menu_action_names(analysis_item)
+    QtTest.QTest.keyClick(explorer.tree, QtCore.Qt.Key.Key_Delete)
+
+    assert group.analyses == []
+    assert subgroup.datasets == [unrelated]
+    assert explorer.has_unsaved_changes
 
 
 def test_analysis_tree_marks_changed_inputs_stale(monkeypatch):
