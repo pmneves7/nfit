@@ -11,7 +11,7 @@ pipeline.
 Nfit was authored by Paul M. Neves (Johns Hopkins University,
 pneves1@jhu.edu) with use of LLM coding tools.
 
-Current package version: 0.20.2.
+Current package version: 0.20.3.
 
 Heat-capacity import, normalization, fitting, and analysis are documented in
 [Heat-capacity data and models](heat_capacity.md).
