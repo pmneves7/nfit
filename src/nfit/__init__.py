@@ -75,14 +75,6 @@ from .fit_config import (
     sharing_mode,
 )
 from .fit_scripts import fit_state_script
-from .fit_views import (
-    FIT_COMPARISON_METADATA_KEY,
-    FitComparisonModelView,
-    FitComparisonResultView,
-    attach_fit_comparisons,
-    fit_comparisons_for_data,
-    hyspec_hhl_fit_comparison_from_points,
-)
 from .fitting import (
     DerivedParameter,
     FitDataset,
@@ -158,9 +150,7 @@ from .mdevent import (
 from .mdhisto import (
     MDHistoAxis,
     MDHistoData,
-    hyspec_hhl_point_indices,
     load_mantid_mdhisto_nxs,
-    point_data_from_hyspec_hhl,
 )
 from .models import (
     compound_additive_model,
@@ -502,11 +492,6 @@ __all__ = [
     "FitHistoryEntry",
     "FitModelSession",
     "FitTimelineEntry",
-    "FIT_COMPARISON_METADATA_KEY",
-    "FitComparisonModelView",
-    "FitComparisonResultView",
-    "attach_fit_comparisons",
-    "fit_comparisons_for_data",
     "fit_least_squares",
     "fit_problem_least_squares",
     "from_arrays",
@@ -515,8 +500,6 @@ __all__ = [
     "infer_axis_role",
     "import_dataset_paths",
     "intensity_from_chipp",
-    "hyspec_hhl_point_indices",
-    "hyspec_hhl_fit_comparison_from_points",
     "linear_background",
     "load_project",
     "load_mantid_mdhisto_nxs",
@@ -563,7 +546,6 @@ __all__ = [
     "ReciprocalSymmetryOperation",
     "SymmetrySpec",
     "resolve_symmetry",
-    "point_data_from_hyspec_hhl",
     "polynomial_fwhm_energy_resolution",
     "q_modulus_inv_angstrom",
     "q_vectors_inv_angstrom",

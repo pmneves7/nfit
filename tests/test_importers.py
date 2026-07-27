@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import numpy as np
 import pytest
 
@@ -16,10 +14,6 @@ from nfit.importers import (
     read_delimited_text,
     split_name_and_unit,
 )
-
-DATA_DIR = Path(__file__).resolve().parents[1] / "data"
-MPMS_FILE = DATA_DIR / "MPMS" / "test_MPMS.dat"
-HB2A_FILE = DATA_DIR / "HB2A" / "test_powder_diffraction.dat"
 
 
 def test_split_name_and_unit():
@@ -39,8 +33,8 @@ def test_read_delimited_text_headerless_whitespace(tmp_path):
     assert parsed.columns["dy"] == [0.1, 0.2]
 
 
-def test_import_mpms_dat_retains_all_columns_and_roles():
-    data = import_mpms_dat(MPMS_FILE)
+def test_import_mpms_dat_retains_all_columns_and_roles(mpms_file):
+    data = import_mpms_dat(mpms_file)
 
     assert isinstance(data, PointListData)
     assert data.coordinate_names == ["Temperature", "Magnetic Field"]
@@ -51,7 +45,7 @@ def test_import_mpms_dat_retains_all_columns_and_roles():
     # Every raw column is retained, including AC channels.
     assert "AC Moment" in data.columns
     assert "AC Susceptibility" in data.columns
-    assert data.size > 5000
+    assert data.size == 12
     # Header metadata is captured.
     assert data.metadata["mpms_info"]["SAMPLE_MATERIAL"].startswith("EXT_Rodriguez")
     assert data.metadata["sample_mass_mg"] == pytest.approx(9.73)
@@ -60,8 +54,8 @@ def test_import_mpms_dat_retains_all_columns_and_roles():
     np.testing.assert_allclose(data.column("Temperature")[0], 299.499588, rtol=1e-6)
 
 
-def test_import_hb2a_powder():
-    data = import_hb2a_powder(HB2A_FILE)
+def test_import_hb2a_powder(hb2a_file):
+    data = import_hb2a_powder(hb2a_file)
 
     assert data.column_names == ["2theta", "I", "dI"]
     assert data.coordinate_names == ["2theta"]
@@ -91,8 +85,8 @@ def test_import_ppms_heat_capacity_retains_columns_and_normalization(tmp_path):
     np.testing.assert_allclose(data.column("Samp HC"), [32.4, 41.5])
 
 
-def test_pointlistdata_rebin_reduces_points():
-    data = import_hb2a_powder(HB2A_FILE)
+def test_pointlistdata_rebin_reduces_points(hb2a_file):
+    data = import_hb2a_powder(hb2a_file)
     rebinned = data.rebin_to_histogram(["2theta"], num_bins=[40])
 
     assert rebinned.size <= 40
@@ -105,15 +99,15 @@ def test_pointlistdata_rebin_reduces_points():
     assert rebinned.column("2theta").max() <= original.max() + 1.0
 
 
-def test_importer_registry_lookup():
+def test_importer_registry_lookup(mpms_file, hb2a_file):
     assert [spec.name for spec in importers_for_data_type("magnetization")] == ["mpms_dat"]
     assert [spec.name for spec in importers_for_data_type("powder_elastic")] == ["hb2a_powder"]
     assert [spec.name for spec in importers_for_data_type("heat_capacity")] == ["ppms_heat_capacity_dat"]
     assert [spec.name for spec in importers_for_data_type("powder_inelastic")] == [
         "powder_ins_csv"
     ]
-    assert IMPORTERS["mpms_dat"].can_read(MPMS_FILE)
-    data = import_with("hb2a_powder", HB2A_FILE)
+    assert IMPORTERS["mpms_dat"].can_read(mpms_file)
+    data = import_with("hb2a_powder", hb2a_file)
     assert data.coordinate_names == ["2theta"]
 
 

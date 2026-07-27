@@ -37,7 +37,7 @@ minimizes one concatenated weighted residual vector.
 `ResolutionSpec`
 : Optional instrument-resolution hook. It receives data coordinates,
   unconvolved model values, and parameters, then returns resolution-corrected
-  measured intensity. `identity_resolution` is the placeholder used when
+  measured intensity. `identity_resolution` is the no-op used when
   resolution effects are disabled.
 
 `FitProblem`
@@ -47,7 +47,7 @@ minimizes one concatenated weighted residual vector.
 `DatasetEntry`
 : One raw dataset plus flexible experiment metadata. This wrapper is intentionally
   general: it can hold neutron point data, MDHisto data, susceptibility curves,
-  powder data, or future polarized-neutron containers. Dataset entries may also
+  powder data, or other point and histogram containers. Dataset entries may also
   carry dataset-local transforms such as masks, cuts, normalization corrections,
   or rebinning operations.
 
@@ -64,13 +64,6 @@ minimizes one concatenated weighted residual vector.
   functions, parameter bindings, dataset weights, and an ordered history of
   completed fits. Each fit can update the current parameters, and previous
   history entries can be restored with `rollback`.
-
-`FitComparisonModelView`
-: A viewer-ready representation of fit outputs associated with one reduced
-  dataset. A comparison view can provide the data points used in the fit, the
-  fitted model values, and normalized residuals on matching axes. The slice
-  viewer detects these attached comparisons and can render data/fit/residual
-  panels with linked axes, slicing, integration, and color settings.
 
 ```python
 from nfit import (
@@ -109,12 +102,11 @@ result = session.fit(group)
 session.rollback(0)
 ```
 
-## Interactive workflow direction
+## GUI and script parity
 
-The workflow is intentionally scriptable first: scripts can create data groups,
-attach masks, choose models, configure resolution functions, run fits, and open a
-viewer to compare data with fit results. The GUI should expose those same
-operations without inventing hidden widget-only scientific state.
+Scripts and the GUI use the same project, model, mask, fit, and resolution
+objects. A workflow created in either interface can therefore be inspected,
+saved, and reproduced in the other.
 
 The current project explorer launches with `nfit` and lets a user:
 
@@ -143,8 +135,8 @@ channel generation is provided by the project fitting pipeline.
 
 The data viewer remains driven by reusable data/model objects. It can display
 current model channels and stored fit channels from GUI fit history, but
-script-created datasets with attached fit comparisons should continue to
-produce the same viewer behavior.
+script-created datasets with attached fit comparisons produce the same viewer
+behavior.
 See [GUI workflows](gui_workflows.md) for current user-facing details.
 See [Fit constraints](fit_constraints.md) for exact relationships,
 inequalities, expression syntax, degrees of freedom, and backend examples.
@@ -254,8 +246,8 @@ energy transfer should matter.
 
 ## Rebinning
 
-`rebin_point_data` and `make_rebin_transform` provide a regular 4D rebinning
-placeholder for `(H,K,L,E)` point data:
+`rebin_point_data` and `make_rebin_transform` provide regular 4D rebinning for
+`(H,K,L,E)` point data:
 
 ```python
 from nfit import make_rebin_transform
@@ -273,9 +265,8 @@ dataset = FitDataset(
 )
 ```
 
-More specialized operations, such as projecting into a cut, integrating a
-region, or applying instrument-specific normalization, should be written as
-custom transforms with the same signature:
+Specialized scripted operations can use a custom transform with the same
+signature:
 
 ```python
 def my_transform(data: PointData4D) -> PointData4D:
@@ -407,15 +398,15 @@ likelihood and uniform priors implied by parameter bounds. It returns samples,
 variable names, log probabilities, and compact diagnostics such as acceptance
 fractions and estimated autocorrelation time when available.
 
-### Why an emcee step costs far more than a least-squares step
+### Why an emcee step is expensive
 
 `emcee` is an *ensemble* sampler: every step advances all `n_walkers` walkers
 at once, so a single step evaluates the model **once per walker** — `n_walkers`
-likelihood (residual) evaluations. A least-squares step, by contrast, is a
-single model evaluation. So a step of MCMC is inherently ~`n_walkers` times more
-expensive than a step of least squares. In the GUI this shows up directly: with
-the default ensemble a least-squares step runs in ~1 s while an emcee step takes
-~20–30 s — the ratio is just the walker count.
+likelihood evaluations. Compare this with one least-squares **residual
+evaluation**, not one optimizer iteration: a least-squares iteration may need
+multiple residual evaluations for a Jacobian or line search. The useful cost
+estimate is therefore `n_walkers × n_steps` model evaluations, plus burn-in,
+versus the optimizer's reported function-evaluation count.
 
 When `Walkers` is left at 0 (or `SamplerConfig(n_walkers=None)`), the walker
 count defaults to `max(32, 2 * n_parameters + 2)`, i.e. **32** for a typical
@@ -440,10 +431,9 @@ handful of parameters. Practical consequences:
   emcee workers to the core count; on a single machine that is roughly a wash
   for large datasets, and it pays off mainly across cluster nodes.
 
-So budget MCMC as a long/overnight (or cluster) job relative to a fit. To shrink
-wall time, reduce `n_steps` (a good least-squares start plus burn-in usually
-means you need far fewer than the default), sample a downsampled dataset, or
-distribute walkers across a cluster.
+MCMC is normally much slower than least squares. Start from the least-squares
+solution, monitor convergence and autocorrelation, and choose burn-in and
+production length from those diagnostics rather than a fixed wall-time rule.
 
 ## Primitive and compound models
 
@@ -579,4 +569,4 @@ required to remain finite and positive at all evaluated energies.
 posterior sampling with an `emcee` ensemble backend over the same `FitProblem`
 and parameter specifications used by deterministic optimization. See the
 posterior-sampling workflow above and, in particular,
-[Why an emcee step costs far more than a least-squares step](#why-an-emcee-step-costs-far-more-than-a-least-squares-step).
+[Why an emcee step is expensive](#why-an-emcee-step-is-expensive).

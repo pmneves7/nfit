@@ -101,10 +101,10 @@ suite instead:
 python -m pytest -q
 ```
 
-You can also run the small synthetic example:
+You can also run the small script-only analysis example:
 
 ```bash
-python examples/synthetic_single_q_fit.py
+python examples/data_playground.py
 ```
 
 ### Everyday use and updates
@@ -143,44 +143,27 @@ help preserving your work.
   `cd` with no arguments shows it in Windows Command Prompt. The active nfit
   folder should contain `environment.yml`.
 
-## Recommended conda setup
+## Developer setup
 
-Use a dedicated conda environment for `nfit`. This avoids mixing compiled
-scientific packages from the project with your base Python installation.
-
-```bash
-cd ~/code/nfit
-conda env create -f environment.yml
-conda activate nfit
-```
-
-If the environment already exists, update it after changes to `environment.yml`:
+The first-time steps above are also the recommended developer setup. After
+pulling changes, update the existing environment with:
 
 ```bash
 conda env update -f environment.yml --prune
 conda activate nfit
 ```
 
-The environment uses conda-forge for NumPy, SciPy, Matplotlib, pytest, Sphinx,
-MyST Markdown, MyST-NB, and the documentation theme. It also installs `nfit`
-in editable mode with:
+To refresh the editable installation explicitly:
 
 ```bash
-/Users/pmneves/anaconda3/envs/nfit/bin/python -m pip install -e ".[dev,docs]"
+python -m pip install -e ".[dev,docs]"
 ```
 
-## Validate the install
-
-Run the test suite:
+### Validate the checkout
 
 ```bash
-/Users/pmneves/anaconda3/envs/nfit/bin/python -m pytest -q
-```
-
-Lint the Analysis Window implementation:
-
-```bash
-/Users/pmneves/anaconda3/envs/nfit/bin/python -m ruff check
+python -m pytest -q
+python -m ruff check
 ```
 
 Launch the graphical project explorer:
@@ -191,39 +174,25 @@ nfit
 
 The GUI opens the project explorer, where users can create workspaces, import
 datasets, add masks and models, inspect metadata, run fits, and open the data
-viewer. See [GUI workflows](gui_workflows.md) for the current user-facing
-workflow and tooltip/documentation expectations.
+viewer. See [GUI workflows](gui_workflows.md) for the user-facing workflow.
 
-Run the first reference example:
+Run the script-only analysis example:
 
 ```bash
-/Users/pmneves/anaconda3/envs/nfit/bin/python examples/synthetic_single_q_fit.py
+python examples/data_playground.py
 ```
 
-Build the documentation:
+Build the documentation and fail on warnings:
 
 ```bash
-sphinx-build -b html docs docs/_build/html
+python -m sphinx -W -b html docs docs/_build/html
 ```
 
-The long-term distribution goal is:
+### Validate a release
 
 ```bash
-pip install nfit
-```
-
-After the package is published, `pip install nfit` should install the runtime
-dependencies and expose the GUI launcher:
-
-```bash
-nfit
-```
-
-Before publishing, check release artifacts locally:
-
-```bash
-/Users/pmneves/anaconda3/envs/nfit/bin/python -m build
-/Users/pmneves/anaconda3/envs/nfit/bin/python -m twine check dist/*
-/Users/pmneves/anaconda3/envs/nfit/bin/python -m pip install dist/nfit-*.whl
+python -m build
+python -m twine check dist/*
+python -m pip install dist/nfit-*.whl
 nfit
 ```

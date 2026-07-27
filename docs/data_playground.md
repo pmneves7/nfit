@@ -229,6 +229,6 @@ Pure functions such as `integrate_bragg_peaks()` and
 `available_analysis_types()`, `default_analysis_parameters()`,
 `validate_analysis()`, and `run_analysis_operation()`.
 
-Future raw-TOF reduction and single-crystal-to-single-crystal subtraction can
-emit corrected derived datasets through the same recipe, artifact, fingerprint,
-and coverage system.
+Native raw-TOF reductions already use the same recipe, artifact, fingerprint,
+and coverage system. Aligned single-crystal dataset subtraction is listed in
+[Planned features](planned_features.md).

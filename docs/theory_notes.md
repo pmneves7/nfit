@@ -1,30 +1,25 @@
-# Theory notes: sum rules, self-consistency, and temperature dependence
+# Theory: sum rules and self-consistency
 
-These are working notes on the theory surrounding the spin-fluctuation model
-family — what is exact, what is approximation, who closed the equations which
-way, and how the pieces map onto nfit's parameters. The section grows as new
-models are implemented. The long-term program it serves:
+This page distinguishes exact identities from model closures and maps each
+implemented closure onto nfit parameters. The practical goal is to describe a
+temperature series with the fewest defensible parameters. Users may fit
+$\chi_0(T)$ and $\Gamma_0(T)$ independently or test whether an Onsager, SCR,
+or Takahashi closure explains their temperature dependence.
 
-> **Fit temperature-dependent data with the minimum number of required
-> parameters.** Today every temperature gets its own $\chi_0(T)$ and
-> $\Gamma_0(T)$; the goal is to replace those per-temperature values with a
-> physical closure (a sum rule or self-consistency condition) so that the
-> temperature dependence is *explained* by one or two global parameters rather
-> than merely *parametrized*.
+## Bare RPA baseline
 
-## Where the current models sit
-
-The `heisenberg_rpa` model (see
+Without an active closure, `heisenberg_rpa` (see
 [Spin-fluctuation models](spin_fluctuation_models.md)) evaluates
 
 $$
-\chi(\mathbf{Q},\omega)
-  = \bigl[\mathbb 1 - \chi_0(\omega)\,J(\mathbf{Q})\bigr]^{-1}\chi_0(\omega),
+\chi(\mathbf{Q},E)
+  = \bigl[\mathbb 1 - \chi_0(E)\,J(\mathbf{Q})\bigr]^{-1}\chi_0(E),
 \qquad
-\chi_0(\omega) = \frac{\chi_0}{1 - i\omega/\Gamma_0}.
+\chi_0(E) = \frac{\chi_0}{1 - iE/\Gamma_0}.
 $$
 
-This is **linear response around a fixed local propagator** — RPA/mean-field,
+This bare path is **linear response around a fixed local propagator** —
+RPA/mean-field,
 not a self-consistent theory. Nothing the dressed $\chi$ describes ever flows
 back into $\chi_0$, $\Gamma_0$, or the couplings. Three consequences:
 
@@ -39,11 +34,10 @@ back into $\chi_0$, $\Gamma_0$, or the couplings. Three consequences:
    instability, spectral weight piles into the soft mode without being
    depleted elsewhere.
 
-All three are cured, in different ways, by the closures below. The pragmatic
-virtue of the unconstrained model is that it outsources the self-consistency
-to the data — the fitted $\chi_0(T)$, $\Gamma_0(T)$ *are* the renormalized
-local response, in the spirit of the Bernhoeft–Lonzarich phenomenology. The
-closures then become hypotheses to test against those fitted trajectories.
+The closures below address these limitations in different ways. The bare model
+remains useful: fitted $\chi_0(T)$ and $\Gamma_0(T)$ describe an empirical
+renormalized local response, and their trajectories provide a baseline against
+which to test a closure.
 
 ## Sum rules
 
@@ -52,9 +46,9 @@ closures then become hypotheses to test against those fitted trajectories.
 Via the fluctuation–dissipation theorem the scattering function is
 
 $$
-S^{\alpha\beta}(\mathbf{Q},\omega)
+S^{\alpha\beta}(\mathbf{Q},E)
  = \frac{1}{\pi}\,
-   \frac{\chi''_{\alpha\beta}(\mathbf{Q},\omega)}{1 - e^{-\omega/k_BT}} ,
+   \frac{\chi''_{\alpha\beta}(\mathbf{Q},E)}{1 - e^{-E/k_BT}} ,
 $$
 
 and integrating the diagonal over the Brillouin zone and *all* energies
@@ -63,8 +57,8 @@ equal-time identity:
 
 $$
 \sum_\alpha
-\frac{1}{V_{BZ}}\int_{BZ} d\mathbf{Q} \int_{-\infty}^{\infty} d\omega\,
-S^{\alpha\alpha}(\mathbf{Q},\omega)
+\frac{1}{V_{BZ}}\int_{BZ} d\mathbf{Q} \int_{-\infty}^{\infty} dE\,
+S^{\alpha\alpha}(\mathbf{Q},E)
  \;=\; \langle \mathbf{S}_i^2 \rangle .
 $$
 
@@ -84,11 +78,11 @@ system cools through the valence-fluctuation/Kondo scale [11, 12].
 
 Two practical caveats for using this quantitatively:
 
-- The experimental window never covers the full $(\mathbf{Q},\omega)$ range;
+- The experimental window never covers the full $(\mathbf{Q},E)$ range;
   the *model*, integrated over the full zone and up to a cutoff, is the object
   that satisfies (or fails) the sum rule — not the windowed data.
 - The relaxational form itself needs a high-energy cutoff: the local
-  first-moment integral $\int^\Lambda d\omega\,\chi''_{\text{loc}}(\omega)
+  amplitude integral $\int^\Lambda dE\,\chi''_{\text{loc}}(E)
   \propto \chi_0\Gamma_0 \ln(\Lambda/\Gamma_0)$ diverges logarithmically. The
   cutoff is physics (bandwidth, crystal-field splitting), and any quantitative
   sum-rule implementation must carry it as an explicit scale.
@@ -96,7 +90,7 @@ Two practical caveats for using this quantitatively:
 ### First-moment (f-) sum rule
 
 $$
-\int_{-\infty}^{\infty} d\omega\; \omega\,\chi''(\mathbf{Q},\omega)
+\int_{-\infty}^{\infty} dE\; E\,\chi''(\mathbf{Q},E)
  = \pi\,\bigl\langle\,[\,[S_\mathbf{Q},H\,],\,S_{-\mathbf{Q}}\,]\,\bigr\rangle
 $$
 
@@ -111,7 +105,7 @@ unmodelled high-energy branch).
 
 $$
 \chi(\mathbf{Q}, 0) = \frac{2}{\pi}\int_0^\infty
- \frac{\chi''(\mathbf{Q},\omega)}{\omega}\, d\omega .
+ \frac{\chi''(\mathbf{Q},E)}{E}\, dE .
 $$
 
 For the relaxational form this integral closes exactly to $\chi_\mathbf{Q}$ —
@@ -124,7 +118,7 @@ cutoff.
 ## The closures: one exact identity + one extra equation
 
 Every self-consistent spin-fluctuation theory in this family has the same
-skeleton: keep the RPA-like form of $\chi(\mathbf{Q},\omega)$, then add one
+skeleton: keep the RPA-like form of $\chi(\mathbf{Q},E)$, then add one
 scalar equation per temperature that determines the local parameters. They
 differ in *which* quantity is conserved or fed back.
 
@@ -158,7 +152,7 @@ rule *cannot* be satisfied with a diverging soft mode, so $\lambda$ backs the
 system away from it, suppressing $T_c$ toward (in 2D exactly to) the
 Mermin–Wagner answer.
 
-**nfit hook:** the shift $-\lambda\,\mathbb 1$ has exactly the matrix shape of
+**Implementation.** The shift $-\lambda\,\mathbb 1$ has exactly the matrix shape of
 an isotropic on-site term (the trace part the SIA projection deliberately
 drops), so the existing evaluator computes the shifted model with no kernel
 change. What is new is (a) an outer scalar root-find per temperature and (b) a
@@ -177,9 +171,9 @@ $$
 \chi_0^{-1}(T) = \chi_0^{-1}(0) + u\,\langle m^2\rangle(T),
 \qquad
 \langle m^2\rangle(T)
- = \frac{1}{V_{BZ}}\int_{BZ} d\mathbf{Q}\int d\omega\,
-   \coth\!\Bigl(\frac{\omega}{2k_BT}\Bigr)\,
-   \frac{\chi''(\mathbf{Q},\omega)}{\pi},
+ = \frac{1}{V_{BZ}}\int_{BZ} d\mathbf{Q}\int dE\,
+   \coth\!\Bigl(\frac{E}{2k_BT}\Bigr)\,
+   \frac{\chi''(\mathbf{Q},E)}{\pi},
 $$
 
 solved self-consistently since $\chi''$ itself depends on $\chi_0$. This is
@@ -257,10 +251,11 @@ Useful identities when relating fitted values across temperatures:
   zero-point weight $\propto \chi_0\Gamma_0\ln(\Lambda/\Gamma_0)$ — this is
   the piece Takahashi's TAC budget trades against the thermal part.
 
-## Roadmap: minimal-parameter temperature fits
+## Choosing a temperature-dependent model
 
-Ordered by increasing theoretical commitment; each stage is falsifiable
-against the stage before it.
+The options below increase in theoretical commitment. Compare each closure
+against the unconstrained baseline using fit quality, parameter count, and the
+diagnostic trajectories.
 
 1. **Unconstrained (implemented).** `chi0`, `gamma0` per dataset
    (`per_dataset` sharing); exchanges and scale global. Parameter count
@@ -287,14 +282,14 @@ against the stage before it.
    parameters, so the temperature dependence becomes a *prediction* checked
    against the data rather than fitted per point. (`gamma0` remains a directly
    fitted, usually global, parameter; a fully derived $\Gamma_0(T)$ à la
-   Lonzarich–Taillefer is future work.)
+   Lonzarich–Taillefer is not implemented.)
 5. **Interplay with the tensor terms (implemented).** Anisotropy gaps, Zeeman
    fields, and dipolar terms all shift where the sum-rule weight sits (a gap
    moves weight up in energy; a field splits it between Larmor channels). The
    closures act on the isotropic local propagator and inherit these effects
    through the full $\chi''$ entering $\langle m^2\rangle$: Tier A (field off)
    integrates the mode Lorentzians in closed form; Tier B (field on) integrates
-   the gyrotropic $\chi''$ numerically on a $(\mathbf{Q},\omega)$ grid.
+   the gyrotropic $\chi''$ numerically on a $(\mathbf{Q},E)$ grid.
 6. **Bulk-susceptibility co-fit (implemented).** The uniform static
    susceptibility $\chi(\mathbf{Q}=0,0)$ — with the active closure — predicts
    the bulk moment $M(T,B)$, and MPMS magnetization datasets are fit jointly
@@ -313,13 +308,13 @@ evaluator. Each closure adds one derived report per temperature ($\lambda(T)$,
 $\chi_{0,\text{eff}}(T)$, $\langle m^2\rangle$) surfaced in the diagnostics.
 
 **Energy integrals.** The per-mode moment
-$(1/\pi)\int_0^\Lambda \coth(\omega/2T)\,\chi''_{\text{Lor}}(\omega)\,d\omega$
+$(1/\pi)\int_0^\Lambda \coth(E/2k_BT)\,\chi''_{\text{Lor}}(E)\,dE$
 has two exact closed forms (both locked to adaptive quadrature): for
 $\Lambda \gg k_BT$ the digamma form (zero-point
 $(\chi\Gamma/2\pi)\ln(1+\Lambda^2/\Gamma^2)$ plus infinite-cutoff thermal part
 $(\chi\Gamma/\pi)[\ln z - 1/2z - \psi(z)]$, $z=\Gamma/2\pi k_BT$); otherwise a
 finite-cutoff Matsubara sum completed with a Hurwitz-zeta tail. Tier B uses a
-log-spaced $\omega$ quadrature of $\mathrm{Tr}\,\chi''$.
+log-spaced energy quadrature of $\mathrm{Tr}\,\chi''$.
 
 **Bulk-$\chi$ units.** The model susceptibility is $\chi_{\text{spin}}$ in
 1/meV per magnetic site; the molar magnetic susceptibility is
@@ -339,7 +334,7 @@ TAC's stored `chi0` is only a root-search seed, so it is excluded from the
 cache key and cannot be varied by the optimizer; the conserved total amplitude
 replaces it physically. Tier B has
 no such shortcut: each closure iteration is a batched LU over the
-$(\text{BZ}\times\omega)$ grid per distinct $(T,B)$ — the default
+$(\text{BZ}\times E)$ grid per distinct $(T,B)$ — the default
 $16^3\times200 \approx 8\times10^5$ solves per iteration, so drop `bz_grid` to
 ~8 while exploring field data. Solves are cached per $(T,B,\text{params})$.
 

@@ -1,43 +1,7 @@
 # GUI workflows
 
-The graphical interface is a project explorer plus a data viewer. It is meant
-to make common exploratory work easier without replacing scripts: every GUI
-operation should correspond to a readable project file or a Python operation
-that can be repeated later.
-
-## Analysis Window
-
-Bragg integration results are stored under **Analyses**, not automatically as
-fit-enabled datasets. Selecting an analysis output in the project tree shows
-its persisted table and metadata. Open the saved analysis to recover its
-grouped controls, sortable accepted/rejected reflection table, and per-peak
-diagnostic plots. Select a row to inspect the corresponding integration region
-or Gaussian widths. Use **View input with peaks** for accepted/rejected markers
-in the regular data viewer, or **Add to datasets** to create a disabled
-**Bragg reflections** dataset explicitly.
-
-The project tree includes an `Analyses` branch after `Fits`. Select it and use
-**Open Analysis Window** in the control strip below the tree to resume the
-workspace's analysis recipes, or **New analysis** in the details panel to start
-a fresh recipe. When an analysis-related row is selected, **Open Analysis
-Window** occupies the position immediately left of **Delete**. The same window
-can be opened from a workspace, dataset, or analysis node for
-non-fitting Bragg, spectral, Bose-separation, spherical-average, and
-angle-background operations. Recipes are non-destructive, run through the
-background task framework, and persist linked output artifacts. Dataset-valued
-outputs may create disabled `Derived data` entries; table outputs remain under
-their analysis until explicitly added to Datasets.
-Tree labels distinguish never-run, fresh, stale, failed, and unavailable results.
-With an analysis recipe selected in the project tree, press **Delete** or use
-the tree's **Delete** button to remove the recipe and datasets derived from it.
-
-See [Analysis Window](data_playground.md) for normalization, coverage, output,
-and script conventions.
-
-Select a workspace to view and edit its **Crystal symmetry / Space group**.
-Bragg peak generation reads this workspace value. Use an International Tables
-number (such as `227`) or a Hermann-Mauguin symbol (such as `F d -3 m:2`);
-CIF imports normalize legacy suffixes such as `F d -3 m Z` automatically.
+The graphical interface combines a project explorer and data viewer. Scientific
+state is stored in the project and can be reproduced through the Python API.
 
 ## Launch
 
@@ -48,16 +12,34 @@ explorer with:
 nfit
 ```
 
-During local development, the explicit environment interpreter is:
+During local development, the equivalent module command is:
 
 ```bash
-/Users/pmneves/anaconda3/envs/nfit/bin/python -m nfit.project_gui
+python -m nfit.project_gui
 ```
 
 When launched from a terminal, Ctrl+C sends an interrupt that closes the Qt
 event loop cleanly with the standard interrupt exit status.
 
+## Quick start
+
+1. Create or select a workspace and data group.
+2. Import files, then review units, temperature, lattice, and normalization in
+   **Dataset details**.
+3. Add masks and model components to the group.
+4. Set fitted parameters, sharing, bounds, and dataset weights.
+5. Run the fit and inspect model and residual channels in the data viewer.
+6. Save the project before exporting scripts, plots, or reports.
+
+Use the `Analyses` branch for non-fitting operations such as Bragg or spectral
+integration. The sections below document each part of this workflow.
+
 ## Project explorer
+
+Selecting a workspace exposes its **Crystal symmetry / Space group**, which
+Bragg peak generation uses. Enter an International Tables number such as `227`
+or a Hermann–Mauguin symbol such as `F d -3 m:2`; CIF imports normalize legacy
+symbol suffixes.
 
 ### Dataset importing
 
@@ -113,8 +95,8 @@ dynamical susceptibility χ″ and choose its units. This lets one selection mix
 for example, intensity constant-E cuts and χ″ constant-Q cuts. Available inputs
 include arbitrary units, normalized `1/meV` intensity, `mbarn/sr/meV`, and
 `μ_B²/meV` or `spin²/meV`. Select the existing formula-unit, atom/ion, or
-unit-cell denominator; enter an atom label such as `V` to preserve a published
-per-V convention. The label does not rescale the values.
+unit-cell denominator; enter the published element or site label when
+preserving a per-atom convention. The label does not rescale the values.
 
 The three-column cut uncertainty is imported directly. A digitized matrix has
 no error layer, so **Map σ** assigns an explicit uniform one-sigma uncertainty
@@ -1052,7 +1034,7 @@ the corresponding selected emcee values rather than the least-squares values.
 
 ## Data viewer
 
-## Saved plots
+### Saved plots
 
 Every workspace has a **Plots** tree section. Use **Save plot** beside **Copy
 figure** in the data viewer's **Figure** panel to preserve the current visual
@@ -1209,20 +1191,6 @@ quantities that are not meaningful for that data type. `|Q|` readout is shown
 when valid `q` information is present or can be computed from `2theta` and
 wavelength.
 
-The exported script is part of the package philosophy: GUI-produced figures
-should be reproducible from editable Python code. When a GUI feature changes the
-plot state, the script-export path should be updated at the same time.
-
-## Hover text standard
-
-Every user-interactable control in the project explorer and data viewer should
-have useful hover text. A good tooltip explains what the control changes, when
-the change takes effect, important constraints, and an example when the input is
-not obvious. Registry-backed controls, such as mask parameters, model
-parameters, model configuration, optimizers, and future resolution models,
-should render hover text from the same metadata that defines defaults and
-scriptable validation.
-
-Tests audit the main GUI surfaces for missing tooltips. When adding a new
-control, update the tooltip and the relevant documentation or wiki page in the
-same change.
+Exported scripts reproduce the displayed figure through the public plotting
+API. See [Data and extension conventions](data_philosophy.md) for the developer
+contract covering GUI state, tooltips, and tests.

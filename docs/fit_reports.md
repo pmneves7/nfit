@@ -1,8 +1,9 @@
 # Fit reports
 
-Every stored fit result can be exported as a publication-grade LaTeX or PDF
-report — a complete record of what was fit, comprehensive enough to serve as
-the methods/supplementary section of a peer-reviewed paper.
+Every stored fit result can be exported as a LaTeX or PDF report. The report
+summarizes the saved fit configuration, statistics, model, and conventions; it
+is a starting point for methods documentation, not a substitute for scientific
+review.
 
 ## Exporting
 

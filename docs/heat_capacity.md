@@ -29,8 +29,7 @@ $$
 
 The parameters are the Debye temperature $\Theta_D$ and oscillator count $n$.
 Here $n$ is the number of atoms per formula unit, so the high-temperature limit
-is $3nR$; use $n=7$ for LiV$_2$O$_4$. The model is registered only for
-heat-capacity datasets.
+is $3nR$. The model is registered only for heat-capacity datasets.
 
 **Low-temperature heat capacity** evaluates
 
@@ -54,22 +53,12 @@ $$
 using the analysis parameter **Atoms / formula unit**. Its diagnostic opens as
 `C/T` versus `T^2` with the fitted line and fit-window boundaries.
 
-## Magnetic thermodynamics roadmap
+## Magnetic heat capacity
 
 The present Heisenberg RPA response does not by itself define a unique
-thermodynamic free energy. A simultaneous magnetic heat-capacity fit requires
-an explicit conserving free-energy functional consistent with the closure:
-
-1. evaluate the RPA/SCR/TAC free energy on the same full-zone grid and energy
-   cutoff used by the closure;
-2. include the closure's stationary or double-counting term rather than
-   differentiating fitted temperature-dependent parameters as external inputs;
-3. calculate $S_{mag}=-\partial F/\partial T$ and
-   $C_{mag}=-T\partial^2F/\partial T^2$ with grid and temperature convergence
-   checks;
-4. enforce $S_{mag}(0)=0$ and the appropriate total entropy budget;
-5. expose the checked result to the joint neutron, susceptibility, and
-   heat-capacity evaluator.
-
-Finite measured neutron windows constrain the response but cannot replace the
-full-zone and full-energy thermodynamic integral.
+thermodynamic free energy, so nfit does not currently infer magnetic heat
+capacity from that response. A future implementation needs a conserving
+free-energy functional, the closure's stationary or double-counting term,
+full-zone and full-energy convergence, and the appropriate entropy constraints.
+Finite measured neutron windows cannot replace that thermodynamic integral.
+See [Planned features](planned_features.md).

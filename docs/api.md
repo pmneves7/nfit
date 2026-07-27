@@ -2,11 +2,10 @@
 
 ## Reduced data, import adapters, and viewing
 
-The package centers on reduced experimental coordinates. Importers should read
-axis names, units, masks, intensities, uncertainties, and metadata from their
-source files, then translate them into common containers. Mantid MDHisto NeXus
-support is currently the most developed adapter, but it is not intended to be
-the only supported input.
+nfit importers translate source axes, units, masks, intensities, uncertainties,
+and metadata into common containers. Supported paths include Mantid MDHisto,
+file-backed MDEvent and raw direct-geometry events, powder cuts, MPMS, PPMS,
+and general point tables.
 
 Mantid `SaveMD` / `MDHistoWorkspace` NeXus files can be loaded with
 `load_mantid_mdhisto_nxs`. The returned `MDHistoData` stores axis metadata plus
@@ -52,30 +51,17 @@ The GUI module also provides `read_isaw_ub`, `write_isaw_ub`, and
 are transposed on disk, and orientation construction uses the IPNS frame with
 beam `+x` and vertical `+z`.
 
-Use `slice_viewer(data)` for the PySide6 interactive viewer. The viewer supports
-choosing displayed x/y axes, integrating hidden axes, switching the displayed
-channel (`signal`, `errors`, `num_events`/multiplicity, `combined_mask`,
-`file_mask`, or `nfit_mask`), color-scale controls, cursor readout,
-histogram box cuts, mask toggling, model overlays,
-figure font sizing, dataset switching, clipboard copy, and script export. The
-Qt viewer accepts either one `MDHistoData` object or a sequence of datasets plus
-optional `dataset_names`. Independent displayed-X/Y Gaussian smoothing is
-specified in bin-width units and is visual only; source arrays and fitting data
-are never modified.
+Use `slice_viewer(data)` for the PySide6 interactive viewer. It accepts one
+`MDHistoData` object or a sequence with optional `dataset_names` and supports
+axis selection, hidden-axis integration, channel selection, masks, model
+overlays, smoothing, and script export. Smoothing is visual only and never
+changes source or fitting arrays. See [Data viewer](gui_workflows.md#data-viewer)
+for the complete control reference.
 
-For gridded data with at least three dimensions, the same viewer exposes a
-Volumetric mode backed by PyVista. It supports independent X/Y/Z selection,
-slicing or integrating
-specified ranges on remaining dimensions, viewed-axis limits, equal-data-unit
-or custom visual axis scaling, volume and isosurface rendering, separate color
-and opacity channels, editable color/opacity transfer curves, and mask-aware
-rendering. Independent X/Y/Z Gaussian smoothing applies only to rendering and
-image/movie output; numerical grids and surface-model exports remain
-unsmoothed. It can export volume data (`.vtr`), surface meshes/scenes (`.vtp`,
-`.ply`, `.stl`, or `.gltf`), still PNG images, and a full-orbit MP4 movie around
-displayed X/Y/Z (Z by default) or the camera's current vertical direction.
-PyVista, PyVistaQt, imageio, and the bundled imageio FFmpeg backend are installed
-as nfit application dependencies.
+For data with at least three dimensions, Volumetric mode provides PyVista
+volume and isosurface rendering. It exports `.vtr`, `.vtp`, `.ply`, `.stl`,
+`.gltf`, PNG, and orbit movies. Rendering-time smoothing does not affect
+numerical grids or surface-model exports.
 
 Use `plot_mdhisto_slice(data, ...)` when a non-interactive Matplotlib colormap
 figure is preferred, for example in notebooks or batch scripts. Use
@@ -97,17 +83,14 @@ Saved workspace plots use `PlotEntry`, `render_plot`, and `render_project_plot`.
 They return Matplotlib figures and never construct Qt widgets, so generated plot
 scripts run in batch or headless environments as well as interactive Python.
 
-Fit-comparison views can be attached to `MDHistoData` with
-`attach_fit_comparisons`. Project GUI fit results can also store fit and
-residual channels directly. When the Qt viewer sees compatible stored channels,
-it can render linked data/fit or data/fit/residual panels while preserving the
-current plotting settings.
+Project GUI fit results store fit and residual channels directly. When the Qt
+viewer sees compatible stored channels, it can render linked data/fit or
+data/fit/residual panels while preserving the current plotting settings.
 
 Launch the project explorer with `nfit`. The explorer manages saved
 projects, workspaces, datasets, dataset groups, masks, models, rebinned dataset
 views, and fit timelines. The GUI is documented in
-[GUI workflows](gui_workflows.md); its controls are expected to stay backed by
-scriptable project state rather than hidden widget-only state.
+[GUI workflows](gui_workflows.md).
 
 ## N-dimensional rebinning
 
@@ -243,9 +226,6 @@ posterior checks use `emcee` through `sample_problem_parameters`. See the
    :members:
 
 .. automodule:: nfit.fitting
-   :members:
-
-.. automodule:: nfit.fit_views
    :members:
 
 .. automodule:: nfit.pipeline

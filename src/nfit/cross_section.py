@@ -19,7 +19,7 @@ def magnetic_moment_factor(
     moment_unit: str = "mu_B_squared",
     g_factor: float | None = None,
 ) -> float:
-    """Return the factor converting the declared response to ``mu_B^2``.
+    """Return the numerical factor converting a declared response to moment units.
 
     A susceptibility already expressed for the magnetic moment in
     ``mu_B^2/meV`` carries no additional Landé factor. A spin-operator
@@ -203,9 +203,11 @@ def cross_section_from_chipp(
 ) -> FloatArray:
     """Return absolute magnetic ``d2sigma/dOmega/dE`` in barn/(sr meV).
 
-    ``chipp`` is in ``mu_B^2/meV`` per declared normalization basis.  The
-    returned cross section has the same basis.  ``kf_ki`` is explicit so data
-    normalized to remove the kinematic factor can leave it at one.
+    ``chipp`` is in ``mu_B^2/meV`` when ``moment_unit="mu_B_squared"`` and in
+    ``spin^2/meV`` when ``moment_unit="spin_squared"``. The returned cross
+    section retains the declared per-ion/formula-unit/cell basis. ``kf_ki`` is
+    explicit so data normalized to remove the kinematic factor can leave it at
+    one.
     """
 
     return np.asarray(kf_ki, dtype=float) * intensity_from_chipp(
@@ -231,7 +233,7 @@ def chipp_from_cross_section(
     moment_unit: str = "mu_B_squared",
     g_factor: float | None = None,
 ) -> FloatArray:
-    """Invert :func:`cross_section_from_chipp` to ``mu_B^2/meV``."""
+    """Invert the cross section to the response selected by ``moment_unit``."""
 
     ratio = np.asarray(kf_ki, dtype=float)
     if np.any(~np.isfinite(ratio)) or np.any(ratio <= 0.0):

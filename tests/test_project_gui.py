@@ -52,10 +52,6 @@ from nfit.project_gui import (
     set_dataset_data_type,
 )
 
-DATA_DIR = Path(__file__).resolve().parents[1] / "data"
-MPMS_FILE = DATA_DIR / "MPMS" / "test_MPMS.dat"
-HB2A_FILE = DATA_DIR / "HB2A" / "test_powder_diffraction.dat"
-
 
 def test_project_helpers_name_import_and_round_trip(tmp_path):
     assert nfit.create_data_group is create_data_group
@@ -4274,16 +4270,18 @@ def test_point_data_rebin_applies_enabled_masks_before_binning():
     np.testing.assert_allclose(rebinned.intensity, [100.0])
 
 
-def test_import_dataset_paths_dispatches_by_data_type_and_round_trips(tmp_path):
+def test_import_dataset_paths_dispatches_by_data_type_and_round_trips(
+    tmp_path, mpms_file, hb2a_file
+):
     group = DataGroup("Datagroup1")
 
-    mpms = import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")[0]
+    mpms = import_dataset_paths(group, [mpms_file], data_type="magnetization")[0]
     assert mpms.data_type == "magnetization"
     assert isinstance(mpms.data, PointListData)
     assert mpms.metadata["importer"] == "mpms_dat"
     assert mpms.data.coordinate_names == ["Temperature", "Magnetic Field"]
 
-    powder = import_dataset_paths(group, [HB2A_FILE], data_type="powder_elastic")[0]
+    powder = import_dataset_paths(group, [hb2a_file], data_type="powder_elastic")[0]
     assert isinstance(powder.data, PointListData)
 
     nxs = import_dataset_paths(group, ["/fake/scan.nxs"], data_type="single_crystal_inelastic")[0]
@@ -4425,9 +4423,9 @@ def test_powder_ins_csv_dialog_allows_mixed_observables(monkeypatch, tmp_path):
     assert options[str(chipp)]["cut_type"] == "constant_q"
 
 
-def test_set_dataset_data_type_reloads_and_resets():
+def test_set_dataset_data_type_reloads_and_resets(hb2a_file):
     group = DataGroup("Datagroup1")
-    entry = import_dataset_paths(group, [HB2A_FILE], data_type="powder_elastic")[0]
+    entry = import_dataset_paths(group, [hb2a_file], data_type="powder_elastic")[0]
     assert isinstance(entry.data, PointListData)
 
     # Switch to an MDHisto/nxs type: point data is dropped for lazy reload.
@@ -4441,12 +4439,12 @@ def test_set_dataset_data_type_reloads_and_resets():
     assert entry.data.coordinate_names == ["2theta"]
 
 
-def test_project_explorer_data_type_dropdown_switches_type(monkeypatch):
+def test_project_explorer_data_type_dropdown_switches_type(monkeypatch, hb2a_file):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
     group = DataGroup("Datagroup1")
-    import_dataset_paths(group, [HB2A_FILE], data_type="powder_elastic")
+    import_dataset_paths(group, [hb2a_file], data_type="powder_elastic")
     explorer = NfitProjectExplorer(NfitProject([group]))
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
 
@@ -4728,11 +4726,11 @@ def test_dataset_scale_factor_scales_viewed_data_and_round_trips(monkeypatch, tm
     assert loaded.scale_factor_vary is True
 
 
-def test_point_list_scale_and_susceptibility_transforms():
+def test_point_list_scale_and_susceptibility_transforms(mpms_file):
     from nfit.project_gui import point_list_config, prepared_point_list_data
 
     group = DataGroup("Datagroup1")
-    dataset = import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")[0]
+    dataset = import_dataset_paths(group, [mpms_file], data_type="magnetization")[0]
     raw = dataset.data
     config = point_list_config(dataset)
     config["scale"] = {"factor": 2.0, "channel": "Moment", "units": "emu/mol"}
@@ -4764,18 +4762,18 @@ def test_point_list_scale_and_susceptibility_transforms():
     )
 
 
-def test_mpms_import_seeds_sample_normalization_metadata():
+def test_mpms_import_seeds_sample_normalization_metadata(mpms_file):
     group = DataGroup("Datagroup1")
-    dataset = import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")[0]
+    dataset = import_dataset_paths(group, [mpms_file], data_type="magnetization")[0]
     assert dataset.parameters["sample_mass_mg"] == pytest.approx(9.73)
     assert dataset.parameters["molar_mass_g_mol"] == pytest.approx(172.8)
 
 
-def test_absolute_mpms_susceptibility_is_molar_and_becomes_fit_channel():
+def test_absolute_mpms_susceptibility_is_molar_and_becomes_fit_channel(mpms_file):
     from nfit.project_gui import fit_data_bundle, point_list_config, prepared_point_list_data
 
     group = DataGroup("Datagroup1")
-    dataset = import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")[0]
+    dataset = import_dataset_paths(group, [mpms_file], data_type="magnetization")[0]
     dataset.parameters.update(
         {"absolute_units": True, "sample_mass_mg": 10.0, "molar_mass_g_mol": 200.0}
     )
@@ -4809,11 +4807,11 @@ def test_absolute_mpms_susceptibility_is_molar_and_becomes_fit_channel():
     assert bundle.points.metadata["unit"] == "cm^3/mol"
 
 
-def test_absolute_mpms_susceptibility_can_use_si_units():
+def test_absolute_mpms_susceptibility_can_use_si_units(mpms_file):
     from nfit.project_gui import point_list_config, prepared_point_list_data
 
     group = DataGroup("Datagroup1")
-    dataset = import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")[0]
+    dataset = import_dataset_paths(group, [mpms_file], data_type="magnetization")[0]
     dataset.parameters.update(
         {"absolute_units": True, "sample_mass_mg": 10.0, "molar_mass_g_mol": 200.0}
     )
@@ -4862,12 +4860,12 @@ def test_heat_capacity_transform_and_unit_selector_tooltips(monkeypatch):
     assert atoms_edit is not None and atoms_edit.toolTip()
 
 
-def test_absolute_mpms_moment_can_be_normalized_per_formula_unit():
+def test_absolute_mpms_moment_can_be_normalized_per_formula_unit(mpms_file):
     from nfit.project_gui import fit_data_bundle, point_list_config, prepared_point_list_data
     from nfit.sum_rules import EMU_PER_MOL_PER_MU_B
 
     group = DataGroup("Datagroup1")
-    dataset = import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")[0]
+    dataset = import_dataset_paths(group, [mpms_file], data_type="magnetization")[0]
     dataset.parameters.update(
         {
             "absolute_units": True,
@@ -4890,12 +4888,12 @@ def test_absolute_mpms_moment_can_be_normalized_per_formula_unit():
     assert bundle.points.metadata["unit"] == "mu_B/f.u."
 
 
-def test_magnetization_bundle_maps_temperature_and_field():
+def test_magnetization_bundle_maps_temperature_and_field(mpms_file):
     """An imported MPMS dataset produces per-point T and field fit points."""
     from nfit.project_gui import fit_data_bundle
 
     group = DataGroup("Datagroup1")
-    dataset = import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")[0]
+    dataset = import_dataset_paths(group, [mpms_file], data_type="magnetization")[0]
     bundle = fit_data_bundle(group, dataset)
     assert bundle is not None
     points = bundle.points
@@ -4908,12 +4906,12 @@ def test_magnetization_bundle_maps_temperature_and_field():
     assert points.magnetic_field is not None and points.magnetic_field.ndim == 2
 
 
-def test_magnetization_absolute_units_box(monkeypatch):
+def test_magnetization_absolute_units_box(monkeypatch, mpms_file):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
     group = DataGroup("Datagroup1")
-    dataset = import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")[0]
+    dataset = import_dataset_paths(group, [mpms_file], data_type="magnetization")[0]
     explorer = NfitProjectExplorer(NfitProject([group]))
     # Select the dataset to build its details pane.
     dataset_item = explorer.tree.topLevelItem(0).child(0).child(0)
@@ -4952,19 +4950,19 @@ def test_magnetization_absolute_units_box(monkeypatch):
     assert dataset.parameters["magnetization_output_unit"] == "mu_B/f.u."
 
 
-def test_sample_environment_panel_is_hidden_for_magnetization(monkeypatch):
+def test_sample_environment_panel_is_hidden_for_magnetization(monkeypatch, mpms_file):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
     group = DataGroup("Datagroup1")
-    import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")
+    import_dataset_paths(group, [mpms_file], data_type="magnetization")
     explorer = NfitProjectExplorer(NfitProject([group]))
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
     titles = [box.title() for box in explorer.details_widget.findChildren(QtWidgets.QGroupBox)]
     assert "Conditions" not in titles
 
 
-def test_powder_wavelength_to_q_and_point_rebin():
+def test_powder_wavelength_to_q_and_point_rebin(hb2a_file):
     from nfit.project_gui import (
         dataset_for_slice_viewer,
         dataset_rebin_config,
@@ -4973,7 +4971,7 @@ def test_powder_wavelength_to_q_and_point_rebin():
     )
 
     group = DataGroup("Datagroup1")
-    dataset = import_dataset_paths(group, [HB2A_FILE], data_type="powder_elastic")[0]
+    dataset = import_dataset_paths(group, [hb2a_file], data_type="powder_elastic")[0]
     config = point_list_config(dataset)
     config["wavelength"] = {"value": 2.41, "two_theta": "2theta"}
 
@@ -4994,6 +4992,7 @@ def test_powder_wavelength_to_q_and_point_rebin():
     rebin = dataset_rebin_config(dataset)
     assert rebin["axes"][0]["name"] == "q"
     rebin["enabled"] = True
+    rebin["resolution_mode"] = "bins"
     rebin["axes"][0]["num_bins"] = 100
     viewed = dataset_for_slice_viewer(dataset)
     assert isinstance(viewed, PointListData)
@@ -5001,13 +5000,13 @@ def test_powder_wavelength_to_q_and_point_rebin():
     assert "q" in viewed.coordinate_names
 
 
-def test_point_list_variables_panel_edits_config(monkeypatch):
+def test_point_list_variables_panel_edits_config(monkeypatch, mpms_file):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
     from nfit.project_gui import point_list_config, prepared_point_list_data
 
     group = DataGroup("Datagroup1")
-    import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")
+    import_dataset_paths(group, [mpms_file], data_type="magnetization")
     explorer = NfitProjectExplorer(NfitProject([group]))
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
     dataset = group.datasets[0]
@@ -5029,7 +5028,7 @@ def test_point_list_variables_panel_edits_config(monkeypatch):
     assert "Susceptibility" in prepared_point_list_data(dataset).channel_labels
 
 
-def test_point_list_dataset_opens_in_data_viewer_as_1d(monkeypatch):
+def test_point_list_dataset_opens_in_data_viewer_as_1d(monkeypatch, mpms_file):
     from types import SimpleNamespace
 
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
@@ -5037,7 +5036,7 @@ def test_point_list_dataset_opens_in_data_viewer_as_1d(monkeypatch):
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     group = DataGroup("Datagroup1")
-    import_dataset_paths(group, [MPMS_FILE], data_type="magnetization")
+    import_dataset_paths(group, [mpms_file], data_type="magnetization")
     datasets, names = project_gui.slice_viewer_datasets(group)
     assert isinstance(datasets[0], PointListData)
 

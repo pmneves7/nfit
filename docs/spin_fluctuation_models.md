@@ -97,29 +97,28 @@ The phenomenological susceptibility of a nearly antiferromagnetic metal
 [Millis, Monien & Pines 1990; Monthoux & Pines 1993]:
 
 $$
-\chi(\mathbf{q}, \omega) =
+\chi(\mathbf{q}, E) =
 \frac{\chi_{\mathrm{pk}}}{1 + \xi^2 |\mathbf{q} - \mathbf{Q}_0|^2
-- i \omega/\omega_{\mathrm{sf}}},
+- i E/E_{\mathrm{sf}}},
 $$
 
 $$
 \chi''(\mathbf{q}, E) = \chi_{\mathrm{pk}}\,
-\frac{E/\omega_{\mathrm{sf}}}
+\frac{E/E_{\mathrm{sf}}}
 {\left(1 + \xi^2 |\mathbf{q} - \mathbf{Q}_0|^2\right)^2
-+ (E/\omega_{\mathrm{sf}})^2},
++ (E/E_{\mathrm{sf}})^2},
 $$
 
 with correlation length $\xi$ in Å, $|\mathbf{q} - \mathbf{Q}_0|$ in
 Å$^{-1}$ (computed from HKL through the lattice matrix), and
-spin-fluctuation energy $\omega_{\mathrm{sf}}$ in meV. At $\mathbf{Q}_0$ the
-lineshape is relaxational with $\Gamma = \omega_{\mathrm{sf}}$; away from
-$\mathbf{Q}_0$ the response broadens and weakens. This form describes, e.g.,
-the normal-state response of optimally doped BaFe$_{1.85}$Co$_{0.15}$As$_2$
-[Inosov et al. 2010].
+spin-fluctuation energy $E_{\mathrm{sf}}$ in meV. The API retains the
+parameter name `omega_sf`, but its value is the energy
+$E_{\mathrm{sf}}=\hbar\omega_{\mathrm{sf}}$, not an angular frequency. At
+$\mathbf{Q}_0$ the relaxation energy is $\Gamma=E_{\mathrm{sf}}$.
 
 ## Model 3: Heisenberg RPA (`heisenberg_rpa`)
 
-The centerpiece model couples local relaxational spins through real-space
+This model couples local relaxational spins through real-space
 Heisenberg exchange in the random phase approximation.
 
 Terms and symbols used below:
@@ -135,7 +134,7 @@ Terms and symbols used below:
 - $N$ is the number of magnetic sites in the crystallographic cell used for the
   model; $a$ and $b$ label those sites, and $\mathbf{r}_a$ is the fractional
   position of site $a$ in that cell.
-- $\chi_0(\omega)$ is the complex single-site dynamic susceptibility.
+- $\chi_0(E)$ is the complex single-site dynamic susceptibility.
   $\chi_0$ without the argument is its static amplitude in meV$^{-1}$, and
   $\Gamma_0$ is the bare local relaxation energy in meV.
 - $J(\mathbf{Q})$ is the $N \times N$ exchange matrix obtained by Fourier
@@ -156,14 +155,14 @@ Terms and symbols used below:
 The single-site dynamic susceptibility is
 
 $$
-\chi_0(\omega) = \frac{\chi_0}{1 - i\omega/\Gamma_0},
+\chi_0(E) = \frac{\chi_0}{1 - iE/\Gamma_0},
 $$
 
 and the RPA sums the exchange to all orders:
 
 $$
-\chi(\mathbf{Q}, \omega) =
-\left[\mathbb{1} - \chi_0(\omega)\, J(\mathbf{Q})\right]^{-1} \chi_0(\omega).
+\chi(\mathbf{Q}, E) =
+\left[\mathbb{1} - \chi_0(E)\, J(\mathbf{Q})\right]^{-1} \chi_0(E).
 $$
 
 ### Exchange Fourier transform and phase convention
@@ -417,16 +416,16 @@ through the inverse RPA denominator matrix rather than through explicit
 eigenmodes:
 
 $$
-\chi(\mathbf{Q}, \omega) = \frac{\chi_0(\omega)}{N}\,
-\boldsymbol{\phi}^\dagger \big[\mathbf{1} - \chi_0(\omega) J(\mathbf{Q})\big]^{-1}
+\chi(\mathbf{Q}, E) = \frac{\chi_0(E)}{N}\,
+\boldsymbol{\phi}^\dagger \big[\mathbf{1} - \chi_0(E) J(\mathbf{Q})\big]^{-1}
 \boldsymbol{\phi},
-\qquad \chi_0(\omega) = \frac{\chi_0}{1 - i\omega/\Gamma_0},
+\qquad \chi_0(E) = \frac{\chi_0}{1 - iE/\Gamma_0}.
 $$
 
 Here $\boldsymbol{\phi}$ is the uniform sublattice vector (one equal entry for
 each magnetic site), $\operatorname{Im}$ means imaginary part, and
 $\chi'' = \operatorname{Im}\chi$. Writing
-$A = \mathbf{1} - \chi_0(\omega)J$, where $A$ is the RPA denominator matrix,
+$A = \mathbf{1} - \chi_0(E)J$, where $A$ is the RPA denominator matrix,
 $x = A^{-1}\boldsymbol{\phi}$, and
 $z = A^{-\dagger}\boldsymbol{\phi}$, where $-\dagger$ means inverse Hermitian
 conjugate, every parameter derivative is a closed-form sandwich that reuses the
@@ -436,7 +435,7 @@ pyrochlore has generically:
 
 $$
 \frac{\partial \chi}{\partial J_o} =
-\frac{\chi_0(\omega)^2}{N}\, z^\dagger P_o(\mathbf{Q})\, x,
+\frac{\chi_0(E)^2}{N}\, z^\dagger P_o(\mathbf{Q})\, x,
 \qquad P_o = \frac{\partial J}{\partial J_o},
 $$
 
@@ -444,7 +443,7 @@ Here $J_o$ is the fitted exchange value for orbit $o$, and $P_o(\mathbf{Q})$ is
 that orbit's precomputed structure matrix, i.e. the part of $J(\mathbf{Q})$
 multiplied by $J_o$. The derivatives
 $\partial\chi/\partial\chi_0$ and $\partial\chi/\partial\Gamma_0$ follow from
-the chain rule through $\chi_0(\omega)$ and $A$. Because every tensor extension
+the chain rule through $\chi_0(E)$ and $A$. Because every tensor extension
 of the model (single-ion anisotropy, anisotropic/tensor exchange,
 dipole–dipole, Zeeman coupling to a field; see
 [Tensor (anisotropic) interactions](#tensor-anisotropic-interactions)) enters
@@ -464,7 +463,7 @@ silently.
 
 | Quantity | Unit |
 | --- | --- |
-| $E$, $\Gamma_0$, $\omega_{\mathrm{sf}}$, $J_i$ | meV |
+| $E$, $\Gamma_0$, $E_{\mathrm{sf}}$ (`omega_sf`), $J_i$ | meV |
 | $\chi_0$, $\chi_{\mathrm{loc}}$, $\chi_{\mathrm{pk}}$ | meV$^{-1}$ (up to the intensity normalization) |
 | $\xi$ | Å |
 | $H, K, L$ | r.l.u. |
@@ -482,7 +481,7 @@ $$
 \mathbb{J}(\mathbf{Q})_{(a\alpha),(b\beta)} = \sum_p \theta_p\,
 P_p(\mathbf{Q})_{(a\alpha),(b\beta)},
 \qquad
-\chi(\mathbf{Q},\omega) = \bigl[\mathbb 1 - \chi_0(\omega)\,\mathbb{J}(\mathbf{Q})\bigr]^{-1}\chi_0(\omega).
+\chi(\mathbf{Q},E) = \bigl[\mathbb 1 - \chi_0(E)\,\mathbb{J}(\mathbf{Q})\bigr]^{-1}\chi_0(E).
 $$
 
 Each contribution is a fitted coefficient $\theta_p$ times a precomputed
@@ -512,7 +511,7 @@ structure matrix. When no tensor section is configured the evaluator runs the
   default of $D_{\mathrm{dip}}$ is the physical $(\mu_0/4\pi)(g\mu_B)^2$ in
   meV·Å³; pin it (vary off) to keep the physical value or fit it. The tensor is
   cached densely per dataset geometry.
-- **Zeeman (applied field)** — see below; makes $\chi_0(\omega)$ a per-site
+- **Zeeman (applied field)** — see below; makes $\chi_0(E)$ a per-site
   gyrotropic $3\times3$ tensor in the field frame.
 
 **Intensity and polarization.** The evaluator forms the dissipative tensor
@@ -528,21 +527,28 @@ so enabling an $\varepsilon$-small anisotropy produces no intensity jump
 conventions.
 
 **Two evaluation tiers.** With $B=0$ the local propagator is scalar and
-$\chi(\mathbf{Q},\omega)$ follows from one Hermitian eigendecomposition of the
+$\chi(\mathbf{Q},E)$ follows from one Hermitian eigendecomposition of the
 $3N\times3N$ $\mathbb{J}(\mathbf{Q})$ per unique $\mathbf{Q}$ (Tier A, covers
-exchange + SIA + dipole). With the Zeeman term on, $X_0(\omega)$ is gyrotropic
+exchange + SIA + dipole). With the Zeeman term on, $X_0(E)$ is gyrotropic
 and no longer commutes with $\mathbb{J}$'s eigenbasis, so each fitted point takes
-a batched LU solve of $\mathbb 1 - X_0(\omega)\mathbb{J}(\mathbf{Q})$ (Tier B).
+a batched LU solve of $\mathbb 1 - X_0(E)\mathbb{J}(\mathbf{Q})$ (Tier B).
 Tier B at $B\to0$ reduces to Tier A to machine precision (tested).
 
-**Zeeman propagator.** In the field frame $\hat z = \hat B$ (uniform field), the
-per-site local response is longitudinal $\chi_\parallel/(1 - i\omega/\Gamma_\parallel)$
-along $\hat z$ and transverse circular $\chi_\perp/(1 - i(\omega \mp \omega_L)/\Gamma_\perp)$
-in the plane, with Larmor frequency $\omega_L = g\,\mu_B\,B$ and
-$\mu_B = 0.05788\,\text{meV/T}$. Fitted parameters are `g_factor` (default 2),
-`chi_perp_ratio`, and `gamma_perp_ratio` (both default 1). The term needs a
-valid per-dataset field (`Dataset details → Conditions`, or
-`dataset.parameters["magnetic_field"]`); a missing field raises a clear error.
+**Zeeman propagator.** In the field frame $\hat z=\hat B$, the per-site
+longitudinal response is
+$\chi_\parallel/[1-iE/\Gamma_\parallel]$. The transverse circular responses are
+$\chi_\perp/[1-i(E\mp E_L)/\Gamma_\perp]$, where
+
+$$
+E_L=\hbar\omega_L=g\mu_BB.
+$$
+
+The Landé factor $g$ is dimensionless and
+$\mu_B=0.05788\,\mathrm{meV/T}$, so $E_L$ is in meV. Internal variables named
+`omega_larmor` store this energy, not an angular frequency. Fitted parameters
+are `g_factor` (default 2), `chi_perp_ratio`, and `gamma_perp_ratio` (both
+default 1). The term requires a per-dataset field in `Dataset details →
+Conditions` or `dataset.parameters["magnetic_field"]`.
 
 **Primitive-cell reduction.** Pure lattice translations do not rotate spins, so
 bond-resolved anisotropic exchange and on-site SIA fold onto the primitive cell
@@ -614,22 +620,33 @@ kernel for Onsager, SCR, and TAC.
 ### Bulk susceptibility and MPMS co-fit
 
 The model predicts the uniform static susceptibility
-$\chi(\mathbf{Q}=0,\omega=0)$ (Kramers–Kronig of the modes, with the active
-closure), and hence the bulk moment $M(T,B)=\text{scale}\cdot g^2\,
-\chi_{\text{uniform}}(T,B)\cdot B$ — nonlinear in $B$ when a field-aware
-closure is active. MPMS `magnetization` datasets (moment vs $T$ and/or field,
+$\chi(\mathbf{Q}=0,E=0)$, including the active closure. Its numerical
+magnetization path is
+
+$$
+M_{\rm model}(T,B)=s\,g^2\chi_{\rm uniform}(T,B)B,
+$$
+
+where $s$ is the dataset scale. This is a model-unit relation:
+$\chi_{\rm uniform}$ is in meV$^{-1}$ per magnetic site and $B$ is stored in
+tesla. In absolute mode nfit replaces the conversion part of $s$ with the
+meV-to-CGS and sample-amount factors below. The response can be nonlinear in
+$B$ when a field-aware closure is active. MPMS `magnetization` datasets
+(moment vs $T$ and/or field,
 imported through `import_mpms_dat`) are fit **jointly** with inelastic data in
 one problem, sharing $J$/`chi0`/`gamma0`; the momentum coordinates are zero and
 the temperature/field are the per-point axes.
 
-Units: the model $\chi$ is in 1/meV per magnetic site; the CGS molar
+The model $\chi$ is in 1/meV per magnetic site. The CGS molar
 susceptibility is $\chi_{\text{mol}} = C\,g^2\,\chi_{\text{model}}$ per site,
 $C=N_A\mu_{B,\text{cgs}}^2/(\text{meV in erg})\approx0.0323$ emu·meV/mol
 (`nfit.sum_rules.EMU_PER_MOL_PER_MODEL_CHI`). By default a free per-dataset
 `scale` absorbs the constant and the sample amount. In **absolute mode**
 (dataset panel: sample mass + molar mass) the emu/mol conversion is pinned and
-the fit runs in absolute emu. Selecting **Plot and fit susceptibility** instead
-predicts $\chi_{\text{mol}}$ directly, without multiplying by field. The data
+the fit runs in absolute emu. For $B$ supplied in tesla, nfit uses
+$H_{\rm Oe}=10^4B_{\rm T}$ before applying $M_{\rm mol}=\chi_{\rm mol}H$.
+Selecting **Plot and fit susceptibility** instead predicts
+$\chi_{\text{mol}}$ directly, without multiplying by field. The data
 panel offers `cm^3/mol` and SI `m^3/mol`; their conversion includes
 $4\pi\times10^{-6}$. MPMS header mass and molecular weight seed the sample
 normalization automatically when present.

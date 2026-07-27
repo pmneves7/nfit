@@ -13,12 +13,9 @@ memory but are substantially slower, so automatic selection requires estimated
 occupancy of 5% or less. If neither threaded strategy meets its memory policy,
 the fused serial kernel is used.
 
-On the July 2026 reference workstation, a five-million-point fractional 4D
-benchmark (`24^4` output bins) accumulated at 6.83, 9.97, 11.33, and 13.36
-million points/s with 1, 2, 4, and 8 dense workers respectively. A 50-million
-point adaptive run selected 16 dense workers and completed in 4.70 seconds at
-about 3.33 GB peak RSS. These measurements depend on the workload and machine;
-use `benchmarks/benchmark_rebin.py` for local sizing.
+Use `benchmarks/benchmark_rebin.py` to measure throughput and memory on the
+target machine; results depend strongly on grid shape, occupancy, and worker
+count.
 
 `rebin_nd_stream` supports sources larger than RAM through repeatable batches,
 including memory maps and custom HDF5, NeXus, or Zarr providers. Coordinate
@@ -55,7 +52,7 @@ by the requested output grid.
 
 ## Heisenberg RPA
 
-Fitting `heisenberg_rpa` (and future coupled models) evaluates a batched
+Fitting `heisenberg_rpa` evaluates a batched
 Hermitian eigendecomposition of $J(\mathbf{Q})$ at every fitted point, so the
 cost scales with the number of valid points and the cube of the number of
 magnetic sublattices. The package applies several exact optimizations
@@ -92,12 +89,9 @@ automatically — none of them changes the fit result or requires configuration.
 - **Fused small-matrix eigensolver.** For datasets with little
   energy-per-$\mathbf{Q}$ deduplication (2D maps), the cost is dominated by
   decomposing many tiny $J(\mathbf{Q})$ matrices, where LAPACK's per-call
-  overhead is the bottleneck. A fused numba Jacobi eigensolver decomposes the
-  whole batch in one parallel kernel — ~7× faster than batched LAPACK for
-  $4\times4$ matrices, and it scales across all cores. It is used for small
-  sublattice counts ($N \le 16$) and large batches; larger matrices use LAPACK.
-  Combined with the shared decomposition, this took a 393k-point 2D-map
-  iteration from ~1.3 s to ~0.26 s.
+  overhead is the bottleneck. A fused Numba Jacobi eigensolver decomposes the
+  batch in one parallel kernel. It is used for small sublattice counts
+  ($N \le 16$) and large batches; larger matrices use LAPACK.
 - **Work-gated threaded eigendecomposition.** When the LAPACK path is used, the
   batched `eigh` is chunked across a thread pool only when the total work
   $M N^3$ is large enough to amortize the dispatch (roughly $N \ge 8$), with the
@@ -141,11 +135,6 @@ background during an interactive session. This keeps Qt responsive; it does not 
 speedup from parallel disk reads or unbounded rebin workers. The numerical
 rebinner retains its own memory-bounded threading policy.
 
-Together these took the reference pyrochlore project (162k fitted points) from
-~1.8 s per model evaluation with per-iteration finite differences to well under
-0.3 s per evaluation with exact gradients — roughly an order of magnitude on
-end-to-end fit time.
-
 ## Compute backends (large datasets)
 
 The per-point resolvent contractions — the dominant cost once the problem has
@@ -165,10 +154,6 @@ problems, and `cupy` for the largest when a GPU is present. `numpy` /
 requested one is unavailable); `nfit.available_rpa_backends()` reports what
 is installed. All backends produce identical results (locked to the numpy path
 to floating-point precision by the test suite).
-
-On the reference 4D pyrochlore fit (4.5M valid points, 156k unique Q), the numba
-backend cut a least-squares iteration from ~2.8 s (numpy) to ~0.8 s, with the
-gradient itself dropping ~4×.
 
 ## Threads and many-core / cluster nodes
 
@@ -234,17 +219,15 @@ no configuration:
   for the small dense decompositions here. On other platforms OpenBLAS or MKL
   are the usual defaults.
 - The batched eigendecomposition and per-point contractions are isolated behind
-  a small set of seams (`nfit.spin_fluctuations._rpa_modes`,
-  `_rpa_numba`, `_rpa_cupy`). The GPU backend currently accelerates the
-  per-point contractions; keeping the eigendecomposition on the GPU
-  (`cupy.linalg.eigh`) to avoid the host↔device transfer is a natural next step.
+  `nfit.spin_fluctuations._rpa_modes`, `_rpa_numba`, and `_rpa_cupy`. The GPU
+  backend currently accelerates per-point contractions.
 
-## Deferred
+## Current limitations
 
-An analytic Jacobian for the tensor path (the resolvent sandwich generalizes,
-but tensor mode currently falls back to finite differences), a fully on-GPU
-pipeline (GPU eigendecomposition and the Tier-B batched solve), and
-tensor-carrying primitive-cell reduction *with* dipoles (needs the primitive
-lattice vectors for the Ewald sum) are left for when they are needed. The
-backend seams keep the hot path swappable so those can be added without
-disturbing the physics or the portable numpy default.
+- Tensor mode uses finite-difference gradients.
+- GPU execution does not yet include eigendecomposition or the Tier-B solve.
+- Dipolar tensor mode cannot use primitive-cell reduction because the Ewald sum
+  requires primitive lattice vectors.
+
+Broader user-facing directions are listed in
+[Planned features](planned_features.md).

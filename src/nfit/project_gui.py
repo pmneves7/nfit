@@ -677,7 +677,7 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
             },
             "oscillator_count": {
                 "default": 1.0,
-                "description": "Number of Debye atoms per formula unit (7 for LiV2O4).",
+                "description": "Number of atoms represented per formula unit.",
                 "allowed": "Positive finite dimensionless number.",
                 "type": "float",
                 "example": "7.0",
@@ -15893,7 +15893,7 @@ class NfitProjectExplorer:
         atoms_label = QtWidgets.QLabel("Atoms / formula unit")
         atoms_tooltip = (
             "Required only for PPMS gram-atom units and used in Debye beta conversions; "
-            "LiV2O4 has 7 atoms per formula unit."
+            "enter the number of atoms represented by one formula unit."
         )
         atoms_label.setToolTip(atoms_tooltip)
         atoms_edit = QtWidgets.QLineEdit(

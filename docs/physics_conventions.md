@@ -8,6 +8,59 @@ means neutron energy loss. Momentum is in reciprocal-lattice units or
 steradian and per meV. Model kernels produce the dissipative response
 $\chi''(\mathbf Q,E)$ before instrumental factors.
 
+### Definition of the dynamic spin correlation function
+
+nfit follows the Fourier-transform convention in Squires, chapter 7,
+Eq. 7.73. For equivalent magnetic ions at equilibrium positions
+$\mathbf R_l$, let $\mathbf S=\hat{\mathbf J}/\hbar$ denote the dimensionless
+spin operator. The dynamic spin correlation function **per magnetic ion** is
+
+$$
+S^{\alpha\beta}_s(\mathbf Q,E)
+=
+\frac{1}{2\pi\hbar}
+\sum_l \exp(i\mathbf Q\mathbin{\cdot}\mathbf R_l)
+\int_{-\infty}^{\infty} dt\,
+\exp(-iEt/\hbar)
+\left\langle
+S^\alpha_0(0)S^\beta_l(t)
+\right\rangle .
+$$
+
+Thus $S^{\alpha\beta}_s$ has physical dimensions of inverse energy and is
+labelled `spin^2/meV` when $E$ is in meV. Here `spin^2` records the operator
+normalization; it is not an additional SI dimension.
+The phase signs, operator order, and the factor $1/(2\pi\hbar)$ are all part
+of the convention. The phase $\mathbf Q\cdot\mathbf R_l$ is dimensionless:
+$\mathbf Q$ and $\mathbf R_l$ in this equation are physical inverse-length
+and length vectors. For a crystal basis, the sum is generalized to both site
+indices and normalized by the number of reference magnetic ions; nfit's
+multi-sublattice mode weights use that same per-site normalization.
+
+Squires Eq. 7.73 also includes the positional factor
+$\langle e^{-i\mathbf Q\cdot\mathbf u_0(0)}
+e^{i\mathbf Q\cdot\mathbf u_l(t)}\rangle$. nfit's spin-fluctuation kernels
+use the rigid-lattice magnetic response, so this factor is one. A
+Debye--Waller or magnetovibrational correction, when needed, must therefore
+be included explicitly in the dataset reduction or model rather than being
+hidden inside $S_s^{\alpha\beta}$.
+
+With this per-ion definition, the magnetic cross section is
+
+$$
+\frac{d^2\sigma}{d\Omega\,dE} =
+\frac{k_f}{k_i}(\gamma r_0)^2
+\left(\frac{g}{2}\right)^2 |f(Q)|^2
+\sum_{\alpha\beta}
+(\delta_{\alpha\beta}-\hat Q_\alpha\hat Q_\beta)
+S_s^{\alpha\beta}(\mathbf Q,E).
+$$
+
+For a sample of $N$ equivalent magnetic ions, Squires writes the total
+cross section with an additional factor $N$ outside the per-ion correlation
+function. nfit instead carries the selected per-magnetic-ion, per-formula-unit,
+or per-unit-cell normalization as dataset metadata.
+
 The scalar spin-fluctuation kernels return a **single Cartesian component** of
 the spin-operator susceptibility,
 $\chi''_s=\chi''_{s,xx}=\chi''_{s,yy}=\chi''_{s,zz}$, in
@@ -20,11 +73,14 @@ $$
 \left(\frac{g}{2}\right)^2 |f(Q)|^2
 \sum_{\alpha\beta}
 (\delta_{\alpha\beta}-\hat Q_\alpha\hat Q_\beta)
-\frac{\chi''_{\alpha\beta}(\mathbf Q,E)}
+\frac{\chi''_{s,\alpha\beta}(\mathbf Q,E)}
 {1-\exp[-E/(k_B T)]},
 $$
 
-where $\chi''_{\alpha\beta}$ is the dimensionless-spin response per unit energy.
+where $\chi''_{s,\alpha\beta}$ is the dimensionless-spin response per unit
+energy. The kinematic ratio, form factor, projector, $g$, and Bose denominator
+are dimensionless, so the area coefficient times $\chi''_s$ gives cross
+section per energy, as required.
 Since
 
 $$
@@ -34,15 +90,26 @@ $$
 \left(\frac{\gamma r_0}{2}\right)^2=0.07265\ {\rm barn},
 $$
 
-the code uses the numerically equivalent $0.07265\,g^2$ barn form. If the
-susceptibility is already expressed as a magnetic-moment response
-$\chi''_\mu=g^2\chi''_s$ in `mu_B^2/meV`, no additional $g^2$ is applied.
+the spin-response form uses the area coefficient
+$0.07265\,g^2\ {\rm barn}$. Equivalently, when a *physical* moment response
+is used,
+
+$$
+C_\mu
+=\frac{(\gamma r_0/2)^2}{\mu_B^2}
+=0.07265\ \frac{{\rm barn}}{\mu_B^2},
+$$
+
+so $C_\mu\chi''_{\rm moment}$ has units barn per energy. These are the same
+physical normalization written in two unit conventions. The code multiplies
+numerical values in `spin^2/meV` by $g^2$; values already expressed in
+`mu_B^2/meV` receive no additional $g^2$.
 
 This is a susceptibility **per unit energy** convention. The fluctuation-
 dissipation theorem is
 
 $$
-S^{\alpha\beta}(\mathbf Q,E)=
+S_s^{\alpha\beta}(\mathbf Q,E)=
 \frac{1}{\pi}\,
 \frac{\chi''_{s,\alpha\beta}(\mathbf Q,E)}
 {1-\exp[-E/(k_BT)]}.
@@ -56,7 +123,7 @@ general double-differential and magnetic correlation-function formalism,
 Squires for the magnetic cross section and linear-response convention, and
 Welch *et al.* for an explicit absolute-unit derivation
 ([Berk 1993](https://doi.org/10.6028/jres.098.002);
-[Squires, chapter 8](https://doi.org/10.1017/CBO9781139107808.009);
+[Squires, chapter 7](https://doi.org/10.1017/CBO9781139107808.008);
 [Welch *et al.* 2022](https://doi.org/10.1103/PhysRevB.105.094402)).
 
 ### Polarization convention
@@ -81,15 +148,52 @@ scalar $P$ is not generally physical.
 
 ### Magnetic moment, spin, and the Landé factor
 
+The Landé factor $g$ is **dimensionless**. It is not measured in Bohr
+magnetons. The magnetic moment operator is
+$\boldsymbol\mu=-g\mu_B\mathbf S$, so $g\mu_B$ carries moment units while
+$g$ alone does not. The dimensionally complete conversion from the spin
+response to the physical magnetic-moment response is
+
+$$
+\chi''_{\rm moment}(\mathbf Q,E)
+=(g\mu_B)^2\chi''_s(\mathbf Q,E).
+$$
+
+Here `spin^2/meV` records the operator convention; because $\mathbf S$ is
+defined as $\hat{\mathbf J}/\hbar$, `spin^2` is dimensionless. Define the
+unit-normalized moment response
+
+$$
+\bar\chi''_\mu
+\equiv \frac{\chi''_{\rm moment}}{\mu_B^2}.
+$$
+
+It has dimensions of inverse energy, and its numerical ordinate is what nfit
+labels in `mu_B^2/meV`. The physical and unit-normalized conversions are
+therefore
+
+$$
+\chi''_{\rm moment}
+=\mu_B^2\bar\chi''_\mu
+=(g\mu_B)^2\chi''_s,
+\qquad
+\bar\chi''_\mu=g^2\chi''_s.
+$$
+
+The last equality is dimensionally valid because both sides have dimensions
+of inverse energy; it is also the $g^2$ conversion between numerical ordinates
+in the two declared unit conventions. The nfit parameter `g_factor` remains
+unitless. This explains the factor $(g/2)^2$ in Squires Eq. 7.73: together
+with the magnetic scattering constant, it converts the dimensionless-spin
+response to a magnetic-moment response.
+
 If imported $\chi''$ is expressed in `mu_B^2/meV`, it is a
 **magnetic-moment** susceptibility and already contains the moment conversion.
 nfit therefore applies no additional $g^2$ when converting that imported
 channel. If the imported response is instead declared in `spin^2/meV`, nfit
-multiplies it by $g^2$ exactly once when calculating the cross section:
-
-$$
-\chi''_{\mu_B^2}=g^2\chi''_{\rm spin^2}.
-$$
+multiplies its numerical values by $g^2$ exactly once and changes the declared
+unit to `mu_B^2/meV` when calculating the cross section. This is the numerical
+unit conversion defined above; physically, the factor is $(g\mu_B)^2$.
 
 The model kernels themselves are spin responses. When a dataset requests a
 model curve in `mu_B^2/meV`, nfit multiplies the model by the dataset's Landé
@@ -101,21 +205,73 @@ from 2.
 
 The microscopic spin susceptibility above responds to the conjugate Zeeman
 energy. Rationalized SI bulk susceptibility instead uses $M=\chi_{\rm SI}H$.
-For a response per magnetic ion,
+The zero-frequency Kramers--Kronig relation for the component parallel to the
+applied field is
 
 $$
-\chi_{\rm SI,ion}(\mathbf Q,E)
-=\frac{\mu_0(g\mu_B)^2}{1\ {\rm meV\ in\ joules}}\,
-\chi_s(\mathbf Q,E),
+\chi'_{s,ii}(\mathbf Q,0)
+=\frac{2}{\pi}\int_0^\infty
+\frac{\chi''_{s,ii}(\mathbf Q,E)}{E}\,dE .
 $$
 
-and a molar value additionally carries Avogadro's number and the chosen number
-of magnetic ions per formula unit. Equivalently,
+Here $E$, $dE$, and the inverse-energy unit of $\chi''_s$ must be expressed
+consistently. Both sides have dimensions of inverse energy.
+
+Bulk susceptibility is the uniform response, so it requires
+$\mathbf Q=0$. If $\chi'_s$ is expressed in J$^{-1}$ per magnetic ion, then
+for a number density $n_{\rm mag}$ in m$^{-3}$ of equivalent magnetic ions,
+
+$$
+\frac{M_i}{H_i}
+=\chi_{{\rm SI},ii}
+=\mu_0 n_{\rm mag}(g\mu_B)^2
+\chi'_{s,ii}(\mathbf 0,0).
+$$
+
+The right-hand side is dimensionless, as required for the SI volume
+susceptibility $M/H$. The factor $\mu_0$ enters because the microscopic
+Zeeman perturbation couples to $B$, with $B\simeq\mu_0H$ in the linear,
+weak-susceptibility limit. For a molar susceptibility normalized per mole of
+formula units,
+
+$$
+\chi_{{\rm mol},ii}
+=\mu_0N_A n_{\rm ion/f.u.}(g\mu_B)^2
+\chi'_{s,ii}(\mathbf 0,0),
+$$
+
+where $n_{\rm ion/f.u.}$ is the number of equivalent magnetic ions per formula
+unit and $\chi'_s$ is again in J$^{-1}$. This equation has units m$^3$/mol.
+A susceptibility quoted per mole of magnetic ions omits
+$n_{\rm ion/f.u.}$. The corresponding susceptibility volume per ion is
 
 $$
 \chi_{\rm SI,ion}
-=\frac{\mu_0\mu_B^2}{1\ {\rm meV\ in\ joules}}\,\chi_\mu .
+=\mu_0(g\mu_B)^2\chi'_s(\mathbf 0,0)
+=\mu_0\mu_B^2\bar\chi'_\mu(\mathbf 0,0),
 $$
+
+which has units m$^3$ per magnetic ion, not a dimensionless bulk
+susceptibility.
+
+nfit stores energies in meV. Let
+$\varepsilon_{\rm meV}=1.602176634\times10^{-22}\ {\rm J}$ be the energy of
+1 meV, and let $\widetilde\chi'_s$ and
+$\widetilde{\bar\chi}'_\mu$ denote the dimensionless numerical values quoted
+in `1/meV` and `mu_B^2/meV`, respectively. The implemented SI conversion is
+then
+
+$$
+\chi_{{\rm SI},ii}
+=\frac{\mu_0n_{\rm mag}(g\mu_B)^2}{\varepsilon_{\rm meV}}\,
+\widetilde\chi'_{s,ii}
+=\frac{\mu_0n_{\rm mag}\mu_B^2}{\varepsilon_{\rm meV}}\,
+\widetilde{\bar\chi}'_{\mu,ii}.
+$$
+
+The explicit division by $\varepsilon_{\rm meV}$ belongs only in this
+unit-stripped numerical-value equation. It must not be combined with a
+susceptibility that still carries its physical inverse-energy unit.
 
 Thus the user's $\mu_0$ observation is correct for conversion to proper MKS/SI
 $M/H$ units. It is **not** an additional factor in the neutron cross section
@@ -124,7 +280,10 @@ would mix SI bulk and microscopic neutron conventions. nfit's molar
 `cm^3/mol` to `m^3/mol` conversion includes the rationalized-SI $4\pi$ factor,
 and the Heisenberg RPA bulk prediction includes the corresponding
 $\mu_0(g\mu_B)^2$ conversion. Welch *et al.* derive this relation explicitly
-for susceptibility per magnetic ion.
+for susceptibility per magnetic ion. Experimentally, a finite energy window
+gives only a partial Kramers--Kronig integral, and finite-$\mathbf Q$ neutron
+data must be extrapolated to $\mathbf Q=0$ before comparison with a bulk
+magnetometer.
 
 ### Form factor and kinematics
 
@@ -172,7 +331,7 @@ physical quantity type, and unit.
   convention is explicitly selected.
 - Signal and uncertainty plots always include a unit. Missing or explicitly
   arbitrary units are displayed as `(a.u.)`.
-- Published normalized intensity such as `1/meV/V` is retained as a
+- Published normalized intensity such as `1/(meV atom)` is retained as a
   dimensionful but non-cross-section signal. Its paired $\chi''$ channel has
   the correct Bose/correction shape but remains arbitrary unless an absolute
   cross-section calibration is supplied.
@@ -205,35 +364,23 @@ primary channel's quantity and unit and evaluate in that representation.
 The normalization basis is metadata, not a hidden atom-count conversion.
 Beam-flux and illuminated-sample calibration must already refer to the same
 formula-unit, magnetic-ion, or unit-cell basis selected in the GUI.
-For per-atom data, an optional label such as `V` changes the displayed suffix
-from `/magnetic ion` to `/V`; it does not multiply or divide the data.
+For per-atom data, an optional element or site label changes the displayed
+normalization suffix; it does not multiply or divide the data.
 These definitions and the distinction between correlation functions,
 $\chi''$, cross section, and absolute normalization follow general neutron
 scattering references rather than any material-specific paper
 ([Squires, chapters 7-8](https://doi.org/10.1017/CBO9781139107808.009);
 [Xu, Xu, and Tranquada 2013](https://doi.org/10.1063/1.4818323)).
 
-### Digitized powder data and the LiV2O4 examples
+### Digitized data
 
-The digitizer CSV importer is general: it records the quantity, units,
-normalization basis, temperature, fixed cut coordinate, and kinematic state
-specified by the user. It does not infer a convention from a material, author,
-or filename. The following papers are therefore provenance and worked import
-examples, not the sources of nfit's physical conventions.
-
-For the supplied LiV2O4 files, Lee *et al.* report Q-E maps and constant-E
-intensity cuts as normalized magnetic intensity in `1/meV/V`, while their
-constant-Q spectra are $\chi''$ in `mu_B^2/meV/V`
-([Lee *et al.* 2001](https://doi.org/10.1103/PhysRevLett.86.5554), especially
-Figs. 1 and 2). Here `V` means per vanadium atom, not per LiV2O4 formula unit.
-
-Tomiyasu *et al.* report absolute constant-E cuts as
-$(k_i/k_f)d^2\sigma/(d\Omega\,dE)$ in `mbarn/sr/meV/V`
-([Tomiyasu *et al.* 2014](https://doi.org/10.1103/PhysRevLett.113.236402),
-Fig. 1). Because the published ordinate has already been multiplied by
-$k_i/k_f$, import it with **k_f/k_i removed upstream**. Their derived
-$\chi''$ is in `mu_B^2/meV/V` (Fig. 2). The importer records these choices but
-does not silently apply paper-specific conventions.
+The digitizer CSV importer records the quantity, unit, normalization basis,
+temperature, fixed cut coordinate, and kinematic state selected by the user.
+It never infers a convention from a material, author, or filename. When
+transcribing a published curve, use its axis label and methods section to
+decide whether the ordinate is intensity, cross section,
+$S(\mathbf Q,E)$, or $\chi''(\mathbf Q,E)$ and whether $k_f/k_i$ was removed
+upstream.
 
 Digitized three-column cuts carry the digitized one-sigma error bars. Color-map
 matrices do not contain an uncertainty layer, so import assigns the explicit
@@ -241,26 +388,40 @@ user-selected uniform map uncertainty and masks NaN pixels. Consequently, an
 absolute intensity scale does not by itself imply statistically calibrated
 map uncertainties.
 
-Bulk magnetic data use explicit CGS/SI conversions: `1 emu = 10^-3 A m^2`,
-`1 T = 10^4 Oe` for the applied-field convention, and molar susceptibility
-obeys `1 cm^3/mol (CGS) = 4 pi 10^-6 m^3/mol (SI)`.
-For a sample with `n` moles of formula units, a measured magnetic moment in
-emu is normalized as `M / (n N_A mu_B)` to obtain `mu_B/f.u.`.
+Bulk magnetic data use explicit CGS/SI conversions: one emu of magnetic dipole
+moment is $10^{-3}\ {\rm A\,m^2}$; in vacuum, a field reported as
+$B=1\ {\rm T}$ corresponds to $H=10^4\ {\rm Oe}$; and molar susceptibility
+obeys `1 cm^3/mol (CGS) = 4 pi 10^-6 m^3/mol (SI)`. For a sample with $n$
+moles of formula units, a measured dipole moment $m_{\rm sample}$ is converted
+to Bohr magnetons per formula unit as
+
+$$
+\frac{m_{\rm sample}}
+{nN_A\mu_B},
+$$
+
+provided $m_{\rm sample}$ and $\mu_B$ are expressed in the same moment unit
+(for example emu). The result is the numerical moment in
+`mu_B/f.u.`.
 
 Additional conventions used by the spin-fluctuation model family (see
 [Spin-fluctuation models](spin_fluctuation_models.md) for the full math):
 
 - Magnetic form factors use the $\langle j_0 \rangle$ analytic approximation
   $f(s) = A e^{-a s^2} + B e^{-b s^2} + C e^{-c s^2} + D$ with
-  $s = |Q|/4\pi$ in Å⁻¹ (`nfit.form_factors`).
+  $s = |Q|/4\pi$ in Å⁻¹ (`nfit.form_factors`). The form factor and
+  $A,B,C,D$ are dimensionless, while $a,b,c$ have units Å², so every
+  exponential argument is dimensionless.
 - Exchange Fourier transforms use the extended-zone phase convention:
   $J(\mathbf{Q})_{ab} = \sum J_{\text{bond}}
   \exp[2\pi i\, \mathbf{Q}\cdot(\mathbf{r}_b + \mathbf{n} - \mathbf{r}_a)]$
-  with fractional site positions inside the phases. Because these matrix
-  elements already carry the full pair phases, the RPA neutron weights use the
-  *uniform* sublattice sum $|\sum_a U_{a\nu}|^2/N$ (no additional site phases),
-  which makes the observable exactly independent of the cell description and
-  keeps the mode weights summing to one. See
+  with $\mathbf Q$ in r.l.u. and the positions and lattice translation
+  fractional, so the phase is dimensionless. $J_{\rm bond}$ and
+  $J(\mathbf Q)$ have energy units. Because these matrix elements already
+  carry the full pair phases, the RPA neutron weights use the *uniform*
+  sublattice sum $|\sum_a U_{a\nu}|^2/N$ (no additional site phases), which is
+  dimensionless, makes the observable exactly independent of the cell
+  description, and keeps the mode weights summing to one. See
   [Spin-fluctuation models](spin_fluctuation_models.md).
 - Temperature enters only through the Bose factor and is read from each
   dataset (`PointData4D.temperature`), never from fit parameters.
@@ -293,10 +454,15 @@ single-ion anisotropy, dipole–dipole, or Zeeman terms (see
   direct lattice matrix) or a reciprocal $(H\,K\,L)$ vector (converted with the
   reciprocal matrix), then normalized to a Cartesian unit vector. In a cubic
   cell $[1\,1\,1]$ and $(1\,1\,1)$ coincide; in lower symmetry they differ.
-- **Units.** Field $B$ in tesla; Larmor energy $\omega_L = g\,\mu_B\,B$ in meV
-  with $\mu_B = 0.05788\,\text{meV/T}$; the dipole strength $D_{\mathrm{dip}}$ in
-  meV·Å³ with physical default $(\mu_0/4\pi)(g\mu_B)^2$.
+- **Units.** Field $B$ is in tesla. The Larmor angular frequency obeys
+  $\hbar\omega_L=g\mu_BB$; nfit stores the corresponding Larmor energy
+  $E_L=\hbar\omega_L$ in meV, using
+  $\mu_B=0.05788\,\text{meV/T}$. The dipole strength $D_{\mathrm{dip}}$ is in
+  meV·Å³, with physical default $(\mu_0/4\pi)(g\mu_B)^2$; this product has
+  dimensions energy times volume.
 - **Sign convention.** Positive couplings favour the ordering where the largest
   eigenvalue $\lambda_{\max}(\mathbf{Q})$ of $\mathbb{J}(\mathbf{Q})$ peaks; the
-  RPA instability is at $\lambda_{\max}\chi_0 \to 1$. This continues the scalar
-  convention and is pinned by limiting-case tests.
+  RPA instability is at $\lambda_{\max}\chi_0 \to 1$.
+  $\lambda_{\max}$ has energy units and $\chi_0$ inverse-energy units, so their
+  product is dimensionless. This continues the scalar convention and is pinned
+  by limiting-case tests.

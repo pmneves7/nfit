@@ -118,7 +118,7 @@ def register_builtin_operations() -> None:
         AnalysisParameterDefinition(
             "atoms_per_formula_unit", "Atoms / formula unit", "value", 1.0,
             "Atom count used only to convert beta to a Debye temperature.",
-            "Positive number; use 7 for LiV2O4.", "7.0",
+            "Positive number.", "4.0",
         ),
     )
     bose_parameters = (

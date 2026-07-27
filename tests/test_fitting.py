@@ -41,7 +41,7 @@ def measured_model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
     )
 
 
-def test_fit_least_squares_recovers_synthetic_single_q_parameters():
+def test_fit_least_squares_recovers_paramagnon_parameters():
     rng = np.random.default_rng(123)
     H = np.linspace(0.25, 0.75, 26)
     E = np.linspace(1.0, 10.0, 22)

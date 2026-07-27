@@ -65,45 +65,6 @@ def test_plotting_helpers_return_axes():
     assert plot_2d_map(data.H, data.K, np.asarray(data.intensity)) is not None
 
 
-def test_hyspec_test_datasets_example_defaults_to_single_dataset_viewer(monkeypatch):
-    import sys
-
-    import examples.plot_hyspec_test_datasets as example
-
-    loaded_paths = []
-    captured = {}
-
-    class Viewer:
-        def run(self):
-            captured["ran"] = True
-
-    def fake_load(path, *, copy_metadata):
-        loaded_paths.append((path.name, copy_metadata))
-        return path.name
-
-    def fake_slice_viewer(datasets, **kwargs):
-        captured["datasets"] = datasets
-        captured["kwargs"] = kwargs
-        return Viewer()
-
-    monkeypatch.setattr(example, "load_mantid_mdhisto_nxs", fake_load)
-    monkeypatch.setattr(example, "slice_viewer", fake_slice_viewer)
-    monkeypatch.setattr(example.Path, "exists", lambda _path: True)
-    monkeypatch.setattr(sys, "argv", ["plot_hyspec_test_datasets.py"])
-
-    example.main()
-
-    assert loaded_paths == [
-        ("1D_test.nxs", False),
-        ("2D_test.nxs", False),
-        ("4D_test.nxs", False),
-    ]
-    assert captured["datasets"] == ["1D_test.nxs", "2D_test.nxs", "4D_test.nxs"]
-    assert captured["kwargs"]["dataset_names"] == ["1D", "2D", "4D"]
-    assert captured["kwargs"]["channel"] == "signal"
-    assert captured["ran"]
-
-
 def test_plot_mdhisto_slice_renders_static_figure_with_histogram_cuts():
     data = _tiny_mdhisto_data()
 

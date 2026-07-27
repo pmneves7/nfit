@@ -1,13 +1,7 @@
 import h5py
 import numpy as np
 
-from nfit import (
-    attach_fit_comparisons,
-    hyspec_hhl_fit_comparison_from_points,
-    hyspec_hhl_point_indices,
-    load_mantid_mdhisto_nxs,
-    point_data_from_hyspec_hhl,
-)
+from nfit import load_mantid_mdhisto_nxs
 from nfit.mdhisto import MDHistoAxis
 
 
@@ -92,47 +86,6 @@ def test_load_mantid_mdhisto_nxs_reads_axes_and_arrays(tmp_path):
     assert imported.metadata["oriented_lattice"]["orientation_matrix_path"].endswith(
         "/experiment99/sample/oriented_lattice/orientation_matrix"
     )
-
-    points, summary = point_data_from_hyspec_hhl(imported, temperature=1.8)
-
-    assert points.size == signal.size
-    assert summary["total_q_trajectories_with_data"] == 3 * 4 * 5
-    assert summary["used_q_trajectories"] == 3 * 4 * 5
-    assert summary["initial_valid_points"] == signal.size
-    np.testing.assert_allclose(points.E[:2], [-0.5, 0.5])
-    hh0 = imported.axes[3].centers[0]
-    hmh0 = imported.axes[1].centers[0]
-    l0 = imported.axes[2].centers[0]
-    np.testing.assert_allclose(points.H[0], hh0 + hmh0)
-    np.testing.assert_allclose(points.K[0], hh0 - hmh0)
-    np.testing.assert_allclose(points.L[0], l0)
-    np.testing.assert_allclose(points.intensity[:2], [0.0, 60.0])
-    assert points.temperature == 1.8
-
-    indices = hyspec_hhl_point_indices(imported, points)
-    np.testing.assert_allclose(imported.signal[indices], points.intensity)
-
-    fit_values = np.full(points.intensity.shape, 5.0)
-    comparison = hyspec_hhl_fit_comparison_from_points(
-        imported,
-        points,
-        fit_values,
-        model_name="constant",
-        result_name="fit 0",
-    )
-    attach_fit_comparisons(imported, [comparison])
-    result_view = comparison.results[0]
-
-    assert imported.metadata["fit_comparisons"] == [comparison]
-    np.testing.assert_allclose(result_view.data.signal[indices], points.intensity)
-    assert np.count_nonzero(~result_view.data.mask) == points.size
-    assert np.count_nonzero(~result_view.fit.mask) == points.size
-    np.testing.assert_allclose(result_view.fit.signal[indices], 5.0)
-    np.testing.assert_allclose(
-        result_view.residual.signal[indices],
-        (points.intensity - 5.0) / points.sigma,
-    )
-
 
 def test_load_mantid_mdhisto_nxs_does_not_copy_large_metadata_by_default(tmp_path):
     path = tmp_path / "tiny_mdhisto.nxs"
