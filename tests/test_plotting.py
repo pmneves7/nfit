@@ -1285,6 +1285,8 @@ def test_qt_waterfall_mode_exposes_controls_and_exports_script():
     )
     assert not viewer.waterfall_group.isHidden()
     assert not viewer.waterfall_step_spin.isHidden()
+    assert viewer.waterfall_offset_auto_check.isChecked()
+    assert viewer.waterfall_offset_auto is True
     for control in (
         viewer.waterfall_source_label,
         viewer.waterfall_step_spin,
@@ -1364,6 +1366,29 @@ def test_qt_waterfall_mode_exposes_controls_and_exports_script():
     assert viewer.marker_face_color == "#ff7f0e"
     viewer.view_mode_combo.setCurrentIndex(1)
     assert viewer.marker_face_color == "outline"
+
+
+def test_qt_waterfall_half_max_stays_enabled_when_initial_range_shrinks():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_2d_mdhisto_data_with_singletons()
+    data.signal *= 1.0e-3
+    data.errors *= 1.0e-3
+    viewer = QtMDHistoSliceViewer(data)
+
+    viewer.view_mode_combo.setCurrentText("Waterfall")
+
+    assert viewer.waterfall_offset_spin.maximum() < 1.0
+    assert viewer.waterfall_offset_auto is True
+    assert viewer.waterfall_offset_auto_check.isChecked()
+    assert viewer.waterfall_offset == pytest.approx(
+        0.5
+        * max(
+            np.nanmax(np.abs(trace.values))
+            for trace in viewer._current_waterfall_traces
+        )
+    )
 
 
 def test_qt_waterfall_mode_groups_compatible_1d_datasets():

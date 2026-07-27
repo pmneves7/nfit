@@ -385,7 +385,7 @@ def test_run_group_fit_honors_masks_disabled_datasets_and_scales():
     assert set(fitted) == {"first", "third"}
     assert fitted["first"] == pytest.approx(1.0, abs=1e-6)
     assert fitted["third"] == pytest.approx(4.0, abs=1e-6)
-    assert "second" not in entry.channels
+    assert entry.channels["second"]["visualization_only"] is True
 
 
 def test_compile_fit_problem_adds_dataset_scale_parameter_to_residuals():
@@ -477,6 +477,40 @@ def test_zero_weight_dataset_is_evaluated_only_for_post_fit_visualization():
     assert entry.metadata["visualization_only_datasets"] == ["full_volume"]
     restored = _fit_channels_from_dict(_fit_channels_to_dict(entry.channels))
     assert restored["full_volume"]["visualization_only"] is True
+
+
+def test_disabled_dataset_gets_post_fit_model_without_affecting_fit():
+    from nfit.project_gui import fit_dataset_inputs
+
+    group = _fit_ready_group({"fit_octant": 1.0, "disabled_volume": 9.0})
+    disabled = group.get_dataset("disabled_volume")
+    disabled.enabled = False
+    model = create_model_component(group)
+    model.fit_parameters["constant"] = True
+    ensure_fit_history(group)
+
+    fit_inputs, _fit_bundles = fit_dataset_inputs(group, purpose="fit")
+    view_inputs, _view_bundles = fit_dataset_inputs(
+        group,
+        purpose="visualization",
+    )
+
+    assert [item.name for item in fit_inputs] == ["fit_octant"]
+    assert [item.name for item in view_inputs] == ["disabled_volume"]
+    assert view_inputs[0].weight == 0.0
+
+    entry = run_group_fit(group, group.fits[0])
+
+    assert entry.goodness["dataset_n_points"] == {"fit_octant": 20}
+    assert set(entry.channels) == {"fit_octant", "disabled_volume"}
+    assert entry.channels["disabled_volume"]["visualization_only"] is True
+    assert entry.channels["disabled_volume"]["fit"] == pytest.approx(
+        np.ones((4, 5)),
+        abs=0.01,
+    )
+    datasets, names = slice_viewer_datasets(group)
+    disabled_view = datasets[names.index("disabled_volume")]
+    assert "fit" in disabled_view.metadata
 
 
 def test_run_group_fit_failure_is_recorded_not_raised():

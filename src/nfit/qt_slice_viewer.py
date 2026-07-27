@@ -2761,7 +2761,11 @@ class QtMDHistoSliceViewer:
 
     def _sync_waterfall_offset_slider(self) -> None:
         maximum = self._waterfall_offset_maximum()
-        self.waterfall_offset_spin.setRange(0.0, maximum)
+        previous = self.waterfall_offset_spin.blockSignals(True)
+        try:
+            self.waterfall_offset_spin.setRange(0.0, maximum)
+        finally:
+            self.waterfall_offset_spin.blockSignals(previous)
         self._set_slider_silent(
             self.waterfall_offset_slider,
             int(

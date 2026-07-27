@@ -4271,12 +4271,12 @@ def fit_dataset_inputs(
     force_masks: bool = True,
     progress_callback: Any | None = None,
 ) -> tuple[list[FitDatasetInput], dict[str, FitDataBundle]]:
-    """Prepare enabled datasets for fitting, visualization, or both.
+    """Prepare datasets for fitting, visualization, or both.
 
-    A non-composite dataset with zero fit weight is visualization-only. It is
-    omitted entirely when ``purpose="fit"`` and selected exclusively when
-    ``purpose="visualization"``. The default keeps the historical all-dataset
-    behavior used by live model overlays.
+    Disabled datasets and non-composite datasets with zero fit weight are
+    visualization-only. They are omitted entirely when ``purpose="fit"`` and
+    selected exclusively when ``purpose="visualization"``. The default keeps
+    the historical enabled-dataset behavior used by live model overlays.
     """
 
     if purpose not in {"all", "fit", "visualization"}:
@@ -4291,16 +4291,17 @@ def fit_dataset_inputs(
         force_rebin=force_rebin,
         force_masks=force_masks,
         progress_callback=progress_callback,
-        include_disabled_groups=False,
+        include_disabled_groups=purpose == "visualization",
     )
     for dataset in entries:
-        if not dataset.enabled:
+        disabled = not dataset.enabled
+        if disabled and purpose != "visualization":
             continue
         is_composite = bool(dataset.metadata.get("composite"))
         fit_weight = 1.0 if is_composite else float(dataset.fit_weight)
         if not np.isfinite(fit_weight) or fit_weight < 0.0:
             raise ValueError(f"dataset {dataset.name!r} fit weight must be finite and non-negative")
-        visualization_only = not is_composite and fit_weight == 0.0
+        visualization_only = disabled or (not is_composite and fit_weight == 0.0)
         if purpose == "fit" and visualization_only:
             continue
         if purpose == "visualization" and not visualization_only:
@@ -4318,7 +4319,7 @@ def fit_dataset_inputs(
             FitDatasetInput(
                 name=dataset.name,
                 data=bundle.points,
-                weight=fit_weight,
+                weight=0.0 if visualization_only else fit_weight,
                 data_type=dataset.data_type or DEFAULT_DATA_TYPE,
                 scale_value=(1.0 if is_composite else float(dataset.scale_factor)),
                 scale_vary=(False if is_composite else bool(dataset.scale_factor_vary)),
@@ -5570,7 +5571,7 @@ def _visualization_only_channels(
     *,
     progress_callback: Any | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Evaluate zero-weight datasets once using the current fitted state."""
+    """Evaluate disabled and zero-weight datasets using the fitted state."""
 
     inputs, bundles = fit_dataset_inputs(
         group,
@@ -5585,7 +5586,7 @@ def _visualization_only_channels(
                 "stage": "visualization",
                 "iteration": 0,
                 "total": len(inputs),
-                "message": "evaluating visualization-only datasets",
+                "message": "evaluating disabled and zero-weight datasets for display",
             }
         )
     compiled = compile_fit_problem(components, inputs, description=group.name)

@@ -1094,8 +1094,11 @@ member of another group switches the waterfall source group as well.
 
 Waterfall markers default to hollow faces (**Marker face / none**),
 independently of the marker-face choice used in the slice viewer. The waterfall
-trace offset defaults to half the largest absolute intensity and can be entered
-manually or adjusted from zero to that absolute maximum with the offset slider.
+trace offset defaults to half the largest absolute intensity. **Auto (half
+max)** is checked initially and remains checked while the viewer calculates its
+first valid offset range; entering an offset manually or using its slider turns
+automatic offset selection off. The manual slider spans zero to the largest
+absolute intensity.
 The bin-width slider spans one native waterfall-axis bin through
 the complete axis span. **Colors** samples a selected Matplotlib sequence
 uniformly across traces; continuous maps also expose a two-handle range slider
@@ -1127,6 +1130,13 @@ calculate and show the current model and residual channels from the `Show
 model` control even before an optimization has been run. Stored fit-result
 channels are still reused when no current model can be evaluated and the stored
 channels remain compatible with the current dataset view.
+Disabled datasets do not contribute to optimization, $\chi^2$, or the fitted
+degrees of freedom. After a fit completes, nfit nevertheless attempts one
+model evaluation for each disabled dataset, just as it does for an enabled
+zero-weight visualization dataset. Successful predictions are stored with the
+fit result, allowing **Show model** to remain available when that disabled
+dataset is selected later. A failed display-only evaluation is recorded in fit
+metadata and does not invalidate the completed fit.
 `Unmask model`, directly below `Show model`, evaluates the model over every
 finite coordinate in the plotted dataset instead of restricting evaluation to
 fit-valid bins. The data remain masked. The extrapolated model is used in 1D
