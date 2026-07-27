@@ -43,7 +43,7 @@ estimates the representative one-event scale from the nonzero accepted events
 in the requested volume as `sqrt(sum(errorSquared_i) / N)`, then divides by the
 bin's normalization. This scale is not an nfit fit weight or dataset scale
 factor. See
-[Measured-zero uncertainties](gui_workflows.md#measured-zero-uncertainties) for
+[Measured-zero uncertainties](data_import.md#measured-zero-uncertainties) for
 the three coverage/count cases and a numerical example.
 
 The GUI module also provides `read_isaw_ub`, `write_isaw_ub`, and
@@ -55,7 +55,7 @@ Use `slice_viewer(data)` for the PySide6 interactive viewer. It accepts one
 `MDHistoData` object or a sequence with optional `dataset_names` and supports
 axis selection, hidden-axis integration, channel selection, masks, model
 overlays, smoothing, and script export. Smoothing is visual only and never
-changes source or fitting arrays. See [Data viewer](gui_workflows.md#data-viewer)
+changes source or fitting arrays. See [Data viewer](data_viewer.md)
 for the complete control reference.
 
 For data with at least three dimensions, Volumetric mode provides PyVista
@@ -285,4 +285,4 @@ normalization-scaled 68% Feldman-Cousins upper-limit uncertainty. It does not
 invoke Mantid. The full ordered raw-event reduction, including detector masking,
 bad-pulse charge selection, TOF-to-HKLE conversion, He-3 and `ki/kf` event
 weights, trajectory normalization, and measured-zero handling, is documented
-in [Raw TOF reduction sequence](gui_workflows.md#raw-tof-reduction-sequence).
+in [Raw TOF reduction sequence](data_import.md#raw-tof-reduction-sequence).

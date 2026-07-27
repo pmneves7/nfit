@@ -44,8 +44,8 @@ deliberately.
 
 Every interactive control needs hover text that explains its effect and any
 important constraint. A behavior change must update the relevant source page
-and tests at the same time. [GUI workflows](gui_workflows.md) is the canonical
-description of the project explorer and data viewer.
+and tests at the same time. The pages linked from
+[GUI workflows](gui_workflows.md) describe the project explorer and data viewer.
 
 ## Mask contract
 
@@ -102,7 +102,7 @@ is a measured zero; a bin without detector coverage is masked. Because an empty
 bin has no event variance, nfit assigns it 1.29 times the estimated uncertainty
 of one representative event in that bin. This is the 68.27% Feldman–Cousins
 upper endpoint for zero observed events and zero known background. See
-[Measured-zero uncertainties](gui_workflows.md#measured-zero-uncertainties)
+[Measured-zero uncertainties](data_import.md#measured-zero-uncertainties)
 for the calculation and [References](references.md) for the citation.
 
 ## Adding an importer or operation

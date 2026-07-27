@@ -55,10 +55,7 @@ using the analysis parameter **Atoms / formula unit**. Its diagnostic opens as
 
 ## Magnetic heat capacity
 
-The present Heisenberg RPA response does not by itself define a unique
-thermodynamic free energy, so nfit does not currently infer magnetic heat
-capacity from that response. A future implementation needs a conserving
-free-energy functional, the closure's stationary or double-counting term,
-full-zone and full-energy convergence, and the appropriate entropy constraints.
-Finite measured neutron windows cannot replace that thermodynamic integral.
-See [Planned features](planned_features.md).
+The Heisenberg RPA response does not define a unique thermodynamic free energy,
+so nfit does not derive magnetic heat capacity from it. Such a calculation
+requires a conserving free-energy functional and converged full-zone,
+full-energy thermodynamics; a finite measured neutron window is insufficient.

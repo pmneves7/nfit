@@ -1,8 +1,7 @@
 # Planned features
 
-This page records likely extensions that are not implemented. It is deliberately
-short: current behavior belongs in the workflow and API pages, while detailed
-design decisions should be made when work starts.
+This page lists possible extensions, not compatibility promises or scheduled
+releases. Current behavior is documented in the workflow and API pages.
 
 ## Scientific analysis
 
@@ -39,5 +38,3 @@ design decisions should be made when work starts.
   outputs that can be checked in automated tests.
 - Keep tutorial inputs small, outputs reproducible, and commands exercised in
   continuous integration so examples do not silently become obsolete.
-
-These items are directions, not compatibility promises or a release schedule.

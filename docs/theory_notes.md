@@ -152,11 +152,10 @@ rule *cannot* be satisfied with a diverging soft mode, so $\lambda$ backs the
 system away from it, suppressing $T_c$ toward (in 2D exactly to) the
 Mermin–Wagner answer.
 
-**Implementation.** The shift $-\lambda\,\mathbb 1$ has exactly the matrix shape of
-an isotropic on-site term (the trace part the SIA projection deliberately
-drops), so the existing evaluator computes the shifted model with no kernel
-change. What is new is (a) an outer scalar root-find per temperature and (b) a
-Brillouin-zone quadrature + energy cutoff to evaluate
+**Implementation.** The shift $-\lambda\,\mathbb 1$ has the matrix shape of an
+isotropic on-site term (the trace part omitted by the SIA projection). The
+closure uses an outer scalar root-find per temperature and a Brillouin-zone
+quadrature with an energy cutoff to evaluate
 $\langle m^2\rangle[\lambda]$ — that integral is over the *full zone*, not the
 measured window, so it needs its own $\mathbf{Q}$-grid independent of the
 data.
@@ -198,9 +197,8 @@ $$
 not the thermal part alone. Because the zero-point part is itself an integral
 over the fitted spectrum, this one condition ties together the ground state
 and the finite-$T$ response, and reproduces the Rhodes–Wohlfarth systematics
-of weak itinerant ferromagnets and the $T^{3/2}$–$T^2$ crossovers with
-strikingly few parameters. Arguably the right "sum rule" for systems whose
-moment is an emergent, partially formed object.
+of weak itinerant ferromagnets and the $T^{3/2}$–$T^2$ crossovers with few
+parameters.
 
 ### TPSC (Vilk–Tremblay)
 
@@ -219,26 +217,21 @@ current phenomenological family.
 In a mixed-valence material the local moment budget scales with the
 $f$-occupancy, $\langle m^2\rangle \sim n_f(T)\,\mu_{CF}^2$ (modulo
 crystal-field projection), and the quasielastic width $\Gamma_0$ *is* the
-valence-fluctuation/Kondo rate [11, 12]. Two fitting consequences:
-
-- **Do not impose** a fixed-moment sum rule on such a system — it forces
-  spectral weight the material does not have at low $T$.
-- **Do extract** $\mu_{\text{eff}}^2(T)$ from the fitted model (energy- and
-  zone-integrated $\chi''$) and watch its collapse below the coherence scale;
-  correlate with $\Gamma_0(T)$ flattening to the charge-fluctuation rate.
-  That correlated behavior — shrinking amplitude, saturating width — is the
-  neutron signature of valence fluctuations, and it is diagnosed from the
-  *unconstrained* fits.
+valence-fluctuation/Kondo rate [11, 12]. A fixed-moment sum rule is therefore
+generally inappropriate. The useful diagnostics are the fitted
+$\mu_{\text{eff}}^2(T)$, obtained from the zone- and energy-integrated
+$\chi''$, and its correlation with $\Gamma_0(T)$. Shrinking amplitude together
+with a saturating width is the characteristic valence-fluctuation pattern.
 
 ## Dictionary: closures ↔ nfit parameters
 
-| theory object | nfit object today | closure would replace it with |
+| theory object | unconstrained fit | closure result or control |
 | --- | --- | --- |
 | local static susceptibility $\chi_{\text{loc}}(T)$ | fitted `chi0` per dataset | derived from $\chi_0^{-1}(0) + u\langle m^2\rangle(T)$ (SCR) or from $\lambda(T)$ (spherical) |
-| local relaxation rate $\Gamma(T)$ | fitted `gamma0` per dataset | SCR scaling forms; or tied to `chi0` via a constant $\chi_0\Gamma_0$ hypothesis |
-| Onsager shift $\lambda(T)$ | solved by the Onsager closure (`nfit.closures`), reported in diagnostics | internal root-find per temperature; matrix shape = isotropic on-site term |
-| moment budget $\langle m^2\rangle$ | fitted `m2_total`/`total_amplitude` or fixed `moment_target` | explicit target ($S(S+1)$, or fitted $\mu_{\text{eff}}^2$, or TAC constant) |
-| high-energy cutoff $\Lambda$ | `config["closure"]["energy_cutoff_mev"]` | one global scale (bandwidth / CF splitting), shared across temperatures |
+| local relaxation rate $\Gamma(T)$ | fitted `gamma0` per dataset | fitted globally or per dataset; not presently fixed by the closures |
+| Onsager shift $\lambda(T)$ | absent | solved internally per temperature and reported in diagnostics |
+| moment budget $\langle m^2\rangle$ | diagnostic integral | fixed `moment_target` or fitted `m2_total`/`total_amplitude` |
+| high-energy cutoff $\Lambda$ | diagnostic choice | global `energy_cutoff_mev`, shared across temperatures |
 | static $\chi(\mathbf{Q}_{\text{pk}}, T)$ | Kramers–Kronig of the fit | cross-check against bulk magnetometry |
 
 Useful identities when relating fitted values across temperatures:
@@ -257,11 +250,10 @@ The options below increase in theoretical commitment. Compare each closure
 against the unconstrained baseline using fit quality, parameter count, and the
 diagnostic trajectories.
 
-1. **Unconstrained (implemented).** `chi0`, `gamma0` per dataset
+1. **Unconstrained.** `chi0`, `gamma0` per dataset
    (`per_dataset` sharing); exchanges and scale global. Parameter count
-   $\sim 2N_T + N_J + 1$. This is the baseline every closure must beat on
-   parsimony without significant $\chi^2$ cost.
-2. **Diagnostics (implemented).** Every fit stamps per-dataset
+   $\sim 2N_T + N_J + 1$. This provides the comparison baseline.
+2. **Diagnostics.** Every fit records per-dataset
    $\mu_{\text{eff}}^2(T)$ (zone/energy integral with cutoff $\Lambda$),
    Kramers–Kronig $\chi(\mathbf{Q}=0,T)$ and $\chi(\mathbf{Q}_{\text{pk}},T)$,
    the $\chi_0\Gamma_0$ product, and the distance to instability
@@ -270,12 +262,12 @@ diagnostic trajectories.
    trajectories select the closure: flat $\mu_{\text{eff}}^2$ →
    spherical/local-moment; linear $\chi_0^{-1}(T)$ with growing amplitude →
    SCR; collapsing amplitude with saturating $\Gamma_0$ → valence fluctuations.
-3. **Spherical/Onsager closure (implemented).** Replace $N_T$ values of `chi0`
+3. **Spherical/Onsager closure.** Replace $N_T$ values of `chi0`
    with one moment target $m_0^2$ (fixed `moment_target`, or fitted
    `m2_total`) and the cutoff $\Lambda$: $\lambda(T)$ solved internally. Exact
    in form (a $\mathbf{Q}$-independent eigenvalue shift), needs only an outer
    scalar root-find, and directly cures the RPA sum-rule violation.
-4. **SCR/TAC dynamic closure (implemented).** SCR renormalizes `chi0` through
+4. **SCR/TAC dynamic closure.** SCR renormalizes `chi0` through
    the mode coupling `mode_coupling_u` (with `chi0` reinterpreted as the $T=0$
    bare value); TAC conserves the total zero-point + thermal amplitude
    (`total_amplitude`). Both reduce a temperature series to a handful of global
@@ -283,14 +275,14 @@ diagnostic trajectories.
    against the data rather than fitted per point. (`gamma0` remains a directly
    fitted, usually global, parameter; a fully derived $\Gamma_0(T)$ à la
    Lonzarich–Taillefer is not implemented.)
-5. **Interplay with the tensor terms (implemented).** Anisotropy gaps, Zeeman
+5. **Interplay with tensor terms.** Anisotropy gaps, Zeeman
    fields, and dipolar terms all shift where the sum-rule weight sits (a gap
    moves weight up in energy; a field splits it between Larmor channels). The
    closures act on the isotropic local propagator and inherit these effects
    through the full $\chi''$ entering $\langle m^2\rangle$: Tier A (field off)
    integrates the mode Lorentzians in closed form; Tier B (field on) integrates
    the gyrotropic $\chi''$ numerically on a $(\mathbf{Q},E)$ grid.
-6. **Bulk-susceptibility co-fit (implemented).** The uniform static
+6. **Bulk-susceptibility co-fit.** The uniform static
    susceptibility $\chi(\mathbf{Q}=0,0)$ — with the active closure — predicts
    the bulk moment $M(T,B)$, and MPMS magnetization datasets are fit jointly
    with the inelastic data sharing $J$/`chi0`/`gamma0`. See the closure and
@@ -332,11 +324,11 @@ temperatures, a shared fused Numba finite-cutoff Matsubara kernel, and exact
 closure-result caching. SCR's `u = 0` limit bypasses root finding entirely.
 TAC's stored `chi0` is only a root-search seed, so it is excluded from the
 cache key and cannot be varied by the optimizer; the conserved total amplitude
-replaces it physically. Tier B has
-no such shortcut: each closure iteration is a batched LU over the
-$(\text{BZ}\times E)$ grid per distinct $(T,B)$ — the default
-$16^3\times200 \approx 8\times10^5$ solves per iteration, so drop `bz_grid` to
-~8 while exploring field data. Solves are cached per $(T,B,\text{params})$.
+replaces it physically. Tier B has no such shortcut: each closure iteration is
+a batched LU over the $(\text{BZ}\times E)$ grid per distinct $(T,B)$. The
+default $16^3\times200$ grid requires approximately $8\times10^5$ solves per
+iteration. Smaller exploratory grids require convergence checks before
+quantitative use. Solves are cached per $(T,B,\text{params})$.
 
 ## References
 

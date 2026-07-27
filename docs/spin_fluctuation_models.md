@@ -449,9 +449,9 @@ dipole–dipole, Zeeman coupling to a field; see
 [Tensor (anisotropic) interactions](#tensor-anisotropic-interactions)) enters
 $J(\mathbf{Q}) = \sum_p \theta_p P_p(\mathbf{Q})$ as a parameter $\theta_p$
 times a precomputed structure matrix $P_p(\mathbf{Q})$, the
-$\partial/\partial J_o$ formula generalizes to those terms verbatim (in tensor
-mode the current implementation uses central-difference gradients; the scalar
-path keeps the analytic Jacobian). When every
+$\partial/\partial J_o$ formula generalizes to those terms verbatim. Tensor
+mode uses central-difference gradients, while the scalar path keeps the
+analytic Jacobian. When every
 model component on a dataset supplies its gradients, the optimizer uses the
 exact Jacobian (`heisenberg_rpa_chipp_and_gradients`) instead of finite
 differences, the numerical derivative method that perturbs one parameter at a
@@ -578,7 +578,7 @@ is `config["closure"]`:
 config["closure"] = {
     "mode": "none" | "onsager" | "scr" | "tac",
     "energy_cutoff_mev": 100.0,   # Lambda for the moment integral
-    "bz_grid": 16,                # N^3 Brillouin-zone grid (drop to ~8 with a field)
+    "bz_grid": 16,                # N^3 Brillouin-zone grid
     "omega_points": 200,          # field-on energy quadrature only
     "moment_mode": "fixed" | "fitted",   # onsager / tac
     "moment_target": 1.0,         # used when moment_mode == "fixed"

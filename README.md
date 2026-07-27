@@ -52,10 +52,6 @@ python -m pytest -q
 python -m ruff check
 ```
 
-The repository’s `AGENTS.md` specifies the exact local interpreter used by
-automation on the primary development machine. Interactive users should
-activate the `nfit` environment and use its `python`.
-
 ## Example
 
 Run the small script-only analysis example:

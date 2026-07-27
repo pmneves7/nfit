@@ -156,14 +156,12 @@ uncertainty from deciding which runs belong to the selected order statistic is
 reported as excluded from the error model.
 
 The result is a powder inelastic dataset that can be inspected directly or
-attached to another dataset through its **Backgrounds** branch. For raw events,
-nfit's current implementation uses proton-charge normalization; future
-instrument-specific reduction can replace that normalization without changing
-the saved analysis recipe or background interface.
+attached to another dataset through its **Backgrounds** branch. Raw-event
+inputs use proton-charge normalization.
 
 ## Spectral integration
 
-The dataset details panel now provides the ordinary import/view/fit route:
+The dataset details panel provides the ordinary import/view/fit route:
 temperature-aware inelastic datasets expose paired scattering-cross-section and
 $\chi''$ channels in arbitrary or absolute units. Use that path when the same
 dataset should be switchable between representations during plotting or

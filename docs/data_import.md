@@ -1,0 +1,227 @@
+# Importing and preparing data
+
+This page covers the project-explorer controls used before fitting. Scientific
+definitions and unit conversions are collected in
+[Physics conventions](physics_conventions.md).
+
+## Importing files
+
+Select a workspace or dataset group, choose the data type and importer, then use
+**Add files**. Numbered acquisitions can instead be generated from a path,
+prefix, suffix, and numor expression:
+
+```text
+409981:409995
+409981:409992,409994:409995
+409981:3:409995
+```
+
+These mean an inclusive range, two comma-separated ranges, and a stepped range.
+nfit checks that all generated paths exist before adding any of them.
+
+Nested dataset groups have their own enabled state, fit weight, scale, and
+optional composite. Disabling a group excludes its descendants without changing
+their individual enabled states.
+
+### Point-list data
+
+MPMS magnetization, PPMS heat capacity, and powder diffraction imports retain
+their source columns and header metadata. The dataset panel identifies
+coordinates and measured channels and lets the user correct quantity types and
+units.
+
+For MPMS data, sample mass and molar mass seed the absolute normalization.
+Choose whether the plotted and fitted observable is moment or susceptibility
+and declare the input moment and field units. Molar susceptibility is available
+in `cm^3/mol` or rationalized SI `m^3/mol`; the conversion includes
+$4\pi\times10^{-6}$.
+
+See [Heat-capacity data and models](heat_capacity.md) for PPMS normalization
+and heat-capacity fit components.
+
+### Digitized powder INS
+
+The powder digitizer importer accepts:
+
+- a headerless `x, signal, sigma` cut; or
+- a `y\x` matrix with $Q$ columns, energy rows, and signal values.
+
+For a cut, specify whether `x` is $Q$ at fixed energy or energy at fixed $Q$.
+For every file, supply temperature, the signal representation, units, and
+normalization basis. A matrix has no uncertainty layer, so **Map σ** supplies a
+uniform one-sigma uncertainty. NaNs are masked.
+
+With a complete convention, nfit exposes paired cross-section and $\chi''$
+channels without changing the imported values. Powder Heisenberg models average
+the single-crystal response over momentum directions and require lattice
+parameters for the reciprocal-coordinate conversion.
+
+## Raw direct-geometry data
+
+Raw NeXus runs are stored as a file-backed dataset group. The shared setup holds
+the UB matrix, detector mask, processed vanadium file, and optional $E_i$ and
+$T_0$ overrides. Individual detector-event runs are not plotted directly;
+enable the group composite and rebin them to an HKLE histogram.
+
+nfit streams detector banks and event chunks rather than loading the complete
+event table. It obtains detector geometry and flight paths from the embedded
+instrument definition, applies available detector-efficiency and $k_i/k_f$
+corrections, converts $\mathbf Q=\mathbf k_i-\mathbf k_f$ to HKL, and normalizes
+by retained proton charge and detector-trajectory coverage.
+
+### Raw TOF reduction sequence
+
+For each enabled run, nfit:
+
+1. reads run logs, instrument geometry, detector IDs, and orientation;
+2. resolves $E_i$ and $T_0$ from explicit overrides, monitor analysis, or an
+   instrument time-zero formula;
+3. combines detector-mask and processed-vanadium exclusions;
+4. rejects bad pulses using the configured charge threshold;
+5. converts accepted event TOF to final energy, $\Delta E$, and sample-frame
+   momentum;
+6. applies detector-efficiency and optional $k_i/k_f$ corrections;
+7. bins corrected events and their variances; and
+8. divides by independently accumulated trajectory coverage.
+
+Bins without detector coverage are masked. Covered bins with no events are
+measured zeros and retain a finite uncertainty.
+
+## MDEvent data
+
+Importing MDEvent NeXus creates one lightweight entry per experiment or run.
+The shared event table stays on disk. Enable **Combine datasets**, configure the
+four output axes and bounds, and select **Rebin now** to create the normalized
+HKLE dataset.
+
+Each coordinate-axis row is an HKLE basis vector. The four rows must be linearly
+independent; momentum rows use only H, K, and L, while the energy row uses E.
+Bounds and resolution are expressed in that basis.
+
+An incident-energy override changes normalization trajectories. A time-zero
+override cannot move coordinates already stored in an MDEvent workspace.
+
+### Measured-zero uncertainties
+
+Event histograms distinguish:
+
+- bins with one or more accepted events;
+- covered bins with zero accepted events; and
+- bins with no detector coverage.
+
+For nonempty bins, nfit stores
+
+```text
+signal = sum(signal_i) / D
+sigma  = sqrt(sum(errorSquared_i)) / D
+```
+
+where $D$ is the normalization denominator. An empty covered bin has no event
+variance, so nfit uses
+
+```text
+sigma_zero = 1.29 * representative_event_scale / D
+```
+
+The representative scale is the root-mean-square event uncertainty over the
+accepted dataset. The factor 1.29 is the 68.27% Feldman--Cousins upper endpoint
+for zero observed events and zero known background. Uncovered bins remain
+masked. This fitting convention avoids assigning infinite weight to a measured
+zero; it does not make the underlying Poisson interval symmetric.
+
+## UB matrices
+
+**Crystal orientation > UB setup** edits lattice parameters, orientation
+vectors `u` and `v`, and the full $3\times3$ UB matrix. **Calculate from lattice
+and u/v** places `u` along the incident beam and uses `u` and `v` to define the
+horizontal scattering plane.
+
+UB maps `[h,k,l]` to reciprocal momentum in inverse angstrom, with
+$|\mathbf Q'|=1/d$. **UB from NeXus** reads embedded orientation metadata.
+**UB from ISAW** and **Save ISAW** use the conventional transposed three-row
+ISAW representation.
+
+Apply the dialog to a dataset for a dataset-specific orientation or to a group
+for shared orientation and composite HKL conversion.
+
+## Dataset details and physical conventions
+
+Selecting a dataset shows its axes, source, crystal information, data summary,
+and imported metadata. The **Fit bins** count uses the same prepared view as the
+optimizer, including masks, invalid values, and invalid uncertainties.
+
+For inelastic data, **INS representations** records:
+
+1. whether the imported signal is intensity/cross section or $\chi''$;
+2. its units and amount-of-sample normalization;
+3. form-factor and polarization states;
+4. whether the response uses spin or magnetic-moment units; and
+5. whether $k_f/k_i$ remains included.
+
+Set temperature and field in **Conditions**. Imported moment response already
+contains $g^2$; imported spin response receives it once. The full conversion is
+given in [Physics conventions](physics_conventions.md).
+
+`Save dataset` and `Save rebin to disk` write portable `.npz` archives
+containing axes, values, uncertainties, masks, metadata, and dataset conditions.
+
+## Rebinning and composites
+
+Rebinning affects both viewing and fitting. It supports:
+
+- **Step** or **Bins** resolution;
+- inverse-variance or uniform averaging;
+- fractional bin overlap;
+- projected HKLE coordinate bases;
+- point-group symmetry expansion; and
+- bounded batch sizes for temporary working memory.
+
+Masks are applied before binning. Automatic rebinning is used for modest jobs;
+larger jobs remain pending until **Rebin now** or until an operation requires
+current rebinned data. The batch target controls temporary work, not the
+persistent output-grid allocation.
+
+**Copy settings** and **Paste settings** transfer compatible rebin recipes.
+**Create dataset from rebin** materializes an independent project dataset.
+
+A composite combines compatible enabled descendants into one effective
+dataset. Each source signal is multiplied by its scale and averaged using its
+fit weight. A negative scale subtracts a source. When a composite is active,
+its constituents are not fitted separately.
+
+## Masks
+
+File masks and nfit masks remain separate but are combined for fitting. All GUI
+mask parameters describe the region to exclude:
+
+- coordinate and energy/$|Q|$ ranges;
+- projected boxes and ellipsoids; and
+- acoustic-phonon cones around one or more Bragg centers.
+
+Zero-width defaults are inactive. **Invert** excludes the complement.
+**Additive** removes a region from earlier nfit-mask contributions but cannot
+undo a file mask. Disabled masks do not participate.
+
+Large datasets may use manual mask application. Opening the viewer, fitting, or
+pressing **Apply masks now** always resolves pending masks first.
+
+## Backgrounds
+
+A dataset or composite can subtract one or more powder-inelastic backgrounds.
+Each background has an enabled state, scale, and linear or nearest interpolation.
+
+For a single-crystal target, nfit interpolates the powder background in
+$|Q|$ and energy and propagates independent uncertainties:
+
+$$
+\sigma_{\rm corrected}^2
+=\sigma_{\rm data}^2+a^2\sigma_{\rm background}^2,
+$$
+
+where $a$ is the background scale. Values outside the background domain are
+masked rather than extrapolated.
+
+A dataset background is applied before that dataset's scale. A group background
+is subtracted once after the group composite is formed. Use **Spherical
+average** in the [Analysis Window](data_playground.md) to create a powder
+background from single-crystal data.

@@ -8,7 +8,7 @@ events, powder cuts, magnetization, heat capacity, and general point tables.
 Nfit was authored by Paul M. Neves (Johns Hopkins University,
 pneves1@jhu.edu) with use of LLM coding tools.
 
-Current package version: 0.20.12.
+Current package version: 0.20.13.
 
 Start with [Getting started](getting_started.md), then use
 [GUI workflows](gui_workflows.md) for interactive work or the
@@ -21,8 +21,10 @@ Start with [Getting started](getting_started.md), then use
 
 getting_started
 gui_workflows
+data_import
+gui_fitting
+data_viewer
 data_playground
-heat_capacity
 plotting
 ```
 
@@ -32,6 +34,7 @@ plotting
 
 physics_conventions
 spin_fluctuation_models
+heat_capacity
 theory_notes
 ```
 

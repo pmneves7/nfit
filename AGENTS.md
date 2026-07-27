@@ -14,6 +14,8 @@ Preferred test commands:
 ```bash
 /Users/pmneves/anaconda3/envs/nfit/bin/python -m pytest -q
 /Users/pmneves/anaconda3/envs/nfit/bin/python -m compileall -q src/nfit tests examples
+/Users/pmneves/anaconda3/envs/nfit/bin/python -m ruff check
+/Users/pmneves/anaconda3/envs/nfit/bin/python -m sphinx -W --keep-going -b html docs docs/_build/html
 ```
 
 Do not rely on the shell's default `python`; on this machine it may point to a
@@ -23,22 +25,74 @@ Qt/PySide and NumPy-version behavior.
 If the environment is missing, tell the user rather than silently switching to a
 different Python.
 
-Versioning and authorship:
+## Branches and commits
 
-- Update the project version in `pyproject.toml` and `docs/conf.py` as part of
-  every commit. Use a reasonable semantic-version bump for the behavioral scope
-  of the commit.
+- Work directly on `main` so the current application state is immediately
+  available for interactive testing.
+- Do not create or switch to a feature branch or worktree unless the user
+  explicitly requests it.
+- Commit each completed, coherent change before handing it back to the user
+  unless the user explicitly asks for uncommitted work.
+- A shared `main` worktree may already contain user or other-agent changes.
+  Preserve them and stage only the exact files that belong to the completed
+  change. Never sweep unrelated dirty files into a commit.
+- Do not commit when relevant tests or validation are failing. Report the
+  failure instead.
+
+## Versioning and authorship
+
+- Every commit must update the version consistently in `pyproject.toml`,
+  `docs/conf.py`, `docs/index.md`, and `tests/test_packaging.py`.
+- Use a patch increment for fixes, documentation, refactoring, and small
+  backward-compatible behavior changes.
+- Use a minor increment for substantial new backward-compatible features.
+- Only a human may change the major version. Agents must never increment it.
 - Keep the authorship statement intact: this project was authored by Paul M.
   Neves (Johns Hopkins University, pneves1@jhu.edu) with use of LLM coding
   tools.
 
-Documentation and wiki maintenance:
+## Project map
+
+- `src/nfit/project_gui.py`: project explorer and GUI workflows.
+- `src/nfit/qt_slice_viewer.py`: interactive data viewer.
+- `src/nfit/fit_config.py`: model-component compilation and parameter mapping.
+- `src/nfit/fitting.py`: optimizer-facing fitting framework.
+- `src/nfit/cross_section.py`: neutron cross-section and susceptibility
+  conversions.
+- `src/nfit/analysis/`: non-destructive analysis operations.
+- `docs/physics_conventions.md`: authoritative physics and unit conventions.
+- `docs/gui_workflows.md`: GUI documentation entry point.
+- `docs/data_import.md`, `docs/gui_fitting.md`, and `docs/data_viewer.md`:
+  detailed GUI workflows.
+- `docs/data_philosophy.md`: extension, serialization, and data contracts.
+
+Keep this map structural rather than exhaustive. Update it only when subsystem
+ownership or documentation entry points move.
+
+## Documentation maintenance
 
 - When changing user-facing behavior, update the relevant source documentation in
   `docs/` during the same change.
-- Treat `docs/gui_workflows.md` as the in-repository wiki for the current GUI
-  and data-viewer workflow. Update it whenever GUI controls, fit-history
-  behavior, data-viewer behavior, or project-file workflow changes.
+- When adding or removing a user-facing capability, update the concise feature
+  summary in `README.md` and the appropriate Sphinx page or navigation entry.
+- Treat `docs/gui_workflows.md` as the GUI entry point. Put detailed import,
+  fitting, viewer, physics, and API behavior in their focused pages rather than
+  growing that overview into a second manual.
 - Keep documentation, tests, and tooltips consistent. New user-interactable GUI
   controls should include useful hover text and test coverage that prevents
   missing tooltip regressions.
+- Build Sphinx with warnings treated as errors after changing documentation or
+  public behavior.
+
+`AGENTS.md` should contain stable workflow rules and pointers, not detailed
+feature descriptions or scientific equations. The Sphinx pages remain the
+authoritative source for behavior and conventions.
+
+## Before committing
+
+- Run tests proportional to the change; run the full suite for broad or risky
+  changes.
+- Run Ruff, byte-compilation, and `git diff --check`.
+- Rebuild Sphinx when documentation or public behavior changes.
+- Confirm that the four version declarations agree.
+- Review the staged diff and verify that it contains no unrelated user changes.

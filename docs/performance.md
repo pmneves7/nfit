@@ -31,24 +31,17 @@ detector-trajectory normalization. The latter uses the shared nfit CPU budget
 and Numba workers when available. Worker count is capped by a 512 MB private
 accumulator budget because each worker may need an output-sized array.
 
-Trajectory workers use one fixed scratch buffer per worker. They do not allocate
-temporary arrays for every run-detector pair; this is important for scans with
-hundreds of runs and roughly 100,000 detectors, where task-local allocation can
-otherwise drive allocator high-water memory into hundreds of gigabytes.
-
-Output-grid memory still scales with the product of all four bin counts. Start
-with the default 20 x 20 x 20 x 50 grid, restrict HKLE limits, and increase
-resolution after confirming the useful region. Large groups use manual
-rebinning and report file-scan and normalization stages in the progress dialog.
+Trajectory workers reuse one scratch buffer per worker instead of allocating
+one for every run-detector pair. This keeps temporary memory bounded as the
+number of runs and detectors grows.
 
 Before allocating output arrays, nfit estimates peak reduction memory from the
-4D bin product, fixed normalization overhead, and selected batch target. It
-warns in the GUI when a request is estimated to exceed 70% of currently
-available RAM and reports the grid, estimated peak, and available memory. The
-user can cancel or explicitly continue. The lower-level API refuses the request
-unless memory enforcement is deliberately disabled. The batch target controls
-event-scan temporary storage; it cannot reduce the persistent memory required
-by the requested output grid.
+product of the four output bin counts, fixed normalization arrays, and the
+selected batch target. The GUI warns when the estimate exceeds 70% of available
+RAM and shows both the requested grid and estimated peak. The batch target
+limits event-scan temporary storage; it cannot reduce the persistent arrays
+required by the output grid. The lower-level API rejects an over-budget request
+unless its caller explicitly disables memory enforcement.
 
 ## Heisenberg RPA
 
@@ -108,9 +101,7 @@ automatically — none of them changes the fit result or requires configuration.
   selection), so merely selecting a fit result or "Current state" node, or
   re-selecting a large dataset, no longer re-masks the whole volume. Dataset
   detail counts are computed directly from the mask/event/intensity arrays
-  instead of materializing coordinate grids. On the 4D reference dataset (59M
-  bins) this takes selecting a fit result from several seconds to ~0.4 s and the
-  dataset-details panel from ~5 s to well under 0.1 s.
+  instead of materializing coordinate grids.
 - **LRU GUI caches and prepared point lists.** Viewer, composite, overlay, and
   transformed point-list caches evict only their least-recently-used entry.
   Workspaces with more cached datasets therefore do not repeatedly discard and
@@ -130,10 +121,9 @@ automatically — none of them changes the fit result or requires configuration.
   do not create thousands of identical static calculations. Exact closure
   results use an LRU sized for complete temperature sweeps.
 
-GUI file imports, explicit lazy-dataset loads, and rebin operations run in the
-background during an interactive session. This keeps Qt responsive; it does not promise linear
-speedup from parallel disk reads or unbounded rebin workers. The numerical
-rebinner retains its own memory-bounded threading policy.
+GUI file imports, explicit lazy-dataset loads, and rebin operations run in a
+background worker so Qt remains responsive. Numerical rebinning still follows
+its memory-bounded threading policy.
 
 ## Compute backends (large datasets)
 

@@ -106,24 +106,9 @@ session.rollback(0)
 
 Scripts and the GUI use the same project, model, mask, fit, and resolution
 objects. A workflow created in either interface can therefore be inspected,
-saved, and reproduced in the other.
-
-The current project explorer launches with `nfit` and lets a user:
-
-- create workspaces and import reduced datasets from files,
-- organize datasets into nested dataset groups,
-- inspect file-provided axes, units, metadata, inferred axis roles, crystal
-  information, source files, and imported sample-environment context,
-- edit dataset configuration such as point-list coordinate/channel roles and
-  rebinned views,
-- edit and attach dataset or shared masks,
-- attach one or more model components,
-- configure optimizer settings, dataset weights, parameter bounds, fitted/fixed
-  parameters, global/per-dataset parameter sharing, and hard parameter
-  relationships,
-- run fits, branch fit timelines, restore earlier fit states, and inspect
-  structured fit metadata,
-- compare data, model, and residual channels visually in the data viewer.
+saved, and reproduced in the other. The project explorer provides interactive
+editing of those objects; generated fit and plot scripts restore saved state
+through the package API.
 
 For workflows with a small symmetry-reduced fitting volume and a much larger
 display volume, set the display dataset's fit weight to zero. Positive-weight
@@ -133,11 +118,11 @@ model channel is calculated exactly once. The lower-level `FitModelSession`
 likewise omits zero-weight entries from its `FitProblem`; post-fit visualization
 channel generation is provided by the project fitting pipeline.
 
-The data viewer remains driven by reusable data/model objects. It can display
-current model channels and stored fit channels from GUI fit history, but
-script-created datasets with attached fit comparisons produce the same viewer
-behavior.
-See [GUI workflows](gui_workflows.md) for current user-facing details.
+The data viewer displays current predictions and stored fit-result channels
+using the same reusable data and model objects.
+See [GUI workflows](gui_workflows.md) for the user-facing entry point,
+[Importing and preparing data](data_import.md), and
+[Models and fitting](gui_fitting.md).
 See [Fit constraints](fit_constraints.md) for exact relationships,
 inequalities, expression syntax, degrees of freedom, and backend examples.
 
@@ -152,7 +137,7 @@ combine with existing masks, so independent masks can be composed in a
 from nfit import FitDataset, make_energy_q_mask_transform, make_mask_transform
 
 dataset = FitDataset(
-    "hyspec_50K",
+    "dataset_50K",
     data,
     transforms=[
         # Keep only this coarse analysis window.
@@ -300,7 +285,7 @@ problem = FitProblem(
         FitDataset("instrument_a", data_a, weight=1.0),
         FitDataset("instrument_b", data_b, weight=0.4),
     ],
-    model=ModelSpec("placeholder_model", predict_measured_intensity),
+    model=ModelSpec("measured_model", predict_measured_intensity),
     parameter_specs=[
         ParameterSpec("amplitude", 1.0, min=0.0),
         ParameterSpec("width", 0.1, min=0.0),
