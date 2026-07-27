@@ -110,6 +110,8 @@ def display_unit(unit: str | None) -> str:
     """Return a publication-style label without changing stored unit keys."""
 
     normalized = normalize_unit(unit)
+    if normalized.casefold() in {"arbitrary", "arbitrary units", "arb. units", "a.u."}:
+        return "a.u."
     labels = {
         "cm^3/mol": "emu/(mol Oe)",
         "mol/cm^3": "mol Oe/emu",
@@ -122,6 +124,68 @@ def display_unit(unit: str | None) -> str:
     return labels.get(normalized, normalized)
 
 
+def display_axis_label(
+    name: str,
+    unit: str | None,
+    *,
+    quantity_type: str = "unknown",
+) -> str:
+    """Return a compact scientific axis label with publication-style units.
+
+    Older nfit projects may contain ``DeltaE`` in the energy axis' unit field.
+    Mantid and nfit use meV for that coordinate, so repair that legacy metadata
+    at display time without changing the saved project.
+    """
+
+    raw_name = str(name).strip()
+    compact_name = raw_name.casefold().replace("_", "").replace(" ", "")
+    is_energy = quantity_type == "energy_transfer" or compact_name in {
+        "deltae",
+        "energy",
+        "energytransfer",
+    }
+    label = "ΔE" if is_energy else raw_name
+    normalized = normalize_unit(unit)
+    if is_energy and normalized.casefold().replace("_", "").replace(" ", "") in {
+        "deltae",
+        "energy",
+        "energytransfer",
+    }:
+        normalized = "meV"
+    displayed = display_unit(normalized)
+    return f"{label} ({displayed})" if displayed else label
+
+
+def display_channel_label(
+    label: str | None,
+    unit: str | None,
+    *,
+    quantity_type: str = "unknown",
+    uncertainty: bool = False,
+) -> str:
+    """Return a compact physical-quantity label and an explicit unit.
+
+    Missing units are intentionally shown as arbitrary units instead of being
+    omitted. This keeps uncalibrated intensity visibly distinct from an
+    absolute cross section.
+    """
+
+    if quantity_type == "unknown":
+        quantity_type = infer_quantity_type(str(label or ""), str(unit or ""))
+    symbols = {
+        "scattering_intensity": r"$I(\mathbf{Q},E)$",
+        "differential_cross_section": (
+            r"$\mathrm{d}^2\sigma/\mathrm{d}\Omega\,\mathrm{d}E$"
+        ),
+        "dynamic_susceptibility": r"$\chi''$",
+    }
+    base = symbols.get(quantity_type, str(label or "").strip() or "Signal")
+    if uncertainty:
+        base = f"Uncertainty in {base}"
+    displayed = display_unit(unit) or "a.u."
+    return f"{base} ({displayed})"
+
+
 def infer_quantity_type(name: str, unit: str = "") -> str:
     """Infer a conservative quantity type from a column name and unit."""
 
@@ -131,6 +195,18 @@ def infer_quantity_type(name: str, unit: str = "") -> str:
         return "temperature"
     if "field" in lowered or normalized in {"Oe", "T", "A/m"}:
         return "magnetic_field"
+    if (
+        "dynamic susceptibility" in lowered
+        or "dynamical susceptibility" in lowered
+        or normalized in {"mu_B^2/meV", "mu_B^2/meV/f.u."}
+    ):
+        return "dynamic_susceptibility"
+    if "cross section" in lowered or normalized in {
+        "barn/sr/meV",
+        "barn/sr/meV/f.u.",
+        "mbarn/sr/meV/f.u.",
+    }:
+        return "differential_cross_section"
     if "inverse susceptibility" in lowered:
         return "inverse_bulk_susceptibility"
     if "heat capacity" in lowered or "samp hc" in lowered or normalized in {
@@ -151,10 +227,6 @@ def infer_quantity_type(name: str, unit: str = "") -> str:
         return "energy_transfer"
     if lowered in {"q", "|q|"} or normalized == "Å⁻¹":
         return "momentum"
-    if normalized in {"barn/sr/meV", "barn/sr/meV/f.u.", "mbarn/sr/meV/f.u."}:
-        return "differential_cross_section"
-    if normalized in {"mu_B^2/meV", "mu_B^2/meV/f.u."}:
-        return "dynamic_susceptibility"
     if any(token in lowered for token in ("intensity", "signal", "counts")):
         return "scattering_intensity"
     return "unknown"

@@ -8,6 +8,19 @@ from nfit import (
     load_mantid_mdhisto_nxs,
     point_data_from_hyspec_hhl,
 )
+from nfit.mdhisto import MDHistoAxis
+
+
+def test_energy_axis_migrates_legacy_deltae_unit_to_mev():
+    axis = MDHistoAxis(
+        "DeltaE",
+        np.asarray([-1.0, 0.0, 1.0]),
+        "DeltaE",
+        "energy",
+    )
+
+    assert axis.name == "DeltaE"
+    assert axis.units == "meV"
 
 
 def test_load_mantid_mdhisto_nxs_reads_axes_and_arrays(tmp_path):

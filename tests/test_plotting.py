@@ -147,6 +147,45 @@ def test_plot_mdhisto_slice_can_render_non_signal_channel():
     assert ax_colorbar.yaxis.label.get_text() == "Multiplicity"
 
 
+def test_mdhisto_neutron_channels_use_quantity_symbols_and_units():
+    data = _tiny_mdhisto_data()
+    data.metadata.update(
+        {
+            "signal_label": "Scattering cross section",
+            "signal_quantity_type": "differential_cross_section",
+            "signal_unit": "mbarn/sr/meV/f.u.",
+        }
+    )
+    data.auxiliary_channels["dynamic_susceptibility"] = MDHistoChannel(
+        np.ones(data.shape),
+        np.full(data.shape, 0.1),
+        label="Dynamical susceptibility χ″",
+        unit="mu_B^2/meV/f.u.",
+        quantity_type="dynamic_susceptibility",
+    )
+
+    signal = MDHistoSliceViewer(data, x_dim=3, y_dim=2, channel="signal")
+    error = MDHistoSliceViewer(data, x_dim=3, y_dim=2, channel="errors")
+    susceptibility = MDHistoSliceViewer(
+        data,
+        x_dim=3,
+        y_dim=2,
+        channel="dynamic_susceptibility",
+    )
+
+    assert signal._axis_label(0) == "ΔE (meV)"
+    assert signal._channel_label() == (
+        r"$\mathrm{d}^2\sigma/\mathrm{d}\Omega\,\mathrm{d}E$ "
+        "(mbarn/(sr meV f.u.))"
+    )
+    assert error._channel_label().startswith(
+        r"Uncertainty in $\mathrm{d}^2\sigma"
+    )
+    assert susceptibility._channel_label() == (
+        r"$\chi''$ (μ$_{\mathrm{B}}^2$/meV/f.u.)"
+    )
+
+
 def test_plot_mdhisto_line_and_auto_dispatch_for_single_non_singleton_axis():
     data = _tiny_1d_mdhisto_data()
 
@@ -154,9 +193,9 @@ def test_plot_mdhisto_line_and_auto_dispatch_for_single_non_singleton_axis():
     auto_ax = plot_mdhisto_auto(data, channel="errors")
 
     assert ax.get_xlabel() == "[H,H,H] (r.l.u.)"
-    assert ax.get_ylabel() == "Signal"
+    assert ax.get_ylabel() == r"$I(\mathbf{Q},E)$ (a.u.)"
     assert len(ax.lines) == 1
-    assert auto_ax.get_ylabel() == "Error"
+    assert auto_ax.get_ylabel() == r"Uncertainty in $I(\mathbf{Q},E)$ (a.u.)"
     assert len(auto_ax.lines) == 1
 
 
@@ -262,7 +301,7 @@ def test_plot_mdhisto_fit_line_comparison_draws_expected_1d_layers():
     ax = plot_mdhisto_fit_line_comparison(data, fit)
 
     assert ax.get_xlabel() == "[H,H,H] (r.l.u.)"
-    assert ax.get_ylabel() == "Signal"
+    assert ax.get_ylabel() == r"$I(\mathbf{Q},E)$ (a.u.)"
     assert ax.containers
     assert any(
         line.get_marker() == "o" and line.get_linestyle() == "None"
@@ -644,7 +683,10 @@ def test_qt_channel_dropdown_switches_displayed_channel_and_export_script():
     viewer.channel_combo.setCurrentText("errors")
 
     assert viewer.model.channel == "errors"
-    assert viewer.colorbar.ax.yaxis.label.get_text() == "Error"
+    assert (
+        viewer.colorbar.ax.yaxis.label.get_text()
+        == r"Uncertainty in $I(\mathbf{Q},E)$ (a.u.)"
+    )
     np.testing.assert_allclose(viewer.image.get_array(), viewer.slice_arrays()["errors"])
     assert "channel='errors'" in viewer.figure_script()
 

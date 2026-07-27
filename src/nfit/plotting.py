@@ -9,7 +9,7 @@ from numpy.typing import ArrayLike
 
 from .dataset import PointData4D, PointListData
 from .mdhisto import MDHistoData, mdhisto_measured_bins
-from .quantities import display_unit
+from .quantities import display_axis_label, display_channel_label, display_unit
 
 
 @dataclass(frozen=True)
@@ -291,18 +291,20 @@ def plot_mdhisto_line(
     else:
         ax.plot(x, y, "-", lw=1.2)
     axis = data.axes[axis_index]
-    xlabel = f"{axis.name} ({axis.units})" if axis.units else axis.name
-    ax.set_xlabel(xlabel)
-    auxiliary = data.auxiliary_channels.get(channel_name)
-    ax.set_ylabel(
-        f"{auxiliary.label} ({display_unit(auxiliary.unit)})"
-        if auxiliary is not None and auxiliary.unit
-        else (
-            auxiliary.label
-            if auxiliary is not None and auxiliary.label
-            else MDHistoSliceViewer.CHANNEL_LABELS[channel_name]
+    ax.set_xlabel(
+        display_axis_label(
+            axis.name,
+            axis.units,
+            quantity_type=axis.role,
         )
     )
+    channel_model = MDHistoSliceViewer(
+        data,
+        x_dim=axis_index,
+        y_dim=_waterfall_other_axis(data, axis_index),
+        channel=channel_name,
+    )
+    ax.set_ylabel(channel_model._channel_label())
     return ax
 
 
@@ -574,9 +576,12 @@ def plot_mdhisto_waterfall(
     first = datasets[0]
     x_index = _waterfall_1d_axis(first, x_dim) if _mdhisto_non_singleton_count(first) == 1 else _resolve_mdhisto_dim(first, x_dim)
     axis = first.axes[x_index]
-    axis_name = waterfall_axis_display_name(axis.name)
     ax.set_xlabel(
-        f"{axis_name} ({display_unit(axis.units)})" if axis.units else axis_name
+        display_axis_label(
+            axis.name,
+            axis.units,
+            quantity_type=axis.role,
+        )
     )
     channel_model = MDHistoSliceViewer(
         first,
@@ -1093,18 +1098,21 @@ def plot_mdhisto_fit_line_comparison(
         ax.axhline(offset, color="0.7", lw=0.8)
         ax.plot(x, r + offset, "o", ms=4.0, mfc="none", color="0.25", label="residual")
     axis = data.axes[axis_index]
-    ax.set_xlabel(f"{axis.name} ({axis.units})" if axis.units else axis.name)
-    channel_name = _resolve_mdhisto_channel(channel, data)
-    auxiliary = data.auxiliary_channels.get(channel_name)
-    ax.set_ylabel(
-        f"{auxiliary.label} ({display_unit(auxiliary.unit)})"
-        if auxiliary is not None and auxiliary.unit
-        else (
-            auxiliary.label
-            if auxiliary is not None and auxiliary.label
-            else MDHistoSliceViewer.CHANNEL_LABELS[channel_name]
+    ax.set_xlabel(
+        display_axis_label(
+            axis.name,
+            axis.units,
+            quantity_type=axis.role,
         )
     )
+    channel_name = _resolve_mdhisto_channel(channel, data)
+    channel_model = MDHistoSliceViewer(
+        data,
+        x_dim=axis_index,
+        y_dim=_waterfall_other_axis(data, axis_index),
+        channel=channel_name,
+    )
+    ax.set_ylabel(channel_model._channel_label())
     ax.legend()
     return ax
 
@@ -1969,9 +1977,17 @@ class MDHistoSliceViewer:
     def _axis_label(self, dim: int) -> str:
         if getattr(self, "is_point_list", False):
             unit = self.data.unit(self.x_key)
-            return f"{self.x_key} ({display_unit(unit)})" if unit else self.x_key
+            return display_axis_label(
+                self.x_key,
+                unit,
+                quantity_type=self.data.quantity_type(self.x_key),
+            )
         axis = self.data.axes[dim]
-        return f"{axis.name} ({display_unit(axis.units)})" if axis.units else axis.name
+        return display_axis_label(
+            axis.name,
+            axis.units,
+            quantity_type=axis.role,
+        )
 
     def _resolve_channel(self, channel: str) -> str:
         normalized = self.CHANNEL_ALIASES.get(str(channel), str(channel))
@@ -1982,8 +1998,35 @@ class MDHistoSliceViewer:
     def _channel_label(self) -> str:
         if getattr(self, "is_point_list", False):
             unit = self._point_channel_unit()
-            return f"{self.channel} ({display_unit(unit)})" if unit else self.channel
-        return self.CHANNEL_LABELS.get(self.channel, self.channel)
+            quantity_type = (
+                self.data.channel_quantity_type(self.channel)
+                if self.channel in self.data.channel_labels
+                else self.data.quantity_type(self.channel)
+            )
+            return display_channel_label(
+                self.channel,
+                unit,
+                quantity_type=quantity_type,
+            )
+        if self.channel in {"num_events", "combined_mask", "file_mask", "nfit_mask"}:
+            return self.CHANNEL_LABELS.get(self.channel, self.channel)
+        if self.channel == "residual":
+            return self.CHANNEL_LABELS[self.channel]
+        source_channel = "signal" if self.channel in {"signal", "errors", "fit"} else self.channel
+        auxiliary = self.data.auxiliary_channels.get(source_channel)
+        quantity_type = self.data.channel_quantity_type(source_channel)
+        unit = self.data.channel_unit(source_channel)
+        label = (
+            auxiliary.label
+            if auxiliary is not None
+            else self.CHANNEL_LABELS.get(source_channel, source_channel)
+        )
+        return display_channel_label(
+            label,
+            unit,
+            quantity_type=quantity_type,
+            uncertainty=self.channel == "errors",
+        )
 
     def _display_values(self, view: dict[str, np.ndarray]) -> np.ndarray:
         if getattr(self, "is_point_list", False):

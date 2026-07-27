@@ -159,10 +159,19 @@ Every imported MDHisto signal and auxiliary channel follows the same contract
 as bulk-susceptibility and heat-capacity data: value, one-sigma uncertainty,
 physical quantity type, and unit.
 
-- Absolute cross section is displayed as `mbarn/sr/meV/f.u.` (or the selected
-  magnetic-ion/unit-cell basis).
-- Absolute dynamical susceptibility is displayed as
-  `mu_B^2/meV/f.u.` (or `spin^2/meV/f.u.` when explicitly selected).
+- Energy transfer is displayed as $\Delta E$ with its stored unit, normally
+  meV. The stable project/script axis key remains `DeltaE`. Legacy projects
+  that stored `DeltaE` in the unit field are interpreted as meV.
+- Unclassified measured INS signal is displayed as $I(\mathbf Q,E)$.
+- An inelastic cross-section channel is displayed as
+  $d^2\sigma/(d\Omega\,dE)$, with units such as
+  `mbarn/(sr meV f.u.)` (or the selected magnetic-ion/unit-cell basis).
+- Dynamical susceptibility is displayed simply as $\chi''$. Magnetic-moment
+  units render the Bohr magneton as $\mu_{\mathrm B}^2$, for example
+  $\mu_{\mathrm B}^2/(\mathrm{meV\ f.u.})`; `spin^2` is retained when that
+  convention is explicitly selected.
+- Signal and uncertainty plots always include a unit. Missing or explicitly
+  arbitrary units are displayed as `(a.u.)`.
 - Published normalized intensity such as `1/meV/V` is retained as a
   dimensionful but non-cross-section signal. Its paired $\chi''$ channel has
   the correct Bose/correction shape but remains arbitrary unless an absolute
@@ -173,6 +182,16 @@ physical quantity type, and unit.
 - For count data, `Signal units / mbarn` is the explicit calibration in
   imported signal units per `mbarn/(sr meV)` on the selected sample basis.
   Zero means uncalibrated.
+
+The cross section and dynamic structure factor are related but are not
+interchangeable labels. nfit therefore does not call an arbitrary or
+cross-section-valued channel $S(\mathbf Q,E)$ unless its metadata explicitly
+identifies that response. Mantid likewise defines normalized direct-geometry
+inelastic output as the double-differential cross section
+$d^2\sigma/(dE\,d\Omega)$, while the neutron-scattering relation contains
+$S(\mathbf Q,E)$ as a separate response function
+([Mantid MDNorm](https://docs.mantidproject.org/v6.1.0/concepts/MDNorm.html);
+[ORNL introduction to neutron spin echo](https://neutrons.ornl.gov/sites/default/files/LS_Introduction_to_NSE_2019NXS-R.pdf)).
 
 The imported signal is retained as a named channel. When temperature is known,
 the paired scattering-cross-section and $\chi''$ channels are generated with

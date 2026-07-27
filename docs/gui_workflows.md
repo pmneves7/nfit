@@ -471,6 +471,16 @@ formula-unit, magnetic-ion, or unit-cell basis. See
 [Physics conventions](physics_conventions.md#inelastic-magnetic-neutron-scattering)
 for the complete equation and references.
 
+Slice, line, and waterfall figures use compact scientific notation consistently:
+energy transfer is $\Delta E$ (normally in meV), unclassified measured
+intensity is $I(\mathbf Q,E)$, an inelastic cross section is
+$d^2\sigma/(d\Omega\,dE)$, and dynamical susceptibility is $\chi''$.
+Magnetic-moment response units render the Bohr magneton as
+$\mu_{\mathrm B}^2$. Signal and uncertainty axes always show their stored
+units; when none are available, the viewer explicitly shows `(a.u.)`.
+`DeltaE` remains the stable axis name used by projects and scripts even though
+the figure label uses the conventional $\Delta E$ glyph.
+
 All enabled file, inherited group, and dataset masks are applied before point or
 MDHisto data are rebinned, so excluded data do not contribute to rebinned bin
 averages; disabled masks are ignored. The materialized dataset keeps the source

@@ -23,7 +23,6 @@ from .plotting import (
     waterfall_step_bounds,
 )
 from .qt_controls import configure_numeric_spin_boxes
-from .quantities import display_unit
 
 _MARKER_OPTIONS = {
     "none": "",
@@ -3479,12 +3478,7 @@ class QtMDHistoSliceViewer:
             trace_label_font_size=self.waterfall_trace_label_font_size,
             trace_label_color=self.waterfall_trace_label_color,
         )
-        x_axis = self.data.axes[self.model.x_dim]
-        x_name = waterfall_axis_display_name(x_axis.name)
-        x_units = display_unit(x_axis.units)
-        self.ax_image.set_xlabel(
-            f"{x_name} ({x_units})" if x_units else x_name
-        )
+        self.ax_image.set_xlabel(self.model._axis_label(self.model.x_dim))
         self.ax_image.set_ylabel(self.model._channel_label())
         if (
             previous_xlim is not None

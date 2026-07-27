@@ -46,6 +46,16 @@ class MDHistoAxis:
     path: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        """Normalize legacy metadata without changing stable axis names."""
+
+        compact_name = self.name.casefold().replace("_", "").replace(" ", "")
+        compact_unit = self.units.casefold().replace("_", "").replace(" ", "")
+        if (
+            self.kind == "energy" or compact_name in {"deltae", "energytransfer"}
+        ) and compact_unit in {"deltae", "energy", "energytransfer"}:
+            object.__setattr__(self, "units", "meV")
+
     @property
     def centers(self) -> FloatArray:
         """Return bin centers when ``values`` are bin boundaries."""

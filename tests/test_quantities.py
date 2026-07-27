@@ -1,7 +1,14 @@
 import numpy as np
 import pytest
 
-from nfit.quantities import convert_quantity, display_unit, infer_quantity_type, normalize_unit
+from nfit.quantities import (
+    convert_quantity,
+    display_axis_label,
+    display_channel_label,
+    display_unit,
+    infer_quantity_type,
+    normalize_unit,
+)
 
 
 def test_cgs_si_bulk_conversions_include_four_pi():
@@ -27,5 +34,35 @@ def test_inference_and_unknown_conversion_are_conservative():
 
 def test_display_units_use_conventional_cgs_and_bohr_magneton_labels():
     assert display_unit("cm^3/mol") == "emu/(mol Oe)"
+    assert display_unit("arb. units") == "a.u."
     assert display_unit("mu_B/f.u.") == r"μ$_{\mathrm{B}}$/f.u."
     assert display_unit("mu_B^2/meV/V") == r"μ$_{\mathrm{B}}^2$/meV/V"
+
+
+def test_neutron_plot_labels_use_symbols_and_explicit_units():
+    assert (
+        display_axis_label("DeltaE", "meV", quantity_type="energy_transfer")
+        == "ΔE (meV)"
+    )
+    assert display_channel_label(
+        "Scattering cross section",
+        "mbarn/sr/meV/f.u.",
+        quantity_type="differential_cross_section",
+    ) == (
+        r"$\mathrm{d}^2\sigma/\mathrm{d}\Omega\,\mathrm{d}E$ "
+        "(mbarn/(sr meV f.u.))"
+    )
+    assert display_channel_label(
+        "Dynamical susceptibility",
+        "mu_B^2/meV/f.u.",
+        quantity_type="dynamic_susceptibility",
+    ) == r"$\chi''$ (μ$_{\mathrm{B}}^2$/meV/f.u.)"
+    assert display_channel_label(
+        "Signal",
+        "",
+        quantity_type="scattering_intensity",
+    ) == r"$I(\mathbf{Q},E)$ (a.u.)"
+    assert display_channel_label(
+        "Scattering cross section",
+        "",
+    ).startswith(r"$\mathrm{d}^2\sigma")
