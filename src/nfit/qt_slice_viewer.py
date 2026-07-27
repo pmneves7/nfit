@@ -8,9 +8,22 @@ import numpy as np
 
 from .dataset import PointListData
 from .mdhisto import MDHistoData
-from .plotting import MDHistoSliceViewer, inverse_variance_weighted_profile, smooth_mdhisto_view
+from .plotting import (
+    MDHistoSliceViewer,
+    WaterfallTrace,
+    default_waterfall_offset,
+    default_waterfall_step,
+    draw_waterfall_traces,
+    inverse_variance_weighted_profile,
+    prepare_mdhisto_waterfall,
+    smooth_mdhisto_view,
+    waterfall_absolute_max,
+    waterfall_axis_display_name,
+    waterfall_colors,
+    waterfall_step_bounds,
+)
 from .qt_controls import configure_numeric_spin_boxes
-
+from .quantities import display_unit
 
 _MARKER_OPTIONS = {
     "none": "",
@@ -40,6 +53,20 @@ _COLOR_OPTIONS = {
     "gray": "#7f7f7f",
     "black": "#000000",
 }
+_WATERFALL_COLORMAPS = (
+    "viridis",
+    "plasma",
+    "magma",
+    "inferno",
+    "cividis",
+    "turbo",
+    "tab10",
+    "Dark2",
+    "Set1",
+    "Blues",
+    "Reds",
+)
+_WATERFALL_DISCRETE_COLORMAPS = {"tab10", "Dark2", "Set1"}
 
 
 @dataclass
@@ -98,6 +125,7 @@ class QtMDHistoSliceViewer:
         data: MDHistoData | Sequence[MDHistoData],
         *,
         dataset_names: Sequence[str] | None = None,
+        dataset_group_keys: Sequence[str] | None = None,
         x_dim: int | str = -1,
         y_dim: int | str = 0,
         channel: str = "signal",
@@ -110,6 +138,10 @@ class QtMDHistoSliceViewer:
         self.app = _qt_app()
         self.datasets = _coerce_datasets(data)
         self.dataset_names = _coerce_dataset_names(self.datasets, dataset_names)
+        self.dataset_group_keys = _coerce_dataset_group_keys(
+            self.datasets,
+            dataset_group_keys,
+        )
         self.dataset_index = 0
         self._initial_x_dim = x_dim
         self._initial_y_dim = y_dim
@@ -219,14 +251,38 @@ class QtMDHistoSliceViewer:
         self.show_errorbar_caps_check = None
         self.errorbar_cap_size_spin = None
         self.copy_figure_button = None
+        self.save_plot_button = None
         self.copy_script_button = None
         self.save_script_button = None
-        self.save_plot_action = None
         self._save_plot_callback = None
+        self._save_project_callback = None
+        self.save_project_shortcut = None
         self._unmask_model_callback = None
         self.view_mode_combo = None
         self.content_stack = None
         self.volume_panel = None
+        self.waterfall_group = None
+        self.waterfall_source_label = None
+        self.waterfall_step_label = None
+        self.waterfall_step_spin = None
+        self.waterfall_step_slider = None
+        self.waterfall_step_auto_check = None
+        self.waterfall_offset_spin = None
+        self.waterfall_offset_slider = None
+        self.waterfall_offset_auto_check = None
+        self.waterfall_cmap_combo = None
+        self.waterfall_color_range_label = None
+        self.waterfall_color_range_slider = None
+        self.waterfall_reverse_check = None
+        self.waterfall_zero_check = None
+        self.waterfall_zero_color_combo = None
+        self.waterfall_zero_style_combo = None
+        self.waterfall_zero_width_spin = None
+        self.waterfall_model_color_combo = None
+        self.waterfall_trace_labels_check = None
+        self.waterfall_trace_label_suffix_edit = None
+        self.waterfall_trace_label_font_size_spin = None
+        self.waterfall_trace_label_color_combo = None
         self.xcut_percent = 20
         self.ycut_percent = 16
         self.font_size = 12.0
@@ -249,6 +305,25 @@ class QtMDHistoSliceViewer:
         self.fit_line_color = "#d62728"
         self.fit_line_width = 2.0
         self.residual_percent = 30
+        self.waterfall_step = 1.0
+        self.waterfall_step_auto = True
+        self.waterfall_offset = 1.0
+        self.waterfall_offset_auto = True
+        self.waterfall_cmap = "viridis"
+        self.waterfall_color_min = 0.0
+        self.waterfall_color_max = 1.0
+        self.waterfall_reverse_colors = False
+        self.waterfall_show_zero_lines = True
+        self.waterfall_zero_color = "#7f7f7f"
+        self.waterfall_zero_style = "--"
+        self.waterfall_zero_width = 0.8
+        self.waterfall_model_color: str | None = None
+        self.waterfall_show_trace_labels = True
+        self.waterfall_trace_label_suffix = ""
+        self.waterfall_trace_label_font_size = 10.0
+        self.waterfall_trace_label_color: str | None = None
+        self.waterfall_dataset_names: list[str] | None = None
+        self._current_waterfall_traces: list[WaterfallTrace] = []
         self.hidden_layout = None
         self.hidden_controls: dict[int, _HiddenAxisControls] = {}
         self._display_axis_dims: list[int] = []
@@ -275,7 +350,7 @@ class QtMDHistoSliceViewer:
         configure_numeric_spin_boxes(self.app)
         self.update_plot()
 
-    def show(self) -> "QtMDHistoSliceViewer":
+    def show(self) -> QtMDHistoSliceViewer:
         self.window.show()
         self.window.raise_()
         self.window.activateWindow()
@@ -293,6 +368,7 @@ class QtMDHistoSliceViewer:
         data: MDHistoData | Sequence[MDHistoData],
         *,
         dataset_names: Sequence[str] | None = None,
+        dataset_group_keys: Sequence[str] | None = None,
         selected_dataset_name: str | None = None,
     ) -> None:
         """Update displayed datasets in place while preserving viewer state."""
@@ -311,6 +387,10 @@ class QtMDHistoSliceViewer:
         )
         self.datasets = _coerce_datasets(data)
         self.dataset_names = _coerce_dataset_names(self.datasets, dataset_names)
+        self.dataset_group_keys = _coerce_dataset_group_keys(
+            self.datasets,
+            dataset_group_keys,
+        )
         if self.volume_panel is not None:
             self.content_stack.setCurrentIndex(0)
             self.view_mode_combo.setCurrentIndex(0)
@@ -376,6 +456,7 @@ class QtMDHistoSliceViewer:
         xlim = self._export_limits("x") if self.ax_image is not None else None
         ylim = self._export_limits("y") if self.ax_image is not None else None
         return {
+            "view_mode": "waterfall" if self._waterfall_mode_active() else "slice",
             "x_dim": self.data.axes[self.model.x_dim].name,
             "y_dim": self.data.axes[self.model.y_dim].name,
             "channel": self.model.channel,
@@ -400,6 +481,34 @@ class QtMDHistoSliceViewer:
             "show_fit": self.show_fit,
             "unmask_model": self.unmask_model,
             "show_residual": self.show_residual,
+            "waterfall_step": self.waterfall_step,
+            "waterfall_step_auto": self.waterfall_step_auto,
+            "waterfall_offset": self.waterfall_offset,
+            "waterfall_offset_auto": self.waterfall_offset_auto,
+            "waterfall_cmap": self.waterfall_cmap,
+            "waterfall_color_min": self.waterfall_color_min,
+            "waterfall_color_max": self.waterfall_color_max,
+            "waterfall_reverse_colors": self.waterfall_reverse_colors,
+            "waterfall_show_zero_lines": self.waterfall_show_zero_lines,
+            "waterfall_zero_color": self.waterfall_zero_color,
+            "waterfall_zero_style": self.waterfall_zero_style,
+            "waterfall_zero_width": self.waterfall_zero_width,
+            "waterfall_model_color": self.waterfall_model_color,
+            "waterfall_show_trace_labels": self.waterfall_show_trace_labels,
+            "waterfall_trace_label_suffix": self.waterfall_trace_label_suffix,
+            "waterfall_trace_label_font_size": self.waterfall_trace_label_font_size,
+            "waterfall_trace_label_color": self.waterfall_trace_label_color,
+            "waterfall_dataset_names": self.waterfall_source_dataset_names(),
+            "marker": self.marker,
+            "line_style": self.line_style,
+            "marker_size": self.marker_size,
+            "line_plot_width": self.line_plot_width,
+            "marker_edge_width": self.marker_edge_width,
+            "marker_face_color": self.marker_face_color,
+            "show_errorbars": self.show_errorbars,
+            "show_errorbar_caps": self.show_errorbar_caps,
+            "errorbar_cap_size": self.errorbar_cap_size,
+            "fit_line_width": self.fit_line_width,
             "figsize": tuple(self.figure.get_size_inches()) if self.figure is not None else (8.0, 6.5),
         }
 
@@ -428,15 +537,125 @@ class QtMDHistoSliceViewer:
         self._set_show_fit(bool(settings.get("show_fit", self.show_fit)))
         self._set_unmask_model(bool(settings.get("unmask_model", self.unmask_model)))
         self._set_show_residual(bool(settings.get("show_residual", self.show_residual)))
+        self.waterfall_step = float(settings.get("waterfall_step", self.waterfall_step))
+        self.waterfall_step_auto = bool(
+            settings.get("waterfall_step_auto", self.waterfall_step_auto)
+        )
+        self.waterfall_offset = float(
+            settings.get("waterfall_offset", self.waterfall_offset)
+        )
+        self.waterfall_offset_auto = bool(
+            settings.get("waterfall_offset_auto", self.waterfall_offset_auto)
+        )
+        self.waterfall_cmap = str(
+            settings.get("waterfall_cmap", self.waterfall_cmap)
+        )
+        self.waterfall_color_min = float(
+            settings.get("waterfall_color_min", self.waterfall_color_min)
+        )
+        self.waterfall_color_max = float(
+            settings.get("waterfall_color_max", self.waterfall_color_max)
+        )
+        self.waterfall_reverse_colors = bool(
+            settings.get(
+                "waterfall_reverse_colors",
+                self.waterfall_reverse_colors,
+            )
+        )
+        self.waterfall_show_zero_lines = bool(
+            settings.get(
+                "waterfall_show_zero_lines",
+                self.waterfall_show_zero_lines,
+            )
+        )
+        self.waterfall_zero_color = str(
+            settings.get("waterfall_zero_color", self.waterfall_zero_color)
+        )
+        self.waterfall_zero_style = str(
+            settings.get("waterfall_zero_style", self.waterfall_zero_style)
+        )
+        self.waterfall_zero_width = float(
+            settings.get("waterfall_zero_width", self.waterfall_zero_width)
+        )
+        model_color = settings.get(
+            "waterfall_model_color",
+            self.waterfall_model_color,
+        )
+        self.waterfall_model_color = None if model_color is None else str(model_color)
+        self.waterfall_show_trace_labels = bool(
+            settings.get(
+                "waterfall_show_trace_labels",
+                self.waterfall_show_trace_labels,
+            )
+        )
+        self.waterfall_trace_label_suffix = str(
+            settings.get(
+                "waterfall_trace_label_suffix",
+                self.waterfall_trace_label_suffix,
+            )
+        )
+        self.waterfall_trace_label_font_size = float(
+            settings.get(
+                "waterfall_trace_label_font_size",
+                self.waterfall_trace_label_font_size,
+            )
+        )
+        label_color = settings.get(
+            "waterfall_trace_label_color",
+            self.waterfall_trace_label_color,
+        )
+        self.waterfall_trace_label_color = (
+            None if label_color is None else str(label_color)
+        )
+        dataset_names = settings.get("waterfall_dataset_names")
+        self.waterfall_dataset_names = (
+            [str(name) for name in dataset_names]
+            if isinstance(dataset_names, (list, tuple))
+            else None
+        )
+        self.marker = str(settings.get("marker", self.marker))
+        self.line_style = str(settings.get("line_style", self.line_style))
+        self.marker_size = float(settings.get("marker_size", self.marker_size))
+        self.line_plot_width = float(
+            settings.get("line_plot_width", self.line_plot_width)
+        )
+        self.marker_edge_width = float(
+            settings.get("marker_edge_width", self.marker_edge_width)
+        )
+        self.marker_face_color = str(
+            settings.get("marker_face_color", self.marker_face_color)
+        )
+        self.show_errorbars = bool(
+            settings.get("show_errorbars", self.show_errorbars)
+        )
+        self.show_errorbar_caps = bool(
+            settings.get("show_errorbar_caps", self.show_errorbar_caps)
+        )
+        self.errorbar_cap_size = float(
+            settings.get("errorbar_cap_size", self.errorbar_cap_size)
+        )
+        self.fit_line_width = float(
+            settings.get("fit_line_width", self.fit_line_width)
+        )
+        self._sync_waterfall_controls()
+        mode = 1 if settings.get("view_mode") == "waterfall" else 0
+        self.view_mode_combo.setCurrentIndex(mode)
         self._roi_extents = settings.get("roi_extents", self._roi_extents)
-        self._redraw()
+        self.update_plot(preserve_view=False)
 
     def set_save_plot_callback(self, callback) -> None:
         """Expose project-bound saved-plot creation when a callback is supplied."""
 
         self._save_plot_callback = callback
-        if self.save_plot_action is not None:
-            self.save_plot_action.setEnabled(callback is not None)
+        if self.save_plot_button is not None:
+            self.save_plot_button.setEnabled(callback is not None)
+
+    def set_save_project_callback(self, callback) -> None:
+        """Route the standard Save shortcut to the owning project window."""
+
+        self._save_project_callback = callback
+        if self.save_project_shortcut is not None:
+            self.save_project_shortcut.setEnabled(callback is not None)
 
     def set_unmask_model_callback(self, callback) -> None:
         """Set the project callback that rebuilds full-grid model channels."""
@@ -459,6 +678,8 @@ class QtMDHistoSliceViewer:
         Path(path).write_text(self.figure_script(), encoding="utf-8")
 
     def figure_script(self) -> str:
+        if self._waterfall_mode_active():
+            return self._waterfall_figure_script()
         source_file = self.data.metadata.get("source_file") if isinstance(self.data.metadata, dict) else None
         data_line = (
             f"data = load_mantid_mdhisto_nxs({source_file!r}, copy_metadata=False)"
@@ -506,6 +727,90 @@ class QtMDHistoSliceViewer:
             ]
         )
 
+    def _waterfall_figure_script(self) -> str:
+        source_indices = (
+            self._waterfall_1d_source_indices()
+            if self._waterfall_uses_1d_group()
+            else [self.dataset_index]
+        )
+        loader_imports = {"plot_mdhisto_waterfall"}
+        loader_expressions = []
+        for index in source_indices:
+            dataset = self.datasets[index]
+            metadata = dataset.metadata if isinstance(dataset.metadata, dict) else {}
+            source = metadata.get("source_file")
+            if not source:
+                loader_expressions = []
+                break
+            if metadata.get("importer") == "powder_ins_csv":
+                loader_imports.add("import_powder_ins_csv")
+                loader_expressions.append(
+                    f"import_powder_ins_csv({str(source)!r}, {dict(metadata.get('import_options', {}))!r})"
+                )
+            else:
+                loader_imports.add("load_mantid_mdhisto_nxs")
+                loader_expressions.append(
+                    f"load_mantid_mdhisto_nxs({str(source)!r}, copy_metadata=False)"
+                )
+        if loader_expressions:
+            loaders = ",\n    ".join(loader_expressions)
+            data_lines = f"data = [\n    {loaders},\n]"
+        else:
+            data_lines = "data = ...  # Replace with one MDHistoData object or a list of 1D datasets"
+        labels = [self.dataset_names[index] for index in source_indices]
+        return "\n".join(
+            [
+                "import matplotlib.pyplot as plt",
+                f"from nfit import {', '.join(sorted(loader_imports))}",
+                "",
+                data_lines,
+                "ax = plot_mdhisto_waterfall(",
+                "    data,",
+                f"    dataset_labels={labels!r},",
+                f"    x_dim={self.data.axes[self.model.x_dim].name!r},",
+                f"    waterfall_dim={self.data.axes[self.model.y_dim].name!r},",
+                f"    channel={self.model.channel!r},",
+                f"    selections={self._export_selections()!r},",
+                f"    integrate_checks={self._export_integrate_checks()!r},",
+                f"    waterfall_step={self.waterfall_step!r},",
+                f"    trace_offset={self.waterfall_offset!r},",
+                f"    cmap={self.waterfall_cmap!r},",
+                f"    color_range={(self.waterfall_color_min, self.waterfall_color_max)!r},",
+                f"    reverse_colors={self.waterfall_reverse_colors!r},",
+                f"    marker={self.marker!r},",
+                f"    line_style={self.line_style!r},",
+                f"    marker_size={self.marker_size!r},",
+                f"    line_width={self.line_plot_width!r},",
+                f"    marker_edge_width={self.marker_edge_width!r},",
+                f"    marker_face={self.marker_face_color!r},",
+                f"    show_errorbars={self.show_errorbars!r},",
+                f"    errorbar_caps={self.show_errorbar_caps!r},",
+                f"    errorbar_cap_size={self.errorbar_cap_size!r},",
+                f"    show_zero_lines={self.waterfall_show_zero_lines!r},",
+                f"    zero_line_color={self.waterfall_zero_color!r},",
+                f"    zero_line_style={self.waterfall_zero_style!r},",
+                f"    zero_line_width={self.waterfall_zero_width!r},",
+                f"    show_model={self.show_fit!r},",
+                f"    unmask_model={self.unmask_model!r},",
+                f"    model_color={self.waterfall_model_color!r},",
+                f"    model_line_width={self.fit_line_width!r},",
+                f"    show_trace_labels={self.waterfall_show_trace_labels!r},",
+                f"    trace_label_suffix={self.waterfall_trace_label_suffix!r},",
+                f"    trace_label_font_size={self.waterfall_trace_label_font_size!r},",
+                f"    trace_label_color={self.waterfall_trace_label_color!r},",
+                f"    smoothing_sigma_x={self.smoothing_x!r},",
+                f"    smoothing_sigma_waterfall={self.smoothing_y!r},",
+                f"    xlim={self._export_limits('x')!r},",
+                f"    ylim={self._export_limits('y')!r},",
+                f"    font_size={self.font_size!r},",
+                f"    axes_linewidth={self.axis_linewidth!r},",
+                f"    figsize={tuple(self.figure.get_size_inches())!r},",
+                ")",
+                "plt.show()",
+                "",
+            ]
+        )
+
     def _line_figure_script(self, data_line: str) -> str:
         return "\n".join(
             [
@@ -536,7 +841,7 @@ class QtMDHistoSliceViewer:
                 f"    line.set_markeredgecolor({self.line_color!r})",
                 f"    line.set_color({self.line_color!r})",
                 f"ax.tick_params(axis='both', which='both', direction='in', top=True, right=True, width={self.axis_linewidth!r})",
-                f"ax.figure.set_size_inches(8.0, 6.0)",
+                "ax.figure.set_size_inches(8.0, 6.0)",
                 f"plt.rcParams.update({{'font.size': {self.font_size!r}}})",
                 "plt.show()",
                 "",
@@ -554,8 +859,7 @@ class QtMDHistoSliceViewer:
         return float(values[0]), float(values[1])
 
     def _build(self) -> None:
-        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-        from matplotlib.backends.backend_qtagg import NavigationToolbar2QT
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
         from matplotlib.figure import Figure
         from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -575,25 +879,15 @@ class QtMDHistoSliceViewer:
         mode_layout.addWidget(QtWidgets.QLabel("Visualization"))
         self.view_mode_combo = QtWidgets.QComboBox()
         self.view_mode_combo.setObjectName("data_viewer_mode_combo")
-        self.view_mode_combo.addItems(["2D slices", "3D PyVista"])
+        self.view_mode_combo.addItems(["Slice viewer", "Waterfall", "3D PyVista"])
         self.view_mode_combo.setToolTip(
-            "Switch between the standard slice viewer and PyVista volume/isosurface rendering. "
-            "3D mode is available for gridded datasets with at least three dimensions."
+            "Switch between standard slices, offset waterfall traces, and PyVista "
+            "volume/isosurface rendering. Waterfall mode accepts one multidimensional "
+            "MDHisto dataset or compatible 1D datasets; 3D mode requires at least three dimensions."
         )
         self.view_mode_combo.currentIndexChanged.connect(self._set_view_mode)
         mode_layout.addWidget(self.view_mode_combo)
         mode_layout.addStretch(1)
-        plot_menu = QtWidgets.QToolButton()
-        plot_menu.setText("Plot")
-        plot_menu.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
-        plot_menu.setToolTip("Create a reusable saved plot from the current data-viewer settings.")
-        menu = QtWidgets.QMenu(plot_menu)
-        self.save_plot_action = menu.addAction("Create saved plot")
-        self.save_plot_action.setToolTip("Store the current view as an editable plot in this workspace.")
-        self.save_plot_action.setEnabled(False)
-        self.save_plot_action.triggered.connect(lambda: self._save_plot_callback() if self._save_plot_callback else None)
-        plot_menu.setMenu(menu)
-        mode_layout.addWidget(plot_menu)
         main_layout.addWidget(mode_bar)
         self.content_stack = QtWidgets.QStackedWidget()
         main_layout.addWidget(self.content_stack, 1)
@@ -980,9 +1274,13 @@ class QtMDHistoSliceViewer:
         self.marker_edge_width_spin.setToolTip("Width of marker outlines in 1D line plots.")
         self.marker_edge_width_spin.valueChanged.connect(self._set_marker_edge_width)
         self.marker_face_color_combo = QtWidgets.QComboBox()
-        self.marker_face_color_combo.addItems(_COLOR_OPTIONS.keys())
+        self.marker_face_color_combo.addItems(
+            ["none", "outline", *[name for name in _COLOR_OPTIONS if name != "none"]]
+        )
         self.marker_face_color_combo.setCurrentText("none")
-        self.marker_face_color_combo.setToolTip("Fill color for markers in 1D line plots.")
+        self.marker_face_color_combo.setToolTip(
+            "Fill markers with no color, their outline color, or one common color."
+        )
         _compact_combobox(self.marker_face_color_combo)
         self.marker_face_color_combo.currentTextChanged.connect(self._set_marker_face_color)
         self.line_color_combo = QtWidgets.QComboBox()
@@ -1039,6 +1337,246 @@ class QtMDHistoSliceViewer:
         line_layout.addWidget(self.fit_line_width_spin, 5, 3)
         controls_layout.addWidget(line_group)
 
+        waterfall_group = QtWidgets.QGroupBox("Waterfall traces")
+        self.waterfall_group = waterfall_group
+        waterfall_layout = QtWidgets.QGridLayout(waterfall_group)
+        waterfall_layout.setHorizontalSpacing(6)
+        waterfall_layout.setVerticalSpacing(6)
+        self.waterfall_source_label = QtWidgets.QLabel()
+        self.waterfall_source_label.setWordWrap(True)
+        self.waterfall_source_label.setToolTip(
+            "For multidimensional data, traces are coarse bins along the selected waterfall axis. "
+            "For compatible 1D data, every dataset contributes one trace."
+        )
+        waterfall_layout.addWidget(self.waterfall_source_label, 0, 0, 1, 4)
+
+        self.waterfall_step_label = QtWidgets.QLabel("Bin width")
+        self.waterfall_step_spin = _make_float_spinbox(1.0e-9, 1.0e12)
+        self.waterfall_step_spin.setDecimals(8)
+        self.waterfall_step_spin.setValue(self.waterfall_step)
+        self.waterfall_step_spin.setToolTip(
+            "Width of each coarse bin along the waterfall axis. Bins are reduced to "
+            "inverse-variance weighted mean traces with propagated one-sigma errors."
+        )
+        self.waterfall_step_spin.valueChanged.connect(self._set_waterfall_step)
+        self.waterfall_step_slider = QtWidgets.QSlider(
+            QtCore.Qt.Orientation.Horizontal
+        )
+        self.waterfall_step_slider.setRange(0, 1000)
+        self.waterfall_step_slider.setToolTip(
+            "Adjust the bin width from one native waterfall-axis bin to the "
+            "full waterfall-axis span."
+        )
+        self.waterfall_step_slider.valueChanged.connect(
+            self._set_waterfall_step_from_slider
+        )
+        self.waterfall_step_auto_check = QtWidgets.QCheckBox("Auto (~10)")
+        self.waterfall_step_auto_check.setChecked(self.waterfall_step_auto)
+        self.waterfall_step_auto_check.setToolTip(
+            "Choose a waterfall-axis bin width that produces approximately ten traces."
+        )
+        self.waterfall_step_auto_check.toggled.connect(self._set_waterfall_step_auto)
+        waterfall_layout.addWidget(self.waterfall_step_label, 1, 0)
+        waterfall_layout.addWidget(self.waterfall_step_spin, 1, 1)
+        waterfall_layout.addWidget(self.waterfall_step_auto_check, 1, 2, 1, 2)
+        waterfall_layout.addWidget(self.waterfall_step_slider, 2, 0, 1, 4)
+
+        self.waterfall_offset_spin = _make_float_spinbox(0.0, 1.0e12)
+        self.waterfall_offset_spin.setDecimals(8)
+        self.waterfall_offset_spin.setValue(self.waterfall_offset)
+        self.waterfall_offset_spin.setToolTip(
+            "Vertical offset between adjacent traces, in the displayed channel units."
+        )
+        self.waterfall_offset_spin.valueChanged.connect(self._set_waterfall_offset)
+        self.waterfall_offset_slider = QtWidgets.QSlider(
+            QtCore.Qt.Orientation.Horizontal
+        )
+        self.waterfall_offset_slider.setRange(0, 1000)
+        self.waterfall_offset_slider.setToolTip(
+            "Adjust the trace offset from zero to the largest absolute data "
+            "value in the prepared waterfall traces."
+        )
+        self.waterfall_offset_slider.valueChanged.connect(
+            self._set_waterfall_offset_from_slider
+        )
+        self.waterfall_offset_auto_check = QtWidgets.QCheckBox("Auto (half max)")
+        self.waterfall_offset_auto_check.setChecked(self.waterfall_offset_auto)
+        self.waterfall_offset_auto_check.setToolTip(
+            "Set the trace offset to half the largest absolute intensity among the prepared traces."
+        )
+        self.waterfall_offset_auto_check.toggled.connect(self._set_waterfall_offset_auto)
+        waterfall_layout.addWidget(QtWidgets.QLabel("Trace offset"), 3, 0)
+        waterfall_layout.addWidget(self.waterfall_offset_spin, 3, 1)
+        waterfall_layout.addWidget(self.waterfall_offset_auto_check, 3, 2, 1, 2)
+        waterfall_layout.addWidget(self.waterfall_offset_slider, 4, 0, 1, 4)
+
+        self.waterfall_cmap_combo = QtWidgets.QComboBox()
+        self.waterfall_cmap_combo.addItems(_WATERFALL_COLORMAPS)
+        self.waterfall_cmap_combo.setCurrentText(self.waterfall_cmap)
+        self.waterfall_cmap_combo.setToolTip(
+            "Color sequence sampled uniformly across the displayed waterfall traces."
+        )
+        _compact_combobox(self.waterfall_cmap_combo)
+        self.waterfall_cmap_combo.currentTextChanged.connect(self._set_waterfall_cmap)
+        self.waterfall_reverse_check = QtWidgets.QCheckBox("Reverse")
+        self.waterfall_reverse_check.setChecked(self.waterfall_reverse_colors)
+        self.waterfall_reverse_check.setToolTip("Reverse the order of colors sampled from the sequence.")
+        self.waterfall_reverse_check.toggled.connect(self._set_waterfall_reverse_colors)
+        waterfall_layout.addWidget(QtWidgets.QLabel("Colors"), 5, 0)
+        waterfall_layout.addWidget(self.waterfall_cmap_combo, 5, 1)
+        waterfall_layout.addWidget(self.waterfall_reverse_check, 5, 2, 1, 2)
+
+        self.waterfall_color_range_slider = _DualRangeSlider()
+        self.waterfall_color_range_slider.set_values(0, 1000)
+        self.waterfall_color_range_slider.setToolTip(
+            "Drag the two handles to exclude colors near either end of a "
+            "continuous colormap."
+        )
+        self.waterfall_color_range_slider.changed.connect(
+            self._set_waterfall_color_range
+        )
+        self.waterfall_color_range_label = QtWidgets.QLabel("Color range")
+        waterfall_layout.addWidget(self.waterfall_color_range_label, 6, 0)
+        waterfall_layout.addWidget(
+            self.waterfall_color_range_slider,
+            6,
+            1,
+            1,
+            3,
+        )
+
+        self.waterfall_zero_check = QtWidgets.QCheckBox("Zero references")
+        self.waterfall_zero_check.setChecked(self.waterfall_show_zero_lines)
+        self.waterfall_zero_check.setToolTip(
+            "Draw a horizontal zero-intensity reference at the offset baseline of every trace."
+        )
+        self.waterfall_zero_check.toggled.connect(self._set_waterfall_zero_lines)
+        self.waterfall_zero_color_combo = QtWidgets.QComboBox()
+        self.waterfall_zero_color_combo.addItems(
+            [name for name in _COLOR_OPTIONS if name != "none"]
+        )
+        self.waterfall_zero_color_combo.setCurrentText(
+            _option_name(_COLOR_OPTIONS, self.waterfall_zero_color)
+        )
+        self.waterfall_zero_color_combo.setToolTip("Color of the per-trace zero reference lines.")
+        _compact_combobox(self.waterfall_zero_color_combo)
+        self.waterfall_zero_color_combo.currentTextChanged.connect(
+            self._set_waterfall_zero_color
+        )
+        waterfall_layout.addWidget(self.waterfall_zero_check, 7, 0, 1, 2)
+        waterfall_layout.addWidget(self.waterfall_zero_color_combo, 7, 2, 1, 2)
+
+        self.waterfall_zero_style_combo = QtWidgets.QComboBox()
+        self.waterfall_zero_style_combo.addItems(
+            [name for name in _LINE_STYLE_OPTIONS if name != "none"]
+        )
+        self.waterfall_zero_style_combo.setCurrentText(
+            _option_name(_LINE_STYLE_OPTIONS, self.waterfall_zero_style)
+        )
+        self.waterfall_zero_style_combo.setToolTip("Line style of the zero references.")
+        _compact_combobox(self.waterfall_zero_style_combo)
+        self.waterfall_zero_style_combo.currentTextChanged.connect(
+            self._set_waterfall_zero_style
+        )
+        self.waterfall_zero_width_spin = _make_float_spinbox(0.1, 20.0)
+        self.waterfall_zero_width_spin.setValue(self.waterfall_zero_width)
+        self.waterfall_zero_width_spin.setToolTip("Line width of the zero references.")
+        self.waterfall_zero_width_spin.valueChanged.connect(
+            self._set_waterfall_zero_width
+        )
+        waterfall_layout.addWidget(QtWidgets.QLabel("Reference style"), 8, 0)
+        waterfall_layout.addWidget(self.waterfall_zero_style_combo, 8, 1)
+        waterfall_layout.addWidget(QtWidgets.QLabel("Width"), 8, 2)
+        waterfall_layout.addWidget(self.waterfall_zero_width_spin, 8, 3)
+
+        self.waterfall_model_color_combo = QtWidgets.QComboBox()
+        self.waterfall_model_color_combo.addItems(
+            ["match traces", *[name for name in _COLOR_OPTIONS if name != "none"]]
+        )
+        self.waterfall_model_color_combo.setCurrentText("match traces")
+        self.waterfall_model_color_combo.setToolTip(
+            "Use each trace's color for its model line, or draw every model trace in one selected color."
+        )
+        _compact_combobox(self.waterfall_model_color_combo)
+        self.waterfall_model_color_combo.currentTextChanged.connect(
+            self._set_waterfall_model_color
+        )
+        self.waterfall_trace_labels_check = QtWidgets.QCheckBox("Trace labels")
+        self.waterfall_trace_labels_check.setChecked(self.waterfall_show_trace_labels)
+        self.waterfall_trace_labels_check.setToolTip(
+            "Label each multidimensional trace by its waterfall-axis center, "
+            "or each 1D trace by its dataset name."
+        )
+        self.waterfall_trace_labels_check.toggled.connect(
+            self._set_waterfall_trace_labels
+        )
+        waterfall_layout.addWidget(QtWidgets.QLabel("Model colors"), 9, 0)
+        waterfall_layout.addWidget(self.waterfall_model_color_combo, 9, 1)
+        waterfall_layout.addWidget(self.waterfall_trace_labels_check, 9, 2, 1, 2)
+
+        self.waterfall_trace_label_suffix_edit = QtWidgets.QLineEdit()
+        self.waterfall_trace_label_suffix_edit.setText(
+            self.waterfall_trace_label_suffix
+        )
+        self.waterfall_trace_label_suffix_edit.setPlaceholderText(
+            "Optional text appended to every trace label"
+        )
+        self.waterfall_trace_label_suffix_edit.setToolTip(
+            "Text appended verbatim to every waterfall trace label, including "
+            "labels derived from an energy-bin center or a 1D dataset name."
+        )
+        self.waterfall_trace_label_suffix_edit.textChanged.connect(
+            self._set_waterfall_trace_label_suffix
+        )
+        waterfall_layout.addWidget(QtWidgets.QLabel("Label suffix"), 10, 0)
+        waterfall_layout.addWidget(
+            self.waterfall_trace_label_suffix_edit,
+            10,
+            1,
+            1,
+            3,
+        )
+
+        self.waterfall_trace_label_font_size_spin = _make_float_spinbox(4.0, 48.0)
+        self.waterfall_trace_label_font_size_spin.setDecimals(1)
+        self.waterfall_trace_label_font_size_spin.setValue(
+            self.waterfall_trace_label_font_size
+        )
+        self.waterfall_trace_label_font_size_spin.setToolTip(
+            "Font size used only for waterfall trace labels."
+        )
+        self.waterfall_trace_label_font_size_spin.valueChanged.connect(
+            self._set_waterfall_trace_label_font_size
+        )
+        self.waterfall_trace_label_color_combo = QtWidgets.QComboBox()
+        self.waterfall_trace_label_color_combo.addItems(
+            ["match traces", *[name for name in _COLOR_OPTIONS if name != "none"]]
+        )
+        self.waterfall_trace_label_color_combo.setCurrentText("match traces")
+        self.waterfall_trace_label_color_combo.setToolTip(
+            "Match each label to its trace, or use one common font color for all labels."
+        )
+        _compact_combobox(self.waterfall_trace_label_color_combo)
+        self.waterfall_trace_label_color_combo.currentTextChanged.connect(
+            self._set_waterfall_trace_label_color
+        )
+        waterfall_layout.addWidget(QtWidgets.QLabel("Label size"), 11, 0)
+        waterfall_layout.addWidget(
+            self.waterfall_trace_label_font_size_spin,
+            11,
+            1,
+        )
+        waterfall_layout.addWidget(QtWidgets.QLabel("Label color"), 11, 2)
+        waterfall_layout.addWidget(
+            self.waterfall_trace_label_color_combo,
+            11,
+            3,
+        )
+
+        waterfall_layout.setColumnStretch(1, 1)
+        waterfall_layout.setColumnStretch(3, 1)
+        controls_layout.addWidget(waterfall_group)
+
         figure_group = QtWidgets.QGroupBox("Figure")
         figure_layout = QtWidgets.QGridLayout(figure_group)
         figure_layout.setHorizontalSpacing(6)
@@ -1055,22 +1593,36 @@ class QtMDHistoSliceViewer:
         self.line_width_spin.setToolTip("Width of figure axes and frame lines.")
         self.line_width_spin.valueChanged.connect(self._set_axis_linewidth)
         self.copy_figure_button = QtWidgets.QPushButton("Copy figure")
+        self.save_plot_button = QtWidgets.QPushButton("Save plot")
         self.copy_script_button = QtWidgets.QPushButton("Copy script")
         self.save_script_button = QtWidgets.QPushButton("Save script")
-        for button in (self.copy_figure_button, self.copy_script_button, self.save_script_button):
+        for button in (
+            self.copy_figure_button,
+            self.save_plot_button,
+            self.copy_script_button,
+            self.save_script_button,
+        ):
             button.setMinimumWidth(0)
             button.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed)
         self.copy_figure_button.setToolTip("Copy the current figure image to the clipboard.")
+        self.save_plot_button.setToolTip(
+            "Store the current view as an editable plot in this workspace."
+        )
         self.copy_script_button.setToolTip("Copy a Python script that recreates the current viewer plot.")
         self.save_script_button.setToolTip("Save a Python script that recreates the current viewer plot.")
+        self.save_plot_button.setEnabled(False)
         self.copy_figure_button.clicked.connect(self.copy_figure_to_clipboard)
+        self.save_plot_button.clicked.connect(
+            lambda: self._save_plot_callback() if self._save_plot_callback else None
+        )
         self.copy_script_button.clicked.connect(self.copy_script_to_clipboard)
         self.save_script_button.clicked.connect(self.save_script)
         figure_layout.addWidget(QtWidgets.QLabel("Font size"), 0, 0)
         figure_layout.addWidget(self.font_size_spin, 0, 1)
         figure_layout.addWidget(QtWidgets.QLabel("Linewidth"), 0, 2)
         figure_layout.addWidget(self.line_width_spin, 0, 3)
-        figure_layout.addWidget(self.copy_figure_button, 1, 0, 1, 4)
+        figure_layout.addWidget(self.copy_figure_button, 1, 0, 1, 2)
+        figure_layout.addWidget(self.save_plot_button, 1, 2, 1, 2)
         figure_layout.addWidget(self.copy_script_button, 2, 0, 1, 2)
         figure_layout.addWidget(self.save_script_button, 2, 2, 1, 2)
         controls_layout.addWidget(figure_group)
@@ -1091,6 +1643,18 @@ class QtMDHistoSliceViewer:
         self.canvas.mpl_connect("motion_notify_event", self._on_motion)
         copy_shortcut = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Copy, self.window)
         copy_shortcut.activated.connect(self.copy_figure_to_clipboard)
+        self.save_project_shortcut = QtGui.QShortcut(
+            QtGui.QKeySequence.StandardKey.Save,
+            self.window,
+        )
+        self.save_project_shortcut.setEnabled(False)
+        self.save_project_shortcut.activated.connect(
+            lambda: (
+                self._save_project_callback()
+                if self._save_project_callback is not None
+                else None
+            )
+        )
         self.close_shortcut = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Close, self.window)
         self.close_shortcut.activated.connect(self.window.close)
         self._sync_fit_channel_controls()
@@ -1099,21 +1663,38 @@ class QtMDHistoSliceViewer:
     def _sync_view_mode_availability(self) -> None:
         from .qt_volume_viewer import supports_volume_view
 
-        available = supports_volume_view(self.data)
-        item = self.view_mode_combo.model().item(1)
-        if item is not None:
-            item.setEnabled(available)
-            item.setToolTip(
+        waterfall_available = (
+            isinstance(self.data, MDHistoData)
+            and sum(size > 1 for size in self.data.shape) >= 1
+        )
+        waterfall_item = self.view_mode_combo.model().item(1)
+        if waterfall_item is not None:
+            waterfall_item.setEnabled(waterfall_available)
+            waterfall_item.setToolTip(
+                "Stack coarse bins or compatible 1D datasets as offset traces."
+                if waterfall_available
+                else "Waterfall mode currently requires gridded MDHisto data."
+            )
+        volume_available = supports_volume_view(self.data)
+        volume_item = self.view_mode_combo.model().item(2)
+        if volume_item is not None:
+            volume_item.setEnabled(volume_available)
+            volume_item.setToolTip(
                 "Render this dataset as a volume or isosurface."
-                if available
+                if volume_available
                 else "3D mode requires a gridded dataset with at least three dimensions."
             )
-        if not available and self.view_mode_combo.currentIndex() == 1:
+        if (
+            (not waterfall_available and self.view_mode_combo.currentIndex() == 1)
+            or (not volume_available and self.view_mode_combo.currentIndex() == 2)
+        ):
             self.view_mode_combo.setCurrentIndex(0)
 
     def _set_view_mode(self, index: int) -> None:
-        if int(index) == 0:
+        index = int(index)
+        if index in {0, 1}:
             self.content_stack.setCurrentIndex(0)
+            self.update_plot(preserve_view=False)
             return
         from .qt_volume_viewer import QtVolumeViewerPanel, supports_volume_view
 
@@ -1507,7 +2088,14 @@ class QtMDHistoSliceViewer:
             self._set_spin_silent(self.marker_size_spin, self.marker_size)
             self._set_spin_silent(self.line_plot_width_spin, self.line_plot_width)
             self._set_spin_silent(self.marker_edge_width_spin, self.marker_edge_width)
-            self._set_combo_silent(self.marker_face_color_combo, _option_name(_COLOR_OPTIONS, self.marker_face_color))
+            self._set_combo_silent(
+                self.marker_face_color_combo,
+                (
+                    "outline"
+                    if self.marker_face_color == "outline"
+                    else _option_name(_COLOR_OPTIONS, self.marker_face_color)
+                ),
+            )
             self._set_combo_silent(self.line_color_combo, _option_name(_COLOR_OPTIONS, self.line_color))
             self._set_checkbox_silent(self.show_errorbars_check, self.show_errorbars)
             self._set_checkbox_silent(self.show_errorbar_caps_check, self.show_errorbar_caps)
@@ -1577,6 +2165,79 @@ class QtMDHistoSliceViewer:
         finally:
             slider.blockSignals(previous)
 
+    def _sync_waterfall_controls(self) -> None:
+        if self.waterfall_step_spin is None:
+            return
+        self._set_spin_silent(self.waterfall_step_spin, self.waterfall_step)
+        self._set_checkbox_silent(
+            self.waterfall_step_auto_check,
+            self.waterfall_step_auto,
+        )
+        self._set_spin_silent(self.waterfall_offset_spin, self.waterfall_offset)
+        self._set_checkbox_silent(
+            self.waterfall_offset_auto_check,
+            self.waterfall_offset_auto,
+        )
+        self._set_combo_silent(self.waterfall_cmap_combo, self.waterfall_cmap)
+        self.waterfall_color_range_slider.set_values(
+            int(round(1000.0 * self.waterfall_color_min)),
+            int(round(1000.0 * self.waterfall_color_max)),
+        )
+        self._set_checkbox_silent(
+            self.waterfall_reverse_check,
+            self.waterfall_reverse_colors,
+        )
+        self._set_checkbox_silent(
+            self.waterfall_zero_check,
+            self.waterfall_show_zero_lines,
+        )
+        self._set_combo_silent(
+            self.waterfall_zero_color_combo,
+            _option_name(_COLOR_OPTIONS, self.waterfall_zero_color),
+        )
+        self._set_combo_silent(
+            self.waterfall_zero_style_combo,
+            _option_name(_LINE_STYLE_OPTIONS, self.waterfall_zero_style),
+        )
+        self._set_spin_silent(
+            self.waterfall_zero_width_spin,
+            self.waterfall_zero_width,
+        )
+        self._set_combo_silent(
+            self.waterfall_model_color_combo,
+            (
+                "match traces"
+                if self.waterfall_model_color is None
+                else _option_name(_COLOR_OPTIONS, self.waterfall_model_color)
+            ),
+        )
+        self._set_checkbox_silent(
+            self.waterfall_trace_labels_check,
+            self.waterfall_show_trace_labels,
+        )
+        previous = self.waterfall_trace_label_suffix_edit.blockSignals(True)
+        try:
+            self.waterfall_trace_label_suffix_edit.setText(
+                self.waterfall_trace_label_suffix
+            )
+        finally:
+            self.waterfall_trace_label_suffix_edit.blockSignals(previous)
+        self._set_spin_silent(
+            self.waterfall_trace_label_font_size_spin,
+            self.waterfall_trace_label_font_size,
+        )
+        self._set_combo_silent(
+            self.waterfall_trace_label_color_combo,
+            (
+                "match traces"
+                if self.waterfall_trace_label_color is None
+                else _option_name(
+                    _COLOR_OPTIONS,
+                    self.waterfall_trace_label_color,
+                )
+            ),
+        )
+
     def _set_rectangle_selector_from_controls(self) -> None:
         if self.rectangle_selector is None:
             return
@@ -1608,14 +2269,18 @@ class QtMDHistoSliceViewer:
             return self._fallback_display_dims(data)
 
     def _fallback_display_dims(self, data: MDHistoData) -> tuple[int, int]:
-        non_singleton = [dim for dim, size in enumerate(data.shape) if size > 1]
-        if len(non_singleton) >= 2:
-            return non_singleton[-1], non_singleton[-2]
-        if len(non_singleton) == 1:
-            x_dim = non_singleton[0]
-            y_dim = 0 if x_dim != 0 else min(1, data.signal.ndim - 1)
-            return x_dim, y_dim
-        return min(data.signal.ndim - 1, 1), 0
+        varying = [dim for dim, size in enumerate(data.shape) if size > 1]
+        if len(varying) == 1:
+            x_dim = varying[0]
+            return x_dim, next(
+                (dim for dim in range(data.signal.ndim) if dim != x_dim),
+                x_dim,
+            )
+        if len(varying) >= 2:
+            return varying[0], varying[1]
+        if data.signal.ndim >= 2:
+            return 0, 1
+        return 0, 0
 
     def _sync_axis_combos(self, *, rebuild: bool = False) -> None:
         self._syncing_axes = True
@@ -1756,7 +2421,14 @@ class QtMDHistoSliceViewer:
         self.residual_split_label.setVisible(residual_split)
         self.residual_split_slider.setVisible(residual_split)
         self.residual_split_label.setText(f"Residual height: {self.residual_percent}%")
-        fit_line = bool(has_fit and (self._is_effective_1d() or self._fit_panels_active()))
+        fit_line = bool(
+            has_fit
+            and (
+                self._is_effective_1d()
+                or self._fit_panels_active()
+                or self._waterfall_mode_active()
+            )
+        )
         for widget in (
             self.fit_line_color_label,
             self.fit_line_color_combo,
@@ -1790,12 +2462,20 @@ class QtMDHistoSliceViewer:
 
     def _set_fit_line_color(self, color_name: str) -> None:
         self.fit_line_color = _COLOR_OPTIONS.get(str(color_name), "#d62728")
-        if self.show_fit and (self._is_effective_1d() or self._fit_cuts_active()):
+        if self.show_fit and (
+            self._is_effective_1d()
+            or self._fit_cuts_active()
+            or self._waterfall_mode_active()
+        ):
             self.update_plot()
 
     def _set_fit_line_width(self, value: float) -> None:
         self.fit_line_width = float(value)
-        if self.show_fit and (self._is_effective_1d() or self._fit_cuts_active()):
+        if self.show_fit and (
+            self._is_effective_1d()
+            or self._fit_cuts_active()
+            or self._waterfall_mode_active()
+        ):
             self.update_plot()
 
     def _set_residual_percent(self, value: int) -> None:
@@ -1852,53 +2532,199 @@ class QtMDHistoSliceViewer:
 
     def _set_marker(self, marker_name: str) -> None:
         self.marker = _MARKER_OPTIONS.get(str(marker_name), "o")
-        if self._is_effective_1d():
+        if self._is_effective_1d() or self._waterfall_mode_active():
             self.update_plot()
 
     def _set_line_style(self, line_style_name: str) -> None:
         self.line_style = _LINE_STYLE_OPTIONS.get(str(line_style_name), "none")
-        if self._is_effective_1d():
+        if self._is_effective_1d() or self._waterfall_mode_active():
             self.update_plot()
 
     def _set_marker_size(self, value: float) -> None:
         self.marker_size = float(value)
-        if self._is_effective_1d():
+        if self._is_effective_1d() or self._waterfall_mode_active():
             self.update_plot()
 
     def _set_line_plot_width(self, value: float) -> None:
         self.line_plot_width = float(value)
-        if self._is_effective_1d():
+        if self._is_effective_1d() or self._waterfall_mode_active():
             self.update_plot()
 
     def _set_marker_edge_width(self, value: float) -> None:
         self.marker_edge_width = float(value)
-        if self._is_effective_1d():
+        if self._is_effective_1d() or self._waterfall_mode_active():
             self.update_plot()
 
     def _set_marker_face_color(self, color_name: str) -> None:
-        self.marker_face_color = _COLOR_OPTIONS.get(str(color_name), "#1f77b4")
-        if self._is_effective_1d():
+        self.marker_face_color = (
+            "outline"
+            if color_name == "outline"
+            else _COLOR_OPTIONS.get(str(color_name), "#1f77b4")
+        )
+        if self._is_effective_1d() or self._waterfall_mode_active():
             self.update_plot()
 
     def _set_line_color(self, color_name: str) -> None:
         self.line_color = _COLOR_OPTIONS.get(str(color_name), "#1f77b4")
-        if self._is_effective_1d():
+        if self._is_effective_1d() or self._waterfall_mode_active():
             self.update_plot()
 
     def _set_show_errorbars(self, show_errorbars: bool) -> None:
         self.show_errorbars = bool(show_errorbars)
-        if self._is_effective_1d():
+        if self._is_effective_1d() or self._waterfall_mode_active():
             self.update_plot()
 
     def _set_show_errorbar_caps(self, show_caps: bool) -> None:
         self.show_errorbar_caps = bool(show_caps)
-        if self._is_effective_1d():
+        if self._is_effective_1d() or self._waterfall_mode_active():
             self.update_plot()
 
     def _set_errorbar_cap_size(self, value: float) -> None:
         self.errorbar_cap_size = float(value)
-        if self._is_effective_1d():
+        if self._is_effective_1d() or self._waterfall_mode_active():
             self.update_plot()
+
+    def _set_waterfall_step(self, value: float) -> None:
+        if self._restoring_dataset_state:
+            return
+        low, high = self._waterfall_step_limits()
+        self.waterfall_step = float(np.clip(value, low, high))
+        self._sync_waterfall_step_slider()
+        if self.waterfall_step_auto_check is not None and self.waterfall_step_auto_check.isChecked():
+            self._set_checkbox_silent(self.waterfall_step_auto_check, False)
+            self.waterfall_step_auto = False
+        self.update_plot(preserve_view=False)
+
+    def _set_waterfall_step_from_slider(self, position: int) -> None:
+        if self._restoring_dataset_state:
+            return
+        low, high = self._waterfall_step_limits()
+        fraction = float(np.clip(position, 0, 1000)) / 1000.0
+        self._set_spin_silent(
+            self.waterfall_step_spin,
+            low + fraction * (high - low),
+        )
+        self._set_waterfall_step(self.waterfall_step_spin.value())
+
+    def _set_waterfall_step_auto(self, enabled: bool) -> None:
+        self.waterfall_step_auto = bool(enabled)
+        if not self._restoring_dataset_state:
+            self.update_plot(preserve_view=False)
+
+    def _set_waterfall_offset(self, value: float) -> None:
+        if self._restoring_dataset_state:
+            return
+        maximum = self._waterfall_offset_maximum()
+        self.waterfall_offset = float(np.clip(value, 0.0, maximum))
+        self._sync_waterfall_offset_slider()
+        if self.waterfall_offset_auto_check is not None and self.waterfall_offset_auto_check.isChecked():
+            self._set_checkbox_silent(self.waterfall_offset_auto_check, False)
+            self.waterfall_offset_auto = False
+        self.update_plot(preserve_view=False)
+
+    def _set_waterfall_offset_from_slider(self, position: int) -> None:
+        if self._restoring_dataset_state:
+            return
+        maximum = self._waterfall_offset_maximum()
+        value = maximum * float(np.clip(position, 0, 1000)) / 1000.0
+        self._set_spin_silent(self.waterfall_offset_spin, value)
+        self._set_waterfall_offset(value)
+
+    def _set_waterfall_offset_auto(self, enabled: bool) -> None:
+        self.waterfall_offset_auto = bool(enabled)
+        if not self._restoring_dataset_state:
+            self.update_plot(preserve_view=False)
+
+    def _set_waterfall_cmap(self, cmap: str) -> None:
+        self.waterfall_cmap = str(cmap)
+        self._sync_control_visibility()
+        self.update_plot()
+
+    def _set_waterfall_color_range(self, low: int, high: int) -> None:
+        self.waterfall_color_min = float(np.clip(low, 0, 1000)) / 1000.0
+        self.waterfall_color_max = float(np.clip(high, 0, 1000)) / 1000.0
+        self.update_plot()
+
+    def _set_waterfall_reverse_colors(self, enabled: bool) -> None:
+        self.waterfall_reverse_colors = bool(enabled)
+        self.update_plot()
+
+    def _set_waterfall_zero_lines(self, enabled: bool) -> None:
+        self.waterfall_show_zero_lines = bool(enabled)
+        self.update_plot()
+
+    def _set_waterfall_zero_color(self, color_name: str) -> None:
+        self.waterfall_zero_color = _COLOR_OPTIONS.get(color_name, "#7f7f7f")
+        self.update_plot()
+
+    def _set_waterfall_zero_style(self, style_name: str) -> None:
+        self.waterfall_zero_style = _LINE_STYLE_OPTIONS.get(style_name, "--")
+        self.update_plot()
+
+    def _set_waterfall_zero_width(self, value: float) -> None:
+        self.waterfall_zero_width = max(float(value), 0.1)
+        self.update_plot()
+
+    def _set_waterfall_model_color(self, color_name: str) -> None:
+        self.waterfall_model_color = (
+            None if color_name == "match traces" else _COLOR_OPTIONS.get(color_name)
+        )
+        self.update_plot()
+
+    def _set_waterfall_trace_labels(self, enabled: bool) -> None:
+        self.waterfall_show_trace_labels = bool(enabled)
+        self.update_plot()
+
+    def _set_waterfall_trace_label_suffix(self, suffix: str) -> None:
+        self.waterfall_trace_label_suffix = str(suffix)
+        self.update_plot()
+
+    def _set_waterfall_trace_label_font_size(self, value: float) -> None:
+        self.waterfall_trace_label_font_size = max(float(value), 1.0)
+        self.update_plot()
+
+    def _set_waterfall_trace_label_color(self, color_name: str) -> None:
+        self.waterfall_trace_label_color = (
+            None
+            if color_name == "match traces"
+            else _COLOR_OPTIONS.get(color_name)
+        )
+        self.update_plot()
+
+    def _waterfall_step_limits(self) -> tuple[float, float]:
+        if self._waterfall_uses_1d_group():
+            return 1.0, 1.0
+        return waterfall_step_bounds(self.data, self.model.y_dim)
+
+    def _waterfall_offset_maximum(self) -> float:
+        maximum = waterfall_absolute_max(self._current_waterfall_traces)
+        return maximum if maximum > 0.0 else 1.0
+
+    def _sync_waterfall_step_slider(self) -> None:
+        low, high = self._waterfall_step_limits()
+        self.waterfall_step_spin.setRange(low, high)
+        fraction = (
+            0.0
+            if high <= low
+            else (float(self.waterfall_step) - low) / (high - low)
+        )
+        self._set_slider_silent(
+            self.waterfall_step_slider,
+            int(round(1000.0 * np.clip(fraction, 0.0, 1.0))),
+        )
+
+    def _sync_waterfall_offset_slider(self) -> None:
+        maximum = self._waterfall_offset_maximum()
+        self.waterfall_offset_spin.setRange(0.0, maximum)
+        self._set_slider_silent(
+            self.waterfall_offset_slider,
+            int(
+                round(
+                    1000.0
+                    * np.clip(float(self.waterfall_offset) / maximum, 0.0, 1.0)
+                )
+            ),
+        )
 
     def _set_font_size(self, value: float) -> None:
         self.font_size = float(value)
@@ -2149,33 +2975,75 @@ class QtMDHistoSliceViewer:
     def _sync_control_visibility(self) -> None:
         is_line = self._is_effective_1d()
         is_point = getattr(self.model, "is_point_list", False)
+        is_waterfall = self._waterfall_mode_active()
+        grouped_waterfall = is_waterfall and self._waterfall_uses_1d_group()
         compare_active = self._fit_panels_active()
         if self.axes_group is not None:
-            self.axes_group.setVisible(is_line or len(self._non_singleton_dims()) >= 2)
+            self.axes_group.setVisible(
+                is_waterfall or is_line or len(self._non_singleton_dims()) >= 2
+            )
         if self.axis_selector_widget is not None:
             # Point data is always 1D but still lets the user pick which
             # coordinate is the x axis, so keep the selector visible.
-            self.axis_selector_widget.setVisible(is_point or not is_line)
+            self.axis_selector_widget.setVisible(is_point or not is_line or is_waterfall)
         if self.y_combo is not None:
-            self.y_combo.setVisible(not is_point)
+            self.y_combo.setVisible(not is_point and not grouped_waterfall)
         if self._axis_y_label is not None:
-            self._axis_y_label.setVisible(not is_point)
+            self._axis_y_label.setVisible(not is_point and not grouped_waterfall)
         if self.hidden_group is not None:
             self.hidden_group.setVisible(not is_line)
         if self.color_group is not None:
-            self.color_group.setVisible(not is_line)
+            self.color_group.setVisible(not is_line and not is_waterfall)
         if self.smoothing_group is not None:
             self.smoothing_group.setVisible(not is_point)
         if self.smoothing_y_spin is not None:
-            self.smoothing_y_spin.setVisible(not is_line)
+            self.smoothing_y_spin.setVisible(not is_line and not grouped_waterfall)
         if self.smoothing_y_label is not None:
-            self.smoothing_y_label.setVisible(not is_line)
+            self.smoothing_y_label.setVisible(not is_line and not grouped_waterfall)
         if self.tools_group is not None:
             # The box tool is used both in the standard 2D layout and in 2D
             # fit compare (where it drives the integrated data+fit cut).
-            self.tools_group.setVisible(not is_line)
+            self.tools_group.setVisible(not is_line and not is_waterfall)
         if self.line_group is not None:
-            self.line_group.setVisible(is_line or compare_active)
+            self.line_group.setVisible(is_line or compare_active or is_waterfall)
+        if self.waterfall_group is not None:
+            self.waterfall_group.setVisible(is_waterfall)
+        if self.waterfall_source_label is not None:
+            if grouped_waterfall:
+                count = len(self._waterfall_1d_source_indices())
+                group_key = self.dataset_group_keys[self.dataset_index]
+                group_text = (
+                    f" in {group_key}" if group_key and group_key != "root" else ""
+                )
+                self.waterfall_source_label.setText(
+                    f"One trace per compatible 1D dataset{group_text} ({count} traces)"
+                )
+            elif is_waterfall:
+                self.waterfall_source_label.setText(
+                    "Coarse bins along "
+                    f"{waterfall_axis_display_name(self.data.axes[self.model.y_dim].name)}"
+                )
+        for widget in (
+            self.waterfall_step_label,
+            self.waterfall_step_spin,
+            self.waterfall_step_slider,
+            self.waterfall_step_auto_check,
+        ):
+            if widget is not None:
+                widget.setVisible(is_waterfall and not grouped_waterfall)
+        if self.waterfall_color_range_slider is not None:
+            show_color_range = (
+                is_waterfall
+                and self.waterfall_cmap not in _WATERFALL_DISCRETE_COLORMAPS
+            )
+            self.waterfall_color_range_slider.setVisible(show_color_range)
+            self.waterfall_color_range_label.setVisible(show_color_range)
+        if self.show_residual_check is not None:
+            self.show_residual_check.setVisible(not is_waterfall)
+        if self.residual_split_label is not None:
+            self.residual_split_label.setVisible(not is_waterfall and self._residual_axes_active())
+        if self.residual_split_slider is not None:
+            self.residual_split_slider.setVisible(not is_waterfall and self._residual_axes_active())
         self._sync_cursor_visibility()
 
     def _suppress_matplotlib_coordinate_status(self) -> None:
@@ -2264,6 +3132,31 @@ class QtMDHistoSliceViewer:
         self._compare_colorbars = []
         self._plot_layout_mode = ("standard", 1)
         self._create_rectangle_selector()
+
+    def _ensure_waterfall_layout(self) -> None:
+        if self._plot_layout_mode == ("waterfall", 1):
+            self.ax_image.clear()
+            return
+        self.figure.clear()
+        self.grid = self.figure.add_gridspec(1, 1)
+        self.ax_image = self.figure.add_subplot(self.grid[0, 0])
+        self.ax_xcut = None
+        self.ax_ycut = None
+        self.ax_colorbar = None
+        self.ax_residual = None
+        self.ax_fit_cut = None
+        self.ax_residual_cut = None
+        self.ax_residual_ycut = None
+        self.image = None
+        self.colorbar = None
+        self._compare_axes = []
+        self._compare_colorbars = []
+        self._compare_colorbar_axes = []
+        if self.rectangle_selector is not None:
+            self.rectangle_selector.set_active(False)
+            self.rectangle_selector = None
+        self._plot_layout_mode = ("waterfall", 1)
+        self._suppress_matplotlib_coordinate_status()
 
     def _ensure_fit_compare_layout(
         self,
@@ -2383,6 +3276,14 @@ class QtMDHistoSliceViewer:
         current_dims = (self.model.x_dim, self.model.y_dim)
         self._current_slice = self._smoothed_slice_view(self.model.slice_arrays())
         view = self._current_slice
+        if self._waterfall_mode_active():
+            self._draw_waterfall_view(
+                previous_xlim,
+                previous_ylim,
+                previous_dims,
+                current_dims,
+            )
+            return
         if self._fit_panels_active():
             self._draw_fit_panels_view(previous_xlim, previous_ylim, previous_dims, current_dims)
             return
@@ -2416,6 +3317,7 @@ class QtMDHistoSliceViewer:
         self.ax_ycut.set_xlabel("Int.")
         self._sync_limit_spinboxes(vmin, vmax)
         self._last_plot_dims = current_dims
+        self._last_plot_view_mode = "slice"
         self._sync_view_limit_controls()
         if self._roi_extents is None or previous_dims != current_dims:
             self._set_roi_extents(self._default_roi_extents(), update_cuts=False, draw=False)
@@ -2426,6 +3328,137 @@ class QtMDHistoSliceViewer:
         self._apply_axis_linewidth()
         self._connect_view_limit_callbacks()
         self._apply_autoscale_to_view()
+        self.canvas.draw_idle()
+
+    def _draw_waterfall_view(
+        self,
+        previous_xlim,
+        previous_ylim,
+        previous_dims,
+        current_dims,
+    ) -> None:
+        """Draw offset traces for the current map or compatible 1D datasets."""
+
+        self._ensure_waterfall_layout()
+        grouped = self._waterfall_uses_1d_group()
+        if grouped:
+            indices = self._waterfall_1d_source_indices()
+            datasets = [self.datasets[index] for index in indices]
+            labels = [self.dataset_names[index] for index in indices]
+            x_dim = next(
+                index for index, size in enumerate(self.data.shape) if size > 1
+            )
+            traces = prepare_mdhisto_waterfall(
+                datasets,
+                dataset_labels=labels,
+                x_dim=self.data.axes[x_dim].name,
+                channel=self.model.channel,
+                masked=self.model.masked,
+                smoothing_sigma_x=self.smoothing_x,
+                include_model=self.show_fit,
+                unmask_model=self.unmask_model,
+            )
+        else:
+            step_low, step_high = self._waterfall_step_limits()
+            if self.waterfall_step_auto:
+                self.waterfall_step = default_waterfall_step(
+                    self.data,
+                    self.model.y_dim,
+                )
+            self.waterfall_step = float(
+                np.clip(self.waterfall_step, step_low, step_high)
+            )
+            self._sync_waterfall_step_slider()
+            self._set_spin_silent(
+                self.waterfall_step_spin,
+                self.waterfall_step,
+            )
+            traces = prepare_mdhisto_waterfall(
+                self.data,
+                x_dim=self.model.x_dim,
+                waterfall_dim=self.model.y_dim,
+                channel=self.model.channel,
+                selections=self._export_selections(),
+                integrate_checks=self._export_integrate_checks(),
+                waterfall_step=self.waterfall_step,
+                masked=self.model.masked,
+                smoothing_sigma_x=self.smoothing_x,
+                smoothing_sigma_waterfall=self.smoothing_y,
+                include_model=self.show_fit,
+                unmask_model=self.unmask_model,
+            )
+        self._current_waterfall_traces = traces
+        maximum_offset = self._waterfall_offset_maximum()
+        if self.waterfall_offset_auto:
+            self.waterfall_offset = default_waterfall_offset(traces)
+        self.waterfall_offset = float(
+            np.clip(self.waterfall_offset, 0.0, maximum_offset)
+        )
+        self._sync_waterfall_offset_slider()
+        self._set_spin_silent(
+            self.waterfall_offset_spin,
+            self.waterfall_offset,
+        )
+        colors = waterfall_colors(
+            self.waterfall_cmap,
+            len(traces),
+            low=self.waterfall_color_min,
+            high=self.waterfall_color_max,
+            reverse=self.waterfall_reverse_colors,
+        )
+        draw_waterfall_traces(
+            self.ax_image,
+            traces,
+            colors=colors,
+            trace_offset=self.waterfall_offset,
+            marker=self.marker,
+            line_style=self.line_style,
+            marker_size=self.marker_size,
+            line_width=self.line_plot_width,
+            marker_edge_width=self.marker_edge_width,
+            marker_face=self.marker_face_color,
+            show_errorbars=self.show_errorbars,
+            errorbar_caps=self.show_errorbar_caps,
+            errorbar_cap_size=self.errorbar_cap_size,
+            show_zero_lines=self.waterfall_show_zero_lines,
+            zero_line_color=self.waterfall_zero_color,
+            zero_line_style=self.waterfall_zero_style,
+            zero_line_width=self.waterfall_zero_width,
+            show_model=self.show_fit,
+            model_color=self.waterfall_model_color,
+            model_line_width=self.fit_line_width,
+            show_trace_labels=self.waterfall_show_trace_labels,
+            trace_label_suffix=self.waterfall_trace_label_suffix,
+            trace_label_font_size=self.waterfall_trace_label_font_size,
+            trace_label_color=self.waterfall_trace_label_color,
+        )
+        x_axis = self.data.axes[self.model.x_dim]
+        x_name = waterfall_axis_display_name(x_axis.name)
+        x_units = display_unit(x_axis.units)
+        self.ax_image.set_xlabel(
+            f"{x_name} ({x_units})" if x_units else x_name
+        )
+        self.ax_image.set_ylabel(self.model._channel_label())
+        if (
+            previous_xlim is not None
+            and previous_ylim is not None
+            and previous_dims == current_dims
+            and getattr(self, "_last_plot_view_mode", None) == "waterfall"
+        ):
+            self.ax_image.set_xlim(previous_xlim)
+            self.ax_image.set_ylim(previous_ylim)
+        else:
+            self.ax_image.relim()
+            self.ax_image.autoscale_view()
+        self.image = None
+        self.colorbar = None
+        self._last_plot_dims = current_dims
+        self._last_plot_view_mode = "waterfall"
+        self._sync_control_visibility()
+        self._sync_view_limit_controls()
+        self._apply_figure_font_size()
+        self._apply_axis_linewidth()
+        self._connect_view_limit_callbacks()
         self.canvas.draw_idle()
 
     def _draw_fit_panels_view(
@@ -2512,6 +3545,7 @@ class QtMDHistoSliceViewer:
         self._sync_control_visibility()
         self._sync_limit_spinboxes(vmin, vmax)
         self._last_plot_dims = current_dims
+        self._last_plot_view_mode = "slice"
         self._sync_view_limit_controls()
         self._apply_figure_font_size()
         self._apply_axis_linewidth()
@@ -2706,6 +3740,68 @@ class QtMDHistoSliceViewer:
             return True
         return sum(size > 1 for size in self.data.shape) == 1
 
+    def _waterfall_mode_active(self) -> bool:
+        return self.view_mode_combo is not None and self.view_mode_combo.currentIndex() == 1
+
+    def _waterfall_uses_1d_group(self) -> bool:
+        return (
+            isinstance(self.data, MDHistoData)
+            and sum(size > 1 for size in self.data.shape) == 1
+        )
+
+    def _waterfall_1d_source_indices(self) -> list[int]:
+        """Return compatible 1D datasets represented by the current trace group."""
+
+        if not self._waterfall_uses_1d_group():
+            return []
+        current_dim = next(index for index, size in enumerate(self.data.shape) if size > 1)
+        current_axis = self.data.axes[current_dim]
+        current_group_key = self.dataset_group_keys[self.dataset_index]
+        allowed_names = (
+            None
+            if self.waterfall_dataset_names is None
+            else set(self.waterfall_dataset_names)
+        )
+        indices = []
+        for index, (dataset, name) in enumerate(
+            zip(self.datasets, self.dataset_names, strict=True)
+        ):
+            if self.dataset_group_keys[index] != current_group_key:
+                continue
+            if not isinstance(dataset, MDHistoData):
+                continue
+            if allowed_names is not None and name not in allowed_names:
+                continue
+            non_singleton = [
+                dim for dim, size in enumerate(dataset.shape) if size > 1
+            ]
+            if len(non_singleton) != 1:
+                continue
+            axis = dataset.axes[non_singleton[0]]
+            if (axis.name, axis.units) != (current_axis.name, current_axis.units):
+                continue
+            available_channels = {
+                *MDHistoSliceViewer.CHANNELS,
+                *dataset.auxiliary_channels,
+            }
+            for overlay in ("fit", "residual"):
+                values = dataset.metadata.get(overlay)
+                if isinstance(values, np.ndarray) and values.shape == dataset.shape:
+                    available_channels.add(overlay)
+            if self.model.channel not in available_channels:
+                continue
+            indices.append(index)
+        return indices or [self.dataset_index]
+
+    def waterfall_source_dataset_names(self) -> list[str]:
+        """Return dataset names used by the active waterfall recipe."""
+
+        if not self._waterfall_mode_active() or not self._waterfall_uses_1d_group():
+            return [self.dataset_names[self.dataset_index]]
+        return [
+            self.dataset_names[index] for index in self._waterfall_1d_source_indices()
+        ]
+
     def _slice_1d_channel(self, view: dict[str, np.ndarray], name: str) -> np.ndarray | None:
         """Return a fit/residual channel from the current slice as a 1D array."""
 
@@ -2756,7 +3852,11 @@ class QtMDHistoSliceViewer:
             "ms": self.marker_size,
             "lw": self.line_plot_width,
             "mew": self.marker_edge_width,
-            "mfc": self.marker_face_color if marker else "none",
+            "mfc": (
+                self.line_color
+                if self.marker_face_color == "outline"
+                else self.marker_face_color if marker else "none"
+            ),
             "mec": self.line_color,
             "color": self.line_color,
         }
@@ -2854,6 +3954,7 @@ class QtMDHistoSliceViewer:
         if previous_xlim is not None and previous_dims == current_dims:
             self.ax_image.set_xlim(previous_xlim)
         self._last_plot_dims = current_dims
+        self._last_plot_view_mode = "slice"
         self._sync_view_limit_controls()
         self._apply_figure_font_size()
         self._apply_axis_linewidth()
@@ -3166,6 +4267,9 @@ class QtMDHistoSliceViewer:
             return
         if event.xdata is None or event.ydata is None:
             return
+        if self._waterfall_mode_active():
+            self._on_waterfall_motion(event)
+            return
         if self._is_effective_1d():
             self._on_line_motion(event)
             return
@@ -3190,6 +4294,41 @@ class QtMDHistoSliceViewer:
         )
         self.cursor_q_label.setText(self._format_q_modulus(coords))
         self.cursor_intensity_label.setText(f"Signal = {value_text} ± {error_text}")
+
+    def _on_waterfall_motion(self, event) -> None:
+        candidates = []
+        for trace_index, trace in enumerate(self._current_waterfall_traces):
+            x = np.asarray(trace.x, dtype=float)
+            if x.size == 0 or not np.any(np.isfinite(x)):
+                continue
+            x_index = int(np.nanargmin(np.abs(x - float(event.xdata))))
+            values = np.asarray(trace.values, dtype=float)
+            if x_index >= values.size or not np.isfinite(values[x_index]):
+                continue
+            plotted = float(values[x_index]) + trace_index * self.waterfall_offset
+            candidates.append(
+                (abs(plotted - float(event.ydata)), trace_index, x_index, plotted)
+            )
+        if not candidates:
+            return
+        _distance, trace_index, x_index, plotted = min(candidates)
+        trace = self._current_waterfall_traces[trace_index]
+        value = float(trace.values[x_index])
+        errors = (
+            np.asarray(trace.errors, dtype=float)
+            if trace.errors is not None
+            else np.array([], dtype=float)
+        )
+        error = float(errors[x_index]) if x_index < errors.size else np.nan
+        value_text, error_text = _format_value_with_uncertainty(value, error)
+        x_value = float(trace.x[x_index])
+        self.cursor_xy_label.setText(
+            f"(x, y+offset) = ({_format_coord(x_value)}, {_format_coord(plotted)})"
+        )
+        self.cursor_hkle_label.setText(f"Trace = {trace.label}")
+        self.cursor_intensity_label.setText(
+            f"{trace.label}: {value_text} ± {error_text}"
+        )
 
     def _on_line_motion(self, event) -> None:
         view = self._current_slice
@@ -3228,7 +4367,11 @@ class QtMDHistoSliceViewer:
         if hkl.shape != (3,) or not np.all(np.isfinite(hkl)):
             return None
         try:
-            from .fitting import _as_3x3_matrix, _metadata_coordinate_units_are_inv_angstrom, _resolve_q_transform
+            from .fitting import (
+                _as_3x3_matrix,
+                _metadata_coordinate_units_are_inv_angstrom,
+                _resolve_q_transform,
+            )
 
             if _metadata_coordinate_units_are_inv_angstrom(self.data.metadata):
                 q_vector = hkl
@@ -3253,7 +4396,7 @@ class QtMDHistoSliceViewer:
         hkle = np.zeros(4, dtype=float)
         has_energy = False
         hidden = self.model._normalized_selections()
-        for dim, axis in enumerate(self.data.axes):
+        for dim, _axis in enumerate(self.data.axes):
             if dim == self.model.x_dim:
                 value = self.data.axes[dim].centers[x_idx]
             elif dim == self.model.y_dim:
@@ -3277,7 +4420,7 @@ class QtMDHistoSliceViewer:
         hkle = np.zeros(4, dtype=float)
         has_energy = False
         hidden = self.model._normalized_selections()
-        for dim, axis in enumerate(self.data.axes):
+        for dim, _axis in enumerate(self.data.axes):
             if dim == self.model.x_dim:
                 value = self.data.axes[dim].centers[x_idx]
             else:
@@ -3390,6 +4533,18 @@ def _coerce_dataset_names(datasets: Sequence[MDHistoData], names: Sequence[str] 
     return labels
 
 
+def _coerce_dataset_group_keys(
+    datasets: Sequence[MDHistoData],
+    keys: Sequence[str] | None,
+) -> list[str]:
+    if keys is None:
+        return [""] * len(datasets)
+    labels = [str(key) for key in keys]
+    if len(labels) != len(datasets):
+        raise ValueError("dataset_group_keys length must match datasets length")
+    return labels
+
+
 def _normalized_column_name(name: str) -> str:
     return (
         str(name)
@@ -3486,14 +4641,18 @@ def _initial_display_dims(data: MDHistoData, x_dim: int | str, y_dim: int | str)
         return 0, 0
     if x_dim != -1 or y_dim != 0:
         return x_dim, y_dim
-    non_singleton = [dim for dim, size in enumerate(data.shape) if size > 1]
-    if len(non_singleton) >= 2:
-        return non_singleton[-1], non_singleton[-2]
-    if len(non_singleton) == 1:
-        x_index = non_singleton[0]
-        y_index = 0 if x_index != 0 else min(1, data.signal.ndim - 1)
-        return x_index, y_index
-    return min(data.signal.ndim - 1, 1), 0
+    varying = [dim for dim, size in enumerate(data.shape) if size > 1]
+    if len(varying) == 1:
+        x_index = varying[0]
+        return x_index, next(
+            (dim for dim in range(data.signal.ndim) if dim != x_index),
+            x_index,
+        )
+    if len(varying) >= 2:
+        return varying[0], varying[1]
+    if data.signal.ndim >= 2:
+        return 0, 1
+    return 0, 0
 
 
 def _format_coord(value: float) -> str:
@@ -3567,6 +4726,87 @@ def _qt_classes():
 
 
 QtCore, QtGui, QtWidgets = _qt_classes()
+
+
+class _DualRangeSlider(QtWidgets.QWidget):
+    changed = QtCore.Signal(int, int)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.low_value = 0
+        self.high_value = 1000
+        self._dragging: str | None = None
+        self.setMinimumHeight(28)
+        self.setMouseTracking(True)
+
+    def set_values(self, low: int, high: int) -> None:
+        self.low_value, self.high_value = sorted(
+            (
+                int(np.clip(low, 0, 1000)),
+                int(np.clip(high, 0, 1000)),
+            )
+        )
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        del event
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        rect = self.rect().adjusted(10, 0, -10, 0)
+        y = rect.center().y()
+        painter.setPen(QtGui.QPen(QtGui.QColor("#707070"), 3))
+        painter.drawLine(rect.left(), y, rect.right(), y)
+        low_x = self._value_to_x(self.low_value)
+        high_x = self._value_to_x(self.high_value)
+        painter.setPen(QtGui.QPen(QtGui.QColor("#4f8bd6"), 5))
+        painter.drawLine(low_x, y, high_x, y)
+        self._draw_handle(painter, low_x, y)
+        self._draw_handle(painter, high_x, y)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() != QtCore.Qt.MouseButton.LeftButton:
+            return
+        x = float(event.position().x())
+        self._dragging = (
+            "low"
+            if abs(x - self._value_to_x(self.low_value))
+            <= abs(x - self._value_to_x(self.high_value))
+            else "high"
+        )
+        self._set_dragged_value(x)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._dragging is not None:
+            self._set_dragged_value(float(event.position().x()))
+
+    def mouseReleaseEvent(self, event) -> None:
+        del event
+        self._dragging = None
+
+    def _set_dragged_value(self, x: float) -> None:
+        value = self._x_to_value(x)
+        if self._dragging == "low":
+            self.low_value = min(value, self.high_value)
+        elif self._dragging == "high":
+            self.high_value = max(value, self.low_value)
+        self.update()
+        self.changed.emit(self.low_value, self.high_value)
+
+    def _value_to_x(self, value: int) -> float:
+        rect = self.rect().adjusted(10, 0, -10, 0)
+        return float(rect.left() + rect.width() * int(value) / 1000.0)
+
+    def _x_to_value(self, x: float) -> int:
+        rect = self.rect().adjusted(10, 0, -10, 0)
+        if rect.width() <= 0:
+            return 0
+        fraction = (float(x) - rect.left()) / rect.width()
+        return int(np.clip(round(1000.0 * fraction), 0, 1000))
+
+    def _draw_handle(self, painter, x: float, y: float) -> None:
+        painter.setBrush(QtGui.QBrush(QtGui.QColor("#80b7ff")))
+        painter.setPen(QtGui.QPen(QtGui.QColor("#303030"), 1))
+        painter.drawEllipse(QtCore.QPointF(x, y), 6.0, 6.0)
 
 
 class _IntegratedAxisSlider(QtWidgets.QWidget):

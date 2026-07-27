@@ -9,6 +9,7 @@ GUI offer more than one importer per data type.
 
 from __future__ import annotations
 
+import csv
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,7 @@ from typing import Any, Callable
 import numpy as np
 
 from .dataset import PointListData
+from .mdhisto import MDHistoAxis, MDHistoData
 from .quantities import normalize_unit
 
 
@@ -350,6 +352,262 @@ def import_hb2a_powder(path: str | Path) -> PointListData:
     )
 
 
+def inspect_powder_ins_csv(path: str | Path) -> dict[str, Any]:
+    """Inspect a plot-digitizer CSV without assigning physical conditions.
+
+    Matrix exports begin with ``y\\x`` and contain Q values across the first
+    row and energy values down the first column. Headerless three-column files
+    are interpreted as a one-dimensional ``x, signal, uncertainty`` cut whose
+    x coordinate must be selected during import.
+    """
+
+    file_path = Path(path)
+    with file_path.open("r", encoding="utf-8-sig", errors="replace", newline="") as handle:
+        rows = [row for row in csv.reader(handle) if any(cell.strip() for cell in row)]
+    if not rows:
+        raise ValueError(f"no CSV data found in {file_path}")
+    first = rows[0][0].strip().lower() if rows[0] else ""
+    if first in {"y\\x", "y/x", "y"}:
+        if len(rows[0]) < 2 or len(rows) < 2:
+            raise ValueError("powder INS matrix CSV requires Q columns and energy rows")
+        return {
+            "layout": "matrix_q_energy",
+            "point_count": (len(rows) - 1) * (len(rows[0]) - 1),
+            "q_count": len(rows[0]) - 1,
+            "energy_count": len(rows) - 1,
+        }
+    if len(rows[0]) < 2:
+        raise ValueError("powder INS cut CSV requires at least x and signal columns")
+    return {
+        "layout": "cut",
+        "point_count": len(rows),
+        "column_count": len(rows[0]),
+    }
+
+
+def _float_cell(text: str, *, context: str) -> float:
+    try:
+        return float(text.strip())
+    except ValueError as exc:
+        raise ValueError(f"invalid numeric value {text!r} in {context}") from exc
+
+
+def _centers_to_edges(values: np.ndarray) -> np.ndarray:
+    """Infer histogram boundaries from ordered digitized bin centers."""
+
+    centers = np.asarray(values, dtype=float)
+    if centers.ndim != 1 or centers.size == 0:
+        raise ValueError("a digitized axis requires at least one center")
+    if centers.size == 1:
+        half_width = max(abs(float(centers[0])) * 1.0e-6, 1.0e-6)
+        return np.asarray([centers[0] - half_width, centers[0] + half_width])
+    interior = 0.5 * (centers[:-1] + centers[1:])
+    return np.concatenate(
+        (
+            [centers[0] - 0.5 * (centers[1] - centers[0])],
+            interior,
+            [centers[-1] + 0.5 * (centers[-1] - centers[-2])],
+        )
+    )
+
+
+def _powder_ins_matrix(path: Path, default_uncertainty: float) -> MDHistoData:
+    with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as handle:
+        rows = [row for row in csv.reader(handle) if any(cell.strip() for cell in row)]
+    q = np.asarray(
+        [_float_cell(cell, context="matrix Q header") for cell in rows[0][1:]],
+        dtype=float,
+    )
+    energy_values: list[float] = []
+    signal_rows: list[list[float]] = []
+    for row_number, row in enumerate(rows[1:], start=2):
+        if len(row) != q.size + 1:
+            raise ValueError(
+                f"matrix row {row_number} has {len(row) - 1} values; expected {q.size}"
+            )
+        energy_values.append(_float_cell(row[0], context=f"matrix row {row_number}"))
+        signal_rows.append([_to_float(cell) for cell in row[1:]])
+    energy = np.asarray(energy_values, dtype=float)
+    # CSV rows are E and columns are Q; nfit's canonical powder order is Q, E.
+    signal = np.asarray(signal_rows, dtype=float).T
+    q_order = np.argsort(q)
+    energy_order = np.argsort(energy)
+    q = q[q_order]
+    energy = energy[energy_order]
+    signal = signal[np.ix_(q_order, energy_order)]
+    measured = np.isfinite(signal)
+    errors = np.full(signal.shape, float(default_uncertainty), dtype=float)
+    errors[~measured] = np.nan
+    return MDHistoData(
+        axes=(
+            MDHistoAxis("Q", _centers_to_edges(q), "1/angstrom", "momentum"),
+            MDHistoAxis(
+                "DeltaE", _centers_to_edges(energy), "meV", "energy"
+            ),
+        ),
+        signal=signal,
+        errors=errors,
+        mask=~measured,
+        num_events=measured.astype(float),
+        metadata={
+            "signal_semantics": "density",
+            "signal_semantics_source": "digitized_powder_ins_map",
+            "zero_event_bins_are_measured": True,
+        },
+    )
+
+
+def _powder_ins_cut(
+    path: Path,
+    *,
+    cut_type: str,
+    fixed_value: float,
+) -> MDHistoData:
+    with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as handle:
+        rows = [row for row in csv.reader(handle) if any(cell.strip() for cell in row)]
+    values = np.asarray(
+        [
+            [_float_cell(cell, context=f"cut row {row_number}") for cell in row[:3]]
+            for row_number, row in enumerate(rows, start=1)
+        ],
+        dtype=float,
+    )
+    if values.shape[1] < 2:
+        raise ValueError("powder INS cut requires x and signal columns")
+    x = values[:, 0]
+    signal_1d = values[:, 1]
+    errors_1d = values[:, 2] if values.shape[1] >= 3 else np.ones_like(signal_1d)
+    order = np.argsort(x)
+    x = x[order]
+    signal_1d = signal_1d[order]
+    errors_1d = errors_1d[order]
+    measured = np.isfinite(x) & np.isfinite(signal_1d) & np.isfinite(errors_1d)
+    if cut_type == "constant_energy":
+        q = x
+        energy = np.asarray([fixed_value], dtype=float)
+        signal = signal_1d[:, None]
+        errors = errors_1d[:, None]
+        mask = (~measured)[:, None]
+    elif cut_type == "constant_q":
+        q = np.asarray([fixed_value], dtype=float)
+        energy = x
+        signal = signal_1d[None, :]
+        errors = errors_1d[None, :]
+        mask = (~measured)[None, :]
+    else:
+        raise ValueError("cut_type must be 'constant_energy' or 'constant_q'")
+    return MDHistoData(
+        axes=(
+            MDHistoAxis("Q", _centers_to_edges(q), "1/angstrom", "momentum"),
+            MDHistoAxis(
+                "DeltaE", _centers_to_edges(energy), "meV", "energy"
+            ),
+        ),
+        signal=signal,
+        errors=errors,
+        mask=mask,
+        num_events=(~mask).astype(float),
+        metadata={
+            "signal_semantics": "density",
+            "signal_semantics_source": "digitized_powder_ins_cut",
+            "zero_event_bins_are_measured": True,
+        },
+    )
+
+
+def import_powder_ins_csv(
+    path: str | Path,
+    options: dict[str, Any] | None = None,
+) -> MDHistoData:
+    """Import a digitized powder INS cut or Q-E matrix CSV.
+
+    Parameters in ``options`` are deliberately explicit because plot digitizer
+    files do not carry their physical context. Required for a cut are
+    ``cut_type`` (``constant_energy`` or ``constant_q``) and ``fixed_value``.
+    Temperature, observable, units, normalization basis, and kinematic state
+    are retained as editable dataset parameters.
+    """
+
+    source = Path(path)
+    settings = {
+        "layout": "auto",
+        "cut_type": "",
+        "fixed_value": None,
+        "temperature_K": None,
+        "source_representation": "cross_section",
+        "source_unit": "arbitrary",
+        "fit_representation": "cross_section",
+        "normalization_basis": "unknown",
+        "normalization_label": "",
+        "kf_ki_state": "removed",
+        "default_uncertainty": 1.0,
+    }
+    if isinstance(options, dict):
+        settings.update(options)
+    detected = inspect_powder_ins_csv(source)
+    layout = detected["layout"] if settings["layout"] == "auto" else str(settings["layout"])
+    if layout == "matrix_q_energy":
+        default_uncertainty = float(settings["default_uncertainty"])
+        if not np.isfinite(default_uncertainty) or default_uncertainty <= 0.0:
+            raise ValueError("map uncertainty must be finite and positive")
+        data = _powder_ins_matrix(source, default_uncertainty)
+    elif layout == "cut":
+        fixed = settings.get("fixed_value")
+        if fixed in (None, ""):
+            raise ValueError("a constant-Q or constant-E cut requires its fixed value")
+        data = _powder_ins_cut(
+            source,
+            cut_type=str(settings.get("cut_type", "")),
+            fixed_value=float(fixed),
+        )
+    else:
+        raise ValueError(f"unknown powder INS CSV layout {layout!r}")
+
+    from .spectral_channels import default_spectral_channel_config
+
+    spectral = default_spectral_channel_config()
+    for key in (
+        "source_representation",
+        "source_unit",
+        "fit_representation",
+        "normalization_basis",
+        "normalization_label",
+        "kf_ki_state",
+    ):
+        spectral[key] = settings[key]
+    temperature = settings.get("temperature_K")
+    parameters: dict[str, Any] = {"spectral_channels": spectral}
+    if temperature not in (None, ""):
+        temperature = float(temperature)
+        if not np.isfinite(temperature) or temperature <= 0.0:
+            raise ValueError("temperature must be finite and positive")
+        parameters["temperature"] = temperature
+    if layout == "cut":
+        fixed = float(settings["fixed_value"])
+        if settings["cut_type"] == "constant_energy":
+            parameters["constant_energy_meV"] = fixed
+        else:
+            parameters["constant_q_inv_angstrom"] = fixed
+    data.metadata.update(
+        {
+            "source_file": str(source),
+            "importer": "powder_ins_csv",
+            "powder_ins_layout": layout,
+            "import_options": dict(settings),
+            "dataset_parameters": parameters,
+            "signal_unit": str(settings["source_unit"]),
+            "signal_quantity_type": (
+                "dynamic_susceptibility"
+                if settings["source_representation"] == "chi_double_prime"
+                else "differential_cross_section"
+                if str(settings["source_unit"]).startswith(("mbarn/", "barn/"))
+                else "scattering_intensity"
+            ),
+        }
+    )
+    return data
+
+
 def _default_channels(
     columns: dict[str, Any],
     *,
@@ -375,9 +633,10 @@ class ImporterSpec:
 
     name: str
     label: str
-    loader: Callable[[str | Path], PointListData]
+    loader: Callable[..., PointListData | MDHistoData]
     data_types: tuple[str, ...]
     extensions: tuple[str, ...] = ()
+    options_kind: str | None = None
 
     def can_read(self, path: str | Path) -> bool:
         if not self.extensions:
@@ -407,6 +666,14 @@ IMPORTERS: dict[str, ImporterSpec] = {
         data_types=("heat_capacity",),
         extensions=(".dat",),
     ),
+    "powder_ins_csv": ImporterSpec(
+        name="powder_ins_csv",
+        label="Powder INS digitizer CSV",
+        loader=import_powder_ins_csv,
+        data_types=("powder_inelastic",),
+        extensions=(".csv",),
+        options_kind="powder_ins_csv",
+    ),
 }
 
 
@@ -416,9 +683,16 @@ def importers_for_data_type(data_type: str) -> list[ImporterSpec]:
     return [spec for spec in IMPORTERS.values() if data_type in spec.data_types]
 
 
-def import_with(importer_name: str, path: str | Path) -> PointListData:
+def import_with(
+    importer_name: str,
+    path: str | Path,
+    options: dict[str, Any] | None = None,
+) -> PointListData | MDHistoData:
     """Run a registered importer by name."""
 
     if importer_name not in IMPORTERS:
         raise KeyError(f"unknown importer {importer_name!r}")
-    return IMPORTERS[importer_name].loader(path)
+    spec = IMPORTERS[importer_name]
+    if spec.options_kind is not None:
+        return spec.loader(path, options)
+    return spec.loader(path)

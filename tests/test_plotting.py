@@ -15,8 +15,9 @@ from nfit.mdhisto import MDHistoAxis, MDHistoData
 from nfit.plotting import (
     MDHistoSliceViewer,
     _DropdownSelect,
-    mdhisto_with_signal_like,
+    gaussian_smooth_nan,
     inverse_variance_weighted_profile,
+    mdhisto_with_signal_like,
     plot_2d_map,
     plot_energy_cut,
     plot_mdhisto_auto,
@@ -24,9 +25,10 @@ from nfit.plotting import (
     plot_mdhisto_fit_line_comparison,
     plot_mdhisto_line,
     plot_mdhisto_slice,
+    plot_mdhisto_waterfall,
     plot_q_cut,
+    prepare_mdhisto_waterfall,
     residual_mdhisto,
-    gaussian_smooth_nan,
 )
 
 
@@ -156,6 +158,70 @@ def test_plot_mdhisto_line_and_auto_dispatch_for_single_non_singleton_axis():
     assert len(ax.lines) == 1
     assert auto_ax.get_ylabel() == "Error"
     assert len(auto_ax.lines) == 1
+
+
+def test_prepare_mdhisto_waterfall_coarsens_axis_with_propagated_errors():
+    data = _with_fit_channels(_tiny_2d_mdhisto_data_with_singletons())
+
+    traces = prepare_mdhisto_waterfall(
+        data,
+        x_dim=3,
+        waterfall_dim=2,
+        waterfall_step=1.0,
+        include_model=True,
+    )
+
+    assert len(traces) == 2
+    np.testing.assert_allclose(
+        traces[0].values,
+        np.mean(data.signal[0, 0, :2, :], axis=0),
+    )
+    np.testing.assert_allclose(traces[0].errors, np.full(5, 1.0 / np.sqrt(2.0)))
+    np.testing.assert_allclose(traces[0].model_values, traces[0].values + 0.5)
+    assert traces[0].label.endswith("r.l.u.")
+
+
+def test_prepare_mdhisto_waterfall_uses_delta_symbol_for_energy_labels():
+    traces = prepare_mdhisto_waterfall(
+        _tiny_mdhisto_data(),
+        x_dim=3,
+        waterfall_dim=0,
+        waterfall_step=0.5,
+    )
+
+    assert traces[0].label.startswith("ΔE = ")
+
+
+def test_plot_mdhisto_waterfall_supports_grouped_1d_data_and_model_lines():
+    first = _with_fit_channels(_tiny_1d_mdhisto_data())
+    second = _with_fit_channels(_tiny_1d_mdhisto_data())
+    second.signal = second.signal + 2.0
+
+    ax = plot_mdhisto_waterfall(
+        [first, second],
+        dataset_labels=["0.5 meV", "1.4 meV"],
+        trace_offset=3.0,
+        cmap="plasma",
+        marker_face="outline",
+        show_model=True,
+        show_zero_lines=True,
+        trace_label_suffix=" at 6 K",
+        trace_label_font_size=14.0,
+        trace_label_color="#000000",
+    )
+
+    assert len(ax._nfit_waterfall_traces) == 2
+    assert ax._nfit_waterfall_offset == pytest.approx(3.0)
+    assert {text.get_text() for text in ax.texts} == {
+        "0.5 meV at 6 K",
+        "1.4 meV at 6 K",
+    }
+    assert all(text.get_fontsize() == pytest.approx(14.0) for text in ax.texts)
+    assert all(text.get_color() == "#000000" for text in ax.texts)
+    assert len(ax.containers) == 2
+    assert len(ax.lines) >= 4
+    data_line = ax.containers[0].lines[0]
+    assert data_line.get_markerfacecolor() == data_line.get_markeredgecolor()
 
 
 def test_plot_mdhisto_fit_comparison_renders_data_fit_residual_panels():
@@ -355,6 +421,50 @@ def test_qt_slice_viewer_uses_real_comboboxes_and_swaps_axes():
     assert viewer.y_combo.currentText() == "[H,H,0]"
 
 
+def test_qt_slice_viewer_defaults_to_the_first_two_axes():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data())
+
+    assert viewer.view_mode_combo.currentText() == "Slice viewer"
+    assert viewer.model.x_dim == 0
+    assert viewer.model.y_dim == 1
+    assert viewer.x_combo.currentText() == "DeltaE"
+    assert viewer.y_combo.currentText() == "[H,-H,0]"
+    viewer.window.close()
+
+
+def test_qt_slice_viewer_effective_1d_defaults_to_its_varying_axis():
+    from nfit.qt_slice_viewer import _initial_display_dims
+
+    assert _initial_display_dims(_tiny_1d_mdhisto_data(), -1, 0) == (3, 0)
+
+
+def test_qt_constant_q_layout_uses_energy_as_its_varying_axis():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    signal = np.linspace(0.0, 1.0, 55)[None, :]
+    data = MDHistoData(
+        axes=(
+            MDHistoAxis("Q", np.asarray([0.55, 0.65]), "1/angstrom", "momentum"),
+            MDHistoAxis("DeltaE", np.linspace(0.0, 5.5, 56), "meV", "energy"),
+        ),
+        signal=signal,
+        errors=np.full_like(signal, 0.1),
+        mask=np.zeros_like(signal, dtype=bool),
+        num_events=np.ones_like(signal),
+    )
+
+    viewer = QtMDHistoSliceViewer(data)
+
+    assert viewer.model.x_dim == 1
+    assert viewer.ax_image.lines[0].get_xdata().shape == (55,)
+    assert viewer.ax_image.lines[0].get_ydata().shape == (55,)
+    viewer.window.close()
+
+
 def test_qt_slice_viewer_interactive_controls_have_tooltips():
     pytest.importorskip("PySide6")
     from PySide6 import QtWidgets
@@ -382,6 +492,55 @@ def test_qt_slice_viewer_interactive_controls_have_tooltips():
             missing.append(f"{type(widget).__name__}:{label}")
 
     assert missing == []
+
+
+def test_qt_slice_viewer_save_plot_button_uses_project_callback():
+    pytest.importorskip("PySide6")
+    from PySide6 import QtWidgets
+
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+    plot_buttons = [
+        button
+        for button in viewer.window.findChildren(QtWidgets.QPushButton)
+        if button.text() == "Save plot"
+    ]
+
+    assert plot_buttons == [viewer.save_plot_button]
+    assert not viewer.save_plot_button.isEnabled()
+    assert not any(
+        button.text() == "Plot"
+        for button in viewer.window.findChildren(QtWidgets.QToolButton)
+    )
+
+    calls = []
+    viewer.set_save_plot_callback(lambda: calls.append("saved"))
+    viewer.save_plot_button.click()
+
+    assert calls == ["saved"]
+    assert viewer.save_plot_button.parentWidget() is viewer.copy_figure_button.parentWidget()
+
+
+def test_qt_slice_viewer_standard_save_shortcut_uses_project_callback():
+    pytest.importorskip("PySide6")
+    from PySide6 import QtGui
+
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+
+    assert not viewer.save_project_shortcut.isEnabled()
+    assert viewer.save_project_shortcut.key() in QtGui.QKeySequence.keyBindings(
+        QtGui.QKeySequence.StandardKey.Save
+    )
+
+    calls = []
+    viewer.set_save_project_callback(lambda: calls.append("saved"))
+    viewer.save_project_shortcut.activated.emit()
+
+    assert viewer.save_project_shortcut.isEnabled()
+    assert calls == ["saved"]
 
 
 def test_qt_slice_viewer_standard_close_shortcut_closes_window():
@@ -628,8 +787,8 @@ def test_qt_dataset_dropdown_handles_1d_line_and_2d_slice_modes():
     assert not viewer.color_group.isHidden()
     assert not viewer.tools_group.isHidden()
     assert viewer.line_group.isHidden()
-    assert viewer.model.x_dim == 3
-    assert viewer.model.y_dim == 2
+    assert viewer.model.x_dim == 0
+    assert viewer.model.y_dim == 1
 
 
 def _with_fit_channels(data: MDHistoData) -> MDHistoData:
@@ -1018,6 +1177,140 @@ def test_qt_1d_line_plot_errorbar_caps_share_linewidth():
     assert len(caplines) == 2
     assert all(capline.get_markersize() == pytest.approx(12.0) for capline in caplines)
     assert all(capline.get_linewidth() == pytest.approx(2.25) for capline in caplines)
+
+
+def test_qt_waterfall_mode_exposes_controls_and_exports_script():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _with_fit_channels(_tiny_2d_mdhisto_data_with_singletons())
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+
+    viewer.view_mode_combo.setCurrentIndex(1)
+
+    assert viewer._plot_layout_mode == ("waterfall", 1)
+    assert not viewer.waterfall_group.isHidden()
+    assert not viewer.waterfall_step_spin.isHidden()
+    for control in (
+        viewer.waterfall_source_label,
+        viewer.waterfall_step_spin,
+        viewer.waterfall_step_slider,
+        viewer.waterfall_step_auto_check,
+        viewer.waterfall_offset_spin,
+        viewer.waterfall_offset_slider,
+        viewer.waterfall_offset_auto_check,
+        viewer.waterfall_cmap_combo,
+        viewer.waterfall_color_range_slider,
+        viewer.waterfall_reverse_check,
+        viewer.waterfall_zero_check,
+        viewer.waterfall_zero_color_combo,
+        viewer.waterfall_zero_style_combo,
+        viewer.waterfall_zero_width_spin,
+        viewer.waterfall_model_color_combo,
+        viewer.waterfall_trace_labels_check,
+        viewer.waterfall_trace_label_suffix_edit,
+        viewer.waterfall_trace_label_font_size_spin,
+        viewer.waterfall_trace_label_color_combo,
+    ):
+        assert control.toolTip().strip()
+    assert len(viewer._current_waterfall_traces) == 4
+    assert viewer.waterfall_offset == pytest.approx(
+        0.5
+        * max(
+            np.nanmax(np.abs(trace.values))
+            for trace in viewer._current_waterfall_traces
+        )
+    )
+
+    viewer.show_fit_check.setChecked(True)
+    viewer.waterfall_cmap_combo.setCurrentText("plasma")
+    viewer.waterfall_color_range_slider.set_values(100, 850)
+    viewer.waterfall_color_range_slider.changed.emit(100, 850)
+    viewer.waterfall_zero_style_combo.setCurrentText("dotted")
+    viewer.waterfall_model_color_combo.setCurrentText("black")
+    viewer.waterfall_trace_label_suffix_edit.setText(" at 6 K")
+    viewer.waterfall_trace_label_font_size_spin.setValue(14.0)
+    viewer.waterfall_trace_label_color_combo.setCurrentText("red")
+    viewer.marker_face_color_combo.setCurrentText("outline")
+    viewer.waterfall_offset_slider.setValue(250)
+    viewer.waterfall_step_slider.setValue(600)
+
+    settings = viewer.current_plot_settings()
+    script = viewer.figure_script()
+    assert settings["view_mode"] == "waterfall"
+    assert settings["waterfall_cmap"] == "plasma"
+    assert settings["waterfall_color_min"] == pytest.approx(0.1)
+    assert settings["waterfall_color_max"] == pytest.approx(0.85)
+    assert settings["waterfall_zero_style"] == ":"
+    assert settings["waterfall_model_color"] == "#000000"
+    assert settings["waterfall_trace_label_suffix"] == " at 6 K"
+    assert settings["waterfall_trace_label_font_size"] == pytest.approx(14.0)
+    assert settings["waterfall_trace_label_color"] == "#d62728"
+    assert settings["marker_face_color"] == "outline"
+    assert 0.0 <= viewer.waterfall_offset <= max(
+        np.nanmax(np.abs(trace.values))
+        for trace in viewer._current_waterfall_traces
+    )
+    assert "plot_mdhisto_waterfall" in script
+    compile(script, "waterfall_figure.py", "exec")
+
+    restored = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    restored.apply_plot_settings(settings)
+    assert restored.view_mode_combo.currentText() == "Waterfall"
+    assert restored.waterfall_cmap == "plasma"
+    assert restored.waterfall_color_min == pytest.approx(0.1)
+    assert restored.waterfall_color_max == pytest.approx(0.85)
+    assert restored.waterfall_zero_style == ":"
+    assert restored.waterfall_trace_label_suffix == " at 6 K"
+    assert restored.waterfall_trace_label_font_size == pytest.approx(14.0)
+    assert restored.waterfall_trace_label_color == "#d62728"
+    assert restored.marker_face_color == "outline"
+
+
+def test_qt_waterfall_mode_groups_compatible_1d_datasets():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    first = _with_fit_channels(_tiny_1d_mdhisto_data())
+    second = _with_fit_channels(_tiny_1d_mdhisto_data())
+    viewer = QtMDHistoSliceViewer(
+        [first, second],
+        dataset_names=["0.5 meV", "1.4 meV"],
+    )
+
+    viewer.view_mode_combo.setCurrentIndex(1)
+
+    assert viewer.waterfall_source_dataset_names() == ["0.5 meV", "1.4 meV"]
+    assert [trace.label for trace in viewer._current_waterfall_traces] == [
+        "0.5 meV",
+        "1.4 meV",
+    ]
+    assert viewer.waterfall_step_spin.isHidden()
+    assert viewer.y_combo.isHidden()
+    assert viewer.current_plot_settings()["waterfall_dataset_names"] == [
+        "0.5 meV",
+        "1.4 meV",
+    ]
+
+
+def test_qt_waterfall_groups_1d_datasets_by_project_group_key():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    datasets = [_tiny_1d_mdhisto_data() for _index in range(4)]
+    viewer = QtMDHistoSliceViewer(
+        datasets,
+        dataset_names=["g1 a", "g1 b", "g2 a", "g2 b"],
+        dataset_group_keys=["Group1", "Group1", "Group2", "Group2"],
+    )
+    viewer.dataset_combo.setCurrentIndex(2)
+    viewer.view_mode_combo.setCurrentIndex(1)
+
+    assert viewer.waterfall_source_dataset_names() == ["g2 a", "g2 b"]
+    assert [trace.label for trace in viewer._current_waterfall_traces] == [
+        "g2 a",
+        "g2 b",
+    ]
 
 
 def test_qt_hidden_axis_sliders_and_spins_stay_linked():

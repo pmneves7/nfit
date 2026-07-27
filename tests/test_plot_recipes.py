@@ -37,6 +37,55 @@ def test_plot_entries_persist_with_the_project_schema():
     assert restored.sources[0].dataset_id == dataset.id
 
 
+def test_waterfall_recipe_renders_and_persists_multiple_dataset_sources():
+    first = _data()
+    first.signal = first.signal.reshape(1, 4)
+    first.errors = first.errors.reshape(1, 4)
+    first.mask = first.mask.reshape(1, 4)
+    first.num_events = first.num_events.reshape(1, 4)
+    first.axes = (
+        MDHistoAxis("fixed", np.array([-0.5, 0.5]), "", "unknown"),
+        MDHistoAxis("Q", np.arange(5.0), "1/angstrom", "momentum"),
+    )
+    second = _data()
+    second.signal = second.signal.reshape(1, 4)
+    second.errors = second.errors.reshape(1, 4)
+    second.mask = second.mask.reshape(1, 4)
+    second.num_events = second.num_events.reshape(1, 4)
+    second.axes = first.axes
+    entry = new_plot_entry(
+        "Cuts",
+        "first",
+        {
+            "view_mode": "waterfall",
+            "x_dim": "Q",
+            "y_dim": "fixed",
+            "waterfall_dataset_names": ["first", "second"],
+            "waterfall_offset": 0.5,
+            "waterfall_trace_label_suffix": " at 6 K",
+            "waterfall_trace_label_font_size": 13.0,
+            "waterfall_trace_label_color": "#000000",
+        },
+        plot_type="mdhisto_waterfall",
+        dataset_ids=["first", "second"],
+    )
+
+    figure = render_plot(entry, [first, second])
+
+    assert len(entry.sources) == 2
+    assert [source.dataset_id for source in entry.sources] == ["first", "second"]
+    assert len(figure.axes[0]._nfit_waterfall_traces) == 2
+    assert {text.get_text() for text in figure.axes[0].texts} == {
+        "first at 6 K",
+        "second at 6 K",
+    }
+    assert all(
+        text.get_fontsize() == 13.0
+        for text in figure.axes[0].texts
+    )
+    assert all(text.get_color() == "#000000" for text in figure.axes[0].texts)
+
+
 def test_fit_comparison_recipe_can_render_model_through_data_masks():
     data = _data()
     data.mask[0, 0] = True

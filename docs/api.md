@@ -81,8 +81,16 @@ figure is preferred, for example in notebooks or batch scripts. Use
 `plot_mdhisto_line(data, ...)` for one-dimensional MDHisto outputs such as
 shape `(1, 1, 1, N)`, and `plot_mdhisto_auto(data, ...)` to dispatch to a line
 plot for exactly-one-non-singleton data or a slice figure otherwise. The
-exported scripts from the GUI call `plot_mdhisto_slice` and include the current
-display settings.
+`plot_mdhisto_waterfall(data, ...)` backend accepts one multidimensional
+MDHisto dataset or a sequence of compatible 1D datasets and reproduces the
+interactive waterfall controls without Qt. `prepare_mdhisto_waterfall`
+returns the reduced traces and propagated errors for custom plotting.
+`waterfall_step_bounds` gives the native-bin/full-span bin-width limits and
+`waterfall_absolute_max` gives the data-dependent offset limit. The
+`color_range` and `marker_face="outline"` options reproduce the interactive
+colormap-range and per-trace marker-fill controls. Exported
+scripts from the GUI call the matching slice, line, or waterfall backend and
+include the current display settings.
 
 Saved workspace plots use `PlotEntry`, `render_plot`, and `render_project_plot`.
 They return Matplotlib figures and never construct Qt widgets, so generated plot

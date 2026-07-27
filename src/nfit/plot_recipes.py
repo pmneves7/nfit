@@ -11,11 +11,17 @@ import numpy as np
 
 from .mdhisto import MDHistoData
 from .pipeline import PlotEntry, PlotSourceRef
-from .plotting import plot_mdhisto_fit_comparison, plot_mdhisto_line, plot_mdhisto_slice
+from .plotting import (
+    plot_mdhisto_fit_comparison,
+    plot_mdhisto_line,
+    plot_mdhisto_slice,
+    plot_mdhisto_waterfall,
+)
 
 PLOT_TYPE_LABELS = {
     "mdhisto_slice": "MDHisto slice",
     "mdhisto_line": "MDHisto line",
+    "mdhisto_waterfall": "Waterfall",
     "fit_comparison": "Data, fit, and residual",
     "fit_covariance": "Fit covariance or correlation",
 }
@@ -28,6 +34,7 @@ def new_plot_entry(
     *,
     plot_type: str,
     fit_id: str | None = None,
+    dataset_ids: list[str] | None = None,
 ) -> PlotEntry:
     """Create a plot entry using only stable source identifiers."""
 
@@ -36,12 +43,20 @@ def new_plot_entry(
     return PlotEntry(
         name=name,
         type=plot_type,
-        sources=[PlotSourceRef(dataset_id=dataset_id, fit_id=fit_id)],
+        sources=[
+            PlotSourceRef(dataset_id=source_id, fit_id=fit_id)
+            for source_id in (dataset_ids or [dataset_id])
+        ],
         settings=dict(settings),
     )
 
 
-def render_plot(entry: PlotEntry, data: MDHistoData | None = None, *, fit_entry: Any | None = None):
+def render_plot(
+    entry: PlotEntry,
+    data: MDHistoData | list[MDHistoData] | None = None,
+    *,
+    fit_entry: Any | None = None,
+):
     """Return the Matplotlib figure for a saved MDHisto plot without Qt."""
 
     settings = dict(entry.settings)
@@ -52,7 +67,66 @@ def render_plot(entry: PlotEntry, data: MDHistoData | None = None, *, fit_entry:
         figure = _render_fit_covariance(fit_entry, settings)
     elif data is None:
         raise ValueError("saved plot requires MDHisto data")
+    elif plot_type == "mdhisto_waterfall":
+        datasets = [data] if isinstance(data, MDHistoData) else list(data)
+        ax = plot_mdhisto_waterfall(
+            datasets,
+            dataset_labels=settings.get("waterfall_dataset_names"),
+            x_dim=settings.get("x_dim", -1),
+            waterfall_dim=settings.get("y_dim", 0),
+            channel=settings.get("channel", "signal"),
+            selections=_selections(settings),
+            integrate_checks=_integrate_checks(settings),
+            waterfall_step=float(settings.get("waterfall_step", 1.0)),
+            trace_offset=float(settings.get("waterfall_offset", 1.0)),
+            cmap=settings.get("waterfall_cmap", "viridis"),
+            color_range=(
+                float(settings.get("waterfall_color_min", 0.0)),
+                float(settings.get("waterfall_color_max", 1.0)),
+            ),
+            reverse_colors=bool(settings.get("waterfall_reverse_colors", False)),
+            marker=settings.get("marker", "o"),
+            line_style=settings.get("line_style", "none"),
+            marker_size=float(settings.get("marker_size", 5.0)),
+            line_width=float(settings.get("line_plot_width", 1.5)),
+            marker_edge_width=float(settings.get("marker_edge_width", 1.5)),
+            marker_face=settings.get(
+                "waterfall_marker_face",
+                settings.get("marker_face_color", "none"),
+            ),
+            show_errorbars=bool(settings.get("show_errorbars", True)),
+            errorbar_caps=bool(settings.get("show_errorbar_caps", False)),
+            errorbar_cap_size=float(settings.get("errorbar_cap_size", 3.0)),
+            show_zero_lines=bool(settings.get("waterfall_show_zero_lines", True)),
+            zero_line_color=settings.get("waterfall_zero_color", "#7f7f7f"),
+            zero_line_style=settings.get("waterfall_zero_style", "--"),
+            zero_line_width=float(settings.get("waterfall_zero_width", 0.8)),
+            show_model=bool(settings.get("show_fit", False)),
+            unmask_model=bool(settings.get("unmask_model", False)),
+            model_color=settings.get("waterfall_model_color"),
+            model_line_width=float(settings.get("fit_line_width", 2.0)),
+            show_trace_labels=bool(
+                settings.get("waterfall_show_trace_labels", True)
+            ),
+            trace_label_suffix=str(
+                settings.get("waterfall_trace_label_suffix", "")
+            ),
+            trace_label_font_size=float(
+                settings.get("waterfall_trace_label_font_size", 10.0)
+            ),
+            trace_label_color=settings.get("waterfall_trace_label_color"),
+            smoothing_sigma_x=float(settings.get("smoothing_x", 0.0)),
+            smoothing_sigma_waterfall=float(settings.get("smoothing_y", 0.0)),
+            xlim=_pair(settings.get("xlim")),
+            ylim=_pair(settings.get("ylim")),
+            font_size=float(settings.get("font_size", 12.0)),
+            axes_linewidth=float(settings.get("axis_linewidth", 1.5)),
+            figsize=tuple(settings.get("figsize", (8.0, 6.5))),
+        )
+        figure = ax.figure
     elif plot_type == "mdhisto_line":
+        if not isinstance(data, MDHistoData):
+            raise TypeError("line plots require one MDHisto dataset")
         axis = settings.get("x_dim")
         ax = plot_mdhisto_line(
             data,
@@ -62,6 +136,8 @@ def render_plot(entry: PlotEntry, data: MDHistoData | None = None, *, fit_entry:
         )
         figure = ax.figure
     elif plot_type == "fit_comparison":
+        if not isinstance(data, MDHistoData):
+            raise TypeError("fit-comparison plots require one MDHisto dataset")
         unmask_model = bool(settings.get("unmask_model", False))
         fit = _channel_data(data, "fit", unmasked=unmask_model)
         residual = _channel_data(data, "residual", unmasked=unmask_model)
@@ -81,6 +157,8 @@ def render_plot(entry: PlotEntry, data: MDHistoData | None = None, *, fit_entry:
             figsize=tuple(settings.get("figsize", (8.0, 6.5))),
         )
     elif plot_type == "mdhisto_slice":
+        if not isinstance(data, MDHistoData):
+            raise TypeError("slice plots require one MDHisto dataset")
         figure = plot_mdhisto_slice(
             data,
             x_dim=settings.get("x_dim", -1),

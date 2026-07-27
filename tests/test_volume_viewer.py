@@ -183,8 +183,10 @@ def test_data_viewer_exposes_3d_mode_for_nd_histograms(monkeypatch):
     viewer = QtMDHistoSliceViewer(_volume_data())
     mode = viewer.window.findChild(QtWidgets.QComboBox, "data_viewer_mode_combo")
     assert mode is not None
-    assert mode.itemText(1) == "3D PyVista"
+    assert mode.itemText(1) == "Waterfall"
+    assert mode.itemText(2) == "3D PyVista"
     assert mode.model().item(1).isEnabled()
+    assert mode.model().item(2).isEnabled()
     assert "three dimensions" in mode.toolTip()
     viewer.window.close()
 
