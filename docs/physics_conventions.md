@@ -1,12 +1,12 @@
 # Physics conventions
 
-## Inelastic magnetic neutron scattering
+## Magnetic neutron-scattering response
 
-nfit uses energy transfer $E = E_i-E_f=\hbar\omega$ in meV; positive $E$
-means neutron energy loss. Momentum is in reciprocal-lattice units or
+nfit uses energy transfer $E = E_i-E_f=\hbar\omega$ in meV, with positive
+$E$ denoting neutron energy loss. Momentum is in reciprocal-lattice units or
 Å$^{-1}$, temperature is in K, and a double-differential cross section is per
 steradian and per meV. Model kernels produce the dissipative response
-$\chi''(\mathbf Q,E)$ before instrumental factors.
+$\chi''(\mathbf Q,E)$ before instrumental factors are applied.
 
 Common symbols are:
 
@@ -27,7 +27,7 @@ Common symbols are:
 nfit follows the Fourier-transform convention in Squires, chapter 7,
 Eq. 7.73. For equivalent magnetic ions at equilibrium positions
 $\mathbf R_l$, let $\mathbf S=\hat{\mathbf J}/\hbar$ denote the dimensionless
-spin operator. The dynamic spin correlation function **per magnetic ion** is
+spin operator. The dynamic spin correlation function per magnetic ion is
 
 $$
 S^{\alpha\beta}_s(\mathbf Q,E)
@@ -45,11 +45,12 @@ $l$ labels magnetic ions, $\mathbf R_l$ is the equilibrium position of ion
 $l$ relative to ion 0, $t$ is time, and angle brackets denote a thermal
 equilibrium average.
 
-Thus $S^{\alpha\beta}_s$ has physical dimensions of inverse energy and is
-labelled `spin^2/meV` when $E$ is in meV. Here `spin^2` records the operator
-normalization; it is not an additional SI dimension.
-The phase signs, operator order, and the factor $1/(2\pi\hbar)$ are all part
-of the convention. The phase $\mathbf Q\cdot\mathbf R_l$ is dimensionless:
+Because $\mathbf S$ is dimensionless, $S^{\alpha\beta}_s$ has dimensions of
+inverse energy. nfit labels this normalization `spin^2/meV` when $E$ is in
+meV; `spin^2` identifies the operator convention rather than an additional SI
+dimension. The phase signs, operator order, and factor $1/(2\pi\hbar)$ are
+part of the Fourier-transform convention. The phase
+$\mathbf Q\cdot\mathbf R_l$ is dimensionless:
 $\mathbf Q$ and $\mathbf R_l$ in this equation are physical inverse-length
 and length vectors. For a crystal basis, the sum is generalized to both site
 indices and normalized by the number of reference magnetic ions; nfit's
@@ -79,11 +80,11 @@ h^\beta(\mathbf Q,E).
 $$
 
 The retarded susceptibility is causal. Its real part $\chi'_s$ is the
-in-phase, reactive response; $\chi'_s(\mathbf Q,0)$ is the static
+in-phase, reactive response, and $\chi'_s(\mathbf Q,0)$ is the static
 susceptibility. Its imaginary part $\chi''_s$ is the out-of-phase,
-dissipative response measured by inelastic scattering. “Imaginary” refers to
-the phase of the response function, not to an imaginary-valued spin. With
-dimensionless spin operators, both parts have units `spin^2/meV`.
+dissipative response measured by inelastic scattering; “imaginary” describes
+the phase of the response function. With the spin normalization above, both
+parts have units `spin^2/meV`.
 
 For a bulk measurement one may instead write
 $\delta M_\alpha=\sum_\beta\chi^{\alpha\beta}_{MH}\delta H_\beta$.
@@ -101,10 +102,10 @@ S_s^{\alpha\beta}(\mathbf Q,E)=
 {1-\exp[-E/(k_BT)]}.
 $$
 
-The $1/\pi$ appears exactly once and is not part of $\chi''$ itself. The
-Bose/detailed-balance denominator is evaluated stably near $E=0$. The
-odd-in-$E$ dissipative response then gives the correct balance between
-neutron energy loss and gain.
+In this convention, $1/\pi$ relates $S_s$ to $\chi''_s$ and is not included
+in the definition of $\chi''_s$. The Bose or detailed-balance denominator is
+evaluated stably near $E=0$. Together with the odd-in-$E$ dissipative
+response, it gives the balance between neutron energy loss and gain.
 
 With this per-ion definition, the magnetic cross section is
 
@@ -128,11 +129,8 @@ cross section with an additional factor $N$ outside the per-ion correlation
 function. nfit instead carries the selected per-magnetic-ion, per-formula-unit,
 or per-unit-cell normalization as dataset metadata.
 
-The scalar spin-fluctuation kernels return a **single Cartesian component** of
-the spin-operator susceptibility,
-$\chi''_s=\chi''_{s,xx}=\chi''_{s,yy}=\chi''_{s,zz}$, in
-`spin^2/meV`. For an unpolarized measurement in the dipole approximation, nfit
-uses
+Substituting the fluctuation--dissipation relation gives the form used for an
+unpolarized measurement in the dipole approximation:
 
 $$
 \frac{d^2\sigma}{d\Omega\,dE} =
@@ -144,11 +142,9 @@ $$
 {1-\exp[-E/(k_B T)]},
 $$
 
-where $\chi''_{s,\alpha\beta}$ is the dimensionless-spin response per unit
-energy. The kinematic ratio, form factor, projector, $g$, and Bose denominator
-are dimensionless, so the area coefficient times $\chi''_s$ gives cross
-section per energy, as required.
-Since
+The kinematic ratio, form factor, projector, $g$, and Bose denominator are
+dimensionless. The remaining area coefficient times the inverse-energy
+susceptibility therefore gives cross section per energy. Since
 
 $$
 (\gamma r_0)^2\left(\frac{g}{2}\right)^2
@@ -157,9 +153,9 @@ $$
 \left(\frac{\gamma r_0}{2}\right)^2=0.07265\ {\rm barn},
 $$
 
-the spin-response form uses the area coefficient
-$0.07265\,g^2\ {\rm barn}$. Equivalently, when a *physical* moment response
-is used,
+the spin-response form has area coefficient
+$0.07265\,g^2\ {\rm barn}$. For the physical moment response, the same
+normalization is
 
 $$
 C_\mu
@@ -167,10 +163,8 @@ C_\mu
 =0.07265\ \frac{{\rm barn}}{\mu_B^2},
 $$
 
-so $C_\mu\chi''_{\rm moment}$ has units barn per energy. These are the same
-physical normalization written in two unit conventions. The code multiplies
-numerical values in `spin^2/meV` by $g^2$; values already expressed in
-`mu_B^2/meV` receive no additional $g^2$.
+so $C_\mu\chi''_{\rm moment}$ has units barn per energy. The relation between
+the spin and moment conventions is defined below.
 
 See Berk's NIST review for the general double-differential and magnetic
 correlation-function formalism,
@@ -230,13 +224,13 @@ them with inelastic data if that rate is to be fitted.
 
 ### Polarization convention
 
-The tensor projector is always
-$\delta_{\alpha\beta}-\hat Q_\alpha\hat Q_\beta$. A scalar polarization factor
-depends on what the scalar $\chi''$ means:
+The tensor projector is
+$\delta_{\alpha\beta}-\hat Q_\alpha\hat Q_\beta$. When the response is
+represented by a scalar, its meaning determines the polarization factor:
 
 - **One isotropic Cartesian component:** $\chi''=\chi''_{xx}=\chi''_{yy}
-  =\chi''_{zz}$ gives $P=2$. This is the scalar convention used by nfit's
-  Heisenberg, MMP, and local-relaxational models.
+  =\chi''_{zz}$ gives $P=2$. nfit's Heisenberg, MMP, and local-relaxational
+  models use this convention and return the component in `spin^2/meV`.
 - **Isotropic trace:** $\chi''=\sum_\alpha\chi''_{\alpha\alpha}$ gives
   $P=2/3$. This remains available for imported data that were reduced with a
   trace convention.
@@ -248,31 +242,27 @@ depends on what the scalar $\chi''$ means:
 For an anisotropic response, the full tensor contraction is required; a single
 scalar $P$ is not generally physical.
 
-### Magnetic moment, spin, and the Landé factor
+### Spin and magnetic-moment susceptibility
 
-The Landé factor $g$ is **dimensionless**. It is not measured in Bohr
-magnetons. The magnetic moment operator is
-$\boldsymbol\mu=-g\mu_B\mathbf S$, so $g\mu_B$ carries moment units while
-$g$ alone does not. The dimensionally complete conversion from the spin
-response to the physical magnetic-moment response is
+For the dimensionless spin operator used above, the magnetic moment operator
+is $\boldsymbol\mu=-g\mu_B\mathbf S$. The Landé factor $g$ is dimensionless,
+and $\mu_B$ supplies the magnetic-moment unit. The corresponding physical
+moment susceptibility is
 
 $$
 \chi''_{\rm moment}(\mathbf Q,E)
 =(g\mu_B)^2\chi''_s(\mathbf Q,E).
 $$
 
-Here `spin^2/meV` records the operator convention; because $\mathbf S$ is
-defined as $\hat{\mathbf J}/\hbar$, `spin^2` is dimensionless. Define the
-unit-normalized moment response
+It is useful to define the moment response normalized by $\mu_B^2$,
 
 $$
 \bar\chi''_\mu
 \equiv \frac{\chi''_{\rm moment}}{\mu_B^2}.
 $$
 
-It has dimensions of inverse energy, and its numerical ordinate is what nfit
-labels in `mu_B^2/meV`. The physical and unit-normalized conversions are
-therefore
+which has dimensions of inverse energy. Its numerical ordinate is what nfit
+labels in `mu_B^2/meV`. Combining the definitions gives
 
 $$
 \chi''_{\rm moment}
@@ -282,33 +272,29 @@ $$
 \bar\chi''_\mu=g^2\chi''_s.
 $$
 
-The last equality is dimensionally valid because both sides have dimensions
-of inverse energy; it is also the $g^2$ conversion between numerical ordinates
-in the two declared unit conventions. The nfit parameter `g_factor` remains
-unitless. This explains the factor $(g/2)^2$ in Squires Eq. 7.73: together
-with the magnetic scattering constant, it converts the dimensionless-spin
-response to a magnetic-moment response.
+Thus $g^2$ converts numerical ordinates from `spin^2/meV` to
+`mu_B^2/meV`, while the physical conversion is $(g\mu_B)^2$. The unit
+declaration determines how nfit applies this relation:
 
-If imported $\chi''$ is expressed in `mu_B^2/meV`, it is a
-**magnetic-moment** susceptibility and already contains the moment conversion.
-nfit therefore applies no additional $g^2$ when converting that imported
-channel. If the imported response is instead declared in `spin^2/meV`, nfit
-multiplies its numerical values by $g^2$ exactly once and changes the declared
-unit to `mu_B^2/meV` when calculating the cross section. This is the numerical
-unit conversion defined above; physically, the factor is $(g\mu_B)^2$.
+- Model kernels produce $\chi''_s$. A model curve requested in
+  `mu_B^2/meV` is multiplied by the dataset's $g^2$; one requested in
+  `spin^2/meV` is unchanged.
+- An imported response declared in `spin^2/meV` is converted by $g^2$ when
+  nfit calculates a cross section in the moment convention, and the converted
+  response is represented in `mu_B^2/meV`.
+- An imported response declared in `mu_B^2/meV` already represents
+  $\bar\chi''_\mu$ and is used without another factor of $g^2$.
 
-The model kernels themselves are spin responses. When a dataset requests a
-model curve in `mu_B^2/meV`, nfit multiplies the model by the dataset's Landé
-$g^2$; when it requests `spin^2/meV`, it does not. This explicit choice avoids
-both omitting $g^2$ and double counting it. The user-set Landé factor may differ
-from 2.
+The dataset parameter `g_factor` is unitless and may differ from 2. The same
+spin-to-moment relation accounts for the factor $(g/2)^2$ in the cross-section
+formula.
 
 ### Relation to SI susceptibility and the role of $\mu_0$
 
-The microscopic spin susceptibility above responds to the conjugate Zeeman
-energy. Rationalized SI bulk susceptibility instead uses $M=\chi_{\rm SI}H$.
-The zero-frequency Kramers--Kronig relation for the component parallel to the
-applied field is
+The microscopic spin susceptibility responds to its conjugate Zeeman energy,
+whereas rationalized SI bulk susceptibility is defined by
+$M=\chi_{\rm SI}H$. Their comparison begins with the zero-frequency
+Kramers--Kronig relation for the component parallel to the applied field:
 
 $$
 \chi'_{s,ii}(\mathbf Q,0)
@@ -320,9 +306,9 @@ Here $E$, $dE$, and the inverse-energy unit of $\chi''_s$ must be expressed
 consistently. The index $i$ labels the Cartesian field component. Both sides
 have dimensions of inverse energy.
 
-Bulk susceptibility is the uniform response, so it requires
-$\mathbf Q=0$. If $\chi'_s$ is expressed in J$^{-1}$ per magnetic ion, then
-for a number density $n_{\rm mag}$ in m$^{-3}$ of equivalent magnetic ions,
+Bulk susceptibility is the uniform response and therefore requires
+$\mathbf Q=0$. For $\chi'_s$ in J$^{-1}$ per magnetic ion and a number
+density $n_{\rm mag}$ in m$^{-3}$ of equivalent magnetic ions,
 
 $$
 \frac{M_i}{H_i}
@@ -331,11 +317,10 @@ $$
 \chi'_{s,ii}(\mathbf 0,0).
 $$
 
-The right-hand side is dimensionless, as required for the SI volume
-susceptibility $M/H$. The factor $\mu_0$ enters because the microscopic
-Zeeman perturbation couples to $B$, with $B\simeq\mu_0H$ in the linear,
-weak-susceptibility limit. For a molar susceptibility normalized per mole of
-formula units,
+The result is the dimensionless SI volume susceptibility $M/H$. The factor
+$\mu_0$ enters because the microscopic Zeeman perturbation couples to $B$,
+with $B\simeq\mu_0H$ in the linear, weak-susceptibility limit. For a molar
+susceptibility normalized per mole of formula units,
 
 $$
 \chi_{{\rm mol},ii}
@@ -372,25 +357,23 @@ $$
 \widetilde{\bar\chi}'_{\mu,ii}.
 $$
 
-The explicit division by $\varepsilon_{\rm meV}$ belongs only in this
-unit-stripped numerical-value equation. It must not be combined with a
-susceptibility that still carries its physical inverse-energy unit.
+The division by $\varepsilon_{\rm meV}$ converts a numerical value quoted per
+meV; it is omitted when the susceptibility still carries its physical
+inverse-energy unit.
 
-The factor $\mu_0$ is therefore required for rationalized-SI $M/H$ units. It
-is **not** an additional factor in the neutron cross section once $\chi''$ is
-already in `spin^2/meV` or `mu_B^2/meV`; inserting it there would mix SI bulk
-and microscopic neutron conventions. nfit's molar
+These equations place $\mu_0$ in the conversion to rationalized-SI $M/H$.
+The neutron cross section above uses the microscopic response in
+`spin^2/meV` or `mu_B^2/meV` and contains no additional $\mu_0$. nfit's molar
 `cm^3/mol` to `m^3/mol` conversion includes the rationalized-SI $4\pi$ factor,
-and the Heisenberg RPA bulk prediction includes the corresponding
-$\mu_0(g\mu_B)^2$ conversion. Welch *et al.* derive this relation explicitly
-for susceptibility per magnetic ion. Experimentally, a finite energy window
-gives only a partial Kramers--Kronig integral, and finite-$\mathbf Q$ neutron
-data must be extrapolated to $\mathbf Q=0$ before comparison with a bulk
-magnetometer.
+and the Heisenberg RPA bulk prediction includes
+$\mu_0(g\mu_B)^2$. Welch *et al.* derive the per-magnetic-ion relation
+explicitly. Experimentally, a finite energy window gives only a partial
+Kramers--Kronig integral, and finite-$\mathbf Q$ neutron data must be
+extrapolated to $\mathbf Q=0$ before comparison with a bulk magnetometer.
 
 ### Form factor and kinematics
 
-The magnetic **amplitude** form factor is $f(Q)$, so intensity contains
+The magnetic amplitude form factor is $f(Q)$, so intensity contains
 $|f(Q)|^2$. nfit's tabulated $\langle j_0\rangle$ approximation follows the
 International Tables/ILL convention
 ([Brown, International Tables C §4.4.5](https://www.ill.eu/sites/ccsl/ffacts/)).
@@ -407,8 +390,8 @@ $$
 \frac{k_f}{k_i}=\sqrt{\frac{E_f}{E_f+E}}.
 $$
 
-The dataset setting records whether this factor is still **included** in the
-imported double-differential cross section or was **removed upstream** to make
+The dataset setting records whether this factor is included in the imported
+double-differential cross section or was removed upstream to make
 an $S(\mathbf Q,E)$-like quantity. Included data require fixed $E_i$ or $E_f$
 for conversion to $\chi''$. This agrees with Mantid's documented `CorrectKiKf`
 direction: multiplying a cross section by $k_i/k_f$ removes the phase-space
@@ -432,14 +415,11 @@ physical quantity type, and unit.
   $\mu_{\mathrm B}^2/(\mathrm{meV\ f.u.})`; `spin^2` is retained when that
   convention is explicitly selected.
 - Signal and uncertainty plots always include a unit. Missing or explicitly
-  arbitrary units are displayed as `(a.u.)`.
-- Published normalized intensity such as `1/(meV atom)` is retained as a
-  dimensionful but non-cross-section signal. Its paired $\chi''$ channel has
-  the correct Bose/correction shape but remains arbitrary unless an absolute
-  cross-section calibration is supplied.
-- Uncalibrated data remain `arb. units`. nfit can remove or apply the Bose,
-  form-factor, polarization, and kinematic **shape**, but does not label the
-  result absolute.
+  arbitrary units are displayed as `(a.u.)`. Published normalized intensity
+  such as `1/(meV atom)` retains that dimensionful, non-cross-section unit.
+  Without an absolute cross-section calibration, nfit can apply the Bose,
+  form-factor, polarization, and kinematic shape corrections, but the paired
+  $\chi''$ channel remains in arbitrary units.
 - For count data, `Signal units / mbarn` is the explicit calibration in
   imported signal units per `mbarn/(sr meV)` on the selected sample basis.
   Zero means uncalibrated.
@@ -506,9 +486,9 @@ single-ion anisotropy, dipole–dipole, or Zeeman terms (see
   $W_{\alpha\beta} = \delta_{\alpha\beta} - \hat Q_\alpha \hat Q_\beta$
   with $\hat Q$ the Cartesian unit momentum transfer (from
   `rlu_to_inv_angstrom_matrix`, stamped on each fit point). The isotropic limit
-  reduces **exactly** to the scalar model's $P = 2$ one-component polarization
-  factor, so there is no intensity jump when an infinitesimal anisotropy is
-  switched on. The dissipative tensor is
+  reduces to the scalar model's $P = 2$ one-component polarization factor,
+  so there is no intensity jump when an infinitesimal anisotropy is switched
+  on. The dissipative tensor is
   $\chi''_{\alpha\beta} = (\chi_{\alpha\beta} - \chi^*_{\beta\alpha})/2i$; its
   antisymmetric (chiral) part is nonzero only when time reversal is broken (a
   Zeeman field or a DM term). Channels are computed internally so polarized
