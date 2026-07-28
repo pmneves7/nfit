@@ -24,16 +24,11 @@ releases. Current behavior is documented in the workflow and API pages.
   binary-dependency testing are ready.
 - Expand import/export adapters where they improve interoperability without
   coupling the fitting layer to an instrument-specific representation.
-- Add an external model-provider interface for specialized engines such as
-  Sunny, SpinW, SpinInteract, and PyCrystalField, and for command-line DFT or
-  DMRG workflows. A provider should declare its parameters, units, bounds,
-  version, and output quantity; accept batched physical coordinates; and return
-  a canonical nfit observable with diagnostics.
-- Keep external engines optional. The core package and built-in models should
-  continue to work after `pip install nfit`; Python providers may use separately
-  installed extras, while Julia, MATLAB, and standalone solvers can be isolated
-  behind versioned subprocess adapters. Saved projects and scripts should
-  identify the provider and fail clearly when it is unavailable.
+- Support optional external model engines such as Sunny, SpinW, SpinInteract,
+  PyCrystalField, and command-line DFT or DMRG workflows. The first real
+  integration should determine the interface. It must preserve a standalone
+  `pip install nfit`, record the engine and version in projects and scripts,
+  and make parameter units and returned physical quantities explicit.
 
 ## Reproducible scripting
 

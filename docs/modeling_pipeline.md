@@ -62,10 +62,11 @@ dataset's selected fit representation.
 : Optimized values, residuals, predictions, goodness-of-fit values, covariance,
   and per-dataset contributions.
 
-The project GUI compiles its component-based state into these lower-level
-objects. `FitModelSession` remains available for direct scripted workflows, but
-new project-aware scripts normally load a project and call the same compilation
-path as the GUI.
+The project GUI compiles serializable `ModelComponentSpec` entries into these
+lower-level objects. Project-aware scripts load the same component state and
+use the same compilation path as the GUI. Developers can also construct a
+`ModelSpec` and `FitProblem` directly for callable models that do not need GUI
+or project serialization.
 
 The common containers expose read-only numerical arrays. Use `with_updates` for
 one replacement or `mutable_copy` followed by `DatasetEntry.replace_data` for

@@ -193,11 +193,11 @@ The fitting API supports both the original single-dataset
 `fit_least_squares(data, model, specs)` convenience function and the
 simultaneous-fit `FitProblem` workflow. `FitDataset` carries dataset-local
 weights, preprocessing transforms, and optional instrument resolution, while
-`ModelSpec` wraps the shared physics model. `DataGroup` and `FitModelSession`
-package related datasets, per-dataset model overrides, optimizer settings, and
-fit history for iterative analysis. Deterministic fits support robust
-least-squares losses and optional differential-evolution initialization;
-posterior checks use `emcee` through `sample_problem_parameters`. See the
+`ModelSpec` wraps the shared physics model. Serializable GUI models use
+`ModelComponentSpec`; `compile_fit_problem` converts those components and their
+dataset sharing rules into a `FitProblem`. Deterministic fits support robust
+least-squares losses and optional differential-evolution initialization.
+Posterior checks use `emcee` through `sample_problem_parameters`. See the
 [modeling pipeline](modeling_pipeline.md) page for the recommended structure.
 
 ```{eval-rst}
