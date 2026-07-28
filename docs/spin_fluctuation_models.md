@@ -8,6 +8,13 @@ nfit provides three magnetic-response models:
 | `mmp_relaxational` | one peak with a correlation length | Nearly antiferromagnetic metals near a known ordering vector |
 | `heisenberg_rpa` | exchange matrix on a crystal lattice | Dispersive fluctuations constrained by crystal symmetry |
 
+```{toctree}
+:maxdepth: 1
+:caption: Model details
+
+heisenberg_rpa
+```
+
 For inelastic data, each kernel returns one Cartesian component of the
 dissipative spin susceptibility $\chi''_s(\mathbf Q,E)$ in `spin^2/meV`.
 The dataset convention determines

@@ -18,6 +18,21 @@ releases. Current behavior is documented in the workflow and API pages.
 - Evaluate additional temperature-dependent closures only when their assumptions
   and parameter identifiability can be documented and tested.
 
+## Electronic-response models
+
+Tight-binding, Lindhard, interaction-dressed, and correlated-electron models
+will be added in independently testable stages. The conventions, initial
+scope, provenance requirements, dependency policy, validation matrix, and
+stage gates are fixed in the
+[Electronic-response design contract](electronic_response_contract.md).
+
+The next stage is a shared model framework for evaluation, GUI metadata,
+diagnostics, reports, plots, and scripts. Subsequent stages add
+phenomenological modes, arbitrary tight binding and band plots, the complex
+bare susceptibility, interaction dressings, production fitting, and advanced
+correlated extensions. A capability remains planned until its model page
+documents an implemented public API.
+
 ## Distribution and interoperability
 
 - Publish versioned releases to a package index when release automation and

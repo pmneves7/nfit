@@ -27,6 +27,11 @@ instrument or file format.
 - **Resolution belongs to a dataset.** A resolution model may depend on the
   instrument and settings, but the optimizer receives only coordinates,
   observations, uncertainties, masks, weights, and predictions.
+- **External model engines are adapters.** Project state records the source,
+  adapter, version, conventions, and portable dependency closure rather than
+  serializing an external Python object. The planned electronic-model contract
+  is defined in
+  [Electronic-response design contract](electronic_response_contract.md).
 
 For example, the GUI's data-group workflow corresponds to ordinary package
 calls:

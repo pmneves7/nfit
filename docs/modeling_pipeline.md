@@ -313,4 +313,7 @@ A new model or transform should:
 7. include tests, tooltips, and user documentation.
 
 Registry and serialization details are in
-[Data and extension conventions](data_philosophy.md).
+[Data and extension conventions](data_philosophy.md). Planned tight-binding
+and itinerant models also follow the layered response, provenance, and result
+contracts in
+[Electronic-response design contract](electronic_response_contract.md).
