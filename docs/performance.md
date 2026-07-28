@@ -39,9 +39,14 @@ rebin settings, backgrounds, or model structure. `DatasetEntry.replace_data`
 advances the revision; changing only a model parameter can still reuse compiled
 geometry.
 
-Cache entries are process-local and evicted by least-recent use. They are
-performance aids, not stored scientific state: recomputation after eviction
-must produce the same result.
+Cache entries are process-local and evicted by least-recent use. Each GUI data
+cache has both an entry-count limit and an estimated numerical-array memory
+budget; an entry larger than its cache budget is used but not retained. The
+budgets count distinct NumPy array payloads, not small Python-object overhead.
+The prepared-table cache defaults to 128 MiB; viewer, composite, and model
+overlay caches each default to 256 MiB.
+Caches are performance aids, not stored scientific state: recomputation after
+eviction produces the same result.
 
 ## Heisenberg RPA
 

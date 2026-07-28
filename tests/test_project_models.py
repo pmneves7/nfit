@@ -863,6 +863,17 @@ def test_viewer_view_cache_uses_lru_eviction_instead_of_clear_all(monkeypatch):
     ]
 
 
+def test_viewer_view_cache_does_not_retain_entry_over_byte_budget(monkeypatch):
+    project_gui._VIEWER_VIEW_CACHE.clear()
+    monkeypatch.setattr(project_gui, "_VIEWER_VIEW_CACHE_MAX_BYTES", 1)
+    dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
+
+    result = project_gui._viewer_data_before_scale(dataset)
+
+    assert isinstance(result, MDHistoData)
+    assert dataset.id not in project_gui._VIEWER_VIEW_CACHE
+
+
 def test_large_dataset_manual_masks_defer_passive_evaluation_and_force_for_fit(monkeypatch):
     project_gui._VIEWER_VIEW_CACHE.clear()
     monkeypatch.setattr(project_gui, "MASK_AUTO_MAX_POINTS", 1)

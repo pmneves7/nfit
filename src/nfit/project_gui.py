@@ -25,6 +25,7 @@ from .analysis.core import AnalysisEntry, AnalysisOutputRef
 from .analysis.fingerprint import dataset_entry_fingerprint, recipe_hash
 from .analysis.registry import analysis_definition, default_analysis_parameters
 from .backgrounds import subtract_powder_background
+from .cache_utils import lru_store as _lru_store
 from .dataset import PointData4D, PointListData
 from .fit_config import (
     CompiledFitProblem,
@@ -1088,6 +1089,7 @@ def point_list_config(dataset: DatasetEntry) -> dict[str, Any]:
 
 _PREPARED_POINT_LIST_CACHE: OrderedDict[str, tuple[str, PointListData]] = OrderedDict()
 _PREPARED_POINT_LIST_CACHE_LIMIT = 16
+_PREPARED_POINT_LIST_CACHE_MAX_BYTES = 128 * 1024**2
 
 
 def _prepared_point_list_signature(dataset: DatasetEntry) -> str:
@@ -1107,13 +1109,6 @@ def _prepared_point_list_signature(dataset: DatasetEntry) -> str:
         dataset.data_type,
     )
     return repr(payload)
-
-
-def _lru_store(cache: OrderedDict, key: Any, value: Any, limit: int) -> None:
-    cache[key] = value
-    cache.move_to_end(key)
-    while len(cache) > limit:
-        cache.popitem(last=False)
 
 
 def prepared_point_list_data(dataset: DatasetEntry) -> PointListData:
@@ -1458,6 +1453,7 @@ def prepared_point_list_data(dataset: DatasetEntry) -> PointListData:
         cache_key,
         (_prepared_point_list_signature(dataset), result),
         _PREPARED_POINT_LIST_CACHE_LIMIT,
+        _PREPARED_POINT_LIST_CACHE_MAX_BYTES,
     )
     return result
 
@@ -3154,6 +3150,7 @@ def _cached_composite_dataset_data(
         cache_key,
         (signature, result),
         _COMPOSITE_DATA_CACHE_LIMIT,
+        _COMPOSITE_DATA_CACHE_MAX_BYTES,
     )
     return result
 
@@ -4795,6 +4792,7 @@ def _fit_limit_warning_text(limit_hits: Any) -> str:
 # parameter values (see _overlay_cache_signature).
 _MODEL_OVERLAY_CACHE: OrderedDict[int, dict[str, Any]] = OrderedDict()
 _MODEL_OVERLAY_CACHE_LIMIT = 6
+_MODEL_OVERLAY_CACHE_MAX_BYTES = 256 * 1024**2
 
 
 def _overlay_cache_signature(group: DataGroup) -> str:
@@ -4955,12 +4953,18 @@ def current_model_channels(
         subsets = {}
         # Lazy loading during fit-data preparation increments dataset revisions.
         signature = _overlay_cache_signature(group)
-        _lru_store(_MODEL_OVERLAY_CACHE, id(group), {
-            "signature": signature,
-            "compiled": compiled,
-            "bundles": bundles,
-            "subsets": subsets,
-        }, _MODEL_OVERLAY_CACHE_LIMIT)
+        _lru_store(
+            _MODEL_OVERLAY_CACHE,
+            id(group),
+            {
+                "signature": signature,
+                "compiled": compiled,
+                "bundles": bundles,
+                "subsets": subsets,
+            },
+            _MODEL_OVERLAY_CACHE_LIMIT,
+            _MODEL_OVERLAY_CACHE_MAX_BYTES,
+        )
     try:
         params = _overlay_current_params(group, compiled)
         return _fit_channels_from_params(
@@ -5883,8 +5887,10 @@ def _point_fit_channel_label(
 # excludes the dataset scale factor, which is applied cheaply afterward.
 _VIEWER_VIEW_CACHE: OrderedDict[str, tuple[str, Any]] = OrderedDict()
 _VIEWER_VIEW_CACHE_LIMIT = 8
+_VIEWER_VIEW_CACHE_MAX_BYTES = 256 * 1024**2
 _COMPOSITE_DATA_CACHE: OrderedDict[int, tuple[str, Any]] = OrderedDict()
 _COMPOSITE_DATA_CACHE_LIMIT = 4
+_COMPOSITE_DATA_CACHE_MAX_BYTES = 256 * 1024**2
 
 
 def _mask_signature(masks: list[MaskSpec] | None) -> list[Any]:
@@ -5967,6 +5973,7 @@ def _viewer_data_before_scale(
             key,
             (signature, result),
             _VIEWER_VIEW_CACHE_LIMIT,
+            _VIEWER_VIEW_CACHE_MAX_BYTES,
         )
         dataset_mask_application_config(dataset)["stale"] = False
     return result
