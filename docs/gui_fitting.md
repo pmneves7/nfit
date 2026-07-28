@@ -163,7 +163,7 @@ bounds before interpreting posterior intervals.
 
 ## Scripts
 
-**Copy fit script** and **Save fit script** generate a Python program that
-loads the saved project and restores the selected state without opening the
-GUI. The generated script prints stored fit metadata by default. Set its
-explicit `RUN_FIT = True` option to rerun the fit and append a new result.
+**Copy fit script** and **Save fit script** generate GUI-free Python for the
+workspace's live fit state. The script reloads and prepares source datasets,
+rebuilds the current model and constraints, and runs the active optimizer
+configuration once. It does not replay fit-history branches.

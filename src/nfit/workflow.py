@@ -332,6 +332,63 @@ def analysis_workflow_plan(project: NfitProject, analysis_id: str) -> WorkflowPl
     return plan
 
 
+def fit_workflow_plan(project: NfitProject, group_name: str) -> WorkflowPlan:
+    """Build the dependency graph needed to fit one live workspace state."""
+
+    matches = [group for group in project.data_groups if group.name == group_name]
+    if len(matches) != 1:
+        raise KeyError(f"expected one workspace named {group_name!r}")
+    group = matches[0]
+    if any(item.enabled for item in group.backgrounds) or any(
+        item.enabled
+        for node in group.iter_subgroups()
+        for item in node.backgrounds
+    ):
+        raise WorkflowValidationError(
+            "fit workflow export does not yet support composite group backgrounds"
+        )
+    composite = group.metadata.get("composite")
+    if isinstance(composite, dict) and composite.get("enabled"):
+        raise WorkflowValidationError(
+            "fit workflow export does not yet support enabled workspace composites"
+        )
+    nodes: list[WorkflowNode] = []
+    node_ids: set[str] = set()
+    dataset_ids = [dataset.id for dataset in group.iter_datasets()]
+    for dataset_id in dataset_ids:
+        dataset_plan = dataset_workflow_plan(project, dataset_id)
+        for node in dataset_plan.topological_nodes():
+            if node.id not in node_ids:
+                nodes.append(node)
+                node_ids.add(node.id)
+    target_id = f"fit:{group.name}"
+    nodes.append(
+        WorkflowNode(
+            id=target_id,
+            kind="fit",
+            operation="perform_group_fit",
+            dependencies=tuple(
+                f"dataset:{dataset_id}" for dataset_id in dataset_ids
+            ),
+            config={
+                "fit_id": target_id,
+                "group": _group_spec(group),
+                "optimizer_config": _active_optimizer_config(group),
+            },
+            outputs=(
+                WorkflowOutput(
+                    "result",
+                    f"fit-result:{group.name}",
+                    "fit_result",
+                ),
+            ),
+        )
+    )
+    plan = WorkflowPlan(tuple(nodes), (target_id,))
+    plan.validate()
+    return plan
+
+
 def render_workflow_script(
     plan: WorkflowPlan,
     *,
@@ -344,7 +401,8 @@ def render_workflow_script(
     unsupported = [
         node
         for node in ordered
-        if node.kind not in {"source_dataset", "prepared_dataset", "analysis"}
+        if node.kind
+        not in {"source_dataset", "prepared_dataset", "analysis", "fit"}
     ]
     if unsupported:
         kinds = ", ".join(sorted({node.kind for node in unsupported}))
@@ -354,6 +412,7 @@ def render_workflow_script(
     source_nodes = [node for node in ordered if node.kind == "source_dataset"]
     prepared_nodes = [node for node in ordered if node.kind == "prepared_dataset"]
     analysis_nodes = [node for node in ordered if node.kind == "analysis"]
+    fit_nodes = [node for node in ordered if node.kind == "fit"]
     root = _source_root(source_nodes, source_root)
     source_specs = {
         node.config["dataset_id"]: {
@@ -370,6 +429,10 @@ def render_workflow_script(
         node.config["analysis_id"]: copy.deepcopy(node.config)
         for node in analysis_nodes
     }
+    fit_specs = {
+        node.config["fit_id"]: copy.deepcopy(node.config)
+        for node in fit_nodes
+    }
     target_ids = [
         output.object_id
         for node in prepared_nodes
@@ -382,6 +445,11 @@ def render_workflow_script(
         for node in analysis_nodes
         if node.id in plan.targets
     ]
+    target_fit_ids = [
+        node.config["fit_id"]
+        for node in fit_nodes
+        if node.id in plan.targets
+    ]
     expected_version = _nfit_version()
     return _dataset_script_text(
         expected_version=expected_version,
@@ -391,6 +459,8 @@ def render_workflow_script(
         target_ids=target_ids,
         analysis_specs=analysis_specs,
         target_analysis_ids=target_analysis_ids,
+        fit_specs=fit_specs,
+        target_fit_ids=target_fit_ids,
     )
 
 
@@ -418,6 +488,20 @@ def analysis_workflow_script(
 
     return render_workflow_script(
         analysis_workflow_plan(project, analysis_id),
+        source_root=source_root,
+    )
+
+
+def fit_workflow_script(
+    project: NfitProject,
+    group_name: str,
+    *,
+    source_root: str | Path | None = None,
+) -> str:
+    """Return an editable script rebuilding and fitting the live workspace."""
+
+    return render_workflow_script(
+        fit_workflow_plan(project, group_name),
         source_root=source_root,
     )
 
@@ -592,6 +676,65 @@ def _background_spec(background: BackgroundSpec) -> dict[str, Any]:
     }
 
 
+def _model_spec(model) -> dict[str, Any]:
+    return {
+        "name": model.name,
+        "type": model.type,
+        "parameters": copy.deepcopy(model.parameters),
+        "config": copy.deepcopy(model.config),
+        "fit_parameters": copy.deepcopy(model.fit_parameters),
+        "sharing": copy.deepcopy(model.sharing),
+        "limits": copy.deepcopy(model.limits),
+        "constraints": copy.deepcopy(model.constraints),
+        "applies_to": copy.deepcopy(model.applies_to),
+        "enabled": bool(model.enabled),
+        "metadata": copy.deepcopy(model.metadata),
+    }
+
+
+def _dataset_group_spec(group: DatasetGroup) -> dict[str, Any]:
+    return {
+        "name": group.name,
+        "dataset_ids": [dataset.id for dataset in group.datasets],
+        "subgroups": [_dataset_group_spec(item) for item in group.subgroups],
+        "enabled": bool(group.enabled),
+        "masks": [_mask_spec(mask) for mask in group.masks],
+        "resolution": copy.deepcopy(group.resolution),
+        "metadata": copy.deepcopy(group.metadata),
+    }
+
+
+def _group_spec(group: DataGroup) -> dict[str, Any]:
+    return {
+        "name": group.name,
+        "dataset_ids": [dataset.id for dataset in group.datasets],
+        "subgroups": [_dataset_group_spec(item) for item in group.subgroups],
+        "masks": [_mask_spec(mask) for mask in group.masks],
+        "lattice_parameters": copy.deepcopy(group.lattice_parameters),
+        "spacegroup": group.spacegroup,
+        "metadata": copy.deepcopy(group.metadata),
+        "models": [_model_spec(model) for model in group.models.values()],
+    }
+
+
+def _active_optimizer_config(group: DataGroup) -> dict[str, Any]:
+    entry = _fit_entry_at_path(group.fits, group.active_fit_path)
+    return copy.deepcopy(entry.optimizer_config) if entry is not None else {}
+
+
+def _fit_entry_at_path(entries, path):
+    if not path:
+        return None
+    current = entries
+    entry = None
+    for index in path:
+        if index < 0 or index >= len(current):
+            return None
+        entry = current[index]
+        current = entry.children
+    return entry
+
+
 def _source_root(
     source_nodes: list[WorkflowNode], requested: str | Path | None
 ) -> Path:
@@ -631,6 +774,8 @@ def _dataset_script_text(
     target_ids: list[str],
     analysis_specs: dict[str, dict[str, Any]],
     target_analysis_ids: list[str],
+    fit_specs: dict[str, dict[str, Any]],
+    target_fit_ids: list[str],
 ) -> str:
     source_text = pformat(source_specs, sort_dicts=False, width=96)
     prepared_text = pformat(prepared_specs, sort_dicts=False, width=96)
@@ -641,6 +786,8 @@ def _dataset_script_text(
         sort_dicts=False,
         width=96,
     )
+    fits_text = pformat(fit_specs, sort_dicts=False, width=96)
+    target_fits_text = pformat(target_fit_ids, sort_dicts=False, width=96)
     return f'''"""Rebuild an nfit workflow from its original source files.
 
 Generated configuration is ordinary Python: edit SOURCE_ROOT, paths, masks,
@@ -658,10 +805,14 @@ from nfit import (
     AnalysisContext,
     AnalysisInput,
     BackgroundSpec,
+    DataGroup,
+    DatasetGroup,
     MaskSpec,
+    ModelComponentSpec,
     dataset_entry_from_path,
     dataset_for_slice_viewer,
     default_analysis_parameters,
+    perform_group_fit,
     run_analysis_operation,
 )
 
@@ -678,14 +829,25 @@ ANALYSES = {analyses_text}
 
 TARGET_ANALYSIS_IDS = {target_analyses_text}
 
+FITS = {fits_text}
+
+TARGET_FIT_IDS = {target_fits_text}
+
 
 class WorkflowResult:
     """Objects produced by this workflow, grouped by execution stage."""
 
-    def __init__(self, source_datasets, prepared_datasets, analysis_results):
+    def __init__(
+        self,
+        source_datasets,
+        prepared_datasets,
+        analysis_results,
+        fit_results,
+    ):
         self.source_datasets = source_datasets
         self.prepared_datasets = prepared_datasets
         self.analysis_results = analysis_results
+        self.fit_results = fit_results
 
 
 def check_nfit_version():
@@ -795,13 +957,68 @@ def run_analyses(prepared):
     return results
 
 
+def build_dataset_group(spec, datasets):
+    """Rebuild one nested dataset group from readable configuration."""
+    return DatasetGroup(
+        name=spec["name"],
+        datasets=[datasets[dataset_id] for dataset_id in spec["dataset_ids"]],
+        subgroups=[
+            build_dataset_group(item, datasets) for item in spec["subgroups"]
+        ],
+        enabled=bool(spec["enabled"]),
+        masks=[MaskSpec(**copy.deepcopy(item)) for item in spec["masks"]],
+        resolution=copy.deepcopy(spec["resolution"]),
+        metadata=copy.deepcopy(spec["metadata"]),
+    )
+
+
+def build_groups(datasets):
+    """Rebuild live workspace state needed by fit targets."""
+    groups = {{}}
+    for fit_id, fit_spec in FITS.items():
+        spec = fit_spec["group"]
+        group = DataGroup(
+            name=spec["name"],
+            datasets=[
+                datasets[dataset_id] for dataset_id in spec["dataset_ids"]
+            ],
+            subgroups=[
+                build_dataset_group(item, datasets)
+                for item in spec["subgroups"]
+            ],
+            masks=[MaskSpec(**copy.deepcopy(item)) for item in spec["masks"]],
+            lattice_parameters=copy.deepcopy(spec["lattice_parameters"]),
+            spacegroup=spec["spacegroup"],
+            metadata=copy.deepcopy(spec["metadata"]),
+        )
+        group.models = {{
+            item["name"]: ModelComponentSpec(**copy.deepcopy(item))
+            for item in spec["models"]
+        }}
+        groups[fit_id] = group
+    return groups
+
+
+def run_fits(groups):
+    """Fit the exported live state once; fit-history branches are not replayed."""
+    return {{
+        fit_id: perform_group_fit(
+            groups[fit_id],
+            optimizer_config=copy.deepcopy(spec["optimizer_config"]),
+        )
+        for fit_id, spec in FITS.items()
+    }}
+
+
 def build_workflow():
     """Run every stage needed by the selected workflow target."""
     check_nfit_version()
     datasets = load_sources()
     prepared = prepare_datasets(datasets)
     analyses = run_analyses(prepared)
-    return WorkflowResult(datasets, prepared, analyses)
+    groups = build_groups(datasets)
+    fits = run_fits(groups)
+    return WorkflowResult(datasets, prepared, analyses, fits)
 
 
 def main():
@@ -813,6 +1030,9 @@ def main():
     for analysis_id in TARGET_ANALYSIS_IDS:
         output_keys = ", ".join(result.analysis_results[analysis_id].outputs)
         print(f"Ran analysis {{analysis_id}}; outputs: {{output_keys}}")
+    for fit_id in TARGET_FIT_IDS:
+        goodness = result.fit_results[fit_id]["goodness"]
+        print(f"Ran fit {{fit_id}}; status: {{goodness['status']}}")
 
 
 if __name__ == "__main__":

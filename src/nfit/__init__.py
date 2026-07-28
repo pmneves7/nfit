@@ -77,7 +77,6 @@ from .fit_config import (
     qualified_parameter_name,
     sharing_mode,
 )
-from .fit_scripts import fit_state_script
 from .fitting import (
     DerivedParameter,
     FitDataset,
@@ -306,6 +305,8 @@ from .workflow import (
     analysis_workflow_script,
     dataset_workflow_plan,
     dataset_workflow_script,
+    fit_workflow_plan,
+    fit_workflow_script,
     render_workflow_script,
 )
 
@@ -352,7 +353,6 @@ __all__ = [
     "chipp_from_intensity",
     "cross_section_from_chipp",
     "FitResult",
-    "fit_state_script",
     "FitDataset",
     "FitProblem",
     "KB_MEV_PER_K",
@@ -535,6 +535,8 @@ __all__ = [
     "analysis_workflow_script",
     "dataset_workflow_plan",
     "dataset_workflow_script",
+    "fit_workflow_plan",
+    "fit_workflow_script",
     "render_workflow_script",
     "make_box_mask_transform",
     "make_constant_intensity_model",

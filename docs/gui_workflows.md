@@ -75,10 +75,10 @@ parameters, constraints, fit settings, fit results, analyses, and saved plot
 recipes.
 
 Right-click an ordinary source-backed dataset to copy or save readable Python
-that reloads and prepares it without Qt. Fit and saved-plot scripts currently
-load a saved project, so those exports require a stable project path. Script
-exports reproduce the selected active state, not every branch in fit history.
-See [Workflow scripts](workflow_scripts.md) for scope and limitations.
+that reloads and prepares it without Qt. Analysis and fit targets include their
+dataset dependency closure; fit exports use the live state and do not replay
+history branches. Saved-plot scripts still require a saved project path. See
+[Workflow scripts](workflow_scripts.md) for scope and limitations.
 
 For the underlying objects and extension contracts, see
 [Modeling and fitting pipeline](modeling_pipeline.md),

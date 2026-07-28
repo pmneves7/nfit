@@ -38,7 +38,6 @@ from .fit_config import (
     qualified_parameter_name,
     sharing_mode,
 )
-from .fit_scripts import fit_state_script
 from .fitting import (
     OptimizationConfig,
     SamplerConfig,
@@ -126,6 +125,7 @@ from .workflow import (
     WorkflowValidationError,
     analysis_workflow_script,
     dataset_workflow_script,
+    fit_workflow_script,
 )
 
 QtMDHistoSliceViewer = None
@@ -10823,56 +10823,19 @@ class NfitProjectExplorer:
         return True
 
     def fit_script_for_selection(self) -> str | None:
-        """Return a backend-only script for the selected fit or current state."""
+        """Return a backend-only script for the live workspace fit state."""
 
         group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
         fit_entry = self._fit_entry_for_item(self._current_item())
-        if role != "fit" or group is None or fit_entry is None or self.project_path is None:
+        if role != "fit" or group is None or fit_entry is None:
             return None
-        return fit_state_script(
-            project_path=self.project_path,
-            group_name=group.name,
-            fit_id=fit_entry.id,
-        )
+        return fit_workflow_script(self.project, group.name)
 
     def copy_fit_script_for_selection(self) -> bool:
-        from PySide6 import QtWidgets
-
-        script = self.fit_script_for_selection()
-        if script is None:
-            QtWidgets.QMessageBox.information(
-                self.window,
-                "Copy fit script",
-                "Save the project first so the generated script can load its data and fit state.",
-            )
-            return False
-        QtWidgets.QApplication.clipboard().setText(script)
-        return True
+        return self.copy_workflow_script_for_selection()
 
     def save_fit_script_for_selection(self) -> bool:
-        from PySide6 import QtWidgets
-
-        script = self.fit_script_for_selection()
-        if script is None:
-            QtWidgets.QMessageBox.information(
-                self.window,
-                "Save fit script",
-                "Save the project first so the generated script can load its data and fit state.",
-            )
-            return False
-        group, _entry, _mask, _model, _role = self._objects_for_item(self._current_item())
-        fit_entry = self._fit_entry_for_item(self._current_item())
-        stem = f"{group.name}_{fit_entry.name}".replace(" ", "_") if group is not None and fit_entry is not None else "fit"
-        path, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
-            self.window,
-            "Save fit script",
-            f"{stem}.py",
-            "Python scripts (*.py);;All files (*)",
-        )
-        if not path:
-            return False
-        Path(path).write_text(script, encoding="utf-8")
-        return True
+        return self.save_workflow_script_for_selection()
 
     def save_dataset_for_selection(self) -> bool:
         from PySide6 import QtWidgets
@@ -10923,6 +10886,8 @@ class NfitProjectExplorer:
                     analysis.name,
                     analysis_workflow_script(self.project, analysis.id),
                 )
+        if role == "fit" and _group is not None:
+            return _group.name, fit_workflow_script(self.project, _group.name)
         return None
 
     def copy_workflow_script_for_selection(self) -> bool:
@@ -13443,8 +13408,8 @@ class NfitProjectExplorer:
         fit_script_available = role == "fit" and fit_entry is not None
         self.fit_copy_script_button.setVisible(fit_script_available)
         self.fit_save_script_button.setVisible(fit_script_available)
-        self.fit_copy_script_button.setEnabled(self.project_path is not None)
-        self.fit_save_script_button.setEnabled(self.project_path is not None)
+        self.fit_copy_script_button.setEnabled(fit_script_available)
+        self.fit_save_script_button.setEnabled(fit_script_available)
 
         selected_plot = self._plot_for_item(self._current_item()) if role == "plot" else None
         plot_available = selected_plot is not None
@@ -18130,6 +18095,8 @@ class NfitProjectExplorer:
             specs.append(("Add model", True))
         if role == "fit":
             specs.append(("Fit now", True))
+            specs.append(("Copy workflow script", True))
+            specs.append(("Save workflow script...", True))
             fit_entry = self._fit_entry_for_item(item)
             specs.append(
                 ("Export report...", fit_entry is not None and fit_entry.kind == "result")

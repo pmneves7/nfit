@@ -10,6 +10,7 @@ from nfit import (
     BackgroundSpec,
     DataGroup,
     DatasetEntry,
+    FitTimelineEntry,
     MaskSpec,
     MDHistoAxis,
     MDHistoData,
@@ -22,11 +23,14 @@ from nfit import (
     WorkflowValidationError,
     analysis_workflow_plan,
     analysis_workflow_script,
+    create_model_component,
     dataset_entry_from_path,
     dataset_for_slice_viewer,
     dataset_workflow_plan,
     dataset_workflow_script,
     fit_data_bundle,
+    fit_workflow_plan,
+    fit_workflow_script,
     prepare_analysis_input,
     prepare_analysis_inputs,
     run_project_analysis,
@@ -340,3 +344,38 @@ def test_point_data_view_analysis_and_fit_share_preparation():
     np.testing.assert_array_equal(viewed.mask, [True, False])
     np.testing.assert_array_equal(analysis_input.data.mask, viewed.mask)
     np.testing.assert_array_equal(fit_bundle.points.mask, viewed.mask)
+
+
+def test_fit_workflow_rebuilds_and_fits_live_state(tmp_path):
+    path = tmp_path / "fit_data.npz"
+    save_dataset_file(DatasetEntry("raw", _grid(1.0)), path, use_view=False)
+    dataset = dataset_entry_from_path(path, data_type="powder_inelastic")
+    dataset.name = "scan"
+    group = DataGroup("Fit workspace", datasets=[dataset])
+    model = create_model_component(group, type="constant_background")
+    model.fit_parameters["constant"] = True
+    group.fits = [
+        FitTimelineEntry(
+            "Current state",
+            kind="current",
+            optimizer_config={"loss": "linear"},
+        )
+    ]
+    group.active_fit_path = [0]
+    project = NfitProject([group])
+
+    plan = fit_workflow_plan(project, group.name)
+    fit_node = plan.topological_nodes()[-1]
+    assert fit_node.kind == "fit"
+    assert fit_node.config["optimizer_config"] == {"loss": "linear"}
+
+    script = fit_workflow_script(project, group.name)
+    compile(script, "<nfit-fit-workflow>", "exec")
+    namespace = {"__name__": "imported_workflow"}
+    exec(script, namespace)
+    result = namespace["build_workflow"]()
+    outcome = result.fit_results[f"fit:{group.name}"]
+
+    assert outcome["goodness"]["status"] == "converged"
+    assert outcome["goodness"]["parameters"]["Model1.constant"] == pytest.approx(2.5)
+    assert "load_project" not in script

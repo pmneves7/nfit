@@ -41,9 +41,16 @@ one prepared-data convention: masks, rebinning, backgrounds, scale, and the
 selected physical channel are applied before the analysis runs.
 
 Grouped raw direct-geometry and MDEvent reductions, analyses that depend on
-derived analysis datasets, fits, and plots are not yet included in the workflow
-graph. nfit reports these cases explicitly instead of producing an incomplete
-script.
+derived analysis datasets, workspace composites, group backgrounds, and plots
+are not yet included in the workflow graph. nfit reports these cases explicitly
+instead of producing an incomplete script.
+
+## Fit workflows
+
+Fit script actions export the workspace's live datasets, model components,
+parameter sharing, bounds, constraints, and active optimizer configuration.
+Running the script performs one fit. Stored results and timeline branches are
+not replayed.
 
 ## Python API
 
@@ -54,9 +61,8 @@ Use `dataset_workflow_plan(project, dataset_id)` or
 
 The graph consists of versioned `WorkflowNode` operations with stable
 dependencies and outputs. Only the dependency closure of the selected target
-is rendered. This contract allows future analysis, fit, posterior, and plot
-exports to share the same reconstruction path.
+is rendered. This contract allows future plot and whole-project exports to
+share the same reconstruction path.
 
-Fit and saved-plot scripts currently use their existing project-backed
-exporters. See [Models and fitting](gui_fitting.md#scripts) and
-[Saved plots](plotting.md).
+Saved plots currently use their existing project-backed exporter. See
+[Models and fitting](gui_fitting.md#scripts) and [Saved plots](plotting.md).

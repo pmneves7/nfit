@@ -101,6 +101,8 @@ rebuilds a supported source-backed dataset through preparation.
 Analysis equivalents are `analysis_workflow_plan(...)` and
 `analysis_workflow_script(...)`. `prepare_analysis_inputs(...)` and
 `run_project_analysis(...)` use the same prepared data as the viewer.
+`fit_workflow_plan(...)` and `fit_workflow_script(...)` export the live
+workspace model and active optimizer configuration.
 
 Launch the project explorer with `nfit`. The explorer manages saved
 projects, workspaces, datasets, dataset groups, masks, models, rebinned dataset
