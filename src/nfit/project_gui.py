@@ -3,7 +3,6 @@ from __future__ import annotations
 import ast
 import base64
 import copy
-import hashlib
 import json
 import math
 import platform
@@ -4292,6 +4291,15 @@ def _optimizer_kwargs(optimizer_config: dict[str, Any] | None) -> dict[str, Any]
     return kwargs
 
 
+def _covariance_mode(optimizer_config: dict[str, Any] | None) -> str:
+    if not isinstance(optimizer_config, dict):
+        return "absolute"
+    mode = str(optimizer_config.get("covariance_mode", "absolute"))
+    if mode not in {"absolute", "residual"}:
+        raise ValueError("covariance_mode must be 'absolute' or 'residual'")
+    return mode
+
+
 def _sampler_config(optimizer_config: dict[str, Any] | None) -> SamplerConfig | None:
     if not isinstance(optimizer_config, dict):
         return None
@@ -4555,7 +4563,10 @@ def perform_group_fit(
         raise ValueError("no enabled positive-weight dataset could be prepared for fitting")
 
     compiled = compile_fit_problem(components, inputs, description=group.name)
-    config = OptimizationConfig(kwargs=_optimizer_kwargs(optimizer_config))
+    config = OptimizationConfig(
+        covariance_mode=_covariance_mode(optimizer_config),
+        kwargs=_optimizer_kwargs(optimizer_config),
+    )
 
     result = fit_problem_least_squares(
         compiled.problem,
@@ -4618,6 +4629,8 @@ def perform_group_fit(
             else {}
         ),
         "covariance": _matrix_summary(result.covariance, result.variable_names),
+        "covariance_mode": result.covariance_mode,
+        "covariance_scale_factor": float(result.covariance_scale_factor),
         "dataset_chi2": {name: float(value) for name, value in result.dataset_chi2.items()},
         "dataset_reduced_chi2": {
             name: float(value) for name, value in result.dataset_reduced_chi2.items()
@@ -12606,6 +12619,23 @@ class NfitProjectExplorer:
             "Least-squares loss. Use linear for ordinary chi-squared; robust losses reduce the influence of outliers."
         )
         self.fit_loss_combo.currentTextChanged.connect(self._set_selected_fit_controls_config)
+        self.fit_covariance_mode_combo = QtWidgets.QComboBox()
+        self.fit_covariance_mode_combo.addItem(
+            "Use absolute data uncertainties",
+            "absolute",
+        )
+        self.fit_covariance_mode_combo.addItem(
+            "Estimate scale from residuals",
+            "residual",
+        )
+        self.fit_covariance_mode_combo.setToolTip(
+            "Controls covariance-derived parameter uncertainties. The default trusts the supplied one-sigma data "
+            "uncertainties. Residual scaling multiplies the covariance by reduced chi-squared and cannot distinguish "
+            "underestimated statistical errors, systematics, correlations, outliers, or model inadequacy."
+        )
+        self.fit_covariance_mode_combo.currentIndexChanged.connect(
+            self._set_selected_fit_controls_config
+        )
         self.fit_f_scale_spin = QtWidgets.QDoubleSpinBox()
         self.fit_f_scale_spin.setRange(1.0e-9, 1.0e9)
         self.fit_f_scale_spin.setDecimals(6)
@@ -12766,10 +12796,12 @@ class NfitProjectExplorer:
         optimizer_layout.addWidget(self.fit_optimizer_combo, 0, 1)
         optimizer_layout.addWidget(QtWidgets.QLabel("Loss"), 1, 0)
         optimizer_layout.addWidget(self.fit_loss_combo, 1, 1)
-        optimizer_layout.addWidget(QtWidgets.QLabel("Loss scale"), 2, 0)
-        optimizer_layout.addWidget(self.fit_f_scale_spin, 2, 1)
-        optimizer_layout.addWidget(QtWidgets.QLabel("Advanced config"), 3, 0)
-        optimizer_layout.addWidget(self.fit_optimizer_config_editor, 3, 1)
+        optimizer_layout.addWidget(QtWidgets.QLabel("Parameter uncertainty"), 2, 0)
+        optimizer_layout.addWidget(self.fit_covariance_mode_combo, 2, 1)
+        optimizer_layout.addWidget(QtWidgets.QLabel("Loss scale"), 3, 0)
+        optimizer_layout.addWidget(self.fit_f_scale_spin, 3, 1)
+        optimizer_layout.addWidget(QtWidgets.QLabel("Advanced config"), 4, 0)
+        optimizer_layout.addWidget(self.fit_optimizer_config_editor, 4, 1)
         fit_settings_layout.addWidget(optimizer_group)
 
         de_group = QtWidgets.QGroupBox("Differential Evolution")
@@ -15393,12 +15425,17 @@ class NfitProjectExplorer:
          "BZ grid; locates the incipient ordering vector."),
         ("chi0_gamma0", "chi0*gamma0", "Product of the local susceptibility and "
          "relaxation rate (tracks the local spectral weight)."),
-        ("distance_to_instability", "1-lam*chi0", "Distance to the RPA "
-         "instability; approaches 0 as the system orders."),
-        ("lambda_shift", "lambda", "Onsager reaction field solved by the "
-         "closure (0 when no closure or non-Onsager)."),
+        ("stability_margin", "D_min", "Smallest RPA denominator on the "
+         "Brillouin-zone grid: positive is stable, zero is the ordering "
+         "boundary, and negative is unstable."),
+        ("stability_ratio", "r_max", "Largest dimensionless RPA feedback "
+         "(lambda_max - lambda_shift) * chi0_eff; D_min = 1 - r_max."),
+        ("lambda_shift", "lambda_shift", "Onsager reaction-field energy "
+         "subtracted from every interaction eigenvalue to enforce the moment "
+         "sum rule. It is zero without an Onsager closure."),
         ("chi0_eff", "chi0_eff", "Effective local susceptibility after the "
-         "closure (equals the fitted chi0 when no closure is active)."),
+         "closure: the value actually used in the RPA denominator. It equals "
+         "the fitted chi0 when no closure is active."),
     )
 
     def _fit_diagnostics_group_box(self, fit_entry: FitTimelineEntry) -> Any:
@@ -17880,6 +17917,7 @@ class NfitProjectExplorer:
     def _sync_fit_control_values(self, config: dict[str, Any]) -> None:
         widgets = [
             self.fit_loss_combo,
+            self.fit_covariance_mode_combo,
             self.fit_f_scale_spin,
             self.fit_de_check,
             self.fit_de_maxiter_spin,
@@ -17896,6 +17934,10 @@ class NfitProjectExplorer:
         for widget in widgets:
             widget.blockSignals(True)
         self.fit_loss_combo.setCurrentText(str(config.get("loss", "linear")))
+        covariance_index = self.fit_covariance_mode_combo.findData(
+            str(config.get("covariance_mode", "absolute"))
+        )
+        self.fit_covariance_mode_combo.setCurrentIndex(max(covariance_index, 0))
         self.fit_f_scale_spin.setValue(float(config.get("f_scale", 1.0) or 1.0))
         initialization = config.get("initialization") if isinstance(config.get("initialization"), dict) else {}
         self.fit_de_check.setChecked(bool(initialization.get("enabled", False)))
@@ -17962,6 +18004,13 @@ class NfitProjectExplorer:
         else:
             config["loss"] = loss
             config["f_scale"] = float(self.fit_f_scale_spin.value())
+        covariance_mode = str(
+            self.fit_covariance_mode_combo.currentData() or "absolute"
+        )
+        if covariance_mode == "absolute":
+            config.pop("covariance_mode", None)
+        else:
+            config["covariance_mode"] = covariance_mode
         if self.fit_de_check.isChecked():
             config["initialization"] = {
                 "enabled": True,
@@ -20572,7 +20621,7 @@ def _project_from_dict(payload: dict[str, Any]) -> NfitProject:
             group.active_fit_path = list(active_path)
         ensure_fit_history(group)
         project.data_groups.append(group)
-    _repair_duplicate_dataset_ids(project)
+    _validate_unique_dataset_ids(project)
     _link_project_backgrounds(project)
     return project
 
@@ -20592,30 +20641,27 @@ def _link_group_backgrounds(group: DataGroup) -> None:
             background.source_entry = by_id.get(background.source_dataset_id)
 
 
-def _repair_duplicate_dataset_ids(project: NfitProject) -> None:
-    seen: set[str] = set()
+def _validate_unique_dataset_ids(project: NfitProject) -> None:
+    seen: dict[str, str] = {}
+    duplicates: dict[str, list[str]] = {}
     for group in project.data_groups:
-        repairs = []
         for index, dataset in enumerate(group.iter_datasets()):
-            if dataset.id not in seen:
-                seen.add(dataset.id)
+            location = f"{group.name}/{dataset.name} (dataset {index + 1})"
+            previous = seen.get(dataset.id)
+            if previous is None:
+                seen[dataset.id] = location
                 continue
-            original = dataset.id
-            salt = 0
-            while True:
-                candidate = hashlib.sha256(
-                    f"{group.name}:{index}:{original}:{salt}".encode()
-                ).hexdigest()[:32]
-                if candidate not in seen:
-                    break
-                salt += 1
-            dataset.id = candidate
-            seen.add(candidate)
-            repairs.append({"dataset": dataset.name, "old_id": original, "new_id": candidate})
-        if repairs:
-            group.metadata.setdefault("project_load_warnings", []).append(
-                {"kind": "duplicate_dataset_ids_repaired", "repairs": repairs}
-            )
+            duplicates.setdefault(dataset.id, [previous]).append(location)
+    if duplicates:
+        details = "; ".join(
+            f"{dataset_id}: {', '.join(locations)}"
+            for dataset_id, locations in duplicates.items()
+        )
+        raise ValueError(
+            "duplicate dataset IDs make project references ambiguous: "
+            f"{details}. Re-import the affected datasets or repair the project file "
+            "so every dataset has a unique ID."
+        )
 
 
 def _model_limit_texts(model: ModelComponentSpec, parameter_name: str) -> tuple[str, str]:

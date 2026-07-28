@@ -387,6 +387,7 @@ class OptimizationConfig:
     method: str = "least_squares"
     require_positive_sigma: bool = True
     kwargs: dict[str, Any] = field(default_factory=dict)
+    covariance_mode: str = "absolute"
 
 
 @dataclass(frozen=True)
@@ -540,6 +541,8 @@ class FitResult:
     dataset_weights: dict[str, float] = field(default_factory=dict)
     dataset_residuals: dict[str, FloatArray] = field(default_factory=dict)
     dataset_model_values: dict[str, FloatArray] = field(default_factory=dict)
+    covariance_mode: str = "absolute"
+    covariance_scale_factor: float = 1.0
 
 
 def identity_resolution(
@@ -1169,6 +1172,8 @@ def fit_problem_least_squares(
     opt = OptimizationConfig() if config is None else config
     if opt.method != "least_squares":
         raise ValueError("only method='least_squares' is implemented")
+    if opt.covariance_mode not in {"absolute", "residual"}:
+        raise ValueError("covariance_mode must be 'absolute' or 'residual'")
 
     x0, bounds, names, fixed = pack_parameters(problem.parameter_specs)
 
@@ -1215,6 +1220,8 @@ def fit_problem_least_squares(
             stderr=None,
             variable_names=[],
             fixed_params=fixed,
+            covariance_mode=opt.covariance_mode,
+            covariance_scale_factor=1.0,
             dataset_chi2=evaluation.dataset_chi2,
             dataset_reduced_chi2=evaluation.dataset_reduced_chi2,
             dataset_sizes=evaluation.dataset_sizes,
@@ -1253,7 +1260,17 @@ def fit_problem_least_squares(
     chi2 = float(np.sum(residuals * residuals))
     dof = sum(evaluation.dataset_sizes.values()) - len(names)
     reduced_chi2 = chi2 / dof if dof > 0 else np.nan
-    covariance = _covariance_from_jacobian(result.jac, chi2=chi2, dof=dof)
+    covariance = _covariance_from_jacobian(
+        result.jac,
+        chi2=chi2,
+        dof=dof,
+        covariance_mode=opt.covariance_mode,
+    )
+    covariance_scale_factor = (
+        float(reduced_chi2)
+        if opt.covariance_mode == "residual" and np.isfinite(reduced_chi2)
+        else 1.0
+    )
     stderr = None
     if covariance is not None:
         stderr = {
@@ -1275,6 +1292,8 @@ def fit_problem_least_squares(
         stderr=stderr,
         variable_names=list(names),
         fixed_params=fixed,
+        covariance_mode=opt.covariance_mode,
+        covariance_scale_factor=covariance_scale_factor,
         dataset_chi2=evaluation.dataset_chi2,
         dataset_reduced_chi2=evaluation.dataset_reduced_chi2,
         dataset_sizes=evaluation.dataset_sizes,
@@ -1977,7 +1996,13 @@ def _as_3x3_matrix(value: ArrayLike, *, name: str) -> FloatArray:
     return matrix
 
 
-def _covariance_from_jacobian(jacobian: FloatArray, *, chi2: float, dof: int) -> FloatArray | None:
+def _covariance_from_jacobian(
+    jacobian: FloatArray,
+    *,
+    chi2: float,
+    dof: int,
+    covariance_mode: str,
+) -> FloatArray | None:
     if dof <= 0 or jacobian.size == 0:
         return None
     try:
@@ -1992,7 +2017,9 @@ def _covariance_from_jacobian(jacobian: FloatArray, *, chi2: float, dof: int) ->
     vt = vt[keep]
     singular_values = singular_values[keep]
     cov = (vt.T / (singular_values * singular_values)) @ vt
-    return cov * (chi2 / dof)
+    if covariance_mode == "residual":
+        cov *= chi2 / dof
+    return cov
 
 
 def _least_squares_kwargs(kwargs: dict[str, Any] | None) -> dict[str, Any]:

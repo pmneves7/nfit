@@ -9,7 +9,12 @@ def test_box_integration_uses_exact_partial_bin_overlap():
     axes = tuple(MDHistoAxis(name, np.array([0.0, 1.0, 2.0]), "rlu", "momentum") for name in ("H", "K", "L"))
     shape = (2, 2, 2)
     data = MDHistoData(axes, np.full(shape, 10.0), np.ones(shape), np.zeros(shape, bool), np.ones(shape), metadata={"signal_semantics": "density", "lattice_parameters": {"a": 2 * np.pi, "b": 2 * np.pi, "c": 2 * np.pi}})
-    result = integrate_bragg_peaks(data, [[1, 1, 1]], box_half_widths=[0.5, 0.5, 0.5])
+    result = integrate_bragg_peaks(
+        data,
+        [[1, 1, 1]],
+        method="box_sum",
+        box_half_widths=[0.5, 0.5, 0.5],
+    )
     assert result.column("I")[0] == 10.0
     np.testing.assert_allclose(result.column("dI")[0], np.sqrt(8 * 0.125**2))
     assert result.column("Coverage")[0] == 1.0
@@ -33,6 +38,7 @@ def test_bragg_progress_reports_reflection_quality_and_running_counts():
     integrate_bragg_peaks(
         data,
         [[0.5, 0.5, 0.5], [1.5, 1.5, 1.5]],
+        method="box_sum",
         box_half_widths=[0.5, 0.5, 0.5],
         progress_callback=events.append,
     )
@@ -50,7 +56,7 @@ def test_shell_background_subtracts_constant_density():
     axes = tuple(MDHistoAxis(name, edges, "rlu", "momentum") for name in ("H", "K", "L"))
     shape = (5, 5, 5)
     data = MDHistoData(axes, np.full(shape, 7.0), np.ones(shape), np.zeros(shape, bool), np.ones(shape), metadata={"signal_semantics": "density", "lattice_parameters": {"a": 2 * np.pi, "b": 2 * np.pi, "c": 2 * np.pi}})
-    result = integrate_bragg_peaks(data, [[2.5, 2.5, 2.5]], box_half_widths=[0.5] * 3, background_mode="shell", background_inner_scale=1.0, background_outer_scale=2.0)
+    result = integrate_bragg_peaks(data, [[2.5, 2.5, 2.5]], method="box_sum", box_half_widths=[0.5] * 3, background_mode="shell", background_inner_scale=1.0, background_outer_scale=2.0)
     np.testing.assert_allclose(result.column("I"), 0.0, atol=1e-12)
     np.testing.assert_allclose(result.column("Background"), 7.0)
 
@@ -78,6 +84,13 @@ def test_gaussian_fit_recovers_integrated_intensity():
     np.testing.assert_allclose(result.column("I"), expected, rtol=1e-3)
     np.testing.assert_allclose(result.column("FitAmplitude"), amplitude, rtol=1e-3)
     np.testing.assert_allclose(result.column("FitBaseline"), 2.0, rtol=1e-3)
+    assert "RawI" not in result.columns
+    assert "Background" not in result.columns
+    np.testing.assert_allclose(
+        result.column("FitWindowRaw"),
+        result.column("FitWindowBackground") + result.column("FitWindowPeak"),
+        rtol=1e-3,
+    )
     np.testing.assert_allclose(
         [result.column("FitSigma1")[0], result.column("FitSigma2")[0], result.column("FitSigma3")[0]],
         [sigma, sigma, sigma],
@@ -105,6 +118,7 @@ def test_quality_thresholds_reject_without_discarding_peak_measurement():
     result = integrate_bragg_peaks(
         data,
         [[1.5, 1.5, 1.5]],
+        method="box_sum",
         box_half_widths=[0.5] * 3,
         minimum_signal_to_noise=2.0,
     )
@@ -166,7 +180,7 @@ def test_four_dimensional_input_uses_fractional_energy_overlap():
     energy = MDHistoAxis("DeltaE", np.array([-1.0, 1.0]), "meV", "energy")
     shape = (1, 1, 1, 1)
     data = MDHistoData((*q_axes, energy), np.full(shape, 4.0), np.ones(shape), np.zeros(shape, bool), np.ones(shape), metadata={"signal_semantics": "density", "lattice_parameters": {"a": 2 * np.pi, "b": 2 * np.pi, "c": 2 * np.pi}})
-    result = integrate_bragg_peaks(data, [[0.5, 0.5, 0.5]], box_half_widths=[0.5] * 3, energy_min_meV=-0.5, energy_max_meV=0.5)
+    result = integrate_bragg_peaks(data, [[0.5, 0.5, 0.5]], method="box_sum", box_half_widths=[0.5] * 3, energy_min_meV=-0.5, energy_max_meV=0.5)
     assert result.column("I")[0] == 4.0
 
 
@@ -181,7 +195,7 @@ def test_four_dimensional_input_defaults_to_energy_bin_nearest_zero():
         np.ones((1, 1, 1, 2)),
         metadata={"signal_semantics": "density", "lattice_parameters": {"a": 2 * np.pi, "b": 2 * np.pi, "c": 2 * np.pi}},
     )
-    result = integrate_bragg_peaks(data, [[0.5, 0.5, 0.5]], box_half_widths=[0.5] * 3)
+    result = integrate_bragg_peaks(data, [[0.5, 0.5, 0.5]], method="box_sum", box_half_widths=[0.5] * 3)
     assert result.column("I")[0] == 8.0
 
 
@@ -227,5 +241,5 @@ def test_projected_hkl_axes_integrate_supplied_peak():
     )
     shape = (8, 8, 8)
     data = MDHistoData(axes, np.ones(shape), np.ones(shape), np.zeros(shape, bool), np.ones(shape), metadata={"signal_semantics": "density", "lattice_parameters": {"a": 2 * np.pi, "b": 2 * np.pi, "c": 2 * np.pi}})
-    result = integrate_bragg_peaks(data, [[0, 0, 0]], box_half_widths=[0.5, 0.5, 0.5], subvoxel_samples=5)
+    result = integrate_bragg_peaks(data, [[0, 0, 0]], method="box_sum", box_half_widths=[0.5, 0.5, 0.5], subvoxel_samples=5)
     np.testing.assert_allclose(result.column("I"), 1.0, rtol=0.12)

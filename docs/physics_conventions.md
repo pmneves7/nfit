@@ -460,5 +460,10 @@ single-ion anisotropy, dipole–dipole, or Zeeman terms (see
   eigenvalue $\lambda_{\max}(\mathbf{Q})$ of $\mathbb{J}(\mathbf{Q})$ peaks; the
   RPA instability is at $\lambda_{\max}\chi_0 \to 1$.
   $\lambda_{\max}$ has energy units and $\chi_0$ inverse-energy units, so their
-  product is dimensionless. This continues the scalar convention and is pinned
-  by limiting-case tests.
+  product is dimensionless. With a self-consistency closure, the denominator is
+  $1-[\lambda_\nu(\mathbf Q)-\lambda_{\rm shift}]\chi_{0,\rm eff}$.
+  `chi0_eff` is the local susceptibility used by the response, and the Onsager
+  reaction field `lambda_shift` is an energy subtracted from every interaction
+  eigenvalue. nfit reports the smallest sampled denominator as
+  `stability_margin`. This continues the scalar convention and is pinned by
+  limiting-case tests.

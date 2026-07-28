@@ -64,9 +64,9 @@ HKL list. Available methods are:
 
 | method | integration region |
 | --- | --- |
+| Gaussian (default) | local 3D Gaussian plus constant or linear baseline |
 | HKL box | exact overlap with a rectangular region |
 | ellipsoid | deterministic subvoxel overlap |
-| Gaussian | local 3D Gaussian plus baseline |
 
 Widths may be in HKL or inverse angstroms. An optional shell estimates a
 volume-scaled local background, propagates its variance, and can exclude
@@ -76,10 +76,14 @@ already-integrated value. An `unknown` convention blocks quantitative
 integration.
 
 Results retain HKL, intensity $I$, standard uncertainty $\delta I$,
-background, $I/\delta I$, coverage, acceptance, and rejection reasons.
-Gaussian results also retain fitted centers, widths, amplitude, baseline, and
-reduced chi-squared. Rejected reflections remain visible for diagnosis. The
-status bitmask is:
+$I/\delta I$, coverage, acceptance, and rejection reasons. Box and ellipsoid
+results report the measured raw and shell-background integrals over the peak
+region. For a Gaussian fit, $I$ is the analytic integral of the fitted Gaussian
+over all reciprocal space. `FitWindowRaw`, `FitWindowBackground`, and
+`FitWindowPeak` are separate finite integrals over the measured voxels used by
+the fit; their domain is therefore explicit. Gaussian results also retain
+fitted centers, widths, amplitude, baseline density, and reduced chi-squared.
+Rejected reflections remain visible for diagnosis. The status bitmask is:
 
 | bit | reason |
 | ---: | --- |
@@ -122,9 +126,21 @@ variances are propagated through both linear combinations.
 ## Spherical averaging
 
 **Spherical average** converts a single-crystal inelastic histogram to a
-powder $|\mathbf Q|,E$ dataset. It preserves energy bins and combines source
-bins with inverse-variance weights. A lattice or UB matrix is required when
-the source momentum coordinates are in reciprocal-lattice units.
+powder $|\mathbf Q|,E$ dataset: the intensity expected after averaging the
+measured single-crystal volume over directions, as for a ground powder. It
+preserves energy bins and weights every source voxel by its physical
+reciprocal-space volume and fractional overlap with each spherical shell.
+Odd-grid subvoxel sampling estimates boundary overlaps. Uncertainties are
+propagated with the same geometric weights; statistical precision does not
+change the physical average. If the source stores bin integrals, nfit first
+divides by each four-dimensional bin volume; an unknown signal convention is
+rejected.
+
+The `powder_coverage` channel gives the measured reciprocal volume divided by
+the full shell volume. Values below one mean that some powder orientations were
+not represented by the single-crystal data, so the result averages only the
+measured portion. A lattice or UB matrix is required when the source momentum
+coordinates are in reciprocal-lattice units.
 
 ## Angle-energy background
 

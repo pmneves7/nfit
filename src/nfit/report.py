@@ -431,6 +431,13 @@ def _section_summary(fit_entry: Any, group_name: str) -> str:
     if fit_entry.created_at:
         lines.append(f"\\item Recorded: {latex_escape(fit_entry.created_at)}")
     lines.append(f"\\item Optimizer: {latex_escape(fit_entry.optimizer)}")
+    covariance_mode = str(goodness.get("covariance_mode", "residual"))
+    covariance_label = (
+        "supplied absolute data uncertainties"
+        if covariance_mode == "absolute"
+        else "residual variance (covariance scaled by reduced $\\chi^2$)"
+    )
+    lines.append(f"\\item Parameter-uncertainty convention: {covariance_label}")
     status = goodness.get("status")
     if status is not None:
         lines.append(f"\\item Status: {latex_escape(status)}")
@@ -1109,8 +1116,9 @@ _DIAGNOSTIC_REPORT_COLUMNS = (
     ("chi_static_q0", "$\\chi(0)$"),
     ("chi_static_qpeak", "$\\chi_{\\mathrm{pk}}$"),
     ("chi0_gamma0", "$\\chi_0\\Gamma_0$"),
-    ("distance_to_instability", "$1 - \\lambda\\chi_0$"),
-    ("lambda_shift", "$\\lambda$ (meV)"),
+    ("stability_margin", "$D_{\\min}$"),
+    ("stability_ratio", "$r_{\\max}$"),
+    ("lambda_shift", "$\\lambda_{\\rm shift}$ (meV)"),
     ("chi0_eff", "$\\chi_{0,\\mathrm{eff}}$"),
 )
 
@@ -1125,7 +1133,9 @@ def _section_diagnostics(fit_entry: Any) -> str:
         "moment $\\mu_{\\mathrm{eff}}^2$ (Brillouin-zone and energy integral "
         "of $\\chi''$ up to the cutoff), the Kramers--Kronig static "
         "susceptibility at $\\mathbf{Q}=0$ and at its zone peak, and the "
-        "distance to the RPA instability."
+        "smallest sampled RPA denominator $D_{\\min}=1-r_{\\max}$. Positive, "
+        "zero, and negative $D_{\\min}$ indicate stable, boundary, and "
+        "unstable parameter sets, respectively."
     )
     columns = _DIAGNOSTIC_REPORT_COLUMNS
     lines.append("\\begin{longtable}{l" + " r" * len(columns) + "}")
@@ -1149,6 +1159,7 @@ def _section_diagnostics(fit_entry: Any) -> str:
 
 def _section_methods(fit_entry: Any, nfit_version: str) -> str:
     goodness = _goodness(fit_entry)
+    covariance_mode = str(goodness.get("covariance_mode", "residual"))
     display = _entry_metadata(fit_entry).get("posterior_display")
     use_posterior_uncertainties = bool(
         isinstance(display, dict) and display.get("use_posterior_uncertainties")
@@ -1165,10 +1176,20 @@ def _section_methods(fit_entry: Any, nfit_version: str) -> str:
     if use_best_sample:
         sampler_note += " Displayed best-fit values use the highest-log-probability stored emcee sample."
     if not use_posterior_uncertainties:
-        sampler_note += (
-            " Reported standard errors are local covariance estimates conditional "
-            "on the fitted model and data uncertainty."
-        )
+        if covariance_mode == "absolute":
+            sampler_note += (
+                " Reported standard errors are local covariance estimates that "
+                "treat the supplied one-sigma data uncertainties as absolute; "
+                "they are not rescaled by the fit residuals."
+            )
+        else:
+            sampler_note += (
+                " Reported standard errors are local covariance estimates scaled "
+                "by the reduced chi-squared, treating the observed residual "
+                "variance as an estimate of one missing global noise scale. This "
+                "scaling cannot distinguish underestimated statistical errors, "
+                "systematics, correlations, outliers, or model inadequacy."
+            )
     sampler_note += (
         " Parameter uncertainties are shown with two significant figures, and "
         "parameter values are rounded to the corresponding decimal place."
@@ -1176,10 +1197,16 @@ def _section_methods(fit_entry: Any, nfit_version: str) -> str:
     return (
         "\\section{Methods}\n"
         "Model parameters were optimized by weighted least squares, "
-        "minimizing $\\chi^2 = \\sum_k \\bigl[(I_k^{\\mathrm{obs}} - "
-        "I_k^{\\mathrm{model}})/\\sigma_k\\bigr]^2$ over the unmasked data "
+        "minimizing $\\chi^2 = \\sum_d w_d\\sum_k "
+        "\\bigl[(I_{dk}^{\\mathrm{obs}} - "
+        "I_{dk}^{\\mathrm{model}})/\\sigma_{dk}\\bigr]^2$ over the unmasked data "
         "points of every fitted dataset; the reduced $\\chi^2_\\nu$ divides "
-        "by the number of points minus free parameters."
+        "by the number of points minus free parameters. Dataset weights $w_d$ "
+        "set relative fitting importance; covariance and posterior uncertainties "
+        "are conditional on those user-selected weights. When the weights encode "
+        "importance rather than statistical precision, $\\chi^2_\\nu$ is not a "
+        "calibrated goodness-of-fit statistic and parameter uncertainties need "
+        "not have a strict repeated-experiment interpretation."
         + sampler_note
         + f" All computations used the \\texttt{{nfit}} package, version "
         f"{latex_escape(nfit_version)}.\n"

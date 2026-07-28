@@ -552,7 +552,8 @@ class DataPlaygroundWindow:
         from PySide6 import QtCore, QtGui, QtWidgets
 
         preferred = [
-            "Accepted", "H", "K", "L", "I", "dI", "I/dI", "Background",
+            "Accepted", "H", "K", "L", "I", "dI", "I/dI",
+            "FitWindowRaw", "FitWindowBackground", "FitWindowPeak", "Background",
             "Coverage", "BackgroundCoverage", "Status", "FitSigma1", "FitSigma2",
             "FitSigma3", "ReducedChi2",
         ]

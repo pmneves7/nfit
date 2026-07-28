@@ -125,6 +125,54 @@ def test_fit_problem_combines_weighted_dataset_objectives():
     np.testing.assert_allclose(result.chi2, sum(result.dataset_chi2.values()))
 
 
+def test_covariance_defaults_to_absolute_uncertainties_and_can_use_residual_scale():
+    data = PointData4D(
+        H=[0.0, 1.0, 2.0],
+        K=[0.0, 0.0, 0.0],
+        L=[0.0, 0.0, 0.0],
+        E=[1.0, 1.0, 1.0],
+        intensity=[0.0, 2.0, 4.0],
+        sigma=[1.0, 1.0, 1.0],
+    )
+
+    def constant_model(data, params):
+        return np.full(data.size, params["level"])
+
+    problem = FitProblem(
+        datasets=[FitDataset("data", data)],
+        model=ModelSpec("constant", constant_model),
+        parameter_specs=[ParameterSpec("level", 1.0)],
+    )
+
+    absolute = fit_problem_least_squares(problem)
+    residual = fit_problem_least_squares(
+        problem,
+        config=OptimizationConfig(covariance_mode="residual"),
+    )
+
+    assert absolute.covariance_mode == "absolute"
+    assert absolute.covariance_scale_factor == 1.0
+    np.testing.assert_allclose(absolute.covariance, [[1.0 / 3.0]])
+    assert residual.covariance_mode == "residual"
+    np.testing.assert_allclose(residual.covariance_scale_factor, 4.0)
+    np.testing.assert_allclose(residual.covariance, absolute.covariance * 4.0)
+
+
+def test_covariance_mode_is_validated():
+    data = PointData4D([0.0], [0.0], [0.0], [1.0], [1.0], [1.0])
+    problem = FitProblem(
+        datasets=[FitDataset("data", data)],
+        model=ModelSpec("constant", lambda data, params: np.ones(data.size)),
+        parameter_specs=[],
+    )
+
+    with pytest.raises(ValueError, match="covariance_mode"):
+        fit_problem_least_squares(
+            problem,
+            config=OptimizationConfig(covariance_mode="unknown"),
+        )
+
+
 def test_least_squares_progress_reports_time_per_step():
     data = PointData4D([0.0, 1.0], [0.0, 0.0], [0.0, 0.0], [1.0, 1.0], [2.0, 3.0], [1.0, 1.0])
     events = []

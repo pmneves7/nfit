@@ -19,6 +19,13 @@ Dataset fit weights control statistical influence. A zero-weight dataset is
 excluded from optimization but evaluated once afterward for visualization.
 Dataset scales may be fixed transforms or fitted parameters.
 
+Fit weights are useful when datasets with very different point counts should
+have comparable influence. They are user-selected importance weights, not
+additional measurements. Parameter uncertainties are therefore conditional on
+those weights and are not necessarily repeated-experiment confidence intervals.
+When weights represent importance rather than statistical precision, reduced
+chi-squared is not a calibrated goodness-of-fit statistic.
+
 The model editor marks fitted values near a finite bound in red. Treat this as a
 diagnostic that the optimum may lie outside the allowed interval.
 
@@ -76,6 +83,20 @@ The loss function and robust-loss scale are explained in
 Use ordinary `linear` loss for a final chi-squared fit when the uncertainty
 model is trusted. Robust losses are useful for diagnosis, but should not replace
 appropriate masks or a better physical model.
+
+**Parameter uncertainty** controls the local least-squares covariance:
+
+- **Use absolute data uncertainties** is the default. It trusts the supplied
+  one-sigma uncertainties and uses $(J^\mathsf{T}J)^{-1}$ without rescaling.
+- **Estimate scale from residuals** multiplies the covariance by
+  $\chi_\nu^2$. This treats the residual scatter as an estimate of one missing
+  global noise scale. It may absorb underestimated statistical uncertainty,
+  systematics, correlations, outliers, and model mismatch, but cannot identify
+  or model any of them separately. It can also reduce reported uncertainties
+  when $\chi_\nu^2<1$.
+
+This choice affects covariance-derived standard errors, not stored data
+uncertainties or posterior intervals.
 
 Long operations run in a background worker and report the active stage,
 evaluation count, cost, current parameters, and time per step. **Terminate**

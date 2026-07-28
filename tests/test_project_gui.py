@@ -70,6 +70,7 @@ def test_project_helpers_name_import_and_round_trip(tmp_path):
         group,
         [tmp_path / "scan.nxs", tmp_path / "scan.nxs"],
     )
+    assert first.id != second.id
     first.enabled = False
     first.fit_weight = 2.5
     mask = create_mask(first)
@@ -1838,6 +1839,7 @@ def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(
 
     controls = [
         explorer.fit_loss_combo,
+        explorer.fit_covariance_mode_combo,
         explorer.fit_f_scale_spin,
         explorer.fit_de_check,
         explorer.fit_de_maxiter_spin,
@@ -1864,6 +1866,9 @@ def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(
     assert explorer.fit_emcee_workers_spin.value() == -1
 
     explorer.fit_loss_combo.setCurrentText("soft_l1")
+    explorer.fit_covariance_mode_combo.setCurrentIndex(
+        explorer.fit_covariance_mode_combo.findData("residual")
+    )
     explorer.fit_f_scale_spin.setValue(2.0)
     explorer.fit_de_check.setChecked(True)
     explorer.fit_de_maxiter_spin.setValue(11)
@@ -1879,6 +1884,7 @@ def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(
     fit_entry = group.fits[0]
     assert fit_entry.optimizer_config["loss"] == "soft_l1"
     assert fit_entry.optimizer_config["f_scale"] == 2.0
+    assert fit_entry.optimizer_config["covariance_mode"] == "residual"
     assert fit_entry.optimizer_config["initialization"] == {
         "enabled": True,
         "method": "differential_evolution",
@@ -6169,7 +6175,8 @@ def test_fit_details_show_diagnostics_table(monkeypatch):
                     "chi_static_q0": 0.7,
                     "chi_static_qpeak": 0.9,
                     "chi0_gamma0": 0.6,
-                    "distance_to_instability": 0.3,
+                    "stability_margin": 0.3,
+                    "stability_ratio": 0.7,
                     "lambda_shift": 0.05,
                     "chi0_eff": 0.3,
                 }

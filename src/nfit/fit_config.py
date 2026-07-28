@@ -1380,14 +1380,43 @@ class _RpaComponentEvaluator:
     # closure's configured cutoff when present.
     _DEFAULT_DIAGNOSTIC_CUTOFF_MEV = 100.0
 
-    def diagnostics(self, data: PointData4D, params: dict[str, float]) -> dict[str, float]:
+    def _stability_metrics(
+        self,
+        model: Any,
+        chi0: float,
+        lambda_shift: float,
+    ) -> dict[str, float]:
+        """Return the smallest sampled RPA denominator and its BZ location."""
+
+        if hasattr(model, "eigenvalues"):
+            eigenvalues = np.asarray(model.eigenvalues, dtype=float)
+        else:
+            eigenvalues = np.linalg.eigvalsh(np.asarray(model.exchange))
+        flat_index = int(np.nanargmax(eigenvalues))
+        q_index, mode_index = np.unravel_index(flat_index, eigenvalues.shape)
+        lambda_max = float(eigenvalues[q_index, mode_index])
+        ratio = float((lambda_max - lambda_shift) * chi0)
+        bz_geometry, _bz_structure = self._closure_context()
+        critical_q = np.asarray(bz_geometry.unique_hkl[q_index], dtype=float)
+        return {
+            "stability_margin": 1.0 - ratio,
+            "stability_ratio": ratio,
+            "stability_lambda_max": lambda_max,
+            "stability_q_h": float(critical_q[0]),
+            "stability_q_k": float(critical_q[1]),
+            "stability_q_l": float(critical_q[2]),
+            "stability_mode_index": float(mode_index),
+        }
+
+    def diagnostics(self, data: PointData4D, params: dict[str, float]) -> dict[str, Any]:
         """Post-fit physics diagnostics for one dataset (see docs/theory_notes).
 
         Returns a flat JSON-safe dict: the effective fluctuating moment
         ``mu_eff_sq`` (its zero-point/thermal split), the closure internals
-        ``lambda_shift``/``chi0_eff``, ``chi0_gamma0``, the distance to the RPA
-        instability, and the static susceptibility at Q=0 and its BZ peak. On
-        unphysical parameters it returns a minimal record flagged ``unstable``.
+        ``lambda_shift``/``chi0_eff``, ``chi0_gamma0``, the smallest sampled RPA
+        denominator, and the static susceptibility at Q=0 and its BZ peak.
+        Stability metrics are computed before moment/static-response evaluation
+        so they remain available for unstable parameters.
         """
 
         temperature = _dataset_temperature(data)
@@ -1402,13 +1431,52 @@ class _RpaComponentEvaluator:
             if self.closure_spec is not None
             else self._DEFAULT_DIAGNOSTIC_CUTOFF_MEV
         )
-        record: dict[str, float] = {"temperature": t, "gamma0": gamma0}
+        record: dict[str, Any] = {
+            "temperature": t,
+            "gamma0": gamma0,
+            "chi0_bare": chi0,
+        }
+        try:
+            model = self._closure_moment_model(params, field)
+            bare_stability = self._stability_metrics(model, chi0, 0.0)
+        except (ValueError, np.linalg.LinAlgError) as exc:
+            record.update({"unstable": 1.0, "diagnostic_error": str(exc)})
+            return record
+        record.update(
+            {
+                f"bare_{key}": value
+                for key, value in bare_stability.items()
+                if key in {"stability_margin", "stability_ratio"}
+            }
+        )
         try:
             if self.closure_spec is not None:
                 closure = self._solve_closure(params, temperature, field)
                 chi0 = closure.chi0_eff
                 lambda_shift = closure.lambda_shift
-            model = self._closure_moment_model(params, field)
+        except ValueError as exc:
+            record.update(bare_stability)
+            record.update(
+                {
+                    "chi0_eff": float("nan"),
+                    "lambda_shift": float("nan"),
+                    "stability_uses_effective_closure": 0.0,
+                    "closure_solution": 0.0,
+                    "unstable": 1.0,
+                    "diagnostic_error": str(exc),
+                }
+            )
+            return record
+        record.update(self._stability_metrics(model, chi0, lambda_shift))
+        record.update(
+            {
+                "chi0_eff": chi0,
+                "lambda_shift": lambda_shift,
+                "stability_uses_effective_closure": 1.0,
+                "closure_solution": 1.0,
+            }
+        )
+        try:
             zero_point, thermal = model.moment(
                 chi0=chi0,
                 gamma0=gamma0,
@@ -1416,22 +1484,19 @@ class _RpaComponentEvaluator:
                 cutoff_mev=cutoff,
                 lambda_shift=lambda_shift,
             )
-            lam_max = float(model._lambda_max)
             chi_q0, chi_peak = self._static_chi_grid_and_q0(params, chi0, lambda_shift)
-        except ValueError:
-            record.update({"chi0_eff": chi0, "unstable": 1.0})
+        except ValueError as exc:
+            record.update({"unstable": 1.0, "diagnostic_error": str(exc)})
             return record
         record.update(
             {
-                "chi0_eff": chi0,
                 "chi0_gamma0": chi0 * gamma0,
-                "lambda_shift": lambda_shift,
                 "mu_eff_sq": zero_point + thermal,
                 "m2_zero_point": zero_point,
                 "m2_thermal": thermal,
-                "distance_to_instability": 1.0 - (lam_max - lambda_shift) * chi0,
                 "chi_static_q0": chi_q0,
                 "chi_static_qpeak": chi_peak,
+                "unstable": 0.0,
             }
         )
         return record
@@ -1507,7 +1572,7 @@ def _heisenberg_rpa_factory(component: Any) -> ModelFunction:
 
 def compute_component_diagnostics(
     component: Any, data: PointData4D, params: Mapping[str, float]
-) -> dict[str, float] | None:
+) -> dict[str, Any] | None:
     """Post-fit physics diagnostics for one ``heisenberg_rpa`` component.
 
     Returns a flat JSON-safe metrics dict (see

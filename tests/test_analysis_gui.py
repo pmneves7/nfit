@@ -237,13 +237,13 @@ def test_bragg_parameter_groups_hide_irrelevant_controls(monkeypatch):
         "Peak selection", "Elastic volume", "Integration region", "Background",
         "Quality filters", "Gaussian fit", "Numerics",
     }
-    assert window.parameter_widgets["method"].currentData() == "ellipsoid_sum"
+    assert window.parameter_widgets["method"].currentData() == "gaussian_fit"
     assert window.parameter_widgets["background_mode"].currentData() == "shell"
-    assert not window.parameter_widgets["gaussian_max_nfev"].isVisible()
-    window.parameter_widgets["method"].setCurrentIndex(
-        window.parameter_widgets["method"].findData("gaussian_fit")
-    )
     assert not window.parameter_widgets["gaussian_max_nfev"].isHidden()
+    window.parameter_widgets["method"].setCurrentIndex(
+        window.parameter_widgets["method"].findData("box_sum")
+    )
+    assert window.parameter_widgets["gaussian_max_nfev"].isHidden()
     assert all(widget.toolTip() for widget in window.parameter_widgets.values())
     window.window.close()
 
@@ -404,6 +404,7 @@ def test_data_viewer_marks_accepted_and_rejected_bragg_peaks(monkeypatch):
     table = integrate_bragg_peaks(
         source,
         [[0.0, 0.0, 0.0], [1.45, 1.45, 1.45]],
+        method="ellipsoid_sum",
         ellipsoid_semiaxes=[0.2] * 3,
         minimum_peak_coverage=0.8,
     )

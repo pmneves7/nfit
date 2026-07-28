@@ -82,7 +82,85 @@ def test_spherical_average_returns_powder_axes_and_weighted_errors():
     assert powder.shape == (2, 3)
     assert powder.axes[0].role == "q_modulus"
     assert powder.metadata["signal_semantics"] == "density"
+    assert powder.metadata["spherical_average"]["weighting"] == "reciprocal_volume_overlap"
+    assert "powder_coverage" in powder.auxiliary_channels
     assert np.count_nonzero(~powder.mask) == 6
+
+
+def test_spherical_average_uses_voxel_volume_not_inverse_variance():
+    axes = (
+        MDHistoAxis("H", np.array([0.0, 1.0, 2.0]), "r.l.u.", "momentum", frame="HKL"),
+        MDHistoAxis("K", np.array([-0.5, 0.5]), "r.l.u.", "momentum", frame="HKL"),
+        MDHistoAxis("L", np.array([-0.5, 0.5]), "r.l.u.", "momentum", frame="HKL"),
+        MDHistoAxis("DeltaE", np.array([0.0, 1.0]), "meV", "energy"),
+    )
+    data = MDHistoData(
+        axes,
+        np.array([[[[1.0]]], [[[3.0]]]]),
+        np.array([[[[0.1]]], [[[100.0]]]]),
+        np.zeros((2, 1, 1, 1), dtype=bool),
+        np.ones((2, 1, 1, 1)),
+        metadata={"signal_semantics": "density"},
+    )
+    context = AnalysisContext(
+        "group",
+        {
+            "a": 2 * np.pi,
+            "b": 2 * np.pi,
+            "c": 2 * np.pi,
+            "alpha": 90,
+            "beta": 90,
+            "gamma": 90,
+        },
+        None,
+        None,
+        None,
+    )
+
+    powder = spherical_average(data, context, q_bins=1, subvoxel_samples=3)
+
+    np.testing.assert_allclose(powder.signal, [[2.0]])
+    np.testing.assert_allclose(
+        powder.errors,
+        [[np.sqrt(0.1**2 + 100.0**2) / 2.0]],
+    )
+
+
+def test_spherical_average_converts_bin_integrals_to_density():
+    density = _histogram(np.arange(6.0).reshape(2, 1, 1, 3) + 1.0)
+    density.axes = (
+        MDHistoAxis("H", np.array([-0.5, 0.5, 2.5]), "r.l.u.", "momentum", frame="HKL"),
+        *density.axes[1:],
+    )
+    context = AnalysisContext(
+        "group",
+        {
+            "a": 2 * np.pi,
+            "b": 2 * np.pi,
+            "c": 2 * np.pi,
+            "alpha": 90,
+            "beta": 90,
+            "gamma": 90,
+        },
+        None,
+        None,
+        None,
+    )
+    q_volumes = np.array([1.0, 2.0])[:, None, None, None]
+    integrated = MDHistoData(
+        density.axes,
+        density.signal * q_volumes,
+        density.errors * q_volumes,
+        density.mask,
+        density.num_events,
+        metadata={"signal_semantics": "bin_integral"},
+    )
+
+    expected = spherical_average(density, context, q_bins=2)
+    actual = spherical_average(integrated, context, q_bins=2)
+
+    np.testing.assert_allclose(actual.signal, expected.signal, equal_nan=True)
+    np.testing.assert_allclose(actual.errors, expected.errors, equal_nan=True)
 
 
 def _run(intensity):

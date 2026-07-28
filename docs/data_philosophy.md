@@ -15,6 +15,9 @@ instrument or file format.
   record recipe hashes, input fingerprints, and relative artifact manifests.
 - **Project state is inspectable.** `.nfit` files are JSON documents containing
   datasets, model sessions, fit results, plots, and analysis provenance.
+- **Dataset identity is unique.** Importing or copying a dataset assigns a new
+  ID, even when the source file is the same. Project loading rejects duplicate
+  IDs because analysis and background references would otherwise be ambiguous.
 - **GUI actions are scriptable.** Scientific operations use the same package
   functions from the GUI and Python, rather than storing behavior only in
   widget state.

@@ -10,8 +10,9 @@ The package provides:
 - powder-cut, MPMS magnetization, PPMS heat-capacity, and tabular imports;
 - masking, symmetry-aware rebinning, backgrounds, and non-destructive analyses;
 - relaxational, MMP, and Heisenberg-RPA spin-fluctuation models;
-- simultaneous least-squares fitting, optional differential-evolution
-  initialization, and `emcee` posterior sampling;
+- simultaneous least-squares fitting with explicit uncertainty conventions,
+  optional differential-evolution initialization, and `emcee` posterior
+  sampling;
 - project files with fit timelines, provenance, saved plots, and script export;
 - interactive slice, waterfall, and volumetric visualization.
 

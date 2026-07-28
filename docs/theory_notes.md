@@ -158,9 +158,45 @@ dependence [7].
 | moment budget | diagnostic integral | `moment_target`, `m2_total`, or `total_amplitude` |
 | energy cutoff | diagnostic choice | shared `energy_cutoff_mev` |
 
-The fit report records the integrated moment, static susceptibilities,
-`chi0 * gamma0`, and distance to the RPA instability. These trends can help
-choose a model:
+`chi0` is the local static susceptibility before intersite RPA enhancement. It
+has units of inverse energy. Without a closure it is fitted and used directly.
+With SCR it is the fitted bare reference susceptibility; with TAC it seeds the
+self-consistent solve.
+
+`chi0_eff` is the local susceptibility actually inserted into the RPA
+denominator. It equals `chi0` without a closure and is derived by SCR or TAC.
+`lambda_shift` is the Onsager reaction-field energy. Onsager subtracts it from
+every interaction eigenvalue,
+$\lambda_\nu(\mathbf Q)\rightarrow\lambda_\nu(\mathbf Q)-\lambda_{\rm shift}$,
+to enforce the configured moment sum rule. It is zero for the other modes.
+
+For each sampled wavevector and mode, define
+
+$$
+D_\nu(\mathbf Q)
+=1-\left[\lambda_\nu(\mathbf Q)-\lambda_{\rm shift}\right]
+\chi_{0,\rm eff}.
+$$
+
+nfit reports
+
+$$
+r_{\max}=\max_{\mathbf Q,\nu}
+\left[\lambda_\nu(\mathbf Q)-\lambda_{\rm shift}\right]\chi_{0,\rm eff},
+\qquad
+D_{\min}=1-r_{\max}.
+$$
+
+`stability_margin` is $D_{\min}$: it is positive in the stable region, zero at
+the RPA boundary, and negative beyond it. The report also stores the critical
+sampled HKL and mode. With a closure, nfit stores both the bare margin and the
+effective self-consistent margin. If the closure has no solution, the bare
+margin remains available and the record states that an effective closure was
+not obtained. The BZ grid is finite, so this is the smallest *sampled*
+denominator rather than a continuous optimization over reciprocal space.
+
+The fit report also records the integrated moment, static susceptibilities,
+and `chi0 * gamma0`. These trends can help choose a model:
 
 - nearly constant integrated moment suggests an Onsager/local-moment model;
 - a growing amplitude that renormalizes inverse susceptibility suggests SCR;

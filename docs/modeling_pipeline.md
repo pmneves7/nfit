@@ -118,7 +118,16 @@ $f_d(\mathbf p)$ is the model prediction at parameter vector $\mathbf p$, and
 $w_d$ is the dataset fit weight.
 
 All $r_d$ are concatenated. Dataset weights therefore affect the objective but
-not the stored observations or uncertainties.
+not the stored observations or uncertainties. They may be used to give datasets
+with very different point counts comparable influence. Covariance and posterior
+uncertainties are conditional on these user-selected weights.
+
+`OptimizationConfig(covariance_mode="absolute")` is the default and treats
+$\sigma_d$ as absolute one-sigma uncertainty. Use
+`covariance_mode="residual"` to multiply the local covariance by the reduced
+chi-squared. Residual scaling estimates one missing global noise scale from all
+residuals; it cannot separate underestimated counting errors from systematics,
+correlations, outliers, or model inadequacy.
 
 ```python
 from nfit import (

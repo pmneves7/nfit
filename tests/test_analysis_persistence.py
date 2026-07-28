@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from nfit.analysis import (
     AnalysisContext,
@@ -49,13 +50,13 @@ def test_version_one_project_generates_dataset_id():
     assert len(restored.data_groups[0].datasets[0].id) == 32
 
 
-def test_duplicate_dataset_ids_are_repaired_deterministically():
+def test_duplicate_dataset_ids_fail_with_dataset_locations():
     payload = {"format": "nfit-project", "version": 2, "settings": {}, "data_groups": [{"name": "group", "datasets": [{"name": "a", "id": "f" * 32}, {"name": "b", "id": "f" * 32}]}]}
-    first = _project_from_dict(payload).data_groups[0]
-    second = _project_from_dict(payload).data_groups[0]
-    assert first.datasets[0].id != first.datasets[1].id
-    assert first.datasets[1].id == second.datasets[1].id
-    assert first.metadata["project_load_warnings"]
+    with pytest.raises(
+        ValueError,
+        match=r"duplicate dataset IDs.*group/a.*group/b",
+    ):
+        _project_from_dict(payload)
 
 
 def test_point_list_artifact_round_trip(tmp_path):

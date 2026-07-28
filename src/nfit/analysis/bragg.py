@@ -66,7 +66,7 @@ def integrate_bragg_peaks(
     data: MDHistoData,
     peaks_hkl: np.ndarray,
     *,
-    method: str = "box_sum",
+    method: str = "gaussian_fit",
     box_half_widths=(0.1, 0.1, 0.1),
     ellipsoid_semiaxes=(0.1, 0.1, 0.1),
     ellipsoid_rotation=None,
@@ -89,7 +89,7 @@ def integrate_bragg_peaks(
     cancel_callback=None,
     gaussian_background: str = "constant",
 ) -> PointListData:
-    """Integrate axis-aligned HKL boxes with optional surrounding shell background."""
+    """Integrate Bragg peaks using Gaussian fitting, boxes, or ellipsoids."""
 
     data = bragg_volume(data, energy_min_meV, energy_max_meV)
     if data.signal.ndim != 3 or len([axis for axis in data.axes if axis.kind == "momentum"]) != 3:
@@ -173,6 +173,7 @@ def integrate_bragg_peaks(
                 peak,
                 half,
                 measured,
+                qvolume,
                 minimum_peak_coverage,
                 gaussian_max_nfev,
                 coordinate_frame,
@@ -184,6 +185,7 @@ def integrate_bragg_peaks(
                 fitted_l,
                 intensity,
                 sigma,
+                raw,
                 background,
                 signal_to_noise,
                 coverage,
@@ -195,8 +197,8 @@ def integrate_bragg_peaks(
                 sigma_2,
                 sigma_3,
                 reduced_chi_squared,
+                fit_window_peak,
             ) = fit_row
-            raw = intensity + background
             status = _bragg_rejection_status(
                 coverage=coverage,
                 background_coverage=background_coverage,
@@ -229,6 +231,7 @@ def integrate_bragg_peaks(
                     sigma_2,
                     sigma_3,
                     reduced_chi_squared,
+                    fit_window_peak,
                 )
             )
             accepted_so_far += int(status == 0)
@@ -403,12 +406,18 @@ def integrate_bragg_peaks(
                 ),
             }
         )
+    raw_name = "FitWindowRaw" if method == "gaussian_fit" else "RawI"
+    background_name = (
+        "FitWindowBackground" if method == "gaussian_fit" else "Background"
+    )
     names = (
         "NominalH", "NominalK", "NominalL", "H", "K", "L", "I", "dI",
-        "RawI", "Background", "I/dI", "Coverage", "BackgroundCoverage",
+        raw_name, background_name, "I/dI", "Coverage", "BackgroundCoverage",
         "Accepted", "Status", "FitAmplitude", "FitBaseline", "FitSigma1",
         "FitSigma2", "FitSigma3", "ReducedChi2",
     )
+    if method == "gaussian_fit":
+        names = (*names, "FitWindowPeak")
     values = np.asarray(rows, dtype=float).reshape(-1, len(names))
     columns = {name: values[:, index] for index, name in enumerate(names)}
     accepted_count = int(np.count_nonzero(columns["Accepted"]))
@@ -417,6 +426,17 @@ def integrate_bragg_peaks(
         "method": method,
         "coordinate_frame": coordinate_frame,
         "background_mode": background_mode,
+        "intensity_definition": (
+            "full_analytic_gaussian_integral"
+            if method == "gaussian_fit"
+            else "measured_integration_region"
+        ),
+        "background_definition": (
+            "fitted_background_integrated_over_measured_fit_window"
+            if method == "gaussian_fit"
+            else "local_shell_scaled_to_peak_region"
+        ),
+        "uncertainty_convention": "supplied_absolute_one_sigma",
         "integration_half_widths": half.tolist(),
         "ellipsoid_rotation": np.asarray(ellipsoid_rotation, dtype=float).tolist(),
         "background_inner_scale": float(background_inner_scale),
@@ -436,21 +456,27 @@ def integrate_bragg_peaks(
             "16": "Gaussian fit failed or had insufficient points",
         },
     }
+    background_column = (
+        "FitWindowBackground" if method == "gaussian_fit" else "Background"
+    )
+    quantity_types = {
+        "I": "scattering_intensity",
+        "dI": "scattering_intensity",
+        raw_name: "scattering_intensity",
+        background_name: "scattering_intensity",
+    }
+    if method == "gaussian_fit":
+        quantity_types["FitWindowPeak"] = "scattering_intensity"
     return PointListData(
         columns,
         coordinate_names=["H", "K", "L"],
         channels=[
             {"label": "Integrated intensity", "value": "I", "error": "dI"},
-            {"label": "Background", "value": "Background", "error": None},
+            {"label": "Background", "value": background_column, "error": None},
             {"label": "I/dI", "value": "I/dI", "error": None},
         ],
         metadata=metadata,
-        quantity_types={
-            "I": "scattering_intensity",
-            "dI": "scattering_intensity",
-            "RawI": "scattering_intensity",
-            "Background": "scattering_intensity",
-        },
+        quantity_types=quantity_types,
     )
 
 
@@ -592,7 +618,19 @@ def _ellipsoid_fraction(edges, components, center, semiaxes, rotation, samples):
     return fraction / samples**3
 
 
-def _fit_gaussian(data, edges, vectors, center, initial_sigma, measured, minimum_coverage, max_nfev, coordinate_frame, background_mode):
+def _fit_gaussian(
+    data,
+    edges,
+    vectors,
+    center,
+    initial_sigma,
+    measured,
+    qvolume,
+    minimum_coverage,
+    max_nfev,
+    coordinate_frame,
+    background_mode,
+):
     from scipy.optimize import least_squares
 
     if signal_semantics(data) != "density":
@@ -625,9 +663,11 @@ def _fit_gaussian(data, edges, vectors, center, initial_sigma, measured, minimum
             np.nan,
             np.nan,
             np.nan,
+            np.nan,
             coverage,
             1.0,
             2.0,
+            np.nan,
             np.nan,
             np.nan,
             np.nan,
@@ -665,11 +705,24 @@ def _fit_gaussian(data, edges, vectors, center, initial_sigma, measured, minimum
     jacobian = abs(float(np.linalg.det(qmatrix))) if coordinate_frame == "hkl" else 1.0
     gaussian_volume = (2 * np.pi) ** 1.5 * float(np.prod(sigma)) * jacobian
     intensity = amplitude * gaussian_volume
-    background = fit.x[7] * gaussian_volume
+    fitted_center_xyz = fit.x[1:4]
+    fitted_background = np.full(y.shape, fit.x[7], dtype=float)
+    if background_mode == "linear":
+        fitted_background += (x - fitted_center_xyz) @ fit.x[8:11]
+    fitted_peak = amplitude * np.exp(
+        -0.5
+        * np.sum(
+            ((x - fitted_center_xyz) / sigma) ** 2,
+            axis=1,
+        )
+    )
+    window_volume = qvolume[valid]
+    fit_window_raw = float(np.sum(y * window_volume))
+    fit_window_background = float(np.sum(fitted_background * window_volume))
+    fit_window_peak = float(np.sum(fitted_peak * window_volume))
     covariance = np.linalg.pinv(fit.jac.T @ fit.jac)
     dof = max(fit.fun.size - fit.x.size, 1)
     reduced_chi_squared = float(np.sum(fit.fun**2) / dof)
-    covariance *= reduced_chi_squared
     gradient = np.zeros(fit.x.size)
     gradient[0] = gaussian_volume
     gradient[4:7] = intensity
@@ -680,7 +733,8 @@ def _fit_gaussian(data, edges, vectors, center, initial_sigma, measured, minimum
         *fitted_center,
         intensity,
         uncertainty,
-        background,
+        fit_window_raw,
+        fit_window_background,
         intensity / uncertainty if uncertainty > 0 else np.nan,
         coverage,
         1.0,
@@ -689,6 +743,7 @@ def _fit_gaussian(data, edges, vectors, center, initial_sigma, measured, minimum
         fit.x[7],
         *sigma,
         reduced_chi_squared,
+        fit_window_peak,
     )
 
 

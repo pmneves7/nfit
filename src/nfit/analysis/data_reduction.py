@@ -7,8 +7,14 @@ from typing import Any
 import numpy as np
 
 from ..dataset import PointData4D
-from ..mdhisto import MDHistoAxis, MDHistoData, mdhisto_measured_bins
-from .coordinates import q_modulus_for_spectral
+from ..mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData, mdhisto_measured_bins
+from .coordinates import (
+    physical_axis_vectors,
+    q_bin_volume,
+    q_modulus_for_spectral,
+    rlu_to_q_matrix,
+    signal_semantics,
+)
 from .core import AnalysisContext
 
 K_B_MEV_PER_K = 0.08617333262145
@@ -116,62 +122,180 @@ def spherical_average(
     context: AnalysisContext,
     *,
     q_bins: int = 100,
+    subvoxel_samples: int = 3,
 ) -> MDHistoData:
-    """Return an inverse-variance spherical average on a ``|Q|, E`` grid."""
+    """Return a reciprocal-volume powder average on a ``|Q|, E`` grid.
+
+    Each source momentum voxel is divided into a regular subvoxel grid to
+    estimate its overlap with radial shells. Signal densities are averaged
+    with those physical overlap volumes. Source-voxel uncertainties are kept
+    correlated across subvoxels when a voxel crosses a shell boundary.
+    """
 
     if int(q_bins) < 1:
         raise ValueError("q_bins must be positive")
+    samples = int(subvoxel_samples)
+    if samples < 1 or samples % 2 == 0:
+        raise ValueError("subvoxel_samples must be a positive odd integer")
     energy_dim = _energy_dimension(data)
+    momentum_dims = [
+        index for index, axis in enumerate(data.axes) if axis.kind == "momentum"
+    ]
+    if len(momentum_dims) != 3 or sorted((*momentum_dims, energy_dim)) != list(
+        range(data.signal.ndim)
+    ):
+        raise ValueError(
+            "spherical averaging requires exactly three momentum axes and one energy axis"
+        )
     q = np.broadcast_to(q_modulus_for_spectral(data, context), data.shape)
-    energy_shape = [1] * data.signal.ndim
-    energy_shape[energy_dim] = data.shape[energy_dim]
-    energy = np.broadcast_to(data.axes[energy_dim].centers.reshape(energy_shape), data.shape)
     valid = (
         mdhisto_measured_bins(data)
         & np.isfinite(data.signal)
         & np.isfinite(data.errors)
         & (data.errors > 0.0)
         & np.isfinite(q)
-        & np.isfinite(energy)
     )
     if not np.any(valid):
         raise ValueError("spherical averaging found no measured bins with finite uncertainty")
     energy_edges = _axis_edges(data.axes[energy_dim], data.shape[energy_dim])
-    q_values = q[valid]
-    q_lower = max(0.0, float(np.nanmin(q_values)))
-    q_upper = float(np.nanmax(q_values))
+
+    order = (*momentum_dims, energy_dim)
+    momentum_shape = tuple(data.shape[index] for index in momentum_dims)
+    momentum_size = int(np.prod(momentum_shape))
+    energy_count = data.shape[energy_dim]
+    signal_source = np.transpose(data.signal, order).reshape(momentum_size, energy_count)
+    error_source = np.transpose(data.errors, order).reshape(momentum_size, energy_count)
+    valid_source = np.transpose(valid, order).reshape(momentum_size, energy_count)
+    q_source = np.transpose(q, order).reshape(momentum_size, energy_count)[:, 0]
+    q_volume_source = (
+        np.transpose(q_bin_volume(data, context), order)
+        .reshape(momentum_size, energy_count)[:, 0]
+    )
+    semantics = signal_semantics(data)
+    if semantics == "unknown":
+        raise ValueError("spherical averaging requires signal_semantics metadata")
+    if semantics == "bin_integral":
+        source_bin_volume = q_volume_source[:, None] * np.diff(energy_edges)[None, :]
+        signal_source = signal_source / source_bin_volume
+        error_source = error_source / source_bin_volume
+    valid_momentum = np.any(valid_source, axis=1)
+
+    axis_edges = [
+        _axis_edges(data.axes[index], data.shape[index]) for index in momentum_dims
+    ]
+    axis_widths = [np.diff(edges) for edges in axis_edges]
+    vectors = physical_axis_vectors(data)[momentum_dims, :3]
+    q_matrix = rlu_to_q_matrix(data.metadata, context)
+    axis_to_q = vectors @ q_matrix.T
+    maximum_widths = np.asarray([np.max(widths) for widths in axis_widths])
+    half_vectors = 0.5 * maximum_widths[:, None] * axis_to_q
+    signs = np.asarray(
+        [
+            [sx, sy, sz]
+            for sx in (-1.0, 1.0)
+            for sy in (-1.0, 1.0)
+            for sz in (-1.0, 1.0)
+        ]
+    )
+    maximum_half_diagonal = float(
+        np.max(np.linalg.norm(signs @ half_vectors, axis=1))
+    )
+    measured_q_centers = q_source[valid_momentum]
+    q_lower = max(
+        0.0,
+        float(np.nanmin(measured_q_centers)) - maximum_half_diagonal,
+    )
+    q_upper = float(np.nanmax(measured_q_centers)) + maximum_half_diagonal
     if not q_upper > q_lower:
         raise ValueError("spherical averaging requires a nonzero |Q| range")
     q_edges = np.linspace(q_lower, q_upper, int(q_bins) + 1)
-    q_indices = np.searchsorted(q_edges, q, side="right") - 1
-    q_indices[q == q_edges[-1]] = int(q_bins) - 1
-    energy_index_shape = [1] * data.signal.ndim
-    energy_index_shape[energy_dim] = data.shape[energy_dim]
-    source_energy_indices = np.broadcast_to(
-        np.arange(data.shape[energy_dim]).reshape(energy_index_shape), data.shape
+
+    numerator = np.zeros((int(q_bins), energy_count), dtype=float)
+    variance = np.zeros_like(numerator)
+    measured_volume = np.zeros_like(numerator)
+    contributing_voxels = np.zeros_like(numerator)
+    offsets = (np.arange(samples, dtype=float) + 0.5) / samples
+    sample_offsets = np.asarray(
+        [(x, y, z) for x in offsets for y in offsets for z in offsets],
+        dtype=float,
     )
-    energy_count = int(energy_edges.size - 1)
-    valid &= (q_indices >= 0) & (q_indices < int(q_bins))
-    flat_indices = q_indices[valid] * energy_count + source_energy_indices[valid]
-    inverse_variance = 1.0 / np.square(data.errors[valid])
-    output_size = int(q_bins) * energy_count
-    weight_sum = np.bincount(
-        flat_indices,
-        weights=inverse_variance,
-        minlength=output_size,
-    ).reshape(int(q_bins), energy_count)
-    weighted_signal = np.bincount(
-        flat_indices,
-        weights=inverse_variance * data.signal[valid],
-        minlength=output_size,
-    ).reshape(int(q_bins), energy_count)
-    counts = np.bincount(flat_indices, minlength=output_size).reshape(
-        int(q_bins), energy_count
-    )
+    samples_per_voxel = sample_offsets.shape[0]
+    measured_indices = np.flatnonzero(valid_momentum)
+    chunk_size = 50_000
+    for start in range(0, measured_indices.size, chunk_size):
+        source_indices = measured_indices[start : start + chunk_size]
+        grid_indices = np.unravel_index(source_indices, momentum_shape)
+        keys = []
+        local_indices = np.arange(source_indices.size, dtype=np.int64)
+        for offset in sample_offsets:
+            coordinates = np.column_stack(
+                [
+                    edges[index] + offset[dim] * widths[index]
+                    for dim, (edges, widths, index) in enumerate(
+                        zip(axis_edges, axis_widths, grid_indices, strict=True)
+                    )
+                ]
+            )
+            hkl = coordinates @ vectors
+            q_sample = np.linalg.norm(hkl @ q_matrix.T, axis=1)
+            q_index = np.searchsorted(q_edges, q_sample, side="right") - 1
+            q_index[q_sample == q_edges[-1]] = int(q_bins) - 1
+            inside = (q_index >= 0) & (q_index < int(q_bins))
+            keys.append(
+                local_indices[inside] * int(q_bins)
+                + q_index[inside].astype(np.int64)
+            )
+        unique_keys, overlap_counts = np.unique(
+            np.concatenate(keys),
+            return_counts=True,
+        )
+        local_source = unique_keys // int(q_bins)
+        output_q = (unique_keys % int(q_bins)).astype(np.intp)
+        source_index = source_indices[local_source]
+        overlap_fraction = overlap_counts.astype(float) / samples_per_voxel
+        overlap_volume = q_volume_source[source_index] * overlap_fraction
+        pair_valid = valid_source[source_index]
+        pair_signal = signal_source[source_index]
+        pair_error = error_source[source_index]
+        weights = overlap_volume[:, None]
+        np.add.at(
+            numerator,
+            output_q,
+            np.where(pair_valid, pair_signal * weights, 0.0),
+        )
+        np.add.at(
+            variance,
+            output_q,
+            np.where(pair_valid, np.square(pair_error * weights), 0.0),
+        )
+        np.add.at(
+            measured_volume,
+            output_q,
+            np.where(pair_valid, weights, 0.0),
+        )
+        np.add.at(
+            contributing_voxels,
+            output_q,
+            np.where(pair_valid, overlap_fraction[:, None], 0.0),
+        )
+
     with np.errstate(divide="ignore", invalid="ignore"):
-        signal = weighted_signal / weight_sum
-        errors = np.sqrt(1.0 / weight_sum)
+        signal = numerator / measured_volume
+        errors = np.sqrt(variance) / measured_volume
     measured = np.isfinite(signal) & np.isfinite(errors)
+    shell_volume = (
+        (4.0 * np.pi / 3.0) * (q_edges[1:] ** 3 - q_edges[:-1] ** 3)
+    )[:, None]
+    coverage = np.clip(
+        np.divide(
+            measured_volume,
+            shell_volume,
+            out=np.zeros_like(measured_volume),
+            where=shell_volume > 0.0,
+        ),
+        0.0,
+        1.0,
+    )
     return MDHistoData(
         axes=(
             MDHistoAxis("|Q|", q_edges, "1/angstrom", "momentum", frame="Q modulus"),
@@ -186,13 +310,25 @@ def spherical_average(
         signal=signal,
         errors=errors,
         mask=~measured,
-        num_events=np.asarray(counts, dtype=float),
+        num_events=contributing_voxels,
+        auxiliary_channels={
+            "powder_coverage": MDHistoChannel(
+                coverage,
+                label="Measured powder-shell coverage",
+                unit="1",
+                quantity_type="unknown",
+            )
+        },
         metadata={
             **dict(data.metadata),
             "signal_semantics": "density",
             "spherical_average": {
                 "q_bins": int(q_bins),
-                "weighting": "inverse_variance",
+                "weighting": "reciprocal_volume_overlap",
+                "subvoxel_samples": samples,
+                "input_signal_semantics": semantics,
+                "uncertainty": "independent_source_voxel_variances",
+                "coverage_channel": "powder_coverage",
             },
         },
     )

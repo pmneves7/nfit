@@ -45,7 +45,7 @@ def register_builtin_operations() -> None:
         _p("include_systematic_absences", False, "Include reflections forbidden by the space group.", kind="bool"),
         _p("d_min_angstrom", None, "Minimum d spacing in angstrom."), _p("d_max_angstrom", None, "Maximum d spacing in angstrom."),
         _p("energy_min_meV", None, "Lower elastic energy boundary; leave both bounds blank to use the bin nearest zero."), _p("energy_max_meV", None, "Upper elastic energy boundary; leave both bounds blank to use the bin nearest zero."),
-        _p("method", "ellipsoid_sum", "Peak integration method.", choices=(("box_sum", "Box"), ("ellipsoid_sum", "Ellipsoid"), ("gaussian_fit", "Gaussian fit"))),
+        _p("method", "gaussian_fit", "Peak integration method.", choices=(("gaussian_fit", "Gaussian fit"), ("box_sum", "Box"), ("ellipsoid_sum", "Ellipsoid"))),
         _p("coordinate_frame", "hkl", "Coordinate frame for region widths.", choices=(("hkl", "HKL (r.l.u.)"), ("q_angstrom_inverse", "Q (1/angstrom)"))),
         _p("box_half_widths", [0.1, 0.1, 0.1], "Positive box half widths."), _p("ellipsoid_semiaxes", [0.1, 0.1, 0.1], "Positive ellipsoid semiaxes."),
         _p("ellipsoid_rotation", np.eye(3).tolist(), "Orthonormal ellipsoid rotation matrix."), _p("center_mode", "nominal", "Use nominal or centroid-refined centers.", choices=(("nominal", "Nominal HKL"), ("centroid", "Refine centroid"))),
@@ -130,13 +130,14 @@ def register_builtin_operations() -> None:
     )
     spherical_parameters = (
         _p("q_bins", 100, "Number of bins in the powder |Q| axis."),
+        _p("subvoxel_samples", 3, "Positive odd number of samples per source-voxel dimension used to estimate spherical-shell overlap."),
     )
     angle_background_parameters = (
         _p("lowest_fraction", 0.2, "Lowest fraction of run intensities averaged independently in each |Q| and energy bin."),
         _p("q_bins", 100, "Number of bins in the background |Q| axis."),
         _p("energy_bins", 100, "Number of bins in the background energy axis."),
     )
-    register_analysis_operation(AnalysisOperationDefinition("bragg_integration", "Bragg integration", 3, "Integrate crystallographic peaks.", 1, 2, ("MDHistoData", "PointListData"), bragg_parameters, _validate_bragg, _execute_bragg))
+    register_analysis_operation(AnalysisOperationDefinition("bragg_integration", "Bragg integration", 4, "Integrate crystallographic peaks.", 1, 2, ("MDHistoData", "PointListData"), bragg_parameters, _validate_bragg, _execute_bragg))
     register_analysis_operation(AnalysisOperationDefinition("spectral_integration", "Spectral integration", 1, "Reduce spectra using physical kernels.", 1, 1, ("MDHistoData",), spectral_parameters, _validate_spectral, _execute_spectral))
     register_analysis_operation(AnalysisOperationDefinition("spectral_conversion", "INS absolute conversion", 1, "Convert measured INS intensity to an absolute cross section or dynamic susceptibility.", 1, 1, ("MDHistoData",), conversion_parameters, _validate_conversion, _execute_conversion))
     register_analysis_operation(
@@ -171,7 +172,7 @@ def register_builtin_operations() -> None:
         AnalysisOperationDefinition(
             "spherical_average",
             "Spherical average",
-            1,
+            2,
             "Convert single-crystal inelastic data to a powder |Q| and energy dataset.",
             1,
             1,
@@ -268,6 +269,9 @@ def _execute_bose_separation(inputs, parameters, **callbacks):
 def _validate_spherical_average(inputs, parameters):
     if int(parameters["q_bins"]) < 1:
         raise ValueError("q_bins must be positive")
+    samples = int(parameters["subvoxel_samples"])
+    if samples < 1 or samples % 2 == 0:
+        raise ValueError("subvoxel_samples must be a positive odd integer")
 
 
 def _execute_spherical_average(inputs, parameters, **callbacks):
@@ -277,12 +281,13 @@ def _execute_spherical_average(inputs, parameters, **callbacks):
         inputs[0].data,
         inputs[0].context,
         q_bins=int(parameters["q_bins"]),
+        subvoxel_samples=int(parameters["subvoxel_samples"]),
     )
     return AnalysisExecution(
         {"powder": DatasetOutput(output, "Spherical average", "powder_inelastic")},
         diagnostics={
-            "weighting": "inverse_variance",
-            "uncertainty_model": "standard error of the inverse-variance weighted mean",
+            "weighting": "reciprocal_volume_overlap",
+            "uncertainty_model": "independent source-voxel variances propagated through geometric overlap weights",
         },
     )
 

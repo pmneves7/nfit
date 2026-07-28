@@ -1786,7 +1786,7 @@ def test_component_diagnostics_static_chi_matches_direct_rpa():
     )
     assert record is not None
     for key in ("mu_eff_sq", "chi_static_q0", "chi_static_qpeak",
-                "distance_to_instability", "chi0_gamma0", "temperature"):
+                "stability_margin", "stability_ratio", "chi0_gamma0", "temperature"):
         assert key in record
     # J(0) = 2 J1 * 3 bonds = 0.6; chi = 0.5 / (1 - 0.6 * 0.5).
     expected = 0.5 / (1.0 - 0.6 * 0.5)
@@ -1810,11 +1810,50 @@ def test_component_diagnostics_report_closure_internals():
     )
     assert record["lambda_shift"] != 0.0
     assert record["mu_eff_sq"] == pytest.approx(0.5, abs=1e-6)
-    assert record["distance_to_instability"] > 0.0
+    assert record["stability_margin"] > 0.0
     # JSON-serializable (persisted in fit metadata via json.dumps).
     import json
 
     assert json.loads(json.dumps(record)) == record
+
+
+def test_component_diagnostics_keep_negative_stability_margin_when_unstable():
+    from nfit.fit_config import compute_component_diagnostics
+
+    component = ModelComponentSpec(
+        name="M",
+        type="heisenberg_rpa",
+        parameters={"scale": 1.0, "chi0": 2.0, "gamma0": 2.0, "J1": 0.1},
+        fit_parameters={},
+        config={
+            "site_positions": [[0.0, 0.0, 0.0]],
+            "orbits": [
+                {
+                    "label": "J1",
+                    "bonds": [
+                        {"site_i": 0, "site_j": 0, "offset": [1, 0, 0]},
+                        {"site_i": 0, "site_j": 0, "offset": [0, 1, 0]},
+                        {"site_i": 0, "site_j": 0, "offset": [0, 0, 1]},
+                    ],
+                }
+            ],
+        },
+    )
+
+    record = compute_component_diagnostics(
+        component,
+        _closure_points(14, n=20),
+        {"M.scale": 1.0, "M.chi0": 2.0, "M.gamma0": 2.0, "M.J1": 0.1},
+    )
+
+    assert record is not None
+    assert record["stability_margin"] < 0.0
+    assert record["stability_ratio"] > 1.0
+    assert record["unstable"] == 1.0
+    assert all(
+        key in record
+        for key in ("stability_q_h", "stability_q_k", "stability_q_l", "stability_mode_index")
+    )
 
 
 def test_component_diagnostics_returns_none_for_non_rpa():

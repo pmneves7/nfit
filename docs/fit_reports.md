@@ -71,9 +71,14 @@ an uncertainty retain the general six-significant-digit display.
 This formatting changes only the generated report. Project files, fit result
 metadata, scripts, and other machine-readable exports retain the stored
 floating-point values. Least-squares standard errors are local covariance
-estimates conditional on the model and supplied data uncertainties; posterior
-intervals are likewise conditional on the model and priors. Neither includes
-unmodeled systematic uncertainty merely because more digits are stored.
+estimates conditional on the model, supplied data uncertainties, and
+user-selected dataset weights. Reports state whether the covariance trusts
+absolute data uncertainties or estimates one global scale from the residuals.
+If weights encode importance rather than statistical precision, reduced
+chi-squared is not statistically calibrated.
+Residual scaling can reflect underestimated statistical error, systematics,
+correlations, outliers, or model mismatch, but it cannot distinguish them.
+Posterior intervals are likewise conditional on the model, weights, and priors.
 
 ## TeX engine requirement
 

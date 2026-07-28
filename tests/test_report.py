@@ -138,7 +138,8 @@ def _full_rpa_entry():
         metadata={"diagnostics": {
             "T5": {"temperature": 5.0, "mu_eff_sq": 0.93, "chi_static_q0": 0.4,
                     "chi_static_qpeak": 0.9, "chi0_gamma0": 0.06,
-                    "distance_to_instability": 0.2, "lambda_shift": 0.12,
+                    "stability_margin": 0.2, "stability_ratio": 0.8,
+                    "lambda_shift": 0.12,
                     "chi0_eff": 0.021},
             "T50": {"temperature": 50.0, "mu_eff_sq": 0.93},
         }},
@@ -178,6 +179,21 @@ def test_minimal_background_report_is_complete_document():
     assert "thebibliography" not in tex
     # Diagnostics absent: section omitted.
     assert "Physics diagnostics" not in tex
+
+
+def test_report_states_covariance_and_dataset_weight_caveats():
+    absolute = _background_entry()
+    absolute.goodness["covariance_mode"] = "absolute"
+    absolute_tex = render_fit_report_latex(absolute, group_name="G")
+    assert "supplied absolute data uncertainties" in absolute_tex
+    assert "user-selected weights" in absolute_tex
+    assert "not rescaled by the fit residuals" in absolute_tex
+
+    residual = _background_entry()
+    residual.goodness["covariance_mode"] = "residual"
+    residual_tex = render_fit_report_latex(residual, group_name="G")
+    assert "scaled by the reduced chi-squared" in residual_tex
+    assert "cannot distinguish underestimated statistical errors" in residual_tex
 
 
 def test_old_entry_without_new_keys_degrades_gracefully():
