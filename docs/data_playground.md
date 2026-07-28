@@ -129,10 +129,12 @@ the source momentum coordinates are in reciprocal-lattice units.
 ## Angle-energy background
 
 This operation estimates a powder background from two or more MDEvent runs.
-Each run is normalized by proton charge and reduced to a common
-$|\mathbf Q|,E$ grid. In each bin, nfit averages the lowest selected fraction
-of run intensities; the default is 20%. Statistical variances are propagated,
-but uncertainty in choosing the order-statistic subset is not included.
+Each run is reduced to a common $|\mathbf Q|,E$ grid. nfit divides the summed
+intensity and its uncertainty by proton charge and by
+$\Delta|\mathbf Q|\,\Delta E$, so the result is an intensity density rather
+than a bin integral. In each bin, it averages the lowest selected fraction of
+run densities; the default is 20%. Statistical variances are propagated, but
+uncertainty in choosing the order-statistic subset is not included.
 
 The method follows Shiver's Mantid
 [`GenerateGoniometerIndependentBackground`](https://docs.mantidproject.org/v6.11.0/algorithms/GenerateGoniometerIndependentBackground-v1.html)

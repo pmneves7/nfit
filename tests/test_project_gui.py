@@ -130,6 +130,23 @@ def test_project_helpers_name_import_and_round_trip(tmp_path):
     assert loaded.data_groups[3].datasets[0].name == "scan"
 
 
+def test_legacy_bragg_analysis_drops_obsolete_edge_policy_on_load():
+    analysis = project_gui._analysis_from_dict(
+        {
+            "name": "Peaks",
+            "type": "bragg_integration",
+            "input_dataset_ids": ["data"],
+            "parameters": {
+                "edge_policy": "report_partial",
+                "minimum_peak_coverage": 0.5,
+            },
+        }
+    )
+
+    assert analysis.parameters == {"minimum_peak_coverage": 0.5}
+    assert "obsolete Bragg edge_policy" in analysis.metadata["project_migrations"][0]
+
+
 def test_waterfall_group_keys_follow_immediate_dataset_groups():
     direct = DatasetEntry("direct", _grid_mdhisto_data(), kind="mdhisto")
     nested = DatasetEntry("nested", _grid_mdhisto_data(), kind="mdhisto")

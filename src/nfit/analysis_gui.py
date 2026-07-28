@@ -973,7 +973,6 @@ def _bragg_parameter_group(name: str) -> str:
         "minimum_background_coverage": "Quality filters",
         "minimum_signal_to_noise": "Quality filters",
         "maximum_background": "Quality filters",
-        "edge_policy": "Quality filters",
         "gaussian_background": "Gaussian fit",
         "gaussian_max_nfev": "Gaussian fit",
         "gaussian_fallback": "Gaussian fit",

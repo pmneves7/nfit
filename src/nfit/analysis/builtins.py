@@ -55,7 +55,7 @@ def register_builtin_operations() -> None:
         _p("minimum_peak_coverage", 0.5, "Minimum measured peak fraction."), _p("minimum_background_coverage", 0.3, "Minimum measured shell fraction."),
         _p("minimum_signal_to_noise", None, "Optional minimum accepted I/dI; leave blank to report all signal-to-noise values."),
         _p("maximum_background", None, "Optional maximum accepted absolute integrated background; leave blank for no background threshold."),
-        _p("edge_policy", "report_partial", "Reject or report partially covered peaks.", choices=(("report_partial", "Report partial"), ("reject", "Reject partial"))), _p("gaussian_background", "constant", "Gaussian background model.", choices=(("constant", "Constant"), ("linear", "Linear"))),
+        _p("gaussian_background", "constant", "Gaussian background model.", choices=(("constant", "Constant"), ("linear", "Linear"))),
         _p("gaussian_max_nfev", 1000, "Maximum Gaussian optimizer evaluations."), _p("gaussian_fallback", "none", "Fallback when Gaussian fitting fails.", choices=(("none", "None"),)),
         _p("subvoxel_samples", 3, "Odd samples per voxel dimension."),
     )
@@ -136,7 +136,7 @@ def register_builtin_operations() -> None:
         _p("q_bins", 100, "Number of bins in the background |Q| axis."),
         _p("energy_bins", 100, "Number of bins in the background energy axis."),
     )
-    register_analysis_operation(AnalysisOperationDefinition("bragg_integration", "Bragg integration", 2, "Integrate crystallographic peaks.", 1, 2, ("MDHistoData", "PointListData"), bragg_parameters, _validate_bragg, _execute_bragg))
+    register_analysis_operation(AnalysisOperationDefinition("bragg_integration", "Bragg integration", 3, "Integrate crystallographic peaks.", 1, 2, ("MDHistoData", "PointListData"), bragg_parameters, _validate_bragg, _execute_bragg))
     register_analysis_operation(AnalysisOperationDefinition("spectral_integration", "Spectral integration", 1, "Reduce spectra using physical kernels.", 1, 1, ("MDHistoData",), spectral_parameters, _validate_spectral, _execute_spectral))
     register_analysis_operation(AnalysisOperationDefinition("spectral_conversion", "INS absolute conversion", 1, "Convert measured INS intensity to an absolute cross section or dynamic susceptibility.", 1, 1, ("MDHistoData",), conversion_parameters, _validate_conversion, _execute_conversion))
     register_analysis_operation(
@@ -327,7 +327,7 @@ def _execute_angle_background(inputs, parameters, **callbacks):
         diagnostics={
             "run_count": len(inputs),
             "lowest_fraction": float(parameters["lowest_fraction"]),
-            "normalization": "proton_charge",
+            "normalization": "proton_charge_and_q_energy_bin_area",
             "uncertainty_model": "selected-run statistical variances; order-statistic uncertainty excluded",
         },
     )
@@ -391,7 +391,7 @@ def _execute_bragg(inputs, parameters, **callbacks):
         if not spacegroup:
             raise ValueError("crystal peak generation requires a space group")
         peaks = generate_bragg_peaks(data, spacegroup, include_systematic_absences=parameters["include_systematic_absences"], d_min_angstrom=parameters["d_min_angstrom"], d_max_angstrom=parameters["d_max_angstrom"])
-    allowed = {key: parameters[key] for key in ("method", "coordinate_frame", "box_half_widths", "ellipsoid_semiaxes", "ellipsoid_rotation", "subvoxel_samples", "background_mode", "background_inner_scale", "background_outer_scale", "minimum_peak_coverage", "minimum_background_coverage", "minimum_signal_to_noise", "maximum_background", "edge_policy", "exclude_neighbor_regions", "center_mode", "centroid_search_radius", "gaussian_background", "gaussian_max_nfev", "energy_min_meV", "energy_max_meV")}
+    allowed = {key: parameters[key] for key in ("method", "coordinate_frame", "box_half_widths", "ellipsoid_semiaxes", "ellipsoid_rotation", "subvoxel_samples", "background_mode", "background_inner_scale", "background_outer_scale", "minimum_peak_coverage", "minimum_background_coverage", "minimum_signal_to_noise", "maximum_background", "exclude_neighbor_regions", "center_mode", "centroid_search_radius", "gaussian_background", "gaussian_max_nfev", "energy_min_meV", "energy_max_meV")}
     table = integrate_bragg_peaks(
         data,
         peaks,

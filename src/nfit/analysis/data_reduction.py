@@ -207,10 +207,11 @@ def angle_energy_background(
 ) -> MDHistoData:
     """Estimate a rotation-independent ``|Q|, E`` background.
 
-    Each run is first reduced independently with proton-charge normalization.
-    In every output bin, run intensities are sorted and the lowest requested
-    fraction is averaged. Statistical variances of the selected runs are
-    propagated; uncertainty in the selection/order statistic is not included.
+    Each run is first reduced independently to an intensity density by dividing
+    by proton charge and the ``|Q|, E`` bin area. In every output bin, run
+    intensities are sorted and the lowest requested fraction is averaged.
+    Statistical variances of the selected runs are propagated; uncertainty in
+    the selection/order statistic is not included.
     """
 
     if len(runs) < 2:
@@ -241,6 +242,7 @@ def angle_energy_background(
         e_upper += e_padding
     q_edges = np.linspace(q_lower, q_upper, int(q_bins) + 1)
     e_edges = np.linspace(e_lower, e_upper, int(energy_bins) + 1)
+    bin_area = np.diff(q_edges)[:, None] * np.diff(e_edges)[None, :]
     signals = []
     variances = []
     measured = []
@@ -252,8 +254,8 @@ def angle_energy_background(
         sums = np.histogramdd(coordinates, bins=(q_edges, e_edges), weights=run.intensity[valid])[0]
         variance = np.histogramdd(coordinates, bins=(q_edges, e_edges), weights=np.square(run.sigma[valid]))[0]
         counts = np.histogramdd(coordinates, bins=(q_edges, e_edges))[0]
-        signals.append(sums / charge)
-        variances.append(variance / charge**2)
+        signals.append(sums / (charge * bin_area))
+        variances.append(variance / (charge**2 * bin_area**2))
         measured.append(counts > 0.0)
     signal_stack = np.stack(signals)
     variance_stack = np.stack(variances)
@@ -286,7 +288,7 @@ def angle_energy_background(
             "angle_energy_background": {
                 "run_count": len(runs),
                 "lowest_fraction": fraction,
-                "normalization": "proton_charge",
+                "normalization": "proton_charge_and_q_energy_bin_area",
                 "uncertainty": "propagated_selected_run_statistics_only",
             },
         },

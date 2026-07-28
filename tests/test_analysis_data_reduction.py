@@ -87,7 +87,7 @@ def test_spherical_average_returns_powder_axes_and_weighted_errors():
 
 def _run(intensity):
     return PointData4D(
-        H=[1.0, 1.0],
+        H=[1.0, 2.0],
         K=[0.0, 0.0],
         L=[0.0, 0.0],
         E=[-1.0, 1.0],
@@ -110,3 +110,21 @@ def test_angle_energy_background_averages_lowest_fraction_per_bin():
     np.testing.assert_allclose(result.signal, [[3.0, 3.0]])
     np.testing.assert_allclose(result.errors, [[np.sqrt(2) / 2, np.sqrt(2) / 2]])
     np.testing.assert_allclose(result.num_events, [[2.0, 2.0]])
+    assert (
+        result.metadata["angle_energy_background"]["normalization"]
+        == "proton_charge_and_q_energy_bin_area"
+    )
+
+
+def test_angle_energy_background_divides_signal_and_variance_by_bin_area():
+    result = angle_energy_background(
+        [_run(2.0), _run(4.0)],
+        q_bins=1,
+        energy_bins=1,
+        lowest_fraction=1.0,
+    )
+
+    # Each run contributes two events to a bin of area
+    # (2 - 1) inverse angstrom * (1 - (-1)) meV = 2.
+    np.testing.assert_allclose(result.signal, [[3.0]])
+    np.testing.assert_allclose(result.errors, [[0.5]])

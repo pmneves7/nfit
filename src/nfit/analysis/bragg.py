@@ -81,7 +81,6 @@ def integrate_bragg_peaks(
     minimum_background_coverage: float = 0.7,
     minimum_signal_to_noise: float | None = None,
     maximum_background: float | None = None,
-    edge_policy: str = "reject",
     exclude_neighbor_regions: bool = True,
     center_mode: str = "nominal",
     centroid_search_radius: float = 0.1,
@@ -120,8 +119,6 @@ def integrate_bragg_peaks(
         raise ValueError("background_mode must be 'none' or 'shell'")
     if background_mode == "shell" and not (1 <= background_inner_scale < background_outer_scale):
         raise ValueError("background scales must satisfy 1 <= inner < outer")
-    if edge_policy not in {"reject", "report_partial"}:
-        raise ValueError("edge_policy must be 'reject' or 'report_partial'")
     if center_mode not in {"nominal", "centroid"}:
         raise ValueError("center_mode must be 'nominal' or 'centroid'")
     if minimum_signal_to_noise is not None and minimum_signal_to_noise < 0:
@@ -420,7 +417,6 @@ def integrate_bragg_peaks(
         "method": method,
         "coordinate_frame": coordinate_frame,
         "background_mode": background_mode,
-        "edge_policy": edge_policy,
         "integration_half_widths": half.tolist(),
         "ellipsoid_rotation": np.asarray(ellipsoid_rotation, dtype=float).tolist(),
         "background_inner_scale": float(background_inner_scale),

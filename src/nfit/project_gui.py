@@ -20808,6 +20808,16 @@ def _analysis_to_dict(analysis: AnalysisEntry) -> dict[str, Any]:
 
 
 def _analysis_from_dict(payload: dict[str, Any]) -> AnalysisEntry:
+    analysis_type = str(payload["type"])
+    parameters = dict(payload.get("parameters", {}))
+    metadata = dict(payload.get("metadata", {}))
+    if analysis_type == "bragg_integration" and "edge_policy" in parameters:
+        parameters.pop("edge_policy")
+        migrations = list(metadata.get("project_migrations", []))
+        migrations.append(
+            "Removed the obsolete Bragg edge_policy parameter; peak coverage is controlled by minimum_peak_coverage."
+        )
+        metadata["project_migrations"] = migrations
     result_payload = payload.get("result")
     result = None
     if isinstance(result_payload, dict):
@@ -20820,11 +20830,11 @@ def _analysis_from_dict(payload: dict[str, Any]) -> AnalysisEntry:
             diagnostics=dict(result_payload.get("diagnostics", {})), error=result_payload.get("error"),
         )
     return AnalysisEntry(
-        name=str(payload["name"]), type=str(payload["type"]),
+        name=str(payload["name"]), type=analysis_type,
         input_dataset_ids=[str(value) for value in payload.get("input_dataset_ids", [])],
-        parameters=dict(payload.get("parameters", {})), id=str(payload.get("id") or AnalysisEntry("", "", [], {}).id),
+        parameters=parameters, id=str(payload.get("id") or AnalysisEntry("", "", [], {}).id),
         operation_version=int(payload.get("operation_version", 1)), enabled=bool(payload.get("enabled", True)),
-        result=result, metadata=dict(payload.get("metadata", {})),
+        result=result, metadata=metadata,
     )
 
 
