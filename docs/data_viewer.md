@@ -58,13 +58,18 @@ Choose **Visualization > Waterfall** to stack one-dimensional traces.
 - For multidimensional data, choose the horizontal and waterfall axes; other
   dimensions retain their ordinary point/range controls.
 - For a one-dimensional dataset, compatible datasets in the same immediate
-  project group provide the traces.
+  project group provide the traces. Choosing any sibling dataset switches to
+  that sibling's immediate group.
 - **Bin width** controls coarsening along the waterfall axis; **Auto** targets
   roughly ten traces.
 
 Trace offset, colors, marker fill, zero references, labels, and model overlays
 are configurable. Saved plot recipes and generated scripts retain these
 settings and all contributing dataset references.
+
+The axis **Reset** buttons and Matplotlib **Home** button use the current trace
+extent. That extent is recomputed when the dataset group, displayed axes, or
+waterfall binning changes.
 
 ## Volumetric mode
 

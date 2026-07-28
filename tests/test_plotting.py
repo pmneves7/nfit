@@ -1140,6 +1140,73 @@ def test_qt_waterfall_groups_1d_datasets_by_project_group_key():
     ]
 
 
+def test_qt_waterfall_saved_names_do_not_pin_interactive_group_selection():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    datasets = [_tiny_1d_mdhisto_data() for _index in range(4)]
+    viewer = QtMDHistoSliceViewer(
+        datasets,
+        dataset_names=["g1 a", "g1 b", "g2 a", "g2 b"],
+        dataset_group_keys=["Group1", "Group1", "Group2", "Group2"],
+    )
+    viewer.waterfall_dataset_names = ["g1 a"]
+    viewer.view_mode_combo.setCurrentIndex(1)
+
+    assert viewer.waterfall_source_dataset_names() == ["g1 a", "g1 b"]
+    assert [trace.label for trace in viewer._current_waterfall_traces] == [
+        "g1 a",
+        "g1 b",
+    ]
+
+    viewer.dataset_combo.setCurrentIndex(2)
+
+    assert viewer.waterfall_source_dataset_names() == ["g2 a", "g2 b"]
+    assert [trace.label for trace in viewer._current_waterfall_traces] == [
+        "g2 a",
+        "g2 b",
+    ]
+
+
+def test_qt_waterfall_reset_and_home_follow_current_group_extent():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    low = [_tiny_1d_mdhisto_data() for _index in range(2)]
+    high = []
+    for _index in range(2):
+        editable = _tiny_1d_mdhisto_data().mutable_copy()
+        editable.signal[...] *= 50.0
+        editable.errors[...] *= 50.0
+        high.append(editable.immutable_copy())
+    viewer = QtMDHistoSliceViewer(
+        [*low, *high],
+        dataset_names=["low a", "low b", "high a", "high b"],
+        dataset_group_keys=["Low", "Low", "High", "High"],
+    )
+    viewer.view_mode_combo.setCurrentIndex(1)
+    low_ylim = viewer._waterfall_default_ylim
+
+    viewer.dataset_combo.setCurrentIndex(2)
+    current_xlim = viewer._waterfall_default_xlim
+    current_ylim = viewer._waterfall_default_ylim
+
+    assert current_xlim is not None
+    assert current_ylim is not None
+    assert low_ylim is not None
+    assert current_ylim != pytest.approx(low_ylim)
+
+    viewer.ax_image.set_ylim(-1.0, 1.0)
+    viewer._reset_view_limits("y")
+    np.testing.assert_allclose(viewer.ax_image.get_ylim(), current_ylim)
+
+    viewer.ax_image.set_xlim(100.0, 200.0)
+    viewer.ax_image.set_ylim(100.0, 200.0)
+    viewer.toolbar.home()
+    np.testing.assert_allclose(viewer.ax_image.get_xlim(), current_xlim)
+    np.testing.assert_allclose(viewer.ax_image.get_ylim(), current_ylim)
+
+
 def test_qt_hidden_axis_sliders_and_spins_stay_linked():
     pytest.importorskip("PySide6")
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer

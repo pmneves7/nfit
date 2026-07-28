@@ -184,6 +184,7 @@ class QtMDHistoSliceViewer:
         self.y_max_spin = None
         self.x_reset_button = None
         self.y_reset_button = None
+        self.toolbar = None
         self.cmap_combo = None
         self.cmap_reverse_button = None
         self.channel_combo = None
@@ -312,6 +313,8 @@ class QtMDHistoSliceViewer:
         self.waterfall_trace_label_color: str | None = None
         self.waterfall_dataset_names: list[str] | None = None
         self._current_waterfall_traces: list[WaterfallTrace] = []
+        self._waterfall_default_xlim: tuple[float, float] | None = None
+        self._waterfall_default_ylim: tuple[float, float] | None = None
         self.hidden_layout = None
         self.hidden_controls: dict[int, _HiddenAxisControls] = {}
         self._display_axis_dims: list[int] = []
@@ -1019,8 +1022,10 @@ class QtMDHistoSliceViewer:
         self.canvas.setToolTip(
             "Interactive plot canvas. Move the cursor for coordinate readouts; use the toolbar or box tool to inspect slices."
         )
-        toolbar = NavigationToolbar2QT(self.canvas, self.window)
-        toolbar.setToolTip("Matplotlib navigation toolbar for pan, zoom, home, configure, and save actions.")
+        self.toolbar = NavigationToolbar2QT(self.canvas, self.window)
+        self.toolbar.setToolTip(
+            "Matplotlib navigation toolbar for pan, zoom, home, configure, and save actions."
+        )
         cursor_bar = QtWidgets.QWidget()
         cursor_layout = QtWidgets.QHBoxLayout(cursor_bar)
         cursor_layout.setContentsMargins(4, 0, 4, 0)
@@ -1041,7 +1046,7 @@ class QtMDHistoSliceViewer:
         cursor_layout.addWidget(self.cursor_hkle_label, 0)
         cursor_layout.addWidget(self.cursor_q_label, 0)
         cursor_layout.addWidget(self.cursor_intensity_label, 1)
-        plot_layout.addWidget(toolbar)
+        plot_layout.addWidget(self.toolbar)
         plot_layout.addWidget(cursor_bar)
         plot_layout.addWidget(self.canvas, 1)
         self._sync_cursor_visibility()
@@ -3047,7 +3052,19 @@ class QtMDHistoSliceViewer:
     def _reset_view_limits(self, axis_name: str) -> None:
         if self.ax_image is None:
             return
-        if axis_name == "x":
+        if (
+            self._waterfall_mode_active()
+            and axis_name == "x"
+            and self._waterfall_default_xlim is not None
+        ):
+            self.ax_image.set_xlim(*self._waterfall_default_xlim)
+        elif (
+            self._waterfall_mode_active()
+            and axis_name == "y"
+            and self._waterfall_default_ylim is not None
+        ):
+            self.ax_image.set_ylim(*self._waterfall_default_ylim)
+        elif axis_name == "x":
             self.ax_image.set_xlim(*self._default_view_limits(self.model.x_dim))
             self._apply_compare_view_limits(xlim=self.ax_image.get_xlim())
         elif self._is_effective_1d():
@@ -3057,6 +3074,14 @@ class QtMDHistoSliceViewer:
             self.ax_image.set_ylim(*self._default_view_limits(self.model.y_dim))
             self._apply_compare_view_limits(ylim=self.ax_image.get_ylim())
         self.canvas.draw_idle()
+
+    def _set_navigation_home_to_current_view(self) -> None:
+        """Make Matplotlib Home restore the plot's current data extent."""
+
+        if self.toolbar is None:
+            return
+        self.toolbar.update()
+        self.toolbar.push_current()
 
     def _sync_view_limit_controls(self, axis_name: str | None = None) -> None:
         if self.ax_image is None or self.x_min_spin is None:
@@ -3575,17 +3600,29 @@ class QtMDHistoSliceViewer:
         )
         self.ax_image.set_xlabel(self.model._axis_label(self.model.x_dim))
         self.ax_image.set_ylabel(self.model._channel_label())
-        if (
+        preserve_limits = (
             previous_xlim is not None
             and previous_ylim is not None
             and previous_dims == current_dims
             and getattr(self, "_last_plot_view_mode", None) == "waterfall"
-        ):
+        )
+        self.ax_image.relim()
+        self.ax_image.autoscale(enable=True, axis="both")
+        default_xlim = tuple(float(value) for value in self.ax_image.get_xlim())
+        default_ylim = tuple(float(value) for value in self.ax_image.get_ylim())
+        defaults_changed = (
+            self._waterfall_default_xlim is None
+            or self._waterfall_default_ylim is None
+            or not np.allclose(default_xlim, self._waterfall_default_xlim)
+            or not np.allclose(default_ylim, self._waterfall_default_ylim)
+        )
+        self._waterfall_default_xlim = default_xlim
+        self._waterfall_default_ylim = default_ylim
+        if defaults_changed:
+            self._set_navigation_home_to_current_view()
+        if preserve_limits:
             self.ax_image.set_xlim(previous_xlim)
             self.ax_image.set_ylim(previous_ylim)
-        else:
-            self.ax_image.relim()
-            self.ax_image.autoscale_view()
         self.image = None
         self.colorbar = None
         self._last_plot_dims = current_dims
@@ -3893,20 +3930,11 @@ class QtMDHistoSliceViewer:
         current_dim = next(index for index, size in enumerate(self.data.shape) if size > 1)
         current_axis = self.data.axes[current_dim]
         current_group_key = self.dataset_group_keys[self.dataset_index]
-        allowed_names = (
-            None
-            if self.waterfall_dataset_names is None
-            else set(self.waterfall_dataset_names)
-        )
         indices = []
-        for index, (dataset, name) in enumerate(
-            zip(self.datasets, self.dataset_names, strict=True)
-        ):
+        for index, dataset in enumerate(self.datasets):
             if self.dataset_group_keys[index] != current_group_key:
                 continue
             if not isinstance(dataset, MDHistoData):
-                continue
-            if allowed_names is not None and name not in allowed_names:
                 continue
             non_singleton = [
                 dim for dim, size in enumerate(dataset.shape) if size > 1
