@@ -50,17 +50,19 @@ def test_volume_support_and_default_axes_require_three_grid_dimensions():
     sparse = _volume_data((2, 3, 1, 1))
     assert default_volume_axes(sparse) == (0, 1, 2)
 
-    two_dimensional = _volume_data((2, 3, 1, 1))
-    two_dimensional.signal = two_dimensional.signal[:, :, 0, 0]
-    two_dimensional.errors = two_dimensional.errors[:, :, 0, 0]
-    two_dimensional.mask = two_dimensional.mask[:, :, 0, 0]
-    two_dimensional.num_events = two_dimensional.num_events[:, :, 0, 0]
-    two_dimensional.axes = two_dimensional.axes[:2]
+    source = _volume_data((2, 3, 1, 1))
+    two_dimensional = source.with_updates(
+        signal=source.signal[:, :, 0, 0],
+        errors=source.errors[:, :, 0, 0],
+        mask=source.mask[:, :, 0, 0],
+        num_events=source.num_events[:, :, 0, 0],
+        axes=source.axes[:2],
+    )
     assert not supports_volume_view(two_dimensional)
 
 
 def test_default_hidden_axis_uses_nearest_measured_bin():
-    data = _volume_data((5, 3, 4, 5))
+    data = _volume_data((5, 3, 4, 5)).mutable_copy()
     data.mask[1:4] = True
 
     assert default_hidden_axis_index(data, 0) == 0
@@ -68,7 +70,7 @@ def test_default_hidden_axis_uses_nearest_measured_bin():
 
 
 def test_extract_volume_selects_or_integrates_hidden_dimensions_and_orders_xyz():
-    data = _volume_data()
+    data = _volume_data().mutable_copy()
     selected = extract_volume_arrays(
         data,
         axes=(3, 1, 2),
@@ -92,7 +94,7 @@ def test_extract_volume_selects_or_integrates_hidden_dimensions_and_orders_xyz()
 
 
 def test_extract_volume_applies_masks_before_hidden_axis_integration():
-    data = _volume_data()
+    data = _volume_data().mutable_copy()
     data.mask[0, 0, 0, 0] = True
     arrays = extract_volume_arrays(
         data,
@@ -300,12 +302,16 @@ def test_volume_panel_exposes_independent_channels_curves_and_camera_exports(mon
     assert panel.plotter.axes_color == "black"
 
     volume_count = len(panel.plotter.added_volumes)
-    panel.data.mask[:] = True
+    panel.data = panel.data.with_updates(
+        mask=np.ones(panel.data.shape, dtype=bool),
+    )
     panel._channel_changed()
     assert panel.render_status.isVisible()
     assert "No finite voxels" in panel.render_status.text()
     assert len(panel.plotter.added_volumes) == volume_count
-    panel.data.mask[:] = False
+    panel.data = panel.data.with_updates(
+        mask=np.zeros(panel.data.shape, dtype=bool),
+    )
     panel._channel_changed()
     assert not panel.render_status.isVisible()
     assert len(panel.plotter.added_volumes) == volume_count + 1

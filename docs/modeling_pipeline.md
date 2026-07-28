@@ -35,7 +35,8 @@ dataset's selected fit representation.
 
 `DatasetEntry`
 : Project wrapper around a data container or lazy file reference. It stores the
-  data type, parameters, transforms, scale, fit weight, and provenance.
+  data type, parameters, transforms, scale, fit weight, and provenance. Install
+  modified data with `replace_data`; its revision invalidates dependent caches.
 
 `DataGroup`
 : A workspace containing datasets, nested dataset groups, masks, backgrounds,
@@ -65,6 +66,10 @@ The project GUI compiles its component-based state into these lower-level
 objects. `FitModelSession` remains available for direct scripted workflows, but
 new project-aware scripts normally load a project and call the same compilation
 path as the GUI.
+
+The common containers expose read-only numerical arrays. Use `with_updates` for
+one replacement or `mutable_copy` followed by `DatasetEntry.replace_data` for
+several edits. See [Data and extension conventions](data_philosophy.md#data-container-contract).
 
 ## Preparing data
 

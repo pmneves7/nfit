@@ -69,6 +69,18 @@ different Python.
 Keep this map structural rather than exhaustive. Update it only when subsystem
 ownership or documentation entry points move.
 
+## Data-container changes
+
+- Treat the numerical payloads of `PointData4D`, `PointListData`, and
+  `MDHistoData` as immutable.
+- Use `with_updates(...)` for a direct replacement or `mutable_copy()` for
+  isolated working arrays.
+- Install changed project data through `DatasetEntry.replace_data(...)`; never
+  assign `dataset.data` directly. Set `source_backed=True` only in import or
+  lazy-load paths that exactly reproduce the referenced source file.
+- Any cache derived from dataset contents must include
+  `dataset.data_cache_token` or an equivalently complete content signature.
+
 ## Documentation maintenance
 
 - When changing user-facing behavior, update the relevant source documentation in

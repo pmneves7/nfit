@@ -50,6 +50,32 @@ important constraint. A behavior change must update the relevant source page
 and tests at the same time. The pages linked from
 [GUI workflows](gui_workflows.md) describe the project explorer and data viewer.
 
+## Data-container contract
+
+The numerical payloads in `PointData4D`, `PointListData`, and `MDHistoData` are
+read-only. This prevents a view, analysis, or script from changing an array
+without invalidating cached results and provenance.
+
+Use `with_updates(...)` for a direct replacement. For several in-place edits,
+make an isolated writable copy and install the result:
+
+```python
+editable = dataset.data.mutable_copy()
+editable.mask[bad_bins] = True
+dataset.replace_data(editable)
+```
+
+`replace_data` converts the result back to the canonical read-only form and
+advances the dataset's process-local data revision. Viewer, composite, model,
+and analysis caches use this revision. Do not assign `dataset.data` directly.
+Importer and lazy-loading code uses `source_backed=True` only when the loaded
+arrays exactly represent `metadata["source_file"]`.
+
+Project files store source references rather than arbitrary in-memory arrays.
+If a script replaces source-backed data, save the result as a portable `.npz`
+dataset and re-import it before saving the project. This makes the replacement
+reproducible instead of silently reloading the old source on the next session.
+
 ## Mask contract
 
 A dataset mask is a `MaskSpec` with:

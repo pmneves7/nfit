@@ -1,8 +1,10 @@
+import copy
+
 import h5py
 import numpy as np
 
 from nfit import load_mantid_mdhisto_nxs
-from nfit.mdhisto import MDHistoAxis
+from nfit.mdhisto import MDHistoAxis, MDHistoData
 
 
 def test_energy_axis_migrates_legacy_deltae_unit_to_mev():
@@ -15,6 +17,31 @@ def test_energy_axis_migrates_legacy_deltae_unit_to_mev():
 
     assert axis.name == "DeltaE"
     assert axis.units == "meV"
+
+
+def test_mdhisto_numeric_payload_requires_explicit_mutable_copy():
+    axis = MDHistoAxis("DeltaE", np.array([0.0, 1.0]), "meV", "energy")
+    data = MDHistoData(
+        axes=(axis,),
+        signal=np.array([1.0]),
+        errors=np.array([0.1]),
+        mask=np.array([False]),
+        num_events=np.array([2.0]),
+    )
+
+    assert not data.signal.flags.writeable
+    assert not data.axes[0].values.flags.writeable
+    editable = data.mutable_copy()
+    editable.signal[0] = 4.0
+    replacement = editable.immutable_copy()
+
+    assert data.signal[0] == 1.0
+    assert replacement.signal[0] == 4.0
+    assert not replacement.signal.flags.writeable
+
+    restored = copy.deepcopy(data).immutable_copy()
+    assert not restored.signal.flags.writeable
+    assert not restored.axes[0].values.flags.writeable
 
 
 def test_load_mantid_mdhisto_nxs_reads_axes_and_arrays(tmp_path):

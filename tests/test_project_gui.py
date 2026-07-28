@@ -131,6 +131,26 @@ def test_project_helpers_name_import_and_round_trip(tmp_path):
     assert loaded.data_groups[3].datasets[0].name == "scan"
 
 
+def test_project_save_rejects_replacement_arrays_not_stored_in_source(tmp_path):
+    source = tmp_path / "scan.npz"
+    source.touch()
+    dataset = DatasetEntry(
+        "scan",
+        _grid_mdhisto_data(),
+        kind="mdhisto",
+        metadata={"source_file": str(source)},
+    )
+    editable = dataset.data.mutable_copy()
+    editable.signal.flat[0] += 1.0
+    dataset.replace_data(editable)
+
+    with pytest.raises(TypeError, match="portable \\.npz"):
+        save_project(
+            NfitProject([DataGroup("Workspace1", datasets=[dataset])]),
+            tmp_path / "project.nfit",
+        )
+
+
 def test_legacy_bragg_analysis_drops_obsolete_edge_policy_on_load():
     analysis = project_gui._analysis_from_dict(
         {
@@ -232,7 +252,7 @@ def test_import_and_reenable_advance_to_evaluated_current_state(
     assert current.metadata["model_evaluation_status"] == "no compatible model prediction"
 
     dataset = group.datasets[0]
-    dataset.data = _grid_mdhisto_data()
+    dataset.replace_data(_grid_mdhisto_data())
     dataset.enabled = False
     explorer._refresh_tree(select_group=group, select_dataset=dataset)
     explorer.enabled_check.setChecked(True)
@@ -1691,7 +1711,9 @@ def test_slice_viewer_datasets_attach_current_model_before_fit():
 
 def test_slice_viewer_unmasked_model_evaluates_masked_grid_bins():
     dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
-    dataset.data.mask[0, 0] = True
+    editable = dataset.data.mutable_copy()
+    editable.mask[0, 0] = True
+    dataset.replace_data(editable)
     group = DataGroup("Datagroup1", datasets=[dataset])
     model = create_model_component(group)
     model.parameters["constant"] = 7.0
@@ -1751,7 +1773,7 @@ def test_point_fit_overlay_is_only_mapped_to_its_fitted_channel():
         ],
     )
     group = DataGroup("Datagroup1")
-    project_gui.attach_fit_channels_to_view(
+    view = project_gui.attach_fit_channels_to_view(
         group,
         "scan",
         view,
@@ -1810,7 +1832,7 @@ def test_legacy_magnetization_fit_infers_saved_susceptibility_channel():
     config = project_gui.point_list_config(dataset)["susceptibility"]
     config.update({"enabled": True, "moment": "Moment"})
 
-    project_gui.attach_fit_channels_to_view(
+    view = project_gui.attach_fit_channels_to_view(
         group,
         "scan",
         view,
@@ -3618,7 +3640,9 @@ def test_dataset_details_text_summarizes_axes_source_and_metadata(tmp_path, monk
 
 def test_dataset_details_fit_bins_include_file_dataset_and_group_masks():
     data = _grid_mdhisto_data()
-    data.mask[0, 0] = True
+    editable = data.mutable_copy()
+    editable.mask[0, 0] = True
+    data = editable.immutable_copy()
     dataset = DatasetEntry("scan", data, kind="mdhisto")
     mask = create_mask(dataset, type="box")
     mask.parameters["axes"] = ["H", "E"]
@@ -3827,13 +3851,16 @@ def test_rebin_settings_paste_rejects_incompatible_axis_count():
 
 def test_saved_nfit_npz_import_restores_mdhisto_axes_data_and_context(tmp_path):
     data = _grid_mdhisto_data()
-    data.metadata["signal_semantics"] = "density"
-    data.coordinate_system = 2
-    data.visual_normalization = 1
-    data.mask[0, 0] = True
-    data.signal[0, 0] = np.nan
-    data.errors[0, 0] = np.nan
-    data.num_events[0, 0] = 0.0
+    editable = data.mutable_copy()
+    editable.mask[0, 0] = True
+    editable.signal[0, 0] = np.nan
+    editable.errors[0, 0] = np.nan
+    editable.num_events[0, 0] = 0.0
+    data = editable.immutable_copy().with_updates(
+        coordinate_system=2,
+        visual_normalization=1,
+        metadata={**data.metadata, "signal_semantics": "density"},
+    )
     dataset = DatasetEntry("scan", data, kind="mdhisto")
     dataset.parameters["temperature"] = 1.8
     dataset.parameters["magnetic_field"] = {"magnitude_T": 4.0, "direction": [0.0, 0.0, 1.0], "frame": "uvw"}
@@ -3898,8 +3925,8 @@ def test_dataset_signal_semantics_control_is_documented_and_updates_data(monkeyp
     assert "Bin-integral" in combo.toolTip()
     combo.setCurrentIndex(combo.findData("density"))
 
-    assert data.metadata["signal_semantics"] == "density"
-    assert data.metadata["signal_semantics_source"] == "user_selected"
+    assert dataset.data.metadata["signal_semantics"] == "density"
+    assert dataset.data.metadata["signal_semantics_source"] == "user_selected"
 
 
 def test_dataset_rebin_edits_preserve_details_scroll_position(monkeypatch):
@@ -5300,10 +5327,10 @@ def test_rebin_basis_survives_lazy_dataset_reload():
 
     # Project reload and fit-history changes can temporarily leave a
     # file-backed dataset unloaded before it is drawn again.
-    dataset.data = None
+    dataset.unload_data()
     assert dataset_rebin_config(dataset)["axes"] == saved_axes
 
-    dataset.data = data
+    dataset.replace_data(data)
     restored = dataset_rebin_config(dataset)
     assert restored["axes"] == saved_axes
 
@@ -6492,6 +6519,20 @@ def test_overlay_cache_invalidates_when_rebin_basis_changes():
     assert project_gui._MODEL_OVERLAY_CACHE[id(group)]["compiled"] is not compiled_first
 
 
+def test_overlay_cache_invalidates_when_dataset_data_is_replaced():
+    project_gui._MODEL_OVERLAY_CACHE.clear()
+    group, dataset, _model = _rpa_overlay_group()
+    project_gui.current_model_channels(group)
+    compiled_first = project_gui._MODEL_OVERLAY_CACHE[id(group)]["compiled"]
+
+    editable = dataset.data.mutable_copy()
+    editable.signal.flat[0] += 1.0
+    dataset.replace_data(editable)
+    project_gui.current_model_channels(group)
+
+    assert project_gui._MODEL_OVERLAY_CACHE[id(group)]["compiled"] is not compiled_first
+
+
 def test_dataset_activation_evaluation_creates_current_state_with_channels(
     monkeypatch,
 ):
@@ -6523,7 +6564,9 @@ def test_overlay_evaluates_only_valid_points(monkeypatch):
     group, dataset, _model = _rpa_overlay_group()
     # Mask one grid cell; the overlay there must be NaN, and the model must not
     # be evaluated over the masked point.
-    dataset.data.mask[0, 0] = True
+    editable = dataset.data.mutable_copy()
+    editable.mask[0, 0] = True
+    dataset.replace_data(editable)
 
     seen_sizes = []
     original = project_gui.evaluate_problem_model
@@ -6595,6 +6638,51 @@ def test_viewer_view_cache_reuses_and_invalidates():
     assert project_gui._viewer_data_before_scale(dataset) is third
 
 
+def test_viewer_lazy_loads_once_then_reuses_canonical_data(monkeypatch, tmp_path):
+    project_gui._VIEWER_VIEW_CACHE.clear()
+    source = tmp_path / "scan.nxs"
+    source.write_bytes(b"placeholder")
+    dataset = DatasetEntry(
+        "scan",
+        None,
+        kind="nxs",
+        metadata={"source_file": str(source), "import_status": "pending"},
+    )
+    calls = []
+
+    def load(path, *, copy_metadata=False):
+        calls.append((path, copy_metadata))
+        return _grid_mdhisto_data()
+
+    monkeypatch.setattr(project_gui, "load_mantid_mdhisto_nxs", load)
+    first = project_gui._viewer_data_before_scale(dataset)
+    second = project_gui._viewer_data_before_scale(dataset)
+
+    assert calls == [(source, False)]
+    assert dataset.data_revision == 1
+    assert dataset.data_matches_source
+    assert second is first
+
+
+def test_viewer_view_cache_invalidates_when_dataset_data_is_replaced():
+    project_gui._VIEWER_VIEW_CACHE.clear()
+    dataset = DatasetEntry(
+        "scan",
+        _grid_mdhisto_data(),
+        kind="mdhisto",
+        data_type="single_crystal_inelastic",
+    )
+    first = project_gui._viewer_data_before_scale(dataset)
+
+    editable = dataset.data.mutable_copy()
+    editable.signal.flat[0] += 1.0
+    dataset.replace_data(editable)
+    second = project_gui._viewer_data_before_scale(dataset)
+
+    assert second is not first
+    assert second.signal.flat[0] == pytest.approx(editable.signal.flat[0])
+
+
 def test_viewer_view_cache_uses_lru_eviction_instead_of_clear_all(monkeypatch):
     project_gui._VIEWER_VIEW_CACHE.clear()
     monkeypatch.setattr(project_gui, "_VIEWER_VIEW_CACHE_LIMIT", 3)
@@ -6609,9 +6697,9 @@ def test_viewer_view_cache_uses_lru_eviction_instead_of_clear_all(monkeypatch):
     project_gui._viewer_data_before_scale(datasets[3])
 
     assert list(project_gui._VIEWER_VIEW_CACHE) == [
-        id(datasets[2]),
-        id(datasets[0]),
-        id(datasets[3]),
+        datasets[2].id,
+        datasets[0].id,
+        datasets[3].id,
     ]
 
 
@@ -6741,8 +6829,10 @@ def test_apply_masks_switches_to_rebin_progress_when_rebinning(monkeypatch):
 
 def test_mdhisto_fit_bin_count_matches_point_based_count():
     data = _grid_mdhisto_data()
-    data.mask[0, 0] = True
-    data.signal[1, 1] = np.nan
+    editable = data.mutable_copy()
+    editable.mask[0, 0] = True
+    editable.signal[1, 1] = np.nan
+    data = editable.immutable_copy()
     dataset = DatasetEntry("scan", data, kind="mdhisto", data_type="single_crystal_inelastic")
     DataGroup("Datagroup1", datasets=[dataset])
     view = project_gui.dataset_for_slice_viewer(dataset)

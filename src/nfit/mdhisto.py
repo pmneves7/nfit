@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import copy
+from dataclasses import InitVar, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -14,23 +15,59 @@ FloatArray = NDArray[np.float64]
 BoolArray = NDArray[np.bool_]
 
 
-@dataclass
+@dataclass(frozen=True)
 class MDHistoChannel:
     values: FloatArray
     errors: FloatArray | None = None
     label: str = ""
     unit: str = ""
     quantity_type: str = "unknown"
+    _mutable: InitVar[bool] = False
+    _arrays_mutable: bool = field(default=False, init=False, repr=False, compare=False)
 
-    def __post_init__(self) -> None:
-        self.values = np.asarray(self.values, dtype=float)
+    def __post_init__(self, _mutable: bool) -> None:
+        object.__setattr__(
+            self,
+            "values",
+            _as_array(self.values, dtype=float, mutable=_mutable),
+        )
         if self.errors is not None:
-            self.errors = np.asarray(self.errors, dtype=float)
+            object.__setattr__(
+                self,
+                "errors",
+                _as_array(self.errors, dtype=float, mutable=_mutable),
+            )
         from .quantities import QUANTITY_TYPES, normalize_unit
 
-        self.unit = normalize_unit(self.unit)
+        object.__setattr__(self, "unit", normalize_unit(self.unit))
         if self.quantity_type not in QUANTITY_TYPES:
             raise ValueError(f"unknown channel quantity type {self.quantity_type!r}")
+        object.__setattr__(self, "_arrays_mutable", bool(_mutable))
+
+    def mutable_copy(self) -> MDHistoChannel:
+        return MDHistoChannel(
+            self.values,
+            self.errors,
+            self.label,
+            self.unit,
+            self.quantity_type,
+            _mutable=True,
+        )
+
+    def immutable_copy(self) -> MDHistoChannel:
+        if (
+            not self._arrays_mutable
+            and not self.values.flags.writeable
+            and (self.errors is None or not self.errors.flags.writeable)
+        ):
+            return self
+        return MDHistoChannel(
+            self.values,
+            self.errors,
+            self.label,
+            self.unit,
+            self.quantity_type,
+        )
 
 
 @dataclass(frozen=True)
@@ -48,6 +85,12 @@ class MDHistoAxis:
     def __post_init__(self) -> None:
         """Normalize legacy metadata without changing stable axis names."""
 
+        object.__setattr__(
+            self,
+            "values",
+            _as_array(self.values, dtype=float, mutable=False),
+        )
+        object.__setattr__(self, "metadata", dict(self.metadata))
         compact_name = self.name.casefold().replace("_", "").replace(" ", "")
         compact_unit = self.units.casefold().replace("_", "").replace(" ", "")
         if (
@@ -69,8 +112,23 @@ class MDHistoAxis:
 
         return infer_axis_role(self.name, units=self.units, kind=self.kind)
 
+    def immutable_copy(self) -> MDHistoAxis:
+        """Return an axis with a read-only coordinate array."""
 
-@dataclass
+        if not self.values.flags.writeable:
+            return self
+        return MDHistoAxis(
+            self.name,
+            self.values,
+            self.units,
+            self.kind,
+            self.frame,
+            self.path,
+            copy.deepcopy(self.metadata),
+        )
+
+
+@dataclass(frozen=True)
 class MDHistoData:
     """Imported binned reduced data from a Mantid MDHistoWorkspace.
 
@@ -88,12 +146,45 @@ class MDHistoData:
     visual_normalization: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     auxiliary_channels: dict[str, MDHistoChannel] = field(default_factory=dict)
+    _mutable: InitVar[bool] = False
+    _arrays_mutable: bool = field(default=False, init=False, repr=False, compare=False)
 
-    def __post_init__(self) -> None:
-        self.signal = np.asarray(self.signal, dtype=float)
-        self.errors = np.asarray(self.errors, dtype=float)
-        self.mask = np.asarray(self.mask, dtype=bool)
-        self.num_events = np.asarray(self.num_events, dtype=float)
+    def __post_init__(self, _mutable: bool) -> None:
+        object.__setattr__(
+            self,
+            "signal",
+            _as_array(self.signal, dtype=float, mutable=_mutable),
+        )
+        object.__setattr__(
+            self,
+            "errors",
+            _as_array(self.errors, dtype=float, mutable=_mutable),
+        )
+        object.__setattr__(
+            self,
+            "mask",
+            _as_array(self.mask, dtype=bool, mutable=_mutable),
+        )
+        object.__setattr__(
+            self,
+            "num_events",
+            _as_array(self.num_events, dtype=float, mutable=_mutable),
+        )
+        object.__setattr__(
+            self,
+            "axes",
+            tuple(axis.immutable_copy() for axis in self.axes),
+        )
+        object.__setattr__(self, "metadata", dict(self.metadata))
+        channels = {
+            str(key): (
+                channel.mutable_copy()
+                if _mutable
+                else channel.immutable_copy()
+            )
+            for key, channel in self.auxiliary_channels.items()
+        }
+        object.__setattr__(self, "auxiliary_channels", channels)
 
         shape = self.signal.shape
         for name in ("errors", "mask", "num_events"):
@@ -114,6 +205,7 @@ class MDHistoData:
                 raise ValueError(f"auxiliary channel {key!r} shape does not match signal shape")
             if channel.errors is not None and channel.errors.shape != shape:
                 raise ValueError(f"auxiliary channel {key!r} error shape does not match signal shape")
+        object.__setattr__(self, "_arrays_mutable", bool(_mutable))
 
     @property
     def shape(self) -> tuple[int, ...]:
@@ -134,6 +226,69 @@ class MDHistoData:
         if name == "signal":
             return str(self.metadata.get("signal_quantity_type", "unknown"))
         return self.auxiliary_channels[name].quantity_type
+
+    def mutable_copy(self) -> MDHistoData:
+        """Return an isolated copy whose channel arrays may be edited in place."""
+
+        return MDHistoData(
+            axes=self.axes,
+            signal=self.signal,
+            errors=self.errors,
+            mask=self.mask,
+            num_events=self.num_events,
+            coordinate_system=self.coordinate_system,
+            visual_normalization=self.visual_normalization,
+            metadata=copy.deepcopy(self.metadata),
+            auxiliary_channels=self.auxiliary_channels,
+            _mutable=True,
+        )
+
+    def immutable_copy(self) -> MDHistoData:
+        """Return an immutable copy, or ``self`` when already immutable."""
+
+        arrays = (self.signal, self.errors, self.mask, self.num_events)
+        channels_are_immutable = all(
+            channel.immutable_copy() is channel
+            for channel in self.auxiliary_channels.values()
+        )
+        if (
+            not self._arrays_mutable
+            and not any(array.flags.writeable for array in arrays)
+            and channels_are_immutable
+            and all(axis.immutable_copy() is axis for axis in self.axes)
+        ):
+            return self
+        return self.with_updates()
+
+    def with_updates(self, **changes: Any) -> MDHistoData:
+        """Return an immutable container with selected fields replaced."""
+
+        values = {
+            "axes": self.axes,
+            "signal": self.signal,
+            "errors": self.errors,
+            "mask": self.mask,
+            "num_events": self.num_events,
+            "coordinate_system": self.coordinate_system,
+            "visual_normalization": self.visual_normalization,
+            "metadata": self.metadata,
+            "auxiliary_channels": self.auxiliary_channels,
+        }
+        unknown = set(changes) - set(values)
+        if unknown:
+            raise TypeError(f"unknown MDHistoData field(s): {', '.join(sorted(unknown))}")
+        values.update(changes)
+        return MDHistoData(**values)
+
+
+def _as_array(value: Any, *, dtype: Any, mutable: bool) -> np.ndarray:
+    arr = np.asarray(value, dtype=dtype)
+    if mutable:
+        return np.array(arr, dtype=dtype, copy=True)
+    if arr.flags.writeable:
+        arr = np.array(arr, dtype=dtype, copy=True)
+    arr.setflags(write=False)
+    return arr
 
 
 def mdhisto_measured_bins(data: MDHistoData) -> BoolArray:

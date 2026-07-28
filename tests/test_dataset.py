@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from nfit import PointData4D, from_arrays
+from nfit import PointData4D, PointListData, from_arrays
 
 
 def test_point_data_valid_masks_nonfinite_and_bad_sigma():
@@ -74,3 +74,54 @@ def test_magnetic_field_shape_validation():
         intensity=np.ones(2), sigma=np.ones(2), magnetic_field=[0.0, 0.0, 1.5],
     )
     assert data.magnetic_field.shape == (3,)
+
+
+def test_point_data_numeric_payload_requires_explicit_mutable_copy():
+    data = PointData4D(
+        H=[0.0],
+        K=[0.0],
+        L=[0.0],
+        E=[1.0],
+        intensity=[2.0],
+        sigma=[0.1],
+        temperature=[10.0],
+        magnetic_field=[[0.0, 0.0, 1.0]],
+    )
+
+    for array in (
+        data.H,
+        data.intensity,
+        data.mask,
+        data.temperature,
+        data.magnetic_field,
+    ):
+        assert not array.flags.writeable
+    with pytest.raises(ValueError, match="read-only"):
+        data.intensity[0] = 3.0
+
+    editable = data.mutable_copy()
+    editable.intensity[0] = 3.0
+    editable.temperature[0] = 20.0
+    replacement = editable.immutable_copy()
+
+    assert data.intensity[0] == 2.0
+    assert replacement.intensity[0] == 3.0
+    assert replacement.temperature[0] == 20.0
+    assert not replacement.intensity.flags.writeable
+
+
+def test_point_list_columns_require_explicit_mutable_copy():
+    data = PointListData(
+        columns={"temperature": [10.0], "moment": [1.0]},
+        coordinate_names=["temperature"],
+        channels=[{"label": "M", "value": "moment", "error": None}],
+    )
+
+    assert not data.columns["moment"].flags.writeable
+    editable = data.mutable_copy()
+    editable.columns["moment"][0] = 2.0
+    replacement = editable.immutable_copy()
+
+    assert data.columns["moment"][0] == 1.0
+    assert replacement.columns["moment"][0] == 2.0
+    assert not replacement.columns["moment"].flags.writeable

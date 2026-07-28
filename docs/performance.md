@@ -17,6 +17,10 @@ so source files may exceed RAM. Explicit output limits permit one pass;
 automatic limits require a discovery pass. The batch target bounds temporary
 event storage but cannot reduce the persistent output arrays.
 
+File-backed datasets are loaded on first use and retained by their
+`DatasetEntry`; viewers, analyses, and composites share that single loading
+path. nfit does not keep a second raw-array cache.
+
 Before a 4D MDEvent reduction, the GUI estimates peak memory from the output
 bin counts and normalization arrays. It warns above 70% of available RAM. The
 lower-level API rejects an over-budget allocation unless the caller explicitly
@@ -24,6 +28,20 @@ disables enforcement.
 
 Use `benchmarks/benchmark_rebin.py` to measure representative grids on the
 target machine.
+
+## GUI and analysis caches
+
+nfit keeps separate bounded caches for prepared point tables, viewer-ready
+data, group composites, compiled model overlays, and analysis fingerprints.
+They cache different stages and are not duplicate copies of one result.
+Entries use stable dataset IDs plus a data revision and the relevant masks,
+rebin settings, backgrounds, or model structure. `DatasetEntry.replace_data`
+advances the revision; changing only a model parameter can still reuse compiled
+geometry.
+
+Cache entries are process-local and evicted by least-recent use. They are
+performance aids, not stored scientific state: recomputation after eviction
+must produce the same result.
 
 ## Heisenberg RPA
 

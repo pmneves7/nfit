@@ -601,7 +601,7 @@ def test_fit_channels_attach_to_point_list_view():
     assert entry.channels["mag"]["kind"] == "points"
 
     view = dataset_for_slice_viewer(dataset)
-    attach_fit_channels_to_view(group, "mag", view)
+    view = attach_fit_channels_to_view(group, "mag", view)
     assert "fit" in view.channel_labels
     assert view.channel_values("fit") == pytest.approx(np.full(8, 2.0), abs=1e-6)
     assert "residual" in view.channel_labels
@@ -634,8 +634,8 @@ def test_project_round_trip_preserves_fit_channels_and_model_fields(tmp_path):
 
     # replace in-memory data with a lazy source reference so the project saves
     dataset = group.get_dataset("first")
-    dataset.data = None
     dataset.metadata["source_file"] = str(tmp_path / "missing.nxs")
+    dataset.unload_data()
 
     path = tmp_path / "project.json"
     save_project(NfitProject([group]), path)
@@ -1344,7 +1344,7 @@ def test_dataset_magnetic_field_validator_gives_actionable_error():
     points = _rpa_points(5.0, 3)
     with pytest.raises(ValueError, match="Conditions"):
         _dataset_magnetic_field(points)
-    points.magnetic_field = np.array([0.0, 0.0, 1.5])
+    points = points.with_updates(magnetic_field=np.array([0.0, 0.0, 1.5]))
     np.testing.assert_array_equal(
         _dataset_magnetic_field(points), np.array([0.0, 0.0, 1.5])
     )
@@ -1545,7 +1545,7 @@ def test_zeeman_component_requires_field_and_reduces_to_scalar_at_g_zero():
 
     field = magnetic_field_vector(4.0, [1, 1, 1], "uvw", crystal["lattice"])
     points = _tensor_points(6, n=100)
-    points.magnetic_field = field
+    points = points.with_updates(magnetic_field=field)
     compiled = compile_fit_problem(
         [component], [FitDatasetInput("d", points, data_type="single_crystal_inelastic")]
     )
@@ -1756,7 +1756,11 @@ def test_zeeman_closure_smoke():
         },
     )
     points = _tensor_points(9, n=60)
-    points.magnetic_field = magnetic_field_vector(4.0, [0, 0, 1], "uvw", crystal["lattice"])
+    points = points.with_updates(
+        magnetic_field=magnetic_field_vector(
+            4.0, [0, 0, 1], "uvw", crystal["lattice"]
+        )
+    )
     values = _evaluate(component, points)
     assert np.all(np.isfinite(values))
     assert np.max(np.abs(values)) < 1e5

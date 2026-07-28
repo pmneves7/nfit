@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import weakref
 from collections import OrderedDict
 from dataclasses import asdict, fields, is_dataclass
 from pathlib import Path
@@ -11,9 +12,12 @@ import numpy as np
 
 from ..pipeline import DataGroup, DatasetEntry
 
-_DATASET_FINGERPRINT_CACHE: OrderedDict[int, tuple[Any, str]] = OrderedDict()
+_DATASET_FINGERPRINT_CACHE: OrderedDict[str, tuple[Any, str]] = OrderedDict()
 _DATASET_FINGERPRINT_CACHE_LIMIT = 128
-_DATA_ARRAY_HASH_CACHE: OrderedDict[int, tuple[Any, dict[str, Any]]] = OrderedDict()
+_DATA_ARRAY_HASH_CACHE: OrderedDict[
+    int,
+    tuple[weakref.ReferenceType[Any], Any, dict[str, Any]],
+] = OrderedDict()
 _DATA_ARRAY_HASH_CACHE_LIMIT = 64
 
 
@@ -43,7 +47,11 @@ def _identity_signature(value: Any) -> Any:
 def _fingerprint_cache_signature(dataset: DatasetEntry, group: DataGroup) -> Any:
     source = dataset.metadata.get("source_file")
     source_state = None
-    if source and Path(source).exists():
+    if (
+        source
+        and Path(source).exists()
+        and (dataset.data is None or dataset.data_matches_source)
+    ):
         stat = Path(source).stat()
         source_state = (str(Path(source).resolve()), stat.st_size, stat.st_mtime_ns)
     data = dataset.data
@@ -77,7 +85,8 @@ def _fingerprint_cache_signature(dataset: DatasetEntry, group: DataGroup) -> Any
     }
     return (
         source_state,
-        id(data),
+        dataset.data_cache_token,
+        dataset.data_matches_source,
         tuple(arrays),
         dataset.id,
         dataset.kind,
@@ -101,9 +110,9 @@ def _dataset_array_hashes(data: Any) -> dict[str, Any]:
     key = id(data)
     signature = _identity_signature(data)
     cached = _DATA_ARRAY_HASH_CACHE.get(key)
-    if cached is not None and cached[0] == signature:
+    if cached is not None and cached[0]() is data and cached[1] == signature:
         _DATA_ARRAY_HASH_CACHE.move_to_end(key)
-        return cached[1]
+        return cached[2]
     arrays: dict[str, Any] = {}
     for name in (
         "signal",
@@ -123,7 +132,7 @@ def _dataset_array_hashes(data: Any) -> dict[str, Any]:
     columns = getattr(data, "columns", None)
     if isinstance(columns, dict):
         arrays["columns"] = {name: array_hash(value) for name, value in columns.items()}
-    _DATA_ARRAY_HASH_CACHE[key] = (signature, arrays)
+    _DATA_ARRAY_HASH_CACHE[key] = (weakref.ref(data), signature, arrays)
     _DATA_ARRAY_HASH_CACHE.move_to_end(key)
     while len(_DATA_ARRAY_HASH_CACHE) > _DATA_ARRAY_HASH_CACHE_LIMIT:
         _DATA_ARRAY_HASH_CACHE.popitem(last=False)
@@ -178,7 +187,7 @@ def file_fingerprint(path: str | Path, *, content_hash: bool = False) -> dict[st
 
 
 def dataset_entry_fingerprint(dataset: DatasetEntry, group: DataGroup) -> str:
-    cache_key = id(dataset)
+    cache_key = dataset.id
     cache_signature = _fingerprint_cache_signature(dataset, group)
     cached = _DATASET_FINGERPRINT_CACHE.get(cache_key)
     if cached is not None and cached[0] == cache_signature:
@@ -186,7 +195,11 @@ def dataset_entry_fingerprint(dataset: DatasetEntry, group: DataGroup) -> str:
         return cached[1]
     source = dataset.metadata.get("source_file")
     source_state = None
-    if source and Path(source).exists():
+    if (
+        source
+        and Path(source).exists()
+        and (dataset.data is None or dataset.data_matches_source)
+    ):
         source_state = file_fingerprint(
             source, content_hash=bool(dataset.metadata.get("derived_from_analysis"))
         )

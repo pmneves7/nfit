@@ -64,7 +64,17 @@ def test_bose_separation_recovers_components_and_propagates_variance():
 def test_bose_separation_rejects_different_binning():
     first = _histogram(np.ones((2, 1, 1, 3)))
     second = _histogram(np.ones((2, 1, 1, 3)))
-    second.axes = (*second.axes[:-1], MDHistoAxis("DeltaE", np.array([-2.0, -1.0, 0.0, 1.0]), "meV", "energy"))
+    second = second.with_updates(
+        axes=(
+            *second.axes[:-1],
+            MDHistoAxis(
+                "DeltaE",
+                np.array([-2.0, -1.0, 0.0, 1.0]),
+                "meV",
+                "energy",
+            ),
+        ),
+    )
     with np.testing.assert_raises_regex(ValueError, "identical"):
         separate_bose_elastic(first, second, first_temperature_K=10.0, second_temperature_K=50.0)
 
@@ -128,9 +138,17 @@ def test_spherical_average_uses_voxel_volume_not_inverse_variance():
 
 def test_spherical_average_converts_bin_integrals_to_density():
     density = _histogram(np.arange(6.0).reshape(2, 1, 1, 3) + 1.0)
-    density.axes = (
-        MDHistoAxis("H", np.array([-0.5, 0.5, 2.5]), "r.l.u.", "momentum", frame="HKL"),
-        *density.axes[1:],
+    density = density.with_updates(
+        axes=(
+            MDHistoAxis(
+                "H",
+                np.array([-0.5, 0.5, 2.5]),
+                "r.l.u.",
+                "momentum",
+                frame="HKL",
+            ),
+            *density.axes[1:],
+        ),
     )
     context = AnalysisContext(
         "group",

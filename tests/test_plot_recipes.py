@@ -38,21 +38,26 @@ def test_plot_entries_persist_with_the_project_schema():
 
 
 def test_waterfall_recipe_renders_and_persists_multiple_dataset_sources():
-    first = _data()
-    first.signal = first.signal.reshape(1, 4)
-    first.errors = first.errors.reshape(1, 4)
-    first.mask = first.mask.reshape(1, 4)
-    first.num_events = first.num_events.reshape(1, 4)
-    first.axes = (
+    source_first = _data()
+    axes = (
         MDHistoAxis("fixed", np.array([-0.5, 0.5]), "", "unknown"),
         MDHistoAxis("Q", np.arange(5.0), "1/angstrom", "momentum"),
     )
-    second = _data()
-    second.signal = second.signal.reshape(1, 4)
-    second.errors = second.errors.reshape(1, 4)
-    second.mask = second.mask.reshape(1, 4)
-    second.num_events = second.num_events.reshape(1, 4)
-    second.axes = first.axes
+    first = source_first.with_updates(
+        signal=source_first.signal.reshape(1, 4),
+        errors=source_first.errors.reshape(1, 4),
+        mask=source_first.mask.reshape(1, 4),
+        num_events=source_first.num_events.reshape(1, 4),
+        axes=axes,
+    )
+    source_second = _data()
+    second = source_second.with_updates(
+        signal=source_second.signal.reshape(1, 4),
+        errors=source_second.errors.reshape(1, 4),
+        mask=source_second.mask.reshape(1, 4),
+        num_events=source_second.num_events.reshape(1, 4),
+        axes=axes,
+    )
     entry = new_plot_entry(
         "Cuts",
         "first",
@@ -87,7 +92,7 @@ def test_waterfall_recipe_renders_and_persists_multiple_dataset_sources():
 
 
 def test_fit_comparison_recipe_can_render_model_through_data_masks():
-    data = _data()
+    data = _data().mutable_copy()
     data.mask[0, 0] = True
     data.metadata["fit"] = np.full(data.shape, 2.0)
     data.metadata["residual"] = np.full(data.shape, -1.0)

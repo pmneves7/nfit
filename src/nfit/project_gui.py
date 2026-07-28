@@ -887,7 +887,7 @@ def set_dataset_source(dataset: DatasetEntry, path: str | Path) -> None:
     dataset.metadata["source_file"] = str(source)
     dataset.metadata["import_status"] = "pending"
     dataset.kind = source.suffix.lstrip(".").lower()
-    dataset.data = None
+    dataset.unload_data()
     if dataset.metadata.get("importer"):
         _load_registered_importer_dataset(dataset)
     elif data_type_container(dataset.data_type) == "point_list":
@@ -915,33 +915,33 @@ def set_dataset_data_type(
     )
     if chosen is not None:
         dataset.metadata["importer"] = chosen
-        dataset.data = None
+        dataset.unload_data()
         if dataset.metadata.get("source_file"):
             try:
                 _load_registered_importer_dataset(dataset)
             except Exception as exc:
-                dataset.data = None
+                dataset.unload_data()
                 dataset.metadata["import_status"] = "error"
                 dataset.metadata["import_error"] = str(exc)
     elif data_type_container(data_type) == "point_list":
         chosen = default_importer_for_data_type(data_type)
         if chosen is not None:
             dataset.metadata["importer"] = chosen
-        dataset.data = None
+        dataset.unload_data()
         if dataset.metadata.get("source_file"):
             # Reload with the new type's importer, but a mismatched importer must
             # not crash the type switch; record the error for the details panel.
             try:
                 _load_point_list_dataset(dataset)
             except Exception as exc:
-                dataset.data = None
+                dataset.unload_data()
                 dataset.metadata["import_status"] = "error"
                 dataset.metadata["import_error"] = str(exc)
     elif chosen is None:
         dataset.metadata.pop("importer", None)
         # Fall back to the lazy MDHisto/.nxs loader on next view.
         if not isinstance(dataset.data, MDHistoData):
-            dataset.data = None
+            dataset.unload_data()
             dataset.metadata["import_status"] = "pending"
 
 
@@ -964,7 +964,7 @@ def _load_registered_importer_dataset(
         source,
         options if isinstance(options, dict) else None,
     )
-    dataset.data = data
+    data = dataset.replace_data(data, source_backed=True)
     dataset.metadata["importer"] = importer_name
     dataset.metadata["import_status"] = "loaded"
     imported_parameters = data.metadata.get("dataset_parameters")
@@ -1079,7 +1079,7 @@ def point_list_config(dataset: DatasetEntry) -> dict[str, Any]:
     return config
 
 
-_PREPARED_POINT_LIST_CACHE: OrderedDict[int, tuple[str, PointListData]] = OrderedDict()
+_PREPARED_POINT_LIST_CACHE: OrderedDict[str, tuple[str, PointListData]] = OrderedDict()
 _PREPARED_POINT_LIST_CACHE_LIMIT = 16
 
 
@@ -1089,8 +1089,12 @@ def _prepared_point_list_signature(dataset: DatasetEntry) -> str:
     data = dataset.data
     columns = getattr(data, "columns", {})
     payload = (
-        id(data),
+        dataset.data_cache_token,
         tuple((name, id(values), np.asarray(values).shape, str(np.asarray(values).dtype)) for name, values in columns.items()),
+        repr(getattr(data, "units", {})),
+        repr(getattr(data, "coordinate_names", [])),
+        repr(getattr(data, "channels", [])),
+        repr(getattr(data, "quantity_types", {})),
         repr(dataset.parameters),
         repr(dataset.transforms),
         dataset.data_type,
@@ -1110,7 +1114,7 @@ def prepared_point_list_data(dataset: DatasetEntry) -> PointListData:
 
     if not isinstance(dataset.data, PointListData):
         raise TypeError("dataset does not contain PointListData")
-    cache_key = id(dataset)
+    cache_key = dataset.id
     signature = _prepared_point_list_signature(dataset)
     cached = _PREPARED_POINT_LIST_CACHE.get(cache_key)
     if cached is not None and cached[0] == signature:
@@ -2926,8 +2930,12 @@ def _composite_reference_data(group: DataGroup) -> Any | None:
 
 
 def _ensure_dataset_data_loaded(dataset: DatasetEntry) -> Any:
+    """Return canonical loaded data, using one path for all lazy consumers."""
+
     if dataset.data is not None:
         return dataset.data
+    if dataset.kind == "raw_dgs_nexus":
+        return None
     if dataset.metadata.get("importer"):
         loaded = _load_registered_importer_dataset(dataset)
         if loaded is not None:
@@ -2941,9 +2949,11 @@ def _ensure_dataset_data_loaded(dataset: DatasetEntry) -> Any:
         if Path(source).suffix.lower() == ".npz":
             loaded, parameters = _load_nfit_dataset_file(Path(source))
             dataset.parameters.update(parameters)
+        elif dataset.kind == "mdevent":
+            loaded = load_mdevent_run_points(dataset)
         else:
             loaded = load_mantid_mdhisto_nxs(Path(source), copy_metadata=False)
-        dataset.data = loaded
+        loaded = dataset.replace_data(loaded, source_backed=True)
         dataset.kind = dataset.kind or Path(source).suffix.lstrip(".").lower()
         dataset.metadata["import_status"] = "loaded"
         return loaded
@@ -2969,7 +2979,7 @@ def _composite_cache_signature(group: DataGroup) -> str:
         [
             [
                 dataset.name,
-                id(dataset.data),
+                dataset.data_cache_token,
                 dataset.data_type,
                 dataset.kind,
                 bool(dataset.enabled),
@@ -2988,7 +2998,7 @@ def _composite_cache_signature(group: DataGroup) -> str:
                 float(background.scale),
                 background.interpolation,
                 (
-                    id(background.source_entry.data)
+                    background.source_entry.data_cache_token
                     if background.source_entry is not None
                     else None
                 ),
@@ -3530,7 +3540,7 @@ def slice_viewer_datasets(
             progress_callback=progress_callback,
         )
         if view_data is not None:
-            attach_fit_channels_to_view(
+            view_data = attach_fit_channels_to_view(
                 group,
                 dataset.name,
                 view_data,
@@ -3716,13 +3726,13 @@ def _apply_kinematic_normalization_to_view(
 def _apply_kinematic_normalization_to_points(
     dataset: DatasetEntry,
     points: PointData4D,
-) -> None:
-    """Apply the same kinematic convention to fit points when needed."""
+) -> PointData4D:
+    """Return fit points in the selected kinematic convention."""
 
     if bool(dataset.parameters.get(KINEMATIC_KF_KI_INCLUDED_KEY, True)):
-        return
+        return points
     if points.metadata.get("nfit_kinematic_kf_ki_normalized"):
-        return
+        return points
     incident, final = _kinematic_energy_metadata(dataset, points.metadata)
     factor = _kinematic_kf_ki_factor(
         points.E,
@@ -3730,11 +3740,15 @@ def _apply_kinematic_normalization_to_points(
         final_energy_meV=final,
     )
     if factor is None:
-        return
-    points.intensity = np.asarray(points.intensity, dtype=float) * factor
-    points.sigma = np.asarray(points.sigma, dtype=float) * np.abs(factor)
-    points.metadata["nfit_kinematic_kf_ki_normalized"] = True
-    points.metadata["nfit_kinematic_kf_ki_source"] = "Ei" if incident is not None else "Ef"
+        return points
+    metadata = dict(points.metadata)
+    metadata["nfit_kinematic_kf_ki_normalized"] = True
+    metadata["nfit_kinematic_kf_ki_source"] = "Ei" if incident is not None else "Ef"
+    return points.with_updates(
+        intensity=np.asarray(points.intensity, dtype=float) * factor,
+        sigma=np.asarray(points.sigma, dtype=float) * np.abs(factor),
+        metadata=metadata,
+    )
 
 
 FIT_CHANNEL_NAMES = ("fit", "residual")
@@ -3771,8 +3785,7 @@ def fit_data_bundle(
 
     extra_masks = effective_dataset_masks(group, dataset)
     if isinstance(dataset.data, PointData4D):
-        points = copy.deepcopy(dataset.data)
-        _apply_sample_context_to_points(group, dataset, points)
+        points = _apply_sample_context_to_points(group, dataset, dataset.data)
         return FitDataBundle(dataset=dataset, view=dataset.data, points=points, grid_shape=None)
     if dataset.scale_factor_vary:
         raw_view = _viewer_data_before_scale(
@@ -3808,10 +3821,12 @@ def fit_data_bundle(
         points = _point_data_from_point_list_view(view)
     else:
         return None
-    _apply_sample_context_to_points(group, dataset, points)
+    points = _apply_sample_context_to_points(group, dataset, points)
     # Record the data type so evaluators can branch (e.g. bulk magnetization
     # vs inelastic intensity) without threading it through every call.
-    points.metadata.setdefault("data_type", dataset.data_type)
+    metadata = dict(points.metadata)
+    metadata.setdefault("data_type", dataset.data_type)
+    points = points.with_updates(metadata=metadata)
     return FitDataBundle(
         dataset=dataset,
         view=view,
@@ -4033,8 +4048,8 @@ def effective_dataset_field(
 
 def _apply_sample_context_to_points(
     group: DataGroup, dataset: DatasetEntry, points: PointData4D
-) -> None:
-    """Stamp per-dataset temperature, field, and lattice metadata onto fit points.
+) -> PointData4D:
+    """Return fit points with per-dataset temperature, field, and lattice context.
 
     Physics models read the sample temperature from ``PointData4D.temperature``
     and the applied field from ``PointData4D.magnetic_field`` (Cartesian
@@ -4044,16 +4059,19 @@ def _apply_sample_context_to_points(
 
     # Per-point temperature/field (e.g. an MPMS sweep) is the physics axis and
     # must not be overwritten by a scalar sample-environment override.
-    if not isinstance(points.temperature, np.ndarray):
+    temperature = points.temperature
+    magnetic_field = points.magnetic_field
+    metadata = dict(points.metadata)
+    if not isinstance(temperature, np.ndarray):
         override = effective_dataset_temperature(group, dataset)
         if override is not None:
-            points.temperature = override
-    if not (isinstance(points.magnetic_field, np.ndarray) and points.magnetic_field.ndim == 2):
+            temperature = override
+    if not (isinstance(magnetic_field, np.ndarray) and magnetic_field.ndim == 2):
         field_vector = effective_dataset_field(group, dataset)
         if field_vector is not None:
-            points.magnetic_field = field_vector
+            magnetic_field = field_vector
     if (
-        "rlu_to_inv_angstrom_matrix" not in points.metadata
+        "rlu_to_inv_angstrom_matrix" not in metadata
         and isinstance(group.lattice_parameters, dict)
         and all(key in group.lattice_parameters for key in ("a", "b", "c"))
     ):
@@ -4066,7 +4084,7 @@ def _apply_sample_context_to_points(
             float(lattice.get("beta", 90.0)),
             float(lattice.get("gamma", 90.0)),
         )
-        points.metadata["lattice_parameters"] = {
+        metadata["lattice_parameters"] = {
             "a": float(lattice["a"]),
             "b": float(lattice["b"]),
             "c": float(lattice["c"]),
@@ -4076,8 +4094,13 @@ def _apply_sample_context_to_points(
             "angle_units": "degree",
             "include_2pi": True,
         }
-        points.metadata["rlu_to_inv_angstrom_matrix"] = matrix.tolist()
-    _apply_kinematic_normalization_to_points(dataset, points)
+        metadata["rlu_to_inv_angstrom_matrix"] = matrix.tolist()
+    contextual = points.with_updates(
+        temperature=temperature,
+        magnetic_field=magnetic_field,
+        metadata=metadata,
+    )
+    return _apply_kinematic_normalization_to_points(dataset, contextual)
 
 
 def _point_data_from_mdhisto_view(data: MDHistoData) -> PointData4D:
@@ -4787,7 +4810,8 @@ def _overlay_cache_signature(group: DataGroup) -> str:
                 bool(dataset.enabled),
                 dataset.data_type,
                 dataset.kind,
-                id(dataset),
+                dataset.id,
+                dataset.data_cache_token,
                 float(dataset.fit_weight),
                 float(dataset.scale_factor),
                 bool(dataset.scale_factor_vary),
@@ -4923,6 +4947,8 @@ def current_model_channels(
         except Exception:
             return {}
         subsets = {}
+        # Lazy loading during fit-data preparation increments dataset revisions.
+        signature = _overlay_cache_signature(group)
         _lru_store(_MODEL_OVERLAY_CACHE, id(group), {
             "signature": signature,
             "compiled": compiled,
@@ -5749,8 +5775,8 @@ def attach_fit_channels_to_view(
     view: MDHistoData | PointListData,
     *,
     fallback_payload: dict[str, Any] | None = None,
-) -> None:
-    """Attach live-model or saved fit/residual channels to a viewer-ready dataset.
+) -> MDHistoData | PointListData:
+    """Return a view with live-model or saved fit/residual channels attached.
 
     Live current-model channels take precedence when available. Channels are
     only attached when their shape still matches the current view, so stale fits
@@ -5759,33 +5785,36 @@ def attach_fit_channels_to_view(
 
     payload = fallback_payload or latest_fit_channels(group, dataset_name)
     if payload is None:
-        return
+        return view
     arrays: dict[str, np.ndarray] = {}
     for channel_name in FIT_CHANNEL_NAMES:
         decoded = _fit_channel_array(payload.get(channel_name))
         if decoded is None:
-            return
+            return view
         arrays[channel_name] = decoded
     if isinstance(view, MDHistoData):
         if any(array.shape != view.shape for array in arrays.values()):
-            return
-        for channel_name, array in arrays.items():
-            view.metadata[channel_name] = array
-        return
+            return view
+        metadata = dict(view.metadata)
+        metadata.update(arrays)
+        return view.with_updates(metadata=metadata)
     if isinstance(view, PointListData):
         if any(array.shape != (view.size,) for array in arrays.values()):
-            return
+            return view
+        columns = dict(view.columns)
+        channels = [dict(channel) for channel in view.channels]
+        metadata = dict(view.metadata)
         existing = set(view.channel_labels)
         fit_channel = _point_fit_channel_label(group, dataset_name, view, payload)
         for channel_name, array in arrays.items():
-            view.columns[channel_name] = array
+            columns[channel_name] = array
             if channel_name not in existing:
-                view.channels.append(
+                channels.append(
                     {"label": channel_name, "value": channel_name, "error": None}
                 )
         for channel_name in FIT_CHANNEL_NAMES:
             key = f"viewer_{channel_name}_channel_map"
-            stored = view.metadata.get(key, {})
+            stored = metadata.get(key, {})
             mapping = dict(stored) if isinstance(stored, dict) else {}
             mapping = {
                 label: target
@@ -5795,9 +5824,15 @@ def attach_fit_channels_to_view(
             if fit_channel:
                 mapping[fit_channel] = channel_name
             if mapping:
-                view.metadata[key] = mapping
+                metadata[key] = mapping
             else:
-                view.metadata.pop(key, None)
+                metadata.pop(key, None)
+        return view.with_updates(
+            columns=columns,
+            channels=channels,
+            metadata=metadata,
+        )
+    return view
 
 
 def _point_fit_channel_label(
@@ -5879,7 +5914,7 @@ def _decode_float_array(payload: dict[str, Any]) -> np.ndarray:
 # result depends only on the dataset's data, rebin config, and masks (not on the
 # selection or model parameters), so it is cached and reused. The signature
 # excludes the dataset scale factor, which is applied cheaply afterward.
-_VIEWER_VIEW_CACHE: OrderedDict[int, tuple[str, Any]] = OrderedDict()
+_VIEWER_VIEW_CACHE: OrderedDict[str, tuple[str, Any]] = OrderedDict()
 _VIEWER_VIEW_CACHE_LIMIT = 8
 _COMPOSITE_DATA_CACHE: OrderedDict[int, tuple[str, Any]] = OrderedDict()
 _COMPOSITE_DATA_CACHE_LIMIT = 4
@@ -5902,7 +5937,7 @@ def _viewer_view_signature(
         else None
     )
     payload = [
-        id(dataset.data),
+        dataset.data_cache_token,
         dataset.data_type,
         dataset.kind,
         rebin,
@@ -5914,7 +5949,11 @@ def _viewer_view_signature(
                 bool(background.enabled),
                 float(background.scale),
                 background.interpolation,
-                id(background.source_entry.data) if background.source_entry is not None else None,
+                (
+                    background.source_entry.data_cache_token
+                    if background.source_entry is not None
+                    else None
+                ),
             ]
             for background in dataset.backgrounds
         ],
@@ -5930,7 +5969,7 @@ def _viewer_data_before_scale(
     force_masks: bool = True,
     progress_callback: Any | None = None,
 ) -> MDHistoData | PointListData | None:
-    key = id(dataset)
+    key = dataset.id
     signature = _viewer_view_signature(dataset, extra_masks)
     deferred_masks = _should_defer_dataset_masks(dataset, force_masks=force_masks)
     cached = _VIEWER_VIEW_CACHE.get(key)
@@ -5954,7 +5993,7 @@ def _viewer_data_before_scale(
         result = _apply_dataset_backgrounds(dataset, result)
     if result is not None and not deferred_masks:
         # Recompute the signature: the uncached path may have lazily loaded the
-        # data (changing id(dataset.data)), so key the entry on the loaded id.
+        # data and incremented the dataset revision.
         signature = _viewer_view_signature(dataset, extra_masks)
         _lru_store(
             _VIEWER_VIEW_CACHE,
@@ -6005,57 +6044,32 @@ def _viewer_data_before_scale_uncached(
     force_masks: bool = True,
     progress_callback: Any | None = None,
 ) -> MDHistoData | PointListData | None:
-    if dataset.kind == "raw_dgs_nexus":
-        return None
-    if dataset.data is None and dataset.metadata.get("importer"):
-        _load_registered_importer_dataset(dataset)
-    if data_type_container(dataset.data_type) == "point_list" or isinstance(dataset.data, PointListData):
-        if dataset.data is None:
-            _load_point_list_dataset(dataset)
-        if not isinstance(dataset.data, PointListData):
+    loaded = _ensure_dataset_data_loaded(dataset)
+    if data_type_container(dataset.data_type) == "point_list" or isinstance(
+        loaded, PointListData
+    ):
+        if not isinstance(loaded, PointListData):
             return None
         if dataset_rebin_enabled(dataset):
             if _should_defer_dataset_rebin(dataset, force_rebin=force_rebin):
                 return prepared_point_list_data(dataset)
             return rebinned_dataset_data(dataset, progress_callback=progress_callback)
         return prepared_point_list_data(dataset)
-    if isinstance(dataset.data, MDHistoData):
+    if isinstance(loaded, MDHistoData):
         if _should_defer_dataset_masks(dataset, force_masks=force_masks):
-            return _mdhisto_without_nfit_masks(dataset.data)
+            return _mdhisto_without_nfit_masks(loaded)
         if dataset_rebin_enabled(dataset):
             if _should_defer_dataset_rebin(dataset, force_rebin=force_rebin):
-                return _mdhisto_with_nfit_masks(dataset, data=dataset.data, extra_masks=extra_masks)
+                return _mdhisto_with_nfit_masks(dataset, data=loaded, extra_masks=extra_masks)
             return rebinned_dataset_data(dataset, extra_masks=extra_masks, progress_callback=progress_callback)
-        return _mdhisto_with_nfit_masks(dataset, data=dataset.data, extra_masks=extra_masks)
-    source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
-    if not source:
-        return None
-    source_path = Path(source)
-    if source_path.suffix.lower() not in {".nxs", ".h5", ".hdf5", ".npz"}:
-        return None
-    if source_path.suffix.lower() == ".npz":
-        loaded, parameters = _load_nfit_dataset_file(source_path)
-        dataset.parameters.update(parameters)
-    elif dataset.kind == "mdevent":
-        loaded = load_mdevent_run_points(dataset)
-    else:
-        loaded = load_mantid_mdhisto_nxs(source_path, copy_metadata=False)
-    dataset.data = loaded
-    dataset.kind = dataset.kind or source_path.suffix.lstrip(".").lower()
-    dataset.metadata["import_status"] = "loaded"
+        return _mdhisto_with_nfit_masks(dataset, data=loaded, extra_masks=extra_masks)
     if isinstance(loaded, PointData4D):
         if dataset_rebin_enabled(dataset):
             return rebinned_dataset_data(
                 dataset, extra_masks=extra_masks, progress_callback=progress_callback
             )
         return _point_data_with_nfit_masks(dataset, loaded, extra_masks=extra_masks)
-    if _should_defer_dataset_masks(dataset, force_masks=force_masks):
-        return _mdhisto_without_nfit_masks(dataset.data)
-    if dataset_rebin_enabled(dataset):
-        if _should_defer_dataset_rebin(dataset, force_rebin=force_rebin):
-            return _mdhisto_with_nfit_masks(dataset, data=dataset.data, extra_masks=extra_masks)
-        return rebinned_dataset_data(dataset, extra_masks=extra_masks, progress_callback=progress_callback)
-    return _mdhisto_with_nfit_masks(dataset, data=dataset.data, extra_masks=extra_masks)
+    return None
 
 
 def _mdhisto_without_nfit_masks(data: MDHistoData) -> MDHistoData:
@@ -6321,7 +6335,7 @@ def _dataset_mask_status_text(dataset: DatasetEntry) -> str:
         if bool(config.get("stale", False)):
             return f"Automatic mask application is on ({size_note}); pending masks apply on the next refresh."
         return f"Automatic mask application is on ({size_note}); applied masks are current."
-    if bool(config.get("stale", False)) or id(dataset) not in _VIEWER_VIEW_CACHE:
+    if bool(config.get("stale", False)) or dataset.id not in _VIEWER_VIEW_CACHE:
         return "Manual mask application pending; press Apply masks now or start a fit/open the data viewer."
     return f"Manual mask application is on ({size_note}); applied masks are current."
 
@@ -6527,8 +6541,7 @@ def _rebin_point_list_data(dataset: DatasetEntry, config: dict[str, Any]) -> Poi
     symmetry_metadata = _rebin_symmetry_metadata(config, prepared.metadata.get("lattice_parameters"))
     if symmetry_metadata is not None:
         metadata.setdefault("rebin", {})["symmetry"] = symmetry_metadata
-    result.metadata = metadata
-    return result
+    return result.with_updates(metadata=metadata)
 
 
 def _rebin_mean_weighting(config: dict[str, Any]) -> str:
@@ -6586,8 +6599,6 @@ def create_rebinned_dataset(
         extra_masks=effective_dataset_masks(group, dataset),
         progress_callback=progress_callback,
     )
-    if data is dataset.data:
-        data = copy.deepcopy(data)
     parameters = {}
     for key in (
         "temperature",
@@ -6609,6 +6620,7 @@ def create_rebinned_dataset(
         parameters=parameters,
         masks=copy.deepcopy(dataset.masks),
     )
+    new_entry.replace_data(data, source_backed=False)
     group.add_dataset(new_entry)
     return new_entry
 
@@ -7286,8 +7298,7 @@ def _rebin_point_data(
     symmetry_metadata = _rebin_symmetry_metadata(config, data.metadata.get("lattice_parameters"))
     if symmetry_metadata is not None:
         metadata.setdefault("rebin", {})["symmetry"] = symmetry_metadata
-    result.metadata = metadata
-    return result
+    return result.with_updates(metadata=metadata)
 
 
 def _point_data_with_nfit_masks(
@@ -8489,7 +8500,7 @@ def dataset_entry_from_path(
             entry.metadata["import_options"] = copy.deepcopy(importer_options)
     if source.suffix.lower() == ".npz":
         data, parameters = _load_nfit_dataset_file(source)
-        entry.data = data
+        entry.replace_data(data, source_backed=True)
         entry.parameters.update(parameters)
         entry.metadata["import_status"] = "loaded"
         return entry
@@ -13961,7 +13972,10 @@ class NfitProjectExplorer:
                         axis,
                         values=np.asarray(axis.values, dtype=float) + shift,
                     )
-                    entry.data.axes = tuple(axes)
+                    entry.replace_data(
+                        entry.data.with_updates(axes=tuple(axes)),
+                        source_backed=False,
+                    )
                     break
         import_options = entry.metadata.get("import_options")
         if isinstance(import_options, dict):
@@ -17194,8 +17208,13 @@ class NfitProjectExplorer:
             return
         if dataset.data.metadata.get("signal_semantics") == semantics:
             return
-        dataset.data.metadata["signal_semantics"] = semantics
-        dataset.data.metadata["signal_semantics_source"] = "user_selected"
+        metadata = dict(dataset.data.metadata)
+        metadata["signal_semantics"] = semantics
+        metadata["signal_semantics_source"] = "user_selected"
+        dataset.replace_data(
+            dataset.data.with_updates(metadata=metadata),
+            source_backed=False,
+        )
         if group is not None:
             self._record_data_group_state_change(group)
             self.refresh_slice_viewer(group)
@@ -20824,8 +20843,12 @@ def _data_group_to_dict(group: DataGroup) -> dict[str, Any]:
 
 def _dataset_to_dict(dataset: DatasetEntry) -> dict[str, Any]:
     source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
-    if dataset.data is not None and not source:
-        raise TypeError("project JSON save does not yet support embedded dataset objects")
+    if dataset.data is not None and (not source or not dataset.data_matches_source):
+        raise TypeError(
+            f"dataset {dataset.name!r} contains replacement data that are not "
+            "stored in its source file; save the dataset to a portable .npz "
+            "file and re-import it before saving the project"
+        )
     if dataset.transforms:
         raise TypeError("project JSON save does not yet support dataset transforms")
     serialized_metadata = copy.deepcopy(dataset.metadata)

@@ -181,6 +181,25 @@ def test_analysis_fingerprint_reuses_array_hashes_for_setting_changes(monkeypatc
     assert calls == first_calls
 
 
+def test_analysis_fingerprint_hashes_replacement_data_instead_of_stale_source(tmp_path):
+    source = tmp_path / "scan.nxs"
+    source.write_bytes(b"source")
+    dataset = DatasetEntry(
+        "scan",
+        _bragg_volume_for_gui(),
+        metadata={"source_file": str(source)},
+    )
+    group = DataGroup("Workspace1", datasets=[dataset])
+    first = dataset_entry_fingerprint(dataset, group)
+
+    editable = dataset.data.mutable_copy()
+    editable.signal.flat[0] += 1.0
+    dataset.replace_data(editable)
+    second = dataset_entry_fingerprint(dataset, group)
+
+    assert second != first
+
+
 def test_bragg_analysis_loads_a_lazy_primary_dataset(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")
@@ -195,7 +214,7 @@ def test_bragg_analysis_loads_a_lazy_primary_dataset(monkeypatch):
 
     def load(entry):
         calls.append(entry)
-        entry.data = loaded
+        entry.replace_data(loaded, source_backed=True)
         return loaded
 
     monkeypatch.setattr(project_gui, "dataset_for_slice_viewer", load)

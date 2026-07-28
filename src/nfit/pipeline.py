@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -167,6 +168,28 @@ class DatasetEntry:
     scale_factor_vary: bool = False
     transforms: Sequence[DataTransformAny] = field(default_factory=tuple)
     id: str = field(default_factory=lambda: uuid4().hex)
+    _data_revision: int = field(default=0, init=False, repr=False, compare=False)
+    _data_matches_source: bool = field(
+        default=False,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _source_data_identity: int | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    def __post_init__(self) -> None:
+        self.data = _immutable_data(self.data)
+        self._data_matches_source = bool(self.metadata.get("source_file"))
+        self._source_data_identity = (
+            id(self.data)
+            if self.data is not None and self._data_matches_source
+            else None
+        )
 
     def prepared(self) -> Any:
         """Return data after applying this dataset's transforms."""
@@ -180,7 +203,92 @@ class DatasetEntry:
         """Return an independent entry with a new stable identifier."""
 
         changes.pop("id", None)
-        return replace(self, id=uuid4().hex, **changes)
+        copied = replace(self, id=uuid4().hex, **changes)
+        if "data" in changes:
+            copied._data_matches_source = False
+            copied._source_data_identity = None
+        else:
+            copied._data_matches_source = self.data_matches_source
+            copied._source_data_identity = (
+                id(copied.data)
+                if copied.data is not None and copied._data_matches_source
+                else None
+            )
+        return copied
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> DatasetEntry:
+        """Deep-copy project configuration while preserving source provenance."""
+
+        copied = object.__new__(type(self))
+        memo[id(self)] = copied
+        for item in fields(self):
+            setattr(copied, item.name, copy.deepcopy(getattr(self, item.name), memo))
+        copied.data = _immutable_data(copied.data)
+        copied._data_matches_source = self.data_matches_source
+        copied._source_data_identity = (
+            id(copied.data)
+            if copied.data is not None and copied._data_matches_source
+            else None
+        )
+        return copied
+
+    @property
+    def data_revision(self) -> int:
+        """Process-local revision incremented by :meth:`replace_data`."""
+
+        return self._data_revision
+
+    @property
+    def data_matches_source(self) -> bool:
+        """Whether the loaded data still represent ``metadata['source_file']``."""
+
+        if not self._data_matches_source:
+            return False
+        return (
+            self.data is None
+            or (
+                self._source_data_identity is not None
+                and id(self.data) == self._source_data_identity
+            )
+        )
+
+    @property
+    def data_cache_token(self) -> tuple[int, int]:
+        """Cheap cache token that also detects unsupported direct replacement."""
+
+        return self._data_revision, id(self.data)
+
+    def replace_data(self, data: Any, *, source_backed: bool = False) -> Any:
+        """Install canonical immutable data and invalidate dependent caches.
+
+        ``source_backed=True`` is reserved for importer and lazy-loading paths
+        whose arrays exactly represent the current ``source_file``. Developer
+        edits should keep the default ``False`` so analysis fingerprints hash
+        the replacement arrays rather than the original file.
+        """
+
+        canonical = _immutable_data(data)
+        self.data = canonical
+        self._data_revision += 1
+        self._data_matches_source = bool(source_backed)
+        self._source_data_identity = (
+            id(canonical)
+            if canonical is not None and self._data_matches_source
+            else None
+        )
+        return canonical
+
+    def unload_data(self) -> None:
+        """Drop loaded arrays while retaining the file-backed project entry."""
+
+        self.replace_data(None, source_backed=True)
+
+
+def _immutable_data(data: Any) -> Any:
+    if data is None:
+        return None
+    converter = getattr(data, "immutable_copy", None)
+    return converter() if callable(converter) else data
 
 
 @dataclass

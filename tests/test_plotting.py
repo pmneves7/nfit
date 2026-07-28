@@ -222,7 +222,7 @@ def test_waterfall_custom_suffix_replaces_generated_axis_units():
 def test_plot_mdhisto_waterfall_supports_grouped_1d_data_and_model_lines():
     first = _with_fit_channels(_tiny_1d_mdhisto_data())
     second = _with_fit_channels(_tiny_1d_mdhisto_data())
-    second.signal = second.signal + 2.0
+    second = second.with_updates(signal=second.signal + 2.0)
 
     ax = plot_mdhisto_waterfall(
         [first, second],
@@ -331,7 +331,9 @@ def test_mdhisto_slice_viewer_reduces_after_fixed_hidden_axis():
 
 def test_mdhisto_slice_viewer_blanks_empty_bins_when_integrating_ranges():
     data = _tiny_mdhisto_data()
-    data.num_events[:, 1, 2, 3] = 0.0
+    editable = data.mutable_copy()
+    editable.num_events[:, 1, 2, 3] = 0.0
+    data = editable.immutable_copy()
     viewer = MDHistoSliceViewer(data, x_dim=3, y_dim=2)
     viewer.selections[0] = (0.25, 0.75)
     viewer.selections[1] = (1.5, 1.5)
@@ -353,7 +355,9 @@ def test_qt_slice_viewer_apply_masks_toggle_shows_masked_bins():
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     data = _tiny_mdhisto_data()
-    data.mask[1, 1, 2, 3] = True
+    editable = data.mutable_copy()
+    editable.mask[1, 1, 2, 3] = True
+    data = editable.immutable_copy()
     viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
     viewer.model.selections[0] = (0.75, 0.75)
     viewer.model.selections[1] = (1.5, 1.5)
@@ -598,7 +602,9 @@ def test_qt_slice_viewer_boolean_channels_use_grey_unit_scale_and_reverse():
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     data = _tiny_mdhisto_data()
-    data.mask[1, 1, 2, 3] = True
+    editable = data.mutable_copy()
+    editable.mask[1, 1, 2, 3] = True
+    data = editable.immutable_copy()
     viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2, channel="mask")
 
     assert "grey" in viewer.model.COLORMAPS
@@ -720,7 +726,7 @@ def test_qt_dataset_dropdown_switches_between_loaded_datasets():
 
     data_a = _tiny_mdhisto_data()
     data_b = _tiny_mdhisto_data()
-    data_b.signal = data_b.signal + 1000.0
+    data_b = data_b.with_updates(signal=data_b.signal + 1000.0)
 
     viewer = QtMDHistoSliceViewer([data_a, data_b], dataset_names=["first", "second"], x_dim=3, y_dim=2)
 
@@ -743,7 +749,7 @@ def test_qt_dataset_dropdown_keeps_plot_configs_independent():
 
     data_a = _tiny_mdhisto_data()
     data_b = _tiny_mdhisto_data()
-    data_b.signal = data_b.signal + 1000.0
+    data_b = data_b.with_updates(signal=data_b.signal + 1000.0)
 
     viewer = QtMDHistoSliceViewer([data_a, data_b], dataset_names=["first", "second"], x_dim=3, y_dim=2)
 
@@ -831,7 +837,7 @@ def test_qt_show_fit_draws_side_by_side_panels_with_shared_view():
     pytest.importorskip("PySide6")
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
-    data = _with_fit_channels(_tiny_mdhisto_data())
+    data = _with_fit_channels(_tiny_mdhisto_data()).mutable_copy()
     viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
 
     assert viewer.show_fit_check.text() == "Show model"
@@ -872,7 +878,7 @@ def test_qt_unmask_model_extends_2d_panels_box_cuts_and_residuals():
     pytest.importorskip("PySide6")
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
-    data = _with_fit_channels(_tiny_mdhisto_data())
+    data = _with_fit_channels(_tiny_mdhisto_data()).mutable_copy()
     data.mask[..., 2] = True
     viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
     viewer.show_fit_check.setChecked(True)
@@ -907,7 +913,7 @@ def test_qt_unmask_model_extends_1d_model_and_residual():
     pytest.importorskip("PySide6")
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
-    data = _with_fit_channels(_tiny_1d_mdhisto_data())
+    data = _with_fit_channels(_tiny_1d_mdhisto_data()).mutable_copy()
     data.mask[0, 0, 0, 2] = True
     viewer = QtMDHistoSliceViewer(data)
     viewer.show_fit_check.setChecked(True)
@@ -1342,9 +1348,9 @@ def test_qt_waterfall_half_max_stays_enabled_when_initial_range_shrinks():
     pytest.importorskip("PySide6")
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
-    data = _tiny_2d_mdhisto_data_with_singletons()
-    data.signal *= 1.0e-3
-    data.errors *= 1.0e-3
+    data = _tiny_2d_mdhisto_data_with_singletons().mutable_copy()
+    data.signal[:] *= 1.0e-3
+    data.errors[:] *= 1.0e-3
     viewer = QtMDHistoSliceViewer(data)
 
     viewer.view_mode_combo.setCurrentText("Waterfall")
@@ -1543,7 +1549,7 @@ def test_qt_copy_and_save_script_exports_current_display_state():
 
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
-    data = _tiny_mdhisto_data()
+    data = _tiny_mdhisto_data().mutable_copy()
     data.metadata["source_file"] = "/tmp/example.nxs"
     viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
     viewer.font_size_spin.setValue(12.5)
@@ -1669,7 +1675,7 @@ def test_qt_cursor_readout_uses_fixed_labels_and_uncertainty_precision():
 
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
-    data = _tiny_mdhisto_data()
+    data = _tiny_mdhisto_data().mutable_copy()
     data.signal[1, 1, 3, 2] = -0.0067
     data.errors[1, 1, 3, 2] = 0.0013
     viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
@@ -1958,7 +1964,7 @@ def test_qt_1d_cursor_readout_tracks_nearest_point_and_hkle():
 
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
-    data = _tiny_1d_mdhisto_data()
+    data = _tiny_1d_mdhisto_data().mutable_copy()
     data.signal[0, 0, 0, 2] = 3.25
     data.errors[0, 0, 0, 2] = 0.12
     viewer = QtMDHistoSliceViewer(data)

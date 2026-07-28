@@ -15,6 +15,12 @@ default, the importer avoids copying bulky ancillary NeXus groups such as
 Axes expose broad roles inferred from file labels and units, such as `h`, `k`,
 `l`, `q_modulus`, `momentum_projection`, and `energy_transfer`.
 
+Common-container numerical arrays are read-only. `with_updates(...)` returns a
+new container; `mutable_copy()` returns an isolated writable working copy.
+When the container belongs to a `DatasetEntry`, finish an edit with
+`dataset.replace_data(...)` so dependent caches and fingerprints are
+invalidated.
+
 MDEvent NeXus files are supported without Mantid through `nfit.mdevent`:
 
 - `inspect_mdevent_workspace(path)` reads run and orientation metadata without

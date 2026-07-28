@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import copy
+from dataclasses import InitVar, dataclass, field
 from typing import Any
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-
 FloatArray = NDArray[np.float64]
 BoolArray = NDArray[np.bool_]
 
 
-@dataclass
+@dataclass(frozen=True)
 class PointData4D:
     """Flattened 4D neutron data for fitting.
 
@@ -49,14 +49,24 @@ class PointData4D:
     temperature: float | ArrayLike | None = None
     magnetic_field: ArrayLike | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    _mutable: InitVar[bool] = False
+    _arrays_mutable: bool = field(default=False, init=False, repr=False, compare=False)
 
-    def __post_init__(self) -> None:
-        self.H = _as_float_1d("H", self.H)
-        self.K = _as_float_1d("K", self.K)
-        self.L = _as_float_1d("L", self.L)
-        self.E = _as_float_1d("E", self.E)
-        self.intensity = _as_float_1d("intensity", self.intensity)
-        self.sigma = _as_float_1d("sigma", self.sigma)
+    def __post_init__(self, _mutable: bool) -> None:
+        object.__setattr__(self, "H", _as_float_1d("H", self.H, mutable=_mutable))
+        object.__setattr__(self, "K", _as_float_1d("K", self.K, mutable=_mutable))
+        object.__setattr__(self, "L", _as_float_1d("L", self.L, mutable=_mutable))
+        object.__setattr__(self, "E", _as_float_1d("E", self.E, mutable=_mutable))
+        object.__setattr__(
+            self,
+            "intensity",
+            _as_float_1d("intensity", self.intensity, mutable=_mutable),
+        )
+        object.__setattr__(
+            self,
+            "sigma",
+            _as_float_1d("sigma", self.sigma, mutable=_mutable),
+        )
 
         shape = self.H.shape
         for name in ("K", "L", "E", "intensity", "sigma"):
@@ -65,29 +75,43 @@ class PointData4D:
                 raise ValueError(f"{name} shape {arr.shape} does not match H shape {shape}")
 
         if self.mask is None:
-            self.mask = np.ones(shape, dtype=bool)
+            mask = np.ones(shape, dtype=bool)
+            if not _mutable:
+                mask.setflags(write=False)
+            object.__setattr__(self, "mask", mask)
         else:
-            self.mask = np.asarray(self.mask, dtype=bool)
-            if self.mask.shape != shape:
-                raise ValueError(f"mask shape {self.mask.shape} does not match H shape {shape}")
+            mask = _as_array(self.mask, dtype=bool, mutable=_mutable)
+            if mask.shape != shape:
+                raise ValueError(f"mask shape {mask.shape} does not match H shape {shape}")
+            object.__setattr__(self, "mask", mask)
 
         if self.temperature is not None and not np.isscalar(self.temperature):
-            temp = _as_float_1d("temperature", self.temperature)
+            temp = _as_float_1d(
+                "temperature",
+                self.temperature,
+                mutable=_mutable,
+            )
             if temp.shape != shape:
                 raise ValueError(
                     f"temperature shape {temp.shape} does not match H shape {shape}"
                 )
-            self.temperature = temp
+            object.__setattr__(self, "temperature", temp)
 
         if self.magnetic_field is not None:
-            field_vector = np.asarray(self.magnetic_field, dtype=float)
+            field_vector = _as_array(
+                self.magnetic_field,
+                dtype=float,
+                mutable=_mutable,
+            )
             if field_vector.shape != (3,) and field_vector.shape != shape + (3,):
                 raise ValueError(
                     "magnetic_field must be a Cartesian 3-vector in Tesla or a "
                     f"per-point ({shape[0]}, 3) array; got shape "
                     f"{field_vector.shape}"
                 )
-            self.magnetic_field = field_vector
+            object.__setattr__(self, "magnetic_field", field_vector)
+        object.__setattr__(self, "metadata", dict(self.metadata))
+        object.__setattr__(self, "_arrays_mutable", bool(_mutable))
 
     @property
     def size(self) -> int:
@@ -150,6 +174,65 @@ class PointData4D:
 
         return self.H, self.K, self.L, self.E
 
+    def mutable_copy(self) -> PointData4D:
+        """Return an isolated copy whose numeric arrays may be edited in place."""
+
+        return PointData4D(
+            H=self.H,
+            K=self.K,
+            L=self.L,
+            E=self.E,
+            intensity=self.intensity,
+            sigma=self.sigma,
+            mask=self.mask,
+            temperature=self.temperature,
+            magnetic_field=self.magnetic_field,
+            metadata=copy.deepcopy(self.metadata),
+            _mutable=True,
+        )
+
+    def immutable_copy(self) -> PointData4D:
+        """Return an immutable copy, or ``self`` when already immutable."""
+
+        arrays = (
+            self.H,
+            self.K,
+            self.L,
+            self.E,
+            self.intensity,
+            self.sigma,
+            self.mask,
+            self.temperature,
+            self.magnetic_field,
+        )
+        if not self._arrays_mutable and not any(
+            isinstance(array, np.ndarray) and array.flags.writeable
+            for array in arrays
+        ):
+            return self
+        return self.with_updates()
+
+    def with_updates(self, **changes: Any) -> PointData4D:
+        """Return an immutable container with selected fields replaced."""
+
+        values = {
+            "H": self.H,
+            "K": self.K,
+            "L": self.L,
+            "E": self.E,
+            "intensity": self.intensity,
+            "sigma": self.sigma,
+            "mask": self.mask,
+            "temperature": self.temperature,
+            "magnetic_field": self.magnetic_field,
+            "metadata": self.metadata,
+        }
+        unknown = set(changes) - set(values)
+        if unknown:
+            raise TypeError(f"unknown PointData4D field(s): {', '.join(sorted(unknown))}")
+        values.update(changes)
+        return PointData4D(**values)
+
 
 def from_arrays(
     H: ArrayLike,
@@ -180,7 +263,7 @@ def from_arrays(
     )
 
 
-@dataclass
+@dataclass(frozen=True)
 class PointListData:
     """A list of measured points with named coordinate and channel columns.
 
@@ -214,12 +297,14 @@ class PointListData:
     channels: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     quantity_types: dict[str, str] = field(default_factory=dict)
+    _mutable: InitVar[bool] = False
+    _arrays_mutable: bool = field(default=False, init=False, repr=False, compare=False)
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, _mutable: bool) -> None:
         columns: dict[str, FloatArray] = {}
         length: int | None = None
         for name, values in self.columns.items():
-            arr = _as_float_1d(str(name), values)
+            arr = _as_float_1d(str(name), values, mutable=_mutable)
             if length is None:
                 length = arr.size
             elif arr.size != length:
@@ -227,22 +312,24 @@ class PointListData:
                     f"column {name!r} has length {arr.size}, expected {length}"
                 )
             columns[str(name)] = arr
-        self.columns = columns
-        self.units = {str(key): str(value) for key, value in dict(self.units).items()}
+        object.__setattr__(self, "columns", columns)
+        units = {str(key): str(value) for key, value in dict(self.units).items()}
         from .quantities import infer_quantity_type, normalize_unit
 
-        self.units = {
-            name: normalize_unit(self.units.get(name, "")) for name in self.columns
+        units = {
+            name: normalize_unit(units.get(name, "")) for name in self.columns
         }
         declared = {str(key): str(value) for key, value in self.quantity_types.items()}
-        self.quantity_types = {
-            name: declared.get(name) or infer_quantity_type(name, self.units.get(name, ""))
+        quantity_types = {
+            name: declared.get(name) or infer_quantity_type(name, units.get(name, ""))
             for name in self.columns
         }
-        for name in self.coordinate_names:
+        coordinate_names = list(self.coordinate_names)
+        channels = [dict(channel) for channel in self.channels]
+        for name in coordinate_names:
             if name not in self.columns:
                 raise ValueError(f"coordinate {name!r} is not a known column")
-        for channel in self.channels:
+        for channel in channels:
             value_name = channel.get("value")
             if value_name not in self.columns:
                 raise ValueError(f"channel value column {value_name!r} is not a known column")
@@ -250,8 +337,14 @@ class PointListData:
             if error_name is not None and error_name not in self.columns:
                 raise ValueError(f"channel error column {error_name!r} is not a known column")
             channel.setdefault("label", str(value_name))
-            channel.setdefault("quantity_type", self.quantity_types.get(value_name, "unknown"))
-            channel.setdefault("unit", self.units.get(value_name, ""))
+            channel.setdefault("quantity_type", quantity_types.get(value_name, "unknown"))
+            channel.setdefault("unit", units.get(value_name, ""))
+        object.__setattr__(self, "units", units)
+        object.__setattr__(self, "quantity_types", quantity_types)
+        object.__setattr__(self, "coordinate_names", coordinate_names)
+        object.__setattr__(self, "channels", channels)
+        object.__setattr__(self, "metadata", dict(self.metadata))
+        object.__setattr__(self, "_arrays_mutable", bool(_mutable))
 
     @property
     def size(self) -> int:
@@ -320,6 +413,45 @@ class PointListData:
         channel = self.channel(label)
         return str(channel.get("quantity_type") or self.quantity_type(channel["value"]))
 
+    def mutable_copy(self) -> PointListData:
+        """Return an isolated copy whose column arrays may be edited in place."""
+
+        return PointListData(
+            columns=self.columns,
+            units=dict(self.units),
+            coordinate_names=list(self.coordinate_names),
+            channels=copy.deepcopy(self.channels),
+            metadata=copy.deepcopy(self.metadata),
+            quantity_types=dict(self.quantity_types),
+            _mutable=True,
+        )
+
+    def immutable_copy(self) -> PointListData:
+        """Return an immutable copy, or ``self`` when already immutable."""
+
+        if not self._arrays_mutable and not any(
+            array.flags.writeable for array in self.columns.values()
+        ):
+            return self
+        return self.with_updates()
+
+    def with_updates(self, **changes: Any) -> PointListData:
+        """Return an immutable container with selected fields replaced."""
+
+        values = {
+            "columns": self.columns,
+            "units": self.units,
+            "coordinate_names": self.coordinate_names,
+            "channels": self.channels,
+            "metadata": self.metadata,
+            "quantity_types": self.quantity_types,
+        }
+        unknown = set(changes) - set(values)
+        if unknown:
+            raise TypeError(f"unknown PointListData field(s): {', '.join(sorted(unknown))}")
+        values.update(changes)
+        return PointListData(**values)
+
     def rebin_to_histogram(
         self,
         coordinate_names: list[str],
@@ -333,7 +465,7 @@ class PointListData:
         mean_weighting: str = "inverse_variance",
         max_batch_bytes: int = 192 * 1024 * 1024,
         symmetry_operations: list[ArrayLike] | tuple[ArrayLike, ...] | None = None,
-    ) -> "PointListData":
+    ) -> PointListData:
         """Bin the points onto a regular grid, returning occupied bin centers.
 
         Each channel's value and error are binned over the chosen coordinates
@@ -435,8 +567,18 @@ class PointListData:
         )
 
 
-def _as_float_1d(name: str, value: ArrayLike) -> FloatArray:
-    arr = np.asarray(value, dtype=float)
+def _as_array(value: ArrayLike, *, dtype: Any, mutable: bool) -> np.ndarray:
+    arr = np.asarray(value, dtype=dtype)
+    if mutable:
+        return np.array(arr, dtype=dtype, copy=True)
+    if arr.flags.writeable:
+        arr = np.array(arr, dtype=dtype, copy=True)
+    arr.setflags(write=False)
+    return arr
+
+
+def _as_float_1d(name: str, value: ArrayLike, *, mutable: bool = False) -> FloatArray:
+    arr = _as_array(value, dtype=float, mutable=mutable)
     if arr.ndim != 1:
         raise ValueError(f"{name} must be a one-dimensional array, got shape {arr.shape}")
     return arr
