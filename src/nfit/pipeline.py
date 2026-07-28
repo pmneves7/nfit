@@ -150,6 +150,7 @@ class DatasetEntry:
     fit_weight: float = 1.0
     scale_factor: float = 1.0
     scale_factor_vary: bool = False
+    scale_factor_group: str | None = None
     transforms: Sequence[DataTransformAny] = field(default_factory=tuple)
     id: str = field(default_factory=lambda: uuid4().hex)
     _data_revision: int = field(default=0, init=False, repr=False, compare=False)

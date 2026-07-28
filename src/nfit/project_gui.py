@@ -393,16 +393,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
             "one-component isotropic polarization factor P = 2. Requires a dataset temperature."
         ),
         "parameters": {
-            "scale": {
-                "default": 1.0,
-                "description": (
-                    "Overall intensity scale for unnormalized data. Degenerate with chi_loc; "
-                    "fix one of the two."
-                ),
-                "allowed": "Positive finite number.",
-                "type": "float",
-                "example": "1.0",
-            },
             "chi_loc": {
                 "default": 1.0,
                 "description": "Static local susceptibility (1/meV up to the intensity normalization).",
@@ -452,16 +442,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
             "Requires dataset temperature and lattice metadata."
         ),
         "parameters": {
-            "scale": {
-                "default": 1.0,
-                "description": (
-                    "Overall intensity scale for unnormalized data. Degenerate with chi_pk; "
-                    "fix one of the two."
-                ),
-                "allowed": "Positive finite number.",
-                "type": "float",
-                "example": "1.0",
-            },
             "chi_pk": {
                 "default": 1.0,
                 "description": "Static susceptibility at the ordering vector Q0 (1/meV up to normalization).",
@@ -546,17 +526,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
             "maximizing J(Q)."
         ),
         "parameters": {
-            "scale": {
-                "default": 1.0,
-                "description": (
-                    "Overall intensity scale for unnormalized data. Degenerate with chi0's "
-                    "magnitude only in part (chi0 also sets the RPA denominator), but fitting "
-                    "both is usually ill-conditioned; consider fixing one."
-                ),
-                "allowed": "Positive finite number.",
-                "type": "float",
-                "example": "1.0",
-            },
             "chi0": {
                 "default": 0.1,
                 "description": (
@@ -1781,11 +1750,13 @@ def snapshot_data_group_state(group: DataGroup) -> dict[str, Any]:
         "datasets": [
             {
                 "name": dataset.name,
+                "data_type": dataset.data_type,
                 "parameters": copy.deepcopy(dataset.parameters),
                 "enabled": bool(dataset.enabled),
                 "fit_weight": float(dataset.fit_weight),
                 "scale_factor": float(dataset.scale_factor),
                 "scale_factor_vary": bool(dataset.scale_factor_vary),
+                "scale_factor_group": dataset.scale_factor_group,
                 "masks": [_mask_to_dict(mask) for mask in dataset.masks],
                 "backgrounds": [
                     _background_to_dict(background)
@@ -1824,11 +1795,19 @@ def restore_data_group_state(group: DataGroup, snapshot: dict[str, Any]) -> None
         dataset = datasets_by_name.get(str(dataset_payload.get("name", "")))
         if dataset is None:
             continue
+        dataset.data_type = str(
+            dataset_payload.get("data_type", dataset.data_type)
+        )
         dataset.parameters = dict(dataset_payload.get("parameters", {}))
         dataset.enabled = bool(dataset_payload.get("enabled", dataset.enabled))
         dataset.fit_weight = float(dataset_payload.get("fit_weight", dataset.fit_weight))
         dataset.scale_factor = float(dataset_payload.get("scale_factor", dataset.scale_factor))
         dataset.scale_factor_vary = bool(dataset_payload.get("scale_factor_vary", dataset.scale_factor_vary))
+        dataset.scale_factor_group = (
+            None
+            if dataset_payload.get("scale_factor_group") in (None, "")
+            else str(dataset_payload["scale_factor_group"])
+        )
         dataset.masks = [_mask_from_dict(mask_payload) for mask_payload in dataset_payload.get("masks", [])]
         dataset.backgrounds = [
             _background_from_dict(background_payload)
@@ -1877,6 +1856,7 @@ def restore_data_group_state(group: DataGroup, snapshot: dict[str, Any]) -> None
         existing.applies_to = _applies_to_from_payload(model_payload.get("applies_to"))
         existing.enabled = bool(model_payload.get("enabled", existing.enabled))
         existing.metadata = dict(model_payload.get("metadata", {}))
+        reconcile_model_orbit_parameters(existing)
 
 
 def delete_fit_entry(group: DataGroup, fit_entry: FitTimelineEntry) -> bool:
@@ -2621,6 +2601,7 @@ def dataset_detail_sections(
                 f"Visualization only: {bool(dataset.enabled and dataset.fit_weight == 0.0)}",
                 f"Scale factor: {_format_number(dataset.scale_factor)}",
                 f"Scale fitted: {bool(dataset.scale_factor_vary)}",
+                f"Shared scale: {dataset.scale_factor_group or '-'}",
             ],
         ),
         ("Axes", axes_lines),
@@ -4177,11 +4158,16 @@ def _point_data_from_point_list_view(data: PointListData) -> PointData4D:
 
     columns_by_role: dict[str, np.ndarray] = {}
     mapping: dict[str, str] = {}
+    powder_q_name: str | None = None
     for name in data.coordinate_names:
         role = name.strip().upper()
         if role in ("H", "K", "L", "E") and role not in columns_by_role:
             columns_by_role[role] = np.asarray(data.column(name), dtype=float)
             mapping[role] = name
+        elif name.strip().lower() in {"q", "|q|", "q_modulus"}:
+            powder_q_name = name
+            columns_by_role["H"] = np.asarray(data.column(name), dtype=float)
+            mapping["q_modulus"] = name
     if "E" not in columns_by_role and data.coordinate_names:
         first = data.coordinate_names[0]
         if first not in mapping.values():
@@ -4200,6 +4186,21 @@ def _point_data_from_point_list_view(data: PointListData) -> PointData4D:
             break
     if temperature is None and data.metadata.get("temperature") is not None:
         temperature = float(data.metadata["temperature"])
+    metadata: dict[str, Any] = {
+        "fit_coordinate_mapping": mapping,
+        "fit_channel": label,
+        "sigma_known": sigma_known,
+    }
+    for key in (
+        "spectral_observable",
+        "signal_quantity_type",
+        "signal_unit",
+    ):
+        if key in data.metadata:
+            metadata[key] = data.metadata[key]
+    if powder_q_name is not None:
+        metadata["coordinate_units"] = "1/angstrom"
+        metadata["powder_q_modulus_axis"] = True
     return PointData4D(
         H=columns_by_role.get("H", zeros),
         K=columns_by_role.get("K", zeros),
@@ -4209,11 +4210,7 @@ def _point_data_from_point_list_view(data: PointListData) -> PointData4D:
         sigma=sigma,
         mask=mask,
         temperature=temperature,
-        metadata={
-            "fit_coordinate_mapping": mapping,
-            "fit_channel": label,
-            "sigma_known": sigma_known,
-        },
+        metadata=metadata,
     )
 
 
@@ -4281,6 +4278,9 @@ def fit_dataset_inputs(
                 data_type=dataset.data_type or DEFAULT_DATA_TYPE,
                 scale_value=(1.0 if is_composite else float(dataset.scale_factor)),
                 scale_vary=(False if is_composite else bool(dataset.scale_factor_vary)),
+                scale_group=(
+                    None if is_composite else dataset.scale_factor_group
+                ),
             )
         )
         bundles[dataset.name] = bundle
@@ -4815,6 +4815,7 @@ def _overlay_cache_signature(group: DataGroup) -> str:
                 float(dataset.fit_weight),
                 float(dataset.scale_factor),
                 bool(dataset.scale_factor_vary),
+                dataset.scale_factor_group,
                 json.dumps(dataset.parameters, sort_keys=True, default=str),
                 # Rebin settings and the output basis stored on a materialized
                 # histogram both change physical HKLE coordinates. Either one
@@ -4870,8 +4871,10 @@ def _overlay_current_params(
     params = {spec.name: float(spec.value) for spec in compiled.problem.parameter_specs}
     for instance in compiled.parameter_instances.values():
         if instance.component == "dataset" and instance.parameter == "scale_factor":
+            if not instance.datasets:
+                continue
             try:
-                dataset = group.get_dataset(instance.scope)
+                dataset = group.get_dataset(instance.datasets[0])
             except KeyError:
                 continue
             params[instance.name] = float(dataset.scale_factor)
@@ -5541,11 +5544,12 @@ def _write_back_dataset_scale_factors(
             continue
         if instance.name not in params:
             continue
-        try:
-            dataset = group.get_dataset(instance.scope)
-        except KeyError:
-            continue
-        dataset.scale_factor = float(params[instance.name])
+        for dataset_name in instance.datasets:
+            try:
+                dataset = group.get_dataset(dataset_name)
+            except KeyError:
+                continue
+            dataset.scale_factor = float(params[instance.name])
 
 
 def _visualization_only_channels(
@@ -9395,6 +9399,7 @@ class NfitProjectExplorer:
         self.group_bulk_widget = None
         self.group_fit_weight_edit = None
         self.group_scale_edit = None
+        self.group_scale_fit_check = None
         self.details_label = None
         self.details_scroll = None
         self.details_widget = None
@@ -12464,10 +12469,11 @@ class NfitProjectExplorer:
         self.scale_factor_spin = QtWidgets.QDoubleSpinBox()
         self.scale_factor_spin.setObjectName("dataset_scale_factor")
         self.scale_factor_spin.setToolTip(
-            "Scale factor for the selected dataset. When Fit scale is unchecked, this is applied before viewing and fitting. "
-            "When Fit scale is checked, this value is the initial guess for the fitted scale parameter."
+            "Dataset calibration scale. Use 1 for normalized data. When Fit scale is "
+            "unchecked it is applied before viewing and fitting; when checked it is "
+            "the initial guess for a fitted dataset scale."
         )
-        self.scale_factor_spin.setRange(-1.0e12, 1.0e12)
+        self.scale_factor_spin.setRange(1.0e-12, 1.0e12)
         self.scale_factor_spin.setDecimals(6)
         self.scale_factor_spin.setSingleStep(0.1)
         self.scale_factor_spin.setValue(1.0)
@@ -12478,8 +12484,8 @@ class NfitProjectExplorer:
         self.scale_factor_fit_check.setToolTip(
             "Treat the selected dataset's scale as a fitted parameter. The Scale value is used as the initial guess, "
             "then the fitted value is written back to the dataset. The fitted scale multiplies the signal and its "
-            "absolute value multiplies the uncertainty; avoid an initial value of zero. Changing this option controls "
-            "the next fit and does not alter the current plot."
+            "uncertainty; avoid an initial value of zero. Changing this option controls the next fit and "
+            "does not alter the current plot. Toggling an individual dataset removes it from any shared scale."
         )
         self.scale_factor_fit_check.toggled.connect(self._set_selected_dataset_scale_factor_vary)
         fit_weight_layout.addWidget(self.scale_factor_fit_check)
@@ -12519,6 +12525,14 @@ class NfitProjectExplorer:
             lambda: self._set_group_bulk_value("scale_factor", self.group_scale_edit.text())
         )
         group_bulk_layout.addWidget(self.group_scale_edit)
+        self.group_scale_fit_check = QtWidgets.QCheckBox("Share fitted scale")
+        self.group_scale_fit_check.setObjectName("group_scale_factor_vary")
+        self.group_scale_fit_check.setToolTip(
+            "Fit one calibration scale shared by every descendant dataset. "
+            "Unchecking keeps their scales fitted independently."
+        )
+        self.group_scale_fit_check.toggled.connect(self._set_group_shared_scale)
+        group_bulk_layout.addWidget(self.group_scale_fit_check)
         title_row.addWidget(self.group_bulk_widget)
         self.details_label = QtWidgets.QLabel()
         self.details_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -13649,6 +13663,21 @@ class NfitProjectExplorer:
                 edit.setText(_format_number(next(iter(values))) if len(values) == 1 else "")
             finally:
                 edit.blockSignals(False)
+        subgroup = self._dataset_group_for_item(self._current_item())
+        tied = bool(
+            subgroup is not None
+            and datasets
+            and all(
+                dataset.scale_factor_vary
+                and dataset.scale_factor_group == subgroup.name
+                for dataset in datasets
+            )
+        )
+        self.group_scale_fit_check.blockSignals(True)
+        try:
+            self.group_scale_fit_check.setChecked(tied)
+        finally:
+            self.group_scale_fit_check.blockSignals(False)
 
     def _set_group_bulk_value(self, attribute: str, text: str) -> None:
         group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
@@ -13672,6 +13701,48 @@ class NfitProjectExplorer:
         self._mark_dirty()
         if group is not None:
             self.refresh_slice_viewer(group)
+        self._sync_details()
+
+    def _set_group_shared_scale(self, checked: bool) -> None:
+        group, _entry, _mask, _model, role = self._objects_for_item(
+            self._current_item()
+        )
+        if role not in {"dataset_group", "group_masks"}:
+            return
+        subgroup = self._dataset_group_for_item(self._current_item())
+        if subgroup is None:
+            return
+        datasets = list(subgroup.iter_datasets())
+        if not datasets:
+            return
+        changed = False
+        if checked:
+            common_scale = float(datasets[0].scale_factor)
+            for dataset in datasets:
+                if (
+                    dataset.scale_factor != common_scale
+                    or not dataset.scale_factor_vary
+                    or dataset.scale_factor_group != subgroup.name
+                ):
+                    dataset.scale_factor = common_scale
+                    dataset.scale_factor_vary = True
+                    dataset.scale_factor_group = subgroup.name
+                    changed = True
+        else:
+            for dataset in datasets:
+                if dataset.scale_factor_group == subgroup.name:
+                    dataset.scale_factor_group = None
+                    dataset.scale_factor_vary = True
+                    changed = True
+        if not changed:
+            return
+        branch_created = bool(
+            group is not None and self._record_data_group_state_change(group)
+        )
+        self._mark_dirty()
+        if group is not None and branch_created:
+            self._refresh_tree(select_group=group, refresh_viewers=False)
+            return
         self._sync_details()
 
     def _set_selected_enabled(self, checked: bool) -> None:
@@ -13735,9 +13806,20 @@ class NfitProjectExplorer:
         if role != "dataset" or entry is None:
             return
         scale = float(value)
-        if entry.scale_factor == scale:
+        tied = (
+            [
+                dataset
+                for dataset in group.iter_datasets()
+                if dataset.scale_factor_group == entry.scale_factor_group
+            ]
+            if group is not None and entry.scale_factor_group is not None
+            else []
+        )
+        targets = tied or [entry]
+        if all(dataset.scale_factor == scale for dataset in targets):
             return
-        entry.scale_factor = scale
+        for dataset in targets:
+            dataset.scale_factor = scale
         branch_created = False
         if group is not None:
             branch_created = self._record_data_group_state_change(group)
@@ -13754,9 +13836,10 @@ class NfitProjectExplorer:
         if role != "dataset" or entry is None:
             return
         vary = bool(checked)
-        if entry.scale_factor_vary == vary:
+        if entry.scale_factor_vary == vary and entry.scale_factor_group is None:
             return
         entry.scale_factor_vary = vary
+        entry.scale_factor_group = None
         branch_created = False
         if group is not None:
             branch_created = self._record_data_group_state_change(group)

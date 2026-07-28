@@ -9,6 +9,7 @@ from nfit.cross_section import (
     cross_section_from_chipp,
     intensity_from_chipp,
     magnetic_moment_factor,
+    quasistatic_cross_section_from_chi,
 )
 
 
@@ -126,3 +127,56 @@ def test_spin_response_g_factor_matches_gamma_r0_g_over_two_convention():
     assert magnetic_moment_factor("spin_squared", g_factor) == pytest.approx(
         g_factor**2
     )
+
+
+def test_quasistatic_cross_section_uses_kbt_static_susceptibility():
+    chi_static = np.array([0.5, 1.25])
+    result = quasistatic_cross_section_from_chi(
+        chi_static,
+        12.0,
+        form_factor_sq=np.array([1.0, 0.8]),
+        polarization=2.0,
+        moment_unit="spin_squared",
+        g_factor=2.0,
+    )
+    expected = (
+        MAGNETIC_GAMMA0_PER_MU_B**2
+        * KB_MEV_PER_K
+        * 12.0
+        * chi_static
+        * np.array([1.0, 0.8])
+        * 2.0
+        * 2.0**2
+    )
+    np.testing.assert_allclose(result, expected)
+
+
+def test_quasistatic_limit_matches_integrated_narrow_relaxational_peak():
+    from nfit.spin_fluctuations import local_relaxational_chipp
+
+    energy = np.linspace(-0.5, 0.5, 200_000, endpoint=False) + 2.5e-6
+    chi_static = 1.7
+    gamma = 0.01
+    dynamic = cross_section_from_chipp(
+        local_relaxational_chipp(energy, chi_loc=chi_static, gamma=gamma),
+        energy,
+        100.0,
+        polarization=2.0,
+        moment_unit="spin_squared",
+        g_factor=2.0,
+    )
+    integrated = np.trapezoid(dynamic, energy)
+    quasistatic = quasistatic_cross_section_from_chi(
+        chi_static,
+        100.0,
+        polarization=2.0,
+        moment_unit="spin_squared",
+        g_factor=2.0,
+    )
+    assert integrated == pytest.approx(float(quasistatic), rel=0.02)
+
+
+@pytest.mark.parametrize("temperature", [-1.0, 0.0])
+def test_quasistatic_cross_section_rejects_nonpositive_temperature(temperature):
+    with pytest.raises(ValueError, match="temperature"):
+        quasistatic_cross_section_from_chi([1.0], temperature)

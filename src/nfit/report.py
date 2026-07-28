@@ -971,12 +971,16 @@ def _section_closure(
 
 
 def _section_cross_section(
-    model: Mapping[str, Any], goodness: Mapping[str, Any], cite: _Citations
+    model: Mapping[str, Any],
+    goodness: Mapping[str, Any],
+    cite: _Citations,
+    *,
+    include_inelastic: bool = True,
+    include_elastic: bool = False,
 ) -> str:
     config = _config(model)
     tensor = _is_tensor_mode(config)
     lines = ["\\subsection{Cross section}"]
-    scale, scale_err = _param_value(goodness, model, "scale")
     ion = config.get("ion")
     if tensor:
         polarization = (
@@ -990,34 +994,48 @@ def _section_cross_section(
             "$\\chi''_s$ denotes one Cartesian component of the isotropic "
             "spin response, so $\\mathcal P[\\chi''_s]=2\\chi''_s$"
         )
-    lines.append(
-        "Measured intensity follows"
-        "\n\\begin{equation}\n\\frac{d^2\\sigma}{d\\Omega\\,dE} = "
-        "s\\,\\frac{k_f}{k_i}(\\gamma r_0)^2\\left(\\frac{g}{2}\\right)^2 "
-        "|f(Q)|^2\\, \\frac{\\mathcal P[\\chi''_s(\\mathbf{Q}, E)]}"
-        "{\\pi\\,[1 - e^{-E/k_BT}]},\n"
-        "\\end{equation}\n"
-        f"where {polarization}, "
-        "the $1/\\pi$ is fixed by the fluctuation--dissipation convention "
-        + cite.cite("squires")
-        + ", and $(\\gamma r_0)^2(g/2)^2$ is equivalently "
-        "$(\\gamma r_0/2)^2g^2$ with $(\\gamma r_0/2)^2=0.07265$ barn "
-        + cite.cite("welch2022")
-        + ". The microscopic $\\chi''_s$ is not dimensionless MKS "
-        "susceptibility: per magnetic ion, "
-        "$\\chi''_{\\rm SI}=\\mu_0(g\\mu_B)^2\\chi''_s/"
-        "(1\\,\\mathrm{meV\\ in\\ joules})$. Thus $\\mu_0$ enters conversion "
-        "to SI $M/H$, not as an extra neutron cross-section factor. "
-        + f"$s = {_pm(scale, scale_err)}$ is the overall scale"
-        + (
-            f", and $|f(Q)|^2$ is the {latex_escape(ion)} magnetic form factor "
-            "in the $\\langle j_0\\rangle$ analytic approximation "
-            + cite.cite("brown")
-            if ion
-            else ""
+    if include_inelastic:
+        lines.append(
+            "The inelastic cross section follows"
+            "\n\\begin{equation}\n\\frac{d^2\\sigma}{d\\Omega\\,dE} = "
+            "\\frac{k_f}{k_i}(\\gamma r_0)^2\\left(\\frac{g}{2}\\right)^2 "
+            "|f(Q)|^2\\, \\frac{\\mathcal P[\\chi''_s(\\mathbf{Q}, E)]}"
+            "{\\pi\\,[1 - e^{-E/k_BT}]},\n"
+            "\\end{equation}\n"
+            f"where {polarization}, "
+            "the $1/\\pi$ is fixed by the fluctuation--dissipation convention "
+            + cite.cite("squires")
+            + ", and $(\\gamma r_0)^2(g/2)^2$ is equivalently "
+            "$(\\gamma r_0/2)^2g^2$ with $(\\gamma r_0/2)^2=0.07265$ barn "
+            + cite.cite("welch2022")
+            + ". The microscopic $\\chi''_s$ is not dimensionless MKS "
+            "susceptibility: per magnetic ion, "
+            "$\\chi''_{\\rm SI}=\\mu_0(g\\mu_B)^2\\chi''_s/"
+            "(1\\,\\mathrm{meV\\ in\\ joules})$. Thus $\\mu_0$ enters conversion "
+            "to SI $M/H$, not as an extra neutron cross-section factor. "
+            + "Any experimental calibration scale belongs to the dataset and is "
+            "applied separately from this intrinsic model response"
+            + (
+                f", and $|f(Q)|^2$ is the {latex_escape(ion)} magnetic form factor "
+                "in the $\\langle j_0\\rangle$ analytic approximation "
+                + cite.cite("brown")
+                if ion
+                else ""
+            )
+            + "."
         )
-        + "."
-    )
+    if include_elastic:
+        lines.append(
+            "For an elastic dataset, nfit uses the quasistatic approximation"
+            "\n\\begin{equation}\n\\frac{d\\sigma}{d\\Omega} \\simeq "
+            "(\\gamma r_0)^2\\left(\\frac{g}{2}\\right)^2 |f(Q)|^2 k_BT\\,"
+            "\\mathcal P[\\chi'_s(\\mathbf Q,0)],\n"
+            "\\end{equation}\n"
+            "which assumes the unresolved magnetic response is narrow compared "
+            "with $k_BT$ and lies within the experimental energy acceptance. "
+            "It does not describe magnetic Bragg intensity from a static ordered "
+            "moment. Dataset calibration is applied separately."
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -1260,6 +1278,17 @@ def render_fit_report_latex(
         if model.get("type") == "heisenberg_rpa" and model.get("enabled", True)
     ]
     cite = _Citations()
+    fitted_data_types = {
+        str(dataset.get("data_type", ""))
+        for dataset in _fitted_snapshot_datasets(fit_entry)
+    }
+    known_data_types = fitted_data_types - {""}
+    elastic_types = {"single_crystal_elastic", "powder_elastic"}
+    inelastic_types = {"single_crystal_inelastic", "powder_inelastic"}
+    include_elastic = bool(known_data_types & elastic_types)
+    include_inelastic = not known_data_types or bool(
+        known_data_types & inelastic_types
+    )
 
     body: list[str] = []
     body.append(_section_summary(fit_entry, group_name))
@@ -1283,7 +1312,15 @@ def render_fit_report_latex(
         body.append(_section_zeeman(fit_entry, model, goodness))
         body.append(_section_dynamic_response(fit_entry, model, goodness, cite))
         body.append(_section_closure(model, goodness, cite))
-        body.append(_section_cross_section(model, goodness, cite))
+        body.append(
+            _section_cross_section(
+                model,
+                goodness,
+                cite,
+                include_inelastic=include_inelastic,
+                include_elastic=include_elastic,
+            )
+        )
     body.append(_section_other_components(models, goodness))
     body.append(_section_parameters(fit_entry))
     body.append(_section_diagnostics(fit_entry))

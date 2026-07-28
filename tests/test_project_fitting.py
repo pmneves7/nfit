@@ -353,8 +353,8 @@ def test_write_back_fitted_parameters_includes_dynamic_orbit_parameters():
     model = ModelComponentSpec(
         name="rpa",
         type="heisenberg_rpa",
-        parameters={"scale": 1.0, "chi0": 0.1, "gamma0": 5.0, "J1": 0.0},
-        fit_parameters={"scale": True, "chi0": True, "gamma0": True, "J1": True},
+        parameters={"chi0": 0.1, "gamma0": 5.0, "J1": 0.0},
+        fit_parameters={"chi0": True, "gamma0": True, "J1": True},
         config={
             "site_positions": [[0.0, 0.0, 0.0]],
             "orbits": [
@@ -376,12 +376,11 @@ def test_write_back_fitted_parameters_includes_dynamic_orbit_parameters():
     result = type(
         "Result",
         (),
-        {"params": {"rpa.scale": 2.0, "rpa.chi0": 0.2, "rpa.gamma0": 4.0, "rpa.J1": 1.25}},
+        {"params": {"rpa.chi0": 0.2, "rpa.gamma0": 4.0, "rpa.J1": 1.25}},
     )()
 
     project_gui._write_back_fitted_parameters(DataGroup("Datagroup1"), [model], compiled, result)
 
-    assert model.parameters["scale"] == pytest.approx(2.0)
     assert model.parameters["J1"] == pytest.approx(1.25)
 
 

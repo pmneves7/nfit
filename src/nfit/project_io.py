@@ -85,6 +85,7 @@ def _project_from_dict(payload: dict[str, Any]) -> NfitProject:
         default_model_config,
         default_model_fit_parameters,
         ensure_fit_history,
+        reconcile_model_orbit_parameters,
     )
 
     if payload.get("format") != "nfit-project":
@@ -131,6 +132,7 @@ def _project_from_dict(payload: dict[str, Any]) -> NfitProject:
                 enabled=bool(model_payload.get("enabled", True)),
                 metadata=dict(model_payload.get("metadata", {})),
             )
+            reconcile_model_orbit_parameters(model)
             group.models[model.name] = model
         group.fits = [
             _fit_entry_from_dict(fit_payload) for fit_payload in group_payload.get("fits", [])
@@ -242,6 +244,11 @@ def _dataset_from_dict(dataset_payload: dict[str, Any]) -> DatasetEntry:
         fit_weight=float(dataset_payload.get("fit_weight", 1.0)),
         scale_factor=float(dataset_payload.get("scale_factor", 1.0)),
         scale_factor_vary=bool(dataset_payload.get("scale_factor_vary", False)),
+        scale_factor_group=(
+            None
+            if dataset_payload.get("scale_factor_group") in (None, "")
+            else str(dataset_payload["scale_factor_group"])
+        ),
         masks=[_mask_from_dict(mask_payload) for mask_payload in dataset_payload.get("masks", [])],
         backgrounds=[
             _background_from_dict(background_payload)
@@ -334,6 +341,7 @@ def _dataset_to_dict(dataset: DatasetEntry) -> dict[str, Any]:
         "fit_weight": float(dataset.fit_weight),
         "scale_factor": float(dataset.scale_factor),
         "scale_factor_vary": bool(dataset.scale_factor_vary),
+        "scale_factor_group": dataset.scale_factor_group,
         "masks": [_mask_to_dict(mask) for mask in dataset.masks],
         "backgrounds": [_background_to_dict(background) for background in dataset.backgrounds],
     }

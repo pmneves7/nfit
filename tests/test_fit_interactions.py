@@ -25,7 +25,7 @@ def test_tensor_component_emits_anisotropy_parameters_and_declines_analytic_jaco
 
     _crystal, component = _pyrochlore_tensor_component()
     names = component_parameter_names(component)
-    assert names == ("scale", "chi0", "gamma0", "J1", "J1_S1", "J1_S2", "J1_D1")
+    assert names == ("chi0", "gamma0", "J1", "J1_S1", "J1_S2", "J1_D1")
     compiled = compile_fit_problem(
         [component], [FitDatasetInput("d", _tensor_points(0), data_type="single_crystal_inelastic")]
     )

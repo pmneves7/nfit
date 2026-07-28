@@ -19,9 +19,11 @@ prefix, suffix, and numor expression:
 These mean an inclusive range, two comma-separated ranges, and a stepped range.
 nfit checks that all generated paths exist before adding any of them.
 
-Nested dataset groups have their own enabled state, fit weight, scale, and
-optional composite. Disabling a group excludes its descendants without changing
-their individual enabled states.
+Nested dataset groups have their own enabled state and optional composite.
+Their bulk controls can set every descendant's fit weight or calibration scale,
+and **Share fitted scale** can tie those dataset scales during fitting.
+Disabling a group excludes its descendants without changing their individual
+enabled states.
 
 ### Point-list data
 
@@ -194,9 +196,10 @@ persistent output-grid allocation.
 **Create dataset from rebin** materializes an independent project dataset.
 
 A composite combines compatible enabled descendants into one effective
-dataset. Each source signal is multiplied by its scale and averaged using its
-fit weight. A negative scale subtracts a source. When a composite is active,
-its constituents are not fitted separately.
+dataset. Each source signal and uncertainty receive its positive dataset
+calibration scale, then the sources are averaged using their fit weights. Use a
+dataset or group background for subtraction. When a composite is active, its
+constituents are not fitted separately.
 
 ## Masks
 

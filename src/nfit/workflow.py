@@ -558,6 +558,7 @@ def _source_node(group: DataGroup, dataset: DatasetEntry) -> WorkflowNode:
         "fit_weight": float(dataset.fit_weight),
         "scale_factor": float(dataset.scale_factor),
         "scale_factor_vary": bool(dataset.scale_factor_vary),
+        "scale_factor_group": dataset.scale_factor_group,
         "masks": [_mask_spec(mask) for mask in dataset.masks],
         "backgrounds": [_background_spec(item) for item in dataset.backgrounds],
         "source_fingerprint": fingerprint,
@@ -900,6 +901,7 @@ def load_sources():
         entry.fit_weight = float(spec["fit_weight"])
         entry.scale_factor = float(spec["scale_factor"])
         entry.scale_factor_vary = bool(spec["scale_factor_vary"])
+        entry.scale_factor_group = spec.get("scale_factor_group")
         entry.masks = [MaskSpec(**copy.deepcopy(item)) for item in spec["masks"]]
         entry.backgrounds = [
             BackgroundSpec(**copy.deepcopy(item)) for item in spec["backgrounds"]

@@ -133,6 +133,8 @@ def test_dataset_workflow_script_rebuilds_prepared_dataset(tmp_path):
     )
     target.name = "Measured signal"
     target.scale_factor = 1.5
+    target.scale_factor_vary = True
+    target.scale_factor_group = "same_run"
     target.masks = [
         MaskSpec(
             "Exclude high H",
@@ -176,6 +178,9 @@ def test_dataset_workflow_script_rebuilds_prepared_dataset(tmp_path):
     actual = result.prepared_datasets[target.id]
 
     assert set(result.source_datasets) == {target.id, background.id}
+    rebuilt_target = result.source_datasets[target.id]
+    assert rebuilt_target.scale_factor_vary is True
+    assert rebuilt_target.scale_factor_group == "same_run"
     np.testing.assert_allclose(actual.signal, expected.signal, equal_nan=True)
     np.testing.assert_allclose(actual.errors, expected.errors, equal_nan=True)
     np.testing.assert_array_equal(actual.mask, expected.mask)

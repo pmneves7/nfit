@@ -1228,6 +1228,43 @@ def test_project_explorer_nested_group_bulk_edit_and_tree(monkeypatch):
     assert not explorer.enabled_check.isChecked()
 
 
+def test_nested_group_can_share_one_fitted_dataset_scale(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    first = DatasetEntry("first", _grid_mdhisto_data(), scale_factor=2.0)
+    second = DatasetEntry("second", _grid_mdhisto_data(), scale_factor=3.0)
+    subgroup = DatasetGroup("same_run", datasets=[first, second])
+    group = DataGroup("workspace", subgroups=[subgroup])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    datasets_item = explorer.tree.topLevelItem(0).child(0)
+    subgroup_item = next(
+        datasets_item.child(index)
+        for index in range(datasets_item.childCount())
+        if datasets_item.child(index).text(0) == "same_run"
+    )
+    explorer.tree.setCurrentItem(subgroup_item)
+    monkeypatch.setattr(explorer, "_record_data_group_state_change", lambda _group: False)
+
+    shared = explorer.window.findChild(
+        QtWidgets.QCheckBox, "group_scale_factor_vary"
+    )
+    assert shared is not None
+    assert "one calibration scale" in shared.toolTip()
+    shared.setChecked(True)
+    assert [dataset.scale_factor for dataset in subgroup.datasets] == [2.0, 2.0]
+    assert all(dataset.scale_factor_vary for dataset in subgroup.datasets)
+    assert {
+        dataset.scale_factor_group for dataset in subgroup.datasets
+    } == {"same_run"}
+
+    shared.setChecked(False)
+    assert all(dataset.scale_factor_vary for dataset in subgroup.datasets)
+    assert all(
+        dataset.scale_factor_group is None for dataset in subgroup.datasets
+    )
+
+
 def test_dataset_scale_factor_scales_viewed_data_and_round_trips(monkeypatch, tmp_path):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
@@ -1282,14 +1319,17 @@ def test_dataset_scale_factor_scales_viewed_data_and_round_trips(monkeypatch, tm
     placeholder = import_dataset_paths(save_group, [tmp_path / "scan.nxs"])[0]
     placeholder.scale_factor = 3.0
     placeholder.scale_factor_vary = True
+    placeholder.scale_factor_group = "same_run"
     path = tmp_path / "proj.nfit"
     save_project(NfitProject([save_group]), path)
     payload = json.loads(path.read_text())["data_groups"][0]["datasets"][0]
     assert payload["scale_factor"] == 3.0
     assert payload["scale_factor_vary"] is True
+    assert payload["scale_factor_group"] == "same_run"
     loaded = load_project(path).data_groups[0].datasets[0]
     assert loaded.scale_factor == 3.0
     assert loaded.scale_factor_vary is True
+    assert loaded.scale_factor_group == "same_run"
 
 
 def test_point_list_scale_and_susceptibility_transforms(mpms_file):
@@ -1534,6 +1574,7 @@ def test_powder_wavelength_to_q_and_point_rebin(hb2a_file):
     dataset = import_dataset_paths(group, [hb2a_file], data_type="powder_elastic")[0]
     config = point_list_config(dataset)
     config["wavelength"] = {"value": 2.41, "two_theta": "2theta"}
+    dataset.parameters["temperature"] = 10.0
 
     prepared = prepared_point_list_data(dataset)
     # Powder is 1D: q is the single coordinate; d and 2theta remain columns.
@@ -1558,6 +1599,13 @@ def test_powder_wavelength_to_q_and_point_rebin(hb2a_file):
     assert isinstance(viewed, PointListData)
     assert viewed.size < dataset.data.size
     assert "q" in viewed.coordinate_names
+
+    bundle = project_gui.fit_data_bundle(group, dataset)
+    assert bundle is not None
+    np.testing.assert_allclose(bundle.points.H, viewed.column("q"))
+    np.testing.assert_allclose(bundle.points.E, 0.0)
+    assert bundle.points.metadata["powder_q_modulus_axis"] is True
+    assert bundle.points.metadata["coordinate_units"] == "1/angstrom"
 
 
 def test_point_list_variables_panel_edits_config(monkeypatch, mpms_file):

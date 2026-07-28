@@ -48,6 +48,7 @@ from .cross_section import (
     intensity_from_chipp,
     kf_over_ki,
     magnetic_moment_factor,
+    quasistatic_cross_section_from_chi,
 )
 from .dataset import PointData4D
 from .fitting import (
@@ -238,7 +239,6 @@ def _spectral_model_observable(
     data: PointData4D,
     chipp: np.ndarray,
     *,
-    scale: float,
     form_factor_sq: float | np.ndarray,
     polarization: float | np.ndarray,
     legacy: str = "intensity",
@@ -248,12 +248,11 @@ def _spectral_model_observable(
     convention = data.metadata.get("spectral_observable")
     if not isinstance(convention, dict):
         if legacy == "chipp":
-            return float(scale) * np.asarray(chipp, dtype=float)
+            return np.asarray(chipp, dtype=float)
         return intensity_from_chipp(
             chipp,
             data.E,
             _dataset_temperature(data),
-            scale=scale,
             form_factor_sq=form_factor_sq,
             polarization=polarization,
         )
@@ -270,7 +269,7 @@ def _spectral_model_observable(
             raise ValueError(
                 "spectral moment_unit must be 'mu_B_squared' or 'spin_squared'"
             )
-        return float(scale) * response
+        return response
 
     kinematic: float | np.ndarray = 1.0
     if convention.get("kf_ki_state") == "included":
@@ -296,7 +295,43 @@ def _spectral_model_observable(
     unit = str(convention.get("unit", ""))
     if unit.startswith("mbarn/"):
         values = values * MILLIBARN_PER_BARN
-    return float(scale) * np.asarray(values, dtype=float)
+    return np.asarray(values, dtype=float)
+
+
+def _quasistatic_model_observable(
+    data: PointData4D,
+    chi_static: np.ndarray,
+    *,
+    form_factor_sq: float | np.ndarray,
+    polarization: float | np.ndarray,
+) -> np.ndarray:
+    """Map static spin susceptibility to energy-integrated elastic intensity."""
+
+    convention = data.metadata.get("spectral_observable")
+    g_factor = 2.0
+    unit = ""
+    if isinstance(convention, dict):
+        g_value = convention.get("g_factor", 2.0)
+        g_factor = 2.0 if g_value in (None, "") else float(g_value)
+        unit = str(convention.get("unit", ""))
+    values = quasistatic_cross_section_from_chi(
+        chi_static,
+        _dataset_temperature(data),
+        form_factor_sq=form_factor_sq,
+        polarization=polarization,
+        moment_unit="spin_squared",
+        g_factor=g_factor,
+    )
+    if unit.startswith("mbarn/"):
+        values = values * MILLIBARN_PER_BARN
+    return np.asarray(values, dtype=float)
+
+
+def _is_elastic_dataset(data: PointData4D) -> bool:
+    return str(data.metadata.get("data_type", "")) in {
+        "single_crystal_elastic",
+        "powder_elastic",
+    }
 
 
 def _dataset_magnetic_field(data: PointData4D) -> np.ndarray:
@@ -403,11 +438,17 @@ def _q_offset_sq_inv_angstrom(
 
 def _local_relaxational_factory(component: Any) -> ModelFunction:
     name = component.name
-    scale_key = qualified_parameter_name(name, "scale")
     chi_key = qualified_parameter_name(name, "chi_loc")
     gamma_key = qualified_parameter_name(name, "gamma")
 
     def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        if _is_elastic_dataset(data):
+            return _quasistatic_model_observable(
+                data,
+                np.full(data.size, float(params[chi_key]), dtype=float),
+                form_factor_sq=_form_factor_sq_from_config(component, data),
+                polarization=ISOTROPIC_POLARIZATION,
+            )
         chipp = local_relaxational_chipp(
             data.E,
             chi_loc=float(params[chi_key]),
@@ -416,7 +457,6 @@ def _local_relaxational_factory(component: Any) -> ModelFunction:
         return _spectral_model_observable(
             data,
             chipp,
-            scale=float(params[scale_key]),
             form_factor_sq=_form_factor_sq_from_config(component, data),
             polarization=ISOTROPIC_POLARIZATION,
         )
@@ -428,7 +468,7 @@ def _mmp_relaxational_factory(component: Any) -> ModelFunction:
     name = component.name
     keys = {
         parameter: qualified_parameter_name(name, parameter)
-        for parameter in ("scale", "chi_pk", "xi", "omega_sf", "q0_h", "q0_k", "q0_l")
+        for parameter in ("chi_pk", "xi", "omega_sf", "q0_h", "q0_k", "q0_l")
     }
 
     def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
@@ -437,8 +477,19 @@ def _mmp_relaxational_factory(component: Any) -> ModelFunction:
             float(params[keys["q0_k"]]),
             float(params[keys["q0_l"]]),
         )
+        q_offset_sq = _q_offset_sq_inv_angstrom(data, q0)
+        if _is_elastic_dataset(data):
+            chi_static = float(params[keys["chi_pk"]]) / (
+                1.0 + float(params[keys["xi"]]) ** 2 * q_offset_sq
+            )
+            return _quasistatic_model_observable(
+                data,
+                chi_static,
+                form_factor_sq=_form_factor_sq_from_config(component, data),
+                polarization=ISOTROPIC_POLARIZATION,
+            )
         chipp = mmp_chipp(
-            _q_offset_sq_inv_angstrom(data, q0),
+            q_offset_sq,
             data.E,
             chi_pk=float(params[keys["chi_pk"]]),
             xi=float(params[keys["xi"]]),
@@ -447,7 +498,6 @@ def _mmp_relaxational_factory(component: Any) -> ModelFunction:
         return _spectral_model_observable(
             data,
             chipp,
-            scale=float(params[keys["scale"]]),
             form_factor_sq=_form_factor_sq_from_config(component, data),
             polarization=ISOTROPIC_POLARIZATION,
         )
@@ -569,7 +619,6 @@ class _RpaComponentEvaluator:
         self._n_magnetic_sites = len(site_positions)
         self.labels = heisenberg_rpa_orbit_labels(component)
         self.j_keys = {label: qualified_parameter_name(name, label) for label in self.labels}
-        self.scale_key = qualified_parameter_name(name, "scale")
         self.chi0_key = qualified_parameter_name(name, "chi0")
         self.gamma0_key = qualified_parameter_name(name, "gamma0")
         self.tensor_mode = _component_has_tensor_terms(config)
@@ -644,7 +693,7 @@ class _RpaComponentEvaluator:
         if len(self._geometry_cache) > 32:
             self._geometry_cache.clear()
         powder = (
-            data.metadata.get("data_type") == "powder_inelastic"
+            data.metadata.get("data_type") in {"powder_inelastic", "powder_elastic"}
             or bool(data.metadata.get("powder_q_modulus_axis"))
         )
         powder_count = 1
@@ -1107,11 +1156,12 @@ class _RpaComponentEvaluator:
     ) -> np.ndarray:
         """Predict the bulk moment M(T, B) for a magnetization dataset.
 
-        ``M = scale * g^2 * chi_uniform(T, B) * B`` (longitudinal), with the
+        ``M = g^2 * chi_uniform(T, B) * B`` (longitudinal), with the
         closure making ``chi_uniform`` field-dependent (nonlinear M(B)) through
-        the reaction field. In absolute mode the physical emu/mol constant and
-        the sample's molar amount replace the free scale. Closures are solved
-        once per distinct (T, B).
+        the reaction field. Dataset calibration is applied outside the model.
+        In absolute mode the physical emu/mol constant and the sample's molar
+        amount set the conversion. Closures are solved once per distinct
+        (T, B).
         """
 
         from .sum_rules import (
@@ -1136,7 +1186,6 @@ class _RpaComponentEvaluator:
         g_factor = (
             float(params[self._zeeman_keys["g_factor"]]) if self.zeeman_mode else 2.0
         )
-        scale = float(params[self.scale_key])
         metadata = data.metadata if isinstance(data.metadata, dict) else {}
         absolute = bool(metadata.get("absolute_units"))
         quantity_type = str(metadata.get("quantity_type", "magnetic_moment"))
@@ -1219,7 +1268,7 @@ class _RpaComponentEvaluator:
             prediction = g_factor**2 * chi_uniform
             if quantity_type != "bulk_susceptibility":
                 prediction = prediction * b_mag[sel]
-            out[sel] = scale * abs_factor * prediction
+            out[sel] = abs_factor * prediction
         if absolute:
             from .quantities import convert_quantity
 
@@ -1245,6 +1294,7 @@ class _RpaComponentEvaluator:
             if powder_count > 1
             else np.asarray(data.E, dtype=float)
         )
+        elastic = _is_elastic_dataset(data)
         try:
             chi0 = float(params[self.chi0_key])
             lambda_shift = 0.0
@@ -1256,6 +1306,8 @@ class _RpaComponentEvaluator:
                 from .tensor_rpa import (
                     MU_B_MEV_PER_T,
                     tensor_rpa_zeeman_unpolarized_chipp,
+                    tensor_zeeman_susceptibility,
+                    unpolarized_static_chi,
                     zeeman_cartesian_propagator,
                 )
 
@@ -1264,7 +1316,7 @@ class _RpaComponentEvaluator:
                 b_hat = field / magnitude if magnitude > 0 else np.array([0.0, 0.0, 1.0])
                 g_factor = float(params[self._zeeman_keys["g_factor"]])
                 propagator = zeeman_cartesian_propagator(
-                    energy,
+                    np.zeros_like(energy) if elastic else energy,
                     b_hat,
                     chi0=chi0,
                     gamma0=float(params[self.gamma0_key]),
@@ -1272,38 +1324,80 @@ class _RpaComponentEvaluator:
                     chi_perp_ratio=float(params[self._zeeman_keys["chi_perp_ratio"]]),
                     gamma_perp_ratio=float(params[self._zeeman_keys["gamma_perp_ratio"]]),
                 )
-                chipp = tensor_rpa_zeeman_unpolarized_chipp(
-                    structure, geometry, energy, q_hat, propagator,
-                    param_values=self._tensor_values(params),
-                    lambda_shift=lambda_shift,
-                )
+                if elastic:
+                    chi_tensor = tensor_zeeman_susceptibility(
+                        structure,
+                        geometry,
+                        np.zeros_like(energy),
+                        propagator,
+                        param_values=self._tensor_values(params),
+                        lambda_shift=lambda_shift,
+                    )
+                    response = unpolarized_static_chi(chi_tensor, q_hat)
+                else:
+                    response = tensor_rpa_zeeman_unpolarized_chipp(
+                        structure, geometry, energy, q_hat, propagator,
+                        param_values=self._tensor_values(params),
+                        lambda_shift=lambda_shift,
+                    )
                 polarization = 1.0
             elif self.tensor_mode:
-                from .tensor_rpa import tensor_rpa_unpolarized_chipp
+                from .tensor_rpa import (
+                    tensor_rpa_unpolarized_chipp,
+                    tensor_susceptibility,
+                    unpolarized_static_chi,
+                )
 
                 structure, q_hat = tensor_context
-                chipp = tensor_rpa_unpolarized_chipp(
-                    structure,
-                    geometry,
-                    energy,
-                    q_hat,
-                    chi0=chi0,
-                    gamma0=float(params[self.gamma0_key]),
-                    param_values=self._tensor_values(params),
-                    lambda_shift=lambda_shift,
-                )
+                if elastic:
+                    chi_tensor = tensor_susceptibility(
+                        structure,
+                        geometry,
+                        np.zeros_like(energy),
+                        chi0=chi0,
+                        gamma0=float(params[self.gamma0_key]),
+                        param_values=self._tensor_values(params),
+                        lambda_shift=lambda_shift,
+                    )
+                    response = unpolarized_static_chi(chi_tensor, q_hat)
+                else:
+                    response = tensor_rpa_unpolarized_chipp(
+                        structure,
+                        geometry,
+                        energy,
+                        q_hat,
+                        chi0=chi0,
+                        gamma0=float(params[self.gamma0_key]),
+                        param_values=self._tensor_values(params),
+                        lambda_shift=lambda_shift,
+                    )
                 # The unpolarized channel already carries the polarization
                 # average, so no extra scalar polarization factor here.
                 polarization = 1.0
             else:
-                chipp = heisenberg_rpa_chipp(
-                    geometry,
-                    energy,
-                    chi0=chi0,
-                    gamma0=float(params[self.gamma0_key]),
-                    j_values=self._j_values(params),
-                    lambda_shift=lambda_shift,
-                )
+                if elastic:
+                    from .sum_rules import static_chi_modes
+
+                    exchange = rpa_exchange_matrix(geometry, self._j_values(params))
+                    eigenvalues, modes = np.linalg.eigh(exchange)
+                    weights = (
+                        np.abs(modes.sum(axis=1)) ** 2 / geometry.n_sites
+                    )
+                    response = static_chi_modes(
+                        eigenvalues,
+                        weights,
+                        chi0=chi0,
+                        lambda_shift=lambda_shift,
+                    )[geometry.point_index]
+                else:
+                    response = heisenberg_rpa_chipp(
+                        geometry,
+                        energy,
+                        chi0=chi0,
+                        gamma0=float(params[self.gamma0_key]),
+                        j_values=self._j_values(params),
+                        lambda_shift=lambda_shift,
+                    )
                 polarization = ISOTROPIC_POLARIZATION
         except ValueError:
             # Unphysical trial parameters (RPA instability, non-positive
@@ -1311,11 +1405,17 @@ class _RpaComponentEvaluator:
             # searching; a huge finite misfit steers them back without
             # aborting the fit.
             return np.full(data.size, 1e6, dtype=float)
-        chipp = self._powder_average(chipp, data.size, powder_count)
+        response = self._powder_average(response, data.size, powder_count)
+        if elastic:
+            return _quasistatic_model_observable(
+                data,
+                response,
+                form_factor_sq=form_factor_sq,
+                polarization=polarization,
+            )
         return _spectral_model_observable(
             data,
-            chipp,
-            scale=float(params[self.scale_key]),
+            response,
             form_factor_sq=form_factor_sq,
             polarization=polarization,
         )
@@ -1511,7 +1611,6 @@ class _RpaComponentEvaluator:
             if powder_count > 1
             else np.asarray(data.E, dtype=float)
         )
-        scale = float(params[self.scale_key])
         try:
             chipp, chipp_grads = heisenberg_rpa_chipp_and_gradients(
                 geometry,
@@ -1524,7 +1623,7 @@ class _RpaComponentEvaluator:
             # Sentinel-penalty region: the value is a constant with no
             # parameter dependence, so every column is zero.
             zero = np.zeros(data.size, dtype=float)
-            columns = {self.scale_key: zero, self.chi0_key: zero, self.gamma0_key: zero}
+            columns = {self.chi0_key: zero, self.gamma0_key: zero}
             columns.update({key: zero for key in self.j_keys.values()})
             return columns
         chipp = self._powder_average(chipp, data.size, powder_count)
@@ -1532,33 +1631,19 @@ class _RpaComponentEvaluator:
             name: self._powder_average(values, data.size, powder_count)
             for name, values in chipp_grads.items()
         }
-        # I = scale * 2 * |f|^2 * chipp / bose(E, T), linear in chipp. The
-        # scale column is I evaluated at unit scale; d(I)/d(chipp) is I with
-        # chipp replaced by 1 (the Bose/form-factor/scale prefactor). Both are
-        # computed directly -- never by dividing by chipp, which would be
-        # singular at nodes where chipp = 0 but the sensitivity is finite.
+        # Intensity is linear in chi''. Compute its derivative directly rather
+        # than dividing by chi'', which would be singular at response nodes.
         ones = np.ones(data.size, dtype=float)
-        scale_column = np.asarray(
-            _spectral_model_observable(
-                data,
-                chipp,
-                scale=1.0,
-                form_factor_sq=form_factor_sq,
-                polarization=ISOTROPIC_POLARIZATION,
-            ),
-            dtype=float,
-        )
         d_intensity_d_chipp = np.asarray(
             _spectral_model_observable(
                 data,
                 ones,
-                scale=scale,
                 form_factor_sq=form_factor_sq,
                 polarization=ISOTROPIC_POLARIZATION,
             ),
             dtype=float,
         )
-        columns = {self.scale_key: scale_column}
+        columns = {}
         columns[self.chi0_key] = d_intensity_d_chipp * chipp_grads["chi0"]
         columns[self.gamma0_key] = d_intensity_d_chipp * chipp_grads["gamma0"]
         for label, key in self.j_keys.items():
@@ -1651,29 +1736,39 @@ MODEL_TYPE_REGISTRY: dict[str, ModelTypeInfo] = {
         jacobian_factory=_linear_background_jacobian_factory,
     ),
     "local_relaxational": ModelTypeInfo(
-        parameters=("scale", "chi_loc", "gamma"),
-        data_types=("single_crystal_inelastic", "powder_inelastic"),
+        parameters=("chi_loc", "gamma"),
+        data_types=(
+            "single_crystal_inelastic",
+            "powder_inelastic",
+            "single_crystal_elastic",
+            "powder_elastic",
+        ),
         factory=_local_relaxational_factory,
-        default_lower_bounds=(("scale", 0.0), ("chi_loc", 0.0), ("gamma", 0.0)),
+        default_lower_bounds=(("chi_loc", 0.0), ("gamma", 0.0)),
     ),
     "mmp_relaxational": ModelTypeInfo(
-        parameters=("scale", "chi_pk", "xi", "omega_sf", "q0_h", "q0_k", "q0_l"),
-        data_types=("single_crystal_inelastic",),
+        parameters=("chi_pk", "xi", "omega_sf", "q0_h", "q0_k", "q0_l"),
+        data_types=("single_crystal_inelastic", "single_crystal_elastic"),
         factory=_mmp_relaxational_factory,
         default_lower_bounds=(
-            ("scale", 0.0),
             ("chi_pk", 0.0),
             ("xi", 0.0),
             ("omega_sf", 0.0),
         ),
     ),
     "heisenberg_rpa": ModelTypeInfo(
-        parameters=("scale", "chi0", "gamma0"),
-        data_types=("single_crystal_inelastic", "powder_inelastic", "magnetization"),
+        parameters=("chi0", "gamma0"),
+        data_types=(
+            "single_crystal_inelastic",
+            "powder_inelastic",
+            "single_crystal_elastic",
+            "powder_elastic",
+            "magnetization",
+        ),
         factory=_heisenberg_rpa_factory,
         dynamic_parameters=heisenberg_rpa_parameter_labels,
         jacobian_factory=_heisenberg_rpa_jacobian_factory,
-        default_lower_bounds=(("scale", 0.0), ("chi0", 0.0), ("gamma0", 0.0)),
+        default_lower_bounds=(("chi0", 0.0), ("gamma0", 0.0)),
     ),
     "debye_heat_capacity": ModelTypeInfo(
         parameters=("debye_temperature", "oscillator_count"),
@@ -1714,7 +1809,8 @@ class FitDatasetInput:
     ``data`` must already reflect masks and any rebinning. Fixed scale factors
     should already be applied; fitted scale factors should be passed as
     ``scale_value`` with ``scale_vary=True`` so the compiler can add a dataset
-    scale parameter.
+    scale parameter. Datasets with the same nonempty ``scale_group`` share one
+    fitted scale and must supply the same starting value.
     """
 
     name: str
@@ -1724,6 +1820,7 @@ class FitDatasetInput:
     metadata: dict[str, Any] = field(default_factory=dict)
     scale_value: float = 1.0
     scale_vary: bool = False
+    scale_group: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1925,31 +2022,60 @@ def compile_fit_problem(
                 )
 
     scale_parameters: dict[str, str] = {}
+    scale_groups: dict[tuple[str, str], list[FitDatasetInput]] = {}
     for dataset in fitted:
-        if not dataset.scale_vary:
-            continue
-        name = dataset_scale_parameter_name(dataset.name)
+        if dataset.scale_vary:
+            key = (
+                ("group", str(dataset.scale_group))
+                if dataset.scale_group
+                else ("dataset", dataset.name)
+            )
+            scale_groups.setdefault(key, []).append(dataset)
+    for (kind, key), members in scale_groups.items():
+        values = np.asarray([float(dataset.scale_value) for dataset in members])
+        if not np.all(np.isfinite(values)) or np.any(values <= 0.0):
+            raise ValueError("fitted dataset scales must be finite and positive")
+        if not np.allclose(values, values[0], rtol=1.0e-12, atol=1.0e-12):
+            names = ", ".join(dataset.name for dataset in members)
+            raise ValueError(
+                f"datasets sharing scale group {key!r} have different starting "
+                f"scales ({names}); set one common dataset scale first"
+            )
+        name = dataset_scale_parameter_name(
+            f"group:{key}" if kind == "group" else key
+        )
         emit(
             ParameterSpec(
                 name=name,
-                value=float(dataset.scale_value),
+                value=float(values[0]),
+                min=0.0,
                 vary=True,
-                description=f"Scale factor for dataset {dataset.name}",
+                description=(
+                    f"Shared scale for datasets {', '.join(d.name for d in members)}"
+                    if len(members) > 1
+                    else f"Scale factor for dataset {members[0].name}"
+                ),
             ),
             ParameterInstance(
                 name=name,
                 component="dataset",
                 parameter="scale_factor",
-                scope=dataset.name,
-                datasets=(dataset.name,),
+                scope=key,
+                datasets=tuple(dataset.name for dataset in members),
             ),
         )
-        scale_parameters[dataset.name] = name
+        for dataset in members:
+            scale_parameters[dataset.name] = name
 
     derived = _compile_constraints(active, applicable, specs, instances)
 
     fit_datasets: list[FitDataset] = []
     for dataset in fitted:
+        fit_data = dataset.data
+        if dataset.data_type and fit_data.metadata.get("data_type") != dataset.data_type:
+            point_metadata = dict(fit_data.metadata)
+            point_metadata["data_type"] = dataset.data_type
+            fit_data = fit_data.with_updates(metadata=point_metadata)
         components_here = [
             component for component in active if dataset.name in applicable[component.name]
         ]
@@ -1967,7 +2093,8 @@ def compile_fit_problem(
         model_jacobian = None
         if (
             components_here
-            and getattr(dataset, "data_type", None) != "magnetization"
+            and getattr(dataset, "data_type", None)
+            not in {"magnetization", "single_crystal_elastic", "powder_elastic"}
             and all(factory is not None for factory in jacobian_factories)
         ):
             # A registry entry may have a jacobian factory that still declines
@@ -1987,7 +2114,7 @@ def compile_fit_problem(
         fit_datasets.append(
             FitDataset(
                 name=dataset.name,
-                data=dataset.data,
+                data=fit_data,
                 weight=float(dataset.weight),
                 parameter_bindings=dict(bindings[dataset.name]),
                 model=_additive_model(evaluators),

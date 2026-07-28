@@ -18,7 +18,7 @@ dataset and its:
 - inherited and dataset masks;
 - rebin settings;
 - attached dataset backgrounds;
-- scale factor; and
+- fixed, fitted, or dataset-group-shared scale; and
 - spectral-channel conversion.
 
 The script separates `load_sources()` from `prepare_datasets()`. Configuration
@@ -49,8 +49,9 @@ instead of producing an incomplete script.
 
 Fit script actions export the workspace's live datasets, model components,
 parameter sharing, bounds, constraints, and active optimizer configuration.
-Running the script performs one fit. Stored results and timeline branches are
-not replayed.
+Dataset scale settings, including shared fitted scales, are part of that
+scientific configuration. Running the script performs one fit. Stored results
+and timeline branches are not replayed.
 
 ## Python API
 

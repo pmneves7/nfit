@@ -62,7 +62,6 @@ def test_scalar_bulk_susceptibility_does_not_recompute_for_each_temperature(monk
         np.zeros(temperatures.size),
     )
     params = {
-        evaluator.scale_key: 1.0,
         evaluator.chi0_key: 0.4,
         evaluator.gamma0_key: 2.0,
         evaluator.j_keys["J1"]: 0.0,
@@ -79,7 +78,6 @@ def test_bulk_q0_eigensystem_is_reused_across_closure_states(monkeypatch):
 
     evaluator = _RpaComponentEvaluator(_magnetization_component(chi0=0.4, J1=0.05))
     params = {
-        evaluator.scale_key: 1.0,
         evaluator.chi0_key: 0.4,
         evaluator.gamma0_key: 2.0,
         evaluator.j_keys["J1"]: 0.05,

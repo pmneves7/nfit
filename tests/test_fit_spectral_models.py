@@ -24,7 +24,7 @@ def test_heisenberg_rpa_emits_dynamic_orbit_parameters():
     component = ModelComponentSpec(
         name="rpa",
         type="heisenberg_rpa",
-        parameters={"scale": 1.0, "chi0": 0.5, "gamma0": 2.0, "J1": 0.1, "J3a": 0.0},
+        parameters={"chi0": 0.5, "gamma0": 2.0, "J1": 0.1, "J3a": 0.0},
         fit_parameters={"J1": True},
         config={
             "site_positions": [[0.0, 0.0, 0.0]],
@@ -38,7 +38,7 @@ def test_heisenberg_rpa_emits_dynamic_orbit_parameters():
     points = _spin_fluctuation_points(np.ones(16), H, np.ones(16), temperature=10.0)
     compiled = compile_fit_problem([component], [FitDatasetInput("a", points)])
     names = [spec.name for spec in compiled.problem.parameter_specs]
-    assert names == ["rpa.scale", "rpa.chi0", "rpa.gamma0", "rpa.J1", "rpa.J3a"]
+    assert names == ["rpa.chi0", "rpa.gamma0", "rpa.J1", "rpa.J3a"]
 
 
 def test_spin_fluctuation_models_require_temperature():
@@ -98,7 +98,7 @@ def test_local_relaxational_model_can_emit_selected_chipp_or_mbarn_channel():
     component = ModelComponentSpec(
         name="loc",
         type="local_relaxational",
-        parameters={"scale": 2.0, "chi_loc": 1.5, "gamma": 2.5},
+        parameters={"chi_loc": 1.5, "gamma": 2.5},
         fit_parameters={},
     )
     convention = {
@@ -113,7 +113,7 @@ def test_local_relaxational_model_can_emit_selected_chipp_or_mbarn_channel():
     params = {spec.name: spec.value for spec in compiled.problem.parameter_specs}
     chipp = local_relaxational_chipp(energy, chi_loc=1.5, gamma=2.5)
     np.testing.assert_allclose(
-        evaluate_problem_model(compiled.problem, "a", params), 2.0 * 2.0**2 * chipp
+        evaluate_problem_model(compiled.problem, "a", params), 2.0**2 * chipp
     )
 
     convention.update(
@@ -125,8 +125,7 @@ def test_local_relaxational_model_can_emit_selected_chipp_or_mbarn_channel():
     from nfit.cross_section import cross_section_from_chipp
 
     expected = (
-        2.0
-        * cross_section_from_chipp(
+        cross_section_from_chipp(
             chipp,
             energy,
             20.0,
@@ -137,6 +136,125 @@ def test_local_relaxational_model_can_emit_selected_chipp_or_mbarn_channel():
         * 1000.0
     )
     np.testing.assert_allclose(evaluate_problem_model(compiled.problem, "a", params), expected)
+
+
+@pytest.mark.parametrize("data_type", ["single_crystal_elastic", "powder_elastic"])
+def test_local_relaxational_elastic_uses_quasistatic_response(data_type):
+    from nfit.cross_section import quasistatic_cross_section_from_chi
+    from nfit.fitting import evaluate_problem_model
+
+    points = _spin_fluctuation_points(
+        np.ones(4),
+        np.linspace(0.1, 0.7, 4),
+        np.zeros(4),
+        temperature=18.0,
+    )
+    if data_type == "powder_elastic":
+        points.metadata.update(
+            {"coordinate_units": "1/angstrom", "powder_q_modulus_axis": True}
+        )
+    component = ModelComponentSpec(
+        name="loc",
+        type="local_relaxational",
+        parameters={"chi_loc": 1.5, "gamma": 2.5},
+        fit_parameters={},
+    )
+    compiled = compile_fit_problem(
+        [component], [FitDatasetInput("elastic", points, data_type=data_type)]
+    )
+    params = {spec.name: spec.value for spec in compiled.problem.parameter_specs}
+    prediction = evaluate_problem_model(compiled.problem, "elastic", params)
+    expected = quasistatic_cross_section_from_chi(
+        np.full(4, 1.5),
+        18.0,
+        polarization=2.0,
+        moment_unit="spin_squared",
+        g_factor=2.0,
+    )
+    np.testing.assert_allclose(prediction, expected)
+    params["loc.gamma"] = 50.0
+    np.testing.assert_allclose(
+        evaluate_problem_model(compiled.problem, "elastic", params),
+        expected,
+    )
+
+
+def test_mmp_single_crystal_elastic_uses_static_lorentzian():
+    from nfit.cross_section import quasistatic_cross_section_from_chi
+    from nfit.fitting import evaluate_problem_model
+
+    h = np.array([0.3, 0.5, 0.7])
+    points = _spin_fluctuation_points(
+        np.ones(3), h, np.zeros(3), temperature=25.0, lattice_a=4.0
+    )
+    component = ModelComponentSpec(
+        name="mmp",
+        type="mmp_relaxational",
+        parameters={
+            "chi_pk": 3.0,
+            "xi": 2.2,
+            "omega_sf": 1.8,
+            "q0_h": 0.5,
+            "q0_k": 0.0,
+            "q0_l": 0.0,
+        },
+        fit_parameters={},
+    )
+    compiled = compile_fit_problem(
+        [component],
+        [FitDatasetInput("elastic", points, data_type="single_crystal_elastic")],
+    )
+    params = {spec.name: spec.value for spec in compiled.problem.parameter_specs}
+    q_sq = (2.0 * np.pi / 4.0) ** 2 * (h - 0.5) ** 2
+    expected = quasistatic_cross_section_from_chi(
+        3.0 / (1.0 + 2.2**2 * q_sq),
+        25.0,
+        polarization=2.0,
+        moment_unit="spin_squared",
+        g_factor=2.0,
+    )
+    np.testing.assert_allclose(
+        evaluate_problem_model(compiled.problem, "elastic", params), expected
+    )
+
+
+def test_heisenberg_rpa_powder_elastic_is_finite_and_gamma_independent():
+    from nfit.fitting import evaluate_problem_model
+
+    component = _heisenberg_chain_component()
+    component.config["crystal"] = {
+        "lattice": {
+            "a": 4.0,
+            "b": 4.0,
+            "c": 4.0,
+            "alpha": 90.0,
+            "beta": 90.0,
+            "gamma": 90.0,
+        }
+    }
+    q = np.linspace(0.2, 2.0, 7)
+    points = _spin_fluctuation_points(
+        np.ones(q.size), q, np.zeros(q.size), temperature=12.0
+    )
+    points.metadata.update(
+        {
+            "coordinate_units": "1/angstrom",
+            "powder_q_modulus_axis": True,
+        }
+    )
+    compiled = compile_fit_problem(
+        [component],
+        [FitDatasetInput("powder", points, data_type="powder_elastic")],
+    )
+    params = {spec.name: spec.value for spec in compiled.problem.parameter_specs}
+    prediction = evaluate_problem_model(compiled.problem, "powder", params)
+    assert np.all(np.isfinite(prediction))
+    assert np.ptp(prediction) > 0.0
+    params["rpa.gamma0"] = 100.0
+    np.testing.assert_allclose(
+        evaluate_problem_model(compiled.problem, "powder", params),
+        prediction,
+    )
 
 
 def test_mmp_relaxational_fit_recovers_synthetic_parameters():
@@ -407,7 +525,7 @@ def test_analytic_jacobian_matches_finite_differences_with_grouped_sharing():
     np.testing.assert_allclose(analytic, fd, rtol=2e-6, atol=1e-6)
 
 
-@pytest.mark.parametrize("scale_value", [1.3, -1.3])
+@pytest.mark.parametrize("scale_value", [1.3, 0.7])
 def test_analytic_jacobian_includes_fitted_dataset_scale(scale_value):
     from nfit.fitting import (
         _evaluate_problem,
@@ -553,7 +671,7 @@ def test_analytic_and_numeric_jacobians_recover_same_fit():
         metadata=dict(data.metadata),
     )
     start = _rpa_component(
-        parameters={"scale": 1.0, "chi0": 0.2, "gamma0": 2.5, "J1": 0.05, "J2": 0.0}
+        parameters={"chi0": 0.2, "gamma0": 2.5, "J1": 0.05, "J2": 0.0}
     )
     compiled = compile_fit_problem(
         [start], [FitDatasetInput("T5", fitted_points, data_type="single_crystal_inelastic")]
@@ -562,12 +680,9 @@ def test_analytic_and_numeric_jacobians_recover_same_fit():
     assert result.success
     # Noise-free data drawn from the model must be fit essentially perfectly.
     assert result.reduced_chi2 < 1e-6
-    # The RPA response is invariant under chi0 -> a*chi0, J -> J/a, scale ->
-    # scale/a, so only gamma0 and the products scale*chi0 and chi0*J_o are
-    # physically determined; assert those recover the generating values.
     p = result.params
     assert p["M.gamma0"] == pytest.approx(2.0, rel=1e-3)
-    assert p["M.scale"] * p["M.chi0"] == pytest.approx(1.2 * 0.3, rel=1e-3)
+    assert p["M.chi0"] == pytest.approx(0.3, rel=1e-3)
     assert p["M.chi0"] * p["M.J1"] == pytest.approx(0.3 * 0.1, rel=1e-3)
     assert p["M.chi0"] * p["M.J2"] == pytest.approx(0.3 * -0.05, rel=1e-3)
 

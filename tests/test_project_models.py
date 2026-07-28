@@ -544,6 +544,7 @@ def test_reconcile_model_orbit_parameters_keeps_and_drops():
     reconcile_model_orbit_parameters(model)
     assert model.parameters["J1"] == 0.2
     assert model.parameters["J2"] == 0.0
+    assert "scale" not in model.parameters
     assert "J9" not in model.parameters
     assert "J9" not in model.fit_parameters
     assert "J9" not in model.limits

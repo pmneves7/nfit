@@ -445,6 +445,16 @@ def _chipp_from_chi(chi: ComplexArray, q_hat: FloatArray) -> FloatArray:
     return np.einsum("pab,pab->p", _unpolarized_weight(q_hat), chi_dd).real
 
 
+def unpolarized_static_chi(chi: ComplexArray, q_hat: FloatArray) -> FloatArray:
+    """Contract ``Re chi(Q, 0)`` with the unpolarized neutron projector."""
+
+    return np.einsum(
+        "pab,pab->p",
+        _unpolarized_weight(q_hat),
+        np.asarray(chi, dtype=complex).real,
+    )
+
+
 def tensor_rpa_zeeman_unpolarized_chipp(
     structure: TensorStructure,
     geometry: RpaGeometry,

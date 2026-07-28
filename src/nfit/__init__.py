@@ -3,7 +3,8 @@
 The public API separates import adapters, generic reduced-data containers,
 dynamical susceptibility models, measured intensity, and fitting workflows.
 Model functions may return chi''(Q,E); cross-section helpers apply Bose,
-form-factor, polarization, scale, and background terms.
+form-factor, polarization, and magnetic-unit terms. Dataset configuration owns
+experimental calibration scales.
 """
 
 from .analysis import (
@@ -43,6 +44,7 @@ from .cross_section import (
     chipp_from_intensity,
     cross_section_from_chipp,
     intensity_from_chipp,
+    quasistatic_cross_section_from_chi,
 )
 from .crystal import (
     Bond,
@@ -352,6 +354,7 @@ __all__ = [
     "chipp_from_cross_section",
     "chipp_from_intensity",
     "cross_section_from_chipp",
+    "quasistatic_cross_section_from_chi",
     "FitResult",
     "FitDataset",
     "FitProblem",

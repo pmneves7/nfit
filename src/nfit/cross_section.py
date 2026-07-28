@@ -221,6 +221,48 @@ def cross_section_from_chipp(
     )
 
 
+def quasistatic_cross_section_from_chi(
+    chi_static: ArrayLike,
+    temperature_K: float | ArrayLike,
+    *,
+    form_factor_sq: float | ArrayLike = 1.0,
+    polarization: float | ArrayLike = 1.0,
+    moment_unit: str = "mu_B_squared",
+    g_factor: float | None = None,
+) -> FloatArray:
+    """Return energy-integrated magnetic ``dsigma/dOmega`` in barn/sr.
+
+    In the quasistatic limit, where the magnetic linewidth is small compared
+    with ``k_B T`` and lies inside the experimental energy acceptance, the
+    fluctuation--dissipation theorem gives
+
+    ``S(Q) = integral S(Q,E) dE ~= k_B T chi'(Q,0)``.
+
+    ``chi_static`` is one Cartesian static-susceptibility component in
+    ``spin^2/meV`` when ``moment_unit="spin_squared"`` or in
+    ``mu_B^2/meV`` when ``moment_unit="mu_B_squared"``. The returned cross
+    section retains the declared per-ion/formula-unit/cell normalization.
+    """
+
+    temperature = np.asarray(temperature_K, dtype=float)
+    if np.any(~np.isfinite(temperature)) or np.any(temperature <= 0.0):
+        raise ValueError(
+            "temperature_K must be finite and positive for the quasistatic approximation"
+        )
+    equal_time_response = (
+        KB_MEV_PER_K
+        * temperature
+        * np.asarray(chi_static, dtype=float)
+        * magnetic_moment_factor(moment_unit, g_factor)
+    )
+    return (
+        MAGNETIC_CROSS_SECTION_BARN_PER_MU_B_SQ
+        * np.asarray(form_factor_sq, dtype=float)
+        * np.asarray(polarization, dtype=float)
+        * equal_time_response
+    )
+
+
 def chipp_from_cross_section(
     cross_section: ArrayLike,
     E_meV: ArrayLike,

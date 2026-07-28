@@ -116,12 +116,17 @@ For dataset $d$, the residual is
 
 $$
 r_d=\sqrt{w_d}\,
-\frac{y_d-f_d(\mathbf p)}{\sigma_d}.
+\frac{a_dy_d-f_d(\mathbf p)}{a_d\sigma_d}.
 $$
 
 $y_d$ and $\sigma_d$ are the measured value and its one-sigma uncertainty,
 $f_d(\mathbf p)$ is the model prediction at parameter vector $\mathbf p$, and
-$w_d$ is the dataset fit weight.
+$w_d$ is the dataset fit weight. The positive dataset scale $a_d$ is an
+experimental calibration based on quantities such as sample amount and
+incident flux. A fixed scale is applied during data preparation; a fitted scale
+is applied by the residual evaluator. Normalized data use $a_d=1$. Several
+datasets may name one `FitDatasetInput.scale_group`, which compiles one shared
+scale parameter and writes its result back to every member.
 
 All $r_d$ are concatenated. Dataset weights therefore affect the objective but
 not the stored observations or uncertainties. They may be used to give datasets

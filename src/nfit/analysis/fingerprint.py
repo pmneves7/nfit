@@ -94,6 +94,7 @@ def _fingerprint_cache_signature(dataset: DatasetEntry, group: DataGroup) -> Any
         _identity_signature(dataset.parameters),
         _identity_signature(metadata),
         dataset.scale_factor,
+        dataset.scale_factor_group,
         dataset.enabled,
         _identity_signature(dataset.masks),
         _identity_signature(group.masks),
@@ -222,6 +223,7 @@ def dataset_entry_fingerprint(dataset: DatasetEntry, group: DataGroup) -> str:
                 if key not in {"source_file", "import_status", "export_file"}
             },
             "scale_factor": dataset.scale_factor,
+            "scale_factor_group": dataset.scale_factor_group,
             "enabled": dataset.enabled,
             "masks": [asdict(mask) for mask in dataset.masks],
             "group_masks": [asdict(mask) for mask in group.masks],

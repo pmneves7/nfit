@@ -228,6 +228,9 @@ def test_constraint_requires_global_mode():
 def test_applies_to_and_data_type_gating_skip_datasets():
     assert model_supports_data_type("constant_background", "magnetization")
     assert not model_supports_data_type("mmp_relaxational", "magnetization")
+    assert model_supports_data_type("local_relaxational", "powder_elastic")
+    assert model_supports_data_type("mmp_relaxational", "single_crystal_elastic")
+    assert model_supports_data_type("heisenberg_rpa", "powder_elastic")
     only_b = _constant_component(applies_to=["b"])
     compiled = compile_fit_problem(
         [only_b],
@@ -266,8 +269,8 @@ def test_physical_model_parameters_receive_default_nonnegative_bounds():
     component = ModelComponentSpec(
         name="local",
         type="local_relaxational",
-        parameters={"scale": 1.0, "chi_loc": 1.0, "gamma": 2.0},
-        fit_parameters={"scale": True, "chi_loc": True, "gamma": True},
+        parameters={"chi_loc": 1.0, "gamma": 2.0},
+        fit_parameters={"chi_loc": True, "gamma": True},
     )
     compiled = compile_fit_problem(
         [component],
@@ -275,7 +278,6 @@ def test_physical_model_parameters_receive_default_nonnegative_bounds():
     )
 
     assert {spec.name: spec.min for spec in compiled.problem.parameter_specs} == {
-        "local.scale": 0.0,
         "local.chi_loc": 0.0,
         "local.gamma": 0.0,
     }
@@ -370,6 +372,64 @@ def test_compile_fit_problem_adds_dataset_scale_parameter_to_residuals():
     assert result.reduced_chi2 == pytest.approx(0.0, abs=1e-8)
 
 
+def test_compile_fit_problem_shares_one_dataset_group_scale():
+    component = _constant_component(
+        parameters={"constant": 1.0}, fit_parameters={"constant": False}
+    )
+    compiled = compile_fit_problem(
+        [component],
+        [
+            FitDatasetInput(
+                "first",
+                _points(2.0),
+                scale_value=1.0,
+                scale_vary=True,
+                scale_group="same_run",
+            ),
+            FitDatasetInput(
+                "second",
+                _points(2.0),
+                scale_value=1.0,
+                scale_vary=True,
+                scale_group="same_run",
+            ),
+        ],
+    )
+
+    scale_name = dataset_scale_parameter_name("group:same_run")
+    instance = compiled.parameter_instances[scale_name]
+    assert instance.datasets == ("first", "second")
+    assert {
+        dataset.data_scale_parameter for dataset in compiled.problem.datasets
+    } == {scale_name}
+    result = fit_problem_least_squares(compiled.problem)
+    assert result.params[scale_name] == pytest.approx(0.5, abs=1e-4)
+
+
+def test_compile_fit_problem_rejects_mismatched_shared_scale_guesses():
+    component = _constant_component()
+    with pytest.raises(ValueError, match="different starting scales"):
+        compile_fit_problem(
+            [component],
+            [
+                FitDatasetInput(
+                    "first",
+                    _points(1.0),
+                    scale_value=1.0,
+                    scale_vary=True,
+                    scale_group="shared",
+                ),
+                FitDatasetInput(
+                    "second",
+                    _points(1.0),
+                    scale_value=2.0,
+                    scale_vary=True,
+                    scale_group="shared",
+                ),
+            ],
+        )
+
+
 def test_run_group_fit_can_fit_dataset_scale_factor():
     group = _fit_ready_group({"scan": 2.0})
     dataset = group.get_dataset("scan")
@@ -386,6 +446,30 @@ def test_run_group_fit_can_fit_dataset_scale_factor():
     assert entry.snapshot["datasets"][0]["scale_factor"] == pytest.approx(0.5, abs=1e-6)
     assert entry.snapshot["datasets"][0]["scale_factor_vary"] is True
     assert entry.channels["scan"]["residual"] == pytest.approx(np.zeros((4, 5)), abs=1e-6)
+
+
+def test_run_group_fit_writes_shared_scale_to_every_dataset():
+    group = _fit_ready_group({"first": 2.0, "second": 2.0})
+    for dataset in group.datasets:
+        dataset.scale_factor = 1.0
+        dataset.scale_factor_vary = True
+        dataset.scale_factor_group = "same_run"
+    model = create_model_component(group)
+    model.parameters["constant"] = 1.0
+    ensure_fit_history(group)
+
+    entry = run_group_fit(group, group.fits[0])
+
+    assert entry.goodness["status"] == "converged"
+    assert [dataset.scale_factor for dataset in group.datasets] == pytest.approx(
+        [0.5, 0.5], abs=1e-4
+    )
+    scale_names = [
+        name
+        for name in entry.goodness["parameters"]
+        if name.startswith("dataset_scale[")
+    ]
+    assert scale_names == ["dataset_scale[group:same_run]"]
 
 
 def test_run_group_fit_weights_change_global_compromise():

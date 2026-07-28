@@ -372,6 +372,19 @@ def test_scalar_model_uses_isotropic_polarization_branch():
     _check_balanced_environments(tex)
 
 
+def test_elastic_rpa_report_uses_quasistatic_cross_section():
+    entry = _full_rpa_entry()
+    for dataset in entry.snapshot["datasets"]:
+        dataset["data_type"] = "single_crystal_elastic"
+
+    tex = render_fit_report_latex(entry, group_name="elastic")
+
+    assert "quasistatic approximation" in tex
+    assert "\\frac{d\\sigma}{d\\Omega}" in tex
+    assert "\\frac{d^2\\sigma}{d\\Omega\\,dE}" not in tex
+    assert "magnetic Bragg intensity" in tex
+
+
 def test_two_rpa_components_get_separate_hamiltonians():
     entry = _full_rpa_entry()
     import copy

@@ -21,8 +21,14 @@ Disabling a dataset or dataset group has the same fitting behavior: its model
 is not evaluated during optimizer or sampler iterations, it contributes no
 chi-squared, and it is omitted from fit reports. nfit evaluates it once after a
 fit so the fitted model can still be viewed. **Use best sample** also evaluates
-disabled data with the selected posterior parameters. Dataset scales may be
-fixed transforms or fitted parameters.
+disabled data with the selected posterior parameters.
+
+The dataset **Scale** is an experimental calibration, not a model parameter.
+Keep it fixed at 1 for normalized data. For unnormalized data, **Fit scale**
+uses the displayed value as the initial guess. On a nested dataset group,
+**Share fitted scale** fits one common calibration for all descendants;
+unchecking it leaves their scales fitted independently. The fitted value is
+written back to every dataset that shares it.
 
 Fit weights are useful when datasets with very different point counts should
 have comparable influence. They are user-selected importance weights, not

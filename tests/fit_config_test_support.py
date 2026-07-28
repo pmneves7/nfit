@@ -113,7 +113,7 @@ def _heisenberg_chain_component(**overrides) -> ModelComponentSpec:
     spec = ModelComponentSpec(
         name="rpa",
         type="heisenberg_rpa",
-        parameters={"scale": 1.0, "chi0": 0.5, "gamma0": 2.5, "J1": 0.05},
+        parameters={"chi0": 0.5, "gamma0": 2.5, "J1": 0.05},
         fit_parameters={"chi0": True, "gamma0": True, "J1": True},
         config={
             "site_positions": [[0.0, 0.0, 0.0]],
@@ -129,8 +129,8 @@ def _rpa_component(**overrides) -> ModelComponentSpec:
     spec = ModelComponentSpec(
         name="M",
         type="heisenberg_rpa",
-        parameters={"scale": 1.2, "chi0": 0.3, "gamma0": 2.0, "J1": 0.1, "J2": -0.05},
-        fit_parameters={"scale": True, "chi0": True, "gamma0": True, "J1": True, "J2": True},
+        parameters={"chi0": 0.3, "gamma0": 2.0, "J1": 0.1, "J2": -0.05},
+        fit_parameters={"chi0": True, "gamma0": True, "J1": True, "J2": True},
         config={
             "site_positions": [[0.0, 0.0, 0.0], [0.31, 0.47, 0.11]],
             "orbits": [

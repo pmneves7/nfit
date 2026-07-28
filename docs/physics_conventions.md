@@ -63,6 +63,49 @@ Debye--Waller or magnetovibrational correction, when needed, must therefore
 be included explicitly in the dataset reduction or model rather than being
 hidden inside $S_s^{\alpha\beta}$.
 
+### Linear response and the fluctuation--dissipation theorem
+
+The dynamic susceptibility describes the response to a weak magnetic
+perturbation. Let $h^\beta(\mathbf Q,E)$ be the energy-like field conjugate to
+$S^\beta(-\mathbf Q)$, so that the perturbing Hamiltonian contains
+$-h^\beta S^\beta$. For a magnetic field, $h$ contains the factor $g\mu_B B$.
+To first order,
+
+$$
+\delta\langle S^\alpha(\mathbf Q,E)\rangle
+=
+\sum_\beta \chi_{s,\alpha\beta}(\mathbf Q,E)
+h^\beta(\mathbf Q,E).
+$$
+
+The retarded susceptibility is causal. Its real part $\chi'_s$ is the
+in-phase, reactive response; $\chi'_s(\mathbf Q,0)$ is the static
+susceptibility. Its imaginary part $\chi''_s$ is the out-of-phase,
+dissipative response measured by inelastic scattering. “Imaginary” refers to
+the phase of the response function, not to an imaginary-valued spin. With
+dimensionless spin operators, both parts have units `spin^2/meV`.
+
+For a bulk measurement one may instead write
+$\delta M_\alpha=\sum_\beta\chi^{\alpha\beta}_{MH}\delta H_\beta$.
+That SI or molar susceptibility includes magnetic-moment, amount-of-sample,
+and field-unit conversions; it is not numerically identical to $\chi_s$.
+The conversion used by nfit is given later on this page under the relation to
+SI susceptibility.
+
+In nfit's per-unit-energy convention, the fluctuation--dissipation theorem is
+
+$$
+S_s^{\alpha\beta}(\mathbf Q,E)=
+\frac{1}{\pi}\,
+\frac{\chi''_{s,\alpha\beta}(\mathbf Q,E)}
+{1-\exp[-E/(k_BT)]}.
+$$
+
+The $1/\pi$ appears exactly once and is not part of $\chi''$ itself. The
+Bose/detailed-balance denominator is evaluated stably near $E=0$. The
+odd-in-$E$ dissipative response then gives the correct balance between
+neutron energy loss and gain.
+
 With this per-ion definition, the magnetic cross section is
 
 $$
@@ -129,26 +172,61 @@ physical normalization written in two unit conventions. The code multiplies
 numerical values in `spin^2/meV` by $g^2$; values already expressed in
 `mu_B^2/meV` receive no additional $g^2$.
 
-This is a susceptibility **per unit energy** convention. The fluctuation-
-dissipation theorem is
-
-$$
-S_s^{\alpha\beta}(\mathbf Q,E)=
-\frac{1}{\pi}\,
-\frac{\chi''_{s,\alpha\beta}(\mathbf Q,E)}
-{1-\exp[-E/(k_BT)]}.
-$$
-
-The $1/\pi$ must appear exactly once; it is not part of $\chi''$ itself. The
-Bose/detailed-balance factor uses a numerically stable
-$1-\exp(-E/k_BT)$ evaluation. The odd-in-$E$ $\chi''$ then produces the correct
-detailed balance between energy loss and gain. See Berk's NIST review for the
-general double-differential and magnetic correlation-function formalism,
+See Berk's NIST review for the general double-differential and magnetic
+correlation-function formalism,
 Squires for the magnetic cross section and linear-response convention, and
 Welch *et al.* for an explicit absolute-unit derivation
 ([Berk 1993](https://doi.org/10.6028/jres.098.002);
 [Squires, chapter 7](https://doi.org/10.1017/CBO9781139107808.008);
 [Welch *et al.* 2022](https://doi.org/10.1103/PhysRevB.105.094402)).
+
+### Quasistatic elastic magnetic scattering
+
+An elastic diffraction measurement can collect a narrow quasielastic response
+without resolving its energy dependence. The measured equal-time correlation
+is then
+
+$$
+S_s^{\alpha\beta}(\mathbf Q)
+=
+\int_{-\infty}^{\infty}
+S_s^{\alpha\beta}(\mathbf Q,E)\,dE.
+$$
+
+If the magnetic linewidth is small compared with $k_BT$ and the experimental
+energy acceptance contains the whole peak, the classical limit of the
+fluctuation--dissipation theorem and the Kramers--Kronig relation give
+
+$$
+S_s^{\alpha\beta}(\mathbf Q)
+\simeq
+k_BT\,\chi'_{s,\alpha\beta}(\mathbf Q,0).
+$$
+
+This is commonly called the **static approximation**. “Quasistatic” emphasizes
+that the collected response may have a finite linewidth below the experiment's
+energy resolution.
+
+nfit uses this quasistatic expression for `single_crystal_elastic` and
+`powder_elastic` datasets. It evaluates the model's static susceptibility
+directly, avoiding a numerical energy integral, and predicts
+
+$$
+\frac{d\sigma}{d\Omega}
+\simeq
+(\gamma r_0)^2\left(\frac{g}{2}\right)^2 |f(Q)|^2 k_BT
+\sum_{\alpha\beta}
+(\delta_{\alpha\beta}-\hat Q_\alpha\hat Q_\beta)
+\chi'_{s,\alpha\beta}(\mathbf Q,0).
+$$
+
+The approximation requires a positive dataset temperature. It describes diffuse
+elastic or resolution-limited quasielastic magnetic scattering, not magnetic
+Bragg intensity from a static ordered moment. It is also inappropriate when
+the linewidth is comparable to $k_BT$, when the instrument accepts only part
+of the peak, or in the quantum low-temperature limit. Elastic-only data
+constrain the static susceptibility but not a model's relaxation rate; combine
+them with inelastic data if that rate is to be fitted.
 
 ### Polarization convention
 

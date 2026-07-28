@@ -246,8 +246,9 @@ For an unconstrained series, use per-dataset or grouped sharing for $\chi_0$
 and $\Gamma_0$ while keeping exchange constants global. With a closure,
 $\chi_0(T)$ is derived from a smaller set of global parameters.
 
-Temperature and field are read from each dataset. Dataset scale may absorb
-unknown sample normalization or be fixed by absolute magnetometry metadata.
+Temperature and field are read from each dataset. Keep dataset scale fixed at
+1 for normalized data; otherwise fit a dataset scale, independently or shared
+within a dataset group.
 
 ## Analytic derivatives
 
