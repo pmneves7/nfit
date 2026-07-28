@@ -32,10 +32,10 @@ releases. Current behavior is documented in the workflow and API pages.
 
 ## Reproducible scripting
 
-- Extend the dataset workflow graph to grouped raw direct-geometry and MDEvent
-  reductions, analyses, fits, posterior sampling, plots, and complete active
-  project state.
-- Add target-specific export from analyses, fits, plots, workspaces, and whole
+- Extend the workflow graph to grouped raw direct-geometry and MDEvent
+  reductions, derived-analysis dependencies, fits, posterior sampling, plots,
+  and complete active project state.
+- Add target-specific export from fits, plots, workspaces, and whole
   projects. Each export should contain the dependency closure needed for that
   target, while fit history remains an interactive convenience.
 - Expand behavior-equivalence tests as each workflow node becomes exportable.

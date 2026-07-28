@@ -10,6 +10,10 @@ Save the project before running an analysis. Array outputs are stored in
 asset tree. Editing a recipe or input marks its result stale but does not
 delete it.
 
+Every operation receives the same prepared dataset used for viewing and
+fitting. Dataset and inherited masks, rebinning, attached backgrounds, scale,
+and the selected physical channel therefore affect analyses consistently.
+
 ## Curie--Weiss fitting
 
 **Curie--Weiss fit** accepts absolute molar susceptibility in `cm^3/mol` or
@@ -206,6 +210,10 @@ Pure functions such as `integrate_bragg_peaks()` and
 `spectral_energy_reduce()` do not construct Qt objects. Registry workflows use
 `available_analysis_types()`, `default_analysis_parameters()`,
 `validate_analysis()`, and `run_analysis_operation()`.
+`prepare_analysis_inputs()` constructs the canonical prepared inputs for a
+saved recipe, and `run_project_analysis()` runs it directly. Right-click a
+saved analysis to copy or save a readable script containing its full dataset
+dependency closure.
 
 Native raw-TOF reductions use the same recipe, artifact, fingerprint, and
 coverage system. Future analysis directions are listed in

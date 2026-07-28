@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from nfit import (
+    AnalysisEntry,
     BackgroundSpec,
     DataGroup,
     DatasetEntry,
@@ -14,14 +15,21 @@ from nfit import (
     MDHistoData,
     NfitProject,
     NfitProjectExplorer,
+    PointData4D,
     WorkflowNode,
     WorkflowOutput,
     WorkflowPlan,
     WorkflowValidationError,
+    analysis_workflow_plan,
+    analysis_workflow_script,
     dataset_entry_from_path,
     dataset_for_slice_viewer,
     dataset_workflow_plan,
     dataset_workflow_script,
+    fit_data_bundle,
+    prepare_analysis_input,
+    prepare_analysis_inputs,
+    run_project_analysis,
     save_dataset_file,
 )
 from nfit.project_gui import effective_dataset_masks
@@ -156,14 +164,14 @@ def test_dataset_workflow_script_rebuilds_prepared_dataset(tmp_path):
     compile(script, "<nfit-workflow>", "exec")
     namespace = {"__name__": "imported_workflow"}
     exec(script, namespace)
-    rebuilt_entries, rebuilt_data = namespace["build_workflow"]()
+    result = namespace["build_workflow"]()
     expected = dataset_for_slice_viewer(
         target,
         extra_masks=effective_dataset_masks(group, target),
     )
-    actual = rebuilt_data[target.id]
+    actual = result.prepared_datasets[target.id]
 
-    assert set(rebuilt_entries) == {target.id, background.id}
+    assert set(result.source_datasets) == {target.id, background.id}
     np.testing.assert_allclose(actual.signal, expected.signal, equal_nan=True)
     np.testing.assert_allclose(actual.errors, expected.errors, equal_nan=True)
     np.testing.assert_array_equal(actual.mask, expected.mask)
@@ -222,3 +230,113 @@ def test_dataset_workflow_can_be_copied_and_saved_from_gui(
     )
     assert explorer.save_dataset_workflow_script_for_selection()
     assert output.read_text(encoding="utf-8") == copied
+
+
+def test_analysis_workflow_rebuilds_prepared_inputs_and_runs_analysis(tmp_path):
+    cold_path = tmp_path / "cold.npz"
+    warm_path = tmp_path / "warm.npz"
+    save_dataset_file(DatasetEntry("cold raw", _grid(1.0)), cold_path, use_view=False)
+    save_dataset_file(DatasetEntry("warm raw", _grid(1.5)), warm_path, use_view=False)
+    cold = dataset_entry_from_path(
+        cold_path,
+        data_type="powder_inelastic",
+    )
+    warm = dataset_entry_from_path(
+        warm_path,
+        data_type="powder_inelastic",
+    )
+    cold.name = "10 K"
+    warm.name = "100 K"
+    cold.parameters["temperature"] = 10.0
+    warm.parameters["temperature"] = 100.0
+    cold.scale_factor = 2.0
+    cold.masks = [
+        MaskSpec("Exclude high Q", parameters={"Q": [1.0, 2.0]})
+    ]
+    analysis = AnalysisEntry(
+        "Separate elastic signal",
+        "bose_elastic_separation",
+        [cold.id, warm.id],
+        {},
+    )
+    group = DataGroup(
+        "Experiment",
+        datasets=[cold, warm],
+        analyses=[analysis],
+    )
+    project = NfitProject([group])
+
+    prepared_inputs = prepare_analysis_inputs(group, analysis)
+    viewed_cold = dataset_for_slice_viewer(
+        cold,
+        extra_masks=effective_dataset_masks(group, cold),
+    )
+    np.testing.assert_allclose(
+        prepared_inputs[0].data.signal,
+        viewed_cold.signal,
+        equal_nan=True,
+    )
+    np.testing.assert_array_equal(prepared_inputs[0].data.mask, viewed_cold.mask)
+
+    plan = analysis_workflow_plan(project, analysis.id)
+    assert plan.targets == (f"analysis:{analysis.id}",)
+    assert {
+        node.id for node in plan.topological_nodes()
+    } >= {
+        f"source:{cold.id}",
+        f"dataset:{cold.id}",
+        f"source:{warm.id}",
+        f"dataset:{warm.id}",
+        f"analysis:{analysis.id}",
+    }
+
+    script = analysis_workflow_script(project, analysis.id)
+    compile(script, "<nfit-analysis-workflow>", "exec")
+    namespace = {"__name__": "imported_workflow"}
+    exec(script, namespace)
+    actual = namespace["build_workflow"]().analysis_results[analysis.id]
+    expected = run_project_analysis(group, analysis)
+
+    assert actual.outputs.keys() == expected.outputs.keys()
+    for key in actual.outputs:
+        np.testing.assert_allclose(
+            actual.outputs[key].data.signal,
+            expected.outputs[key].data.signal,
+            equal_nan=True,
+        )
+        np.testing.assert_array_equal(
+            actual.outputs[key].data.mask,
+            expected.outputs[key].data.mask,
+        )
+
+
+def test_point_data_view_analysis_and_fit_share_preparation():
+    points = PointData4D(
+        H=[0.0, 1.0],
+        K=[0.0, 0.0],
+        L=[0.0, 0.0],
+        E=[5.0, 5.0],
+        intensity=[2.0, 3.0],
+        sigma=[0.2, 0.3],
+    )
+    dataset = DatasetEntry(
+        "points",
+        points,
+        data_type="single_crystal_inelastic",
+        scale_factor=4.0,
+        masks=[MaskSpec("Exclude second", parameters={"H": [0.5, 1.5]})],
+    )
+    group = DataGroup("Experiment", datasets=[dataset])
+
+    viewed = dataset_for_slice_viewer(dataset)
+    analysis_input = prepare_analysis_input(group, dataset)
+    fit_bundle = fit_data_bundle(group, dataset)
+
+    assert isinstance(viewed, PointData4D)
+    assert fit_bundle is not None
+    np.testing.assert_allclose(viewed.intensity, [8.0, 12.0])
+    np.testing.assert_allclose(analysis_input.data.intensity, viewed.intensity)
+    np.testing.assert_allclose(fit_bundle.points.intensity, viewed.intensity)
+    np.testing.assert_array_equal(viewed.mask, [True, False])
+    np.testing.assert_array_equal(analysis_input.data.mask, viewed.mask)
+    np.testing.assert_array_equal(fit_bundle.points.mask, viewed.mask)

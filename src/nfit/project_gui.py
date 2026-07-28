@@ -122,7 +122,11 @@ from .spectral_channels import (
     with_paired_spectral_channels,
 )
 from .symmetry import SymmetrySpec, resolve_symmetry, symmetry_config, symmetry_spec_from_config
-from .workflow import WorkflowValidationError, dataset_workflow_script
+from .workflow import (
+    WorkflowValidationError,
+    analysis_workflow_script,
+    dataset_workflow_script,
+)
 
 QtMDHistoSliceViewer = None
 RECENT_PROJECT_LIMIT = 10
@@ -3564,11 +3568,11 @@ def dataset_for_slice_viewer(
     force_rebin: bool = True,
     force_masks: bool = True,
     progress_callback: Any | None = None,
-) -> MDHistoData | PointListData | None:
+) -> MDHistoData | PointListData | PointData4D | None:
     """Return a viewer-ready dataset, loading from source metadata if needed.
 
     ``extra_masks`` are masks inherited from ancestor dataset groups; they are
-    applied ahead of the dataset's own masks (MDHisto datasets only).
+    applied ahead of the dataset's own masks.
     """
 
     result = _viewer_data_before_scale(
@@ -3587,8 +3591,8 @@ def dataset_for_slice_viewer(
 
 def _apply_spectral_channel_view(
     dataset: DatasetEntry,
-    data: MDHistoData | PointListData,
-) -> MDHistoData | PointListData:
+    data: MDHistoData | PointListData | PointData4D,
+) -> MDHistoData | PointListData | PointData4D:
     """Apply paired INS channels, falling back to the legacy kinematic path."""
 
     config = dataset.parameters.get(SPECTRAL_CHANNEL_CONFIG_KEY)
@@ -3608,8 +3612,8 @@ def _apply_spectral_channel_view(
 
 def _with_viewer_dataset_metadata(
     dataset: DatasetEntry,
-    data: MDHistoData | PointListData,
-) -> MDHistoData | PointListData:
+    data: MDHistoData | PointListData | PointData4D,
+) -> MDHistoData | PointListData | PointData4D:
     metadata = dict(getattr(data, "metadata", {}) or {})
     metadata["nfit_data_type"] = dataset.data_type
     metadata["nfit_dataset_kind"] = dataset.kind
@@ -3624,6 +3628,8 @@ def _with_viewer_dataset_metadata(
             metadata=metadata,
             quantity_types=dict(data.quantity_types),
         )
+    if isinstance(data, PointData4D):
+        return data.with_updates(metadata=metadata)
     return data
 
 
@@ -3676,12 +3682,14 @@ def _kinematic_kf_ki_factor(
 
 def _apply_kinematic_normalization_to_view(
     dataset: DatasetEntry,
-    data: MDHistoData | PointListData,
-) -> MDHistoData | PointListData:
+    data: MDHistoData | PointListData | PointData4D,
+) -> MDHistoData | PointListData | PointData4D:
     """Normalize binned data to the cross-section ``k_f/k_i`` convention."""
 
     if bool(dataset.parameters.get(KINEMATIC_KF_KI_INCLUDED_KEY, True)):
         return data
+    if isinstance(data, PointData4D):
+        return _apply_kinematic_normalization_to_points(dataset, data)
     if not isinstance(data, MDHistoData):
         return data
     energy_dim = next(
@@ -3772,9 +3780,6 @@ def fit_data_bundle(
     """Build the fit-ready views of one dataset, or ``None`` if unsupported."""
 
     extra_masks = effective_dataset_masks(group, dataset)
-    if isinstance(dataset.data, PointData4D):
-        points = _apply_sample_context_to_points(group, dataset, dataset.data)
-        return FitDataBundle(dataset=dataset, view=dataset.data, points=points, grid_shape=None)
     if dataset.scale_factor_vary:
         raw_view = _viewer_data_before_scale(
             dataset,
@@ -3801,6 +3806,8 @@ def fit_data_bundle(
         )
     if isinstance(view, MDHistoData):
         points = _point_data_from_mdhisto_view(view)
+    elif isinstance(view, PointData4D):
+        points = view
     elif isinstance(view, PointListData) and dataset.data_type == "magnetization":
         points = _magnetization_point_data(view, group, dataset)
     elif isinstance(view, PointListData) and dataset.data_type == "heat_capacity":
@@ -6030,8 +6037,8 @@ def _mdhisto_without_nfit_masks(data: MDHistoData) -> MDHistoData:
 
 def _apply_dataset_scale(
     dataset: DatasetEntry,
-    data: MDHistoData | PointListData,
-) -> MDHistoData | PointListData:
+    data: MDHistoData | PointListData | PointData4D,
+) -> MDHistoData | PointListData | PointData4D:
     """Multiply a dataset's signal and errors by its scale factor (both channels)."""
 
     scale = float(getattr(dataset, "scale_factor", 1.0) or 1.0)
@@ -6061,6 +6068,11 @@ def _apply_dataset_scale(
             channels=[dict(channel) for channel in data.channels],
             metadata=dict(data.metadata),
             quantity_types=dict(data.quantity_types),
+        )
+    if isinstance(data, PointData4D):
+        return data.with_updates(
+            intensity=np.asarray(data.intensity, dtype=float) * scale,
+            sigma=np.asarray(data.sigma, dtype=float) * abs(scale),
         )
     return data
 
@@ -10897,52 +10909,63 @@ class NfitProjectExplorer:
             return None
         return dataset_workflow_script(self.project, entry.id)
 
-    def copy_dataset_workflow_script_for_selection(self) -> bool:
-        """Copy the selected dataset's reproducible workflow to the clipboard."""
+    def workflow_script_for_selection(self) -> tuple[str, str] | None:
+        """Return ``(label, script)`` for a supported selected workflow target."""
+
+        item = self._current_item()
+        _group, entry, _mask, _model, role = self._objects_for_item(item)
+        if role == "dataset" and entry is not None:
+            return entry.name, dataset_workflow_script(self.project, entry.id)
+        if role == "analysis":
+            analysis = self._analysis_item_roles.get(id(item))
+            if analysis is not None:
+                return (
+                    analysis.name,
+                    analysis_workflow_script(self.project, analysis.id),
+                )
+        return None
+
+    def copy_workflow_script_for_selection(self) -> bool:
+        """Copy the selected target's reproducible workflow to the clipboard."""
 
         from PySide6 import QtWidgets
 
         try:
-            script = self.dataset_workflow_script_for_selection()
-        except (NotImplementedError, OSError, WorkflowValidationError) as exc:
+            payload = self.workflow_script_for_selection()
+        except (KeyError, NotImplementedError, OSError, WorkflowValidationError) as exc:
             QtWidgets.QMessageBox.information(
                 self.window,
-                "Copy dataset workflow script",
-                f"This dataset workflow cannot yet be exported:\n{exc}",
+                "Copy workflow script",
+                f"This workflow cannot yet be exported:\n{exc}",
             )
             return False
-        if script is None:
+        if payload is None:
             return False
+        _label, script = payload
         QtWidgets.QApplication.clipboard().setText(script)
         return True
 
-    def save_dataset_workflow_script_for_selection(self) -> bool:
-        """Save the selected dataset's reproducible workflow as Python."""
+    def save_workflow_script_for_selection(self) -> bool:
+        """Save the selected target's reproducible workflow as Python."""
 
         from PySide6 import QtWidgets
 
         try:
-            script = self.dataset_workflow_script_for_selection()
-        except (NotImplementedError, OSError, WorkflowValidationError) as exc:
+            payload = self.workflow_script_for_selection()
+        except (KeyError, NotImplementedError, OSError, WorkflowValidationError) as exc:
             QtWidgets.QMessageBox.information(
                 self.window,
-                "Save dataset workflow script",
-                f"This dataset workflow cannot yet be exported:\n{exc}",
+                "Save workflow script",
+                f"This workflow cannot yet be exported:\n{exc}",
             )
             return False
-        if script is None:
+        if payload is None:
             return False
-        _group, entry, _mask, _model, _role = self._objects_for_item(
-            self._current_item()
-        )
-        stem = (
-            "dataset"
-            if entry is None
-            else re.sub(r"\W+", "_", entry.name).strip("_") or "dataset"
-        )
+        label, script = payload
+        stem = re.sub(r"\W+", "_", label).strip("_") or "workflow"
         path, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
             self.window,
-            "Save dataset workflow script",
+            "Save workflow script",
             f"{stem}_workflow.py",
             "Python scripts (*.py);;All files (*)",
         )
@@ -10953,11 +10976,21 @@ class NfitProjectExplorer:
         except OSError as exc:
             QtWidgets.QMessageBox.warning(
                 self.window,
-                "Save dataset workflow script",
+                "Save workflow script",
                 f"Could not write the script:\n{exc}",
             )
             return False
         return True
+
+    def copy_dataset_workflow_script_for_selection(self) -> bool:
+        """Copy the selected dataset's reproducible workflow to the clipboard."""
+
+        return self.copy_workflow_script_for_selection()
+
+    def save_dataset_workflow_script_for_selection(self) -> bool:
+        """Save the selected dataset's reproducible workflow as Python."""
+
+        return self.save_workflow_script_for_selection()
 
     def fit_now_for_selection(self) -> FitTimelineEntry | None:
         group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
@@ -18075,6 +18108,9 @@ class NfitProjectExplorer:
             specs.append(("Open Analysis Window", True))
         if role == "analyses":
             specs.append(("New analysis", True))
+        if role == "analysis":
+            specs.append(("Copy workflow script", True))
+            specs.append(("Save workflow script...", True))
         if role in {"group", "datasets", "dataset", "masks", "mask", "backgrounds", "background", "group_backgrounds", "group_background", "dataset_group", "group_masks", "group_mask", "analysis_output"}:
             output = self._analysis_output_roles.get(id(item)) if role == "analysis_output" else None
             specs.append(("View in data viewer", role != "analysis_output" or bool(output and output.dataset_id)))
@@ -18121,8 +18157,8 @@ class NfitProjectExplorer:
             "View in data viewer": self.open_slice_viewer_for_selection,
             "Show file location": self.show_file_location_for_selection,
             "Change file source": self.change_file_source_for_selection,
-            "Copy workflow script": self.copy_dataset_workflow_script_for_selection,
-            "Save workflow script...": self.save_dataset_workflow_script_for_selection,
+            "Copy workflow script": self.copy_workflow_script_for_selection,
+            "Save workflow script...": self.save_workflow_script_for_selection,
             "Add dataset": self.add_dataset_to_selection,
             "Add mask": self.add_mask_to_selection,
             "Add background": self.add_background_to_selection,

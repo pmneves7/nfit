@@ -14,7 +14,7 @@ The package provides:
   optional differential-evolution initialization, and `emcee` posterior
   sampling;
 - project files with fit timelines and provenance, plus editable script export
-  for dataset preparation, fits, and saved plots;
+  for dataset preparation, analyses, fits, and saved plots;
 - interactive slice, waterfall, and volumetric visualization.
 
 See the [documentation](docs/index.md) for workflows, physics conventions,

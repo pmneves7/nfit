@@ -264,6 +264,74 @@ def dataset_workflow_plan(project: NfitProject, dataset_id: str) -> WorkflowPlan
     return plan
 
 
+def analysis_workflow_plan(project: NfitProject, analysis_id: str) -> WorkflowPlan:
+    """Build the dependency graph needed to rerun one analysis recipe."""
+
+    group, analysis = _find_analysis(project, analysis_id)
+    nodes: list[WorkflowNode] = []
+    node_ids: set[str] = set()
+    for dataset_id in analysis.input_dataset_ids:
+        dataset_plan = dataset_workflow_plan(project, dataset_id)
+        for node in dataset_plan.topological_nodes():
+            if node.id not in node_ids:
+                nodes.append(node)
+                node_ids.add(node.id)
+    datasets = {dataset.id: dataset for dataset in group.iter_datasets()}
+    input_contexts = {}
+    for dataset_id in analysis.input_dataset_ids:
+        dataset = datasets.get(dataset_id)
+        if dataset is None:
+            raise WorkflowValidationError(
+                f"analysis {analysis.name!r} refers to missing dataset "
+                f"{dataset_id!r}"
+            )
+        input_contexts[dataset_id] = {
+            "data_group_name": group.name,
+            "lattice_parameters": copy.deepcopy(group.lattice_parameters),
+            "spacegroup": group.spacegroup,
+            "crystal": copy.deepcopy(group.metadata.get("crystal")),
+            "temperature_K": dataset.parameters.get("temperature"),
+            "metadata": {
+                "dataset_metadata": copy.deepcopy(dataset.metadata),
+            },
+        }
+    result_outputs = ()
+    if analysis.result is not None:
+        result_outputs = tuple(
+            WorkflowOutput(
+                output.key,
+                output.dataset_id
+                or f"analysis-output:{analysis.id}:{output.key}",
+                output.kind,
+            )
+            for output in analysis.result.outputs
+        )
+    nodes.append(
+        WorkflowNode(
+            id=f"analysis:{analysis.id}",
+            kind="analysis",
+            operation=analysis.type,
+            operation_version=analysis.operation_version,
+            dependencies=tuple(
+                f"dataset:{dataset_id}"
+                for dataset_id in analysis.input_dataset_ids
+            ),
+            config={
+                "analysis_id": analysis.id,
+                "name": analysis.name,
+                "type": analysis.type,
+                "input_dataset_ids": list(analysis.input_dataset_ids),
+                "parameters": copy.deepcopy(analysis.parameters),
+                "input_contexts": input_contexts,
+            },
+            outputs=result_outputs,
+        )
+    )
+    plan = WorkflowPlan(tuple(nodes), (f"analysis:{analysis.id}",))
+    plan.validate()
+    return plan
+
+
 def render_workflow_script(
     plan: WorkflowPlan,
     *,
@@ -276,7 +344,7 @@ def render_workflow_script(
     unsupported = [
         node
         for node in ordered
-        if node.kind not in {"source_dataset", "prepared_dataset"}
+        if node.kind not in {"source_dataset", "prepared_dataset", "analysis"}
     ]
     if unsupported:
         kinds = ", ".join(sorted({node.kind for node in unsupported}))
@@ -285,6 +353,7 @@ def render_workflow_script(
         )
     source_nodes = [node for node in ordered if node.kind == "source_dataset"]
     prepared_nodes = [node for node in ordered if node.kind == "prepared_dataset"]
+    analysis_nodes = [node for node in ordered if node.kind == "analysis"]
     root = _source_root(source_nodes, source_root)
     source_specs = {
         node.config["dataset_id"]: {
@@ -297,12 +366,21 @@ def render_workflow_script(
         node.config["dataset_id"]: copy.deepcopy(node.config)
         for node in prepared_nodes
     }
+    analysis_specs = {
+        node.config["analysis_id"]: copy.deepcopy(node.config)
+        for node in analysis_nodes
+    }
     target_ids = [
         output.object_id
         for node in prepared_nodes
         if node.id in plan.targets
         for output in node.outputs
         if output.value_kind == "prepared_dataset"
+    ]
+    target_analysis_ids = [
+        node.config["analysis_id"]
+        for node in analysis_nodes
+        if node.id in plan.targets
     ]
     expected_version = _nfit_version()
     return _dataset_script_text(
@@ -311,6 +389,8 @@ def render_workflow_script(
         source_specs=source_specs,
         prepared_specs=prepared_specs,
         target_ids=target_ids,
+        analysis_specs=analysis_specs,
+        target_analysis_ids=target_analysis_ids,
     )
 
 
@@ -324,6 +404,20 @@ def dataset_workflow_script(
 
     return render_workflow_script(
         dataset_workflow_plan(project, dataset_id),
+        source_root=source_root,
+    )
+
+
+def analysis_workflow_script(
+    project: NfitProject,
+    analysis_id: str,
+    *,
+    source_root: str | Path | None = None,
+) -> str:
+    """Return an editable script rebuilding and running one analysis."""
+
+    return render_workflow_script(
+        analysis_workflow_plan(project, analysis_id),
         source_root=source_root,
     )
 
@@ -407,6 +501,14 @@ def _find_dataset(
             if dataset.id == dataset_id:
                 return group, dataset
     raise KeyError(f"unknown dataset ID {dataset_id!r}")
+
+
+def _find_analysis(project: NfitProject, analysis_id: str):
+    for group in project.data_groups:
+        for analysis in group.analyses:
+            if analysis.id == analysis_id:
+                return group, analysis
+    raise KeyError(f"unknown analysis ID {analysis_id!r}")
 
 
 def _dataset_background_closure(
@@ -527,11 +629,19 @@ def _dataset_script_text(
     source_specs: dict[str, dict[str, Any]],
     prepared_specs: dict[str, dict[str, Any]],
     target_ids: list[str],
+    analysis_specs: dict[str, dict[str, Any]],
+    target_analysis_ids: list[str],
 ) -> str:
     source_text = pformat(source_specs, sort_dicts=False, width=96)
     prepared_text = pformat(prepared_specs, sort_dicts=False, width=96)
     targets_text = pformat(target_ids, sort_dicts=False, width=96)
-    return f'''"""Rebuild an nfit dataset workflow from its original source files.
+    analyses_text = pformat(analysis_specs, sort_dicts=False, width=96)
+    target_analyses_text = pformat(
+        target_analysis_ids,
+        sort_dicts=False,
+        width=96,
+    )
+    return f'''"""Rebuild an nfit workflow from its original source files.
 
 Generated configuration is ordinary Python: edit SOURCE_ROOT, paths, masks,
 rebin settings, scales, or other dictionaries before running as needed.
@@ -545,10 +655,14 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from nfit import (
+    AnalysisContext,
+    AnalysisInput,
     BackgroundSpec,
     MaskSpec,
     dataset_entry_from_path,
     dataset_for_slice_viewer,
+    default_analysis_parameters,
+    run_analysis_operation,
 )
 
 EXPECTED_NFIT_VERSION = {expected_version!r}
@@ -559,6 +673,19 @@ SOURCE_DATASETS = {source_text}
 PREPARED_DATASETS = {prepared_text}
 
 TARGET_DATASET_IDS = {targets_text}
+
+ANALYSES = {analyses_text}
+
+TARGET_ANALYSIS_IDS = {target_analyses_text}
+
+
+class WorkflowResult:
+    """Objects produced by this workflow, grouped by execution stage."""
+
+    def __init__(self, source_datasets, prepared_datasets, analysis_results):
+        self.source_datasets = source_datasets
+        self.prepared_datasets = prepared_datasets
+        self.analysis_results = analysis_results
 
 
 def check_nfit_version():
@@ -638,20 +765,54 @@ def prepare_datasets(datasets):
     return prepared
 
 
+def run_analyses(prepared):
+    """Run analysis recipes against the same prepared data used by the viewer."""
+    results = {{}}
+    for analysis_id, spec in ANALYSES.items():
+        inputs = []
+        for dataset_id in spec["input_dataset_ids"]:
+            context = AnalysisContext(
+                **copy.deepcopy(spec["input_contexts"][dataset_id])
+            )
+            inputs.append(
+                AnalysisInput(
+                    dataset_id,
+                    SOURCE_DATASETS[dataset_id]["name"],
+                    prepared[dataset_id],
+                    context,
+                    repr(SOURCE_DATASETS[dataset_id].get("source_fingerprint")),
+                )
+            )
+        parameters = {{
+            **default_analysis_parameters(spec["type"]),
+            **copy.deepcopy(spec["parameters"]),
+        }}
+        results[analysis_id] = run_analysis_operation(
+            spec["type"],
+            inputs,
+            parameters,
+        )
+    return results
+
+
 def build_workflow():
-    """Run every stage needed by the selected target dataset."""
+    """Run every stage needed by the selected workflow target."""
     check_nfit_version()
     datasets = load_sources()
     prepared = prepare_datasets(datasets)
-    return datasets, prepared
+    analyses = run_analyses(prepared)
+    return WorkflowResult(datasets, prepared, analyses)
 
 
 def main():
-    _datasets, prepared = build_workflow()
+    result = build_workflow()
     for dataset_id in TARGET_DATASET_IDS:
-        data = prepared[dataset_id]
+        data = result.prepared_datasets[dataset_id]
         shape = getattr(data, "shape", (getattr(data, "size", 0),))
         print(f"Prepared {{dataset_id}} with shape {{shape}}")
+    for analysis_id in TARGET_ANALYSIS_IDS:
+        output_keys = ", ".join(result.analysis_results[analysis_id].outputs)
+        print(f"Ran analysis {{analysis_id}}; outputs: {{output_keys}}")
 
 
 if __name__ == "__main__":

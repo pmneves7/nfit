@@ -6,15 +6,13 @@ from typing import Any
 import numpy as np
 
 from .analysis import (
-    AnalysisContext,
     AnalysisEntry,
-    AnalysisInput,
     analysis_definition,
     available_analysis_types,
     default_analysis_parameters,
+    prepare_analysis_input,
 )
 from .analysis.artifacts import read_dataset_artifact
-from .analysis.fingerprint import dataset_entry_fingerprint
 from .analysis.runner import execute_to_artifacts
 from .dataset import PointData4D, PointListData
 from .mdhisto import MDHistoData
@@ -721,43 +719,37 @@ class DataPlaygroundWindow:
                 return False
         dataset_id = self.dataset_combo.currentData()
         dataset = next(item for item in self.group.iter_datasets() if item.id == dataset_id)
-        analysis_data = self._primary_analysis_data(dataset)
-        if analysis_data is None:
+        try:
+            primary_input = prepare_analysis_input(self.group, dataset)
+        except (OSError, TypeError, ValueError) as exc:
             message = (
-                "Could not load the selected dataset for Bragg integration."
+                f"Could not prepare the selected dataset for Bragg integration:\n{exc}"
                 if self.operation_combo.currentData() == "bragg_integration"
-                else "Load the selected dataset before running the analysis."
+                else f"Could not prepare the selected dataset:\n{exc}"
             )
             QtWidgets.QMessageBox.warning(self.window, "Analysis Window", message)
             return False
-        if self.operation_combo.currentData() in {
-            "curie_weiss_fit", "low_temperature_heat_capacity_fit"
-        }:
-            # These fits consume the same derived, unit-aware physical channel
-            # that the dataset viewer presents.
-            from .project_gui import prepared_point_list_data
-
-            try:
-                analysis_data = prepared_point_list_data(dataset)
-            except (TypeError, ValueError) as exc:
-                QtWidgets.QMessageBox.warning(
-                    self.window, "Point-data analysis", str(exc)
-                )
-                return False
+        analysis_data = primary_input.data
         if not self._confirm_memory(analysis_data):
             return False
-        context = self._analysis_context(dataset)
-        data_fingerprint = dataset_entry_fingerprint(dataset, self.group)
-        analysis_inputs = [AnalysisInput(dataset.id, dataset.name, analysis_data, context, data_fingerprint)]
+        analysis_inputs = [primary_input]
         parameters = self._parameters()
         if self.operation_combo.currentData() == "bragg_integration" and parameters.get("peak_source") == "table":
             secondary_id = self.secondary_dataset_combo.currentData()
             secondary = next((item for item in self.group.iter_datasets() if item.id == secondary_id), None)
-            if secondary is None or secondary.data is None:
+            if secondary is None:
                 QtWidgets.QMessageBox.warning(self.window, "Analysis Window", "Select and load a secondary H, K, L peak-table dataset.")
                 return False
             parameters["peak_table_dataset_id"] = secondary.id
-            analysis_inputs.append(AnalysisInput(secondary.id, secondary.name, secondary.data, context, dataset_entry_fingerprint(secondary, self.group)))
+            try:
+                analysis_inputs.append(prepare_analysis_input(self.group, secondary))
+            except (OSError, TypeError, ValueError) as exc:
+                QtWidgets.QMessageBox.warning(
+                    self.window,
+                    "Analysis Window",
+                    f"Could not prepare the secondary peak table:\n{exc}",
+                )
+                return False
         elif self.operation_combo.currentData() == "bose_elastic_separation":
             secondary_id = self.secondary_dataset_combo.currentData()
             secondary = next(
@@ -771,23 +763,16 @@ class DataPlaygroundWindow:
                     "Select the second-temperature dataset.",
                 )
                 return False
-            secondary_data = self._primary_analysis_data(secondary)
-            if secondary_data is None:
+            try:
+                secondary_input = prepare_analysis_input(self.group, secondary)
+            except (OSError, TypeError, ValueError) as exc:
                 QtWidgets.QMessageBox.warning(
                     self.window,
                     "Bose-Einstein elastic separation",
-                    "Could not load the second-temperature dataset.",
+                    f"Could not prepare the second-temperature dataset:\n{exc}",
                 )
                 return False
-            analysis_inputs.append(
-                AnalysisInput(
-                    secondary.id,
-                    secondary.name,
-                    secondary_data,
-                    self._analysis_context(secondary),
-                    dataset_entry_fingerprint(secondary, self.group),
-                )
-            )
+            analysis_inputs.append(secondary_input)
         elif self.operation_combo.currentData() == "angle_energy_background":
             selected_ids = list(dict.fromkeys(self.additional_input_ids))
             if dataset.id not in selected_ids:
@@ -800,23 +785,16 @@ class DataPlaygroundWindow:
                 )
                 if selected is None:
                     continue
-                selected_data = self._primary_analysis_data(selected)
-                if selected_data is None:
+                try:
+                    selected_input = prepare_analysis_input(self.group, selected)
+                except (OSError, TypeError, ValueError) as exc:
                     QtWidgets.QMessageBox.warning(
                         self.window,
                         "Angle-energy background",
-                        f"Could not load {selected.name!r}.",
+                        f"Could not prepare {selected.name!r}:\n{exc}",
                     )
                     return False
-                analysis_inputs.append(
-                    AnalysisInput(
-                        selected.id,
-                        selected.name,
-                        selected_data,
-                        self._analysis_context(selected),
-                        dataset_entry_fingerprint(selected, self.group),
-                    )
-                )
+                analysis_inputs.append(selected_input)
         analysis = self._selected_analysis()
         is_new = analysis is None
         if analysis is None:
@@ -896,27 +874,14 @@ class DataPlaygroundWindow:
         )
 
     def _primary_analysis_data(self, dataset: DatasetEntry) -> Any | None:
-        """Return primary input data, loading a lazy Bragg source when possible."""
+        """Return the same prepared dataset used by analysis execution."""
 
-        if dataset.data is not None:
-            return dataset.data
-        from .project_gui import dataset_for_slice_viewer
-
+        if self.group is None:
+            return None
         try:
-            loaded = dataset_for_slice_viewer(dataset)
+            return prepare_analysis_input(self.group, dataset).data
         except (OSError, TypeError, ValueError):
             return None
-        return dataset.data if dataset.data is not None else loaded
-
-    def _analysis_context(self, dataset: DatasetEntry) -> AnalysisContext:
-        return AnalysisContext(
-            self.group.name,
-            self.group.lattice_parameters,
-            self.group.spacegroup,
-            self.group.metadata.get("crystal"),
-            dataset.parameters.get("temperature"),
-            {"dataset_metadata": dataset.metadata},
-        )
 
     def _confirm_memory(self, data: Any) -> bool:
         from PySide6 import QtWidgets

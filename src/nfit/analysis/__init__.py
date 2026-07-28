@@ -39,6 +39,11 @@ from .registry import (
     run_analysis_operation,
     validate_analysis,
 )
+from .runner import (
+    prepare_analysis_input,
+    prepare_analysis_inputs,
+    run_project_analysis,
+)
 
 register_builtin_operations()
 
@@ -62,6 +67,8 @@ __all__ = [
     "measured_mask",
     "physical_axis_vectors",
     "physical_coordinate_arrays",
+    "prepare_analysis_input",
+    "prepare_analysis_inputs",
     "q_bin_volume",
     "q_modulus_for_spectral",
     "rlu_to_q_matrix",
@@ -74,5 +81,6 @@ __all__ = [
     "new_analysis_id",
     "register_analysis_operation",
     "run_analysis_operation",
+    "run_project_analysis",
     "validate_analysis",
 ]

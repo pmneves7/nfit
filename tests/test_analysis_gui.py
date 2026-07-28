@@ -101,6 +101,28 @@ def test_analyses_branch_new_analysis_button_opens_fresh_recipe(monkeypatch):
     playground.window.close()
 
 
+def test_analysis_workflow_script_can_be_copied_from_tree(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    dataset = DatasetEntry("scan", None)
+    analysis = AnalysisEntry("Powder average", "spherical_average", [dataset.id], {})
+    group = DataGroup("Workspace1", datasets=[dataset], analyses=[analysis])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    analysis_item = explorer.tree.topLevelItem(0).child(3).child(0)
+    explorer.tree.setCurrentItem(analysis_item)
+    monkeypatch.setattr(
+        project_gui,
+        "analysis_workflow_script",
+        lambda project, analysis_id: f"# analysis {analysis_id}\n",
+    )
+
+    actions = explorer.context_menu_action_names(analysis_item)
+    assert "Copy workflow script" in actions
+    assert "Save workflow script..." in actions
+    assert explorer.copy_workflow_script_for_selection()
+    assert QtWidgets.QApplication.clipboard().text() == f"# analysis {analysis.id}\n"
+
+
 def test_delete_key_removes_selected_analysis_and_linked_datasets(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtCore = pytest.importorskip("PySide6.QtCore")
@@ -209,17 +231,34 @@ def test_bragg_analysis_loads_a_lazy_primary_dataset(monkeypatch):
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
     analysis_window = explorer.open_data_playground_for_selection()
     assert analysis_window is not None
-    loaded = object()
+    loaded = MDHistoData(
+        axes=(MDHistoAxis("E", np.array([0.0, 1.0]), "meV", "energy"),),
+        signal=np.array([1.0]),
+        errors=np.array([1.0]),
+        mask=np.array([False]),
+        num_events=np.array([1.0]),
+        metadata={},
+    )
     calls = []
 
-    def load(entry):
-        calls.append(entry)
+    def load(entry, **kwargs):
+        calls.append((entry, kwargs))
         entry.replace_data(loaded, source_backed=True)
         return loaded
 
     monkeypatch.setattr(project_gui, "dataset_for_slice_viewer", load)
     assert analysis_window._primary_analysis_data(dataset) is loaded
-    assert calls == [dataset]
+    assert calls == [
+        (
+            dataset,
+            {
+                "extra_masks": [],
+                "force_rebin": True,
+                "force_masks": True,
+                "progress_callback": None,
+            },
+        )
+    ]
     analysis_window.window.close()
 
 

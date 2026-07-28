@@ -9,7 +9,7 @@ and general point tables.
 nfit was authored by Paul M. Neves (Johns Hopkins University,
 pneves1@jhu.edu) with use of LLM coding tools.
 
-Current package version: 0.25.0.
+Current package version: 0.26.0.
 
 Start with [Getting started](getting_started.md), then use
 [GUI workflows](gui_workflows.md) for interactive work or the
