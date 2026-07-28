@@ -54,6 +54,11 @@ The following sources underlie nfit's conventions and model documentation:
   [doi:10.1017/CBO9781139107808](https://doi.org/10.1017/CBO9781139107808).
   Chapter 7 fixes the magnetic correlation-function and cross-section
   convention used by nfit.
+- A. T. Boothroyd, *Principles of Neutron Scattering from Condensed Matter*
+  (Oxford University Press, 2020),
+  [doi:10.1093/oso/9780198862314.001.0001](https://doi.org/10.1093/oso/9780198862314.001.0001).
+  Section 7.5.1 discusses the equal-time magnetic correlation measured in the
+  static approximation.
 - S. W. Lovesey, *Theory of Neutron Scattering from Condensed Matter*,
   Vols. 1–2 (Clarendon Press, 1984).
 - I. A. Zaliznyak and S.-H. Lee, “Magnetic Neutron Scattering,” in
