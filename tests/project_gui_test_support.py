@@ -11,6 +11,12 @@ import nfit
 import nfit.project_gui as project_gui
 from nfit.dataset import PointData4D, PointListData
 from nfit.mdhisto import MDHistoAxis, MDHistoData
+from nfit.model_registry import (
+    default_model_config,
+    default_model_fit_parameters,
+    default_model_parameters,
+    model_parameter_tooltip,
+)
 from nfit.pipeline import (
     DataGroup,
     DatasetEntry,
@@ -35,14 +41,10 @@ from nfit.project_gui import (
     dataset_for_slice_viewer,
     dataset_rebin_config,
     default_mask_parameters,
-    default_model_config,
-    default_model_fit_parameters,
-    default_model_parameters,
     forget_missing_recent_projects,
     import_dataset_paths,
     load_project,
     mask_parameter_tooltip,
-    model_parameter_tooltip,
     next_data_group_name,
     recent_project_paths,
     remember_recent_project,

@@ -89,7 +89,6 @@ component. Each registered definition supplies:
 tooltips derive from the same definitions, and project saving, workflow export,
 diagnostics, reports, and model-owned plots resolve their hooks there. This
 keeps an extension scriptable even when it also supplies GUI presentation.
-`MODEL_TYPE_DEFINITIONS` remains a read-only mapping view for compatibility.
 
 Register a definition with `register_model_definition`. Registration validates
 duplicate fields, bounds, and plot keys. Extension code should register during
@@ -98,6 +97,13 @@ scientific model still needs a focused documentation page under
 [Spin-fluctuation models](spin_fluctuation_models.md), validation against known
 limits, and workflow-equivalence tests; registry membership alone is not a
 physics validation.
+
+An optional external engine such as Sunny or PyCrystalField uses the same
+contract. Its model factory calls a public adapter function, while `config` and
+`metadata` store the engine key and version, input references, conventions,
+calculation settings, and parameter mapping as JSON-compatible values.
+Generated scripts import and call that adapter explicitly. Projects never store
+an external Python object or arbitrary callable.
 
 ## Preparing data
 

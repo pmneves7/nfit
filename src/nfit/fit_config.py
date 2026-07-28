@@ -65,7 +65,6 @@ from .fitting import (
 from .form_factors import form_factor_sq
 from .heat_capacity import debye_heat_capacity, low_temperature_heat_capacity
 from .model_registry import MODEL_TYPE_REGISTRY, validate_model_component
-from .model_registry import ModelTypeInfo as ModelTypeInfo
 from .quantities import convert_quantity
 from .spin_fluctuations import (
     build_rpa_geometry,

@@ -19,7 +19,6 @@ from typing import Any
 
 import numpy as np
 
-from . import model_registry as _model_registry
 from .analysis.artifacts import read_dataset_artifact
 from .analysis.coordinates import signal_semantics
 from .analysis.core import AnalysisEntry, AnalysisOutputRef
@@ -76,7 +75,16 @@ from .mdhisto import (
     load_mantid_mdhisto_nxs,
     mdhisto_measured_bins,
 )
-from .model_registry import MODEL_TYPE_DEFINITIONS, MODEL_TYPE_REGISTRY
+from .model_registry import (
+    MODEL_TYPE_REGISTRY,
+    available_model_types,
+    default_model_config,
+    default_model_fit_parameters,
+    default_model_parameters,
+    model_config_tooltip,
+    model_definition,
+    model_parameter_tooltip,
+)
 from .pipeline import (
     BackgroundSpec,
     DataGroup,
@@ -1273,7 +1281,7 @@ def create_model_component(
 ) -> ModelComponentSpec:
     """Add a model component spec to a data group and return it."""
 
-    if type not in MODEL_TYPE_DEFINITIONS:
+    if type not in MODEL_TYPE_REGISTRY:
         raise ValueError(f"unknown model type {type!r}")
     model = ModelComponentSpec(
         name=next_model_name(group.models),
@@ -1670,12 +1678,6 @@ def available_mask_types() -> list[str]:
     return list(MASK_TYPE_DEFINITIONS)
 
 
-def available_model_types() -> list[str]:
-    """Return registered model type names."""
-
-    return list(_model_registry.available_model_types())
-
-
 def default_mask_parameters(type: str) -> dict[str, Any]:
     """Return default parameter values for a registered mask type."""
 
@@ -1974,7 +1976,7 @@ def reconcile_model_orbit_parameters(model: ModelComponentSpec) -> None:
         if isinstance(mapping, dict):
             for key in [name for name in mapping if name not in keep]:
                 mapping.pop(key)
-    static = set(MODEL_TYPE_DEFINITIONS[model.type]["parameters"])
+    static = set(model_definition(model.type).parameters)
     for name in names:
         if name in static:
             continue
@@ -2143,36 +2145,6 @@ def set_model_closure(model: ModelComponentSpec, updates: dict[str, Any]) -> Non
     else:
         model.config["closure"] = closure
     reconcile_model_orbit_parameters(model)
-
-
-def default_model_parameters(type: str) -> dict[str, Any]:
-    """Return default parameter values for a registered model type."""
-
-    return _model_registry.default_model_parameters(type)
-
-
-def default_model_config(type: str) -> dict[str, Any]:
-    """Return default non-optimizable configuration settings for a model type."""
-
-    return _model_registry.default_model_config(type)
-
-
-def default_model_fit_parameters(type: str) -> dict[str, bool]:
-    """Return default optimizer-inclusion flags for a registered model type."""
-
-    return _model_registry.default_model_fit_parameters(type)
-
-
-def model_parameter_tooltip(type: str, parameter_name: str) -> str:
-    """Return standard hover text for a model parameter editor."""
-
-    return _model_registry.model_parameter_tooltip(type, parameter_name)
-
-
-def model_config_tooltip(type: str, setting_name: str) -> str:
-    """Return standard hover text for a model configuration setting editor."""
-
-    return _model_registry.model_config_tooltip(type, setting_name)
 
 
 def dataset_details_text(dataset: DatasetEntry, *, group: DataGroup | None = None) -> str:
@@ -5274,7 +5246,7 @@ def _fit_diagnostics_from_result(
         component.name: component
         for component in components
         if component.enabled
-        and component.type in MODEL_TYPE_DEFINITIONS
+        and component.type in MODEL_TYPE_REGISTRY
         and MODEL_TYPE_REGISTRY[component.type].diagnostics is not None
     }
     if not diagnostic_by_name:
@@ -13241,7 +13213,8 @@ class NfitProjectExplorer:
             self._set_fit_details(fit_entry)
         elif role == "model" and model is not None:
             self.title_label.setText(model.name)
-            label = MODEL_TYPE_DEFINITIONS.get(model.type, {}).get("label", model.type)
+            definition = MODEL_TYPE_REGISTRY.get(model.type)
+            label = definition.label if definition is not None else model.type
             self._set_details_text(f"Model\n\nType: {label}\nEnabled: {model.enabled}")
             self._sync_model_editor(model)
         elif role == "fit_model_session" and group is not None:
@@ -18375,7 +18348,7 @@ class NfitProjectExplorer:
         self.model_type_combo.blockSignals(True)
         self.model_type_combo.clear()
         for type_name in available_model_types():
-            self.model_type_combo.addItem(MODEL_TYPE_DEFINITIONS[type_name]["label"], type_name)
+            self.model_type_combo.addItem(model_definition(type_name).label, type_name)
         if current is not None:
             index = self.model_type_combo.findData(current)
             if index >= 0:
@@ -18581,7 +18554,10 @@ class NfitProjectExplorer:
         config_group.setObjectName("model_config_group")
         config_layout = QtWidgets.QGridLayout(config_group)
         config_layout.setColumnStretch(1, 1)
-        config_definitions = MODEL_TYPE_DEFINITIONS[model.type].get("config", {})
+        definition = model_definition(model.type)
+        config_definitions = {
+            field.name: field for field in definition.config_fields
+        }
         if not config_definitions:
             config_layout.addWidget(QtWidgets.QLabel("No configuration settings."), 0, 0, 1, 2)
         row = 0
@@ -18591,7 +18567,7 @@ class NfitProjectExplorer:
             label = QtWidgets.QLabel(setting_name)
             tooltip = model_config_tooltip(model.type, setting_name)
             label.setToolTip(tooltip)
-            if config_definitions[setting_name].get("choices") == "form_factor_ions":
+            if config_definitions[setting_name].choices == "form_factor_ions":
                 label.setText("form_factor")
                 combo = QtWidgets.QComboBox()
                 combo.setObjectName(f"model_config_choice_{setting_name}")
@@ -18639,7 +18615,7 @@ class NfitProjectExplorer:
             config_layout.addWidget(editor, row, 1)
             row += 1
         self.model_parameter_layout.addWidget(config_group, 2, 0, 1, 4)
-        if MODEL_TYPE_DEFINITIONS[model.type].get("structured_config"):
+        if definition.structured_config:
             self._build_model_crystal_editor(model)
 
     def _clear_model_parameter_editor(self) -> None:

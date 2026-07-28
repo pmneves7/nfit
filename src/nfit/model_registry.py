@@ -10,19 +10,17 @@ from __future__ import annotations
 
 import copy
 import json
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 __all__ = [
-    "MODEL_TYPE_DEFINITIONS",
     "MODEL_TYPE_REGISTRY",
     "ModelConfigDefinition",
     "ModelDefinition",
     "ModelFieldDefinition",
     "ModelParameterDefinition",
     "ModelPlotDefinition",
-    "ModelTypeInfo",
     "available_model_types",
     "default_model_config",
     "default_model_fit_parameters",
@@ -60,22 +58,6 @@ class ModelFieldDefinition:
     example: str
     unit: str = ""
     choices: Any = None
-
-    def as_mapping(self) -> dict[str, Any]:
-        """Return the compatibility mapping used by existing GUI controls."""
-
-        result = {
-            "default": copy.deepcopy(self.default),
-            "description": self.description,
-            "allowed": self.allowed,
-            "type": self.type,
-            "example": self.example,
-            "unit": self.unit,
-        }
-        if self.choices is not None:
-            result["choices"] = copy.deepcopy(self.choices)
-        return result
-
 
 @dataclass(frozen=True)
 class ModelParameterDefinition(ModelFieldDefinition):
@@ -170,48 +152,7 @@ class ModelDefinition:
                 return item
         raise KeyError(f"unknown configuration field {name!r} for model {self.key!r}")
 
-    def as_gui_mapping(self) -> dict[str, Any]:
-        """Return the former dictionary representation as a derived view."""
-
-        result: dict[str, Any] = {
-            "label": self.label,
-            "description": self.description,
-            "parameters": {
-                item.name: item.as_mapping() for item in self.parameter_fields
-            },
-            "config": {item.name: item.as_mapping() for item in self.config_fields},
-            "model_version": self.version,
-            "category": self.category,
-            "documentation": self.documentation,
-            "citations": list(self.citations),
-        }
-        if self.structured_config:
-            result["structured_config"] = True
-        if self.dynamic_parameters is not None:
-            result["dynamic_parameter_description"] = self.dynamic_parameter_description
-            result["dynamic_parameter_unit"] = self.dynamic_parameter_unit
-        return result
-
-
-@dataclass(frozen=True)
-class ModelTypeInfo:
-    """Legacy fit-only registry entry retained for import compatibility.
-
-    New extensions should use :class:`ModelDefinition` and
-    :func:`register_model_definition`.
-    """
-
-    parameters: tuple[str, ...]
-    data_types: tuple[str, ...]
-    factory: ModelFactory
-    dynamic_parameters: DynamicParameters | None = None
-    jacobian_factory: ModelJacobianFactory | None = None
-    default_lower_bounds: tuple[tuple[str, float], ...] = ()
-    validate_component: ModelValidator | None = None
-    diagnostics: ModelDiagnostics | None = None
-
-
-MODEL_TYPE_REGISTRY: dict[str, ModelDefinition | ModelTypeInfo] = {}
+MODEL_TYPE_REGISTRY: dict[str, ModelDefinition] = {}
 
 
 def register_model_definition(
@@ -299,11 +240,6 @@ def model_definition(type_name: str) -> ModelDefinition:
         definition = MODEL_TYPE_REGISTRY[type_name]
     except KeyError as exc:
         raise KeyError(f"unknown model type {type_name!r}") from exc
-    if not isinstance(definition, ModelDefinition):
-        raise TypeError(
-            f"model type {type_name!r} uses the legacy fit-only registration; "
-            "register a ModelDefinition for GUI and serialization support"
-        )
     return definition
 
 
@@ -452,22 +388,6 @@ def serialize_model_component(
         )
     json.dumps(payload)
     return payload
-
-
-class _LegacyModelDefinitions(Mapping[str, dict[str, Any]]):
-    """Read-only derived view retaining the former public dictionary API."""
-
-    def __getitem__(self, key: str) -> dict[str, Any]:
-        return model_definition(key).as_gui_mapping()
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(MODEL_TYPE_REGISTRY)
-
-    def __len__(self) -> int:
-        return len(MODEL_TYPE_REGISTRY)
-
-
-MODEL_TYPE_DEFINITIONS: Mapping[str, dict[str, Any]] = _LegacyModelDefinitions()
 
 
 def _value_text(value: Any) -> str:

@@ -56,9 +56,7 @@ deliberately.
 Models use the public `ModelDefinition` registry. In addition to fields and
 compatibility, a definition may provide numerical and Jacobian factories,
 dynamic parameter discovery, diagnostics, report sections, model-owned plots,
-citations, and separate project/workflow serializers. The legacy
-`MODEL_TYPE_DEFINITIONS` dictionary interface is a derived read-only view, not
-a second metadata registry. See
+citations, and separate project/workflow serializers. See
 [Modeling and fitting pipeline](modeling_pipeline.md#shared-model-registry).
 
 Every interactive control needs hover text that explains its effect and any

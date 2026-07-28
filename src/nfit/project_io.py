@@ -10,7 +10,11 @@ from typing import Any
 import numpy as np
 
 from .analysis.core import AnalysisEntry, AnalysisOutputRef, AnalysisResultRecord
-from .model_registry import serialize_model_component
+from .model_registry import (
+    default_model_config,
+    default_model_fit_parameters,
+    serialize_model_component,
+)
 from .pipeline import (
     BackgroundSpec,
     DataGroup,
@@ -83,8 +87,6 @@ def _project_to_dict(project: NfitProject) -> dict[str, Any]:
 
 def _project_from_dict(payload: dict[str, Any]) -> NfitProject:
     from .project_gui import (
-        default_model_config,
-        default_model_fit_parameters,
         ensure_fit_history,
         reconcile_model_orbit_parameters,
     )

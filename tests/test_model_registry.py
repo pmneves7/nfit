@@ -3,8 +3,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+import nfit
 from nfit import (
-    MODEL_TYPE_DEFINITIONS,
     MODEL_TYPE_REGISTRY,
     DataGroup,
     FitDatasetInput,
@@ -12,7 +12,6 @@ from nfit import (
     ModelDefinition,
     ModelParameterDefinition,
     ModelPlotDefinition,
-    ModelTypeInfo,
     compile_fit_problem,
     model_definition,
     model_plot_definitions,
@@ -21,12 +20,12 @@ from nfit import (
 )
 from nfit.dataset import from_arrays
 from nfit.fit_config import compute_component_diagnostics
-from nfit.project_gui import (
-    create_model_component,
+from nfit.model_registry import (
     default_model_config,
     default_model_fit_parameters,
     default_model_parameters,
 )
+from nfit.project_gui import create_model_component
 from nfit.project_io import _model_to_dict
 from nfit.workflow import _model_spec
 
@@ -55,11 +54,14 @@ def _temporary_definition(key: str, **overrides) -> ModelDefinition:
 
 
 def test_builtin_registry_is_the_gui_and_fit_source_of_truth():
-    assert tuple(MODEL_TYPE_REGISTRY) == tuple(MODEL_TYPE_DEFINITIONS)
     definition = model_definition("local_relaxational")
 
+    assert all(
+        isinstance(registered, ModelDefinition)
+        for registered in MODEL_TYPE_REGISTRY.values()
+    )
     assert definition.parameters == ("chi_loc", "gamma")
-    assert tuple(MODEL_TYPE_DEFINITIONS["local_relaxational"]["parameters"]) == (
+    assert tuple(field.name for field in definition.parameter_fields) == (
         "chi_loc",
         "gamma",
     )
@@ -75,17 +77,8 @@ def test_builtin_registry_is_the_gui_and_fit_source_of_truth():
         "chi_loc": False,
         "gamma": False,
     }
-
-
-def test_legacy_fit_registry_entry_constructor_remains_compatible():
-    entry = ModelTypeInfo(
-        parameters=("amplitude",),
-        data_types=("*",),
-        factory=lambda _component: lambda data, _params: np.zeros(data.size),
-    )
-
-    assert entry.parameters == ("amplitude",)
-    assert entry.validate_component is None
+    assert not hasattr(nfit, "MODEL_TYPE_DEFINITIONS")
+    assert not hasattr(nfit, "ModelTypeInfo")
 
 
 def test_registered_model_drives_creation_diagnostics_plots_and_serialization():
