@@ -65,8 +65,12 @@ not a universal direct-geometry NeXus importer.
 
 Compatible runs are stored as a file-backed dataset group. The shared setup
 holds the UB matrix, detector mask, processed vanadium file, and optional
-$E_i$ and $T_0$ overrides. Individual detector-event runs are not plotted
-directly; enable the group composite and rebin them to an HKLE histogram.
+$E_i$ and $T_0$ overrides. The accepted energy-transfer interval is expressed
+as fractions of each run's $E_i$ and defaults to
+$-0.95E_i\leq\Delta E\leq0.95E_i$. The same limits define event selection and
+detector-trajectory normalization. Individual detector-event runs are not
+plotted directly; enable the group composite and rebin them to an HKLE
+histogram.
 
 nfit streams detector banks and event chunks rather than loading the complete
 event table. It obtains detector geometry and flight paths from the embedded
@@ -84,7 +88,7 @@ For each enabled run, nfit:
 3. combines detector-mask and processed-vanadium exclusions;
 4. rejects bad pulses using the configured charge threshold;
 5. converts accepted event TOF to final energy, $\Delta E$, and sample-frame
-   momentum;
+   momentum, then applies the configured $\Delta E/E_i$ limits;
 6. applies detector-efficiency and optional $k_i/k_f$ corrections;
 7. bins corrected events and their variances; and
 8. divides by independently accumulated trajectory coverage.

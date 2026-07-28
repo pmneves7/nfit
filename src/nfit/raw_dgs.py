@@ -127,6 +127,8 @@ def raw_dgs_dataset_group(
         "mask_file": None if mask_path is None else str(mask_path),
         "incident_energy_override": None,
         "t0_override": None,
+        "energy_min_fraction": -0.95,
+        "energy_max_fraction": 0.95,
         "bad_pulse_threshold": 95.0,
         "ki_kf_normalization": True,
         "he3_detector_efficiency_correction": True,
@@ -231,6 +233,8 @@ def bin_raw_dgs_group(
     detector_mask = _combined_detector_mask(config)
     total = sum(int(dataset.metadata.get("event_count", 0)) for dataset in selected)
     processed = 0
+    energy_bounds_by_dataset_id: dict[str, tuple[float, float]] = {}
+    resolved_energy_windows = []
     for dataset in selected:
         source = Path(dataset.metadata["source_file"])
         info = inspect_raw_dgs_run(source)
@@ -239,6 +243,17 @@ def bin_raw_dgs_group(
         t0 = float(config.get("t0_override") if config.get("t0_override") is not None else info.t0)
         if ei <= 0.0 or info.l1 <= 0.0:
             raise ValueError(f"{source.name} has no usable incident energy or source distance")
+        energy_bounds = _energy_transfer_bounds(config, ei)
+        energy_bounds_by_dataset_id[dataset.id] = energy_bounds
+        resolved_energy_windows.append(
+            {
+                "dataset_id": dataset.id,
+                "run_number": info.run_number,
+                "incident_energy_meV": ei,
+                "minimum_meV": energy_bounds[0],
+                "maximum_meV": energy_bounds[1],
+            }
+        )
         ub = np.asarray(config["ub_matrix"], dtype=float)
         hkl_transform = np.linalg.inv(2.0 * np.pi * ub)
         gonio = _goniometer(info.omega, info.phi, info.chi)
@@ -294,7 +309,10 @@ def bin_raw_dgs_group(
                             ef = (TOF_US_PER_M_SQRT_MEV * l2 / final_tof) ** 2
                             energy = ei - ef
                             kf = np.sqrt(np.maximum(ef, 0.0) / ENERGY_TO_K2)
-                            energy_keep = (energy >= -0.95 * ei) & (energy <= 0.95 * ei)
+                            energy_keep = (
+                                (energy >= energy_bounds[0])
+                                & (energy <= energy_bounds[1])
+                            )
                             positions = positions[energy_keep]
                             ids_valid = ids_valid[energy_keep]
                             energy = energy[energy_keep]
@@ -359,6 +377,7 @@ def bin_raw_dgs_group(
         detector_norm,
         detector_mask,
         symmetry,
+        energy_bounds_by_dataset_id,
     )
     covered = normalization > 0.0
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -387,6 +406,7 @@ def bin_raw_dgs_group(
         num_events=event_count,
         metadata={
             "raw_dgs": config,
+            "raw_dgs_energy_windows_meV": resolved_energy_windows,
             "rebin": {"vectors": basis.tolist()},
             "signal_semantics": "density",
             "signal_semantics_source": "nfit_raw_tof_reduction",
@@ -413,6 +433,7 @@ def _trajectory_normalization(
     detector_norm,
     detector_mask,
     symmetry_operations=None,
+    energy_bounds_by_dataset_id=None,
 ):
     """Native MDNorm-style detector trajectories for compatible direct-geometry runs."""
     config = group.metadata["raw_dgs"]
@@ -440,6 +461,11 @@ def _trajectory_normalization(
             basis_inverse[:3, :3].T @ operation @ canonical_inverse for operation in symmetry
         ]
         ei = float(config.get("incident_energy_override") or info.incident_energy)
+        energy_bounds = (
+            _energy_transfer_bounds(config, ei)
+            if energy_bounds_by_dataset_id is None
+            else energy_bounds_by_dataset_id[dataset.id]
+        )
         import h5py
 
         with h5py.File(info.path, "r") as handle:
@@ -462,7 +488,8 @@ def _trajectory_normalization(
                 )
             )
         payloads.extend(
-            (inverse, ei, (-0.95 * ei, 0.95 * ei), charge, direction, solid) for inverse in inverses
+            (inverse, ei, energy_bounds, charge, direction, solid)
+            for inverse in inverses
         )
     if (
         _MDEVENT_NUMBA is not None
@@ -504,6 +531,25 @@ def _combined_detector_mask(config):
     for mask in masks:
         values[mask.value_for_ids(ids) <= 0.0] = 0.0
     return type(masks[0])(Path("combined_mask"), ids, values, np.zeros(ids.size))
+
+
+def _energy_transfer_bounds(config, incident_energy):
+    """Resolve and validate the per-run energy-transfer limits in meV."""
+
+    ei = float(incident_energy)
+    minimum_fraction = float(config.get("energy_min_fraction", -0.95))
+    maximum_fraction = float(config.get("energy_max_fraction", 0.95))
+    if not np.isfinite(ei) or ei <= 0.0:
+        raise ValueError("incident energy must be positive and finite")
+    if not np.isfinite(minimum_fraction) or not np.isfinite(maximum_fraction):
+        raise ValueError("raw direct-geometry energy limits must be finite")
+    if minimum_fraction >= maximum_fraction:
+        raise ValueError("raw direct-geometry energy minimum must be below its maximum")
+    if maximum_fraction >= 1.0:
+        raise ValueError(
+            "raw direct-geometry energy maximum must be below 1 Ei so final energy remains positive"
+        )
+    return minimum_fraction * ei, maximum_fraction * ei
 
 
 def _good_pulses(entry, threshold):

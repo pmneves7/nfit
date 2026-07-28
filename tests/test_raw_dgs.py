@@ -5,6 +5,7 @@ from nfit import bin_raw_dgs_group, inspect_raw_dgs_run, raw_dgs, raw_dgs_datase
 from nfit.raw_dgs import (
     TOF_US_PER_M_SQRT_MEV,
     _evaluate_mantid_t0_formula,
+    _energy_transfer_bounds,
     _monitor_ei_t0,
     _retained_proton_charge_uah,
 )
@@ -57,6 +58,8 @@ def test_raw_dgs_metadata_and_streamed_hkle_binning(tmp_path):
     assert info.run_number == "42"
     assert info.event_count == 2
     assert info.incident_energy == 20.0
+    assert group.metadata["raw_dgs"]["energy_min_fraction"] == -0.95
+    assert group.metadata["raw_dgs"]["energy_max_fraction"] == 0.95
     result = bin_raw_dgs_group(
         group,
         lower=[-10, -10, -10, -100],
@@ -71,6 +74,8 @@ def test_raw_dgs_metadata_and_streamed_hkle_binning(tmp_path):
     assert np.isfinite(result.signal.item()) and result.signal.item() > 0.0
     assert np.isfinite(result.errors.item()) and result.errors.item() > 0.0
     assert result.metadata["ki_kf_normalization"] is True
+    assert result.metadata["raw_dgs_energy_windows_meV"][0]["minimum_meV"] == -19.0
+    assert result.metadata["raw_dgs_energy_windows_meV"][0]["maximum_meV"] == 19.0
     assert not result.mask.item()
 
 
@@ -93,6 +98,7 @@ def test_raw_dgs_trajectory_normalization_keeps_each_runs_detector_geometry(monk
         ),
     }
     directions = []
+    energy_bounds = []
 
     monkeypatch.setattr(
         raw_dgs,
@@ -103,8 +109,9 @@ def test_raw_dgs_trajectory_normalization_keeps_each_runs_detector_geometry(monk
     monkeypatch.setattr(
         raw_dgs,
         "_accumulate_detector_trajectory",
-        lambda result, edges, inverse, direction, ei, bounds, weight: directions.append(
-            direction.copy()
+        lambda result, edges, inverse, direction, ei, bounds, weight: (
+            directions.append(direction.copy()),
+            energy_bounds.append(bounds),
         ),
     )
 
@@ -122,6 +129,46 @@ def test_raw_dgs_trajectory_normalization_keeps_each_runs_detector_geometry(monk
         directions,
         [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
     )
+    assert energy_bounds == [(-19.0, 19.0), (-19.0, 19.0)]
+
+
+def test_raw_dgs_custom_energy_limits_apply_to_events_and_normalization(
+    monkeypatch, tmp_path
+):
+    source = tmp_path / "SEQ_42.nxs.h5"
+    _write_raw_dgs(source)
+    group = raw_dgs_dataset_group([source])
+    group.metadata["raw_dgs"]["energy_min_fraction"] = -0.25
+    group.metadata["raw_dgs"]["energy_max_fraction"] = 0.9
+    captured = {}
+
+    def normalization(*args):
+        captured["bounds"] = args[-1]
+        return np.ones(args[3])
+
+    monkeypatch.setattr(raw_dgs, "_trajectory_normalization", normalization)
+    result = bin_raw_dgs_group(
+        group,
+        lower=[-10, -10, -10, -100],
+        upper=[10, 10, 10, 20],
+        num_bins=[1, 1, 1, 1],
+    )
+
+    assert result.num_events.item() == 0.0
+    assert captured["bounds"] == {group.datasets[0].id: (-5.0, 18.0)}
+
+
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        ({"energy_min_fraction": 0.5, "energy_max_fraction": 0.5}, "below"),
+        ({"energy_min_fraction": -0.95, "energy_max_fraction": 1.0}, "below 1 Ei"),
+        ({"energy_min_fraction": np.nan, "energy_max_fraction": 0.95}, "finite"),
+    ],
+)
+def test_raw_dgs_energy_limits_are_validated(config, message):
+    with pytest.raises(ValueError, match=message):
+        _energy_transfer_bounds(config, 20.0)
 
 
 def test_raw_dgs_detector_mask_removes_events(tmp_path):

@@ -7049,6 +7049,8 @@ def test_raw_dgs_nexus_import_creates_a_file_backed_reduction_group(tmp_path):
     assert entries[0].kind == "raw_dgs_nexus"
     assert len(group.subgroups) == 1
     assert "raw_dgs" in group.subgroups[0].metadata
+    assert group.subgroups[0].metadata["raw_dgs"]["energy_min_fraction"] == -0.95
+    assert group.subgroups[0].metadata["raw_dgs"]["energy_max_fraction"] == 0.95
     ok, _message = project_gui.data_group_composite_status(group.subgroups[0])
     assert ok
     assert project_gui.slice_viewer_datasets(group) == ([], [])

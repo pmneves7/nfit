@@ -14795,16 +14795,33 @@ class NfitProjectExplorer:
             spin.setToolTip(tooltip)
             spin.valueChanged.connect(lambda value, key=key: self._set_raw_dgs_group_value(node, key, None if value < 0.0 else float(value)))
             layout.addWidget(spin, 2, column * 2 + 1)
+        for column, (label, key, default, maximum, tooltip) in enumerate((
+            ("Emin / Ei", "energy_min_fraction", -0.95, 0.999999, "Minimum accepted energy transfer divided by the incident energy. The default is -0.95. This same limit is used for event selection and detector-trajectory normalization."),
+            ("Emax / Ei", "energy_max_fraction", 0.95, 0.999999, "Maximum accepted energy transfer divided by the incident energy. It must remain below 1 so the final neutron energy is positive. The default is 0.95. This same limit is used for event selection and detector-trajectory normalization."),
+        )):
+            layout.addWidget(QtWidgets.QLabel(label), 3, column * 2)
+            spin = QtWidgets.QDoubleSpinBox()
+            spin.setObjectName(f"raw_dgs_{key}")
+            spin.setRange(-100.0, maximum)
+            spin.setDecimals(6)
+            spin.setValue(float(config.get(key, default)))
+            spin.setToolTip(tooltip)
+            spin.valueChanged.connect(
+                lambda value, key=key: self._set_raw_dgs_group_value(
+                    node, key, float(value)
+                )
+            )
+            layout.addWidget(spin, 3, column * 2 + 1)
         correction = QtWidgets.QCheckBox("Apply ki/kf correction")
         correction.setChecked(bool(config.get("ki_kf_normalization", config.get("kf_ki_normalization", True))))
         correction.setToolTip("Multiply each accepted event by ki/kf, the incident-to-final wavevector ratio used by Mantid direct-geometry reduction. Event variances receive the square of this factor; the choice is recorded in rebinned metadata.")
         correction.toggled.connect(lambda checked: self._set_raw_dgs_group_value(node, "ki_kf_normalization", bool(checked)))
-        layout.addWidget(correction, 3, 0, 1, 2)
-        layout.addWidget(QtWidgets.QLabel("UB matrix"), 4, 0)
+        layout.addWidget(correction, 4, 0, 1, 2)
+        layout.addWidget(QtWidgets.QLabel("UB matrix"), 5, 0)
         ub = QtWidgets.QLineEdit(_parameter_to_text(config.get("ub_matrix", np.eye(3).tolist())))
         ub.setToolTip("Shared IPNS/ISAW UB matrix. Raw Q is rotated into the sample frame and converted with (2*pi*UB)^-1 before binning.")
         ub.editingFinished.connect(lambda: self._set_raw_dgs_group_ub(node, ub))
-        layout.addWidget(ub, 4, 1, 1, 3)
+        layout.addWidget(ub, 5, 1, 1, 3)
         return box
 
     def _ub_setup_group_box(
