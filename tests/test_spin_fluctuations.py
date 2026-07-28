@@ -8,9 +8,14 @@ import pytest
 
 from nfit.spin_fluctuations import (
     build_rpa_geometry,
+    damped_mode_susceptibility,
+    generalized_paramagnon_susceptibility,
     heisenberg_rpa_chipp,
     local_relaxational_chipp,
+    local_relaxational_susceptibility,
     mmp_chipp,
+    mmp_susceptibility,
+    paramagnon_spatial_kernel,
     reduce_site_network,
     rpa_exchange_matrix,
 )
@@ -80,6 +85,77 @@ def test_mmp_chipp_is_odd_in_energy_and_peaks_at_q0():
 def test_mmp_requires_positive_omega_sf():
     with pytest.raises(ValueError):
         mmp_chipp(0.0, 1.0, chi_pk=1.0, xi=1.0, omega_sf=0.0)
+
+
+def test_complex_relaxational_views_are_causal_and_match_chipp():
+    energy = np.linspace(-8.0, 8.0, 81)
+    response = local_relaxational_susceptibility(
+        energy, chi_loc=2.3, gamma=1.7
+    )
+    np.testing.assert_allclose(response.real, response.real[::-1])
+    np.testing.assert_allclose(response.imag, -response.imag[::-1])
+    np.testing.assert_allclose(
+        response.imag,
+        local_relaxational_chipp(energy, chi_loc=2.3, gamma=1.7),
+    )
+    np.testing.assert_allclose(response[40], 2.3 + 0.0j)
+
+
+def test_mmp_complex_response_and_generalized_limit_agree():
+    q_sq = np.array([0.0, 0.2, 0.7])
+    energy = np.array([0.3, 1.1, 2.0])
+    xi = 2.4
+    kernel = 1.0 + xi**2 * q_sq
+    mmp = mmp_susceptibility(
+        q_sq, energy, chi_pk=1.8, xi=xi, omega_sf=2.1
+    )
+    generalized = generalized_paramagnon_susceptibility(
+        kernel,
+        energy,
+        chi_peak=1.8,
+        gamma0=2.1,
+        relaxation_power=1.0,
+        inverse_mode_energy_sq=0.0,
+    )
+    np.testing.assert_allclose(generalized, mmp)
+
+
+def test_damped_mode_has_relaxational_limit_and_static_response():
+    energy = np.array([-2.0, 0.0, 2.0])
+    relaxor = damped_mode_susceptibility(
+        energy,
+        chi_static=1.4,
+        relaxation_energy=3.0,
+        inverse_mode_energy_sq=0.0,
+    )
+    np.testing.assert_allclose(
+        relaxor,
+        local_relaxational_susceptibility(energy, chi_loc=1.4, gamma=3.0),
+    )
+    propagating = damped_mode_susceptibility(
+        energy,
+        chi_static=1.4,
+        relaxation_energy=3.0,
+        inverse_mode_energy_sq=0.25,
+    )
+    assert propagating[1] == pytest.approx(1.4 + 0.0j)
+    assert propagating[2] == pytest.approx(np.conj(propagating[0]))
+
+
+def test_paramagnon_spatial_kernel_uses_positive_cholesky_metric():
+    offsets = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    cholesky = np.array([[2.0, 0.0, 0.0], [0.5, 1.0, 0.0], [0.0, 0.0, 3.0]])
+    kernel = paramagnon_spatial_kernel(
+        offsets,
+        correlation_cholesky_angstrom=cholesky,
+        spatial_power=2.0,
+    )
+    np.testing.assert_allclose(kernel, [5.0, 2.25])
+    with pytest.raises(ValueError, match="lower triangular"):
+        paramagnon_spatial_kernel(
+            offsets,
+            correlation_cholesky_angstrom=np.ones((3, 3)),
+        )
 
 
 def test_rpa_weights_sum_rule_two_site_random_crystal():

@@ -436,6 +436,15 @@ def _fit_diagnostics(name: str) -> ModelDiagnostics:
     return diagnostics
 
 
+def _fit_validator(name: str) -> ModelValidator:
+    def validate(component: Any) -> None:
+        from . import fit_config
+
+        getattr(fit_config, name)(component)
+
+    return validate
+
+
 def _report_sections(name: str) -> ModelReportSections:
     def sections(
         fit_entry: Any,
@@ -448,6 +457,33 @@ def _report_sections(name: str) -> ModelReportSections:
         return getattr(report, name)(fit_entry, model, goodness, context)
 
     return sections
+
+
+def _model_plot_calculator(name: str) -> Callable[..., Any]:
+    def calculate(*args: Any, **kwargs: Any) -> Any:
+        from . import model_plots
+
+        return getattr(model_plots, name)(*args, **kwargs)
+
+    return calculate
+
+
+def _model_plot_renderer(name: str) -> Callable[..., Any]:
+    def render(*args: Any, **kwargs: Any) -> Any:
+        from . import model_plots
+
+        return getattr(model_plots, name)(*args, **kwargs)
+
+    return render
+
+
+def _model_plot_script(name: str) -> Callable[..., str]:
+    def script(*args: Any, **kwargs: Any) -> str:
+        from . import model_plots
+
+        return str(getattr(model_plots, name)(*args, **kwargs))
+
+    return script
 
 
 def _parameter(
@@ -679,6 +715,250 @@ def _register_builtin_models() -> None:
             citations=(
                 "https://doi.org/10.1103/PhysRevB.42.167",
                 "https://doi.org/10.1103/PhysRevB.47.6069",
+            ),
+        )
+    )
+    register_model_definition(
+        ModelDefinition(
+            key="generalized_paramagnon",
+            label="Generalized paramagnon / damped mode",
+            description=(
+                "Causal anisotropic paramagnon response with a positive correlation "
+                "metric, configurable momentum-space centers, critical slowing down, "
+                "and an optional inertial term. It continuously covers local and MMP "
+                "relaxation and damped propagating modes."
+            ),
+            category="spin_fluctuation",
+            data_types=(
+                "single_crystal_inelastic",
+                "powder_inelastic",
+                "single_crystal_elastic",
+                "powder_elastic",
+            ),
+            factory=_fit_factory("_generalized_paramagnon_factory"),
+            parameter_fields=(
+                _parameter(
+                    "chi_peak",
+                    1.0,
+                    "Static susceptibility of one peak at its center.",
+                    "Nonnegative finite number.",
+                    "meV^-1",
+                    "3.0",
+                ),
+                _parameter(
+                    "gamma0",
+                    2.0,
+                    "Relaxation energy at a peak center.",
+                    "Positive finite number in meV.",
+                    "meV",
+                    "2.0",
+                ),
+                _parameter(
+                    "relaxation_power",
+                    1.0,
+                    "Exponent z in Gamma(q) = gamma0 A(q)^z.",
+                    "Nonnegative finite number.",
+                    "dimensionless",
+                    "1.0",
+                ),
+                _parameter(
+                    "inverse_mode_energy_sq",
+                    0.0,
+                    "Inertial coefficient 1/E0^2; zero is exactly relaxational.",
+                    "Nonnegative finite number in meV^-2.",
+                    "meV^-2",
+                    "0.04",
+                ),
+                _parameter(
+                    "xi_x",
+                    1.0,
+                    "x diagonal of the correlation-metric Cholesky factor.",
+                    "Nonnegative finite number in Angstrom.",
+                    "angstrom",
+                    "4.0",
+                ),
+                _parameter(
+                    "xi_y",
+                    1.0,
+                    "y diagonal of the correlation-metric Cholesky factor.",
+                    "Nonnegative finite number in Angstrom.",
+                    "angstrom",
+                    "2.0",
+                ),
+                _parameter(
+                    "xi_z",
+                    1.0,
+                    "z diagonal of the correlation-metric Cholesky factor.",
+                    "Nonnegative finite number in Angstrom.",
+                    "angstrom",
+                    "1.0",
+                ),
+                _parameter(
+                    "xi_yx",
+                    0.0,
+                    "yx off-diagonal of the correlation-metric Cholesky factor.",
+                    "Any finite number in Angstrom.",
+                    "angstrom",
+                    "0.0",
+                ),
+                _parameter(
+                    "xi_zx",
+                    0.0,
+                    "zx off-diagonal of the correlation-metric Cholesky factor.",
+                    "Any finite number in Angstrom.",
+                    "angstrom",
+                    "0.0",
+                ),
+                _parameter(
+                    "xi_zy",
+                    0.0,
+                    "zy off-diagonal of the correlation-metric Cholesky factor.",
+                    "Any finite number in Angstrom.",
+                    "angstrom",
+                    "0.0",
+                ),
+                _parameter(
+                    "q0_h",
+                    0.5,
+                    "H coordinate of the primary peak center.",
+                    "Finite number in reciprocal lattice units.",
+                    "rlu",
+                    "0.5",
+                ),
+                _parameter(
+                    "q0_k",
+                    0.0,
+                    "K coordinate of the primary peak center.",
+                    "Finite number in reciprocal lattice units.",
+                    "rlu",
+                    "0.0",
+                ),
+                _parameter(
+                    "q0_l",
+                    0.0,
+                    "L coordinate of the primary peak center.",
+                    "Finite number in reciprocal lattice units.",
+                    "rlu",
+                    "0.0",
+                ),
+            ),
+            config_fields=(
+                ModelConfigDefinition(
+                    name="spatial_power",
+                    default=2.0,
+                    description=(
+                        "Power p in A(q) = 1 + [q^T C q]^(p/2); p = 2 is "
+                        "Ornstein-Zernike."
+                    ),
+                    allowed="Positive finite number.",
+                    type="float",
+                    unit="dimensionless",
+                    example="2.0",
+                ),
+                ModelConfigDefinition(
+                    name="center_offsets",
+                    default=[[0.0, 0.0, 0.0]],
+                    description=(
+                        "Peak-center offsets added to fitted Q0. Each row is "
+                        "[dH, dK, dL] in reciprocal lattice units."
+                    ),
+                    allowed="Nonempty JSON list of unique three-number rows.",
+                    type="list",
+                    unit="rlu",
+                    example="[[0, 0, 0], [0.5, 0.5, 0]]",
+                ),
+                ModelConfigDefinition(
+                    name="center_combination",
+                    default="sum",
+                    description=(
+                        "Sum responses from all listed centers or retain the nearest "
+                        "center at each momentum."
+                    ),
+                    allowed="'sum' or 'nearest'.",
+                    type="str",
+                    unit="",
+                    example="sum",
+                ),
+                ModelConfigDefinition(
+                    name="periodic",
+                    default=True,
+                    description=(
+                        "When true, use the closest reciprocal-lattice image of each "
+                        "center."
+                    ),
+                    allowed="true or false.",
+                    type="bool",
+                    unit="",
+                    example="true",
+                ),
+                ModelConfigDefinition(
+                    name="powder_orientations",
+                    default=50,
+                    description="Number of deterministic sphere directions in a powder average.",
+                    allowed="Integer of at least 6.",
+                    type="int",
+                    unit="directions",
+                    example="96",
+                ),
+                ModelConfigDefinition(
+                    name="lattice",
+                    default={},
+                    description=(
+                        "Optional lattice dictionary with a, b, c in Angstrom and "
+                        "alpha, beta, gamma in degrees. Dataset reciprocal metadata "
+                        "takes precedence."
+                    ),
+                    allowed="JSON dictionary or empty dictionary.",
+                    type="dict",
+                    unit="",
+                    example=(
+                        '{"a": 4, "b": 4, "c": 6, "alpha": 90, '
+                        '"beta": 90, "gamma": 90}'
+                    ),
+                ),
+                *_form_factor_fields("Fe2"),
+            ),
+            validate_component=_fit_validator(
+                "_validate_generalized_paramagnon_component"
+            ),
+            diagnostics=_fit_diagnostics(
+                "_generalized_paramagnon_component_diagnostics"
+            ),
+            report_sections=_report_sections(
+                "generalized_paramagnon_report_sections"
+            ),
+            plots=(
+                ModelPlotDefinition(
+                    key="complex_energy_scan",
+                    label="Complex susceptibility versus energy",
+                    description=(
+                        "Plot chi' and chi'' at one or more dimensionless spatial "
+                        "kernel values A(q)."
+                    ),
+                    calculate=_model_plot_calculator(
+                        "generalized_paramagnon_energy_scan"
+                    ),
+                    render=_model_plot_renderer(
+                        "render_generalized_paramagnon_energy_scan"
+                    ),
+                    script=_model_plot_script(
+                        "generalized_paramagnon_energy_scan_script"
+                    ),
+                ),
+            ),
+            default_lower_bounds=(
+                ("chi_peak", 0.0),
+                ("gamma0", 0.0),
+                ("relaxation_power", 0.0),
+                ("inverse_mode_energy_sq", 0.0),
+                ("xi_x", 0.0),
+                ("xi_y", 0.0),
+                ("xi_z", 0.0),
+            ),
+            documentation="generalized_paramagnon.md",
+            citations=(
+                "https://doi.org/10.1007/978-3-642-82499-9",
+                "https://doi.org/10.1103/PhysRevB.42.167",
             ),
         )
     )

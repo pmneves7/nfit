@@ -304,6 +304,177 @@ def test_mmp_relaxational_fit_recovers_synthetic_parameters():
     assert result.params["mmp.omega_sf"] == pytest.approx(truth["omega_sf"], rel=0.05)
 
 
+def _generalized_paramagnon_component(**overrides):
+    component = ModelComponentSpec(
+        name="pm",
+        type="generalized_paramagnon",
+        parameters={
+            "chi_peak": 2.0,
+            "gamma0": 2.5,
+            "relaxation_power": 1.0,
+            "inverse_mode_energy_sq": 0.04,
+            "xi_x": 2.0,
+            "xi_y": 1.0,
+            "xi_z": 1.0,
+            "xi_yx": 0.0,
+            "xi_zx": 0.0,
+            "xi_zy": 0.0,
+            "q0_h": 0.5,
+            "q0_k": 0.0,
+            "q0_l": 0.0,
+        },
+        fit_parameters={},
+        config={
+            "spatial_power": 2.0,
+            "center_offsets": [[0.0, 0.0, 0.0]],
+            "center_combination": "sum",
+            "periodic": True,
+            "powder_orientations": 24,
+            "lattice": {},
+            "ion": "",
+            "form_factor_coefficients": "",
+        },
+    )
+    for key, value in overrides.items():
+        setattr(component, key, value)
+    return component
+
+
+def test_generalized_paramagnon_single_crystal_matches_complex_kernel():
+    from nfit.cross_section import intensity_from_chipp
+    from nfit.fitting import evaluate_problem_model
+    from nfit.spin_fluctuations import generalized_paramagnon_chipp
+
+    h = np.array([0.4, 0.5, 0.6])
+    energy = np.array([1.0, 1.5, 2.0])
+    points = _spin_fluctuation_points(
+        np.ones(3), h, energy, temperature=30.0, lattice_a=4.0
+    )
+    component = _generalized_paramagnon_component()
+    compiled = compile_fit_problem([component], [FitDatasetInput("scan", points)])
+    params = {spec.name: spec.value for spec in compiled.problem.parameter_specs}
+    qx = 2.0 * np.pi / 4.0 * (h - 0.5)
+    kernel = 1.0 + (2.0 * qx) ** 2
+    expected = intensity_from_chipp(
+        generalized_paramagnon_chipp(
+            kernel,
+            energy,
+            chi_peak=2.0,
+            gamma0=2.5,
+            relaxation_power=1.0,
+            inverse_mode_energy_sq=0.04,
+        ),
+        energy,
+        30.0,
+        polarization=2.0,
+    )
+    np.testing.assert_allclose(
+        evaluate_problem_model(compiled.problem, "scan", params), expected
+    )
+
+
+def test_generalized_paramagnon_fit_recovers_damped_mode_parameters():
+    from nfit.spin_fluctuations import generalized_paramagnon_chipp
+
+    energy = np.linspace(0.2, 12.0, 100)
+    h = np.full(energy.shape, 0.5)
+    truth = {
+        "chi_peak": 2.4,
+        "gamma0": 2.8,
+        "inverse_mode_energy_sq": 0.05,
+    }
+    intensity = generalized_paramagnon_chipp(
+        np.ones(energy.shape),
+        energy,
+        relaxation_power=1.0,
+        **truth,
+    )
+    points = _spin_fluctuation_points(
+        intensity, h, energy, temperature=20.0, lattice_a=4.0
+    )
+    points.metadata["spectral_observable"] = {
+        "fit_representation": "chi_double_prime",
+        "unit": "spin^2/meV",
+        "moment_unit": "spin_squared",
+        "g_factor": 2.0,
+        "kf_ki_state": "removed",
+    }
+    component = _generalized_paramagnon_component()
+    component.parameters.update(
+        chi_peak=1.5,
+        gamma0=1.5,
+        inverse_mode_energy_sq=0.01,
+    )
+    component.fit_parameters = {
+        "chi_peak": True,
+        "gamma0": True,
+        "inverse_mode_energy_sq": True,
+    }
+    compiled = compile_fit_problem(
+        [component], [FitDatasetInput("mode", points)]
+    )
+    result = fit_problem_least_squares(compiled.problem)
+    for name, value in truth.items():
+        assert result.params[f"pm.{name}"] == pytest.approx(value, rel=1.0e-5)
+
+
+def test_generalized_paramagnon_elastic_ignores_dynamic_parameters():
+    from nfit.cross_section import quasistatic_cross_section_from_chi
+    from nfit.fitting import evaluate_problem_model
+
+    h = np.array([0.4, 0.5, 0.6])
+    points = _spin_fluctuation_points(
+        np.ones(3), h, np.zeros(3), temperature=20.0, lattice_a=4.0
+    )
+    component = _generalized_paramagnon_component()
+    compiled = compile_fit_problem(
+        [component],
+        [FitDatasetInput("elastic", points, data_type="single_crystal_elastic")],
+    )
+    params = {spec.name: spec.value for spec in compiled.problem.parameter_specs}
+    qx = 2.0 * np.pi / 4.0 * (h - 0.5)
+    expected = quasistatic_cross_section_from_chi(
+        2.0 / (1.0 + (2.0 * qx) ** 2),
+        20.0,
+        polarization=2.0,
+        moment_unit="spin_squared",
+        g_factor=2.0,
+    )
+    prediction = evaluate_problem_model(compiled.problem, "elastic", params)
+    np.testing.assert_allclose(prediction, expected)
+    params["pm.gamma0"] = 20.0
+    params["pm.inverse_mode_energy_sq"] = 0.5
+    np.testing.assert_allclose(
+        evaluate_problem_model(compiled.problem, "elastic", params), prediction
+    )
+
+
+@pytest.mark.parametrize("data_type", ["powder_inelastic", "powder_elastic"])
+def test_generalized_paramagnon_powder_is_finite(data_type):
+    from nfit.fitting import evaluate_problem_model
+
+    q = np.linspace(0.2, 2.0, 5)
+    energy = (
+        np.zeros(5)
+        if data_type == "powder_elastic"
+        else np.linspace(0.5, 3.0, 5)
+    )
+    points = _spin_fluctuation_points(
+        np.ones(5), q, energy, temperature=15.0, lattice_a=4.0
+    )
+    points.metadata.update(
+        {"coordinate_units": "1/angstrom", "powder_q_modulus_axis": True}
+    )
+    component = _generalized_paramagnon_component()
+    compiled = compile_fit_problem(
+        [component], [FitDatasetInput("powder", points, data_type=data_type)]
+    )
+    params = {spec.name: spec.value for spec in compiled.problem.parameter_specs}
+    prediction = evaluate_problem_model(compiled.problem, "powder", params)
+    assert prediction.shape == q.shape
+    assert np.all(np.isfinite(prediction))
+
+
 def test_heisenberg_rpa_fit_recovers_synthetic_parameters():
     from nfit.cross_section import MAGNETIC_GAMMA0_PER_MU_B, intensity_from_chipp
     from nfit.fit_config import ISOTROPIC_POLARIZATION

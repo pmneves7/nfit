@@ -409,3 +409,7 @@ Every scientific model added in these stages receives its own daughter page
 under [Spin-fluctuation models](spin_fluctuation_models.md). A stage is ready
 for user testing only after its public API, GUI behavior where applicable,
 workflow script, fit-result export, documentation, and validation tests agree.
+
+Stages 0--2 are implemented. The generalized-paramagnon model supplies the
+Stage 2 relaxational and damped-propagating limits through one causal complex
+response; later stages begin with the arbitrary electronic-model layer.

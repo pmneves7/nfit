@@ -184,6 +184,55 @@ def test_report_uses_registered_model_section_hook():
         MODEL_TYPE_REGISTRY.pop(key, None)
 
 
+def test_generalized_paramagnon_report_defines_complex_and_static_response():
+    entry = _background_entry()
+    entry.snapshot["models"] = [
+        {
+            "name": "pm",
+            "type": "generalized_paramagnon",
+            "enabled": True,
+            "parameters": {
+                "chi_peak": 2.0,
+                "gamma0": 3.0,
+                "relaxation_power": 1.0,
+                "inverse_mode_energy_sq": 0.04,
+                "xi_x": 2.0,
+                "xi_y": 1.0,
+                "xi_z": 1.0,
+                "xi_yx": 0.0,
+                "xi_zx": 0.0,
+                "xi_zy": 0.0,
+                "q0_h": 0.5,
+                "q0_k": 0.0,
+                "q0_l": 0.0,
+            },
+            "config": {
+                "spatial_power": 2.0,
+                "center_offsets": [[0.0, 0.0, 0.0]],
+                "center_combination": "sum",
+                "periodic": True,
+            },
+            "fit_parameters": {},
+            "sharing": {},
+            "limits": {},
+            "constraints": [],
+            "applies_to": None,
+            "metadata": {},
+        }
+    ]
+    entry.goodness["parameters"] = {
+        f"pm.{name}": value
+        for name, value in entry.snapshot["models"][0]["parameters"].items()
+    }
+    entry.goodness["stderr"] = {}
+    tex = render_fit_report_latex(entry, group_name="G")
+    assert "Generalized paramagnon model" in tex
+    assert "\\chi(\\mathbf q,E)" in tex
+    assert "elastic datasets use" in tex
+    assert "Millis" in tex
+    _check_balanced_environments(tex)
+
+
 def test_report_omits_disabled_and_zero_weight_visualization_datasets():
     entry = _background_entry()
     entry.snapshot["datasets"].append(

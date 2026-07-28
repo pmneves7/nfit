@@ -81,6 +81,38 @@ def test_builtin_registry_is_the_gui_and_fit_source_of_truth():
     assert not hasattr(nfit, "ModelTypeInfo")
 
 
+def test_generalized_paramagnon_registry_exposes_complete_extension_contract():
+    definition = model_definition("generalized_paramagnon")
+    assert definition.diagnostics is not None
+    assert definition.report_sections is not None
+    assert definition.validate_component is not None
+    assert definition.documentation == "generalized_paramagnon.md"
+    assert set(definition.data_types) == {
+        "single_crystal_inelastic",
+        "powder_inelastic",
+        "single_crystal_elastic",
+        "powder_elastic",
+    }
+    plot = model_plot_definitions("generalized_paramagnon")[0]
+    result = plot.calculate(
+        [-2.0, 0.0, 2.0],
+        spatial_kernels=[1.0, 2.0],
+        chi_peak=1.5,
+        gamma0=2.0,
+        inverse_mode_energy_sq=0.04,
+    )
+    assert result["susceptibility"].shape == (2, 3)
+    script = plot.script(
+        energy=[-2.0, 0.0, 2.0],
+        spatial_kernels=[1.0, 2.0],
+        chi_peak=1.5,
+        gamma0=2.0,
+        inverse_mode_energy_sq=0.04,
+    )
+    assert "generalized_paramagnon_energy_scan" in script
+    compile(script, "<model-plot>", "exec")
+
+
 def test_registered_model_drives_creation_diagnostics_plots_and_serialization():
     key = "_registry_contract_test"
 

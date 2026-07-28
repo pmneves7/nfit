@@ -68,10 +68,12 @@ from .model_registry import MODEL_TYPE_REGISTRY, validate_model_component
 from .quantities import convert_quantity
 from .spin_fluctuations import (
     build_rpa_geometry,
+    generalized_paramagnon_chipp,
     heisenberg_rpa_chipp,
     heisenberg_rpa_chipp_and_gradients,
     local_relaxational_chipp,
     mmp_chipp,
+    paramagnon_spatial_kernel,
     reduce_site_network,
     reduce_site_network_with_tensors,
     rpa_exchange_matrix,
@@ -435,6 +437,303 @@ def _q_offset_sq_inv_angstrom(
     if not _metadata_coordinate_units_are_inv_angstrom(data.metadata):
         delta = delta @ _resolve_q_transform(data).T
     return np.einsum("ij,ij->i", delta, delta)
+
+
+def _lattice_reciprocal_matrix(
+    data: PointData4D,
+    lattice: Mapping[str, Any] | None = None,
+) -> np.ndarray:
+    """Resolve a reciprocal-basis matrix from data or model lattice metadata."""
+
+    matrix = data.metadata.get("rlu_to_inv_angstrom_matrix")
+    if matrix is None and isinstance(lattice, Mapping):
+        from .fitting import reciprocal_basis_from_lattice_parameters
+
+        if all(name in lattice for name in ("a", "b", "c")):
+            matrix = reciprocal_basis_from_lattice_parameters(
+                float(lattice["a"]),
+                float(lattice["b"]),
+                float(lattice["c"]),
+                float(lattice.get("alpha", 90.0)),
+                float(lattice.get("beta", 90.0)),
+                float(lattice.get("gamma", 90.0)),
+            )
+    if matrix is None and not _metadata_coordinate_units_are_inv_angstrom(data.metadata):
+        matrix = _resolve_q_transform(data)
+    result = np.asarray(matrix, dtype=float) if matrix is not None else np.empty(0)
+    if (
+        result.shape != (3, 3)
+        or not np.all(np.isfinite(result))
+        or abs(float(np.linalg.det(result))) < 1.0e-14
+    ):
+        raise ValueError(
+            "generalized paramagnon evaluation requires valid lattice or "
+            "reciprocal-basis metadata"
+        )
+    return result
+
+
+def _periodic_cartesian_offset_candidates(
+    q_rlu: np.ndarray,
+    center_rlu: np.ndarray,
+    reciprocal_matrix: np.ndarray,
+) -> np.ndarray:
+    """Return nearby Cartesian offsets to reciprocal images of one center."""
+
+    fractional = np.asarray(q_rlu, dtype=float) - np.asarray(center_rlu, dtype=float)
+    base = np.rint(fractional)
+    shifts = np.asarray(
+        [
+            (i, j, k)
+            for i in (-1.0, 0.0, 1.0)
+            for j in (-1.0, 0.0, 1.0)
+            for k in (-1.0, 0.0, 1.0)
+        ],
+        dtype=float,
+    )
+    return (
+        fractional[:, None, :] - base[:, None, :] - shifts[None, :, :]
+    ) @ reciprocal_matrix.T
+
+
+def _generalized_paramagnon_kernels(
+    q_cartesian: np.ndarray,
+    q_rlu: np.ndarray,
+    *,
+    reciprocal_matrix: np.ndarray,
+    centers_rlu: np.ndarray,
+    correlation_cholesky: np.ndarray,
+    spatial_power: float,
+    periodic: bool,
+) -> np.ndarray:
+    """Return one spatial kernel per point and symmetry-related center."""
+
+    kernels = []
+    for center in centers_rlu:
+        if periodic:
+            offsets = _periodic_cartesian_offset_candidates(
+                q_rlu, center, reciprocal_matrix
+            )
+            image_kernels = paramagnon_spatial_kernel(
+                offsets,
+                correlation_cholesky_angstrom=correlation_cholesky,
+                spatial_power=spatial_power,
+            )
+            kernels.append(np.min(image_kernels, axis=1))
+        else:
+            offsets = q_cartesian - center @ reciprocal_matrix.T
+            kernels.append(
+                paramagnon_spatial_kernel(
+                    offsets,
+                    correlation_cholesky_angstrom=correlation_cholesky,
+                    spatial_power=spatial_power,
+                )
+            )
+    return np.column_stack(kernels)
+
+
+def _generalized_paramagnon_factory(component: Any) -> ModelFunction:
+    """Build the generalized relaxational/propagating paramagnon evaluator."""
+
+    name = component.name
+    parameter_names = (
+        "chi_peak",
+        "gamma0",
+        "relaxation_power",
+        "inverse_mode_energy_sq",
+        "xi_x",
+        "xi_y",
+        "xi_z",
+        "xi_yx",
+        "xi_zx",
+        "xi_zy",
+        "q0_h",
+        "q0_k",
+        "q0_l",
+    )
+    keys = {
+        parameter: qualified_parameter_name(name, parameter)
+        for parameter in parameter_names
+    }
+    config = component.config if isinstance(component.config, dict) else {}
+    lattice = config.get("lattice")
+    center_offsets = np.asarray(
+        config.get("center_offsets", [[0.0, 0.0, 0.0]]), dtype=float
+    )
+    spatial_power = float(config.get("spatial_power", 2.0))
+    periodic = bool(config.get("periodic", True))
+    combination = str(config.get("center_combination", "sum")).strip().lower()
+    powder_orientations = max(int(config.get("powder_orientations", 50)), 6)
+
+    def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        reciprocal = _lattice_reciprocal_matrix(data, lattice)
+        powder = (
+            data.metadata.get("data_type") in {"powder_inelastic", "powder_elastic"}
+            or bool(data.metadata.get("powder_q_modulus_axis"))
+        )
+        orientation_count = 1
+        if powder:
+            from .fitting import q_modulus_inv_angstrom
+
+            orientation_count = powder_orientations
+            directions = _powder_sphere_directions(orientation_count)
+            q_modulus = np.asarray(q_modulus_inv_angstrom(data), dtype=float)
+            q_cartesian = (
+                q_modulus[:, None, None] * directions[None, :, :]
+            ).reshape(-1, 3)
+            q_rlu = q_cartesian @ np.linalg.inv(reciprocal).T
+            energy = np.repeat(np.asarray(data.E, dtype=float), orientation_count)
+        else:
+            coordinates = np.column_stack([data.H, data.K, data.L]).astype(float)
+            if _metadata_coordinate_units_are_inv_angstrom(data.metadata):
+                q_cartesian = coordinates
+                q_rlu = q_cartesian @ np.linalg.inv(reciprocal).T
+            else:
+                q_rlu = coordinates
+                q_cartesian = q_rlu @ reciprocal.T
+            energy = np.asarray(data.E, dtype=float)
+
+        q0 = np.asarray(
+            [
+                params[keys["q0_h"]],
+                params[keys["q0_k"]],
+                params[keys["q0_l"]],
+            ],
+            dtype=float,
+        )
+        centers = q0[None, :] + center_offsets
+        cholesky = np.asarray(
+            [
+                [params[keys["xi_x"]], 0.0, 0.0],
+                [params[keys["xi_yx"]], params[keys["xi_y"]], 0.0],
+                [
+                    params[keys["xi_zx"]],
+                    params[keys["xi_zy"]],
+                    params[keys["xi_z"]],
+                ],
+            ],
+            dtype=float,
+        )
+        kernels = _generalized_paramagnon_kernels(
+            q_cartesian,
+            q_rlu,
+            reciprocal_matrix=reciprocal,
+            centers_rlu=centers,
+            correlation_cholesky=cholesky,
+            spatial_power=spatial_power,
+            periodic=periodic,
+        )
+        if combination == "nearest":
+            kernels = np.min(kernels, axis=1, keepdims=True)
+
+        if _is_elastic_dataset(data):
+            response = np.sum(float(params[keys["chi_peak"]]) / kernels, axis=1)
+        else:
+            response = np.sum(
+                generalized_paramagnon_chipp(
+                    kernels,
+                    energy[:, None],
+                    chi_peak=float(params[keys["chi_peak"]]),
+                    gamma0=float(params[keys["gamma0"]]),
+                    relaxation_power=float(params[keys["relaxation_power"]]),
+                    inverse_mode_energy_sq=float(
+                        params[keys["inverse_mode_energy_sq"]]
+                    ),
+                ),
+                axis=1,
+            )
+        if powder:
+            response = response.reshape(data.size, orientation_count).mean(axis=1)
+        if _is_elastic_dataset(data):
+            return _quasistatic_model_observable(
+                data,
+                response,
+                form_factor_sq=_form_factor_sq_from_config(component, data),
+                polarization=ISOTROPIC_POLARIZATION,
+            )
+        return _spectral_model_observable(
+            data,
+            response,
+            form_factor_sq=_form_factor_sq_from_config(component, data),
+            polarization=ISOTROPIC_POLARIZATION,
+        )
+
+    return model
+
+
+def _validate_generalized_paramagnon_component(component: Any) -> None:
+    """Validate fixed generalized-paramagnon configuration."""
+
+    config = component.config if isinstance(component.config, dict) else {}
+    offsets = np.asarray(
+        config.get("center_offsets", [[0.0, 0.0, 0.0]]), dtype=float
+    )
+    if offsets.ndim != 2 or offsets.shape[1] != 3 or offsets.shape[0] < 1:
+        raise ValueError("center_offsets must be a nonempty list of [dH, dK, dL]")
+    if np.any(~np.isfinite(offsets)):
+        raise ValueError("center_offsets must contain only finite numbers")
+    if np.unique(np.round(offsets, 12), axis=0).shape[0] != offsets.shape[0]:
+        raise ValueError("center_offsets contains duplicate centers")
+    if bool(config.get("periodic", True)):
+        wrapped = offsets - np.floor(offsets)
+        if np.unique(np.round(wrapped, 12), axis=0).shape[0] != offsets.shape[0]:
+            raise ValueError(
+                "center_offsets contains equivalent centers modulo reciprocal "
+                "lattice vectors while periodic is true"
+            )
+    power = float(config.get("spatial_power", 2.0))
+    if not np.isfinite(power) or power <= 0.0:
+        raise ValueError("spatial_power must be finite and positive")
+    if str(config.get("center_combination", "sum")).strip().lower() not in {
+        "sum",
+        "nearest",
+    }:
+        raise ValueError("center_combination must be 'sum' or 'nearest'")
+    if int(config.get("powder_orientations", 50)) < 6:
+        raise ValueError("powder_orientations must be at least 6")
+
+
+def _generalized_paramagnon_component_diagnostics(
+    component: Any, data: PointData4D, params: Mapping[str, float]
+) -> dict[str, Any]:
+    """Return fit-safe dynamical and correlation-length diagnostics."""
+
+    del data
+    prefix = f"{component.name}."
+    inertia = float(params[prefix + "inverse_mode_energy_sq"])
+    gamma0 = float(params[prefix + "gamma0"])
+    cholesky = np.asarray(
+        [
+            [params[prefix + "xi_x"], 0.0, 0.0],
+            [params[prefix + "xi_yx"], params[prefix + "xi_y"], 0.0],
+            [
+                params[prefix + "xi_zx"],
+                params[prefix + "xi_zy"],
+                params[prefix + "xi_z"],
+            ],
+        ],
+        dtype=float,
+    )
+    principal = np.linalg.svd(cholesky, compute_uv=False)
+    record: dict[str, Any] = {
+        "chi_static_qpeak": float(params[prefix + "chi_peak"]),
+        "gamma0": gamma0,
+        "relaxation_power": float(params[prefix + "relaxation_power"]),
+        "xi_principal_min": float(np.min(principal)),
+        "xi_principal_max": float(np.max(principal)),
+        "propagating": float(inertia > 0.0),
+    }
+    if inertia > 0.0:
+        mode_energy = 1.0 / np.sqrt(inertia)
+        damping = 1.0 / (inertia * gamma0)
+        record.update(
+            {
+                "mode_energy_qpeak": float(mode_energy),
+                "dho_damping_qpeak": float(damping),
+                "damping_ratio_qpeak": float(damping / (2.0 * mode_energy)),
+            }
+        )
+    return record
 
 
 def _local_relaxational_factory(component: Any) -> ModelFunction:

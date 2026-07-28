@@ -1,14 +1,14 @@
-"""Dynamic susceptibility models for itinerant, nearly magnetically ordered metals.
+"""Dynamic susceptibility models for nearly magnetically ordered materials.
 
-This module implements the imaginary part of the dynamic spin susceptibility
-chi''(Q, E) for three increasingly structured models. Conversion of chi'' to
-measured neutron intensity (Bose factor, magnetic form factor, polarization
-factor, overall scale) is handled separately by
+This module implements causal complex spin susceptibilities and their
+dissipative parts ``chi''(Q, E)``. Conversion of ``chi''`` to measured neutron
+intensity (Bose factor, magnetic form factor, polarization factor, and dataset
+scale) is handled separately by
 :func:`nfit.cross_section.intensity_from_chipp`.
 
 Models
 ------
-1. **Local relaxational** (:func:`local_relaxational_chipp`): a fully local
+1. **Local relaxational** (:func:`local_relaxational_susceptibility`): a fully local
    spin relaxing at rate ``Gamma``,
 
    ``chi''(E) = chi_loc * Gamma * E / (E^2 + Gamma^2)``.
@@ -16,7 +16,7 @@ Models
    This is the single-site quasi-elastic Lorentzian used for local-moment
    systems and as the Q-independent limit of the coupled models below.
 
-2. **Millis-Monien-Pines (MMP) relaxational** (:func:`mmp_chipp`): the
+2. **Millis-Monien-Pines (MMP) relaxational** (:func:`mmp_susceptibility`): the
    phenomenological nearly-antiferromagnetic-liquid form
 
    ``chi(q, w) = chi_pk / (1 + xi^2 |q - Q0|^2 - i w / omega_sf)``
@@ -31,7 +31,13 @@ Models
    state of nearly antiferromagnetic metals such as the optimally doped iron
    pnictides [Inosov et al., Nat. Phys. 6, 178 (2010)].
 
-3. **Heisenberg RPA** (:func:`heisenberg_rpa_chipp`): a single-site
+3. **Generalized paramagnon** (:func:`generalized_paramagnon_susceptibility`):
+   an anisotropic momentum-space peak with independently controlled spatial
+   shape, critical slowing down, and inertia. It reduces exactly to the local
+   and MMP responses and becomes a damped propagating mode when its inertial
+   coefficient is nonzero.
+
+4. **Heisenberg RPA** (:func:`heisenberg_rpa_chipp`): a single-site
    relaxational susceptibility ``chi0(w) = chi0 / (1 - i w / Gamma0)`` coupled
    through real-space Heisenberg exchange in the random phase approximation,
 
@@ -113,8 +119,6 @@ try:  # optional: scopes BLAS thread counts to avoid nested oversubscription
     from threadpoolctl import threadpool_limits as _threadpool_limits
 except Exception:  # pragma: no cover - threadpoolctl not installed
     _threadpool_limits = None
-
-from .models import relaxational_chipp
 
 FloatArray = NDArray[np.float64]
 ComplexArray = NDArray[np.complex128]
@@ -321,19 +325,114 @@ def _batched_eigh(matrices: ComplexArray) -> tuple[FloatArray, ComplexArray]:
     return eigenvalues, eigenvectors
 
 
+def damped_mode_susceptibility(
+    E: ArrayLike,
+    *,
+    chi_static: ArrayLike,
+    relaxation_energy: ArrayLike,
+    inverse_mode_energy_sq: ArrayLike = 0.0,
+) -> ComplexArray:
+    r"""Return a causal relaxational or damped-mode susceptibility.
+
+    The response is
+
+    .. math::
+
+       \chi(E) = \frac{\chi(0)}
+       {1-a_E E^2-iE/\Gamma},
+
+    where ``relaxation_energy`` is :math:`\Gamma` in meV and
+    ``inverse_mode_energy_sq`` is :math:`a_E\geq0` in meV\ :sup:`-2`.
+    Setting :math:`a_E=0` gives a Debye relaxor exactly. For
+    :math:`a_E>0`, the equivalent damped-oscillator natural energy is
+    :math:`E_0=1/\sqrt{a_E}` and its damping coefficient is
+    :math:`\gamma_{\rm DHO}=E_0^2/\Gamma`.
+
+    All arguments follow NumPy broadcasting. The convention is
+    :math:`\chi(-E)=\chi(E)^*`, so ``chi.imag`` is positive at positive
+    energy for a positive static susceptibility.
+    """
+
+    energy = np.asarray(E, dtype=float)
+    chi0 = np.asarray(chi_static, dtype=float)
+    gamma = np.asarray(relaxation_energy, dtype=float)
+    inertia = np.asarray(inverse_mode_energy_sq, dtype=float)
+    if np.any(~np.isfinite(chi0)) or np.any(chi0 < 0.0):
+        raise ValueError("chi_static must be finite and nonnegative")
+    if np.any(~np.isfinite(gamma)) or np.any(gamma <= 0.0):
+        raise ValueError("relaxation_energy must be finite and positive")
+    if np.any(~np.isfinite(inertia)) or np.any(inertia < 0.0):
+        raise ValueError("inverse_mode_energy_sq must be finite and nonnegative")
+    denominator = 1.0 - inertia * energy**2 - 1j * energy / gamma
+    return np.asarray(chi0 / denominator, dtype=np.complex128)
+
+
+def local_relaxational_susceptibility(
+    E: ArrayLike,
+    *,
+    chi_loc: float,
+    gamma: float,
+) -> ComplexArray:
+    r"""Return the complex local relaxational susceptibility.
+
+    .. math:: \chi(E)=\chi_{\rm loc}/(1-iE/\Gamma).
+    """
+
+    return damped_mode_susceptibility(
+        E,
+        chi_static=float(chi_loc),
+        relaxation_energy=float(gamma),
+    )
+
+
 def local_relaxational_chipp(
     E: ArrayLike,
     *,
     chi_loc: float,
     gamma: float,
 ) -> FloatArray:
-    """Local-spin relaxational ``chi''(E) = chi_loc Gamma E / (E^2 + Gamma^2)``.
+    """Return the dissipative part of the local relaxational response."""
 
-    ``gamma`` (meV) must be positive; ``chi_loc`` carries the static local
-    susceptibility (1/meV up to intensity normalization).
+    return np.asarray(
+        local_relaxational_susceptibility(
+            E,
+            chi_loc=chi_loc,
+            gamma=gamma,
+        ).imag,
+        dtype=float,
+    )
+
+
+def mmp_susceptibility(
+    q_minus_q0_sq_inv_angstrom2: ArrayLike,
+    E: ArrayLike,
+    *,
+    chi_pk: float,
+    xi: float,
+    omega_sf: float,
+) -> ComplexArray:
+    r"""Return the complex Millis--Monien--Pines susceptibility.
+
+    .. math::
+
+       \chi(\mathbf q,E)=\frac{\chi_{\rm pk}}
+       {1+\xi^2|\mathbf q-\mathbf Q_0|^2-iE/E_{\rm sf}}.
     """
 
-    return relaxational_chipp(float(chi_loc), float(gamma), E)
+    if not np.isfinite(chi_pk) or chi_pk < 0.0:
+        raise ValueError("chi_pk must be finite and nonnegative")
+    if not np.isfinite(xi) or xi < 0.0:
+        raise ValueError("xi must be finite and nonnegative")
+    if not np.isfinite(omega_sf) or omega_sf <= 0.0:
+        raise ValueError("omega_sf must be finite and positive")
+    q_sq = np.asarray(q_minus_q0_sq_inv_angstrom2, dtype=float)
+    if np.any(~np.isfinite(q_sq)) or np.any(q_sq < 0.0):
+        raise ValueError("squared momentum offsets must be finite and nonnegative")
+    a = 1.0 + float(xi) ** 2 * q_sq
+    return np.asarray(
+        float(chi_pk) / (a - 1j * np.asarray(E, dtype=float) / float(omega_sf)),
+        dtype=np.complex128,
+    )
 
 
 def mmp_chipp(
@@ -353,12 +452,120 @@ def mmp_chipp(
     (1990)].
     """
 
-    if omega_sf <= 0:
-        raise ValueError("omega_sf must be positive")
-    q_sq = np.asarray(q_minus_q0_sq_inv_angstrom2, dtype=float)
-    x = np.asarray(E, dtype=float) / float(omega_sf)
-    a = 1.0 + float(xi) ** 2 * q_sq
-    return float(chi_pk) * x / (a * a + x * x)
+    return np.asarray(
+        mmp_susceptibility(
+            q_minus_q0_sq_inv_angstrom2,
+            E,
+            chi_pk=chi_pk,
+            xi=xi,
+            omega_sf=omega_sf,
+        ).imag,
+        dtype=float,
+    )
+
+
+def paramagnon_spatial_kernel(
+    q_offset_cartesian_inv_angstrom: ArrayLike,
+    *,
+    correlation_cholesky_angstrom: ArrayLike,
+    spatial_power: float = 2.0,
+) -> FloatArray:
+    r"""Return the positive anisotropic paramagnon kernel ``A(q)``.
+
+    For Cartesian momentum offsets :math:`\Delta\mathbf q` and a lower
+    triangular correlation matrix :math:`L` in Angstrom,
+
+    .. math::
+
+       A(\mathbf q)=1+\left[
+       \Delta\mathbf q^T L L^T\Delta\mathbf q
+       \right]^{p/2}.
+
+    ``spatial_power=2`` is the Ornstein--Zernike form. Parameterizing the
+    metric through ``L`` keeps it positive semidefinite during fitting.
+    """
+
+    q_offset = np.asarray(q_offset_cartesian_inv_angstrom, dtype=float)
+    if q_offset.ndim == 1:
+        q_offset = q_offset[np.newaxis, :]
+    if q_offset.ndim < 2 or q_offset.shape[-1] != 3:
+        raise ValueError("q_offset_cartesian_inv_angstrom must end with three components")
+    cholesky = np.asarray(correlation_cholesky_angstrom, dtype=float)
+    if cholesky.shape != (3, 3) or np.any(~np.isfinite(cholesky)):
+        raise ValueError("correlation_cholesky_angstrom must be a finite 3 by 3 matrix")
+    if np.any(np.abs(np.triu(cholesky, k=1)) > 1.0e-14):
+        raise ValueError("correlation_cholesky_angstrom must be lower triangular")
+    if not np.isfinite(spatial_power) or spatial_power <= 0.0:
+        raise ValueError("spatial_power must be finite and positive")
+    scaled = q_offset @ cholesky
+    radius_sq = np.einsum("...i,...i->...", scaled, scaled)
+    return np.asarray(1.0 + radius_sq ** (0.5 * float(spatial_power)), dtype=float)
+
+
+def generalized_paramagnon_susceptibility(
+    spatial_kernel: ArrayLike,
+    E: ArrayLike,
+    *,
+    chi_peak: float,
+    gamma0: float,
+    relaxation_power: float = 1.0,
+    inverse_mode_energy_sq: float = 0.0,
+) -> ComplexArray:
+    r"""Return the generalized complex paramagnon susceptibility.
+
+    With :math:`A(\mathbf q)\geq1`,
+
+    .. math::
+
+       \chi(\mathbf q,E)=\frac{\chi_{\rm pk}/A}
+       {1-(a_E/A)E^2-iE/[\Gamma_0 A^z]}.
+
+    ``relaxation_power`` is :math:`z`, and ``inverse_mode_energy_sq`` is
+    :math:`a_E`. The zero-energy response is always
+    :math:`\chi_{\rm pk}/A`, independent of the dynamical parameters.
+    """
+
+    kernel = np.asarray(spatial_kernel, dtype=float)
+    if np.any(~np.isfinite(kernel)) or np.any(kernel < 1.0):
+        raise ValueError("spatial_kernel must be finite and at least one")
+    if not np.isfinite(chi_peak) or chi_peak < 0.0:
+        raise ValueError("chi_peak must be finite and nonnegative")
+    if not np.isfinite(gamma0) or gamma0 <= 0.0:
+        raise ValueError("gamma0 must be finite and positive")
+    if not np.isfinite(relaxation_power) or relaxation_power < 0.0:
+        raise ValueError("relaxation_power must be finite and nonnegative")
+    if not np.isfinite(inverse_mode_energy_sq) or inverse_mode_energy_sq < 0.0:
+        raise ValueError("inverse_mode_energy_sq must be finite and nonnegative")
+    return damped_mode_susceptibility(
+        E,
+        chi_static=float(chi_peak) / kernel,
+        relaxation_energy=float(gamma0) * kernel ** float(relaxation_power),
+        inverse_mode_energy_sq=float(inverse_mode_energy_sq) / kernel,
+    )
+
+
+def generalized_paramagnon_chipp(
+    spatial_kernel: ArrayLike,
+    E: ArrayLike,
+    *,
+    chi_peak: float,
+    gamma0: float,
+    relaxation_power: float = 1.0,
+    inverse_mode_energy_sq: float = 0.0,
+) -> FloatArray:
+    """Return ``imag(generalized_paramagnon_susceptibility(...))``."""
+
+    return np.asarray(
+        generalized_paramagnon_susceptibility(
+            spatial_kernel,
+            E,
+            chi_peak=chi_peak,
+            gamma0=gamma0,
+            relaxation_power=relaxation_power,
+            inverse_mode_energy_sq=inverse_mode_energy_sq,
+        ).imag,
+        dtype=float,
+    )
 
 
 @dataclass

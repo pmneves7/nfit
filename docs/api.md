@@ -216,8 +216,22 @@ Serializable component types are described by `ModelDefinition` entries in
 `model_plot_definitions` are the public extension points for numerical
 factories, GUI metadata, diagnostics, reports, plots, and serialization.
 
+Complex phenomenological responses are available from
+`local_relaxational_susceptibility`, `mmp_susceptibility`,
+`damped_mode_susceptibility`, and
+`generalized_paramagnon_susceptibility`; the corresponding `*_chipp`
+functions return their imaginary parts. `paramagnon_spatial_kernel` builds the
+positive anisotropic momentum kernel. For model-owned plotting,
+`generalized_paramagnon_energy_scan`,
+`render_generalized_paramagnon_energy_scan`, and
+`generalized_paramagnon_energy_scan_script` share the same GUI-free
+calculation.
+
 ```{eval-rst}
 .. automodule:: nfit.model_registry
+   :members:
+
+.. automodule:: nfit.model_plots
    :members:
 
 .. automodule:: nfit.axes

@@ -237,6 +237,10 @@ _REFERENCES: dict[str, str] = {
         "T. Moriya, \\emph{Spin Fluctuations in Itinerant Electron Magnetism}, "
         "Springer Series in Solid-State Sciences 56 (Springer, Berlin, 1985)."
     ),
+    "mmp1990": (
+        "A. J. Millis, H. Monien, and D. Pines, Phys.\\ Rev.\\ B "
+        "\\textbf{42}, 167 (1990), doi:10.1103/PhysRevB.42.167."
+    ),
     "sunny": (
         "D. Dahlbom \\emph{et al.}, Sunny.jl -- symmetry-distinct bond "
         "convention, \\texttt{https://github.com/SunnySuite/Sunny.jl}."
@@ -1083,6 +1087,79 @@ def heisenberg_rpa_report_sections(
     )
 
 
+def generalized_paramagnon_report_sections(
+    fit_entry: Any,
+    model: Mapping[str, Any],
+    goodness: Mapping[str, Any],
+    context: Mapping[str, Any],
+) -> tuple[tuple[str, str], ...]:
+    """Return a self-contained generalized-paramagnon report section."""
+
+    del fit_entry
+    cite = context["citations"]
+    name = latex_escape(model.get("name"))
+    config = _config(model)
+    parameter_names = (
+        "chi_peak",
+        "gamma0",
+        "relaxation_power",
+        "inverse_mode_energy_sq",
+        "xi_x",
+        "xi_y",
+        "xi_z",
+        "xi_yx",
+        "xi_zx",
+        "xi_zy",
+        "q0_h",
+        "q0_k",
+        "q0_l",
+    )
+    parameter_text = []
+    for parameter in parameter_names:
+        value, stderr = _param_value(goodness, model, parameter)
+        parameter_text.append(
+            f"{latex_escape(parameter)} = {_fmt_pm(value, stderr)}"
+        )
+    lines = [
+        f"\\section{{Generalized paramagnon model ({name})}}",
+        (
+            "The fitted causal response uses a positive spatial kernel "
+            "$A(\\mathbf q)=1+[\\Delta\\mathbf q^TLL^T\\Delta\\mathbf q]^{p/2}$ "
+            "and"
+        ),
+        (
+            "\\begin{equation}\n"
+            "\\chi(\\mathbf q,E)=\\frac{\\chi_{\\rm pk}/A(\\mathbf q)}"
+            "{1-[a_E/A(\\mathbf q)]E^2-iE/"
+            "[\\Gamma_0A(\\mathbf q)^z]}.\n"
+            "\\end{equation}"
+        ),
+        (
+            "Here $L$ is a lower-triangular correlation-length factor in "
+            "\\AA, $z$ is the relaxation exponent, and $a_E=1/E_0^2$. "
+            "The fitted inelastic response is $\\chi''=\\operatorname{Im}\\chi$; "
+            "elastic datasets use $\\chi'(\\mathbf q,0)=\\chi_{\\rm pk}/A$. "
+            "The $a_E=0$ limit is relaxational, while $a_E>0$ is a damped "
+            "propagating mode. "
+            + cite.cite("moriya1985", "mmp1990")
+        ),
+        "\\paragraph{Parameters} " + "; ".join(parameter_text) + ".",
+        (
+            "\\paragraph{Fixed configuration} "
+            f"$p={_fmt(config.get('spatial_power', 2.0))}$; center combination "
+            f"{latex_escape(config.get('center_combination', 'sum'))}; periodic "
+            f"{latex_escape(config.get('periodic', True))}; center offsets "
+            f"{latex_escape(config.get('center_offsets', [[0, 0, 0]]))}."
+        ),
+        (
+            "The fluctuation--dissipation conversion, magnetic form factor, "
+            "polarization factor, and experimental scale are applied by the "
+            "dataset comparison layer rather than included in this response."
+        ),
+    ]
+    return (("model", "\n".join(lines) + "\n"),)
+
+
 def _section_other_components(
     models: list[dict[str, Any]],
     goodness: Mapping[str, Any],
@@ -1199,6 +1276,11 @@ _DIAGNOSTIC_REPORT_COLUMNS = (
     ("stability_ratio", "$r_{\\max}$"),
     ("lambda_shift", "$\\lambda_{\\rm shift}$ (meV)"),
     ("chi0_eff", "$\\chi_{0,\\mathrm{eff}}$"),
+    ("mode_energy_qpeak", "$E_0$ (meV)"),
+    ("dho_damping_qpeak", "$\\gamma_{\\rm DHO}$ (meV)"),
+    ("damping_ratio_qpeak", "$\\zeta$"),
+    ("xi_principal_min", "$\\xi_{\\min}$ (\\AA)"),
+    ("xi_principal_max", "$\\xi_{\\max}$ (\\AA)"),
 )
 
 
@@ -1208,13 +1290,10 @@ def _section_diagnostics(fit_entry: Any) -> str:
         return ""
     lines = ["\\section{Physics diagnostics}"]
     lines.append(
-        "Model-derived quantities per dataset: the effective fluctuating "
-        "moment $\\mu_{\\mathrm{eff}}^2$ (Brillouin-zone and energy integral "
-        "of $\\chi''$ up to the cutoff), the Kramers--Kronig static "
-        "susceptibility at $\\mathbf{Q}=0$ and at its zone peak, and the "
-        "smallest sampled RPA denominator $D_{\\min}=1-r_{\\max}$. Positive, "
-        "zero, and negative $D_{\\min}$ indicate stable, boundary, and "
-        "unstable parameter sets, respectively."
+        "Model-derived quantities per dataset. RPA components report moment, "
+        "static-response, and stability checks; generalized paramagnons report "
+        "principal correlation lengths and, when inertia is nonzero, the "
+        "natural mode energy, damping coefficient, and damping ratio."
     )
     columns = _DIAGNOSTIC_REPORT_COLUMNS
     lines.append("\\begin{longtable}{l" + " r" * len(columns) + "}")

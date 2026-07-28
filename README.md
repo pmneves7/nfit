@@ -9,8 +9,8 @@ The package provides:
 - native MDHisto, MDEvent, and compatible direct-geometry spectrometer workflows;
 - powder-cut, MPMS magnetization, PPMS heat-capacity, and tabular imports;
 - masking, symmetry-aware rebinning, backgrounds, and non-destructive analyses;
-- relaxational, MMP, and Heisenberg-RPA spin-fluctuation models for inelastic
-  and quasistatic elastic scattering;
+- local, MMP, generalized-paramagnon/damped-mode, and Heisenberg-RPA
+  spin-fluctuation models for inelastic and quasistatic elastic scattering;
 - an extensible model registry shared by fitting, GUI metadata, diagnostics,
   reports, plots, project files, and workflow scripts;
 - simultaneous least-squares fitting with explicit uncertainty conventions,

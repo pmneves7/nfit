@@ -1,17 +1,22 @@
 # Spin-fluctuation models
 
-nfit provides three magnetic-response models:
+nfit provides four magnetic-response models. Start with the least structured
+model that resolves the features in the data.
 
-| Model | Momentum dependence | Typical use |
+| Model | Main response | Typical use |
 | --- | --- | --- |
-| `local_relaxational` | form factor only | Local or nearly momentum-independent fluctuations |
-| `mmp_relaxational` | one peak with a correlation length | Nearly antiferromagnetic metals near a known ordering vector |
-| `heisenberg_rpa` | exchange matrix on a crystal lattice | Dispersive fluctuations constrained by crystal symmetry |
+| `local_relaxational` | $\chi=\chi_{\rm loc}/(1-iE/\Gamma)$ | Local or momentum-independent fluctuations |
+| `mmp_relaxational` | $\chi=\chi_{\rm pk}/(1+\xi^2q^2-iE/E_{\rm sf})$ | One isotropic peak in a nearly antiferromagnetic metal |
+| `generalized_paramagnon` | $\chi=(\chi_{\rm pk}/A)/(1-a_EE^2/A-iE/[\Gamma_0A^z])$ | Anisotropic peaks, critical slowing down, and damped propagating modes |
+| `heisenberg_rpa` | $\boldsymbol\chi=[\mathbb 1-\chi_0J(\mathbf Q)]^{-1}\chi_0$ | Dispersive fluctuations constrained by a crystal and exchange network |
 
 ```{toctree}
 :maxdepth: 1
 :caption: Model details
 
+local_relaxational
+mmp_relaxational
+generalized_paramagnon
 heisenberg_rpa
 ```
 
@@ -25,74 +30,12 @@ normalization.
 
 Backgrounds are separate additive model components.
 
-## Local relaxational model
-
-The local model is
-
-$$
-\chi''(E)=\chi_{\rm loc}\frac{\Gamma E}{E^2+\Gamma^2}.
-$$
-
-$E$ is transferred energy, $\Gamma$ is the relaxation energy, and
-$\chi_{\rm loc}$ is the static local susceptibility. The response peaks at
-$E=\Gamma$ and has no momentum dependence beyond the magnetic form factor. It
-therefore applies to both single-crystal and powder data.
-
-For elastic data, nfit uses the quasistatic result
-$S(\mathbf Q)\simeq k_BT\chi'(\mathbf Q,0)$. The local model therefore has no
-momentum dependence beyond the form factor, and elastic-only data do not
-constrain $\Gamma$.
-
-## MMP relaxational model
-
-The Millis--Monien--Pines form describes a relaxational peak centered at
-$\mathbf Q_0$:
-
-$$
-\chi''(\mathbf q,E)=
-\chi_{\rm pk}
-\frac{E/E_{\rm sf}}
-{\left[1+\xi^2|\mathbf q-\mathbf Q_0|^2\right]^2+(E/E_{\rm sf})^2}.
-$$
-
-Here $\mathbf q$ is physical momentum transfer, $\mathbf Q_0$ is the peak
-position, $\chi_{\rm pk}$ is the static peak susceptibility, $\xi$ is the
-correlation length in Å, momentum distance is in Å$^{-1}$, and $E_{\rm sf}$ is
-the spin-fluctuation energy in meV. The API name `omega_sf` stores the energy
-$E_{\rm sf}=\hbar\omega_{\rm sf}$, not an angular frequency.
-
-This model is useful when the peak position is known and the data do not
-require a crystallographic exchange network.
-
-The same static peak form is available for single-crystal elastic data.
-Elastic-only data do not constrain `omega_sf`.
-
-## Heisenberg RPA model
-
-`heisenberg_rpa` dresses a local relaxational response with real-space
-exchange:
-
-$$
-\chi(\mathbf Q,E)=
-\left[\mathbb 1-\chi_0(E)J(\mathbf Q)\right]^{-1}\chi_0(E),
-\qquad
-\chi_0(E)=\frac{\chi_0}{1-iE/\Gamma_0}.
-$$
-
-Exchange parameters belong to symmetry-distinct bond orbits generated from the
-crystal structure. The model supports multiple magnetic sites, powder
-averaging, anisotropic interactions, dipoles, applied fields,
-self-consistency closures, and joint magnetometry fits.
-
-For single-crystal and powder elastic data, the model evaluates
-$\chi'(\mathbf Q,0)$ directly and applies the quasistatic cross section.
-Powder evaluation requires lattice parameters and performs the same
-orientation average as the inelastic model. Elastic-only data do not constrain
-$\Gamma_0$.
-
-The phase convention, mode weights, tensor extension, closures, and fitting
-parameters are documented separately in
-[Heisenberg RPA](heisenberg_rpa.md).
+The [local relaxational](local_relaxational.md),
+[MMP relaxational](mmp_relaxational.md),
+[generalized paramagnon](generalized_paramagnon.md), and
+[Heisenberg RPA](heisenberg_rpa.md) pages define their parameters, complex
+susceptibilities, dissipative responses, elastic limits, scripts, and
+references.
 
 ## Magnetic form factor
 
@@ -133,9 +76,10 @@ self-consistent alternatives described in
 
 | Quantity | Unit |
 | --- | --- |
-| $E$, $\Gamma$, $\Gamma_0$, $E_{\rm sf}$, $J_i$ | meV |
+| $E$, $\Gamma$, $\Gamma_0$, $E_{\rm sf}$, $E_0$, $J_i$ | meV |
 | $\chi_{\rm loc}$, $\chi_{\rm pk}$, $\chi_0$ | meV$^{-1}$ in the model normalization |
 | $\xi$ | Å |
+| $a_E=1/E_0^2$ | meV$^{-2}$ |
 | $H,K,L$ | r.l.u. |
 | $T$ | K |
 
