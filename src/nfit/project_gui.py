@@ -11619,6 +11619,14 @@ class NfitProjectExplorer:
             viewer.set_save_plot_callback(lambda viewer=viewer, group=group: self.save_plot_from_viewer(group, viewer))
         if hasattr(viewer, "set_save_project_callback"):
             viewer.set_save_project_callback(self.save)
+        if hasattr(viewer, "set_open_new_viewer_callback"):
+            viewer.set_open_new_viewer_callback(
+                lambda selected_name, group=group, use_composite=use_composite: self.open_slice_viewer(
+                    group,
+                    selected_dataset_name=selected_name,
+                    use_composite=use_composite,
+                )
+            )
         if hasattr(viewer, "set_unmask_model_callback"):
             viewer.set_unmask_model_callback(
                 lambda _enabled, group=group: self._request_overlay_refresh(group)

@@ -10,7 +10,9 @@ Scientific settings are stored in the `.nfit` project and use the same package
 functions available through the Python API.
 
 **View in data viewer** opens a new, independent window each time, so several
-datasets or views of the same dataset can remain visible side by side.
+datasets or views of the same dataset can remain visible side by side. Use
+**Open new viewer** beside the visualization selector to duplicate the current
+view before adjusting its dataset, axes, ranges, or styling independently.
 
 ## Launch
 

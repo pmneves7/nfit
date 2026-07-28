@@ -16,7 +16,8 @@ The package provides:
   sampling;
 - project files with fit timelines and provenance, plus editable script export
   for dataset preparation, analyses, fits, and saved plots;
-- interactive slice, waterfall, and volumetric visualization.
+- interactive slice, waterfall, and volumetric visualization with independent,
+  same-state viewer duplication.
 
 See the [documentation](docs/index.md) for workflows, physics conventions,
 model equations, and the Python API.

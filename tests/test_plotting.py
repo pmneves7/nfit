@@ -205,6 +205,60 @@ def test_qt_slice_viewer_interactive_controls_have_tooltips():
     assert missing == []
 
 
+def test_qt_slice_viewer_open_new_viewer_duplicates_current_state():
+    pytest.importorskip("PySide6")
+    from PySide6 import QtWidgets
+
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    first = _tiny_mdhisto_data()
+    second = _tiny_mdhisto_data()
+    viewer = QtMDHistoSliceViewer(
+        [first, second],
+        dataset_names=["first", "second"],
+        x_dim=3,
+        y_dim=2,
+    )
+    viewer.dataset_combo.setCurrentIndex(1)
+    viewer.marker_combo.setCurrentText("square")
+    viewer.cmap_combo.setCurrentText("plasma")
+    viewer._toggle_cmap_reverse()
+    viewer.ax_image.set_xlim(-0.25, 0.75)
+    viewer.ax_image.set_ylim(-0.5, 0.5)
+
+    opened = []
+
+    def create_viewer(_selected_name):
+        duplicate = QtMDHistoSliceViewer(
+            [first, second],
+            dataset_names=["first", "second"],
+        )
+        opened.append(duplicate)
+        return duplicate
+
+    viewer.set_open_new_viewer_callback(create_viewer)
+    button = viewer.window.findChild(
+        QtWidgets.QPushButton,
+        "data_viewer_open_new_button",
+    )
+    mode_layout = viewer.view_mode_combo.parentWidget().layout()
+
+    assert button is viewer.open_new_viewer_button
+    assert mode_layout.indexOf(button) == mode_layout.indexOf(viewer.view_mode_combo) + 1
+    assert button.toolTip().strip()
+
+    button.click()
+
+    duplicate = opened[0]
+    assert duplicate.dataset_combo.currentText() == "second"
+    assert duplicate.marker == "s"
+    assert duplicate.model._effective_cmap() == "plasma_r"
+    assert duplicate.ax_image.get_xlim() == pytest.approx((-0.25, 0.75))
+    assert duplicate.ax_image.get_ylim() == pytest.approx((-0.5, 0.5))
+    duplicate.window.close()
+    viewer.window.close()
+
+
 def test_qt_slice_viewer_save_plot_button_uses_project_callback():
     pytest.importorskip("PySide6")
     from PySide6 import QtWidgets

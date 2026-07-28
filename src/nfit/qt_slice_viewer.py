@@ -237,7 +237,10 @@ class QtMDHistoSliceViewer:
         self.save_script_button = None
         self._save_plot_callback = None
         self._save_project_callback = None
+        self._open_new_viewer_callback = None
         self._close_callback = None
+        self._child_viewers = []
+        self.open_new_viewer_button = None
         self.save_project_shortcut = None
         self._unmask_model_callback = None
         self.view_mode_combo = None
@@ -440,8 +443,19 @@ class QtMDHistoSliceViewer:
 
         xlim = self._export_limits("x") if self.ax_image is not None else None
         ylim = self._export_limits("y") if self.ax_image is not None else None
+        view_mode = (
+            "volumetric"
+            if self.view_mode_combo.currentIndex() == 2
+            else "waterfall"
+            if self._waterfall_mode_active()
+            else "slice"
+        )
+        dataset_name = self.dataset_combo.currentText()
+        if view_mode == "volumetric" and self.volume_panel is not None:
+            dataset_name = self.volume_panel.dataset_combo.currentText()
         return {
-            "view_mode": "waterfall" if self._waterfall_mode_active() else "slice",
+            "view_mode": view_mode,
+            "dataset_name": dataset_name,
             "x_dim": self.data.axes[self.model.x_dim].name,
             "y_dim": self.data.axes[self.model.y_dim].name,
             "channel": self.model.channel,
@@ -466,6 +480,9 @@ class QtMDHistoSliceViewer:
             "show_fit": self.show_fit,
             "unmask_model": self.unmask_model,
             "show_residual": self.show_residual,
+            "apply_masks": self.model.masked,
+            "show_box_tool": bool(self.show_box_check and self.show_box_check.isChecked()),
+            "roi_enabled": bool(self.roi_button and self.roi_button.isChecked()),
             "waterfall_step": self.waterfall_step,
             "waterfall_step_auto": self.waterfall_step_auto,
             "waterfall_offset": self.waterfall_offset,
@@ -493,13 +510,19 @@ class QtMDHistoSliceViewer:
             "show_errorbars": self.show_errorbars,
             "show_errorbar_caps": self.show_errorbar_caps,
             "errorbar_cap_size": self.errorbar_cap_size,
+            "line_color": self.line_color,
+            "fit_line_color": self.fit_line_color,
             "fit_line_width": self.fit_line_width,
+            "residual_percent": self.residual_percent,
             "figsize": tuple(self.figure.get_size_inches()) if self.figure is not None else (8.0, 6.5),
         }
 
     def apply_plot_settings(self, settings: dict[str, object]) -> None:
         """Restore a saved plot recipe into the interactive controls."""
 
+        dataset_name = settings.get("dataset_name")
+        if dataset_name in self.dataset_names:
+            self.dataset_combo.setCurrentIndex(self.dataset_names.index(dataset_name))
         x_name = settings.get("x_dim")
         y_name = settings.get("y_dim")
         names = [axis.name for axis in self.data.axes]
@@ -511,17 +534,25 @@ class QtMDHistoSliceViewer:
             self._set_channel(str(settings["channel"]))
         self.model.selections.update({int(key): tuple(value) for key, value in dict(settings.get("selections", {})).items()})
         self.model.integrate_checks.update({int(key): bool(value) for key, value in dict(settings.get("integrate_checks", {})).items()})
-        self._set_cmap(str(settings.get("cmap", self.model.cmap)).removesuffix("_r"))
+        effective_cmap = str(settings.get("cmap", self.model.cmap))
+        self._set_cmap(effective_cmap.removesuffix("_r"))
+        self.model.cmap_reversed = effective_cmap.endswith("_r")
         self._set_color_scale(str(settings.get("color_scale", self.model.color_scale)))
         self._set_auto_limits(str(settings.get("auto_limits", self.model.auto_limits)))
+        self.model.manual_vmin = settings.get("manual_vmin", self.model.manual_vmin)
+        self.model.manual_vmax = settings.get("manual_vmax", self.model.manual_vmax)
         self._set_autoscale(bool(settings.get("autoscale", self.model.autoscale)))
         self.smoothing_x = float(settings.get("smoothing_x", self.smoothing_x))
         self.smoothing_y = float(settings.get("smoothing_y", self.smoothing_y))
+        self._set_spin_silent(self.smoothing_x_spin, self.smoothing_x)
+        self._set_spin_silent(self.smoothing_y_spin, self.smoothing_y)
         self._set_font_size(float(settings.get("font_size", self.font_size)))
         self._set_axis_linewidth(float(settings.get("axis_linewidth", self.axis_linewidth)))
         self._set_show_fit(bool(settings.get("show_fit", self.show_fit)))
         self._set_unmask_model(bool(settings.get("unmask_model", self.unmask_model)))
         self._set_show_residual(bool(settings.get("show_residual", self.show_residual)))
+        self.model.masked = bool(settings.get("apply_masks", self.model.masked))
+        self._set_checkbox_silent(self.apply_masks_check, self.model.masked)
         self.waterfall_step = float(settings.get("waterfall_step", self.waterfall_step))
         self.waterfall_step_auto = bool(
             settings.get("waterfall_step_auto", self.waterfall_step_auto)
@@ -619,10 +650,20 @@ class QtMDHistoSliceViewer:
         self.errorbar_cap_size = float(
             settings.get("errorbar_cap_size", self.errorbar_cap_size)
         )
+        self.line_color = str(settings.get("line_color", self.line_color))
+        self.fit_line_color = str(
+            settings.get("fit_line_color", self.fit_line_color)
+        )
         self.fit_line_width = float(
             settings.get("fit_line_width", self.fit_line_width)
         )
-        mode = 1 if settings.get("view_mode") == "waterfall" else 0
+        self.residual_percent = int(
+            settings.get("residual_percent", self.residual_percent)
+        )
+        mode = {
+            "waterfall": 1,
+            "volumetric": 2,
+        }.get(settings.get("view_mode"), 0)
         if mode == 1:
             self._waterfall_marker_face_color = marker_face_color
         else:
@@ -640,7 +681,61 @@ class QtMDHistoSliceViewer:
             ),
         )
         self._roi_extents = settings.get("roi_extents", self._roi_extents)
+        self.xcut_percent = int(settings.get("xcut_percent", self.xcut_percent))
+        self.ycut_percent = int(settings.get("ycut_percent", self.ycut_percent))
+        self._set_slider_silent(self.xcut_percent_slider, self.xcut_percent)
+        self._set_slider_silent(self.ycut_percent_slider, self.ycut_percent)
+        self._set_slider_silent(self.residual_split_slider, self.residual_percent)
+        self._set_checkbox_silent(
+            self.hist_axes_check,
+            bool(settings.get("show_histogram_axes", self.hist_axes_check.isChecked())),
+        )
+        self._set_checkbox_silent(
+            self.show_box_check,
+            bool(settings.get("show_box_tool", self.show_box_check.isChecked())),
+        )
+        self._set_checkbox_silent(
+            self.roi_button,
+            bool(settings.get("roi_enabled", self.roi_button.isChecked())),
+        )
         self.update_plot(preserve_view=False)
+        if settings.get("xlim") is not None:
+            self.ax_image.set_xlim(*settings["xlim"])
+        if settings.get("ylim") is not None:
+            self.ax_image.set_ylim(*settings["ylim"])
+        self._sync_view_limit_controls()
+        self._set_rectangle_selector_from_controls()
+        self._sync_histogram_panel_controls()
+        self._apply_histogram_axes_layout(draw=False)
+        if mode == 2 and self.volume_panel is not None:
+            volume_index = self.volume_panel.dataset_combo.findText(str(dataset_name))
+            if volume_index >= 0:
+                self.volume_panel.dataset_combo.setCurrentIndex(volume_index)
+        self.canvas.draw_idle()
+
+    def open_new_viewer(self):
+        """Open an independent viewer initialized from the current view."""
+
+        settings = self.current_plot_settings()
+        if self._open_new_viewer_callback is not None:
+            viewer = self._open_new_viewer_callback(settings.get("dataset_name"))
+        else:
+            viewer = type(self)(
+                self.datasets,
+                dataset_names=self.dataset_names,
+                dataset_group_keys=self.dataset_group_keys,
+            )
+            self._child_viewers.append(viewer)
+        if viewer is None:
+            return None
+        viewer.apply_plot_settings(settings)
+        viewer.show()
+        return viewer
+
+    def set_open_new_viewer_callback(self, callback) -> None:
+        """Set the project-aware factory used by :meth:`open_new_viewer`."""
+
+        self._open_new_viewer_callback = callback
 
     def set_save_plot_callback(self, callback) -> None:
         """Expose project-bound saved-plot creation when a callback is supplied."""
@@ -892,6 +987,14 @@ class QtMDHistoSliceViewer:
         )
         self.view_mode_combo.currentIndexChanged.connect(self._set_view_mode)
         mode_layout.addWidget(self.view_mode_combo)
+        self.open_new_viewer_button = QtWidgets.QPushButton("Open new viewer")
+        self.open_new_viewer_button.setObjectName("data_viewer_open_new_button")
+        self.open_new_viewer_button.setToolTip(
+            "Open an independent data viewer initialized with the current dataset, "
+            "visualization mode, axes, ranges, and styling."
+        )
+        self.open_new_viewer_button.clicked.connect(self.open_new_viewer)
+        mode_layout.addWidget(self.open_new_viewer_button)
         mode_layout.addStretch(1)
         main_layout.addWidget(mode_bar)
         self.content_stack = QtWidgets.QStackedWidget()

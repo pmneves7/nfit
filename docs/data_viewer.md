@@ -8,7 +8,9 @@ Every **View in data viewer** action opens a new window. Multiple viewers may
 display the same workspace or different workspaces at once; dataset selection,
 axes, ranges, visualization mode, styling, and other controls are independent
 in each window. Project changes refresh every open viewer without merging their
-view settings. Closing one viewer does not affect the others.
+view settings. **Open new viewer**, beside the visualization selector, creates
+an independent viewer initialized from the current dataset and view settings.
+Closing one viewer does not affect the others.
 
 ## Slices, lines, and maps
 

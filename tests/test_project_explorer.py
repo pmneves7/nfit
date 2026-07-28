@@ -331,10 +331,14 @@ def test_project_explorer_opens_and_reloads_independent_group_slice_viewers(monk
             self.window = FakeWindow(self)
             self.shown = False
             self.replaced = False
+            self.open_new_viewer_callback = None
             created_viewers.append(self)
 
         def set_close_callback(self, callback):
             self.close_callback = callback
+
+        def set_open_new_viewer_callback(self, callback):
+            self.open_new_viewer_callback = callback
 
         def show(self):
             self.shown = True
@@ -372,6 +376,7 @@ def test_project_explorer_opens_and_reloads_independent_group_slice_viewers(monk
     assert viewer.dataset_names == ["first", "second"]
     assert viewer.dataset_combo.currentText() == "second"
     assert viewer.shown
+    assert callable(viewer.open_new_viewer_callback)
 
     second_viewer = explorer.open_slice_viewer(
         group,
