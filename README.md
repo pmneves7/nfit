@@ -50,6 +50,7 @@ nfit
 
 ```bash
 python -m pytest -q
+python -m pytest --cov=nfit --cov-branch --cov-report=term-missing
 python -m ruff check
 ```
 

@@ -13,7 +13,6 @@ from nfit.crystal import (
     sites_to_config,
 )
 
-
 PYROCHLORE = {
     "lattice": {"a": 10.0, "b": 10.0, "c": 10.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
     "spacegroup": "F d -3 m:2",
@@ -250,7 +249,11 @@ def test_pyrochlore_reduces_to_four_sublattices_with_identical_chipp():
 
     reduced_positions, reduced_orbits = reduce_site_network(positions, orbit_payload)
     assert reduced_positions.shape == (4, 3)
-    for full_orbit, reduced_orbit in zip(orbit_payload, reduced_orbits):
+    for full_orbit, reduced_orbit in zip(
+        orbit_payload,
+        reduced_orbits,
+        strict=True,
+    ):
         assert len(reduced_orbit["bonds"]) * 4 == len(full_orbit["bonds"])
 
     rng = np.random.default_rng(11)
@@ -304,7 +307,7 @@ def test_bond_orbits_record_symmetry_operations():
         representative_vector = _bond_vector_cartesian(
             orbit.bonds[0], positions, lattice_matrix
         )
-        for bond, symmetry in zip(orbit.bonds, orbit.operations):
+        for bond, symmetry in zip(orbit.bonds, orbit.operations, strict=True):
             rotation = cartesian_rotation(
                 np.asarray(symmetry.rotation), PYROCHLORE["lattice"]
             )
@@ -397,7 +400,11 @@ def test_orbit_config_round_trips_symmetry_operations():
     assert all("rotation" in bond and "reversed" in bond for bond in payload[0]["bonds"])
     rebuilt = orbits_from_config(payload)
     assert rebuilt[0].operations is not None
-    for original, restored in zip(orbits[0].operations, rebuilt[0].operations):
+    for original, restored in zip(
+        orbits[0].operations,
+        rebuilt[0].operations,
+        strict=True,
+    ):
         np.testing.assert_allclose(
             np.asarray(original.rotation), np.asarray(restored.rotation)
         )

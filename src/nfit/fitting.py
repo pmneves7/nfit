@@ -1119,7 +1119,7 @@ def unpack_parameters(x: Sequence[float], names: Sequence[str], fixed: dict[str,
     """Combine optimizer vector values with fixed parameters."""
 
     params = dict(fixed)
-    params.update({name: float(value) for name, value in zip(names, x)})
+    params.update({name: float(value) for name, value in zip(names, x, strict=True)})
     return params
 
 
@@ -1511,7 +1511,10 @@ def sample_problem_parameters(
                             "total": n_steps,
                             "elapsed_seconds": elapsed,
                             "seconds_per_step": elapsed / max(iteration, 1),
-                            "parameters": {name: float(value) for name, value in zip(names, mean)},
+                            "parameters": {
+                                name: float(value)
+                                for name, value in zip(names, mean, strict=True)
+                            },
                             "message": f"emcee step {iteration}/{n_steps}",
                         }
                     )
@@ -1546,7 +1549,7 @@ def initialize_problem_differential_evolution(
     if np.any(~np.isfinite(lower)) or np.any(~np.isfinite(upper)):
         unbounded = [
             name
-            for name, lo, hi in zip(names, lower, upper)
+            for name, lo, hi in zip(names, lower, upper, strict=True)
             if not np.isfinite(lo) or not np.isfinite(hi)
         ]
         raise ValueError(
@@ -1565,7 +1568,10 @@ def initialize_problem_differential_evolution(
         pool = ThreadPool(workers)
         options["workers"] = pool.map
         options["updating"] = "deferred"
-    bounds_list = [(float(lo), float(hi)) for lo, hi in zip(lower, upper)]
+    bounds_list = [
+        (float(lo), float(hi))
+        for lo, hi in zip(lower, upper, strict=True)
+    ]
     iteration = 0
     initialization_start = time.perf_counter()
 
@@ -1602,7 +1608,8 @@ def initialize_problem_differential_evolution(
         objective(x0)
     except Exception as exc:
         preview = ", ".join(
-            f"{name}={value:.6g}" for name, value in zip(names, x0[: len(names)])
+            f"{name}={value:.6g}"
+            for name, value in zip(names, x0[: len(names)], strict=True)
         )
         raise RuntimeError(
             "differential evolution initialization could not evaluate the "
@@ -1631,7 +1638,10 @@ def initialize_problem_differential_evolution(
                 "iteration": iteration,
                 "elapsed_seconds": elapsed,
                 "seconds_per_step": elapsed / iteration if iteration else None,
-                "parameters": {name: float(value) for name, value in zip(names, result.x)},
+                "parameters": {
+                    name: float(value)
+                    for name, value in zip(names, result.x, strict=True)
+                },
                 "cost": float(result.fun),
                 "message": "differential evolution initialization finished",
             }

@@ -13,6 +13,7 @@ Preferred test commands:
 
 ```bash
 /Users/pmneves/anaconda3/envs/nfit/bin/python -m pytest -q
+/Users/pmneves/anaconda3/envs/nfit/bin/python -m pytest --cov=nfit --cov-branch --cov-report=term-missing
 /Users/pmneves/anaconda3/envs/nfit/bin/python -m compileall -q src/nfit tests examples
 /Users/pmneves/anaconda3/envs/nfit/bin/python -m ruff check
 /Users/pmneves/anaconda3/envs/nfit/bin/python -m sphinx -W --keep-going -b html docs docs/_build/html

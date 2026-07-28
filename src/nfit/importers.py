@@ -11,16 +11,16 @@ from __future__ import annotations
 
 import csv
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 
 from .dataset import PointListData
 from .mdhisto import MDHistoAxis, MDHistoData
 from .quantities import normalize_unit
-
 
 # ``Name (unit)`` -> ("Name", "unit"). The unit is the last parenthesized group.
 _UNIT_PATTERN = re.compile(r"^(?P<name>.*?)\s*\((?P<unit>[^()]*)\)\s*$")

@@ -20,7 +20,8 @@ References: S. W. de Leeuw, J. W. Perram, E. R. Smith, Proc. R. Soc. A 373, 27
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray

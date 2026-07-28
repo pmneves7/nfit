@@ -2,7 +2,6 @@ import numpy as np
 
 from nfit.dipole import dipole_coupling_constant, ewald_dipole_tensor
 
-
 LATTICE = {"a": 4.0, "b": 4.0, "c": 4.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0}
 FRAC = [[0.0, 0.0, 0.0], [0.5, 0.5, 0.5]]
 HKL = np.array([[0.1, 0.2, 0.3], [0.5, 0.0, 0.0], [0.25, 0.25, 0.25], [0.4, 0.1, 0.6]])

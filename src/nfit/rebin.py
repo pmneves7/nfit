@@ -12,7 +12,6 @@ from numpy.typing import ArrayLike, NDArray
 
 from . import _parallel
 
-
 FloatArray = NDArray[np.float64]
 
 MeanWeighting = Literal["inverse_variance", "uniform"]
@@ -584,7 +583,7 @@ class NDRebin:
                 )
                 partials = list(
                     executor.map(
-                        lambda bounds: worker(
+                        lambda bounds, worker=worker: worker(
                             bounds[0], bounds[1], lower, upper, step_size, num_bins, size
                         ),
                         ranges,
@@ -961,7 +960,8 @@ def rebin_nd_stream(
                 )
                 ranges = _split_range(0, data.size, template.resolved_workers)
                 partials = list(executor.map(
-                    lambda bounds: worker(
+                    lambda bounds, worker=worker, step_array=step_array,
+                    num_bins_array=num_bins_array: worker(
                         bounds[0], bounds[1], lower_arr, upper_arr,
                         step_array, num_bins_array, size,
                     ),

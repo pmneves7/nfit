@@ -5,7 +5,6 @@ from __future__ import annotations
 import numpy as np
 from numba import get_num_threads, get_thread_id, njit, prange, set_num_threads
 
-
 ENERGY_TO_K2 = 2.072124855
 
 
@@ -89,10 +88,14 @@ def trajectory_normalization(
             index1 = np.searchsorted(edge1, coordinate1, side="right") - 1
             index2 = np.searchsorted(edge2, coordinate2, side="right") - 1
             index3 = np.searchsorted(edge3, coordinate3, side="right") - 1
-            if coordinate0 == edge0[-1]: index0 = edge0.size - 2
-            if coordinate1 == edge1[-1]: index1 = edge1.size - 2
-            if coordinate2 == edge2[-1]: index2 = edge2.size - 2
-            if coordinate3 == edge3[-1]: index3 = edge3.size - 2
+            if coordinate0 == edge0[-1]:
+                index0 = edge0.size - 2
+            if coordinate1 == edge1[-1]:
+                index1 = edge1.size - 2
+            if coordinate2 == edge2[-1]:
+                index2 = edge2.size - 2
+            if coordinate3 == edge3[-1]:
+                index3 = edge3.size - 2
             if 0 <= index0 < edge0.size - 1 and 0 <= index1 < edge1.size - 1 and 0 <= index2 < edge2.size - 1 and 0 <= index3 < edge3.size - 1:
                 flat = ((index0 * shape[1] + index1) * shape[2] + index2) * shape[3] + index3
                 partial[thread, flat] += weight * ENERGY_TO_K2 * (second * second - first * first)

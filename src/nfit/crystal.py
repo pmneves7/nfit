@@ -24,12 +24,12 @@ imported lazily so the rest of the package works without it.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-
 
 FloatArray = NDArray[np.float64]
 
@@ -88,14 +88,14 @@ class Bond:
     site_j: int
     offset: tuple[int, int, int]
 
-    def reversed(self) -> "Bond":
+    def reversed(self) -> Bond:
         return Bond(
             self.site_j,
             self.site_i,
             (-self.offset[0], -self.offset[1], -self.offset[2]),
         )
 
-    def canonical(self) -> "Bond":
+    def canonical(self) -> Bond:
         other = self.reversed()
         return min(self, other, key=lambda b: (b.site_i, b.site_j, b.offset))
 

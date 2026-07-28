@@ -163,8 +163,14 @@ python -m pip install -e ".[dev,docs]"
 
 ```bash
 python -m pytest -q
+python -m pytest --cov=nfit --cov-branch --cov-report=term-missing
 python -m ruff check
 ```
+
+The coverage run reports untested lines and branches. It is diagnostic: the
+goal is meaningful tests for important behavior, not maximizing a percentage.
+The configured 75% floor is a regression guard below the current baseline, not
+a target that replaces scientific review.
 
 Launch the graphical project explorer:
 

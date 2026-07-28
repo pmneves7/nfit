@@ -30,8 +30,9 @@ unphysical-parameter sentinel.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -67,7 +68,7 @@ class ClosureSpec:
     moment_target: float = 1.0
 
     @classmethod
-    def from_config(cls, config: Mapping[str, Any] | None) -> "ClosureSpec | None":
+    def from_config(cls, config: Mapping[str, Any] | None) -> ClosureSpec | None:
         """Parse a config mapping; ``None`` for an absent or "none" closure."""
 
         if not config:

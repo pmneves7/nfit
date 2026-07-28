@@ -23,8 +23,8 @@ from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
-from numba import njit, prange, set_num_threads as _numba_set_num_threads
-
+from numba import njit, prange
+from numba import set_num_threads as _numba_set_num_threads
 
 _OPENMP_INIT_LOCK = threading.Lock()
 _OPENMP_PARALLEL_INITIALIZED = False

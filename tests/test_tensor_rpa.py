@@ -22,7 +22,6 @@ from nfit.tensor_rpa import (
     tensor_susceptibility,
 )
 
-
 PYROCHLORE = {
     "lattice": {"a": 10.0, "b": 10.0, "c": 10.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0},
     "spacegroup": "F d -3 m:2",
@@ -319,7 +318,6 @@ def test_zeeman_reduces_to_tier_a_at_zero_field():
 
 def test_zeeman_propagator_is_gyrotropic_and_larmor_resonant():
     from nfit.tensor_rpa import (
-        MU_B_MEV_PER_T,
         tensor_zeeman_susceptibility,
         zeeman_cartesian_propagator,
     )

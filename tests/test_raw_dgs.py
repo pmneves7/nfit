@@ -4,8 +4,8 @@ import pytest
 from nfit import bin_raw_dgs_group, inspect_raw_dgs_run, raw_dgs, raw_dgs_dataset_group
 from nfit.raw_dgs import (
     TOF_US_PER_M_SQRT_MEV,
-    _evaluate_mantid_t0_formula,
     _energy_transfer_bounds,
+    _evaluate_mantid_t0_formula,
     _monitor_ei_t0,
     _retained_proton_charge_uah,
 )

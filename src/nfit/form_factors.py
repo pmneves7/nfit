@@ -25,7 +25,6 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-
 FloatArray = NDArray[np.float64]
 
 # <j0> coefficients (A, a, B, b, C, c, D), keyed by ion label "<Element><charge>"

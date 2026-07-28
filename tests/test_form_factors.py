@@ -10,7 +10,7 @@ from nfit.form_factors import (
 
 
 def test_all_tabulated_ions_are_normalized_at_zero_q():
-    for ion, (A, a, B, b, C, c, D) in J0_COEFFICIENTS.items():
+    for ion, (A, _a, B, _b, C, _c, D) in J0_COEFFICIENTS.items():
         assert abs((A + B + C + D) - 1.0) < 0.01, ion
         np.testing.assert_allclose(
             magnetic_form_factor_j0(0.0, ion=ion), A + B + C + D, rtol=1e-12

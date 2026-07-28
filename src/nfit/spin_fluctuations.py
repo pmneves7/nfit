@@ -98,10 +98,11 @@ from __future__ import annotations
 
 import contextlib
 import os
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -114,7 +115,6 @@ except Exception:  # pragma: no cover - threadpoolctl not installed
     _threadpool_limits = None
 
 from .models import relaxational_chipp
-
 
 FloatArray = NDArray[np.float64]
 ComplexArray = NDArray[np.complex128]
@@ -479,7 +479,7 @@ def _translation_reduction(
         return mapping
 
     def preserves_bonds(mapping: list[tuple[int, FloatArray]]) -> bool:
-        for orbit, keys in zip(orbits, orbit_keys):
+        for orbit, keys in zip(orbits, orbit_keys, strict=True):
             translated = set()
             for bond in orbit.get("bonds", []):
                 i, shift_i = mapping[int(bond["site_i"])]

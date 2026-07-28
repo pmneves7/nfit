@@ -9,7 +9,6 @@ from numpy.typing import NDArray
 
 from .dataset import PointData4D
 
-
 FloatArray = NDArray[np.float64]
 ModelFunction = Callable[[PointData4D, dict[str, float]], FloatArray]
 ParameterLike = float | int | str

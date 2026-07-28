@@ -1,13 +1,12 @@
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 from nfit.spin_fluctuations import (
-    RpaGeometry,
     build_rpa_geometry,
     heisenberg_rpa_chipp,
     local_relaxational_chipp,
