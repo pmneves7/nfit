@@ -286,7 +286,10 @@ def plot_mdhisto_line(
         _, ax = plt.subplots()
     if channel_name == "signal":
         yerr = np.asarray(_mdhisto_channel_array(data, "errors")[tuple(index)], dtype=float)
-        yerr = gaussian_smooth_nan(yerr, (max(float(smoothing_sigma), 0.0),))
+        yerr = gaussian_smooth_uncertainty(
+            yerr,
+            (max(float(smoothing_sigma), 0.0),),
+        )
         ax.errorbar(x, y, yerr=yerr, fmt="-", lw=1.2)
     else:
         ax.plot(x, y, "-", lw=1.2)
@@ -2344,16 +2347,61 @@ def gaussian_smooth_nan(values: np.ndarray, sigma: float | Sequence[float]) -> n
     numerator = gaussian_filter(
         np.where(finite, array, 0.0),
         sigma=sigma_values,
-        mode="nearest",
+        mode="constant",
+        cval=0.0,
     )
     denominator = gaussian_filter(
         finite.astype(float),
         sigma=sigma_values,
-        mode="nearest",
+        mode="constant",
+        cval=0.0,
     )
     with np.errstate(divide="ignore", invalid="ignore"):
         smoothed = numerator / denominator
     return np.where(finite & (denominator > np.finfo(float).eps), smoothed, np.nan)
+
+
+def gaussian_smooth_uncertainty(
+    errors: np.ndarray,
+    sigma: float | Sequence[float],
+) -> np.ndarray:
+    """Propagate independent one-sigma errors through normalized Gaussian smoothing."""
+
+    from scipy.ndimage import convolve1d, gaussian_filter
+
+    array = np.asarray(errors, dtype=float)
+    sigma_values = np.broadcast_to(np.asarray(sigma, dtype=float), (array.ndim,))
+    if not np.any(sigma_values > 0.0):
+        return array.copy()
+    finite = np.isfinite(array)
+    denominator = gaussian_filter(
+        finite.astype(float),
+        sigma=sigma_values,
+        mode="constant",
+        cval=0.0,
+    )
+    propagated_variance = np.where(finite, np.square(array), 0.0)
+    for axis, width in enumerate(sigma_values):
+        if width <= 0.0:
+            continue
+        radius = int(4.0 * float(width) + 0.5)
+        positions = np.arange(-radius, radius + 1, dtype=float)
+        kernel = np.exp(-0.5 * np.square(positions / float(width)))
+        kernel /= np.sum(kernel)
+        propagated_variance = convolve1d(
+            propagated_variance,
+            np.square(kernel),
+            axis=axis,
+            mode="constant",
+            cval=0.0,
+        )
+    with np.errstate(divide="ignore", invalid="ignore"):
+        uncertainty = np.sqrt(propagated_variance) / denominator
+    return np.where(
+        finite & (denominator > np.finfo(float).eps),
+        uncertainty,
+        np.nan,
+    )
 
 
 def smooth_mdhisto_view(
@@ -2379,5 +2427,8 @@ def smooth_mdhisto_view(
         array = np.asarray(values)
         if name in excluded or array.shape != reference.shape or array.dtype == bool:
             continue
-        result[name] = gaussian_smooth_nan(array, sigma)
+        if name == "errors":
+            result[name] = gaussian_smooth_uncertainty(array, sigma)
+        else:
+            result[name] = gaussian_smooth_nan(array, sigma)
     return result

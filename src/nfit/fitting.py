@@ -391,13 +391,7 @@ class OptimizationConfig:
 
 @dataclass(frozen=True)
 class SamplerConfig:
-    """Settings placeholder for uncertainty sampling.
-
-    The current package defines the configuration and result containers so
-    scripts can be structured now. A concrete MCMC backend will be wired in
-    once we choose an implementation such as emcee, PyMC, NumPyro, or a custom
-    sampler.
-    """
+    """Settings for posterior sampling with the optional emcee backend."""
 
     method: str = "emcee"
     n_walkers: int | None = None

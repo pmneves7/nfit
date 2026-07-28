@@ -28,7 +28,7 @@ def generate_bragg_peaks(
 
     import gemmi
 
-    data = _bragg_volume(data)
+    data = bragg_volume(data)
     vectors = physical_axis_vectors(data)[:, :3]
     if data.signal.ndim != 3 or abs(float(np.linalg.det(vectors))) <= 1e-12:
         raise ValueError("automatic peak generation requires three independent HKL projections")
@@ -92,7 +92,7 @@ def integrate_bragg_peaks(
 ) -> PointListData:
     """Integrate axis-aligned HKL boxes with optional surrounding shell background."""
 
-    data = _bragg_volume(data, energy_min_meV, energy_max_meV)
+    data = bragg_volume(data, energy_min_meV, energy_max_meV)
     if data.signal.ndim != 3 or len([axis for axis in data.axes if axis.kind == "momentum"]) != 3:
         raise ValueError("Bragg box integration requires a three-dimensional momentum histogram")
     semantics = signal_semantics(data)
@@ -734,7 +734,7 @@ def _elastic_reduce(data: MDHistoData, lower: float, upper: float) -> MDHistoDat
     return MDHistoData(axes, signal, errors, coverage <= 0, np.where(coverage > 0, 1.0, 0.0), coordinate_system=data.coordinate_system, visual_normalization=data.visual_normalization, metadata=metadata)
 
 
-def _bragg_volume(
+def bragg_volume(
     data: MDHistoData,
     energy_min_meV: float | None = None,
     energy_max_meV: float | None = None,

@@ -6,7 +6,7 @@ transfer, independently of the originating instrument or file layout.
 
 The package provides:
 
-- native MDHisto, MDEvent, and raw direct-geometry NeXus workflows;
+- native MDHisto, MDEvent, and compatible direct-geometry spectrometer workflows;
 - powder-cut, MPMS magnetization, PPMS heat-capacity, and tabular imports;
 - masking, symmetry-aware rebinning, backgrounds, and non-destructive analyses;
 - relaxational, MMP, and Heisenberg-RPA spin-fluctuation models;

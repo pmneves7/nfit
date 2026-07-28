@@ -68,6 +68,29 @@ def test_powder_background_projects_onto_hkle_using_lattice_metadata():
     np.testing.assert_allclose(result.errors, np.sqrt(2.0))
 
 
+def test_linear_background_interpolation_uses_squared_uncertainty_weights():
+    target = MDHistoData(
+        axes=(
+            MDHistoAxis("|Q|", np.array([1.0, 2.0]), "1/angstrom", "momentum"),
+            MDHistoAxis("DeltaE", np.array([-1.0, 0.0]), "meV", "energy"),
+        ),
+        signal=np.array([[10.0]]),
+        errors=np.array([[0.0]]),
+        mask=np.zeros((1, 1), dtype=bool),
+        num_events=np.ones((1, 1)),
+        metadata={"signal_semantics": "density"},
+    )
+    background = _powder(
+        [[1.0, 1.0], [1.0, 1.0]],
+        np.ones((2, 2)),
+    )
+
+    result = subtract_powder_background(target, background, interpolation="linear")
+
+    assert result.signal.item() == 9.0
+    assert result.errors.item() == 0.5
+
+
 def test_background_specs_round_trip_and_relink_by_dataset_id():
     source = DatasetEntry(
         "Powder background",

@@ -2,13 +2,14 @@
 
 `nfit` analyzes magnetic neutron-scattering and related bulk measurements in
 physical coordinates such as `H`, `K`, `L`, `|Q|`, and energy transfer. It
-supports reduced MDHisto data, file-backed MDEvent and raw direct-geometry
-events, powder cuts, magnetization, heat capacity, and general point tables.
+supports reduced MDHisto data, file-backed MDEvent and compatible
+direct-geometry spectrometer events, powder cuts, magnetization, heat capacity,
+and general point tables.
 
 nfit was authored by Paul M. Neves (Johns Hopkins University,
 pneves1@jhu.edu) with use of LLM coding tools.
 
-Current package version: 0.20.14.
+Current package version: 0.21.0.
 
 Start with [Getting started](getting_started.md), then use
 [GUI workflows](gui_workflows.md) for interactive work or the

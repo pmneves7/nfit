@@ -61,13 +61,12 @@ class EnergyGaussianResolution:
         sorted_indices = np.asarray(indices, dtype=int)[order]
         target_e = data.E[sorted_indices]
 
-        if target_e.size < 2:
-            values = np.asarray(model(_subset_point_data(data, sorted_indices), params), dtype=float)
-            return values[np.argsort(order)]
-
         target_fwhm = self.fwhm_values(target_e, params)
         max_sigma = float(np.max(_sigma_from_fwhm(target_fwhm)))
-        step = _dense_energy_step(target_e, self.oversampling)
+        if target_e.size < 2:
+            step = max_sigma / self.oversampling
+        else:
+            step = _dense_energy_step(target_e, self.oversampling)
         dense_e = np.arange(
             float(target_e[0] - self.tail_sigma * max_sigma),
             float(target_e[-1] + self.tail_sigma * max_sigma + 0.5 * step),

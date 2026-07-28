@@ -285,7 +285,7 @@ def test_constraint_requires_global_mode():
 
 def test_applies_to_and_data_type_gating_skip_datasets():
     assert model_supports_data_type("constant_background", "magnetization")
-    assert not model_supports_data_type("single_q_paramagnon", "magnetization")
+    assert not model_supports_data_type("mmp_relaxational", "magnetization")
     only_b = _constant_component(applies_to=["b"])
     compiled = compile_fit_problem(
         [only_b],
@@ -298,25 +298,47 @@ def test_applies_to_and_data_type_gating_skip_datasets():
 
 
 def test_component_matching_no_dataset_emits_no_parameters():
-    paramagnon = ModelComponentSpec(
-        name="pm",
-        type="single_q_paramagnon",
+    mmp = ModelComponentSpec(
+        name="mmp",
+        type="mmp_relaxational",
         parameters={
-            "amplitude": 1.0,
-            "q0_h": 0.0,
+            "scale": 1.0,
+            "chi_pk": 1.0,
+            "xi": 1.0,
+            "omega_sf": 1.0,
+            "q0_h": 0.5,
             "q0_k": 0.0,
             "q0_l": 0.0,
-            "kappa": 1.0,
-            "omega_sf": 1.0,
         },
-        fit_parameters={"amplitude": True},
+        fit_parameters={"chi_pk": True},
     )
     compiled = compile_fit_problem(
-        [paramagnon, _constant_component()],
+        [mmp, _constant_component()],
         [FitDatasetInput("m", _points(1.0), data_type="magnetization")],
     )
     names = [spec.name for spec in compiled.problem.parameter_specs]
     assert names == ["bg.constant"]
+
+
+def test_physical_model_parameters_receive_default_nonnegative_bounds():
+    component = ModelComponentSpec(
+        name="local",
+        type="local_relaxational",
+        parameters={"scale": 1.0, "chi_loc": 1.0, "gamma": 2.0},
+        fit_parameters={"scale": True, "chi_loc": True, "gamma": True},
+    )
+    compiled = compile_fit_problem(
+        [component],
+        [FitDatasetInput("scan", _points(1.0))],
+    )
+
+    assert {
+        spec.name: spec.min for spec in compiled.problem.parameter_specs
+    } == {
+        "local.scale": 0.0,
+        "local.chi_loc": 0.0,
+        "local.gamma": 0.0,
+    }
 
 
 def test_disabled_component_is_ignored():
@@ -1959,7 +1981,7 @@ def test_bulk_q0_eigensystem_is_reused_across_closure_states(monkeypatch):
 
 
 def test_magnetization_absolute_normalization():
-    """Absolute mode multiplies by the emu/mol constant, moles, and Oe/T."""
+    """Absolute mode includes all magnetic sites in each formula unit."""
     from nfit.fitting import evaluate_problem_model
     from nfit.sum_rules import EMU_PER_MOL_PER_MODEL_CHI
 
@@ -1978,13 +2000,13 @@ def test_magnetization_absolute_normalization():
         {spec.name: spec.value for spec in compiled.problem.parameter_specs},
     )
     moles = (10.0 / 1000.0) / 200.0
-    factor = EMU_PER_MOL_PER_MODEL_CHI * moles * 1.0e4 / 2.0
+    factor = EMU_PER_MOL_PER_MODEL_CHI * moles * 1.0e4 * 2.0
     expected = 1.0 * factor * (2.0**2) * 0.3 * fields
     np.testing.assert_allclose(values, expected, rtol=1e-9)
 
 
 def test_magnetization_absolute_normalization_can_return_mu_b_per_formula_unit():
-    """Formula-unit output removes the sample amount and divides by one mu_B."""
+    """Formula-unit output includes every magnetic site and divides by one mu_B."""
     from nfit.fitting import evaluate_problem_model
     from nfit.sum_rules import EMU_PER_MOL_PER_MODEL_CHI, EMU_PER_MOL_PER_MU_B
 
@@ -2008,7 +2030,7 @@ def test_magnetization_absolute_normalization_can_return_mu_b_per_formula_unit()
         compiled.problem, "m",
         {spec.name: spec.value for spec in compiled.problem.parameter_specs},
     )
-    factor = EMU_PER_MOL_PER_MODEL_CHI * 1.0e4 / (2.0 * EMU_PER_MOL_PER_MU_B)
+    factor = EMU_PER_MOL_PER_MODEL_CHI * 1.0e4 * 2.0 / EMU_PER_MOL_PER_MU_B
     expected = factor * (2.0**2) * 0.3 * fields
     np.testing.assert_allclose(values, expected, rtol=1e-9)
 
@@ -2036,7 +2058,7 @@ def test_absolute_bulk_susceptibility_prediction_does_not_multiply_by_field():
         compiled.problem, "m",
         {spec.name: spec.value for spec in compiled.problem.parameter_specs},
     )
-    expected = EMU_PER_MOL_PER_MODEL_CHI / 2.0 * (2.0**2) * 0.3
+    expected = EMU_PER_MOL_PER_MODEL_CHI * 2.0 * (2.0**2) * 0.3
     np.testing.assert_allclose(values, expected, rtol=1e-9)
 
 

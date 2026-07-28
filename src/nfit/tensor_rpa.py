@@ -109,9 +109,8 @@ def build_tensor_structure(
     # Heisenberg (isotropic) part: one parameter per orbit, tensor = identity.
     for orbit in orbits:
         label = str(orbit["label"])
-        phases = geometry.bond_phases[label]  # (n_q, N, N), Hermitian already
         # Recover per-bond phase from the orbit definition to keep the tensor
-        # blocks bond-resolved (identity tensor -> the sum reproduces `phases`).
+        # blocks bond-resolved; their sum reproduces the scalar bond phases.
         block_terms: list[_BlockTerm] = []
         for bond in orbit["bonds"]:
             i = int(bond["site_i"])
@@ -346,7 +345,6 @@ def zeeman_cartesian_propagator(
     # X0_frame = diag_perp (xx,yy) + off_perp (xy antisymmetric) + x_par (zz).
     # Build directly in Cartesian: X0 = a (I - zz^T) + s (zz^T) + g [xy antisym],
     # where the antisymmetric transverse part is off_perp * (x y^T - y x^T).
-    n = e.shape[0]
     identity = np.eye(3)
     zz = np.outer(z_axis, z_axis)
     antisym = np.outer(x_axis, y_axis) - np.outer(y_axis, x_axis)
@@ -365,8 +363,8 @@ def cartesian_qhat_per_point(
 
     ``rlu_to_inv_angstrom`` is the ``3x3`` matrix with reciprocal-lattice basis
     vectors as columns (``metadata["rlu_to_inv_angstrom_matrix"]``). Points at
-    ``Q = 0`` get a zero vector (their polarization factor is then the isotropic
-    average, harmless since the response there is finite).
+    ``Q = 0`` get a zero vector; :func:`_unpolarized_weight` recognizes those
+    rows and applies the isotropic directional average.
     """
 
     if geometry.unique_hkl is None:
@@ -382,7 +380,10 @@ def _unpolarized_weight(q_hat: FloatArray) -> FloatArray:
 
     identity = np.eye(3)[None, :, :]
     outer = q_hat[:, :, None] * q_hat[:, None, :]
-    return identity - outer
+    weight = identity - outer
+    zero_q = np.linalg.norm(q_hat, axis=1) <= np.finfo(float).eps
+    weight[zero_q] = (2.0 / 3.0) * identity
+    return weight
 
 
 _ZEEMAN_SOLVE_BLOCK = 200_000

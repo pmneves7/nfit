@@ -106,6 +106,177 @@ def test_absolute_ins_conversion_returns_chipp_with_explicit_metadata():
     assert converted.metadata["spectral_convention"]["absolute_scale"] is True
 
 
+def test_absolute_mbarn_analysis_conversion_honors_spin_g_and_kf_over_ki():
+    axes = (
+        MDHistoAxis("Q", np.array([0.0, 1.0]), "1/angstrom", "momentum"),
+        MDHistoAxis("DeltaE", np.array([1.0, 3.0]), "meV", "energy"),
+    )
+    original = np.array([[1.7]])
+    energy = np.array([[2.0]])
+    from nfit.cross_section import cross_section_from_chipp, kf_over_ki
+
+    ratio = kf_over_ki(energy, incident_energy_meV=10.0)
+    cross_mbarn = (
+        cross_section_from_chipp(
+            original,
+            energy,
+            25.0,
+            form_factor_sq=0.8,
+            polarization=2.0,
+            kf_ki=ratio,
+            moment_unit="spin_squared",
+            g_factor=2.5,
+        )
+        * 1000.0
+    )
+    data = MDHistoData(
+        axes,
+        cross_mbarn,
+        cross_mbarn * 0.1,
+        np.zeros((1, 1), bool),
+        np.ones((1, 1)),
+    )
+    convention = SpectralConvention(
+        "cross_section",
+        "mbarn/(sr meV)",
+        "per_formula_unit",
+        2.0,
+        "spin_squared",
+        2.5,
+        "included",
+        "included",
+        "included",
+        "included",
+        True,
+        incident_energy_meV=10.0,
+    )
+
+    converted = convert_spectral_representation(
+        data,
+        convention=convention,
+        target_representation="chi_double_prime",
+        temperature_K=25.0,
+        form_factor_sq=0.8,
+        polarization=2.0,
+    )
+
+    np.testing.assert_allclose(converted.signal, original)
+    assert converted.metadata["signal_unit"] == "spin^2/meV"
+
+
+def test_spin_sqw_analysis_conversion_applies_g_squared_and_kinematics():
+    axes = (
+        MDHistoAxis("Q", np.array([0.0, 1.0]), "1/angstrom", "momentum"),
+        MDHistoAxis("DeltaE", np.array([1.0, 3.0]), "meV", "energy"),
+    )
+    signal = np.array([[3.0]])
+    data = MDHistoData(
+        axes,
+        signal,
+        signal * 0.1,
+        np.zeros((1, 1), bool),
+        np.ones((1, 1)),
+    )
+    convention = SpectralConvention(
+        "s_qw",
+        "spin^2/meV",
+        "per_magnetic_ion",
+        1.0,
+        "spin_squared",
+        2.5,
+        "removed",
+        "removed",
+        "included",
+        "included",
+        True,
+        incident_energy_meV=10.0,
+    )
+    converted = convert_spectral_representation(
+        data,
+        convention=convention,
+        target_representation="cross_section",
+        temperature_K=25.0,
+        form_factor_sq=0.8,
+        polarization=2.0,
+    )
+    from nfit.cross_section import (
+        MAGNETIC_CROSS_SECTION_BARN_PER_MU_B_SQ,
+        kf_over_ki,
+    )
+
+    expected = (
+        kf_over_ki(np.array([[2.0]]), incident_energy_meV=10.0)
+        * MAGNETIC_CROSS_SECTION_BARN_PER_MU_B_SQ
+        * 0.8
+        * 2.0
+        * 2.5**2
+        * signal
+    )
+    np.testing.assert_allclose(converted.signal, expected)
+
+
+def test_spectral_reduction_converts_mbarn_spin_cross_section_before_integrating():
+    axes = (
+        MDHistoAxis("Q", np.array([0.0, 1.0]), "1/angstrom", "momentum"),
+        MDHistoAxis("DeltaE", np.array([1.0, 3.0]), "meV", "energy"),
+    )
+    original = np.array([[1.7]])
+    energy = np.array([[2.0]])
+    from nfit.cross_section import cross_section_from_chipp, kf_over_ki
+
+    ratio = kf_over_ki(energy, incident_energy_meV=10.0)
+    cross_mbarn = (
+        cross_section_from_chipp(
+            original,
+            energy,
+            25.0,
+            form_factor_sq=0.8,
+            polarization=2.0,
+            kf_ki=ratio,
+            moment_unit="spin_squared",
+            g_factor=2.5,
+        )
+        * 1000.0
+    )
+    data = MDHistoData(
+        axes,
+        cross_mbarn,
+        cross_mbarn * 0.1,
+        np.zeros((1, 1), bool),
+        np.ones((1, 1)),
+    )
+    convention = SpectralConvention(
+        "cross_section",
+        "mbarn/(sr meV)",
+        "per_magnetic_ion",
+        1.0,
+        "spin_squared",
+        2.5,
+        "included",
+        "included",
+        "included",
+        "included",
+        True,
+        incident_energy_meV=10.0,
+    )
+
+    output = spectral_energy_reduce(
+        data,
+        kernel="qfi",
+        convention=convention,
+        temperature_K=25.0,
+        energy_min_meV=1.0,
+        energy_max_meV=3.0,
+        form_factor_sq=0.8,
+        polarization=2.0,
+    )
+    expected = spectral_kernel("qfi", energy, 25.0).item() * original.item() * 2.0
+
+    assert output.data.column("Quantum Fisher information")[0] == pytest.approx(
+        expected
+    )
+
+
 def test_arbitrary_ins_view_exposes_cross_section_and_chipp_channels():
     axes = (
         MDHistoAxis("Q", np.array([0.0, 1.0]), "1/angstrom", "momentum"),

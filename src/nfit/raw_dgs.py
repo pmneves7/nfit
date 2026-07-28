@@ -1,8 +1,10 @@
-"""Streaming direct-geometry TOF event reduction for raw NeXus files.
+"""Streaming TOF reduction for compatible direct-geometry spectrometer NeXus files.
 
 The implementation deliberately reads one bank (and then one event chunk) at a
-time.  A raw SNS run can therefore be combined into an HKLE histogram without
-materialising its event table, which is important for multi-run SEQUOIA data.
+time. A compatible run can therefore be combined into an HKLE histogram without
+materialising its event table. This is an adapter for direct-geometry
+spectrometers with the expected NeXus layout, not a generic reducer for every
+direct-geometry NeXus file.
 """
 
 from __future__ import annotations
@@ -11,15 +13,20 @@ import ast
 import math
 import re
 import xml.etree.ElementTree as ET
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 
 from .mdevent import (
-    ENERGY_TO_K2, FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER,
-    _MDEVENT_NUMBA, _accumulate_detector_trajectory, _flat_bin_indices, _symmetry_matrices,
+    _MDEVENT_NUMBA,
+    ENERGY_TO_K2,
+    FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER,
+    _accumulate_detector_trajectory,
+    _flat_bin_indices,
+    _symmetry_matrices,
     load_detector_normalization,
 )
 from .mdhisto import MDHistoAxis, MDHistoData
@@ -57,6 +64,7 @@ class RawDGSRunInfo:
 def is_raw_dgs_nexus_file(path: str | Path) -> bool:
     try:
         import h5py
+
         with h5py.File(path, "r") as handle:
             entry = handle.get("entry")
             return entry is not None and any(
@@ -75,7 +83,8 @@ def inspect_raw_dgs_run(path: str | Path) -> RawDGSRunInfo:
     with h5py.File(source, "r") as handle:
         entry = handle["entry"]
         event_count = sum(
-            int(group["event_id"].shape[0]) for name, group in entry.items()
+            int(group["event_id"].shape[0])
+            for name, group in entry.items()
             if name.startswith("bank") and name.endswith("_events") and "event_id" in group
         )
         requested_ei = _log_value(entry, ("EnergyRequest", "Ei", "BL17:Det:TH:BL:Ei"), 0.0)
@@ -96,8 +105,11 @@ def inspect_raw_dgs_run(path: str | Path) -> RawDGSRunInfo:
 
 
 def raw_dgs_dataset_group(
-    paths: Iterable[str | Path], *, normalization_path: str | Path | None = None,
-    mask_path: str | Path | None = None, name: str | None = None,
+    paths: Iterable[str | Path],
+    *,
+    normalization_path: str | Path | None = None,
+    mask_path: str | Path | None = None,
+    name: str | None = None,
     progress_callback: Any | None = None,
 ) -> DatasetGroup:
     """Create lightweight raw-run entries sharing reduction and sample setup."""
@@ -122,28 +134,54 @@ def raw_dgs_dataset_group(
     }
     datasets = []
     for index, info in enumerate(infos, start=1):
-        datasets.append(DatasetEntry(
-            name=f"run {info.run_number}", data=None, kind="raw_dgs_nexus",
-            data_type="single_crystal_inelastic",
-            metadata={"source_file": str(info.path), "run_number": info.run_number,
-                      "event_count": info.event_count, "incident_energy": info.incident_energy,
-                      "proton_charge": info.proton_charge, "omega": info.omega,
-                      "phi": info.phi, "chi": info.chi, "l1": info.l1,
-                      "t0": info.t0,
-                      "import_status": "pending"},
-        ))
+        datasets.append(
+            DatasetEntry(
+                name=f"run {info.run_number}",
+                data=None,
+                kind="raw_dgs_nexus",
+                data_type="single_crystal_inelastic",
+                metadata={
+                    "source_file": str(info.path),
+                    "run_number": info.run_number,
+                    "event_count": info.event_count,
+                    "incident_energy": info.incident_energy,
+                    "proton_charge": info.proton_charge,
+                    "omega": info.omega,
+                    "phi": info.phi,
+                    "chi": info.chi,
+                    "l1": info.l1,
+                    "t0": info.t0,
+                    "import_status": "pending",
+                },
+            )
+        )
         if progress_callback is not None:
-            progress_callback({"stage": "raw_dgs_import", "iteration": index, "total": len(infos),
-                               "message": f"reading raw run metadata {index}/{len(infos)}"})
-    return DatasetGroup(name=name or first.path.stem, datasets=datasets, metadata={"raw_dgs": shared})
+            progress_callback(
+                {
+                    "stage": "raw_dgs_import",
+                    "iteration": index,
+                    "total": len(infos),
+                    "message": f"reading raw run metadata {index}/{len(infos)}",
+                }
+            )
+    return DatasetGroup(
+        name=name or first.path.stem, datasets=datasets, metadata={"raw_dgs": shared}
+    )
 
 
 def bin_raw_dgs_group(
-    group: DatasetGroup, *, lower: Iterable[float], upper: Iterable[float],
-    num_bins: Iterable[int], step_size: Iterable[float] | None = None,
-    datasets: Iterable[DatasetEntry] | None = None, vectors: Iterable[Iterable[float]] | None = None,
-    axis_names: Iterable[str] | None = None, max_batch_bytes: int = 192 * 1024 * 1024,
-    progress_callback: Any | None = None, symmetry_operations: Iterable[Iterable[Iterable[float]]] | None = None,
+    group: DatasetGroup,
+    *,
+    lower: Iterable[float],
+    upper: Iterable[float],
+    num_bins: Iterable[int],
+    step_size: Iterable[float] | None = None,
+    datasets: Iterable[DatasetEntry] | None = None,
+    vectors: Iterable[Iterable[float]] | None = None,
+    axis_names: Iterable[str] | None = None,
+    max_batch_bytes: int = 192 * 1024 * 1024,
+    progress_callback: Any | None = None,
+    symmetry_operations: Iterable[Iterable[Iterable[float]]] | None = None,
 ) -> MDHistoData:
     """Reduce raw direct-geometry event banks into an HKLE histogram.
 
@@ -157,8 +195,10 @@ def bin_raw_dgs_group(
 
     config = group.metadata["raw_dgs"]
     selected = list(group.datasets if datasets is None else datasets)
-    lo, hi, bins = (np.asarray(tuple(values), dtype=dtype) for values, dtype in
-                    ((lower, float), (upper, float), (num_bins, int)))
+    lo, hi, bins = (
+        np.asarray(tuple(values), dtype=dtype)
+        for values, dtype in ((lower, float), (upper, float), (num_bins, int))
+    )
     if lo.shape != (4,) or hi.shape != (4,) or bins.shape != (4,) or np.any(bins <= 0):
         raise ValueError("raw direct-geometry HKLE binning requires four positive bin counts")
     if step_size is None:
@@ -167,9 +207,13 @@ def bin_raw_dgs_group(
         steps = np.asarray(tuple(step_size), dtype=float)
         if steps.shape != (4,) or np.any(steps <= 0.0):
             raise ValueError("raw direct-geometry step sizes must contain four positive values")
-        edges = [np.append(np.arange(a, b, step), b) for a, b, step in zip(lo, hi, steps, strict=True)]
+        edges = [
+            np.append(np.arange(a, b, step), b) for a, b, step in zip(lo, hi, steps, strict=True)
+        ]
     shape = tuple(edge.size - 1 for edge in edges)
-    basis = np.eye(4) if vectors is None else np.asarray(tuple(tuple(v) for v in vectors), dtype=float)
+    basis = (
+        np.eye(4) if vectors is None else np.asarray(tuple(tuple(v) for v in vectors), dtype=float)
+    )
     if basis.shape != (4, 4) or np.linalg.matrix_rank(basis) != 4:
         raise ValueError("raw direct-geometry coordinate axes must form an invertible 4D basis")
     if np.any(basis[:3, 3]) or np.any(basis[3, :3]) or basis[3, 3] != 1.0:
@@ -177,7 +221,9 @@ def bin_raw_dgs_group(
     basis_inverse = np.linalg.inv(basis)
     symmetry = _symmetry_matrices(symmetry_operations)
     names = tuple(axis_names or (_axis_name(row, index) for index, row in enumerate(basis)))
-    data_sum = np.zeros(shape); variance_sum = np.zeros(shape); event_count = np.zeros(shape)
+    data_sum = np.zeros(shape)
+    variance_sum = np.zeros(shape)
+    event_count = np.zeros(shape)
     # Shiver's GenerateDGSMDE uses NormFilename only to construct a detector
     # mask. Its MakeSlice call does not pass this workspace to MDNorm as a
     # SolidAngleWorkspace, so matching that path must not weight by vanadium.
@@ -198,69 +244,121 @@ def bin_raw_dgs_group(
         gonio = _goniometer(info.omega, info.phi, info.chi)
         rows = max(1, int(max_batch_bytes) // 96)
         import h5py
+
         with h5py.File(source, "r") as handle:
-            pulse_keep = _good_pulses(handle["entry"], float(config.get("bad_pulse_threshold", 0.0)))
+            pulse_keep = _good_pulses(
+                handle["entry"], float(config.get("bad_pulse_threshold", 0.0))
+            )
             for bank_name, bank in handle["entry"].items():
-                if not (bank_name.startswith("bank") and bank_name.endswith("_events") and "event_id" in bank):
+                if not (
+                    bank_name.startswith("bank")
+                    and bank_name.endswith("_events")
+                    and "event_id" in bank
+                ):
                     continue
-                ids = bank["event_id"]; tofs = bank["event_time_offset"]
-                event_index = np.asarray(bank["event_index"], dtype=np.int64) if pulse_keep is not None else None
+                ids = bank["event_id"]
+                tofs = bank["event_time_offset"]
+                event_index = (
+                    np.asarray(bank["event_index"], dtype=np.int64)
+                    if pulse_keep is not None
+                    else None
+                )
                 for start in range(0, ids.shape[0], rows):
                     stop = min(start + rows, ids.shape[0])
                     event_ids = np.asarray(ids[start:stop], dtype=np.int64)
                     event_tof = np.asarray(tofs[start:stop], dtype=float) - t0
                     positions, he3_exponents, valid = geometry.event_geometry_for_ids(event_ids)
                     if pulse_keep is not None:
-                        pulse_index = np.searchsorted(event_index, np.arange(start, stop), side="right") - 1
+                        pulse_index = (
+                            np.searchsorted(event_index, np.arange(start, stop), side="right") - 1
+                        )
                         valid &= pulse_keep[np.clip(pulse_index, 0, pulse_keep.size - 1)]
                     if detector_norm is not None:
                         valid &= detector_norm.value_for_ids(event_ids) > 0.0
                     if detector_mask is not None:
                         valid &= detector_mask.value_for_ids(event_ids) > 0.0
                     if np.any(valid):
-                        positions = positions[valid]; he3_exponents = he3_exponents[valid]
-                        ids_valid = event_ids[valid]; tof = event_tof[valid]
+                        positions = positions[valid]
+                        he3_exponents = he3_exponents[valid]
+                        ids_valid = event_ids[valid]
+                        tof = event_tof[valid]
                         l2 = np.linalg.norm(positions, axis=1)
                         final_tof = tof - TOF_US_PER_M_SQRT_MEV * info.l1 / math.sqrt(ei)
                         good = final_tof > 0.0
-                        positions = positions[good]; ids_valid = ids_valid[good]; l2 = l2[good]
-                        final_tof = final_tof[good]; he3_exponents = he3_exponents[good]
+                        positions = positions[good]
+                        ids_valid = ids_valid[good]
+                        l2 = l2[good]
+                        final_tof = final_tof[good]
+                        he3_exponents = he3_exponents[good]
                         if final_tof.size:
                             ef = (TOF_US_PER_M_SQRT_MEV * l2 / final_tof) ** 2
                             energy = ei - ef
                             kf = np.sqrt(np.maximum(ef, 0.0) / ENERGY_TO_K2)
                             energy_keep = (energy >= -0.95 * ei) & (energy <= 0.95 * ei)
-                            positions = positions[energy_keep]; ids_valid = ids_valid[energy_keep]
-                            energy = energy[energy_keep]; kf = kf[energy_keep]; l2 = l2[energy_keep]
+                            positions = positions[energy_keep]
+                            ids_valid = ids_valid[energy_keep]
+                            energy = energy[energy_keep]
+                            kf = kf[energy_keep]
+                            l2 = l2[energy_keep]
                             he3_exponents = he3_exponents[energy_keep]
                             if not energy.size:
                                 processed += stop - start
                                 continue
                             direction = positions / l2[:, None]
-                            q_lab = np.column_stack((-kf * direction[:, 0], -kf * direction[:, 1],
-                                                     math.sqrt(ei / ENERGY_TO_K2) - kf * direction[:, 2]))
+                            q_lab = np.column_stack(
+                                (
+                                    -kf * direction[:, 0],
+                                    -kf * direction[:, 1],
+                                    math.sqrt(ei / ENERGY_TO_K2) - kf * direction[:, 2],
+                                )
+                            )
                             q_sample = q_lab @ gonio
                             hkl = q_sample @ hkl_transform.T
                             for operation in symmetry:
-                                coords = np.column_stack((hkl @ operation.T, energy)) @ basis_inverse
+                                coords = (
+                                    np.column_stack((hkl @ operation.T, energy)) @ basis_inverse
+                                )
                                 flat = _flat_bin_indices(coords, edges, shape)
                                 keep = flat >= 0
                                 if np.any(keep):
                                     weights = np.ones(ids_valid.size)
                                     if config.get("he3_detector_efficiency_correction", True):
-                                        weights *= _he3_tube_efficiency_correction(kf, he3_exponents)
+                                        weights *= _he3_tube_efficiency_correction(
+                                            kf, he3_exponents
+                                        )
                                     if _use_ki_kf_correction(config):
                                         weights *= math.sqrt(ei / ENERGY_TO_K2) / kf
                                     ravel = data_sum.ravel()
-                                    ravel += np.bincount(flat[keep], weights=weights[keep], minlength=ravel.size)
-                                    variance_sum.ravel()[:] += np.bincount(flat[keep], weights=weights[keep] ** 2, minlength=variance_sum.size)
-                                    event_count.ravel()[:] += np.bincount(flat[keep], minlength=event_count.size)
+                                    ravel += np.bincount(
+                                        flat[keep], weights=weights[keep], minlength=ravel.size
+                                    )
+                                    variance_sum.ravel()[:] += np.bincount(
+                                        flat[keep],
+                                        weights=weights[keep] ** 2,
+                                        minlength=variance_sum.size,
+                                    )
+                                    event_count.ravel()[:] += np.bincount(
+                                        flat[keep], minlength=event_count.size
+                                    )
                     processed += stop - start
                     if progress_callback is not None:
-                        progress_callback({"stage": "raw_dgs_events", "iteration": processed, "total": total,
-                                           "message": f"reducing raw events {processed}/{total}"})
+                        progress_callback(
+                            {
+                                "stage": "raw_dgs_events",
+                                "iteration": processed,
+                                "total": total,
+                                "message": f"reducing raw events {processed}/{total}",
+                            }
+                        )
     normalization = _trajectory_normalization(
-        group, selected, edges, shape, basis_inverse, detector_norm, detector_mask, symmetry,
+        group,
+        selected,
+        edges,
+        shape,
+        basis_inverse,
+        detector_norm,
+        detector_mask,
+        symmetry,
     )
     covered = normalization > 0.0
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -269,77 +367,136 @@ def bin_raw_dgs_group(
     total_events = float(event_count.sum())
     rms = float(np.sqrt(variance_sum.sum() / total_events)) if total_events else 1.0
     zeros = covered & (event_count == 0)
-    errors[zeros] = (
-        FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER
-        * rms
-        / normalization[zeros]
-    )
+    errors[zeros] = FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER * rms / normalization[zeros]
     mask = ~covered
-    axes = tuple(MDHistoAxis(name, edge, "meV" if index == 3 else "r.l.u.",
-                             "energy" if index == 3 else "momentum", frame="General Frame" if index == 3 else "HKL")
-                 for index, (name, edge) in enumerate(zip(names, edges, strict=True)))
-    return MDHistoData(axes=axes, signal=signal, errors=errors, mask=mask, num_events=event_count,
-                       metadata={"raw_dgs": config, "rebin": {"vectors": basis.tolist()},
-                                 "signal_semantics": "density",
-                                 "signal_semantics_source": "nfit_raw_tof_reduction",
-                                 "normalization_denominator": normalization,
-                                 "zero_event_bins_are_measured": True,
-                                 "zero_count_error_model": "feldman_cousins_68_percent_upper_limit_scaled_by_rms_event_weight",
-                                 "event_weight_rms": rms,
-                                 "symmetry_operations_hkl": [operation.tolist() for operation in symmetry],
-                                 "ki_kf_normalization": _use_ki_kf_correction(config),
-                                 "he3_detector_efficiency_correction": bool(config.get("he3_detector_efficiency_correction", True)),
-                                 "proton_charge_units": "microampere-hour (retained raw pulse charge in picocoulombs divided by 3.6e9)"})
+    axes = tuple(
+        MDHistoAxis(
+            name,
+            edge,
+            "meV" if index == 3 else "r.l.u.",
+            "energy" if index == 3 else "momentum",
+            frame="General Frame" if index == 3 else "HKL",
+        )
+        for index, (name, edge) in enumerate(zip(names, edges, strict=True))
+    )
+    return MDHistoData(
+        axes=axes,
+        signal=signal,
+        errors=errors,
+        mask=mask,
+        num_events=event_count,
+        metadata={
+            "raw_dgs": config,
+            "rebin": {"vectors": basis.tolist()},
+            "signal_semantics": "density",
+            "signal_semantics_source": "nfit_raw_tof_reduction",
+            "normalization_denominator": normalization,
+            "zero_event_bins_are_measured": True,
+            "zero_count_error_model": "feldman_cousins_68_percent_upper_limit_scaled_by_rms_event_weight",
+            "event_weight_rms": rms,
+            "symmetry_operations_hkl": [operation.tolist() for operation in symmetry],
+            "ki_kf_normalization": _use_ki_kf_correction(config),
+            "he3_detector_efficiency_correction": bool(
+                config.get("he3_detector_efficiency_correction", True)
+            ),
+            "proton_charge_units": "microampere-hour (retained raw pulse charge in picocoulombs divided by 3.6e9)",
+        },
+    )
 
 
 def _trajectory_normalization(
-    group, datasets, edges, shape, basis_inverse, detector_norm, detector_mask, symmetry_operations=None,
+    group,
+    datasets,
+    edges,
+    shape,
+    basis_inverse,
+    detector_norm,
+    detector_mask,
+    symmetry_operations=None,
 ):
-    """Native MDNorm-style detector trajectories for raw direct-geometry runs."""
+    """Native MDNorm-style detector trajectories for compatible direct-geometry runs."""
     config = group.metadata["raw_dgs"]
     result = np.zeros(shape)
     symmetry = _symmetry_matrices(symmetry_operations)
     payloads = []
     detector_payload = None
+    shared_detector_geometry = True
     for dataset in datasets:
         info = inspect_raw_dgs_run(dataset.metadata["source_file"])
         geometry = _detector_geometry(info.path)
         direction = geometry.positions / np.linalg.norm(geometry.positions, axis=1)[:, None]
-        solid = np.ones(geometry.detector_ids.size) if detector_norm is None else detector_norm.value_for_ids(geometry.detector_ids)
+        solid = (
+            np.ones(geometry.detector_ids.size)
+            if detector_norm is None
+            else detector_norm.value_for_ids(geometry.detector_ids)
+        )
         if detector_mask is not None:
             solid[detector_mask.value_for_ids(geometry.detector_ids) <= 0.0] = 0.0
         ub = np.asarray(config["ub_matrix"], dtype=float)
-        canonical_inverse = np.linalg.inv(2.0 * np.pi * ub) @ _goniometer(info.omega, info.phi, info.chi).T
-        inverses = [basis_inverse[:3, :3].T @ operation @ canonical_inverse for operation in symmetry]
+        canonical_inverse = (
+            np.linalg.inv(2.0 * np.pi * ub) @ _goniometer(info.omega, info.phi, info.chi).T
+        )
+        inverses = [
+            basis_inverse[:3, :3].T @ operation @ canonical_inverse for operation in symmetry
+        ]
         ei = float(config.get("incident_energy_override") or info.incident_energy)
         import h5py
+
         with h5py.File(info.path, "r") as handle:
             charge = _retained_proton_charge_uah(
-                handle["entry"], float(config.get("bad_pulse_threshold", 95.0)),
+                handle["entry"],
+                float(config.get("bad_pulse_threshold", 95.0)),
             )
+        theta = np.arccos(np.clip(direction[:, 2], -1.0, 1.0))
+        phi = np.arctan2(direction[:, 1], direction[:, 0])
+        current_detector_payload = (geometry.detector_ids, theta, phi, solid)
         if detector_payload is None:
-            theta = np.arccos(np.clip(direction[:, 2], -1.0, 1.0))
-            phi = np.arctan2(direction[:, 1], direction[:, 0])
-            detector_payload = (theta, phi, solid)
-        payloads.extend((inverse, ei, (-0.95 * ei, 0.95 * ei), charge) for inverse in inverses)
-    if _MDEVENT_NUMBA is not None and detector_payload is not None and len(symmetry) == 1:
-        theta, phi, solid = detector_payload
+            detector_payload = current_detector_payload
+        else:
+            shared_detector_geometry &= all(
+                first.shape == current.shape and np.array_equal(first, current)
+                for first, current in zip(
+                    detector_payload,
+                    current_detector_payload,
+                    strict=True,
+                )
+            )
+        payloads.extend(
+            (inverse, ei, (-0.95 * ei, 0.95 * ei), charge, direction, solid) for inverse in inverses
+        )
+    if (
+        _MDEVENT_NUMBA is not None
+        and detector_payload is not None
+        and shared_detector_geometry
+        and len(symmetry) == 1
+    ):
+        _, theta, phi, solid = detector_payload
         flat = _MDEVENT_NUMBA.run_trajectory_normalization(
-            theta, phi, solid, np.asarray([item[0] for item in payloads]),
-            np.asarray([item[1] for item in payloads]), np.asarray([item[2] for item in payloads]),
-            np.asarray([item[3] for item in payloads]), *[np.asarray(edge) for edge in edges],
-            np.asarray(shape, dtype=np.int64), workers=1,
+            theta,
+            phi,
+            solid,
+            np.asarray([item[0] for item in payloads]),
+            np.asarray([item[1] for item in payloads]),
+            np.asarray([item[2] for item in payloads]),
+            np.asarray([item[3] for item in payloads]),
+            *[np.asarray(edge) for edge in edges],
+            np.asarray(shape, dtype=np.int64),
+            workers=1,
         )
         return np.asarray(flat).reshape(shape)
-    for inverse, ei, energy_bounds, charge in payloads:
+    for inverse, ei, energy_bounds, charge, direction, solid in payloads:
         for index in np.flatnonzero(solid > 0.0):
-            _accumulate_detector_trajectory(result, edges, inverse, direction[index], ei, energy_bounds, charge * solid[index])
+            _accumulate_detector_trajectory(
+                result, edges, inverse, direction[index], ei, energy_bounds, charge * solid[index]
+            )
     return result
 
 
 def _combined_detector_mask(config):
     paths = [config.get("normalization_file"), config.get("mask_file")]
-    masks = [load_detector_normalization(path) for path in dict.fromkeys(path for path in paths if path)]
+    masks = [
+        load_detector_normalization(path) for path in dict.fromkeys(path for path in paths if path)
+    ]
     if not masks:
         return None
     ids = np.unique(np.concatenate([mask.detector_ids for mask in masks]))
@@ -412,7 +569,8 @@ class _DetectorGeometry:
     he3_exponents: np.ndarray
 
     def event_geometry_for_ids(self, ids: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        order = np.argsort(self.detector_ids); sorted_ids = self.detector_ids[order]
+        order = np.argsort(self.detector_ids)
+        sorted_ids = self.detector_ids[order]
         found = np.searchsorted(sorted_ids, ids)
         valid = found < sorted_ids.size
         valid[valid] &= sorted_ids[found[valid]] == ids[valid]
@@ -426,6 +584,7 @@ class _DetectorGeometry:
 def _detector_geometry(path: Path) -> _DetectorGeometry:
     """Resolve detector pixels from an IDF's component/type hierarchy."""
     import h5py
+
     with h5py.File(path, "r") as handle:
         xml_data = handle["entry/instrument/instrument_xml/data"][()]
     root = ET.fromstring(xml_data.tobytes().decode())
@@ -433,14 +592,21 @@ def _detector_geometry(path: Path) -> _DetectorGeometry:
     types = {item.get("name"): item for item in root.findall(f"{namespace}type")}
     idlists = {item.get("idname"): item for item in root.findall(f"{namespace}idlist")}
     he3_parameters = _idf_he3_parameters(root, namespace)
-    ids: list[int] = []; positions: list[np.ndarray] = []; he3_exponents: list[float] = []
+    ids: list[int] = []
+    positions: list[np.ndarray] = []
+    he3_exponents: list[float] = []
     for component in root.findall(f"{namespace}component"):
         idname = component.get("idlist")
         if not idname or idname not in idlists:
             continue
         component_type = component.get("type")
         leaf_positions = _expand_type(
-            component_type, types, np.eye(3), np.zeros(3), namespace, he3_parameters,
+            component_type,
+            types,
+            np.eye(3),
+            np.zeros(3),
+            namespace,
+            he3_parameters,
             he3_parameters.get(component.get("name") or component_type),
         )
         detector_ids = _expand_idlist(idlists[idname], namespace)
@@ -452,7 +618,8 @@ def _detector_geometry(path: Path) -> _DetectorGeometry:
     if not ids:
         raise ValueError(f"{path.name} instrument XML did not define detector pixel positions")
     return _DetectorGeometry(
-        np.asarray(ids, dtype=np.int64), np.asarray(positions, dtype=float),
+        np.asarray(ids, dtype=np.int64),
+        np.asarray(positions, dtype=float),
         np.asarray(he3_exponents, dtype=float),
     )
 
@@ -473,9 +640,17 @@ def _expand_type(name, types, rotation, translation, ns, he3_parameters, inherit
                 axis, radius = _idf_detector_cylinder(types[child])
                 leaves.append((child_translation, child_rotation @ axis, radius, child_he3))
             else:
-                leaves.extend(_expand_type(
-                    child, types, child_rotation, child_translation, ns, he3_parameters, child_he3,
-                ))
+                leaves.extend(
+                    _expand_type(
+                        child,
+                        types,
+                        child_rotation,
+                        child_translation,
+                        ns,
+                        he3_parameters,
+                        child_he3,
+                    )
+                )
     return leaves
 
 
@@ -503,7 +678,11 @@ def _idf_detector_cylinder(detector_type):
     if cylinder is None:
         return np.array([0.0, 1.0, 0.0]), 0.0
     axis_element = cylinder.find("{*}axis")
-    axis = np.array([float(axis_element.get(key, 0.0)) for key in ("x", "y", "z")]) if axis_element is not None else np.array([0.0, 1.0, 0.0])
+    axis = (
+        np.array([float(axis_element.get(key, 0.0)) for key in ("x", "y", "z")])
+        if axis_element is not None
+        else np.array([0.0, 1.0, 0.0])
+    )
     length = np.linalg.norm(axis)
     if length <= 0.0:
         axis = np.array([0.0, 1.0, 0.0])
@@ -520,7 +699,13 @@ def _he3_exponent(position, axis, radius, parameters):
     direction_length = np.linalg.norm(position)
     axis_length = np.linalg.norm(axis)
     straight_path = 2.0 * (radius - thickness)
-    if pressure <= 0.0 or temperature <= 0.0 or straight_path <= 0.0 or direction_length <= 0.0 or axis_length <= 0.0:
+    if (
+        pressure <= 0.0
+        or temperature <= 0.0
+        or straight_path <= 0.0
+        or direction_length <= 0.0
+        or axis_length <= 0.0
+    ):
         return 0.0
     cosine = float(np.dot(axis, position) / (axis_length * direction_length))
     sine = math.sqrt(max(0.0, 1.0 - cosine * cosine))
@@ -549,9 +734,14 @@ def _location_transform(location):
         axis = np.array([float(element.get(f"axis-{key}", 0.0)) for key in ("x", "y", "z")])
         length = np.linalg.norm(axis)
         if length:
-            axis /= length; angle = math.radians(float(element.get("val", 0.0)))
-            cross = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
-            rotation = rotation @ (np.eye(3) + math.sin(angle) * cross + (1 - math.cos(angle)) * (cross @ cross))
+            axis /= length
+            angle = math.radians(float(element.get("val", 0.0)))
+            cross = np.array(
+                [[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]]
+            )
+            rotation = rotation @ (
+                np.eye(3) + math.sin(angle) * cross + (1 - math.cos(angle)) * (cross @ cross)
+            )
     return translation, rotation
 
 
@@ -560,21 +750,25 @@ def _expand_idlist(item, ns):
     for element in item.findall(f"{ns}id"):
         if element.get("start") is None:
             continue
-        start = int(element.get("start")); end = int(element.get("end", start)); step = int(element.get("step", 1))
+        start = int(element.get("start"))
+        end = int(element.get("end", start))
+        step = int(element.get("step", 1))
         values.extend(range(start, end + (1 if step > 0 else -1), step))
     return values
 
 
 def _log_value(entry, names, default):
     logs = entry.get("DASlogs")
-    if logs is None: return default
+    if logs is None:
+        return default
     for name in names:
         group = logs.get(name)
         if group is not None:
             data = group.get("average_value") or group.get("value")
             if data is not None:
                 values = np.asarray(data[()]).reshape(-1)
-                if values.size: return float(values[0])
+                if values.size:
+                    return float(values[0])
     return default
 
 
@@ -618,16 +812,23 @@ def _monitor_ei_t0(entry, energy_guess):
         source_z = -_source_distance(entry)
         idf_names = {name for name, _ in locations if name}
         monitor_groups = sorted(
-            (name for name, group in entry.items()
-             if "event_time_offset" in group
-             and (getattr(group, "attrs", {}).get("NX_class", b"") in (b"NXmonitor", "NXmonitor")
-                  or name in idf_names)),
+            (
+                name
+                for name, group in entry.items()
+                if "event_time_offset" in group
+                and (
+                    getattr(group, "attrs", {}).get("NX_class", b"") in (b"NXmonitor", "NXmonitor")
+                    or name in idf_names
+                )
+            ),
             key=_natural_sort_key,
         )
         monitor_data = []
         for index, (idf_name, position) in enumerate(locations):
-            name = idf_name if idf_name in monitor_groups else (
-                monitor_groups[index] if index < len(monitor_groups) else None
+            name = (
+                idf_name
+                if idf_name in monitor_groups
+                else (monitor_groups[index] if index < len(monitor_groups) else None)
             )
             if name is None:
                 continue
@@ -674,19 +875,41 @@ def _evaluate_mantid_t0_formula(formula, incident_energy):
     """Evaluate Mantid's arithmetic t0_formula with only ``sqrt`` enabled."""
 
     tree = ast.parse(str(formula), mode="eval")
-    allowed = (ast.Expression, ast.BinOp, ast.UnaryOp, ast.Add, ast.Sub,
-               ast.Mult, ast.Div, ast.Pow, ast.USub, ast.UAdd, ast.Constant,
-               ast.Name, ast.Load, ast.Call)
+    allowed = (
+        ast.Expression,
+        ast.BinOp,
+        ast.UnaryOp,
+        ast.Add,
+        ast.Sub,
+        ast.Mult,
+        ast.Div,
+        ast.Pow,
+        ast.USub,
+        ast.UAdd,
+        ast.Constant,
+        ast.Name,
+        ast.Load,
+        ast.Call,
+    )
     if not all(isinstance(node, allowed) for node in ast.walk(tree)):
         raise ValueError(f"unsupported Mantid t0_formula: {formula!r}")
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and node.id not in {"incidentEnergy", "sqrt"}:
             raise ValueError(f"unsupported Mantid t0_formula name: {node.id!r}")
-        if isinstance(node, ast.Call) and (not isinstance(node.func, ast.Name) or node.func.id != "sqrt"):
+        if isinstance(node, ast.Call) and (
+            not isinstance(node.func, ast.Name) or node.func.id != "sqrt"
+        ):
             raise ValueError(f"unsupported Mantid t0_formula call: {formula!r}")
-    return float(eval(compile(tree, "<mantid-t0-formula>", "eval"), {"__builtins__": {}}, {
-        "incidentEnergy": float(incident_energy), "sqrt": math.sqrt,
-    }))
+    return float(
+        eval(
+            compile(tree, "<mantid-t0-formula>", "eval"),
+            {"__builtins__": {}},
+            {
+                "incidentEnergy": float(incident_energy),
+                "sqrt": math.sqrt,
+            },
+        )
+    )
 
 
 def _mantid_getei_v2_peak(values, distance, energy_guess):
@@ -710,7 +933,9 @@ def _mantid_getei_v2_peak(values, distance, energy_guess):
     rebinned, rebinned_edges = np.histogram(values, bins=rebinned_edges)
     rebinned_centres = 0.5 * (rebinned_edges[:-1] + rebinned_edges[1:])
     region = _mantid_getei_peak_region(
-        rebinned_centres, rebinned.astype(float) / width, np.sqrt(rebinned) / width,
+        rebinned_centres,
+        rebinned.astype(float) / width,
+        np.sqrt(rebinned) / width,
     )
     if region is None:
         return None
@@ -724,7 +949,8 @@ def _mantid_getei_peak_region(x, y, errors, prominence=4.0):
 
     if x.size < 3:
         return None
-    peak = int(np.argmax(y)); background_floor = float(np.min(y))
+    peak = int(np.argmax(y))
+    background_floor = float(np.min(y))
     peak_height = float(y[peak] - background_floor)
     if peak_height <= 0.0:
         return None
@@ -750,10 +976,12 @@ def _mantid_getei_peak_region(x, y, errors, prominence=4.0):
     derivative, uncertainty = -1000.0, 0.0
     while right < x.size - 1 and derivative < -uncertainty:
         forward, backward = x[right + 1] - x[right], x[right] - x[right - 1]
-        derivative = 0.5 * ((y[right + 1] - y[right]) / forward + (y[right] - y[right - 1]) / backward)
+        derivative = 0.5 * (
+            (y[right + 1] - y[right]) / forward + (y[right] - y[right - 1]) / backward
+        )
         uncertainty = 0.5 * math.sqrt(
-            (errors[right + 1] ** 2 + errors[right] ** 2) / forward ** 2
-            + (errors[right] ** 2 + errors[right - 1] ** 2) / backward ** 2
+            (errors[right + 1] ** 2 + errors[right] ** 2) / forward**2
+            + (errors[right] ** 2 + errors[right - 1] ** 2) / backward**2
             - 2.0 * errors[right] ** 2 / (forward * backward)
         )
         right += 1
@@ -766,8 +994,8 @@ def _mantid_getei_peak_region(x, y, errors, prominence=4.0):
         forward, backward = x[left + 1] - x[left], x[left] - x[left - 1]
         derivative = 0.5 * ((y[left + 1] - y[left]) / forward + (y[left] - y[left - 1]) / backward)
         uncertainty = 0.5 * math.sqrt(
-            (errors[left + 1] ** 2 + errors[left] ** 2) / forward ** 2
-            + (errors[left] ** 2 + errors[left - 1] ** 2) / backward ** 2
+            (errors[left + 1] ** 2 + errors[left] ** 2) / forward**2
+            + (errors[left] ** 2 + errors[left - 1] ** 2) / backward**2
             - 2.0 * errors[left] ** 2 / (forward * backward)
         )
         left -= 1
@@ -789,9 +1017,12 @@ def _mantid_getei_peak_region(x, y, errors, prominence=4.0):
         keep = (x >= x[right]) & (x <= background_stop)
         if keep.sum() > 1:
             background_parts.append((np.trapezoid(y[keep], x[keep]), x[keep][-1] - x[keep][0]))
-    background = (sum(area for area, _ in background_parts) / sum(span for _, span in background_parts)
-                  if background_parts else 0.0)
-    return x[left:right + 1], y[left:right + 1] - background, peak_width
+    background = (
+        sum(area for area, _ in background_parts) / sum(span for _, span in background_parts)
+        if background_parts
+        else 0.0
+    )
+    return x[left : right + 1], y[left : right + 1] - background, peak_width
 
 
 def _idf_location(entry, location):
@@ -817,15 +1048,32 @@ def _evaluate_idf_log_expression(expression, value):
     if not expression:
         return float(value)
     tree = ast.parse(str(expression), mode="eval")
-    allowed = (ast.Expression, ast.BinOp, ast.UnaryOp, ast.Add, ast.Sub,
-               ast.Mult, ast.Div, ast.Pow, ast.USub, ast.UAdd, ast.Constant, ast.Name, ast.Load)
+    allowed = (
+        ast.Expression,
+        ast.BinOp,
+        ast.UnaryOp,
+        ast.Add,
+        ast.Sub,
+        ast.Mult,
+        ast.Div,
+        ast.Pow,
+        ast.USub,
+        ast.UAdd,
+        ast.Constant,
+        ast.Name,
+        ast.Load,
+    )
     if not all(isinstance(node, allowed) for node in ast.walk(tree)):
         raise ValueError(f"unsupported IDF logfile expression: {expression!r}")
-    return float(eval(compile(tree, "<idf-logfile>", "eval"), {"__builtins__": {}}, {"value": float(value)}))
+    return float(
+        eval(compile(tree, "<idf-logfile>", "eval"), {"__builtins__": {}}, {"value": float(value)})
+    )
 
 
 def _natural_sort_key(name):
-    return tuple(int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", str(name)))
+    return tuple(
+        int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", str(name))
+    )
 
 
 def _interpolated_half_height_time(histogram, edges, maximum, half_height, direction):
@@ -855,9 +1103,11 @@ def _ub_from_logs(entry):
 
 
 def _text_scalar(dataset, default):
-    if dataset is None: return default
+    if dataset is None:
+        return default
     value = np.asarray(dataset[()]).reshape(-1)
-    if not value.size: return default
+    if not value.size:
+        return default
     first = value[0]
     return first.decode() if isinstance(first, bytes) else str(first)
 
@@ -866,14 +1116,26 @@ def _goniometer(omega, phi, chi):
     # SEQUOIA's NeXus/Mantid convention has beam along lab +z and vertical +y.
     # Its recorded omega matrix is therefore a rotation around lab y.
     def rot(axis, degrees):
-        angle = math.radians(degrees); c, s = math.cos(angle), math.sin(angle)
-        if axis == 1: return np.array([[c, 0, s], [0, 1., 0], [-s, 0, c]])
-        if axis == 2: return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1.]])
-        return np.array([[1., 0, 0], [0, c, -s], [0, s, c]])
+        angle = math.radians(degrees)
+        c, s = math.cos(angle), math.sin(angle)
+        if axis == 1:
+            return np.array([[c, 0, s], [0, 1.0, 0], [-s, 0, c]])
+        if axis == 2:
+            return np.array([[c, -s, 0], [s, c, 0], [0, 0, 1.0]])
+        return np.array([[1.0, 0, 0], [0, c, -s], [0, s, c]])
+
     return rot(1, omega) @ rot(2, chi) @ rot(1, phi)
 
 
 def _axis_name(vector, index):
-    if index == 3: return "DeltaE"
+    if index == 3:
+        return "DeltaE"
     labels = ("H", "K", "L")
-    return "[" + ",".join("0" if value == 0 else label if value == 1 else f"{value:g}{label}" for value, label in zip(vector[:3], labels, strict=True)) + "]"
+    return (
+        "["
+        + ",".join(
+            "0" if value == 0 else label if value == 1 else f"{value:g}{label}"
+            for value, label in zip(vector[:3], labels, strict=True)
+        )
+        + "]"
+    )

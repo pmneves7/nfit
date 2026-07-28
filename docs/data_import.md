@@ -56,12 +56,17 @@ channels without changing the imported values. Powder Heisenberg models average
 the single-crystal response over momentum directions and require lattice
 parameters for the reciprocal-coordinate conversion.
 
-## Raw direct-geometry data
+## Compatible direct-geometry spectrometer data
 
-Raw NeXus runs are stored as a file-backed dataset group. The shared setup holds
-the UB matrix, detector mask, processed vanadium file, and optional $E_i$ and
-$T_0$ overrides. Individual detector-event runs are not plotted directly;
-enable the group composite and rebin them to an HKLE histogram.
+This importer supports raw event NeXus files from compatible direct-geometry
+spectrometers, including CNCS, HYSPEC, and SEQUOIA. It requires the expected
+event banks and run logs plus an embedded Mantid instrument definition. It is
+not a universal direct-geometry NeXus importer.
+
+Compatible runs are stored as a file-backed dataset group. The shared setup
+holds the UB matrix, detector mask, processed vanadium file, and optional
+$E_i$ and $T_0$ overrides. Individual detector-event runs are not plotted
+directly; enable the group composite and rebin them to an HKLE histogram.
 
 nfit streams detector banks and event chunks rather than loading the complete
 event table. It obtains detector geometry and flight paths from the embedded

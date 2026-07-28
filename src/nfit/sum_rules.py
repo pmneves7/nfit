@@ -60,7 +60,8 @@ _DIGAMMA_REGIME_CUTOFF_OVER_KT = 20.0
 # susceptibility is chi_molar = N_A (g mu_B)^2 chi_spin. In CGS-emu units
 # (mu_B in erg/G, energy in erg) this is
 #   chi_molar[emu/mol] = EMU_PER_MOL_PER_MODEL_CHI * g^2 * chi_model[1/meV]
-# per magnetic site (divide by sites-per-formula-unit for per-f.u.).
+# per magnetic site. A response per mole of formula units therefore multiplies
+# by the number of equivalent magnetic sites per formula unit.
 _MU_B_CGS_ERG_PER_G = 9.2740100783e-21
 _MEV_IN_ERG = 1.602176634e-15
 _AVOGADRO = 6.02214076e23

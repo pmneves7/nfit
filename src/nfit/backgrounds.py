@@ -44,13 +44,15 @@ def subtract_powder_background(
         bounds_error=False,
         fill_value=np.nan,
     )
-    variance_interpolator = RegularGridInterpolator(
-        (q_centers, energy_centers),
-        safe_variance,
-        method=interpolation,
-        bounds_error=False,
-        fill_value=np.nan,
-    )
+    variance_interpolator = None
+    if interpolation == "nearest":
+        variance_interpolator = RegularGridInterpolator(
+            (q_centers, energy_centers),
+            safe_variance,
+            method=interpolation,
+            bounds_error=False,
+            fill_value=np.nan,
+        )
     q = np.broadcast_to(q_modulus_for_spectral(data), data.shape)
     target_energy_dim = _energy_dimension(data)
     energy_shape = [1] * data.signal.ndim
@@ -60,7 +62,15 @@ def subtract_powder_background(
     )
     points = np.column_stack((q.ravel(), energy.ravel()))
     interpolated = value_interpolator(points).reshape(data.shape)
-    interpolated_variance = variance_interpolator(points).reshape(data.shape)
+    if variance_interpolator is None:
+        interpolated_variance = _linear_interpolation_variance(
+            q_centers,
+            energy_centers,
+            safe_variance,
+            points,
+        ).reshape(data.shape)
+    else:
+        interpolated_variance = variance_interpolator(points).reshape(data.shape)
     valid_background = np.isfinite(interpolated) & np.isfinite(interpolated_variance)
     factor = float(scale)
     output_signal = np.asarray(data.signal, dtype=float) - factor * interpolated
@@ -85,6 +95,54 @@ def subtract_powder_background(
         mask=np.asarray(data.mask, dtype=bool) | ~valid_background,
         metadata=metadata,
     )
+
+
+def _linear_interpolation_variance(
+    q_centers: np.ndarray,
+    energy_centers: np.ndarray,
+    variances: np.ndarray,
+    points: np.ndarray,
+) -> np.ndarray:
+    """Propagate independent source variances through bilinear interpolation."""
+
+    q_upper = np.searchsorted(q_centers, points[:, 0], side="right")
+    e_upper = np.searchsorted(energy_centers, points[:, 1], side="right")
+    q_upper = np.clip(q_upper, 1, q_centers.size - 1)
+    e_upper = np.clip(e_upper, 1, energy_centers.size - 1)
+    q_lower = q_upper - 1
+    e_lower = e_upper - 1
+    q_fraction = (points[:, 0] - q_centers[q_lower]) / (
+        q_centers[q_upper] - q_centers[q_lower]
+    )
+    e_fraction = (points[:, 1] - energy_centers[e_lower]) / (
+        energy_centers[e_upper] - energy_centers[e_lower]
+    )
+    inside = (
+        (points[:, 0] >= q_centers[0])
+        & (points[:, 0] <= q_centers[-1])
+        & (points[:, 1] >= energy_centers[0])
+        & (points[:, 1] <= energy_centers[-1])
+    )
+    propagated = np.zeros(points.shape[0], dtype=float)
+    valid = inside.copy()
+    for q_index, q_weight in (
+        (q_lower, 1.0 - q_fraction),
+        (q_upper, q_fraction),
+    ):
+        for e_index, e_weight in (
+            (e_lower, 1.0 - e_fraction),
+            (e_upper, e_fraction),
+        ):
+            weight = q_weight * e_weight
+            corner_variance = variances[q_index, e_index]
+            used = weight > np.finfo(float).eps
+            valid &= ~used | np.isfinite(corner_variance)
+            propagated += np.where(
+                used & np.isfinite(corner_variance),
+                np.square(weight) * corner_variance,
+                0.0,
+            )
+    return np.where(valid, propagated, np.nan)
 
 
 def _powder_dimensions(data: MDHistoData) -> tuple[int, int]:

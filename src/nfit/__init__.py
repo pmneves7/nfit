@@ -158,9 +158,6 @@ from .models import (
     constant_intensity_model,
     linear_background,
     make_constant_intensity_model,
-    multi_q_paramagnon_chipp,
-    paramagnon_chipp,
-    quadratic_distance_rlu,
     relaxational_chipp,
 )
 from .pipeline import (
@@ -525,8 +522,6 @@ __all__ = [
     "mask_out_ellipsoid",
     "mask_out_energy_q_range",
     "mask_out_phonon_cone",
-    "multi_q_paramagnon_chipp",
-    "paramagnon_chipp",
     "mdhisto_with_signal_like",
     "plot_mdhisto_auto",
     "plot_mdhisto_fit_comparison",
@@ -549,7 +544,6 @@ __all__ = [
     "polynomial_fwhm_energy_resolution",
     "q_modulus_inv_angstrom",
     "q_vectors_inv_angstrom",
-    "quadratic_distance_rlu",
     "rebin_point_data",
     "direct_basis_from_lattice_parameters",
     "magnetic_field_vector",

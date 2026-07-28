@@ -49,6 +49,18 @@ def test_energy_resolution_broadens_delta_like_model():
     assert broadened[7] > raw[7]
 
 
+def test_energy_resolution_convolves_single_energy_point():
+    data = _energy_data([0.0])
+
+    def narrow_peak(eval_data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        return np.exp(-0.5 * (eval_data.E / params["sigma"]) ** 2)
+
+    resolution = constant_fwhm_energy_resolution(1.0, oversampling=8)
+    broadened = resolution.evaluate_model(data, narrow_peak, {"sigma": 0.08})
+
+    assert 0.0 < broadened[0] < 1.0
+
+
 def test_polynomial_fwhm_can_use_fitted_parameters_in_fit_problem():
     energy = np.linspace(-2.0, 2.0, 9)
     data = PointData4D(

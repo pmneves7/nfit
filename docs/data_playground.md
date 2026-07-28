@@ -159,7 +159,10 @@ $$
 $k_i$ and $k_f$ are the incident and final neutron wavevector magnitudes,
 $f(Q)$ is the magnetic form factor, and $P$ is the polarization factor. For a
 spin response, replace $\chi''$ by $g^2\chi''_s$. The complete convention is
-defined in [Physics conventions](physics_conventions.md).
+defined in [Physics conventions](physics_conventions.md). When the stored cross
+section includes $k_f/k_i$, its spectral convention must also provide the fixed
+incident energy for direct geometry or fixed final energy for indirect
+geometry.
 
 Spectral reductions use these energy kernels:
 

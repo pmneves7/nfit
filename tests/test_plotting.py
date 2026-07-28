@@ -16,6 +16,7 @@ from nfit.plotting import (
     MDHistoSliceViewer,
     _DropdownSelect,
     gaussian_smooth_nan,
+    gaussian_smooth_uncertainty,
     inverse_variance_weighted_profile,
     mdhisto_with_signal_like,
     plot_2d_map,
@@ -49,6 +50,14 @@ def test_gaussian_plot_smoothing_preserves_masked_bins():
     assert np.isnan(smoothed[1])
     assert smoothed[0] > 0.0
     assert smoothed[2] < 10.0
+
+
+def test_gaussian_plot_smoothing_propagates_independent_uncertainties():
+    errors = np.array([1.0, 1.0, np.nan, 1.0, 1.0])
+    smoothed = gaussian_smooth_uncertainty(errors, 1.0)
+
+    assert np.isnan(smoothed[2])
+    assert np.all(smoothed[[0, 1, 3, 4]] < 1.0)
 
 
 def test_plotting_helpers_return_axes():

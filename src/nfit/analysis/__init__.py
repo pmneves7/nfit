@@ -1,5 +1,6 @@
 """Pure analysis domain contracts and operation registry."""
 
+from .bragg import bragg_volume
 from .builtins import register_builtin_operations
 from .coordinates import (
     bin_edges,
@@ -56,6 +57,7 @@ __all__ = [
     "SpectralConvention",
     "bin_edges",
     "bin_widths",
+    "bragg_volume",
     "energy_bin_widths",
     "measured_mask",
     "physical_axis_vectors",

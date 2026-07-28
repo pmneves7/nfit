@@ -90,7 +90,7 @@ def test_mdhisto_artifact_preserves_axes_and_auxiliary_channels(tmp_path):
 def test_runner_publishes_artifact_and_fresh_result(tmp_path):
     key = "persistence_test_operation"
     table = PointListData({"H": [1.0], "I": [2.0]}, coordinate_names=["H"], channels=[{"label": "I", "value": "I", "error": None}])
-    register_analysis_operation(AnalysisOperationDefinition(key, "Test", 1, "Test", 1, 1, ("PointData4D",), (), lambda *_: None, lambda *_args, **_kwargs: AnalysisExecution({"table": TableOutput(table, "Table")})))
+    register_analysis_operation(AnalysisOperationDefinition(key, "Test", 2, "Test", 1, 1, ("PointData4D",), (), lambda *_: None, lambda *_args, **_kwargs: AnalysisExecution({"table": TableOutput(table, "Table")})))
     data = PointData4D([0], [0], [0], [1], [2], [0.1])
     item = AnalysisInput("a" * 32, "scan", data, AnalysisContext("g", None, None, None, None), "fingerprint")
     analysis = AnalysisEntry("Analysis", key, [item.dataset_id], {})
@@ -100,6 +100,7 @@ def test_runner_publishes_artifact_and_fresh_result(tmp_path):
     result = execute_to_artifacts(analysis, [item], project)
     analysis.result = result
 
+    assert analysis.operation_version == 2
     assert analysis_is_fresh(analysis, [item])
     artifact = tmp_path / result.outputs[0].artifact_path
     assert artifact.exists()

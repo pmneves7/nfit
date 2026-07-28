@@ -22,6 +22,8 @@ class SpectralConvention:
     bose_state: str
     kf_ki_state: str
     absolute_scale: bool
+    incident_energy_meV: float | None = None
+    final_energy_meV: float | None = None
 
     def __post_init__(self) -> None:
         if self.representation not in _REPRESENTATIONS:
@@ -39,6 +41,20 @@ class SpectralConvention:
             raise ValueError("magnetic_ions_per_basis must be positive")
         if self.g_factor is not None and self.g_factor <= 0:
             raise ValueError("g_factor must be positive")
+        for name in ("incident_energy_meV", "final_energy_meV"):
+            value = getattr(self, name)
+            if value is not None and value <= 0:
+                raise ValueError(f"{name} must be positive")
+        if self.incident_energy_meV is not None and self.final_energy_meV is not None:
+            raise ValueError("provide incident_energy_meV or final_energy_meV, not both")
+        if (
+            self.kf_ki_state == "included"
+            and self.incident_energy_meV is None
+            and self.final_energy_meV is None
+        ):
+            raise ValueError(
+                "kf_ki_state='included' requires incident_energy_meV or final_energy_meV"
+            )
 
     def require_absolute(self, quantity: str) -> None:
         if not self.absolute_scale:

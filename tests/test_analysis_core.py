@@ -89,22 +89,37 @@ def test_analysis_registry_defaults_tooltips_validation_and_execution():
         run_analysis_operation(operation, [_input()], {"scale": 0.0})
 
 
-def test_reserved_analysis_types_cannot_be_registered():
-    with pytest.raises(ValueError, match="reserved"):
-        register_analysis_operation(
-            AnalysisOperationDefinition(
-                key="raw_tof_reduction",
-                label="Raw TOF",
-                version=1,
-                description="Reserved.",
-                min_inputs=1,
-                max_inputs=None,
-                accepted_containers=(),
-                parameters=(),
-                validate=lambda _inputs, _parameters: None,
-                execute=lambda *_args, **_kwargs: AnalysisExecution({}),
-            )
+def test_analysis_defaults_do_not_share_mutable_values():
+    operation = "test_mutable_analysis_defaults"
+    register_analysis_operation(
+        AnalysisOperationDefinition(
+            key=operation,
+            label="Mutable defaults",
+            version=1,
+            description="Test operation.",
+            min_inputs=0,
+            max_inputs=None,
+            accepted_containers=(),
+            parameters=(
+                AnalysisParameterDefinition(
+                    "values",
+                    "Values",
+                    "list",
+                    [],
+                    "Mutable test value.",
+                    "list",
+                    "[]",
+                ),
+            ),
+            validate=lambda *_args: None,
+            execute=lambda *_args, **_kwargs: AnalysisExecution({}),
         )
+    )
+
+    first = default_analysis_parameters(operation)
+    first["values"].append(1)
+
+    assert default_analysis_parameters(operation) == {"values": []}
 
 
 def test_spectral_convention_and_cross_section_inverse():

@@ -63,7 +63,6 @@ from .fitting import (
 )
 from .form_factors import form_factor_sq
 from .heat_capacity import debye_heat_capacity, low_temperature_heat_capacity
-from .models import paramagnon_chipp
 from .quantities import convert_quantity
 from .spin_fluctuations import (
     build_rpa_geometry,
@@ -208,36 +207,6 @@ def _curie_weiss_factory(component: Any) -> ModelFunction:
         if unit == "cm^3/mol":
             return values
         return convert_quantity(values, "bulk_susceptibility", "cm^3/mol", unit)
-
-    return model
-
-
-def _single_q_paramagnon_factory(component: Any) -> ModelFunction:
-    name = component.name
-
-    def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
-        chipp = paramagnon_chipp(
-            data.H,
-            data.K,
-            data.L,
-            data.E,
-            amplitude=float(params[qualified_parameter_name(name, "amplitude")]),
-            q0=(
-                float(params[qualified_parameter_name(name, "q0_h")]),
-                float(params[qualified_parameter_name(name, "q0_k")]),
-                float(params[qualified_parameter_name(name, "q0_l")]),
-            ),
-            kappa=float(params[qualified_parameter_name(name, "kappa")]),
-            omega_sf=float(params[qualified_parameter_name(name, "omega_sf")]),
-        )
-        return _spectral_model_observable(
-            data,
-            chipp,
-            scale=1.0,
-            form_factor_sq=1.0,
-            polarization=ISOTROPIC_POLARIZATION,
-            legacy="chipp",
-        )
 
     return model
 
@@ -1191,10 +1160,10 @@ class _RpaComponentEvaluator:
                 )
             moles = mass_g / molar_mass
             if quantity_type == "bulk_susceptibility":
-                abs_factor = EMU_PER_MOL_PER_MODEL_CHI / sites_per_fu
+                abs_factor = EMU_PER_MOL_PER_MODEL_CHI * sites_per_fu
             else:
                 abs_factor = (
-                    EMU_PER_MOL_PER_MODEL_CHI * moles * OERSTED_PER_TESLA / sites_per_fu
+                    EMU_PER_MOL_PER_MODEL_CHI * moles * OERSTED_PER_TESLA * sites_per_fu
                 )
                 if target_unit == "emu/mol":
                     abs_factor /= moles
@@ -1588,6 +1557,7 @@ class ModelTypeInfo:
     factory: Callable[[Any], ModelFunction]
     dynamic_parameters: Callable[[Any], tuple[str, ...]] | None = None
     jacobian_factory: Callable[[Any], ModelJacobian] | None = None
+    default_lower_bounds: tuple[tuple[str, float], ...] = ()
     """Optional analytic-Jacobian builder. When every component applied to a
     dataset provides one, the optimizer uses exact gradients instead of finite
     differences; otherwise it silently falls back."""
@@ -1615,20 +1585,22 @@ MODEL_TYPE_REGISTRY: dict[str, ModelTypeInfo] = {
         factory=_linear_background_factory,
         jacobian_factory=_linear_background_jacobian_factory,
     ),
-    "single_q_paramagnon": ModelTypeInfo(
-        parameters=("amplitude", "q0_h", "q0_k", "q0_l", "kappa", "omega_sf"),
-        data_types=("single_crystal_inelastic",),
-        factory=_single_q_paramagnon_factory,
-    ),
     "local_relaxational": ModelTypeInfo(
         parameters=("scale", "chi_loc", "gamma"),
         data_types=("single_crystal_inelastic", "powder_inelastic"),
         factory=_local_relaxational_factory,
+        default_lower_bounds=(("scale", 0.0), ("chi_loc", 0.0), ("gamma", 0.0)),
     ),
     "mmp_relaxational": ModelTypeInfo(
         parameters=("scale", "chi_pk", "xi", "omega_sf", "q0_h", "q0_k", "q0_l"),
         data_types=("single_crystal_inelastic",),
         factory=_mmp_relaxational_factory,
+        default_lower_bounds=(
+            ("scale", 0.0),
+            ("chi_pk", 0.0),
+            ("xi", 0.0),
+            ("omega_sf", 0.0),
+        ),
     ),
     "heisenberg_rpa": ModelTypeInfo(
         parameters=("scale", "chi0", "gamma0"),
@@ -1636,21 +1608,25 @@ MODEL_TYPE_REGISTRY: dict[str, ModelTypeInfo] = {
         factory=_heisenberg_rpa_factory,
         dynamic_parameters=heisenberg_rpa_parameter_labels,
         jacobian_factory=_heisenberg_rpa_jacobian_factory,
+        default_lower_bounds=(("scale", 0.0), ("chi0", 0.0), ("gamma0", 0.0)),
     ),
     "debye_heat_capacity": ModelTypeInfo(
         parameters=("debye_temperature", "oscillator_count"),
         data_types=("heat_capacity",),
         factory=_debye_heat_capacity_factory,
+        default_lower_bounds=(("debye_temperature", 0.0), ("oscillator_count", 0.0)),
     ),
     "low_temperature_heat_capacity": ModelTypeInfo(
         parameters=("sommerfeld_gamma", "debye_beta"),
         data_types=("heat_capacity",),
         factory=_low_temperature_heat_capacity_factory,
+        default_lower_bounds=(("sommerfeld_gamma", 0.0), ("debye_beta", 0.0)),
     ),
     "curie_weiss": ModelTypeInfo(
         parameters=("curie_constant", "theta_CW"),
         data_types=("magnetization",),
         factory=_curie_weiss_factory,
+        default_lower_bounds=(("curie_constant", 0.0),),
     ),
 }
 
@@ -1737,10 +1713,14 @@ def dataset_scale_parameter_name(dataset_name: str) -> str:
 def parameter_limits(component: Any, parameter: str) -> tuple[float | None, float | None]:
     """Return ``(min, max)`` bounds for one component parameter."""
 
+    info = MODEL_TYPE_REGISTRY.get(component.type)
+    default_lower = (
+        dict(info.default_lower_bounds).get(parameter) if info is not None else None
+    )
     raw = component.limits.get(parameter) if isinstance(component.limits, dict) else None
     if not isinstance(raw, (list, tuple)) or len(raw) != 2:
-        return None, None
-    lower = None if raw[0] in (None, "") else float(raw[0])
+        return default_lower, None
+    lower = default_lower if raw[0] in (None, "") else float(raw[0])
     upper = None if raw[1] in (None, "") else float(raw[1])
     return lower, upper
 
@@ -2025,7 +2005,17 @@ def _compile_constraints(
                 raise ValueError(f"constraint references unknown parameter {qualified!r}")
             if op not in ("=", ">=", "<="):
                 raise ValueError(f"unsupported constraint operator {op!r} on {qualified!r}")
-            if target.min is not None or target.max is not None:
+            configured_limits = (
+                component.limits.get(parameter)
+                if isinstance(component.limits, dict)
+                else None
+            )
+            has_explicit_limits = (
+                isinstance(configured_limits, (list, tuple))
+                and len(configured_limits) == 2
+                and any(value not in (None, "") for value in configured_limits)
+            )
+            if has_explicit_limits:
                 raise ValueError(
                     f"parameter {qualified!r} cannot have both limits and a constraint"
                 )

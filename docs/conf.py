@@ -1,10 +1,10 @@
 project = "nfit"
 author = "Paul M. Neves"
 copyright = "2026, Paul M. Neves"
-release = "0.20.14"
+release = "0.21.0"
 
 extensions = [
-    "myst_nb",
+    "myst_parser",
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
     "sphinx.ext.mathjax",
@@ -12,11 +12,9 @@ extensions = [
 
 source_suffix = {
     ".rst": "restructuredtext",
-    ".md": "myst-nb",
-    ".ipynb": "myst-nb",
+    ".md": "markdown",
 }
 master_doc = "index"
 html_theme = "furo"
 myst_enable_extensions = ["dollarmath", "amsmath"]
 myst_heading_anchors = 4
-nb_execution_mode = "off"

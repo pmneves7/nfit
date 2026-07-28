@@ -258,9 +258,12 @@ posterior checks use `emcee` through `sample_problem_parameters`. See the
    :members:
 ```
 
-## Raw direct-geometry TOF reduction
+## Compatible direct-geometry spectrometer TOF reduction
 
-Raw direct-geometry SNS event NeXus files are supported through `nfit.raw_dgs`.
+Compatible direct-geometry spectrometer event NeXus files are supported through
+`nfit.raw_dgs`. This adapter expects compatible event banks and run logs plus an
+embedded Mantid instrument definition; it is not a generic importer for every
+direct-geometry instrument.
 `inspect_raw_dgs_run(path)` reads run metadata without reading event arrays;
 `raw_dgs_dataset_group(paths, ...)` creates lightweight entries sharing one raw
 reduction setup; and `bin_raw_dgs_group(...)` resolves detector positions from

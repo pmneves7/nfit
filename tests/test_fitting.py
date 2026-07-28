@@ -5,33 +5,25 @@ from nfit import (
     FitDataset,
     FitProblem,
     ModelSpec,
+    OptimizationConfig,
     ParameterSpec,
     PointData4D,
     ResolutionSpec,
-    fit_least_squares,
-    fit_problem_least_squares,
-    OptimizationConfig,
-    make_mask_transform,
-    rebin_point_data,
     SamplerConfig,
     SamplingCancelled,
+    fit_least_squares,
+    fit_problem_least_squares,
+    make_mask_transform,
+    rebin_point_data,
     sample_problem_parameters,
 )
 from nfit.cross_section import MAGNETIC_GAMMA0_PER_MU_B, intensity_from_chipp
-from nfit.models import paramagnon_chipp
+from nfit.models import relaxational_chipp
 
 
 def measured_model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
-    chipp = paramagnon_chipp(
-        data.H,
-        data.K,
-        data.L,
-        data.E,
-        amplitude=params["amplitude"],
-        q0=(params["q0_h"], params["q0_k"], params["q0_l"]),
-        kappa=params["kappa"],
-        omega_sf=params["omega_sf"],
-    )
+    q_profile = params["amplitude"] / (1.0 + np.square((data.H - params["q0_h"]) / params["kappa"]))
+    chipp = relaxational_chipp(q_profile, params["omega_sf"], data.E)
     return intensity_from_chipp(
         chipp,
         data.E,
@@ -41,7 +33,7 @@ def measured_model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
     )
 
 
-def test_fit_least_squares_recovers_paramagnon_parameters():
+def test_fit_least_squares_recovers_synthetic_peak_parameters():
     rng = np.random.default_rng(123)
     H = np.linspace(0.25, 0.75, 26)
     E = np.linspace(1.0, 10.0, 22)
@@ -480,7 +472,9 @@ def test_magnetic_field_vector_frames_differ_for_orthorhombic():
     # is along x/a + y/b ~ (1/3, 1/5, 0). Hand-checked normalization.
     uvw = magnetic_field_vector(1.0, [1, 1, 0], "uvw", lattice)
     hkl = magnetic_field_vector(1.0, [1, 1, 0], "hkl", lattice)
-    np.testing.assert_allclose(uvw, np.array([3.0, 5.0, 0.0]) / np.linalg.norm([3.0, 5.0, 0.0]), atol=1e-12)
+    np.testing.assert_allclose(
+        uvw, np.array([3.0, 5.0, 0.0]) / np.linalg.norm([3.0, 5.0, 0.0]), atol=1e-12
+    )
     np.testing.assert_allclose(
         hkl, np.array([1 / 3.0, 1 / 5.0, 0.0]) / np.linalg.norm([1 / 3.0, 1 / 5.0, 0.0]), atol=1e-12
     )
@@ -515,6 +509,11 @@ def test_point_data_magnetic_field_propagates_through_pipeline():
     # a non-3-vector is rejected
     with pytest.raises(ValueError, match="magnetic_field"):
         PointData4D(
-            H=np.zeros(1), K=np.zeros(1), L=np.zeros(1), E=np.zeros(1),
-            intensity=np.zeros(1), sigma=np.ones(1), magnetic_field=[1.0, 2.0],
+            H=np.zeros(1),
+            K=np.zeros(1),
+            L=np.zeros(1),
+            E=np.zeros(1),
+            intensity=np.zeros(1),
+            sigma=np.ones(1),
+            magnetic_field=[1.0, 2.0],
         )

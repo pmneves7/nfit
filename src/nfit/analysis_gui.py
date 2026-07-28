@@ -1085,9 +1085,9 @@ class BraggPeakDiagnosticsWidget:
         self.source = source
         if source is not None:
             try:
-                from .analysis.bragg import _bragg_volume
+                from .analysis.bragg import bragg_volume
 
-                self.source = _bragg_volume(
+                self.source = bragg_volume(
                     source,
                     parameters.get("energy_min_meV"),
                     parameters.get("energy_max_meV"),

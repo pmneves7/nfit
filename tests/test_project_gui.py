@@ -42,7 +42,6 @@ from nfit.project_gui import (
     import_dataset_paths,
     load_project,
     mask_parameter_tooltip,
-    model_config_tooltip,
     model_parameter_tooltip,
     next_data_group_name,
     recent_project_paths,
@@ -1113,28 +1112,15 @@ def test_project_explorer_adds_and_edits_models(monkeypatch):
     assert "Fit:" in tooltip
     assert "Global fit:" in tooltip
 
-    combo.setCurrentIndex(combo.findData("single_q_paramagnon"))
-    assert model.config == {"cross_section": "magnetic"}
-    explorer._set_model_config_setting("cross_section", "kinematic")
-
-    assert model.config["cross_section"] == "kinematic"
-    config_tooltip = model_config_tooltip("single_q_paramagnon", "cross_section")
-    config_group = explorer.model_parameter_widget.findChild(QtWidgets.QGroupBox, "model_config_group")
-    config_editors = config_group.findChildren(QtWidgets.QLineEdit)
-    config_checks = config_group.findChildren(QtWidgets.QCheckBox)
-    assert any(editor.toolTip() == config_tooltip for editor in config_editors)
-    assert config_checks == []
-    assert "Configuration settings are fixed model options" in config_tooltip
-
     plot_label_editor = explorer.model_parameter_widget.findChild(
         QtWidgets.QLineEdit,
-        "model_parameter_plot_label_amplitude",
+        "model_parameter_plot_label_c1",
     )
     assert plot_label_editor is not None
     assert plot_label_editor.toolTip()
-    plot_label_editor.setText(r"$A$")
-    explorer._set_model_parameter_plot_label("amplitude", plot_label_editor.text())
-    assert model.metadata["parameter_labels"]["amplitude"] == r"$A$"
+    plot_label_editor.setText(r"$c_1$")
+    explorer._set_model_parameter_plot_label("c1", plot_label_editor.text())
+    assert model.metadata["parameter_labels"]["c1"] == r"$c_1$"
 
     models_item = explorer.tree.topLevelItem(0).child(1)
     explorer.tree.setCurrentItem(models_item)

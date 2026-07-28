@@ -158,7 +158,7 @@ depends on what the scalar $\chi''$ means:
 
 - **One isotropic Cartesian component:** $\chi''=\chi''_{xx}=\chi''_{yy}
   =\chi''_{zz}$ gives $P=2$. This is the scalar convention used by nfit's
-  Heisenberg, MMP, local-relaxational, and paramagnon models.
+  Heisenberg, MMP, and local-relaxational models.
 - **Isotropic trace:** $\chi''=\sum_\alpha\chi''_{\alpha\alpha}$ gives
   $P=2/3$. This remains available for imported data that were reduced with a
   trace convention.

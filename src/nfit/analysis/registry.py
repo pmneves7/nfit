@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -35,18 +36,11 @@ class AnalysisOperationDefinition:
 
 
 _OPERATIONS: dict[str, AnalysisOperationDefinition] = {}
-_RESERVED_TYPES = frozenset(
-    {"dataset_subtraction", "find_bragg_peaks", "mode_tracking", "raw_tof_reduction"}
-)
-
-
 def register_analysis_operation(
     definition: AnalysisOperationDefinition, *, replace: bool = False
 ) -> None:
     """Register one operation definition."""
 
-    if definition.key in _RESERVED_TYPES:
-        raise ValueError(f"analysis type {definition.key!r} is reserved")
     if definition.key in _OPERATIONS and not replace:
         raise ValueError(f"analysis type {definition.key!r} is already registered")
     parameter_names = [parameter.name for parameter in definition.parameters]
@@ -68,7 +62,7 @@ def analysis_definition(type_name: str) -> AnalysisOperationDefinition:
 
 def default_analysis_parameters(type_name: str) -> dict[str, Any]:
     return {
-        parameter.name: parameter.default
+        parameter.name: copy.deepcopy(parameter.default)
         for parameter in analysis_definition(type_name).parameters
     }
 

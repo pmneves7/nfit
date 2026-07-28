@@ -60,6 +60,40 @@ def test_tensor_heisenberg_only_matches_scalar_intensity():
     np.testing.assert_allclose(tensor, 2.0 * scalar, rtol=1e-11, atol=1e-14)
 
 
+def test_tensor_q_zero_uses_isotropic_polarization_average():
+    geometry = build_rpa_geometry(
+        [0.0],
+        [0.0],
+        [0.0],
+        [[0.0, 0.0, 0.0]],
+        [],
+    )
+    structure = build_tensor_structure(
+        geometry,
+        [[0.0, 0.0, 0.0]],
+        [],
+    )
+    energy = np.array([1.0])
+    kwargs = {"chi0": 0.4, "gamma0": 2.5, "param_values": {}}
+
+    scalar = heisenberg_rpa_chipp(
+        geometry,
+        energy,
+        chi0=kwargs["chi0"],
+        gamma0=kwargs["gamma0"],
+        j_values={},
+    )
+    tensor = tensor_rpa_unpolarized_chipp(
+        structure,
+        geometry,
+        energy,
+        cartesian_qhat_per_point(geometry, np.eye(3)),
+        **kwargs,
+    )
+
+    np.testing.assert_allclose(tensor, 2.0 * scalar)
+
+
 def test_tensor_heisenberg_susceptibility_is_isotropic():
     rng = np.random.default_rng(2)
     positions, orbits, geometry = _two_site_geometry(rng)

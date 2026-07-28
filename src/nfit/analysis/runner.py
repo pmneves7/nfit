@@ -29,6 +29,7 @@ def execute_to_artifacts(
     """Run an analysis and atomically publish all of its artifact outputs."""
 
     definition = analysis_definition(analysis.type)
+    analysis.operation_version = definition.version
     parameters = {**default_analysis_parameters(analysis.type), **analysis.parameters}
     current_recipe = recipe_hash(analysis.type, definition.version, parameters, analysis.input_dataset_ids)
     started = time.monotonic()
