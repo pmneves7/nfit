@@ -9560,7 +9560,8 @@ class NfitProjectExplorer:
         self.delete_button = None
         self._clipboard: tuple[str, DatasetEntry | MaskSpec] | None = None
         self._analysis_window = None
-        self._slice_viewers: dict[int, Any] = {}
+        self._slice_viewers: dict[int, list[Any]] = {}
+        self._auxiliary_windows: dict[int, Any] = {}
         self._overlay_refresh_timer = None
         self._pending_overlay_groups: dict[int, DataGroup] = {}
         # True only while the Qt event loop is running (set in run()); in
@@ -11251,7 +11252,7 @@ class NfitProjectExplorer:
             return None
         window = _FitDiagnosticsPlotWindow(fit_entry, self)
         window.show()
-        self._slice_viewers[id(window)] = window
+        self._auxiliary_windows[id(window)] = window
         return window
 
     def apply_posterior_sampling_window(
@@ -11650,7 +11651,7 @@ class NfitProjectExplorer:
         self._sync_details()
         if not datasets:
             return None
-        viewer = self._replace_slice_viewer(group, datasets, names)
+        viewer = self._create_slice_viewer(group, datasets, names)
         viewer._nfit_use_composite = bool(use_composite)
         viewer._nfit_group = group
         viewer._nfit_dataset_ids = {dataset.name: dataset.id for dataset in group.iter_datasets()}
@@ -11876,34 +11877,39 @@ class NfitProjectExplorer:
     def refresh_slice_viewer(self, group: DataGroup) -> Any | None:
         if id(group) not in self._slice_viewers:
             return None
-        selected_name = None
-        current_viewer = self._slice_viewers[id(group)]
-        use_composite = bool(getattr(current_viewer, "_nfit_use_composite", True))
-        if current_viewer.dataset_combo is not None:
-            selected_name = current_viewer.dataset_combo.currentText()
-        try:
-            datasets, names = slice_viewer_datasets(
-                group,
-                use_composite=use_composite,
-                unmask_model=bool(getattr(current_viewer, "unmask_model", False)),
-                force_rebin=False,
-                force_masks=False,
-            )
-        except Exception:
-            return None
-        if not datasets:
-            self._close_slice_viewer(group)
-            return None
-        if hasattr(current_viewer, "replace_datasets"):
-            current_viewer.replace_datasets(
-                datasets,
-                dataset_names=names,
-                dataset_group_keys=_waterfall_group_keys(group, names),
-                selected_dataset_name=selected_name,
-            )
-        else:
-            self._replace_slice_viewer(group, datasets, names)
-        return self._slice_viewers.get(id(group))
+        viewers = list(self._slice_viewers[id(group)])
+        prepared: dict[tuple[bool, bool], tuple[list[MDHistoData], list[str]]] = {}
+        for current_viewer in viewers:
+            selected_name = None
+            use_composite = bool(getattr(current_viewer, "_nfit_use_composite", True))
+            unmask_model = bool(getattr(current_viewer, "unmask_model", False))
+            if current_viewer.dataset_combo is not None:
+                selected_name = current_viewer.dataset_combo.currentText()
+            cache_key = (use_composite, unmask_model)
+            try:
+                if cache_key not in prepared:
+                    prepared[cache_key] = slice_viewer_datasets(
+                        group,
+                        use_composite=use_composite,
+                        unmask_model=unmask_model,
+                        force_rebin=False,
+                        force_masks=False,
+                    )
+                datasets, names = prepared[cache_key]
+            except Exception:
+                continue
+            if not datasets:
+                self._forget_slice_viewer(group, current_viewer, close=True)
+                continue
+            if hasattr(current_viewer, "replace_datasets"):
+                current_viewer.replace_datasets(
+                    datasets,
+                    dataset_names=names,
+                    dataset_group_keys=_waterfall_group_keys(group, names),
+                    selected_dataset_name=selected_name,
+                )
+        remaining = self._slice_viewers.get(id(group), [])
+        return remaining[0] if remaining else None
 
     def _rebin_progress_callback_for_group(self, group: DataGroup, *, use_composite: bool = True) -> Any | None:
         if use_composite and any(
@@ -12590,7 +12596,9 @@ class NfitProjectExplorer:
         self.new_analysis_button.setToolTip(
             "Open the Analysis Window for this workspace with a fresh analysis recipe."
         )
-        self.view_slice_button.setToolTip("Open or refresh the data viewer for the selected workspace or dataset.")
+        self.view_slice_button.setToolTip(
+            "Open a new, independent data viewer for the selected workspace or dataset."
+        )
         self.load_dataset_button.setToolTip("Load this dataset from disk now so its axes, data, and metadata are available.")
         self.add_mask_button.setToolTip("Create a new mask under the selected dataset or shared mask folder.")
         self.add_background_button.setToolTip(
@@ -19643,7 +19651,7 @@ class NfitProjectExplorer:
         for group in list(self.project.data_groups):
             self._request_overlay_refresh(group)
 
-    def _replace_slice_viewer(
+    def _create_slice_viewer(
         self,
         group: DataGroup,
         datasets: list[MDHistoData],
@@ -19655,38 +19663,52 @@ class NfitProjectExplorer:
             from .qt_slice_viewer import QtMDHistoSliceViewer as viewer_class
 
             QtMDHistoSliceViewer = viewer_class
-        existing = self._slice_viewers.get(id(group))
         group_keys = _waterfall_group_keys(group, names)
-        if existing is not None and hasattr(existing, "replace_datasets"):
-            existing.replace_datasets(
-                datasets,
-                dataset_names=names,
-                dataset_group_keys=group_keys,
+        viewer = QtMDHistoSliceViewer(
+            datasets,
+            dataset_names=names,
+            dataset_group_keys=group_keys,
+        )
+        self._slice_viewers.setdefault(id(group), []).append(viewer)
+        if hasattr(viewer, "set_close_callback"):
+            viewer.set_close_callback(
+                lambda group=group, viewer=viewer: self._forget_slice_viewer(group, viewer)
             )
-            viewer = existing
-        else:
-            if existing is not None and existing.window is not None:
-                existing.window.close()
-            viewer = QtMDHistoSliceViewer(
-                datasets,
-                dataset_names=names,
-                dataset_group_keys=group_keys,
-            )
-            self._slice_viewers[id(group)] = viewer
         if viewer.window is not None:
             viewer.window.setWindowTitle(f"nfit Data Viewer - {group.name}")
         return viewer
 
-    def _close_slice_viewer(self, group: DataGroup) -> None:
-        viewer = self._slice_viewers.pop(id(group), None)
-        if viewer is not None and viewer.window is not None:
+    def _forget_slice_viewer(
+        self,
+        group: DataGroup,
+        viewer: Any,
+        *,
+        close: bool = False,
+    ) -> None:
+        viewers = self._slice_viewers.get(id(group))
+        if viewers is not None and viewer in viewers:
+            viewers.remove(viewer)
+            if not viewers:
+                self._slice_viewers.pop(id(group), None)
+        if close and viewer is not None and viewer.window is not None:
             viewer.window.close()
+
+    def _close_slice_viewer(self, group: DataGroup) -> None:
+        viewers = self._slice_viewers.pop(id(group), [])
+        for viewer in viewers:
+            if viewer is not None and viewer.window is not None:
+                viewer.window.close()
 
     def _close_all_slice_viewers(self) -> None:
         for group_id in list(self._slice_viewers):
-            viewer = self._slice_viewers.pop(group_id)
-            if viewer is not None and viewer.window is not None:
-                viewer.window.close()
+            viewers = self._slice_viewers.pop(group_id)
+            for viewer in viewers:
+                if viewer is not None and viewer.window is not None:
+                    viewer.window.close()
+        for window_id in list(self._auxiliary_windows):
+            window = self._auxiliary_windows.pop(window_id)
+            if window is not None:
+                window.close()
 
 
 def _make_project_window_class():

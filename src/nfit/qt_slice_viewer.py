@@ -255,6 +255,7 @@ class QtMDHistoSliceViewer:
         self.save_script_button = None
         self._save_plot_callback = None
         self._save_project_callback = None
+        self._close_callback = None
         self.save_project_shortcut = None
         self._unmask_model_callback = None
         self.view_mode_combo = None
@@ -677,6 +678,11 @@ class QtMDHistoSliceViewer:
         """Set the project callback that rebuilds full-grid model channels."""
 
         self._unmask_model_callback = callback
+
+    def set_close_callback(self, callback) -> None:
+        """Notify the owning project when this viewer window closes."""
+
+        self._close_callback = callback
 
     def save_script(self) -> None:
         from pathlib import Path
@@ -4556,6 +4562,10 @@ def _make_data_viewer_window_class():
         def closeEvent(self, event):
             self.viewer._close_volume_panel()
             super().closeEvent(event)
+            callback = self.viewer._close_callback
+            if callback is not None:
+                self.viewer._close_callback = None
+                callback()
 
     return DataViewerWindow
 

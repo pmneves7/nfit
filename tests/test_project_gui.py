@@ -289,7 +289,7 @@ def test_project_explorer_tree_hierarchy_fonts(monkeypatch):
         assert not item.icon(0).isNull()
 
 
-def test_project_explorer_opens_and_reloads_group_slice_viewer(monkeypatch):
+def test_project_explorer_opens_and_reloads_independent_group_slice_viewers(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")
 
@@ -307,12 +307,17 @@ def test_project_explorer_opens_and_reloads_group_slice_viewer(monkeypatch):
             return self.names[self.index]
 
     class FakeWindow:
-        def __init__(self):
+        def __init__(self, viewer):
+            self.viewer = viewer
             self.closed = False
             self.title = ""
 
         def close(self):
             self.closed = True
+            if self.viewer.close_callback is not None:
+                callback = self.viewer.close_callback
+                self.viewer.close_callback = None
+                callback()
 
         def setWindowTitle(self, title):
             self.title = title
@@ -322,10 +327,14 @@ def test_project_explorer_opens_and_reloads_group_slice_viewer(monkeypatch):
             self.datasets = list(datasets)
             self.dataset_names = list(dataset_names)
             self.dataset_combo = FakeCombo(dataset_names)
-            self.window = FakeWindow()
+            self.close_callback = None
+            self.window = FakeWindow(self)
             self.shown = False
             self.replaced = False
             created_viewers.append(self)
+
+        def set_close_callback(self, callback):
+            self.close_callback = callback
 
         def show(self):
             self.shown = True
@@ -364,17 +373,32 @@ def test_project_explorer_opens_and_reloads_group_slice_viewer(monkeypatch):
     assert viewer.dataset_combo.currentText() == "second"
     assert viewer.shown
 
+    second_viewer = explorer.open_slice_viewer(
+        group,
+        selected_dataset_name="first",
+        use_composite=False,
+    )
+    assert second_viewer is created_viewers[1]
+    assert second_viewer is not viewer
+    assert second_viewer.dataset_combo.currentText() == "first"
+    assert len(explorer._slice_viewers[id(group)]) == 2
+
     group.add_dataset(DatasetEntry("third", _tiny_mdhisto_data(3.0)))
     viewer.shown = False
     reloaded = explorer.refresh_slice_viewer(group)
 
     assert reloaded is viewer
-    assert len(created_viewers) == 1
+    assert len(created_viewers) == 2
     assert not viewer.window.closed
     assert viewer.replaced
+    assert second_viewer.replaced
     assert not viewer.shown
     assert reloaded.dataset_names == ["first", "second", "third"]
     assert reloaded.dataset_combo.currentText() == "second"
+    assert second_viewer.dataset_combo.currentText() == "first"
+
+    viewer.window.close()
+    assert explorer._slice_viewers[id(group)] == [second_viewer]
 
 
 def test_project_explorer_loads_dataset_and_refreshes_details(monkeypatch, tmp_path):
