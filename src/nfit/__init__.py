@@ -161,6 +161,7 @@ from .models import (
     relaxational_chipp,
 )
 from .pipeline import (
+    BackgroundSpec,
     DataGroup,
     DatasetEntry,
     DatasetGroup,
@@ -210,6 +211,7 @@ from .project_gui import (
     create_rebinned_dataset,
     data_type_label,
     dataset_details_text,
+    dataset_entry_from_path,
     dataset_for_slice_viewer,
     dataset_rebin_config,
     dataset_rebin_enabled,
@@ -291,6 +293,16 @@ from .spin_fluctuations import (
     set_rpa_backend,
 )
 from .symmetry import ReciprocalSymmetryOperation, SymmetrySpec, resolve_symmetry
+from .workflow import (
+    WORKFLOW_SCHEMA_VERSION,
+    WorkflowNode,
+    WorkflowOutput,
+    WorkflowPlan,
+    WorkflowValidationError,
+    dataset_workflow_plan,
+    dataset_workflow_script,
+    render_workflow_script,
+)
 
 
 def __getattr__(name: str):
@@ -347,6 +359,7 @@ __all__ = [
     "DetectorNormalization",
     "NfitProjectExplorer",
     "NfitProject",
+    "BackgroundSpec",
     "MaskSpec",
     "ModelComponentSpec",
     "PlotEntry",
@@ -466,6 +479,7 @@ __all__ = [
     "copy_dataset_to_group",
     "copy_mask_to_dataset",
     "dataset_details_text",
+    "dataset_entry_from_path",
     "dataset_for_slice_viewer",
     "dataset_rebin_config",
     "dataset_rebin_enabled",
@@ -504,6 +518,14 @@ __all__ = [
     "rebinned_dataset_data",
     "remember_recent_project",
     "restore_data_group_state",
+    "WORKFLOW_SCHEMA_VERSION",
+    "WorkflowNode",
+    "WorkflowOutput",
+    "WorkflowPlan",
+    "WorkflowValidationError",
+    "dataset_workflow_plan",
+    "dataset_workflow_script",
+    "render_workflow_script",
     "make_box_mask_transform",
     "make_constant_intensity_model",
     "make_ellipsoid_mask_transform",

@@ -74,10 +74,11 @@ includes dataset sources and conventions, masks, model configuration,
 parameters, constraints, fit settings, fit results, analyses, and saved plot
 recipes.
 
-Actions that export scripts require the project to be saved first so the script
-has a stable project path. Generated fit scripts can restore a selected state
-without creating Qt objects; generated plot scripts use the public plotting
-API.
+Right-click an ordinary source-backed dataset to copy or save readable Python
+that reloads and prepares it without Qt. Fit and saved-plot scripts currently
+load a saved project, so those exports require a stable project path. Script
+exports reproduce the selected active state, not every branch in fit history.
+See [Workflow scripts](workflow_scripts.md) for scope and limitations.
 
 For the underlying objects and extension contracts, see
 [Modeling and fitting pipeline](modeling_pipeline.md),

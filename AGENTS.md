@@ -61,6 +61,7 @@ different Python.
 - `src/nfit/cross_section.py`: neutron cross-section and susceptibility
   conversions.
 - `src/nfit/analysis/`: non-destructive analysis operations.
+- `src/nfit/workflow.py`: dependency graphs and human-readable script export.
 - `docs/physics_conventions.md`: authoritative physics and unit conventions.
 - `docs/gui_workflows.md`: GUI documentation entry point.
 - `docs/data_import.md`, `docs/gui_fitting.md`, and `docs/data_viewer.md`:

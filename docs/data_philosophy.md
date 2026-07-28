@@ -18,10 +18,11 @@ instrument or file format.
 - **Dataset identity is unique.** Importing or copying a dataset assigns a new
   ID, even when the source file is the same. Project loading rejects duplicate
   IDs because analysis and background references would otherwise be ambiguous.
-- **Scientific actions belong in public APIs.** Fit and saved-plot workflows
-  already export editable scripts. Other GUI workflows should call the same
-  package functions as Python code and must not hide scientific choices only
-  in widget state. Remaining export gaps are listed in
+- **Scientific actions belong in public APIs.** Dataset preparation, fit, and
+  saved-plot workflows export editable scripts. Other GUI workflows should call
+  the same package functions as Python code and must not hide scientific
+  choices only in widget state. Current coverage and remaining gaps are listed
+  in [Workflow scripts](workflow_scripts.md) and
   [Planned features](planned_features.md).
 - **Resolution belongs to a dataset.** A resolution model may depend on the
   instrument and settings, but the optimizer receives only coordinates,

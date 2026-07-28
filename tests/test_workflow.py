@@ -1,0 +1,224 @@
+from __future__ import annotations
+
+import json
+
+import numpy as np
+import pytest
+
+from nfit import (
+    BackgroundSpec,
+    DataGroup,
+    DatasetEntry,
+    MaskSpec,
+    MDHistoAxis,
+    MDHistoData,
+    NfitProject,
+    NfitProjectExplorer,
+    WorkflowNode,
+    WorkflowOutput,
+    WorkflowPlan,
+    WorkflowValidationError,
+    dataset_entry_from_path,
+    dataset_for_slice_viewer,
+    dataset_workflow_plan,
+    dataset_workflow_script,
+    save_dataset_file,
+)
+from nfit.project_gui import effective_dataset_masks
+
+
+def _grid(value: float) -> MDHistoData:
+    q = MDHistoAxis("Q", np.array([0.0, 1.0, 2.0]), "A^-1", "momentum")
+    energy = MDHistoAxis("E", np.array([0.0, 10.0, 20.0]), "meV", "energy")
+    signal = value * np.array([[1.0, 2.0], [3.0, 4.0]])
+    return MDHistoData(
+        axes=(q, energy),
+        signal=signal,
+        errors=np.full_like(signal, value),
+        mask=np.zeros_like(signal, dtype=bool),
+        num_events=np.ones_like(signal),
+        metadata={},
+    )
+
+
+def test_workflow_plan_round_trips_and_orders_dependencies():
+    source = WorkflowNode(
+        id="source:a",
+        kind="source_dataset",
+        operation="load",
+        outputs=(WorkflowOutput("dataset", "entry:a", "dataset_entry"),),
+    )
+    prepared = WorkflowNode(
+        id="dataset:a",
+        kind="prepared_dataset",
+        operation="prepare",
+        dependencies=("source:a",),
+        outputs=(WorkflowOutput("data", "a", "prepared_dataset"),),
+    )
+    unused = WorkflowNode(id="source:unused", kind="source_dataset", operation="load")
+    plan = WorkflowPlan(nodes=(unused, prepared, source), targets=("dataset:a",))
+
+    plan.validate()
+    assert [node.id for node in plan.topological_nodes()] == ["source:a", "dataset:a"]
+    assert WorkflowPlan.from_dict(json.loads(json.dumps(plan.to_dict()))) == plan
+
+
+def test_workflow_plan_reports_cycles_and_duplicate_outputs():
+    cyclic = WorkflowPlan(
+        nodes=(
+            WorkflowNode(
+                id="a",
+                kind="source_dataset",
+                operation="a",
+                dependencies=("b",),
+            ),
+            WorkflowNode(
+                id="b",
+                kind="prepared_dataset",
+                operation="b",
+                dependencies=("a",),
+            ),
+        ),
+        targets=("a",),
+    )
+    with pytest.raises(WorkflowValidationError, match="cycle"):
+        cyclic.validate()
+
+    duplicate_output = WorkflowPlan(
+        nodes=(
+            WorkflowNode(
+                id="a",
+                kind="source_dataset",
+                operation="a",
+                outputs=(WorkflowOutput("x", "same", "dataset_entry"),),
+            ),
+            WorkflowNode(
+                id="b",
+                kind="source_dataset",
+                operation="b",
+                outputs=(WorkflowOutput("x", "same", "dataset_entry"),),
+            ),
+        ),
+        targets=("a",),
+    )
+    with pytest.raises(WorkflowValidationError, match="produced by both"):
+        duplicate_output.validate()
+
+
+def test_dataset_workflow_script_rebuilds_prepared_dataset(tmp_path):
+    target_path = tmp_path / "target.npz"
+    background_path = tmp_path / "background.npz"
+    save_dataset_file(DatasetEntry("raw target", _grid(2.0)), target_path, use_view=False)
+    save_dataset_file(
+        DatasetEntry("raw background", _grid(0.25)),
+        background_path,
+        use_view=False,
+    )
+
+    target = dataset_entry_from_path(
+        target_path,
+        data_type="single_crystal_inelastic",
+    )
+    target.name = "Measured signal"
+    target.scale_factor = 1.5
+    target.masks = [
+        MaskSpec(
+            "Exclude high H",
+            parameters={"Q": [1.0, 2.0]},
+        )
+    ]
+    background = dataset_entry_from_path(
+        background_path,
+        data_type="single_crystal_inelastic",
+    )
+    background.name = "Empty can"
+    target.backgrounds = [
+        BackgroundSpec(
+            "Subtract empty can",
+            background.id,
+            scale=0.5,
+            source_entry=background,
+        )
+    ]
+    group = DataGroup(
+        "Experiment",
+        datasets=[target, background],
+        masks=[
+            MaskSpec(
+                "Exclude high energy",
+                parameters={"E": [10.0, 20.0]},
+            )
+        ],
+    )
+    project = NfitProject([group])
+
+    script = dataset_workflow_script(project, target.id)
+    compile(script, "<nfit-workflow>", "exec")
+    namespace = {"__name__": "imported_workflow"}
+    exec(script, namespace)
+    rebuilt_entries, rebuilt_data = namespace["build_workflow"]()
+    expected = dataset_for_slice_viewer(
+        target,
+        extra_masks=effective_dataset_masks(group, target),
+    )
+    actual = rebuilt_data[target.id]
+
+    assert set(rebuilt_entries) == {target.id, background.id}
+    np.testing.assert_allclose(actual.signal, expected.signal, equal_nan=True)
+    np.testing.assert_allclose(actual.errors, expected.errors, equal_nan=True)
+    np.testing.assert_array_equal(actual.mask, expected.mask)
+    assert "from nfit import" in script
+    assert "load_project" not in script
+    assert "PySide" not in script
+    assert "def load_sources" in script
+    assert "def prepare_datasets" in script
+
+
+def test_dataset_workflow_rejects_non_source_and_grouped_reduction_datasets(tmp_path):
+    derived = DatasetEntry(
+        "Derived",
+        _grid(1.0),
+        metadata={"derived_from_analysis": "analysis-id"},
+    )
+    project = NfitProject([DataGroup("Experiment", datasets=[derived])])
+    with pytest.raises(WorkflowValidationError, match="derived from an analysis"):
+        dataset_workflow_plan(project, derived.id)
+
+    path = tmp_path / "grouped.npz"
+    save_dataset_file(DatasetEntry("raw", _grid(1.0)), path, use_view=False)
+    grouped = dataset_entry_from_path(path, data_type="single_crystal_inelastic")
+    grouped.kind = "raw_dgs_nexus"
+    project = NfitProject([DataGroup("Experiment", datasets=[grouped])])
+    with pytest.raises(WorkflowValidationError, match="grouped reduction"):
+        dataset_workflow_plan(project, grouped.id)
+
+
+def test_dataset_workflow_can_be_copied_and_saved_from_gui(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    source_path = tmp_path / "source.npz"
+    save_dataset_file(DatasetEntry("raw", _grid(1.0)), source_path, use_view=False)
+    dataset = dataset_entry_from_path(
+        source_path,
+        data_type="single_crystal_inelastic",
+    )
+    explorer = NfitProjectExplorer(
+        NfitProject([DataGroup("Experiment", datasets=[dataset])])
+    )
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
+
+    assert explorer.copy_dataset_workflow_script_for_selection()
+    copied = QtWidgets.QApplication.clipboard().text()
+    assert "def build_workflow" in copied
+
+    output = tmp_path / "saved_workflow.py"
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getSaveFileName",
+        lambda *args, **kwargs: (str(output), "Python scripts (*.py)"),
+    )
+    assert explorer.save_dataset_workflow_script_for_selection()
+    assert output.read_text(encoding="utf-8") == copied

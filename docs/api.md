@@ -93,6 +93,12 @@ Project GUI fit results store fit and residual channels directly. When the Qt
 viewer sees compatible stored channels, it can render linked data/fit or
 data/fit/residual panels while preserving the current plotting settings.
 
+`dataset_workflow_script(project, dataset_id)` generates GUI-free Python that
+rebuilds a supported source-backed dataset through preparation.
+`dataset_workflow_plan(...)` returns its versioned dependency graph, and
+`render_workflow_script(...)` renders a supported graph. See
+[Workflow scripts](workflow_scripts.md) for the current node coverage.
+
 Launch the project explorer with `nfit`. The explorer manages saved
 projects, workspaces, datasets, dataset groups, masks, models, rebinned dataset
 views, and fit timelines. The GUI is documented in

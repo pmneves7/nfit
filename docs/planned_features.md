@@ -32,10 +32,13 @@ releases. Current behavior is documented in the workflow and API pages.
 
 ## Reproducible scripting
 
-- Extend editable script export beyond fits and saved plots to data imports,
-  transformations, masks, rebinning, analyses, and complete batch workflows.
-- Add behavior-equivalence tests showing that exported scripts reproduce the
-  scientific project state without creating Qt widgets.
+- Extend the dataset workflow graph to grouped raw direct-geometry and MDEvent
+  reductions, analyses, fits, posterior sampling, plots, and complete active
+  project state.
+- Add target-specific export from analyses, fits, plots, workspaces, and whole
+  projects. Each export should contain the dependency closure needed for that
+  target, while fit history remains an interactive convenience.
+- Expand behavior-equivalence tests as each workflow node becomes exportable.
 
 ## Tutorials
 

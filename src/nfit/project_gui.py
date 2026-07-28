@@ -122,6 +122,7 @@ from .spectral_channels import (
     with_paired_spectral_channels,
 )
 from .symmetry import SymmetrySpec, resolve_symmetry, symmetry_config, symmetry_spec_from_config
+from .workflow import WorkflowValidationError, dataset_workflow_script
 
 QtMDHistoSliceViewer = None
 RECENT_PROJECT_LIMIT = 10
@@ -10886,6 +10887,78 @@ class NfitProjectExplorer:
             return False
         return True
 
+    def dataset_workflow_script_for_selection(self) -> str | None:
+        """Return a script that reconstructs the selected dataset from source."""
+
+        _group, entry, _mask, _model, role = self._objects_for_item(
+            self._current_item()
+        )
+        if role != "dataset" or entry is None:
+            return None
+        return dataset_workflow_script(self.project, entry.id)
+
+    def copy_dataset_workflow_script_for_selection(self) -> bool:
+        """Copy the selected dataset's reproducible workflow to the clipboard."""
+
+        from PySide6 import QtWidgets
+
+        try:
+            script = self.dataset_workflow_script_for_selection()
+        except (NotImplementedError, OSError, WorkflowValidationError) as exc:
+            QtWidgets.QMessageBox.information(
+                self.window,
+                "Copy dataset workflow script",
+                f"This dataset workflow cannot yet be exported:\n{exc}",
+            )
+            return False
+        if script is None:
+            return False
+        QtWidgets.QApplication.clipboard().setText(script)
+        return True
+
+    def save_dataset_workflow_script_for_selection(self) -> bool:
+        """Save the selected dataset's reproducible workflow as Python."""
+
+        from PySide6 import QtWidgets
+
+        try:
+            script = self.dataset_workflow_script_for_selection()
+        except (NotImplementedError, OSError, WorkflowValidationError) as exc:
+            QtWidgets.QMessageBox.information(
+                self.window,
+                "Save dataset workflow script",
+                f"This dataset workflow cannot yet be exported:\n{exc}",
+            )
+            return False
+        if script is None:
+            return False
+        _group, entry, _mask, _model, _role = self._objects_for_item(
+            self._current_item()
+        )
+        stem = (
+            "dataset"
+            if entry is None
+            else re.sub(r"\W+", "_", entry.name).strip("_") or "dataset"
+        )
+        path, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
+            self.window,
+            "Save dataset workflow script",
+            f"{stem}_workflow.py",
+            "Python scripts (*.py);;All files (*)",
+        )
+        if not path:
+            return False
+        try:
+            Path(path).write_text(script, encoding="utf-8")
+        except OSError as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Save dataset workflow script",
+                f"Could not write the script:\n{exc}",
+            )
+            return False
+        return True
+
     def fit_now_for_selection(self) -> FitTimelineEntry | None:
         group, _entry, _mask, _model, role = self._objects_for_item(self._current_item())
         fit_entry = self._fit_entry_for_item(self._current_item())
@@ -18008,6 +18081,8 @@ class NfitProjectExplorer:
         if role == "dataset":
             specs.append(("Show file location", has_source))
             specs.append(("Change file source", True))
+            specs.append(("Copy workflow script", True))
+            specs.append(("Save workflow script...", True))
         if role in {"dataset", "masks", "group_masks", "dataset_group"}:
             specs.append(("Add mask", True))
         if role in {"datasets", "dataset", "backgrounds", "dataset_group", "group_backgrounds"}:
@@ -18046,6 +18121,8 @@ class NfitProjectExplorer:
             "View in data viewer": self.open_slice_viewer_for_selection,
             "Show file location": self.show_file_location_for_selection,
             "Change file source": self.change_file_source_for_selection,
+            "Copy workflow script": self.copy_dataset_workflow_script_for_selection,
+            "Save workflow script...": self.save_dataset_workflow_script_for_selection,
             "Add dataset": self.add_dataset_to_selection,
             "Add mask": self.add_mask_to_selection,
             "Add background": self.add_background_to_selection,
@@ -18069,6 +18146,14 @@ class NfitProjectExplorer:
             "View in data viewer": "Open or refresh the data viewer for this selection.",
             "Show file location": "Reveal the selected dataset's source file in the operating system file browser.",
             "Change file source": "Point this dataset at a different source file on disk.",
+            "Copy workflow script": (
+                "Copy readable Python that reloads and prepares this dataset "
+                "from its source files."
+            ),
+            "Save workflow script...": (
+                "Save readable Python that reloads and prepares this dataset "
+                "from its source files."
+            ),
             "Add dataset": "Choose data files to import into this dataset collection.",
             "Add mask": "Create a new mask for the selected dataset or shared mask folder.",
             "Add background": (

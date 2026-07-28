@@ -9,7 +9,7 @@ and general point tables.
 nfit was authored by Paul M. Neves (Johns Hopkins University,
 pneves1@jhu.edu) with use of LLM coding tools.
 
-Current package version: 0.24.1.
+Current package version: 0.25.0.
 
 Start with [Getting started](getting_started.md), then use
 [GUI workflows](gui_workflows.md) for interactive work or the
@@ -22,6 +22,7 @@ Start with [Getting started](getting_started.md), then use
 
 getting_started
 gui_workflows
+workflow_scripts
 data_import
 gui_fitting
 data_viewer

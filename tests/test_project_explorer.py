@@ -1312,6 +1312,8 @@ def test_project_explorer_context_menu_actions_and_source_change(monkeypatch, tm
         "View in data viewer",
         "Show file location",
         "Change file source",
+        "Copy workflow script",
+        "Save workflow script...",
         "Add mask",
         "Add background",
     ]

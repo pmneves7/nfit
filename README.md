@@ -13,8 +13,8 @@ The package provides:
 - simultaneous least-squares fitting with explicit uncertainty conventions,
   optional differential-evolution initialization, and `emcee` posterior
   sampling;
-- project files with fit timelines, provenance, and script export for fits and
-  saved plots;
+- project files with fit timelines and provenance, plus editable script export
+  for dataset preparation, fits, and saved plots;
 - interactive slice, waterfall, and volumetric visualization.
 
 See the [documentation](docs/index.md) for workflows, physics conventions,
