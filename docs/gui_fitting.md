@@ -72,7 +72,7 @@ The stages are opt-in:
    correlations after least squares.
 
 The loss function and robust-loss scale are explained in
-[Modeling and fitting pipeline](modeling_pipeline.md#simultaneous-fitting).
+[Modeling and fitting pipeline](modeling_pipeline.md#simultaneous-least-squares).
 Use ordinary `linear` loss for a final chi-squared fit when the uncertainty
 model is trusted. Robust losses are useful for diagnosis, but should not replace
 appropriate masks or a better physical model.

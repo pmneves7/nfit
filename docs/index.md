@@ -5,10 +5,10 @@ physical coordinates such as `H`, `K`, `L`, `|Q|`, and energy transfer. It
 supports reduced MDHisto data, file-backed MDEvent and raw direct-geometry
 events, powder cuts, magnetization, heat capacity, and general point tables.
 
-Nfit was authored by Paul M. Neves (Johns Hopkins University,
+nfit was authored by Paul M. Neves (Johns Hopkins University,
 pneves1@jhu.edu) with use of LLM coding tools.
 
-Current package version: 0.20.13.
+Current package version: 0.20.14.
 
 Start with [Getting started](getting_started.md), then use
 [GUI workflows](gui_workflows.md) for interactive work or the
@@ -34,6 +34,7 @@ plotting
 
 physics_conventions
 spin_fluctuation_models
+heisenberg_rpa
 heat_capacity
 theory_notes
 ```

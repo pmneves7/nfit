@@ -75,6 +75,17 @@ ownership or documentation entry points move.
   `docs/` during the same change.
 - When adding or removing a user-facing capability, update the concise feature
   summary in `README.md` and the appropriate Sphinx page or navigation entry.
+- Write for a user or developer trying to understand the current package.
+  Prefer direct, task-oriented prose; remove development history, planning
+  narration, repeated caveats, and step-by-step widget descriptions that do not
+  help someone use or extend the feature.
+- Keep overview pages short and route detail to focused pages. Preserve
+  information needed to use, validate, or extend nfit even when tightening the
+  prose.
+- Define every physics quantity at first use and state its units or
+  dimensionless convention. Keep equations dimensionally consistent and use
+  `docs/physics_conventions.md` as the canonical source for shared notation,
+  normalization, and unit conversions.
 - Treat `docs/gui_workflows.md` as the GUI entry point. Put detailed import,
   fitting, viewer, physics, and API behavior in their focused pages rather than
   growing that overview into a second manual.

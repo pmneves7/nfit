@@ -25,6 +25,8 @@ $$
 \sigma_{\bar y}=\frac{1}{\sqrt{\sum_i1/\sigma_i^2}}.
 $$
 
+$y_i$ is a contributing bin value, $\sigma_i$ is its one-sigma uncertainty,
+and $\bar y$ is the reduced value with uncertainty $\sigma_{\bar y}$.
 Masked bins and invalid uncertainties are excluded.
 
 Plot smoothing is specified in displayed-bin widths. It affects only the

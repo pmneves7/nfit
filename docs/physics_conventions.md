@@ -8,6 +8,20 @@ means neutron energy loss. Momentum is in reciprocal-lattice units or
 steradian and per meV. Model kernels produce the dissipative response
 $\chi''(\mathbf Q,E)$ before instrumental factors.
 
+Common symbols are:
+
+| symbol | meaning |
+| --- | --- |
+| $E_i,E_f,E$ | incident, final, and transferred neutron energy |
+| $\mathbf k_i,\mathbf k_f$ | incident and final neutron wavevectors; $k_i,k_f$ are their magnitudes |
+| $\mathbf Q=\mathbf k_i-\mathbf k_f$ | momentum transfer; $Q=|\mathbf Q|$ and $\hat{\mathbf Q}=\mathbf Q/Q$ |
+| $T$, $k_B$ | absolute temperature and Boltzmann constant |
+| $\omega$, $\hbar$ | angular frequency and reduced Planck constant, with $E=\hbar\omega$ |
+| $g$, $\mu_B$, $\mu_0$ | dimensionless Landé factor, Bohr magneton, and vacuum permeability |
+| $B$, $H$, $M$ | magnetic flux density, magnetic field strength, and magnetization |
+| $N_A$ | Avogadro constant |
+| $\alpha,\beta$ | Cartesian components $x,y,z$ |
+
 ### Definition of the dynamic spin correlation function
 
 nfit follows the Fourier-transform convention in Squires, chapter 7,
@@ -26,6 +40,10 @@ S^{\alpha\beta}_s(\mathbf Q,E)
 S^\alpha_0(0)S^\beta_l(t)
 \right\rangle .
 $$
+
+$l$ labels magnetic ions, $\mathbf R_l$ is the equilibrium position of ion
+$l$ relative to ion 0, $t$ is time, and angle brackets denote a thermal
+equilibrium average.
 
 Thus $S^{\alpha\beta}_s$ has physical dimensions of inverse energy and is
 labelled `spin^2/meV` when $E$ is in meV. Here `spin^2` records the operator
@@ -55,6 +73,12 @@ $$
 (\delta_{\alpha\beta}-\hat Q_\alpha\hat Q_\beta)
 S_s^{\alpha\beta}(\mathbf Q,E).
 $$
+
+$d\Omega$ is detector solid angle, $f(Q)$ is the dimensionless magnetic
+amplitude form factor, $\delta_{\alpha\beta}$ is the Kronecker delta,
+$\gamma$ is the neutron magnetic-moment coefficient, and $r_0$ is the
+classical electron radius. The tensor in parentheses projects out moment
+components parallel to $\mathbf Q$.
 
 For a sample of $N$ equivalent magnetic ions, Squires writes the total
 cross section with an additional factor $N$ outside the per-ion correlation
@@ -215,7 +239,8 @@ $$
 $$
 
 Here $E$, $dE$, and the inverse-energy unit of $\chi''_s$ must be expressed
-consistently. Both sides have dimensions of inverse energy.
+consistently. The index $i$ labels the Cartesian field component. Both sides
+have dimensions of inverse energy.
 
 Bulk susceptibility is the uniform response, so it requires
 $\mathbf Q=0$. If $\chi'_s$ is expressed in J$^{-1}$ per magnetic ion, then
@@ -273,10 +298,10 @@ The explicit division by $\varepsilon_{\rm meV}$ belongs only in this
 unit-stripped numerical-value equation. It must not be combined with a
 susceptibility that still carries its physical inverse-energy unit.
 
-Thus the user's $\mu_0$ observation is correct for conversion to proper MKS/SI
-$M/H$ units. It is **not** an additional factor in the neutron cross section
-once $\chi''$ is already in `spin^2/meV` or `mu_B^2/meV`; inserting it there
-would mix SI bulk and microscopic neutron conventions. nfit's molar
+The factor $\mu_0$ is therefore required for rationalized-SI $M/H$ units. It
+is **not** an additional factor in the neutron cross section once $\chi''$ is
+already in `spin^2/meV` or `mu_B^2/meV`; inserting it there would mix SI bulk
+and microscopic neutron conventions. nfit's molar
 `cm^3/mol` to `m^3/mol` conversion includes the rationalized-SI $4\pi$ factor,
 and the Heisenberg RPA bulk prediction includes the corresponding
 $\mu_0(g\mu_B)^2$ conversion. Welch *et al.* derive this relation explicitly
@@ -372,21 +397,7 @@ scattering references rather than any material-specific paper
 ([Squires, chapters 7-8](https://doi.org/10.1017/CBO9781139107808.009);
 [Xu, Xu, and Tranquada 2013](https://doi.org/10.1063/1.4818323)).
 
-### Digitized data
-
-The digitizer CSV importer records the quantity, unit, normalization basis,
-temperature, fixed cut coordinate, and kinematic state selected by the user.
-It never infers a convention from a material, author, or filename. When
-transcribing a published curve, use its axis label and methods section to
-decide whether the ordinate is intensity, cross section,
-$S(\mathbf Q,E)$, or $\chi''(\mathbf Q,E)$ and whether $k_f/k_i$ was removed
-upstream.
-
-Digitized three-column cuts carry the digitized one-sigma error bars. Color-map
-matrices do not contain an uncertainty layer, so import assigns the explicit
-user-selected uniform map uncertainty and masks NaN pixels. Consequently, an
-absolute intensity scale does not by itself imply statistically calibrated
-map uncertainties.
+### Bulk-data unit conversions
 
 Bulk magnetic data use explicit CGS/SI conversions: one emu of magnetic dipole
 moment is $10^{-3}\ {\rm A\,m^2}$; in vacuum, a field reported as
@@ -404,33 +415,15 @@ provided $m_{\rm sample}$ and $\mu_B$ are expressed in the same moment unit
 (for example emu). The result is the numerical moment in
 `mu_B/f.u.`.
 
-Additional conventions used by the spin-fluctuation model family (see
-[Spin-fluctuation models](spin_fluctuation_models.md) for the full math):
-
-- Magnetic form factors use the $\langle j_0 \rangle$ analytic approximation
-  $f(s) = A e^{-a s^2} + B e^{-b s^2} + C e^{-c s^2} + D$ with
-  $s = |Q|/4\pi$ in Å⁻¹ (`nfit.form_factors`). The form factor and
-  $A,B,C,D$ are dimensionless, while $a,b,c$ have units Å², so every
-  exponential argument is dimensionless.
-- Exchange Fourier transforms use the extended-zone phase convention:
-  $J(\mathbf{Q})_{ab} = \sum J_{\text{bond}}
-  \exp[2\pi i\, \mathbf{Q}\cdot(\mathbf{r}_b + \mathbf{n} - \mathbf{r}_a)]$
-  with $\mathbf Q$ in r.l.u. and the positions and lattice translation
-  fractional, so the phase is dimensionless. $J_{\rm bond}$ and
-  $J(\mathbf Q)$ have energy units. Because these matrix elements already
-  carry the full pair phases, the RPA neutron weights use the *uniform*
-  sublattice sum $|\sum_a U_{a\nu}|^2/N$ (no additional site phases), which is
-  dimensionless, makes the observable exactly independent of the cell
-  description, and keeps the mode weights summing to one. See
-  [Spin-fluctuation models](spin_fluctuation_models.md).
-- Temperature enters only through the Bose factor and is read from each
-  dataset (`PointData4D.temperature`), never from fit parameters.
+The model-specific form-factor and exchange symbols are defined in
+[Spin-fluctuation models](spin_fluctuation_models.md) and
+[Heisenberg RPA](heisenberg_rpa.md).
 
 ## Tensor (anisotropic) interactions
 
 These apply when the `heisenberg_rpa` model is run with anisotropic exchange,
 single-ion anisotropy, dipole–dipole, or Zeeman terms (see
-[Spin-fluctuation models](spin_fluctuation_models.md#tensor-anisotropic-interactions)).
+[Heisenberg RPA](heisenberg_rpa.md#tensor-interactions)).
 
 - **Polarization weight.** The unpolarized channel uses
   $W_{\alpha\beta} = \delta_{\alpha\beta} - \hat Q_\alpha \hat Q_\beta$
@@ -449,6 +442,9 @@ single-ion anisotropy, dipole–dipole, or Zeeman terms (see
   $R = L\,R_{\text{frac}}\,L^{-1}$ of the symmetry op; the two axial-vector
   $\det R$ factors cancel, so no sign flip is applied for improper ops. A bond
   reversed by its generating op contributes $R\,T^{\mathsf T}R^{\mathsf T}$.
+  Here $T$ is the Cartesian interaction tensor, $R_{\rm frac}$ is a fractional
+  crystallographic symmetry operation, and $L$ maps fractional direct-space
+  vectors to Cartesian coordinates.
 - **Field frames.** The applied field is entered as a magnitude in tesla plus a
   direction given as either a direct $[u\,v\,w]$ vector (converted with the
   direct lattice matrix) or a reciprocal $(H\,K\,L)$ vector (converted with the

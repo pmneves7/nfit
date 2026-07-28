@@ -1,223 +1,118 @@
 # Performance notes
 
-## N-dimensional rebinning
+nfit selects conservative CPU and memory strategies automatically. Most users
+only need to limit grid sizes and install an optional acceleration backend for
+large jobs.
 
-The rebinner follows the same workload-gated backend and CPU-allocation
-conventions as the Heisenberg RPA implementation. Small jobs stay on NumPy;
-large jobs use an optional fused Numba kernel. `NFIT_NUM_THREADS`, process CPU
-affinity, cgroups, and SLURM allocations define the automatic worker ceiling.
+## Rebinning and event reduction
 
-Threaded accumulation uses memory-bounded dense private outputs when practical.
-Very sparse, enormous output grids can instead use touched-bin maps; these save
-memory but are substantially slower, so automatic selection requires estimated
-occupancy of 5% or less. If neither threaded strategy meets its memory policy,
-the fused serial kernel is used.
+Small rebinning jobs use NumPy. Large jobs can use a fused Numba kernel with
+memory-bounded private accumulators. Extremely sparse output grids may use
+touched-bin maps when their estimated occupancy is at most 5%; otherwise nfit
+falls back to a serial fused kernel if threaded copies exceed the memory
+budget.
 
-Use `benchmarks/benchmark_rebin.py` to measure throughput and memory on the
-target machine; results depend strongly on grid shape, occupancy, and worker
-count.
+`rebin_nd_stream` and MDEvent reduction process source data in bounded batches,
+so source files may exceed RAM. Explicit output limits permit one pass;
+automatic limits require a discovery pass. The batch target bounds temporary
+event storage but cannot reduce the persistent output arrays.
 
-`rebin_nd_stream` supports sources larger than RAM through repeatable batches,
-including memory maps and custom HDF5, NeXus, or Zarr providers. Coordinate
-projection and binning are batch-local. Automatic limits require a discovery
-pass before accumulation, while explicit limits permit a single pass. Each
-streaming batch can use the same memory-bounded dense or sparse worker strategy.
+Before a 4D MDEvent reduction, the GUI estimates peak memory from the output
+bin counts and normalization arrays. It warns above 70% of available RAM. The
+lower-level API rejects an over-budget allocation unless the caller explicitly
+disables enforcement.
 
-## MDEvent reduction
-
-MDEvent rows are streamed in bounded chunks, so memory does not scale with the
-complete event table. Runtime is split between HDF5 reads/event binning and
-detector-trajectory normalization. The latter uses the shared nfit CPU budget
-and Numba workers when available. Worker count is capped by a 512 MB private
-accumulator budget because each worker may need an output-sized array.
-
-Trajectory workers reuse one scratch buffer per worker instead of allocating
-one for every run-detector pair. This keeps temporary memory bounded as the
-number of runs and detectors grows.
-
-Before allocating output arrays, nfit estimates peak reduction memory from the
-product of the four output bin counts, fixed normalization arrays, and the
-selected batch target. The GUI warns when the estimate exceeds 70% of available
-RAM and shows both the requested grid and estimated peak. The batch target
-limits event-scan temporary storage; it cannot reduce the persistent arrays
-required by the output grid. The lower-level API rejects an over-budget request
-unless its caller explicitly disables memory enforcement.
+Use `benchmarks/benchmark_rebin.py` to measure representative grids on the
+target machine.
 
 ## Heisenberg RPA
 
-Fitting `heisenberg_rpa` evaluates a batched
-Hermitian eigendecomposition of $J(\mathbf{Q})$ at every fitted point, so the
-cost scales with the number of valid points and the cube of the number of
-magnetic sublattices. The package applies several exact optimizations
-automatically — none of them changes the fit result or requires configuration.
+For $M$ fitted momentum points and $N$ magnetic sublattices, the scalar model's
+batched eigendecomposition costs approximately $O(MN^3)$. nfit reduces this
+cost without changing the result:
 
-## What is automatic
+- masked data are prepared once per fit;
+- datasets with zero fit weight are evaluated only after optimization;
+- phase geometry and form factors are cached per dataset;
+- centered cells are reduced to translationally distinct magnetic sites when
+  the interaction permits it;
+- exchange-independent geometry is reused between value and Jacobian calls;
+- analytic scalar-model derivatives avoid one model evaluation per parameter;
+- gradients stream in bounded point blocks; and
+- GUI views, overlays, and analysis fingerprints use bounded caches.
 
-- **Prepared-data memoization.** Each dataset's masked, validity-filtered
-  points are computed once per fit and reused across every optimizer iteration
-  (`FitDataset.prepared_valid`), rather than re-running the transform chain each
-  time.
-- **Visualization-only datasets.** Enabled datasets with zero fit weight are
-  excluded before fit preparation, compilation, and residual evaluation. They
-  are prepared and evaluated once after optimization so their stored model
-  channels can visualize a full volume without putting that volume in the fit.
-- **Per-dataset geometry cache.** The $\mathbf{Q}$-dependent, exchange-
-  independent phase arrays and the magnetic form factor are built once per
-  dataset and cached (identity-checked against the data object).
-- **Primitive-cell reduction.** Centered lattices are folded onto their
-  translationally distinct sublattices before evaluation — exact, and a large
-  win for high-symmetry crystals (pyrochlore in the conventional cubic cell:
-  16 → 4 sites, ~64× less eigendecomposition work). All inputs and outputs stay
-  in the user's specified cell. See
-  [Spin-fluctuation models](spin_fluctuation_models.md).
-- **Analytic Jacobian.** When every model component on a dataset can supply
-  exact gradients (backgrounds and `heisenberg_rpa` do, absent instrument
-  resolution), the optimizer uses them instead of finite differences, cutting a
-  least-squares iteration from $1 + n_{\text{param}}$ model evaluations to about
-  two and improving convergence.
-- **Shared eigendecomposition.** The eigendecomposition of $J(\mathbf{Q})$
-  depends only on the exchange values, so it is cached on the geometry and the
-  back-to-back value and Jacobian evaluations of one least-squares iteration
-  reuse a single decomposition instead of computing it twice.
-- **Fused small-matrix eigensolver.** For datasets with little
-  energy-per-$\mathbf{Q}$ deduplication (2D maps), the cost is dominated by
-  decomposing many tiny $J(\mathbf{Q})$ matrices, where LAPACK's per-call
-  overhead is the bottleneck. A fused Numba Jacobi eigensolver decomposes the
-  batch in one parallel kernel. It is used for small sublattice counts
-  ($N \le 16$) and large batches; larger matrices use LAPACK.
-- **Work-gated threaded eigendecomposition.** When the LAPACK path is used, the
-  batched `eigh` is chunked across a thread pool only when the total work
-  $M N^3$ is large enough to amortize the dispatch (roughly $N \ge 8$), with the
-  underlying BLAS pinned to one thread to avoid nested oversubscription.
-- **Memory-bounded gradients.** The analytic Jacobian streams over points in
-  blocks, so its $(\text{block}, N, N)$ temporaries stay within a fixed budget
-  regardless of dataset size.
-- **Live overlay caching.** In the GUI, the model overlay is evaluated only over
-  valid (unmasked) points and its bundles and phase geometry are cached across
-  parameter edits, so changing a fitted value re-evaluates in ~0.1 s rather than
-  rebuilding from scratch. Rapid edits are debounced.
-- **Viewer-view and details caching.** The masked, rebinned viewer view is
-  cached per dataset (keyed on data identity, masks, and rebin — not the
-  selection), so merely selecting a fit result or "Current state" node, or
-  re-selecting a large dataset, no longer re-masks the whole volume. Dataset
-  detail counts are computed directly from the mask/event/intensity arrays
-  instead of materializing coordinate grids.
-- **LRU GUI caches and prepared point lists.** Viewer, composite, overlay, and
-  transformed point-list caches evict only their least-recently-used entry.
-  Workspaces with more cached datasets therefore do not repeatedly discard and
-  rebuild every large view. Point-list role/unit transforms are reused until
-  their source data or configuration changes; merely inspecting rebin status
-  reads the source row count without copying every column.
-- **Incremental analysis fingerprints.** Array content hashes are retained by
-  immutable data identity. Changing enablement, fit weight, scale, masks, or
-  other configuration still produces a new complete fingerprint, but does not
-  reread and SHA-256 hash unchanged multidimensional arrays during a tree
-  refresh.
-- **Bulk-susceptibility grouping.** The Q=0 exchange eigensystem is computed
-  once per exchange parameter vector and reused for every temperature and
-  closure state. Scalar bulk curves group only by the quantities that can
-  affect the result: temperature when a closure is active, and one evaluation
-  for a closure-free curve. Small measured-field readback variations therefore
-  do not create thousands of identical static calculations. Exact closure
-  results use an LRU sized for complete temperature sweeps.
+Primitive-cell reduction is often the largest exact saving because the
+eigendecomposition cost is cubic in $N$. See
+[Heisenberg RPA](heisenberg_rpa.md#primitive-cell-reduction).
 
-GUI file imports, explicit lazy-dataset loads, and rebin operations run in a
-background worker so Qt remains responsive. Numerical rebinning still follows
-its memory-bounded threading policy.
+For many small matrices, a fused Numba Jacobi eigensolver removes repeated
+LAPACK call overhead. Larger matrices use LAPACK, with batch-level threading
+only when the workload can amortize dispatch.
 
-## Compute backends (large datasets)
+## Compute backends
 
-The per-point resolvent contractions — the dominant cost once the problem has
-millions of points — run through a selectable backend:
+The resolvent contractions support:
 
-| backend | when | dependency |
+| backend | use | installation |
 | --- | --- | --- |
-| `numpy` | always available; fastest for small problems | — |
-| `numba` | large problems on CPU (fused, parallel, streaming kernel) | `pip install nfit[accel]` |
-| `cupy` | large problems on an NVIDIA/AMD GPU | `pip install nfit[gpu]` (CuPy wheel matching your CUDA/ROCm) |
+| `numpy` | default and small jobs | included |
+| `numba` | large CPU jobs | `pip install nfit[accel]` |
+| `cupy` | large GPU jobs | `pip install nfit[gpu]` with a matching CuPy wheel |
 
-`nfit.set_rpa_backend("auto")` (the default, also via the
-`NFIT_RPA_BACKEND` environment variable) picks `numpy` below ~50k points so
-a 100-point dataset pays no JIT or host↔device overhead, `numba` for larger CPU
-problems, and `cupy` for the largest when a GPU is present. `numpy` /
-`numba` / `cupy` force a specific backend (falling back to `numpy` if the
-requested one is unavailable); `nfit.available_rpa_backends()` reports what
-is installed. All backends produce identical results (locked to the numpy path
-to floating-point precision by the test suite).
+`nfit.set_rpa_backend("auto")` is the default. It uses NumPy below roughly
+50,000 points, then selects an installed accelerated backend when worthwhile.
+Set `NFIT_RPA_BACKEND` or call `set_rpa_backend()` to override it.
+`nfit.available_rpa_backends()` reports what is available. An unavailable
+forced backend falls back to NumPy.
 
-## Threads and many-core / cluster nodes
+## Threads
 
-The parallel worker budget for the RPA kernels (the batched-eigendecomposition
-thread pool and the numba kernel) auto-detects the CPUs the process is actually
-*allowed* to run on: on Linux that respects cgroup / cpuset / SLURM allocations
-via `os.sched_getaffinity`, so a 16-core allocation on a 128-core node uses 16
-workers, not 128. Override with `nfit.set_num_threads(n)` or the
-`NFIT_NUM_THREADS` environment variable.
+nfit respects the CPUs available through affinity, cgroups, or a SLURM
+allocation. Override the detected worker count with `NFIT_NUM_THREADS` or
+`nfit.set_num_threads(n)`.
 
-The batched eigendecomposition pins the underlying BLAS/LAPACK to a single
-thread per call while our thread pool provides the batch-level parallelism —
-otherwise a multithreaded BLAS (MKL/OpenBLAS/Accelerate) would nest
-`workers × BLAS_threads` threads, which oversubscribes badly on many-core
-nodes. (This is what `threadpoolctl` is for; it is a hard dependency.)
+Batch-level eigendecomposition pins BLAS/LAPACK to one thread to avoid nested
+oversubscription. On Apple silicon, Accelerate's shared AMX unit can make a
+smaller worker count faster for large matrices; lower `NFIT_NUM_THREADS` if
+benchmarking shows this behavior. Small primitive-cell models do not use the
+threaded LAPACK path.
 
-One hardware caveat: on Apple silicon, `eigh` runs through Accelerate's
-AMX-backed LAPACK, whose throughput is bounded by the shared AMX unit rather
-than by core count, so for large magnetic cells ($N \gtrsim 8$ sublattices)
-fewer eigh workers can be faster there — set `NFIT_NUM_THREADS` lower if
-you hit it. On non-AMX platforms (Linux/Windows with OpenBLAS/MKL) the
-pinned-BLAS pool scales the eigendecomposition across all allocated cores. The
-primitive-cell-reduced common case ($N \le 6$) does not thread the eigh at all,
-so it is unaffected either way.
+## Tensor interactions
 
-## Tensor (anisotropic) interactions
+Tensor interactions promote the scalar $N\times N$ exchange matrix to
+$3N\times3N$:
 
-Enabling anisotropic exchange, single-ion anisotropy, dipole–dipole, or Zeeman
-promotes $J(\mathbf{Q})$ to a $3N\times3N$ matrix
-([Spin-fluctuation models](spin_fluctuation_models.md#tensor-anisotropic-interactions)).
-Cost notes:
-
-- **Tier A (field off).** One Hermitian $3N\times3N$ eigendecomposition per
-  unique $\mathbf{Q}$: roughly $3^3\approx 27\times$ the scalar per-$\mathbf{Q}$
-  work at fixed $N$, though $3N\le 16$ (e.g. pyrochlore $N=4\Rightarrow 3N=12$)
-  still fits the fused numba Jacobi eigensolver. Structure matrices are stored
-  **bond-resolved** (per-bond phase rows + $3\times3$ Cartesian tensors) and
-  assembled per iteration, so no $(n_Q, N, N, 3, 3)$ array is held per parameter.
-- **Tier B (field on).** A batched LU solve of
-  $\mathbb 1 - X_0(\omega)\mathbb{J}(\mathbf{Q})$ per fitted point (chunked at
-  200k points), since the gyrotropic $X_0(\omega)$ breaks the eigenbasis reuse.
-  Budget a few seconds per evaluation on the 4D job.
-- **Dipole cache.** The Ewald tensor is built once per dataset geometry and
-  cached densely at shape $(n_Q, N, N, 3, 3)$ complex — ≈360 MB for
-  $n_Q=156\text{k}$, $N=4$. It also disables primitive-cell reduction (the Ewald
-  sum needs the primitive lattice), so the full cell is used when dipole is on.
-- **Gradients.** Tensor mode currently uses central-difference gradients
-  ($1+n_{\text{param}}$ evaluations per iteration); the scalar path keeps its
+- **Field off:** one Hermitian eigendecomposition is reused for every energy
+  at a momentum. Cubic scaling makes the matrix work roughly 27 times the
+  scalar cost at fixed $N$.
+- **Field on:** the gyrotropic local response requires a batched linear solve
+  at each fitted point.
+- **Dipoles:** the Ewald tensor is cached densely and disables primitive-cell
+  reduction. Its complex array has shape $(n_Q,N,N,3,3)$, where $n_Q$ is the
+  number of distinct momentum points.
+- **Gradients:** tensor mode uses central differences; scalar mode retains its
   analytic Jacobian.
 
-The scalar path is untouched when no tensor section is configured, so existing
-projects see no change.
+The scalar path is unchanged when tensor interactions are disabled. See
+[Heisenberg RPA](heisenberg_rpa.md#tensor-interactions) for the model
+definitions.
 
-## Hardware and libraries
+## Closures
 
-nfit computes through NumPy/SciPy, so it inherits whatever LAPACK/BLAS
-those were built against. This is an **environment choice, not a code change**,
-and the package stays portable across macOS, Linux, Windows, and clusters with
-no configuration:
+Field-free Onsager, SCR, and TAC calculations reuse one Brillouin-zone
+eigendecomposition and cache exact closure results across a temperature
+series. Field-on closures require numerical energy integration and batched
+linear solves, so their cost scales with both Brillouin-zone and energy-grid
+sizes.
 
-- On Apple silicon, conda-forge can link Apple's Accelerate
-  (`libblas=*=*accelerate`), which uses the AMX coprocessor and is often faster
-  for the small dense decompositions here. On other platforms OpenBLAS or MKL
-  are the usual defaults.
-- The batched eigendecomposition and per-point contractions are isolated behind
-  `nfit.spin_fluctuations._rpa_modes`, `_rpa_numba`, and `_rpa_cupy`. The GPU
-  backend currently accelerates per-point contractions.
+Use a coarse grid for exploration, then check convergence of fitted and derived
+quantities before reporting quantitative results. The closure equations and
+grid controls are in [Sum rules and self-consistency](theory_notes.md).
 
 ## Current limitations
 
 - Tensor mode uses finite-difference gradients.
-- GPU execution does not yet include eigendecomposition or the Tier-B solve.
-- Dipolar tensor mode cannot use primitive-cell reduction because the Ewald sum
-  requires primitive lattice vectors.
+- GPU execution does not include eigendecomposition or field-on tensor solves.
+- Dipolar tensor mode cannot use primitive-cell reduction.
 
-Broader user-facing directions are listed in
-[Planned features](planned_features.md).
+Broader directions are listed in [Planned features](planned_features.md).

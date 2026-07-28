@@ -20,7 +20,7 @@ model equations, and the Python API.
 
 ## Authorship
 
-Nfit was authored by Paul M. Neves (Johns Hopkins University,
+nfit was authored by Paul M. Neves (Johns Hopkins University,
 pneves1@jhu.edu) with use of LLM coding tools.
 See [References and software influences](docs/references.md) for the scientific
 and software projects that informed nfit.

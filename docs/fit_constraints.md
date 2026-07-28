@@ -1,6 +1,6 @@
 # Fit constraints
 
-Nfit fit constraints are hard relationships between model parameters. They are
+nfit fit constraints are hard relationships between model parameters. They are
 stored in the project and fit-state snapshots, used by GUI and backend fits, and
 included when a fit-generating script restores a saved state. Constraints are
 therefore scientific configuration, not transient GUI state.
@@ -37,7 +37,7 @@ saved constraint references.
 ## Exact relationships
 
 Choose `=` when one parameter is completely determined by other parameters or
-constants. Nfit removes the dependent parameter from the optimizer and evaluates
+constants. nfit removes the dependent parameter from the optimizer and evaluates
 the expression for every model call.
 
 | Desired relationship | Dependent parameter | Expression |
@@ -70,7 +70,7 @@ side must currently be one qualified global parameter or one numeric constant:
 | $a \ge b$ | `A.a` | `>=` | `` `B.b` `` |
 | $a \le 4$ | `A.a` | `<=` | `4` |
 
-Nfit enforces an inequality by reparameterization. For $a \ge b$, it fits a
+nfit enforces an inequality by reparameterization. For $a \ge b$, it fits a
 nonnegative offset $\delta$ and evaluates $a=b+\delta$; for $a \le b$, it uses
 $a=b-\delta$. The optimizer therefore cannot step outside the allowed region.
 General arithmetic expressions on the right-hand side of inequalities are not
@@ -79,7 +79,7 @@ written with an additional model parameter.
 
 ## Reduced chi-squared
 
-Nfit reports
+nfit reports
 
 $$
 \chi^2_\nu = \frac{\chi^2}{N-p},
