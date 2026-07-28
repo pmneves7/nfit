@@ -64,6 +64,8 @@ from .fitting import (
 )
 from .form_factors import form_factor_sq
 from .heat_capacity import debye_heat_capacity, low_temperature_heat_capacity
+from .model_registry import MODEL_TYPE_REGISTRY, validate_model_component
+from .model_registry import ModelTypeInfo as ModelTypeInfo
 from .quantities import convert_quantity
 from .spin_fluctuations import (
     build_rpa_geometry,
@@ -1655,25 +1657,32 @@ def _heisenberg_rpa_factory(component: Any) -> ModelFunction:
     return _RpaComponentEvaluator(component).value
 
 
+def _heisenberg_rpa_component_diagnostics(
+    component: Any, data: PointData4D, params: Mapping[str, float]
+) -> dict[str, Any] | None:
+    """Calculate post-fit physics diagnostics for a Heisenberg RPA component."""
+
+    return _RpaComponentEvaluator(component).diagnostics(data, dict(params))
+
+
 def compute_component_diagnostics(
     component: Any, data: PointData4D, params: Mapping[str, float]
 ) -> dict[str, Any] | None:
-    """Post-fit physics diagnostics for one ``heisenberg_rpa`` component.
+    """Run a component's registered post-fit diagnostics, when available.
 
-    Returns a flat JSON-safe metrics dict (see
-    :meth:`_RpaComponentEvaluator.diagnostics`), or ``None`` when the component
-    is not a ``heisenberg_rpa`` model or cannot be evaluated on ``data``
-    (missing crystal config, incompatible dataset). ``params`` are fully
-    resolved qualified parameter values.
+    ``params`` contains fully resolved qualified parameter values. Invalid or
+    incomplete model configuration returns ``None`` so diagnostics never turn
+    an otherwise successful fit into a failure.
     """
 
-    if getattr(component, "type", None) != "heisenberg_rpa":
+    info = MODEL_TYPE_REGISTRY.get(getattr(component, "type", None))
+    if info is None or info.diagnostics is None:
         return None
     try:
-        evaluator = _RpaComponentEvaluator(component)
-        return evaluator.diagnostics(data, dict(params))
+        result = info.diagnostics(component, data, params)
     except (ValueError, KeyError):
         return None
+    return None if result is None else dict(result)
 
 
 def _heisenberg_rpa_jacobian_factory(component: Any) -> ModelJacobian | None:
@@ -1692,27 +1701,6 @@ def _heisenberg_rpa_jacobian_factory(component: Any) -> ModelJacobian | None:
     return _RpaComponentEvaluator(component).gradients
 
 
-@dataclass(frozen=True)
-class ModelTypeInfo:
-    """Fit-engine registration for one model component type.
-
-    ``data_types`` lists the dataset data types the model can be applied to;
-    ``("*",)`` means the model works with any dataset. ``dynamic_parameters``
-    optionally derives additional parameter names from a component's
-    configuration (e.g. one exchange constant per bond orbit).
-    """
-
-    parameters: tuple[str, ...]
-    data_types: tuple[str, ...]
-    factory: Callable[[Any], ModelFunction]
-    dynamic_parameters: Callable[[Any], tuple[str, ...]] | None = None
-    jacobian_factory: Callable[[Any], ModelJacobian] | None = None
-    default_lower_bounds: tuple[tuple[str, float], ...] = ()
-    """Optional analytic-Jacobian builder. When every component applied to a
-    dataset provides one, the optimizer uses exact gradients instead of finite
-    differences; otherwise it silently falls back."""
-
-
 def component_parameter_names(component: Any) -> tuple[str, ...]:
     """Return all parameter names of a component, static plus config-derived."""
 
@@ -1720,75 +1708,6 @@ def component_parameter_names(component: Any) -> tuple[str, ...]:
     if info.dynamic_parameters is None:
         return info.parameters
     return (*info.parameters, *info.dynamic_parameters(component))
-
-
-MODEL_TYPE_REGISTRY: dict[str, ModelTypeInfo] = {
-    "constant_background": ModelTypeInfo(
-        parameters=("constant",),
-        data_types=("*",),
-        factory=_constant_background_factory,
-        jacobian_factory=_constant_background_jacobian_factory,
-    ),
-    "linear_background": ModelTypeInfo(
-        parameters=("c0", "c1"),
-        data_types=("single_crystal_inelastic", "powder_inelastic"),
-        factory=_linear_background_factory,
-        jacobian_factory=_linear_background_jacobian_factory,
-    ),
-    "local_relaxational": ModelTypeInfo(
-        parameters=("chi_loc", "gamma"),
-        data_types=(
-            "single_crystal_inelastic",
-            "powder_inelastic",
-            "single_crystal_elastic",
-            "powder_elastic",
-        ),
-        factory=_local_relaxational_factory,
-        default_lower_bounds=(("chi_loc", 0.0), ("gamma", 0.0)),
-    ),
-    "mmp_relaxational": ModelTypeInfo(
-        parameters=("chi_pk", "xi", "omega_sf", "q0_h", "q0_k", "q0_l"),
-        data_types=("single_crystal_inelastic", "single_crystal_elastic"),
-        factory=_mmp_relaxational_factory,
-        default_lower_bounds=(
-            ("chi_pk", 0.0),
-            ("xi", 0.0),
-            ("omega_sf", 0.0),
-        ),
-    ),
-    "heisenberg_rpa": ModelTypeInfo(
-        parameters=("chi0", "gamma0"),
-        data_types=(
-            "single_crystal_inelastic",
-            "powder_inelastic",
-            "single_crystal_elastic",
-            "powder_elastic",
-            "magnetization",
-        ),
-        factory=_heisenberg_rpa_factory,
-        dynamic_parameters=heisenberg_rpa_parameter_labels,
-        jacobian_factory=_heisenberg_rpa_jacobian_factory,
-        default_lower_bounds=(("chi0", 0.0), ("gamma0", 0.0)),
-    ),
-    "debye_heat_capacity": ModelTypeInfo(
-        parameters=("debye_temperature", "oscillator_count"),
-        data_types=("heat_capacity",),
-        factory=_debye_heat_capacity_factory,
-        default_lower_bounds=(("debye_temperature", 0.0), ("oscillator_count", 0.0)),
-    ),
-    "low_temperature_heat_capacity": ModelTypeInfo(
-        parameters=("sommerfeld_gamma", "debye_beta"),
-        data_types=("heat_capacity",),
-        factory=_low_temperature_heat_capacity_factory,
-        default_lower_bounds=(("sommerfeld_gamma", 0.0), ("debye_beta", 0.0)),
-    ),
-    "curie_weiss": ModelTypeInfo(
-        parameters=("curie_constant", "theta_CW"),
-        data_types=("magnetization",),
-        factory=_curie_weiss_factory,
-        default_lower_bounds=(("curie_constant", 0.0),),
-    ),
-}
 
 
 def model_supports_data_type(model_type: str, data_type: str) -> bool:
@@ -1945,6 +1864,7 @@ def compile_fit_problem(
     for component in active:
         if component.type not in MODEL_TYPE_REGISTRY:
             raise ValueError(f"model type {component.type!r} is not registered for fitting")
+        validate_model_component(component)
         if component.name in seen:
             raise ValueError(f"duplicate model component name {component.name!r}")
         seen.add(component.name)

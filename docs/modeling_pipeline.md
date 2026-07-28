@@ -72,6 +72,33 @@ The common containers expose read-only numerical arrays. Use `with_updates` for
 one replacement or `mutable_copy` followed by `DatasetEntry.replace_data` for
 several edits. See [Data and extension conventions](data_philosophy.md#data-container-contract).
 
+## Shared model registry
+
+`ModelDefinition` is the single public description of a serializable model
+component. Each registered definition supplies:
+
+- a stable type key, label, description, version, category, compatible dataset
+  types, documentation target, and citations;
+- typed parameter and fixed-configuration fields with defaults, units,
+  validation guidance, examples, and optional dynamic parameter discovery;
+- the numerical factory and optional analytic-Jacobian factory;
+- optional post-fit diagnostics, report-section, and model-plot providers; and
+- project and workflow serialization hooks.
+
+`MODEL_TYPE_REGISTRY` drives fit compilation. The project editor and its
+tooltips derive from the same definitions, and project saving, workflow export,
+diagnostics, reports, and model-owned plots resolve their hooks there. This
+keeps an extension scriptable even when it also supplies GUI presentation.
+`MODEL_TYPE_DEFINITIONS` remains a read-only mapping view for compatibility.
+
+Register a definition with `register_model_definition`. Registration validates
+duplicate fields, bounds, and plot keys. Extension code should register during
+package initialization, before loading projects that use its type key. A
+scientific model still needs a focused documentation page under
+[Spin-fluctuation models](spin_fluctuation_models.md), validation against known
+limits, and workflow-equivalence tests; registry membership alone is not a
+physics validation.
+
 ## Preparing data
 
 ### Masks
@@ -308,9 +335,10 @@ A new model or transform should:
 2. preserve or explicitly declare units and quantity types;
 3. avoid mutating its inputs;
 4. serialize every scientific choice;
-5. provide stable parameter names and validation;
-6. expose the same operation to scripts and the GUI where applicable; and
-7. include tests, tooltips, and user documentation.
+5. provide stable parameter names and validation through `ModelDefinition`;
+6. register diagnostics, reports, plots, and serializers that the model owns;
+7. expose the same operation to scripts and the GUI where applicable; and
+8. include tests, tooltips, citations, and user documentation.
 
 Registry and serialization details are in
 [Data and extension conventions](data_philosophy.md). Planned tight-binding

@@ -65,10 +65,8 @@ from .crystal import (
 from .dataset import PointData4D, PointListData, from_arrays
 from .fit_config import (
     ISOTROPIC_POLARIZATION,
-    MODEL_TYPE_REGISTRY,
     CompiledFitProblem,
     FitDatasetInput,
-    ModelTypeInfo,
     ParameterInstance,
     compile_fit_problem,
     component_parameter_names,
@@ -156,6 +154,21 @@ from .mdhisto import (
     MDHistoData,
     load_mantid_mdhisto_nxs,
 )
+from .model_registry import (
+    MODEL_TYPE_DEFINITIONS,
+    MODEL_TYPE_REGISTRY,
+    ModelConfigDefinition,
+    ModelDefinition,
+    ModelFieldDefinition,
+    ModelParameterDefinition,
+    ModelPlotDefinition,
+    ModelTypeInfo,
+    model_definition,
+    model_plot_definitions,
+    register_model_definition,
+    serialize_model_component,
+    validate_model_component,
+)
 from .models import (
     compound_additive_model,
     constant_background,
@@ -198,7 +211,6 @@ from .plotting import (
 from .project_gui import (
     DATA_TYPE_DEFINITIONS,
     MASK_TYPE_DEFINITIONS,
-    MODEL_TYPE_DEFINITIONS,
     NfitProject,
     attach_fit_channels_to_view,
     available_data_types,
@@ -444,6 +456,16 @@ __all__ = [
     "instanced_parameter_name",
     "latest_fit_channels",
     "MODEL_TYPE_REGISTRY",
+    "ModelConfigDefinition",
+    "ModelDefinition",
+    "ModelFieldDefinition",
+    "ModelParameterDefinition",
+    "ModelPlotDefinition",
+    "model_definition",
+    "model_plot_definitions",
+    "register_model_definition",
+    "serialize_model_component",
+    "validate_model_component",
     "model_supports_data_type",
     "ModelTypeInfo",
     "ParameterInstance",

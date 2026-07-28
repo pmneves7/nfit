@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 
 from .analysis.core import AnalysisEntry, AnalysisOutputRef, AnalysisResultRecord
+from .model_registry import serialize_model_component
 from .pipeline import (
     BackgroundSpec,
     DataGroup,
@@ -437,19 +438,7 @@ def _background_to_dict(background: BackgroundSpec) -> dict[str, Any]:
 
 
 def _model_to_dict(model: ModelComponentSpec) -> dict[str, Any]:
-    return {
-        "name": model.name,
-        "type": model.type,
-        "parameters": _json_mapping(model.parameters),
-        "config": _json_mapping(model.config),
-        "fit_parameters": {name: bool(value) for name, value in model.fit_parameters.items()},
-        "sharing": _json_mapping(model.sharing),
-        "limits": _json_mapping(model.limits),
-        "constraints": [dict(constraint) for constraint in model.constraints],
-        "applies_to": None if model.applies_to is None else list(model.applies_to),
-        "enabled": bool(model.enabled),
-        "metadata": _json_mapping(model.metadata),
-    }
+    return serialize_model_component(model, purpose="project")
 
 
 def _fit_entry_to_dict(fit_entry: FitTimelineEntry) -> dict[str, Any]:

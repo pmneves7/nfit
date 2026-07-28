@@ -26,12 +26,21 @@ scope, provenance requirements, dependency policy, validation matrix, and
 stage gates are fixed in the
 [Electronic-response design contract](electronic_response_contract.md).
 
-The next stage is a shared model framework for evaluation, GUI metadata,
-diagnostics, reports, plots, and scripts. Subsequent stages add
-phenomenological modes, arbitrary tight binding and band plots, the complex
-bare susceptibility, interaction dressings, production fitting, and advanced
-correlated extensions. A capability remains planned until its model page
-documents an implemented public API.
+The shared model registry now provides common metadata and extension hooks for
+evaluation, diagnostics, reports, model plots, and project/workflow
+serialization. Subsequent stages add phenomenological modes, arbitrary tight
+binding and orbital-projected band and density-of-states plots, the complex
+bare susceptibility, interaction dressings, production fitting, BCS
+superconductivity, and advanced correlated extensions. Electronic calculations
+should eventually share the rebinner's bounded-memory and selectable-backend
+approach, including symmetry-reduced Brillouin-zone work where valid. A
+capability remains planned until its model page documents an implemented public
+API.
+
+Instrument resolution, finite-bin integration, absorption, and related
+measurement effects will form an optional dataset-owned systematics layer
+before comparison with observations. This layer is separate from the
+electronic-response implementation.
 
 ## Distribution and interoperability
 

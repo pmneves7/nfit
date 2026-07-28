@@ -18,6 +18,7 @@ from pathlib import Path
 from pprint import pformat
 from typing import Any
 
+from .model_registry import serialize_model_component
 from .pipeline import BackgroundSpec, DataGroup, DatasetEntry, DatasetGroup, MaskSpec
 from .project_io import NfitProject
 
@@ -678,19 +679,7 @@ def _background_spec(background: BackgroundSpec) -> dict[str, Any]:
 
 
 def _model_spec(model) -> dict[str, Any]:
-    return {
-        "name": model.name,
-        "type": model.type,
-        "parameters": copy.deepcopy(model.parameters),
-        "config": copy.deepcopy(model.config),
-        "fit_parameters": copy.deepcopy(model.fit_parameters),
-        "sharing": copy.deepcopy(model.sharing),
-        "limits": copy.deepcopy(model.limits),
-        "constraints": copy.deepcopy(model.constraints),
-        "applies_to": copy.deepcopy(model.applies_to),
-        "enabled": bool(model.enabled),
-        "metadata": copy.deepcopy(model.metadata),
-    }
+    return serialize_model_component(model, purpose="workflow")
 
 
 def _dataset_group_spec(group: DatasetGroup) -> dict[str, Any]:

@@ -27,6 +27,8 @@ from typing import Any
 
 import numpy as np
 
+from .model_registry import model_definition
+
 __all__ = [
     "LatexCompileError",
     "compile_latex_pdf",
@@ -1039,13 +1041,59 @@ def _section_cross_section(
     return "\n".join(lines) + "\n"
 
 
+def heisenberg_rpa_report_sections(
+    fit_entry: Any,
+    model: Mapping[str, Any],
+    goodness: Mapping[str, Any],
+    context: Mapping[str, Any],
+) -> tuple[tuple[str, str], ...]:
+    """Return the model-owned crystal and physics sections for an RPA model."""
+
+    cite = context["citations"]
+    model_count = int(context.get("model_count", 1))
+    heading = "Model Hamiltonian"
+    if model_count > 1:
+        heading += f" ({latex_escape(model.get('name'))})"
+    config = _config(model)
+    model_parts = [
+        f"\\section{{{heading}}}",
+        (
+            "The active terms of the spin Hamiltonian are (each bond counted "
+            "once; interaction matrices in the Cartesian crystal frame):"
+        ),
+        _hamiltonian_display(config),
+        _section_exchange(model, goodness, cite),
+        _section_anisotropy(model, goodness, cite),
+        _section_sia(model, goodness),
+        _section_dipole(model, goodness, cite),
+        _section_zeeman(fit_entry, model, goodness),
+        _section_dynamic_response(fit_entry, model, goodness, cite),
+        _section_closure(model, goodness, cite),
+        _section_cross_section(
+            model,
+            goodness,
+            cite,
+            include_inelastic=bool(context.get("include_inelastic", True)),
+            include_elastic=bool(context.get("include_elastic", False)),
+        ),
+    ]
+    return (
+        ("crystal", _section_crystal(model)),
+        ("model", "\n".join(part for part in model_parts if part)),
+    )
+
+
 def _section_other_components(
-    models: list[dict[str, Any]], goodness: Mapping[str, Any]
+    models: list[dict[str, Any]],
+    goodness: Mapping[str, Any],
+    *,
+    handled_names: set[str] | None = None,
 ) -> str:
+    handled_names = handled_names or set()
     others = [
         model
         for model in models
-        if model.get("type") != "heisenberg_rpa" and model.get("enabled", True)
+        if model.get("name") not in handled_names and model.get("enabled", True)
     ]
     if not others:
         return ""
@@ -1272,11 +1320,6 @@ def render_fit_report_latex(
 
     goodness = _goodness(fit_entry)
     models = _snapshot_models(fit_entry)
-    rpa_models = [
-        model
-        for model in models
-        if model.get("type") == "heisenberg_rpa" and model.get("enabled", True)
-    ]
     cite = _Citations()
     fitted_data_types = {
         str(dataset.get("data_type", ""))
@@ -1290,38 +1333,39 @@ def render_fit_report_latex(
         known_data_types & inelastic_types
     )
 
+    report_models: list[tuple[dict[str, Any], Any]] = []
+    for model in models:
+        if not model.get("enabled", True):
+            continue
+        try:
+            hook = model_definition(str(model.get("type", ""))).report_sections
+        except (KeyError, TypeError):
+            hook = None
+        if hook is not None:
+            report_models.append((model, hook))
+    report_context = {
+        "citations": cite,
+        "model_count": len(report_models),
+        "include_elastic": include_elastic,
+        "include_inelastic": include_inelastic,
+    }
+    report_sections: list[tuple[str, str]] = []
+    handled_names: set[str] = set()
+    for model, hook in report_models:
+        report_sections.extend(hook(fit_entry, model, goodness, report_context))
+        handled_names.add(str(model.get("name")))
+
     body: list[str] = []
     body.append(_section_summary(fit_entry, group_name))
-    for model in rpa_models:
-        body.append(_section_crystal(model))
-    for model in rpa_models:
-        config = _config(model)
-        heading = "Model Hamiltonian"
-        if len(rpa_models) > 1:
-            heading += f" ({latex_escape(model.get('name'))})"
-        body.append(f"\\section{{{heading}}}")
-        body.append(
-            "The active terms of the spin Hamiltonian are (each bond counted "
-            "once; interaction matrices in the Cartesian crystal frame):"
+    body.extend(text for slot, text in report_sections if slot == "crystal")
+    body.extend(text for slot, text in report_sections if slot != "crystal")
+    body.append(
+        _section_other_components(
+            models,
+            goodness,
+            handled_names=handled_names,
         )
-        body.append(_hamiltonian_display(config))
-        body.append(_section_exchange(model, goodness, cite))
-        body.append(_section_anisotropy(model, goodness, cite))
-        body.append(_section_sia(model, goodness))
-        body.append(_section_dipole(model, goodness, cite))
-        body.append(_section_zeeman(fit_entry, model, goodness))
-        body.append(_section_dynamic_response(fit_entry, model, goodness, cite))
-        body.append(_section_closure(model, goodness, cite))
-        body.append(
-            _section_cross_section(
-                model,
-                goodness,
-                cite,
-                include_inelastic=include_inelastic,
-                include_elastic=include_elastic,
-            )
-        )
-    body.append(_section_other_components(models, goodness))
+    )
     body.append(_section_parameters(fit_entry))
     body.append(_section_diagnostics(fit_entry))
     body.append(_section_methods(fit_entry, nfit_version))

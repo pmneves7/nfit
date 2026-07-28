@@ -53,6 +53,14 @@ project files, validation, and GUI tooltips therefore use the same contract.
 Values remain JSON-compatible unless the common project format is extended
 deliberately.
 
+Models use the public `ModelDefinition` registry. In addition to fields and
+compatibility, a definition may provide numerical and Jacobian factories,
+dynamic parameter discovery, diagnostics, report sections, model-owned plots,
+citations, and separate project/workflow serializers. The legacy
+`MODEL_TYPE_DEFINITIONS` dictionary interface is a derived read-only view, not
+a second metadata registry. See
+[Modeling and fitting pipeline](modeling_pipeline.md#shared-model-registry).
+
 Every interactive control needs hover text that explains its effect and any
 important constraint. A behavior change must update the relevant source page
 and tests at the same time. The pages linked from
@@ -116,6 +124,12 @@ A data group stores model components as `ModelComponentSpec` entries:
 The prediction is the sum of enabled components. Parameter links, expressions,
 and priors use the common fit specification described in
 [Fit constraints](fit_constraints.md), not GUI-only state.
+
+The component type resolves through `model_definition(type)`. Model-specific
+post-fit diagnostics are stored with the fit result; report and plotting
+providers consume that stored or reproducible scientific state. Custom
+serializers must return JSON-compatible component dictionaries and preserve the
+registered type key.
 
 ## File-backed event data
 

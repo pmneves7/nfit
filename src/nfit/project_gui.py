@@ -19,6 +19,7 @@ from typing import Any
 
 import numpy as np
 
+from . import model_registry as _model_registry
 from .analysis.artifacts import read_dataset_artifact
 from .analysis.coordinates import signal_semantics
 from .analysis.core import AnalysisEntry, AnalysisOutputRef
@@ -75,6 +76,7 @@ from .mdhisto import (
     load_mantid_mdhisto_nxs,
     mdhisto_measured_bins,
 )
+from .model_registry import MODEL_TYPE_DEFINITIONS, MODEL_TYPE_REGISTRY
 from .pipeline import (
     BackgroundSpec,
     DataGroup,
@@ -349,296 +351,6 @@ MASK_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
 }
 
 
-MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
-    "constant_background": {
-        "label": "Constant background",
-        "description": "Measured-intensity background that is constant across Q and energy.",
-        "parameters": {
-            "constant": {
-                "default": 0.0,
-                "description": "Flat measured-intensity offset added to every point.",
-                "allowed": "Any finite number in the dataset intensity units.",
-                "type": "float",
-                "example": "0.1",
-            },
-        },
-        "config": {},
-    },
-    "linear_background": {
-        "label": "Linear background",
-        "description": "Measured-intensity background linear in energy transfer.",
-        "parameters": {
-            "c0": {
-                "default": 0.0,
-                "description": "Energy-independent background offset.",
-                "allowed": "Any finite number in the dataset intensity units.",
-                "type": "float",
-                "example": "0.1",
-            },
-            "c1": {
-                "default": 0.0,
-                "description": "Slope of the background versus energy transfer.",
-                "allowed": "Any finite number in intensity units per meV.",
-                "type": "float",
-                "example": "0.02",
-            },
-        },
-        "config": {},
-    },
-    "local_relaxational": {
-        "label": "Local relaxational spin",
-        "description": (
-            "Fully local spin relaxing at rate Gamma: chi'' = chi_loc * Gamma * E / (E^2 + Gamma^2), "
-            "converted to intensity with the Bose factor, magnetic form factor, and "
-            "one-component isotropic polarization factor P = 2. Requires a dataset temperature."
-        ),
-        "parameters": {
-            "chi_loc": {
-                "default": 1.0,
-                "description": "Static local susceptibility (1/meV up to the intensity normalization).",
-                "allowed": "Positive finite number.",
-                "type": "float",
-                "example": "2.0",
-            },
-            "gamma": {
-                "default": 2.0,
-                "description": "Relaxation rate Gamma: chi'' peaks at E = Gamma.",
-                "allowed": "Positive finite number in meV.",
-                "type": "float",
-                "example": "3.0",
-            },
-        },
-        "config": {
-            "ion": {
-                "default": "",
-                "description": (
-                    "Magnetic form factor multiplying the intensity: choose a tabulated ion, "
-                    "Custom for explicit <j0> coefficients, or none for no form factor. "
-                    "Requires lattice metadata for |Q|."
-                ),
-                "allowed": "An ion label from the ILL <j0> tables, Custom, or empty.",
-                "type": "str",
-                "example": "Fe2",
-                "choices": "form_factor_ions",
-            },
-            "form_factor_coefficients": {
-                "default": "",
-                "description": (
-                    "Custom <j0> coefficients A, a, B, b, C, c, D overriding the ion table "
-                    "(see https://www.ill.eu/sites/ccsl/ffacts/)."
-                ),
-                "allowed": "Seven comma-separated numbers, or empty to use the ion table.",
-                "type": "str",
-                "example": "0.0263, 34.96, 0.3668, 15.94, 0.6188, 5.594, -0.0119",
-            },
-        },
-    },
-    "mmp_relaxational": {
-        "label": "MMP relaxational (nearly AFM)",
-        "description": (
-            "Millis-Monien-Pines susceptibility of a nearly antiferromagnetic metal: "
-            "chi(q,w) = chi_pk / (1 + xi^2 |q-Q0|^2 - i w/omega_sf), converted to intensity "
-            "with Bose, form-factor, and one-component isotropic polarization P = 2. "
-            "Requires dataset temperature and lattice metadata."
-        ),
-        "parameters": {
-            "chi_pk": {
-                "default": 1.0,
-                "description": "Static susceptibility at the ordering vector Q0 (1/meV up to normalization).",
-                "allowed": "Positive finite number.",
-                "type": "float",
-                "example": "3.0",
-            },
-            "xi": {
-                "default": 1.0,
-                "description": "Magnetic correlation length.",
-                "allowed": "Positive finite number in Angstrom.",
-                "type": "float",
-                "example": "2.5",
-            },
-            "omega_sf": {
-                "default": 1.0,
-                "description": "Spin-fluctuation energy: relaxation rate of the mode at Q0.",
-                "allowed": "Positive finite number in meV.",
-                "type": "float",
-                "example": "1.8",
-            },
-            "q0_h": {
-                "default": 0.5,
-                "description": "H coordinate of the ordering vector Q0.",
-                "allowed": "Finite number in reciprocal lattice units.",
-                "type": "float",
-                "example": "0.5",
-            },
-            "q0_k": {
-                "default": 0.0,
-                "description": "K coordinate of the ordering vector Q0.",
-                "allowed": "Finite number in reciprocal lattice units.",
-                "type": "float",
-                "example": "0.5",
-            },
-            "q0_l": {
-                "default": 0.0,
-                "description": "L coordinate of the ordering vector Q0.",
-                "allowed": "Finite number in reciprocal lattice units.",
-                "type": "float",
-                "example": "0.0",
-            },
-        },
-        "config": {
-            "ion": {
-                "default": "",
-                "description": (
-                    "Magnetic form factor multiplying the intensity: choose a tabulated ion, "
-                    "Custom for explicit <j0> coefficients, or none for no form factor."
-                ),
-                "allowed": "An ion label from the ILL <j0> tables, Custom, or empty.",
-                "type": "str",
-                "example": "Fe2",
-                "choices": "form_factor_ions",
-            },
-            "form_factor_coefficients": {
-                "default": "",
-                "description": (
-                    "Custom <j0> coefficients A, a, B, b, C, c, D overriding the ion table "
-                    "(see https://www.ill.eu/sites/ccsl/ffacts/)."
-                ),
-                "allowed": "Seven comma-separated numbers, or empty to use the ion table.",
-                "type": "str",
-                "example": "0.0263, 34.96, 0.3668, 15.94, 0.6188, 5.594, -0.0119",
-            },
-        },
-    },
-    "heisenberg_rpa": {
-        "label": "Heisenberg RPA spin fluctuations",
-        "description": (
-            "Local relaxational spins coupled by Heisenberg exchange in the RPA: "
-            "chi(Q,w) = [1 - chi0(w) J(Q)]^-1 chi0(w) with chi0(w) = chi0/(1 - i w/Gamma0). "
-            "J(Q) is built from symmetry-distinct bond orbits (J1, J2, J3a, ...), each an "
-            "exchange fit parameter in meV; J > 0 favors ordering where J(Q) is maximal and "
-            "the fit is restricted to the paramagnetic side max J(Q) chi0 < 1. "
-            "Configure the crystal and generate bond orbits, then fit. Requires dataset temperature."
-        ),
-        "structured_config": True,
-        "dynamic_parameter_description": (
-            "Heisenberg exchange constant of symmetry orbit {name} in meV; one shared value "
-            "for every bond in the orbit. Positive J favors ordering at the wavevector "
-            "maximizing J(Q)."
-        ),
-        "parameters": {
-            "chi0": {
-                "default": 0.1,
-                "description": (
-                    "Single-site static susceptibility entering the RPA denominator "
-                    "(1/meV: the product J * chi0 is dimensionless). The magnetic instability "
-                    "is at max J(Q) chi0 = 1."
-                ),
-                "allowed": "Positive finite number in 1/meV.",
-                "type": "float",
-                "example": "0.5",
-            },
-            "gamma0": {
-                "default": 5.0,
-                "description": (
-                    "Bare single-site relaxation rate; the coupled mode at Q relaxes at "
-                    "Gamma0 (1 - J(Q) chi0), softening toward the ordering vector."
-                ),
-                "allowed": "Positive finite number in meV.",
-                "type": "float",
-                "example": "5.0",
-            },
-        },
-        "config": {
-            "ion": {
-                "default": "",
-                "description": (
-                    "Magnetic form factor multiplying the intensity: choose a tabulated ion, "
-                    "Custom for explicit <j0> coefficients, or none for no form factor."
-                ),
-                "allowed": "An ion label from the ILL <j0> tables, Custom, or empty.",
-                "type": "str",
-                "example": "Yb3",
-                "choices": "form_factor_ions",
-            },
-            "form_factor_coefficients": {
-                "default": "",
-                "description": (
-                    "Custom <j0> coefficients A, a, B, b, C, c, D overriding the ion table "
-                    "(see https://www.ill.eu/sites/ccsl/ffacts/)."
-                ),
-                "allowed": "Seven comma-separated numbers, or empty to use the ion table.",
-                "type": "str",
-                "example": "0.0263, 34.96, 0.3668, 15.94, 0.6188, 5.594, -0.0119",
-            },
-        },
-    },
-    "debye_heat_capacity": {
-        "label": "Debye phonon heat capacity",
-        "description": (
-            "Debye lattice heat capacity C_D(T). The oscillator count is the number of "
-            "atoms represented per formula unit, so the high-temperature limit is 3 n R."
-        ),
-        "parameters": {
-            "debye_temperature": {
-                "default": 300.0,
-                "description": "Debye temperature theta_D.",
-                "allowed": "Positive finite temperature in kelvin.",
-                "type": "float",
-                "example": "420.0",
-            },
-            "oscillator_count": {
-                "default": 1.0,
-                "description": "Number of atoms represented per formula unit.",
-                "allowed": "Positive finite dimensionless number.",
-                "type": "float",
-                "example": "7.0",
-            },
-        },
-        "config": {},
-    },
-    "low_temperature_heat_capacity": {
-        "label": "Low-temperature heat capacity",
-        "description": "Electronic plus leading Debye term: C = gamma T + beta T^3.",
-        "parameters": {
-            "sommerfeld_gamma": {
-                "default": 100.0,
-                "description": "Sommerfeld coefficient gamma.",
-                "allowed": "Non-negative finite number in mJ/(mol K^2).",
-                "type": "float",
-                "example": "400.0",
-            },
-            "debye_beta": {
-                "default": 0.1,
-                "description": "Leading Debye coefficient beta multiplying T^3.",
-                "allowed": "Non-negative finite number in mJ/(mol K^4).",
-                "type": "float",
-                "example": "0.08",
-            },
-        },
-        "config": {},
-    },
-    "curie_weiss": {
-        "label": "Curie-Weiss susceptibility",
-        "description": "Absolute molar susceptibility chi = C / (T - theta_CW).",
-        "parameters": {
-            "curie_constant": {
-                "default": 1.0,
-                "description": "Molar Curie constant C in cm^3 K/mol.",
-                "allowed": "Positive finite number.",
-                "type": "float",
-                "example": "0.42",
-            },
-            "theta_CW": {
-                "default": 0.0,
-                "description": "Curie-Weiss temperature theta_CW in kelvin.",
-                "allowed": "Finite number below the fitted temperature interval.",
-                "type": "float",
-                "example": "-18.0",
-            },
-        },
-        "config": {},
-    },
-}
 
 def _new_gui_project() -> NfitProject:
     """Return the clean initial project shown by the GUI."""
@@ -1961,7 +1673,7 @@ def available_mask_types() -> list[str]:
 def available_model_types() -> list[str]:
     """Return registered model type names."""
 
-    return list(MODEL_TYPE_DEFINITIONS)
+    return list(_model_registry.available_model_types())
 
 
 def default_mask_parameters(type: str) -> dict[str, Any]:
@@ -2436,81 +2148,31 @@ def set_model_closure(model: ModelComponentSpec, updates: dict[str, Any]) -> Non
 def default_model_parameters(type: str) -> dict[str, Any]:
     """Return default parameter values for a registered model type."""
 
-    return {
-        name: copy.deepcopy(metadata["default"])
-        for name, metadata in MODEL_TYPE_DEFINITIONS[type]["parameters"].items()
-    }
+    return _model_registry.default_model_parameters(type)
 
 
 def default_model_config(type: str) -> dict[str, Any]:
     """Return default non-optimizable configuration settings for a model type."""
 
-    return {
-        name: copy.deepcopy(metadata["default"])
-        for name, metadata in MODEL_TYPE_DEFINITIONS[type].get("config", {}).items()
-    }
+    return _model_registry.default_model_config(type)
 
 
 def default_model_fit_parameters(type: str) -> dict[str, bool]:
     """Return default optimizer-inclusion flags for a registered model type."""
 
-    return {name: False for name in MODEL_TYPE_DEFINITIONS[type]["parameters"]}
+    return _model_registry.default_model_fit_parameters(type)
 
 
 def model_parameter_tooltip(type: str, parameter_name: str) -> str:
-    """Return standard hover text for a model parameter editor.
+    """Return standard hover text for a model parameter editor."""
 
-    Config-derived parameters (e.g. exchange constants of generated bond
-    orbits) are not in the static definitions; they use the model type's
-    ``dynamic_parameter_description`` template.
-    """
-
-    definition = MODEL_TYPE_DEFINITIONS[type]
-    metadata = definition["parameters"].get(parameter_name)
-    if metadata is None:
-        template = definition.get(
-            "dynamic_parameter_description",
-            "Configuration-derived fit parameter {name}.",
-        )
-        return "\n".join(
-            [
-                f"Parameter: {parameter_name}",
-                f"Description: {template.format(name=parameter_name)}",
-                "Data type: float",
-                "Default: 0",
-                "Fit: checked means the optimizer may vary this parameter; unchecked means it is fixed at the displayed value.",
-                "Sharing: choose one global value, independent per-dataset values, or named dataset groups.",
-            ]
-        )
-    return "\n".join(
-        [
-            f"Parameter: {parameter_name}",
-            f"Description: {metadata['description']}",
-            f"Allowed values: {metadata['allowed']}",
-            f"Data type: {metadata['type']}",
-            f"Default: {_parameter_to_text(metadata['default'])}",
-            f"Example: {metadata['example']}",
-            "Fit: checked means the optimizer may vary this parameter; unchecked means it is fixed at the displayed value.",
-            "Sharing: choose one global value, independent per-dataset values, or named dataset groups.",
-        ]
-    )
+    return _model_registry.model_parameter_tooltip(type, parameter_name)
 
 
 def model_config_tooltip(type: str, setting_name: str) -> str:
     """Return standard hover text for a model configuration setting editor."""
 
-    metadata = MODEL_TYPE_DEFINITIONS[type].get("config", {})[setting_name]
-    return "\n".join(
-        [
-            f"Configuration setting: {setting_name}",
-            f"Description: {metadata['description']}",
-            f"Allowed values: {metadata['allowed']}",
-            f"Data type: {metadata['type']}",
-            f"Default: {_parameter_to_text(metadata['default'])}",
-            f"Example: {metadata['example']}",
-            "Configuration settings are fixed model options and are not optimized by the fitter.",
-        ]
-    )
+    return _model_registry.model_config_tooltip(type, setting_name)
 
 
 def dataset_details_text(dataset: DatasetEntry, *, group: DataGroup | None = None) -> str:
@@ -5599,49 +5261,53 @@ def _fit_diagnostics_from_result(
     result: Any,
     bundles: dict[str, FitDataBundle],
     components: list[ModelComponentSpec],
-) -> dict[str, dict[str, float]]:
-    """Per-dataset physics diagnostics for each fitted heisenberg_rpa component.
+) -> dict[str, dict[str, Any]]:
+    """Collect registered per-dataset physics diagnostics after a fit.
 
     Returns ``{dataset_name: {metric: value}}`` (metrics prefixed by the
-    component name when a dataset carries more than one RPA component). Stored
-    in the fit result's metadata, which round-trips as JSON, so a future
-    diagnostics-vs-temperature plot needs no recomputation. Never raises: a
-    component that cannot be evaluated on a dataset is skipped.
+    component name when a dataset carries more than one diagnostic component).
+    Stored in the fit result's metadata, which round-trips as JSON. A component
+    that cannot be evaluated on a dataset is skipped.
     """
 
-    rpa_by_name = {
+    diagnostic_by_name = {
         component.name: component
         for component in components
-        if component.type == "heisenberg_rpa" and component.enabled
+        if component.enabled
+        and component.type in MODEL_TYPE_DEFINITIONS
+        and MODEL_TYPE_REGISTRY[component.type].diagnostics is not None
     }
-    if not rpa_by_name:
+    if not diagnostic_by_name:
         return {}
     resolved = compiled.problem.resolve_parameters(result.params)
     fitted_names = {dataset.name for dataset in compiled.problem.datasets}
-    diagnostics: dict[str, dict[str, float]] = {}
+    diagnostics: dict[str, dict[str, Any]] = {}
     for name, bundle in bundles.items():
         if name not in fitted_names:
             continue
         applicable = [
-            rpa_by_name[component_name]
+            diagnostic_by_name[component_name]
             for component_name in compiled.components_by_dataset.get(name, [])
-            if component_name in rpa_by_name
+            if component_name in diagnostic_by_name
         ]
         if not applicable:
             continue
         subset = _subset_points(bundle.points, bundle.points.valid_mask())
         if not subset.size:
             continue
-        per_dataset: dict[str, float] = {}
+        per_dataset: dict[str, Any] = {}
         for component in applicable:
             record = compute_component_diagnostics(component, subset, resolved)
             if not record:
                 continue
             if len(applicable) == 1:
-                per_dataset = {k: float(v) for k, v in record.items()}
+                per_dataset = copy.deepcopy(record)
             else:
                 per_dataset.update(
-                    {f"{component.name}.{k}": float(v) for k, v in record.items()}
+                    {
+                        f"{component.name}.{key}": copy.deepcopy(value)
+                        for key, value in record.items()
+                    }
                 )
         if per_dataset:
             diagnostics[name] = per_dataset

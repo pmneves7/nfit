@@ -34,7 +34,10 @@ electronic-model interface will leave room for a nonorthogonal overlap matrix
 $S(\mathbf k)$, but generalized eigenproblems are not part of the first
 implementation. Superconducting Nambu Hamiltonians, self-consistent electronic
 mean fields, and full DMFT or Bethe--Salpeter solvers are also deferred. These
-extensions must not require changing the conventions below.
+extensions must not require changing the conventions below. A later BCS
+response model will add Nambu bands, superconducting gaps, coherence factors,
+and the resulting continuum or spin-resonance response as an explicit
+extension of the normal-state electronic model.
 
 ## Layered response
 
@@ -47,6 +50,7 @@ The calculation is divided into composable layers:
 | bare response | eigensystem or Green function and an operator basis | complex $\boldsymbol\chi^0(\mathbf q,E)$ |
 | interaction dressing | $\boldsymbol\chi^0$ and an interaction vertex | complex $\boldsymbol\chi(\mathbf q,E)$ |
 | neutron projection | generalized response and magnetic operators | $\chi_{s,\alpha\beta}(\mathbf Q,E)$ |
+| experimental systematics | projected response and dataset/instrument configuration | response after resolution, bin integration, absorption, and other selected corrections |
 | dataset comparison | projected response and dataset metadata | the selected measured quantity |
 
 Electronic renormalization is optional. It is the insertion point for
@@ -58,6 +62,13 @@ Phenomenological models may construct the projected susceptibility directly,
 but they use the same complex-response, neutron-projection, dataset, report,
 and export contracts. The bare-response implementation must not depend on a
 particular interaction dressing.
+
+The experimental-systematics layer is optional and is owned by the dataset,
+not the electronic model. It is the insertion point for instrument resolution,
+finite-bin integration, absorption or self-shielding corrections, and related
+measurement effects. Its detailed implementation is outside the
+electronic-response stages, but electronic kernels must permit these operations
+immediately before or during dataset comparison.
 
 ## Coordinates, units, and Fourier phases
 
@@ -197,7 +208,25 @@ unit cell or per correlated site. Conversion to a dataset's normalization
 basis is never inferred from orbital count. The existing dataset layer remains
 responsible for form factor, polarization, Bose population, resolution, and
 experimental scale unless a model explicitly supplies a documented
-position-dependent magnetic operator.
+orbital- or site-resolved magnetic operator. Such an operator must state its
+position phases, spin or magnetization matrix elements, and form-factor
+approximation. Exactly one layer applies each form factor.
+
+## Geometry and wavevector sampling
+
+Manual tight-binding construction may reuse the Heisenberg RPA crystal, site
+expansion, symmetry, and bond-orbit machinery for orbital locations and
+symmetry-related hoppings. The shared part is geometry and orbit generation:
+a hopping may be a directed complex matrix between orbital subspaces, so it is
+not represented as a scalar Heisenberg exchange constant.
+
+Band paths and Brillouin-zone meshes use one serializable wavevector-sampling
+interface with different configurations. An ordered path carries segment
+labels and physical path distance for visualization. A periodic mesh carries
+integration weights, dimensions, shifts, and symmetry reduction information
+for density-of-states and response integrals. Code may share coordinate
+conversion, provenance, and evaluation without pretending that a path is an
+integration mesh.
 
 ## Canonical models and results
 
@@ -217,7 +246,10 @@ An electronic model records:
 
 A band result records reduced wavevectors, physical path distance in Å$^{-1}$,
 labels, band energies in meV, Fermi level, band indices, optional eigenvectors
-or projected weights, and the complete calculation provenance.
+or orbital/site/spin projected weights, and the complete calculation
+provenance. A density-of-states result records the energy grid, total density
+of states, optional projected contributions, normalization, broadening or
+integration method, and mesh provenance.
 
 A Fermi-surface result records the target energy, contributing bands,
 contours or surface vertices in both reduced and physical coordinates,
@@ -269,6 +301,22 @@ plot recipe, and fit configuration. External Python objects and pickles are
 not project formats. Optional adapters convert at the boundary and record the
 package version used.
 
+## Scalable execution
+
+Electronic calculations use chunkable map/reduce kernels with explicit memory
+budgets, deterministic aggregation, and backend-neutral scientific results.
+The same public calculation should be able to select a serial NumPy path on a
+laptop, local CPU workers, an accelerated CPU or GPU backend, or a distributed
+scheduler without changing the model configuration. Backend, worker count,
+precision, chunking, timing, and convergence settings are provenance.
+
+Symmetry reduction should eventually evaluate only the irreducible part of a
+Brillouin-zone mesh when the Hamiltonian, operators, and requested observable
+permit it. Full-zone fallback is required, and symmetry expansion must be
+testable independently. As in nfit's rebinner, temporary memory is bounded by
+user-configurable budgets rather than by constructing all intermediate
+transitions at once.
+
 ## Interoperability decisions
 
 | package or format | planned role | dependency policy |
@@ -312,6 +360,7 @@ Each later stage is complete only when its applicable checks pass.
 | multiorbital response | analytically reducible two-orbital model | operator-basis permutation and projection invariance |
 | scalar RPA | one-channel Stoner model | closed-form denominator and pole location |
 | Hubbard--Hund RPA | one- and two-shell limits | one-orbital reduction, rotational constraints, spin/charge channel signs |
+| BCS response | one-band isotropic-gap model | normal-state limit, pair-breaking threshold, coherence factors, causality |
 | neutron projection | local isotropic and multisite models | polarization limit, extended-zone phases, origin and cell invariance |
 | serialization | manual and imported models | project reopen, digest verification, editable script equivalence |
 | fitting | small synthetic spectra | parameter recovery, cache invalidation, report and exported-result parity |
@@ -350,11 +399,11 @@ The implementation proceeds in independently testable stages:
 | 0 | this design contract, documentation hierarchy, scope, provenance, and validation references |
 | 1 | one shared model framework for evaluation, GUI metadata, diagnostics, reports, plots, and scripts |
 | 2 | generalized paramagnons and damped propagating modes using the complex-response contract |
-| 3 | arbitrary electronic models, Wannier90 import, bands, density of states, and Fermi surfaces |
+| 3 | arbitrary electronic models, Wannier90 import, bands, orbital-projected bands, density of states, and Fermi surfaces |
 | 4 | generalized complex Lindhard response and its projections |
 | 5 | scalar Stoner, user-defined, and Hubbard--Hund RPA interaction dressings |
 | 6 | production convergence, acceleration, uncertainty, reports, and multi-dataset fitting |
-| 7 | slave-boson, imported self-energy, and other explicitly documented beyond-RPA extensions |
+| 7 | BCS superconductivity, slave-boson, imported self-energy, and other explicitly documented beyond-RPA extensions |
 
 Every scientific model added in these stages receives its own daughter page
 under [Spin-fluctuation models](spin_fluctuation_models.md). A stage is ready

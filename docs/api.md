@@ -211,7 +211,15 @@ least-squares losses and optional differential-evolution initialization.
 Posterior checks use `emcee` through `sample_problem_parameters`. See the
 [modeling pipeline](modeling_pipeline.md) page for the recommended structure.
 
+Serializable component types are described by `ModelDefinition` entries in
+`MODEL_TYPE_REGISTRY`. `register_model_definition`, `model_definition`, and
+`model_plot_definitions` are the public extension points for numerical
+factories, GUI metadata, diagnostics, reports, plots, and serialization.
+
 ```{eval-rst}
+.. automodule:: nfit.model_registry
+   :members:
+
 .. automodule:: nfit.axes
    :members:
 

@@ -3,6 +3,11 @@ import shutil
 
 import pytest
 
+from nfit.model_registry import (
+    MODEL_TYPE_REGISTRY,
+    ModelDefinition,
+    register_model_definition,
+)
 from nfit.pipeline import FitTimelineEntry
 from nfit.report import (
     LatexCompileError,
@@ -151,6 +156,32 @@ def test_latex_escape_covers_special_characters():
     assert latex_escape("x^y~z") == r"x\textasciicircum{}y\textasciitilde{}z"
     assert latex_escape("${}") == r"\$\{\}"
     assert latex_escape("a\\b") == r"a\textbackslash{}b"
+
+
+def test_report_uses_registered_model_section_hook():
+    key = "_report_hook_test"
+
+    def sections(_entry, model, _goodness, _context):
+        return (("model", f"\\section{{Hook for {model['name']}}}"),)
+
+    register_model_definition(
+        ModelDefinition(
+            key=key,
+            label="Report hook",
+            description="Test report hook.",
+            data_types=("*",),
+            factory=lambda _component: lambda data, _params: data.signal * 0.0,
+            report_sections=sections,
+        )
+    )
+    try:
+        entry = _background_entry()
+        entry.snapshot["models"][0]["type"] = key
+        tex = render_fit_report_latex(entry, group_name="G")
+        assert r"\section{Hook for bg}" in tex
+        assert r"\subsection{Additional model components}" not in tex
+    finally:
+        MODEL_TYPE_REGISTRY.pop(key, None)
 
 
 def test_report_omits_disabled_and_zero_weight_visualization_datasets():
