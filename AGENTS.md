@@ -112,6 +112,18 @@ ownership or documentation entry points move.
 feature descriptions or scientific equations. The Sphinx pages remain the
 authoritative source for behavior and conventions.
 
+## GUI and scripting parity
+
+- Every scientific GUI action must use a public, human-readable scripting API.
+  GUI-only state is acceptable for presentation details, not for imports,
+  transforms, fits, plots, or analyses.
+- Batchable GUI workflows must be exportable as editable scripts. New GUI
+  actions must extend the appropriate script generator and add a round-trip or
+  behavior-equivalence test.
+- Do not claim scripting parity for a workflow until its complete scientific
+  configuration can be saved and rerun without constructing Qt widgets. Track
+  remaining gaps in `docs/planned_features.md`.
+
 ## Before committing
 
 - Run tests proportional to the change; run the full suite for broad or risky

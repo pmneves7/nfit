@@ -317,6 +317,19 @@ def _snapshot_datasets(fit_entry: Any) -> list[dict[str, Any]]:
     return [d for d in datasets if isinstance(d, dict)] if datasets else []
 
 
+def _fitted_snapshot_datasets(fit_entry: Any) -> list[dict[str, Any]]:
+    """Return only datasets that contributed points to the recorded fit."""
+
+    goodness = _goodness(fit_entry)
+    names = goodness.get("dataset_n_points") or goodness.get("dataset_chi2") or {}
+    fitted = {str(name) for name in names}
+    return [
+        dataset
+        for dataset in _snapshot_datasets(fit_entry)
+        if str(dataset.get("name")) in fitted
+    ]
+
+
 def _goodness(fit_entry: Any) -> dict[str, Any]:
     raw = fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
     metadata = _entry_metadata(fit_entry)
@@ -450,7 +463,7 @@ def _section_summary(fit_entry: Any, group_name: str) -> str:
         )
     lines.append("\\end{itemize}")
 
-    fitted_names = list(dataset_chi2) or [d.get("name") for d in datasets]
+    fitted_names = list(n_points) or list(dataset_chi2)
     if fitted_names:
         lines.append("\\begin{longtable}{l l r r r r r}")
         lines.append("\\toprule")
@@ -749,7 +762,7 @@ def _section_zeeman(
         f"$\\Gamma_\\perp/\\Gamma_0 = {_pm(gamma_ratio, gamma_err)}$."
     )
     rows = []
-    for dataset in _snapshot_datasets(fit_entry):
+    for dataset in _fitted_snapshot_datasets(fit_entry):
         parameters = dataset.get("parameters") or {}
         field = parameters.get("magnetic_field")
         if not isinstance(field, dict):

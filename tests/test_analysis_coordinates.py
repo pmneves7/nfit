@@ -40,7 +40,7 @@ def test_projected_coordinates_and_q_volume():
     assert signal_semantics(data) == "density"
 
 
-def test_signal_semantics_defaults_and_legacy_automatic_labels_are_density():
+def test_signal_semantics_defaults_and_respects_explicit_values():
     data = _data()
     data.metadata.pop("signal_semantics")
     assert signal_semantics(data) == "density"
@@ -51,7 +51,7 @@ def test_signal_semantics_defaults_and_legacy_automatic_labels_are_density():
             "signal_semantics_source": "mantid_mdhisto_workspace",
         }
     )
-    assert signal_semantics(data) == "density"
+    assert signal_semantics(data) == "bin_integral"
 
     data.metadata["signal_semantics_source"] = "user_selected"
     assert signal_semantics(data) == "bin_integral"

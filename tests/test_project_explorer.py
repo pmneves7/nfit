@@ -87,7 +87,7 @@ def test_project_helpers_name_import_and_round_trip(tmp_path):
     assert loaded.data_groups[2].models["Model1"].parameters["constant"] == 0.25
     assert loaded.data_groups[2].models["Model1"].config["script_note"] == "fixed"
     assert loaded.data_groups[2].models["Model1"].fit_parameters["constant"] is False
-    assert loaded.data_groups[2].models["Model1"].global_fit["constant"] is True
+    assert loaded.data_groups[2].models["Model1"].sharing["constant"]["mode"] == "global"
     assert loaded.data_groups[3].datasets[0].name == "scan"
 
 
@@ -111,21 +111,16 @@ def test_project_save_rejects_replacement_arrays_not_stored_in_source(tmp_path):
         )
 
 
-def test_legacy_bragg_analysis_drops_obsolete_edge_policy_on_load():
-    analysis = project_gui._analysis_from_dict(
-        {
-            "name": "Peaks",
-            "type": "bragg_integration",
-            "input_dataset_ids": ["data"],
-            "parameters": {
-                "edge_policy": "report_partial",
-                "minimum_peak_coverage": 0.5,
-            },
-        }
-    )
-
-    assert analysis.parameters == {"minimum_peak_coverage": 0.5}
-    assert "obsolete Bragg edge_policy" in analysis.metadata["project_migrations"][0]
+def test_obsolete_bragg_edge_policy_is_rejected():
+    with pytest.raises(ValueError, match="edge_policy.*no longer supported"):
+        project_gui._analysis_from_dict(
+            {
+                "name": "Peaks",
+                "type": "bragg_integration",
+                "input_dataset_ids": ["data"],
+                "parameters": {"edge_policy": "report_partial"},
+            }
+        )
 
 
 def test_waterfall_group_keys_follow_immediate_dataset_groups():
@@ -1052,7 +1047,7 @@ def test_project_explorer_adds_and_edits_models(monkeypatch):
     assert model.parameters == default_model_parameters("constant_background")
     assert model.config == default_model_config("constant_background")
     assert model.fit_parameters == default_model_fit_parameters("constant_background")
-    assert model.global_fit == default_model_global_fit("constant_background")
+    assert model.sharing == {"constant": {"mode": "global", "groups": {}}}
     assert explorer.tree.currentItem().text(0) == "Model1"
 
     fit_group = explorer.model_parameter_widget.findChild(
@@ -1086,26 +1081,32 @@ def test_project_explorer_adds_and_edits_models(monkeypatch):
     assert model.parameters["c1"] == 0.0
     assert model.fit_parameters["c0"] is False
     assert model.fit_parameters["c1"] is False
-    assert model.global_fit["c0"] is True
-    assert model.global_fit["c1"] is True
+    assert model.sharing["c0"]["mode"] == "global"
+    assert model.sharing["c1"]["mode"] == "global"
     assert model.config == default_model_config("linear_background")
 
     explorer._set_model_parameter("c1", "0.02")
     explorer._set_model_fit_parameter("c1", True)
-    explorer._set_model_global_fit("c1", False)
+    explorer._set_model_sharing_mode("c1", "per_dataset")
 
     assert model.parameters["c1"] == 0.02
     assert model.fit_parameters["c1"] is True
-    assert model.global_fit["c1"] is False
+    assert model.sharing["c1"]["mode"] == "per_dataset"
 
     tooltip = model_parameter_tooltip("linear_background", "c1")
     editors = explorer.model_parameter_widget.findChildren(QtWidgets.QLineEdit)
     checks = explorer.model_parameter_widget.findChildren(QtWidgets.QCheckBox)
+    sharing = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox,
+        "model_parameter_sharing_c1",
+    )
     assert any(editor.toolTip() == tooltip for editor in editors)
     assert any(check.text() == "Fit" for check in checks)
-    assert any(check.text() == "Global fit" for check in checks)
+    assert sharing is not None
+    assert sharing.currentData() == "per_dataset"
+    assert sharing.toolTip()
     assert "Fit:" in tooltip
-    assert "Global fit:" in tooltip
+    assert "Sharing:" in tooltip
 
     plot_label_editor = explorer.model_parameter_widget.findChild(
         QtWidgets.QLineEdit,

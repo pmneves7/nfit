@@ -501,42 +501,6 @@ def test_point_fit_channel_round_trips_with_saved_fit_channels():
     assert decoded["scan"]["fit_channel"] == "Susceptibility"
 
 
-def test_legacy_magnetization_fit_infers_saved_susceptibility_channel():
-    view = PointListData(
-        columns={
-            "Temperature": np.array([10.0, 20.0]),
-            "Moment": np.array([1.0, 0.8]),
-            "Susceptibility": np.array([0.1, 0.08]),
-        },
-        coordinate_names=["Temperature"],
-        channels=[
-            {"label": "Moment", "value": "Moment", "error": None},
-            {
-                "label": "Susceptibility",
-                "value": "Susceptibility",
-                "error": None,
-            },
-        ],
-    )
-    dataset = DatasetEntry("scan", view, data_type="magnetization")
-    group = DataGroup("Datagroup1", datasets=[dataset])
-    config = project_gui.point_list_config(dataset)["susceptibility"]
-    config.update({"enabled": True, "moment": "Moment"})
-
-    view = project_gui.attach_fit_channels_to_view(
-        group,
-        "scan",
-        view,
-        fallback_payload={
-            "kind": "points",
-            "fit": np.array([0.11, 0.09]),
-            "residual": np.array([-1.0, -1.0]),
-        },
-    )
-
-    assert view.metadata["viewer_fit_channel_map"] == {"Susceptibility": "fit"}
-
-
 def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
@@ -845,7 +809,8 @@ def test_best_posterior_sample_updates_live_model_and_restores_lm_values(monkeyp
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
     dataset = DatasetEntry("first", _tiny_mdhisto_data(2.0))
-    group = DataGroup("Datagroup1", datasets=[dataset])
+    disabled = DatasetEntry("disabled", _tiny_mdhisto_data(8.0), enabled=False)
+    group = DataGroup("Datagroup1", datasets=[dataset, disabled])
     model = create_model_component(group)
     model.parameters["constant"] = 1.0
     model.fit_parameters["constant"] = True
@@ -912,6 +877,10 @@ def test_best_posterior_sample_updates_live_model_and_restores_lm_values(monkeyp
     assert display["use_best_sample"] is True
     assert display["use_posterior_uncertainties"] is True
     assert display["best_sample"]["parameters"][parameter_name] == pytest.approx(2.0)
+    disabled_channels = project_gui.current_model_channels(group)["disabled"]
+    assert disabled_channels["fit"] == pytest.approx(
+        np.full(disabled.data.shape, 2.0)
+    )
     assert project_gui._fit_results_rows(result)[0]["value"] == "2"
     result_table = explorer.window.findChild(QtWidgets.QTableWidget, "fit_results_table")
     assert result_table.horizontalHeaderItem(2).text() == "68% error"
@@ -1350,30 +1319,6 @@ def test_fit_limit_hits_are_saved_and_rendered_in_fit_results(monkeypatch):
     )
     assert table.item(1, 1).background().color() != QtGui.QColor("#5a2929")
 
-    legacy_entry = FitTimelineEntry(
-        name="Fit Result0",
-        kind="result",
-        goodness={"parameters": {"Model1.gamma0": 10.0}},
-        snapshot={
-            "models": [
-                {
-                    "name": "Model1",
-                    "parameters": {"gamma0": 10.0},
-                    "fit_parameters": {"gamma0": True},
-                    "limits": {"gamma0": [0.0, 10.0]},
-                }
-            ]
-        },
-    )
-    legacy_box = explorer._fit_results_group_box(legacy_entry)
-    legacy_table = legacy_box.findChild(QtWidgets.QTableWidget, "fit_results_table")
-    assert legacy_table is not None
-    assert all(
-        legacy_table.item(0, column).background().color() == QtGui.QColor("#5a2929")
-        for column in range(6)
-    )
-
-
 def test_model_editor_marks_effectively_boundary_pinned_parameter_red(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
@@ -1382,7 +1327,7 @@ def test_model_editor_marks_effectively_boundary_pinned_parameter_red(monkeypatc
         "Model1",
         parameters={"constant": -99.9957},
         fit_parameters={"constant": True},
-        global_fit={"constant": True},
+        sharing={"constant": {"mode": "global", "groups": {}}},
         limits={"constant": [-100.0, 100.0]},
     )
     group = DataGroup("Datagroup1", models={model.name: model})
@@ -1684,15 +1629,15 @@ def test_project_explorer_edits_initial_state_in_place_without_results(monkeypat
     model_item = explorer.tree.topLevelItem(0).child(1).child(0)
     explorer.tree.setCurrentItem(model_item)
     explorer._set_model_fit_parameter("constant", True)
-    explorer._set_model_global_fit("constant", False)
+    explorer._set_model_sharing_mode("constant", "per_dataset")
 
     assert model.fit_parameters["constant"] is True
-    assert model.global_fit["constant"] is False
+    assert model.sharing["constant"]["mode"] == "per_dataset"
     assert [fit.name for fit in group.fits] == ["Initial"]
     assert group.fits[0].children == []
     snapshot_model = group.fits[0].snapshot["models"][0]
     assert snapshot_model["fit_parameters"]["constant"] is True
-    assert snapshot_model["global_fit"]["constant"] is False
+    assert snapshot_model["sharing"]["constant"]["mode"] == "per_dataset"
 
 
 def test_project_explorer_fit_now_from_earlier_result_creates_nested_timeline(monkeypatch):

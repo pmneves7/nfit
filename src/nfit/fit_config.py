@@ -1759,14 +1759,13 @@ class CompiledFitProblem:
 def sharing_mode(component: Any, parameter: str) -> str:
     """Return the sharing mode of one component parameter.
 
-    An explicit ``sharing`` entry wins; otherwise the legacy ``global_fit``
-    boolean maps ``True`` to ``"global"`` and ``False`` to ``"per_dataset"``.
+    Parameters without an explicit entry use global sharing.
     """
 
     entry = component.sharing.get(parameter) if isinstance(component.sharing, dict) else None
     if isinstance(entry, dict) and entry.get("mode") in SHARING_MODES:
         return str(entry["mode"])
-    return "global" if component.global_fit.get(parameter, True) else "per_dataset"
+    return "global"
 
 
 def dataset_scale_parameter_name(dataset_name: str) -> str:

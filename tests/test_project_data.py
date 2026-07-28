@@ -354,30 +354,22 @@ def test_saved_nfit_npz_import_restores_mdhisto_axes_data_and_context(tmp_path):
     np.testing.assert_allclose(reloaded_view.num_events, data.num_events)
 
 
-def test_legacy_nfit_npz_import_defaults_to_density_signal(tmp_path):
+def test_nfit_npz_import_requires_signal_semantics(tmp_path):
     data = _grid_mdhisto_data()
     dataset = DatasetEntry("scan", data, kind="mdhisto")
     modern_path = tmp_path / "modern.npz"
-    legacy_path = tmp_path / "legacy.npz"
+    incomplete_path = tmp_path / "incomplete.npz"
     save_dataset_file(dataset, modern_path)
 
     with np.load(modern_path) as archive:
-        payload = {
-            key: archive[key]
-            for key in archive.files
-            if key not in {"coordinate_system", "visual_normalization"}
-        }
-    np.savez_compressed(legacy_path, **payload)
+        payload = {key: archive[key] for key in archive.files}
+    metadata = json.loads(str(np.asarray(payload["metadata_json"]).item()))
+    metadata.pop("signal_semantics", None)
+    payload["metadata_json"] = json.dumps(metadata)
+    np.savez_compressed(incomplete_path, **payload)
 
-    imported = dataset_entry_from_path(legacy_path)
-
-    assert isinstance(imported.data, MDHistoData)
-    assert imported.data.metadata["signal_semantics"] == "density"
-    assert (
-        imported.data.metadata["signal_semantics_source"] == "legacy_nfit_archive_density_default"
-    )
-    assert imported.data.coordinate_system is None
-    assert imported.data.visual_normalization is None
+    with pytest.raises(ValueError, match="missing signal_semantics metadata"):
+        dataset_entry_from_path(incomplete_path)
 
 
 def test_dataset_signal_semantics_control_is_documented_and_updates_data(monkeypatch):
@@ -1668,11 +1660,6 @@ def test_energy_q_range_mask_defaults_are_neutral():
     assert parameters["q_modulus"] == [0.0, 0.0]
 
 
-def test_legacy_broad_mask_defaults_remain_neutral():
-    assert project_gui._exclusion_parameter_range([-1.0e99, 1.0e99]) is None
-    assert project_gui._exclusion_parameter_range([0.0, 1.0e99]) is None
-
-
 def test_all_registered_mask_defaults_mask_nothing_for_histogram_and_points():
     histogram = DatasetEntry("grid", _grid_mdhisto_data())
     points = PointData4D(
@@ -1937,7 +1924,7 @@ def test_rebin_basis_rejects_energy_mixing_and_dependent_axes():
         project_gui._validate_mdhisto_rebin_basis(dependent, 4)
 
 
-def test_legacy_custom_rebin_basis_refits_bounds_once():
+def test_saved_custom_rebin_basis_requires_current_basis_version():
     axes = (
         MDHistoAxis("DeltaE", np.array([-10.0, 0.0, 10.0]), "meV", "energy"),
         MDHistoAxis("[H,-H,0]", np.array([-0.5, 0.0, 0.5]), "rlu", "momentum"),
@@ -1959,14 +1946,8 @@ def test_legacy_custom_rebin_basis_refits_bounds_once():
     config["axes"][1].update({"lower": -0.5, "upper": 0.5, "num_bins": 2})
     config.pop("coordinate_basis_version")
 
-    migrated = dataset_rebin_config(dataset)
-
-    assert migrated["coordinate_basis_version"] == project_gui.REBIN_COORDINATE_BASIS_VERSION
-    assert migrated["stale"] is True
-    assert migrated["axes"][1]["lower"] < -0.5
-    assert migrated["axes"][1]["upper"] > 0.5
-    migrated["axes"][1]["lower"] = -0.25
-    assert dataset_rebin_config(dataset)["axes"][1]["lower"] == -0.25
+    with pytest.raises(ValueError, match="coordinate_basis_version"):
+        dataset_rebin_config(dataset)
 
 
 def test_add_mask_and_slice_viewer_from_masks_node(monkeypatch):

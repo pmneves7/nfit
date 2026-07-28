@@ -157,15 +157,6 @@ def q_modulus_for_spectral(
 
 def signal_semantics(data: MDHistoData) -> str:
     semantics = str(data.metadata.get("signal_semantics", "density"))
-    source = str(data.metadata.get("signal_semantics_source", ""))
-    if semantics == "bin_integral" and source in {
-        "mantid_mdhisto_workspace",
-        "legacy_nfit_archive_default",
-    }:
-        # Releases before 0.13 labeled these normalized/averaged sources as
-        # bin integrals by default. Preserve explicit user selections while
-        # interpreting the old automatic label according to the new policy.
-        semantics = "density"
     if semantics not in {"density", "bin_integral", "unknown"}:
         raise ValueError(f"unknown signal_semantics {semantics!r}")
     return semantics

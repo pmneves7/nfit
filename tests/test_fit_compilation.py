@@ -467,6 +467,43 @@ def test_disabled_dataset_gets_post_fit_model_without_affecting_fit():
     assert "fit" in disabled_view.metadata
 
 
+def test_disabled_dataset_group_is_visualization_only():
+    from nfit.project_gui import fit_dataset_inputs
+
+    group = _fit_ready_group({"fit_octant": 1.0, "disabled_volume": 9.0})
+    disabled = group.get_dataset("disabled_volume")
+    group.datasets.remove(disabled)
+    group.subgroups.append(
+        DatasetGroup("disabled_group", datasets=[disabled], enabled=False)
+    )
+    model = create_model_component(group)
+    model.fit_parameters["constant"] = True
+    ensure_fit_history(group)
+
+    fit_inputs, _ = fit_dataset_inputs(group, purpose="fit")
+    view_inputs, _ = fit_dataset_inputs(group, purpose="visualization")
+    all_inputs, _ = fit_dataset_inputs(group, purpose="overlay")
+
+    assert [item.name for item in fit_inputs] == ["fit_octant"]
+    assert [item.name for item in view_inputs] == ["disabled_volume"]
+    assert view_inputs[0].weight == 0.0
+    assert [item.name for item in all_inputs] == ["fit_octant", "disabled_volume"]
+
+    entry = run_group_fit(group, group.fits[0])
+
+    assert entry.goodness["dataset_n_points"] == {"fit_octant": 20}
+    assert entry.channels["disabled_volume"]["visualization_only"] is True
+    assert entry.channels["disabled_volume"]["fit"] == pytest.approx(
+        np.ones((4, 5)),
+        abs=0.01,
+    )
+    live = current_model_channels(group)
+    assert live["disabled_volume"]["fit"] == pytest.approx(
+        np.ones((4, 5)),
+        abs=0.01,
+    )
+
+
 def test_run_group_fit_failure_is_recorded_not_raised():
     group = _fit_ready_group({"first": 1.0})
     ensure_fit_history(group)

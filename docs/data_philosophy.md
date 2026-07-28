@@ -18,9 +18,11 @@ instrument or file format.
 - **Dataset identity is unique.** Importing or copying a dataset assigns a new
   ID, even when the source file is the same. Project loading rejects duplicate
   IDs because analysis and background references would otherwise be ambiguous.
-- **GUI actions are scriptable.** Scientific operations use the same package
-  functions from the GUI and Python, rather than storing behavior only in
-  widget state.
+- **Scientific actions belong in public APIs.** Fit and saved-plot workflows
+  already export editable scripts. Other GUI workflows should call the same
+  package functions as Python code and must not hide scientific choices only
+  in widget state. Remaining export gaps are listed in
+  [Planned features](planned_features.md).
 - **Resolution belongs to a dataset.** A resolution model may depend on the
   instrument and settings, but the optimizer receives only coordinates,
   observations, uncertainties, masks, weights, and predictions.

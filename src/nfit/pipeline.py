@@ -74,9 +74,9 @@ class ModelComponentSpec:
     where mode is ``"global"`` (one shared value), ``"per_dataset"`` (one
     independent value per dataset), or ``"grouped"`` (datasets sharing a tie
     key in ``groups`` share one value; unlisted datasets get their own).
-    Parameters without a ``sharing`` entry fall back to the legacy
-    ``global_fit`` booleans. ``limits`` maps a parameter name to
-    ``[min, max]`` bounds where either side may be ``None``. ``constraints``
+    Parameters without a ``sharing`` entry default to global sharing.
+    ``limits`` maps a parameter name to ``[min, max]`` bounds where either side
+    may be ``None``. ``constraints``
     holds inequalities such as ``{"parameter": "c0", "op": ">=",
     "reference": ...}`` or exact derived relationships such as
     ``{"parameter": "c0", "op": "=", "expression": "10 - `other.c0`"}``.
@@ -89,7 +89,6 @@ class ModelComponentSpec:
     parameters: dict[str, Any] = field(default_factory=dict)
     config: dict[str, Any] = field(default_factory=dict)
     fit_parameters: dict[str, bool] = field(default_factory=dict)
-    global_fit: dict[str, bool] = field(default_factory=dict)
     sharing: dict[str, dict[str, Any]] = field(default_factory=dict)
     limits: dict[str, Any] = field(default_factory=dict)
     constraints: list[dict[str, Any]] = field(default_factory=list)

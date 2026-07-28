@@ -28,6 +28,7 @@ from .backgrounds import subtract_powder_background
 from .cache_utils import lru_store as _lru_store
 from .dataset import PointData4D, PointListData
 from .fit_config import (
+    SHARING_MODES,
     CompiledFitProblem,
     FitDatasetInput,
     compile_fit_problem,
@@ -354,7 +355,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Any finite number in the dataset intensity units.",
                 "type": "float",
                 "example": "0.1",
-                "global_fit": True,
             },
         },
         "config": {},
@@ -369,7 +369,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Any finite number in the dataset intensity units.",
                 "type": "float",
                 "example": "0.1",
-                "global_fit": True,
             },
             "c1": {
                 "default": 0.0,
@@ -377,7 +376,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Any finite number in intensity units per meV.",
                 "type": "float",
                 "example": "0.02",
-                "global_fit": True,
             },
         },
         "config": {},
@@ -399,7 +397,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Positive finite number.",
                 "type": "float",
                 "example": "1.0",
-                "global_fit": True,
             },
             "chi_loc": {
                 "default": 1.0,
@@ -407,7 +404,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Positive finite number.",
                 "type": "float",
                 "example": "2.0",
-                "global_fit": True,
             },
             "gamma": {
                 "default": 2.0,
@@ -415,7 +411,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Positive finite number in meV.",
                 "type": "float",
                 "example": "3.0",
-                "global_fit": True,
             },
         },
         "config": {
@@ -461,7 +456,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Positive finite number.",
                 "type": "float",
                 "example": "1.0",
-                "global_fit": True,
             },
             "chi_pk": {
                 "default": 1.0,
@@ -469,7 +463,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Positive finite number.",
                 "type": "float",
                 "example": "3.0",
-                "global_fit": True,
             },
             "xi": {
                 "default": 1.0,
@@ -477,7 +470,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Positive finite number in Angstrom.",
                 "type": "float",
                 "example": "2.5",
-                "global_fit": True,
             },
             "omega_sf": {
                 "default": 1.0,
@@ -485,7 +477,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Positive finite number in meV.",
                 "type": "float",
                 "example": "1.8",
-                "global_fit": True,
             },
             "q0_h": {
                 "default": 0.5,
@@ -493,7 +484,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Finite number in reciprocal lattice units.",
                 "type": "float",
                 "example": "0.5",
-                "global_fit": True,
             },
             "q0_k": {
                 "default": 0.0,
@@ -501,7 +491,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Finite number in reciprocal lattice units.",
                 "type": "float",
                 "example": "0.5",
-                "global_fit": True,
             },
             "q0_l": {
                 "default": 0.0,
@@ -509,7 +498,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Finite number in reciprocal lattice units.",
                 "type": "float",
                 "example": "0.0",
-                "global_fit": True,
             },
         },
         "config": {
@@ -563,7 +551,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Positive finite number.",
                 "type": "float",
                 "example": "1.0",
-                "global_fit": True,
             },
             "chi0": {
                 "default": 0.1,
@@ -575,7 +562,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Positive finite number in 1/meV.",
                 "type": "float",
                 "example": "0.5",
-                "global_fit": True,
             },
             "gamma0": {
                 "default": 5.0,
@@ -586,7 +572,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Positive finite number in meV.",
                 "type": "float",
                 "example": "5.0",
-                "global_fit": True,
             },
         },
         "config": {
@@ -626,7 +611,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Positive finite temperature in kelvin.",
                 "type": "float",
                 "example": "420.0",
-                "global_fit": True,
             },
             "oscillator_count": {
                 "default": 1.0,
@@ -634,7 +618,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Positive finite dimensionless number.",
                 "type": "float",
                 "example": "7.0",
-                "global_fit": True,
             },
         },
         "config": {},
@@ -649,7 +632,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Non-negative finite number in mJ/(mol K^2).",
                 "type": "float",
                 "example": "400.0",
-                "global_fit": True,
             },
             "debye_beta": {
                 "default": 0.1,
@@ -657,7 +639,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Non-negative finite number in mJ/(mol K^4).",
                 "type": "float",
                 "example": "0.08",
-                "global_fit": True,
             },
         },
         "config": {},
@@ -672,7 +653,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Positive finite number.",
                 "type": "float",
                 "example": "0.42",
-                "global_fit": True,
             },
             "theta_CW": {
                 "default": 0.0,
@@ -680,7 +660,6 @@ MODEL_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
                 "allowed": "Finite number below the fitted temperature interval.",
                 "type": "float",
                 "example": "-18.0",
-                "global_fit": True,
             },
         },
         "config": {},
@@ -1578,6 +1557,22 @@ def _dataset_parent_node(root: Any, dataset: DatasetEntry) -> Any:
     return None
 
 
+def _dataset_is_effectively_enabled(
+    data_group: DataGroup,
+    dataset: DatasetEntry,
+) -> bool:
+    """Return whether a dataset and every containing dataset group are enabled."""
+
+    if not dataset.enabled:
+        return False
+    node = _dataset_parent_node(data_group, dataset)
+    while isinstance(node, DatasetGroup):
+        if not node.enabled:
+            return False
+        node = _dataset_group_parent(data_group, node)
+    return True
+
+
 def _group_contains_node(ancestor: DatasetGroup, node: Any) -> bool:
     """Return True if ``node`` is ``ancestor`` or nested anywhere inside it."""
 
@@ -1600,7 +1595,10 @@ def create_model_component(
         parameters=default_model_parameters(type),
         config=default_model_config(type),
         fit_parameters=default_model_fit_parameters(type),
-        global_fit=default_model_global_fit(type),
+        sharing={
+            name: {"mode": "global", "groups": {}}
+            for name in default_model_parameters(type)
+        },
     )
     if name is not None:
         model.name = name
@@ -1865,10 +1863,6 @@ def restore_data_group_state(group: DataGroup, snapshot: dict[str, Any]) -> None
         existing.fit_parameters = {
             str(key): bool(value)
             for key, value in dict(model_payload.get("fit_parameters", {})).items()
-        }
-        existing.global_fit = {
-            str(key): bool(value)
-            for key, value in dict(model_payload.get("global_fit", {})).items()
         }
         existing.sharing = _sharing_from_payload(model_payload.get("sharing"))
         existing.limits = dict(model_payload.get("limits", {}) or {})
@@ -2277,7 +2271,6 @@ def reconcile_model_orbit_parameters(model: ModelComponentSpec) -> None:
     for mapping in (
         model.parameters,
         model.fit_parameters,
-        model.global_fit,
         model.limits,
         model.sharing,
     ):
@@ -2290,7 +2283,7 @@ def reconcile_model_orbit_parameters(model: ModelComponentSpec) -> None:
             continue
         model.parameters.setdefault(name, _MODEL_PARAMETER_DEFAULTS.get(name, 0.0))
         model.fit_parameters.setdefault(name, False)
-        model.global_fit.setdefault(name, True)
+        model.sharing.setdefault(name, {"mode": "global", "groups": {}})
 
 
 def import_cif_into_model(
@@ -2473,15 +2466,6 @@ def default_model_config(type: str) -> dict[str, Any]:
     }
 
 
-def default_model_global_fit(type: str) -> dict[str, bool]:
-    """Return default global-fit flags for a registered model type."""
-
-    return {
-        name: bool(metadata.get("global_fit", True))
-        for name, metadata in MODEL_TYPE_DEFINITIONS[type]["parameters"].items()
-    }
-
-
 def default_model_fit_parameters(type: str) -> dict[str, bool]:
     """Return default optimizer-inclusion flags for a registered model type."""
 
@@ -2510,7 +2494,7 @@ def model_parameter_tooltip(type: str, parameter_name: str) -> str:
                 "Data type: float",
                 "Default: 0",
                 "Fit: checked means the optimizer may vary this parameter; unchecked means it is fixed at the displayed value.",
-                "Global fit: checked means one shared value is fitted across datasets; unchecked means each dataset may fit its own value.",
+                "Sharing: choose one global value, independent per-dataset values, or named dataset groups.",
             ]
         )
     return "\n".join(
@@ -2522,7 +2506,7 @@ def model_parameter_tooltip(type: str, parameter_name: str) -> str:
             f"Default: {_parameter_to_text(metadata['default'])}",
             f"Example: {metadata['example']}",
             "Fit: checked means the optimizer may vary this parameter; unchecked means it is fixed at the displayed value.",
-            "Global fit: checked means one shared value is fitted across datasets; unchecked means each dataset may fit its own value.",
+            "Sharing: choose one global value, independent per-dataset values, or named dataset groups.",
         ]
     )
 
@@ -4235,14 +4219,18 @@ def fit_dataset_inputs(
 ) -> tuple[list[FitDatasetInput], dict[str, FitDataBundle]]:
     """Prepare datasets for fitting, visualization, or both.
 
-    Disabled datasets and non-composite datasets with zero fit weight are
-    visualization-only. They are omitted entirely when ``purpose="fit"`` and
-    selected exclusively when ``purpose="visualization"``. The default keeps
-    the historical enabled-dataset behavior used by live model overlays.
+    Disabled datasets, datasets inside disabled groups, and non-composite
+    datasets with zero fit weight are visualization-only. They are omitted
+    entirely when ``purpose="fit"`` and selected exclusively when
+    ``purpose="visualization"``. ``purpose="overlay"`` includes both fitted
+    and visualization-only datasets. The default retains enabled datasets for
+    callers that prepare ordinary data selections.
     """
 
-    if purpose not in {"all", "fit", "visualization"}:
-        raise ValueError("dataset input purpose must be 'all', 'fit', or 'visualization'")
+    if purpose not in {"all", "fit", "visualization", "overlay"}:
+        raise ValueError(
+            "dataset input purpose must be 'all', 'fit', 'visualization', or 'overlay'"
+        )
 
     inputs: list[FitDatasetInput] = []
     bundles: dict[str, FitDataBundle] = {}
@@ -4253,11 +4241,11 @@ def fit_dataset_inputs(
         force_rebin=force_rebin,
         force_masks=force_masks,
         progress_callback=progress_callback,
-        include_disabled_groups=purpose == "visualization",
+        include_disabled_groups=purpose in {"visualization", "overlay"},
     )
     for dataset in entries:
-        disabled = not dataset.enabled
-        if disabled and purpose != "visualization":
+        disabled = not _dataset_is_effectively_enabled(group, dataset)
+        if disabled and purpose not in {"visualization", "overlay"}:
             continue
         is_composite = bool(dataset.metadata.get("composite"))
         fit_weight = 1.0 if is_composite else float(dataset.fit_weight)
@@ -4940,6 +4928,7 @@ def current_model_channels(
     else:
         inputs, bundles = fit_dataset_inputs(
             group,
+            purpose="overlay",
             force_rebin=False,
             force_masks=force_masks,
         )
@@ -5851,32 +5840,10 @@ def _point_fit_channel_label(
     view: PointListData,
     payload: dict[str, Any],
 ) -> str:
-    """Return the data channel predicted by a point-list fit payload."""
+    """Return the explicitly recorded data channel for a point-list fit."""
 
     explicit = str(payload.get("fit_channel", "")).strip()
-    if explicit in view.channel_labels:
-        return explicit
-    try:
-        dataset = group.get_dataset(dataset_name)
-    except KeyError:
-        return ""
-    config = point_list_config(dataset)
-    if dataset.data_type == "magnetization":
-        susceptibility = config.get("susceptibility", {})
-        preferred = (
-            SUSCEPTIBILITY_CHANNEL_LABEL
-            if susceptibility.get("enabled")
-            else str(susceptibility.get("moment", ""))
-        )
-    elif dataset.data_type == "heat_capacity":
-        preferred = str(
-            config.get("heat_capacity", {}).get(
-                "fit_channel", HEAT_CAPACITY_CHANNEL_LABEL
-            )
-        )
-    else:
-        return ""
-    return preferred if preferred in view.channel_labels else ""
+    return explicit if explicit in view.channel_labels else ""
 
 
 # Building a viewer view (loading, rebinning, and masking the full volume) is
@@ -6152,34 +6119,23 @@ def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
                     )
                 sanitized_axes.append(_sanitize_rebin_axis_config(axis_config))
             config["axes"] = sanitized_axes
-        if len(axes) == len(default_axes) and isinstance(dataset.data, MDHistoData) and len(dataset.data.axes) == 4:
+        if (
+            len(axes) == len(default_axes)
+            and isinstance(dataset.data, MDHistoData)
+            and len(dataset.data.axes) == 4
+        ):
             try:
-                basis_version = int(config.get("coordinate_basis_version", 0) or 0)
-            except (TypeError, ValueError):
-                basis_version = 0
-            if basis_version < REBIN_COORDINATE_BASIS_VERSION:
-                custom_basis = any(
-                    not np.allclose(
-                        _rebin_axis_vector(axis, index, 4),
-                        _rebin_axis_vector(default_axis, index, 4),
-                    )
-                    for index, (axis, default_axis) in enumerate(
-                        zip(sanitized_axes, default_axes, strict=True)
-                    )
+                basis_version = int(config["coordinate_basis_version"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    "saved 4D rebin settings are missing a supported "
+                    "coordinate_basis_version; recreate the rebin settings"
+                ) from exc
+            if basis_version != REBIN_COORDINATE_BASIS_VERSION:
+                raise ValueError(
+                    f"unsupported rebin coordinate basis version {basis_version}; "
+                    "recreate the rebin settings"
                 )
-                if custom_basis:
-                    try:
-                        _update_mdhisto_rebin_basis(
-                            dataset.data,
-                            sanitized_axes,
-                            0,
-                            _rebin_axis_vector(sanitized_axes[0], 0, 4).tolist(),
-                        )
-                    except ValueError:
-                        pass
-                    else:
-                        config["stale"] = True
-                config["coordinate_basis_version"] = REBIN_COORDINATE_BASIS_VERSION
     if "auto_rebin" not in config:
         config["auto_rebin"] = not _dataset_rebin_is_large(dataset, config)
     config.setdefault("stale", False)
@@ -6608,6 +6564,8 @@ def save_dataset_file(dataset: DatasetEntry, path: str | Path, *, use_view: bool
         return
     if not isinstance(data, MDHistoData):
         raise TypeError("dataset saving currently supports MDHistoData or PointListData datasets")
+    saved_metadata = dict(data.metadata)
+    saved_metadata.setdefault("signal_semantics", signal_semantics(data))
     payload: dict[str, Any] = {
         "nfit_dataset_format": np.asarray("nfit-dataset"),
         "nfit_dataset_version": np.asarray(3, dtype=int),
@@ -6616,7 +6574,7 @@ def save_dataset_file(dataset: DatasetEntry, path: str | Path, *, use_view: bool
         "errors": data.errors,
         "mask": data.mask,
         "num_events": data.num_events,
-        "metadata_json": json.dumps(_json_safe_value(data.metadata), sort_keys=True),
+        "metadata_json": json.dumps(_json_safe_value(saved_metadata), sort_keys=True),
         "axis_count": np.asarray(len(data.axes), dtype=int),
         "coordinate_system": np.asarray(-1 if data.coordinate_system is None else data.coordinate_system),
         "visual_normalization": np.asarray(
@@ -6727,15 +6685,10 @@ def _load_nfit_mdhisto_archive(archive: Any, source: Path) -> MDHistoData:
     metadata = _nfit_archive_json_mapping(archive, "metadata_json")
     metadata["export_file"] = str(source)
     if "signal_semantics" not in metadata:
-        metadata["signal_semantics"] = "density"
-        metadata["signal_semantics_source"] = "legacy_nfit_archive_density_default"
-    elif (
-        metadata.get("signal_semantics") == "bin_integral"
-        and metadata.get("signal_semantics_source")
-        in {"mantid_mdhisto_workspace", "legacy_nfit_archive_default"}
-    ):
-        metadata["signal_semantics"] = "density"
-        metadata["signal_semantics_source"] = "migrated_density_default"
+        raise ValueError(
+            f"{source} is missing signal_semantics metadata; "
+            "re-export it with a current nfit version"
+        )
     channel_names = json.loads(_nfit_archive_text(archive, "auxiliary_channel_names_json", "[]"))
     auxiliary_channels = {
         str(name): MDHistoChannel(
@@ -7779,10 +7732,6 @@ def _exclusion_parameter_range(value: Any) -> tuple[float | None, float | None] 
         return None
     if bounds[0] == 0.0 and bounds[1] == 0.0:
         return None
-    if _range_is_unrestricted(bounds):
-        return None
-    if bounds[0] == 0.0 and bounds[1] is not None and bounds[1] >= 1.0e90:
-        return None
     return bounds
 
 
@@ -7798,7 +7747,7 @@ def _values_in_range(values: np.ndarray, bounds: tuple[float | None, float | Non
 
 def _range_is_unrestricted(bounds: tuple[float | None, float | None]) -> bool:
     lower, upper = bounds
-    return (lower is None or lower <= -1.0e90) and (upper is None or upper >= 1.0e90)
+    return lower is None and upper is None
 
 
 def _range_tolerance(value: float) -> float:
@@ -17765,12 +17714,7 @@ class NfitProjectExplorer:
         try:
             restore_data_group_state(group, fit_entry.snapshot)
             if _posterior_display_options(fit_entry).get("use_best_sample"):
-                try:
-                    _apply_displayed_fit_parameters(group, fit_entry)
-                except Exception:
-                    # A project may contain a legacy/incomplete posterior.
-                    # Its least-squares snapshot remains usable.
-                    restore_data_group_state(group, fit_entry.snapshot)
+                _apply_displayed_fit_parameters(group, fit_entry)
             # _refresh_tree already refreshes every open slice viewer for the
             # restored state; an explicit refresh here would recompute the
             # (expensive) overlay a second time.
@@ -17902,23 +17846,6 @@ class NfitProjectExplorer:
         self.fit_optimizer_combo.setCurrentText(fit_entry.optimizer or "least_squares")
         self.fit_optimizer_combo.blockSignals(False)
         config = dict(fit_entry.optimizer_config) if isinstance(fit_entry.optimizer_config, dict) else {}
-        stored = _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples"))
-        if fit_entry.kind == "result" and stored is not None and not isinstance(config.get("sampler"), dict):
-            # A stored chain records what actually happened. In particular, a
-            # cancelled run has fewer completed steps than the configured
-            # request. Only use it as a legacy fallback when this result lacks
-            # sampler configuration altogether; never let it rewrite controls.
-            sampler = {"enabled": True, "method": "emcee"}
-            for key in ("n_walkers", "burn_in", "thin", "random_seed", "workers"):
-                value = stored.metadata.get(key)
-                if value not in (None, ""):
-                    sampler[key] = value
-            requested_steps = stored.metadata.get(
-                "requested_n_steps", stored.metadata.get("n_steps")
-            )
-            if requested_steps not in (None, ""):
-                sampler["n_steps"] = requested_steps
-            config["sampler"] = sampler
         self._sync_fit_control_values(config)
         self.fit_optimizer_config_editor.blockSignals(True)
         self.fit_optimizer_config_editor.setText(json.dumps(config, sort_keys=True))
@@ -18629,11 +18556,15 @@ class NfitProjectExplorer:
         defaults = default_model_parameters(model.type)
         default_config = default_model_config(model.type)
         default_fit = default_model_fit_parameters(model.type)
-        default_global = default_model_global_fit(model.type)
         model.parameters = {name: model.parameters.get(name, value) for name, value in defaults.items()}
         model.config = {name: model.config.get(name, value) for name, value in default_config.items()}
         model.fit_parameters = {name: model.fit_parameters.get(name, value) for name, value in default_fit.items()}
-        model.global_fit = {name: model.global_fit.get(name, value) for name, value in default_global.items()}
+        model.sharing = {
+            name: copy.deepcopy(
+                model.sharing.get(name, {"mode": "global", "groups": {}})
+            )
+            for name in defaults
+        }
         branch_created = self._record_data_group_state_change(group) if group is not None else False
         self._mark_dirty()
         self._rebuild_model_parameter_editor(model)
@@ -18692,9 +18623,21 @@ class NfitProjectExplorer:
                 and not closure_derived
             )
             fit_check.setEnabled(not closure_derived)
-            global_check = QtWidgets.QCheckBox("Global fit")
-            global_check.setObjectName(f"model_parameter_global_{parameter_name}")
-            global_check.setChecked(bool(model.global_fit.get(parameter_name, True)))
+            sharing_combo = QtWidgets.QComboBox()
+            sharing_combo.setObjectName(f"model_parameter_sharing_{parameter_name}")
+            sharing_combo.addItem("Global", "global")
+            sharing_combo.addItem("Per dataset", "per_dataset")
+            sharing_combo.addItem("Grouped", "grouped")
+            mode = sharing_mode(model, parameter_name)
+            sharing_combo.setCurrentIndex(max(sharing_combo.findData(mode), 0))
+            sharing_groups = QtWidgets.QLineEdit(
+                _sharing_groups_text(model, parameter_name)
+            )
+            sharing_groups.setObjectName(
+                f"model_parameter_sharing_groups_{parameter_name}"
+            )
+            sharing_groups.setPlaceholderText("scan1=A, scan2=A")
+            sharing_groups.setVisible(mode == "grouped")
             tooltip = model_parameter_tooltip(model.type, parameter_name)
             limit_side = _model_parameter_limit_side(model, parameter_name)
             if limit_side is not None:
@@ -18722,9 +18665,14 @@ class NfitProjectExplorer:
                     "Unchecked parameters stay fixed at their current value."
                 )
             )
-            global_check.setToolTip(
-                f"Share parameter {parameter_name!r} across all fitted datasets. "
-                "Uncheck to allow independent per-dataset values."
+            sharing_tooltip = (
+                f"Choose how parameter {parameter_name!r} is shared: one global "
+                "value, one value per dataset, or values tied by named groups."
+            )
+            sharing_combo.setToolTip(sharing_tooltip)
+            sharing_groups.setToolTip(
+                "For grouped sharing, enter comma-separated dataset=group pairs. "
+                "Unlisted datasets remain independent."
             )
             editor.editingFinished.connect(
                 lambda parameter_name=parameter_name, editor=editor: self._set_model_parameter(parameter_name, editor.text())
@@ -18741,8 +18689,15 @@ class NfitProjectExplorer:
             fit_check.toggled.connect(
                 lambda checked, parameter_name=parameter_name: self._set_model_fit_parameter(parameter_name, checked)
             )
-            global_check.toggled.connect(
-                lambda checked, parameter_name=parameter_name: self._set_model_global_fit(parameter_name, checked)
+            sharing_combo.currentIndexChanged.connect(
+                lambda _index, parameter_name=parameter_name, combo=sharing_combo: self._set_model_sharing_mode(
+                    parameter_name, str(combo.currentData())
+                )
+            )
+            sharing_groups.editingFinished.connect(
+                lambda parameter_name=parameter_name, editor=sharing_groups: self._set_model_sharing_groups(
+                    parameter_name, editor.text()
+                )
             )
             fit_layout.addWidget(label, row, 0)
             fit_layout.addWidget(editor, row, 1)
@@ -18750,7 +18705,8 @@ class NfitProjectExplorer:
             fit_layout.addWidget(min_editor, row, 3)
             fit_layout.addWidget(max_editor, row, 4)
             fit_layout.addWidget(fit_check, row, 5)
-            fit_layout.addWidget(global_check, row, 6)
+            fit_layout.addWidget(sharing_combo, row, 6)
+            fit_layout.addWidget(sharing_groups, row, 7)
         self.model_parameter_layout.addWidget(fit_group, 0, 0, 1, 4)
 
         scope_group = QtWidgets.QGroupBox("Dataset Scope")
@@ -19574,13 +19530,47 @@ class NfitProjectExplorer:
         if group is not None:
             self._request_overlay_refresh(group)
 
-    def _set_model_global_fit(self, name: str, checked: bool) -> None:
+    def _set_model_sharing_mode(self, name: str, mode: str) -> None:
         group, _entry, _mask, model, role = self._objects_for_item(self._current_item())
         if role != "model" or model is None:
             return
-        value = bool(checked)
-        if model.global_fit.get(name) != value:
-            model.global_fit[name] = value
+        if mode not in SHARING_MODES:
+            return
+        current = model.sharing.get(name)
+        entry = dict(current) if isinstance(current, dict) else {}
+        if entry.get("mode") != mode:
+            entry["mode"] = mode
+            entry.setdefault("groups", {})
+            model.sharing[name] = entry
+            branch_created = self._record_data_group_state_change(group) if group is not None else False
+            self._mark_dirty()
+            self._rebuild_model_parameter_editor(model)
+            if group is not None and branch_created:
+                self._refresh_tree(select_group=group, select_model=model)
+        if group is not None:
+            self._request_overlay_refresh(group)
+
+    def _set_model_sharing_groups(self, name: str, text: str) -> None:
+        group, _entry, _mask, model, role = self._objects_for_item(self._current_item())
+        if role != "model" or model is None:
+            return
+        groups: dict[str, str] = {}
+        for item in text.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            if "=" not in item:
+                return
+            dataset, tie_group = (piece.strip() for piece in item.split("=", 1))
+            if not dataset or not tie_group:
+                return
+            groups[dataset] = tie_group
+        current = model.sharing.get(name)
+        entry = dict(current) if isinstance(current, dict) else {}
+        if entry.get("groups", {}) != groups:
+            entry["mode"] = "grouped"
+            entry["groups"] = groups
+            model.sharing[name] = entry
             branch_created = self._record_data_group_state_change(group) if group is not None else False
             self._mark_dirty()
             if group is not None and branch_created:
@@ -20394,7 +20384,7 @@ def _fit_result_limit_hits(
     fit_entry: FitTimelineEntry,
     parameters: dict[str, Any],
 ) -> dict[str, dict[str, Any]]:
-    """Return saved bound hits, inferring them from legacy fit snapshots too."""
+    """Return recorded LM hits or evaluate the displayed posterior sample."""
 
     goodness = fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
     # Stored LM hits describe the least-squares result.  When the best emcee
@@ -20402,6 +20392,8 @@ def _fit_result_limit_hits(
     # limits instead.
     use_best_sample = bool(_posterior_display_options(fit_entry).get("use_best_sample"))
     hits = {} if use_best_sample else _fit_limit_hits_from_goodness(goodness)
+    if not use_best_sample:
+        return hits
     by_casefold = {name.casefold(): name for name in parameters}
     snapshot = fit_entry.snapshot if isinstance(fit_entry.snapshot, dict) else {}
     models = snapshot.get("models", [])
@@ -20566,6 +20558,18 @@ def _model_limit_texts(model: ModelComponentSpec, parameter_name: str) -> tuple[
     return (
         "" if lower in (None, "") else _parameter_to_text(lower),
         "" if upper in (None, "") else _parameter_to_text(upper),
+    )
+
+
+def _sharing_groups_text(model: ModelComponentSpec, parameter_name: str) -> str:
+    """Return grouped-sharing assignments in the editor's compact syntax."""
+
+    entry = model.sharing.get(parameter_name)
+    groups = entry.get("groups") if isinstance(entry, dict) else {}
+    if not isinstance(groups, dict):
+        return ""
+    return ", ".join(
+        f"{dataset}={tie_group}" for dataset, tie_group in groups.items()
     )
 
 

@@ -16,13 +16,14 @@ from nfit.fit_config import (
 )
 from nfit.fitting import fit_problem_least_squares
 from nfit.mdhisto import MDHistoAxis, MDHistoData
-from nfit.pipeline import DataGroup, DatasetEntry, ModelComponentSpec
+from nfit.pipeline import DataGroup, DatasetEntry, DatasetGroup, ModelComponentSpec
 from nfit.plotting import MDHistoSliceViewer
 from nfit.project_gui import (
     NfitProject,
     attach_fit_channels_to_view,
     create_mask,
     create_model_component,
+    current_model_channels,
     dataset_for_slice_viewer,
     ensure_fit_history,
     fit_data_bundle,

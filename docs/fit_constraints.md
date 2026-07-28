@@ -26,7 +26,7 @@ the same rules.
 The dependent parameter must:
 
 - have **Fit** enabled,
-- use **Global fit** sharing, and
+- use **Global** sharing, and
 - have blank Min and Max fields.
 
 Parameters referenced on the right-hand side must also use global sharing, but

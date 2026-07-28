@@ -344,8 +344,7 @@ as bulk-susceptibility and heat-capacity data: value, one-sigma uncertainty,
 physical quantity type, and unit.
 
 - Energy transfer is displayed as $\Delta E$ with its stored unit, normally
-  meV. The stable project/script axis key remains `DeltaE`. Legacy projects
-  that stored `DeltaE` in the unit field are interpreted as meV.
+  meV. The stable project/script axis key is `DeltaE`.
 - Unclassified measured INS signal is displayed as $I(\mathbf Q,E)$.
 - An inelastic cross-section channel is displayed as
   $d^2\sigma/(d\Omega\,dE)$, with units such as

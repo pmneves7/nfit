@@ -89,8 +89,8 @@ def _project_from_dict(payload: dict[str, Any]) -> NfitProject:
 
     if payload.get("format") != "nfit-project":
         raise ValueError("not a nfit project file")
-    version = int(payload.get("version", 1))
-    if version not in (1, 2, 3):
+    version = int(payload.get("version", 0))
+    if version != 3:
         raise ValueError(f"unsupported nfit project version {version}")
     project = NfitProject(settings=dict(payload.get("settings", {})))
     for group_payload in payload.get("data_groups", []):
@@ -121,10 +121,6 @@ def _project_from_dict(payload: dict[str, Any]) -> NfitProject:
                     # not in the static defaults and must survive a load
                     **default_model_fit_parameters(model_type),
                     **{str(name): bool(value) for name, value in fit_payload.items()},
-                },
-                global_fit={
-                    str(name): bool(value)
-                    for name, value in dict(model_payload.get("global_fit", {})).items()
                 },
                 sharing=_sharing_from_payload(model_payload.get("sharing")),
                 limits=dict(model_payload.get("limits", {}) or {}),
@@ -374,14 +370,12 @@ def _analysis_to_dict(analysis: AnalysisEntry) -> dict[str, Any]:
 def _analysis_from_dict(payload: dict[str, Any]) -> AnalysisEntry:
     analysis_type = str(payload["type"])
     parameters = dict(payload.get("parameters", {}))
-    metadata = dict(payload.get("metadata", {}))
     if analysis_type == "bragg_integration" and "edge_policy" in parameters:
-        parameters.pop("edge_policy")
-        migrations = list(metadata.get("project_migrations", []))
-        migrations.append(
-            "Removed the obsolete Bragg edge_policy parameter; peak coverage is controlled by minimum_peak_coverage."
+        raise ValueError(
+            "Bragg analysis parameter 'edge_policy' is no longer supported; "
+            "use 'minimum_peak_coverage'"
         )
-        metadata["project_migrations"] = migrations
+    metadata = dict(payload.get("metadata", {}))
     result_payload = payload.get("result")
     result = None
     if isinstance(result_payload, dict):
@@ -441,7 +435,6 @@ def _model_to_dict(model: ModelComponentSpec) -> dict[str, Any]:
         "parameters": _json_mapping(model.parameters),
         "config": _json_mapping(model.config),
         "fit_parameters": {name: bool(value) for name, value in model.fit_parameters.items()},
-        "global_fit": {name: bool(value) for name, value in model.global_fit.items()},
         "sharing": _json_mapping(model.sharing),
         "limits": _json_mapping(model.limits),
         "constraints": [dict(constraint) for constraint in model.constraints],

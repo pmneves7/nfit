@@ -35,7 +35,7 @@ def _background_entry(**overrides):
                 {"name": "bg", "type": "constant_background", "enabled": True,
                  "parameters": {"constant": 1.5},
                  "fit_parameters": {"constant": True},
-                 "global_fit": {}, "sharing": {}, "limits": {},
+                 "sharing": {}, "limits": {},
                  "constraints": [], "applies_to": None, "metadata": {}}
             ],
         },
@@ -97,7 +97,7 @@ def _full_rpa_entry():
                        "D_dip": 0.21, "g_factor": 2.1, "chi_perp_ratio": 1.0,
                        "gamma_perp_ratio": 1.0, "m2_total": 0.9},
         "fit_parameters": {"J1": True, "J1_S1": True, "m2_total": True},
-        "global_fit": {}, "sharing": {"chi0": {"mode": "per_dataset"}},
+        "sharing": {"chi0": {"mode": "per_dataset"}},
         "limits": {"J1": [-1.0, 1.0]}, "constraints": [], "applies_to": None,
         "metadata": {"fitted_values": {
             "chi0": {"T5": 0.021, "T50": 0.018},
@@ -151,6 +151,24 @@ def test_latex_escape_covers_special_characters():
     assert latex_escape("x^y~z") == r"x\textasciicircum{}y\textasciitilde{}z"
     assert latex_escape("${}") == r"\$\{\}"
     assert latex_escape("a\\b") == r"a\textbackslash{}b"
+
+
+def test_report_omits_disabled_and_zero_weight_visualization_datasets():
+    entry = _background_entry()
+    entry.snapshot["datasets"].append(
+        {
+            "name": "disabled_volume",
+            "parameters": {},
+            "enabled": False,
+            "fit_weight": 1.0,
+            "scale_factor": 1.0,
+        }
+    )
+
+    tex = render_fit_report_latex(entry, group_name="G")
+
+    assert "scan" in tex
+    assert "disabled\\_volume" not in tex
 
 
 def test_adversarial_names_cannot_inject_latex():

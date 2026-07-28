@@ -41,17 +41,17 @@ def test_project_v3_round_trips_analysis_ids_and_results():
     assert restored.analyses[0] == analysis
 
 
-def test_version_one_project_generates_dataset_id():
+def test_old_project_versions_are_rejected():
     payload = {
         "format": "nfit-project", "version": 1, "settings": {},
         "data_groups": [{"name": "group", "datasets": [{"name": "scan"}]}],
     }
-    restored = _project_from_dict(payload)
-    assert len(restored.data_groups[0].datasets[0].id) == 32
+    with pytest.raises(ValueError, match="unsupported nfit project version 1"):
+        _project_from_dict(payload)
 
 
 def test_duplicate_dataset_ids_fail_with_dataset_locations():
-    payload = {"format": "nfit-project", "version": 2, "settings": {}, "data_groups": [{"name": "group", "datasets": [{"name": "a", "id": "f" * 32}, {"name": "b", "id": "f" * 32}]}]}
+    payload = {"format": "nfit-project", "version": 3, "settings": {}, "data_groups": [{"name": "group", "datasets": [{"name": "a", "id": "f" * 32}, {"name": "b", "id": "f" * 32}]}]}
     with pytest.raises(
         ValueError,
         match=r"duplicate dataset IDs.*group/a.*group/b",

@@ -17,7 +17,12 @@ and sharing:
 
 Dataset fit weights control statistical influence. A zero-weight dataset is
 excluded from optimization but evaluated once afterward for visualization.
-Dataset scales may be fixed transforms or fitted parameters.
+Disabling a dataset or dataset group has the same fitting behavior: its model
+is not evaluated during optimizer or sampler iterations, it contributes no
+chi-squared, and it is omitted from fit reports. nfit evaluates it once after a
+fit so the fitted model can still be viewed. **Use best sample** also evaluates
+disabled data with the selected posterior parameters. Dataset scales may be
+fixed transforms or fitted parameters.
 
 Fit weights are useful when datasets with very different point counts should
 have comparable influence. They are user-selected importance weights, not
