@@ -1166,6 +1166,13 @@ def test_qt_waterfall_saved_names_do_not_pin_interactive_group_selection():
         "g2 a",
         "g2 b",
     ]
+    assert viewer.marker_face_color == "none"
+    assert viewer.marker_face_color_combo.currentText() == "none"
+    assert all(
+        line.get_markerfacecolor() == "none"
+        for line in viewer.ax_image.lines
+        if line.get_marker() not in {"None", "none", ""}
+    )
 
 
 def test_qt_waterfall_reset_and_home_follow_current_group_extent():

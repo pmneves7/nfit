@@ -30,7 +30,7 @@ class _DatasetViewState:
     marker_size: float = 5.0
     line_plot_width: float = 1.5
     marker_edge_width: float = 1.5
-    marker_face_color: str = "#1f77b4"
+    marker_face_color: str = "none"
     line_color: str = "#1f77b4"
     show_errorbars: bool = True
     show_errorbar_caps: bool = False

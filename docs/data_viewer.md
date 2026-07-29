@@ -65,7 +65,8 @@ Choose **Visualization > Waterfall** to stack one-dimensional traces.
 
 Trace offset, colors, marker fill, zero references, labels, and model overlays
 are configurable. Saved plot recipes and generated scripts retain these
-settings and all contributing dataset references.
+settings and all contributing dataset references. Trace markers are unfilled by
+default.
 
 The axis **Reset** buttons and Matplotlib **Home** button use the current trace
 extent. That extent is recomputed when the dataset group, displayed axes, or
