@@ -186,6 +186,9 @@ dictionaries can be entered directly in the model editor.
 | `hopping_terms` | selected active hopping terms with mirrored canonical parameter state | `[]` | `[selected_term.to_dict()]` |
 | `periodic_axes` | periodic lattice axes; empty asks a Wannier import to infer them from nonzero translations | `[]` | `[0]`, `[0, 1]`, or `[0, 1, 2]` |
 | `electronic_energy_unit` | input and electronic-plot unit; changing it does not alter canonical values | `"eV"` | `"eV"` or `"meV"` |
+| `electronic_backend` | execution policy for bands, DOS, and Fermi surfaces | `"auto"` | `"auto"`, `"numpy"`, `"threaded"`, or `"cupy"` |
+| `electronic_workers` | maximum CPU workers; zero uses nfit's allocation and `NFIT_NUM_THREADS` | `0` | `8` |
+| `electronic_max_batch_mb` | target temporary memory per Hamiltonian/eigensystem batch | `256.0` | `512.0` |
 | `chemical_potential_meV` | canonical chemical potential subtracted on band and DOS plots; displayed in `electronic_energy_unit` | `0.0` | `12.5` for 0.0125 eV |
 | `projection_groups` | plot labels mapped to zero-based basis indices | `{}` | `{"d": [0, 1, 2], "p": [3, 4]}` |
 | `band_path` | ordered nodes with labels and primitive reduced reciprocal coordinates | $\Gamma$–X–M–$\Gamma$ | `[{"label": "G", "k": [0, 0, 0]}, {"label": "X", "k": [0.5, 0, 0]}]` |
@@ -193,6 +196,7 @@ dictionaries can be entered directly in the model editor.
 | `band_path_metadata` | provider, version, convention, and symmetry tolerance for an automatic path | `{}` until a path is generated | `{"provider": "seekpath", "provider_version": "2.2.1", "convention": "HPKOT", "symprec": 1e-5}` |
 | `band_points_per_segment` | interpolation intervals in each path segment | `60` | `80` |
 | `dos_mesh` | uniform mesh sizes, one per periodic axis or one per lattice axis | `[40, 40, 40]` | `[80, 80]` for a two-dimensional model |
+| `dos_symmetry_reduce` | use an nfit-certified symmetry-unique mesh for total DOS; projected or unsupported calculations retain the full mesh | `false` | `true` |
 | `dos_energy_min_meV` | canonical lower absolute energy sampled for the DOS | `-500.0` | `-250.0` |
 | `dos_energy_max_meV` | canonical upper absolute energy sampled for the DOS | `500.0` | `250.0` |
 | `dos_energy_points` | number of DOS energy samples, at least two | `600` | `1000` |
@@ -766,19 +770,25 @@ The calculation arguments beyond the `model` itself are:
 | `band_path.points_per_segment` | positive interpolation-interval count | `80` |
 | `k_mesh.shape` | positive size for each periodic axis, or three lattice-axis sizes | `[80, 80]` |
 | `k_mesh.shift` | optional offset in mesh steps for each periodic axis | `[0.5, 0.5]` for a half-step shift |
+| `k_mesh.symmetry_reduce` | request an nfit-certified irreducible integration mesh; unsupported cases return the full mesh with a provenance reason | `True` |
 | `calculate_bands.sampling` | `WavevectorSampling` path or mesh | `path` or `mesh` from the functions above |
 | `calculate_bands.chemical_potential_meV` | energy stored as the plotting reference | `12.5` |
 | `calculate_bands.projections` | optional named zero-based basis-index groups | `{"d": [0, 1]}` |
 | `calculate_bands.include_eigenvectors` | retain the complete eigenvectors in the result | `True` |
+| `calculate_bands.backend` | execution backend; `None` uses the configured process default | `"threaded"` |
+| `calculate_bands.workers` | bounded CPU worker count; `None` uses nfit's allocation | `8` |
+| `calculate_bands.max_batch_bytes` | temporary Hamiltonian/eigensystem memory target | `268435456` |
 | `density_of_states.mesh` | mesh-valued `WavevectorSampling` | `k_mesh(model, [80, 80])` |
 | `density_of_states.energy_meV` | one-dimensional absolute energy grid | `np.linspace(-250, 250, 1000)` |
 | `density_of_states.broadening_meV` | positive Gaussian standard deviation | `2.0` |
 | `density_of_states.chemical_potential_meV` | plotting reference energy | `12.5` |
 | `density_of_states.projections` | optional named basis-index groups | `{"d": [0, 1]}` |
 | `density_of_states.max_chunk_bytes` | positive temporary-kernel memory budget | `67108864` for 64 MiB |
+| `density_of_states.backend`, `workers`, `max_batch_bytes` | eigensystem execution settings, as for `calculate_bands` | `"numpy"`, `1`, `268435456` |
 | `fermi_surface.mesh_shape` | extraction-grid size for each periodic axis | `[200, 200]` |
 | `fermi_surface.target_energy_meV` | absolute constant-energy target | `12.5` |
 | `fermi_surface.projections` | optional named basis-index groups evaluated on the surface | `{"d": [0, 1]}` |
+| `fermi_surface.backend`, `workers`, `max_batch_bytes` | eigensystem execution settings, as for `calculate_bands` | `"cupy"`, `1`, `268435456` |
 
 For three-dimensional crystals, `standard_band_path(crystal,
 convention="hinuma")` uses Seek-path to apply the Hinuma *et al.* HPKOT
@@ -794,9 +804,27 @@ default to eV and accept `energy_unit="meV"` when a low-energy display is more
 useful. When a DOS is rendered in eV, nfit converts states/meV to states/eV as
 well as converting the horizontal axis.
 
-The DOS calculation is chunked under an explicit temporary-memory budget.
-Production backend selection and symmetry-reduced meshes remain part of the
-later optimization stage.
+Electronic calculations use float64/complex128 throughout. `auto` keeps the
+NumPy reference path and may split sufficiently large work across bounded CPU
+workers. `threaded` selects that split explicitly. `cupy` is an explicit GPU
+opt-in and falls back to NumPy when no compatible CuPy device is available.
+Set the process default with `set_electronic_backend()` or
+`NFIT_ELECTRONIC_BACKEND`; `electronic_workers=0` follows `NFIT_NUM_THREADS`.
+Result provenance records the requested and resolved backend, worker count,
+batch size, precision, and that no approximation was used.
+
+Batching changes neither the wavevectors nor the Hamiltonian. Unprojected
+calculations use `eigvalsh` and avoid constructing eigenvectors. Projected
+bands, projected DOS, and projected Fermi surfaces still calculate the
+eigenvectors they require.
+
+`k_mesh(..., symmetry_reduce=True)` reduces only a three-dimensional uniform
+mesh with reciprocal operations certified by nfit's symmetry-aware orbital
+builder. It retains exact orbit multiplicities as integration weights.
+Wannier90 imports and incompatible shifts safely return the full mesh.
+The component-level option is limited to total DOS because an arbitrary
+orbital projection need not be invariant under the crystal symmetry. It is
+off by default, preserving the previous full-mesh summation order.
 
 The band-structure, density-of-states, and Fermi-surface viewers use a common
 two-column window: the interactive plot and its Matplotlib navigation toolbar

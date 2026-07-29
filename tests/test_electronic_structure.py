@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import warnings
+from dataclasses import replace
+from itertools import permutations, product
 
 import numpy as np
 import pytest
@@ -20,6 +22,7 @@ from nfit import (
     density_of_states,
     electronic_energy_from_meV,
     electronic_energy_to_meV,
+    evaluate_eigensystem,
     fermi_surface,
     import_wannier90,
     k_mesh,
@@ -200,6 +203,169 @@ def test_named_hopping_parameters_return_new_models():
     assert changed.translations is model.translations
     assert changed.hamiltonian_blocks is model.hamiltonian_blocks
     assert changed.parameter_blocks["t"] is model.parameter_blocks["t"]
+
+
+def test_immutable_model_caches_do_not_cross_parameter_updates():
+    model = build_electronic_model(
+        direct_lattice=np.eye(3),
+        basis=["s"],
+        hoppings={(0, 0, 0): [[5.0]]},
+        periodic_axes=(0,),
+        parameter_values={"t": -10.0},
+        parameter_hoppings={"t": {(1, 0, 0): [[1.0]]}},
+        energy_unit="meV",
+    )
+    first_blocks = model.resolved_hamiltonian_blocks
+    first_digest = model.content_digest
+    first_reciprocal = model.reciprocal_lattice
+
+    assert model.resolved_hamiltonian_blocks is first_blocks
+    assert model.content_digest is first_digest
+    assert model.reciprocal_lattice is first_reciprocal
+
+    changed = model.with_parameters(t=-20.0, energy_unit="meV")
+    assert changed.resolved_hamiltonian_blocks is not first_blocks
+    assert changed.content_digest != first_digest
+    np.testing.assert_allclose(
+        changed.resolved_hamiltonian_blocks
+        - model.resolved_hamiltonian_blocks,
+        changed.parameter_blocks["t"] * -10.0,
+    )
+
+
+def test_eigensystem_backends_preserve_reference_values_and_order(monkeypatch):
+    model = _square_two_orbital_model()
+    coordinates = k_mesh(model, (17, 13)).reduced_coordinates
+    reference = evaluate_eigensystem(
+        model,
+        coordinates,
+        eigenvectors=False,
+        backend="numpy",
+        max_batch_bytes=1024,
+    )
+    threaded = evaluate_eigensystem(
+        model,
+        coordinates,
+        eigenvectors=False,
+        backend="threaded",
+        workers=2,
+        max_batch_bytes=1024,
+    )
+
+    np.testing.assert_array_equal(threaded.eigenvalues, reference.eigenvalues)
+    assert reference.eigenvectors is None
+    assert threaded.provenance["resolved_backend"] == "threaded"
+    assert threaded.provenance["approximation"] == "none"
+    assert threaded.provenance["batch_size"] < coordinates.shape[0]
+
+    with_vectors = evaluate_eigensystem(
+        model,
+        coordinates[:4],
+        eigenvectors=True,
+        backend="numpy",
+    )
+    assert with_vectors.eigenvectors is not None
+    reconstructed = (
+        with_vectors.eigenvectors
+        * with_vectors.eigenvalues[:, None, :]
+    ) @ with_vectors.eigenvectors.conj().transpose(0, 2, 1)
+    np.testing.assert_allclose(
+        reconstructed,
+        model.hamiltonian(coordinates[:4]),
+        rtol=1.0e-13,
+        atol=1.0e-13,
+    )
+
+    monkeypatch.setattr("nfit.electronic_backends._CUPY_BACKEND", None)
+    fallback = evaluate_eigensystem(
+        model,
+        coordinates[:4],
+        eigenvectors=False,
+        backend="cupy",
+    )
+    assert fallback.provenance["requested_backend"] == "cupy"
+    assert fallback.provenance["resolved_backend"] == "numpy"
+
+    with pytest.raises(ValueError, match="at least one"):
+        evaluate_eigensystem(
+            model,
+            np.empty((0, 3)),
+            eigenvectors=False,
+        )
+    with pytest.raises(ValueError, match="workers"):
+        evaluate_eigensystem(
+            model,
+            coordinates[:1],
+            eigenvectors=False,
+            workers=-1,
+        )
+
+
+def test_symmetry_reduced_mesh_is_opt_in_and_preserves_total_dos():
+    rotations = []
+    for permutation in permutations(range(3)):
+        for signs in product((-1, 1), repeat=3):
+            rotation = np.zeros((3, 3), dtype=int)
+            for row, column in enumerate(permutation):
+                rotation[row, column] = signs[row]
+            rotations.append(rotation.tolist())
+    model = build_electronic_model(
+        direct_lattice=np.eye(3),
+        basis=["s"],
+        hoppings={
+            (1, 0, 0): [[-1.0]],
+            (0, 1, 0): [[-1.0]],
+            (0, 0, 1): [[-1.0]],
+        },
+        energy_unit="meV",
+    )
+    model = replace(
+        model,
+        provenance={
+            **dict(model.provenance),
+            "reciprocal_symmetry": {
+                "certified_by": "nfit_orbital_builder",
+                "rotations": rotations,
+                "includes_time_reversal": True,
+            },
+        },
+    )
+    full = k_mesh(model, (8, 8, 8))
+    reduced = k_mesh(model, (8, 8, 8), symmetry_reduce=True)
+
+    assert full.reduced_coordinates.shape[0] == 512
+    assert reduced.reduced_coordinates.shape[0] == 35
+    assert reduced.provenance["symmetry_reduction"]["applied"] is True
+    assert reduced.weights.sum() == pytest.approx(1.0)
+
+    energy = np.linspace(-7.0, 7.0, 301)
+    full_dos = density_of_states(
+        model,
+        full,
+        energy,
+        broadening_meV=0.2,
+    )
+    reduced_dos = density_of_states(
+        model,
+        reduced,
+        energy,
+        broadening_meV=0.2,
+    )
+    np.testing.assert_allclose(
+        reduced_dos.total_per_meV_cell,
+        full_dos.total_per_meV_cell,
+        rtol=2.0e-14,
+        atol=2.0e-14,
+    )
+
+    uncertified = _square_two_orbital_model()
+    unchanged = k_mesh(
+        uncertified,
+        (7, 9),
+        symmetry_reduce=True,
+    )
+    assert unchanged.reduced_coordinates.shape[0] == 63
+    assert unchanged.provenance["symmetry_reduction"]["applied"] is False
 
 
 def test_manual_builder_converts_declared_electronic_units_once():
@@ -464,6 +630,8 @@ def test_tight_binding_registry_plots_and_scripts_are_component_driven():
         assert "model = ElectronicModel.from_dict" in script
         assert "energy_unit = 'eV'" in script
         assert "electronic_energy_to_meV" in script
+        assert "electronic_backend = 'auto'" in script
+        assert "max_batch_bytes = 268435456" in script
         assert "show_electronic_figure" in script
         if plot.key == "fermi_surface":
             assert "show_fermi_surface_result" in script

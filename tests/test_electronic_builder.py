@@ -244,7 +244,7 @@ def test_component_builder_resolves_values_project_and_script_round_trip(tmp_pat
         fit=True,
     )
 
-    electronic_model_from_component(component)
+    resolved_model = electronic_model_from_component(component)
     resolved = component.config["model_data"]
     assert component.config["model_digest"] == resolved["content_digest"]
     assert sorted(component.config["projection_groups"]) == ["M1_d"]
@@ -256,6 +256,10 @@ def test_component_builder_resolves_values_project_and_script_round_trip(tmp_pat
     assert component.fit_parameters[first] is True
     assert component.sharing[first]["mode"] == "global"
     assert first in component_parameter_names(component)
+    reciprocal_symmetry = resolved_model.provenance["reciprocal_symmetry"]
+    assert reciprocal_symmetry["certified_by"] == "nfit_orbital_builder"
+    assert reciprocal_symmetry["includes_time_reversal"] is True
+    assert len(reciprocal_symmetry["rotations"]) == 48
 
     set_tight_binding_parameter_state(
         component,

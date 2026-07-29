@@ -345,6 +345,20 @@ def _symmetry_operations(spacegroup: str) -> list[tuple[FloatArray, FloatArray]]
     return operations
 
 
+def spacegroup_operations(
+    crystal: Mapping[str, Any],
+) -> tuple[tuple[FloatArray, FloatArray], ...]:
+    """Return all fractional-coordinate operations for a validated crystal."""
+
+    validate_crystal(crystal)
+    return tuple(
+        (np.array(rotation, copy=True), np.array(translation, copy=True))
+        for rotation, translation in _symmetry_operations(
+            str(crystal.get("spacegroup", "P 1"))
+        )
+    )
+
+
 def site_symmetry_operations(
     crystal: Mapping[str, Any], site_label: str
 ) -> list[dict[str, Any]]:

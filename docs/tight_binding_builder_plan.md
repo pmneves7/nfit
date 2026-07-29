@@ -364,15 +364,25 @@ When fitting is enabled:
 - Keep Wannier90 as the only Hamiltonian-file adapter. ASE, pymatgen, and
   PythTB compatibility are not required for this stage.
 
-### 3.7 — Calculation backends (planned)
+### 3.7 — Calculation backends (implemented)
 
-- Reduce Brillouin-zone meshes to symmetry-unique points where the complete
-  Hamiltonian and requested observable permit it.
-- Add sparse or compiled kernels, GPU execution, and bounded parallel or
-  distributed execution without changing scientific results or serialized
-  models.
-- Follow the binning subsystem's selectable laptop, workstation, cluster, and
-  supercomputer execution policy.
+- Evaluate Hamiltonians and Hermitian eigensystems in bounded full-precision
+  batches, with serial NumPy, bounded threaded NumPy, and explicit optional
+  CuPy execution.
+- Cache immutable reciprocal lattices, resolved real-space Hamiltonian blocks,
+  and model digests without storing calculated bands in the model.
+- Offer opt-in symmetry-unique integration meshes only for models whose
+  reciprocal operations were certified by the nfit orbital builder. Imported
+  and projected calculations retain the full mesh unless their symmetry is
+  known.
+- Keep automatic execution on the NumPy reference calculation; GPU execution
+  is explicit, and every result records its resolved backend, precision,
+  worker count, and batch size.
+
+These backends partition independent wavevectors and do not change the
+Hamiltonian, eigensolver precision, mesh, or broadening. Distributed schedulers
+can partition the same scriptable wavevector batches; integrated scheduler
+adapters and convergence management belong to the later production stage.
 
 ## Validation
 

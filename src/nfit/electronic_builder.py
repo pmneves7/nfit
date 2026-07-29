@@ -33,6 +33,7 @@ from .crystal import (
     orbits_to_config,
     site_symmetry_operations,
     sites_to_config,
+    spacegroup_operations,
     validate_crystal,
 )
 from .electronic_structure import (
@@ -2539,6 +2540,65 @@ def resolve_tight_binding_builder(component: Any) -> ElectronicModel:
         manifolds=manifolds,
         soc_terms=_component_soc_terms(component),
     )
+    conventional_lattice = lattice_vectors(
+        component.config["crystal"]["lattice"]
+    )
+    primitive_transform = np.linalg.solve(
+        conventional_lattice,
+        model.direct_lattice,
+    )
+    inverse_transform = np.linalg.inv(primitive_transform)
+    reciprocal_rotations = []
+    for conventional_rotation, _translation in spacegroup_operations(
+        component.config["crystal"]
+    ):
+        direct_rotation = (
+            inverse_transform
+            @ conventional_rotation
+            @ primitive_transform
+        )
+        reciprocal_rotation = np.linalg.inv(direct_rotation).T
+        rounded = np.rint(reciprocal_rotation).astype(np.int64)
+        if not np.allclose(reciprocal_rotation, rounded, atol=1.0e-8):
+            raise ValueError(
+                "space-group rotation is not integral in the electronic "
+                "model's primitive reciprocal basis"
+            )
+        record = rounded.tolist()
+        if record not in reciprocal_rotations:
+            reciprocal_rotations.append(record)
+    probe = np.asarray(
+        [
+            [0.0, 0.0, 0.0],
+            [0.137, 0.271, 0.389],
+            [0.317, 0.113, 0.071],
+        ],
+        dtype=float,
+    )
+    reference_bands = np.linalg.eigvalsh(model.hamiltonian(probe))
+    symmetry_certified = all(
+        np.allclose(
+            np.linalg.eigvalsh(
+                model.hamiltonian(probe @ np.asarray(rotation, dtype=float).T)
+            ),
+            reference_bands,
+            rtol=1.0e-10,
+            atol=1.0e-7,
+        )
+        for rotation in reciprocal_rotations
+    )
+    if symmetry_certified:
+        model = replace(
+            model,
+            provenance={
+                **dict(model.provenance),
+                "reciprocal_symmetry": {
+                    "certified_by": "nfit_orbital_builder",
+                    "rotations": reciprocal_rotations,
+                    "includes_time_reversal": True,
+                },
+            },
+        )
     component.config["source_path"] = ""
     component.config["model_data"] = model.to_dict()
     component.config["model_digest"] = model.content_digest

@@ -157,6 +157,18 @@ def _with_electronic_display_unit(result: Any, component: Any) -> Any:
     )
 
 
+def _electronic_execution_kwargs(component: Any) -> dict[str, Any]:
+    config = component.config if isinstance(component.config, dict) else {}
+    workers = int(config.get("electronic_workers", 0))
+    return {
+        "backend": str(config.get("electronic_backend", "auto")),
+        "workers": None if workers == 0 else workers,
+        "max_batch_bytes": int(
+            float(config.get("electronic_max_batch_mb", 256.0)) * 1024**2
+        ),
+    }
+
+
 def tight_binding_band_structure(component: Any) -> BandResult:
     """Calculate a configured tight-binding band path for a model component."""
 
@@ -201,6 +213,7 @@ def tight_binding_band_structure(component: Any) -> BandResult:
             ),
             projections=_projection_groups(component),
             include_eigenvectors=False,
+            **_electronic_execution_kwargs(component),
         ),
         component,
     )
@@ -211,7 +224,14 @@ def tight_binding_density_of_states(component: Any) -> DensityOfStatesResult:
 
     model = electronic_model_from_component(component)
     config = component.config
-    mesh = k_mesh(model, config.get("dos_mesh", [40, 40, 40]))
+    projections = _projection_groups(component)
+    mesh = k_mesh(
+        model,
+        config.get("dos_mesh", [40, 40, 40]),
+        symmetry_reduce=bool(
+            config.get("dos_symmetry_reduce", False) and not projections
+        ),
+    )
     energy_min = float(config.get("dos_energy_min_meV", -500.0))
     energy_max = float(config.get("dos_energy_max_meV", 500.0))
     energy = np.linspace(
@@ -228,7 +248,8 @@ def tight_binding_density_of_states(component: Any) -> DensityOfStatesResult:
             chemical_potential_meV=float(
                 config.get("chemical_potential_meV", 0.0)
             ),
-            projections=_projection_groups(component),
+            projections=projections,
+            **_electronic_execution_kwargs(component),
         ),
         component,
     )
@@ -250,6 +271,7 @@ def tight_binding_fermi_surface(component: Any) -> FermiSurfaceResult:
                 )
             ),
             projections=_projection_groups(component),
+            **_electronic_execution_kwargs(component),
         ),
         component,
     )
@@ -449,12 +471,23 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
             config.get("chemical_potential_meV", 0.0), energy_unit
         )
     )
+    execution_backend = str(config.get("electronic_backend", "auto"))
+    execution_workers = int(config.get("electronic_workers", 0))
+    max_batch_bytes = int(
+        float(config.get("electronic_max_batch_mb", 256.0)) * 1024**2
+    )
+    dos_symmetry_reduce = bool(
+        config.get("dos_symmetry_reduce", False) and not projections
+    )
     lines.extend(
         [
             "from nfit import electronic_energy_to_meV",
             f"energy_unit = {energy_unit!r}",
             f"chemical_potential = {chemical_potential!r}",
             "chemical_potential_meV = electronic_energy_to_meV(chemical_potential, energy_unit)",
+            f"electronic_backend = {execution_backend!r}",
+            f"electronic_workers = {None if execution_workers == 0 else execution_workers!r}",
+            f"max_batch_bytes = {max_batch_bytes!r}",
         ]
     )
     if plot_key == "bands":
@@ -479,7 +512,7 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
                 "path_reciprocal_lattice = "
                 f"{band_path_reciprocal_lattice(component).tolist()!r}",
                 f"sampling = band_path(model, {nodes!r}, labels={labels!r}, break_before={breaks!r}, points_per_segment={int(config.get('band_points_per_segment', 60))!r}, coordinate_reciprocal_lattice=path_reciprocal_lattice)",
-                f"result = calculate_bands(model, sampling, chemical_potential_meV=chemical_potential_meV, projections={projections!r}, include_eigenvectors=False)",
+                f"result = calculate_bands(model, sampling, chemical_potential_meV=chemical_potential_meV, projections={projections!r}, include_eigenvectors=False, backend=electronic_backend, workers=electronic_workers, max_batch_bytes=max_batch_bytes)",
                 "figure, axis = render_band_structure(result, energy_unit=energy_unit)",
             ]
         )
@@ -504,12 +537,12 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
                 "import numpy as np",
                 "from nfit import density_of_states, k_mesh",
                 "from nfit.model_plots import render_density_of_states",
-                f"mesh = k_mesh(model, {config.get('dos_mesh', [40, 40, 40])!r})",
+                f"mesh = k_mesh(model, {config.get('dos_mesh', [40, 40, 40])!r}, symmetry_reduce={dos_symmetry_reduce!r})",
                 f"energy = np.linspace({energy_min!r}, {energy_max!r}, {int(config.get('dos_energy_points', 600))!r})",
                 "energy_meV = electronic_energy_to_meV(energy, energy_unit)",
                 f"broadening = {broadening!r}",
                 "broadening_meV = electronic_energy_to_meV(broadening, energy_unit)",
-                f"result = density_of_states(model, mesh, energy_meV, broadening_meV=broadening_meV, chemical_potential_meV=chemical_potential_meV, projections={projections!r})",
+                f"result = density_of_states(model, mesh, energy_meV, broadening_meV=broadening_meV, chemical_potential_meV=chemical_potential_meV, projections={projections!r}, backend=electronic_backend, workers=electronic_workers, max_batch_bytes=max_batch_bytes)",
                 "figure, axis = render_density_of_states(result, energy_unit=energy_unit)",
             ]
         )
@@ -529,7 +562,7 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
                 "from nfit.model_plots import render_fermi_surface",
                 f"target_energy = {target!r}",
                 "target_energy_meV = electronic_energy_to_meV(target_energy, energy_unit)",
-                f"result = fermi_surface(model, {config.get('fermi_mesh', [64, 64, 64])!r}, target_energy_meV=target_energy_meV, projections={projections!r})",
+                f"result = fermi_surface(model, {config.get('fermi_mesh', [64, 64, 64])!r}, target_energy_meV=target_energy_meV, projections={projections!r}, backend=electronic_backend, workers=electronic_workers, max_batch_bytes=max_batch_bytes)",
             ]
         )
     else:

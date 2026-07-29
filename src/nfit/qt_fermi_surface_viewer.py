@@ -11,6 +11,7 @@ from .electronic_structure import (
     electronic_energy_from_meV,
     normalize_electronic_energy_unit,
 )
+from .qt_pyvista import configure_pyvista_interactor, show_then_render
 from .qt_viewer_shell import create_viewer_shell
 
 _SHEET_COLORS = (
@@ -171,6 +172,7 @@ def show_fermi_surface_result(
         viewer_key="fermi_surface",
     )
     plotter = QtInteractor(central, auto_update=False)
+    configure_pyvista_interactor(plotter)
     plotter.setObjectName("fermi_surface_plotter")
     viewport_layout.addWidget(plotter.interactor)
     window.setCentralWidget(central)
@@ -224,6 +226,8 @@ def show_fermi_surface_result(
         copy_figure=copy_figure,
         save_figure=save_figure,
     )
-    _render_fermi_surface(plotter, result)
-    window.show()
+    show_then_render(
+        window,
+        lambda: _render_fermi_surface(plotter, result),
+    )
     return window

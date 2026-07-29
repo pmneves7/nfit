@@ -11,6 +11,7 @@ from typing import Any
 import numpy as np
 
 from .brillouin_zone import BrillouinZoneScene, BrillouinZoneViewOptions
+from .qt_pyvista import configure_pyvista_interactor, show_then_render
 from .qt_viewer_shell import create_viewer_shell
 
 
@@ -560,6 +561,7 @@ def show_brillouin_zone_scene(
     )
     settings.setFixedWidth(320)
     plotter = QtInteractor(central, auto_update=False)
+    configure_pyvista_interactor(plotter)
     plotter.setObjectName("brillouin_zone_plotter")
     viewport_layout.addWidget(plotter.interactor)
     window.setCentralWidget(central)
@@ -633,6 +635,8 @@ def show_brillouin_zone_scene(
         copy_figure=copy_figure,
         save_figure=save_figure,
     )
-    _render_brillouin_zone(plotter, scene, current)
-    window.show()
+    show_then_render(
+        window,
+        lambda: _render_brillouin_zone(plotter, scene, current),
+    )
     return window

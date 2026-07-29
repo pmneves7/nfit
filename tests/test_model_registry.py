@@ -158,6 +158,10 @@ def test_tight_binding_registry_validates_energy_unit_and_canonical_window():
     assert config["orbital_manifolds"] == []
     assert config["onsite_terms"] == []
     assert config["fermi_mesh"] == [64, 64, 64]
+    assert config["electronic_backend"] == "auto"
+    assert config["electronic_workers"] == 0
+    assert config["electronic_max_batch_mb"] == 256.0
+    assert config["dos_symmetry_reduce"] is False
     component = ModelComponentSpec(
         name="bands",
         type="tight_binding",
@@ -169,6 +173,14 @@ def test_tight_binding_registry_validates_energy_unit_and_canonical_window():
     with pytest.raises(ValueError, match="eV.*meV"):
         nfit.validate_model_component(component)
     component.config["electronic_energy_unit"] = "meV"
+    component.config["electronic_backend"] = "quantum"
+    with pytest.raises(ValueError, match="electronic_backend"):
+        nfit.validate_model_component(component)
+    component.config["electronic_backend"] = "auto"
+    component.config["electronic_workers"] = -1
+    with pytest.raises(ValueError, match="electronic_workers"):
+        nfit.validate_model_component(component)
+    component.config["electronic_workers"] = 0
     component.config["dos_energy_min_meV"] = 10.0
     component.config["dos_energy_max_meV"] = -10.0
     with pytest.raises(ValueError, match="dos_energy_min_meV"):

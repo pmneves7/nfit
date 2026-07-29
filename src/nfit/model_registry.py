@@ -1417,6 +1417,43 @@ def _register_builtin_models() -> None:
                     "eV",
                 ),
                 _config_field(
+                    "electronic_backend",
+                    "auto",
+                    (
+                        "Execution backend for bands, density of states, and "
+                        "Fermi surfaces. Automatic mode uses the NumPy reference "
+                        "path and bounded CPU threading when worthwhile; CuPy is "
+                        "an explicit GPU opt-in."
+                    ),
+                    "One of auto, numpy, threaded, or cupy.",
+                    "str",
+                    "auto",
+                ),
+                _config_field(
+                    "electronic_workers",
+                    0,
+                    (
+                        "Maximum CPU workers for electronic calculations. Zero "
+                        "uses the nfit CPU-allocation policy and respects "
+                        "NFIT_NUM_THREADS."
+                    ),
+                    "Zero for automatic allocation, or a positive integer.",
+                    "int",
+                    "8",
+                ),
+                _config_field(
+                    "electronic_max_batch_mb",
+                    256.0,
+                    (
+                        "Working-memory target for each electronic Hamiltonian "
+                        "and eigensystem batch."
+                    ),
+                    "Positive finite memory size.",
+                    "float",
+                    "512",
+                    "MiB",
+                ),
+                _config_field(
                     "chemical_potential_meV",
                     0.0,
                     (
@@ -1497,6 +1534,22 @@ def _register_builtin_models() -> None:
                     "One size per periodic dimension, or three lattice-axis sizes.",
                     "list",
                     "[80, 80, 1]",
+                ),
+                _config_field(
+                    "dos_symmetry_reduce",
+                    False,
+                    (
+                        "Use only symmetry-unique density-of-states mesh points "
+                        "when the nfit-built model certifies compatible reciprocal "
+                        "symmetry. Leave disabled for bit-for-bit continuity with "
+                        "the full mesh."
+                    ),
+                    (
+                        "Boolean. Unsupported models or mesh shifts safely retain "
+                        "the full mesh."
+                    ),
+                    "bool",
+                    "true",
                 ),
                 _config_field(
                     "dos_energy_min_meV",

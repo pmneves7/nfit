@@ -256,8 +256,26 @@ def _validate_tight_binding_config(component: Any) -> None:
     path_convention = str(config.get("band_path_convention", "hinuma"))
     if path_convention not in {"hinuma", "manual"}:
         raise ValueError("band_path_convention must be 'hinuma' or 'manual'")
+    electronic_backend = str(config.get("electronic_backend", "auto"))
+    if electronic_backend not in {"auto", "numpy", "threaded", "cupy"}:
+        raise ValueError(
+            "electronic_backend must be auto, numpy, threaded, or cupy"
+        )
+    electronic_workers = int(config.get("electronic_workers", 0))
+    if electronic_workers < 0:
+        raise ValueError("electronic_workers must be zero or positive")
+    electronic_max_batch_mb = float(
+        config.get("electronic_max_batch_mb", 256.0)
+    )
+    if (
+        not np.isfinite(electronic_max_batch_mb)
+        or electronic_max_batch_mb <= 0.0
+    ):
+        raise ValueError("electronic_max_batch_mb must be positive and finite")
     if not isinstance(config.get("band_path_metadata", {}), Mapping):
         raise ValueError("band_path_metadata must be a mapping")
+    if not isinstance(config.get("dos_symmetry_reduce", False), bool):
+        raise ValueError("dos_symmetry_reduce must be boolean")
     energy_names = (
         "chemical_potential_meV",
         "dos_energy_min_meV",

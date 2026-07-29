@@ -188,13 +188,15 @@ def test_gpu_fermi_surface_viewer_uses_standard_shell(monkeypatch):
             QtInteractor=FakeInteractor,
         ),
     )
+    rendered = []
     monkeypatch.setattr(
         "nfit.qt_fermi_surface_viewer._render_fermi_surface",
-        lambda *_args, **_kwargs: None,
+        lambda *_args, **_kwargs: rendered.append(True),
     )
     from nfit.qt_fermi_surface_viewer import show_fermi_surface_result
 
     window = show_fermi_surface_result(_fermi_surface_result())
+    application.processEvents()
     panel = window.findChild(
         QtWidgets.QGroupBox,
         "fermi_surface_settings_panel",
@@ -205,6 +207,7 @@ def test_gpu_fermi_surface_viewer_uses_standard_shell(monkeypatch):
     )
 
     assert panel is not None
+    assert rendered == [True]
     assert summary.text().endswith("1 displayed triangles")
     assert window.findChild(
         QtWidgets.QPushButton,
@@ -218,3 +221,25 @@ def test_gpu_fermi_surface_viewer_uses_standard_shell(monkeypatch):
     window._nfit_close_shortcut.activated.emit()
     assert not window.isVisible()
     assert window._nfit_plotter.close_count == 1
+
+
+def test_macos_qt_pyvista_safeguard_clears_paint_on_screen(monkeypatch):
+    QtCore = pytest.importorskip("PySide6.QtCore")
+    from nfit.qt_pyvista import configure_pyvista_interactor
+
+    calls = []
+
+    class Widget:
+        def setAttribute(self, attribute, enabled):
+            calls.append((attribute, enabled))
+
+    monkeypatch.setattr("nfit.qt_pyvista.platform.system", lambda: "Darwin")
+    monkeypatch.setattr(
+        "nfit.qt_pyvista._qt_version_tuple",
+        lambda _version: (6, 11, 1),
+    )
+    configure_pyvista_interactor(SimpleNamespace(interactor=Widget()))
+
+    assert calls == [
+        (QtCore.Qt.WidgetAttribute.WA_PaintOnScreen, False),
+    ]

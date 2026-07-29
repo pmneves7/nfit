@@ -76,11 +76,19 @@ from .crystal import (
     site_rotations_to_config,
     site_symmetry_operations,
     sites_to_config,
+    spacegroup_operations,
     symmetry_allowed_exchange_basis,
     symmetry_allowed_sia_basis,
     validate_crystal,
 )
 from .dataset import PointData4D, PointListData, from_arrays
+from .electronic_backends import (
+    ElectronicEigensystem,
+    available_electronic_backends,
+    electronic_backend,
+    evaluate_eigensystem,
+    set_electronic_backend,
+)
 from .electronic_builder import (
     ORBITAL_PRESETS,
     HoppingGeneration,
@@ -492,6 +500,7 @@ __all__ = [
     "DatasetOutput",
     "DensityOfStatesResult",
     "ElectronicModel",
+    "ElectronicEigensystem",
     "GeometryFrame",
     "GeometryOrbital",
     "GeometryPathway",
@@ -505,6 +514,7 @@ __all__ = [
     "analysis_definition",
     "analysis_parameter_tooltip",
     "available_analysis_types",
+    "available_electronic_backends",
     "default_analysis_parameters",
     "prepare_analysis_input",
     "prepare_analysis_inputs",
@@ -523,6 +533,8 @@ __all__ = [
     "debye_heat_capacity",
     "debye_temperature_from_beta",
     "density_of_states",
+    "electronic_backend",
+    "evaluate_eigensystem",
     "electronic_energy_from_meV",
     "electronic_energy_to_meV",
     "ELECTRONIC_ENERGY_UNITS",
@@ -892,6 +904,8 @@ __all__ = [
     "save_electronic_model",
     "save_dataset_file",
     "set_dataset_source",
+    "set_electronic_backend",
+    "spacegroup_operations",
     "snapshot_data_group_state",
     "slice_viewer",
     "slice_viewer_datasets",

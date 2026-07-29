@@ -41,15 +41,16 @@ manifold-resolved onsite spin-orbit coupling, time-reversal validation, and a
 matrix/subspace inspector are implemented. GUI-built models now provide
 Slater--Koster and general symmetry-matrix hopping conventions, lazy canonical
 Hamiltonian resolution, primitive-cell folding, and Hinuma/HPKOT standard
-paths. Optimizer evaluation awaits a compatible electronic-response
-observable.
+paths. Full-precision electronic eigensystems now support bounded serial or
+threaded CPU batches, explicit optional CuPy execution, immutable-model
+caches, and opt-in certified symmetry reduction for total-DOS meshes.
+Optimizer evaluation awaits a compatible electronic-response observable.
 Response stages add the complex bare susceptibility, interaction dressings,
-production fitting, BCS superconductivity, and advanced correlated extensions. Electronic
-calculations should next share the rebinner's bounded-memory and
-selectable-backend approach, including symmetry-reduced Brillouin-zone work,
-compiled or sparse kernels, GPUs, and distributed execution where valid. A
-capability remains planned until its model page documents an implemented
-public API.
+production fitting, BCS superconductivity, and advanced correlated extensions.
+Later performance work includes scheduler adapters, wider certified symmetry
+support, convergence management, and workload-specific compiled or sparse
+kernels. A capability remains planned until its model page documents an
+implemented public API.
 
 Instrument resolution, finite-bin integration, absorption, and related
 measurement effects will form an optional dataset-owned systematics layer

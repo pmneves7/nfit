@@ -17,6 +17,7 @@ from .model_geometry import (
     ModelGeometryScene,
     model_geometry_scene,
 )
+from .qt_pyvista import configure_pyvista_interactor, show_then_render
 
 
 @dataclass(frozen=True)
@@ -410,7 +411,8 @@ def show_model_geometry_scene(
     window.setWindowTitle(f"Model geometry — {scene.model_name}")
     central = QtWidgets.QWidget()
     layout = QtWidgets.QHBoxLayout(central)
-    plotter = QtInteractor(central)
+    plotter = QtInteractor(central, auto_update=False)
+    configure_pyvista_interactor(plotter)
     plotter.setObjectName("model_geometry_plotter")
     layout.addWidget(plotter.interactor, 1)
     controls = QtWidgets.QWidget()
@@ -424,14 +426,17 @@ def show_model_geometry_scene(
     window.resize(1100, 760)
     window._nfit_plotter = plotter
     window._nfit_application = application
-    registry = _render_scene(plotter, scene)
-    window._nfit_pick_registry = registry
+    window._nfit_pick_registry = {}
     _enable_geometry_picking(
         plotter,
-        lambda: registry,
+        lambda: window._nfit_pick_registry,
         selection_label.setText,
     )
-    window.show()
+
+    def initial_render() -> None:
+        window._nfit_pick_registry = _render_scene(plotter, scene)
+
+    show_then_render(window, initial_render)
     return window
 
 
@@ -451,7 +456,8 @@ def open_model_geometry_viewer(component: Any, *, parent: Any | None = None) -> 
             self.setWindowTitle(f"Model geometry — {component.name}")
             central = QtWidgets.QWidget()
             root = QtWidgets.QHBoxLayout(central)
-            self.plotter = QtInteractor(central)
+            self.plotter = QtInteractor(central, auto_update=False)
+            configure_pyvista_interactor(self.plotter)
             self.plotter.setObjectName("model_geometry_plotter")
             root.addWidget(self.plotter.interactor, 1)
             controls = QtWidgets.QWidget()
@@ -531,7 +537,6 @@ def open_model_geometry_viewer(component: Any, *, parent: Any | None = None) -> 
             self.hopping_term.currentIndexChanged.connect(self.refresh)
             self.all_equivalent.toggled.connect(self.refresh)
             self._pick_registry: dict[str, _PickBatch] = {}
-            self.refresh()
             _enable_geometry_picking(
                 self.plotter,
                 lambda: self._pick_registry,
@@ -564,5 +569,5 @@ def open_model_geometry_viewer(component: Any, *, parent: Any | None = None) -> 
 
     window = Viewer()
     window._nfit_application = application
-    window.show()
+    show_then_render(window, window.refresh)
     return window

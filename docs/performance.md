@@ -88,6 +88,38 @@ Set `NFIT_RPA_BACKEND` or call `set_rpa_backend()` to override it.
 `nfit.available_rpa_backends()` reports what is available. An unavailable
 forced backend falls back to NumPy.
 
+## Tight-binding electronic structure
+
+Bands, density of states, and constant-energy surfaces share a bounded
+eigensystem service. It applies the same float64/complex128 Fourier
+Hamiltonian and Hermitian NumPy solver in serial or across independent
+wavevector batches. Unprojected calculations use `eigvalsh`, avoiding the
+eigenvectors needed only for orbital projections.
+
+The component settings are:
+
+- `electronic_backend`: `auto`, `numpy`, `threaded`, or explicit optional
+  `cupy`;
+- `electronic_workers`: zero for the nfit allocation or a positive limit; and
+- `electronic_max_batch_mb`: the temporary Hamiltonian/eigensystem target.
+
+`auto` does not select a GPU. A compatible CuPy installation can be selected
+explicitly and uses the same precision. An unavailable requested GPU falls
+back to NumPy. `NFIT_ELECTRONIC_BACKEND` sets the process default, while
+`NFIT_NUM_THREADS` supplies the automatic CPU allocation. Execution details
+and the absence of numerical approximations are stored in result provenance.
+
+Immutable electronic models cache their reciprocal lattice, parameter-resolved
+real-space blocks, and scientific digest. Updating a named coefficient creates
+a new model and therefore a new cache.
+
+For total DOS, `k_mesh(..., symmetry_reduce=True)` can use exact orbit
+multiplicities from a GUI-built model's certified reciprocal symmetry. The
+default remains the full mesh. Wannier90 models, reduced-dimensional meshes,
+incompatible shifts, and component-level projected DOS retain full sampling.
+Fermi-surface extraction also retains a regular full grid because marching
+contours require its topology.
+
 ## Threads
 
 nfit respects the CPUs available through affinity, cgroups, or a SLURM
@@ -135,7 +167,9 @@ grid controls are in [Sum rules and self-consistency](theory_notes.md).
 ## Current limitations
 
 - Tensor mode uses finite-difference gradients.
-- GPU execution does not include eigendecomposition or field-on tensor solves.
+- RPA GPU execution does not include eigendecomposition or field-on tensor
+  solves. Tight-binding eigendecomposition has a separate explicit CuPy
+  backend.
 - Dipolar tensor mode cannot use primitive-cell reduction.
 
 Broader directions are listed in [Planned features](planned_features.md).

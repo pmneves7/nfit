@@ -9,6 +9,7 @@ import numpy as np
 from .dataset import PointListData
 from .mdhisto import MDHistoAxis, MDHistoData, mdhisto_measured_bins
 from .plotting import gaussian_smooth_nan
+from .qt_pyvista import configure_pyvista_interactor
 
 TRANSFER_SAMPLES = 256
 COLORMAPS = ("viridis", "magma", "plasma", "cividis", "turbo", "coolwarm", "grey")
@@ -498,6 +499,7 @@ def _make_volume_panel(
             render_layout = QtWidgets.QVBoxLayout(render_frame)
             render_layout.setContentsMargins(8, 8, 8, 8)
             self.plotter = QtInteractor(render_frame)
+            configure_pyvista_interactor(self.plotter)
             self.render_status = QtWidgets.QLabel()
             self.render_status.setObjectName("volume_render_status")
             self.render_status.setWordWrap(True)

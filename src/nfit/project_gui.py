@@ -18754,6 +18754,28 @@ class NfitProjectExplorer:
                 config_layout.addWidget(combo, row, 1)
                 row += 1
                 continue
+            if (
+                model.type == "tight_binding"
+                and setting_name == "electronic_backend"
+            ):
+                label.setText("Electronic backend")
+                combo = QtWidgets.QComboBox()
+                combo.setObjectName("tight_binding_electronic_backend")
+                combo.setToolTip(tooltip)
+                for backend in ("auto", "numpy", "threaded", "cupy"):
+                    combo.addItem(backend, backend)
+                current = str(model.config.get(setting_name, "auto"))
+                combo.setCurrentIndex(max(combo.findData(current), 0))
+                combo.currentIndexChanged.connect(
+                    lambda _index, combo=combo: self._set_model_config_setting(
+                        "electronic_backend",
+                        str(combo.currentData()),
+                    )
+                )
+                config_layout.addWidget(label, row, 0)
+                config_layout.addWidget(combo, row, 1)
+                row += 1
+                continue
             if config_definitions[setting_name].choices == "form_factor_ions":
                 label.setText("form_factor")
                 combo = QtWidgets.QComboBox()

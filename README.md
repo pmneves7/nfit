@@ -17,7 +17,9 @@ The package provides:
   subspaces, symmetry-allowed onsite terms, selectable orbital-explicit
   Slater--Koster or general-matrix hopping candidates, lazy primitive-cell
   resolution, Hinuma/HPKOT paths, eV/meV conversion, bands, orbital
-  projections, density of states, Fermi surfaces, implicit/collinear/spinor bases,
+  projections, density of states, Fermi surfaces, bounded CPU and optional
+  GPU eigensystem backends, certified total-DOS symmetry reduction,
+  implicit/collinear/spinor bases,
   manifold-resolved onsite spin-orbit coupling, Hamiltonian and orbital-block
   matrix inspection, shared 3D model-geometry inspection, and
   primitive-cell first-Brillouin-zone views; atoms, orbitals, and bonds in the

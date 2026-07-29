@@ -88,6 +88,14 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
     assert "canonical" in unit_combo.toolTip()
     assert chemical_editor is not None and chemical_editor.toolTip()
     assert float(dos_min_editor.text()) == pytest.approx(-0.5)
+    backend_combo = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox,
+        "tight_binding_electronic_backend",
+    )
+    assert backend_combo is not None and backend_combo.currentData() == "auto"
+    assert "CuPy" in backend_combo.toolTip()
+    backend_combo.setCurrentIndex(backend_combo.findData("threaded"))
+    assert model.config["electronic_backend"] == "threaded"
     chemical_editor.setText("0.0125")
     chemical_editor.editingFinished.emit()
     assert model.config["chemical_potential_meV"] == pytest.approx(12.5)

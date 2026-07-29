@@ -15,7 +15,8 @@ import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
+from functools import cached_property
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from pprint import pformat
@@ -24,6 +25,8 @@ from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
+
+from .electronic_backends import ElectronicBackend, evaluate_eigensystem
 
 FloatArray = NDArray[np.float64]
 ComplexArray = NDArray[np.complex128]
@@ -218,7 +221,7 @@ class ElectronicModel:
     def dimension(self) -> int:
         return len(self.periodic_axes)
 
-    @property
+    @cached_property
     def reciprocal_lattice(self) -> FloatArray:
         """Return reciprocal vectors as columns in Angstrom^-1."""
 
@@ -342,6 +345,16 @@ class ElectronicModel:
             object.__setattr__(updated, model_field.name, value)
         return updated
 
+    @cached_property
+    def resolved_hamiltonian_blocks(self) -> ComplexArray:
+        """Return immutable real-space blocks with named coefficients applied."""
+
+        resolved = np.array(self.hamiltonian_blocks, copy=True)
+        for name, value in self.parameter_values.items():
+            resolved += value * self.parameter_blocks[name]
+        resolved.setflags(write=False)
+        return resolved
+
     def hamiltonian(self, reduced_k: ArrayLike) -> ComplexArray:
         """Evaluate ``H(k)`` at one or more reduced wavevectors."""
 
@@ -353,14 +366,11 @@ class ElectronicModel:
         phase = np.exp(
             2j * np.pi * wavevectors @ np.asarray(self.translations, dtype=float).T
         )
-        resolved_blocks = np.array(self.hamiltonian_blocks, copy=True)
-        for name, value in self.parameter_values.items():
-            resolved_blocks += value * self.parameter_blocks[name]
         result = np.einsum(
             "kr,r,rij->kij",
             phase,
             self.interpolation_weights,
-            resolved_blocks,
+            self.resolved_hamiltonian_blocks,
             optimize=True,
         )
         if not np.allclose(result, result.swapaxes(1, 2).conj(), rtol=1e-9, atol=1e-8):
@@ -391,7 +401,7 @@ class ElectronicModel:
             "fourier_gauge": self.fourier_gauge,
         }
 
-    @property
+    @cached_property
     def content_digest(self) -> str:
         encoded = json.dumps(
             self._scientific_payload(), sort_keys=True, separators=(",", ":")
@@ -952,8 +962,14 @@ def k_mesh(
     shape: Sequence[int],
     *,
     shift: Sequence[float] | None = None,
+    symmetry_reduce: bool = False,
 ) -> WavevectorSampling:
-    """Build a uniform periodic integration mesh for the model dimension."""
+    """Build a uniform periodic integration mesh for the model dimension.
+
+    Symmetry reduction is applied only when the model carries reciprocal-space
+    operations certified by nfit's symmetry-aware orbital builder. Unsupported
+    models or meshes remain full and record why reduction was not applied.
+    """
 
     dimensions = tuple(int(value) for value in shape)
     if len(dimensions) == 3:
@@ -976,13 +992,103 @@ def k_mesh(
     )
     coordinates = np.zeros((local.shape[0], 3), dtype=float)
     coordinates[:, model.periodic_axes] = local
-    return WavevectorSampling(
+    full = WavevectorSampling(
         "mesh",
         coordinates,
         weights=np.full(local.shape[0], 1.0 / local.shape[0]),
         mesh_shape=dimensions,
         shift=offsets,
         provenance={"provider": "uniform"},
+    )
+    if not symmetry_reduce:
+        return full
+    return _symmetry_reduced_k_mesh(model, full)
+
+
+def _symmetry_reduced_k_mesh(
+    model: ElectronicModel,
+    full: WavevectorSampling,
+) -> WavevectorSampling:
+    metadata = model.provenance.get("reciprocal_symmetry", {})
+
+    def unchanged(reason: str) -> WavevectorSampling:
+        return replace(
+            full,
+            provenance={
+                **dict(full.provenance),
+                "symmetry_reduction": {
+                    "requested": True,
+                    "applied": False,
+                    "reason": reason,
+                },
+            },
+        )
+
+    if model.dimension != 3:
+        return unchanged("only three-dimensional meshes are currently reduced")
+    if (
+        not isinstance(metadata, Mapping)
+        or metadata.get("certified_by") != "nfit_orbital_builder"
+    ):
+        return unchanged("model has no nfit-certified reciprocal symmetry")
+    raw_rotations = metadata.get("rotations", ())
+    rotations = []
+    for raw in raw_rotations:
+        rotation = np.asarray(raw, dtype=np.int64)
+        if rotation.shape != (3, 3):
+            return unchanged("certified rotation metadata is invalid")
+        rotations.append(rotation)
+    if not rotations:
+        return unchanged("certified rotation metadata is empty")
+
+    shape = np.asarray(full.mesh_shape, dtype=np.int64)
+    shift = np.asarray(full.shift, dtype=float)
+    indices = np.indices(tuple(shape), dtype=np.int64).reshape(3, -1).T
+    coordinates = (indices + shift[None, :]) / shape[None, :]
+    representatives = np.arange(indices.shape[0], dtype=np.int64)
+    transformed_count = 0
+    signs = (1, -1) if bool(metadata.get("includes_time_reversal")) else (1,)
+    for rotation in rotations:
+        for sign in signs:
+            transformed = sign * (coordinates @ rotation.T)
+            transformed_indices = transformed * shape[None, :] - shift[None, :]
+            rounded = np.rint(transformed_indices).astype(np.int64)
+            if not np.allclose(transformed_indices, rounded, atol=1.0e-9):
+                continue
+            wrapped = np.mod(rounded, shape[None, :])
+            flat = np.ravel_multi_index(wrapped.T, tuple(shape))
+            representatives = np.minimum(representatives, flat)
+            transformed_count += 1
+    if transformed_count < 2:
+        return unchanged("mesh shape or shift is incompatible with the symmetry")
+
+    unique, counts = np.unique(
+        representatives,
+        return_counts=True,
+    )
+    # A complete operation list maps every member directly onto the minimum
+    # orbit representative. This assertion prevents an incomplete metadata set
+    # from silently producing incorrect multiplicities.
+    if np.any(representatives[unique] != unique):
+        return unchanged("certified operations do not close on this mesh")
+    reduced_coordinates = full.reduced_coordinates[unique]
+    weights = counts.astype(float) / float(indices.shape[0])
+    return WavevectorSampling(
+        "mesh",
+        reduced_coordinates,
+        weights=weights,
+        mesh_shape=full.mesh_shape,
+        shift=full.shift,
+        provenance={
+            **dict(full.provenance),
+            "symmetry_reduction": {
+                "requested": True,
+                "applied": True,
+                "full_size": int(indices.shape[0]),
+                "irreducible_size": int(unique.size),
+                "operation_count": int(transformed_count),
+            },
+        },
     )
 
 
@@ -1037,14 +1143,27 @@ def calculate_bands(
     chemical_potential_meV: float = 0.0,
     projections: Mapping[str, Sequence[int]] | None = None,
     include_eigenvectors: bool = True,
+    backend: ElectronicBackend | str | None = None,
+    workers: int | None = None,
+    max_batch_bytes: int = 256 * 1024**2,
 ) -> BandResult:
     """Diagonalize an arbitrary model on a path or mesh."""
 
     projection_indices = _projection_indices(model, projections)
-    energies, eigenvectors = np.linalg.eigh(
-        model.hamiltonian(sampling.reduced_coordinates)
+    need_eigenvectors = bool(include_eigenvectors or projection_indices)
+    eigensystem = evaluate_eigensystem(
+        model,
+        sampling.reduced_coordinates,
+        eigenvectors=need_eigenvectors,
+        backend=backend,
+        workers=workers,
+        max_batch_bytes=max_batch_bytes,
     )
+    energies = eigensystem.eigenvalues
+    eigenvectors = eigensystem.eigenvectors
     projected: dict[str, FloatArray] = {}
+    if projection_indices and eigenvectors is None:  # pragma: no cover - defensive
+        raise RuntimeError("orbital projections require eigenvectors")
     for label, indices in projection_indices.items():
         projected[label] = np.sum(
             np.abs(eigenvectors[:, indices, :]) ** 2, axis=1
@@ -1061,9 +1180,10 @@ def calculate_bands(
         projected_weights=projected,
         model_digest=model.content_digest,
         provenance={
-            "backend": "numpy",
+            "backend": eigensystem.provenance["resolved_backend"],
             "precision": "float64/complex128",
             "fourier_gauge": model.fourier_gauge,
+            "execution": dict(eigensystem.provenance),
             "projection_groups": {
                 label: indices.tolist()
                 for label, indices in projection_indices.items()
@@ -1111,6 +1231,9 @@ def density_of_states(
     chemical_potential_meV: float = 0.0,
     projections: Mapping[str, Sequence[int]] | None = None,
     max_chunk_bytes: int = 64 * 1024**2,
+    backend: ElectronicBackend | str | None = None,
+    workers: int | None = None,
+    max_batch_bytes: int = 256 * 1024**2,
 ) -> DensityOfStatesResult:
     """Calculate Gaussian-broadened total and projected density of states."""
 
@@ -1125,6 +1248,10 @@ def density_of_states(
         mesh,
         chemical_potential_meV=chemical_potential_meV,
         projections=projections,
+        include_eigenvectors=False,
+        backend=backend,
+        workers=workers,
+        max_batch_bytes=max_batch_bytes,
     )
     flat_energy = bands.energies_meV.reshape(-1)
     state_weight = np.repeat(np.asarray(mesh.weights), model.n_basis)
@@ -1159,9 +1286,10 @@ def density_of_states(
         mesh=mesh,
         model_digest=model.content_digest,
         provenance={
-            "backend": "numpy",
+            "backend": bands.provenance["backend"],
             "precision": "float64/complex128",
             "method": "gaussian",
+            "execution": dict(bands.provenance["execution"]),
             "max_chunk_bytes": int(max_chunk_bytes),
             "projection_groups": {
                 label: list(indices)
@@ -1331,6 +1459,9 @@ def fermi_surface(
     *,
     target_energy_meV: float = 0.0,
     projections: Mapping[str, Sequence[int]] | None = None,
+    backend: ElectronicBackend | str | None = None,
+    workers: int | None = None,
+    max_batch_bytes: int = 256 * 1024**2,
 ) -> FermiSurfaceResult:
     """Extract 1D Fermi points, 2D contours, or 3D triangulated surfaces."""
 
@@ -1344,7 +1475,15 @@ def fermi_surface(
     coordinates = np.zeros((*local_grid.shape[:-1], 3), dtype=float)
     coordinates[..., model.periodic_axes] = local_grid
     flat = coordinates.reshape(-1, 3)
-    energies = np.linalg.eigvalsh(model.hamiltonian(flat)).reshape(
+    mesh_eigensystem = evaluate_eigensystem(
+        model,
+        flat,
+        eigenvectors=False,
+        backend=backend,
+        workers=workers,
+        max_batch_bytes=max_batch_bytes,
+    )
+    energies = mesh_eigensystem.eigenvalues.reshape(
         *coordinates.shape[:-1], model.n_basis
     )
     projection_indices = _projection_indices(model, projections)
@@ -1371,7 +1510,17 @@ def fermi_surface(
             continue
         projected: dict[str, FloatArray] = {}
         if projection_indices:
-            _, vectors = np.linalg.eigh(model.hamiltonian(vertices))
+            vertex_eigensystem = evaluate_eigensystem(
+                model,
+                vertices,
+                eigenvectors=True,
+                backend=backend,
+                workers=workers,
+                max_batch_bytes=max_batch_bytes,
+            )
+            vectors = vertex_eigensystem.eigenvectors
+            if vectors is None:  # pragma: no cover - defensive
+                raise RuntimeError("Fermi-surface projections require eigenvectors")
             for label, indices in projection_indices.items():
                 projected[label] = np.sum(
                     np.abs(vectors[:, indices, band_index]) ** 2, axis=1
@@ -1393,8 +1542,9 @@ def fermi_surface(
         mesh_shape=shape,
         model_digest=model.content_digest,
         provenance={
-            "backend": "numpy",
+            "backend": mesh_eigensystem.provenance["resolved_backend"],
             "precision": "float64/complex128",
+            "execution": dict(mesh_eigensystem.provenance),
             "method": {
                 1: "linear",
                 2: "marching_squares",
