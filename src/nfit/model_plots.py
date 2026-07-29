@@ -530,7 +530,6 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
                 f"target_energy = {target!r}",
                 "target_energy_meV = electronic_energy_to_meV(target_energy, energy_unit)",
                 f"result = fermi_surface(model, {config.get('fermi_mesh', [100, 100, 40])!r}, target_energy_meV=target_energy_meV, projections={projections!r})",
-                "figure, axis = render_fermi_surface(result, energy_unit=energy_unit)",
             ]
         )
     else:
@@ -540,6 +539,34 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
         "dos": "density_of_states",
         "fermi_surface": "fermi_surface",
     }
+    if plot_key == "fermi_surface":
+        lines.extend(
+            [
+                "",
+                "if globals().get('__name__') == '__main__':",
+                "    from PySide6 import QtWidgets",
+                "    app = QtWidgets.QApplication.instance()",
+                "    owns_app = app is None",
+                "    if owns_app:",
+                "        app = QtWidgets.QApplication([])",
+                "    if result.dimension == 3:",
+                "        from nfit.qt_fermi_surface_viewer import show_fermi_surface_result",
+                "        window = show_fermi_surface_result(result)",
+                "    else:",
+                "        from nfit.qt_electronic_viewer import show_electronic_figure",
+                "        figure, axis = render_fermi_surface(result, energy_unit=energy_unit)",
+                "        window = show_electronic_figure(",
+                "            figure, viewer_key='fermi_surface'",
+                "        )",
+                "    if owns_app:",
+                "        app.exec()",
+                "else:",
+                "    figure, axis = render_fermi_surface(result, energy_unit=energy_unit)",
+                "    figure.show()",
+                "",
+            ]
+        )
+        return "\n".join(lines)
     lines.extend(
         [
             "",

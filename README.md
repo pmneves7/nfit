@@ -22,10 +22,11 @@ The package provides:
   matrix inspection, shared 3D model-geometry inspection, and
   primitive-cell first-Brillouin-zone views; atoms, orbitals, and bonds in the
   model-geometry viewer are clickable and identified in its side panel, while
-  all electronic viewers use a common plot-plus-settings layout and the
+  all electronic viewers use a common plot-plus-settings layout,
+  three-dimensional Fermi surfaces use GPU-accelerated interaction, and the
   Brillouin-zone viewer provides scriptable styling, visibility, projection,
-  and image-export controls; named onsite, hopping, and SOC coefficients share the
-  standard bounds, fit-selection, dataset-sharing, report, and script
+  and image-export controls; named onsite, hopping, and SOC coefficients share
+  the standard bounds, fit-selection, dataset-sharing, report, and script
   machinery;
 - an extensible model registry shared by fitting, GUI metadata, diagnostics,
   reports, plots, project files, and workflow scripts;

@@ -465,6 +465,8 @@ def test_tight_binding_registry_plots_and_scripts_are_component_driven():
         assert "energy_unit = 'eV'" in script
         assert "electronic_energy_to_meV" in script
         assert "show_electronic_figure" in script
+        if plot.key == "fermi_surface":
+            assert "show_fermi_surface_result" in script
 
     component.config["electronic_energy_unit"] = "meV"
     result = definition.plots[0].calculate(component)

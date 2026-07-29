@@ -20294,17 +20294,25 @@ class NfitProjectExplorer:
             return False
         try:
             result = plot.calculate(model)
-            figure, _axes = plot.render(result)
-            viewer_keys = {
-                "bands": "band_structure",
-                "dos": "density_of_states",
-                "fermi_surface": "fermi_surface",
-            }
-            window = show_electronic_figure(
-                figure,
-                viewer_key=viewer_keys[plot_key],
-                parent=self.window,
-            )
+            if plot_key == "fermi_surface" and result.dimension == 3:
+                from .qt_fermi_surface_viewer import show_fermi_surface_result
+
+                window = show_fermi_surface_result(
+                    result,
+                    parent=self.window,
+                )
+            else:
+                figure, _axes = plot.render(result)
+                viewer_keys = {
+                    "bands": "band_structure",
+                    "dos": "density_of_states",
+                    "fermi_surface": "fermi_surface",
+                }
+                window = show_electronic_figure(
+                    figure,
+                    viewer_key=viewer_keys[plot_key],
+                    parent=self.window,
+                )
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
                 self.window,

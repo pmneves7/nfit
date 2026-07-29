@@ -750,6 +750,12 @@ dos = density_of_states(
 surface = fermi_surface(model, [200, 200], target_energy_meV=0.0)
 ```
 
+The GUI displays three-dimensional Fermi surfaces with PyVista's
+GPU-accelerated mesh renderer, which remains responsive for meshes that are
+slow to rotate in Matplotlib. One- and two-dimensional results continue to use
+Matplotlib. `render_fermi_surface` also remains available when a static
+Matplotlib figure is preferable in a script or notebook.
+
 The calculation arguments beyond the `model` itself are:
 
 | Argument | Meaning | Acceptable input example |
