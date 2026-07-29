@@ -188,6 +188,7 @@ def test_soc_builder_script_round_trip_preserves_digest():
         value=0.012,
         energy_unit="eV",
     )
+    electronic_model_from_component(component)
     script = tight_binding_structure_script(
         component.config["crystal"],
         component.config["periodic_axes"] or (0, 1, 2),
@@ -270,5 +271,7 @@ def test_matrix_viewer_exposes_exact_values_and_decomposition(monkeypatch):
     )
     copy_button.click()
     assert "\t" in QtWidgets.QApplication.clipboard().text()
-    window.close()
+    assert window._nfit_close_shortcut is not None
+    window._nfit_close_shortcut.activated.emit()
+    assert not window.isVisible()
     assert application is not None

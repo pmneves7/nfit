@@ -268,10 +268,16 @@ def show_electronic_matrix_catalog(
         window,
     )
     copy_shortcut.activated.connect(copy_current_matrix)
+    close_shortcut = QtGui.QShortcut(
+        QtGui.QKeySequence.StandardKey.Close,
+        window,
+    )
+    close_shortcut.activated.connect(window.close)
     window._nfit_application = application
     window._nfit_catalog = entries
     window._nfit_matrix_state = state
     window._nfit_copy_shortcut = copy_shortcut
+    window._nfit_close_shortcut = close_shortcut
     redraw()
     window.resize(1280, 820)
     window.show()

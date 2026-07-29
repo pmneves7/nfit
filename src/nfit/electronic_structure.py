@@ -15,7 +15,7 @@ import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from pprint import pformat
@@ -316,7 +316,31 @@ class ElectronicModel:
                 for name, value in values.items()
             }
         )
-        return replace(self, parameter_values=updated)
+        return self._with_parameter_values_meV(updated)
+
+    def _with_parameter_values_meV(
+        self,
+        values: Mapping[str, float],
+    ) -> ElectronicModel:
+        """Reuse validated immutable structure with new canonical parameter values."""
+
+        if set(values) != set(self.parameter_values):
+            raise ValueError("parameter values must preserve the model parameter names")
+        normalized = {str(name): float(value) for name, value in values.items()}
+        if any(not np.isfinite(value) for value in normalized.values()):
+            raise ValueError("electronic-model parameters must be finite")
+        if normalized == dict(self.parameter_values):
+            return self
+
+        updated = object.__new__(type(self))
+        for model_field in fields(self):
+            value = (
+                MappingProxyType(normalized)
+                if model_field.name == "parameter_values"
+                else getattr(self, model_field.name)
+            )
+            object.__setattr__(updated, model_field.name, value)
+        return updated
 
     def hamiltonian(self, reduced_k: ArrayLike) -> ComplexArray:
         """Evaluate ``H(k)`` at one or more reduced wavevectors."""
@@ -417,6 +441,208 @@ class ElectronicModel:
         if expected is not None and str(expected) != model.content_digest:
             raise ValueError("electronic-model content digest does not match its payload")
         return model
+
+
+def reduce_electronic_model_to_primitive(
+    model: ElectronicModel,
+    primitive_lattice: ArrayLike,
+    *,
+    tolerance: float = 1.0e-8,
+) -> ElectronicModel:
+    """Fold a three-dimensional supercell model onto a primitive lattice.
+
+    Basis centers and real-space Hamiltonian blocks are transformed exactly.
+    The operation is conservative: it returns ``model`` when the supplied
+    lattice has the same volume and raises if the basis cannot be partitioned
+    into complete translation-equivalent groups.
+    """
+
+    primitive = np.asarray(primitive_lattice, dtype=float)
+    if primitive.shape != (3, 3) or not np.all(np.isfinite(primitive)):
+        raise ValueError("primitive_lattice must be a finite 3x3 matrix")
+    if tuple(model.periodic_axes) != (0, 1, 2):
+        return model
+    conventional_volume = abs(float(np.linalg.det(model.direct_lattice)))
+    primitive_volume = abs(float(np.linalg.det(primitive)))
+    if primitive_volume <= tolerance:
+        raise ValueError("primitive_lattice must be invertible")
+    multiplicity_float = conventional_volume / primitive_volume
+    multiplicity = int(round(multiplicity_float))
+    if not np.isclose(multiplicity_float, multiplicity, atol=tolerance):
+        raise ValueError("primitive lattice must have an integer cell multiplicity")
+    if multiplicity <= 1:
+        return model
+
+    transform = np.linalg.solve(model.direct_lattice, primitive)
+    inverse_transform = np.linalg.inv(transform)
+    primitive_centers = (
+        inverse_transform @ np.asarray(model.orbital_centers, dtype=float).T
+    ).T
+    wrapped_centers = primitive_centers - np.floor(
+        primitive_centers + tolerance
+    )
+    cell_shifts = np.rint(primitive_centers - wrapped_centers).astype(np.int64)
+
+    def basis_key(index: int) -> tuple[Any, ...]:
+        state = model.basis[index]
+        return (
+            str(state.metadata.get("manifold", "")),
+            state.orbital,
+            state.species,
+            state.correlated_shell,
+            state.spin,
+            tuple(float(value) for value in np.round(wrapped_centers[index], 9)),
+        )
+
+    key_to_index: dict[tuple[Any, ...], int] = {}
+    old_to_new: list[int] = []
+    representative_indices: list[int] = []
+    group_sizes: dict[int, int] = {}
+    for old_index in range(model.n_basis):
+        key = basis_key(old_index)
+        new_index = key_to_index.get(key)
+        if new_index is None:
+            new_index = len(representative_indices)
+            key_to_index[key] = new_index
+            representative_indices.append(old_index)
+        old_to_new.append(new_index)
+        group_sizes[new_index] = group_sizes.get(new_index, 0) + 1
+    if any(size != multiplicity for size in group_sizes.values()):
+        raise ValueError(
+            "electronic basis is not complete under primitive translations"
+        )
+
+    reduced_size = len(representative_indices)
+    translation_transform = inverse_transform
+    block_maps: dict[str, dict[tuple[int, int, int], ComplexArray]] = {
+        "hamiltonian": {}
+    }
+    block_maps.update({name: {} for name in model.parameter_blocks})
+
+    def fold_blocks(
+        source: ComplexArray,
+        destination: dict[tuple[int, int, int], ComplexArray],
+    ) -> None:
+        for translation, weight, block in zip(
+            model.translations,
+            model.interpolation_weights,
+            source,
+            strict=True,
+        ):
+            primitive_translation = translation_transform @ translation
+            rounded_translation = np.rint(primitive_translation).astype(np.int64)
+            if not np.allclose(
+                primitive_translation,
+                rounded_translation,
+                atol=tolerance,
+            ):
+                raise ValueError(
+                    "conventional translation is not integral in the "
+                    "primitive lattice"
+                )
+            for old_row, old_column in np.argwhere(
+                np.abs(block) > tolerance
+            ):
+                new_row = old_to_new[int(old_row)]
+                new_column = old_to_new[int(old_column)]
+                new_translation = (
+                    rounded_translation
+                    + cell_shifts[int(old_column)]
+                    - cell_shifts[int(old_row)]
+                )
+                key = tuple(int(value) for value in new_translation)
+                target = destination.setdefault(
+                    key,
+                    np.zeros(
+                        (reduced_size, reduced_size),
+                        dtype=np.complex128,
+                    ),
+                )
+                target[new_row, new_column] += (
+                    float(weight) * block[old_row, old_column] / multiplicity
+                )
+
+    fold_blocks(model.hamiltonian_blocks, block_maps["hamiltonian"])
+    for name, source in model.parameter_blocks.items():
+        fold_blocks(source, block_maps[name])
+    all_translations = sorted(
+        {
+            translation
+            for blocks in block_maps.values()
+            for translation in blocks
+        }
+        or {(0, 0, 0)}
+    )
+    zero = np.zeros((reduced_size, reduced_size), dtype=np.complex128)
+
+    spin_operators = None
+    if model.spin_operators is not None:
+        reduced_spin = np.zeros(
+            (3, reduced_size, reduced_size),
+            dtype=np.complex128,
+        )
+        for axis, operator in enumerate(model.spin_operators):
+            for old_row, old_column in np.argwhere(
+                np.abs(operator) > tolerance
+            ):
+                shift = (
+                    cell_shifts[int(old_column)]
+                    - cell_shifts[int(old_row)]
+                )
+                if np.any(shift):
+                    raise ValueError(
+                        "spin operator couples different primitive cells"
+                    )
+                reduced_spin[
+                    axis,
+                    old_to_new[int(old_row)],
+                    old_to_new[int(old_column)],
+                ] += operator[old_row, old_column] / multiplicity
+        spin_operators = reduced_spin
+
+    provenance = {
+        **dict(model.provenance),
+        "primitive_reduction": {
+            "enabled": True,
+            "cell_multiplicity": multiplicity,
+            "input_basis_size": model.n_basis,
+            "output_basis_size": reduced_size,
+        },
+    }
+    return ElectronicModel(
+        direct_lattice=primitive,
+        basis=tuple(model.basis[index] for index in representative_indices),
+        translations=np.asarray(all_translations, dtype=np.int64),
+        hamiltonian_blocks=np.asarray(
+            [
+                block_maps["hamiltonian"].get(translation, zero)
+                for translation in all_translations
+            ],
+            dtype=np.complex128,
+        ),
+        interpolation_weights=np.ones(len(all_translations), dtype=float),
+        orbital_centers=np.asarray(
+            [wrapped_centers[index] for index in representative_indices],
+            dtype=float,
+        ),
+        periodic_axes=model.periodic_axes,
+        parameter_values=dict(model.parameter_values),
+        parameter_blocks={
+            name: np.asarray(
+                [
+                    blocks.get(translation, zero)
+                    for translation in all_translations
+                ],
+                dtype=np.complex128,
+            )
+            for name, blocks in block_maps.items()
+            if name != "hamiltonian"
+        },
+        spin_operators=spin_operators,
+        energy_zero_meV=model.energy_zero_meV,
+        provenance=provenance,
+        fourier_gauge=model.fourier_gauge,
+    )
 
 
 def build_electronic_model(
@@ -626,6 +852,7 @@ def band_path(
     nodes: Sequence[ArrayLike],
     *,
     labels: Sequence[str] | None = None,
+    break_before: Sequence[bool] | None = None,
     points_per_segment: int = 60,
     coordinate_reciprocal_lattice: ArrayLike | None = None,
 ) -> WavevectorSampling:
@@ -657,15 +884,31 @@ def band_path(
     )
     if len(names) != node_array.shape[0]:
         raise ValueError("path labels must match the number of nodes")
+    breaks = (
+        tuple(False for _ in range(node_array.shape[0]))
+        if break_before is None
+        else tuple(bool(value) for value in break_before)
+    )
+    if len(breaks) != node_array.shape[0] or breaks[0]:
+        raise ValueError(
+            "break_before must match the nodes and begin with False"
+        )
     points = [node_array[0]]
+    point_breaks = [False]
     label_points: list[tuple[int, str]] = [(0, names[0])]
     for segment in range(node_array.shape[0] - 1):
+        if breaks[segment + 1]:
+            points.append(node_array[segment + 1])
+            point_breaks.append(True)
+            label_points.append((len(points) - 1, names[segment + 1]))
+            continue
         for step in range(1, points_per_segment + 1):
             fraction = step / points_per_segment
             points.append(
                 (1.0 - fraction) * node_array[segment]
                 + fraction * node_array[segment + 1]
             )
+            point_breaks.append(False)
         label_points.append((len(points) - 1, names[segment + 1]))
     input_coordinates = np.asarray(points, dtype=float)
     if coordinate_reciprocal_lattice is None:
@@ -686,6 +929,7 @@ def band_path(
     physical = input_coordinates @ coordinate_reciprocal.T
     coordinates = physical @ np.linalg.inv(model.reciprocal_lattice).T
     increments = np.linalg.norm(np.diff(physical, axis=0), axis=1)
+    increments[np.asarray(point_breaks[1:], dtype=bool)] = 0.0
     distance = np.concatenate([[0.0], np.cumsum(increments)])
     return WavevectorSampling(
         "path",
@@ -695,6 +939,7 @@ def band_path(
         provenance={
             "provider": "manual",
             "points_per_segment": points_per_segment,
+            "break_before": list(breaks),
             "coordinate_reciprocal_lattice_inv_angstrom": (
                 coordinate_reciprocal.tolist()
             ),
@@ -1182,6 +1427,11 @@ def tight_binding_structure_script(
     group_name: str = "Electronic",
     model_name: str = "tight_binding",
     electronic_energy_unit: str = "eV",
+    use_primitive_cell: bool = True,
+    hopping_parameterization: str = "slater_koster",
+    band_path_nodes: Sequence[Mapping[str, Any]] = (),
+    band_path_convention: str = "manual",
+    band_path_metadata: Mapping[str, Any] | None = None,
     orbital_manifolds: Sequence[Mapping[str, Any]] = (),
     onsite_terms: Sequence[Mapping[str, Any]] = (),
     hopping_cutoff_angstrom: float | None = None,
@@ -1241,6 +1491,17 @@ def tight_binding_structure_script(
             f"model = create_model_component(group, {str(model_name)!r}, type='tight_binding')",
             f"set_model_crystal(model, crystal, group=group, periodic_axes={axes!r})",
             f"set_electronic_energy_unit(model, {display_unit!r})",
+            f"model.config['use_primitive_cell'] = {bool(use_primitive_cell)!r}",
+            (
+                "model.config['hopping_parameterization'] = "
+                f"{str(hopping_parameterization)!r}"
+            ),
+            f"model.config['band_path'] = {pformat(list(band_path_nodes), sort_dicts=True)}",
+            f"model.config['band_path_convention'] = {str(band_path_convention)!r}",
+            (
+                "model.config['band_path_metadata'] = "
+                f"{pformat(dict(band_path_metadata or {}), sort_dicts=True)}"
+            ),
         ]
     )
     if orbital_manifolds:
@@ -1619,12 +1880,39 @@ def electronic_model_from_component(
         )
     else:
         payload = config.get("model_data")
-        if not isinstance(payload, dict) or not payload:
-            raise ValueError(
-                "tight-binding model has no source; import Wannier90 data or "
-                "supply a canonical model_data dictionary"
+        if bool(config.get("model_stale", False)) or not isinstance(
+            payload, dict
+        ) or not payload:
+            if config.get("orbital_manifolds"):
+                from .electronic_builder import resolve_tight_binding_builder
+
+                model = resolve_tight_binding_builder(component)
+                config = component.config
+            else:
+                raise ValueError(
+                    "tight-binding model has no source; import Wannier90 data "
+                    "or add orbital manifolds to the structure-first builder"
+                )
+        else:
+            expected_digest = str(config.get("model_digest", "")).strip()
+            cached = getattr(
+                component,
+                "_nfit_electronic_model_cache",
+                None,
             )
-        model = ElectronicModel.from_dict(payload)
+            if (
+                isinstance(cached, tuple)
+                and len(cached) == 2
+                and cached[0] == expected_digest
+                and isinstance(cached[1], ElectronicModel)
+            ):
+                model = cached[1]
+            else:
+                model = ElectronicModel.from_dict(payload)
+                component._nfit_electronic_model_cache = (
+                    model.content_digest,
+                    model,
+                )
     expected = str(config.get("model_digest", "")).strip()
     if expected and expected != model.content_digest:
         raise ValueError("tight-binding source no longer matches its stored digest")
@@ -1640,4 +1928,6 @@ def electronic_model_from_component(
         if not np.isfinite(numeric):
             raise ValueError("electronic-model parameter values must be finite")
         values[name] = numeric
-    return replace(model, parameter_values=values)
+    if values == dict(model.parameter_values):
+        return model
+    return model._with_parameter_values_meV(values)

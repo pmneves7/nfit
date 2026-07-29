@@ -44,6 +44,8 @@ def test_electronic_viewers_share_right_settings_panel(monkeypatch):
         assert canvas is not None
         root = window.centralWidget().layout()
         assert root.itemAt(root.count() - 1).widget() is panel
-        window.close()
+        assert window._nfit_close_shortcut is not None
+        window._nfit_close_shortcut.activated.emit()
+        assert not window.isVisible()
 
     assert application is QtWidgets.QApplication.instance()

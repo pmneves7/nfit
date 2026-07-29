@@ -106,10 +106,11 @@ not assigned from band order or energy.
 
 ## Parameters
 
-Stage 3 has no optimizer-facing fit parameters. It does support named linear
-Hamiltonian terms, but fitting those terms begins when a dataset observable is
-available. Canonical-model fields below are in meV; manual-builder inputs use
-their declared `energy_unit`.
+The builder exposes named linear Hamiltonian terms through the common value,
+bounds, sharing, and fit-selection machinery. An optimizer consumes them only
+after an electronic-response component supplies a dataset observable.
+Canonical-model fields below are in meV; manual-builder inputs use their
+declared `energy_unit`.
 
 ### Basis-state fields
 
@@ -171,12 +172,15 @@ dictionaries can be entered directly in the model editor.
 | `source_path` | Wannier90 `*_hr.dat` or `*_tb.dat` filesystem path; the GUI stores an absolute path; empty for a stored manual model | `""` | `"/data/run/model_tb.dat"` |
 | `model_digest` | expected SHA-256 digest of the canonical model; source reload fails if it differs | `""` | `"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"` when that is the model's actual digest |
 | `model_data` | portable dictionary returned by `ElectronicModel.to_dict()` | `{}` | `model.to_dict()` |
+| `model_stale` | derived cache state; builder edits set it and the next calculation or script export rebuilds `model_data` | `false` | `true` |
+| `use_primitive_cell` | fold equivalent conventional-cell orbitals and hoppings onto the primitive translation cell before diagonalization | `true` | `false` for diagnostic comparison |
 | `crystal` | editable lattice, space group, crystallographic sites, and optional CIF provenance used by the structure-first builder | `P 1` cell with no sites | `{"lattice": {"a": 4, "b": 4, "c": 6, "alpha": 90, "beta": 90, "gamma": 90}, "spacegroup": "P 1", "sites": []}` |
 | `orbital_manifolds` | editable site-attached basis definitions and local frames | `[]` | `[orbital_manifold_preset("M1", "d").to_dict()]` |
 | `spin_treatment` | requested spin representation; `auto` remains implicit unless SOC requires spinors | `"auto"` | `"auto"`, `"implicit"`, `"collinear"`, or `"spinor"` |
 | `soc_terms` | optional manifold-resolved onsite $\lambda\mathbf L\cdot\mathbf S$ terms | `[]` | `[spin_orbit_term("M1_d", value_meV=25).to_dict()]` |
 | `onsite_terms` | generated Hermitian onsite matrix bases and mirrored canonical parameter state | `[]` | `[term.to_dict() for term in generate_onsite_terms(crystal, manifolds)]` |
 | `hopping_cutoff_angstrom` | maximum representative-bond distance used by the symmetry hopping generator; zero disables generated hoppings | `0.0` | `4.2` |
+| `hopping_parameterization` | generated hopping basis: compact two-centre integrals or the complete symmetry-allowed real matrix basis | `"slater_koster"` | `"slater_koster"` or `"general"` |
 | `spatial_orbits` | generated symmetry-equivalent bond families retained for editing and visualization | `[]` | `[orbit.to_dict() for orbit in generation.orbits]` |
 | `hopping_candidates` | complete generated list of symmetry-allowed matrix terms; candidates do not affect $H(\mathbf k)$ | `[]` | `[term.to_dict() for term in generation.terms]` |
 | `hopping_terms` | selected active hopping terms with mirrored canonical parameter state | `[]` | `[selected_term.to_dict()]` |
@@ -185,6 +189,8 @@ dictionaries can be entered directly in the model editor.
 | `chemical_potential_meV` | canonical chemical potential subtracted on band and DOS plots; displayed in `electronic_energy_unit` | `0.0` | `12.5` for 0.0125 eV |
 | `projection_groups` | plot labels mapped to zero-based basis indices | `{}` | `{"d": [0, 1, 2], "p": [3, 4]}` |
 | `band_path` | ordered nodes with labels and primitive reduced reciprocal coordinates | $\Gamma$–X–M–$\Gamma$ | `[{"label": "G", "k": [0, 0, 0]}, {"label": "X", "k": [0.5, 0, 0]}]` |
+| `band_path_convention` | origin of the configured path | `"hinuma"` | `"hinuma"` or `"manual"` |
+| `band_path_metadata` | provider, version, convention, and symmetry tolerance for an automatic path | `{}` until a path is generated | `{"provider": "seekpath", "provider_version": "2.2.1", "convention": "HPKOT", "symprec": 1e-5}` |
 | `band_points_per_segment` | interpolation intervals in each path segment | `60` | `80` |
 | `dos_mesh` | uniform mesh sizes, one per periodic axis or one per lattice axis | `[40, 40, 40]` | `[80, 80]` for a two-dimensional model |
 | `dos_energy_min_meV` | canonical lower absolute energy sampled for the DOS | `-500.0` | `-250.0` |
@@ -316,11 +322,14 @@ $$
 | `fit` | fit selection mirrored from `component.fit_parameters` | `false` |
 | `source` | origin of the matrix constraints | `"site_symmetry"` or `"declared_degeneracy"` |
 
-The GUI displays values and bounds in `electronic_energy_unit`, converts them
-immediately to canonical meV, and regenerates `model_data` and
-`model_digest`. The same values, bounds, fit selections, and sharing rules are
-installed in the component's common parameter state. With no Stage 3.3
-hopping terms, the resulting bands are flat.
+The GUI displays values and bounds in `electronic_energy_unit` and converts
+them immediately to canonical meV. It updates the compact builder and marks
+the derived canonical model stale. The next band, DOS, Fermi-surface, matrix,
+response, or script calculation rebuilds `model_data` once and caches the
+immutable result. Repeated calculations reuse that result until another
+scientific input changes. Fit selections and sharing rules update without
+rebuilding the Hamiltonian. With no hopping terms, the resulting bands are
+flat.
 
 ```python
 from nfit import (
@@ -359,13 +368,40 @@ set_tight_binding_onsite_term(
 
 ### Hopping-invariant fields
 
-For each spatial bond orbit within `hopping_cutoff_angstrom`, the builder
-finds a real matrix basis $B_p$ allowed by the representative bond
-stabilizer:
+The **Hoppings** section offers two parameterizations. **Slater--Koster
+integrals** is the compact default for analytic `s`, `p`, `d`, and `f`
+manifolds, including symmetry-selected subspaces. **General symmetry
+matrices** finds a complete real matrix basis $B_p$ allowed by the
+representative bond stabilizer:
 
 $$
 T_{\mathrm{rep}}=\sum_p t_p B_p.
 $$
+
+For Slater--Koster hopping, nfit makes a bond frame with local $z$ along the
+representative bond and constructs
+
+$$
+T_{\mathrm{rep}}
+=\sum_{\mu=\sigma,\pi,\delta,\phi}
+V_{l_i l_j\mu}\,
+C_i^\dagger D_i^\dagger P_\mu D_j C_j.
+$$
+
+$P_\mu$ selects equal bond-axis magnetic quantum numbers with
+$|m|=0,1,2,3$, respectively. $D_i$ and $D_j$ rotate the endpoint local frames
+into the bond frame, and $C_i$ and $C_j$ project complete harmonic shells into
+the selected orbital subspaces. A coefficient such as $V_{pd\pi}$ is the
+axial two-centre matrix element itself, not a unit-Frobenius rescaling. Terms
+whose projection is identically zero are omitted. Effective scalar orbitals
+participate as $l=0$ states. The current generator uses nfit's real-harmonic
+convention. Complex-harmonic, custom, and Wannier bases require the general
+convention because nfit does not infer or silently change their phase
+conventions.
+Distinct images of each Slater--Koster seed under the bond stabilizer are
+combined into one coefficient. This ties endpoint-reversed blocks when
+required and prevents the compact convention from violating space-group
+covariance.
 
 If a space-group operation $g$ maps the representative bond to another orbit
 member, its hopping matrix is
@@ -380,9 +416,11 @@ Hamiltonian contains both directions and therefore obeys
 $H(-\mathbf R)=H(\mathbf R)^\dagger$ exactly.
 Generation populates `hopping_candidates`. The user selects which candidates
 to add to `hopping_terms`; only those active terms enter the Hamiltonian.
-Automatic names retain the compact orbit and basis index while summarizing the
-active orbital support, for example
-`B2 t1: V1_d[d_xy,d_yz,+3] ← Li1_s[s]`. The arrow follows the convention that
+General-matrix names retain the compact orbit and basis index while
+summarizing active orbital support, for example
+`B2 t1: V1_d[d_xy,d_yz,+3] ← Li1_s[s]`. Slater--Koster names state the
+integral and manifolds, for example
+`B2 V_pdπ: V1_d ← O1_p`. The arrow follows the convention that
 $T_{ij}(\mathbf R)$ maps orbitals on site $j$ in cell $\mathbf R$ to site $i$
 in the home cell.
 
@@ -395,28 +433,32 @@ in the home cell.
 | `representative_bond` | endpoint indices and integer cell offset for the canonical representative | `{"site_i": 0, "site_j": 0, "offset": [1, 0, 0]}` |
 | `basis_i` | ordered basis labels at the receiving endpoint | `["M1_d:d_xy", "M1_d:d_yz"]` |
 | `basis_j` | ordered basis labels at the sending endpoint | `["M1_d:d_xy", "M1_d:d_yz"]` |
-| `matrix` | unit-Frobenius real hopping invariant, serialized as real/imaginary pairs | `[[[0.7071, 0], [0, 0]], [[0, 0], [0.7071, 0]]]` |
+| `matrix` | real hopping selector, serialized as real/imaginary pairs; unit-Frobenius for the general basis and literal axial normalization for Slater--Koster | `[[[0.7071, 0], [0, 0]], [[0, 0], [0.7071, 0]]]` |
 | `value_meV` | canonical coefficient $t_p$ | `-80.0` |
 | `bounds_meV` | canonical fit bounds mirrored from `component.limits` | `[-200.0, 20.0]` |
 | `fit` | fit selection mirrored from `component.fit_parameters` | `false` |
-| `source` | origin of the matrix constraints | `"spinless_time_reversal_space_group"` |
+| `source` | origin of the matrix constraints | `"slater_koster"` or `"spinless_time_reversal_space_group"` |
 
 The spatial hopping generator is orbital-only, real, and time-reversal
 symmetric. Collinear and spinor models lift each generated hopping as
 $B_p\otimes I_2$, so adding spin does not duplicate its coefficient.
 Spin-dependent hopping remains an advanced opt-in extension rather than part
 of the default generated basis. Manual and Wannier90 models may contain
-general complex matrices. A custom numerical basis can use automatic hopping
-generation only when every required site mapping is the identity; otherwise
-its representation matrices must be supplied explicitly.
+general complex matrices. A custom numerical basis can use the general
+generator only when every required site mapping is the identity; otherwise
+explicit representation matrices remain a later extension. Changing
+parameterization regenerates suggestions. Active terms survive only when
+their stable identifiers also exist in the new convention.
 
 ```python
 from nfit import (
     add_tight_binding_hopping_term,
     regenerate_tight_binding_hopping_terms,
+    set_tight_binding_hopping_parameterization,
     set_tight_binding_hopping_term,
 )
 
+set_tight_binding_hopping_parameterization(model, "slater_koster")
 generation = regenerate_tight_binding_hopping_terms(
     model,
     cutoff_angstrom=4.2,
@@ -432,6 +474,23 @@ set_tight_binding_hopping_term(
     upper=0.02,
 )
 ```
+
+### Primitive-cell resolution
+
+For a three-dimensional GUI-built model, `use_primitive_cell=true` folds a
+centered conventional construction onto the primitive translation lattice
+before spin expansion and diagonalization. Orbitals are grouped by their
+wrapped primitive-cell center, manifold, orbital, species, correlated shell,
+and spin label. Hamiltonian and named-parameter blocks are translated and
+summed into that basis. nfit requires each group to contain exactly the
+crystallographic cell multiplicity; an incomplete or inequivalent basis is an
+error rather than an approximate fold.
+
+The resolved provenance records the cell multiplicity and input and output
+basis sizes. Disable the option only when diagnosing the unreduced
+construction. This reduces matrix dimension; it is distinct from the planned
+optimization that will sample only the symmetry-unique part of a
+Brillouin-zone mesh.
 
 ## Spin representations and spin–orbit coupling
 
@@ -667,6 +726,7 @@ from nfit import (
     k_mesh,
 )
 
+# These manual nodes are the conventional path for this simple-cubic example.
 path = band_path(
     model,
     [[0, 0, 0], [0.5, 0, 0], [0.5, 0.5, 0], [0, 0, 0]],
@@ -696,6 +756,7 @@ The calculation arguments beyond the `model` itself are:
 | --- | --- | --- |
 | `band_path.nodes` | two or more reduced-coordinate path nodes | `[[0, 0, 0], [0.5, 0, 0]]` |
 | `band_path.labels` | optional label for each node | `["G", "X"]` |
+| `band_path.break_before` | optional flags that suppress interpolation from the preceding node | `[False, False, True, False]` |
 | `band_path.points_per_segment` | positive interpolation-interval count | `80` |
 | `k_mesh.shape` | positive size for each periodic axis, or three lattice-axis sizes | `[80, 80]` |
 | `k_mesh.shift` | optional offset in mesh steps for each periodic axis | `[0.5, 0.5]` for a half-step shift |
@@ -712,6 +773,14 @@ The calculation arguments beyond the `model` itself are:
 | `fermi_surface.mesh_shape` | extraction-grid size for each periodic axis | `[200, 200]` |
 | `fermi_surface.target_energy_meV` | absolute constant-energy target | `12.5` |
 | `fermi_surface.projections` | optional named basis-index groups evaluated on the surface | `{"d": [0, 1]}` |
+
+For three-dimensional crystals, `standard_band_path(crystal,
+convention="hinuma")` uses Seek-path to apply the Hinuma *et al.* HPKOT
+convention, then converts the standardized path into nfit's primitive
+reciprocal basis. `set_tight_binding_standard_path(component)` installs that
+path and explicit disconnected-section markers. CIF-installed tight-binding
+models use this convention by default. Manual nodes remain available for
+nonstandard paths and reduced-dimensional models.
 
 `electronic_energy_to_meV` and `electronic_energy_from_meV` are the explicit
 script boundary for these low-level functions. The electronic renderers
@@ -829,13 +898,12 @@ structure inputs:
   positions manually; or
 - import a complete Wannier90 Hamiltonian.
 
-CIF import initializes `periodic_axes` to `[0, 1, 2]`. The **Orbitals**,
+CIF import initializes `periodic_axes` to `[0, 1, 2]` and generates the
+Hinuma/HPKOT path. The **Orbitals**,
 **Onsite terms**, and **Hoppings** sections construct and retain a high-level
 editable builder specification as well as its resolved `model_data`. Complete
 manual Hamiltonians can also be constructed through the lower-level scripting
 API.
-The remaining SOC workflow is specified in the
-[Tight-binding model-builder plan](tight_binding_builder_plan.md).
 
 Each plot action has a **Copy script** button that exports editable GUI-free
 Python using the same calculation and rendering functions. The exported plot
@@ -877,9 +945,11 @@ Wigner--Seitz cell of the **primitive** reciprocal translation lattice. For a
 centered conventional crystal cell, including F-centered space groups, nfit
 uses the space-group centering translations to construct primitive direct
 vectors before finding the zone. Configured path nodes use that primitive
-reciprocal basis. Thus `[0.5, 0, 0]` reaches the bisecting face normal to
-$\mathbf b_1$, including when the tight-binding Hamiltonian is represented in
-a centered conventional cell. Before evaluating $H(\mathbf k)$, nfit converts
+reciprocal basis. A coordinate such as `[0.5, 0, 0]` means
+$\mathbf b_1/2$; it is not a universal definition of a point named X and need
+not lie on a zone face for a non-orthogonal primitive basis. Use the generated
+Hinuma/HPKOT path for conventional high-symmetry labels, or enter manual
+coordinates deliberately. Before evaluating $H(\mathbf k)$, nfit converts
 these physical wavevectors to the model's internal reduced coordinates. The
 three-dimensional view and band-structure calculation therefore use the same
 physical path.
@@ -942,6 +1012,11 @@ verify the stored canonical digest.
   [doi:10.1088/1361-648X/ab51ff](https://doi.org/10.1088/1361-648X/ab51ff).
 - V. Vitale *et al.*, *npj Comput. Mater.* **6**, 66 (2020),
   [doi:10.1038/s41524-020-0312-y](https://doi.org/10.1038/s41524-020-0312-y).
+- J. C. Slater and G. F. Koster, *Phys. Rev.* **94**, 1498 (1954),
+  [doi:10.1103/PhysRev.94.1498](https://doi.org/10.1103/PhysRev.94.1498).
+- Y. Hinuma *et al.*, *Comput. Mater. Sci.* **128**, 140 (2017),
+  [doi:10.1016/j.commatsci.2016.10.015](https://doi.org/10.1016/j.commatsci.2016.10.015).
+- [Seek-path documentation](https://seekpath.readthedocs.io/).
 - [Wannier90 file-format documentation](https://wannier90.readthedocs.io/en/latest/user_guide/wannier90/files/).
 - [ASE unit conventions](https://docs.ase-lib.org/ase/units.html).
 - [pymatgen electronic-structure API](https://pymatgen.org/pymatgen.electronic_structure.html).

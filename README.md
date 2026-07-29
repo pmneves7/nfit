@@ -15,8 +15,9 @@ The package provides:
 - CIF/manual crystal geometry and arbitrary manual or Wannier90 tight-binding
   models with explicit local orbital frames, site-point-group harmonic
   subspaces, symmetry-allowed onsite terms, selectable orbital-explicit
-  hopping candidates, eV/meV conversion, bands, orbital projections, density
-  of states, Fermi surfaces, implicit/collinear/spinor bases,
+  Slater--Koster or general-matrix hopping candidates, lazy primitive-cell
+  resolution, Hinuma/HPKOT paths, eV/meV conversion, bands, orbital
+  projections, density of states, Fermi surfaces, implicit/collinear/spinor bases,
   manifold-resolved onsite spin-orbit coupling, Hamiltonian and orbital-block
   matrix inspection, shared 3D model-geometry inspection, and
   primitive-cell first-Brillouin-zone views; atoms, orbitals, and bonds in the

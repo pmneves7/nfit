@@ -4,7 +4,7 @@ This page tracks the staged structure-first builder for manual tight-binding
 models. The detailed current behavior is documented on
 [Tight-binding electronic structure](tight_binding.md).
 
-Stages 3.1 through 3.5 are implemented. The GUI and public API share CIF import,
+Stages 3.1 through 3.6 are implemented. The GUI and public API share CIF import,
 editable crystal geometry, site expansion, orbital manifolds and local frames,
 site-point-group identification, calculated harmonic subspaces,
 site-symmetry representations, static onsite invariants, selectable
@@ -19,7 +19,9 @@ fit-selection, sharing, reporting, and scripting machinery. Their optimizer
 evaluation begins when an electronic-response model supplies a dataset
 observable. Optional collinear and spinor representations, onsite
 $\lambda\mathbf L\cdot\mathbf S$, time-reversal validation, and matrix/subspace
-inspection are available. Compact parameterizations remain planned.
+inspection are available. GUI-built models default to compact Slater--Koster
+hoppings, lazy canonical resolution, primitive-cell folding, and
+Hinuma/HPKOT standard paths.
 
 ## Goal
 
@@ -159,10 +161,10 @@ into fitting. This gives:
   entries are independent; and
 - exact regeneration of every symmetry-related $H(\mathbf R)$ block.
 
-The initial parameterization should use symmetry-allowed matrix bases because
-it is general. Slater--Koster two-center integrals can later be an optional
-compact parameterization for recognized angular-momentum bases, not the only
-route.
+The GUI offers both representations. Slater--Koster two-center integrals are
+the compact default for recognized angular-momentum bases. The complete
+symmetry-allowed matrix basis remains available for custom bases and for
+models that should not assume a two-center form.
 
 ## Shared 3D model viewer
 
@@ -347,12 +349,30 @@ When fitting is enabled:
   representative onsite and hopping bases, exact elements, and
   orbital-subspace blocks in a separate viewer.
 
-### 3.6 — Compact and accelerated parameterizations
+### 3.6 — Compact parameterization and evaluation boundaries (implemented)
 
-- Add optional Slater--Koster parameter sets and external structure/path
-  adapters where they reduce user work.
-- Add symmetry-reduced evaluation, sparse or compiled kernels, GPU and
-  distributed backends without changing the scientific model.
+- Generate $ss\sigma$ through $ff\phi$ Slater--Koster coefficients in local
+  frames and project them into selected crystal-field subspaces.
+- Retain the full bond-stabilizer matrix basis as an explicit GUI and
+  scripting alternative.
+- Make the editable builder authoritative and resolve its immutable canonical
+  Hamiltonian lazily at calculation and export boundaries.
+- Fold complete centered conventional-cell builders onto the primitive
+  translation cell before spin expansion.
+- Generate Hinuma/HPKOT high-symmetry paths with Seek-path and preserve
+  disconnected path sections.
+- Keep Wannier90 as the only Hamiltonian-file adapter. ASE, pymatgen, and
+  PythTB compatibility are not required for this stage.
+
+### 3.7 — Calculation backends (planned)
+
+- Reduce Brillouin-zone meshes to symmetry-unique points where the complete
+  Hamiltonian and requested observable permit it.
+- Add sparse or compiled kernels, GPU execution, and bounded parallel or
+  distributed execution without changing scientific results or serialized
+  models.
+- Follow the binning subsystem's selectable laptop, workstation, cluster, and
+  supercomputer execution policy.
 
 ## Validation
 
@@ -379,8 +399,9 @@ model. They should verify:
   explicit alternatives.
 - The crystal Cartesian frame is the default, with an arbitrary local frame
   available per manifold.
-- General symmetry-allowed hopping matrices are the default. Slater--Koster
-  integrals will be an optional later parameterization.
+- Slater--Koster integrals are the GUI default for analytic harmonic
+  manifolds. General symmetry-allowed hopping matrices remain an equal
+  alternative and are required for arbitrary numerical bases.
 - Tight-binding “orbital self energies” are named static **onsite energies**.
   Self-energy is reserved for a later frequency-dependent
   $\Sigma(\mathbf k,E)$ interface.

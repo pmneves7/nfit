@@ -1,5 +1,5 @@
 # ruff: noqa: F401, F403, F405
-from nfit import ElectronicModel
+from nfit import electronic_model_from_component
 from tests.project_gui_test_support import *
 from tests.project_gui_test_support import (
     _explorer_with_fit_result,
@@ -186,7 +186,8 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
     assert len(model.config["onsite_terms"]) == 1
     assert model.config["orbital_manifolds"][0]["site_point_group"] == "m-3m"
     assert len(model.config["orbital_manifolds"][0]["orbitals"]) in {2, 3}
-    assert model.config["model_digest"]
+    assert model.config["model_stale"] is True
+    assert model.config["model_digest"] == ""
     frame = explorer.model_parameter_widget.findChild(
         QtWidgets.QLineEdit, "tight_binding_manifold_frame_0"
     )
@@ -201,6 +202,13 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
     assert fit is not None and "compatible electronic-response" in fit.toolTip()
     value.setText("0.025")
     value.editingFinished.emit()
+    assert (
+        explorer.model_parameter_widget.findChild(
+            QtWidgets.QLineEdit,
+            "tight_binding_onsite_value_0",
+        )
+        is value
+    )
     assert model.config["onsite_terms"][0]["value_meV"] == pytest.approx(25.0)
     onsite_identifier = model.config["onsite_terms"][0]["identifier"]
     assert model.parameters[onsite_identifier] == pytest.approx(25.0)
@@ -214,9 +222,16 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
     cutoff = explorer.model_parameter_widget.findChild(
         QtWidgets.QLineEdit, "tight_binding_hopping_cutoff"
     )
+    parameterization = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox,
+        "tight_binding_hopping_parameterization",
+    )
     generate = explorer.model_parameter_widget.findChild(
         QtWidgets.QPushButton, "tight_binding_hopping_generate"
     )
+    assert parameterization.currentData() == "slater_koster"
+    assert "General symmetry matrices" == parameterization.itemText(1)
+    assert parameterization.toolTip()
     cutoff.setText("5.1")
     generate.click()
     assert model.config["spatial_orbits"]
@@ -268,6 +283,7 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
     copied_script = QtWidgets.QApplication.clipboard().text()
     assert "configure_tight_binding_builder" in copied_script
     assert "set_tight_binding_parameter_state" in copied_script
+    assert "hopping_parameterization" in copied_script
 
     opened = []
     monkeypatch.setattr(
@@ -298,6 +314,17 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
         QtWidgets.QPushButton, "tight_binding_brillouin_zone_script"
     )
     assert zone.toolTip() and zone_script.toolTip()
+    primitive = explorer.model_parameter_widget.findChild(
+        QtWidgets.QCheckBox,
+        "tight_binding_use_primitive_cell",
+    )
+    path_convention = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox,
+        "tight_binding_path_convention",
+    )
+    assert primitive.isChecked() and primitive.toolTip()
+    assert path_convention.currentData() == "hinuma"
+    assert path_convention.toolTip()
     zone.click()
     assert zones and zones[0][0].path_nodes
     zone_script.click()
@@ -316,7 +343,7 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
     assert soc_enabled.isEnabled() and soc_enabled.toolTip()
     soc_enabled.click()
     assert len(model.config["soc_terms"]) == 1
-    assert ElectronicModel.from_dict(model.config["model_data"]).n_basis == (
+    assert electronic_model_from_component(model).n_basis == (
         2 * len(model.config["orbital_manifolds"][0]["orbitals"])
     )
 
@@ -378,6 +405,10 @@ M1 Fe 0.125 0.250 0.375
 
     assert model.config["crystal"] == imported
     assert model.config["periodic_axes"] == [0, 1, 2]
+    assert model.config["band_path_convention"] == "hinuma"
+    assert model.config["band_path_metadata"]["provider"] == "seekpath"
+    assert model.config["band_path_metadata"]["convention"] == "HPKOT"
+    assert model.config["band_path_metadata"]["provider_version"]
     assert imported["sites"][0]["element"] == "Fe"
     assert group.metadata["crystal"] == imported
 
@@ -387,6 +418,10 @@ M1 Fe 0.125 0.250 0.375
     restored_model = restored.data_groups[0].models["bands"]
     assert restored_model.config["crystal"] == imported
     assert restored_model.config["periodic_axes"] == [0, 1, 2]
+    assert (
+        restored_model.config["band_path_metadata"]
+        == model.config["band_path_metadata"]
+    )
 
     script = tight_binding_structure_script(
         restored_model.config["crystal"],

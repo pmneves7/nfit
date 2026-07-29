@@ -19,6 +19,7 @@ class BrillouinZoneNode:
     label: str
     reduced: tuple[float, float, float]
     cartesian_inv_angstrom: tuple[float, float, float]
+    break_before: bool = False
 
 
 @dataclass(frozen=True)
@@ -162,6 +163,7 @@ def build_brillouin_zone_scene(
                 label=str(item.get("label", "")),
                 reduced=tuple(float(value) for value in reduced),
                 cartesian_inv_angstrom=tuple(float(value) for value in cartesian),
+                break_before=bool(item.get("break_before", False)),
             )
         )
     return BrillouinZoneScene(
@@ -184,26 +186,19 @@ def _component_lattices(component: Any) -> tuple[FloatArray, FloatArray | None]:
     config = component.config
     crystal = config.get("crystal")
     primitive = None
-    if isinstance(config.get("model_data"), dict) and config["model_data"]:
-        model = ElectronicModel.from_dict(config["model_data"])
-        direct = model.direct_lattice
-        if (
-            isinstance(crystal, dict)
-            and crystal.get("sites")
-            and config.get("orbital_manifolds")
-        ):
-            crystal_direct = lattice_vectors(crystal["lattice"])
-            if np.allclose(crystal_direct, direct, atol=1e-9):
-                primitive = primitive_lattice_vectors(
-                    crystal["lattice"],
-                    str(crystal.get("spacegroup", "P 1")),
-                )
-    elif isinstance(crystal, dict) and crystal.get("sites"):
+    if (
+        isinstance(crystal, dict)
+        and crystal.get("sites")
+        and config.get("orbital_manifolds")
+    ):
         direct = lattice_vectors(crystal["lattice"])
         primitive = primitive_lattice_vectors(
             crystal["lattice"],
             str(crystal.get("spacegroup", "P 1")),
         )
+    elif isinstance(config.get("model_data"), dict) and config["model_data"]:
+        model = ElectronicModel.from_dict(config["model_data"])
+        direct = model.direct_lattice
     elif str(config.get("source_path", "")).strip():
         direct = import_wannier90(
             str(config["source_path"]),
@@ -212,6 +207,127 @@ def _component_lattices(component: Any) -> tuple[FloatArray, FloatArray | None]:
     else:
         raise ValueError("the tight-binding model has no electronic lattice")
     return np.asarray(direct, dtype=float), primitive
+
+
+def standard_band_path(
+    crystal: Any,
+    *,
+    convention: str = "hinuma",
+    symprec: float = 1.0e-5,
+) -> tuple[dict[str, Any], ...]:
+    """Return a standard labelled path in nfit's primitive reciprocal basis.
+
+    The initial standard convention is the Hinuma--Pizzi--Kumagai--Oba--Tanaka
+    (HPKOT) convention implemented by Seek-path. Disconnected path sections
+    carry ``break_before=True`` so plots and the 3D viewer do not join them.
+    """
+
+    selected = str(convention).strip().lower()
+    if selected not in {"hinuma", "hpkot", "seekpath"}:
+        raise ValueError("standard path convention must be 'hinuma'")
+    try:
+        import seekpath
+    except ImportError as exc:  # pragma: no cover - declared dependency
+        raise ImportError("standard high-symmetry paths require seekpath") from exc
+
+    from .crystal import (
+        expand_crystal_sites,
+        lattice_vectors,
+        primitive_lattice_vectors,
+        validate_crystal,
+    )
+
+    validate_crystal(crystal)
+    labels = [str(site["label"]) for site in crystal.get("sites", ())]
+    sites = expand_crystal_sites(crystal, labels)
+    if not sites:
+        raise ValueError("a standard band path requires at least one crystal site")
+    species_ids: dict[str, int] = {}
+    types = []
+    for site in sites:
+        species = str(site.element or site.label)
+        species_ids.setdefault(species, len(species_ids) + 1)
+        types.append(species_ids[species])
+    conventional = lattice_vectors(crystal["lattice"])
+    result = seekpath.get_path(
+        (
+            conventional.T,
+            np.asarray([site.position for site in sites], dtype=float),
+            np.asarray(types, dtype=int),
+        ),
+        with_time_reversal=True,
+        recipe="hpkot",
+        symprec=float(symprec),
+    )
+    seek_primitive = np.asarray(result["primitive_lattice"], dtype=float).T
+    nfit_primitive = primitive_lattice_vectors(
+        crystal["lattice"],
+        str(crystal.get("spacegroup", "P 1")),
+    )
+    seek_reciprocal = 2.0 * np.pi * np.linalg.inv(seek_primitive).T
+    nfit_reciprocal = 2.0 * np.pi * np.linalg.inv(nfit_primitive).T
+    point_coordinates = {
+        str(label): np.linalg.solve(
+            nfit_reciprocal,
+            seek_reciprocal @ np.asarray(coordinate, dtype=float),
+        )
+        for label, coordinate in result["point_coords"].items()
+    }
+
+    def display_label(label: str) -> str:
+        return "Γ" if label.upper() == "GAMMA" else label
+
+    nodes: list[dict[str, Any]] = []
+    previous_end = ""
+    for start, stop in result["path"]:
+        if not nodes or str(start) != previous_end:
+            nodes.append(
+                {
+                    "label": display_label(str(start)),
+                    "k": np.round(point_coordinates[str(start)], 12).tolist(),
+                    "break_before": bool(nodes),
+                }
+            )
+        nodes.append(
+            {
+                "label": display_label(str(stop)),
+                "k": np.round(point_coordinates[str(stop)], 12).tolist(),
+            }
+        )
+        previous_end = str(stop)
+    if len(nodes) < 2:
+        raise ValueError("Seek-path returned no connected path segments")
+    return tuple(nodes)
+
+
+def set_tight_binding_standard_path(
+    component: Any,
+    convention: str = "hinuma",
+    *,
+    symprec: float = 1.0e-5,
+) -> tuple[dict[str, Any], ...]:
+    """Install a standard path without resolving the electronic Hamiltonian."""
+
+    if getattr(component, "type", None) != "tight_binding":
+        raise TypeError("standard band paths require a tight_binding component")
+    import seekpath
+
+    path = standard_band_path(
+        component.config.get("crystal", {}),
+        convention=convention,
+        symprec=symprec,
+    )
+    component.config["band_path"] = [dict(node) for node in path]
+    component.config["band_path_convention"] = "hinuma"
+    component.config["band_path_metadata"] = {
+        "provider": "seekpath",
+        "provider_version": str(
+            getattr(seekpath, "__version__", "unknown")
+        ),
+        "convention": "HPKOT",
+        "symprec": float(symprec),
+    }
+    return path
 
 
 def brillouin_zone_scene(component: Any) -> BrillouinZoneScene:
@@ -251,7 +367,11 @@ def brillouin_zone_script(
     reciprocal = np.asarray(scene.reciprocal_vectors, dtype=float).T
     primitive = 2.0 * np.pi * np.linalg.inv(reciprocal).T
     band_path = [
-        {"label": node.label, "k": list(node.reduced)}
+        {
+            "label": node.label,
+            "k": list(node.reduced),
+            **({"break_before": True} if node.break_before else {}),
+        }
         for node in scene.path_nodes
     ]
     return "\n".join(

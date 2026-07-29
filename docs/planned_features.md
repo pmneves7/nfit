@@ -38,15 +38,18 @@ Brillouin-zone viewer. Named electronic Hamiltonian terms now share the common
 parameter, bounds, fit-selection, dataset-sharing, report, and script
 machinery. Optional explicit collinear and spinor representations,
 manifold-resolved onsite spin-orbit coupling, time-reversal validation, and a
-matrix/subspace inspector are implemented. Slater--Koster parameterizations
-remain a later builder stage; optimizer evaluation awaits a compatible
-electronic-response observable.
+matrix/subspace inspector are implemented. GUI-built models now provide
+Slater--Koster and general symmetry-matrix hopping conventions, lazy canonical
+Hamiltonian resolution, primitive-cell folding, and Hinuma/HPKOT standard
+paths. Optimizer evaluation awaits a compatible electronic-response
+observable.
 Response stages add the complex bare susceptibility, interaction dressings,
 production fitting, BCS superconductivity, and advanced correlated extensions. Electronic
-calculations should eventually share the rebinner's bounded-memory and
-selectable-backend approach, including symmetry-reduced Brillouin-zone work
-where valid. A capability remains planned until its model page documents an
-implemented public API.
+calculations should next share the rebinner's bounded-memory and
+selectable-backend approach, including symmetry-reduced Brillouin-zone work,
+compiled or sparse kernels, GPUs, and distributed execution where valid. A
+capability remains planned until its model page documents an implemented
+public API.
 
 Instrument resolution, finite-bin integration, absorption, and related
 measurement effects will form an optional dataset-owned systematics layer

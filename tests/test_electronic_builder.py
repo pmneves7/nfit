@@ -5,7 +5,6 @@ import pytest
 
 from nfit import (
     DataGroup,
-    ElectronicModel,
     ModelComponentSpec,
     NfitProject,
     OrbitalManifold,
@@ -14,6 +13,7 @@ from nfit import (
     add_tight_binding_orbital_manifold,
     create_model_component,
     electronic_model_from_component,
+    generate_hopping_terms,
     generate_onsite_terms,
     hopping_endpoint_orbitals,
     load_project,
@@ -26,6 +26,7 @@ from nfit import (
     regenerate_tight_binding_hopping_terms,
     remove_tight_binding_hopping_term,
     save_project,
+    set_tight_binding_hopping_parameterization,
     set_tight_binding_hopping_term,
     set_tight_binding_onsite_term,
     set_tight_binding_parameter_state,
@@ -34,6 +35,11 @@ from nfit import (
     site_symmetry_operations,
     spherical_harmonic_representation,
     tight_binding_structure_script,
+)
+from nfit.crystal import bond_stabilizer_symmetries
+from nfit.electronic_builder import (
+    _expanded_orbital_sites,
+    _mapped_hopping_matrix,
 )
 from nfit.fit_config import component_parameter_names
 
@@ -224,6 +230,8 @@ def test_component_builder_resolves_values_project_and_script_round_trip(tmp_pat
         "M1", "d", correlated_shell="M1_3d"
     )
     add_tight_binding_orbital_manifold(component, manifold)
+    assert component.config["model_stale"] is True
+    assert component.config["model_digest"] == ""
     assert len(component.config["onsite_terms"]) == 2
     first = component.config["onsite_terms"][0]["identifier"]
     set_tight_binding_onsite_term(
@@ -236,6 +244,7 @@ def test_component_builder_resolves_values_project_and_script_round_trip(tmp_pat
         fit=True,
     )
 
+    electronic_model_from_component(component)
     resolved = component.config["model_data"]
     assert component.config["model_digest"] == resolved["content_digest"]
     assert sorted(component.config["projection_groups"]) == ["M1_d"]
@@ -340,14 +349,15 @@ def test_symmetry_generated_hopping_resolves_dispersion_and_script_round_trip():
     assert len(generation.terms) == 1
     term = generation.terms[0]
     np.testing.assert_allclose(term.matrix, [[1.0]])
-    assert "M1_effective[effective]" in term.label
+    assert "V_ssσ" in term.label
+    assert "M1_effective ← M1_effective" in term.label
     assert hopping_endpoint_orbitals(term) == (
         ("M1_effective:effective",),
         ("M1_effective:effective",),
     )
     assert len(component.config["hopping_candidates"]) == 1
     assert component.config["hopping_terms"] == []
-    flat = ElectronicModel.from_dict(component.config["model_data"])
+    flat = electronic_model_from_component(component)
     np.testing.assert_allclose(
         np.linalg.eigvalsh(flat.hamiltonian([0, 0, 0])),
         [0.0],
@@ -372,7 +382,7 @@ def test_symmetry_generated_hopping_resolves_dispersion_and_script_round_trip():
     assert len(hopping_scene.pathways) == 1
     assert hopping_scene.pathways[0].orbit_label == "B1"
 
-    model = ElectronicModel.from_dict(component.config["model_data"])
+    model = electronic_model_from_component(component)
     assert model.parameter_values[term.identifier] == pytest.approx(-100.0)
     assert np.linalg.eigvalsh(model.hamiltonian([0, 0, 0]))[0] == pytest.approx(
         -600.0
@@ -428,6 +438,155 @@ def test_symmetry_generated_hopping_resolves_dispersion_and_script_round_trip():
     restored = component.config["hopping_terms"][0]
     assert restored["value_meV"] == pytest.approx(-100.0)
     assert restored["fit"] is True
+
+
+def test_slater_koster_pp_channels_follow_the_bond_frame():
+    crystal = _crystal()
+    crystal["sites"][1]["position"] = [0.25, 0.0, 0.0]
+    manifolds = (
+        orbital_manifold_preset("M1", "p"),
+        orbital_manifold_preset("X1", "p"),
+    )
+
+    generation = generate_hopping_terms(
+        crystal,
+        manifolds,
+        1.01,
+        parameterization="slater_koster",
+    )
+
+    assert len(generation.terms) == 2
+    sigma = next(term for term in generation.terms if "V_ppσ" in term.label)
+    pi = next(term for term in generation.terms if "V_ppπ" in term.label)
+    np.testing.assert_allclose(
+        sigma.matrix,
+        np.diag([1.0, 0.0, 0.0]),
+        atol=1e-10,
+    )
+    np.testing.assert_allclose(
+        pi.matrix,
+        np.diag([0.0, 1.0, 1.0]),
+        atol=1e-10,
+    )
+    assert sigma.source == "slater_koster"
+    assert "M1_p ← X1_p" in sigma.label
+
+
+def test_slater_koster_terms_respect_bond_reversing_stabilizers():
+    crystal = _crystal("P m -3 m")
+    crystal["sites"] = crystal["sites"][:1]
+    manifolds = (
+        orbital_manifold_preset("M1", "s"),
+        orbital_manifold_preset("M1", "p"),
+    )
+    generation = generate_hopping_terms(
+        crystal,
+        manifolds,
+        4.01,
+        parameterization="slater_koster",
+    )
+    contexts = _expanded_orbital_sites(
+        crystal,
+        manifolds,
+        expected_sites=generation.sites,
+    )
+    sp_sigma = next(
+        term for term in generation.terms if "V_spσ" in term.label
+    )
+
+    for symmetry in bond_stabilizer_symmetries(
+        crystal,
+        generation.sites,
+        sp_sigma.representative_bond,
+    ):
+        mapped = _mapped_hopping_matrix(
+            contexts,
+            sp_sigma.representative_bond,
+            sp_sigma.representative_bond,
+            symmetry,
+            sp_sigma.matrix,
+            crystal,
+        )
+        np.testing.assert_allclose(mapped, sp_sigma.matrix, atol=1e-9)
+
+
+def test_hopping_parameterization_switch_regenerates_only_suggestions():
+    group = DataGroup("Electronic")
+    component = create_model_component(group, "bands", type="tight_binding")
+    component.config["crystal"] = _crystal()
+    add_tight_binding_orbital_manifold(
+        component,
+        orbital_manifold_preset("M1", "p"),
+    )
+    regenerate_tight_binding_hopping_terms(component, 4.01)
+    assert {
+        item["source"] for item in component.config["hopping_candidates"]
+    } == {"slater_koster"}
+
+    set_tight_binding_hopping_parameterization(component, "general")
+
+    assert component.config["hopping_parameterization"] == "general"
+    assert component.config["hopping_terms"] == []
+    assert {
+        item["source"] for item in component.config["hopping_candidates"]
+    } == {"spinless_time_reversal_space_group"}
+    assert component.config["model_stale"] is True
+
+
+def test_lazy_builder_resolution_reuses_canonical_model_until_invalidated(
+    monkeypatch,
+):
+    group = DataGroup("Electronic")
+    component = create_model_component(group, "bands", type="tight_binding")
+    component.config["crystal"] = _crystal()
+    add_tight_binding_orbital_manifold(
+        component,
+        orbital_manifold_preset("M1", "effective"),
+    )
+
+    first = electronic_model_from_component(component)
+    cached = electronic_model_from_component(component)
+    assert first.translations is cached.translations
+    onsite = component.config["onsite_terms"][0]["identifier"]
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            "nfit.electronic_builder.resolve_tight_binding_builder",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("coefficient edit resolved the Hamiltonian")
+            ),
+        )
+        set_tight_binding_onsite_term(component, onsite, value=0.125)
+    assert component.config["model_stale"] is True
+
+    rebuilt = electronic_model_from_component(component)
+    assert rebuilt.content_digest != first.content_digest
+    assert component.config["model_stale"] is False
+    assert rebuilt.parameter_values[onsite] == pytest.approx(125.0)
+
+
+def test_conventional_f_centered_builder_folds_to_primitive_cell():
+    crystal = _crystal("F m -3 m")
+    crystal["sites"] = crystal["sites"][:1]
+    group = DataGroup("Electronic")
+    component = create_model_component(group, "bands", type="tight_binding")
+    component.config["crystal"] = crystal
+    add_tight_binding_orbital_manifold(
+        component,
+        orbital_manifold_preset("M1", "effective"),
+    )
+
+    primitive = electronic_model_from_component(component)
+    assert primitive.n_basis == 1
+    assert primitive.provenance["primitive_reduction"][
+        "cell_multiplicity"
+    ] == 4
+
+    component.config["use_primitive_cell"] = False
+    from nfit import invalidate_tight_binding_model
+
+    invalidate_tight_binding_model(component)
+    conventional = electronic_model_from_component(component)
+    assert conventional.n_basis == 4
 
 
 def test_model_geometry_scene_shows_active_ghost_orbitals_and_frames():

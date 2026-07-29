@@ -4,12 +4,26 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from .brillouin_zone import BrillouinZoneScene, BrillouinZoneViewOptions
 from .qt_viewer_shell import create_viewer_shell
+
+
+@lru_cache(maxsize=1)
+def _label_font_file() -> str:
+    """Return a bundled font containing Greek and Unicode subscript glyphs."""
+
+    from matplotlib import get_data_path
+
+    path = Path(get_data_path()) / "fonts" / "ttf" / "DejaVuSans.ttf"
+    if not path.is_file():
+        raise FileNotFoundError("Matplotlib's DejaVu Sans font is unavailable")
+    return str(path)
 
 
 def _zone_mesh(scene: BrillouinZoneScene) -> Any:
@@ -107,7 +121,12 @@ def _render_brillouin_zone(
         dtype=float,
     )
     if settings.show_path and len(nodes) >= 2:
-        for start, stop in zip(nodes[:-1], nodes[1:], strict=True):
+        for index, (start, stop) in enumerate(
+            zip(nodes[:-1], nodes[1:], strict=True),
+            start=1,
+        ):
+            if scene.path_nodes[index].break_before:
+                continue
             plotter.add_mesh(
                 pv.Line(start, stop),
                 color=settings.path_color,
@@ -126,6 +145,7 @@ def _render_brillouin_zone(
             [node.label for node in scene.path_nodes],
             text_color="black",
             font_size=settings.label_font_size,
+            font_file=_label_font_file(),
             shape=None,
             show_points=False,
             always_visible=True,
@@ -148,20 +168,29 @@ def _render_brillouin_zone(
                 if settings.basis_vector_inside_style == "solid"
                 else surface
             )
+            arrow_vector = vector - arrow_start
             if settings.basis_vector_inside_style == "dashed":
+                shaft_radius = (
+                    settings.basis_vector_thickness
+                    * float(np.linalg.norm(arrow_vector))
+                )
                 for dash_start, dash_stop in _dashed_segments(
                     np.zeros(3),
                     surface,
                 ):
+                    difference = dash_stop - dash_start
                     plotter.add_mesh(
-                        pv.Line(dash_start, dash_stop),
-                        color=color,
-                        line_width=max(
-                            1.0,
-                            800.0 * settings.basis_vector_thickness,
+                        pv.Cylinder(
+                            center=(dash_start + dash_stop) / 2.0,
+                            direction=difference,
+                            radius=shaft_radius,
+                            height=float(np.linalg.norm(difference)),
+                            resolution=16,
+                            capping=True,
                         ),
+                        color=color,
+                        lighting=False,
                     )
-            arrow_vector = vector - arrow_start
             plotter.add_mesh(
                 pv.Arrow(
                     start=arrow_start,
@@ -179,12 +208,11 @@ def _render_brillouin_zone(
             labels,
             text_color="black",
             font_size=settings.label_font_size,
+            font_file=_label_font_file(),
             shape=None,
             show_points=False,
             always_visible=True,
         )
-    if hasattr(plotter, "hide_axes"):
-        plotter.hide_axes()
     if settings.show_compass:
         plotter.add_axes(
             x_color="#FF0000",
@@ -192,6 +220,10 @@ def _render_brillouin_zone(
             z_color="#0000FF",
             label_color="black",
         )
+        if hasattr(plotter, "show_axes"):
+            plotter.show_axes()
+    elif hasattr(plotter, "hide_axes"):
+        plotter.hide_axes()
     if settings.projection == "orthographic":
         if hasattr(plotter, "enable_parallel_projection"):
             plotter.enable_parallel_projection()
@@ -344,18 +376,29 @@ def _populate_settings_panel(
         update(basis_vector_color_mode=mode)
 
     color_mode.currentIndexChanged.connect(set_color_mode)
-    vector_thickness = QtWidgets.QDoubleSpinBox()
+    vector_thickness = QtWidgets.QLineEdit(
+        f"{initial.basis_vector_thickness:.6g}"
+    )
     vector_thickness.setObjectName("brillouin_zone_basis_thickness")
-    vector_thickness.setRange(0.001, 0.05)
-    vector_thickness.setDecimals(3)
-    vector_thickness.setSingleStep(0.001)
-    vector_thickness.setValue(initial.basis_vector_thickness)
     vector_thickness.setToolTip(
-        "Set the reciprocal-vector shaft radius as a fraction of arrow length."
+        "Set the positive reciprocal-vector shaft radius as a fraction of "
+        "arrow length. Values near 0.001–0.05 are usually useful."
     )
-    vector_thickness.valueChanged.connect(
-        lambda value: update(basis_vector_thickness=float(value))
-    )
+
+    def commit_vector_thickness() -> None:
+        try:
+            value = float(vector_thickness.text())
+            if not np.isfinite(value) or value <= 0.0:
+                raise ValueError
+        except ValueError:
+            vector_thickness.setText(
+                f"{state['options'].basis_vector_thickness:.6g}"
+            )
+            return
+        vector_thickness.setText(f"{value:.6g}")
+        update(basis_vector_thickness=value)
+
+    vector_thickness.editingFinished.connect(commit_vector_thickness)
     vectors_layout.addRow("Colors", color_mode)
     vectors_layout.addRow("Single color", vector_color)
     vectors_layout.addRow("Thickness", vector_thickness)
@@ -503,24 +546,25 @@ def show_brillouin_zone_scene(
     """Open an interactively styled Qt window for a precomputed zone scene."""
 
     from PySide6 import QtCore, QtGui, QtWidgets
-    from pyvistaqt import QtInteractor
+    from pyvistaqt import MainWindow, QtInteractor
 
     application = QtWidgets.QApplication.instance()
     if application is None:
         application = QtWidgets.QApplication([])
-    window = QtWidgets.QMainWindow(parent)
+
+    window = MainWindow(parent=parent, title="First Brillouin zone")
     window.setObjectName("brillouin_zone_viewer")
-    window.setWindowTitle("First Brillouin zone")
     central, viewport_layout, settings = create_viewer_shell(
         QtWidgets,
         viewer_key="brillouin_zone",
     )
     settings.setFixedWidth(320)
-    plotter = QtInteractor(central)
+    plotter = QtInteractor(central, auto_update=False)
     plotter.setObjectName("brillouin_zone_plotter")
     viewport_layout.addWidget(plotter.interactor)
     window.setCentralWidget(central)
     window.resize(1180, 820)
+    window.signal_close.connect(plotter.close)
     current = BrillouinZoneViewOptions() if options is None else options
 
     def redraw(updated: BrillouinZoneViewOptions) -> None:
@@ -576,6 +620,12 @@ def show_brillouin_zone_scene(
     window._nfit_view_options = current
     window._nfit_copy_figure = copy_figure
     window._nfit_save_figure = save_figure
+    close_shortcut = QtGui.QShortcut(
+        QtGui.QKeySequence.StandardKey.Close,
+        window,
+    )
+    close_shortcut.activated.connect(window.close)
+    window._nfit_close_shortcut = close_shortcut
     _populate_settings_panel(
         settings,
         initial=current,

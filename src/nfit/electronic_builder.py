@@ -41,6 +41,7 @@ from .electronic_structure import (
     build_electronic_model,
     electronic_energy_to_meV,
     normalize_electronic_energy_unit,
+    reduce_electronic_model_to_primitive,
 )
 
 FloatArray = NDArray[np.float64]
@@ -1493,12 +1494,224 @@ def hopping_invariants(
     return tuple(result)
 
 
+_SLATER_KOSTER_CHANNELS = ("sigma", "pi", "delta", "phi")
+
+
+def _slater_koster_manifold_data(
+    manifold: OrbitalManifold,
+    context: _ExpandedOrbitalSite,
+    bond_frame: FloatArray,
+) -> tuple[int, ComplexArray]:
+    """Return ``(l, C U)`` from selected local orbitals to the bond frame."""
+
+    if manifold.basis_kind == "effective_scalar":
+        return 0, np.ones((1, 1), dtype=np.complex128)
+    if manifold.basis_kind != "real_harmonic":
+        raise OrbitalSymmetryError(
+            "Slater-Koster hopping currently requires the real-harmonic "
+            f"convention; {manifold.label!r} uses {manifold.basis_kind!r}. "
+            "Choose the general symmetry-matrix parameterization for a "
+            "custom, complex-harmonic, or Wannier basis."
+        )
+    if manifold.l is None or manifold.harmonic_transform is None:
+        raise OrbitalSymmetryError(
+            f"manifold {manifold.label!r} lacks its harmonic basis definition"
+        )
+    l_value = int(manifold.l)
+    selected_to_declared = np.asarray(
+        manifold.harmonic_transform,
+        dtype=np.complex128,
+    )
+    selected_to_complex = _real_transform(l_value) @ selected_to_declared
+    local_frame = (
+        np.asarray(context.generator_cartesian, dtype=float)
+        @ np.asarray(manifold.local_frame, dtype=float)
+    )
+    local_to_bond = np.asarray(bond_frame, dtype=float).T @ local_frame
+    declared_to_bond = spherical_harmonic_representation(
+        l_value,
+        local_to_bond,
+        basis_kind="complex_harmonic",
+    )
+    return l_value, declared_to_bond @ selected_to_complex
+
+
+def _bond_frame(
+    crystal: Mapping[str, Any],
+    sites: Sequence[CrystalSite],
+    bond: Bond,
+) -> FloatArray:
+    """Construct a deterministic right-handed frame with ``z`` along a bond."""
+
+    direct = lattice_vectors(crystal["lattice"])
+    displacement_fractional = (
+        np.asarray(sites[bond.site_j].position, dtype=float)
+        + np.asarray(bond.offset, dtype=float)
+        - np.asarray(sites[bond.site_i].position, dtype=float)
+    )
+    z_axis = direct @ displacement_fractional
+    norm = float(np.linalg.norm(z_axis))
+    if norm <= 1e-12:
+        raise OrbitalSymmetryError("Slater-Koster hopping requires a nonzero bond")
+    z_axis /= norm
+    reference_axes = np.eye(3)
+    reference = reference_axes[
+        int(np.argmin(np.abs(reference_axes @ z_axis)))
+    ]
+    x_axis = np.cross(reference, z_axis)
+    x_axis /= np.linalg.norm(x_axis)
+    y_axis = np.cross(z_axis, x_axis)
+    return np.column_stack((x_axis, y_axis, z_axis))
+
+
+def slater_koster_hopping_invariants(
+    crystal: Mapping[str, Any],
+    manifolds: Sequence[OrbitalManifold | Mapping[str, Any]],
+    sites: Sequence[CrystalSite],
+    orbit: BondOrbit,
+) -> tuple[HoppingInvariant, ...]:
+    """Generate two-centre ``ssσ`` through ``ffφ`` hopping coefficients.
+
+    Each coefficient is the corresponding axial Slater-Koster matrix element,
+    not a unit-Frobenius rescaling. Site-local frames and selected
+    crystal-field subspaces are rotated into the representative bond frame.
+    """
+
+    items = tuple(
+        item if isinstance(item, OrbitalManifold) else OrbitalManifold.from_dict(item)
+        for item in manifolds
+    )
+    contexts = _expanded_orbital_sites(
+        crystal,
+        items,
+        expected_sites=sites,
+    )
+    representative = orbit.bonds[0]
+    context_i = contexts[representative.site_i]
+    context_j = contexts[representative.site_j]
+    frame = _bond_frame(crystal, sites, representative)
+    rows = len(context_i.basis_labels)
+    columns = len(context_j.basis_labels)
+    offsets_i: list[tuple[OrbitalManifold, int, int]] = []
+    offsets_j: list[tuple[OrbitalManifold, int, int]] = []
+    cursor = 0
+    for manifold in context_i.manifolds:
+        offsets_i.append((manifold, cursor, cursor + manifold.dimension))
+        cursor += manifold.dimension
+    cursor = 0
+    for manifold in context_j.manifolds:
+        offsets_j.append((manifold, cursor, cursor + manifold.dimension))
+        cursor += manifold.dimension
+
+    result: list[HoppingInvariant] = []
+    invariant_matrices: list[ComplexArray] = []
+    stabilizers = bond_stabilizer_symmetries(
+        crystal,
+        sites,
+        representative,
+    )
+    for manifold_i, start_i, stop_i in offsets_i:
+        l_i, transform_i = _slater_koster_manifold_data(
+            manifold_i,
+            context_i,
+            frame,
+        )
+        for manifold_j, start_j, stop_j in offsets_j:
+            l_j, transform_j = _slater_koster_manifold_data(
+                manifold_j,
+                context_j,
+                frame,
+            )
+            for order in range(min(l_i, l_j) + 1):
+                axial = np.zeros(
+                    (2 * l_i + 1, 2 * l_j + 1),
+                    dtype=np.complex128,
+                )
+                for m_value in range(-order, order + 1):
+                    if abs(m_value) == order:
+                        axial[l_i + m_value, l_j + m_value] = 1.0
+                selected = transform_i.conj().T @ axial @ transform_j
+                selected[np.abs(selected) < 1e-12] = 0.0
+                if float(np.linalg.norm(selected)) <= 1e-12:
+                    continue
+                seed = np.zeros((rows, columns), dtype=np.complex128)
+                seed[start_i:stop_i, start_j:stop_j] = selected
+                images: list[ComplexArray] = []
+                for symmetry in stabilizers:
+                    image = np.asarray(
+                        _mapped_hopping_matrix(
+                            contexts,
+                            representative,
+                            representative,
+                            symmetry,
+                            seed,
+                            crystal,
+                        ),
+                        dtype=np.complex128,
+                    )
+                    if not any(
+                        np.allclose(image, previous, atol=1e-9)
+                        for previous in images
+                    ):
+                        images.append(image)
+                matrix = np.sum(images, axis=0)
+                matrix[np.abs(matrix) < 1e-12] = 0.0
+                if float(np.linalg.norm(matrix)) <= 1e-12:
+                    continue
+                if any(
+                    np.allclose(matrix, previous, atol=1e-9)
+                    or np.allclose(matrix, -previous, atol=1e-9)
+                    for previous in invariant_matrices
+                ):
+                    continue
+                invariant_matrices.append(matrix)
+                channel = _SLATER_KOSTER_CHANNELS[order]
+                shell_i = "spdf"[l_i]
+                shell_j = "spdf"[l_j]
+                symbol = {"sigma": "σ", "pi": "π", "delta": "δ", "phi": "φ"}[
+                    channel
+                ]
+                digest_payload = {
+                    "source": "slater_koster",
+                    "orbit": orbit.label,
+                    "manifold_i": manifold_i.label,
+                    "manifold_j": manifold_j.label,
+                    "channel": channel,
+                    "matrix_real": np.round(matrix.real, 10).tolist(),
+                    "matrix_imag": np.round(matrix.imag, 10).tolist(),
+                }
+                digest = hashlib.sha256(
+                    json.dumps(digest_payload, sort_keys=True).encode()
+                ).hexdigest()[:12]
+                result.append(
+                    HoppingInvariant(
+                        identifier=(
+                            f"{orbit.label}:sk:{manifold_i.label}:"
+                            f"{manifold_j.label}:{channel}:{digest}"
+                        ),
+                        label=(
+                            f"{orbit.label} V_{shell_i}{shell_j}{symbol}: "
+                            f"{manifold_i.label} ← {manifold_j.label}"
+                        ),
+                        orbit_label=orbit.label,
+                        distance_angstrom=orbit.distance_angstrom,
+                        representative_bond=representative,
+                        basis_i=context_i.basis_labels,
+                        basis_j=context_j.basis_labels,
+                        matrix=matrix,
+                        source="slater_koster",
+                    )
+                )
+    return tuple(result)
+
+
 def generate_hopping_terms(
     crystal: Mapping[str, Any],
     manifolds: Sequence[OrbitalManifold | Mapping[str, Any]],
     cutoff_angstrom: float,
     *,
     previous: Sequence[HoppingInvariant | Mapping[str, Any]] = (),
+    parameterization: Literal["slater_koster", "general"] = "general",
 ) -> HoppingGeneration:
     """Generate spatial orbits and symmetry-allowed hopping coefficients."""
 
@@ -1525,9 +1738,24 @@ def generate_hopping_terms(
         else HoppingInvariant.from_dict(item)
         for item in previous
     }
+    mode = str(parameterization).strip().lower()
+    if mode not in {"slater_koster", "general"}:
+        raise ValueError(
+            "hopping parameterization must be 'slater_koster' or 'general'"
+        )
     terms: list[HoppingInvariant] = []
     for orbit in orbits:
-        for generated in hopping_invariants(crystal, items, sites, orbit):
+        generated_terms = (
+            slater_koster_hopping_invariants(
+                crystal,
+                items,
+                sites,
+                orbit,
+            )
+            if mode == "slater_koster"
+            else hopping_invariants(crystal, items, sites, orbit)
+        )
+        for generated in generated_terms:
             prior = old.get(generated.identifier)
             if prior is not None:
                 generated = HoppingInvariant(
@@ -1866,16 +2094,23 @@ def tight_binding_parameter_labels(component: Any) -> dict[str, str]:
 
 
 def _builder_state_snapshot(component: Any) -> dict[str, Any]:
+    # Builder records and canonical model data are replaced atomically rather
+    # than mutated in place. A shallow mapping snapshot therefore supports
+    # rollback without copying potentially large candidate tables or
+    # Hamiltonian payloads on every coefficient edit.
+    config = dict(component.config)
     return {
-        name: deepcopy(getattr(component, name))
-        for name in (
-            "config",
-            "parameters",
-            "fit_parameters",
-            "limits",
-            "sharing",
-            "metadata",
-        )
+        "config": config,
+        **{
+            name: deepcopy(getattr(component, name))
+            for name in (
+                "parameters",
+                "fit_parameters",
+                "limits",
+                "sharing",
+                "metadata",
+            )
+        },
     }
 
 
@@ -2026,7 +2261,7 @@ def set_tight_binding_parameter_state(
 def set_tight_binding_spin_treatment(
     component: Any,
     treatment: str,
-) -> ElectronicModel:
+) -> None:
     """Select automatic, implicit, collinear, or full-spinor handling."""
 
     from .electronic_spin import SPIN_TREATMENTS
@@ -2037,7 +2272,7 @@ def set_tight_binding_spin_treatment(
     before = _builder_state_snapshot(component)
     try:
         component.config["spin_treatment"] = selected
-        return resolve_tight_binding_builder(component)
+        invalidate_tight_binding_model(component)
     except Exception:
         _restore_builder_state(component, before)
         raise
@@ -2055,7 +2290,7 @@ def set_tight_binding_soc_term(
     fit: bool | None = None,
     prescription: str | None = None,
     orbital_operators: ArrayLike | None = None,
-) -> ElectronicModel:
+) -> None:
     """Add, update, or remove onsite SOC for one spatial manifold."""
 
     from .electronic_spin import SpinOrbitTerm, spin_orbit_term
@@ -2078,7 +2313,8 @@ def set_tight_binding_soc_term(
                 if term.manifold_label != label
             ]
             reconcile_tight_binding_parameters(component)
-            return resolve_tight_binding_builder(component)
+            invalidate_tight_binding_model(component)
+            return
         unit = normalize_electronic_energy_unit(
             energy_unit or component.config.get("electronic_energy_unit", "eV")
         )
@@ -2127,7 +2363,7 @@ def set_tight_binding_soc_term(
         component.config["soc_terms"] = [term.to_dict() for term in terms]
         _adopt_term_parameter_state(component, (updated,))
         reconcile_tight_binding_parameters(component)
-        return resolve_tight_binding_builder(component)
+        invalidate_tight_binding_model(component)
     except Exception:
         _restore_builder_state(component, before)
         raise
@@ -2280,6 +2516,21 @@ def resolve_tight_binding_builder(component: Any) -> ElectronicModel:
         hopping_terms=_component_hopping_terms(component),
         periodic_axes=component.config.get("periodic_axes") or (0, 1, 2),
     )
+    if bool(component.config.get("use_primitive_cell", True)):
+        from .crystal import primitive_lattice_vectors
+
+        model = reduce_electronic_model_to_primitive(
+            model,
+            primitive_lattice_vectors(
+                component.config["crystal"]["lattice"],
+                str(
+                    component.config["crystal"].get(
+                        "spacegroup",
+                        "P 1",
+                    )
+                ),
+            ),
+        )
     from .electronic_spin import lift_electronic_model_spin
 
     model = lift_electronic_model_spin(
@@ -2291,12 +2542,32 @@ def resolve_tight_binding_builder(component: Any) -> ElectronicModel:
     component.config["source_path"] = ""
     component.config["model_data"] = model.to_dict()
     component.config["model_digest"] = model.content_digest
+    component.config["model_stale"] = False
+    component._nfit_electronic_model_cache = (
+        model.content_digest,
+        model,
+    )
     projections: dict[str, list[int]] = {}
     for index, state in enumerate(model.basis):
         manifold_label = str(state.metadata.get("manifold", ""))
         projections.setdefault(manifold_label, []).append(index)
     component.config["projection_groups"] = projections
     return model
+
+
+def invalidate_tight_binding_model(component: Any) -> None:
+    """Mark canonical Hamiltonian data stale after a compact builder edit.
+
+    Builder records remain authoritative. The previous canonical model may stay
+    in the project as a cache, but its digest is cleared and no calculation may
+    use it until :func:`resolve_tight_binding_builder` rebuilds it.
+    """
+
+    if getattr(component, "type", None) != "tight_binding":
+        raise TypeError("only tight-binding components have lazy model state")
+    component.config["model_stale"] = True
+    component.config["model_digest"] = ""
+    component.__dict__.pop("_nfit_electronic_model_cache", None)
 
 
 def set_tight_binding_orbital_manifolds(
@@ -2342,10 +2613,17 @@ def set_tight_binding_orbital_manifolds(
                 items,
                 cutoff,
                 previous=_component_hopping_terms(component),
+                parameterization=str(
+                    component.config.get(
+                        "hopping_parameterization",
+                        "slater_koster",
+                    )
+                ),
             )
             _install_hopping_generation(component, hopping)
         if items and component.config.get("onsite_terms"):
-            resolve_tight_binding_builder(component)
+            reconcile_tight_binding_parameters(component)
+            invalidate_tight_binding_model(component)
         else:
             component.config["onsite_terms"] = []
             component.config["hopping_candidates"] = []
@@ -2355,6 +2633,7 @@ def set_tight_binding_orbital_manifolds(
             component.config["expanded_crystal_sites"] = []
             component.config["model_data"] = {}
             component.config["model_digest"] = ""
+            component.config["model_stale"] = False
             reconcile_tight_binding_parameters(component)
     except Exception:
         _restore_builder_state(component, before)
@@ -2410,10 +2689,17 @@ def regenerate_tight_binding_onsite_terms(
                 _component_manifolds(component),
                 cutoff,
                 previous=_component_hopping_terms(component),
+                parameterization=str(
+                    component.config.get(
+                        "hopping_parameterization",
+                        "slater_koster",
+                    )
+                ),
             )
             _install_hopping_generation(component, generation)
         if terms:
-            resolve_tight_binding_builder(component)
+            reconcile_tight_binding_parameters(component)
+            invalidate_tight_binding_model(component)
     except Exception:
         _restore_builder_state(component, before)
         raise
@@ -2442,14 +2728,65 @@ def regenerate_tight_binding_hopping_terms(
             _component_manifolds(component),
             cutoff,
             previous=_component_hopping_terms(component),
+            parameterization=str(
+                component.config.get(
+                    "hopping_parameterization",
+                    "slater_koster",
+                )
+            ),
         )
         component.config["hopping_cutoff_angstrom"] = cutoff
         _install_hopping_generation(component, generation)
-        resolve_tight_binding_builder(component)
+        reconcile_tight_binding_parameters(component)
+        invalidate_tight_binding_model(component)
     except Exception:
         _restore_builder_state(component, before)
         raise
     return generation
+
+
+def set_tight_binding_hopping_parameterization(
+    component: Any,
+    parameterization: Literal["slater_koster", "general"],
+) -> HoppingGeneration | None:
+    """Select compact Slater-Koster or general symmetry-matrix hoppings."""
+
+    if getattr(component, "type", None) != "tight_binding":
+        raise TypeError("hopping parameterization requires a tight_binding component")
+    mode = str(parameterization).strip().lower()
+    if mode not in {"slater_koster", "general"}:
+        raise ValueError(
+            "hopping parameterization must be 'slater_koster' or 'general'"
+        )
+    if str(
+        component.config.get("hopping_parameterization", "slater_koster")
+    ) == mode:
+        return None
+    before = _builder_state_snapshot(component)
+    try:
+        component.config["hopping_parameterization"] = mode
+        cutoff = float(component.config.get("hopping_cutoff_angstrom", 0.0))
+        if cutoff <= 0.0 or not _component_manifolds(component):
+            component.config["hopping_candidates"] = []
+            component.config["hopping_terms"] = []
+            component.config["spatial_orbits"] = []
+            reconcile_tight_binding_parameters(component)
+            invalidate_tight_binding_model(component)
+            return None
+        generation = generate_hopping_terms(
+            component.config["crystal"],
+            _component_manifolds(component),
+            cutoff,
+            previous=_component_hopping_terms(component),
+            parameterization=mode,
+        )
+        _install_hopping_generation(component, generation)
+        reconcile_tight_binding_parameters(component)
+        invalidate_tight_binding_model(component)
+        return generation
+    except Exception:
+        _restore_builder_state(component, before)
+        raise
 
 
 def add_tight_binding_hopping_term(
@@ -2478,7 +2815,8 @@ def add_tight_binding_hopping_term(
         component.config["hopping_terms"] = [
             item.to_dict() for item in (*active, candidate)
         ]
-        resolve_tight_binding_builder(component)
+        reconcile_tight_binding_parameters(component)
+        invalidate_tight_binding_model(component)
     except Exception:
         _restore_builder_state(component, before)
         raise
@@ -2511,7 +2849,8 @@ def remove_tight_binding_hopping_term(
         component.config["hopping_terms"] = [
             item.to_dict() for item in retained
         ]
-        resolve_tight_binding_builder(component)
+        reconcile_tight_binding_parameters(component)
+        invalidate_tight_binding_model(component)
     except Exception:
         _restore_builder_state(component, before)
         raise
@@ -2570,7 +2909,7 @@ def set_tight_binding_onsite_term(
         try:
             _adopt_term_parameter_state(component, (updated,))
             component.config["onsite_terms"] = [item.to_dict() for item in terms]
-            resolve_tight_binding_builder(component)
+            invalidate_tight_binding_model(component)
         except Exception:
             _restore_builder_state(component, before)
             raise
@@ -2646,7 +2985,7 @@ def set_tight_binding_hopping_term(
             component.config["hopping_terms"] = [
                 item.to_dict() for item in terms
             ]
-            resolve_tight_binding_builder(component)
+            invalidate_tight_binding_model(component)
         except Exception:
             _restore_builder_state(component, before)
             raise

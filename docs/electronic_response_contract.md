@@ -343,15 +343,15 @@ transitions at once.
 | package or format | planned role | dependency policy |
 | --- | --- | --- |
 | Wannier90 | native import of `*_tb.dat` or `*_hr.dat` with associated lattice, center, and replica files | no Wannier90 runtime dependency |
-| PythTB | optional model adapter and comparison oracle | optional; not a core dependency |
-| ASE | optional structure and band-path adapter | optional |
-| pymatgen | optional structure, band-result, and path adapter | optional |
-| SeeK-path | automatic crystallographic high-symmetry paths | candidate for a focused optional extra |
+| PythTB | comparison oracle only in the current roadmap | no adapter or core dependency |
+| ASE | reference for structure and band-path conventions | no current importer |
+| pymatgen | reference for structure, band-result, and path conventions | no current importer |
+| Seek-path | automatic Hinuma/HPKOT crystallographic high-symmetry paths | focused core dependency |
 | TBmodels or sisl | comparison of Wannier interpolation and edge cases | development-time oracle unless a later use case justifies an adapter |
 
-Manual high-symmetry paths remain available without an optional package. An
-automatically generated path is resolved once and serialized with its provider,
-convention, version, and symmetry tolerances.
+Manual high-symmetry paths remain available. An automatically generated path
+is resolved once and serialized with its provider, convention, version, and
+symmetry tolerance.
 
 Wannier90 text outputs are the interchange boundary; nfit does not perform the
 DFT calculation or wannierization. `*_hr.dat` alone does not contain all

@@ -7,12 +7,12 @@ import pytest
 from nfit import (
     BrillouinZoneViewOptions,
     DataGroup,
-    ElectronicModel,
     brillouin_zone_scene,
     brillouin_zone_script,
     build_brillouin_zone_scene,
     create_model_component,
     primitive_lattice_vectors,
+    standard_band_path,
 )
 from nfit.electronic_builder import (
     add_tight_binding_orbital_manifold,
@@ -126,17 +126,15 @@ def test_component_brillouin_zone_and_script_use_configured_band_path():
 
     scene = brillouin_zone_scene(component)
     assert [node.label for node in scene.path_nodes] == ["Γ", "R"]
-    canonical = ElectronicModel.from_dict(component.config["model_data"])
+    canonical_direct = primitive_lattice_vectors(
+        component.config["crystal"]["lattice"],
+        component.config["crystal"]["spacegroup"],
+    )
     expected_reciprocal = 2.0 * np.pi * np.linalg.inv(
-        canonical.direct_lattice
+        canonical_direct
     ).T
     np.testing.assert_allclose(
         np.asarray(scene.reciprocal_vectors).T,
-        expected_reciprocal,
-    )
-    component.config["crystal"]["lattice"]["a"] = 99.0
-    np.testing.assert_allclose(
-        np.asarray(brillouin_zone_scene(component).reciprocal_vectors).T,
         expected_reciprocal,
     )
     script = brillouin_zone_script(
@@ -203,13 +201,12 @@ def test_basis_vector_surface_and_dashed_modes(monkeypatch):
     from nfit.qt_brillouin_zone_viewer import _render_brillouin_zone
 
     arrows = []
-    lines = []
+    cylinders = []
     fake_pyvista = SimpleNamespace(
         PolyData=lambda points, faces: ("zone", points, faces),
-        Line=lambda start, stop: lines.append(
-            (np.asarray(start), np.asarray(stop))
-        )
-        or ("line", start, stop),
+        Line=lambda start, stop: ("line", start, stop),
+        Cylinder=lambda **kwargs: cylinders.append(kwargs)
+        or ("cylinder", kwargs),
         Arrow=lambda **kwargs: arrows.append(kwargs) or ("arrow", kwargs),
     )
     monkeypatch.setitem(sys.modules, "pyvista", fake_pyvista)
@@ -253,16 +250,24 @@ def test_basis_vector_surface_and_dashed_modes(monkeypatch):
     assert plotter.labels[1] == ("b₁", "b₂", "b₃")
 
     arrows.clear()
-    lines.clear()
+    cylinders.clear()
     _render_brillouin_zone(
         plotter,
         scene,
         BrillouinZoneViewOptions(basis_vector_inside_style="dashed"),
     )
-    assert len(lines) == 21
+    assert len(cylinders) == 21
     assert len(arrows) == 3
     for arrow, vector in zip(arrows, reciprocal, strict=True):
         np.testing.assert_allclose(arrow["start"], vector / 2.0)
+    expected_radius = (
+        BrillouinZoneViewOptions().basis_vector_thickness
+        * np.linalg.norm(reciprocal[0] / 2.0)
+    )
+    assert all(
+        cylinder["radius"] == pytest.approx(expected_radius)
+        for cylinder in cylinders[:7]
+    )
 
 
 def test_zone_renderer_uses_flat_faces_heavy_outline_and_thin_full_vectors(
@@ -282,6 +287,8 @@ def test_zone_renderer_uses_flat_faces_heavy_outline_and_thin_full_vectors(
         def __init__(self):
             self.meshes = []
             self.point_labels = []
+            self.axes = []
+            self.axes_shown = False
 
         def clear(self):
             return None
@@ -301,8 +308,11 @@ def test_zone_renderer_uses_flat_faces_heavy_outline_and_thin_full_vectors(
         def add_point_labels(self, *_args, **kwargs):
             self.point_labels.append(kwargs)
 
-        def add_axes(self, **_kwargs):
-            return None
+        def add_axes(self, **kwargs):
+            self.axes.append(kwargs)
+
+        def show_axes(self):
+            self.axes_shown = True
 
         def reset_camera(self):
             return None
@@ -317,6 +327,7 @@ def test_zone_renderer_uses_flat_faces_heavy_outline_and_thin_full_vectors(
         path_color="#551111",
         cell_surface_opacity=0.25,
         cell_outline_thickness=5.0,
+        show_compass=True,
     )
     _render_brillouin_zone(plotter, scene, options)
 
@@ -333,19 +344,26 @@ def test_zone_renderer_uses_flat_faces_heavy_outline_and_thin_full_vectors(
         assert arguments["shaft_radius"] == options.basis_vector_thickness
         assert arguments["scale"] == np.linalg.norm(vector)
     assert plotter.point_labels[-1]["show_points"] is False
+    assert plotter.point_labels[-1]["font_file"].endswith("DejaVuSans.ttf")
+    assert plotter.axes[-1]["x_color"] == "#FF0000"
+    assert plotter.axes[-1]["y_color"] == "#00A000"
+    assert plotter.axes[-1]["z_color"] == "#0000FF"
+    assert plotter.axes_shown is True
 
 
 def test_zone_viewer_uses_standard_right_settings_panel(monkeypatch, tmp_path):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtCore = pytest.importorskip("PySide6.QtCore")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
     application = QtWidgets.QApplication.instance()
     if application is None:
         application = QtWidgets.QApplication([])
 
     class FakeInteractor:
-        def __init__(self, parent):
+        def __init__(self, parent, **_kwargs):
             self.interactor = QtWidgets.QWidget(parent)
             self.saved_paths = []
+            self.close_count = 0
 
         def setObjectName(self, name):
             self.interactor.setObjectName(name)
@@ -355,10 +373,27 @@ def test_zone_viewer_uses_standard_right_settings_panel(monkeypatch, tmp_path):
                 return np.zeros((12, 16, 3), dtype=np.uint8)
             self.saved_paths.append(path)
 
+        def close(self):
+            self.close_count += 1
+
+    class FakeMainWindow(QtWidgets.QMainWindow):
+        signal_close = QtCore.Signal()
+
+        def __init__(self, parent=None, title=None):
+            super().__init__(parent)
+            self.setWindowTitle(title or "")
+
+        def closeEvent(self, event):
+            self.signal_close.emit()
+            super().closeEvent(event)
+
     monkeypatch.setitem(
         sys.modules,
         "pyvistaqt",
-        SimpleNamespace(QtInteractor=FakeInteractor),
+        SimpleNamespace(
+            MainWindow=FakeMainWindow,
+            QtInteractor=FakeInteractor,
+        ),
     )
     monkeypatch.setattr(
         "nfit.qt_brillouin_zone_viewer._render_brillouin_zone",
@@ -435,4 +470,42 @@ def test_zone_viewer_uses_standard_right_settings_panel(monkeypatch, tmp_path):
     )
     window._nfit_save_figure()
     assert window._nfit_plotter.saved_paths == [str(output_path)]
+    thickness = window.findChild(
+        QtWidgets.QLineEdit,
+        "brillouin_zone_basis_thickness",
+    )
+    thickness.setText("0.009")
+    thickness.editingFinished.emit()
+    assert window._nfit_view_options.basis_vector_thickness == pytest.approx(
+        0.009
+    )
     window.close()
+    assert window._nfit_plotter.close_count == 1
+
+
+def test_hinuma_standard_path_uses_primitive_reciprocal_coordinates():
+    crystal = {
+        "lattice": {
+            "a": 8.0,
+            "b": 8.0,
+            "c": 8.0,
+            "alpha": 90.0,
+            "beta": 90.0,
+            "gamma": 90.0,
+        },
+        "spacegroup": "F d -3 m:2",
+        "sites": [
+            {
+                "label": "M1",
+                "element": "Fe",
+                "position": [0.0, 0.0, 0.0],
+            }
+        ],
+    }
+
+    path = standard_band_path(crystal)
+    labels = {node["label"] for node in path}
+    assert {"Γ", "X", "L", "W"}.issubset(labels)
+    x_node = next(node for node in path if node["label"] == "X")
+    assert x_node["k"] != [0.5, 0.0, 0.0]
+    assert any(bool(node.get("break_before", False)) for node in path)

@@ -25,7 +25,7 @@ def show_electronic_figure(
         FigureCanvasQTAgg,
         NavigationToolbar2QT,
     )
-    from PySide6 import QtWidgets
+    from PySide6 import QtGui, QtWidgets
 
     try:
         title = _VIEWER_TITLES[viewer_key]
@@ -61,5 +61,11 @@ def show_electronic_figure(
     window._nfit_figure = figure
     window._nfit_canvas = canvas
     window._nfit_settings_panel = settings
+    close_shortcut = QtGui.QShortcut(
+        QtGui.QKeySequence.StandardKey.Close,
+        window,
+    )
+    close_shortcut.activated.connect(window.close)
+    window._nfit_close_shortcut = close_shortcut
     window.show()
     return window

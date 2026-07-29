@@ -1254,6 +1254,40 @@ def _register_builtin_models() -> None:
                     "{}",
                 ),
                 _config_field(
+                    "model_stale",
+                    False,
+                    (
+                        "Whether compact builder edits have invalidated the "
+                        "cached canonical Hamiltonian."
+                    ),
+                    "Boolean derived-cache state; calculations resolve it lazily.",
+                    "bool",
+                    "false",
+                ),
+                _config_field(
+                    "use_primitive_cell",
+                    True,
+                    (
+                        "Fold GUI-built conventional-cell Hamiltonians onto "
+                        "the primitive translation lattice before evaluation."
+                    ),
+                    "Boolean; disable only for diagnostic comparison.",
+                    "bool",
+                    "true",
+                ),
+                _config_field(
+                    "hopping_parameterization",
+                    "slater_koster",
+                    (
+                        "Basis used for GUI-generated hopping coefficients: "
+                        "compact two-centre Slater-Koster channels or the full "
+                        "space-group-allowed matrix basis."
+                    ),
+                    "Either slater_koster or general.",
+                    "str",
+                    "slater_koster",
+                ),
+                _config_field(
                     "crystal",
                     {
                         "lattice": {
@@ -1422,6 +1456,31 @@ def _register_builtin_models() -> None:
                     "list",
                     '[{"label": "G", "k": [0, 0, 0]}, '
                     '{"label": "X", "k": [0.5, 0, 0]}]',
+                ),
+                _config_field(
+                    "band_path_convention",
+                    "hinuma",
+                    (
+                        "Source convention for the configured high-symmetry "
+                        "path."
+                    ),
+                    "Either manual or hinuma.",
+                    "str",
+                    "hinuma",
+                ),
+                _config_field(
+                    "band_path_metadata",
+                    {},
+                    (
+                        "Provider, version, convention, and tolerance used to "
+                        "generate an automatic high-symmetry path."
+                    ),
+                    "JSON dictionary; empty for a manual path.",
+                    "dict",
+                    (
+                        '{"provider": "seekpath", "provider_version": "2.2.1", '
+                        '"convention": "HPKOT", "symprec": 1e-5}'
+                    ),
                 ),
                 _config_field(
                     "band_points_per_segment",

@@ -178,10 +178,17 @@ def tight_binding_band_structure(component: Any) -> BandResult:
         str(item.get("label", f"K{index}")) if isinstance(item, dict) else f"K{index}"
         for index, item in enumerate(raw_nodes)
     ]
+    breaks = [
+        bool(item.get("break_before", False))
+        if isinstance(item, dict)
+        else False
+        for item in raw_nodes
+    ]
     sampling = band_path(
         model,
         nodes,
         labels=labels,
+        break_before=breaks,
         points_per_segment=int(config.get("band_points_per_segment", 60)),
         coordinate_reciprocal_lattice=band_path_reciprocal_lattice(component),
     )
@@ -459,13 +466,19 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
             else f"K{index}"
             for index, item in enumerate(raw_nodes)
         ]
+        breaks = [
+            bool(item.get("break_before", False))
+            if isinstance(item, dict)
+            else False
+            for item in raw_nodes
+        ]
         lines.extend(
             [
                 "from nfit import band_path, calculate_bands",
                 "from nfit.model_plots import render_band_structure",
                 "path_reciprocal_lattice = "
                 f"{band_path_reciprocal_lattice(component).tolist()!r}",
-                f"sampling = band_path(model, {nodes!r}, labels={labels!r}, points_per_segment={int(config.get('band_points_per_segment', 60))!r}, coordinate_reciprocal_lattice=path_reciprocal_lattice)",
+                f"sampling = band_path(model, {nodes!r}, labels={labels!r}, break_before={breaks!r}, points_per_segment={int(config.get('band_points_per_segment', 60))!r}, coordinate_reciprocal_lattice=path_reciprocal_lattice)",
                 f"result = calculate_bands(model, sampling, chemical_potential_meV=chemical_potential_meV, projections={projections!r}, include_eigenvectors=False)",
                 "figure, axis = render_band_structure(result, energy_unit=energy_unit)",
             ]

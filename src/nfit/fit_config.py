@@ -246,6 +246,18 @@ def _validate_tight_binding_config(component: Any) -> None:
 
     config = component.config
     normalize_electronic_energy_unit(config.get("electronic_energy_unit", "eV"))
+    hopping_parameterization = str(
+        config.get("hopping_parameterization", "slater_koster")
+    )
+    if hopping_parameterization not in {"slater_koster", "general"}:
+        raise ValueError(
+            "hopping_parameterization must be 'slater_koster' or 'general'"
+        )
+    path_convention = str(config.get("band_path_convention", "hinuma"))
+    if path_convention not in {"hinuma", "manual"}:
+        raise ValueError("band_path_convention must be 'hinuma' or 'manual'")
+    if not isinstance(config.get("band_path_metadata", {}), Mapping):
+        raise ValueError("band_path_metadata must be a mapping")
     energy_names = (
         "chemical_potential_meV",
         "dos_energy_min_meV",

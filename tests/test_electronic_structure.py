@@ -197,6 +197,9 @@ def test_named_hopping_parameters_return_new_models():
     assert np.linalg.eigvalsh(model.hamiltonian([0.0, 0.0, 0.0]))[0] == -15.0
     assert np.linalg.eigvalsh(changed.hamiltonian([0.0, 0.0, 0.0]))[0] == -35.0
     assert changed.content_digest != model.content_digest
+    assert changed.translations is model.translations
+    assert changed.hamiltonian_blocks is model.hamiltonian_blocks
+    assert changed.parameter_blocks["t"] is model.parameter_blocks["t"]
 
 
 def test_manual_builder_converts_declared_electronic_units_once():
