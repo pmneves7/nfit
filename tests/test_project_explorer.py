@@ -1078,6 +1078,7 @@ def test_project_explorer_adds_and_edits_models(monkeypatch):
     assert config_group is not None
     assert model_scroll is not None
     assert model_scroll.widget() is explorer.model_parameter_widget
+    assert explorer.details_scroll.isHidden()
     right_layout = model_scroll.parentWidget().layout()
     assert right_layout.stretch(right_layout.indexOf(model_scroll)) > right_layout.stretch(
         right_layout.indexOf(explorer.details_scroll)

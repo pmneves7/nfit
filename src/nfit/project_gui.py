@@ -13065,6 +13065,10 @@ class NfitProjectExplorer:
         self.mask_parameter_widget.setVisible(mask_editing)
         self.model_type_combo.setVisible(role == "model")
         self.model_parameter_scroll.setVisible(role == "model")
+        # The dedicated model editor already contains the selected model's
+        # settings. Let it use the generic-details area rather than leaving a
+        # redundant model summary below the scrollable controls.
+        self.details_scroll.setVisible(role != "model")
         self.fit_editor_widget.setVisible(role == "fit" and fit_entry is not None)
         self.fit_now_button.setVisible(role == "fit" and fit_entry is not None)
         self.fit_corner_button.setVisible(
