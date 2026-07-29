@@ -13,7 +13,7 @@ import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 import numpy as np
@@ -1808,6 +1808,255 @@ def _component_hopping_orbits(component: Any) -> tuple[BondOrbit, ...]:
     return tuple(orbits_from_config(component.config.get("spatial_orbits", ())))
 
 
+def tight_binding_parameter_terms(
+    component: Any,
+) -> tuple[OnsiteInvariant | HoppingInvariant, ...]:
+    """Return active named Hamiltonian terms in stable builder order."""
+
+    if getattr(component, "type", None) != "tight_binding":
+        raise TypeError("tight-binding parameters require a tight_binding component")
+    terms = (*_component_terms(component), *_component_hopping_terms(component))
+    names = [term.identifier for term in terms]
+    if len(names) != len(set(names)):
+        raise ValueError("tight-binding parameter identifiers must be unique")
+    return terms
+
+
+def tight_binding_parameter_names(component: Any) -> tuple[str, ...]:
+    """Return stable optimizer names for active onsite and hopping terms."""
+
+    return tuple(term.identifier for term in tight_binding_parameter_terms(component))
+
+
+def tight_binding_parameter_labels(component: Any) -> dict[str, str]:
+    """Return stable parameter identifier -> descriptive builder label."""
+
+    return {
+        term.identifier: term.label
+        for term in tight_binding_parameter_terms(component)
+    }
+
+
+def _builder_state_snapshot(component: Any) -> dict[str, Any]:
+    return {
+        name: deepcopy(getattr(component, name))
+        for name in (
+            "config",
+            "parameters",
+            "fit_parameters",
+            "limits",
+            "sharing",
+            "metadata",
+        )
+    }
+
+
+def _restore_builder_state(component: Any, state: Mapping[str, Any]) -> None:
+    for name, values in state.items():
+        mapping = getattr(component, name)
+        mapping.clear()
+        mapping.update(values)
+
+
+def _term_with_parameter_state(
+    term: OnsiteInvariant | HoppingInvariant,
+    component: Any,
+) -> OnsiteInvariant | HoppingInvariant:
+    name = term.identifier
+    value = float(component.parameters.get(name, term.value_meV))
+    raw_bounds = component.limits.get(name, term.bounds_meV)
+    bounds = (
+        tuple(raw_bounds)
+        if isinstance(raw_bounds, (list, tuple)) and len(raw_bounds) == 2
+        else term.bounds_meV
+    )
+    return replace(
+        term,
+        value_meV=value,
+        bounds_meV=(
+            None if bounds[0] in (None, "") else float(bounds[0]),
+            None if bounds[1] in (None, "") else float(bounds[1]),
+        ),
+        fit=bool(component.fit_parameters.get(name, term.fit)),
+    )
+
+
+def _adopt_term_parameter_state(
+    component: Any,
+    terms: Sequence[OnsiteInvariant | HoppingInvariant],
+) -> None:
+    for term in terms:
+        component.parameters[term.identifier] = float(term.value_meV)
+        component.fit_parameters[term.identifier] = bool(term.fit)
+        if term.bounds_meV == (None, None):
+            component.limits.pop(term.identifier, None)
+        else:
+            component.limits[term.identifier] = list(term.bounds_meV)
+        component.sharing.setdefault(
+            term.identifier,
+            {"mode": "global", "groups": {}},
+        )
+
+
+def reconcile_tight_binding_parameters(component: Any) -> tuple[str, ...]:
+    """Synchronize builder terms with common parameter, fit, and sharing state.
+
+    The common :class:`ModelComponentSpec` mappings are authoritative after a
+    parameter has been installed. Term records retain a mirrored copy so that
+    the high-level builder remains independently serializable and readable.
+    """
+
+    terms = tight_binding_parameter_terms(component)
+    names = tuple(term.identifier for term in terms)
+    keep = set(names)
+    metadata = component.metadata if isinstance(component.metadata, dict) else {}
+    previous = {
+        str(name)
+        for name in metadata.get("tight_binding_parameter_ids", ())
+    }
+    for mapping in (
+        component.parameters,
+        component.fit_parameters,
+        component.limits,
+        component.sharing,
+    ):
+        if isinstance(mapping, dict):
+            for name in previous - keep:
+                mapping.pop(name, None)
+
+    for term in terms:
+        name = term.identifier
+        component.parameters.setdefault(name, float(term.value_meV))
+        component.fit_parameters.setdefault(name, bool(term.fit))
+        if name not in component.limits and term.bounds_meV != (None, None):
+            component.limits[name] = list(term.bounds_meV)
+        entry = component.sharing.get(name)
+        if not isinstance(entry, dict) or entry.get("mode") not in {
+            "global",
+            "per_dataset",
+            "grouped",
+        }:
+            component.sharing[name] = {"mode": "global", "groups": {}}
+        else:
+            entry.setdefault("groups", {})
+
+    updated_onsite = [
+        _term_with_parameter_state(term, component)
+        for term in _component_terms(component)
+    ]
+    updated_hoppings = [
+        _term_with_parameter_state(term, component)
+        for term in _component_hopping_terms(component)
+    ]
+    component.config["onsite_terms"] = [term.to_dict() for term in updated_onsite]
+    component.config["hopping_terms"] = [
+        term.to_dict() for term in updated_hoppings
+    ]
+    active_hoppings = {term.identifier: term for term in updated_hoppings}
+    component.config["hopping_candidates"] = [
+        active_hoppings.get(term.identifier, term).to_dict()
+        for term in _component_hopping_candidates(component)
+    ]
+    metadata["tight_binding_parameter_ids"] = list(names)
+    component.metadata = metadata
+    return names
+
+
+def set_tight_binding_parameter_state(
+    component: Any,
+    *,
+    values_meV: Mapping[str, float] | None = None,
+    fit_parameters: Mapping[str, bool] | None = None,
+    limits_meV: Mapping[str, Sequence[float | None]] | None = None,
+    sharing: Mapping[str, Mapping[str, Any]] | None = None,
+) -> ElectronicModel:
+    """Update common tight-binding parameter state and rebuild the model.
+
+    Values and bounds at this API boundary are canonical meV. The specialized
+    term setters remain the display-unit boundary used by the GUI.
+    """
+
+    before = _builder_state_snapshot(component)
+    try:
+        return _set_tight_binding_parameter_state_unchecked(
+            component,
+            values_meV=values_meV,
+            fit_parameters=fit_parameters,
+            limits_meV=limits_meV,
+            sharing=sharing,
+        )
+    except Exception:
+        _restore_builder_state(component, before)
+        raise
+
+
+def _set_tight_binding_parameter_state_unchecked(
+    component: Any,
+    *,
+    values_meV: Mapping[str, float] | None,
+    fit_parameters: Mapping[str, bool] | None,
+    limits_meV: Mapping[str, Sequence[float | None]] | None,
+    sharing: Mapping[str, Mapping[str, Any]] | None,
+) -> ElectronicModel:
+    names = set(reconcile_tight_binding_parameters(component))
+    supplied = set(values_meV or ())
+    supplied.update(fit_parameters or ())
+    supplied.update(limits_meV or ())
+    supplied.update(sharing or ())
+    unknown = supplied - names
+    if unknown:
+        raise KeyError(f"unknown tight-binding parameter {sorted(unknown)[0]!r}")
+
+    for name, value in (values_meV or {}).items():
+        numeric = float(value)
+        if not np.isfinite(numeric):
+            raise ValueError("tight-binding parameter values must be finite")
+        component.parameters[name] = numeric
+    for name, selected in (fit_parameters or {}).items():
+        component.fit_parameters[name] = bool(selected)
+    for name, raw in (limits_meV or {}).items():
+        if (
+            isinstance(raw, (str, bytes))
+            or not isinstance(raw, Sequence)
+            or len(raw) != 2
+        ):
+            raise ValueError("tight-binding limits must contain lower and upper")
+        bounds = [
+            None if value is None else float(value)
+            for value in raw
+        ]
+        if any(value is not None and not np.isfinite(value) for value in bounds):
+            raise ValueError("tight-binding limits must be finite or None")
+        if (
+            bounds[0] is not None
+            and bounds[1] is not None
+            and bounds[0] >= bounds[1]
+        ):
+            raise ValueError("tight-binding lower limits must be below upper limits")
+        if bounds == [None, None]:
+            component.limits.pop(name, None)
+        else:
+            component.limits[name] = bounds
+    for name, raw in (sharing or {}).items():
+        if not isinstance(raw, Mapping):
+            raise ValueError("tight-binding sharing entries must be mappings")
+        mode = str(raw.get("mode", "global"))
+        if mode not in {"global", "per_dataset", "grouped"}:
+            raise ValueError(f"unsupported tight-binding sharing mode {mode!r}")
+        groups = raw.get("groups", {})
+        if not isinstance(groups, Mapping):
+            raise ValueError("tight-binding sharing groups must be a mapping")
+        component.sharing[name] = {
+            "mode": mode,
+            "groups": {
+                str(dataset): str(group)
+                for dataset, group in groups.items()
+            },
+        }
+    reconcile_tight_binding_parameters(component)
+    return resolve_tight_binding_builder(component)
+
+
 def _install_hopping_generation(
     component: Any,
     generation: HoppingGeneration,
@@ -1845,6 +2094,7 @@ def resolve_tight_binding_builder(component: Any) -> ElectronicModel:
 
     if getattr(component, "type", None) != "tight_binding":
         raise TypeError("the orbital builder requires a tight_binding component")
+    reconcile_tight_binding_parameters(component)
     model = build_orbital_electronic_model(
         component.config["crystal"],
         _component_manifolds(component),
@@ -1880,7 +2130,7 @@ def set_tight_binding_orbital_manifolds(
     )
     if len({item.label for item in items}) != len(items):
         raise ValueError("orbital manifold labels must be unique")
-    before = deepcopy(component.config)
+    before = _builder_state_snapshot(component)
     try:
         component.config["orbital_manifolds"] = [item.to_dict() for item in items]
         if generate_terms:
@@ -1912,9 +2162,9 @@ def set_tight_binding_orbital_manifolds(
             component.config["expanded_crystal_sites"] = []
             component.config["model_data"] = {}
             component.config["model_digest"] = ""
+            reconcile_tight_binding_parameters(component)
     except Exception:
-        component.config.clear()
-        component.config.update(before)
+        _restore_builder_state(component, before)
         raise
     return items
 
@@ -1952,7 +2202,7 @@ def regenerate_tight_binding_onsite_terms(
 ) -> tuple[OnsiteInvariant, ...]:
     """Regenerate symmetry invariants and preserve stable values and bounds."""
 
-    before = deepcopy(component.config)
+    before = _builder_state_snapshot(component)
     try:
         terms = generate_onsite_terms(
             component.config["crystal"],
@@ -1972,8 +2222,7 @@ def regenerate_tight_binding_onsite_terms(
         if terms:
             resolve_tight_binding_builder(component)
     except Exception:
-        component.config.clear()
-        component.config.update(before)
+        _restore_builder_state(component, before)
         raise
     return terms
 
@@ -1993,7 +2242,7 @@ def regenerate_tight_binding_hopping_terms(
     )
     if cutoff <= 0.0:
         raise ValueError("hopping cutoff must be positive")
-    before = deepcopy(component.config)
+    before = _builder_state_snapshot(component)
     try:
         generation = generate_hopping_terms(
             component.config["crystal"],
@@ -2005,8 +2254,7 @@ def regenerate_tight_binding_hopping_terms(
         _install_hopping_generation(component, generation)
         resolve_tight_binding_builder(component)
     except Exception:
-        component.config.clear()
-        component.config.update(before)
+        _restore_builder_state(component, before)
         raise
     return generation
 
@@ -2032,15 +2280,14 @@ def add_tight_binding_hopping_term(
     )
     if candidate is None:
         raise KeyError(f"unknown hopping candidate {identifier!r}")
-    before = deepcopy(component.config)
+    before = _builder_state_snapshot(component)
     try:
         component.config["hopping_terms"] = [
             item.to_dict() for item in (*active, candidate)
         ]
         resolve_tight_binding_builder(component)
     except Exception:
-        component.config.clear()
-        component.config.update(before)
+        _restore_builder_state(component, before)
         raise
     return candidate
 
@@ -2056,7 +2303,7 @@ def remove_tight_binding_hopping_term(
     retained = [term for term in active if term.identifier != key]
     if len(retained) == len(active):
         raise KeyError(f"unknown active hopping term {identifier!r}")
-    before = deepcopy(component.config)
+    before = _builder_state_snapshot(component)
     try:
         removed = next(term for term in active if term.identifier == key)
         candidates = list(_component_hopping_candidates(component))
@@ -2073,8 +2320,7 @@ def remove_tight_binding_hopping_term(
         ]
         resolve_tight_binding_builder(component)
     except Exception:
-        component.config.clear()
-        component.config.update(before)
+        _restore_builder_state(component, before)
         raise
 
 
@@ -2127,13 +2373,13 @@ def set_tight_binding_onsite_term(
             source=term.source,
         )
         terms[index] = updated
-        before = deepcopy(component.config)
+        before = _builder_state_snapshot(component)
         try:
+            _adopt_term_parameter_state(component, (updated,))
             component.config["onsite_terms"] = [item.to_dict() for item in terms]
             resolve_tight_binding_builder(component)
         except Exception:
-            component.config.clear()
-            component.config.update(before)
+            _restore_builder_state(component, before)
             raise
         return updated
     raise KeyError(f"unknown onsite term {identifier!r}")
@@ -2190,8 +2436,9 @@ def set_tight_binding_hopping_term(
             source=term.source,
         )
         terms[index] = updated
-        before = deepcopy(component.config)
+        before = _builder_state_snapshot(component)
         try:
+            _adopt_term_parameter_state(component, (updated,))
             candidates = [
                 updated if item.identifier == updated.identifier else item
                 for item in _component_hopping_candidates(component)
@@ -2208,8 +2455,7 @@ def set_tight_binding_hopping_term(
             ]
             resolve_tight_binding_builder(component)
         except Exception:
-            component.config.clear()
-            component.config.update(before)
+            _restore_builder_state(component, before)
             raise
         return updated
     raise KeyError(f"unknown hopping term {identifier!r}")
@@ -2225,7 +2471,7 @@ def configure_tight_binding_builder(
 ) -> ElectronicModel:
     """Rebuild a component from editable high-level builder configuration."""
 
-    before = deepcopy(component.config)
+    before = _builder_state_snapshot(component)
     try:
         set_tight_binding_orbital_manifolds(
             component, manifolds, generate_terms=True
@@ -2266,6 +2512,7 @@ def configure_tight_binding_builder(
                     )
                 )
             component.config["onsite_terms"] = [item.to_dict() for item in merged]
+            _adopt_term_parameter_state(component, merged)
         if hopping_cutoff_angstrom is not None:
             generation = regenerate_tight_binding_hopping_terms(
                 component,
@@ -2319,6 +2566,7 @@ def configure_tight_binding_builder(
                 component.config["hopping_terms"] = [
                     item.to_dict() for item in merged_hoppings
                 ]
+                _adopt_term_parameter_state(component, merged_hoppings)
                 candidate_values = {
                     item.identifier: item for item in merged_hoppings
                 }
@@ -2328,6 +2576,5 @@ def configure_tight_binding_builder(
                 ]
         return resolve_tight_binding_builder(component)
     except Exception:
-        component.config.clear()
-        component.config.update(before)
+        _restore_builder_state(component, before)
         raise

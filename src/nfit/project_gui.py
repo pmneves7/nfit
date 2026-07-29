@@ -1977,14 +1977,19 @@ _MODEL_PARAMETER_DEFAULTS = {
 
 
 def reconcile_model_orbit_parameters(model: ModelComponentSpec) -> None:
-    """Align a model's fit parameters with its configured interactions.
+    """Align a model's fit parameters with its configuration-derived terms.
 
-    Covers the Heisenberg orbits plus any enabled tensor terms (anisotropic
-    exchange, single-ion anisotropy, dipole strength, Zeeman). Values of
-    parameters whose names persist are kept; new ones start at their default
-    (0 meV / fixed, or the physical Zeeman defaults); parameters of removed
-    interactions are dropped along with their fit flags, limits, and sharing.
+    Tight binding delegates to its builder-state synchronizer. For Heisenberg
+    RPA this covers exchange orbits plus enabled tensor, dipole, and Zeeman
+    terms. Values of parameters whose names persist are kept; parameters of
+    removed terms are dropped with their fit flags, limits, and sharing.
     """
+
+    if model.type == "tight_binding":
+        from .electronic_builder import reconcile_tight_binding_parameters
+
+        reconcile_tight_binding_parameters(model)
+        return
 
     names = list(component_parameter_names(model))
     keep = set(names)
@@ -2060,6 +2065,9 @@ def set_model_crystal(
                 model.config["expanded_crystal_sites"] = []
                 model.config["model_data"] = {}
                 model.config["model_digest"] = ""
+                from .electronic_builder import reconcile_tight_binding_parameters
+
+                reconcile_tight_binding_parameters(model)
     elif model.type == "heisenberg_rpa":
         model.config["magnetic_sites"] = []
         for name in ("orbits", "site_positions", "site_rotations"):
@@ -18509,7 +18517,22 @@ class NfitProjectExplorer:
         fit_layout.addWidget(header_label, 0, 2)
         fit_layout.addWidget(header_min, 0, 3)
         fit_layout.addWidget(header_max, 0, 4)
-        for index, parameter_name in enumerate(model_parameter_names(model)):
+        parameter_names = model_parameter_names(model)
+        if model.type == "tight_binding":
+            note = QtWidgets.QLabel(
+                "Onsite and hopping coefficients use the common parameter, "
+                "bounds, fit-selection, and sharing machinery. Edit them in "
+                "their orbital-aware tables below."
+            )
+            note.setObjectName("tight_binding_fit_parameter_note")
+            note.setWordWrap(True)
+            note.setToolTip(
+                "The tight-binding component is calculation-only until a "
+                "compatible electronic-response model supplies a dataset observable."
+            )
+            fit_layout.addWidget(note, 1, 0, 1, 8)
+            parameter_names = []
+        for index, parameter_name in enumerate(parameter_names):
             row = index + 1
             label = QtWidgets.QLabel(parameter_name)
             editor = QtWidgets.QLineEdit(_parameter_to_text(model.parameters.get(parameter_name, "")))
@@ -19229,6 +19252,50 @@ class NfitProjectExplorer:
         layout.addWidget(status, len(manifolds) + 3, 0, 1, len(headers))
         self.model_parameter_layout.addWidget(group, 5, 0, 1, 4)
 
+    def _tight_binding_sharing_controls(
+        self,
+        model: ModelComponentSpec,
+        identifier: str,
+        *,
+        object_prefix: str,
+    ) -> tuple[Any, Any]:
+        """Build common sharing controls for one orbital-aware parameter row."""
+
+        from PySide6 import QtWidgets
+
+        sharing = QtWidgets.QComboBox()
+        sharing.setObjectName(f"{object_prefix}_sharing")
+        sharing.addItem("Global", "global")
+        sharing.addItem("Per dataset", "per_dataset")
+        sharing.addItem("Grouped", "grouped")
+        mode = sharing_mode(model, identifier)
+        sharing.setCurrentIndex(max(sharing.findData(mode), 0))
+        sharing.setToolTip(
+            "Choose whether a compatible response fit uses one coefficient for "
+            "all datasets, one per dataset, or values tied by named groups."
+        )
+        groups = QtWidgets.QLineEdit(_sharing_groups_text(model, identifier))
+        groups.setObjectName(f"{object_prefix}_sharing_groups")
+        groups.setPlaceholderText("scan1=A, scan2=A")
+        groups.setVisible(mode == "grouped")
+        groups.setToolTip(
+            "For grouped sharing, enter comma-separated dataset=group pairs. "
+            "Unlisted datasets remain independent."
+        )
+        sharing.currentIndexChanged.connect(
+            lambda _index, identifier=identifier, combo=sharing: self._set_model_sharing_mode(
+                identifier,
+                str(combo.currentData()),
+            )
+        )
+        groups.editingFinished.connect(
+            lambda identifier=identifier, editor=groups: self._set_model_sharing_groups(
+                identifier,
+                editor.text(),
+            )
+        )
+        return sharing, groups
+
     def _build_tight_binding_onsite_editor(
         self, model: ModelComponentSpec
     ) -> None:
@@ -19260,7 +19327,9 @@ class NfitProjectExplorer:
             f"Value ({unit})",
             f"Lower ({unit})",
             f"Upper ({unit})",
-            "Fit later",
+            "Fit",
+            "Sharing",
+            "Groups",
             "Matrix basis",
         )
         for column, text in enumerate(headers):
@@ -19305,8 +19374,8 @@ class NfitProjectExplorer:
                     f"tight_binding_onsite_{field}_{index}"
                 )
                 editor.setToolTip(
-                    f"Optional future fit bound in {unit}. Empty means unbounded. "
-                    "Stage 3.2 stores this choice; optimizer integration is Stage 3.4."
+                    f"Optional fit bound in {unit}. Empty means unbounded. "
+                    "The value is stored in the component's common bounds state."
                 )
                 editor.editingFinished.connect(
                     lambda identifier=term.identifier, field=field, editor=editor: self._set_tight_binding_onsite_field(
@@ -19318,9 +19387,9 @@ class NfitProjectExplorer:
             fit.setObjectName(f"tight_binding_onsite_fit_{index}")
             fit.setChecked(term.fit)
             fit.setToolTip(
-                "Record that this term should be fitted once an electronic "
-                "response supplies a dataset observable. Stage 3.2 does not "
-                "send it to the optimizer."
+                "Vary this coefficient when a compatible electronic-response "
+                "component supplies a dataset observable. Tight binding alone "
+                "remains calculation-only."
             )
             fit.toggled.connect(
                 lambda checked, identifier=term.identifier: self._set_tight_binding_onsite_fit(
@@ -19328,6 +19397,13 @@ class NfitProjectExplorer:
                 )
             )
             layout.addWidget(fit, row, 6)
+            sharing, groups = self._tight_binding_sharing_controls(
+                model,
+                term.identifier,
+                object_prefix=f"tight_binding_onsite_{index}",
+            )
+            layout.addWidget(sharing, row, 7)
+            layout.addWidget(groups, row, 8)
             matrix = QtWidgets.QLabel(
                 f"{len(term.basis_labels)}x{len(term.basis_labels)}; {term.source}"
             )
@@ -19336,7 +19412,7 @@ class NfitProjectExplorer:
                 f"Ordered local basis: {', '.join(term.basis_labels)}\n"
                 f"Matrix:\n{np.array2string(term.matrix, precision=4)}"
             )
-            layout.addWidget(matrix, row, 7)
+            layout.addWidget(matrix, row, 9)
         status_text = (
             f"{len(terms)} onsite invariant(s)."
             if terms
@@ -19527,7 +19603,9 @@ class NfitProjectExplorer:
             f"Value ({unit})",
             f"Lower ({unit})",
             f"Upper ({unit})",
-            "Fit later",
+            "Fit",
+            "Sharing",
+            "Groups",
             "Matrix basis",
             "",
         )
@@ -19582,7 +19660,8 @@ class NfitProjectExplorer:
                     f"tight_binding_hopping_{field}_{index}"
                 )
                 editor.setToolTip(
-                    f"Optional future fit bound in {unit}; empty is unbounded."
+                    f"Optional fit bound in {unit}; empty is unbounded. The "
+                    "canonical bound is shared with the fitting machinery."
                 )
                 editor.editingFinished.connect(
                     lambda identifier=term.identifier, field=field,
@@ -19597,8 +19676,9 @@ class NfitProjectExplorer:
             fit.setObjectName(f"tight_binding_hopping_fit_{index}")
             fit.setChecked(term.fit)
             fit.setToolTip(
-                "Record this coefficient for fitting once an electronic "
-                "response supplies a compatible dataset observable."
+                "Vary this coefficient when a compatible electronic-response "
+                "component supplies a dataset observable. Tight binding alone "
+                "remains calculation-only."
             )
             fit.toggled.connect(
                 lambda checked, identifier=term.identifier: self._set_tight_binding_hopping_fit(
@@ -19607,6 +19687,13 @@ class NfitProjectExplorer:
                 )
             )
             layout.addWidget(fit, row, 7)
+            sharing, groups = self._tight_binding_sharing_controls(
+                model,
+                term.identifier,
+                object_prefix=f"tight_binding_hopping_{index}",
+            )
+            layout.addWidget(sharing, row, 8)
+            layout.addWidget(groups, row, 9)
             matrix = QtWidgets.QLabel(
                 f"{len(term.basis_i)}x{len(term.basis_j)}"
             )
@@ -19618,7 +19705,7 @@ class NfitProjectExplorer:
                 f"Columns: {', '.join(term.basis_j)}\n"
                 f"Matrix:\n{np.array2string(term.matrix, precision=4)}"
             )
-            layout.addWidget(matrix, row, 8)
+            layout.addWidget(matrix, row, 10)
             remove = QtWidgets.QPushButton("Remove")
             remove.setObjectName(f"tight_binding_hopping_remove_{index}")
             remove.setToolTip(
@@ -19630,7 +19717,7 @@ class NfitProjectExplorer:
                     identifier
                 )
             )
-            layout.addWidget(remove, row, 9)
+            layout.addWidget(remove, row, 11)
         status = QtWidgets.QLabel(
             f"{len(candidates)} available suggestion(s); "
             f"{len(active)} active hopping coefficient(s) on "
@@ -19689,6 +19776,9 @@ class NfitProjectExplorer:
         model.config["spatial_orbits"] = []
         model.config["site_positions"] = []
         model.config["expanded_crystal_sites"] = []
+        from .electronic_builder import reconcile_tight_binding_parameters
+
+        reconcile_tight_binding_parameters(model)
         owner = self._group_for_model(model)
         if owner is not None:
             self._record_data_group_state_change(owner)
@@ -19795,6 +19885,10 @@ class NfitProjectExplorer:
                     or None
                 ),
                 hopping_terms=model.config.get("hopping_terms", ()),
+                parameter_values_meV=model.parameters,
+                fit_parameters=model.fit_parameters,
+                parameter_limits_meV=model.limits,
+                parameter_sharing=model.sharing,
                 expected_model_digest=str(model.config.get("model_digest", "")),
             )
         except Exception as exc:

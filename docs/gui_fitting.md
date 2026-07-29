@@ -52,11 +52,14 @@ spherical-harmonic, or custom manifolds with explicit local frames. For an
 $s$, $p$, $d$, or $f$ shell it identifies the selected site's point group and
 can add one calculated symmetry-closed subspace. **Onsite terms** generates the
 complete symmetry-allowed static onsite basis and stores values, bounds, and
-future fit selections. **Hoppings** selects a distance cutoff and generates a
+fit selections. **Hoppings** selects a distance cutoff and generates a
 suggestion table of symmetry-allowed matrix terms for each spatial bond orbit.
 Each suggestion identifies its source and destination sites and orbitals. Only
 the rows selected and added by the user become active Hamiltonian terms with
-values, bounds, and future fit selections.
+values, bounds, fit selections, and global, per-dataset, or grouped sharing.
+These controls use the same parameter state as other models, although the
+tight-binding component itself remains calculation-only until an electronic
+response supplies a measured-data observable.
 
 **View model in 3D** shows the unit cell, active or ghost sites, orbital
 tokens, local frames, and available hopping or exchange pathways. Atom spheres

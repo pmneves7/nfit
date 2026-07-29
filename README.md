@@ -19,7 +19,9 @@ The package provides:
   of states, Fermi surfaces, shared 3D model-geometry inspection, and
   primitive-cell first-Brillouin-zone views; atoms, orbitals, and bonds in the
   model-geometry viewer are clickable and identified in its side panel, while
-  all electronic viewers use a common plot-plus-settings layout;
+  all electronic viewers use a common plot-plus-settings layout; named onsite
+  and hopping coefficients share the standard bounds, fit-selection,
+  dataset-sharing, report, and script machinery;
 - an extensible model registry shared by fitting, GUI metadata, diagnostics,
   reports, plots, project files, and workflow scripts;
 - simultaneous least-squares fitting with explicit uncertainty conventions,

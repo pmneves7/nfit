@@ -1155,6 +1155,10 @@ def tight_binding_structure_script(
     onsite_terms: Sequence[Mapping[str, Any]] = (),
     hopping_cutoff_angstrom: float | None = None,
     hopping_terms: Sequence[Mapping[str, Any]] = (),
+    parameter_values_meV: Mapping[str, float] | None = None,
+    fit_parameters: Mapping[str, bool] | None = None,
+    parameter_limits_meV: Mapping[str, Sequence[float | None]] | None = None,
+    parameter_sharing: Mapping[str, Mapping[str, Any]] | None = None,
     expected_model_digest: str = "",
 ) -> str:
     """Return an editable script that rebuilds tight-binding builder state."""
@@ -1230,6 +1234,32 @@ def tight_binding_structure_script(
             lines.append(
                 f"assert electronic_model.content_digest == {str(expected_model_digest)!r}"
             )
+        if any(
+            value
+            for value in (
+                parameter_values_meV,
+                fit_parameters,
+                parameter_limits_meV,
+                parameter_sharing,
+            )
+        ):
+            lines.extend(
+                [
+                    "from nfit import set_tight_binding_parameter_state",
+                    "",
+                    "electronic_model = set_tight_binding_parameter_state(",
+                    "    model,",
+                    f"    values_meV={pformat(dict(parameter_values_meV or {}), sort_dicts=True)},",
+                    f"    fit_parameters={pformat(dict(fit_parameters or {}), sort_dicts=True)},",
+                    f"    limits_meV={pformat(dict(parameter_limits_meV or {}), sort_dicts=True)},",
+                    f"    sharing={pformat(dict(parameter_sharing or {}), sort_dicts=True)},",
+                    ")",
+                ]
+            )
+            if expected_model_digest:
+                lines.append(
+                    f"assert electronic_model.content_digest == {str(expected_model_digest)!r}"
+                )
     lines.append("")
     return "\n".join(lines)
 
@@ -1522,3 +1552,56 @@ def import_wannier90(
         },
     )
     return model
+
+
+def electronic_model_from_component(
+    component: Any,
+    *,
+    parameter_values_meV: Mapping[str, float] | None = None,
+) -> ElectronicModel:
+    """Resolve a tight-binding component and optional trial parameter values.
+
+    The stored source digest is checked before overrides are applied. Builder
+    parameters are then installed by replacing only the immutable model's
+    named coefficient mapping, so its symmetry-generated Hamiltonian blocks
+    remain reusable by electronic-response calculations.
+    """
+
+    if getattr(component, "type", None) != "tight_binding":
+        raise TypeError("electronic model resolution requires a tight_binding component")
+    config = component.config if isinstance(component.config, dict) else {}
+    source_path = str(config.get("source_path", "")).strip()
+    if source_path:
+        raw_axes = config.get("periodic_axes", [])
+        model = import_wannier90(
+            source_path,
+            periodic_axes=(
+                None
+                if not raw_axes
+                else tuple(int(value) for value in raw_axes)
+            ),
+        )
+    else:
+        payload = config.get("model_data")
+        if not isinstance(payload, dict) or not payload:
+            raise ValueError(
+                "tight-binding model has no source; import Wannier90 data or "
+                "supply a canonical model_data dictionary"
+            )
+        model = ElectronicModel.from_dict(payload)
+    expected = str(config.get("model_digest", "")).strip()
+    if expected and expected != model.content_digest:
+        raise ValueError("tight-binding source no longer matches its stored digest")
+
+    values = {
+        name: float(component.parameters.get(name, value))
+        for name, value in model.parameter_values.items()
+    }
+    for name, value in (parameter_values_meV or {}).items():
+        if name not in model.parameter_values:
+            raise KeyError(f"unknown electronic-model parameter {name!r}")
+        numeric = float(value)
+        if not np.isfinite(numeric):
+            raise ValueError("electronic-model parameter values must be finite")
+        values[name] = numeric
+    return replace(model, parameter_values=values)

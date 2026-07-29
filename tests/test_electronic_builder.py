@@ -13,6 +13,7 @@ from nfit import (
     add_tight_binding_hopping_term,
     add_tight_binding_orbital_manifold,
     create_model_component,
+    electronic_model_from_component,
     generate_onsite_terms,
     hopping_endpoint_orbitals,
     load_project,
@@ -27,12 +28,14 @@ from nfit import (
     save_project,
     set_tight_binding_hopping_term,
     set_tight_binding_onsite_term,
+    set_tight_binding_parameter_state,
     site_point_group_symbol,
     site_symmetry_harmonic_submanifolds,
     site_symmetry_operations,
     spherical_harmonic_representation,
     tight_binding_structure_script,
 )
+from nfit.fit_config import component_parameter_names
 
 
 def _crystal(spacegroup="P 1"):
@@ -239,6 +242,51 @@ def test_component_builder_resolves_values_project_and_script_round_trip(tmp_pat
     assert component.config["onsite_terms"][0]["value_meV"] == pytest.approx(25.0)
     assert component.config["onsite_terms"][0]["bounds_meV"] == [-200.0, 200.0]
     assert component.config["onsite_terms"][0]["fit"] is True
+    assert component.parameters[first] == pytest.approx(25.0)
+    assert component.limits[first] == [-200.0, 200.0]
+    assert component.fit_parameters[first] is True
+    assert component.sharing[first]["mode"] == "global"
+    assert first in component_parameter_names(component)
+
+    set_tight_binding_parameter_state(
+        component,
+        values_meV={first: 30.0},
+        fit_parameters={first: True},
+        limits_meV={first: (-250.0, 250.0)},
+        sharing={
+            first: {
+                "mode": "grouped",
+                "groups": {"scan1": "low", "scan2": "low"},
+            }
+        },
+    )
+    assert component.config["onsite_terms"][0]["value_meV"] == pytest.approx(30.0)
+    assert component.config["onsite_terms"][0]["bounds_meV"] == [-250.0, 250.0]
+    assert electronic_model_from_component(component).parameter_values[
+        first
+    ] == pytest.approx(30.0)
+    state_before_invalid_update = copy.deepcopy(
+        (
+            component.parameters,
+            component.fit_parameters,
+            component.limits,
+            component.sharing,
+            component.config,
+        )
+    )
+    with pytest.raises(ValueError, match="sharing mode"):
+        set_tight_binding_parameter_state(
+            component,
+            values_meV={first: 99.0},
+            sharing={first: {"mode": "invalid"}},
+        )
+    assert (
+        component.parameters,
+        component.fit_parameters,
+        component.limits,
+        component.sharing,
+        component.config,
+    ) == state_before_invalid_update
 
     project_path = tmp_path / "builder.nfit"
     save_project(NfitProject([group]), project_path)
@@ -246,12 +294,20 @@ def test_component_builder_resolves_values_project_and_script_round_trip(tmp_pat
     assert restored.config["model_digest"] == component.config["model_digest"]
     assert restored.config["orbital_manifolds"] == component.config["orbital_manifolds"]
     assert restored.config["onsite_terms"] == component.config["onsite_terms"]
+    assert restored.parameters == component.parameters
+    assert restored.limits == component.limits
+    assert restored.fit_parameters == component.fit_parameters
+    assert restored.sharing == component.sharing
 
     script = tight_binding_structure_script(
         component.config["crystal"],
         component.config["periodic_axes"] or [0, 1, 2],
         orbital_manifolds=component.config["orbital_manifolds"],
         onsite_terms=component.config["onsite_terms"],
+        parameter_values_meV=component.parameters,
+        fit_parameters=component.fit_parameters,
+        parameter_limits_meV=component.limits,
+        parameter_sharing=component.sharing,
         expected_model_digest=component.config["model_digest"],
     )
     namespace = {}
@@ -261,6 +317,9 @@ def test_component_builder_resolves_values_project_and_script_round_trip(tmp_pat
         == component.config["model_digest"]
     )
     assert namespace["model"].config["onsite_terms"][0]["fit"] is True
+    assert namespace["model"].parameters == component.parameters
+    assert namespace["model"].limits == component.limits
+    assert namespace["model"].sharing == component.sharing
 
 
 def test_symmetry_generated_hopping_resolves_dispersion_and_script_round_trip():
@@ -303,6 +362,9 @@ def test_symmetry_generated_hopping_resolves_dispersion_and_script_round_trip():
         energy_unit="eV",
         fit=True,
     )
+    assert component.parameters[term.identifier] == pytest.approx(-100.0)
+    assert component.fit_parameters[term.identifier] is True
+    assert component.limits[term.identifier] == [-200.0, 0.0]
     hopping_scene = model_geometry_scene(
         component,
         selected_hopping_term=term.identifier,
@@ -340,6 +402,10 @@ def test_symmetry_generated_hopping_resolves_dispersion_and_script_round_trip():
             "hopping_cutoff_angstrom"
         ],
         hopping_terms=component.config["hopping_terms"],
+        parameter_values_meV=component.parameters,
+        fit_parameters=component.fit_parameters,
+        parameter_limits_meV=component.limits,
+        parameter_sharing=component.sharing,
         expected_model_digest=component.config["model_digest"],
     )
     namespace = {}
@@ -354,6 +420,10 @@ def test_symmetry_generated_hopping_resolves_dispersion_and_script_round_trip():
     remove_tight_binding_hopping_term(component, term.identifier)
     assert component.config["hopping_terms"] == []
     assert len(component.config["hopping_candidates"]) == 1
+    assert term.identifier not in component.parameters
+    assert term.identifier not in component.fit_parameters
+    assert term.identifier not in component.limits
+    assert term.identifier not in component.sharing
     add_tight_binding_hopping_term(component, term.identifier)
     restored = component.config["hopping_terms"][0]
     assert restored["value_meV"] == pytest.approx(-100.0)

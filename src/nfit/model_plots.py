@@ -12,15 +12,14 @@ from numpy.typing import ArrayLike
 from .electronic_structure import (
     BandResult,
     DensityOfStatesResult,
-    ElectronicModel,
     FermiSurfaceResult,
     band_path,
     calculate_bands,
     density_of_states,
     electronic_energy_from_meV,
     electronic_energy_to_meV,
+    electronic_model_from_component,
     fermi_surface,
-    import_wannier90,
     k_mesh,
     normalize_electronic_energy_unit,
 )
@@ -129,33 +128,6 @@ def generalized_paramagnon_energy_scan_script(
     )
 
 
-def _electronic_model_from_component(component: Any) -> ElectronicModel:
-    config = component.config if isinstance(component.config, dict) else {}
-    source_path = str(config.get("source_path", "")).strip()
-    if source_path:
-        raw_axes = config.get("periodic_axes", [])
-        model = import_wannier90(
-            source_path,
-            periodic_axes=(
-                None
-                if not raw_axes
-                else tuple(int(value) for value in raw_axes)
-            ),
-        )
-    else:
-        payload = config.get("model_data")
-        if not isinstance(payload, dict) or not payload:
-            raise ValueError(
-                "tight-binding model has no source; import Wannier90 data or "
-                "supply a canonical model_data dictionary"
-            )
-        model = ElectronicModel.from_dict(payload)
-    expected = str(config.get("model_digest", "")).strip()
-    if expected and expected != model.content_digest:
-        raise ValueError("tight-binding source no longer matches its stored digest")
-    return model
-
-
 def _projection_groups(component: Any) -> dict[str, list[int]]:
     config = component.config if isinstance(component.config, dict) else {}
     raw = config.get("projection_groups", {})
@@ -187,7 +159,7 @@ def _with_electronic_display_unit(result: Any, component: Any) -> Any:
 def tight_binding_band_structure(component: Any) -> BandResult:
     """Calculate a configured tight-binding band path for a model component."""
 
-    model = _electronic_model_from_component(component)
+    model = electronic_model_from_component(component)
     config = component.config
     raw_nodes = config.get(
         "band_path",
@@ -228,7 +200,7 @@ def tight_binding_band_structure(component: Any) -> BandResult:
 def tight_binding_density_of_states(component: Any) -> DensityOfStatesResult:
     """Calculate configured total and orbital-projected density of states."""
 
-    model = _electronic_model_from_component(component)
+    model = electronic_model_from_component(component)
     config = component.config
     mesh = k_mesh(model, config.get("dos_mesh", [40, 40, 40]))
     energy_min = float(config.get("dos_energy_min_meV", -500.0))
@@ -256,7 +228,7 @@ def tight_binding_density_of_states(component: Any) -> DensityOfStatesResult:
 def tight_binding_fermi_surface(component: Any) -> FermiSurfaceResult:
     """Calculate configured Fermi points, contours, or surfaces."""
 
-    model = _electronic_model_from_component(component)
+    model = electronic_model_from_component(component)
     config = component.config
     return _with_electronic_display_unit(
         fermi_surface(

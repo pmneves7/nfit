@@ -34,8 +34,11 @@ arbitrary tight-binding electronic-structure layer are implemented. The
 CIF/manual builder now includes orbital manifolds, local frames, static onsite
 invariants, symmetry-constrained hoppings, hopping-path inspection, a shared
 tight-binding/Heisenberg 3D geometry viewer, and a labelled 3D
-Brillouin-zone viewer. Subsequent builder stages add optimizer integration,
-spin-orbit coupling, and optional Slater--Koster parameterizations.
+Brillouin-zone viewer. Named electronic Hamiltonian terms now share the common
+parameter, bounds, fit-selection, dataset-sharing, report, and script
+machinery. Spin-orbit coupling and optional Slater--Koster parameterizations
+remain later builder stages; optimizer evaluation awaits a compatible
+electronic-response observable.
 Response stages add the complex bare susceptibility, interaction dressings,
 production fitting, BCS superconductivity, and advanced correlated extensions. Electronic
 calculations should eventually share the rebinner's bounded-memory and

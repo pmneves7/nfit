@@ -1220,6 +1220,14 @@ def _register_builtin_models() -> None:
             data_types=("electronic_structure",),
             factory=_fit_factory("_electronic_structure_factory"),
             validate_component=_fit_validator("_validate_tight_binding_config"),
+            dynamic_parameters=_fit_dynamic_parameters(
+                "tight_binding_parameter_names"
+            ),
+            dynamic_parameter_description=(
+                "Named static onsite or hopping coefficient {name}. Values are "
+                "canonical meV and multiply the symmetry-generated Hamiltonian basis."
+            ),
+            dynamic_parameter_unit="meV",
             config_fields=(
                 _config_field(
                     "source_path",
@@ -1492,6 +1500,7 @@ def _register_builtin_models() -> None:
                     script=_tight_binding_plot_script("fermi_surface"),
                 ),
             ),
+            report_sections=_report_sections("tight_binding_report_sections"),
             documentation="tight_binding.md",
             citations=(
                 "https://doi.org/10.1016/j.cpc.2007.11.016",

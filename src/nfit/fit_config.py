@@ -231,6 +231,14 @@ def _electronic_structure_factory(component: Any) -> ModelFunction:
     return model
 
 
+def tight_binding_parameter_names(component: Any) -> tuple[str, ...]:
+    """Return active named Hamiltonian coefficients for shared fit machinery."""
+
+    from .electronic_builder import tight_binding_parameter_names as names
+
+    return names(component)
+
+
 def _validate_tight_binding_config(component: Any) -> None:
     """Validate canonical electronic energies and the presentation unit."""
 
@@ -256,6 +264,7 @@ def _validate_tight_binding_config(component: Any) -> None:
         HoppingInvariant,
         OnsiteInvariant,
         OrbitalManifold,
+        tight_binding_parameter_terms,
     )
 
     manifolds = [
@@ -273,6 +282,31 @@ def _validate_tight_binding_config(component: Any) -> None:
         HoppingInvariant.from_dict(item)
     for item in config.get("hopping_terms", ()):
         HoppingInvariant.from_dict(item)
+    for term in tight_binding_parameter_terms(component):
+        name = term.identifier
+        if name not in component.parameters:
+            raise ValueError(
+                f"tight-binding parameter {name!r} is missing shared value state"
+            )
+        if not np.isclose(float(component.parameters[name]), term.value_meV):
+            raise ValueError(
+                f"tight-binding parameter {name!r} disagrees with its builder term"
+            )
+        raw_limits = component.limits.get(name, (None, None))
+        limits = (
+            tuple(raw_limits)
+            if isinstance(raw_limits, (list, tuple)) and len(raw_limits) == 2
+            else (None, None)
+        )
+        if limits != term.bounds_meV:
+            raise ValueError(
+                f"tight-binding limits for {name!r} disagree with its builder term"
+            )
+        if bool(component.fit_parameters.get(name, False)) != term.fit:
+            raise ValueError(
+                f"tight-binding fit selection for {name!r} disagrees with its "
+                "builder term"
+            )
 
 
 ISOTROPIC_POLARIZATION = 2.0

@@ -1160,6 +1160,100 @@ def generalized_paramagnon_report_sections(
     return (("model", "\n".join(lines) + "\n"),)
 
 
+def tight_binding_report_sections(
+    fit_entry: Any,
+    model: Mapping[str, Any],
+    goodness: Mapping[str, Any],
+    context: Mapping[str, Any],
+) -> tuple[tuple[str, str], ...]:
+    """Return the resolved electronic Hamiltonian and parameter state."""
+
+    del fit_entry, context
+    name = latex_escape(model.get("name"))
+    config = _config(model)
+    model_data = config.get("model_data")
+    basis_count = (
+        len(model_data.get("basis", ()))
+        if isinstance(model_data, Mapping)
+        else 0
+    )
+    digest = latex_escape(str(config.get("model_digest", "")) or "--")
+    fit_flags = (
+        model.get("fit_parameters")
+        if isinstance(model.get("fit_parameters"), Mapping)
+        else {}
+    )
+    sharing = (
+        model.get("sharing")
+        if isinstance(model.get("sharing"), Mapping)
+        else {}
+    )
+    limits = (
+        model.get("limits")
+        if isinstance(model.get("limits"), Mapping)
+        else {}
+    )
+    terms = [
+        ("onsite", item)
+        for item in config.get("onsite_terms", ())
+        if isinstance(item, Mapping)
+    ]
+    terms.extend(
+        ("hopping", item)
+        for item in config.get("hopping_terms", ())
+        if isinstance(item, Mapping)
+    )
+    lines = [
+        f"\\section{{Tight-binding electronic structure ({name})}}",
+        (
+            f"The resolved orthonormal Hamiltonian contains {basis_count} basis "
+            f"state(s). Its canonical SHA-256 model digest is "
+            f"\\texttt{{{digest}}}. Energies in the fit state are stored in meV."
+        ),
+    ]
+    if terms:
+        lines.extend(
+            [
+                "\\begin{longtable}{l l r l l}",
+                "\\toprule",
+                "Kind & Term & Value (meV) & Status & Sharing / limits \\\\",
+                "\\midrule",
+                "\\endhead",
+            ]
+        )
+        for kind, term in terms:
+            identifier = str(term.get("identifier", ""))
+            label = latex_escape(term.get("label", identifier))
+            value, stderr = _param_value(goodness, model, identifier)
+            entry = sharing.get(identifier)
+            mode = (
+                str(entry.get("mode", "global"))
+                if isinstance(entry, Mapping)
+                else "global"
+            )
+            raw_limits = limits.get(identifier)
+            limit_text = (
+                f"[{_fmt(raw_limits[0])}, {_fmt(raw_limits[1])}]"
+                if isinstance(raw_limits, (list, tuple))
+                and len(raw_limits) == 2
+                else "unbounded"
+            )
+            status = "varied" if fit_flags.get(identifier, False) else "fixed"
+            lines.append(
+                f"{latex_escape(kind)} & {label} & {_fmt_pm(value, stderr)} & "
+                f"{status} & {latex_escape(mode)} / {latex_escape(limit_text)} \\\\"
+            )
+        lines.extend(["\\bottomrule", "\\end{longtable}"])
+    else:
+        lines.append("No symmetry-generated onsite or hopping terms were active.")
+    lines.append(
+        "This component defines electronic structure. A compatible electronic-"
+        "response component supplies the measured susceptibility or neutron "
+        "observable used by an optimizer."
+    )
+    return (("model", "\n".join(lines) + "\n"),)
+
+
 def _section_other_components(
     models: list[dict[str, Any]],
     goodness: Mapping[str, Any],

@@ -40,6 +40,9 @@ from any historical fit result, including after reloading a project.
    cross-section convention (the fluctuation-dissipation $1/\pi$, the
    one-component $P=2$ polarization factor, $(g/2)^2$, form factor, Bose
    factor, and the separate $\mu_0$ conversion to SI $M/H$).
+   A tight-binding component contributes its basis count, model digest, and
+   readable onsite and hopping terms with canonical values, uncertainties,
+   fit state, sharing, and bounds.
 4. **Fitted parameters** — every parameter with value, standard error,
    varied/fixed status, sharing scope, and limits; posterior median and
    16/84 percentiles when emcee sampling ran. When the fit result's posterior

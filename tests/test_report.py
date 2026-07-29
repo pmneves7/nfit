@@ -62,6 +62,55 @@ def _background_entry(**overrides):
     return FitTimelineEntry(**payload)
 
 
+def test_tight_binding_report_lists_named_parameter_state():
+    identifier = "M1:onsite:abc123"
+    model = {
+        "name": "electrons",
+        "type": "tight_binding",
+        "enabled": True,
+        "parameters": {identifier: 25.0},
+        "fit_parameters": {identifier: True},
+        "sharing": {
+            identifier: {
+                "mode": "grouped",
+                "groups": {"scan1": "A", "scan2": "A"},
+            }
+        },
+        "limits": {identifier: [-100.0, 100.0]},
+        "constraints": [],
+        "applies_to": None,
+        "metadata": {},
+        "config": {
+            "model_digest": "a" * 64,
+            "model_data": {"basis": [{"label": "orbital"}]},
+            "onsite_terms": [
+                {
+                    "identifier": identifier,
+                    "label": "M1 onsite energy",
+                }
+            ],
+            "hopping_terms": [],
+        },
+    }
+    entry = FitTimelineEntry(
+        name="electronic fit",
+        kind="result",
+        snapshot={"datasets": [], "models": [model]},
+        goodness={
+            "parameters": {f"electrons.{identifier}": 24.5},
+            "stderr": {f"electrons.{identifier}": 0.5},
+        },
+    )
+
+    tex = render_fit_report_latex(entry, group_name="Electronic")
+
+    assert "Tight-binding electronic structure" in tex
+    assert "M1 onsite energy" in tex
+    assert "grouped" in tex
+    assert "canonical SHA-256 model digest" in tex
+    _check_balanced_environments(tex)
+
+
 def _full_rpa_entry():
     """A synthetic full-featured heisenberg_rpa fit entry."""
     sym = [[0.1, 0.2, 0.0], [0.2, -0.1, 0.0], [0.0, 0.0, 0.0]]

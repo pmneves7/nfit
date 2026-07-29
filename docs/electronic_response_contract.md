@@ -443,3 +443,7 @@ foundation. Stage 3.3 adds selectable symmetry-covariant real hopping
 candidates with explicit source and destination orbitals, dispersive
 Hamiltonians, hopping-path inspection, and a labelled primitive-lattice
 first-Brillouin-zone viewer using the configured band path.
+Stage 3.4 connects every generated onsite and hopping coefficient to the
+common parameter values, bounds, fit selections, dataset-sharing rules,
+reports, and builder scripts. Tight binding remains calculation-only until the
+Stage 4 response supplies a dataset observable.

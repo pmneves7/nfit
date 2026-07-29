@@ -4,7 +4,7 @@ This page tracks the staged structure-first builder for manual tight-binding
 models. The detailed current behavior is documented on
 [Tight-binding electronic structure](tight_binding.md).
 
-Stages 3.1 through 3.3 are implemented. The GUI and public API share CIF import,
+Stages 3.1 through 3.4 are implemented. The GUI and public API share CIF import,
 editable crystal geometry, site expansion, orbital manifolds and local frames,
 site-point-group identification, calculated harmonic subspaces,
 site-symmetry representations, static onsite invariants, selectable
@@ -14,8 +14,10 @@ The shared 3D model viewer displays the cell, smooth element-colored atom
 spheres, active or ghost sites, orbital tokens, local frames, and selected
 hopping or exchange pathways using batched geometry. A separate 3D
 Brillouin-zone view shows the configured labelled path and reciprocal basis
-vectors. Optimizer integration, SOC, and compact parameterizations remain
-planned.
+vectors. Named Hamiltonian coefficients use the common value, bounds,
+fit-selection, sharing, reporting, and scripting machinery. Their optimizer
+evaluation begins when an electronic-response model supplies a dataset
+observable. SOC and compact parameterizations remain planned.
 
 ## Goal
 
@@ -306,7 +308,7 @@ When fitting is enabled:
 - Generate onsite invariants and symmetry-required degeneracies.
 - Add the Structure, Orbitals, and Onsite GUI sections.
 - Resolve the generated static terms into an editable canonical
-  `ElectronicModel`, preserving values and future fit metadata.
+  `ElectronicModel`, preserving values and parameter metadata.
 - Add builder-script round trips and the shared 3D viewer foundation.
 
 ### 3.3 — Hopping generator (implemented)
@@ -321,7 +323,7 @@ When fitting is enabled:
 - Add a labelled first-Brillouin-zone viewer using the primitive translation
   lattice, configured band path, and reciprocal basis vectors.
 
-### 3.4 — Parameter and fit integration
+### 3.4 — Parameter and fit integration (implemented)
 
 - Connect named onsite and hopping terms to shared bounds, fit selection,
   grouping, reports, and scripts.

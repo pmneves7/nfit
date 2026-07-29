@@ -197,10 +197,18 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
     )
     assert frame is not None and "orthonormal" in frame.toolTip()
     assert value is not None and "many-body" in value.toolTip()
-    assert fit is not None and "Stage 3.2" in fit.toolTip()
+    assert fit is not None and "compatible electronic-response" in fit.toolTip()
     value.setText("0.025")
     value.editingFinished.emit()
     assert model.config["onsite_terms"][0]["value_meV"] == pytest.approx(25.0)
+    onsite_identifier = model.config["onsite_terms"][0]["identifier"]
+    assert model.parameters[onsite_identifier] == pytest.approx(25.0)
+    onsite_sharing = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox, "tight_binding_onsite_0_sharing"
+    )
+    assert onsite_sharing is not None and onsite_sharing.toolTip()
+    onsite_sharing.setCurrentIndex(onsite_sharing.findData("per_dataset"))
+    assert model.sharing[onsite_identifier]["mode"] == "per_dataset"
 
     cutoff = explorer.model_parameter_widget.findChild(
         QtWidgets.QLineEdit, "tight_binding_hopping_cutoff"
@@ -230,6 +238,10 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
         QtWidgets.QLineEdit, "tight_binding_hopping_value_0"
     )
     assert hopping_value is not None and "canonical meV" in hopping_value.toolTip()
+    hopping_sharing = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox, "tight_binding_hopping_0_sharing"
+    )
+    assert hopping_sharing is not None and hopping_sharing.toolTip()
     remove_hopping = explorer.model_parameter_widget.findChild(
         QtWidgets.QPushButton, "tight_binding_hopping_remove_0"
     )
@@ -252,7 +264,9 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
         QtWidgets.QPushButton, "tight_binding_structure_script"
     )
     copied.click()
-    assert "configure_tight_binding_builder" in QtWidgets.QApplication.clipboard().text()
+    copied_script = QtWidgets.QApplication.clipboard().text()
+    assert "configure_tight_binding_builder" in copied_script
+    assert "set_tight_binding_parameter_state" in copied_script
 
     opened = []
     monkeypatch.setattr(

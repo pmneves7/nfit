@@ -173,11 +173,11 @@ dictionaries can be entered directly in the model editor.
 | `model_data` | portable dictionary returned by `ElectronicModel.to_dict()` | `{}` | `model.to_dict()` |
 | `crystal` | editable lattice, space group, crystallographic sites, and optional CIF provenance used by the structure-first builder | `P 1` cell with no sites | `{"lattice": {"a": 4, "b": 4, "c": 6, "alpha": 90, "beta": 90, "gamma": 90}, "spacegroup": "P 1", "sites": []}` |
 | `orbital_manifolds` | editable site-attached basis definitions and local frames | `[]` | `[orbital_manifold_preset("M1", "d").to_dict()]` |
-| `onsite_terms` | generated Hermitian onsite matrix bases, canonical values, bounds, and future fit selections | `[]` | `[term.to_dict() for term in generate_onsite_terms(crystal, manifolds)]` |
+| `onsite_terms` | generated Hermitian onsite matrix bases and mirrored canonical parameter state | `[]` | `[term.to_dict() for term in generate_onsite_terms(crystal, manifolds)]` |
 | `hopping_cutoff_angstrom` | maximum representative-bond distance used by the symmetry hopping generator; zero disables generated hoppings | `0.0` | `4.2` |
 | `spatial_orbits` | generated symmetry-equivalent bond families retained for editing and visualization | `[]` | `[orbit.to_dict() for orbit in generation.orbits]` |
 | `hopping_candidates` | complete generated list of symmetry-allowed matrix terms; candidates do not affect $H(\mathbf k)$ | `[]` | `[term.to_dict() for term in generation.terms]` |
-| `hopping_terms` | selected active hopping terms with canonical values, bounds, and future fit selections | `[]` | `[selected_term.to_dict()]` |
+| `hopping_terms` | selected active hopping terms with mirrored canonical parameter state | `[]` | `[selected_term.to_dict()]` |
 | `periodic_axes` | periodic lattice axes; empty asks a Wannier import to infer them from nonzero translations | `[]` | `[0]`, `[0, 1]`, or `[0, 1, 2]` |
 | `electronic_energy_unit` | input and electronic-plot unit; changing it does not alter canonical values | `"eV"` | `"eV"` or `"meV"` |
 | `chemical_potential_meV` | canonical chemical potential subtracted on band and DOS plots; displayed in `electronic_energy_unit` | `0.0` | `12.5` for 0.0125 eV |
@@ -310,14 +310,15 @@ $$
 | `matrix` | unit-Frobenius Hermitian invariant, serialized as real/imaginary pairs | a $3\times3$ identity-like selector |
 | `kind` | diagonal onsite energy or allowed onsite hybridization | `"onsite_energy"` or `"onsite_hybridization"` |
 | `value_meV` | canonical coefficient | `25.0` |
-| `bounds_meV` | canonical optional future fit bounds | `[-100.0, 100.0]` |
-| `fit` | stored request for later optimizer integration | `false` |
+| `bounds_meV` | canonical fit bounds mirrored from `component.limits` | `[-100.0, 100.0]` |
+| `fit` | fit selection mirrored from `component.fit_parameters` | `false` |
 | `source` | origin of the matrix constraints | `"site_symmetry"` or `"declared_degeneracy"` |
 
 The GUI displays values and bounds in `electronic_energy_unit`, converts them
 immediately to canonical meV, and regenerates `model_data` and
-`model_digest`. Fit selections are stored now but are not consumed until
-Stage 3.4. With no Stage 3.3 hopping terms, the resulting bands are flat.
+`model_digest`. The same values, bounds, fit selections, and sharing rules are
+installed in the component's common parameter state. With no Stage 3.3
+hopping terms, the resulting bands are flat.
 
 ```python
 from nfit import (
@@ -394,8 +395,8 @@ in the home cell.
 | `basis_j` | ordered basis labels at the sending endpoint | `["M1_d:d_xy", "M1_d:d_yz"]` |
 | `matrix` | unit-Frobenius real hopping invariant, serialized as real/imaginary pairs | `[[[0.7071, 0], [0, 0]], [[0, 0], [0.7071, 0]]]` |
 | `value_meV` | canonical coefficient $t_p$ | `-80.0` |
-| `bounds_meV` | optional canonical future fit bounds | `[-200.0, 20.0]` |
-| `fit` | stored request for later optimizer integration | `false` |
+| `bounds_meV` | canonical fit bounds mirrored from `component.limits` | `[-200.0, 20.0]` |
+| `fit` | fit selection mirrored from `component.fit_parameters` | `false` |
 | `source` | origin of the matrix constraints | `"spinless_time_reversal_space_group"` |
 
 Stage 3.3 symmetry generation is spinless, real, and time-reversal symmetric.
@@ -589,18 +590,61 @@ run as files open the same window.
 
 ## Fitting and identifiability
 
-Stage 3 electronic models are calculation-only components. They can be saved
-in projects and used by the model-owned plots, but are not passed to the
-optimizer until an electronic response supplies a dataset observable. Later
-fit results will retain the electronic model digest and calculation
-provenance.
+Every active onsite or hopping invariant is a first-class parameter whose
+stable identifier is shared by:
 
-The current named linear terms are parameter-ready, and the builder stores
-their future fit checkboxes and bounds, but the optimizer does not consume
-them yet. In this documentation, **onsite energy** means a static diagonal or
-symmetry-allowed onsite Hamiltonian term. A frequency-
-dependent many-body self-energy $\Sigma(\mathbf k,E)$ is a separate future
-extension and should not be conflated with an onsite energy.
+- `component.parameters`, in canonical meV;
+- `component.limits`, `component.fit_parameters`, and `component.sharing`;
+- the mirrored high-level onsite or hopping record;
+- the resolved `ElectronicModel.parameter_values`; and
+- project files, builder scripts, and fit reports.
+
+The orbital-aware GUI tables display electronic energies in the selected
+`electronic_energy_unit` and expose global, per-dataset, and grouped sharing.
+`set_tight_binding_parameter_state` is the equivalent canonical-meV scripting
+API. Regenerating symmetry terms preserves common parameter state for stable
+identifiers and removes state belonging to deleted terms.
+
+```python
+from nfit import (
+    electronic_model_from_component,
+    set_tight_binding_parameter_state,
+)
+
+set_tight_binding_parameter_state(
+    model,
+    values_meV={term_id: 30.0},
+    fit_parameters={term_id: True},
+    limits_meV={term_id: [-100.0, 100.0]},
+    sharing={
+        term_id: {
+            "mode": "grouped",
+            "groups": {"scan1": "low_temperature", "scan2": "low_temperature"},
+        }
+    },
+)
+trial_model = electronic_model_from_component(
+    model,
+    parameter_values_meV={term_id: 31.5},
+)
+```
+
+`electronic_model_from_component` replaces only the immutable model's named
+coefficient values. Its symmetry-generated Hamiltonian blocks can therefore
+be reused by a response calculation. The returned content digest includes the
+resolved values, so caches can distinguish optimizer states.
+
+The tight-binding component itself remains calculation-only: bands and
+related electronic plots are not measured-dataset residuals. Its selected
+parameters enter an optimizer when a compatible electronic-response model
+supplies the susceptibility or other dataset observable. Fit reports then
+include the readable term labels, canonical values and uncertainties, bounds,
+sharing modes, basis count, and electronic-model digest.
+
+In this documentation, **onsite energy** means a static diagonal or
+symmetry-allowed onsite Hamiltonian term. A frequency-dependent many-body
+self-energy $\Sigma_{ab}(\mathbf k,E)$ is a separate extension and should not
+be conflated with an onsite energy.
 
 ## Scripting and export
 
@@ -626,8 +670,8 @@ script states `energy_unit`, converts its editable values to canonical meV,
 and passes the same unit to the renderer. **Copy builder script** exports CIF
 reload and digest verification, or embeds a manually entered crystal, then
 reconstructs the component, manifolds, regenerated onsite matrices, values,
-bounds, generated hopping matrices, fit selections, and canonical digest
-without Qt.
+bounds, generated hopping matrices, fit selections, sharing rules, and
+canonical digest without Qt.
 
 ## Shared 3D model viewer
 
