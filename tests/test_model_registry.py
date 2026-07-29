@@ -155,6 +155,8 @@ def test_scalar_bulk_models_reject_invalid_normalization(model_type):
 def test_tight_binding_registry_validates_energy_unit_and_canonical_window():
     config = default_model_config("tight_binding")
     assert config["electronic_energy_unit"] == "eV"
+    assert config["orbital_manifolds"] == []
+    assert config["onsite_terms"] == []
     component = ModelComponentSpec(
         name="bands",
         type="tight_binding",

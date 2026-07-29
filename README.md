@@ -13,8 +13,9 @@ The package provides:
   spin-fluctuation models for inelastic, quasistatic elastic, and optional
   bulk-response comparisons;
 - CIF/manual crystal geometry and arbitrary manual or Wannier90 tight-binding
-  models with explicit eV/meV conversion, bands, orbital projections, density
-  of states, and Fermi surfaces;
+  models with explicit local orbital frames, symmetry-allowed onsite terms,
+  eV/meV conversion, bands, orbital projections, density of states, Fermi
+  surfaces, and shared 3D model-geometry inspection;
 - an extensible model registry shared by fitting, GUI metadata, diagnostics,
   reports, plots, project files, and workflow scripts;
 - simultaneous least-squares fitting with explicit uncertainty conventions,

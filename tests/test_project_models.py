@@ -39,6 +39,12 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
     assert explorer.model_parameter_widget.findChild(
         QtWidgets.QGroupBox, "model_crystal_sites_group"
     )
+    assert explorer.model_parameter_widget.findChild(
+        QtWidgets.QGroupBox, "tight_binding_orbitals_group"
+    )
+    assert explorer.model_parameter_widget.findChild(
+        QtWidgets.QGroupBox, "tight_binding_onsite_group"
+    )
     assert (
         explorer.model_parameter_widget.findChild(
             QtWidgets.QGroupBox, "model_bonds_group"
@@ -125,6 +131,87 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
     explorer.window.close()
 
 
+def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Electronic")
+    model = create_model_component(group, "bands", type="tight_binding")
+    model.config["crystal"]["sites"] = [
+        {
+            "label": "M1",
+            "element": "Fe",
+            "position": [0.0, 0.0, 0.0],
+            "ion": "",
+        },
+        {
+            "label": "X1",
+            "element": "O",
+            "position": [0.5, 0.5, 0.5],
+            "ion": "",
+        },
+    ]
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer._refresh_tree(select_group=group, select_model=model)
+
+    site = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox, "tight_binding_orbital_site"
+    )
+    preset = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox, "tight_binding_orbital_preset"
+    )
+    add = explorer.model_parameter_widget.findChild(
+        QtWidgets.QPushButton, "tight_binding_orbital_add"
+    )
+    assert site.currentData() == "M1"
+    preset.setCurrentIndex(preset.findData("effective"))
+    add.click()
+
+    assert len(model.config["orbital_manifolds"]) == 1
+    assert len(model.config["onsite_terms"]) == 1
+    assert model.config["model_digest"]
+    frame = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "tight_binding_manifold_frame_0"
+    )
+    value = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "tight_binding_onsite_value_0"
+    )
+    fit = explorer.model_parameter_widget.findChild(
+        QtWidgets.QCheckBox, "tight_binding_onsite_fit_0"
+    )
+    assert frame is not None and "orthonormal" in frame.toolTip()
+    assert value is not None and "many-body" in value.toolTip()
+    assert fit is not None and "Stage 3.2" in fit.toolTip()
+    value.setText("0.025")
+    value.editingFinished.emit()
+    assert model.config["onsite_terms"][0]["value_meV"] == pytest.approx(25.0)
+
+    copied = explorer.model_parameter_widget.findChild(
+        QtWidgets.QPushButton, "tight_binding_structure_script"
+    )
+    copied.click()
+    assert "configure_tight_binding_builder" in QtWidgets.QApplication.clipboard().text()
+
+    opened = []
+    monkeypatch.setattr(
+        "nfit.qt_model_geometry_viewer.open_model_geometry_viewer",
+        lambda component, parent=None: opened.append((component, parent)) or object(),
+    )
+    viewer = explorer.model_parameter_widget.findChild(
+        QtWidgets.QPushButton, "model_geometry_viewer"
+    )
+    script = explorer.model_parameter_widget.findChild(
+        QtWidgets.QPushButton, "model_geometry_script"
+    )
+    assert viewer.toolTip() and script.toolTip()
+    viewer.click()
+    assert opened and opened[0][0] is model
+    script.click()
+    assert "model_geometry_scene" in QtWidgets.QApplication.clipboard().text()
+    explorer.has_unsaved_changes = False
+    explorer.window.close()
+
+
 def test_tight_binding_cif_structure_project_and_script_round_trip(tmp_path):
     from nfit import (
         import_cif_into_model,
@@ -204,6 +291,12 @@ def test_heisenberg_rpa_editor_generates_orbits_and_round_trips(monkeypatch, tmp
         QtWidgets.QGroupBox, "model_crystal_sites_group"
     )
     assert crystal_box is not None and bonds_box is not None and sites_box is not None
+    assert explorer.model_parameter_widget.findChild(
+        QtWidgets.QPushButton, "model_geometry_viewer"
+    ).toolTip()
+    assert explorer.model_parameter_widget.findChild(
+        QtWidgets.QPushButton, "model_geometry_script"
+    ).toolTip()
 
     # configure an FCC crystal through the handlers
     for name in ("a", "b", "c"):

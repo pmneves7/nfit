@@ -4,12 +4,13 @@ This page tracks the staged structure-first builder for manual tight-binding
 models. The detailed current behavior is documented on
 [Tight-binding electronic structure](tight_binding.md).
 
-Stage 3.1 is implemented: the GUI and public API share CIF import, editable
-crystal geometry, site expansion, spatial bond-orbit geometry, project
-serialization, structure-script export, and an eV-default electronic input and
-plot unit backed by canonical meV storage. Orbital assignment begins in Stage
-3.2; the later sections on onsite terms, hoppings, fitting, and SOC remain
-planned.
+Stages 3.1 and 3.2 are implemented. The GUI and public API share CIF import,
+editable crystal geometry, site expansion, orbital manifolds and local frames,
+site-symmetry representations, static onsite invariants, canonical model
+resolution, project and builder-script serialization, and an eV-default input
+unit backed by canonical meV storage. The shared 3D viewer displays the cell,
+active or ghost sites, orbital tokens, and local frames. Hoppings, optimizer
+integration, SOC, and compact parameterizations remain planned.
 
 ## Goal
 
@@ -60,6 +61,21 @@ manifold record contains:
 Presets such as `s`, `p`, `d`, `f`, `t2g`, and `eg` are conveniences that
 populate this record. They are not separate model classes. Arbitrary labels
 and custom transformation matrices remain available.
+
+Real spherical harmonics are the primary built-in convention. Complete
+shells and the `t2g`, `eg`, `a1g_t2g`, `eg_prime_t2g`, and
+`t2g_trigonal` subspaces carry explicit transformations from that shell.
+The crystal Cartesian frame is the default. A user may replace it with any
+right-handed orthonormal local frame, including a frame chosen to describe a
+particular crystal-field environment.
+
+Automatic symmetry is permitted only when the selected subspace is closed
+under every operation in the site's stabilizer. nfit reports a non-closed
+operation rather than projecting it away. Custom numerical and Wannier bases
+remain usable with automatic symmetry disabled; a later adapter may attach
+explicit representation matrices. Imported Wannier90 models remain an
+independent construction route and are not converted automatically into
+symmetry-aware builder models.
 
 The local frame is essential for directional orbitals, crystal-field terms,
 spin-orbit coupling, and symmetry-related hopping matrices. nfit must not
@@ -136,6 +152,29 @@ The initial parameterization should use symmetry-allowed matrix bases because
 it is general. Slater--Koster two-center integrals can later be an optional
 compact parameterization for recognized angular-momentum bases, not the only
 route.
+
+## Shared 3D model viewer
+
+The renderer-independent model-geometry scene is shared by tight binding and
+Heisenberg RPA. Its Stage 3.2 foundation contains:
+
+- the crystallographic unit cell;
+- all atoms or active sites only, with inactive atoms optionally shown as
+  translucent ghosts;
+- every orbital center and an abstract colored token for each simultaneous
+  basis orbital; and
+- the local Cartesian frame of each orbital manifold.
+
+The tokens identify basis states and do not claim to be real-space
+wavefunction isosurfaces. Analytic orbital lobes and imported volumetric
+Wannier functions may be added later without changing the scientific scene
+API.
+
+Stage 3.3 adds hopping-path selection to the same scene. The pathway layer
+already accepts Heisenberg exchange orbits and distinguishes one
+representative bond from all symmetry-equivalent bonds. It will later display
+hopping magnitude and complex phase only with an explicit legend; geometry
+must not imply that a multiorbital hopping matrix is a single scalar.
 
 ## Spin-orbit coupling
 
@@ -237,12 +276,15 @@ When fitting is enabled:
 - Add project and script round trips for a structure-only tight-binding
   component.
 
-### 3.2 — Orbital and onsite builder
+### 3.2 — Orbital and onsite builder (implemented)
 
 - Add orbital-manifold records, presets, local frames, basis expansion, and
   symmetry representations.
 - Generate onsite invariants and symmetry-required degeneracies.
 - Add the Structure, Orbitals, and Onsite GUI sections.
+- Resolve the generated static terms into an editable canonical
+  `ElectronicModel`, preserving values and future fit metadata.
+- Add builder-script round trips and the shared 3D viewer foundation.
 
 ### 3.3 — Hopping generator
 
@@ -250,6 +292,8 @@ When fitting is enabled:
 - Generate symmetry-allowed hopping bases up to a cutoff.
 - Resolve named parameters into canonical $H(\mathbf R)$ blocks and add the
   Hoppings GUI section.
+- Extend the shared viewer with representative and symmetry-equivalent hopping
+  paths and matrix-term selection.
 
 ### 3.4 — Parameter and fit integration
 
@@ -289,24 +333,27 @@ model. They should verify:
   applicable; and
 - GUI actions and exported scripts produce identical canonical digests.
 
-## Decisions needed before implementation
+## Fixed design decisions
 
-Three choices should be settled before Stage 3.2:
-
-1. Use real spherical harmonics as the primary built-in orbital convention,
-   with complex harmonics and custom matrices available explicitly.
-2. Use general symmetry-allowed hopping matrices as the default; add
-   Slater--Koster integrals later as an optional parameterization.
-3. Treat user-entered “orbital self energies” as static onsite energies in
-   this builder, reserving **self-energy** for a later
-   frequency-dependent $\Sigma(\mathbf k,E)$ interface.
-
-These defaults provide the most general model without tying the package to a
-particular material or electronic-structure approximation.
+- Real spherical harmonics are the primary built-in convention; complex
+  harmonics, crystal-field subspaces, and custom numerical bases remain
+  explicit alternatives.
+- The crystal Cartesian frame is the default, with an arbitrary local frame
+  available per manifold.
+- General symmetry-allowed hopping matrices are the default. Slater--Koster
+  integrals will be an optional later parameterization.
+- Tight-binding “orbital self energies” are named static **onsite energies**.
+  Self-energy is reserved for a later frequency-dependent
+  $\Sigma(\mathbf k,E)$ interface.
+- SCDM-generated Wannier functions enter through the normal Wannier90 import
+  route. nfit does not infer atomic symmetry character from their labels or
+  centers.
 
 ## References
 
 - J. C. Slater and G. F. Koster, *Phys. Rev.* **94**, 1498 (1954),
   [doi:10.1103/PhysRev.94.1498](https://doi.org/10.1103/PhysRev.94.1498).
+- V. Vitale *et al.*, *npj Comput. Mater.* **6**, 66 (2020),
+  [doi:10.1038/s41524-020-0312-y](https://doi.org/10.1038/s41524-020-0312-y).
 - [Gemmi crystallography documentation](https://gemmi.readthedocs.io/).
 - [Electronic-response design contract](electronic_response_contract.md).

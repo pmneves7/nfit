@@ -252,6 +252,16 @@ def _validate_tight_binding_config(component: Any) -> None:
         raise ValueError("dos_energy_min_meV must be below dos_energy_max_meV")
     if energies["dos_broadening_meV"] <= 0.0:
         raise ValueError("dos_broadening_meV must be positive")
+    from .electronic_builder import OnsiteInvariant, OrbitalManifold
+
+    manifolds = [
+        OrbitalManifold.from_dict(item)
+        for item in config.get("orbital_manifolds", ())
+    ]
+    if len({item.label for item in manifolds}) != len(manifolds):
+        raise ValueError("tight-binding orbital manifold labels must be unique")
+    for item in config.get("onsite_terms", ()):
+        OnsiteInvariant.from_dict(item)
 
 
 ISOTROPIC_POLARIZATION = 2.0

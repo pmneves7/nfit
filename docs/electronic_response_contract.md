@@ -2,8 +2,10 @@
 
 This page fixes the architecture and conventions for nfit's tight-binding and
 itinerant spin-response models. Stages 0--3 are implemented; later response and
-interaction stages remain an implementation contract. Available models remain
-listed on [Spin-fluctuation models](spin_fluctuation_models.md).
+interaction stages remain an implementation contract. Electronic Hamiltonians
+are listed under
+[Electronic-structure models](electronic_structure_models.md), while response
+models are listed under [Spin-fluctuation models](spin_fluctuation_models.md).
 
 The goal is a material-independent path from an electronic Hamiltonian to a
 complex magnetic susceptibility and then to the neutron observable. No core
@@ -421,9 +423,11 @@ The implementation proceeds in independently testable stages:
 | 6 | production convergence, acceleration, uncertainty, reports, and multi-dataset fitting |
 | 7 | BCS superconductivity, slave-boson, imported self-energy, and other explicitly documented beyond-RPA extensions |
 
-Every scientific model added in these stages receives its own daughter page
-under [Spin-fluctuation models](spin_fluctuation_models.md). A stage is ready
-for user testing only after its public API, GUI behavior where applicable,
+Every electronic Hamiltonian receives a daughter page under
+[Electronic-structure models](electronic_structure_models.md). Models that
+produce a magnetic susceptibility receive daughter pages under
+[Spin-fluctuation models](spin_fluctuation_models.md). A stage is ready for
+user testing only after its public API, GUI behavior where applicable,
 workflow script, fit-result export, documentation, and validation tests agree.
 
 Stages 0--3 are implemented. The generalized-paramagnon model supplies the
@@ -431,5 +435,7 @@ Stage 2 relaxational and damped-propagating limits through one causal complex
 response. Stage 3 supplies arbitrary orthonormal electronic models, native
 Wannier90 import, shared path and mesh sampling, bands and orbital projections,
 density of states, Fermi surfaces, model-owned GUI plots, and editable scripts.
-Stage 3.1 also supplies shared CIF/manual crystal geometry and structure-script
-round trips for the structure-first tight-binding builder.
+Stage 3.1 supplies shared CIF/manual crystal geometry. Stage 3.2 adds
+site-attached orbital manifolds, local frames, symmetry-allowed static onsite
+terms, resolved flat-band Hamiltonians, builder-script round trips, and the
+shared model-geometry viewer foundation.

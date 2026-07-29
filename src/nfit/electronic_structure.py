@@ -1151,8 +1151,11 @@ def tight_binding_structure_script(
     group_name: str = "Electronic",
     model_name: str = "tight_binding",
     electronic_energy_unit: str = "eV",
+    orbital_manifolds: Sequence[Mapping[str, Any]] = (),
+    onsite_terms: Sequence[Mapping[str, Any]] = (),
+    expected_model_digest: str = "",
 ) -> str:
-    """Return an editable script that rebuilds tight-binding crystal geometry."""
+    """Return an editable script that rebuilds tight-binding builder state."""
 
     from .crystal import validate_crystal
 
@@ -1199,9 +1202,27 @@ def tight_binding_structure_script(
             f"model = create_model_component(group, {str(model_name)!r}, type='tight_binding')",
             f"set_model_crystal(model, crystal, group=group, periodic_axes={axes!r})",
             f"set_electronic_energy_unit(model, {display_unit!r})",
-            "",
         ]
     )
+    if orbital_manifolds:
+        lines.extend(
+            [
+                "from nfit import configure_tight_binding_builder",
+                "",
+                f"orbital_manifolds = {pformat(list(orbital_manifolds), sort_dicts=True)}",
+                f"onsite_terms = {pformat(list(onsite_terms), sort_dicts=True)}",
+                "electronic_model = configure_tight_binding_builder(",
+                "    model,",
+                "    manifolds=orbital_manifolds,",
+                "    onsite_terms=onsite_terms,",
+                ")",
+            ]
+        )
+        if expected_model_digest:
+            lines.append(
+                f"assert electronic_model.content_digest == {str(expected_model_digest)!r}"
+            )
+    lines.append("")
     return "\n".join(lines)
 
 

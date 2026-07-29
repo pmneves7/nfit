@@ -172,6 +172,8 @@ dictionaries can be entered directly in the model editor.
 | `model_digest` | expected SHA-256 digest of the canonical model; source reload fails if it differs | `""` | `"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"` when that is the model's actual digest |
 | `model_data` | portable dictionary returned by `ElectronicModel.to_dict()` | `{}` | `model.to_dict()` |
 | `crystal` | editable lattice, space group, crystallographic sites, and optional CIF provenance used by the structure-first builder | `P 1` cell with no sites | `{"lattice": {"a": 4, "b": 4, "c": 6, "alpha": 90, "beta": 90, "gamma": 90}, "spacegroup": "P 1", "sites": []}` |
+| `orbital_manifolds` | editable site-attached basis definitions and local frames | `[]` | `[orbital_manifold_preset("M1", "t2g").to_dict()]` |
+| `onsite_terms` | generated Hermitian onsite matrix bases, canonical values, bounds, and future fit selections | `[]` | `[term.to_dict() for term in generate_onsite_terms(crystal, manifolds)]` |
 | `periodic_axes` | periodic lattice axes; empty asks a Wannier import to infer them from nonzero translations | `[]` | `[0]`, `[0, 1]`, or `[0, 1, 2]` |
 | `electronic_energy_unit` | input and electronic-plot unit; changing it does not alter canonical values | `"eV"` | `"eV"` or `"meV"` |
 | `chemical_potential_meV` | canonical chemical potential subtracted on band and DOS plots; displayed in `electronic_energy_unit` | `0.0` | `12.5` for 0.0125 eV |
@@ -212,6 +214,128 @@ coordinates.
 This stage does not yet calculate neutron intensity, bulk susceptibility, or a
 fit observable. The generalized Lindhard response and its magnetic projections
 are Stage 4; interaction dressings are Stage 5.
+
+## Structure-first orbital and onsite builder
+
+Stage 3.2 constructs a static onsite Hamiltonian from a CIF or manually
+entered crystal. `OrbitalManifold` attaches an ordered basis to a
+crystallographic representative site. The space group expands it to every
+equivalent site. Each generated basis state retains its site, element,
+orbital, manifold, correlated-shell label, and fractional center.
+
+### Orbital-manifold fields
+
+| Field | Meaning | Acceptable input example |
+| --- | --- | --- |
+| `site_label` | representative crystal site receiving the manifold | `"M1"` |
+| `label` | unique editable manifold identifier | `"M1_t2g"` |
+| `basis_kind` | transformation convention | `"real_harmonic"`, `"complex_harmonic"`, `"effective_scalar"`, `"custom"`, or `"wannier"` |
+| `orbitals` | ordered basis labels | `["d_xy", "d_yz", "d_zx"]` |
+| `l` | angular-momentum quantum number for a harmonic basis | `2` |
+| `irrep` | descriptive crystal-field or representation label | `"t2g"` |
+| `degeneracy_groups` | optional groups constrained to share a diagonal onsite energy | `[["d_yz", "d_zx"]]` |
+| `local_frame` | right-handed orthonormal local axes as columns in crystal Cartesian coordinates | `[[1,0,0], [0,1,0], [0,0,1]]` |
+| `spin_basis` | basis spin convention; Stage 3.2 supports spinless | `"spinless"` |
+| `correlated_shell` | label used by later interaction dressings | `"M1_3d"` |
+| `symmetry_mode` | automatic analytic representation or no inferred symmetry | `"automatic"` or `"none"` |
+| `harmonic_transform` | orthonormal columns mapping selected orbitals into the complete $l$ shell | the selector for the first three real $d$ harmonics |
+| `preset` | convenience recipe that created the record | `"t2g"` |
+
+The built-in presets are `effective`, `s`, `p`, `d`, `f`, `t2g`, `eg`,
+`a1g_t2g`, `eg_prime_t2g`, `t2g_trigonal`, and `custom`. The real $p$ order
+is $(p_x,p_y,p_z)$ and the real $d$ order is
+$(d_{xy},d_{yz},d_{zx},d_{x^2-y^2},d_{z^2})$. Complete shells do not impose
+accidental degeneracy: the site symmetry determines their allowed splitting,
+unless the user adds a `degeneracy_groups` constraint.
+For `complex_harmonic`, rows of `harmonic_transform` follow
+$m=-l,-l+1,\ldots,l$.
+
+The local frame defaults to the crystal Cartesian frame. Crystal-field
+subspaces are interpreted in the selected frame. The trigonal $t_{2g}$ presets
+use
+
+$$
+\begin{aligned}
+\lvert a_{1g}\rangle
+&=(\lvert xy\rangle+\lvert yz\rangle+\lvert zx\rangle)/\sqrt3,\\
+\lvert e'_{g,1}\rangle
+&=(2\lvert xy\rangle-\lvert yz\rangle-\lvert zx\rangle)/\sqrt6,\\
+\lvert e'_{g,2}\rangle
+&=(\lvert yz\rangle-\lvert zx\rangle)/\sqrt2 .
+\end{aligned}
+$$
+
+For a site operation $g$, nfit evaluates the spherical-harmonic
+representation $D(g)$ in the declared local frame. A selected subspace with
+coefficient matrix $C$ is valid for automatic symmetry only when
+$D(g)C$ lies in the span of $C$ for every operation in the site stabilizer.
+A non-closed subspace is rejected with a diagnostic; it is never silently
+projected. A custom or imported numerical basis remains usable with
+`symmetry_mode="none"`, but nfit does not invent its symmetry character.
+
+### Onsite-invariant fields
+
+The builder finds the complete Hermitian matrix space satisfying
+
+$$
+D(g)P_pD(g)^\dagger=P_p
+$$
+
+for every site-stabilizer operation, together with any declared diagonal
+degeneracies. The static onsite block is
+
+$$
+H_{\mathrm{onsite}}=\sum_p\epsilon_pP_p.
+$$
+
+| Field | Meaning | Acceptable input example |
+| --- | --- | --- |
+| `identifier` | stable hash of site, ordered basis, and invariant matrix | `"M1:onsite:6054a1a6e2ad"` |
+| `label` | readable term label | `"M1 epsilon_1"` |
+| `site_label` | representative site on which the term acts | `"M1"` |
+| `basis_labels` | ordered local basis addressed by the matrix | `["M1_t2g:d_xy", "M1_t2g:d_yz", "M1_t2g:d_zx"]` |
+| `matrix` | unit-Frobenius Hermitian invariant, serialized as real/imaginary pairs | a $3\times3$ identity-like selector |
+| `kind` | diagonal onsite energy or allowed onsite hybridization | `"onsite_energy"` or `"onsite_hybridization"` |
+| `value_meV` | canonical coefficient | `25.0` |
+| `bounds_meV` | canonical optional future fit bounds | `[-100.0, 100.0]` |
+| `fit` | stored request for later optimizer integration | `false` |
+| `source` | origin of the matrix constraints | `"site_symmetry"` or `"declared_degeneracy"` |
+
+The GUI displays values and bounds in `electronic_energy_unit`, converts them
+immediately to canonical meV, and regenerates `model_data` and
+`model_digest`. Fit selections are stored now but are not consumed until
+Stage 3.4. With no Stage 3.3 hopping terms, the resulting bands are flat.
+
+```python
+from nfit import (
+    add_tight_binding_orbital_manifold,
+    create_model_component,
+    orbital_manifold_preset,
+    set_model_crystal,
+    set_tight_binding_onsite_term,
+)
+
+model = create_model_component(group, "electrons", type="tight_binding")
+set_model_crystal(model, crystal, group=group)
+add_tight_binding_orbital_manifold(
+    model,
+    orbital_manifold_preset(
+        "M1",
+        "t2g",
+        local_frame=[[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+        correlated_shell="M1_3d",
+    ),
+)
+term_id = model.config["onsite_terms"][0]["identifier"]
+set_tight_binding_onsite_term(
+    model,
+    term_id,
+    value=0.025,
+    energy_unit="eV",
+    lower=-0.2,
+    upper=0.2,
+)
+```
 
 ## Manual construction
 
@@ -373,9 +497,10 @@ optimizer until an electronic response supplies a dataset observable. Later
 fit results will retain the electronic model digest and calculation
 provenance.
 
-The current named linear terms are therefore parameter-ready but not yet shown
-as fit checkboxes in the GUI. In this documentation, **onsite energy** means a
-static diagonal or symmetry-allowed onsite Hamiltonian term. A frequency-
+The current named linear terms are parameter-ready, and the builder stores
+their future fit checkboxes and bounds, but the optimizer does not consume
+them yet. In this documentation, **onsite energy** means a static diagonal or
+symmetry-allowed onsite Hamiltonian term. A frequency-
 dependent many-body self-energy $\Sigma(\mathbf k,E)$ is a separate future
 extension and should not be conflated with an onsite energy.
 
@@ -389,19 +514,35 @@ structure inputs:
   positions manually; or
 - import a complete Wannier90 Hamiltonian.
 
-CIF import initializes `periodic_axes` to `[0, 1, 2]`. The structure editor
-stores candidate orbital locations but does not yet assign orbital manifolds
-or construct $H(\mathbf R)$ from them; that is Stage 3.2. Complete manual
-Hamiltonians can still be constructed through the public scripting API and
-stored as `model_data`. The remaining workflow is specified in the
+CIF import initializes `periodic_axes` to `[0, 1, 2]`. The **Orbitals** and
+**Onsite terms** sections construct and retain a high-level editable builder
+specification as well as its resolved `model_data`. Complete manual
+Hamiltonians can also be constructed through the lower-level scripting API.
+The remaining hopping and SOC workflow is specified in the
 [Tight-binding model-builder plan](tight_binding_builder_plan.md).
 
 Each plot action has a **Copy script** button that exports editable GUI-free
 Python using the same calculation and rendering functions. The exported plot
 script states `energy_unit`, converts its editable values to canonical meV,
-and passes the same unit to the renderer. **Copy structure script** exports CIF
+and passes the same unit to the renderer. **Copy builder script** exports CIF
 reload and digest verification, or embeds a manually entered crystal, then
-reconstructs the data group, model component, and periodic axes without Qt.
+reconstructs the component, manifolds, regenerated onsite matrices, values,
+bounds, fit selections, and canonical digest without Qt.
+
+## Shared 3D model viewer
+
+**View model in 3D** opens the same model-geometry viewer for tight binding and
+Heisenberg RPA. It can show the complete unit cell, only active sites, or
+inactive atoms as translucent ghosts. Tight-binding scenes show all orbitals
+simultaneously as separated colored tokens and local frames as red, green, and
+blue axis triads. Tokens identify basis states; they are not wavefunction
+isosurfaces. Heisenberg scenes can display one representative exchange
+pathway or all symmetry-equivalent members. Stage 3.3 will add the same
+selection for hopping pathways.
+
+`model_geometry_scene` is the renderer-independent public API. It returns cell
+edges, sites, orbital tokens, frames, and pathways as immutable records.
+`model_geometry_script` exports an editable standalone viewer script.
 
 `ElectronicModel.to_dict()` is a portable, digest-protected representation.
 `save_electronic_model` and `load_electronic_model` write and validate that
@@ -414,6 +555,8 @@ verify the stored canonical digest.
   [doi:10.1016/j.cpc.2007.11.016](https://doi.org/10.1016/j.cpc.2007.11.016).
 - G. Pizzi *et al.*, *J. Phys.: Condens. Matter* **32**, 165902 (2020),
   [doi:10.1088/1361-648X/ab51ff](https://doi.org/10.1088/1361-648X/ab51ff).
+- V. Vitale *et al.*, *npj Comput. Mater.* **6**, 66 (2020),
+  [doi:10.1038/s41524-020-0312-y](https://doi.org/10.1038/s41524-020-0312-y).
 - [Wannier90 file-format documentation](https://wannier90.readthedocs.io/en/latest/user_guide/wannier90/files/).
 - [ASE unit conventions](https://docs.ase-lib.org/ase/units.html).
 - [pymatgen electronic-structure API](https://pymatgen.org/pymatgen.electronic_structure.html).

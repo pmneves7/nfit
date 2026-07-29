@@ -251,6 +251,50 @@ def _symmetry_operations(spacegroup: str) -> list[tuple[FloatArray, FloatArray]]
     return operations
 
 
+def site_symmetry_operations(
+    crystal: Mapping[str, Any], site_label: str
+) -> list[dict[str, Any]]:
+    """Return the space-group operations that leave one representative site fixed.
+
+    Rotations and translations are returned in fractional coordinates together
+    with the corresponding Cartesian rotation. An operation belongs to the site
+    stabilizer when it maps the representative position onto itself modulo a
+    lattice translation.
+    """
+
+    validate_crystal(crystal)
+    entries = {
+        str(site["label"]): site for site in crystal.get("sites", [])
+    }
+    label = str(site_label)
+    if label not in entries:
+        raise ValueError(
+            f"site label {site_label!r} not found; crystal defines {sorted(entries)}"
+        )
+    base = _wrap_fractional(
+        np.asarray(entries[label]["position"], dtype=float)
+    )
+    result: list[dict[str, Any]] = []
+    for rotation, translation in _symmetry_operations(
+        str(crystal.get("spacegroup", "P 1"))
+    ):
+        image = _wrap_fractional(rotation @ base + translation)
+        if not np.allclose(image, base, atol=_POSITION_TOL):
+            continue
+        result.append(
+            {
+                "rotation_fractional": np.asarray(rotation, dtype=float).tolist(),
+                "translation_fractional": np.asarray(
+                    translation, dtype=float
+                ).tolist(),
+                "rotation_cartesian": cartesian_rotation(
+                    rotation, crystal["lattice"]
+                ).tolist(),
+            }
+        )
+    return result
+
+
 def _resolve_spacegroup(gemmi: Any, spacegroup: str):
     """Resolve a user-entered space group, preferring reference origin choices.
 

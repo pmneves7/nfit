@@ -76,4 +76,6 @@ The following sources underlie nfit's conventions and model documentation:
 
 Model-specific papers are cited beside the equations on
 [Spin-fluctuation models](spin_fluctuation_models.md) and
+[Electronic-structure models](electronic_structure_models.md), and beside the
+closure definitions in
 [Theory: sum rules and self-consistency](theory_notes.md).

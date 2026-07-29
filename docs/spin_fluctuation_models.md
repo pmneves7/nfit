@@ -1,8 +1,9 @@
 # Spin-fluctuation models
 
-nfit provides four magnetic-response models and the electronic-structure
-foundation for later itinerant-response models. Start with the least
-structured response that resolves the features in the data.
+nfit provides four magnetic-response models. Start with the least structured
+response that resolves the features in the data. Electronic Hamiltonians are
+documented separately under
+[Electronic-structure models](electronic_structure_models.md).
 
 | Model | Main response | Typical use | Calculable data |
 | --- | --- | --- | --- |
@@ -10,7 +11,6 @@ structured response that resolves the features in the data.
 | `mmp_relaxational` | $\chi=\chi_{\rm pk}/(1+\xi^2q^2-iE/E_{\rm sf})$ | One isotropic peak in a nearly antiferromagnetic metal | Single-crystal neutron scattering; extrapolated bulk linear response |
 | `generalized_paramagnon` | $\chi=(\chi_{\rm pk}/A)/(1-a_EE^2/A-iE/[\Gamma_0A^z])$ | Anisotropic peaks, critical slowing down, and damped propagating modes | Single-crystal and powder neutron scattering; extrapolated bulk linear response |
 | `heisenberg_rpa` | $\boldsymbol\chi=[\mathbb 1-\chi_0J(\mathbf Q)]^{-1}\chi_0$ | Dispersive fluctuations constrained by a crystal and exchange network | Single-crystal and powder neutron scattering; bulk linear response |
-| `tight_binding` | $H(\mathbf k)=\sum_{\mathbf R}w_{\mathbf R}H(\mathbf R)e^{2\pi i\mathbf k\cdot\mathbf R}$ | Material-independent electronic structure underlying later Lindhard models | Bands, orbital projections, density of states, and Fermi surfaces |
 
 ```{toctree}
 :maxdepth: 1
@@ -20,7 +20,6 @@ local_relaxational
 mmp_relaxational
 generalized_paramagnon
 heisenberg_rpa
-tight_binding
 ```
 
 For inelastic data, each magnetic-response kernel returns one Cartesian
@@ -40,10 +39,6 @@ The [local relaxational](local_relaxational.md),
 [Heisenberg RPA](heisenberg_rpa.md) pages define their parameters, complex
 susceptibilities, dissipative responses, elastic limits, scripts, and
 references.
-
-The [tight-binding electronic-structure](tight_binding.md) page documents the
-calculation-only foundation for the later Lindhard and interaction-dressed
-responses.
 
 Bulk comparison is optional. For models constructed near finite-momentum
 peaks, the $\mathbf Q=0$ result is an extrapolation whose failure can itself be

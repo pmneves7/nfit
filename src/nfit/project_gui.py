@@ -1954,6 +1954,16 @@ def _mark_tight_binding_crystal_manual(
         crystal["provenance"] = {"source": "manual"}
 
 
+def _refresh_tight_binding_builder(model: ModelComponentSpec) -> None:
+    """Regenerate builder-derived onsite data after crystal or orbital edits."""
+
+    if model.type != "tight_binding" or not model.config.get("orbital_manifolds"):
+        return
+    from .electronic_builder import regenerate_tight_binding_onsite_terms
+
+    regenerate_tight_binding_onsite_terms(model)
+
+
 # Default starting values for the non-orbit dynamic parameters (all others
 # default to 0.0). Zeeman parameters must be nonzero to have any effect.
 _MODEL_PARAMETER_DEFAULTS = {
@@ -2029,6 +2039,21 @@ def set_model_crystal(
         model.config["periodic_axes"] = list(axes)
         for name in ("spatial_orbits", "expanded_crystal_sites"):
             model.config.pop(name, None)
+        if model.config.get("orbital_manifolds"):
+            available = {
+                str(site.get("label", "")) for site in payload.get("sites", ())
+            }
+            used = {
+                str(item.get("site_label", ""))
+                for item in model.config.get("orbital_manifolds", ())
+            }
+            if used.issubset(available):
+                _refresh_tight_binding_builder(model)
+            else:
+                model.config["orbital_manifolds"] = []
+                model.config["onsite_terms"] = []
+                model.config["model_data"] = {}
+                model.config["model_digest"] = ""
     elif model.type == "heisenberg_rpa":
         model.config["magnetic_sites"] = []
         for name in ("orbits", "site_positions", "site_rotations"):
@@ -18636,6 +18661,8 @@ class NfitProjectExplorer:
                 "model_digest",
                 "model_data",
                 "crystal",
+                "orbital_manifolds",
+                "onsite_terms",
             }:
                 continue
             label = QtWidgets.QLabel(setting_name)
@@ -18772,6 +18799,8 @@ class NfitProjectExplorer:
         self.model_parameter_layout.addWidget(config_group, 2, 0, 1, 4)
         if model.type == "tight_binding":
             self._build_model_crystal_editor(model, structure_only=True)
+            self._build_tight_binding_orbital_editor(model)
+            self._build_tight_binding_onsite_editor(model)
             self._build_tight_binding_editor(model)
         elif definition.structured_config:
             self._build_model_crystal_editor(model)
@@ -18818,11 +18847,11 @@ class NfitProjectExplorer:
             lambda _checked=False, model=model: self._import_wannier90_model(model)
         )
         layout.addWidget(import_button, 1, 0, 1, 2)
-        structure_script = QtWidgets.QPushButton("Copy structure script")
+        structure_script = QtWidgets.QPushButton("Copy builder script")
         structure_script.setObjectName("tight_binding_structure_script")
         structure_script.setToolTip(
-            "Copy editable Python that rebuilds the CIF or manual crystal, "
-            "periodic axes, data group, and tight-binding component."
+            "Copy editable Python that rebuilds the crystal, orbital manifolds, "
+            "onsite invariants and values, periodic axes, and canonical model."
         )
         structure_script.clicked.connect(
             lambda _checked=False, model=model: self._copy_tight_binding_structure_script(
@@ -18853,7 +18882,309 @@ class NfitProjectExplorer:
             )
             layout.addWidget(calculate, row, 0, 1, 2)
             layout.addWidget(copy_script, row, 2)
+        self.model_parameter_layout.addWidget(group, 7, 0, 1, 4)
+
+    def _build_tight_binding_orbital_editor(
+        self, model: ModelComponentSpec
+    ) -> None:
+        """Build editable site-attached orbital manifolds."""
+
+        from PySide6 import QtWidgets
+
+        from .electronic_builder import ORBITAL_PRESETS, OrbitalManifold
+
+        group = QtWidgets.QGroupBox("Orbitals")
+        group.setObjectName("tight_binding_orbitals_group")
+        layout = QtWidgets.QGridLayout(group)
+        tooltip = (
+            "Attach an ordered orbital manifold to a crystallographic site. "
+            "Analytic spherical harmonics transform in the displayed local "
+            "frame. Custom bases remain usable but automatic symmetry is "
+            "disabled unless representation matrices are supplied in a later stage."
+        )
+        site_combo = QtWidgets.QComboBox()
+        site_combo.setObjectName("tight_binding_orbital_site")
+        site_combo.setToolTip(tooltip)
+        for site in model_crystal_config(model).get("sites", ()):
+            label = str(site.get("label", ""))
+            if label:
+                site_combo.addItem(label, label)
+        preset_combo = QtWidgets.QComboBox()
+        preset_combo.setObjectName("tight_binding_orbital_preset")
+        preset_combo.setToolTip(
+            "Choose an effective scalar, a complete real spherical-harmonic "
+            "shell, a crystal-field submanifold, or a custom numerical basis."
+        )
+        for preset in ORBITAL_PRESETS:
+            preset_combo.addItem(preset, preset)
+        add_button = QtWidgets.QPushButton("Add manifold")
+        add_button.setObjectName("tight_binding_orbital_add")
+        add_button.setToolTip(
+            "Add the selected preset in the crystal Cartesian frame. Its "
+            "local frame, degeneracy groups, and correlated-shell label remain editable."
+        )
+        add_button.setEnabled(site_combo.count() > 0)
+        add_button.clicked.connect(
+            lambda _checked=False, sites=site_combo, presets=preset_combo: self._add_tight_binding_manifold(
+                str(sites.currentData() or ""),
+                str(presets.currentData() or "effective"),
+            )
+        )
+        layout.addWidget(QtWidgets.QLabel("Site"), 0, 0)
+        layout.addWidget(site_combo, 0, 1)
+        layout.addWidget(QtWidgets.QLabel("Preset"), 0, 2)
+        layout.addWidget(preset_combo, 0, 3)
+        layout.addWidget(add_button, 0, 4)
+
+        headers = (
+            "Site",
+            "Manifold",
+            "Basis",
+            "Orbitals",
+            "Local frame",
+            "Degeneracy groups",
+            "Correlated shell",
+            "",
+        )
+        for column, text in enumerate(headers):
+            layout.addWidget(QtWidgets.QLabel(text), 1, column)
+        manifolds = [
+            OrbitalManifold.from_dict(item)
+            for item in model.config.get("orbital_manifolds", ())
+        ]
+        for index, manifold in enumerate(manifolds):
+            row = index + 2
+            site = QtWidgets.QLabel(manifold.site_label)
+            site.setToolTip(tooltip)
+            layout.addWidget(site, row, 0)
+            label = QtWidgets.QLineEdit(manifold.label)
+            label.setObjectName(f"tight_binding_manifold_label_{index}")
+            label.setToolTip(
+                "Stable, unique manifold label used in basis-state names, "
+                "projection groups, scripts, and later interaction definitions."
+            )
+            label.editingFinished.connect(
+                lambda index=index, editor=label: self._set_tight_binding_manifold_field(
+                    index, "label", editor.text()
+                )
+            )
+            layout.addWidget(label, row, 1)
+            basis = QtWidgets.QLabel(
+                f"{manifold.preset} ({manifold.basis_kind})"
+            )
+            basis.setToolTip(
+                "The preset is a convenience, while basis_kind determines "
+                "how symmetry acts. Crystal-field presets are subspaces of a complete shell."
+            )
+            layout.addWidget(basis, row, 2)
+            orbitals = QtWidgets.QLineEdit(
+                _parameter_to_text(list(manifold.orbitals))
+            )
+            orbitals.setObjectName(f"tight_binding_manifold_orbitals_{index}")
+            orbitals.setReadOnly(manifold.basis_kind != "custom")
+            orbitals.setToolTip(
+                "Ordered basis labels. Built-in harmonic labels are fixed by "
+                "their transformation convention; custom labels are editable JSON."
+            )
+            orbitals.editingFinished.connect(
+                lambda index=index, editor=orbitals: self._set_tight_binding_manifold_field(
+                    index, "orbitals", editor.text()
+                )
+            )
+            layout.addWidget(orbitals, row, 3)
+            frame = QtWidgets.QLineEdit(
+                _parameter_to_text(np.asarray(manifold.local_frame).tolist())
+            )
+            frame.setObjectName(f"tight_binding_manifold_frame_{index}")
+            frame.setToolTip(
+                "Right-handed orthonormal local axes as a 3x3 JSON matrix whose "
+                "columns are local x, y, z in crystal Cartesian coordinates. "
+                "Identity is the crystal frame."
+            )
+            frame.editingFinished.connect(
+                lambda index=index, editor=frame: self._set_tight_binding_manifold_field(
+                    index, "local_frame", editor.text()
+                )
+            )
+            layout.addWidget(frame, row, 4)
+            degeneracy = QtWidgets.QLineEdit(
+                _parameter_to_text(
+                    [list(group) for group in manifold.degeneracy_groups]
+                )
+            )
+            degeneracy.setObjectName(
+                f"tight_binding_manifold_degeneracy_{index}"
+            )
+            degeneracy.setToolTip(
+                "Optional JSON groups constrained to share one diagonal onsite "
+                "energy, for example [[\"d_yz\", \"d_zx\"]]. Groups must remain "
+                "compatible with the selected symmetry representation."
+            )
+            degeneracy.editingFinished.connect(
+                lambda index=index, editor=degeneracy: self._set_tight_binding_manifold_field(
+                    index, "degeneracy_groups", editor.text()
+                )
+            )
+            layout.addWidget(degeneracy, row, 5)
+            shell = QtWidgets.QLineEdit(manifold.correlated_shell)
+            shell.setObjectName(f"tight_binding_manifold_shell_{index}")
+            shell.setToolTip(
+                "Optional correlated-shell identifier that later Hubbard-Hund "
+                "and other interaction dressings will use."
+            )
+            shell.editingFinished.connect(
+                lambda index=index, editor=shell: self._set_tight_binding_manifold_field(
+                    index, "correlated_shell", editor.text()
+                )
+            )
+            layout.addWidget(shell, row, 6)
+            remove = QtWidgets.QPushButton("Remove")
+            remove.setObjectName(f"tight_binding_manifold_remove_{index}")
+            remove.setToolTip(
+                "Remove this manifold and regenerate the remaining onsite basis."
+            )
+            remove.clicked.connect(
+                lambda _checked=False, label=manifold.label: self._remove_tight_binding_manifold(
+                    label
+                )
+            )
+            layout.addWidget(remove, row, 7)
+        status_text = (
+            f"{sum(item.dimension for item in manifolds)} orbital(s) in "
+            f"{len(manifolds)} manifold(s)."
+            if manifolds
+            else "Add an orbital manifold to begin constructing the electronic basis."
+        )
+        status = QtWidgets.QLabel(status_text)
+        status.setObjectName("tight_binding_orbital_status")
+        status.setToolTip(tooltip)
+        status.setWordWrap(True)
+        layout.addWidget(status, len(manifolds) + 2, 0, 1, len(headers))
         self.model_parameter_layout.addWidget(group, 5, 0, 1, 4)
+
+    def _build_tight_binding_onsite_editor(
+        self, model: ModelComponentSpec
+    ) -> None:
+        """Build generated onsite-energy and onsite-hybridization controls."""
+
+        from PySide6 import QtWidgets
+
+        from .electronic_builder import OnsiteInvariant
+        from .electronic_structure import electronic_energy_from_meV
+
+        group = QtWidgets.QGroupBox("Onsite terms")
+        group.setObjectName("tight_binding_onsite_group")
+        layout = QtWidgets.QGridLayout(group)
+        regenerate = QtWidgets.QPushButton("Regenerate symmetry invariants")
+        regenerate.setObjectName("tight_binding_onsite_generate")
+        regenerate.setToolTip(
+            "Recompute the complete Hermitian onsite basis allowed by each "
+            "site stabilizer and declared degeneracy. Existing values, bounds, "
+            "and fit selections are retained when a stable identifier survives."
+        )
+        regenerate.setEnabled(bool(model.config.get("orbital_manifolds")))
+        regenerate.clicked.connect(self._regenerate_tight_binding_onsite)
+        layout.addWidget(regenerate, 0, 0, 1, 3)
+        unit = str(model.config.get("electronic_energy_unit", "eV"))
+        headers = (
+            "Term",
+            "Site",
+            "Kind",
+            f"Value ({unit})",
+            f"Lower ({unit})",
+            f"Upper ({unit})",
+            "Fit later",
+            "Matrix basis",
+        )
+        for column, text in enumerate(headers):
+            layout.addWidget(QtWidgets.QLabel(text), 1, column)
+        terms = [
+            OnsiteInvariant.from_dict(item)
+            for item in model.config.get("onsite_terms", ())
+        ]
+        for index, term in enumerate(terms):
+            row = index + 2
+            layout.addWidget(QtWidgets.QLabel(term.label), row, 0)
+            layout.addWidget(QtWidgets.QLabel(term.site_label), row, 1)
+            layout.addWidget(QtWidgets.QLabel(term.kind), row, 2)
+            value = QtWidgets.QLineEdit(
+                _parameter_to_text(
+                    electronic_energy_from_meV(term.value_meV, unit)
+                )
+            )
+            value.setObjectName(f"tight_binding_onsite_value_{index}")
+            value.setToolTip(
+                f"Static one-electron onsite coefficient in {unit}. It is "
+                "converted immediately to canonical meV. This is distinct from "
+                "a future dynamical many-body self-energy Sigma(k,E)."
+            )
+            value.editingFinished.connect(
+                lambda identifier=term.identifier, editor=value: self._set_tight_binding_onsite_field(
+                    identifier, "value", editor.text()
+                )
+            )
+            layout.addWidget(value, row, 3)
+            for column, (field, bound) in enumerate(
+                zip(("lower", "upper"), term.bounds_meV, strict=True), start=4
+            ):
+                editor = QtWidgets.QLineEdit(
+                    ""
+                    if bound is None
+                    else _parameter_to_text(
+                        electronic_energy_from_meV(bound, unit)
+                    )
+                )
+                editor.setObjectName(
+                    f"tight_binding_onsite_{field}_{index}"
+                )
+                editor.setToolTip(
+                    f"Optional future fit bound in {unit}. Empty means unbounded. "
+                    "Stage 3.2 stores this choice; optimizer integration is Stage 3.4."
+                )
+                editor.editingFinished.connect(
+                    lambda identifier=term.identifier, field=field, editor=editor: self._set_tight_binding_onsite_field(
+                        identifier, field, editor.text()
+                    )
+                )
+                layout.addWidget(editor, row, column)
+            fit = QtWidgets.QCheckBox()
+            fit.setObjectName(f"tight_binding_onsite_fit_{index}")
+            fit.setChecked(term.fit)
+            fit.setToolTip(
+                "Record that this term should be fitted once an electronic "
+                "response supplies a dataset observable. Stage 3.2 does not "
+                "send it to the optimizer."
+            )
+            fit.toggled.connect(
+                lambda checked, identifier=term.identifier: self._set_tight_binding_onsite_fit(
+                    identifier, checked
+                )
+            )
+            layout.addWidget(fit, row, 6)
+            matrix = QtWidgets.QLabel(
+                f"{len(term.basis_labels)}x{len(term.basis_labels)}; {term.source}"
+            )
+            matrix.setToolTip(
+                "Unit-Frobenius Hermitian matrix multiplying this coefficient. "
+                f"Ordered local basis: {', '.join(term.basis_labels)}\n"
+                f"Matrix:\n{np.array2string(term.matrix, precision=4)}"
+            )
+            layout.addWidget(matrix, row, 7)
+        status_text = (
+            f"{len(terms)} onsite invariant(s). With no hoppings yet, the "
+            "resolved Stage 3.2 model has flat bands."
+            if terms
+            else "No onsite invariants. Add orbitals, then regenerate."
+        )
+        status = QtWidgets.QLabel(status_text)
+        status.setObjectName("tight_binding_onsite_status")
+        status.setToolTip(
+            "Onsite energies and symmetry-allowed onsite hybridizations form "
+            "the static R=0 Hamiltonian. Hopping generation follows in Stage 3.3."
+        )
+        status.setWordWrap(True)
+        layout.addWidget(status, len(terms) + 2, 0, 1, len(headers))
+        self.model_parameter_layout.addWidget(group, 6, 0, 1, 4)
 
     def _import_wannier90_model(self, model: ModelComponentSpec) -> bool:
         from PySide6 import QtWidgets
@@ -18889,6 +19220,8 @@ class NfitProjectExplorer:
         model.config["model_digest"] = imported.content_digest
         model.config["model_data"] = {}
         model.config["periodic_axes"] = list(imported.periodic_axes)
+        model.config["orbital_manifolds"] = []
+        model.config["onsite_terms"] = []
         owner = self._group_for_model(model)
         if owner is not None:
             self._record_data_group_state_change(owner)
@@ -18977,6 +19310,9 @@ class NfitProjectExplorer:
                 electronic_energy_unit=model.config.get(
                     "electronic_energy_unit", "eV"
                 ),
+                orbital_manifolds=model.config.get("orbital_manifolds", ()),
+                onsite_terms=model.config.get("onsite_terms", ()),
+                expected_model_digest=str(model.config.get("model_digest", "")),
             )
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
@@ -19065,6 +19401,23 @@ class NfitProjectExplorer:
         )
         from_group_button.clicked.connect(self._use_group_crystal_for_selected_model)
         crystal_layout.addWidget(from_group_button, 1, 8, 1, 2)
+        geometry_button = QtWidgets.QPushButton("View model in 3D")
+        geometry_button.setObjectName("model_geometry_viewer")
+        geometry_button.setToolTip(
+            "Inspect the unit cell, active and ghost sites, local orbital "
+            "frames, orbital tokens, and representative or symmetry-equivalent "
+            "hopping/exchange pathways in the shared model-geometry viewer."
+        )
+        geometry_button.clicked.connect(self._open_selected_model_geometry)
+        crystal_layout.addWidget(geometry_button, 2, 0, 1, 3)
+        geometry_script = QtWidgets.QPushButton("Copy 3D viewer script")
+        geometry_script.setObjectName("model_geometry_script")
+        geometry_script.setToolTip(
+            "Copy editable Python that reconstructs the renderer-independent "
+            "model-geometry scene and opens the same viewer without project widgets."
+        )
+        geometry_script.clicked.connect(self._copy_selected_model_geometry_script)
+        crystal_layout.addWidget(geometry_script, 2, 3, 1, 3)
         self.model_parameter_layout.addWidget(crystal_group, 3, 0, 1, 4)
 
         sites_group = QtWidgets.QGroupBox("Atomic Sites")
@@ -19169,13 +19522,13 @@ class NfitProjectExplorer:
         sites_layout.addWidget(add_site_button, len(crystal["sites"]) + 1, 0)
         if structure_only:
             status = QtWidgets.QLabel(
-                "The crystal is ready for orbital assignment; orbital "
-                "manifolds are added in the next builder stage."
+                "The crystal supplies candidate orbital sites. Add manifolds "
+                "below to construct the Stage 3.2 onsite Hamiltonian."
             )
             status.setObjectName("tight_binding_structure_status")
             status.setToolTip(
-                "Stage 3.1 stores editable crystal geometry. It does not yet "
-                "construct a Hamiltonian without model_data or Wannier90."
+                "Crystal geometry, orbital manifolds, onsite invariants, and "
+                "the resolved canonical model are shared by the GUI and scripts."
             )
             status.setWordWrap(True)
             sites_layout.addWidget(
@@ -19489,6 +19842,166 @@ class NfitProjectExplorer:
 
         self.model_parameter_layout.addWidget(group, 7, 0, 1, 4)
 
+    def _add_tight_binding_manifold(self, site_label: str, preset: str) -> None:
+        from .electronic_builder import (
+            add_tight_binding_orbital_manifold,
+            orbital_manifold_preset,
+        )
+
+        def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
+            if model.type != "tight_binding":
+                raise ValueError("orbital manifolds require a tight-binding model")
+            if not site_label:
+                raise ValueError("select a crystallographic site first")
+            base = f"{site_label}_{preset}"
+            existing = {
+                str(item.get("label", ""))
+                for item in model.config.get("orbital_manifolds", ())
+            }
+            label = base
+            suffix = 2
+            while label in existing:
+                label = f"{base}_{suffix}"
+                suffix += 1
+            add_tight_binding_orbital_manifold(
+                model,
+                orbital_manifold_preset(site_label, preset, label=label),
+            )
+
+        self._mutate_selected_model(mutate)
+
+    def _set_tight_binding_manifold_field(
+        self, index: int, field: str, text: str
+    ) -> None:
+        from .electronic_builder import (
+            OrbitalManifold,
+            set_tight_binding_orbital_manifolds,
+        )
+
+        def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
+            payloads = copy.deepcopy(model.config.get("orbital_manifolds", ()))
+            if not (0 <= int(index) < len(payloads)):
+                raise _NoChange()
+            payload = payloads[int(index)]
+            if field in {"label", "correlated_shell"}:
+                value: Any = text.strip()
+            else:
+                value = _parse_parameter_text(text)
+                if field == "orbitals" and not isinstance(value, list):
+                    raise ValueError("custom orbitals must be entered as a JSON list")
+                if field == "local_frame" and (
+                    not isinstance(value, list)
+                    or len(value) != 3
+                    or any(
+                        not isinstance(row, list) or len(row) != 3
+                        for row in value
+                    )
+                ):
+                    raise ValueError("local_frame must be a 3x3 JSON matrix")
+                if field == "degeneracy_groups" and not isinstance(value, list):
+                    raise ValueError(
+                        "degeneracy_groups must be a JSON list of orbital-label lists"
+                    )
+            if payload.get(field) == value:
+                raise _NoChange()
+            payload[field] = value
+            set_tight_binding_orbital_manifolds(
+                model, [OrbitalManifold.from_dict(item) for item in payloads]
+            )
+
+        self._mutate_selected_model_quietly(mutate)
+
+    def _remove_tight_binding_manifold(self, label: str) -> None:
+        from .electronic_builder import remove_tight_binding_orbital_manifold
+
+        self._mutate_selected_model(
+            lambda model, _group: remove_tight_binding_orbital_manifold(
+                model, label
+            )
+        )
+
+    def _regenerate_tight_binding_onsite(self) -> None:
+        from .electronic_builder import regenerate_tight_binding_onsite_terms
+
+        self._mutate_selected_model(
+            lambda model, _group: regenerate_tight_binding_onsite_terms(model)
+        )
+
+    def _set_tight_binding_onsite_field(
+        self, identifier: str, field: str, text: str
+    ) -> None:
+        from .electronic_builder import set_tight_binding_onsite_term
+
+        def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
+            if field == "value":
+                set_tight_binding_onsite_term(
+                    model,
+                    identifier,
+                    value=float(_parse_parameter_text(text)),
+                )
+                return
+            value = (
+                None if not text.strip() else float(_parse_parameter_text(text))
+            )
+            set_tight_binding_onsite_term(
+                model,
+                identifier,
+                **{field: value},
+            )
+
+        self._mutate_selected_model(mutate)
+
+    def _set_tight_binding_onsite_fit(
+        self, identifier: str, checked: bool
+    ) -> None:
+        from .electronic_builder import set_tight_binding_onsite_term
+
+        self._mutate_selected_model(
+            lambda model, _group: set_tight_binding_onsite_term(
+                model, identifier, fit=bool(checked)
+            )
+        )
+
+    def _open_selected_model_geometry(self) -> bool:
+        from PySide6 import QtWidgets
+
+        from .qt_model_geometry_viewer import open_model_geometry_viewer
+
+        _group, model = self._selected_model_and_group()
+        if model is None:
+            return False
+        try:
+            window = open_model_geometry_viewer(model, parent=self.window)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Model geometry",
+                f"Could not open the 3D model viewer:\n{exc}",
+            )
+            return False
+        self._plot_windows[f"model:{id(model)}:geometry"] = window
+        return True
+
+    def _copy_selected_model_geometry_script(self) -> bool:
+        from PySide6 import QtWidgets
+
+        from .model_geometry import model_geometry_script
+
+        _group, model = self._selected_model_and_group()
+        if model is None:
+            return False
+        try:
+            script = model_geometry_script(model)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Model geometry script",
+                f"Could not create the viewer script:\n{exc}",
+            )
+            return False
+        QtWidgets.QApplication.clipboard().setText(script)
+        return True
+
     def _set_model_interaction(self, kind: str, enabled: bool) -> None:
         def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
             if kind == "anisotropy":
@@ -19544,6 +20057,7 @@ class NfitProjectExplorer:
                 raise _NoChange()
             lattice[name] = value
             _mark_tight_binding_crystal_manual(model, crystal)
+            _refresh_tight_binding_builder(model)
 
         self._mutate_selected_model_quietly(mutate)
 
@@ -19555,6 +20069,7 @@ class NfitProjectExplorer:
                 raise _NoChange()
             crystal["spacegroup"] = value
             _mark_tight_binding_crystal_manual(model, crystal)
+            _refresh_tight_binding_builder(model)
 
         self._mutate_selected_model_quietly(mutate)
 
@@ -19569,6 +20084,7 @@ class NfitProjectExplorer:
                 value = text.strip()
                 if site.get("label") == value:
                     raise _NoChange()
+                previous_label = str(site.get("label", ""))
                 if model.type == "heisenberg_rpa":
                     magnetic = [
                         str(name)
@@ -19578,6 +20094,10 @@ class NfitProjectExplorer:
                         value if name == str(site.get("label", "")) else name
                         for name in magnetic
                     ]
+                elif model.type == "tight_binding":
+                    for manifold in model.config.get("orbital_manifolds", ()):
+                        if str(manifold.get("site_label", "")) == previous_label:
+                            manifold["site_label"] = value
                 site["label"] = value
             elif field in {"ion", "element"}:
                 value = text.strip()
@@ -19592,6 +20112,7 @@ class NfitProjectExplorer:
                 position[int(field)] = value
                 site["position"] = position
             _mark_tight_binding_crystal_manual(model, crystal)
+            _refresh_tight_binding_builder(model)
 
         self._mutate_selected_model_quietly(mutate)
 
@@ -19642,6 +20163,15 @@ class NfitProjectExplorer:
                     for name in model.config.get("magnetic_sites", [])
                     if str(name) != label
                 ]
+            elif model.type == "tight_binding":
+                from .electronic_builder import set_tight_binding_orbital_manifolds
+
+                retained = [
+                    item
+                    for item in model.config.get("orbital_manifolds", ())
+                    if str(item.get("site_label", "")) != label
+                ]
+                set_tight_binding_orbital_manifolds(model, retained)
             _mark_tight_binding_crystal_manual(model, crystal)
 
         self._mutate_selected_model(mutate)

@@ -1267,6 +1267,28 @@ def _register_builtin_models() -> None:
                     '"spacegroup": "P 1", "sites": []}',
                 ),
                 _config_field(
+                    "orbital_manifolds",
+                    [],
+                    (
+                        "Editable site-attached orbital manifolds, local frames, "
+                        "and symmetry conventions used by the structure-first builder."
+                    ),
+                    "A list of OrbitalManifold dictionaries.",
+                    "list",
+                    "[]",
+                ),
+                _config_field(
+                    "onsite_terms",
+                    [],
+                    (
+                        "Generated symmetry-allowed onsite energies and "
+                        "hybridizations with canonical meV coefficients."
+                    ),
+                    "A list of OnsiteInvariant dictionaries generated from the crystal and orbitals.",
+                    "list",
+                    "[]",
+                ),
+                _config_field(
                     "periodic_axes",
                     [],
                     "Direct-lattice periodic axes; empty infers them from hoppings.",
