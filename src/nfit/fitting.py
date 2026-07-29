@@ -423,6 +423,10 @@ class SamplingCancelled(RuntimeError):
         self.result = result
 
 
+class FitCancellationRequested(RuntimeError):
+    """Request that an active deterministic optimizer return its best point."""
+
+
 @dataclass(frozen=True)
 class FitProblem:
     """Complete simultaneous-fitting problem definition.
@@ -543,6 +547,7 @@ class FitResult:
     dataset_model_values: dict[str, FloatArray] = field(default_factory=dict)
     covariance_mode: str = "absolute"
     covariance_scale_factor: float = 1.0
+    cancelled: bool = False
 
 
 def identity_resolution(
@@ -1300,6 +1305,7 @@ def fit_problem_least_squares(
         dataset_weights=evaluation.dataset_weights,
         dataset_residuals=evaluation.dataset_residuals,
         dataset_model_values=evaluation.dataset_model_values,
+        cancelled=bool(result.cancelled),
     )
 
 
@@ -2007,13 +2013,13 @@ def _as_3x3_matrix(value: ArrayLike, *, name: str) -> FloatArray:
 
 
 def _covariance_from_jacobian(
-    jacobian: FloatArray,
+    jacobian: FloatArray | None,
     *,
     chi2: float,
     dof: int,
     covariance_mode: str,
 ) -> FloatArray | None:
-    if dof <= 0 or jacobian.size == 0:
+    if jacobian is None or dof <= 0 or jacobian.size == 0:
         return None
     try:
         _, singular_values, vt = np.linalg.svd(jacobian, full_matrices=False)
@@ -2061,10 +2067,11 @@ def _initial_walker_positions(
 @dataclass
 class _LeastSquaresResult:
     x: FloatArray
-    jac: FloatArray
+    jac: FloatArray | None
     success: bool
     message: str
     cost: float
+    cancelled: bool = False
 
 
 def _run_least_squares(
@@ -2081,14 +2088,24 @@ def _run_least_squares(
     optimizer_kwargs = {} if kwargs is None else dict(kwargs)
     x0 = _nudge_inside_bounds(x0, bounds)
     wrapped_residual_fn = residual_fn
+    best_x: FloatArray | None = None
+    best_cost = np.inf
     if progress_callback is not None:
         evaluation = 0
         fit_start = time.perf_counter()
 
         def wrapped_residual_fn(x: FloatArray) -> FloatArray:
-            nonlocal evaluation
+            nonlocal best_cost, best_x, evaluation
             evaluation += 1
             residual = residual_fn(x)
+            cost = _least_squares_objective_cost(
+                residual,
+                loss=optimizer_kwargs.get("loss", "linear"),
+                f_scale=optimizer_kwargs.get("f_scale", 1.0),
+            )
+            if np.isfinite(cost) and cost < best_cost:
+                best_cost = cost
+                best_x = np.asarray(x, dtype=float).copy()
             if evaluation == 1 or evaluation % 10 == 0:
                 params = unpack_parameters(x, names, {} if fixed is None else fixed)
                 elapsed = time.perf_counter() - fit_start
@@ -2099,7 +2116,7 @@ def _run_least_squares(
                         "elapsed_seconds": elapsed,
                         "seconds_per_step": elapsed / max(evaluation, 1),
                         "parameters": {name: float(params[name]) for name in names},
-                        "cost": 0.5 * float(np.dot(residual, residual)),
+                        "cost": cost,
                         "message": f"least-squares residual evaluation {evaluation}",
                     }
                 )
@@ -2108,12 +2125,15 @@ def _run_least_squares(
     if _scipy_least_squares is not None:
         if jac is not None:
             optimizer_kwargs.setdefault("jac", jac)
-        scipy_result = _scipy_least_squares(
-            wrapped_residual_fn,
-            x0=x0,
-            bounds=bounds,
-            **optimizer_kwargs,
-        )
+        try:
+            scipy_result = _scipy_least_squares(
+                wrapped_residual_fn,
+                x0=x0,
+                bounds=bounds,
+                **optimizer_kwargs,
+            )
+        except FitCancellationRequested:
+            return _cancelled_least_squares_result(best_x, best_cost)
         return _LeastSquaresResult(
             x=np.asarray(scipy_result.x, dtype=float),
             jac=np.asarray(scipy_result.jac, dtype=float),
@@ -2126,7 +2146,65 @@ def _run_least_squares(
     if unsupported:
         names = ", ".join(sorted(unsupported))
         raise ValueError(f"NumPy least-squares fallback does not support optimizer kwargs: {names}")
-    return _numpy_least_squares(wrapped_residual_fn, x0=x0, bounds=bounds, **optimizer_kwargs)
+    try:
+        return _numpy_least_squares(
+            wrapped_residual_fn,
+            x0=x0,
+            bounds=bounds,
+            **optimizer_kwargs,
+        )
+    except FitCancellationRequested:
+        return _cancelled_least_squares_result(best_x, best_cost)
+
+
+def _least_squares_objective_cost(
+    residual: FloatArray,
+    *,
+    loss: str | Callable[[FloatArray], FloatArray],
+    f_scale: float,
+) -> float:
+    """Return SciPy's least-squares objective for one residual evaluation."""
+
+    values = np.asarray(residual, dtype=float)
+    if loss == "linear":
+        return 0.5 * float(np.dot(values, values))
+    scale = float(f_scale)
+    z = (values / scale) ** 2
+    if callable(loss):
+        rho = np.asarray(loss(z), dtype=float)
+        rho0 = rho[0]
+    elif loss == "soft_l1":
+        rho0 = 2.0 * (np.sqrt(1.0 + z) - 1.0)
+    elif loss == "huber":
+        rho0 = np.where(z <= 1.0, z, 2.0 * np.sqrt(z) - 1.0)
+    elif loss == "cauchy":
+        rho0 = np.log1p(z)
+    elif loss == "arctan":
+        rho0 = np.arctan(z)
+    else:
+        return 0.5 * float(np.dot(values, values))
+    return 0.5 * scale**2 * float(np.sum(rho0))
+
+
+def _cancelled_least_squares_result(
+    best_x: FloatArray | None,
+    best_cost: float,
+) -> _LeastSquaresResult:
+    if best_x is None:
+        raise FitCancellationRequested(
+            "least-squares terminated before any parameter set was evaluated"
+        )
+    return _LeastSquaresResult(
+        x=best_x,
+        jac=None,
+        success=False,
+        message=(
+            "least-squares terminated by user; returning the lowest-objective "
+            "parameter set evaluated so far"
+        ),
+        cost=float(best_cost),
+        cancelled=True,
+    )
 
 
 def _nudge_inside_bounds(

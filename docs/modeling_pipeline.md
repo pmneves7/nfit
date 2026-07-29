@@ -198,6 +198,11 @@ problem = FitProblem(
 result = fit_problem_least_squares(problem)
 ```
 
+Raise `FitCancellationRequested` from a progress callback to stop least squares
+and return the lowest-objective parameter set evaluated so far. The returned
+`FitResult` has `cancelled=True`, `success=False`, and no covariance-derived
+standard errors because the optimization did not converge.
+
 An enabled project dataset with zero fit weight is omitted from preparation and
 optimization. After the fit, the project pipeline evaluates it once for display.
 

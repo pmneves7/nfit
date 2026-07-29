@@ -1224,7 +1224,7 @@ def test_fit_progress_dialog_uses_parameter_table_and_resets(monkeypatch):
     assert splitter.indexOf(log) == 1
     assert table.rowCount() == 2
     assert dialog.cancel_button.text() == "Terminate"
-    assert "completed least-squares result is kept" in dialog.cancel_button.toolTip()
+    assert "lowest-objective parameter set evaluated so far" in dialog.cancel_button.toolTip()
     assert "model.constant" not in dialog.log.toPlainText()
     assert "Least-squares fit" in dialog.stage_label.text()
     assert "125 ms/step" in dialog.status_label.text()

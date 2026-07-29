@@ -1,7 +1,9 @@
 import numpy as np
 import pytest
 
+import nfit.fitting as fitting_module
 from nfit import (
+    FitCancellationRequested,
     FitDataset,
     FitProblem,
     ModelSpec,
@@ -192,6 +194,45 @@ def test_least_squares_progress_reports_time_per_step():
     assert timed
     assert all(event["elapsed_seconds"] >= 0.0 for event in timed)
     assert all(event["seconds_per_step"] >= 0.0 for event in timed)
+
+
+def test_cancelled_least_squares_returns_lowest_objective_point(monkeypatch):
+    data = PointData4D(
+        [0.0, 1.0],
+        [0.0, 0.0],
+        [0.0, 0.0],
+        [1.0, 1.0],
+        [2.0, 2.0],
+        [1.0, 1.0],
+    )
+    problem = FitProblem(
+        datasets=[FitDataset("data", data)],
+        model=lambda data, params: np.full(data.size, params["level"]),
+        parameter_specs=[ParameterSpec("level", 0.0)],
+    )
+
+    def fake_least_squares(fun, *, x0, bounds, **kwargs):
+        del x0, bounds, kwargs
+        for level in (0.0, 1.0, 1.8, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0):
+            fun(np.asarray([level], dtype=float))
+        raise AssertionError("termination should unwind the optimizer")
+
+    def terminate(event):
+        if event["iteration"] >= 10:
+            raise FitCancellationRequested("stop")
+
+    monkeypatch.setattr(fitting_module, "_scipy_least_squares", fake_least_squares)
+
+    result = fit_problem_least_squares(problem, progress_callback=terminate)
+
+    assert result.cancelled is True
+    assert result.success is False
+    assert result.params["level"] == pytest.approx(1.8)
+    assert result.cost == pytest.approx(0.04)
+    assert result.chi2 == pytest.approx(0.08)
+    assert result.covariance is None
+    assert result.stderr is None
+    assert "lowest-objective parameter set" in result.message
 
 
 def test_fit_dataset_applies_mask_transform_and_resolution():

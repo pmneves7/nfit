@@ -39,6 +39,7 @@ from .fit_config import (
     sharing_mode,
 )
 from .fitting import (
+    FitCancellationRequested,
     OptimizationConfig,
     SamplerConfig,
     SamplingCancelled,
@@ -4231,7 +4232,7 @@ def perform_group_fit(
     )
     sampler_result: SamplingResult | None = None
     sampler_cancelled = False
-    sampler = _sampler_config(optimizer_config)
+    sampler = None if result.cancelled else _sampler_config(optimizer_config)
     if sampler is not None:
         try:
             sampler_result = sample_problem_parameters(
@@ -4252,7 +4253,7 @@ def perform_group_fit(
         visualization_channels = _visualization_only_channels(
             group,
             components,
-            progress_callback=record_progress,
+            progress_callback=None if result.cancelled else record_progress,
         )
         visualization_names = list(visualization_channels)
         channels.update(visualization_channels)
@@ -4263,7 +4264,7 @@ def perform_group_fit(
     goodness: dict[str, Any] = {
         "status": (
             "cancelled"
-            if sampler_cancelled
+            if result.cancelled or sampler_cancelled
             else ("converged" if result.success else "not converged")
         ),
         "message": (
@@ -8314,8 +8315,8 @@ class _FitProgressDialog:
         self.cancel_button.setEnabled(False)
         self.cancel_button.setToolTip(
             "Terminate the active optimization or posterior sampler at its next progress update. "
-            "A completed least-squares result is kept; if emcee has recorded samples, its partial "
-            "chain is also saved for inspection or continuation."
+            "Least squares keeps the lowest-objective parameter set evaluated so far; if emcee "
+            "has recorded samples, its partial chain is also saved for inspection or continuation."
         )
         self.cancel_button.clicked.connect(self._cancel_requested)
         self.close_button = QtWidgets.QPushButton("Close")
@@ -10677,7 +10678,9 @@ class NfitProjectExplorer:
                 try:
                     def progress_callback(event: dict[str, Any]) -> None:
                         if self.cancel_requested:
-                            raise RuntimeError("Operation cancelled by user.")
+                            raise FitCancellationRequested(
+                                "Operation cancelled by user."
+                            )
                         self.progress.emit(event)
 
                     self.finished.emit(task(progress_callback))

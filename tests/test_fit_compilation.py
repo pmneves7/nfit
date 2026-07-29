@@ -1,4 +1,6 @@
 # ruff: noqa: F401, F403, F405
+import nfit.fitting as fitting_module
+from nfit import FitCancellationRequested
 from tests.fit_config_test_support import *
 from tests.fit_config_test_support import (
     _closure_points,
@@ -314,6 +316,39 @@ def test_run_group_fit_recovers_constant_and_stores_channels():
     assert channels["residual"] == pytest.approx(np.zeros((4, 5)), abs=1e-5)
     # the snapshot captures the fitted value so restoring reproduces the fit
     assert entry.snapshot["models"][0]["parameters"]["constant"] == pytest.approx(1.5, abs=1e-6)
+
+
+def test_run_group_fit_records_best_point_when_least_squares_is_cancelled(monkeypatch):
+    group = _fit_ready_group({"first": 1.5})
+    model = create_model_component(group)
+    model.parameters["constant"] = 0.0
+    model.fit_parameters["constant"] = True
+    ensure_fit_history(group)
+
+    def fake_least_squares(fun, *, x0, bounds, **kwargs):
+        del x0, bounds, kwargs
+        for level in (0.0, 1.0, 1.4, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0):
+            fun(np.asarray([level], dtype=float))
+        raise AssertionError("termination should unwind the optimizer")
+
+    def terminate(event):
+        if event.get("stage") == "least_squares" and event["iteration"] >= 10:
+            raise FitCancellationRequested("stop")
+
+    monkeypatch.setattr(fitting_module, "_scipy_least_squares", fake_least_squares)
+
+    entry = run_group_fit(
+        group,
+        group.fits[0],
+        progress_callback=terminate,
+    )
+
+    assert entry.goodness["status"] == "cancelled"
+    assert "lowest-objective parameter set" in entry.goodness["message"]
+    assert entry.goodness["stderr"] == {}
+    assert model.parameters["constant"] == pytest.approx(1.4)
+    assert entry.channels["first"]["fit"] == pytest.approx(np.full((4, 5), 1.4))
+    assert entry.snapshot["models"][0]["parameters"]["constant"] == pytest.approx(1.4)
 
 
 def test_run_group_fit_honors_masks_disabled_datasets_and_scales():

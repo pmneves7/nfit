@@ -111,8 +111,11 @@ uncertainties or posterior intervals.
 
 Long operations run in a background worker and report the active stage,
 evaluation count, cost, current parameters, and time per step. **Terminate**
-requests a stop at the next progress update. A completed least-squares result is
-not discarded if posterior sampling is terminated later.
+requests a stop at the next progress update. If least squares is still running,
+nfit stores the lowest-objective parameter set evaluated so far as a cancelled
+fit and evaluates its model and residual channels. It does not report local
+covariance errors for this unconverged result. A completed least-squares result
+is not discarded if posterior sampling is terminated later.
 
 Parallel worker controls apply to differential evolution and emcee objective
 evaluations. `1` is serial; `-1` selects a conservative automatic CPU count.

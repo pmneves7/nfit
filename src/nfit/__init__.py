@@ -79,6 +79,7 @@ from .fit_config import (
 )
 from .fitting import (
     DerivedParameter,
+    FitCancellationRequested,
     FitDataset,
     FitProblem,
     FitResult,
@@ -377,6 +378,7 @@ __all__ = [
     "cross_section_from_chipp",
     "quasistatic_cross_section_from_chi",
     "FitResult",
+    "FitCancellationRequested",
     "FitDataset",
     "FitProblem",
     "KB_MEV_PER_K",
