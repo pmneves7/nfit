@@ -6,11 +6,13 @@ models. The detailed current behavior is documented on
 
 Stages 3.1 and 3.2 are implemented. The GUI and public API share CIF import,
 editable crystal geometry, site expansion, orbital manifolds and local frames,
+site-point-group identification, calculated harmonic subspaces,
 site-symmetry representations, static onsite invariants, canonical model
 resolution, project and builder-script serialization, and an eV-default input
 unit backed by canonical meV storage. The shared 3D viewer displays the cell,
-active or ghost sites, orbital tokens, and local frames. Hoppings, optimizer
-integration, SOC, and compact parameterizations remain planned.
+element-colored atom spheres, active or ghost sites, orbital tokens, and local
+frames using batched geometry. Hoppings, optimizer integration, SOC, and
+compact parameterizations remain planned.
 
 ## Goal
 
@@ -25,9 +27,8 @@ correlation model. It should support, for example:
 
 - one effective orbital on each selected site;
 - a complete degenerate atomic shell;
-- cubic or lower-symmetry crystal-field submanifolds, such as
-  $d\rightarrow t_{2g}\oplus e_g$ followed by
-  $t_{2g}\rightarrow a_{1g}\oplus e_g'$;
+- site-symmetry submanifolds calculated from any supported crystallographic
+  point group and selected local harmonic shell;
 - a localized orbital hybridized with broader orbitals on the same or other
   species; and
 - spinor bases with spin-orbit coupling.
@@ -48,26 +49,29 @@ manifold record contains:
 | Field | Meaning | Example |
 | --- | --- | --- |
 | `site_label` | crystallographic site receiving the manifold | `"M1"` |
-| `label` | unique manifold label | `"M1_t2g"` |
+| `label` | unique manifold label | `"M1_d_subspace"` |
 | `basis_kind` | effective scalar, real spherical harmonics, complex spherical harmonics, or custom | `"real_harmonic"` |
 | `l` | angular-momentum quantum number when applicable | `2` for a $d$ shell |
-| `orbitals` | ordered orbital labels | `["d_xy", "d_yz", "d_zx"]` |
-| `irrep` | optional site-symmetry irrep label | `"t2g"` |
+| `orbitals` | ordered orbital labels | `["d_yz", "d_zx"]` |
+| `irrep` | calculated subspace description or established irrep label | `"4/mmm subspace 2 (dimension 2; d_yz, d_zx)"` |
 | `degeneracy_groups` | orbitals constrained to one onsite energy | `[["d_yz", "d_zx"], ["d_xy"]]` |
 | `local_frame` | orthonormal local axes expressed in crystal Cartesian coordinates | `[[1,0,0], [0,1,0], [0,0,1]]` |
 | `spin_basis` | spinless, collinear, or spinor | `"spinless"` |
 | `correlated_shell` | grouping used by later $U$ and $J_H$ interactions | `"M1_3d"` |
+| `site_point_group` | point group used for an opted-in subspace | `"4/mmm"` |
+| `submanifold_id` | stable calculated-subspace identifier | `"d:4/mmm:8705c5723841"` |
 
-Presets such as `s`, `p`, `d`, `f`, `t2g`, and `eg` are conveniences that
-populate this record. They are not separate model classes. Arbitrary labels
-and custom transformation matrices remain available.
+The always-available choices are an effective orbital, complete `s`, `p`, `d`,
+and `f` shells, and a custom basis. They are not separate model classes.
+For a harmonic shell, the user may opt into the identified site point group
+and select a symmetry-closed subspace calculated from its representation.
+Arbitrary labels and custom transformation matrices remain available.
 
-Real spherical harmonics are the primary built-in convention. Complete
-shells and the `t2g`, `eg`, `a1g_t2g`, `eg_prime_t2g`, and
-`t2g_trigonal` subspaces carry explicit transformations from that shell.
-The crystal Cartesian frame is the default. A user may replace it with any
-right-handed orthonormal local frame, including a frame chosen to describe a
-particular crystal-field environment.
+Real spherical harmonics are the primary built-in convention. The crystal
+Cartesian frame is the default. A user may replace it with any right-handed
+orthonormal local frame, including a frame chosen to describe a particular
+crystal-field environment. Subspaces are derived after applying that frame;
+they are not a hard-coded list of cubic or trigonal names.
 
 Automatic symmetry is permitted only when the selected subspace is closed
 under every operation in the site's stabilizer. nfit reports a non-closed
@@ -159,8 +163,8 @@ The renderer-independent model-geometry scene is shared by tight binding and
 Heisenberg RPA. Its Stage 3.2 foundation contains:
 
 - the crystallographic unit cell;
-- all atoms or active sites only, with inactive atoms optionally shown as
-  translucent ghosts;
+- all atoms as element-colored, smooth-shaded sphere glyphs, or active sites
+  only, with inactive atoms optionally shown as translucent ghosts;
 - every orbital center and an abstract colored token for each simultaneous
   basis orbital; and
 - the local Cartesian frame of each orbital manifold.
@@ -169,6 +173,10 @@ The tokens identify basis states and do not claim to be real-space
 wavefunction isosurfaces. Analytic orbital lobes and imported volumetric
 Wannier functions may be added later without changing the scientific scene
 API.
+
+Cell edges, atom glyphs, orbital tokens, local-frame axes, and pathways are
+batched by visual role. This keeps scene construction responsive while
+retaining smooth camera interaction.
 
 Stage 3.3 adds hopping-path selection to the same scene. The pathway layer
 already accepts Heisenberg exchange orbits and distinguishes one
@@ -202,8 +210,9 @@ The model editor should present five focused sections:
 
 1. **Structure** — import CIF, edit lattice and space group, inspect
    crystallographic sites, and choose periodic axes.
-2. **Orbitals** — select sites, add presets or custom manifolds, define local
-   frames, and inspect the expanded ordered basis.
+2. **Orbitals** — select sites, inspect the identified point group, add a
+   complete shell, an opted-in symmetry subspace, or a custom manifold, define
+   local frames, and inspect the expanded ordered basis.
 3. **Onsite terms** — generate symmetry-allowed onsite invariants, set
    crystal-field energies and hybridizations, and choose fitted terms.
 4. **Hoppings** — choose a distance cutoff, generate spatial bond orbits,

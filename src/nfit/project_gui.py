@@ -18891,7 +18891,12 @@ class NfitProjectExplorer:
 
         from PySide6 import QtWidgets
 
-        from .electronic_builder import ORBITAL_PRESETS, OrbitalManifold
+        from .electronic_builder import (
+            ORBITAL_PRESETS,
+            OrbitalManifold,
+            site_point_group_symbol,
+            site_symmetry_harmonic_submanifolds,
+        )
 
         group = QtWidgets.QGroupBox("Orbitals")
         group.setObjectName("tight_binding_orbitals_group")
@@ -18913,28 +18918,112 @@ class NfitProjectExplorer:
         preset_combo.setObjectName("tight_binding_orbital_preset")
         preset_combo.setToolTip(
             "Choose an effective scalar, a complete real spherical-harmonic "
-            "shell, a crystal-field submanifold, or a custom numerical basis."
+            "s, p, d, or f shell, or a custom numerical basis."
         )
         for preset in ORBITAL_PRESETS:
             preset_combo.addItem(preset, preset)
+        symmetry_label = QtWidgets.QLabel()
+        symmetry_label.setObjectName("tight_binding_orbital_site_symmetry")
+        symmetry_label.setToolTip(
+            "The crystallographic point group formed by the space-group "
+            "operations that leave the selected site fixed."
+        )
+        use_site_symmetry = QtWidgets.QCheckBox("Select a site-symmetry subspace")
+        use_site_symmetry.setObjectName(
+            "tight_binding_orbital_use_site_symmetry"
+        )
+        use_site_symmetry.setToolTip(
+            "Split the complete harmonic shell using the selected site's "
+            "actual point-group representation, then add one symmetry-closed "
+            "subspace. This is available for s, p, d, and f shells."
+        )
+        submanifold_combo = QtWidgets.QComboBox()
+        submanifold_combo.setObjectName(
+            "tight_binding_orbital_submanifold"
+        )
+        submanifold_combo.setToolTip(
+            "Choose a symmetry-closed subspace calculated from the site point "
+            "group in the crystal Cartesian frame. The dimension and dominant "
+            "complete-shell orbitals are shown for identification."
+        )
+        symmetry_cache: dict[tuple[str, str], tuple[Any, ...]] = {}
+
+        def refresh_site_symmetry(*_args: Any) -> None:
+            site_label = str(site_combo.currentData() or "")
+            shell = str(preset_combo.currentData() or "")
+            available = bool(site_label and shell in {"s", "p", "d", "f"})
+            use_site_symmetry.setEnabled(available)
+            if not available:
+                use_site_symmetry.setChecked(False)
+            submanifold_combo.clear()
+            if not site_label:
+                symmetry_label.setText("Site symmetry: select a site")
+            else:
+                try:
+                    point_group = site_point_group_symbol(
+                        model_crystal_config(model),
+                        site_label,
+                    )
+                    symmetry_label.setText(
+                        f"Site symmetry: {point_group}"
+                    )
+                    if available:
+                        cache_key = (site_label, shell)
+                        if cache_key not in symmetry_cache:
+                            symmetry_cache[cache_key] = (
+                                site_symmetry_harmonic_submanifolds(
+                                    model_crystal_config(model),
+                                    site_label,
+                                    shell,
+                                )
+                            )
+                        for option in symmetry_cache[cache_key]:
+                            submanifold_combo.addItem(
+                                option.label,
+                                option.identifier,
+                            )
+                except (RuntimeError, ValueError) as exc:
+                    symmetry_label.setText(f"Site symmetry unavailable: {exc}")
+                    use_site_symmetry.setChecked(False)
+                    use_site_symmetry.setEnabled(False)
+            submanifold_combo.setEnabled(
+                use_site_symmetry.isChecked()
+                and submanifold_combo.count() > 0
+            )
+
+        site_combo.currentIndexChanged.connect(refresh_site_symmetry)
+        preset_combo.currentIndexChanged.connect(refresh_site_symmetry)
+        use_site_symmetry.toggled.connect(refresh_site_symmetry)
         add_button = QtWidgets.QPushButton("Add manifold")
         add_button.setObjectName("tight_binding_orbital_add")
         add_button.setToolTip(
-            "Add the selected preset in the crystal Cartesian frame. Its "
-            "local frame, degeneracy groups, and correlated-shell label remain editable."
+            "Add the complete selected shell, or the selected point-group "
+            "subspace when site-symmetry selection is enabled. The crystal "
+            "Cartesian frame is the default local frame."
         )
         add_button.setEnabled(site_combo.count() > 0)
         add_button.clicked.connect(
-            lambda _checked=False, sites=site_combo, presets=preset_combo: self._add_tight_binding_manifold(
+            lambda _checked=False, sites=site_combo, presets=preset_combo,
+            use_symmetry=use_site_symmetry,
+            submanifolds=submanifold_combo: self._add_tight_binding_manifold(
                 str(sites.currentData() or ""),
                 str(presets.currentData() or "effective"),
+                (
+                    str(submanifolds.currentData() or "")
+                    if use_symmetry.isChecked()
+                    else None
+                ),
             )
         )
+        refresh_site_symmetry()
         layout.addWidget(QtWidgets.QLabel("Site"), 0, 0)
         layout.addWidget(site_combo, 0, 1)
-        layout.addWidget(QtWidgets.QLabel("Preset"), 0, 2)
+        layout.addWidget(QtWidgets.QLabel("Shell or basis"), 0, 2)
         layout.addWidget(preset_combo, 0, 3)
         layout.addWidget(add_button, 0, 4)
+        layout.addWidget(symmetry_label, 1, 0, 1, 2)
+        layout.addWidget(use_site_symmetry, 1, 2, 1, 2)
+        layout.addWidget(submanifold_combo, 1, 4, 1, 4)
 
         headers = (
             "Site",
@@ -18947,13 +19036,13 @@ class NfitProjectExplorer:
             "",
         )
         for column, text in enumerate(headers):
-            layout.addWidget(QtWidgets.QLabel(text), 1, column)
+            layout.addWidget(QtWidgets.QLabel(text), 2, column)
         manifolds = [
             OrbitalManifold.from_dict(item)
             for item in model.config.get("orbital_manifolds", ())
         ]
         for index, manifold in enumerate(manifolds):
-            row = index + 2
+            row = index + 3
             site = QtWidgets.QLabel(manifold.site_label)
             site.setToolTip(tooltip)
             layout.addWidget(site, row, 0)
@@ -18973,8 +19062,9 @@ class NfitProjectExplorer:
                 f"{manifold.preset} ({manifold.basis_kind})"
             )
             basis.setToolTip(
-                "The preset is a convenience, while basis_kind determines "
-                "how symmetry acts. Crystal-field presets are subspaces of a complete shell."
+                "The shell or basis choice is a convenience, while basis_kind "
+                "determines how symmetry acts. A site-symmetry entry is a "
+                "calculated subspace of the named complete shell."
             )
             layout.addWidget(basis, row, 2)
             orbitals = QtWidgets.QLineEdit(
@@ -19059,7 +19149,7 @@ class NfitProjectExplorer:
         status.setObjectName("tight_binding_orbital_status")
         status.setToolTip(tooltip)
         status.setWordWrap(True)
-        layout.addWidget(status, len(manifolds) + 2, 0, 1, len(headers))
+        layout.addWidget(status, len(manifolds) + 3, 0, 1, len(headers))
         self.model_parameter_layout.addWidget(group, 5, 0, 1, 4)
 
     def _build_tight_binding_onsite_editor(
@@ -19842,9 +19932,15 @@ class NfitProjectExplorer:
 
         self.model_parameter_layout.addWidget(group, 7, 0, 1, 4)
 
-    def _add_tight_binding_manifold(self, site_label: str, preset: str) -> None:
+    def _add_tight_binding_manifold(
+        self,
+        site_label: str,
+        preset: str,
+        submanifold_id: str | None = None,
+    ) -> None:
         from .electronic_builder import (
             add_tight_binding_orbital_manifold,
+            orbital_manifold_from_site_symmetry,
             orbital_manifold_preset,
         )
 
@@ -19853,7 +19949,11 @@ class NfitProjectExplorer:
                 raise ValueError("orbital manifolds require a tight-binding model")
             if not site_label:
                 raise ValueError("select a crystallographic site first")
-            base = f"{site_label}_{preset}"
+            base = (
+                f"{site_label}_{preset}_subspace"
+                if submanifold_id
+                else f"{site_label}_{preset}"
+            )
             existing = {
                 str(item.get("label", ""))
                 for item in model.config.get("orbital_manifolds", ())
@@ -19865,7 +19965,21 @@ class NfitProjectExplorer:
                 suffix += 1
             add_tight_binding_orbital_manifold(
                 model,
-                orbital_manifold_preset(site_label, preset, label=label),
+                (
+                    orbital_manifold_from_site_symmetry(
+                        model_crystal_config(model),
+                        site_label,
+                        preset,
+                        submanifold_id,
+                        label=label,
+                    )
+                    if submanifold_id
+                    else orbital_manifold_preset(
+                        site_label,
+                        preset,
+                        label=label,
+                    )
+                ),
             )
 
         self._mutate_selected_model(mutate)

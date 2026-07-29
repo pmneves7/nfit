@@ -48,16 +48,19 @@ lives under **Models**. Its editor imports or manually edits crystal geometry,
 imports Wannier90 Hamiltonians, and opens band, orbital-projected band,
 density-of-states, and Fermi-surface plots. CIF/manual geometry defines
 candidate orbital sites. The **Orbitals** section attaches effective,
-spherical-harmonic, crystal-field, or custom manifolds with explicit local
-frames. **Onsite terms** generates the complete symmetry-allowed static onsite
-basis and stores values, bounds, and future fit selections. The resolved model
-has flat bands until hopping generation is added in Stage 3.3.
+spherical-harmonic, or custom manifolds with explicit local frames. For an
+$s$, $p$, $d$, or $f$ shell it identifies the selected site's point group and
+can add one calculated symmetry-closed subspace. **Onsite terms** generates the
+complete symmetry-allowed static onsite basis and stores values, bounds, and
+future fit selections. The resolved model has flat bands until hopping
+generation is added in Stage 3.3.
 
 **View model in 3D** shows the unit cell, active or ghost sites, orbital
-tokens, local frames, and available hopping or exchange pathways. **Copy 3D
-viewer script** exports the same renderer-independent scene. The builder and
-plot actions also expose editable scripts but do not enter a fit until a later
-electronic-response model provides a dataset observable.
+tokens, local frames, and available hopping or exchange pathways. Atom spheres
+use distinct element colors; geometry is batched to reduce scene-construction
+time. **Copy 3D viewer script** exports the same renderer-independent scene.
+The builder and plot actions also expose editable scripts but do not enter a
+fit until a later electronic-response model provides a dataset observable.
 Electronic energy entry and plots default to eV, while the stored canonical
 model remains in meV. The editor's energy-unit selector changes presentation,
 not the physical model or neutron-response units.

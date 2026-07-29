@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import atexit
+from functools import lru_cache
 from typing import Any
 
 import numpy as np
@@ -9,34 +11,116 @@ import numpy as np
 from .model_geometry import ModelGeometryScene, model_geometry_scene
 
 
-def _render_scene(plotter: Any, scene: ModelGeometryScene) -> None:
+@lru_cache(maxsize=1)
+def _sphere_source() -> Any:
     import pyvista as pv
 
+    return pv.Sphere(radius=1.0, theta_resolution=16, phi_resolution=12)
+
+
+@lru_cache(maxsize=1)
+def _arrow_source() -> Any:
+    import pyvista as pv
+
+    return pv.Arrow(
+        start=(0.0, 0.0, 0.0),
+        direction=(1.0, 0.0, 0.0),
+        tip_resolution=12,
+        shaft_resolution=8,
+    )
+
+
+atexit.register(_sphere_source.cache_clear)
+atexit.register(_arrow_source.cache_clear)
+
+
+def _sphere_glyphs(
+    points: np.ndarray,
+    radii: np.ndarray,
+    colors: np.ndarray,
+) -> Any:
+    import pyvista as pv
+
+    cloud = pv.PolyData(np.asarray(points, dtype=float))
+    cloud["display_radius"] = np.asarray(radii, dtype=float)
+    cloud["rgb"] = np.asarray(np.rint(255.0 * colors), dtype=np.uint8)
+    return cloud.glyph(
+        scale="display_radius",
+        geom=_sphere_source(),
+        orient=False,
+    )
+
+
+def _line_segments(
+    starts: np.ndarray,
+    stops: np.ndarray,
+) -> Any:
+    import pyvista as pv
+
+    starts = np.asarray(starts, dtype=float)
+    stops = np.asarray(stops, dtype=float)
+    points = np.empty((2 * len(starts), 3), dtype=float)
+    points[0::2] = starts
+    points[1::2] = stops
+    lines = np.column_stack(
+        (
+            np.full(len(starts), 2, dtype=np.int64),
+            2 * np.arange(len(starts), dtype=np.int64),
+            2 * np.arange(len(starts), dtype=np.int64) + 1,
+        )
+    )
+    return pv.PolyData(points, lines=lines)
+
+
+def _arrow_glyphs(origins: np.ndarray, directions: np.ndarray, scale: float) -> Any:
+    import pyvista as pv
+
+    cloud = pv.PolyData(np.asarray(origins, dtype=float))
+    cloud["direction"] = np.asarray(directions, dtype=float)
+    cloud["display_scale"] = np.full(len(origins), float(scale))
+    return cloud.glyph(
+        orient="direction",
+        scale="display_scale",
+        geom=_arrow_source(),
+    )
+
+
+def _render_scene(plotter: Any, scene: ModelGeometryScene) -> None:
     plotter.clear()
     plotter.set_background("white")
     vertices = np.asarray(scene.cell_vertices, dtype=float)
-    for start, stop in scene.cell_edges:
+    edge_starts = np.asarray([vertices[start] for start, _stop in scene.cell_edges])
+    edge_stops = np.asarray([vertices[stop] for _start, stop in scene.cell_edges])
+    if len(edge_starts):
         plotter.add_mesh(
-            pv.Line(vertices[start], vertices[stop]),
+            _line_segments(edge_starts, edge_stops),
             color="black",
             line_width=1,
         )
     active = [site for site in scene.sites if site.active]
     ghosts = [site for site in scene.sites if not site.active]
     if ghosts:
-        plotter.add_points(
-            np.asarray([site.cartesian for site in ghosts]),
-            color="lightgray",
+        plotter.add_mesh(
+            _sphere_glyphs(
+                np.asarray([site.cartesian for site in ghosts]),
+                np.asarray([site.display_radius for site in ghosts]),
+                np.asarray([site.color for site in ghosts]),
+            ),
+            scalars="rgb",
+            rgb=True,
             opacity=0.28,
-            point_size=15,
-            render_points_as_spheres=True,
+            smooth_shading=True,
         )
     if active:
-        plotter.add_points(
-            np.asarray([site.cartesian for site in active]),
-            color="firebrick",
-            point_size=20,
-            render_points_as_spheres=True,
+        plotter.add_mesh(
+            _sphere_glyphs(
+                np.asarray([site.cartesian for site in active]),
+                np.asarray([site.display_radius for site in active]),
+                np.asarray([site.color for site in active]),
+            ),
+            scalars="rgb",
+            rgb=True,
+            smooth_shading=True,
         )
         plotter.add_point_labels(
             np.asarray([site.cartesian for site in active]),
@@ -46,14 +130,23 @@ def _render_scene(plotter: Any, scene: ModelGeometryScene) -> None:
             shape=None,
             always_visible=True,
         )
-    for orbital in scene.orbitals:
-        plotter.add_points(
-            np.asarray([orbital.display_center_cartesian]),
-            color=orbital.color,
-            point_size=12,
-            render_points_as_spheres=True,
-        )
     if scene.orbitals:
+        orbital_radius = 0.024 * min(
+            np.linalg.norm(np.asarray(vector, dtype=float))
+            for vector in scene.lattice_vectors
+        )
+        plotter.add_mesh(
+            _sphere_glyphs(
+                np.asarray(
+                    [orbital.display_center_cartesian for orbital in scene.orbitals]
+                ),
+                np.full(len(scene.orbitals), orbital_radius),
+                np.asarray([orbital.color for orbital in scene.orbitals]),
+            ),
+            scalars="rgb",
+            rgb=True,
+            smooth_shading=True,
+        )
         plotter.add_point_labels(
             np.asarray(
                 [orbital.display_center_cartesian for orbital in scene.orbitals]
@@ -68,22 +161,38 @@ def _render_scene(plotter: Any, scene: ModelGeometryScene) -> None:
         np.linalg.norm(np.asarray(vector, dtype=float))
         for vector in scene.lattice_vectors
     )
-    for frame in scene.frames:
-        for axis, color in zip(frame.axes_cartesian, ("red", "green", "blue"), strict=True):
+    for axis_index, color in enumerate(("red", "green", "blue")):
+        if scene.frames:
             plotter.add_mesh(
-                pv.Arrow(
-                    start=frame.origin_cartesian,
-                    direction=axis,
-                    scale=frame_scale,
+                _arrow_glyphs(
+                    np.asarray([frame.origin_cartesian for frame in scene.frames]),
+                    np.asarray(
+                        [frame.axes_cartesian[axis_index] for frame in scene.frames]
+                    ),
+                    frame_scale,
                 ),
                 color=color,
             )
-    for pathway in scene.pathways:
-        plotter.add_mesh(
-            pv.Line(pathway.start_cartesian, pathway.end_cartesian),
-            color="royalblue" if pathway.kind == "hopping" else "darkorange",
-            line_width=5 if pathway.representative else 3,
-        )
+    for kind, representative in (
+        ("hopping", True),
+        ("hopping", False),
+        ("exchange", True),
+        ("exchange", False),
+    ):
+        pathways = [
+            pathway
+            for pathway in scene.pathways
+            if pathway.kind == kind and pathway.representative == representative
+        ]
+        if pathways:
+            plotter.add_mesh(
+                _line_segments(
+                    np.asarray([pathway.start_cartesian for pathway in pathways]),
+                    np.asarray([pathway.end_cartesian for pathway in pathways]),
+                ),
+                color="royalblue" if kind == "hopping" else "darkorange",
+                line_width=5 if representative else 3,
+            )
     plotter.add_axes(color="black")
     plotter.reset_camera()
 

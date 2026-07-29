@@ -436,6 +436,7 @@ response. Stage 3 supplies arbitrary orthonormal electronic models, native
 Wannier90 import, shared path and mesh sampling, bands and orbital projections,
 density of states, Fermi surfaces, model-owned GUI plots, and editable scripts.
 Stage 3.1 supplies shared CIF/manual crystal geometry. Stage 3.2 adds
-site-attached orbital manifolds, local frames, symmetry-allowed static onsite
-terms, resolved flat-band Hamiltonians, builder-script round trips, and the
-shared model-geometry viewer foundation.
+site-attached orbital manifolds, local frames, site-point-group harmonic
+subspaces, symmetry-allowed static onsite terms, resolved flat-band
+Hamiltonians, builder-script round trips, and the shared model-geometry viewer
+foundation.

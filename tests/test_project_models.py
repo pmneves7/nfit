@@ -151,6 +151,7 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
             "ion": "",
         },
     ]
+    model.config["crystal"]["spacegroup"] = "P m -3 m"
     explorer = NfitProjectExplorer(NfitProject([group]))
     explorer._refresh_tree(select_group=group, select_model=model)
 
@@ -163,12 +164,27 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
     add = explorer.model_parameter_widget.findChild(
         QtWidgets.QPushButton, "tight_binding_orbital_add"
     )
+    point_group = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLabel, "tight_binding_orbital_site_symmetry"
+    )
+    use_site_symmetry = explorer.model_parameter_widget.findChild(
+        QtWidgets.QCheckBox, "tight_binding_orbital_use_site_symmetry"
+    )
+    submanifold = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox, "tight_binding_orbital_submanifold"
+    )
     assert site.currentData() == "M1"
-    preset.setCurrentIndex(preset.findData("effective"))
+    assert point_group.text() == "Site symmetry: m-3m"
+    assert use_site_symmetry.toolTip() and submanifold.toolTip()
+    preset.setCurrentIndex(preset.findData("d"))
+    assert submanifold.count() == 2
+    use_site_symmetry.setChecked(True)
     add.click()
 
     assert len(model.config["orbital_manifolds"]) == 1
     assert len(model.config["onsite_terms"]) == 1
+    assert model.config["orbital_manifolds"][0]["site_point_group"] == "m-3m"
+    assert len(model.config["orbital_manifolds"][0]["orbitals"]) in {2, 3}
     assert model.config["model_digest"]
     frame = explorer.model_parameter_widget.findChild(
         QtWidgets.QLineEdit, "tight_binding_manifold_frame_0"

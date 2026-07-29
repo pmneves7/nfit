@@ -41,15 +41,9 @@ ORBITAL_PRESETS = (
     "s",
     "p",
     "d",
-    "t2g",
-    "eg",
-    "a1g_t2g",
-    "eg_prime_t2g",
-    "t2g_trigonal",
     "f",
     "custom",
 )
-
 
 class OrbitalSymmetryError(ValueError):
     """Raised when a requested orbital subspace is not closed under symmetry."""
@@ -114,6 +108,8 @@ class OrbitalManifold:
     symmetry_mode: Literal["automatic", "none"] = "automatic"
     harmonic_transform: ComplexArray | None = None
     preset: str = "custom"
+    site_point_group: str = ""
+    submanifold_id: str = ""
 
     def __post_init__(self) -> None:
         allowed_basis_kinds = {
@@ -185,6 +181,8 @@ class OrbitalManifold:
             "correlated_shell": self.correlated_shell,
             "symmetry_mode": self.symmetry_mode,
             "preset": self.preset,
+            "site_point_group": self.site_point_group,
+            "submanifold_id": self.submanifold_id,
         }
         if self.harmonic_transform is not None:
             payload["harmonic_transform"] = _complex_matrix_to_data(
@@ -217,7 +215,56 @@ class OrbitalManifold:
                 None if transform is None else _complex_matrix_from_data(transform)
             ),
             preset=str(payload.get("preset", "custom")),
+            site_point_group=str(payload.get("site_point_group", "")),
+            submanifold_id=str(payload.get("submanifold_id", "")),
         )
+
+
+@dataclass(frozen=True)
+class SiteSymmetrySubmanifold:
+    """One symmetry-closed subspace of a complete local harmonic shell."""
+
+    identifier: str
+    label: str
+    site_label: str
+    point_group: str
+    shell: str
+    l: int
+    orbitals: tuple[str, ...]
+    harmonic_transform: ComplexArray
+
+    def __post_init__(self) -> None:
+        transform = np.asarray(self.harmonic_transform, dtype=np.complex128)
+        expected = (2 * int(self.l) + 1, len(self.orbitals))
+        if transform.shape != expected:
+            raise ValueError(
+                f"harmonic_transform must have shape {expected} for this submanifold"
+            )
+        if not np.allclose(
+            transform.conj().T @ transform,
+            np.eye(len(self.orbitals)),
+            atol=1e-8,
+        ):
+            raise ValueError("submanifold transform columns must be orthonormal")
+        frozen = transform.copy()
+        frozen.setflags(write=False)
+        object.__setattr__(self, "harmonic_transform", frozen)
+
+    @property
+    def dimension(self) -> int:
+        return len(self.orbitals)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "identifier": self.identifier,
+            "label": self.label,
+            "site_label": self.site_label,
+            "point_group": self.point_group,
+            "shell": self.shell,
+            "l": int(self.l),
+            "orbitals": list(self.orbitals),
+            "harmonic_transform": _complex_matrix_to_data(self.harmonic_transform),
+        }
 
 
 @dataclass(frozen=True)
@@ -376,52 +423,7 @@ def orbital_manifold_preset(
             harmonic_transform=np.eye(2 * l + 1, dtype=np.complex128),
             preset=key,
         )
-    names_d = _real_harmonic_names(2)
-    if key == "t2g":
-        indices = (0, 1, 2)
-        names = tuple(names_d[index] for index in indices)
-        transform = _selection(5, indices)
-        irrep = "t2g"
-        groups = ()
-    elif key == "eg":
-        indices = (3, 4)
-        names = tuple(names_d[index] for index in indices)
-        transform = _selection(5, indices)
-        irrep = "eg"
-        groups = ()
-    else:
-        trigonal = np.zeros((5, 3), dtype=np.complex128)
-        trigonal[:3, 0] = 1.0 / np.sqrt(3.0)
-        trigonal[:3, 1] = np.asarray([2.0, -1.0, -1.0]) / np.sqrt(6.0)
-        trigonal[:3, 2] = np.asarray([0.0, 1.0, -1.0]) / np.sqrt(2.0)
-        if key == "a1g_t2g":
-            names = ("a1g",)
-            transform = trigonal[:, :1]
-            irrep = "a1g"
-            groups = ()
-        elif key == "eg_prime_t2g":
-            names = ("eg_prime_1", "eg_prime_2")
-            transform = trigonal[:, 1:]
-            irrep = "eg_prime"
-            groups = ()
-        else:
-            names = ("a1g", "eg_prime_1", "eg_prime_2")
-            transform = trigonal
-            irrep = "a1g + eg_prime"
-            groups = ()
-    return OrbitalManifold(
-        site_label=str(site_label),
-        label=label or default_label,
-        basis_kind="real_harmonic",
-        l=2,
-        orbitals=names,
-        irrep=irrep,
-        degeneracy_groups=groups,
-        local_frame=tuple(map(tuple, frame)),
-        correlated_shell=correlated_shell,
-        harmonic_transform=transform,
-        preset=key,
-    )
+    raise AssertionError("unreachable orbital preset")
 
 
 def _sphere_points(count: int) -> FloatArray:
@@ -529,6 +531,238 @@ def manifold_symmetry_representation(
     result = transform.conj().T @ image
     left, _singular, right = np.linalg.svd(result)
     return left @ right
+
+
+def site_point_group_symbol(
+    crystal: Mapping[str, Any],
+    site_label: str,
+) -> str:
+    """Identify the crystallographic point group that fixes one site."""
+
+    import gemmi
+
+    operations = site_symmetry_operations(crystal, site_label)
+    gemmi_operations = []
+    for operation in operations:
+        item = gemmi.Op()
+        item.rot = np.rint(
+            np.asarray(operation["rotation_fractional"], dtype=float) * gemmi.Op.DEN
+        ).astype(int).tolist()
+        item.tran = [0, 0, 0]
+        gemmi_operations.append(item)
+    group = gemmi.GroupOps(gemmi_operations)
+    group.add_missing_elements()
+    identified = gemmi.find_spacegroup_by_ops(group)
+    if identified is None:
+        return f"order-{len(operations)} site group"
+    return str(identified.point_group_hm())
+
+
+def _canonical_subspace_basis(projector: ComplexArray) -> ComplexArray:
+    dimension = int(round(float(np.trace(projector).real)))
+    columns: list[ComplexArray] = []
+    for index in range(projector.shape[0]):
+        vector = projector[:, index].copy()
+        for previous in columns:
+            vector -= previous * np.vdot(previous, vector)
+        norm = float(np.linalg.norm(vector))
+        if norm <= 1e-8:
+            continue
+        vector /= norm
+        pivot = int(np.argmax(np.abs(vector)))
+        phase = vector[pivot] / abs(vector[pivot])
+        vector /= phase
+        columns.append(vector)
+        if len(columns) == dimension:
+            break
+    if len(columns) != dimension:
+        raise OrbitalSymmetryError("could not construct a stable basis for a site subspace")
+    return np.column_stack(columns)
+
+
+def site_symmetry_harmonic_submanifolds(
+    crystal: Mapping[str, Any],
+    site_label: str,
+    shell: Literal["s", "p", "d", "f"],
+    *,
+    local_frame: ArrayLike | None = None,
+) -> tuple[SiteSymmetrySubmanifold, ...]:
+    """Split a complete harmonic shell into site-symmetry-closed subspaces.
+
+    The decomposition is obtained from the actual stabilizer of ``site_label``.
+    It therefore adapts to the crystal and local frame rather than assuming a
+    named cubic or trigonal crystal-field splitting.
+    """
+
+    key = str(shell).strip().lower()
+    if key not in {"s", "p", "d", "f"}:
+        raise ValueError("site-symmetry submanifolds require an s, p, d, or f shell")
+    frame = np.eye(3) if local_frame is None else _frame(local_frame)
+    l = {"s": 0, "p": 1, "d": 2, "f": 3}[key]
+    names = _real_harmonic_names(l)
+    complete = orbital_manifold_preset(
+        site_label,
+        key,
+        local_frame=frame,
+    )
+    representations = tuple(
+        manifold_symmetry_representation(
+            complete,
+            operation["rotation_cartesian"],
+        )
+        for operation in site_symmetry_operations(crystal, site_label)
+    )
+    point_group = site_point_group_symbol(crystal, site_label)
+    size = 2 * l + 1
+
+    # The Reynolds average of a deterministic real-symmetric operator lies in
+    # the commutant of the site representation. Its eigenspaces are therefore
+    # symmetry closed. A group that acts only by scalar matrices imposes no
+    # meaningful orbital splitting, so it leaves the complete shell intact.
+    scalar_action = all(
+        np.allclose(
+            representation,
+            np.trace(representation) * np.eye(size) / size,
+            atol=1e-8,
+        )
+        for representation in representations
+    )
+    if scalar_action:
+        eigenvalues = np.zeros(size)
+        eigenvectors = np.eye(size, dtype=np.complex128)
+    else:
+        row, column = np.indices((size, size))
+        seed = (
+            np.cos((row + 1) * (column + 2))
+            + np.sin(np.sqrt(2.0) * (row + 2) * (column + 1))
+        )
+        seed = 0.5 * (seed + seed.T) + np.diag(
+            np.sqrt(3.0) * np.arange(size)
+        )
+        invariant = sum(
+            representation @ seed @ representation.conj().T
+            for representation in representations
+        ) / len(representations)
+        invariant = 0.5 * (invariant + invariant.conj().T)
+        eigenvalues, eigenvectors = np.linalg.eigh(invariant)
+    tolerance = 1e-8 * max(1.0, float(np.max(np.abs(eigenvalues))))
+    clusters: list[list[int]] = []
+    for index, value in enumerate(eigenvalues):
+        if not clusters or abs(value - eigenvalues[clusters[-1][0]]) > tolerance:
+            clusters.append([index])
+        else:
+            clusters[-1].append(index)
+
+    candidates: list[tuple[tuple[Any, ...], ComplexArray]] = []
+    for cluster in clusters:
+        vectors = eigenvectors[:, cluster]
+        projector = vectors @ vectors.conj().T
+        projector[np.abs(projector) < 1e-11] = 0.0
+        weights = np.real(np.diag(projector))
+        dominant = tuple(
+            int(index)
+            for index in np.argsort(-weights)[: len(cluster)]
+        )
+        candidates.append(((min(dominant), len(cluster), dominant), projector))
+    candidates.sort(key=lambda item: item[0])
+
+    result: list[SiteSymmetrySubmanifold] = []
+    for index, (_sort_key, projector) in enumerate(candidates, start=1):
+        diagonal = np.real(np.diag(projector))
+        selected = tuple(
+            int(item)
+            for item in np.flatnonzero(np.isclose(diagonal, 1.0, atol=1e-8))
+        )
+        selector = (
+            len(selected) == int(round(float(np.trace(projector).real)))
+            and np.allclose(
+                projector,
+                np.diag(np.isclose(diagonal, 1.0, atol=1e-8).astype(float)),
+                atol=1e-8,
+            )
+        )
+        transform = (
+            _selection(size, selected)
+            if selector
+            else _canonical_subspace_basis(projector)
+        )
+        orbital_names = (
+            tuple(names[item] for item in selected)
+            if selector
+            else tuple(f"{key}_subspace_{index}_{item + 1}" for item in range(transform.shape[1]))
+        )
+        dominant_names = [
+            names[item]
+            for item in np.argsort(-diagonal)
+            if diagonal[item] > 1e-6
+        ]
+        description = ", ".join(dominant_names)
+        digest = hashlib.sha256(
+            np.round(projector, decimals=10).tobytes()
+        ).hexdigest()[:12]
+        identifier = f"{key}:{point_group}:{digest}"
+        label = (
+            f"{point_group} subspace {index} "
+            f"(dimension {transform.shape[1]}; {description})"
+        )
+        result.append(
+            SiteSymmetrySubmanifold(
+                identifier=identifier,
+                label=label,
+                site_label=str(site_label),
+                point_group=point_group,
+                shell=key,
+                l=l,
+                orbitals=orbital_names,
+                harmonic_transform=transform,
+            )
+        )
+    return tuple(result)
+
+
+def orbital_manifold_from_site_symmetry(
+    crystal: Mapping[str, Any],
+    site_label: str,
+    shell: Literal["s", "p", "d", "f"],
+    submanifold_id: str,
+    *,
+    label: str | None = None,
+    local_frame: ArrayLike | None = None,
+    correlated_shell: str = "",
+) -> OrbitalManifold:
+    """Create one orbital manifold selected from a site's harmonic subspaces."""
+
+    options = site_symmetry_harmonic_submanifolds(
+        crystal,
+        site_label,
+        shell,
+        local_frame=local_frame,
+    )
+    selected = next(
+        (item for item in options if item.identifier == str(submanifold_id)),
+        None,
+    )
+    if selected is None:
+        raise ValueError(
+            f"unknown {shell!r} submanifold {submanifold_id!r} at "
+            f"site {site_label!r}"
+        )
+    frame = np.eye(3) if local_frame is None else _frame(local_frame)
+    default_label = f"{site_label}_{shell}_subspace"
+    return OrbitalManifold(
+        site_label=str(site_label),
+        label=label or default_label,
+        basis_kind="real_harmonic",
+        orbitals=selected.orbitals,
+        l=selected.l,
+        irrep=selected.label,
+        local_frame=tuple(map(tuple, frame)),
+        correlated_shell=correlated_shell,
+        harmonic_transform=selected.harmonic_transform,
+        preset="site_symmetry",
+        site_point_group=selected.point_group,
+        submanifold_id=selected.identifier,
+    )
 
 
 def _block_diagonal(blocks: Sequence[ComplexArray]) -> ComplexArray:

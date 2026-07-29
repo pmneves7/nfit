@@ -123,7 +123,7 @@ Each `BasisState` describes one ordered orthonormal basis vector.
 | `orbital` | orbital or effective-orbital name | `"d_xy"` or `"effective_1"` |
 | `correlated_shell` | grouping for later interactions | `"M1_3d"` |
 | `spin` | spin or spinor-component label | `"up"`; empty for a spinless basis |
-| `metadata` | additional JSON-compatible annotations | `{"irrep": "t2g"}` |
+| `metadata` | additional JSON-compatible annotations | `{"manifold": "M1_d"}` |
 
 Labels identify array indices and must be unique. Orbital names and shell
 labels are descriptive in Stage 3; nfit does not infer degeneracy or symmetry
@@ -172,7 +172,7 @@ dictionaries can be entered directly in the model editor.
 | `model_digest` | expected SHA-256 digest of the canonical model; source reload fails if it differs | `""` | `"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"` when that is the model's actual digest |
 | `model_data` | portable dictionary returned by `ElectronicModel.to_dict()` | `{}` | `model.to_dict()` |
 | `crystal` | editable lattice, space group, crystallographic sites, and optional CIF provenance used by the structure-first builder | `P 1` cell with no sites | `{"lattice": {"a": 4, "b": 4, "c": 6, "alpha": 90, "beta": 90, "gamma": 90}, "spacegroup": "P 1", "sites": []}` |
-| `orbital_manifolds` | editable site-attached basis definitions and local frames | `[]` | `[orbital_manifold_preset("M1", "t2g").to_dict()]` |
+| `orbital_manifolds` | editable site-attached basis definitions and local frames | `[]` | `[orbital_manifold_preset("M1", "d").to_dict()]` |
 | `onsite_terms` | generated Hermitian onsite matrix bases, canonical values, bounds, and future fit selections | `[]` | `[term.to_dict() for term in generate_onsite_terms(crystal, manifolds)]` |
 | `periodic_axes` | periodic lattice axes; empty asks a Wannier import to infer them from nonzero translations | `[]` | `[0]`, `[0, 1]`, or `[0, 1, 2]` |
 | `electronic_energy_unit` | input and electronic-plot unit; changing it does not alter canonical values | `"eV"` | `"eV"` or `"meV"` |
@@ -228,42 +228,42 @@ orbital, manifold, correlated-shell label, and fractional center.
 | Field | Meaning | Acceptable input example |
 | --- | --- | --- |
 | `site_label` | representative crystal site receiving the manifold | `"M1"` |
-| `label` | unique editable manifold identifier | `"M1_t2g"` |
+| `label` | unique editable manifold identifier | `"M1_d"` |
 | `basis_kind` | transformation convention | `"real_harmonic"`, `"complex_harmonic"`, `"effective_scalar"`, `"custom"`, or `"wannier"` |
-| `orbitals` | ordered basis labels | `["d_xy", "d_yz", "d_zx"]` |
+| `orbitals` | ordered basis labels | `["d_xy", "d_yz", "d_zx", "d_x2_y2", "d_z2"]` |
 | `l` | angular-momentum quantum number for a harmonic basis | `2` |
-| `irrep` | descriptive crystal-field or representation label | `"t2g"` |
+| `irrep` | descriptive site-symmetry subspace label | `"4/mmm subspace 2 (dimension 2; d_yz, d_zx)"` |
 | `degeneracy_groups` | optional groups constrained to share a diagonal onsite energy | `[["d_yz", "d_zx"]]` |
 | `local_frame` | right-handed orthonormal local axes as columns in crystal Cartesian coordinates | `[[1,0,0], [0,1,0], [0,0,1]]` |
 | `spin_basis` | basis spin convention; Stage 3.2 supports spinless | `"spinless"` |
 | `correlated_shell` | label used by later interaction dressings | `"M1_3d"` |
 | `symmetry_mode` | automatic analytic representation or no inferred symmetry | `"automatic"` or `"none"` |
-| `harmonic_transform` | orthonormal columns mapping selected orbitals into the complete $l$ shell | the selector for the first three real $d$ harmonics |
-| `preset` | convenience recipe that created the record | `"t2g"` |
+| `harmonic_transform` | orthonormal columns mapping selected orbitals into the complete $l$ shell | a site-symmetry projector basis with shape $5\times2$ |
+| `preset` | convenience recipe that created the record | `"d"` or `"site_symmetry"` |
+| `site_point_group` | identified point group when a site-symmetry subspace was selected | `"4/mmm"` |
+| `submanifold_id` | stable identifier of that calculated subspace | `"d:4/mmm:8705c5723841"` |
 
-The built-in presets are `effective`, `s`, `p`, `d`, `f`, `t2g`, `eg`,
-`a1g_t2g`, `eg_prime_t2g`, `t2g_trigonal`, and `custom`. The real $p$ order
-is $(p_x,p_y,p_z)$ and the real $d$ order is
+The always-available basis choices are `effective`, complete `s`, `p`, `d`,
+and `f` shells, and `custom`. The real $p$ order is $(p_x,p_y,p_z)$ and the
+real $d$ order is
 $(d_{xy},d_{yz},d_{zx},d_{x^2-y^2},d_{z^2})$. Complete shells do not impose
 accidental degeneracy: the site symmetry determines their allowed splitting,
 unless the user adds a `degeneracy_groups` constraint.
 For `complex_harmonic`, rows of `harmonic_transform` follow
 $m=-l,-l+1,\ldots,l$.
 
-The local frame defaults to the crystal Cartesian frame. Crystal-field
-subspaces are interpreted in the selected frame. The trigonal $t_{2g}$ presets
-use
+The local frame defaults to the crystal Cartesian frame. The GUI identifies
+the selected site's crystallographic point group from its stabilizer. For a
+complete $s$, $p$, $d$, or $f$ shell, the user may then opt into one of the
+symmetry-closed subspaces calculated from that point-group representation.
+This is a general decomposition: nfit does not assume a particular cubic,
+trigonal, or other named crystal-field scheme. A reported subspace gives its
+dimension and dominant complete-shell orbitals for identification. It does
+not claim a conventional irrep name when nfit has not established one.
 
-$$
-\begin{aligned}
-\lvert a_{1g}\rangle
-&=(\lvert xy\rangle+\lvert yz\rangle+\lvert zx\rangle)/\sqrt3,\\
-\lvert e'_{g,1}\rangle
-&=(2\lvert xy\rangle-\lvert yz\rangle-\lvert zx\rangle)/\sqrt6,\\
-\lvert e'_{g,2}\rangle
-&=(\lvert yz\rangle-\lvert zx\rangle)/\sqrt2 .
-\end{aligned}
-$$
+For site groups that act only as a scalar on the selected shell, including
+the trivial group, nfit returns the complete shell rather than inventing
+arbitrary one-dimensional crystal-field levels.
 
 For a site operation $g$, nfit evaluates the spherical-harmonic
 representation $D(g)$ in the declared local frame. A selected subspace with
@@ -293,7 +293,7 @@ $$
 | `identifier` | stable hash of site, ordered basis, and invariant matrix | `"M1:onsite:6054a1a6e2ad"` |
 | `label` | readable term label | `"M1 epsilon_1"` |
 | `site_label` | representative site on which the term acts | `"M1"` |
-| `basis_labels` | ordered local basis addressed by the matrix | `["M1_t2g:d_xy", "M1_t2g:d_yz", "M1_t2g:d_zx"]` |
+| `basis_labels` | ordered local basis addressed by the matrix | `["M1_d:d_xy", "M1_d:d_yz", "M1_d:d_zx"]` |
 | `matrix` | unit-Frobenius Hermitian invariant, serialized as real/imaginary pairs | a $3\times3$ identity-like selector |
 | `kind` | diagonal onsite energy or allowed onsite hybridization | `"onsite_energy"` or `"onsite_hybridization"` |
 | `value_meV` | canonical coefficient | `25.0` |
@@ -310,18 +310,22 @@ Stage 3.4. With no Stage 3.3 hopping terms, the resulting bands are flat.
 from nfit import (
     add_tight_binding_orbital_manifold,
     create_model_component,
-    orbital_manifold_preset,
+    orbital_manifold_from_site_symmetry,
     set_model_crystal,
     set_tight_binding_onsite_term,
+    site_symmetry_harmonic_submanifolds,
 )
 
 model = create_model_component(group, "electrons", type="tight_binding")
 set_model_crystal(model, crystal, group=group)
+subspaces = site_symmetry_harmonic_submanifolds(crystal, "M1", "d")
 add_tight_binding_orbital_manifold(
     model,
-    orbital_manifold_preset(
+    orbital_manifold_from_site_symmetry(
+        crystal,
         "M1",
-        "t2g",
+        "d",
+        subspaces[0].identifier,
         local_frame=[[1, 0, 0], [0, 1, 0], [0, 0, 1]],
         correlated_shell="M1_3d",
     ),
@@ -535,10 +539,13 @@ bounds, fit selections, and canonical digest without Qt.
 Heisenberg RPA. It can show the complete unit cell, only active sites, or
 inactive atoms as translucent ghosts. Tight-binding scenes show all orbitals
 simultaneously as separated colored tokens and local frames as red, green, and
-blue axis triads. Tokens identify basis states; they are not wavefunction
-isosurfaces. Heisenberg scenes can display one representative exchange
-pathway or all symmetry-equivalent members. Stage 3.3 will add the same
-selection for hopping pathways.
+blue axis triads. Atoms are smooth-shaded sphere glyphs with distinct,
+CPK-like element colors and element-scaled display radii. Geometry is batched
+by visual role so building a scene does not create one rendering actor per
+atom, orbital, frame arrow, or pathway. Tokens identify basis states; they are
+not wavefunction isosurfaces. Heisenberg scenes can display one representative
+exchange pathway or all symmetry-equivalent members. Stage 3.3 will add the
+same selection for hopping pathways.
 
 `model_geometry_scene` is the renderer-independent public API. It returns cell
 edges, sites, orbital tokens, frames, and pathways as immutable records.

@@ -30,6 +30,8 @@ class GeometrySite:
     fractional: tuple[float, float, float]
     cartesian: tuple[float, float, float]
     active: bool
+    color: tuple[float, float, float]
+    display_radius: float
 
 
 @dataclass(frozen=True)
@@ -90,6 +92,69 @@ def _stable_color(label: str) -> tuple[float, float, float]:
     values = np.frombuffer(digest[:3], dtype=np.uint8).astype(float) / 255.0
     values = 0.25 + 0.65 * values
     return tuple(float(value) for value in values)
+
+
+_ELEMENT_COLORS = {
+    "H": (1.00, 1.00, 1.00),
+    "C": (0.35, 0.35, 0.35),
+    "N": (0.19, 0.31, 0.97),
+    "O": (1.00, 0.05, 0.05),
+    "F": (0.56, 0.88, 0.31),
+    "Na": (0.67, 0.36, 0.95),
+    "Mg": (0.54, 1.00, 0.00),
+    "Al": (0.75, 0.65, 0.65),
+    "Si": (0.94, 0.78, 0.63),
+    "P": (1.00, 0.50, 0.00),
+    "S": (1.00, 1.00, 0.19),
+    "Cl": (0.12, 0.94, 0.12),
+    "K": (0.56, 0.25, 0.83),
+    "Ca": (0.24, 1.00, 0.00),
+    "Ti": (0.75, 0.76, 0.78),
+    "V": (0.65, 0.65, 0.67),
+    "Cr": (0.54, 0.60, 0.78),
+    "Mn": (0.61, 0.48, 0.78),
+    "Fe": (0.88, 0.40, 0.20),
+    "Co": (0.94, 0.56, 0.63),
+    "Ni": (0.31, 0.82, 0.31),
+    "Cu": (0.78, 0.50, 0.20),
+    "Zn": (0.49, 0.50, 0.69),
+    "Br": (0.65, 0.16, 0.16),
+    "Ag": (0.75, 0.75, 0.75),
+    "I": (0.58, 0.00, 0.58),
+    "Ba": (0.00, 0.79, 0.00),
+    "Ce": (1.00, 1.00, 0.78),
+    "Nd": (0.78, 1.00, 0.78),
+    "Sm": (0.56, 1.00, 0.78),
+    "Gd": (0.27, 1.00, 0.78),
+    "Yb": (0.00, 0.75, 0.22),
+    "Pt": (0.82, 0.82, 0.88),
+    "Au": (1.00, 0.82, 0.14),
+    "Pb": (0.34, 0.35, 0.38),
+}
+
+
+def element_display_color(element: str) -> tuple[float, float, float]:
+    """Return a stable CPK-like display color for a chemical element."""
+
+    symbol = str(element).strip()
+    if symbol:
+        symbol = symbol[:1].upper() + symbol[1:].lower()
+    return _ELEMENT_COLORS.get(symbol, _stable_color(f"element:{symbol}"))
+
+
+def element_display_radius(element: str, lattice_scale: float) -> float:
+    """Return a compact sphere radius in Å for a unit-cell model view."""
+
+    try:
+        import gemmi
+
+        covalent_radius = float(gemmi.Element(str(element)).covalent_r)
+    except (ValueError, RuntimeError):
+        covalent_radius = 1.0
+    if not np.isfinite(covalent_radius) or covalent_radius <= 0.0:
+        covalent_radius = 1.0
+    scale = float(lattice_scale)
+    return float(np.clip(0.055 * scale * covalent_radius, 0.035 * scale, 0.10 * scale))
 
 
 def _cell_geometry(
@@ -196,6 +261,9 @@ def model_geometry_scene(
     if not isinstance(crystal, Mapping):
         raise ValueError("the model has no crystal geometry")
     direct = lattice_vectors(crystal["lattice"])
+    lattice_scale = min(
+        float(np.linalg.norm(direct[:, axis])) for axis in range(3)
+    )
     all_labels = [str(site["label"]) for site in crystal.get("sites", ())]
     if component.type == "tight_binding":
         manifolds = tuple(
@@ -225,6 +293,8 @@ def model_geometry_scene(
                 fractional=tuple(float(value) for value in site.position),
                 cartesian=tuple(float(value) for value in cartesian),
                 active=active,
+                color=element_display_color(site.element),
+                display_radius=element_display_radius(site.element, lattice_scale),
             )
         )
         if active:
@@ -232,7 +302,7 @@ def model_geometry_scene(
 
     frames: list[GeometryFrame] = []
     orbitals: list[GeometryOrbital] = []
-    token_radius = 0.06 * min(float(np.linalg.norm(direct[:, axis])) for axis in range(3))
+    token_radius = 0.06 * lattice_scale
     for manifold in manifolds:
         expanded_sites = expand_crystal_sites(crystal, [manifold.site_label])
         for site in expanded_sites:

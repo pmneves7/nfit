@@ -17,9 +17,12 @@ from nfit import (
     model_geometry_scene,
     model_geometry_script,
     onsite_invariants,
+    orbital_manifold_from_site_symmetry,
     orbital_manifold_preset,
     save_project,
     set_tight_binding_onsite_term,
+    site_point_group_symbol,
+    site_symmetry_harmonic_submanifolds,
     site_symmetry_operations,
     spherical_harmonic_representation,
     tight_binding_structure_script,
@@ -52,6 +55,20 @@ def _crystal(spacegroup="P 1"):
             },
         ],
     }
+
+
+def _nonclosed_d_manifold():
+    transform = np.zeros((5, 1), dtype=np.complex128)
+    transform[0, 0] = 1.0
+    return OrbitalManifold(
+        site_label="M1",
+        label="M1_partial_d",
+        basis_kind="real_harmonic",
+        orbitals=("d_partial",),
+        l=2,
+        harmonic_transform=transform,
+        preset="custom_subspace",
+    )
 
 
 def test_spherical_harmonic_representations_are_unitary_and_use_local_frames():
@@ -101,9 +118,39 @@ def test_cubic_d_shell_splits_into_two_onsite_invariants():
             )
 
 
+def test_site_point_group_generates_crystal_specific_harmonic_submanifolds():
+    crystal = _crystal("P m -3 m")
+    options = site_symmetry_harmonic_submanifolds(crystal, "M1", "d")
+
+    assert site_point_group_symbol(crystal, "M1") == "m-3m"
+    assert sorted(option.dimension for option in options) == [2, 3]
+    assert {tuple(option.orbitals) for option in options} == {
+        ("d_xy", "d_yz", "d_zx"),
+        ("d_x2_y2", "d_z2"),
+    }
+    selected = orbital_manifold_from_site_symmetry(
+        crystal,
+        "M1",
+        "d",
+        options[0].identifier,
+    )
+    assert selected.site_point_group == "m-3m"
+    assert selected.submanifold_id == options[0].identifier
+    assert selected.preset == "site_symmetry"
+    assert len(generate_onsite_terms(crystal, [selected])) == 1
+
+
+def test_scalar_site_symmetry_does_not_invent_crystal_field_subspaces():
+    options = site_symmetry_harmonic_submanifolds(_crystal("P 1"), "M1", "f")
+
+    assert len(options) == 1
+    assert options[0].dimension == 7
+    assert options[0].orbitals == orbital_manifold_preset("M1", "f").orbitals
+
+
 def test_nonclosed_submanifold_is_diagnosed_instead_of_projected():
     crystal = _crystal("P m -3 m")
-    manifold = orbital_manifold_preset("M1", "a1g_t2g")
+    manifold = _nonclosed_d_manifold()
     with pytest.raises(OrbitalSymmetryError, match="not closed"):
         generate_onsite_terms(crystal, [manifold])
 
@@ -116,7 +163,7 @@ def test_failed_component_symmetry_update_is_atomic():
 
     with pytest.raises(OrbitalSymmetryError):
         add_tight_binding_orbital_manifold(
-            component, orbital_manifold_preset("M1", "a1g_t2g")
+            component, _nonclosed_d_manifold()
         )
     assert component.config == before
 
@@ -205,7 +252,7 @@ def test_model_geometry_scene_shows_active_ghost_orbitals_and_frames():
         config={
             "crystal": _crystal(),
             "orbital_manifolds": [
-                orbital_manifold_preset("M1", "t2g").to_dict()
+                orbital_manifold_preset("M1", "p").to_dict()
             ],
         },
     )
@@ -218,11 +265,57 @@ def test_model_geometry_scene_shows_active_ghost_orbitals_and_frames():
     assert len(scene.orbitals) == 3
     assert len(scene.frames) == 1
     assert len(scene.cell_edges) == 12
+    assert active[0].color != ghosts[0].color
+    assert active[0].display_radius > ghosts[0].display_radius
     active_only = model_geometry_scene(component, include_ghost_sites=False)
     assert all(site.active for site in active_only.sites)
     script = model_geometry_script(component)
     compile(script, "<model-geometry-script>", "exec")
     assert "owns_app" in script
+
+
+def test_model_geometry_renderer_batches_true_sphere_glyphs():
+    from nfit.qt_model_geometry_viewer import _render_scene
+
+    component = ModelComponentSpec(
+        name="electrons",
+        type="tight_binding",
+        config={
+            "crystal": _crystal(),
+            "orbital_manifolds": [
+                orbital_manifold_preset("M1", "p").to_dict()
+            ],
+        },
+    )
+    scene = model_geometry_scene(component)
+
+    class Plotter:
+        def __init__(self):
+            self.meshes = []
+
+        def clear(self):
+            pass
+
+        def set_background(self, _color):
+            pass
+
+        def add_mesh(self, mesh, **_kwargs):
+            self.meshes.append(mesh)
+
+        def add_point_labels(self, *_args, **_kwargs):
+            pass
+
+        def add_axes(self, **_kwargs):
+            pass
+
+        def reset_camera(self):
+            pass
+
+    plotter = Plotter()
+    _render_scene(plotter, scene)
+
+    assert len(plotter.meshes) == 7
+    assert any(mesh.n_cells > 100 for mesh in plotter.meshes)
 
 
 def test_model_geometry_scene_reuses_heisenberg_exchange_pathways():
