@@ -433,6 +433,120 @@ def test_model_geometry_renderer_batches_true_sphere_glyphs():
     assert any(mesh.n_cells > 100 for mesh in plotter.meshes)
 
 
+def test_model_geometry_picking_reports_atoms_orbitals_and_bonds(monkeypatch):
+    from nfit.qt_model_geometry_viewer import (
+        _actor_key,
+        _enable_geometry_picking,
+        _PickBatch,
+        _selection_from_pick,
+        _selection_panel,
+    )
+
+    component = ModelComponentSpec(
+        name="electrons",
+        type="tight_binding",
+        config={
+            "crystal": _crystal(),
+            "orbital_manifolds": [
+                orbital_manifold_preset("M1", "p").to_dict()
+            ],
+            "site_positions": [[0.0, 0.0, 0.0]],
+            "spatial_orbits": [
+                {
+                    "label": "B1",
+                    "distance_angstrom": 4.0,
+                    "bonds": [
+                        {"site_i": 0, "site_j": 0, "offset": [1, 0, 0]}
+                    ],
+                }
+            ],
+        },
+    )
+    scene = model_geometry_scene(component)
+
+    class Actor:
+        def __init__(self, name):
+            self.name = name
+
+        def GetAddressAsString(self, _prefix):
+            return self.name
+
+    site_actor = Actor("site")
+    orbital_actor = Actor("orbital")
+    pathway_actor = Actor("pathway")
+    registry = {
+        _actor_key(site_actor): _PickBatch("site", (scene.sites[0],)),
+        _actor_key(orbital_actor): _PickBatch(
+            "orbital",
+            (scene.orbitals[0],),
+            radius=0.1,
+        ),
+        _actor_key(pathway_actor): _PickBatch(
+            "pathway",
+            (scene.pathways[0],),
+        ),
+    }
+    site_text = _selection_from_pick(
+        registry,
+        site_actor,
+        np.asarray(scene.sites[0].cartesian),
+    )
+    orbital_text = _selection_from_pick(
+        registry,
+        orbital_actor,
+        np.asarray(scene.orbitals[0].display_center_cartesian),
+    )
+    pathway = scene.pathways[0]
+    midpoint = 0.5 * (
+        np.asarray(pathway.start_cartesian)
+        + np.asarray(pathway.end_cartesian)
+    )
+    pathway_text = _selection_from_pick(
+        registry,
+        pathway_actor,
+        midpoint,
+    )
+    assert "Atom: M1_1" in site_text
+    assert "Representative site: M1" in site_text
+    assert "Orbital: p_x" in orbital_text
+    assert "Manifold: M1_p" in orbital_text
+    assert "Hopping bond: B1" in pathway_text
+    assert "representative" in pathway_text
+
+    class Picker:
+        def GetActor(self):
+            return site_actor
+
+    class Plotter:
+        def enable_point_picking(self, **kwargs):
+            self.options = kwargs
+
+    updates = []
+    plotter = Plotter()
+    _enable_geometry_picking(plotter, lambda: registry, updates.append)
+    assert plotter.options["left_clicking"] is True
+    assert plotter.options["picker"] == "cell"
+    assert plotter.options["use_picker"] is True
+    plotter.options["callback"](
+        np.asarray(scene.sites[0].cartesian),
+        Picker(),
+    )
+    assert "Atom: M1_1" in updates[-1]
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    application = QtWidgets.QApplication.instance() or QtWidgets.QApplication(
+        []
+    )
+    panel, label = _selection_panel(QtWidgets)
+    assert panel.objectName() == "model_geometry_selection_group"
+    assert label.objectName() == "model_geometry_selection"
+    assert "Click an atom" in label.text()
+    assert label.toolTip()
+    panel.deleteLater()
+    assert application is not None
+
+
 def test_model_geometry_scene_reuses_heisenberg_exchange_pathways():
     component = ModelComponentSpec(
         name="spins",

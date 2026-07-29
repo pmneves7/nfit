@@ -3,12 +3,125 @@
 from __future__ import annotations
 
 import atexit
+from collections.abc import Callable
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
 import numpy as np
 
-from .model_geometry import ModelGeometryScene, model_geometry_scene
+from .model_geometry import (
+    GeometryOrbital,
+    GeometryPathway,
+    GeometrySite,
+    ModelGeometryScene,
+    model_geometry_scene,
+)
+
+
+@dataclass(frozen=True)
+class _PickBatch:
+    kind: str
+    items: tuple[Any, ...]
+    radius: float = 0.0
+
+
+def _actor_key(actor: Any) -> str:
+    if actor is None:
+        return ""
+    if hasattr(actor, "GetAddressAsString"):
+        return str(actor.GetAddressAsString(""))
+    return f"python:{id(actor)}"
+
+
+def _distance_to_segment(
+    point: np.ndarray,
+    start: np.ndarray,
+    stop: np.ndarray,
+) -> float:
+    direction = stop - start
+    length_squared = float(direction @ direction)
+    if length_squared <= 1e-20:
+        return float(np.linalg.norm(point - start))
+    fraction = float((point - start) @ direction) / length_squared
+    closest = start + np.clip(fraction, 0.0, 1.0) * direction
+    return float(np.linalg.norm(point - closest))
+
+
+def _pick_batch_item(batch: _PickBatch, point: np.ndarray) -> Any | None:
+    if not batch.items:
+        return None
+    location = np.asarray(point, dtype=float)
+    if batch.kind == "site":
+        return min(
+            batch.items,
+            key=lambda item: abs(
+                np.linalg.norm(location - np.asarray(item.cartesian))
+                - item.display_radius
+            ),
+        )
+    if batch.kind == "orbital":
+        return min(
+            batch.items,
+            key=lambda item: abs(
+                np.linalg.norm(
+                    location - np.asarray(item.display_center_cartesian)
+                )
+                - batch.radius
+            ),
+        )
+    if batch.kind == "pathway":
+        return min(
+            batch.items,
+            key=lambda item: _distance_to_segment(
+                location,
+                np.asarray(item.start_cartesian),
+                np.asarray(item.end_cartesian),
+            ),
+        )
+    return None
+
+
+def _selection_text(item: Any) -> str:
+    if isinstance(item, GeometrySite):
+        activity = "active model site" if item.active else "inactive atom"
+        return (
+            f"Atom: {item.site_label}\n"
+            f"Representative site: {item.representative_label}\n"
+            f"Element: {item.element or '(unspecified)'}\n"
+            f"Role: {activity}"
+        )
+    if isinstance(item, GeometryOrbital):
+        return (
+            f"Orbital: {item.orbital_label}\n"
+            f"Manifold: {item.manifold_label}\n"
+            f"Site: {item.site_identifier}"
+        )
+    if isinstance(item, GeometryPathway):
+        kind = "Hopping bond" if item.kind == "hopping" else "Exchange bond"
+        member = (
+            "representative"
+            if item.representative
+            else "symmetry-equivalent member"
+        )
+        return (
+            f"{kind}: {item.orbit_label}\n"
+            f"Member: {member}\n"
+            f"Identifier: {item.identifier}"
+        )
+    return "Nothing selected."
+
+
+def _selection_from_pick(
+    registry: dict[str, _PickBatch],
+    actor: Any,
+    point: np.ndarray,
+) -> str | None:
+    batch = registry.get(_actor_key(actor))
+    if batch is None:
+        return None
+    item = _pick_batch_item(batch, point)
+    return None if item is None else _selection_text(item)
 
 
 @lru_cache(maxsize=1)
@@ -85,7 +198,17 @@ def _arrow_glyphs(origins: np.ndarray, directions: np.ndarray, scale: float) -> 
     )
 
 
-def _render_scene(plotter: Any, scene: ModelGeometryScene) -> None:
+def _render_scene(
+    plotter: Any,
+    scene: ModelGeometryScene,
+) -> dict[str, _PickBatch]:
+    registry: dict[str, _PickBatch] = {}
+
+    def register(actor: Any, batch: _PickBatch) -> None:
+        key = _actor_key(actor)
+        if key:
+            registry[key] = batch
+
     plotter.clear()
     plotter.set_background("white")
     if hasattr(plotter, "enable_lightkit"):
@@ -98,11 +221,12 @@ def _render_scene(plotter: Any, scene: ModelGeometryScene) -> None:
             _line_segments(edge_starts, edge_stops),
             color="black",
             line_width=1,
+            pickable=False,
         )
     active = [site for site in scene.sites if site.active]
     ghosts = [site for site in scene.sites if not site.active]
     if ghosts:
-        plotter.add_mesh(
+        actor = plotter.add_mesh(
             _sphere_glyphs(
                 np.asarray([site.cartesian for site in ghosts]),
                 np.asarray([site.display_radius for site in ghosts]),
@@ -119,8 +243,9 @@ def _render_scene(plotter: Any, scene: ModelGeometryScene) -> None:
             specular=0.30,
             specular_power=24.0,
         )
+        register(actor, _PickBatch("site", tuple(ghosts)))
     if active:
-        plotter.add_mesh(
+        actor = plotter.add_mesh(
             _sphere_glyphs(
                 np.asarray([site.cartesian for site in active]),
                 np.asarray([site.display_radius for site in active]),
@@ -136,6 +261,7 @@ def _render_scene(plotter: Any, scene: ModelGeometryScene) -> None:
             specular=0.35,
             specular_power=28.0,
         )
+        register(actor, _PickBatch("site", tuple(active)))
         plotter.add_point_labels(
             np.asarray([site.cartesian for site in active]),
             [site.representative_label for site in active],
@@ -149,7 +275,7 @@ def _render_scene(plotter: Any, scene: ModelGeometryScene) -> None:
             np.linalg.norm(np.asarray(vector, dtype=float))
             for vector in scene.lattice_vectors
         )
-        plotter.add_mesh(
+        actor = plotter.add_mesh(
             _sphere_glyphs(
                 np.asarray(
                     [orbital.display_center_cartesian for orbital in scene.orbitals]
@@ -166,6 +292,14 @@ def _render_scene(plotter: Any, scene: ModelGeometryScene) -> None:
             diffuse=0.80,
             specular=0.30,
             specular_power=24.0,
+        )
+        register(
+            actor,
+            _PickBatch(
+                "orbital",
+                tuple(scene.orbitals),
+                orbital_radius,
+            ),
         )
         plotter.add_point_labels(
             np.asarray(
@@ -192,6 +326,7 @@ def _render_scene(plotter: Any, scene: ModelGeometryScene) -> None:
                     frame_scale,
                 ),
                 color=color,
+                pickable=False,
             )
     for kind, representative in (
         ("hopping", True),
@@ -205,7 +340,7 @@ def _render_scene(plotter: Any, scene: ModelGeometryScene) -> None:
             if pathway.kind == kind and pathway.representative == representative
         ]
         if pathways:
-            plotter.add_mesh(
+            actor = plotter.add_mesh(
                 _line_segments(
                     np.asarray([pathway.start_cartesian for pathway in pathways]),
                     np.asarray([pathway.end_cartesian for pathway in pathways]),
@@ -213,8 +348,49 @@ def _render_scene(plotter: Any, scene: ModelGeometryScene) -> None:
                 color="royalblue" if kind == "hopping" else "darkorange",
                 line_width=5 if representative else 3,
             )
+            register(actor, _PickBatch("pathway", tuple(pathways)))
     plotter.add_axes(color="black")
     plotter.reset_camera()
+    return registry
+
+
+def _selection_panel(QtWidgets: Any) -> tuple[Any, Any]:
+    panel = QtWidgets.QGroupBox("Selected object")
+    panel.setObjectName("model_geometry_selection_group")
+    layout = QtWidgets.QVBoxLayout(panel)
+    label = QtWidgets.QLabel(
+        "Nothing selected.\nClick an atom, orbital, or bond in the 3D view."
+    )
+    label.setObjectName("model_geometry_selection")
+    label.setToolTip(
+        "Reports the crystallographic atom, orbital basis state, or "
+        "hopping/exchange pathway under the last left click."
+    )
+    label.setWordWrap(True)
+    layout.addWidget(label)
+    return panel, label
+
+
+def _enable_geometry_picking(
+    plotter: Any,
+    registry: Callable[[], dict[str, _PickBatch]],
+    update_text: Callable[[str], None],
+) -> None:
+    def picked(point: np.ndarray, picker: Any) -> None:
+        actor = picker.GetActor() if hasattr(picker, "GetActor") else None
+        text = _selection_from_pick(registry(), actor, point)
+        if text is not None:
+            update_text(text)
+
+    plotter.enable_point_picking(
+        callback=picked,
+        left_clicking=True,
+        picker="cell",
+        show_message=False,
+        show_point=False,
+        use_picker=True,
+        pickable_window=False,
+    )
 
 
 def show_model_geometry_scene(
@@ -233,15 +409,28 @@ def show_model_geometry_scene(
     window = QtWidgets.QMainWindow(parent)
     window.setWindowTitle(f"Model geometry — {scene.model_name}")
     central = QtWidgets.QWidget()
-    layout = QtWidgets.QVBoxLayout(central)
+    layout = QtWidgets.QHBoxLayout(central)
     plotter = QtInteractor(central)
     plotter.setObjectName("model_geometry_plotter")
-    layout.addWidget(plotter.interactor)
+    layout.addWidget(plotter.interactor, 1)
+    controls = QtWidgets.QWidget()
+    controls.setMaximumWidth(300)
+    controls_layout = QtWidgets.QVBoxLayout(controls)
+    selection_panel, selection_label = _selection_panel(QtWidgets)
+    controls_layout.addWidget(selection_panel)
+    controls_layout.addStretch(1)
+    layout.addWidget(controls)
     window.setCentralWidget(central)
-    window.resize(1000, 760)
+    window.resize(1100, 760)
     window._nfit_plotter = plotter
     window._nfit_application = application
-    _render_scene(plotter, scene)
+    registry = _render_scene(plotter, scene)
+    window._nfit_pick_registry = registry
+    _enable_geometry_picking(
+        plotter,
+        lambda: registry,
+        selection_label.setText,
+    )
     window.show()
     return window
 
@@ -268,6 +457,8 @@ def open_model_geometry_viewer(component: Any, *, parent: Any | None = None) -> 
             controls = QtWidgets.QWidget()
             controls.setMaximumWidth(300)
             form = QtWidgets.QVBoxLayout(controls)
+            selection_panel, self.selection = _selection_panel(QtWidgets)
+            form.addWidget(selection_panel)
             self.ghosts = QtWidgets.QCheckBox("Show inactive atoms as ghosts")
             self.ghosts.setObjectName("model_geometry_show_ghosts")
             self.ghosts.setToolTip(
@@ -339,7 +530,13 @@ def open_model_geometry_viewer(component: Any, *, parent: Any | None = None) -> 
             self.pathway.currentIndexChanged.connect(self.refresh)
             self.hopping_term.currentIndexChanged.connect(self.refresh)
             self.all_equivalent.toggled.connect(self.refresh)
+            self._pick_registry: dict[str, _PickBatch] = {}
             self.refresh()
+            _enable_geometry_picking(
+                self.plotter,
+                lambda: self._pick_registry,
+                self.selection.setText,
+            )
 
         def refresh(self, *_args: Any) -> None:
             scene = model_geometry_scene(
@@ -355,7 +552,11 @@ def open_model_geometry_viewer(component: Any, *, parent: Any | None = None) -> 
                     "all" if self.all_equivalent.isChecked() else "representative"
                 ),
             )
-            _render_scene(self.plotter, scene)
+            self._pick_registry = _render_scene(self.plotter, scene)
+            self.selection.setText(
+                "Nothing selected.\n"
+                "Click an atom, orbital, or bond in the 3D view."
+            )
 
         def closeEvent(self, event: Any) -> None:
             self.plotter.close()

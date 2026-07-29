@@ -180,6 +180,9 @@ API.
 Cell edges, atom glyphs, orbital tokens, local-frame axes, and pathways are
 batched by visual role. This keeps scene construction responsive while
 retaining smooth camera interaction.
+The shared renderer maps each batched actor back to its scene records.
+Left-clicking an atom, orbital token, or pathway reports its name and relevant
+site, manifold, element, or orbit context in the side panel.
 
 Stage 3.3 adds hopping-path and hopping-term selection to the same scene. The
 pathway layer accepts Heisenberg exchange or tight-binding bond orbits and

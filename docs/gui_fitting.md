@@ -63,7 +63,8 @@ tokens, local frames, and available hopping or exchange pathways. Atom spheres
 use distinct element colors; geometry is batched to reduce scene-construction
 time. **Copy 3D viewer script** exports the same renderer-independent scene.
 The model geometry view can select one hopping matrix term, one representative
-path, or all symmetry-equivalent paths. **View Brillouin zone in 3D** shows
+path, or all symmetry-equivalent paths. Left-clicking an atom, orbital token,
+or pathway identifies it in the side panel. **View Brillouin zone in 3D** shows
 the primitive reciprocal-lattice Wigner--Seitz cell, including conventional
 cell centering, together with the configured labelled band path and reciprocal
 basis vectors. Its adjacent script action reproduces the same view without

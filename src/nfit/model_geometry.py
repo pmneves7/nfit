@@ -26,6 +26,7 @@ class GeometrySite:
 
     identifier: str
     representative_label: str
+    site_label: str
     element: str
     fractional: tuple[float, float, float]
     cartesian: tuple[float, float, float]
@@ -305,6 +306,7 @@ def model_geometry_scene(
             GeometrySite(
                 identifier=identifier,
                 representative_label=representative,
+                site_label=site.label,
                 element=site.element,
                 fractional=tuple(float(value) for value in site.position),
                 cartesian=tuple(float(value) for value in cartesian),

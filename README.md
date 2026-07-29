@@ -17,7 +17,8 @@ The package provides:
   subspaces, symmetry-allowed onsite terms, selectable orbital-explicit
   hopping candidates, eV/meV conversion, bands, orbital projections, density
   of states, Fermi surfaces, shared 3D model-geometry inspection, and
-  primitive-cell first-Brillouin-zone views;
+  primitive-cell first-Brillouin-zone views; atoms, orbitals, and bonds in the
+  model-geometry viewer are clickable and identified in its side panel;
 - an extensible model registry shared by fitting, GUI metadata, diagnostics,
   reports, plots, project files, and workflow scripts;
 - simultaneous least-squares fitting with explicit uncertainty conventions,

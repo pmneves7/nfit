@@ -637,6 +637,10 @@ exchange pathway or all symmetry-equivalent members. Tight-binding scenes
 offer the same spatial-orbit selection and can restrict a pathway to one
 symmetry-allowed hopping matrix term. A pathway depicts geometry, not a scalar
 summary of a multiorbital hopping matrix.
+Left-clicking an atom, orbital token, or hopping/exchange pathway updates the
+**Selected object** panel with its expanded site name, element, orbital and
+manifold labels, or bond-orbit label. This picking behavior is shared by the
+interactive model editor and exported standalone viewer.
 
 `model_geometry_scene` is the renderer-independent public API. It returns cell
 edges, sites, orbital tokens, frames, and pathways as immutable records.
