@@ -88,6 +88,8 @@ def _arrow_glyphs(origins: np.ndarray, directions: np.ndarray, scale: float) -> 
 def _render_scene(plotter: Any, scene: ModelGeometryScene) -> None:
     plotter.clear()
     plotter.set_background("white")
+    if hasattr(plotter, "enable_lightkit"):
+        plotter.enable_lightkit()
     vertices = np.asarray(scene.cell_vertices, dtype=float)
     edge_starts = np.asarray([vertices[start] for start, _stop in scene.cell_edges])
     edge_stops = np.asarray([vertices[stop] for _start, stop in scene.cell_edges])
@@ -110,6 +112,12 @@ def _render_scene(plotter: Any, scene: ModelGeometryScene) -> None:
             rgb=True,
             opacity=0.28,
             smooth_shading=True,
+            interpolation="phong",
+            lighting=True,
+            ambient=0.18,
+            diffuse=0.82,
+            specular=0.30,
+            specular_power=24.0,
         )
     if active:
         plotter.add_mesh(
@@ -121,6 +129,12 @@ def _render_scene(plotter: Any, scene: ModelGeometryScene) -> None:
             scalars="rgb",
             rgb=True,
             smooth_shading=True,
+            interpolation="phong",
+            lighting=True,
+            ambient=0.18,
+            diffuse=0.82,
+            specular=0.35,
+            specular_power=28.0,
         )
         plotter.add_point_labels(
             np.asarray([site.cartesian for site in active]),
@@ -146,6 +160,12 @@ def _render_scene(plotter: Any, scene: ModelGeometryScene) -> None:
             scalars="rgb",
             rgb=True,
             smooth_shading=True,
+            interpolation="phong",
+            lighting=True,
+            ambient=0.20,
+            diffuse=0.80,
+            specular=0.30,
+            specular_power=24.0,
         )
         plotter.add_point_labels(
             np.asarray(
@@ -278,6 +298,19 @@ def open_model_geometry_viewer(component: Any, *, parent: Any | None = None) -> 
             initial = model_geometry_scene(component)
             for label in initial.pathway_labels:
                 self.pathway.addItem(label, label)
+            self.hopping_term = QtWidgets.QComboBox()
+            self.hopping_term.setObjectName("model_geometry_hopping_term")
+            self.hopping_term.setToolTip(
+                "Restrict the displayed pathway to the bond orbit generated "
+                "by one representative hopping-matrix coefficient."
+            )
+            self.hopping_term.addItem("All hopping matrix terms", "")
+            for term in component.config.get("hopping_terms", ()):
+                self.hopping_term.addItem(
+                    str(term.get("label", "")),
+                    str(term.get("identifier", "")),
+                )
+            self.hopping_term.setVisible(component.type == "tight_binding")
             self.all_equivalent = QtWidgets.QCheckBox(
                 "Show all symmetry-equivalent pathways"
             )
@@ -292,6 +325,7 @@ def open_model_geometry_viewer(component: Any, *, parent: Any | None = None) -> 
                 self.frames,
                 QtWidgets.QLabel("Pathway"),
                 self.pathway,
+                self.hopping_term,
                 self.all_equivalent,
             ):
                 form.addWidget(widget)
@@ -303,6 +337,7 @@ def open_model_geometry_viewer(component: Any, *, parent: Any | None = None) -> 
             self.orbitals.toggled.connect(self.refresh)
             self.frames.toggled.connect(self.refresh)
             self.pathway.currentIndexChanged.connect(self.refresh)
+            self.hopping_term.currentIndexChanged.connect(self.refresh)
             self.all_equivalent.toggled.connect(self.refresh)
             self.refresh()
 
@@ -313,6 +348,9 @@ def open_model_geometry_viewer(component: Any, *, parent: Any | None = None) -> 
                 show_orbitals=self.orbitals.isChecked(),
                 show_local_frames=self.frames.isChecked(),
                 selected_pathway=str(self.pathway.currentData() or "") or None,
+                selected_hopping_term=(
+                    str(self.hopping_term.currentData() or "") or None
+                ),
                 pathway_mode=(
                     "all" if self.all_equivalent.isChecked() else "representative"
                 ),

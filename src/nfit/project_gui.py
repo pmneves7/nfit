@@ -2052,6 +2052,11 @@ def set_model_crystal(
             else:
                 model.config["orbital_manifolds"] = []
                 model.config["onsite_terms"] = []
+                model.config["hopping_cutoff_angstrom"] = 0.0
+                model.config["hopping_terms"] = []
+                model.config["spatial_orbits"] = []
+                model.config["site_positions"] = []
+                model.config["expanded_crystal_sites"] = []
                 model.config["model_data"] = {}
                 model.config["model_digest"] = ""
     elif model.type == "heisenberg_rpa":
@@ -18663,6 +18668,9 @@ class NfitProjectExplorer:
                 "crystal",
                 "orbital_manifolds",
                 "onsite_terms",
+                "hopping_cutoff_angstrom",
+                "spatial_orbits",
+                "hopping_terms",
             }:
                 continue
             label = QtWidgets.QLabel(setting_name)
@@ -18796,14 +18804,18 @@ class NfitProjectExplorer:
             config_layout.addWidget(label, row, 0)
             config_layout.addWidget(editor, row, 1)
             row += 1
-        self.model_parameter_layout.addWidget(config_group, 2, 0, 1, 4)
         if model.type == "tight_binding":
             self._build_model_crystal_editor(model, structure_only=True)
             self._build_tight_binding_orbital_editor(model)
             self._build_tight_binding_onsite_editor(model)
+            self._build_tight_binding_hopping_editor(model)
             self._build_tight_binding_editor(model)
+            self.model_parameter_layout.addWidget(config_group, 9, 0, 1, 4)
         elif definition.structured_config:
+            self.model_parameter_layout.addWidget(config_group, 2, 0, 1, 4)
             self._build_model_crystal_editor(model)
+        else:
+            self.model_parameter_layout.addWidget(config_group, 2, 0, 1, 4)
 
     def _clear_model_parameter_editor(self) -> None:
         while self.model_parameter_layout.count():
@@ -18860,8 +18872,31 @@ class NfitProjectExplorer:
         )
         layout.addWidget(structure_script, 1, 2)
 
+        zone_button = QtWidgets.QPushButton("View Brillouin zone in 3D")
+        zone_button.setObjectName("tight_binding_brillouin_zone")
+        zone_button.setToolTip(
+            "Show the first Brillouin-zone polyhedron, the configured labelled "
+            "band path, and reciprocal basis vectors b1, b2, and b3."
+        )
+        zone_button.clicked.connect(
+            lambda _checked=False, model=model: self._open_brillouin_zone(model)
+        )
+        zone_script = QtWidgets.QPushButton("Copy Brillouin-zone script")
+        zone_script.setObjectName("tight_binding_brillouin_zone_script")
+        zone_script.setToolTip(
+            "Copy editable Python that reconstructs the same labelled 3D "
+            "Brillouin-zone scene without project widgets."
+        )
+        zone_script.clicked.connect(
+            lambda _checked=False, model=model: self._copy_brillouin_zone_script(
+                model
+            )
+        )
+        layout.addWidget(zone_button, 2, 0, 1, 2)
+        layout.addWidget(zone_script, 2, 2)
+
         definition = model_definition(model.type)
-        for row, plot in enumerate(definition.plots, start=2):
+        for row, plot in enumerate(definition.plots, start=3):
             calculate = QtWidgets.QPushButton(plot.label)
             calculate.setObjectName(f"model_plot_{plot.key}")
             calculate.setToolTip(plot.description)
@@ -18882,7 +18917,47 @@ class NfitProjectExplorer:
             )
             layout.addWidget(calculate, row, 0, 1, 2)
             layout.addWidget(copy_script, row, 2)
-        self.model_parameter_layout.addWidget(group, 7, 0, 1, 4)
+        self.model_parameter_layout.addWidget(group, 8, 0, 1, 4)
+
+    def _open_brillouin_zone(self, model: ModelComponentSpec) -> bool:
+        from PySide6 import QtWidgets
+
+        from .brillouin_zone import brillouin_zone_scene
+        from .qt_brillouin_zone_viewer import show_brillouin_zone_scene
+
+        try:
+            window = show_brillouin_zone_scene(
+                brillouin_zone_scene(model),
+                parent=self.window,
+            )
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Brillouin zone",
+                f"Could not open the Brillouin-zone viewer:\n{exc}",
+            )
+            return False
+        self._plot_windows[f"model:{id(model)}:brillouin_zone"] = window
+        return True
+
+    def _copy_brillouin_zone_script(
+        self, model: ModelComponentSpec
+    ) -> bool:
+        from PySide6 import QtWidgets
+
+        from .brillouin_zone import brillouin_zone_script
+
+        try:
+            script = brillouin_zone_script(model)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Brillouin-zone script",
+                f"Could not create the Brillouin-zone script:\n{exc}",
+            )
+            return False
+        QtWidgets.QApplication.clipboard().setText(script)
+        return True
 
     def _build_tight_binding_orbital_editor(
         self, model: ModelComponentSpec
@@ -19261,8 +19336,7 @@ class NfitProjectExplorer:
             )
             layout.addWidget(matrix, row, 7)
         status_text = (
-            f"{len(terms)} onsite invariant(s). With no hoppings yet, the "
-            "resolved Stage 3.2 model has flat bands."
+            f"{len(terms)} onsite invariant(s)."
             if terms
             else "No onsite invariants. Add orbitals, then regenerate."
         )
@@ -19270,11 +19344,174 @@ class NfitProjectExplorer:
         status.setObjectName("tight_binding_onsite_status")
         status.setToolTip(
             "Onsite energies and symmetry-allowed onsite hybridizations form "
-            "the static R=0 Hamiltonian. Hopping generation follows in Stage 3.3."
+            "the static R=0 Hamiltonian."
         )
         status.setWordWrap(True)
         layout.addWidget(status, len(terms) + 2, 0, 1, len(headers))
         self.model_parameter_layout.addWidget(group, 6, 0, 1, 4)
+
+    def _build_tight_binding_hopping_editor(
+        self, model: ModelComponentSpec
+    ) -> None:
+        """Build symmetry-generated hopping controls."""
+
+        from PySide6 import QtWidgets
+
+        from .electronic_builder import HoppingInvariant
+        from .electronic_structure import electronic_energy_from_meV
+
+        group = QtWidgets.QGroupBox("Hoppings")
+        group.setObjectName("tight_binding_hopping_group")
+        layout = QtWidgets.QGridLayout(group)
+        cutoff_label = QtWidgets.QLabel("Cutoff (Å)")
+        cutoff = QtWidgets.QLineEdit(
+            _parameter_to_text(
+                float(model.config.get("hopping_cutoff_angstrom", 0.0))
+                or 5.0
+            )
+        )
+        cutoff.setObjectName("tight_binding_hopping_cutoff")
+        cutoff_tooltip = (
+            "Maximum real-space distance used to generate symmetry-distinct "
+            "bonds between every orbital-bearing site."
+        )
+        cutoff_label.setToolTip(cutoff_tooltip)
+        cutoff.setToolTip(cutoff_tooltip)
+        generate = QtWidgets.QPushButton("Generate hopping terms")
+        generate.setObjectName("tight_binding_hopping_generate")
+        generate.setToolTip(
+            "Generate spatial bond orbits and the complete real spinless "
+            "hopping-matrix basis allowed by each bond stabilizer. Stable "
+            "values, bounds, and fit selections are retained."
+        )
+        generate.setEnabled(bool(model.config.get("orbital_manifolds")))
+        generate.clicked.connect(
+            lambda _checked=False, editor=cutoff: self._regenerate_tight_binding_hoppings(
+                editor.text()
+            )
+        )
+        layout.addWidget(cutoff_label, 0, 0)
+        layout.addWidget(cutoff, 0, 1)
+        layout.addWidget(generate, 0, 2, 1, 2)
+
+        unit = str(model.config.get("electronic_energy_unit", "eV"))
+        headers = (
+            "Term",
+            "Orbit",
+            "Distance (Å)",
+            "Multiplicity",
+            f"Value ({unit})",
+            f"Lower ({unit})",
+            f"Upper ({unit})",
+            "Fit later",
+            "Matrix basis",
+        )
+        for column, text in enumerate(headers):
+            layout.addWidget(QtWidgets.QLabel(text), 1, column)
+        multiplicities = {
+            str(item.get("label", "")): len(item.get("bonds", ()))
+            for item in model.config.get("spatial_orbits", ())
+        }
+        terms = [
+            HoppingInvariant.from_dict(item)
+            for item in model.config.get("hopping_terms", ())
+        ]
+        for index, term in enumerate(terms):
+            row = index + 2
+            layout.addWidget(QtWidgets.QLabel(term.label), row, 0)
+            layout.addWidget(QtWidgets.QLabel(term.orbit_label), row, 1)
+            layout.addWidget(
+                QtWidgets.QLabel(f"{term.distance_angstrom:.5g}"),
+                row,
+                2,
+            )
+            layout.addWidget(
+                QtWidgets.QLabel(str(multiplicities.get(term.orbit_label, 0))),
+                row,
+                3,
+            )
+            value = QtWidgets.QLineEdit(
+                _parameter_to_text(
+                    electronic_energy_from_meV(term.value_meV, unit)
+                )
+            )
+            value.setObjectName(f"tight_binding_hopping_value_{index}")
+            value.setToolTip(
+                f"Coefficient of this unit-Frobenius representative hopping "
+                f"matrix in {unit}; converted immediately to canonical meV."
+            )
+            value.editingFinished.connect(
+                lambda identifier=term.identifier, editor=value: self._set_tight_binding_hopping_field(
+                    identifier,
+                    "value",
+                    editor.text(),
+                )
+            )
+            layout.addWidget(value, row, 4)
+            for column, (field, bound) in enumerate(
+                zip(("lower", "upper"), term.bounds_meV, strict=True),
+                start=5,
+            ):
+                editor = QtWidgets.QLineEdit(
+                    ""
+                    if bound is None
+                    else _parameter_to_text(
+                        electronic_energy_from_meV(bound, unit)
+                    )
+                )
+                editor.setObjectName(
+                    f"tight_binding_hopping_{field}_{index}"
+                )
+                editor.setToolTip(
+                    f"Optional future fit bound in {unit}; empty is unbounded."
+                )
+                editor.editingFinished.connect(
+                    lambda identifier=term.identifier, field=field,
+                    editor=editor: self._set_tight_binding_hopping_field(
+                        identifier,
+                        field,
+                        editor.text(),
+                    )
+                )
+                layout.addWidget(editor, row, column)
+            fit = QtWidgets.QCheckBox()
+            fit.setObjectName(f"tight_binding_hopping_fit_{index}")
+            fit.setChecked(term.fit)
+            fit.setToolTip(
+                "Record this coefficient for fitting once an electronic "
+                "response supplies a compatible dataset observable."
+            )
+            fit.toggled.connect(
+                lambda checked, identifier=term.identifier: self._set_tight_binding_hopping_fit(
+                    identifier,
+                    checked,
+                )
+            )
+            layout.addWidget(fit, row, 7)
+            matrix = QtWidgets.QLabel(
+                f"{len(term.basis_i)}x{len(term.basis_j)}"
+            )
+            matrix.setToolTip(
+                "Representative unit-Frobenius hopping matrix. Every "
+                "symmetry-equivalent pathway is generated by orbital "
+                "covariance, including Hermitian reversal.\n"
+                f"Rows: {', '.join(term.basis_i)}\n"
+                f"Columns: {', '.join(term.basis_j)}\n"
+                f"Matrix:\n{np.array2string(term.matrix, precision=4)}"
+            )
+            layout.addWidget(matrix, row, 8)
+        status = QtWidgets.QLabel(
+            (
+                f"{len(terms)} hopping coefficient(s) on "
+                f"{len(multiplicities)} spatial orbit(s)."
+            )
+            if terms
+            else "No hopping terms. Choose a positive cutoff and generate."
+        )
+        status.setObjectName("tight_binding_hopping_status")
+        status.setWordWrap(True)
+        layout.addWidget(status, len(terms) + 2, 0, 1, len(headers))
+        self.model_parameter_layout.addWidget(group, 7, 0, 1, 4)
 
     def _import_wannier90_model(self, model: ModelComponentSpec) -> bool:
         from PySide6 import QtWidgets
@@ -19312,6 +19549,11 @@ class NfitProjectExplorer:
         model.config["periodic_axes"] = list(imported.periodic_axes)
         model.config["orbital_manifolds"] = []
         model.config["onsite_terms"] = []
+        model.config["hopping_cutoff_angstrom"] = 0.0
+        model.config["hopping_terms"] = []
+        model.config["spatial_orbits"] = []
+        model.config["site_positions"] = []
+        model.config["expanded_crystal_sites"] = []
         owner = self._group_for_model(model)
         if owner is not None:
             self._record_data_group_state_change(owner)
@@ -19402,6 +19644,11 @@ class NfitProjectExplorer:
                 ),
                 orbital_manifolds=model.config.get("orbital_manifolds", ()),
                 onsite_terms=model.config.get("onsite_terms", ()),
+                hopping_cutoff_angstrom=(
+                    float(model.config.get("hopping_cutoff_angstrom", 0.0))
+                    or None
+                ),
+                hopping_terms=model.config.get("hopping_terms", ()),
                 expected_model_digest=str(model.config.get("model_digest", "")),
             )
         except Exception as exc:
@@ -20073,6 +20320,55 @@ class NfitProjectExplorer:
         self._mutate_selected_model(
             lambda model, _group: set_tight_binding_onsite_term(
                 model, identifier, fit=bool(checked)
+            )
+        )
+
+    def _regenerate_tight_binding_hoppings(self, text: str) -> None:
+        from .electronic_builder import (
+            regenerate_tight_binding_hopping_terms,
+        )
+
+        self._mutate_selected_model(
+            lambda model, _group: regenerate_tight_binding_hopping_terms(
+                model,
+                float(_parse_parameter_text(text)),
+            )
+        )
+
+    def _set_tight_binding_hopping_field(
+        self, identifier: str, field: str, text: str
+    ) -> None:
+        from .electronic_builder import set_tight_binding_hopping_term
+
+        def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
+            if field == "value":
+                set_tight_binding_hopping_term(
+                    model,
+                    identifier,
+                    value=float(_parse_parameter_text(text)),
+                )
+                return
+            value = (
+                None if not text.strip() else float(_parse_parameter_text(text))
+            )
+            set_tight_binding_hopping_term(
+                model,
+                identifier,
+                **{field: value},
+            )
+
+        self._mutate_selected_model(mutate)
+
+    def _set_tight_binding_hopping_fit(
+        self, identifier: str, checked: bool
+    ) -> None:
+        from .electronic_builder import set_tight_binding_hopping_term
+
+        self._mutate_selected_model(
+            lambda model, _group: set_tight_binding_hopping_term(
+                model,
+                identifier,
+                fit=bool(checked),
             )
         )
 

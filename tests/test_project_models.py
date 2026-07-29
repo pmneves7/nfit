@@ -202,6 +202,34 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
     value.editingFinished.emit()
     assert model.config["onsite_terms"][0]["value_meV"] == pytest.approx(25.0)
 
+    cutoff = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "tight_binding_hopping_cutoff"
+    )
+    generate = explorer.model_parameter_widget.findChild(
+        QtWidgets.QPushButton, "tight_binding_hopping_generate"
+    )
+    cutoff.setText("5.1")
+    generate.click()
+    assert model.config["spatial_orbits"]
+    assert model.config["hopping_terms"]
+    hopping_value = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "tight_binding_hopping_value_0"
+    )
+    assert hopping_value is not None and "canonical meV" in hopping_value.toolTip()
+
+    config_group = explorer.model_parameter_widget.findChild(
+        QtWidgets.QGroupBox, "model_config_group"
+    )
+    electronic_group = explorer.model_parameter_widget.findChild(
+        QtWidgets.QGroupBox, "tight_binding_actions_group"
+    )
+    config_index = explorer.model_parameter_layout.indexOf(config_group)
+    electronic_index = explorer.model_parameter_layout.indexOf(electronic_group)
+    assert (
+        explorer.model_parameter_layout.getItemPosition(config_index)[0]
+        > explorer.model_parameter_layout.getItemPosition(electronic_index)[0]
+    )
+
     copied = explorer.model_parameter_widget.findChild(
         QtWidgets.QPushButton, "tight_binding_structure_script"
     )
@@ -224,6 +252,23 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
     assert opened and opened[0][0] is model
     script.click()
     assert "model_geometry_scene" in QtWidgets.QApplication.clipboard().text()
+
+    zones = []
+    monkeypatch.setattr(
+        "nfit.qt_brillouin_zone_viewer.show_brillouin_zone_scene",
+        lambda scene, parent=None: zones.append((scene, parent)) or object(),
+    )
+    zone = explorer.model_parameter_widget.findChild(
+        QtWidgets.QPushButton, "tight_binding_brillouin_zone"
+    )
+    zone_script = explorer.model_parameter_widget.findChild(
+        QtWidgets.QPushButton, "tight_binding_brillouin_zone_script"
+    )
+    assert zone.toolTip() and zone_script.toolTip()
+    zone.click()
+    assert zones and zones[0][0].path_nodes
+    zone_script.click()
+    assert "build_brillouin_zone_scene" in QtWidgets.QApplication.clipboard().text()
     explorer.has_unsaved_changes = False
     explorer.window.close()
 

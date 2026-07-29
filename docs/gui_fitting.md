@@ -52,13 +52,20 @@ spherical-harmonic, or custom manifolds with explicit local frames. For an
 $s$, $p$, $d$, or $f$ shell it identifies the selected site's point group and
 can add one calculated symmetry-closed subspace. **Onsite terms** generates the
 complete symmetry-allowed static onsite basis and stores values, bounds, and
-future fit selections. The resolved model has flat bands until hopping
-generation is added in Stage 3.3.
+future fit selections. **Hoppings** selects a distance cutoff, generates
+symmetry-allowed matrix terms for each spatial bond orbit, and stores their
+values, bounds, and future fit selections. These terms produce the dispersive
+resolved Hamiltonian.
 
 **View model in 3D** shows the unit cell, active or ghost sites, orbital
 tokens, local frames, and available hopping or exchange pathways. Atom spheres
 use distinct element colors; geometry is batched to reduce scene-construction
 time. **Copy 3D viewer script** exports the same renderer-independent scene.
+The model geometry view can select one hopping matrix term, one representative
+path, or all symmetry-equivalent paths. **View Brillouin zone in 3D** shows
+the configured labelled band path and reciprocal basis vectors in the first
+Brillouin zone; its adjacent script action reproduces the same view without
+project widgets.
 The builder and plot actions also expose editable scripts but do not enter a
 fit until a later electronic-response model provides a dataset observable.
 Electronic energy entry and plots default to eV, while the stored canonical

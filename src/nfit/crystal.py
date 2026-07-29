@@ -532,6 +532,35 @@ def generate_spatial_bond_orbits(
     return sites, labeled
 
 
+def bond_stabilizer_symmetries(
+    crystal: Mapping[str, Any],
+    sites: Sequence[CrystalSite],
+    bond: Bond,
+) -> tuple[BondSymmetry, ...]:
+    """Return every space-group operation that preserves an undirected bond."""
+
+    positions = np.asarray([site.position for site in sites], dtype=float)
+    canonical = bond.canonical()
+    result = []
+    for rotation, translation in _symmetry_operations(
+        crystal.get("spacegroup", "P 1")
+    ):
+        image, reverses = _transform_bond(
+            canonical,
+            rotation,
+            translation,
+            positions,
+        )
+        if image == canonical:
+            result.append(
+                BondSymmetry(
+                    rotation=_rotation_tuple(rotation),
+                    reverses=reverses,
+                )
+            )
+    return tuple(result)
+
+
 def generate_bond_orbits(
     crystal: Mapping[str, Any],
     site_labels: Sequence[str],

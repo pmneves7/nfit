@@ -20,9 +20,19 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from .crystal import (
+    Bond,
+    BondOrbit,
+    BondSymmetry,
+    CrystalSite,
+    bond_stabilizer_symmetries,
+    cartesian_rotation,
     expand_crystal_sites,
+    generate_spatial_bond_orbits,
     lattice_vectors,
+    orbits_from_config,
+    orbits_to_config,
     site_symmetry_operations,
+    sites_to_config,
     validate_crystal,
 )
 from .electronic_structure import (
@@ -230,6 +240,7 @@ class SiteSymmetrySubmanifold:
     point_group: str
     shell: str
     l: int
+    irrep_label: str
     orbitals: tuple[str, ...]
     harmonic_transform: ComplexArray
 
@@ -262,6 +273,7 @@ class SiteSymmetrySubmanifold:
             "point_group": self.point_group,
             "shell": self.shell,
             "l": int(self.l),
+            "irrep_label": self.irrep_label,
             "orbitals": list(self.orbitals),
             "harmonic_transform": _complex_matrix_to_data(self.harmonic_transform),
         }
@@ -337,6 +349,104 @@ class OnsiteInvariant:
             fit=bool(payload.get("fit", False)),
             source=str(payload.get("source", "site_symmetry")),
         )
+
+
+@dataclass(frozen=True)
+class HoppingInvariant:
+    """One real coefficient multiplying a symmetry-covariant hopping matrix."""
+
+    identifier: str
+    label: str
+    orbit_label: str
+    distance_angstrom: float
+    representative_bond: Bond
+    basis_i: tuple[str, ...]
+    basis_j: tuple[str, ...]
+    matrix: ComplexArray
+    value_meV: float = 0.0
+    bounds_meV: tuple[float | None, float | None] = (None, None)
+    fit: bool = False
+    source: str = "space_group_covariance"
+
+    def __post_init__(self) -> None:
+        matrix = np.asarray(self.matrix, dtype=np.complex128)
+        if matrix.shape != (len(self.basis_i), len(self.basis_j)):
+            raise ValueError(
+                "hopping matrix shape must match the endpoint orbital bases"
+            )
+        if not np.all(np.isfinite(matrix)):
+            raise ValueError("hopping matrices must be finite")
+        if not np.isfinite(float(self.value_meV)):
+            raise ValueError("hopping values must be finite")
+        low, high = self.bounds_meV
+        if any(
+            value is not None and not np.isfinite(float(value))
+            for value in (low, high)
+        ):
+            raise ValueError("hopping bounds must be finite or None")
+        if low is not None and high is not None and float(low) >= float(high):
+            raise ValueError("hopping lower bound must be below its upper bound")
+        frozen = matrix.copy()
+        frozen.setflags(write=False)
+        object.__setattr__(self, "matrix", frozen)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "identifier": self.identifier,
+            "label": self.label,
+            "orbit_label": self.orbit_label,
+            "distance_angstrom": float(self.distance_angstrom),
+            "representative_bond": {
+                "site_i": int(self.representative_bond.site_i),
+                "site_j": int(self.representative_bond.site_j),
+                "offset": list(self.representative_bond.offset),
+            },
+            "basis_i": list(self.basis_i),
+            "basis_j": list(self.basis_j),
+            "matrix": _complex_matrix_to_data(self.matrix),
+            "value_meV": float(self.value_meV),
+            "bounds_meV": [
+                None if value is None else float(value)
+                for value in self.bounds_meV
+            ],
+            "fit": bool(self.fit),
+            "source": self.source,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> HoppingInvariant:
+        bond = payload["representative_bond"]
+        bounds = payload.get("bounds_meV", (None, None))
+        return cls(
+            identifier=str(payload["identifier"]),
+            label=str(payload["label"]),
+            orbit_label=str(payload["orbit_label"]),
+            distance_angstrom=float(payload["distance_angstrom"]),
+            representative_bond=Bond(
+                int(bond["site_i"]),
+                int(bond["site_j"]),
+                tuple(int(value) for value in bond["offset"]),
+            ),
+            basis_i=tuple(str(value) for value in payload["basis_i"]),
+            basis_j=tuple(str(value) for value in payload["basis_j"]),
+            matrix=_complex_matrix_from_data(payload["matrix"]),
+            value_meV=float(payload.get("value_meV", 0.0)),
+            bounds_meV=(
+                None if bounds[0] is None else float(bounds[0]),
+                None if bounds[1] is None else float(bounds[1]),
+            ),
+            fit=bool(payload.get("fit", False)),
+            source=str(payload.get("source", "space_group_covariance")),
+        )
+
+
+@dataclass(frozen=True)
+class HoppingGeneration:
+    """Expanded sites, spatial bond orbits, and allowed hopping coefficients."""
+
+    sites: tuple[CrystalSite, ...]
+    orbits: tuple[BondOrbit, ...]
+    terms: tuple[HoppingInvariant, ...]
 
 
 def _real_harmonic_layout(l: int) -> tuple[tuple[str, int], ...]:
@@ -580,6 +690,64 @@ def _canonical_subspace_basis(projector: ComplexArray) -> ComplexArray:
     return np.column_stack(columns)
 
 
+def _operation_order(rotation: ArrayLike, *, maximum: int = 12) -> int | None:
+    matrix = np.asarray(rotation, dtype=float)
+    product = np.eye(3)
+    for order in range(1, maximum + 1):
+        product = product @ matrix
+        if np.allclose(product, np.eye(3), atol=1e-7):
+            return order
+    return None
+
+
+def _trigonal_irrep_label(
+    point_group: str,
+    l: int,
+    projector: ComplexArray,
+    operations: Sequence[Mapping[str, Any]],
+    representations: Sequence[ComplexArray],
+) -> str:
+    """Return conventional trigonal labels when the character test is unique."""
+
+    dimension = int(round(float(np.trace(projector).real)))
+    group = str(point_group).replace(" ", "")
+    supported = {"3", "-3", "32", "3m", "-3m"}
+    if group not in supported:
+        return ""
+    parity = ""
+    if group in {"-3", "-3m"}:
+        parity = "g" if int(l) % 2 == 0 else "u"
+    if dimension == 2:
+        return f"E{parity}"
+    if dimension != 1:
+        return ""
+    if group in {"3", "-3"}:
+        return f"A{parity}"
+
+    secondary_character = None
+    for operation, representation in zip(
+        operations,
+        representations,
+        strict=True,
+    ):
+        rotation = np.asarray(operation["rotation_cartesian"], dtype=float)
+        if _operation_order(rotation) != 2:
+            continue
+        determinant = float(np.linalg.det(rotation))
+        if group in {"32", "-3m"} and determinant < 0.0:
+            continue
+        if group == "3m" and determinant > 0.0:
+            continue
+        secondary_character = float(
+            np.trace(projector @ representation).real
+        )
+        break
+    if secondary_character is None:
+        return ""
+    subscript = "1" if secondary_character > 0.0 else "2"
+    return f"A{subscript}{parity}"
+
+
 def site_symmetry_harmonic_submanifolds(
     crystal: Mapping[str, Any],
     site_label: str,
@@ -605,12 +773,13 @@ def site_symmetry_harmonic_submanifolds(
         key,
         local_frame=frame,
     )
+    operations = tuple(site_symmetry_operations(crystal, site_label))
     representations = tuple(
         manifold_symmetry_representation(
             complete,
             operation["rotation_cartesian"],
         )
-        for operation in site_symmetry_operations(crystal, site_label)
+        for operation in operations
     )
     point_group = site_point_group_symbol(crystal, site_label)
     size = 2 * l + 1
@@ -666,7 +835,7 @@ def site_symmetry_harmonic_submanifolds(
         candidates.append(((min(dominant), len(cluster), dominant), projector))
     candidates.sort(key=lambda item: item[0])
 
-    result: list[SiteSymmetrySubmanifold] = []
+    prepared: list[dict[str, Any]] = []
     for index, (_sort_key, projector) in enumerate(candidates, start=1):
         diagonal = np.real(np.diag(projector))
         selected = tuple(
@@ -691,30 +860,70 @@ def site_symmetry_harmonic_submanifolds(
             if selector
             else tuple(f"{key}_subspace_{index}_{item + 1}" for item in range(transform.shape[1]))
         )
-        dominant_names = [
-            names[item]
+        contributions = [
+            (names[item], float(diagonal[item]) / transform.shape[1])
             for item in np.argsort(-diagonal)
             if diagonal[item] > 1e-6
         ]
-        description = ", ".join(dominant_names)
+        description = ", ".join(
+            f"{name} {100.0 * weight:.0f}%"
+            for name, weight in contributions[:3]
+        )
         digest = hashlib.sha256(
             np.round(projector, decimals=10).tobytes()
         ).hexdigest()[:12]
         identifier = f"{key}:{point_group}:{digest}"
+        prepared.append(
+            {
+                "identifier": identifier,
+                "index": index,
+                "transform": transform,
+                "orbitals": orbital_names,
+                "description": description,
+                "irrep_label": _trigonal_irrep_label(
+                    point_group,
+                    l,
+                    projector,
+                    operations,
+                    representations,
+                ),
+            }
+        )
+
+    irrep_counts: dict[str, int] = {}
+    for item in prepared:
+        irrep = str(item["irrep_label"])
+        if irrep:
+            irrep_counts[irrep] = irrep_counts.get(irrep, 0) + 1
+    irrep_seen: dict[str, int] = {}
+    result: list[SiteSymmetrySubmanifold] = []
+    for item in prepared:
+        irrep = str(item["irrep_label"])
+        if irrep:
+            irrep_seen[irrep] = irrep_seen.get(irrep, 0) + 1
+            irrep_text = irrep
+            if irrep_counts[irrep] > 1:
+                irrep_text += (
+                    f" copy {irrep_seen[irrep]}/{irrep_counts[irrep]}"
+                )
+        else:
+            irrep_text = f"subspace {item['index']}"
         label = (
-            f"{point_group} subspace {index} "
-            f"(dimension {transform.shape[1]}; {description})"
+            f"{point_group} {irrep_text} "
+            f"(dimension {item['transform'].shape[1]}; "
+            f"{item['description']})"
         )
         result.append(
             SiteSymmetrySubmanifold(
-                identifier=identifier,
+                identifier=str(item["identifier"]),
                 label=label,
                 site_label=str(site_label),
                 point_group=point_group,
                 shell=key,
                 l=l,
-                orbitals=orbital_names,
-                harmonic_transform=transform,
+                irrep_label=irrep,
+                orbitals=tuple(item["orbitals"]),
+                harmonic_transform=np.asarray(item["transform"]),
             )
         )
     return tuple(result)
@@ -970,6 +1179,307 @@ def onsite_invariants(
     return tuple(result)
 
 
+@dataclass(frozen=True)
+class _ExpandedOrbitalSite:
+    representative_label: str
+    site: CrystalSite
+    manifolds: tuple[OrbitalManifold, ...]
+    generator_cartesian: FloatArray
+
+    @property
+    def basis_labels(self) -> tuple[str, ...]:
+        return tuple(
+            f"{manifold.label}:{orbital}"
+            for manifold in self.manifolds
+            for orbital in manifold.orbitals
+        )
+
+
+def _expanded_orbital_sites(
+    crystal: Mapping[str, Any],
+    manifolds: Sequence[OrbitalManifold],
+    *,
+    expected_sites: Sequence[CrystalSite] | None = None,
+) -> tuple[_ExpandedOrbitalSite, ...]:
+    ordered_labels = [
+        str(site["label"])
+        for site in crystal.get("sites", ())
+        if any(item.site_label == str(site["label"]) for item in manifolds)
+    ]
+    contexts: list[_ExpandedOrbitalSite] = []
+    seen: set[tuple[float, float, float]] = set()
+    for representative in ordered_labels:
+        site_manifolds = tuple(
+            item for item in manifolds if item.site_label == representative
+        )
+        for site in expand_crystal_sites(crystal, [representative]):
+            key = tuple(site.position)
+            if key in seen:
+                continue
+            seen.add(key)
+            generator = (
+                np.eye(3)
+                if site.rotation is None
+                else cartesian_rotation(site.rotation, crystal["lattice"])
+            )
+            contexts.append(
+                _ExpandedOrbitalSite(
+                    representative_label=representative,
+                    site=site,
+                    manifolds=site_manifolds,
+                    generator_cartesian=np.asarray(generator, dtype=float),
+                )
+            )
+    if expected_sites is not None:
+        actual = tuple(context.site.position for context in contexts)
+        expected = tuple(site.position for site in expected_sites)
+        if actual != expected:
+            raise OrbitalSymmetryError(
+                "expanded orbital sites do not match the generated bond-site order"
+            )
+    return tuple(contexts)
+
+
+def _site_mapping_representation(
+    source: _ExpandedOrbitalSite,
+    target: _ExpandedOrbitalSite,
+    rotation_cartesian: ArrayLike,
+) -> FloatArray:
+    if source.representative_label != target.representative_label:
+        raise OrbitalSymmetryError(
+            "a space-group operation mapped between inequivalent orbital sites"
+        )
+    if tuple(item.label for item in source.manifolds) != tuple(
+        item.label for item in target.manifolds
+    ):
+        raise OrbitalSymmetryError(
+            "symmetry-related sites do not carry the same ordered manifolds"
+        )
+    relative = (
+        target.generator_cartesian.T
+        @ np.asarray(rotation_cartesian, dtype=float)
+        @ source.generator_cartesian
+    )
+    blocks: list[ComplexArray] = []
+    for manifold in source.manifolds:
+        if manifold.symmetry_mode == "none":
+            if not np.allclose(relative, np.eye(3), atol=1e-8):
+                raise OrbitalSymmetryError(
+                    f"manifold {manifold.label!r} has no representation for "
+                    "a nontrivial hopping symmetry operation"
+                )
+            block = np.eye(manifold.dimension, dtype=np.complex128)
+        else:
+            block = manifold_symmetry_representation(manifold, relative)
+        blocks.append(block)
+    representation = _block_diagonal(blocks)
+    if np.max(np.abs(representation.imag), initial=0.0) > 1e-8:
+        raise OrbitalSymmetryError(
+            "Stage 3.3 hopping generation requires a real spinless orbital "
+            "representation; complex/spinor hopping follows in Stage 3.5"
+        )
+    return np.asarray(representation.real, dtype=float)
+
+
+def _mapped_hopping_matrix(
+    contexts: Sequence[_ExpandedOrbitalSite],
+    representative: Bond,
+    member: Bond,
+    symmetry: BondSymmetry,
+    matrix: ArrayLike,
+    crystal: Mapping[str, Any],
+) -> FloatArray:
+    rotation = cartesian_rotation(symmetry.rotation, crystal["lattice"])
+    source_i = contexts[representative.site_i]
+    source_j = contexts[representative.site_j]
+    complex_values = np.asarray(matrix, dtype=np.complex128)
+    if np.max(np.abs(complex_values.imag), initial=0.0) > 1e-8:
+        raise OrbitalSymmetryError(
+            "Stage 3.3 generated hopping matrices must be real"
+        )
+    values = np.asarray(complex_values.real, dtype=float)
+    if not symmetry.reverses:
+        target_i = contexts[member.site_i]
+        target_j = contexts[member.site_j]
+        left = _site_mapping_representation(source_i, target_i, rotation)
+        right = _site_mapping_representation(source_j, target_j, rotation)
+        return left @ values @ right.T
+    target_for_j = contexts[member.site_i]
+    target_for_i = contexts[member.site_j]
+    left = _site_mapping_representation(source_j, target_for_j, rotation)
+    right = _site_mapping_representation(source_i, target_for_i, rotation)
+    return left @ values.T @ right.T
+
+
+def _canonical_real_subspace_basis(projector: FloatArray) -> FloatArray:
+    dimension = int(round(float(np.trace(projector))))
+    columns: list[FloatArray] = []
+    for index in range(projector.shape[0]):
+        vector = projector[:, index].copy()
+        for previous in columns:
+            vector -= previous * float(previous @ vector)
+        norm = float(np.linalg.norm(vector))
+        if norm <= 1e-8:
+            continue
+        vector /= norm
+        lead = int(np.argmax(np.abs(vector)))
+        if vector[lead] < 0.0:
+            vector *= -1.0
+        columns.append(vector)
+        if len(columns) == dimension:
+            break
+    if len(columns) != dimension:
+        raise OrbitalSymmetryError(
+            "could not construct a stable symmetry-allowed hopping basis"
+        )
+    return np.column_stack(columns)
+
+
+def hopping_invariants(
+    crystal: Mapping[str, Any],
+    manifolds: Sequence[OrbitalManifold | Mapping[str, Any]],
+    sites: Sequence[CrystalSite],
+    orbit: BondOrbit,
+) -> tuple[HoppingInvariant, ...]:
+    """Generate the real spinless hopping basis allowed on one bond orbit."""
+
+    items = tuple(
+        item if isinstance(item, OrbitalManifold) else OrbitalManifold.from_dict(item)
+        for item in manifolds
+    )
+    contexts = _expanded_orbital_sites(
+        crystal,
+        items,
+        expected_sites=sites,
+    )
+    representative = orbit.bonds[0]
+    context_i = contexts[representative.site_i]
+    context_j = contexts[representative.site_j]
+    rows = len(context_i.basis_labels)
+    columns = len(context_j.basis_labels)
+    size = rows * columns
+    constraints: list[FloatArray] = []
+    for symmetry in bond_stabilizer_symmetries(
+        crystal,
+        sites,
+        representative,
+    ):
+        action = np.column_stack(
+            [
+                _mapped_hopping_matrix(
+                    contexts,
+                    representative,
+                    representative,
+                    symmetry,
+                    np.eye(size)[:, index].reshape(rows, columns),
+                    crystal,
+                ).reshape(size)
+                for index in range(size)
+            ]
+        )
+        constraints.append(action - np.eye(size))
+    stacked = (
+        np.vstack(constraints)
+        if constraints
+        else np.zeros((0, size), dtype=float)
+    )
+    null = _null_space(stacked, size)
+    if null.shape[1] == 0:
+        return ()
+    projector = null @ null.T
+    basis = _canonical_real_subspace_basis(projector)
+    result = []
+    for index in range(basis.shape[1]):
+        matrix = basis[:, index].reshape(rows, columns)
+        digest_payload = {
+            "orbit": orbit.label,
+            "bond": [
+                representative.site_i,
+                representative.site_j,
+                *representative.offset,
+            ],
+            "basis_i": context_i.basis_labels,
+            "basis_j": context_j.basis_labels,
+            "matrix": np.round(matrix, decimals=10).tolist(),
+        }
+        digest = hashlib.sha256(
+            json.dumps(digest_payload, sort_keys=True).encode()
+        ).hexdigest()[:12]
+        result.append(
+            HoppingInvariant(
+                identifier=f"{orbit.label}:hopping:{digest}",
+                label=f"{orbit.label} t{index + 1}",
+                orbit_label=orbit.label,
+                distance_angstrom=orbit.distance_angstrom,
+                representative_bond=representative,
+                basis_i=context_i.basis_labels,
+                basis_j=context_j.basis_labels,
+                matrix=np.asarray(matrix, dtype=np.complex128),
+                source="spinless_time_reversal_space_group",
+            )
+        )
+    return tuple(result)
+
+
+def generate_hopping_terms(
+    crystal: Mapping[str, Any],
+    manifolds: Sequence[OrbitalManifold | Mapping[str, Any]],
+    cutoff_angstrom: float,
+    *,
+    previous: Sequence[HoppingInvariant | Mapping[str, Any]] = (),
+) -> HoppingGeneration:
+    """Generate spatial orbits and symmetry-allowed hopping coefficients."""
+
+    validate_crystal(crystal)
+    items = tuple(
+        item if isinstance(item, OrbitalManifold) else OrbitalManifold.from_dict(item)
+        for item in manifolds
+    )
+    active_labels = [
+        str(site["label"])
+        for site in crystal.get("sites", ())
+        if any(item.site_label == str(site["label"]) for item in items)
+    ]
+    if not active_labels:
+        raise ValueError("add at least one orbital manifold before generating hoppings")
+    sites, orbits = generate_spatial_bond_orbits(
+        crystal,
+        active_labels,
+        float(cutoff_angstrom),
+    )
+    old = {
+        item.identifier: item
+        if isinstance(item, HoppingInvariant)
+        else HoppingInvariant.from_dict(item)
+        for item in previous
+    }
+    terms: list[HoppingInvariant] = []
+    for orbit in orbits:
+        for generated in hopping_invariants(crystal, items, sites, orbit):
+            prior = old.get(generated.identifier)
+            if prior is not None:
+                generated = HoppingInvariant(
+                    identifier=generated.identifier,
+                    label=generated.label,
+                    orbit_label=generated.orbit_label,
+                    distance_angstrom=generated.distance_angstrom,
+                    representative_bond=generated.representative_bond,
+                    basis_i=generated.basis_i,
+                    basis_j=generated.basis_j,
+                    matrix=generated.matrix,
+                    value_meV=prior.value_meV,
+                    bounds_meV=prior.bounds_meV,
+                    fit=prior.fit,
+                    source=generated.source,
+                )
+            terms.append(generated)
+    return HoppingGeneration(
+        sites=tuple(sites),
+        orbits=tuple(orbits),
+        terms=tuple(terms),
+    )
+
+
 def generate_onsite_terms(
     crystal: Mapping[str, Any],
     manifolds: Sequence[OrbitalManifold | Mapping[str, Any]],
@@ -1026,9 +1536,11 @@ def build_orbital_electronic_model(
     manifolds: Sequence[OrbitalManifold | Mapping[str, Any]],
     onsite_terms: Sequence[OnsiteInvariant | Mapping[str, Any]],
     *,
+    hopping_orbits: Sequence[BondOrbit | Mapping[str, Any]] = (),
+    hopping_terms: Sequence[HoppingInvariant | Mapping[str, Any]] = (),
     periodic_axes: Sequence[int] = (0, 1, 2),
 ) -> ElectronicModel:
-    """Resolve a structure-first onsite model into canonical tight-binding data."""
+    """Resolve structure-first onsite and hopping terms into canonical data."""
 
     validate_crystal(crystal)
     items = tuple(
@@ -1038,6 +1550,16 @@ def build_orbital_electronic_model(
     terms = tuple(
         item if isinstance(item, OnsiteInvariant) else OnsiteInvariant.from_dict(item)
         for item in onsite_terms
+    )
+    orbits = tuple(
+        item if isinstance(item, BondOrbit) else orbits_from_config([item])[0]
+        for item in hopping_orbits
+    )
+    hopping_items = tuple(
+        item
+        if isinstance(item, HoppingInvariant)
+        else HoppingInvariant.from_dict(item)
+        for item in hopping_terms
     )
     if not items:
         raise ValueError("add at least one orbital manifold before resolving the model")
@@ -1097,6 +1619,65 @@ def build_orbital_electronic_model(
             )[(0, 0, 0)]
             selector[start:stop, start:stop] = term.matrix
             parameter_values[term.identifier] = term.value_meV
+
+    contexts = _expanded_orbital_sites(crystal, items)
+    if len(contexts) != len(site_blocks):
+        raise OrbitalSymmetryError(
+            "expanded hopping sites do not match the resolved electronic basis"
+        )
+    ranges = tuple((start, stop) for _label, start, stop, _items in site_blocks)
+    orbit_lookup = {orbit.label: orbit for orbit in orbits}
+    for term in hopping_items:
+        orbit = orbit_lookup.get(term.orbit_label)
+        if orbit is None:
+            raise ValueError(
+                f"hopping term {term.identifier!r} refers to missing orbit "
+                f"{term.orbit_label!r}"
+            )
+        if orbit.operations is None or len(orbit.operations) != len(orbit.bonds):
+            raise ValueError(
+                f"hopping orbit {orbit.label!r} lacks symmetry mapping operations"
+            )
+        if term.representative_bond != orbit.bonds[0]:
+            raise ValueError(
+                f"hopping term {term.identifier!r} no longer matches its "
+                "representative bond"
+            )
+        representative = orbit.bonds[0]
+        if term.basis_i != contexts[representative.site_i].basis_labels:
+            raise ValueError(
+                f"hopping term {term.identifier!r} no longer matches endpoint i"
+            )
+        if term.basis_j != contexts[representative.site_j].basis_labels:
+            raise ValueError(
+                f"hopping term {term.identifier!r} no longer matches endpoint j"
+            )
+        selector_blocks = parameter_hoppings.setdefault(term.identifier, {})
+        for member, symmetry in zip(
+            orbit.bonds,
+            orbit.operations,
+            strict=True,
+        ):
+            matrix = _mapped_hopping_matrix(
+                contexts,
+                representative,
+                member,
+                symmetry,
+                term.matrix,
+                crystal,
+            )
+            vector = tuple(int(value) for value in member.offset)
+            partner = tuple(-value for value in vector)
+            start_i, stop_i = ranges[member.site_i]
+            start_j, stop_j = ranges[member.site_j]
+            block = selector_blocks.setdefault(vector, np.zeros_like(zero))
+            block[start_i:stop_i, start_j:stop_j] += matrix
+            partner_block = selector_blocks.setdefault(
+                partner,
+                np.zeros_like(zero),
+            )
+            partner_block[start_j:stop_j, start_i:stop_i] += matrix.T
+        parameter_values[term.identifier] = term.value_meV
     model = build_electronic_model(
         direct_lattice=lattice_vectors(crystal["lattice"]),
         basis=basis_states,
@@ -1111,7 +1692,11 @@ def build_orbital_electronic_model(
             "spacegroup": str(crystal.get("spacegroup", "P 1")),
             "manifold_count": len(items),
             "onsite_term_count": len(terms),
-            "hopping_stage": "not_configured",
+            "hopping_orbit_count": len(orbits),
+            "hopping_term_count": len(hopping_items),
+            "hopping_stage": (
+                "symmetry_generated" if hopping_items else "not_configured"
+            ),
         },
     )
     return model
@@ -1131,6 +1716,41 @@ def _component_terms(component: Any) -> tuple[OnsiteInvariant, ...]:
     )
 
 
+def _component_hopping_terms(component: Any) -> tuple[HoppingInvariant, ...]:
+    return tuple(
+        HoppingInvariant.from_dict(item)
+        for item in component.config.get("hopping_terms", ())
+    )
+
+
+def _component_hopping_orbits(component: Any) -> tuple[BondOrbit, ...]:
+    return tuple(orbits_from_config(component.config.get("spatial_orbits", ())))
+
+
+def _install_hopping_generation(
+    component: Any,
+    generation: HoppingGeneration,
+) -> None:
+    component.config["site_positions"] = sites_to_config(generation.sites)
+    component.config["expanded_crystal_sites"] = [
+        {
+            "label": site.label,
+            "position": list(site.position),
+            "element": site.element,
+            "rotation": (
+                None
+                if site.rotation is None
+                else [list(row) for row in site.rotation]
+            ),
+        }
+        for site in generation.sites
+    ]
+    component.config["spatial_orbits"] = orbits_to_config(generation.orbits)
+    component.config["hopping_terms"] = [
+        item.to_dict() for item in generation.terms
+    ]
+
+
 def resolve_tight_binding_builder(component: Any) -> ElectronicModel:
     """Regenerate and install canonical ``model_data`` from builder records."""
 
@@ -1140,6 +1760,8 @@ def resolve_tight_binding_builder(component: Any) -> ElectronicModel:
         component.config["crystal"],
         _component_manifolds(component),
         _component_terms(component),
+        hopping_orbits=_component_hopping_orbits(component),
+        hopping_terms=_component_hopping_terms(component),
         periodic_axes=component.config.get("periodic_axes") or (0, 1, 2),
     )
     component.config["source_path"] = ""
@@ -1181,10 +1803,23 @@ def set_tight_binding_orbital_manifolds(
             component.config["onsite_terms"] = [
                 item.to_dict() for item in generated
             ]
+        cutoff = float(component.config.get("hopping_cutoff_angstrom", 0.0))
+        if items and cutoff > 0.0:
+            hopping = generate_hopping_terms(
+                component.config["crystal"],
+                items,
+                cutoff,
+                previous=_component_hopping_terms(component),
+            )
+            _install_hopping_generation(component, hopping)
         if items and component.config.get("onsite_terms"):
             resolve_tight_binding_builder(component)
         else:
             component.config["onsite_terms"] = []
+            component.config["hopping_terms"] = []
+            component.config["spatial_orbits"] = []
+            component.config["site_positions"] = []
+            component.config["expanded_crystal_sites"] = []
             component.config["model_data"] = {}
             component.config["model_digest"] = ""
     except Exception:
@@ -1235,6 +1870,15 @@ def regenerate_tight_binding_onsite_terms(
             previous=_component_terms(component),
         )
         component.config["onsite_terms"] = [item.to_dict() for item in terms]
+        cutoff = float(component.config.get("hopping_cutoff_angstrom", 0.0))
+        if cutoff > 0.0:
+            generation = generate_hopping_terms(
+                component.config["crystal"],
+                _component_manifolds(component),
+                cutoff,
+                previous=_component_hopping_terms(component),
+            )
+            _install_hopping_generation(component, generation)
         if terms:
             resolve_tight_binding_builder(component)
     except Exception:
@@ -1242,6 +1886,39 @@ def regenerate_tight_binding_onsite_terms(
         component.config.update(before)
         raise
     return terms
+
+
+def regenerate_tight_binding_hopping_terms(
+    component: Any,
+    cutoff_angstrom: float | None = None,
+) -> HoppingGeneration:
+    """Regenerate hopping orbits and matrices, preserving stable coefficients."""
+
+    if getattr(component, "type", None) != "tight_binding":
+        raise TypeError("hopping generation requires a tight_binding component")
+    cutoff = float(
+        component.config.get("hopping_cutoff_angstrom", 0.0)
+        if cutoff_angstrom is None
+        else cutoff_angstrom
+    )
+    if cutoff <= 0.0:
+        raise ValueError("hopping cutoff must be positive")
+    before = deepcopy(component.config)
+    try:
+        generation = generate_hopping_terms(
+            component.config["crystal"],
+            _component_manifolds(component),
+            cutoff,
+            previous=_component_hopping_terms(component),
+        )
+        component.config["hopping_cutoff_angstrom"] = cutoff
+        _install_hopping_generation(component, generation)
+        resolve_tight_binding_builder(component)
+    except Exception:
+        component.config.clear()
+        component.config.update(before)
+        raise
+    return generation
 
 
 def set_tight_binding_onsite_term(
@@ -1305,11 +1982,78 @@ def set_tight_binding_onsite_term(
     raise KeyError(f"unknown onsite term {identifier!r}")
 
 
+def set_tight_binding_hopping_term(
+    component: Any,
+    identifier: str,
+    *,
+    value: float | None = None,
+    energy_unit: str | None = None,
+    lower: float | None | Literal["unchanged"] = "unchanged",
+    upper: float | None | Literal["unchanged"] = "unchanged",
+    fit: bool | None = None,
+) -> HoppingInvariant:
+    """Update one hopping coefficient, bounds, or future fit-selection flag."""
+
+    terms = list(_component_hopping_terms(component))
+    for index, term in enumerate(terms):
+        if term.identifier != str(identifier):
+            continue
+        unit = normalize_electronic_energy_unit(
+            energy_unit or component.config.get("electronic_energy_unit", "eV")
+        )
+        bounds = list(term.bounds_meV)
+        if lower != "unchanged":
+            bounds[0] = (
+                None
+                if lower is None
+                else float(electronic_energy_to_meV(lower, unit))
+            )
+        if upper != "unchanged":
+            bounds[1] = (
+                None
+                if upper is None
+                else float(electronic_energy_to_meV(upper, unit))
+            )
+        updated = HoppingInvariant(
+            identifier=term.identifier,
+            label=term.label,
+            orbit_label=term.orbit_label,
+            distance_angstrom=term.distance_angstrom,
+            representative_bond=term.representative_bond,
+            basis_i=term.basis_i,
+            basis_j=term.basis_j,
+            matrix=term.matrix,
+            value_meV=(
+                term.value_meV
+                if value is None
+                else float(electronic_energy_to_meV(value, unit))
+            ),
+            bounds_meV=(bounds[0], bounds[1]),
+            fit=term.fit if fit is None else bool(fit),
+            source=term.source,
+        )
+        terms[index] = updated
+        before = deepcopy(component.config)
+        try:
+            component.config["hopping_terms"] = [
+                item.to_dict() for item in terms
+            ]
+            resolve_tight_binding_builder(component)
+        except Exception:
+            component.config.clear()
+            component.config.update(before)
+            raise
+        return updated
+    raise KeyError(f"unknown hopping term {identifier!r}")
+
+
 def configure_tight_binding_builder(
     component: Any,
     *,
     manifolds: Sequence[OrbitalManifold | Mapping[str, Any]],
     onsite_terms: Sequence[OnsiteInvariant | Mapping[str, Any]] = (),
+    hopping_cutoff_angstrom: float | None = None,
+    hopping_terms: Sequence[HoppingInvariant | Mapping[str, Any]] = (),
 ) -> ElectronicModel:
     """Rebuild a component from editable high-level builder configuration."""
 
@@ -1354,6 +2098,56 @@ def configure_tight_binding_builder(
                     )
                 )
             component.config["onsite_terms"] = [item.to_dict() for item in merged]
+        if hopping_cutoff_angstrom is not None:
+            generation = regenerate_tight_binding_hopping_terms(
+                component,
+                hopping_cutoff_angstrom,
+            )
+            if hopping_terms:
+                parsed_hoppings = tuple(
+                    item
+                    if isinstance(item, HoppingInvariant)
+                    else HoppingInvariant.from_dict(item)
+                    for item in hopping_terms
+                )
+                supplied_hoppings = {
+                    item.identifier: item for item in parsed_hoppings
+                }
+                generated_hoppings = list(generation.terms)
+                if set(supplied_hoppings) != {
+                    item.identifier for item in generated_hoppings
+                }:
+                    raise ValueError(
+                        "stored hopping terms do not match the invariants "
+                        "regenerated from the crystal and orbital manifolds"
+                    )
+                merged_hoppings = []
+                for term in generated_hoppings:
+                    source = supplied_hoppings[term.identifier]
+                    if not np.allclose(source.matrix, term.matrix, atol=1e-9):
+                        raise ValueError(
+                            f"stored matrix for hopping term "
+                            f"{term.identifier!r} changed"
+                        )
+                    merged_hoppings.append(
+                        HoppingInvariant(
+                            identifier=term.identifier,
+                            label=term.label,
+                            orbit_label=term.orbit_label,
+                            distance_angstrom=term.distance_angstrom,
+                            representative_bond=term.representative_bond,
+                            basis_i=term.basis_i,
+                            basis_j=term.basis_j,
+                            matrix=term.matrix,
+                            value_meV=source.value_meV,
+                            bounds_meV=source.bounds_meV,
+                            fit=source.fit,
+                            source=term.source,
+                        )
+                    )
+                component.config["hopping_terms"] = [
+                    item.to_dict() for item in merged_hoppings
+                ]
         return resolve_tight_binding_builder(component)
     except Exception:
         component.config.clear()

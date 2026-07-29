@@ -1289,6 +1289,40 @@ def _register_builtin_models() -> None:
                     "[]",
                 ),
                 _config_field(
+                    "hopping_cutoff_angstrom",
+                    0.0,
+                    (
+                        "Maximum real-space bond distance used by the "
+                        "symmetry-aware hopping generator."
+                    ),
+                    "Zero before generation, otherwise a positive length in Angstrom.",
+                    "float",
+                    "4.5",
+                    "angstrom",
+                ),
+                _config_field(
+                    "spatial_orbits",
+                    [],
+                    (
+                        "Generated symmetry-distinct hopping pathways and "
+                        "their space-group mapping operations."
+                    ),
+                    "A generated list of BondOrbit dictionaries.",
+                    "list",
+                    "[]",
+                ),
+                _config_field(
+                    "hopping_terms",
+                    [],
+                    (
+                        "Generated symmetry-covariant hopping matrices with "
+                        "canonical meV coefficients."
+                    ),
+                    "A generated list of HoppingInvariant dictionaries.",
+                    "list",
+                    "[]",
+                ),
+                _config_field(
                     "periodic_axes",
                     [],
                     "Direct-lattice periodic axes; empty infers them from hoppings.",

@@ -14,9 +14,9 @@ The package provides:
   bulk-response comparisons;
 - CIF/manual crystal geometry and arbitrary manual or Wannier90 tight-binding
   models with explicit local orbital frames, site-point-group harmonic
-  subspaces, symmetry-allowed onsite terms, eV/meV conversion, bands, orbital
-  projections, density of states, Fermi surfaces, and shared 3D
-  model-geometry inspection;
+  subspaces, symmetry-allowed onsite and hopping terms, eV/meV conversion,
+  bands, orbital projections, density of states, Fermi surfaces, shared 3D
+  model-geometry inspection, and labelled first-Brillouin-zone views;
 - an extensible model registry shared by fitting, GUI metadata, diagnostics,
   reports, plots, project files, and workflow scripts;
 - simultaneous least-squares fitting with explicit uncertainty conventions,

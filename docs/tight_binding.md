@@ -174,6 +174,9 @@ dictionaries can be entered directly in the model editor.
 | `crystal` | editable lattice, space group, crystallographic sites, and optional CIF provenance used by the structure-first builder | `P 1` cell with no sites | `{"lattice": {"a": 4, "b": 4, "c": 6, "alpha": 90, "beta": 90, "gamma": 90}, "spacegroup": "P 1", "sites": []}` |
 | `orbital_manifolds` | editable site-attached basis definitions and local frames | `[]` | `[orbital_manifold_preset("M1", "d").to_dict()]` |
 | `onsite_terms` | generated Hermitian onsite matrix bases, canonical values, bounds, and future fit selections | `[]` | `[term.to_dict() for term in generate_onsite_terms(crystal, manifolds)]` |
+| `hopping_cutoff_angstrom` | maximum representative-bond distance used by the symmetry hopping generator; zero disables generated hoppings | `0.0` | `4.2` |
+| `spatial_orbits` | generated symmetry-equivalent bond families retained for editing and visualization | `[]` | `[orbit.to_dict() for orbit in generation.orbits]` |
+| `hopping_terms` | symmetry-allowed hopping matrix bases with canonical values, bounds, and future fit selections | `[]` | `[term.to_dict() for term in generation.terms]` |
 | `periodic_axes` | periodic lattice axes; empty asks a Wannier import to infer them from nonzero translations | `[]` | `[0]`, `[0, 1]`, or `[0, 1, 2]` |
 | `electronic_energy_unit` | input and electronic-plot unit; changing it does not alter canonical values | `"eV"` | `"eV"` or `"meV"` |
 | `chemical_potential_meV` | canonical chemical potential subtracted on band and DOS plots; displayed in `electronic_energy_unit` | `0.0` | `12.5` for 0.0125 eV |
@@ -199,6 +202,8 @@ surface.
 
 The model calculates:
 
+- the first Brillouin zone, labelled reciprocal vectors, and the configured
+  high-symmetry path;
 - band energies along an ordered path;
 - orbital-, site-, shell-, or spin-projected band weights;
 - total and projected electronic density of states;
@@ -215,10 +220,10 @@ This stage does not yet calculate neutron intensity, bulk susceptibility, or a
 fit observable. The generalized Lindhard response and its magnetic projections
 are Stage 4; interaction dressings are Stage 5.
 
-## Structure-first orbital and onsite builder
+## Structure-first orbital, onsite, and hopping builder
 
-Stage 3.2 constructs a static onsite Hamiltonian from a CIF or manually
-entered crystal. `OrbitalManifold` attaches an ordered basis to a
+Stages 3.2 and 3.3 construct a static tight-binding Hamiltonian from a CIF or
+manually entered crystal. `OrbitalManifold` attaches an ordered basis to a
 crystallographic representative site. The space group expands it to every
 equivalent site. Each generated basis state retains its site, element,
 orbital, manifold, correlated-shell label, and fractional center.
@@ -260,6 +265,13 @@ This is a general decomposition: nfit does not assume a particular cubic,
 trigonal, or other named crystal-field scheme. A reported subspace gives its
 dimension and dominant complete-shell orbitals for identification. It does
 not claim a conventional irrep name when nfit has not established one.
+For the supported trigonal site groups, nfit assigns conventional labels such
+as $A_{1g}$ and $E_g$ only after checking the representation characters.
+Repeated copies of the same irrep receive deterministic `copy 1`, `copy 2`,
+and orbital-weight descriptions. These copy numbers identify the displayed
+basis choice; they are not extra symmetry quantum numbers. Symmetry permits
+different copies of the same irrep to mix, so two displayed $E_g$ subspaces
+remain physically the same irrep.
 
 For site groups that act only as a scalar on the selected shell, including
 the trivial group, nfit returns the complete shell rather than inventing
@@ -338,6 +350,68 @@ set_tight_binding_onsite_term(
     energy_unit="eV",
     lower=-0.2,
     upper=0.2,
+)
+```
+
+### Hopping-invariant fields
+
+For each spatial bond orbit within `hopping_cutoff_angstrom`, the builder
+finds a real matrix basis $B_p$ allowed by the representative bond
+stabilizer:
+
+$$
+T_{\mathrm{rep}}=\sum_p t_p B_p.
+$$
+
+If a space-group operation $g$ maps the representative bond to another orbit
+member, its hopping matrix is
+
+$$
+T_{g(i)g(j)}(\mathbf R_g)
+=D_i(g)T_{\mathrm{rep}}D_j(g)^\dagger.
+$$
+
+Reversing the directed bond transposes the current real matrix. The resolved
+Hamiltonian contains both directions and therefore obeys
+$H(-\mathbf R)=H(\mathbf R)^\dagger$ exactly.
+
+| Field | Meaning | Acceptable input example |
+| --- | --- | --- |
+| `identifier` | stable hash of the orbit, ordered endpoint bases, and invariant matrix | `"B1:hopping:2a9374d7d0f1"` |
+| `label` | readable parameter label | `"B1 t_1"` |
+| `orbit_label` | spatial bond-orbit identifier | `"B1"` |
+| `distance_angstrom` | representative center-to-center distance in Å | `3.9` |
+| `representative_bond` | endpoint indices and integer cell offset for the canonical representative | `{"site_i": 0, "site_j": 0, "offset": [1, 0, 0]}` |
+| `basis_i` | ordered basis labels at the receiving endpoint | `["M1_d:d_xy", "M1_d:d_yz"]` |
+| `basis_j` | ordered basis labels at the sending endpoint | `["M1_d:d_xy", "M1_d:d_yz"]` |
+| `matrix` | unit-Frobenius real hopping invariant, serialized as real/imaginary pairs | `[[[0.7071, 0], [0, 0]], [[0, 0], [0.7071, 0]]]` |
+| `value_meV` | canonical coefficient $t_p$ | `-80.0` |
+| `bounds_meV` | optional canonical future fit bounds | `[-200.0, 20.0]` |
+| `fit` | stored request for later optimizer integration | `false` |
+| `source` | origin of the matrix constraints | `"spinless_time_reversal_space_group"` |
+
+Stage 3.3 symmetry generation is spinless, real, and time-reversal symmetric.
+Manual and Wannier90 models may still contain general complex hopping
+matrices. Symmetry generation for complex or spinor representations is
+reserved for the SOC stage. A custom numerical basis can use automatic
+hopping generation only when every required site mapping is the identity;
+otherwise its representation matrices must be supplied by a future adapter.
+
+```python
+from nfit import (
+    regenerate_tight_binding_hopping_terms,
+    set_tight_binding_hopping_term,
+)
+
+regenerate_tight_binding_hopping_terms(model, cutoff_angstrom=4.2)
+hopping_id = model.config["hopping_terms"][0]["identifier"]
+set_tight_binding_hopping_term(
+    model,
+    hopping_id,
+    value=-0.080,
+    energy_unit="eV",
+    lower=-0.2,
+    upper=0.02,
 )
 ```
 
@@ -518,11 +592,12 @@ structure inputs:
   positions manually; or
 - import a complete Wannier90 Hamiltonian.
 
-CIF import initializes `periodic_axes` to `[0, 1, 2]`. The **Orbitals** and
-**Onsite terms** sections construct and retain a high-level editable builder
-specification as well as its resolved `model_data`. Complete manual
-Hamiltonians can also be constructed through the lower-level scripting API.
-The remaining hopping and SOC workflow is specified in the
+CIF import initializes `periodic_axes` to `[0, 1, 2]`. The **Orbitals**,
+**Onsite terms**, and **Hoppings** sections construct and retain a high-level
+editable builder specification as well as its resolved `model_data`. Complete
+manual Hamiltonians can also be constructed through the lower-level scripting
+API.
+The remaining SOC workflow is specified in the
 [Tight-binding model-builder plan](tight_binding_builder_plan.md).
 
 Each plot action has a **Copy script** button that exports editable GUI-free
@@ -531,7 +606,8 @@ script states `energy_unit`, converts its editable values to canonical meV,
 and passes the same unit to the renderer. **Copy builder script** exports CIF
 reload and digest verification, or embeds a manually entered crystal, then
 reconstructs the component, manifolds, regenerated onsite matrices, values,
-bounds, fit selections, and canonical digest without Qt.
+bounds, generated hopping matrices, fit selections, and canonical digest
+without Qt.
 
 ## Shared 3D model viewer
 
@@ -544,12 +620,31 @@ CPK-like element colors and element-scaled display radii. Geometry is batched
 by visual role so building a scene does not create one rendering actor per
 atom, orbital, frame arrow, or pathway. Tokens identify basis states; they are
 not wavefunction isosurfaces. Heisenberg scenes can display one representative
-exchange pathway or all symmetry-equivalent members. Stage 3.3 will add the
-same selection for hopping pathways.
+exchange pathway or all symmetry-equivalent members. Tight-binding scenes
+offer the same spatial-orbit selection and can restrict a pathway to one
+symmetry-allowed hopping matrix term. A pathway depicts geometry, not a scalar
+summary of a multiorbital hopping matrix.
 
 `model_geometry_scene` is the renderer-independent public API. It returns cell
 edges, sites, orbital tokens, frames, and pathways as immutable records.
 `model_geometry_script` exports an editable standalone viewer script.
+
+## Three-dimensional Brillouin-zone viewer
+
+**View Brillouin zone in 3D** constructs the first Brillouin zone as the
+Wigner--Seitz cell of the reciprocal lattice. It overlays the configured
+`band_path`, including every node label, and the reciprocal basis vectors
+$\mathbf b_1$, $\mathbf b_2$, and $\mathbf b_3$. Coordinates and vectors are
+defined in Å$^{-1}$; the displayed basis arrows are uniformly shortened when
+necessary so they remain legible beside the zone. The path is not inferred
+automatically in Stage 3.3, so its labels and reduced coordinates remain an
+explicit, editable model setting.
+
+`brillouin_zone_scene` is the renderer-independent component API.
+`build_brillouin_zone_scene` accepts a direct-lattice matrix and path
+dictionaries, while `brillouin_zone_script` exports an editable standalone
+viewer. The band plot and three-dimensional view consume the same
+`band_path`, so changing a node or label updates both.
 
 `ElectronicModel.to_dict()` is a portable, digest-protected representation.
 `save_electronic_model` and `load_electronic_model` write and validate that

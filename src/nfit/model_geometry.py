@@ -249,6 +249,7 @@ def model_geometry_scene(
     show_orbitals: bool = True,
     show_local_frames: bool = True,
     selected_pathway: str | None = None,
+    selected_hopping_term: str | None = None,
     pathway_mode: Literal["representative", "all"] = "representative",
 ) -> ModelGeometryScene:
     """Build a shared unit-cell scene for tight-binding or Heisenberg models."""
@@ -257,6 +258,21 @@ def model_geometry_scene(
         raise ValueError("model geometry is available for tight_binding and heisenberg_rpa")
     if pathway_mode not in {"representative", "all"}:
         raise ValueError("pathway_mode must be 'representative' or 'all'")
+    if selected_hopping_term:
+        matched = next(
+            (
+                item
+                for item in component.config.get("hopping_terms", ())
+                if str(item.get("identifier", "")) == selected_hopping_term
+                or str(item.get("label", "")) == selected_hopping_term
+            ),
+            None,
+        )
+        if matched is None:
+            raise ValueError(
+                f"unknown hopping term {selected_hopping_term!r}"
+            )
+        selected_pathway = str(matched.get("orbit_label", ""))
     crystal = component.config.get("crystal")
     if not isinstance(crystal, Mapping):
         raise ValueError("the model has no crystal geometry")

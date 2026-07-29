@@ -5,6 +5,7 @@ import pytest
 
 from nfit import (
     DataGroup,
+    ElectronicModel,
     ModelComponentSpec,
     NfitProject,
     OrbitalManifold,
@@ -19,7 +20,9 @@ from nfit import (
     onsite_invariants,
     orbital_manifold_from_site_symmetry,
     orbital_manifold_preset,
+    regenerate_tight_binding_hopping_terms,
     save_project,
+    set_tight_binding_hopping_term,
     set_tight_binding_onsite_term,
     site_point_group_symbol,
     site_symmetry_harmonic_submanifolds,
@@ -148,6 +151,18 @@ def test_scalar_site_symmetry_does_not_invent_crystal_field_subspaces():
     assert options[0].orbitals == orbital_manifold_preset("M1", "f").orbitals
 
 
+def test_trigonal_repeated_irreps_are_named_as_distinct_copies():
+    crystal = _crystal("F d -3 m:2")
+    crystal["sites"][0]["position"] = [0.5, 0.5, 0.5]
+    options = site_symmetry_harmonic_submanifolds(crystal, "M1", "d")
+
+    assert [option.dimension for option in options] == [2, 1, 2]
+    assert [option.irrep_label for option in options] == ["Eg", "A1g", "Eg"]
+    assert "Eg copy 1/2" in options[0].label
+    assert "Eg copy 2/2" in options[2].label
+    assert options[0].label != options[2].label
+
+
 def test_nonclosed_submanifold_is_diagnosed_instead_of_projected():
     crystal = _crystal("P m -3 m")
     manifold = _nonclosed_d_manifold()
@@ -243,6 +258,80 @@ def test_component_builder_resolves_values_project_and_script_round_trip(tmp_pat
         == component.config["model_digest"]
     )
     assert namespace["model"].config["onsite_terms"][0]["fit"] is True
+
+
+def test_symmetry_generated_hopping_resolves_dispersion_and_script_round_trip():
+    crystal = _crystal("P m -3 m")
+    crystal["sites"] = crystal["sites"][:1]
+    group = DataGroup("Electronic")
+    component = create_model_component(group, "bands", type="tight_binding")
+    component.config["crystal"] = crystal
+    add_tight_binding_orbital_manifold(
+        component,
+        orbital_manifold_preset("M1", "effective"),
+    )
+
+    generation = regenerate_tight_binding_hopping_terms(component, 4.01)
+    assert len(generation.orbits) == 1
+    assert generation.orbits[0].label == "B1"
+    assert generation.orbits[0].multiplicity == 3
+    assert len(generation.terms) == 1
+    term = generation.terms[0]
+    np.testing.assert_allclose(term.matrix, [[1.0]])
+    set_tight_binding_hopping_term(
+        component,
+        term.identifier,
+        value=-0.1,
+        lower=-0.2,
+        upper=0.0,
+        energy_unit="eV",
+        fit=True,
+    )
+    hopping_scene = model_geometry_scene(
+        component,
+        selected_hopping_term=term.identifier,
+    )
+    assert len(hopping_scene.pathways) == 1
+    assert hopping_scene.pathways[0].orbit_label == "B1"
+
+    model = ElectronicModel.from_dict(component.config["model_data"])
+    assert model.parameter_values[term.identifier] == pytest.approx(-100.0)
+    assert np.linalg.eigvalsh(model.hamiltonian([0, 0, 0]))[0] == pytest.approx(
+        -600.0
+    )
+    assert np.linalg.eigvalsh(model.hamiltonian([0.5, 0, 0]))[0] == pytest.approx(
+        -200.0
+    )
+    for vector, block in zip(
+        model.translations,
+        model.parameter_blocks[term.identifier],
+        strict=True,
+    ):
+        partner_index = np.flatnonzero(
+            np.all(model.translations == -vector, axis=1)
+        )[0]
+        np.testing.assert_allclose(
+            block,
+            model.parameter_blocks[term.identifier][partner_index].conj().T,
+        )
+
+    script = tight_binding_structure_script(
+        component.config["crystal"],
+        component.config["periodic_axes"] or [0, 1, 2],
+        orbital_manifolds=component.config["orbital_manifolds"],
+        onsite_terms=component.config["onsite_terms"],
+        hopping_cutoff_angstrom=component.config[
+            "hopping_cutoff_angstrom"
+        ],
+        hopping_terms=component.config["hopping_terms"],
+        expected_model_digest=component.config["model_digest"],
+    )
+    namespace = {}
+    exec(compile(script, "<hopping-builder-script>", "exec"), namespace)
+    assert (
+        namespace["electronic_model"].content_digest
+        == component.config["model_digest"]
+    )
 
 
 def test_model_geometry_scene_shows_active_ghost_orbitals_and_frames():

@@ -4,15 +4,18 @@ This page tracks the staged structure-first builder for manual tight-binding
 models. The detailed current behavior is documented on
 [Tight-binding electronic structure](tight_binding.md).
 
-Stages 3.1 and 3.2 are implemented. The GUI and public API share CIF import,
+Stages 3.1 through 3.3 are implemented. The GUI and public API share CIF import,
 editable crystal geometry, site expansion, orbital manifolds and local frames,
 site-point-group identification, calculated harmonic subspaces,
-site-symmetry representations, static onsite invariants, canonical model
-resolution, project and builder-script serialization, and an eV-default input
-unit backed by canonical meV storage. The shared 3D viewer displays the cell,
-element-colored atom spheres, active or ghost sites, orbital tokens, and local
-frames using batched geometry. Hoppings, optimizer integration, SOC, and
-compact parameterizations remain planned.
+site-symmetry representations, static onsite invariants, symmetry-generated
+hopping invariants, canonical model resolution, project and builder-script
+serialization, and an eV-default input unit backed by canonical meV storage.
+The shared 3D model viewer displays the cell, smooth element-colored atom
+spheres, active or ghost sites, orbital tokens, local frames, and selected
+hopping or exchange pathways using batched geometry. A separate 3D
+Brillouin-zone view shows the configured labelled path and reciprocal basis
+vectors. Optimizer integration, SOC, and compact parameterizations remain
+planned.
 
 ## Goal
 
@@ -178,11 +181,17 @@ Cell edges, atom glyphs, orbital tokens, local-frame axes, and pathways are
 batched by visual role. This keeps scene construction responsive while
 retaining smooth camera interaction.
 
-Stage 3.3 adds hopping-path selection to the same scene. The pathway layer
-already accepts Heisenberg exchange orbits and distinguishes one
-representative bond from all symmetry-equivalent bonds. It will later display
-hopping magnitude and complex phase only with an explicit legend; geometry
-must not imply that a multiorbital hopping matrix is a single scalar.
+Stage 3.3 adds hopping-path and hopping-term selection to the same scene. The
+pathway layer accepts Heisenberg exchange or tight-binding bond orbits and
+distinguishes one representative bond from all symmetry-equivalent bonds. It
+does not encode hopping magnitude or phase: geometry must not imply that a
+multiorbital hopping matrix is a single scalar.
+
+The renderer-independent Brillouin-zone scene is separate from the crystal
+scene. It constructs the first reciprocal-space Wigner--Seitz cell and
+overlays the configured labelled band path plus $\mathbf b_1$, $\mathbf b_2$,
+and $\mathbf b_3$. The three-dimensional view and band plot use the same path
+configuration.
 
 ## Spin-orbit coupling
 
@@ -295,7 +304,7 @@ When fitting is enabled:
   `ElectronicModel`, preserving values and future fit metadata.
 - Add builder-script round trips and the shared 3D viewer foundation.
 
-### 3.3 — Hopping generator
+### 3.3 — Hopping generator (implemented)
 
 - Reuse spatial bond orbits and add orbital covariance matrices.
 - Generate symmetry-allowed hopping bases up to a cutoff.
@@ -303,6 +312,8 @@ When fitting is enabled:
   Hoppings GUI section.
 - Extend the shared viewer with representative and symmetry-equivalent hopping
   paths and matrix-term selection.
+- Add a labelled first-Brillouin-zone viewer using the configured band path
+  and reciprocal basis vectors.
 
 ### 3.4 — Parameter and fit integration
 

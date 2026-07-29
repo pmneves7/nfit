@@ -32,10 +32,10 @@ The CIF-to-orbital manual construction workflow is specified separately in the
 The shared model registry, generalized paramagnon/damped-mode response, and
 arbitrary tight-binding electronic-structure layer are implemented. The
 CIF/manual builder now includes orbital manifolds, local frames, static onsite
-invariants, and a shared tight-binding/Heisenberg 3D geometry viewer.
-Subsequent builder stages add symmetry-constrained hoppings, pathway
-inspection, optimizer integration, spin-orbit coupling, and optional
-Slater--Koster parameterizations.
+invariants, symmetry-constrained hoppings, hopping-path inspection, a shared
+tight-binding/Heisenberg 3D geometry viewer, and a labelled 3D
+Brillouin-zone viewer. Subsequent builder stages add optimizer integration,
+spin-orbit coupling, and optional Slater--Koster parameterizations.
 Response stages add the complex bare susceptibility, interaction dressings,
 production fitting, BCS superconductivity, and advanced correlated extensions. Electronic
 calculations should eventually share the rebinner's bounded-memory and

@@ -1153,6 +1153,8 @@ def tight_binding_structure_script(
     electronic_energy_unit: str = "eV",
     orbital_manifolds: Sequence[Mapping[str, Any]] = (),
     onsite_terms: Sequence[Mapping[str, Any]] = (),
+    hopping_cutoff_angstrom: float | None = None,
+    hopping_terms: Sequence[Mapping[str, Any]] = (),
     expected_model_digest: str = "",
 ) -> str:
     """Return an editable script that rebuilds tight-binding builder state."""
@@ -1211,10 +1213,16 @@ def tight_binding_structure_script(
                 "",
                 f"orbital_manifolds = {pformat(list(orbital_manifolds), sort_dicts=True)}",
                 f"onsite_terms = {pformat(list(onsite_terms), sort_dicts=True)}",
+                f"hopping_terms = {pformat(list(hopping_terms), sort_dicts=True)}",
                 "electronic_model = configure_tight_binding_builder(",
                 "    model,",
                 "    manifolds=orbital_manifolds,",
                 "    onsite_terms=onsite_terms,",
+                (
+                    "    hopping_cutoff_angstrom="
+                    f"{None if hopping_cutoff_angstrom is None else float(hopping_cutoff_angstrom)!r},"
+                ),
+                "    hopping_terms=hopping_terms,",
                 ")",
             ]
         )
