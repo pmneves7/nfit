@@ -37,41 +37,6 @@ The [local relaxational](local_relaxational.md),
 susceptibilities, dissipative responses, elastic limits, scripts, and
 references.
 
-## Magnetic form factor
-
-nfit uses the standard analytic approximation
-
-$$
-f(s)=Ae^{-as^2}+Be^{-bs^2}+Ce^{-cs^2}+D,
-\qquad s=\frac{|\mathbf Q|}{4\pi},
-$$
-
-with coefficients for common $3d$, $4d$, $4f$, and $5f$ ions. Select a
-tabulated ion in the model editor or provide custom
-$(A,a,B,b,C,c,D)$ coefficients.
-
-$f$ and $A,B,C,D$ are dimensionless; $s=|\mathbf Q|/(4\pi)$ has units
-Å$^{-1}$, so $a,b,c$ have units Å$^2$.
-
-Evaluating $|\mathbf Q|$ requires lattice or UB metadata when coordinates are
-in reciprocal-lattice units. Use the same ion when a dataset conversion and a
-model both apply or remove a form factor.
-
-## Temperature series
-
-Temperature is read from each dataset. A model that requires detailed balance
-cannot evaluate a dataset without a valid temperature.
-
-Experimental calibration belongs to the dataset, not the response model. Keep
-the dataset scale fixed at 1 for normalized data. For unnormalized data it may
-be fitted independently or shared by datasets in one dataset group.
-
-For an unconstrained temperature series, keep structural parameters and
-exchange constants global while sharing $\chi_0$ and $\Gamma_0$ per dataset or
-temperature group. The fitted trajectories can then be compared with the
-self-consistent alternatives described in
-[Theory: sum rules and self-consistency](theory_notes.md).
-
 ## Units
 
 | Quantity | Unit |
@@ -82,15 +47,3 @@ self-consistent alternatives described in
 | $a_E=1/E_0^2$ | meV$^{-2}$ |
 | $H,K,L$ | r.l.u. |
 | $T$ | K |
-
-## References
-
-- T. Moriya, *Spin Fluctuations in Itinerant Electron Magnetism*
-  (Springer, 1985).
-- A. J. Millis, H. Monien, and D. Pines, *Phys. Rev. B* **42**, 167
-  (1990), [doi:10.1103/PhysRevB.42.167](https://doi.org/10.1103/PhysRevB.42.167).
-- P. Monthoux and D. Pines, *Phys. Rev. B* **47**, 6069
-  (1993), [doi:10.1103/PhysRevB.47.6069](https://doi.org/10.1103/PhysRevB.47.6069).
-- P. J. Brown, “Magnetic form factors,” *International Tables for
-  Crystallography*, Vol. C, §4.4.5; see the
-  [ILL tables](https://www.ill.eu/sites/ccsl/ffacts/).

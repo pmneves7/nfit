@@ -35,8 +35,12 @@ $E_{\rm sf}=\hbar\omega_{\rm sf}$, not an angular frequency.
 | `omega_sf` | relaxation energy at $\mathbf Q_0$ | meV |
 | `q0_h`, `q0_k`, `q0_l` | peak center $\mathbf Q_0$ | r.l.u. |
 
-An optional magnetic form factor is fixed model configuration. Momentum
-conversion requires reciprocal-basis or lattice metadata.
+The intrinsic momentum dependence is the Lorentzian peak about
+$\mathbf Q_0$. The measured magnetic neutron intensity is additionally
+modulated by the magnetic form factor. Because $\mathbf Q_0$ is
+specified in reciprocal-lattice units while $\xi$ is in Å, the crystal lattice
+is needed to form the dimensionless product
+$\xi|\mathbf q-\mathbf Q_0|$.
 
 ## Elastic and inelastic data
 

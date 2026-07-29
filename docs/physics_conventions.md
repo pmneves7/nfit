@@ -307,6 +307,19 @@ The magnetic amplitude form factor is $f(Q)$, so intensity contains
 $|f(Q)|^2$. nfit's tabulated $\langle j_0\rangle$ approximation follows the
 International Tables/ILL convention
 ([Brown, International Tables C §4.4.5](https://www.ill.eu/sites/ccsl/ffacts/)).
+It has the form
+
+$$
+f(s)=Ae^{-as^2}+Be^{-bs^2}+Ce^{-cs^2}+D,
+\qquad
+s=\frac{|\mathbf Q|}{4\pi}.
+$$
+
+$f$ and $A,B,C,D$ are dimensionless. Since $s$ has units Å$^{-1}$,
+$a,b,c$ have units Å$^2$. The tabulated ions cover common $3d$, $4d$, $4f$,
+and $5f$ magnetic ions; the same expression can be used with explicit custom
+coefficients. Evaluating $|\mathbf Q|$ from reciprocal-lattice coordinates
+requires the crystal lattice or a UB-derived reciprocal basis.
 
 For direct geometry,
 
@@ -348,8 +361,17 @@ consistently. The index $i$ labels the Cartesian field component. Both sides
 have dimensions of inverse energy.
 
 Bulk susceptibility is the uniform response and therefore requires
-$\mathbf Q=0$. For $\chi'_s$ in J$^{-1}$ per magnetic ion and a number
-density $n_{\rm mag}$ in m$^{-3}$ of equivalent magnetic ions,
+$\mathbf Q=0$. It is not obtained by integrating a finite-$\mathbf Q$ neutron
+spectrum over momentum. In the current fitting interface, `heisenberg_rpa`
+evaluates this uniform static response and can share parameters between bulk
+and neutron datasets. The `curie_weiss` model fits molar susceptibility
+directly. The local, MMP, and generalized-paramagnon components do not
+currently accept bulk-susceptibility datasets; in particular, nfit does not
+assume that a peak expansion about a nonzero ordering vector remains valid at
+$\mathbf Q=0$.
+
+For $\chi'_s$ in J$^{-1}$ per magnetic ion and a number density
+$n_{\rm mag}$ in m$^{-3}$ of equivalent magnetic ions,
 
 $$
 \frac{M_i}{H_i}

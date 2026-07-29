@@ -40,6 +40,25 @@ chi-squared is not a calibrated goodness-of-fit statistic.
 The model editor marks fitted values near a finite bound in red. Treat this as a
 diagnostic that the optimum may lie outside the allowed interval.
 
+### Temperature and multi-dataset series
+
+Temperature and applied field are properties of each dataset. A
+spin-fluctuation model needs a positive temperature when the
+fluctuation--dissipation relation is used to predict neutron intensity.
+
+For a temperature series, keep crystal structure and other genuinely common
+parameters global. Use per-dataset or grouped sharing for quantities such as a
+static susceptibility or linewidth when their temperature dependence is to be
+determined from the data. A self-consistency closure instead derives that
+dependence from a smaller set of global parameters; see
+[Theory: sum rules and self-consistency](theory_notes.md).
+
+Measured bulk-susceptibility channels currently support the `curie_weiss` and
+`heisenberg_rpa` models. Heisenberg RPA may be fitted jointly to neutron and
+bulk datasets with shared response and exchange parameters. The local, MMP,
+and generalized-paramagnon components currently apply only to neutron
+datasets.
+
 ### Constraints
 
 The workspace constraint table defines equality and inequality relationships

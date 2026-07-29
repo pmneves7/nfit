@@ -84,12 +84,15 @@ imaginary part.
 | `q0_h`, `q0_k`, `q0_l` | fitted primary center | r.l.u. |
 
 The diagonal correlation parameters, susceptibility, relaxation energy,
-relaxation power, and inertial coefficient have nonnegative fit bounds;
-`gamma0` must be strictly positive when evaluated.
+relaxation power, and inertial coefficient are nonnegative; $\Gamma_0$ must be
+strictly positive.
 
-Fixed configuration contains `spatial_power`, `center_offsets`,
-`center_combination`, `periodic`, `powder_orientations`, optional lattice
-parameters, and the magnetic form factor.
+The exponent $p$, the set of related peak centers, and whether the response is
+periodic are choices that define the spatial form rather than adjustable
+dynamical parameters. Powder calculations average this response over
+orientations. The crystal lattice converts peak centers in r.l.u. to physical
+momentum, and the magnetic form factor supplies the additional $|\mathbf Q|$
+dependence of the neutron intensity.
 
 ## Important limits
 
@@ -118,10 +121,11 @@ and then the common quasistatic cross-section conversion. Elastic-only data
 cannot constrain `gamma0`, `relaxation_power`, or
 `inverse_mode_energy_sq`.
 
-Powder datasets average the same response over deterministic sphere
-directions. Lattice or reciprocal-basis metadata is required to relate the
-centers in r.l.u. to physical momentum. The Bose factor, magnetic form factor,
-polarization, and dataset scale remain outside the susceptibility kernel.
+Powder datasets average the same response over orientations. The
+fluctuation--dissipation relation, polarization factor, magnetic form factor,
+and experimental normalization then convert the intrinsic susceptibility into
+the measured neutron intensity, as described in
+[Physics conventions](physics_conventions.md).
 
 ## Scripting and plots
 

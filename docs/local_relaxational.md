@@ -24,9 +24,9 @@ energy. The peak of $\chi''$ occurs at $E=\Gamma$.
 | `chi_loc` | static local susceptibility $\chi'(0)$ | meV$^{-1}$ |
 | `gamma` | relaxation energy $\Gamma$ | meV |
 
-The model has no intrinsic momentum dependence. Its optional magnetic form
-factor is fixed configuration, while experimental normalization is owned by
-the dataset.
+The susceptibility has no intrinsic momentum dependence. Momentum dependence
+in the magnetic neutron intensity appears only through the magnetic form
+factor.
 
 ## Elastic and inelastic data
 
