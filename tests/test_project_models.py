@@ -12,6 +12,36 @@ from tests.project_gui_test_support import (
 )
 
 
+def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Electronic")
+    model = create_model_component(group, "bands", type="tight_binding")
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer._refresh_tree(select_group=group, select_model=model)
+
+    actions = explorer.model_parameter_widget.findChild(
+        QtWidgets.QGroupBox, "tight_binding_actions_group"
+    )
+    assert actions is not None
+    for key in ("bands", "dos", "fermi_surface"):
+        plot_button = explorer.model_parameter_widget.findChild(
+            QtWidgets.QPushButton, f"model_plot_{key}"
+        )
+        script_button = explorer.model_parameter_widget.findChild(
+            QtWidgets.QPushButton, f"model_plot_script_{key}"
+        )
+        assert plot_button is not None and plot_button.toolTip()
+        assert script_button is not None and script_button.toolTip()
+    assert (
+        explorer.model_parameter_widget.findChild(
+            QtWidgets.QPushButton, "tight_binding_import_wannier90"
+        ).toolTip()
+    )
+    explorer.window.close()
+
+
 def test_heisenberg_rpa_editor_generates_orbits_and_round_trips(monkeypatch, tmp_path):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("gemmi")

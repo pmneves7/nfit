@@ -40,6 +40,12 @@ chi-squared is not a calibrated goodness-of-fit statistic.
 The model editor marks fitted values near a finite bound in red. Treat this as a
 diagnostic that the optimum may lie outside the allowed interval.
 
+The calculation-only **Tight-binding electronic structure** component also
+lives under **Models**. Its editor imports Wannier90 Hamiltonians and opens
+band, orbital-projected band, density-of-states, and Fermi-surface plots. These
+actions expose editable scripts but do not enter a fit until a later
+electronic-response model provides a dataset observable.
+
 ### Temperature and multi-dataset series
 
 Temperature and applied field are properties of each dataset. A

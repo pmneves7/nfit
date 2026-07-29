@@ -85,6 +85,7 @@ from .model_registry import (
     model_config_tooltip,
     model_definition,
     model_parameter_tooltip,
+    model_plot_definitions,
 )
 from .pipeline import (
     BackgroundSpec,
@@ -3545,6 +3546,7 @@ def _magnetization_point_data(
         "data_type": "magnetization",
         "quantity_type": view.channel_quantity_type(label),
         "unit": view.unit(view.channel(label)["value"]),
+        "field_direction_cartesian": direction.tolist(),
     }
     for key in ("absolute_units", "sample_mass_mg", "molar_mass_g_mol"):
         if key in dataset.parameters:
@@ -18567,6 +18569,12 @@ class NfitProjectExplorer:
         for setting_name in config_definitions:
             if setting_name == "form_factor_coefficients":
                 continue
+            if model.type == "tight_binding" and setting_name in {
+                "source_path",
+                "model_digest",
+                "model_data",
+            }:
+                continue
             label = QtWidgets.QLabel(setting_name)
             tooltip = model_config_tooltip(model.type, setting_name)
             label.setToolTip(tooltip)
@@ -18618,7 +18626,9 @@ class NfitProjectExplorer:
             config_layout.addWidget(editor, row, 1)
             row += 1
         self.model_parameter_layout.addWidget(config_group, 2, 0, 1, 4)
-        if definition.structured_config:
+        if model.type == "tight_binding":
+            self._build_tight_binding_editor(model)
+        elif definition.structured_config:
             self._build_model_crystal_editor(model)
 
     def _clear_model_parameter_editor(self) -> None:
@@ -18628,6 +18638,162 @@ class NfitProjectExplorer:
             if widget is not None:
                 widget.setParent(None)
                 widget.deleteLater()
+
+    def _build_tight_binding_editor(self, model: ModelComponentSpec) -> None:
+        """Build source and scriptable plot actions for an electronic model."""
+
+        from PySide6 import QtWidgets
+
+        group = QtWidgets.QGroupBox("Electronic structure")
+        group.setObjectName("tight_binding_actions_group")
+        layout = QtWidgets.QGridLayout(group)
+        source = str(model.config.get("source_path", "")).strip()
+        source_label = QtWidgets.QLabel(
+            Path(source).name if source else "No Wannier90 source loaded"
+        )
+        source_label.setObjectName("tight_binding_source_summary")
+        source_label.setToolTip(source or "Manual models may be supplied through model_data.")
+        layout.addWidget(source_label, 0, 0, 1, 3)
+
+        import_button = QtWidgets.QPushButton("Import Wannier90...")
+        import_button.setObjectName("tight_binding_import_wannier90")
+        import_button.setToolTip(
+            "Import seedname_tb.dat, or seedname_hr.dat with its associated "
+            ".win, centres, and optional wsvec files."
+        )
+        import_button.clicked.connect(
+            lambda _checked=False, model=model: self._import_wannier90_model(model)
+        )
+        layout.addWidget(import_button, 1, 0, 1, 3)
+
+        definition = model_definition(model.type)
+        for row, plot in enumerate(definition.plots, start=2):
+            calculate = QtWidgets.QPushButton(plot.label)
+            calculate.setObjectName(f"model_plot_{plot.key}")
+            calculate.setToolTip(plot.description)
+            calculate.clicked.connect(
+                lambda _checked=False, model=model, key=plot.key: self._open_model_plot(
+                    model, key
+                )
+            )
+            copy_script = QtWidgets.QPushButton("Copy script")
+            copy_script.setObjectName(f"model_plot_script_{plot.key}")
+            copy_script.setToolTip(
+                f"Copy editable Python that reproduces the {plot.label.lower()} calculation."
+            )
+            copy_script.clicked.connect(
+                lambda _checked=False, model=model, key=plot.key: self._copy_model_plot_script(
+                    model, key
+                )
+            )
+            layout.addWidget(calculate, row, 0, 1, 2)
+            layout.addWidget(copy_script, row, 2)
+        self.model_parameter_layout.addWidget(group, 3, 0, 1, 4)
+
+    def _import_wannier90_model(self, model: ModelComponentSpec) -> bool:
+        from PySide6 import QtWidgets
+
+        from .electronic_structure import import_wannier90
+
+        path, _selected_filter = QtWidgets.QFileDialog.getOpenFileName(
+            self.window,
+            "Import Wannier90 Hamiltonian",
+            "",
+            "Wannier90 Hamiltonians (*_tb.dat *_hr.dat);;All files (*)",
+        )
+        if not path:
+            return False
+        try:
+            raw_axes = model.config.get("periodic_axes", [])
+            imported = import_wannier90(
+                path,
+                periodic_axes=(
+                    None
+                    if not raw_axes
+                    else tuple(int(value) for value in raw_axes)
+                ),
+            )
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Import Wannier90 Hamiltonian",
+                f"Could not import the electronic model:\n{exc}",
+            )
+            return False
+        model.config["source_path"] = str(Path(path).resolve())
+        model.config["model_digest"] = imported.content_digest
+        model.config["model_data"] = {}
+        model.config["periodic_axes"] = list(imported.periodic_axes)
+        owner = self._group_for_model(model)
+        if owner is not None:
+            self._record_data_group_state_change(owner)
+        self._mark_dirty()
+        self._rebuild_model_parameter_editor(model)
+        return True
+
+    def _group_for_model(self, model: ModelComponentSpec) -> DataGroup | None:
+        return next(
+            (
+                group
+                for group in self.project.data_groups
+                if any(candidate is model for candidate in group.models.values())
+            ),
+            None,
+        )
+
+    def _open_model_plot(self, model: ModelComponentSpec, plot_key: str) -> bool:
+        from PySide6 import QtWidgets
+
+        plot = next(
+            (
+                candidate
+                for candidate in model_plot_definitions(model.type)
+                if candidate.key == plot_key
+            ),
+            None,
+        )
+        if plot is None or plot.render is None:
+            return False
+        try:
+            result = plot.calculate(model)
+            figure, _axes = plot.render(result)
+            figure.show()
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Electronic-structure plot",
+                f"Could not calculate the plot:\n{exc}",
+            )
+            return False
+        self._plot_windows[f"model:{id(model)}:{plot_key}"] = figure
+        return True
+
+    def _copy_model_plot_script(
+        self, model: ModelComponentSpec, plot_key: str
+    ) -> bool:
+        from PySide6 import QtWidgets
+
+        plot = next(
+            (
+                candidate
+                for candidate in model_plot_definitions(model.type)
+                if candidate.key == plot_key
+            ),
+            None,
+        )
+        if plot is None or plot.script is None:
+            return False
+        try:
+            script = plot.script(model)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Electronic-structure script",
+                f"Could not create the script:\n{exc}",
+            )
+            return False
+        QtWidgets.QApplication.clipboard().setText(script)
+        return True
 
     def _build_model_crystal_editor(self, model: ModelComponentSpec) -> None:
         """Structured crystal / magnetic-site / bond-orbit editor.

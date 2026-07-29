@@ -262,11 +262,12 @@ $$
 
 Here $m$ is magnetic moment, $B$ is magnetic flux density, and
 $\mu_B^{({\rm meV/T})}=0.05788\ {\rm meV/T}$ is the numerical value of the
-Bohr magneton in these units. For an absolute molar channel, nfit also applies
-the sample amount and number of magnetic ions on the selected molar basis.
-Selecting susceptibility predicts $\chi_{\rm mol}$ directly; selecting moment
-also multiplies by field. See [Physics conventions](physics_conventions.md)
-for the rationalized-SI relation $M=\chi_{\rm SI}H$.
+Bohr magneton in these units. $B$ is signed along the dataset's measurement
+direction. For an absolute sample-moment channel, nfit also applies the sample
+amount and number of magnetic ions on the selected molar basis. Selecting
+susceptibility predicts $\chi_{\rm mol}$ directly; selecting moment also
+multiplies by field. See [Physics conventions](physics_conventions.md) for the
+rationalized-SI relation $M=\chi_{\rm SI}H$.
 
 ## Fitting a temperature series
 

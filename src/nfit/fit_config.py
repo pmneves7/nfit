@@ -219,6 +219,18 @@ def _curie_weiss_factory(component: Any) -> ModelFunction:
     return model
 
 
+def _electronic_structure_factory(component: Any) -> ModelFunction:
+    """Return a guard for a calculation-only electronic-structure component."""
+
+    def model(_data: PointData4D, _params: dict[str, float]) -> np.ndarray:
+        raise ValueError(
+            f"{component.name!r} calculates electronic structure but does not "
+            "produce a dataset observable until an electronic-response model is added"
+        )
+
+    return model
+
+
 ISOTROPIC_POLARIZATION = 2.0
 """Polarization factor for one component of an isotropic susceptibility.
 
@@ -401,19 +413,30 @@ def _scalar_bulk_observable(
     if np.any(~np.isfinite(chi)):
         raise ValueError("uniform static susceptibility must be finite")
 
-    raw_field = data.magnetic_field
-    if raw_field is None:
-        field_magnitude = np.zeros(data.size, dtype=float)
-    elif np.ndim(raw_field) == 1:
-        field_magnitude = np.full(
-            data.size, float(np.linalg.norm(np.asarray(raw_field, dtype=float)))
-        )
-    else:
-        field_magnitude = np.linalg.norm(np.asarray(raw_field, dtype=float), axis=1)
-
     values = g_value**2 * chi
     if quantity_type != "bulk_susceptibility":
-        values = values * field_magnitude
+        raw_field = data.magnetic_field
+        if raw_field is None:
+            signed_field = np.zeros(data.size, dtype=float)
+        else:
+            field_vectors = np.asarray(raw_field, dtype=float)
+            if field_vectors.ndim == 1:
+                field_vectors = np.broadcast_to(field_vectors, (data.size, 3))
+            axis = np.asarray(
+                metadata.get("field_direction_cartesian", []), dtype=float
+            )
+            if axis.shape == (3,) and np.all(np.isfinite(axis)) and np.linalg.norm(axis) > 0:
+                axis = axis / np.linalg.norm(axis)
+                signed_field = field_vectors @ axis
+            else:
+                # Older projects did not store the fixed measurement axis.
+                # Preserve the field magnitude while taking its sign from the
+                # Cartesian component with the largest range.
+                component = int(np.argmax(np.max(np.abs(field_vectors), axis=0)))
+                signed_field = np.linalg.norm(field_vectors, axis=1) * np.sign(
+                    field_vectors[:, component]
+                )
+        values = values * signed_field
 
     if not bool(metadata.get("absolute_units")):
         return np.asarray(values, dtype=float)

@@ -431,11 +431,11 @@ inverse-energy unit.
 These equations place $\mu_0$ in the conversion to rationalized-SI $M/H$.
 The neutron cross section above uses the microscopic response in
 `spin^2/meV` or `mu_B^2/meV` and contains no additional $\mu_0$. The
-Heisenberg RPA bulk prediction includes $\mu_0(g\mu_B)^2$. Welch *et al.*
-derive the per-magnetic-ion relation explicitly. Experimentally, a finite
-energy window gives only a partial Kramers--Kronig integral, and
-finite-$\mathbf Q$ neutron data must be extrapolated to $\mathbf Q=0$ before
-comparison with a bulk magnetometer.
+spin-fluctuation models' rationalized-SI bulk predictions include
+$\mu_0(g\mu_B)^2$. Welch *et al.* derive the per-magnetic-ion relation
+explicitly. Experimentally, a finite energy window gives only a partial
+Kramers--Kronig integral, and finite-$\mathbf Q$ neutron data must be
+extrapolated to $\mathbf Q=0$ before comparison with a bulk magnetometer.
 
 ### CGS and SI data units
 
@@ -454,6 +454,13 @@ $$
 provided $m_{\rm sample}$ and $\mu_B$ are expressed in the same moment unit
 (for example emu). The result is the numerical moment in
 `mu_B/f.u.`.
+
+For moment channels, $B$ is the signed field component along the dataset's
+declared measurement direction. Reversing the field therefore reverses the
+linear-response moment. A molar susceptibility prediction does not multiply
+by field. Sample mass and formula-unit molar mass are needed when converting
+between a sample-total moment and a molar or formula-unit channel; they are
+not additional factors in an already molar susceptibility.
 
 ## Data representations and normalization
 

@@ -1,9 +1,9 @@
 # Electronic-response design contract
 
-This page fixes the architecture and conventions for nfit's planned
-tight-binding and itinerant spin-response models. It is an implementation
-contract, not a claim that these models are currently available. Available
-models remain listed on [Spin-fluctuation models](spin_fluctuation_models.md).
+This page fixes the architecture and conventions for nfit's tight-binding and
+itinerant spin-response models. Stages 0--3 are implemented; later response and
+interaction stages remain an implementation contract. Available models remain
+listed on [Spin-fluctuation models](spin_fluctuation_models.md).
 
 The goal is a material-independent path from an electronic Hamiltonian to a
 complex magnetic susceptibility and then to the neutron observable. No core
@@ -410,6 +410,8 @@ under [Spin-fluctuation models](spin_fluctuation_models.md). A stage is ready
 for user testing only after its public API, GUI behavior where applicable,
 workflow script, fit-result export, documentation, and validation tests agree.
 
-Stages 0--2 are implemented. The generalized-paramagnon model supplies the
+Stages 0--3 are implemented. The generalized-paramagnon model supplies the
 Stage 2 relaxational and damped-propagating limits through one causal complex
-response; later stages begin with the arbitrary electronic-model layer.
+response. Stage 3 supplies arbitrary orthonormal electronic models, native
+Wannier90 import, shared path and mesh sampling, bands and orbital projections,
+density of states, Fermi surfaces, model-owned GUI plots, and editable scripts.

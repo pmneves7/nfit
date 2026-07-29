@@ -258,6 +258,9 @@ calculation.
 .. automodule:: nfit.spin_fluctuations
    :members:
 
+.. automodule:: nfit.electronic_structure
+   :members:
+
 .. automodule:: nfit.magnetization
    :members:
 

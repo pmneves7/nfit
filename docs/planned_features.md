@@ -20,17 +20,17 @@ releases. Current behavior is documented in the workflow and API pages.
 
 ## Electronic-response models
 
-Tight-binding, Lindhard, interaction-dressed, and correlated-electron models
-will be added in independently testable stages. The conventions, initial
+Electronic-response models are being added in independently testable stages.
+The tight-binding stage is available; Lindhard, interaction-dressed, and
+correlated-electron responses remain planned. Their conventions, initial
 scope, provenance requirements, dependency policy, validation matrix, and
 stage gates are fixed in the
 [Electronic-response design contract](electronic_response_contract.md).
 
-The shared model registry and the generalized paramagnon/damped-mode response
-are implemented. Subsequent stages add arbitrary tight binding and
-orbital-projected band and density-of-states plots, the complex bare
-susceptibility, interaction dressings, production fitting, BCS
-superconductivity, and advanced correlated extensions. Electronic
+The shared model registry, generalized paramagnon/damped-mode response, and
+arbitrary tight-binding electronic-structure layer are implemented. Subsequent
+stages add the complex bare susceptibility, interaction dressings, production
+fitting, BCS superconductivity, and advanced correlated extensions. Electronic
 calculations should eventually share the rebinner's bounded-memory and
 selectable-backend approach, including symmetry-reduced Brillouin-zone work
 where valid. A capability remains planned until its model page documents an

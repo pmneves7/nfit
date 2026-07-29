@@ -182,6 +182,54 @@ def test_absolute_bulk_susceptibility_prediction_does_not_multiply_by_field():
     np.testing.assert_allclose(values, expected, rtol=1e-9)
 
 
+def test_absolute_bulk_normalization_matches_direct_si_formula():
+    from nfit.fitting import evaluate_problem_model
+    from nfit.sum_rules import SI_M3_PER_MOL_PER_MODEL_CHI
+
+    component = _magnetization_component(chi0=0.3, J1=0.0)
+    component.config["bulk"] = {"enabled": True, "sites_per_fu": 2}
+    points = _magnetization_points([5.0], np.array([1.0]), np.zeros(1))
+    points.metadata.update(
+        {
+            "absolute_units": True,
+            "quantity_type": "bulk_susceptibility",
+            "unit": "m^3/mol",
+        }
+    )
+    compiled = compile_fit_problem(
+        [component], [FitDatasetInput("m", points, data_type="magnetization")]
+    )
+    values = evaluate_problem_model(
+        compiled.problem,
+        "m",
+        {spec.name: spec.value for spec in compiled.problem.parameter_specs},
+    )
+
+    expected = SI_M3_PER_MOL_PER_MODEL_CHI * 2.0 * 2.0**2 * 0.3
+    np.testing.assert_allclose(values, expected, rtol=1.0e-14)
+
+
+def test_linear_response_moment_preserves_signed_field():
+    from nfit.fitting import evaluate_problem_model
+
+    component = _magnetization_component(chi0=0.3, J1=0.0)
+    fields = np.array([-2.0, -0.5, 0.5, 2.0])
+    points = _magnetization_points(
+        np.full(fields.shape, 5.0), fields, np.zeros(fields.shape)
+    )
+    points.metadata["field_direction_cartesian"] = [0.0, 0.0, 1.0]
+    compiled = compile_fit_problem(
+        [component], [FitDatasetInput("m", points, data_type="magnetization")]
+    )
+    values = evaluate_problem_model(
+        compiled.problem,
+        "m",
+        {spec.name: spec.value for spec in compiled.problem.parameter_specs},
+    )
+
+    np.testing.assert_allclose(values, 2.0**2 * 0.3 * fields)
+
+
 @pytest.mark.parametrize(
     ("model_type", "parameters", "expected_static"),
     [
@@ -366,6 +414,7 @@ def test_magnetization_point_data_maps_temperature_and_field():
     # Oersted -> tesla (1 T = 1e4 Oe), along default z.
     np.testing.assert_allclose(points.magnetic_field[:, 2], [1.0, 5.0])
     assert points.metadata["data_type"] == "magnetization"
+    assert points.metadata["field_direction_cartesian"] == [0.0, 0.0, 1.0]
 
 
 def test_cofit_ins_and_magnetization_share_parameters():

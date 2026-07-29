@@ -486,6 +486,15 @@ def _model_plot_script(name: str) -> Callable[..., str]:
     return script
 
 
+def _tight_binding_plot_script(plot_key: str) -> Callable[..., str]:
+    def script(component: Any) -> str:
+        from .model_plots import tight_binding_plot_script
+
+        return tight_binding_plot_script(component, plot_key)
+
+    return script
+
+
 def _parameter(
     name: str,
     default: Any,
@@ -502,6 +511,26 @@ def _parameter(
         type="float",
         unit=unit,
         example=example,
+    )
+
+
+def _config_field(
+    name: str,
+    default: Any,
+    description: str,
+    allowed: str,
+    type_name: str,
+    example: str,
+    unit: str = "",
+) -> ModelConfigDefinition:
+    return ModelConfigDefinition(
+        name=name,
+        default=default,
+        description=description,
+        allowed=allowed,
+        type=type_name,
+        example=example,
+        unit=unit,
     )
 
 
@@ -1176,6 +1205,187 @@ def _register_builtin_models() -> None:
             citations=(
                 "https://doi.org/10.1051/jphystap:019070060066100",
             ),
+        )
+    )
+    register_model_definition(
+        ModelDefinition(
+            key="tight_binding",
+            label="Tight-binding electronic structure",
+            description=(
+                "Material-independent orthonormal electronic Hamiltonian for "
+                "manual or Wannier90 models, with bands, orbital projections, "
+                "density of states, and Fermi surfaces."
+            ),
+            category="electronic_structure",
+            data_types=("electronic_structure",),
+            factory=_fit_factory("_electronic_structure_factory"),
+            config_fields=(
+                _config_field(
+                    "source_path",
+                    "",
+                    "Wannier90 *_hr.dat or *_tb.dat source; empty for a manual model.",
+                    "Existing Wannier90 Hamiltonian path, or empty.",
+                    "str",
+                    "/path/to/material_tb.dat",
+                ),
+                _config_field(
+                    "model_digest",
+                    "",
+                    "SHA-256 digest of the canonical electronic model.",
+                    "A 64-character hexadecimal digest, or empty.",
+                    "str",
+                    "",
+                ),
+                _config_field(
+                    "model_data",
+                    {},
+                    "Portable ElectronicModel.to_dict() data for a manual model.",
+                    "Canonical model dictionary, or empty.",
+                    "dict",
+                    "{}",
+                ),
+                _config_field(
+                    "periodic_axes",
+                    [],
+                    "Direct-lattice periodic axes; empty infers them from hoppings.",
+                    "Empty, or one to three unique indices chosen from 0, 1, and 2.",
+                    "list",
+                    "[0, 1]",
+                ),
+                _config_field(
+                    "chemical_potential_meV",
+                    0.0,
+                    "Chemical potential used as the plotted energy zero.",
+                    "Any finite energy.",
+                    "float",
+                    "12.5",
+                    "meV",
+                ),
+                _config_field(
+                    "projection_groups",
+                    {},
+                    "Named orbital projections as zero-based basis-index lists.",
+                    "JSON dictionary mapping labels to index lists.",
+                    "dict",
+                    '{"d": [0, 1, 2], "p": [3, 4]}',
+                ),
+                _config_field(
+                    "band_path",
+                    [
+                        {"label": r"$\Gamma$", "k": [0.0, 0.0, 0.0]},
+                        {"label": "X", "k": [0.5, 0.0, 0.0]},
+                        {"label": "M", "k": [0.5, 0.5, 0.0]},
+                        {"label": r"$\Gamma$", "k": [0.0, 0.0, 0.0]},
+                    ],
+                    "Ordered labeled nodes of the band path.",
+                    "JSON list of labeled three-coordinate nodes.",
+                    "list",
+                    '[{"label": "G", "k": [0, 0, 0]}, '
+                    '{"label": "X", "k": [0.5, 0, 0]}]',
+                ),
+                _config_field(
+                    "band_points_per_segment",
+                    60,
+                    "Interpolation intervals in each band-path segment.",
+                    "Positive integer.",
+                    "int",
+                    "80",
+                ),
+                _config_field(
+                    "dos_mesh",
+                    [40, 40, 40],
+                    "Uniform Brillouin-zone mesh for density of states.",
+                    "One size per periodic dimension, or three lattice-axis sizes.",
+                    "list",
+                    "[80, 80, 1]",
+                ),
+                _config_field(
+                    "dos_energy_min_meV",
+                    -500.0,
+                    "Lower density-of-states energy.",
+                    "Finite energy below dos_energy_max_meV.",
+                    "float",
+                    "-250",
+                    "meV",
+                ),
+                _config_field(
+                    "dos_energy_max_meV",
+                    500.0,
+                    "Upper density-of-states energy.",
+                    "Finite energy above dos_energy_min_meV.",
+                    "float",
+                    "250",
+                    "meV",
+                ),
+                _config_field(
+                    "dos_energy_points",
+                    600,
+                    "Number of points in the density-of-states energy grid.",
+                    "Integer of at least 2.",
+                    "int",
+                    "1000",
+                ),
+                _config_field(
+                    "dos_broadening_meV",
+                    5.0,
+                    "Gaussian standard deviation for density of states.",
+                    "Positive finite energy.",
+                    "float",
+                    "2.0",
+                    "meV",
+                ),
+                _config_field(
+                    "fermi_mesh",
+                    [100, 100, 40],
+                    "Periodic grid used to extract the Fermi surface.",
+                    "One size per periodic dimension, or three lattice-axis sizes.",
+                    "list",
+                    "[200, 200, 1]",
+                ),
+                _config_field(
+                    "fermi_energy_meV",
+                    0.0,
+                    "Target energy for Fermi-surface extraction.",
+                    "Any finite energy.",
+                    "float",
+                    "0.0",
+                    "meV",
+                ),
+            ),
+            plots=(
+                ModelPlotDefinition(
+                    key="bands",
+                    label="Band structure",
+                    description="Plot bands and configured orbital projections.",
+                    calculate=_model_plot_calculator("tight_binding_band_structure"),
+                    render=_model_plot_renderer("render_band_structure"),
+                    script=_tight_binding_plot_script("bands"),
+                ),
+                ModelPlotDefinition(
+                    key="dos",
+                    label="Density of states",
+                    description="Plot total and configured orbital-projected DOS.",
+                    calculate=_model_plot_calculator(
+                        "tight_binding_density_of_states"
+                    ),
+                    render=_model_plot_renderer("render_density_of_states"),
+                    script=_tight_binding_plot_script("dos"),
+                ),
+                ModelPlotDefinition(
+                    key="fermi_surface",
+                    label="Fermi surface",
+                    description="Plot 1D Fermi points, 2D contours, or a 3D surface.",
+                    calculate=_model_plot_calculator("tight_binding_fermi_surface"),
+                    render=_model_plot_renderer("render_fermi_surface"),
+                    script=_tight_binding_plot_script("fermi_surface"),
+                ),
+            ),
+            documentation="tight_binding.md",
+            citations=(
+                "https://doi.org/10.1016/j.cpc.2007.11.016",
+                "https://doi.org/10.1088/1361-648X/ab51ff",
+            ),
+            metadata={"component_plot_actions": True},
         )
     )
 

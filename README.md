@@ -12,6 +12,8 @@ The package provides:
 - local, MMP, generalized-paramagnon/damped-mode, and Heisenberg-RPA
   spin-fluctuation models for inelastic, quasistatic elastic, and optional
   bulk-response comparisons;
+- arbitrary manual or Wannier90 tight-binding models with bands, orbital
+  projections, density of states, and Fermi surfaces;
 - an extensible model registry shared by fitting, GUI metadata, diagnostics,
   reports, plots, project files, and workflow scripts;
 - simultaneous least-squares fitting with explicit uncertainty conventions,
