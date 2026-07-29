@@ -348,6 +348,7 @@ def test_zone_renderer_uses_flat_faces_heavy_outline_and_thin_full_vectors(
     assert plotter.axes[-1]["x_color"] == "#FF0000"
     assert plotter.axes[-1]["y_color"] == "#00A000"
     assert plotter.axes[-1]["z_color"] == "#0000FF"
+    assert plotter.axes[-1]["color"] == "black"
     assert plotter.axes_shown is True
 
 

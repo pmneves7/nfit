@@ -218,7 +218,7 @@ def _render_brillouin_zone(
             x_color="#FF0000",
             y_color="#00A000",
             z_color="#0000FF",
-            label_color="black",
+            color="black",
         )
         if hasattr(plotter, "show_axes"):
             plotter.show_axes()
