@@ -1388,8 +1388,15 @@ def _register_builtin_models() -> None:
                         {"label": "M", "k": [0.5, 0.5, 0.0]},
                         {"label": r"$\Gamma$", "k": [0.0, 0.0, 0.0]},
                     ],
-                    "Ordered labeled nodes of the band path.",
-                    "JSON list of labeled three-coordinate nodes.",
+                    (
+                        "Ordered labeled nodes of the band path in the primitive "
+                        "reciprocal basis."
+                    ),
+                    (
+                        "JSON list of labeled three-coordinate nodes. A coordinate "
+                        "of 0.5 reaches halfway to the neighboring reciprocal point "
+                        "along that primitive basis vector."
+                    ),
                     "list",
                     '[{"label": "G", "k": [0, 0, 0]}, '
                     '{"label": "X", "k": [0.5, 0, 0]}]',

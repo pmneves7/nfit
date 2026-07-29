@@ -99,6 +99,21 @@ def test_arbitrary_chain_uses_wannier_phase_and_physical_path_distance():
         path.path_distance_inv_angstrom,
     )
 
+    alternate_reciprocal = model.reciprocal_lattice.copy()
+    alternate_reciprocal[:, 0] *= 2.0
+    alternate_path = band_path(
+        model,
+        [[0.0], [0.5]],
+        labels=["G", "B"],
+        points_per_segment=1,
+        coordinate_reciprocal_lattice=alternate_reciprocal,
+    )
+    assert alternate_path.path_distance_inv_angstrom[-1] == pytest.approx(np.pi)
+    np.testing.assert_allclose(
+        alternate_path.reduced_coordinates[-1],
+        [1.0, 0.0, 0.0],
+    )
+
 
 def test_projected_bands_and_dos_preserve_state_count():
     model = _square_two_orbital_model()

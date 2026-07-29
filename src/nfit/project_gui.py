@@ -18901,7 +18901,9 @@ class NfitProjectExplorer:
         zone_button.setObjectName("tight_binding_brillouin_zone")
         zone_button.setToolTip(
             "Show the first Brillouin-zone polyhedron, the configured labelled "
-            "band path, and reciprocal basis vectors b1, b2, and b3."
+            "band path, and primitive reciprocal basis vectors b1, b2, and b3. "
+            "The viewer includes scriptable styling, visibility, projection, "
+            "copy, and save controls."
         )
         zone_button.clicked.connect(
             lambda _checked=False, model=model: self._open_brillouin_zone(model)

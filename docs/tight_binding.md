@@ -182,7 +182,7 @@ dictionaries can be entered directly in the model editor.
 | `electronic_energy_unit` | input and electronic-plot unit; changing it does not alter canonical values | `"eV"` | `"eV"` or `"meV"` |
 | `chemical_potential_meV` | canonical chemical potential subtracted on band and DOS plots; displayed in `electronic_energy_unit` | `0.0` | `12.5` for 0.0125 eV |
 | `projection_groups` | plot labels mapped to zero-based basis indices | `{}` | `{"d": [0, 1, 2], "p": [3, 4]}` |
-| `band_path` | ordered nodes with labels and reduced coordinates | $\Gamma$–X–M–$\Gamma$ | `[{"label": "G", "k": [0, 0, 0]}, {"label": "X", "k": [0.5, 0, 0]}]` |
+| `band_path` | ordered nodes with labels and primitive reduced reciprocal coordinates | $\Gamma$–X–M–$\Gamma$ | `[{"label": "G", "k": [0, 0, 0]}, {"label": "X", "k": [0.5, 0, 0]}]` |
 | `band_points_per_segment` | interpolation intervals in each path segment | `60` | `80` |
 | `dos_mesh` | uniform mesh sizes, one per periodic axis or one per lattice axis | `[40, 40, 40]` | `[80, 80]` for a two-dimensional model |
 | `dos_energy_min_meV` | canonical lower absolute energy sampled for the DOS | `-500.0` | `-250.0` |
@@ -703,27 +703,58 @@ edges, sites, orbital tokens, frames, and pathways as immutable records.
 Wigner--Seitz cell of the **primitive** reciprocal translation lattice. For a
 centered conventional crystal cell, including F-centered space groups, nfit
 uses the space-group centering translations to construct primitive direct
-vectors before finding the zone. The path retains the reduced-coordinate basis
-used by the electronic Hamiltonian, so a conventional-cell model and its band
-plot remain consistent.
+vectors before finding the zone. Configured path nodes use that primitive
+reciprocal basis. Thus `[0.5, 0, 0]` reaches the bisecting face normal to
+$\mathbf b_1$, including when the tight-binding Hamiltonian is represented in
+a centered conventional cell. Before evaluating $H(\mathbf k)$, nfit converts
+these physical wavevectors to the model's internal reduced coordinates. The
+three-dimensional view and band-structure calculation therefore use the same
+physical path.
 
 The viewer overlays the configured `band_path`, including every node label,
 and the primitive reciprocal vectors $\mathbf b_1$, $\mathbf b_2$, and
 $\mathbf b_3$. Coordinates and vectors are in Å$^{-1}$. Each reciprocal
 vector reaches the neighboring reciprocal-lattice point and therefore extends
-past the intervening Brillouin-zone face. The zone is drawn with transparent
-flat faces and an opaque black outline. The path is not inferred automatically
-in Stage 3.3, so its labels and reduced coordinates remain an explicit,
-editable model setting. This viewer uses the same visualization-left,
-**Settings**-right layout as the band, density-of-states, and Fermi-surface
-viewers. Its settings panel is reserved for later interactive controls.
+past the intervening Brillouin-zone face. Path labels do not add point glyphs
+at reciprocal-vector endpoints.
+
+The right **Settings** panel controls:
+
+- visibility of the reciprocal vectors, path, path labels, and XYZ compass;
+- one-color or RGB reciprocal vectors and their thickness;
+- path color and width, and label font size;
+- Wigner--Seitz face color and opacity, outline color and width;
+- orthographic or perspective camera projection; and
+- copying or saving the current viewport image.
+
+The defaults use neutral-blue reciprocal vectors, a dark-red path, transparent
+flat faces, a dark outline, and orthographic projection. Each setting redraws
+the existing scene without rebuilding the zone geometry.
 
 `brillouin_zone_scene` is the renderer-independent component API.
-`build_brillouin_zone_scene` accepts the direct-lattice matrix that defines
-path coordinates, path dictionaries, and an optional `primitive_lattice`
-matrix for centered-cell models. `brillouin_zone_script` exports both lattices
-in an editable standalone viewer. The band plot and three-dimensional view
-consume the same `band_path`, so changing a node or label updates both.
+`build_brillouin_zone_scene` accepts the model direct-lattice matrix, path
+dictionaries, and an optional `primitive_lattice` matrix that defines both the
+zone and path-coordinate basis. `BrillouinZoneViewOptions` contains the
+renderer settings described above. `show_brillouin_zone_scene(scene,
+options=...)` applies them without requiring project widgets, and
+`brillouin_zone_script` exports both lattices and an editable options object.
+For lower-level band calculations, `band_path(...,
+coordinate_reciprocal_lattice=...)` accepts the same physical reciprocal basis
+and converts nodes to the Hamiltonian basis.
+
+```python
+from nfit import BrillouinZoneViewOptions, brillouin_zone_scene
+from nfit.qt_brillouin_zone_viewer import show_brillouin_zone_scene
+
+scene = brillouin_zone_scene(model_component)
+options = BrillouinZoneViewOptions(
+    basis_vector_color_mode="rgb",
+    path_color="#7A1F1F",
+    cell_surface_opacity=0.15,
+    projection="orthographic",
+)
+window = show_brillouin_zone_scene(scene, options=options)
+```
 
 `ElectronicModel.to_dict()` is a portable, digest-protected representation.
 `save_electronic_model` and `load_electronic_model` write and validate that

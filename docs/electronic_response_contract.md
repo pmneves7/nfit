@@ -240,11 +240,14 @@ covariance, fitting boundary, and SOC stages are specified in the
 
 Band paths and Brillouin-zone meshes use one serializable wavevector-sampling
 interface with different configurations. An ordered path carries segment
-labels and physical path distance for visualization. A periodic mesh carries
-integration weights, dimensions, shifts, and symmetry reduction information
-for density-of-states and response integrals. Code may share coordinate
-conversion, provenance, and evaluation without pretending that a path is an
-integration mesh.
+labels and physical path distance for visualization. Component paths use the
+primitive reciprocal basis and are converted to the Hamiltonian's internal
+reduced basis before evaluation; this keeps centered-cell models consistent
+with the physical first Brillouin zone. A periodic mesh carries integration
+weights, dimensions, shifts, and symmetry reduction information for
+density-of-states and response integrals. Code may share coordinate conversion,
+provenance, and evaluation without pretending that a path is an integration
+mesh.
 
 ## Canonical models and results
 

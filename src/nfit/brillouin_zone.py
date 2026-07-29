@@ -31,6 +31,51 @@ class BrillouinZoneScene:
     path_nodes: tuple[BrillouinZoneNode, ...]
 
 
+@dataclass(frozen=True)
+class BrillouinZoneViewOptions:
+    """Scriptable presentation settings for a Brillouin-zone scene."""
+
+    basis_vector_color_mode: str = "single"
+    basis_vector_color: str = "#496A9B"
+    basis_vector_thickness: float = 0.006
+    path_color: str = "#7A1F1F"
+    path_thickness: float = 4.0
+    label_font_size: int = 14
+    cell_surface_color: str = "#B8C7D9"
+    cell_surface_opacity: float = 0.10
+    cell_outline_color: str = "#202020"
+    cell_outline_thickness: float = 4.0
+    show_basis_vectors: bool = True
+    show_path: bool = True
+    show_path_labels: bool = True
+    show_compass: bool = True
+    projection: str = "orthographic"
+
+    def __post_init__(self) -> None:
+        if self.basis_vector_color_mode not in {"single", "rgb"}:
+            raise ValueError("basis_vector_color_mode must be 'single' or 'rgb'")
+        if self.projection not in {"orthographic", "perspective"}:
+            raise ValueError("projection must be 'orthographic' or 'perspective'")
+        for name in (
+            "basis_vector_color",
+            "path_color",
+            "cell_surface_color",
+            "cell_outline_color",
+        ):
+            if not str(getattr(self, name)).strip():
+                raise ValueError(f"{name} must be a nonempty color specification")
+        if not 0.0 <= float(self.cell_surface_opacity) <= 1.0:
+            raise ValueError("cell_surface_opacity must be between zero and one")
+        if float(self.basis_vector_thickness) <= 0.0:
+            raise ValueError("basis_vector_thickness must be positive")
+        if float(self.path_thickness) <= 0.0:
+            raise ValueError("path_thickness must be positive")
+        if float(self.cell_outline_thickness) <= 0.0:
+            raise ValueError("cell_outline_thickness must be positive")
+        if int(self.label_font_size) <= 0:
+            raise ValueError("label_font_size must be positive")
+
+
 def _first_zone_faces(
     reciprocal_lattice: FloatArray,
 ) -> tuple[FloatArray, tuple[tuple[int, ...], ...]]:
@@ -81,10 +126,11 @@ def build_brillouin_zone_scene(
 ) -> BrillouinZoneScene:
     """Build the first Brillouin zone and a labelled reduced-coordinate path.
 
-    ``direct_lattice`` defines the reduced coordinates of ``band_path``.
-    ``primitive_lattice`` generates the reciprocal translation lattice and
-    defaults to ``direct_lattice``. Supplying both supports a Hamiltonian
-    represented in a centered conventional cell.
+    ``primitive_lattice`` defines both the reciprocal translation lattice and
+    the reduced coordinates of ``band_path``. It defaults to
+    ``direct_lattice``. Supplying both supports a Hamiltonian represented in a
+    centered conventional cell while keeping path nodes in primitive
+    reciprocal coordinates.
     """
 
     direct = np.asarray(direct_lattice, dtype=float)
@@ -98,7 +144,6 @@ def build_brillouin_zone_scene(
         raise ValueError(
             "primitive_lattice must be a finite 3x3 column-vector matrix"
         )
-    path_reciprocal = 2.0 * np.pi * np.linalg.inv(direct).T
     primitive_reciprocal = 2.0 * np.pi * np.linalg.inv(primitive).T
     vertices, faces = _first_zone_faces(primitive_reciprocal)
     nodes = []
@@ -106,7 +151,7 @@ def build_brillouin_zone_scene(
         reduced = np.asarray(item.get("k", ()), dtype=float)
         if reduced.shape != (3,) or not np.all(np.isfinite(reduced)):
             raise ValueError("every band-path node requires three finite k coordinates")
-        cartesian = path_reciprocal @ reduced
+        cartesian = primitive_reciprocal @ reduced
         nodes.append(
             BrillouinZoneNode(
                 label=str(item.get("label", "")),
@@ -176,10 +221,27 @@ def brillouin_zone_scene(component: Any) -> BrillouinZoneScene:
     )
 
 
-def brillouin_zone_script(component: Any) -> str:
+def band_path_reciprocal_lattice(component: Any) -> FloatArray:
+    """Return the reciprocal basis used by configured electronic paths."""
+
+    direct, primitive = _component_lattices(component)
+    path_lattice = direct if primitive is None else primitive
+    return 2.0 * np.pi * np.linalg.inv(path_lattice).T
+
+
+def brillouin_zone_script(
+    component: Any,
+    *,
+    view_options: BrillouinZoneViewOptions | None = None,
+) -> str:
     """Return editable Python reproducing the component's 3D zone view."""
 
     scene = brillouin_zone_scene(component)
+    options = (
+        BrillouinZoneViewOptions()
+        if view_options is None
+        else view_options
+    )
     direct, _primitive = _component_lattices(component)
     reciprocal = np.asarray(scene.reciprocal_vectors, dtype=float).T
     primitive = 2.0 * np.pi * np.linalg.inv(reciprocal).T
@@ -191,7 +253,7 @@ def brillouin_zone_script(component: Any) -> str:
         [
             '"""Inspect a labelled first Brillouin zone without project widgets."""',
             "",
-            "from nfit import build_brillouin_zone_scene",
+            "from nfit import BrillouinZoneViewOptions, build_brillouin_zone_scene",
             "from nfit.qt_brillouin_zone_viewer import show_brillouin_zone_scene",
             "from PySide6 import QtWidgets",
             "",
@@ -203,11 +265,12 @@ def brillouin_zone_script(component: Any) -> str:
             "    band_path,",
             "    primitive_lattice=primitive_lattice,",
             ")",
+            f"view_options = {options!r}",
             "app = QtWidgets.QApplication.instance()",
             "owns_app = app is None",
             "if owns_app:",
             "    app = QtWidgets.QApplication([])",
-            "window = show_brillouin_zone_scene(scene)",
+            "window = show_brillouin_zone_scene(scene, options=view_options)",
             "if owns_app:",
             "    app.exec()",
             "",

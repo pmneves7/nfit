@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from nfit import (
+    BrillouinZoneViewOptions,
     DataGroup,
     ElectronicModel,
     brillouin_zone_scene,
@@ -17,6 +18,7 @@ from nfit.electronic_builder import (
     add_tight_binding_orbital_manifold,
     orbital_manifold_preset,
 )
+from nfit.model_plots import tight_binding_band_structure
 
 
 def test_cubic_first_brillouin_zone_and_labelled_path():
@@ -67,7 +69,7 @@ def test_f_centered_cubic_zone_uses_primitive_translation_lattice():
     )
     np.testing.assert_allclose(
         scene.path_nodes[1].cartesian_inv_angstrom,
-        [np.pi / 8.0, 0.0, 0.0],
+        np.asarray(scene.reciprocal_vectors[0]) / 2.0,
         atol=1e-12,
     )
 
@@ -92,6 +94,14 @@ def test_f_centered_cubic_zone_uses_primitive_translation_lattice():
     component_scene = brillouin_zone_scene(component)
     assert len(component_scene.vertices_inv_angstrom) == 24
     assert len(component_scene.faces) == 14
+    bands = tight_binding_band_structure(component)
+    expected_first_segment = np.linalg.norm(
+        np.asarray(component_scene.reciprocal_vectors[0]) / 2.0
+    )
+    first_node_index = bands.sampling.labels[1][0]
+    assert bands.sampling.path_distance_inv_angstrom[
+        first_node_index
+    ] == pytest.approx(expected_first_segment)
 
 
 def test_component_brillouin_zone_and_script_use_configured_band_path():
@@ -129,10 +139,61 @@ def test_component_brillouin_zone_and_script_use_configured_band_path():
         np.asarray(brillouin_zone_scene(component).reciprocal_vectors).T,
         expected_reciprocal,
     )
-    script = brillouin_zone_script(component)
+    script = brillouin_zone_script(
+        component,
+        view_options=BrillouinZoneViewOptions(
+            path_color="#551111",
+            projection="perspective",
+        ),
+    )
     compile(script, "<brillouin-zone-script>", "exec")
     assert "primitive_lattice" in script
+    assert "BrillouinZoneViewOptions" in script
+    assert "path_color='#551111'" in script
+    assert "projection='perspective'" in script
     assert "show_brillouin_zone_scene" in script
+
+
+def test_f_centered_default_path_uses_primitive_reciprocal_coordinates():
+    lattice = {
+        "a": 8.0,
+        "b": 8.0,
+        "c": 8.0,
+        "alpha": 90.0,
+        "beta": 90.0,
+        "gamma": 90.0,
+    }
+    scene = build_brillouin_zone_scene(
+        np.diag([8.0, 8.0, 8.0]),
+        [
+            {"label": "Γ", "k": [0.0, 0.0, 0.0]},
+            {"label": "X", "k": [0.5, 0.0, 0.0]},
+            {"label": "M", "k": [0.5, 0.5, 0.0]},
+        ],
+        primitive_lattice=primitive_lattice_vectors(lattice, "F d -3 m:2"),
+    )
+    reciprocal = np.asarray(scene.reciprocal_vectors)
+    np.testing.assert_allclose(
+        scene.path_nodes[1].cartesian_inv_angstrom,
+        reciprocal[0] / 2.0,
+    )
+    np.testing.assert_allclose(
+        scene.path_nodes[2].cartesian_inv_angstrom,
+        (reciprocal[0] + reciprocal[1]) / 2.0,
+    )
+
+
+def test_view_options_validate_scriptable_appearance():
+    options = BrillouinZoneViewOptions(
+        basis_vector_color_mode="rgb",
+        path_color="#551111",
+        show_compass=False,
+        projection="perspective",
+    )
+    assert options.basis_vector_color_mode == "rgb"
+    assert options.show_compass is False
+    with pytest.raises(ValueError, match="projection"):
+        BrillouinZoneViewOptions(projection="fish-eye")
 
 
 def test_zone_renderer_uses_flat_faces_heavy_outline_and_thin_full_vectors(
@@ -151,6 +212,7 @@ def test_zone_renderer_uses_flat_faces_heavy_outline_and_thin_full_vectors(
     class Plotter:
         def __init__(self):
             self.meshes = []
+            self.point_labels = []
 
         def clear(self):
             return None
@@ -167,8 +229,8 @@ def test_zone_renderer_uses_flat_faces_heavy_outline_and_thin_full_vectors(
         def add_points(self, *_args, **_kwargs):
             return None
 
-        def add_point_labels(self, *_args, **_kwargs):
-            return None
+        def add_point_labels(self, *_args, **kwargs):
+            self.point_labels.append(kwargs)
 
         def add_axes(self, **_kwargs):
             return None
@@ -181,23 +243,30 @@ def test_zone_renderer_uses_flat_faces_heavy_outline_and_thin_full_vectors(
         [{"label": "Γ", "k": [0.0, 0.0, 0.0]}],
     )
     plotter = Plotter()
-    _render_brillouin_zone(plotter, scene)
+    options = BrillouinZoneViewOptions(
+        basis_vector_color_mode="rgb",
+        path_color="#551111",
+        cell_surface_opacity=0.25,
+        cell_outline_thickness=5.0,
+    )
+    _render_brillouin_zone(plotter, scene, options)
 
     face_style = plotter.meshes[0][1]
     edge_style = plotter.meshes[1][1]
-    assert face_style["opacity"] == 0.10
+    assert face_style["opacity"] == 0.25
     assert face_style["smooth_shading"] is False
     assert face_style["lighting"] is False
     assert edge_style["style"] == "wireframe"
-    assert edge_style["line_width"] == 4
+    assert edge_style["line_width"] == 5.0
     assert len(arrow_arguments) == 3
     reciprocal = np.asarray(scene.reciprocal_vectors)
     for arguments, vector in zip(arrow_arguments, reciprocal, strict=True):
-        assert arguments["shaft_radius"] == 0.008
+        assert arguments["shaft_radius"] == options.basis_vector_thickness
         assert arguments["scale"] == np.linalg.norm(vector)
+    assert plotter.point_labels[-1]["show_points"] is False
 
 
-def test_zone_viewer_uses_standard_right_settings_panel(monkeypatch):
+def test_zone_viewer_uses_standard_right_settings_panel(monkeypatch, tmp_path):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
     application = QtWidgets.QApplication.instance()
@@ -207,9 +276,13 @@ def test_zone_viewer_uses_standard_right_settings_panel(monkeypatch):
     class FakeInteractor:
         def __init__(self, parent):
             self.interactor = QtWidgets.QWidget(parent)
+            self.saved_paths = []
 
         def setObjectName(self, name):
             self.interactor.setObjectName(name)
+
+        def screenshot(self, path):
+            self.saved_paths.append(path)
 
     monkeypatch.setitem(
         sys.modules,
@@ -218,7 +291,7 @@ def test_zone_viewer_uses_standard_right_settings_panel(monkeypatch):
     )
     monkeypatch.setattr(
         "nfit.qt_brillouin_zone_viewer._render_brillouin_zone",
-        lambda _plotter, _scene: None,
+        lambda *_args, **_kwargs: None,
     )
     from nfit.qt_brillouin_zone_viewer import show_brillouin_zone_scene
 
@@ -234,4 +307,56 @@ def test_zone_viewer_uses_standard_right_settings_panel(monkeypatch):
     assert panel is not None
     assert panel.title() == "Settings"
     assert window.centralWidget().layout().itemAt(1).widget() is panel
+    assert (
+        window.findChild(
+            QtWidgets.QComboBox,
+            "brillouin_zone_basis_color_mode",
+        ).currentData()
+        == "single"
+    )
+    assert window.findChild(
+        QtWidgets.QPushButton,
+        "brillouin_zone_copy_figure",
+    ).toolTip()
+    assert window.findChild(
+        QtWidgets.QPushButton,
+        "brillouin_zone_save_figure",
+    ).toolTip()
+    for object_name in (
+        "brillouin_zone_show_basis_vectors",
+        "brillouin_zone_show_path",
+        "brillouin_zone_show_path_labels",
+        "brillouin_zone_show_compass",
+        "brillouin_zone_basis_color_mode",
+        "brillouin_zone_basis_color",
+        "brillouin_zone_basis_thickness",
+        "brillouin_zone_path_color",
+        "brillouin_zone_path_thickness",
+        "brillouin_zone_label_font_size",
+        "brillouin_zone_surface_color",
+        "brillouin_zone_surface_opacity",
+        "brillouin_zone_outline_color",
+        "brillouin_zone_outline_thickness",
+        "brillouin_zone_projection",
+    ):
+        control = window.findChild(QtWidgets.QWidget, object_name)
+        assert control is not None
+        assert control.toolTip()
+    projection = window.findChild(
+        QtWidgets.QComboBox,
+        "brillouin_zone_projection",
+    )
+    assert projection.currentData() == "orthographic"
+    projection.setCurrentIndex(projection.findData("perspective"))
+    assert window._nfit_view_options.projection == "perspective"
+    window._nfit_copy_figure()
+    assert not QtWidgets.QApplication.clipboard().pixmap().isNull()
+    output_path = tmp_path / "zone.png"
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getSaveFileName",
+        lambda *_args, **_kwargs: (str(output_path), "Images (*.png)"),
+    )
+    window._nfit_save_figure()
+    assert window._nfit_plotter.saved_paths == [str(output_path)]
     window.close()

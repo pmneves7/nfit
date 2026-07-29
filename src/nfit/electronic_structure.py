@@ -627,8 +627,17 @@ def band_path(
     *,
     labels: Sequence[str] | None = None,
     points_per_segment: int = 60,
+    coordinate_reciprocal_lattice: ArrayLike | None = None,
 ) -> WavevectorSampling:
-    """Resolve a manual high-symmetry path with physical path distance."""
+    """Resolve a manual high-symmetry path with physical path distance.
+
+    Nodes normally use the model's reduced reciprocal coordinates. Pass a
+    ``3x3`` column-vector ``coordinate_reciprocal_lattice`` to describe nodes
+    in another reciprocal basis, such as the primitive basis associated with
+    a centered conventional-cell Hamiltonian. Returned reduced coordinates
+    are always converted to the model basis used by
+    :meth:`ElectronicModel.hamiltonian`.
+    """
 
     node_array = np.asarray(nodes, dtype=float)
     if node_array.ndim != 2 or node_array.shape[0] < 2:
@@ -658,8 +667,24 @@ def band_path(
                 + fraction * node_array[segment + 1]
             )
         label_points.append((len(points) - 1, names[segment + 1]))
-    coordinates = np.asarray(points, dtype=float)
-    physical = coordinates @ model.reciprocal_lattice.T
+    input_coordinates = np.asarray(points, dtype=float)
+    if coordinate_reciprocal_lattice is None:
+        coordinate_reciprocal = model.reciprocal_lattice
+    else:
+        coordinate_reciprocal = np.asarray(
+            coordinate_reciprocal_lattice,
+            dtype=float,
+        )
+        if (
+            coordinate_reciprocal.shape != (3, 3)
+            or not np.all(np.isfinite(coordinate_reciprocal))
+        ):
+            raise ValueError(
+                "coordinate_reciprocal_lattice must be a finite 3x3 "
+                "column-vector matrix"
+            )
+    physical = input_coordinates @ coordinate_reciprocal.T
+    coordinates = physical @ np.linalg.inv(model.reciprocal_lattice).T
     increments = np.linalg.norm(np.diff(physical, axis=0), axis=1)
     distance = np.concatenate([[0.0], np.cumsum(increments)])
     return WavevectorSampling(
@@ -667,7 +692,13 @@ def band_path(
         coordinates,
         path_distance_inv_angstrom=distance,
         labels=tuple(label_points),
-        provenance={"provider": "manual", "points_per_segment": points_per_segment},
+        provenance={
+            "provider": "manual",
+            "points_per_segment": points_per_segment,
+            "coordinate_reciprocal_lattice_inv_angstrom": (
+                coordinate_reciprocal.tolist()
+            ),
+        },
     )
 
 

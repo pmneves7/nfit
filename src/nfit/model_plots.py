@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike
 
+from .brillouin_zone import band_path_reciprocal_lattice
 from .electronic_structure import (
     BandResult,
     DensityOfStatesResult,
@@ -182,6 +183,7 @@ def tight_binding_band_structure(component: Any) -> BandResult:
         nodes,
         labels=labels,
         points_per_segment=int(config.get("band_points_per_segment", 60)),
+        coordinate_reciprocal_lattice=band_path_reciprocal_lattice(component),
     )
     return _with_electronic_display_unit(
         calculate_bands(
@@ -461,7 +463,9 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
             [
                 "from nfit import band_path, calculate_bands",
                 "from nfit.model_plots import render_band_structure",
-                f"sampling = band_path(model, {nodes!r}, labels={labels!r}, points_per_segment={int(config.get('band_points_per_segment', 60))!r})",
+                "path_reciprocal_lattice = "
+                f"{band_path_reciprocal_lattice(component).tolist()!r}",
+                f"sampling = band_path(model, {nodes!r}, labels={labels!r}, points_per_segment={int(config.get('band_points_per_segment', 60))!r}, coordinate_reciprocal_lattice=path_reciprocal_lattice)",
                 f"result = calculate_bands(model, sampling, chemical_potential_meV=chemical_potential_meV, projections={projections!r}, include_eigenvectors=False)",
                 "figure, axis = render_band_structure(result, energy_unit=energy_unit)",
             ]

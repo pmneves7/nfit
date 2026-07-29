@@ -71,11 +71,16 @@ or pathway identifies it in the side panel. **View Brillouin zone in 3D** shows
 the primitive reciprocal-lattice Wigner--Seitz cell, including conventional
 cell centering, together with the configured labelled band path and reciprocal
 basis vectors. Its adjacent script action reproduces the same view without
-project widgets.
+project widgets. Reduced path coordinates use the primitive reciprocal basis,
+so a node at `[0.5, 0, 0]` reaches the corresponding bisecting zone face even
+for a centered conventional crystal cell.
 The Brillouin-zone, band-structure, density-of-states, and Fermi-surface
 viewers share a consistent two-column layout with the visualization on the
-left and a fixed-width **Settings** panel on the right. The settings panels are
-present but intentionally contain no interactive controls yet.
+left and a fixed-width **Settings** panel on the right. The Brillouin-zone
+panel controls object visibility, vector and path styling, label size, cell
+face and outline styling, camera projection, and viewport copy/save actions.
+The other electronic viewer panels reserve this space for their plot-specific
+controls.
 The builder and plot actions also expose editable scripts but do not enter a
 fit until a later electronic-response model provides a dataset observable.
 Electronic energy entry and plots default to eV, while the stored canonical
