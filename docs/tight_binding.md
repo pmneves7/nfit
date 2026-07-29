@@ -173,6 +173,8 @@ dictionaries can be entered directly in the model editor.
 | `model_data` | portable dictionary returned by `ElectronicModel.to_dict()` | `{}` | `model.to_dict()` |
 | `crystal` | editable lattice, space group, crystallographic sites, and optional CIF provenance used by the structure-first builder | `P 1` cell with no sites | `{"lattice": {"a": 4, "b": 4, "c": 6, "alpha": 90, "beta": 90, "gamma": 90}, "spacegroup": "P 1", "sites": []}` |
 | `orbital_manifolds` | editable site-attached basis definitions and local frames | `[]` | `[orbital_manifold_preset("M1", "d").to_dict()]` |
+| `spin_treatment` | requested spin representation; `auto` remains implicit unless SOC requires spinors | `"auto"` | `"auto"`, `"implicit"`, `"collinear"`, or `"spinor"` |
+| `soc_terms` | optional manifold-resolved onsite $\lambda\mathbf L\cdot\mathbf S$ terms | `[]` | `[spin_orbit_term("M1_d", value_meV=25).to_dict()]` |
 | `onsite_terms` | generated Hermitian onsite matrix bases and mirrored canonical parameter state | `[]` | `[term.to_dict() for term in generate_onsite_terms(crystal, manifolds)]` |
 | `hopping_cutoff_angstrom` | maximum representative-bond distance used by the symmetry hopping generator; zero disables generated hoppings | `0.0` | `4.2` |
 | `spatial_orbits` | generated symmetry-equivalent bond families retained for editing and visualization | `[]` | `[orbit.to_dict() for orbit in generation.orbits]` |
@@ -399,12 +401,14 @@ in the home cell.
 | `fit` | fit selection mirrored from `component.fit_parameters` | `false` |
 | `source` | origin of the matrix constraints | `"spinless_time_reversal_space_group"` |
 
-Stage 3.3 symmetry generation is spinless, real, and time-reversal symmetric.
-Manual and Wannier90 models may still contain general complex hopping
-matrices. Symmetry generation for complex or spinor representations is
-reserved for the SOC stage. A custom numerical basis can use automatic
-hopping generation only when every required site mapping is the identity;
-otherwise its representation matrices must be supplied by a future adapter.
+The spatial hopping generator is orbital-only, real, and time-reversal
+symmetric. Collinear and spinor models lift each generated hopping as
+$B_p\otimes I_2$, so adding spin does not duplicate its coefficient.
+Spin-dependent hopping remains an advanced opt-in extension rather than part
+of the default generated basis. Manual and Wannier90 models may contain
+general complex matrices. A custom numerical basis can use automatic hopping
+generation only when every required site mapping is the identity; otherwise
+its representation matrices must be supplied explicitly.
 
 ```python
 from nfit import (
@@ -428,6 +432,144 @@ set_tight_binding_hopping_term(
     upper=0.02,
 )
 ```
+
+## Spin representations and spin–orbit coupling
+
+Spin is optional computational structure, not another spatial-orbital preset.
+The **Spin and SOC** section resolves one of three representations:
+
+| Resolved treatment | Basis size | Use |
+| --- | --- | --- |
+| `implicit` | $N$ | default SU(2)-symmetric paramagnet; spin degeneracy and spin traces are applied analytically by later response calculations |
+| `collinear` | $2N$ | explicit up/down blocks without spin mixing |
+| `spinor` | $2N$ | SOC, transverse spin operators, and other terms that mix spin components |
+
+`spin_treatment="auto"` resolves to `implicit` when no SOC term is active and
+to `spinor` when one is added. Explicit `implicit` or `collinear` treatment is
+rejected if SOC is active because neither can represent
+$\mathbf L\cdot\mathbf S$. This makes the inexpensive $N\times N$
+diagonalization the normal case.
+
+Explicit bases use orbital-major ordering,
+
+$$
+(a\uparrow,a\downarrow,b\uparrow,b\downarrow,\ldots).
+$$
+
+Every pre-existing orbital Hamiltonian block and parameter selector is lifted
+without creating new coefficients:
+
+$$
+H_{\mathrm{spin}}(\mathbf R)
+  =H_{\mathrm{orb}}(\mathbf R)\otimes I_2,\qquad
+P_{p,\mathrm{spin}}(\mathbf R)
+  =P_{p,\mathrm{orb}}(\mathbf R)\otimes I_2.
+$$
+
+The generated dimensionless spin operators are
+
+$$
+S_\alpha=I_N\otimes\frac{\sigma_\alpha}{2},
+$$
+
+where $\sigma_\alpha$ are Pauli matrices. `BasisState.spin` is empty for an
+implicit model and is `"up"` or `"down"` for an explicit basis. The 3D
+geometry viewer continues to show one token per spatial orbital; it does not
+draw two overlapping spheres for the two spin components.
+
+### Onsite SOC
+
+Each enabled manifold contributes a named linear term
+
+$$
+H_{\mathrm{SOC},m}
+  =\lambda_m\sum_{\alpha=x,y,z}
+  L_{m,\alpha}\otimes S_\alpha.
+$$
+
+$\lambda_m$ is entered in `electronic_energy_unit`, stored canonically in
+meV, and uses the same bounds, fit selection, and dataset-sharing machinery as
+onsite and hopping coefficients. `SpinOrbitTerm` defines:
+
+| Field | Meaning | Acceptable input example |
+| --- | --- | --- |
+| `identifier` | stable parameter name | `"M1_d:soc:lambda"` |
+| `label` | readable description | `"M1_d λ L·S"` |
+| `manifold_label` | spatial manifold receiving SOC | `"M1_d"` |
+| `value_meV` | canonical $\lambda$ | `25.0` |
+| `bounds_meV` | canonical optional fit bounds | `[0.0, 100.0]` |
+| `fit` | mirrored fit selection | `false` |
+| `prescription` | construction of $\mathbf L$ | `"auto"`, `"atomic"`, `"projected"`, or `"effective"` |
+| `orbital_operators` | explicit local $L_x,L_y,L_z$ for an effective/custom basis | complex array with shape `(3, n, n)` |
+
+The prescriptions have distinct physical meanings:
+
+- **Atomic** uses the exact angular-momentum matrices of a complete
+  $(2l+1)$-orbital spherical-harmonic shell. It is rejected for a truncated
+  shell.
+- **Projected** uses $L_\alpha^{(P)}=P L_\alpha P$ in a selected
+  site-symmetry subspace. It is internally consistent, but orbital angular
+  momentum can be quenched and virtual coupling through excluded orbitals is
+  absent.
+- **Effective** uses explicitly supplied Hermitian $L_x,L_y,L_z$ matrices.
+  This is the supported route for effective, custom numerical, and suitably
+  characterized Wannier-like local bases; nfit does not infer them from
+  orbital names.
+- **Auto** selects atomic for a complete analytic shell and projected for an
+  analytic subspace.
+
+`harmonic_transform` maps the selected analytic orbitals into the documented
+complete real- or complex-harmonic order. nfit constructs $\mathbf L$ in that
+convention, projects it, and rotates its Cartesian components from the
+manifold's local frame into the crystal frame. Symmetry-equivalent sites use
+their generated local frames.
+
+```python
+from nfit import (
+    set_tight_binding_soc_term,
+    set_tight_binding_spin_treatment,
+    spin_orbit_term,
+)
+
+# Efficient default: remains N dimensional until SOC is enabled.
+set_tight_binding_spin_treatment(model, "auto")
+set_tight_binding_soc_term(
+    model,
+    "M1_d",
+    enabled=True,
+    prescription="auto",
+    value=0.025,
+    energy_unit="eV",
+    lower=0.0,
+    upper=0.10,
+)
+
+# Equivalent serializable term for configure_tight_binding_spin.
+soc = spin_orbit_term("M1_d", value_meV=25.0)
+```
+
+For a nonmagnetic spinor Hamiltonian, nfit validates
+
+$$
+H(\mathbf k)
+=U_\Theta H(-\mathbf k)^*U_\Theta^\dagger,\qquad
+U_\Theta=I_N\otimes i\sigma_y.
+$$
+
+`spinor_time_reversal_residual` exposes the normalized residual and
+`validate_spinor_time_reversal` applies the validation threshold. For a
+spatial operation $g$, the double-group representation is
+
+$$
+D_{\mathrm{spinor}}(g)
+=D_{\mathrm{orbital}}(g)\otimes D_{1/2}(g).
+$$
+
+`spinor_rotation_representation` constructs $D_{1/2}$, treating spin as an
+axial vector under improper spatial operations, while
+`spinor_manifold_representation` combines it with the orbital action. The
+default spin-independent lifting does not regenerate a large set of separate
+up/down hopping invariants.
 
 ## Manual construction
 
@@ -588,14 +730,45 @@ panel is intentionally empty in this release; it establishes one location for
 later plot-specific controls without changing the viewer layout. Plot scripts
 run as files open the same window.
 
+## Electronic matrix inspector
+
+**Inspect matrices** opens a separate viewer rather than adding permanent
+columns to the model editor. Its catalog includes:
+
+- the resolved complex $H(\mathbf k)$;
+- every named parameter selector after Fourier summation and its current
+  coefficient contribution;
+- $S_x,S_y,S_z$ for explicit spin models; and
+- representative onsite and hopping matrix bases from the builder.
+
+The **Heatmap** tab displays the real part, imaginary part, magnitude, or
+phase. **Matrix elements** gives the exact complex entries with ordered row
+and column labels. A parameter can be viewed either as its dimensionless
+matrix basis or as its coefficient times that basis. For a hopping
+$T_{ij}(\mathbf R)$, rows are destination orbitals and columns are source
+orbitals.
+
+The right panel also reports every nonzero orbital-subspace block
+
+$$
+P_\alpha A P_\beta
+$$
+
+grouped by site, manifold, and spin. It gives the block shape, Frobenius norm,
+and largest element. This makes onsite mixing, inter-manifold hopping, and
+spinor structure visible without treating a multiorbital term as one scalar.
+`electronic_matrix_catalog` is the renderer-independent API,
+`show_electronic_matrix_catalog` is the Qt viewer, and
+`electronic_matrix_script` exports an editable standalone inspection.
+
 ## Fitting and identifiability
 
-Every active onsite or hopping invariant is a first-class parameter whose
+Every active onsite, hopping, or SOC invariant is a first-class parameter whose
 stable identifier is shared by:
 
 - `component.parameters`, in canonical meV;
 - `component.limits`, `component.fit_parameters`, and `component.sharing`;
-- the mirrored high-level onsite or hopping record;
+- the mirrored high-level onsite, hopping, or SOC record;
 - the resolved `ElectronicModel.parameter_values`; and
 - project files, builder scripts, and fit reports.
 

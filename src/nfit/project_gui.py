@@ -18691,6 +18691,8 @@ class NfitProjectExplorer:
                 "model_data",
                 "crystal",
                 "orbital_manifolds",
+                "spin_treatment",
+                "soc_terms",
                 "onsite_terms",
                 "hopping_cutoff_angstrom",
                 "spatial_orbits",
@@ -18832,10 +18834,11 @@ class NfitProjectExplorer:
         if model.type == "tight_binding":
             self._build_model_crystal_editor(model, structure_only=True)
             self._build_tight_binding_orbital_editor(model)
+            self._build_tight_binding_spin_editor(model)
             self._build_tight_binding_onsite_editor(model)
             self._build_tight_binding_hopping_editor(model)
             self._build_tight_binding_editor(model)
-            self.model_parameter_layout.addWidget(config_group, 9, 0, 1, 4)
+            self.model_parameter_layout.addWidget(config_group, 10, 0, 1, 4)
         elif definition.structured_config:
             self.model_parameter_layout.addWidget(config_group, 2, 0, 1, 4)
             self._build_model_crystal_editor(model)
@@ -18888,7 +18891,8 @@ class NfitProjectExplorer:
         structure_script.setObjectName("tight_binding_structure_script")
         structure_script.setToolTip(
             "Copy editable Python that rebuilds the crystal, orbital manifolds, "
-            "onsite invariants and values, periodic axes, and canonical model."
+            "onsite, hopping, spin, and SOC terms, periodic axes, and canonical "
+            "model."
         )
         structure_script.clicked.connect(
             lambda _checked=False, model=model: self._copy_tight_binding_structure_script(
@@ -18901,7 +18905,7 @@ class NfitProjectExplorer:
         zone_button.setObjectName("tight_binding_brillouin_zone")
         zone_button.setToolTip(
             "Show the first Brillouin-zone polyhedron, the configured labelled "
-            "band path, and primitive reciprocal basis vectors b1, b2, and b3. "
+            "band path, and primitive reciprocal basis vectors b₁, b₂, and b₃. "
             "The viewer includes scriptable styling, visibility, projection, "
             "copy, and save controls."
         )
@@ -18922,8 +18926,33 @@ class NfitProjectExplorer:
         layout.addWidget(zone_button, 2, 0, 1, 2)
         layout.addWidget(zone_script, 2, 2)
 
+        matrix_button = QtWidgets.QPushButton("Inspect matrices")
+        matrix_button.setObjectName("tight_binding_matrix_inspector")
+        matrix_button.setToolTip(
+            "Inspect H(k), named Hamiltonian terms, spin operators, exact "
+            "matrix elements, and orbital-subspace block norms."
+        )
+        matrix_button.clicked.connect(
+            lambda _checked=False, model=model: self._open_electronic_matrix_inspector(
+                model
+            )
+        )
+        matrix_script = QtWidgets.QPushButton("Copy matrix-viewer script")
+        matrix_script.setObjectName("tight_binding_matrix_script")
+        matrix_script.setToolTip(
+            "Copy editable Python that reconstructs the electronic matrix "
+            "catalog and opens the standalone inspector."
+        )
+        matrix_script.clicked.connect(
+            lambda _checked=False, model=model: self._copy_electronic_matrix_script(
+                model
+            )
+        )
+        layout.addWidget(matrix_button, 3, 0, 1, 2)
+        layout.addWidget(matrix_script, 3, 2)
+
         definition = model_definition(model.type)
-        for row, plot in enumerate(definition.plots, start=3):
+        for row, plot in enumerate(definition.plots, start=4):
             calculate = QtWidgets.QPushButton(plot.label)
             calculate.setObjectName(f"model_plot_{plot.key}")
             calculate.setToolTip(plot.description)
@@ -18944,7 +18973,53 @@ class NfitProjectExplorer:
             )
             layout.addWidget(calculate, row, 0, 1, 2)
             layout.addWidget(copy_script, row, 2)
-        self.model_parameter_layout.addWidget(group, 8, 0, 1, 4)
+        self.model_parameter_layout.addWidget(group, 9, 0, 1, 4)
+
+    def _open_electronic_matrix_inspector(
+        self,
+        model: ModelComponentSpec,
+    ) -> bool:
+        from PySide6 import QtWidgets
+
+        from .electronic_matrix import electronic_matrix_catalog
+        from .qt_electronic_matrix_viewer import (
+            show_electronic_matrix_catalog,
+        )
+
+        try:
+            window = show_electronic_matrix_catalog(
+                electronic_matrix_catalog(model),
+                parent=self.window,
+            )
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Electronic matrix inspector",
+                f"Could not open the matrix inspector:\n{exc}",
+            )
+            return False
+        self._plot_windows[f"model:{id(model)}:matrix"] = window
+        return True
+
+    def _copy_electronic_matrix_script(
+        self,
+        model: ModelComponentSpec,
+    ) -> bool:
+        from PySide6 import QtWidgets
+
+        from .electronic_matrix import electronic_matrix_script
+
+        try:
+            script = electronic_matrix_script(model)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Electronic matrix script",
+                f"Could not create the matrix-viewer script:\n{exc}",
+            )
+            return False
+        QtWidgets.QApplication.clipboard().setText(script)
+        return True
 
     def _open_brillouin_zone(self, model: ModelComponentSpec) -> bool:
         from PySide6 import QtWidgets
@@ -19254,6 +19329,252 @@ class NfitProjectExplorer:
         layout.addWidget(status, len(manifolds) + 3, 0, 1, len(headers))
         self.model_parameter_layout.addWidget(group, 5, 0, 1, 4)
 
+    def _build_tight_binding_spin_editor(
+        self,
+        model: ModelComponentSpec,
+    ) -> None:
+        """Build compact opt-in spin and onsite SOC controls."""
+
+        from PySide6 import QtWidgets
+
+        from .electronic_builder import OrbitalManifold
+        from .electronic_spin import SPIN_TREATMENTS, SpinOrbitTerm
+        from .electronic_structure import electronic_energy_from_meV
+
+        group = QtWidgets.QGroupBox("Spin and SOC")
+        group.setObjectName("tight_binding_spin_group")
+        group.setToolTip(
+            "Spin remains an implicit twofold degeneracy unless collinear or "
+            "spinor structure is requested. Active SOC promotes Auto to the "
+            "full spinor basis."
+        )
+        layout = QtWidgets.QGridLayout(group)
+        treatment_label = QtWidgets.QLabel("Spin treatment")
+        treatment = QtWidgets.QComboBox()
+        treatment.setObjectName("tight_binding_spin_treatment")
+        treatment.setToolTip(
+            "Auto keeps an N-orbital SU(2)-symmetric model implicit and only "
+            "creates 2N basis states when SOC requires spin mixing. Collinear "
+            "and spinor explicitly force the corresponding representation."
+        )
+        treatment_labels = {
+            "auto": "Auto (efficient)",
+            "implicit": "Implicit spin degeneracy",
+            "collinear": "Explicit collinear",
+            "spinor": "Full spinor",
+        }
+        for option in SPIN_TREATMENTS:
+            treatment.addItem(treatment_labels[option], option)
+        selected = str(model.config.get("spin_treatment", "auto"))
+        treatment.setCurrentIndex(max(0, treatment.findData(selected)))
+        treatment.currentIndexChanged.connect(
+            lambda _index, combo=treatment: self._set_tight_binding_spin_treatment(
+                str(combo.currentData())
+            )
+        )
+        resolved = ""
+        model_data = model.config.get("model_data")
+        if isinstance(model_data, dict):
+            provenance = model_data.get("provenance", {})
+            if isinstance(provenance, dict):
+                resolved = str(
+                    provenance.get("resolved_spin_treatment", "")
+                )
+        resolved_label = QtWidgets.QLabel(
+            f"Resolved: {resolved or 'not built'}"
+        )
+        resolved_label.setObjectName("tight_binding_spin_resolved")
+        resolved_label.setToolTip(
+            "The actual representation used by the canonical model. Implicit "
+            "uses N basis states; collinear and spinor use 2N."
+        )
+        layout.addWidget(treatment_label, 0, 0)
+        layout.addWidget(treatment, 0, 1, 1, 2)
+        layout.addWidget(resolved_label, 0, 3, 1, 3)
+
+        headers = (
+            "Manifold",
+            "Spatial orbitals",
+            "SOC",
+            "Prescription",
+            "λ",
+            "Lower",
+            "Upper",
+            "Fit",
+            "Sharing",
+            "Groups",
+        )
+        for column, text in enumerate(headers):
+            label = QtWidgets.QLabel(text)
+            label.setToolTip(group.toolTip())
+            layout.addWidget(label, 1, column)
+        manifolds = [
+            OrbitalManifold.from_dict(item)
+            for item in model.config.get("orbital_manifolds", ())
+        ]
+        terms = {
+            term.manifold_label: term
+            for term in (
+                SpinOrbitTerm.from_dict(item)
+                for item in model.config.get("soc_terms", ())
+            )
+        }
+        unit = str(model.config.get("electronic_energy_unit", "eV"))
+        for index, manifold in enumerate(manifolds):
+            row = index + 2
+            term = terms.get(manifold.label)
+            supported = (
+                manifold.basis_kind
+                in {"real_harmonic", "complex_harmonic"}
+                and manifold.l is not None
+                and manifold.l > 0
+            ) or (term is not None and term.orbital_operators is not None)
+            manifold_name = QtWidgets.QLabel(manifold.label)
+            manifold_name.setToolTip(
+                "SOC is attached once to this spatial manifold and repeated "
+                "on every symmetry-equivalent site."
+            )
+            layout.addWidget(manifold_name, row, 0)
+            orbitals = QtWidgets.QLabel(
+                f"{manifold.dimension}: {', '.join(manifold.orbitals)}"
+            )
+            orbitals.setToolTip(
+                "Spatial orbitals before optional spinor expansion. The 3D "
+                "geometry viewer does not duplicate these tokens for spin."
+            )
+            layout.addWidget(orbitals, row, 1)
+            enabled = QtWidgets.QCheckBox()
+            enabled.setObjectName(f"tight_binding_soc_enabled_{index}")
+            enabled.setChecked(term is not None)
+            enabled.setEnabled(supported)
+            enabled.setToolTip(
+                "Enable λ L·S for this manifold. Complete harmonic shells use "
+                "atomic L; symmetry-selected subspaces use projected P L P. "
+                "Custom bases require explicit operators through the API."
+            )
+            enabled.toggled.connect(
+                lambda checked, label=manifold.label: self._toggle_tight_binding_soc(
+                    label,
+                    bool(checked),
+                )
+            )
+            layout.addWidget(enabled, row, 2)
+            prescription = QtWidgets.QComboBox()
+            prescription.setObjectName(
+                f"tight_binding_soc_prescription_{index}"
+            )
+            prescription.addItem("Auto", "auto")
+            prescription.addItem("Atomic shell", "atomic")
+            prescription.addItem("Projected subspace", "projected")
+            prescription.addItem("Effective operators", "effective")
+            prescription.setCurrentIndex(
+                max(
+                    0,
+                    prescription.findData(
+                        "auto" if term is None else term.prescription
+                    ),
+                )
+            )
+            prescription.setEnabled(term is not None)
+            prescription.setToolTip(
+                "Atomic requires a complete l shell. Projected uses P(L·S)P "
+                "and may omit virtual coupling to excluded orbitals. Effective "
+                "requires explicitly supplied Lx, Ly, and Lz matrices."
+            )
+            prescription.currentIndexChanged.connect(
+                lambda _index, label=manifold.label,
+                combo=prescription: self._set_tight_binding_soc_field(
+                    label,
+                    "prescription",
+                    str(combo.currentData()),
+                )
+            )
+            layout.addWidget(prescription, row, 3)
+            value = QtWidgets.QLineEdit(
+                ""
+                if term is None
+                else _parameter_to_text(
+                    electronic_energy_from_meV(term.value_meV, unit)
+                )
+            )
+            value.setObjectName(f"tight_binding_soc_value_{index}")
+            value.setEnabled(term is not None)
+            value.setToolTip(
+                f"Spin-orbit coupling λ in {unit}; converted immediately to "
+                "canonical meV."
+            )
+            value.editingFinished.connect(
+                lambda label=manifold.label, editor=value: self._set_tight_binding_soc_field(
+                    label,
+                    "value",
+                    editor.text(),
+                )
+            )
+            layout.addWidget(value, row, 4)
+            for column, (field, bound) in enumerate(
+                zip(
+                    ("lower", "upper"),
+                    (None, None) if term is None else term.bounds_meV,
+                    strict=True,
+                ),
+                start=5,
+            ):
+                editor = QtWidgets.QLineEdit(
+                    ""
+                    if bound is None
+                    else _parameter_to_text(
+                        electronic_energy_from_meV(bound, unit)
+                    )
+                )
+                editor.setObjectName(f"tight_binding_soc_{field}_{index}")
+                editor.setEnabled(term is not None)
+                editor.setToolTip(
+                    f"Optional fit bound for λ in {unit}; empty is unbounded."
+                )
+                editor.editingFinished.connect(
+                    lambda label=manifold.label, field=field,
+                    editor=editor: self._set_tight_binding_soc_field(
+                        label,
+                        field,
+                        editor.text(),
+                    )
+                )
+                layout.addWidget(editor, row, column)
+            fit = QtWidgets.QCheckBox()
+            fit.setObjectName(f"tight_binding_soc_fit_{index}")
+            fit.setChecked(False if term is None else term.fit)
+            fit.setEnabled(term is not None)
+            fit.setToolTip(
+                "Allow a compatible future electronic-response fit to vary λ."
+            )
+            fit.toggled.connect(
+                lambda checked, label=manifold.label: self._set_tight_binding_soc_fit(
+                    label,
+                    bool(checked),
+                )
+            )
+            layout.addWidget(fit, row, 7)
+            if term is None:
+                sharing = QtWidgets.QLabel("—")
+                groups = QtWidgets.QLabel("")
+            else:
+                sharing, groups = self._tight_binding_sharing_controls(
+                    model,
+                    term.identifier,
+                    object_prefix=f"tight_binding_soc_{index}",
+                )
+            layout.addWidget(sharing, row, 8)
+            layout.addWidget(groups, row, 9)
+        status = QtWidgets.QLabel(
+            "Implicit spin avoids redundant diagonalization. SOC, transverse "
+            "spin mixing, and noncollinear extensions use the full spinor basis."
+        )
+        status.setObjectName("tight_binding_spin_status")
+        status.setWordWrap(True)
+        status.setToolTip(group.toolTip())
+        layout.addWidget(status, len(manifolds) + 2, 0, 1, len(headers))
+        self.model_parameter_layout.addWidget(group, 6, 0, 1, 4)
+
     def _tight_binding_sharing_controls(
         self,
         model: ModelComponentSpec,
@@ -19428,7 +19749,7 @@ class NfitProjectExplorer:
         )
         status.setWordWrap(True)
         layout.addWidget(status, len(terms) + 2, 0, 1, len(headers))
-        self.model_parameter_layout.addWidget(group, 6, 0, 1, 4)
+        self.model_parameter_layout.addWidget(group, 7, 0, 1, 4)
 
     def _build_tight_binding_hopping_editor(
         self, model: ModelComponentSpec
@@ -19734,7 +20055,7 @@ class NfitProjectExplorer:
             1,
             len(active_headers),
         )
-        self.model_parameter_layout.addWidget(group, 7, 0, 1, 4)
+        self.model_parameter_layout.addWidget(group, 8, 0, 1, 4)
 
     def _import_wannier90_model(self, model: ModelComponentSpec) -> bool:
         from PySide6 import QtWidgets
@@ -19771,6 +20092,8 @@ class NfitProjectExplorer:
         model.config["model_data"] = {}
         model.config["periodic_axes"] = list(imported.periodic_axes)
         model.config["orbital_manifolds"] = []
+        model.config["spin_treatment"] = "auto"
+        model.config["soc_terms"] = []
         model.config["onsite_terms"] = []
         model.config["hopping_cutoff_angstrom"] = 0.0
         model.config["hopping_candidates"] = []
@@ -19887,6 +20210,10 @@ class NfitProjectExplorer:
                     or None
                 ),
                 hopping_terms=model.config.get("hopping_terms", ()),
+                spin_treatment=str(
+                    model.config.get("spin_treatment", "auto")
+                ),
+                soc_terms=model.config.get("soc_terms", ()),
                 parameter_values_meV=model.parameters,
                 fit_parameters=model.fit_parameters,
                 parameter_limits_meV=model.limits,
@@ -20520,6 +20847,80 @@ class NfitProjectExplorer:
         self._mutate_selected_model(
             lambda model, _group: remove_tight_binding_orbital_manifold(
                 model, label
+            )
+        )
+
+    def _set_tight_binding_spin_treatment(self, treatment: str) -> None:
+        from .electronic_builder import set_tight_binding_spin_treatment
+
+        self._mutate_selected_model(
+            lambda model, _group: set_tight_binding_spin_treatment(
+                model,
+                treatment,
+            )
+        )
+
+    def _toggle_tight_binding_soc(
+        self,
+        manifold_label: str,
+        enabled: bool,
+    ) -> None:
+        from .electronic_builder import set_tight_binding_soc_term
+
+        self._mutate_selected_model(
+            lambda model, _group: set_tight_binding_soc_term(
+                model,
+                manifold_label,
+                enabled=enabled,
+            )
+        )
+
+    def _set_tight_binding_soc_field(
+        self,
+        manifold_label: str,
+        field: str,
+        text: str,
+    ) -> None:
+        from .electronic_builder import set_tight_binding_soc_term
+
+        def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
+            if field == "prescription":
+                set_tight_binding_soc_term(
+                    model,
+                    manifold_label,
+                    prescription=text,
+                )
+                return
+            if field == "value":
+                set_tight_binding_soc_term(
+                    model,
+                    manifold_label,
+                    value=float(_parse_parameter_text(text)),
+                )
+                return
+            bound = (
+                None if not text.strip() else float(_parse_parameter_text(text))
+            )
+            set_tight_binding_soc_term(
+                model,
+                manifold_label,
+                **{field: bound},
+            )
+
+        self._mutate_selected_model(mutate)
+
+    def _set_tight_binding_soc_fit(
+        self,
+        manifold_label: str,
+        checked: bool,
+    ) -> None:
+        from .electronic_builder import set_tight_binding_soc_term
+
+        self._mutate_selected_model(
+            lambda model, _group: set_tight_binding_soc_term(
+                model,
+                manifold_label,
+                fit=checked,
             )
         )
 

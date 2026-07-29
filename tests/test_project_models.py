@@ -1,4 +1,5 @@
 # ruff: noqa: F401, F403, F405
+from nfit import ElectronicModel
 from tests.project_gui_test_support import *
 from tests.project_gui_test_support import (
     _explorer_with_fit_result,
@@ -301,6 +302,46 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
     assert zones and zones[0][0].path_nodes
     zone_script.click()
     assert "build_brillouin_zone_scene" in QtWidgets.QApplication.clipboard().text()
+
+    spin_treatment = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox,
+        "tight_binding_spin_treatment",
+    )
+    soc_enabled = explorer.model_parameter_widget.findChild(
+        QtWidgets.QCheckBox,
+        "tight_binding_soc_enabled_0",
+    )
+    assert spin_treatment.currentData() == "auto"
+    assert spin_treatment.toolTip()
+    assert soc_enabled.isEnabled() and soc_enabled.toolTip()
+    soc_enabled.click()
+    assert len(model.config["soc_terms"]) == 1
+    assert ElectronicModel.from_dict(model.config["model_data"]).n_basis == (
+        2 * len(model.config["orbital_manifolds"][0]["orbitals"])
+    )
+
+    matrix_windows = []
+    monkeypatch.setattr(
+        "nfit.qt_electronic_matrix_viewer.show_electronic_matrix_catalog",
+        lambda catalog, parent=None: matrix_windows.append((catalog, parent))
+        or object(),
+    )
+    matrix_button = explorer.model_parameter_widget.findChild(
+        QtWidgets.QPushButton,
+        "tight_binding_matrix_inspector",
+    )
+    matrix_script = explorer.model_parameter_widget.findChild(
+        QtWidgets.QPushButton,
+        "tight_binding_matrix_script",
+    )
+    assert matrix_button.toolTip() and matrix_script.toolTip()
+    matrix_button.click()
+    assert matrix_windows and matrix_windows[0][0]
+    matrix_script.click()
+    assert (
+        "show_electronic_matrix_catalog"
+        in QtWidgets.QApplication.clipboard().text()
+    )
     explorer.has_unsaved_changes = False
     explorer.window.close()
 

@@ -1649,6 +1649,18 @@ def build_orbital_electronic_model(
         for site in expanded:
             start = len(basis_states)
             for manifold in site_manifolds:
+                generator = cartesian_rotation(
+                    (
+                        np.eye(3)
+                        if site.rotation is None
+                        else np.asarray(site.rotation, dtype=float)
+                    ),
+                    crystal["lattice"],
+                )
+                local_frame_cartesian = generator @ np.asarray(
+                    manifold.local_frame,
+                    dtype=float,
+                )
                 for orbital in manifold.orbitals:
                     basis_states.append(
                         BasisState(
@@ -1661,6 +1673,9 @@ def build_orbital_electronic_model(
                             metadata={
                                 "manifold": manifold.label,
                                 "preset": manifold.preset,
+                                "local_frame_cartesian": (
+                                    local_frame_cartesian.tolist()
+                                ),
                             },
                         )
                     )
@@ -1795,6 +1810,15 @@ def _component_hopping_terms(component: Any) -> tuple[HoppingInvariant, ...]:
     )
 
 
+def _component_soc_terms(component: Any) -> tuple[Any, ...]:
+    from .electronic_spin import SpinOrbitTerm
+
+    return tuple(
+        SpinOrbitTerm.from_dict(item)
+        for item in component.config.get("soc_terms", ())
+    )
+
+
 def _component_hopping_candidates(
     component: Any,
 ) -> tuple[HoppingInvariant, ...]:
@@ -1810,12 +1834,16 @@ def _component_hopping_orbits(component: Any) -> tuple[BondOrbit, ...]:
 
 def tight_binding_parameter_terms(
     component: Any,
-) -> tuple[OnsiteInvariant | HoppingInvariant, ...]:
+) -> tuple[Any, ...]:
     """Return active named Hamiltonian terms in stable builder order."""
 
     if getattr(component, "type", None) != "tight_binding":
         raise TypeError("tight-binding parameters require a tight_binding component")
-    terms = (*_component_terms(component), *_component_hopping_terms(component))
+    terms = (
+        *_component_terms(component),
+        *_component_hopping_terms(component),
+        *_component_soc_terms(component),
+    )
     names = [term.identifier for term in terms]
     if len(names) != len(set(names)):
         raise ValueError("tight-binding parameter identifiers must be unique")
@@ -1859,9 +1887,9 @@ def _restore_builder_state(component: Any, state: Mapping[str, Any]) -> None:
 
 
 def _term_with_parameter_state(
-    term: OnsiteInvariant | HoppingInvariant,
+    term: Any,
     component: Any,
-) -> OnsiteInvariant | HoppingInvariant:
+) -> Any:
     name = term.identifier
     value = float(component.parameters.get(name, term.value_meV))
     raw_bounds = component.limits.get(name, term.bounds_meV)
@@ -1883,7 +1911,7 @@ def _term_with_parameter_state(
 
 def _adopt_term_parameter_state(
     component: Any,
-    terms: Sequence[OnsiteInvariant | HoppingInvariant],
+    terms: Sequence[Any],
 ) -> None:
     for term in terms:
         component.parameters[term.identifier] = float(term.value_meV)
@@ -1948,10 +1976,15 @@ def reconcile_tight_binding_parameters(component: Any) -> tuple[str, ...]:
         _term_with_parameter_state(term, component)
         for term in _component_hopping_terms(component)
     ]
+    updated_soc = [
+        _term_with_parameter_state(term, component)
+        for term in _component_soc_terms(component)
+    ]
     component.config["onsite_terms"] = [term.to_dict() for term in updated_onsite]
     component.config["hopping_terms"] = [
         term.to_dict() for term in updated_hoppings
     ]
+    component.config["soc_terms"] = [term.to_dict() for term in updated_soc]
     active_hoppings = {term.identifier: term for term in updated_hoppings}
     component.config["hopping_candidates"] = [
         active_hoppings.get(term.identifier, term).to_dict()
@@ -1985,6 +2018,149 @@ def set_tight_binding_parameter_state(
             limits_meV=limits_meV,
             sharing=sharing,
         )
+    except Exception:
+        _restore_builder_state(component, before)
+        raise
+
+
+def set_tight_binding_spin_treatment(
+    component: Any,
+    treatment: str,
+) -> ElectronicModel:
+    """Select automatic, implicit, collinear, or full-spinor handling."""
+
+    from .electronic_spin import SPIN_TREATMENTS
+
+    selected = str(treatment)
+    if selected not in SPIN_TREATMENTS:
+        raise ValueError(f"spin treatment must be one of {SPIN_TREATMENTS}")
+    before = _builder_state_snapshot(component)
+    try:
+        component.config["spin_treatment"] = selected
+        return resolve_tight_binding_builder(component)
+    except Exception:
+        _restore_builder_state(component, before)
+        raise
+
+
+def set_tight_binding_soc_term(
+    component: Any,
+    manifold_label: str,
+    *,
+    enabled: bool = True,
+    value: float | None = None,
+    energy_unit: str | None = None,
+    lower: float | None | Literal["unchanged"] = "unchanged",
+    upper: float | None | Literal["unchanged"] = "unchanged",
+    fit: bool | None = None,
+    prescription: str | None = None,
+    orbital_operators: ArrayLike | None = None,
+) -> ElectronicModel:
+    """Add, update, or remove onsite SOC for one spatial manifold."""
+
+    from .electronic_spin import SpinOrbitTerm, spin_orbit_term
+
+    label = str(manifold_label)
+    manifolds = {item.label: item for item in _component_manifolds(component)}
+    if label not in manifolds:
+        raise KeyError(f"unknown orbital manifold {label!r}")
+    terms = list(_component_soc_terms(component))
+    existing = next(
+        (term for term in terms if term.manifold_label == label),
+        None,
+    )
+    before = _builder_state_snapshot(component)
+    try:
+        if not enabled:
+            component.config["soc_terms"] = [
+                term.to_dict()
+                for term in terms
+                if term.manifold_label != label
+            ]
+            reconcile_tight_binding_parameters(component)
+            return resolve_tight_binding_builder(component)
+        unit = normalize_electronic_energy_unit(
+            energy_unit or component.config.get("electronic_energy_unit", "eV")
+        )
+        if existing is None:
+            existing = spin_orbit_term(label)
+            terms.append(existing)
+        bounds = list(existing.bounds_meV)
+        if lower != "unchanged":
+            bounds[0] = (
+                None
+                if lower is None
+                else float(electronic_energy_to_meV(lower, unit))
+            )
+        if upper != "unchanged":
+            bounds[1] = (
+                None
+                if upper is None
+                else float(electronic_energy_to_meV(upper, unit))
+            )
+        updated = SpinOrbitTerm(
+            identifier=existing.identifier,
+            label=existing.label,
+            manifold_label=existing.manifold_label,
+            value_meV=(
+                existing.value_meV
+                if value is None
+                else float(electronic_energy_to_meV(value, unit))
+            ),
+            bounds_meV=(bounds[0], bounds[1]),
+            fit=existing.fit if fit is None else bool(fit),
+            prescription=(
+                existing.prescription
+                if prescription is None
+                else str(prescription)
+            ),
+            orbital_operators=(
+                existing.orbital_operators
+                if orbital_operators is None
+                else np.asarray(orbital_operators, dtype=np.complex128)
+            ),
+        )
+        terms = [
+            updated if term.manifold_label == label else term
+            for term in terms
+        ]
+        component.config["soc_terms"] = [term.to_dict() for term in terms]
+        _adopt_term_parameter_state(component, (updated,))
+        reconcile_tight_binding_parameters(component)
+        return resolve_tight_binding_builder(component)
+    except Exception:
+        _restore_builder_state(component, before)
+        raise
+
+
+def configure_tight_binding_spin(
+    component: Any,
+    *,
+    treatment: str = "auto",
+    soc_terms: Sequence[Mapping[str, Any] | Any] = (),
+) -> ElectronicModel:
+    """Install serialized spin/SOC builder state and resolve the model."""
+
+    from .electronic_spin import SPIN_TREATMENTS, SpinOrbitTerm
+
+    selected = str(treatment)
+    if selected not in SPIN_TREATMENTS:
+        raise ValueError(f"spin treatment must be one of {SPIN_TREATMENTS}")
+    parsed = tuple(
+        item if isinstance(item, SpinOrbitTerm) else SpinOrbitTerm.from_dict(item)
+        for item in soc_terms
+    )
+    known = {item.label for item in _component_manifolds(component)}
+    missing = sorted({item.manifold_label for item in parsed} - known)
+    if missing:
+        raise ValueError(f"SOC terms refer to missing manifolds {missing}")
+    before = _builder_state_snapshot(component)
+    try:
+        component.config["spin_treatment"] = selected
+        component.config["soc_terms"] = [item.to_dict() for item in parsed]
+        _adopt_term_parameter_state(component, parsed)
+        reconcile_tight_binding_parameters(component)
+        return resolve_tight_binding_builder(component)
     except Exception:
         _restore_builder_state(component, before)
         raise
@@ -2095,13 +2271,22 @@ def resolve_tight_binding_builder(component: Any) -> ElectronicModel:
     if getattr(component, "type", None) != "tight_binding":
         raise TypeError("the orbital builder requires a tight_binding component")
     reconcile_tight_binding_parameters(component)
+    manifolds = _component_manifolds(component)
     model = build_orbital_electronic_model(
         component.config["crystal"],
-        _component_manifolds(component),
+        manifolds,
         _component_terms(component),
         hopping_orbits=_component_hopping_orbits(component),
         hopping_terms=_component_hopping_terms(component),
         periodic_axes=component.config.get("periodic_axes") or (0, 1, 2),
+    )
+    from .electronic_spin import lift_electronic_model_spin
+
+    model = lift_electronic_model_spin(
+        model,
+        treatment=str(component.config.get("spin_treatment", "auto")),
+        manifolds=manifolds,
+        soc_terms=_component_soc_terms(component),
     )
     component.config["source_path"] = ""
     component.config["model_data"] = model.to_dict()
@@ -2133,6 +2318,14 @@ def set_tight_binding_orbital_manifolds(
     before = _builder_state_snapshot(component)
     try:
         component.config["orbital_manifolds"] = [item.to_dict() for item in items]
+        retained_soc = [
+            term
+            for term in _component_soc_terms(component)
+            if term.manifold_label in {item.label for item in items}
+        ]
+        component.config["soc_terms"] = [
+            term.to_dict() for term in retained_soc
+        ]
         if generate_terms:
             generated = generate_onsite_terms(
                 component.config["crystal"],
@@ -2468,6 +2661,8 @@ def configure_tight_binding_builder(
     onsite_terms: Sequence[OnsiteInvariant | Mapping[str, Any]] = (),
     hopping_cutoff_angstrom: float | None = None,
     hopping_terms: Sequence[HoppingInvariant | Mapping[str, Any]] = (),
+    spin_treatment: str = "auto",
+    soc_terms: Sequence[Mapping[str, Any] | Any] = (),
 ) -> ElectronicModel:
     """Rebuild a component from editable high-level builder configuration."""
 
@@ -2574,7 +2769,11 @@ def configure_tight_binding_builder(
                     candidate_values.get(item.identifier, item).to_dict()
                     for item in generated_hoppings
                 ]
-        return resolve_tight_binding_builder(component)
+        return configure_tight_binding_spin(
+            component,
+            treatment=spin_treatment,
+            soc_terms=soc_terms,
+        )
     except Exception:
         _restore_builder_state(component, before)
         raise

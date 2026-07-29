@@ -4,7 +4,7 @@ This page tracks the staged structure-first builder for manual tight-binding
 models. The detailed current behavior is documented on
 [Tight-binding electronic structure](tight_binding.md).
 
-Stages 3.1 through 3.4 are implemented. The GUI and public API share CIF import,
+Stages 3.1 through 3.5 are implemented. The GUI and public API share CIF import,
 editable crystal geometry, site expansion, orbital manifolds and local frames,
 site-point-group identification, calculated harmonic subspaces,
 site-symmetry representations, static onsite invariants, selectable
@@ -17,7 +17,9 @@ Brillouin-zone view shows the configured labelled path and reciprocal basis
 vectors. Named Hamiltonian coefficients use the common value, bounds,
 fit-selection, sharing, reporting, and scripting machinery. Their optimizer
 evaluation begins when an electronic-response model supplies a dataset
-observable. SOC and compact parameterizations remain planned.
+observable. Optional collinear and spinor representations, onsite
+$\lambda\mathbf L\cdot\mathbf S$, time-reversal validation, and matrix/subspace
+inspection are available. Compact parameterizations remain planned.
 
 ## Goal
 
@@ -214,10 +216,10 @@ meV. The generated Hamiltonian and spin operators must use the same basis
 ordering. Custom orbital manifolds require explicit angular-momentum matrices
 before SOC can be enabled.
 
-SOC is a separate implementation stage because it changes symmetry from
-single-valued orbital representations to spinor representations and may
-require double-group operations. Collinear spin labels without SOC should
-remain a simpler supported case.
+The default `auto` representation keeps spin implicit until an SOC term
+requires a spinor basis. Collinear spin labels without SOC remain a simpler
+explicit option. Spin-independent spatial terms are lifted with
+$I_2$ rather than regenerated as separate up/down coefficients.
 
 ## GUI workflow
 
@@ -330,11 +332,20 @@ When fitting is enabled:
 - Enable optimizer use when a compatible electronic-response observable is
   implemented.
 
-### 3.5 — Spin and SOC
+### 3.5 — Spin, SOC, and matrix inspection (implemented)
 
-- Add collinear and spinor basis expansion, spin operators, orbital angular
-  momentum, $\lambda\mathbf L\cdot\mathbf S$, and double-group validation.
-- Keep custom spin operators available for effective bases.
+- Keep SU(2)-symmetric models in an implicit $N$-orbital representation unless
+  a calculation requires explicit spin.
+- Add collinear and spinor $2N$-state expansion without duplicating
+  spin-independent Hamiltonian coefficients.
+- Add spin operators and manifold-resolved
+  $\lambda\mathbf L\cdot\mathbf S$ for complete analytic shells, projected
+  analytic subspaces, and effective bases with explicit orbital operators.
+- Validate nonmagnetic spinor Hamiltonians under time reversal and expose
+  orbital-plus-spin double-group representations.
+- Inspect $H(\mathbf k)$, named parameter matrices, spin operators,
+  representative onsite and hopping bases, exact elements, and
+  orbital-subspace blocks in a separate viewer.
 
 ### 3.6 — Compact and accelerated parameterizations
 

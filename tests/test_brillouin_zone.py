@@ -192,8 +192,77 @@ def test_view_options_validate_scriptable_appearance():
     )
     assert options.basis_vector_color_mode == "rgb"
     assert options.show_compass is False
+    assert BrillouinZoneViewOptions().show_compass is False
     with pytest.raises(ValueError, match="projection"):
         BrillouinZoneViewOptions(projection="fish-eye")
+    with pytest.raises(ValueError, match="inside_style"):
+        BrillouinZoneViewOptions(basis_vector_inside_style="fade")
+
+
+def test_basis_vector_surface_and_dashed_modes(monkeypatch):
+    from nfit.qt_brillouin_zone_viewer import _render_brillouin_zone
+
+    arrows = []
+    lines = []
+    fake_pyvista = SimpleNamespace(
+        PolyData=lambda points, faces: ("zone", points, faces),
+        Line=lambda start, stop: lines.append(
+            (np.asarray(start), np.asarray(stop))
+        )
+        or ("line", start, stop),
+        Arrow=lambda **kwargs: arrows.append(kwargs) or ("arrow", kwargs),
+    )
+    monkeypatch.setitem(sys.modules, "pyvista", fake_pyvista)
+
+    class Plotter:
+        def clear(self):
+            pass
+
+        def set_background(self, _color):
+            pass
+
+        def add_mesh(self, *_args, **_kwargs):
+            pass
+
+        def add_points(self, *_args, **_kwargs):
+            pass
+
+        def add_point_labels(self, points, labels, **_kwargs):
+            self.labels = (points, labels)
+
+        def add_axes(self, **_kwargs):
+            pass
+
+        def reset_camera(self):
+            pass
+
+    scene = build_brillouin_zone_scene(
+        np.diag([4.0, 4.0, 4.0]),
+        [{"label": "Γ", "k": [0.0, 0.0, 0.0]}],
+    )
+    plotter = Plotter()
+    _render_brillouin_zone(
+        plotter,
+        scene,
+        BrillouinZoneViewOptions(basis_vector_inside_style="hidden"),
+    )
+    reciprocal = np.asarray(scene.reciprocal_vectors)
+    for arrow, vector in zip(arrows, reciprocal, strict=True):
+        np.testing.assert_allclose(arrow["start"], vector / 2.0)
+        assert arrow["scale"] == pytest.approx(np.linalg.norm(vector) / 2.0)
+    assert plotter.labels[1] == ("b₁", "b₂", "b₃")
+
+    arrows.clear()
+    lines.clear()
+    _render_brillouin_zone(
+        plotter,
+        scene,
+        BrillouinZoneViewOptions(basis_vector_inside_style="dashed"),
+    )
+    assert len(lines) == 21
+    assert len(arrows) == 3
+    for arrow, vector in zip(arrows, reciprocal, strict=True):
+        np.testing.assert_allclose(arrow["start"], vector / 2.0)
 
 
 def test_zone_renderer_uses_flat_faces_heavy_outline_and_thin_full_vectors(
@@ -281,7 +350,9 @@ def test_zone_viewer_uses_standard_right_settings_panel(monkeypatch, tmp_path):
         def setObjectName(self, name):
             self.interactor.setObjectName(name)
 
-        def screenshot(self, path):
+        def screenshot(self, path=None, *, return_img=False):
+            if return_img:
+                return np.zeros((12, 16, 3), dtype=np.uint8)
             self.saved_paths.append(path)
 
     monkeypatch.setitem(
@@ -330,6 +401,7 @@ def test_zone_viewer_uses_standard_right_settings_panel(monkeypatch, tmp_path):
         "brillouin_zone_basis_color_mode",
         "brillouin_zone_basis_color",
         "brillouin_zone_basis_thickness",
+        "brillouin_zone_basis_inside_style",
         "brillouin_zone_path_color",
         "brillouin_zone_path_thickness",
         "brillouin_zone_label_font_size",
@@ -347,6 +419,10 @@ def test_zone_viewer_uses_standard_right_settings_panel(monkeypatch, tmp_path):
         "brillouin_zone_projection",
     )
     assert projection.currentData() == "orthographic"
+    assert not window.findChild(
+        QtWidgets.QCheckBox,
+        "brillouin_zone_show_compass",
+    ).isChecked()
     projection.setCurrentIndex(projection.findData("perspective"))
     assert window._nfit_view_options.projection == "perspective"
     window._nfit_copy_figure()

@@ -52,7 +52,13 @@ spherical-harmonic, or custom manifolds with explicit local frames. For an
 $s$, $p$, $d$, or $f$ shell it identifies the selected site's point group and
 can add one calculated symmetry-closed subspace. **Onsite terms** generates the
 complete symmetry-allowed static onsite basis and stores values, bounds, and
-fit selections. **Hoppings** selects a distance cutoff and generates a
+fit selections. **Spin and SOC** keeps an SU(2)-symmetric model spin-implicit
+by default, or opts into an explicit collinear or spinor basis. Adding onsite
+$\lambda\mathbf L\cdot\mathbf S$ automatically selects the spinor
+representation; complete harmonic shells use atomic orbital-angular-momentum
+operators, selected harmonic subspaces use projected operators, and custom
+bases require explicit effective operators through the scripting API.
+**Hoppings** selects a distance cutoff and generates a
 suggestion table of symmetry-allowed matrix terms for each spatial bond orbit.
 Each suggestion identifies its source and destination sites and orbitals. Only
 the rows selected and added by the user become active Hamiltonian terms with
@@ -79,8 +85,18 @@ viewers share a consistent two-column layout with the visualization on the
 left and a fixed-width **Settings** panel on the right. The Brillouin-zone
 panel controls object visibility, vector and path styling, label size, cell
 face and outline styling, camera projection, and viewport copy/save actions.
+The reciprocal vectors may be solid throughout, dashed within the zone, or
+start at its surface. The coordinate compass is hidden by default and uses
+saturated red, green, and blue axes when enabled. Figure copying captures the
+rendered framebuffer rather than another application window.
 The other electronic viewer panels reserve this space for their plot-specific
 controls.
+**Inspect matrices** opens a separate heatmap and exact-element viewer for
+$H(\mathbf k)$, each named parameter basis and contribution, spin operators,
+and representative onsite and hopping matrices. Its right panel summarizes
+nonzero site/manifold/spin subspace blocks, avoiding a large matrix-element
+table in the main model editor. **Copy matrix-viewer script** exports the same
+inspection through the public API.
 The builder and plot actions also expose editable scripts but do not enter a
 fit until a later electronic-response model provides a dataset observable.
 Electronic energy entry and plots default to eV, while the stored canonical

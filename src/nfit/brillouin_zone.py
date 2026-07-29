@@ -38,6 +38,7 @@ class BrillouinZoneViewOptions:
     basis_vector_color_mode: str = "single"
     basis_vector_color: str = "#496A9B"
     basis_vector_thickness: float = 0.006
+    basis_vector_inside_style: str = "solid"
     path_color: str = "#7A1F1F"
     path_thickness: float = 4.0
     label_font_size: int = 14
@@ -48,12 +49,16 @@ class BrillouinZoneViewOptions:
     show_basis_vectors: bool = True
     show_path: bool = True
     show_path_labels: bool = True
-    show_compass: bool = True
+    show_compass: bool = False
     projection: str = "orthographic"
 
     def __post_init__(self) -> None:
         if self.basis_vector_color_mode not in {"single", "rgb"}:
             raise ValueError("basis_vector_color_mode must be 'single' or 'rgb'")
+        if self.basis_vector_inside_style not in {"solid", "dashed", "hidden"}:
+            raise ValueError(
+                "basis_vector_inside_style must be 'solid', 'dashed', or 'hidden'"
+            )
         if self.projection not in {"orthographic", "perspective"}:
             raise ValueError("projection must be 'orthographic' or 'perspective'")
         for name in (

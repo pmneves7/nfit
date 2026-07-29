@@ -36,8 +36,10 @@ invariants, symmetry-constrained hoppings, hopping-path inspection, a shared
 tight-binding/Heisenberg 3D geometry viewer, and a labelled 3D
 Brillouin-zone viewer. Named electronic Hamiltonian terms now share the common
 parameter, bounds, fit-selection, dataset-sharing, report, and script
-machinery. Spin-orbit coupling and optional Slater--Koster parameterizations
-remain later builder stages; optimizer evaluation awaits a compatible
+machinery. Optional explicit collinear and spinor representations,
+manifold-resolved onsite spin-orbit coupling, time-reversal validation, and a
+matrix/subspace inspector are implemented. Slater--Koster parameterizations
+remain a later builder stage; optimizer evaluation awaits a compatible
 electronic-response observable.
 Response stages add the complex bare susceptibility, interaction dressings,
 production fitting, BCS superconductivity, and advanced correlated extensions. Electronic

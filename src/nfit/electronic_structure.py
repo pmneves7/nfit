@@ -1186,6 +1186,8 @@ def tight_binding_structure_script(
     onsite_terms: Sequence[Mapping[str, Any]] = (),
     hopping_cutoff_angstrom: float | None = None,
     hopping_terms: Sequence[Mapping[str, Any]] = (),
+    spin_treatment: str = "auto",
+    soc_terms: Sequence[Mapping[str, Any]] = (),
     parameter_values_meV: Mapping[str, float] | None = None,
     fit_parameters: Mapping[str, bool] | None = None,
     parameter_limits_meV: Mapping[str, Sequence[float | None]] | None = None,
@@ -1249,6 +1251,7 @@ def tight_binding_structure_script(
                 f"orbital_manifolds = {pformat(list(orbital_manifolds), sort_dicts=True)}",
                 f"onsite_terms = {pformat(list(onsite_terms), sort_dicts=True)}",
                 f"hopping_terms = {pformat(list(hopping_terms), sort_dicts=True)}",
+                f"soc_terms = {pformat(list(soc_terms), sort_dicts=True)}",
                 "electronic_model = configure_tight_binding_builder(",
                 "    model,",
                 "    manifolds=orbital_manifolds,",
@@ -1258,6 +1261,8 @@ def tight_binding_structure_script(
                     f"{None if hopping_cutoff_angstrom is None else float(hopping_cutoff_angstrom)!r},"
                 ),
                 "    hopping_terms=hopping_terms,",
+                f"    spin_treatment={str(spin_treatment)!r},",
+                "    soc_terms=soc_terms,",
                 ")",
             ]
         )

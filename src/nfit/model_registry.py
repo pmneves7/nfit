@@ -1286,6 +1286,28 @@ def _register_builtin_models() -> None:
                     "[]",
                 ),
                 _config_field(
+                    "spin_treatment",
+                    "auto",
+                    (
+                        "Requested spin representation. Auto keeps spin "
+                        "implicit unless active SOC requires a full spinor basis."
+                    ),
+                    "One of auto, implicit, collinear, or spinor.",
+                    "str",
+                    "auto",
+                ),
+                _config_field(
+                    "soc_terms",
+                    [],
+                    (
+                        "Optional manifold-resolved onsite lambda L.S terms "
+                        "with canonical meV coefficients."
+                    ),
+                    "A list of SpinOrbitTerm dictionaries.",
+                    "list",
+                    "[]",
+                ),
+                _config_field(
                     "onsite_terms",
                     [],
                     (

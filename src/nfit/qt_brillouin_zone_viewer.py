@@ -27,6 +27,48 @@ def _zone_mesh(scene: BrillouinZoneScene) -> Any:
     )
 
 
+def _basis_vector_surface_fraction(
+    scene: BrillouinZoneScene,
+    vector: Any,
+) -> float:
+    """Return where a ray from Gamma first exits the convex zone."""
+
+    from scipy.spatial import ConvexHull
+
+    direction = np.asarray(vector, dtype=float)
+    hull = ConvexHull(np.asarray(scene.vertices_inv_angstrom, dtype=float))
+    denominators = hull.equations[:, :3] @ direction
+    active = denominators > 1.0e-12
+    if not np.any(active):
+        raise ValueError("reciprocal vector does not exit the Brillouin zone")
+    fractions = -hull.equations[active, 3] / denominators[active]
+    positive = fractions[fractions >= 0.0]
+    if not len(positive):
+        raise ValueError("could not locate the Brillouin-zone surface")
+    return float(np.min(positive))
+
+
+def _dashed_segments(
+    start: Any,
+    stop: Any,
+    *,
+    dash_count: int = 7,
+) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
+    beginning = np.asarray(start, dtype=float)
+    ending = np.asarray(stop, dtype=float)
+    result = []
+    for index in range(int(dash_count)):
+        left = (2.0 * index) / (2.0 * dash_count - 1.0)
+        right = (2.0 * index + 1.0) / (2.0 * dash_count - 1.0)
+        result.append(
+            (
+                beginning + left * (ending - beginning),
+                beginning + min(right, 1.0) * (ending - beginning),
+            )
+        )
+    return tuple(result)
+
+
 def _render_brillouin_zone(
     plotter: Any,
     scene: BrillouinZoneScene,
@@ -95,15 +137,36 @@ def _render_brillouin_zone(
             if settings.basis_vector_color_mode == "rgb"
             else (settings.basis_vector_color,) * 3
         )
-        labels = ("b1", "b2", "b3")
+        labels = ("b₁", "b₂", "b₃")
         endpoints = []
         for vector, color in zip(reciprocal, colors, strict=True):
             endpoints.append(vector)
+            surface_fraction = _basis_vector_surface_fraction(scene, vector)
+            surface = surface_fraction * vector
+            arrow_start = (
+                np.zeros(3)
+                if settings.basis_vector_inside_style == "solid"
+                else surface
+            )
+            if settings.basis_vector_inside_style == "dashed":
+                for dash_start, dash_stop in _dashed_segments(
+                    np.zeros(3),
+                    surface,
+                ):
+                    plotter.add_mesh(
+                        pv.Line(dash_start, dash_stop),
+                        color=color,
+                        line_width=max(
+                            1.0,
+                            800.0 * settings.basis_vector_thickness,
+                        ),
+                    )
+            arrow_vector = vector - arrow_start
             plotter.add_mesh(
                 pv.Arrow(
-                    start=(0.0, 0.0, 0.0),
-                    direction=vector,
-                    scale=float(np.linalg.norm(vector)),
+                    start=arrow_start,
+                    direction=arrow_vector,
+                    scale=float(np.linalg.norm(arrow_vector)),
                     tip_length=0.09,
                     tip_radius=3.0 * settings.basis_vector_thickness,
                     shaft_radius=settings.basis_vector_thickness,
@@ -123,7 +186,12 @@ def _render_brillouin_zone(
     if hasattr(plotter, "hide_axes"):
         plotter.hide_axes()
     if settings.show_compass:
-        plotter.add_axes(color="black")
+        plotter.add_axes(
+            x_color="#FF0000",
+            y_color="#00A000",
+            z_color="#0000FF",
+            label_color="black",
+        )
     if settings.projection == "orthographic":
         if hasattr(plotter, "enable_parallel_projection"):
             plotter.enable_parallel_projection()
@@ -291,6 +359,24 @@ def _populate_settings_panel(
     vectors_layout.addRow("Colors", color_mode)
     vectors_layout.addRow("Single color", vector_color)
     vectors_layout.addRow("Thickness", vector_thickness)
+    inside_style = QtWidgets.QComboBox()
+    inside_style.setObjectName("brillouin_zone_basis_inside_style")
+    inside_style.setToolTip(
+        "Choose whether reciprocal vectors are solid from Gamma, dashed "
+        "inside the Wigner–Seitz cell, or begin at its surface."
+    )
+    inside_style.addItem("Solid throughout", "solid")
+    inside_style.addItem("Dashed inside cell", "dashed")
+    inside_style.addItem("Start at cell surface", "hidden")
+    inside_style.setCurrentIndex(
+        max(0, inside_style.findData(initial.basis_vector_inside_style))
+    )
+    inside_style.currentIndexChanged.connect(
+        lambda _index: update(
+            basis_vector_inside_style=str(inside_style.currentData())
+        )
+    )
+    vectors_layout.addRow("Inside cell", inside_style)
     layout.addWidget(vectors)
 
     path = QtWidgets.QGroupBox("Path and labels")
@@ -416,7 +502,7 @@ def show_brillouin_zone_scene(
 ) -> Any:
     """Open an interactively styled Qt window for a precomputed zone scene."""
 
-    from PySide6 import QtWidgets
+    from PySide6 import QtCore, QtGui, QtWidgets
     from pyvistaqt import QtInteractor
 
     application = QtWidgets.QApplication.instance()
@@ -450,9 +536,29 @@ def show_brillouin_zone_scene(
             if hasattr(plotter, "render"):
                 plotter.render()
         window._nfit_view_options = updated
+        if window.isVisible():
+            window.raise_()
+            window.activateWindow()
+            QtCore.QTimer.singleShot(0, window.raise_)
 
     def copy_figure() -> None:
-        QtWidgets.QApplication.clipboard().setPixmap(plotter.interactor.grab())
+        image = np.ascontiguousarray(plotter.screenshot(return_img=True))
+        if image.ndim != 3 or image.shape[2] not in (3, 4):
+            raise ValueError("PyVista returned an unsupported screenshot format")
+        height, width, channels = image.shape
+        image_format = (
+            QtGui.QImage.Format.Format_RGB888
+            if channels == 3
+            else QtGui.QImage.Format.Format_RGBA8888
+        )
+        qimage = QtGui.QImage(
+            image.data,
+            width,
+            height,
+            int(image.strides[0]),
+            image_format,
+        ).copy()
+        QtWidgets.QApplication.clipboard().setImage(qimage)
 
     def save_figure() -> None:
         path, _selected = QtWidgets.QFileDialog.getSaveFileName(
