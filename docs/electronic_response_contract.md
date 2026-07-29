@@ -218,7 +218,10 @@ Manual tight-binding construction may reuse the Heisenberg RPA crystal, site
 expansion, symmetry, and bond-orbit machinery for orbital locations and
 symmetry-related hoppings. The shared part is geometry and orbit generation:
 a hopping may be a directed complex matrix between orbital subspaces, so it is
-not represented as a scalar Heisenberg exchange constant.
+not represented as a scalar Heisenberg exchange constant. The planned
+structure-first GUI, orbital representations, onsite invariants, hopping
+covariance, fitting boundary, and SOC stages are specified in the
+[Tight-binding model-builder plan](tight_binding_builder_plan.md).
 
 Band paths and Brillouin-zone meshes use one serializable wavevector-sampling
 interface with different configurations. An ordered path carries segment

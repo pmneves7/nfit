@@ -26,6 +26,8 @@ correlated-electron responses remain planned. Their conventions, initial
 scope, provenance requirements, dependency policy, validation matrix, and
 stage gates are fixed in the
 [Electronic-response design contract](electronic_response_contract.md).
+The CIF-to-orbital manual construction workflow is specified separately in the
+[Tight-binding model-builder plan](tight_binding_builder_plan.md).
 
 The shared model registry, generalized paramagnon/damped-mode response, and
 arbitrary tight-binding electronic-structure layer are implemented. Subsequent
