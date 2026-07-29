@@ -68,6 +68,36 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
             QtWidgets.QPushButton, "tight_binding_structure_script"
         ).toolTip()
     )
+    unit_combo = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox, "tight_binding_energy_unit"
+    )
+    chemical_editor = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "model_config_chemical_potential_meV"
+    )
+    dos_min_editor = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "model_config_dos_energy_min_meV"
+    )
+    assert unit_combo is not None and unit_combo.currentData() == "eV"
+    assert "canonical" in unit_combo.toolTip()
+    assert chemical_editor is not None and chemical_editor.toolTip()
+    assert float(dos_min_editor.text()) == pytest.approx(-0.5)
+    chemical_editor.setText("0.0125")
+    chemical_editor.editingFinished.emit()
+    assert model.config["chemical_potential_meV"] == pytest.approx(12.5)
+
+    unit_combo = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox, "tight_binding_energy_unit"
+    )
+    unit_combo.setCurrentIndex(unit_combo.findData("meV"))
+    assert model.config["electronic_energy_unit"] == "meV"
+    chemical_editor = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "model_config_chemical_potential_meV"
+    )
+    dos_min_editor = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "model_config_dos_energy_min_meV"
+    )
+    assert float(chemical_editor.text()) == pytest.approx(12.5)
+    assert float(dos_min_editor.text()) == pytest.approx(-500.0)
     element = explorer.model_parameter_widget.findChild(
         QtWidgets.QLineEdit, "model_crystal_site_element_0"
     )
@@ -84,10 +114,13 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
     from nfit import tight_binding_structure_script
 
     script = tight_binding_structure_script(
-        model.config["crystal"], model.config["periodic_axes"] or [0, 1, 2]
+        model.config["crystal"],
+        model.config["periodic_axes"] or [0, 1, 2],
+        electronic_energy_unit=model.config["electronic_energy_unit"],
     )
     assert "crystal_from_cif" not in script
     assert "'element': 'Co'" in script
+    assert "set_electronic_energy_unit(model, 'meV')" in script
     explorer.has_unsaved_changes = False
     explorer.window.close()
 
@@ -139,12 +172,14 @@ M1 Fe 0.125 0.250 0.375
         restored_model.config["periodic_axes"],
         group_name="Electronic",
         model_name="bands",
+        electronic_energy_unit=restored_model.config["electronic_energy_unit"],
     )
     namespace = {}
     exec(compile(script, "<tight-binding-structure>", "exec"), namespace)
     scripted = namespace["model"]
     assert scripted.config["crystal"] == imported
     assert scripted.config["periodic_axes"] == [0, 1, 2]
+    assert scripted.config["electronic_energy_unit"] == "eV"
 
 
 def test_heisenberg_rpa_editor_generates_orbits_and_round_trips(monkeypatch, tmp_path):

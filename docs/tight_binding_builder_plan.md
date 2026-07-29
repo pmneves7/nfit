@@ -6,9 +6,10 @@ models. The detailed current behavior is documented on
 
 Stage 3.1 is implemented: the GUI and public API share CIF import, editable
 crystal geometry, site expansion, spatial bond-orbit geometry, project
-serialization, and structure-script export. Orbital assignment begins in
-Stage 3.2; the later sections on onsite terms, hoppings, fitting, and SOC
-remain planned.
+serialization, structure-script export, and an eV-default electronic input and
+plot unit backed by canonical meV storage. Orbital assignment begins in Stage
+3.2; the later sections on onsite terms, hoppings, fitting, and SOC remain
+planned.
 
 ## Goal
 
@@ -77,10 +78,11 @@ H_{\mathrm{onsite}}
 $$
 
 $P_p$ is a symmetry-allowed Hermitian matrix and $\epsilon_p$ is a named
-energy in meV. One parameter is created for each independent onsite invariant.
-An explicitly declared degeneracy group shares one parameter, but the builder
-must reject a requested degeneracy that conflicts with the selected
-site-symmetry representation.
+energy. It is entered in the model's electronic energy unit, which defaults to
+eV, and converted once to canonical meV. One parameter is created for each
+independent onsite invariant. An explicitly declared degeneracy group shares
+one parameter, but the builder must reject a requested degeneracy that
+conflicts with the selected site-symmetry representation.
 
 A frequency-dependent self-energy
 $\Sigma_{ab}(\mathbf k,E)$ belongs to a later correlated-electron layer. It
@@ -119,8 +121,9 @@ $$
 T_{\mathrm{rep}}=\sum_p t_p B_p.
 $$
 
-Each coefficient $t_p$ is a named energy parameter that is fixed by default
-and may be opted into fitting. This gives:
+Each coefficient $t_p$ is a named energy parameter in the selected electronic
+input unit. It is fixed by default, stored canonically in meV, and may be opted
+into fitting. This gives:
 
 - one scalar nearest-neighbor parameter for a one-orbital manifold;
 - independent intra- and inter-manifold hopping or hybridization when
@@ -144,9 +147,10 @@ $$
 
 Enabling it expands a spinless orbital manifold into a spinor basis, constructs
 $\mathbf L$ in the declared orbital convention and local frame, and adds a
-named $\lambda$ parameter in meV. The generated Hamiltonian and spin operators
-must use the same basis ordering. Custom orbital manifolds require explicit
-angular-momentum matrices before SOC can be enabled.
+named $\lambda$ parameter in the electronic input unit, stored canonically in
+meV. The generated Hamiltonian and spin operators must use the same basis
+ordering. Custom orbital manifolds require explicit angular-momentum matrices
+before SOC can be enabled.
 
 SOC is a separate implementation stage because it changes symmetry from
 single-valued orbital representations to spinor representations and may

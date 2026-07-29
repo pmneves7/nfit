@@ -77,13 +77,24 @@ All numerical kernels use the conventions on
 
 - neutron energy transfer is $E=E_i-E_f$ in meV, with $E>0$ for neutron energy
   loss;
-- electronic eigenvalues, chemical potentials, broadenings, hoppings, and
-  interaction energies are converted to meV on import;
+- electronic inputs and plots use a declared display unit, normally eV, while
+  eigenvalues, chemical potentials, hoppings, self-energies, and interaction
+  energies are converted once to canonical meV when a model is built or
+  imported;
 - direct-space vectors are in Å and physical reciprocal vectors are in
   Å$^{-1}$;
 - reduced reciprocal coordinates $\mathbf k$, $\mathbf q$, and
   $\mathbf Q=(H,K,L)$ are dimensionless; and
 - temperature is in K.
+
+The manual electronic builder exposes `energy_unit` and defaults it to eV;
+scripts should pass it explicitly when their source could use another
+convention. Unit-neutral package adapters must require an explicit unit. The
+GUI defaults that choice to eV. Canonical serialization and all response
+kernels remain in meV, so products such as $U\chi^0$ use $U$ in meV and
+$\chi^0$ in meV$^{-1}$. Rendering may convert a canonical result to eV; for a
+density of states it converts both the energy axis and the states-per-energy
+ordinate so the integrated state count is unchanged.
 
 Basis vectors are stored as columns. If $A$ is the direct-lattice matrix, then
 
@@ -185,7 +196,9 @@ The ordered operator basis, multiplication order, vertex sign, and channel
 must be stored with every result. A scalar Stoner model is the one-operator
 limit. Hubbard--Hund parameters belong to the interaction object, not to
 $H_0$, unless a separately named electronic-renormalization step applies a
-mean field or correlated-band correction.
+mean field or correlated-band correction. Their input and report unit follows
+the electronic model, normally eV, while the interaction object stores
+canonical meV before combining them with $\boldsymbol\chi^0$.
 
 The physical spin response is
 

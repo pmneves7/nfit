@@ -18,6 +18,8 @@ from nfit import (
     calculate_bands,
     create_model_component,
     density_of_states,
+    electronic_energy_from_meV,
+    electronic_energy_to_meV,
     fermi_surface,
     import_wannier90,
     k_mesh,
@@ -39,6 +41,7 @@ def _chain_model(*, hopping=-100.0, onsite=0.0):
         },
         orbital_centers=[[0.25, 0.0, 0.0]],
         periodic_axes=(0,),
+        energy_unit="meV",
     )
 
 
@@ -58,6 +61,7 @@ def _square_two_orbital_model():
         },
         orbital_centers=[[0.0, 0.0, 0.0], [0.5, 0.5, 0.0]],
         periodic_axes=(0, 1),
+        energy_unit="meV",
     )
 
 
@@ -151,6 +155,7 @@ def test_basis_permutation_and_orbital_origin_do_not_change_bands():
         },
         orbital_centers=model.orbital_centers[permutation] + [0.2, -0.1, 0.0],
         periodic_axes=model.periodic_axes,
+        energy_unit="meV",
     )
     wavevectors = np.array([[0.13, 0.27, 0.0], [0.4, 0.1, 0.0]])
 
@@ -168,14 +173,51 @@ def test_named_hopping_parameters_return_new_models():
         periodic_axes=(0,),
         parameter_values={"t": -10.0},
         parameter_hoppings={"t": {(1, 0, 0): [[1.0]]}},
+        energy_unit="meV",
     )
-    changed = model.with_parameters(t=-20.0)
+    changed = model.with_parameters(t=-20.0, energy_unit="meV")
 
     assert model.parameter_values["t"] == -10.0
     assert changed.parameter_values["t"] == -20.0
     assert np.linalg.eigvalsh(model.hamiltonian([0.0, 0.0, 0.0]))[0] == -15.0
     assert np.linalg.eigvalsh(changed.hamiltonian([0.0, 0.0, 0.0]))[0] == -35.0
     assert changed.content_digest != model.content_digest
+
+
+def test_manual_builder_converts_declared_electronic_units_once():
+    ev_model = build_electronic_model(
+        direct_lattice=np.eye(3),
+        basis=["s"],
+        hoppings={(0, 0, 0): [[0.012]], (1, 0, 0): [[-0.1]]},
+        periodic_axes=(0,),
+        parameter_values={"shift": 0.003},
+        parameter_hoppings={"shift": {(0, 0, 0): [[1.0]]}},
+        energy_unit="eV",
+        energy_zero=0.004,
+    )
+    mev_model = build_electronic_model(
+        direct_lattice=np.eye(3),
+        basis=["s"],
+        hoppings={(0, 0, 0): [[12.0]], (1, 0, 0): [[-100.0]]},
+        periodic_axes=(0,),
+        parameter_values={"shift": 3.0},
+        parameter_hoppings={"shift": {(0, 0, 0): [[1.0]]}},
+        energy_unit="meV",
+        energy_zero=4.0,
+    )
+
+    assert ev_model.content_digest == mev_model.content_digest
+    assert ev_model.parameter_values["shift"] == 3.0
+    assert ev_model.energy_zero_meV == 4.0
+    assert ev_model.provenance["source_energy_unit"] == "eV"
+    assert ev_model.provenance["canonical_energy_unit"] == "meV"
+    assert ev_model.to_dict()["canonical_energy_unit"] == "meV"
+    changed = ev_model.with_parameters(shift=0.005, energy_unit="eV")
+    assert changed.parameter_values["shift"] == 5.0
+    assert electronic_energy_to_meV(0.25, "eV") == 250.0
+    assert electronic_energy_from_meV(250.0, "eV") == 0.25
+    with pytest.raises(ValueError, match="eV.*meV"):
+        electronic_energy_to_meV(1.0, "joule")
 
 
 def test_fermi_surfaces_cover_one_and_two_dimensions():
@@ -209,6 +251,7 @@ def test_three_dimensional_fermi_surface_is_triangulated():
             (0, 1, 0): [[-1.0]],
             (0, 0, 1): [[-1.0]],
         },
+        energy_unit="meV",
     )
     result = fermi_surface(model, (10, 10, 10), target_energy_meV=0.0)
 
@@ -283,6 +326,7 @@ def test_wannier90_hr_import_converts_units_centres_and_provenance(tmp_path):
     )[:, 0]
     np.testing.assert_allclose(energies, [-188.0, 212.0])
     assert model.provenance["energy_conversion"] == "eV to meV (x1000)"
+    assert model.provenance["canonical_energy_unit"] == "meV"
     assert {item["role"] for item in model.provenance["files"]} == {
         "wannier90_hr",
         "wannier90_input",
@@ -374,8 +418,19 @@ def test_tight_binding_registry_plots_and_scripts_are_component_driven():
     for plot in definition.plots:
         result = plot.calculate(component)
         assert result.model_digest == model.content_digest
-        figure, _axes = plot.render(result)
+        assert result.provenance["display_energy_unit"] == "eV"
+        figure, axes = plot.render(result)
         assert figure.axes
+        if plot.key == "bands":
+            assert "(eV)" in axes.get_ylabel()
+        elif plot.key == "dos":
+            assert "(eV)" in axes.get_xlabel()
+            assert "states / eV" in axes.get_ylabel()
+            np.testing.assert_allclose(
+                axes.lines[0].get_ydata(), result.total_per_meV_cell * 1000.0
+            )
+        else:
+            assert "eV" in axes.get_title()
         plt.close(figure)
         script = plot.script(component)
         namespace = {}
@@ -389,6 +444,16 @@ def test_tight_binding_registry_plots_and_scripts_are_component_driven():
         assert namespace["result"].model_digest == result.model_digest
         plt.close(namespace["figure"])
         assert "model = ElectronicModel.from_dict" in script
+        assert "energy_unit = 'eV'" in script
+        assert "electronic_energy_to_meV" in script
+
+    component.config["electronic_energy_unit"] = "meV"
+    result = definition.plots[0].calculate(component)
+    figure, axis = definition.plots[0].render(result)
+    assert result.provenance["display_energy_unit"] == "meV"
+    assert "(meV)" in axis.get_ylabel()
+    plt.close(figure)
+    assert "energy_unit = 'meV'" in definition.plots[0].script(component)
 
 
 def test_manual_electronic_model_reopens_from_a_project(tmp_path):

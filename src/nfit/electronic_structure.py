@@ -27,6 +27,49 @@ from numpy.typing import ArrayLike, NDArray
 
 FloatArray = NDArray[np.float64]
 ComplexArray = NDArray[np.complex128]
+ELECTRONIC_ENERGY_UNITS = ("eV", "meV")
+
+
+def normalize_electronic_energy_unit(unit: str) -> Literal["eV", "meV"]:
+    """Return the canonical spelling of a supported electronic energy unit."""
+
+    normalized = str(unit).strip().casefold()
+    if normalized == "ev":
+        return "eV"
+    if normalized == "mev":
+        return "meV"
+    raise ValueError("electronic energy unit must be 'eV' or 'meV'")
+
+
+def electronic_energy_to_meV(values: ArrayLike, unit: str) -> float | FloatArray:
+    """Convert explicitly declared electronic energies to canonical meV."""
+
+    canonical = normalize_electronic_energy_unit(unit)
+    result = np.asarray(values, dtype=float) * (1000.0 if canonical == "eV" else 1.0)
+    if result.ndim == 0:
+        return float(result)
+    return result
+
+
+def electronic_energy_from_meV(values: ArrayLike, unit: str) -> float | FloatArray:
+    """Convert canonical meV energies to an electronic input or display unit."""
+
+    canonical = normalize_electronic_energy_unit(unit)
+    result = np.asarray(values, dtype=float) / (1000.0 if canonical == "eV" else 1.0)
+    if result.ndim == 0:
+        return float(result)
+    return result
+
+
+def set_electronic_energy_unit(component: Any, unit: str) -> str:
+    """Set a component's electronic input/display unit without rescaling data."""
+
+    canonical = normalize_electronic_energy_unit(unit)
+    config = getattr(component, "config", None)
+    if not isinstance(config, dict):
+        raise TypeError("component must provide a mutable config dictionary")
+    config["electronic_energy_unit"] = canonical
+    return canonical
 
 
 def _readonly(array: ArrayLike, dtype: Any) -> np.ndarray:
@@ -114,7 +157,7 @@ class BasisState:
 
 @dataclass(frozen=True)
 class ElectronicModel:
-    """Immutable orthonormal tight-binding Hamiltonian in the Wannier gauge."""
+    """Immutable orthonormal tight-binding Hamiltonian, canonically in meV."""
 
     direct_lattice: FloatArray
     basis: tuple[BasisState, ...]
@@ -258,14 +301,21 @@ class ElectronicModel:
                     f"{label}(-R) = {label}(R)^dagger is violated for R={vector}"
                 )
 
-    def with_parameters(self, **values: float) -> ElectronicModel:
-        """Return a new immutable model with updated named hopping parameters."""
+    def with_parameters(
+        self, *, energy_unit: str, **values: float
+    ) -> ElectronicModel:
+        """Return a model with named hopping parameters converted from ``energy_unit``."""
 
         unknown = set(values) - set(self.parameter_values)
         if unknown:
             raise KeyError(f"unknown electronic-model parameter {sorted(unknown)[0]!r}")
         updated = dict(self.parameter_values)
-        updated.update({name: float(value) for name, value in values.items()})
+        updated.update(
+            {
+                name: float(electronic_energy_to_meV(value, energy_unit))
+                for name, value in values.items()
+            }
+        )
         return replace(self, parameter_values=updated)
 
     def hamiltonian(self, reduced_k: ArrayLike) -> ComplexArray:
@@ -326,12 +376,16 @@ class ElectronicModel:
 
     def to_dict(self) -> dict[str, Any]:
         payload = self._scientific_payload()
+        payload["canonical_energy_unit"] = "meV"
         payload["provenance"] = _thaw(self.provenance)
         payload["content_digest"] = self.content_digest
         return payload
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> ElectronicModel:
+        unit = str(payload.get("canonical_energy_unit", "meV"))
+        if normalize_electronic_energy_unit(unit) != "meV":
+            raise ValueError("serialized electronic models must use canonical meV")
         model = cls(
             direct_lattice=np.asarray(payload["direct_lattice"], dtype=float),
             basis=tuple(BasisState.from_dict(item) for item in payload["basis"]),
@@ -378,17 +432,22 @@ def build_electronic_model(
         str, Mapping[tuple[int, int, int], ArrayLike]
     ] | None = None,
     spin_operators: ArrayLike | None = None,
-    energy_zero_meV: float = 0.0,
+    energy_unit: str = "eV",
+    energy_zero: float = 0.0,
     add_hermitian_conjugates: bool = True,
     provenance: Mapping[str, Any] | None = None,
 ) -> ElectronicModel:
-    """Build a general manual model from real-space Hamiltonian blocks.
+    """Build a manual model, converting declared input energies to meV.
 
     Missing nonzero ``-R`` blocks are generated when
     ``add_hermitian_conjugates`` is true. Explicit inconsistent partners and a
-    non-Hermitian onsite block always raise an error.
+    non-Hermitian onsite block always raise an error. ``hoppings``,
+    ``parameter_values``, and ``energy_zero`` use ``energy_unit``; parameter
+    hopping blocks are dimensionless selectors.
     """
 
+    input_unit = normalize_electronic_energy_unit(energy_unit)
+    scale_to_meV = 1000.0 if input_unit == "eV" else 1.0
     states = tuple(
         item
         if isinstance(item, BasisState)
@@ -398,13 +457,17 @@ def build_electronic_model(
         for item in basis
     )
     n_basis = len(states)
+
     def _blocks(
-        raw: Mapping[tuple[int, int, int], ArrayLike], label: str
+        raw: Mapping[tuple[int, int, int], ArrayLike],
+        label: str,
+        *,
+        energy_scale: float = 1.0,
     ) -> dict[tuple[int, int, int], ComplexArray]:
         result = {
             tuple(int(value) for value in vector): np.asarray(
                 matrix, dtype=np.complex128
-            )
+            ) * energy_scale
             for vector, matrix in raw.items()
         }
         for vector, matrix in list(result.items()):
@@ -420,13 +483,14 @@ def build_electronic_model(
                 result[partner] = matrix.conj().T
         return result
 
-    blocks = _blocks(hoppings, "hopping")
+    blocks = _blocks(hoppings, "hopping", energy_scale=scale_to_meV)
     parameter_maps = {
         str(name): _blocks(terms, f"parameter {name!r}")
         for name, terms in (parameter_hoppings or {}).items()
     }
     values = {
-        str(name): float(value) for name, value in (parameter_values or {}).items()
+        str(name): float(electronic_energy_to_meV(value, input_unit))
+        for name, value in (parameter_values or {}).items()
     }
     if set(values) != set(parameter_maps):
         raise ValueError("parameter_values and parameter_hoppings must have the same keys")
@@ -441,6 +505,18 @@ def build_electronic_model(
         resolved_weights[key] = float(
             weight_map.get(key, weight_map.get(partner, 1.0))
         )
+    source_provenance = dict(provenance or {"source": "manual"})
+    source_provenance.update(
+        {
+            "source_energy_unit": input_unit,
+            "canonical_energy_unit": "meV",
+            "energy_conversion": (
+                "eV to meV (x1000)"
+                if input_unit == "eV"
+                else "meV to meV (x1)"
+            ),
+        }
+    )
     return ElectronicModel(
         direct_lattice=np.asarray(direct_lattice, dtype=float),
         basis=states,
@@ -463,8 +539,8 @@ def build_electronic_model(
         spin_operators=(
             None if spin_operators is None else np.asarray(spin_operators)
         ),
-        energy_zero_meV=float(energy_zero_meV),
-        provenance=dict(provenance or {"source": "manual"}),
+        energy_zero_meV=float(electronic_energy_to_meV(energy_zero, input_unit)),
+        provenance=source_provenance,
     )
 
 
@@ -1074,6 +1150,7 @@ def tight_binding_structure_script(
     *,
     group_name: str = "Electronic",
     model_name: str = "tight_binding",
+    electronic_energy_unit: str = "eV",
 ) -> str:
     """Return an editable script that rebuilds tight-binding crystal geometry."""
 
@@ -1082,6 +1159,7 @@ def tight_binding_structure_script(
     payload = deepcopy(dict(crystal))
     validate_crystal(payload)
     axes = tuple(int(axis) for axis in periodic_axes)
+    display_unit = normalize_electronic_energy_unit(electronic_energy_unit)
     if not axes or len(set(axes)) != len(axes) or any(
         axis not in (0, 1, 2) for axis in axes
     ):
@@ -1091,7 +1169,10 @@ def tight_binding_structure_script(
     lines = [
         '"""Rebuild tight-binding crystal geometry without GUI state."""',
         "",
-        "from nfit import DataGroup, create_model_component, set_model_crystal",
+        (
+            "from nfit import (DataGroup, create_model_component, "
+            "set_electronic_energy_unit, set_model_crystal)"
+        ),
     ]
     provenance = payload.get("provenance", {})
     if (
@@ -1117,6 +1198,7 @@ def tight_binding_structure_script(
             f"group = DataGroup({str(group_name)!r})",
             f"model = create_model_component(group, {str(model_name)!r}, type='tight_binding')",
             f"set_model_crystal(model, crystal, group=group, periodic_axes={axes!r})",
+            f"set_electronic_energy_unit(model, {display_unit!r})",
             "",
         ]
     )
@@ -1401,6 +1483,7 @@ def import_wannier90(
             "nfit_version": _nfit_version(),
             "format": "tb.dat" if is_tb else "hr.dat",
             "source_energy_unit": "eV",
+            "canonical_energy_unit": "meV",
             "energy_conversion": "eV to meV (x1000)",
             "source_fourier_gauge": "wannier",
             "canonical_fourier_gauge": "wannier",

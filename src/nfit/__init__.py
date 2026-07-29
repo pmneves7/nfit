@@ -68,6 +68,7 @@ from .crystal import (
 )
 from .dataset import PointData4D, PointListData, from_arrays
 from .electronic_structure import (
+    ELECTRONIC_ENERGY_UNITS,
     BandResult,
     BasisState,
     DensityOfStatesResult,
@@ -79,11 +80,15 @@ from .electronic_structure import (
     build_electronic_model,
     calculate_bands,
     density_of_states,
+    electronic_energy_from_meV,
+    electronic_energy_to_meV,
     fermi_surface,
     import_wannier90,
     k_mesh,
     load_electronic_model,
+    normalize_electronic_energy_unit,
     save_electronic_model,
+    set_electronic_energy_unit,
     tight_binding_structure_script,
 )
 from .fit_config import (
@@ -423,6 +428,9 @@ __all__ = [
     "debye_heat_capacity",
     "debye_temperature_from_beta",
     "density_of_states",
+    "electronic_energy_from_meV",
+    "electronic_energy_to_meV",
+    "ELECTRONIC_ENERGY_UNITS",
     "fermi_surface",
     "quasistatic_cross_section_from_chi",
     "FitResult",
@@ -554,6 +562,8 @@ __all__ = [
     "available_rpa_backends",
     "build_rpa_geometry",
     "build_electronic_model",
+    "normalize_electronic_energy_unit",
+    "set_electronic_energy_unit",
     "band_path",
     "calculate_bands",
     "heisenberg_rpa_chipp",

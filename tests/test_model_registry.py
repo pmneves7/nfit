@@ -152,6 +152,26 @@ def test_scalar_bulk_models_reject_invalid_normalization(model_type):
         nfit.validate_model_component(component)
 
 
+def test_tight_binding_registry_validates_energy_unit_and_canonical_window():
+    config = default_model_config("tight_binding")
+    assert config["electronic_energy_unit"] == "eV"
+    component = ModelComponentSpec(
+        name="bands",
+        type="tight_binding",
+        config=config,
+    )
+    nfit.validate_model_component(component)
+
+    component.config["electronic_energy_unit"] = "joule"
+    with pytest.raises(ValueError, match="eV.*meV"):
+        nfit.validate_model_component(component)
+    component.config["electronic_energy_unit"] = "meV"
+    component.config["dos_energy_min_meV"] = 10.0
+    component.config["dos_energy_max_meV"] = -10.0
+    with pytest.raises(ValueError, match="dos_energy_min_meV"):
+        nfit.validate_model_component(component)
+
+
 def test_registered_model_drives_creation_diagnostics_plots_and_serialization():
     key = "_registry_contract_test"
 

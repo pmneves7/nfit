@@ -231,6 +231,29 @@ def _electronic_structure_factory(component: Any) -> ModelFunction:
     return model
 
 
+def _validate_tight_binding_config(component: Any) -> None:
+    """Validate canonical electronic energies and the presentation unit."""
+
+    from .electronic_structure import normalize_electronic_energy_unit
+
+    config = component.config
+    normalize_electronic_energy_unit(config.get("electronic_energy_unit", "eV"))
+    energy_names = (
+        "chemical_potential_meV",
+        "dos_energy_min_meV",
+        "dos_energy_max_meV",
+        "dos_broadening_meV",
+        "fermi_energy_meV",
+    )
+    energies = {name: float(config.get(name, 0.0)) for name in energy_names}
+    if any(not np.isfinite(value) for value in energies.values()):
+        raise ValueError("tight-binding canonical energy settings must be finite")
+    if energies["dos_energy_min_meV"] >= energies["dos_energy_max_meV"]:
+        raise ValueError("dos_energy_min_meV must be below dos_energy_max_meV")
+    if energies["dos_broadening_meV"] <= 0.0:
+        raise ValueError("dos_broadening_meV must be positive")
+
+
 ISOTROPIC_POLARIZATION = 2.0
 """Polarization factor for one component of an isotropic susceptibility.
 

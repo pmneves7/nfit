@@ -6,6 +6,22 @@ calculates bands, orbital projections, density of states, and Fermi surfaces.
 It does not assume a particular lattice, material, orbital count, or spin
 layout.
 
+## Energy units
+
+Electronic inputs and plots default to eV. The canonical `ElectronicModel`
+stores every Hamiltonian, eigenvalue, chemical potential, and electronic
+interaction energy in meV so it can feed neutron-response calculations without
+another unit boundary. Conversion occurs once when a model is built or
+imported and is recorded in provenance.
+
+The GUI has one **Electronic energy unit** selector for coherent electronic
+settings. Changing it between eV and meV changes entry fields and electronic
+plot labels, but not stored physical values. Low-level calculation arguments
+whose names end in `_meV` are canonical and are never interpreted in the
+display unit. Unit-neutral package adapters must declare their input unit;
+manual scripts should pass it explicitly whenever the source convention may
+not be eV. nfit does not guess from magnitude.
+
 ## Response
 
 Let $\lvert\mathbf R,b\rangle$ be orthonormal basis orbital $b$ in the cell
@@ -92,7 +108,8 @@ not assigned from band order or energy.
 
 Stage 3 has no optimizer-facing fit parameters. It does support named linear
 Hamiltonian terms, but fitting those terms begins when a dataset observable is
-available. All energies below are in meV.
+available. Canonical-model fields below are in meV; manual-builder inputs use
+their declared `energy_unit`.
 
 ### Basis-state fields
 
@@ -119,14 +136,15 @@ from their spelling.
 | `direct_lattice` | $3\times3$ matrix whose columns are direct-lattice vectors in Å | `np.diag([4.0, 4.0, 12.0])` |
 | `basis` | ordered nonempty sequence of `BasisState`, dictionaries, or labels | `[BasisState("M1_d")]` |
 | `translations` | canonical integer cell translations $\mathbf R$ | `[[0, 0, 0], [1, 0, 0], [-1, 0, 0]]` |
-| `hamiltonian_blocks` | one complex $N\times N$ matrix $H(\mathbf R)$ per translation | an array with shape `(3, N, N)` |
+| `hamiltonian_blocks` | one complex $N\times N$ canonical matrix $H(\mathbf R)$ in meV per translation | an array with shape `(3, N, N)` |
 | `interpolation_weights` | positive $w_{\mathbf R}$ multiplying each block | `[1.0, 1.0, 1.0]` |
 | `orbital_centers` | one fractional direct-lattice position per basis state | `[[0.0, 0.0, 0.0], [0.5, 0.5, 0.0]]` |
 | `periodic_axes` | ordered periodic lattice-axis indices | `(0,)`, `(0, 1)`, or `(0, 1, 2)` |
-| `parameter_values` | current values of named linear Hamiltonian terms | `{"t_nn": -80.0}` |
+| `parameter_values` | canonical meV values of named linear Hamiltonian terms | `{"t_nn": -80.0}` |
 | `parameter_blocks` | derivative blocks paired one-to-one with `parameter_values` | `{"t_nn": dH_dt}` |
 | `spin_operators` | optional Hermitian $S_x,S_y,S_z$ matrices | complex array with shape `(3, N, N)` |
 | `energy_zero_meV` | recorded reference energy; it does not shift $H$ automatically | `0.0` |
+| `canonical_energy_unit` | serialized energy unit, fixed by the model contract | `"meV"` |
 | `provenance` | JSON-compatible source and conversion record | `{"source": "manual"}` |
 | `fourier_gauge` | Fourier convention; currently fixed to the Wannier gauge | `"wannier"` |
 
@@ -155,17 +173,18 @@ dictionaries can be entered directly in the model editor.
 | `model_data` | portable dictionary returned by `ElectronicModel.to_dict()` | `{}` | `model.to_dict()` |
 | `crystal` | editable lattice, space group, crystallographic sites, and optional CIF provenance used by the structure-first builder | `P 1` cell with no sites | `{"lattice": {"a": 4, "b": 4, "c": 6, "alpha": 90, "beta": 90, "gamma": 90}, "spacegroup": "P 1", "sites": []}` |
 | `periodic_axes` | periodic lattice axes; empty asks a Wannier import to infer them from nonzero translations | `[]` | `[0]`, `[0, 1]`, or `[0, 1, 2]` |
-| `chemical_potential_meV` | chemical potential subtracted on band and DOS plots | `0.0` | `12.5` |
+| `electronic_energy_unit` | input and electronic-plot unit; changing it does not alter canonical values | `"eV"` | `"eV"` or `"meV"` |
+| `chemical_potential_meV` | canonical chemical potential subtracted on band and DOS plots; displayed in `electronic_energy_unit` | `0.0` | `12.5` for 0.0125 eV |
 | `projection_groups` | plot labels mapped to zero-based basis indices | `{}` | `{"d": [0, 1, 2], "p": [3, 4]}` |
 | `band_path` | ordered nodes with labels and reduced coordinates | $\Gamma$–X–M–$\Gamma$ | `[{"label": "G", "k": [0, 0, 0]}, {"label": "X", "k": [0.5, 0, 0]}]` |
 | `band_points_per_segment` | interpolation intervals in each path segment | `60` | `80` |
 | `dos_mesh` | uniform mesh sizes, one per periodic axis or one per lattice axis | `[40, 40, 40]` | `[80, 80]` for a two-dimensional model |
-| `dos_energy_min_meV` | lower absolute energy sampled for the DOS | `-500.0` | `-250.0` |
-| `dos_energy_max_meV` | upper absolute energy sampled for the DOS | `500.0` | `250.0` |
+| `dos_energy_min_meV` | canonical lower absolute energy sampled for the DOS | `-500.0` | `-250.0` |
+| `dos_energy_max_meV` | canonical upper absolute energy sampled for the DOS | `500.0` | `250.0` |
 | `dos_energy_points` | number of DOS energy samples, at least two | `600` | `1000` |
-| `dos_broadening_meV` | Gaussian standard deviation used for the DOS | `5.0` | `2.0` |
+| `dos_broadening_meV` | canonical Gaussian standard deviation used for the DOS | `5.0` | `2.0` |
 | `fermi_mesh` | extraction-grid sizes, each at least two | `[100, 100, 40]` | `[200, 200]` for a two-dimensional model |
-| `fermi_energy_meV` | absolute target energy of the extracted constant-energy surface | `0.0` | `12.5` to extract the Fermi surface when $\mu=12.5$ meV |
+| `fermi_energy_meV` | canonical absolute target energy of the extracted constant-energy surface | `0.0` | `12.5` to extract the Fermi surface when $\mu=12.5$ meV |
 
 For a reduced-dimensional model, a mesh may contain one size per periodic
 axis. A three-entry mesh instead gives sizes in lattice-axis order, and nfit
@@ -200,21 +219,24 @@ are Stage 4; interaction dressings are Stage 5.
 For convenience, it can add a missing Hermitian-conjugate $-\mathbf R$ block.
 If both partners are supplied, inconsistency is an error.
 Optional `parameter_values` and `parameter_hoppings` define named linear
-Hamiltonian terms. `model.with_parameters(...)` returns a new immutable model,
-which provides the parameter boundary needed by later fitting stages.
+Hamiltonian terms. `energy_unit` defaults to eV and applies to `hoppings`,
+`parameter_values`, and `energy_zero`; dimensionless `parameter_hoppings`
+select the affected matrix elements. `model.with_parameters(...)` returns a
+new immutable model and also requires an explicit `energy_unit`.
 
 | Argument | Meaning | Acceptable input example |
 | --- | --- | --- |
 | `direct_lattice` | lattice-vector matrix described above | `np.diag([4.0, 4.0, 12.0])` |
 | `basis` | ordered basis states | `[BasisState("M1_d"), BasisState("X1_p")]` |
-| `hoppings` | map from integer $\mathbf R$ to $N\times N$ $H(\mathbf R)$ in meV | `{(0, 0, 0): [[0.0]], (1, 0, 0): [[-80.0]]}` |
+| `hoppings` | map from integer $\mathbf R$ to $N\times N$ $H(\mathbf R)$ in `energy_unit` | `{(0, 0, 0): [[0.0]], (1, 0, 0): [[-0.08]]}` in eV |
 | `orbital_centers` | fractional center of each basis state | `[[0, 0, 0], [0.5, 0.5, 0]]` |
 | `periodic_axes` | periodic lattice axes | `(0, 1)` |
 | `interpolation_weights` | optional map from $\mathbf R$ to positive weight | `{(0, 0, 0): 1.0}` |
-| `parameter_values` | named linear-term values | `{"t_nn": -80.0}` |
+| `parameter_values` | named linear-term energies in `energy_unit` | `{"t_nn": -0.08}` in eV |
 | `parameter_hoppings` | named maps from $\mathbf R$ to selector matrices | `{"t_nn": {(1, 0, 0): [[1.0]]}}` |
 | `spin_operators` | optional three spin matrices | `np.asarray([Sx, Sy, Sz])` |
-| `energy_zero_meV` | recorded reference energy | `0.0` |
+| `energy_unit` | unit of manual Hamiltonian energies; converted immediately to canonical meV | `"eV"` or `"meV"` |
+| `energy_zero` | recorded reference energy in `energy_unit` | `0.0` |
 | `add_hermitian_conjugates` | add a missing $-\mathbf R$ partner | `True` |
 | `provenance` | source description | `{"source": "manual", "author": "user"}` |
 
@@ -231,17 +253,23 @@ model = build_electronic_model(
     ],
     orbital_centers=[[0, 0, 0], [0.5, 0.5, 0]],
     periodic_axes=(0, 1),
+    energy_unit="eV",
     hoppings={
-        (0, 0, 0): [[-20, 0], [0, 30]],
-        (1, 0, 0): [[-80, 0], [0, -40]],
-        (0, 1, 0): [[-80, 0], [0, -40]],
+        (0, 0, 0): [[-0.020, 0], [0, 0.030]],
+        (1, 0, 0): [[-0.080, 0], [0, -0.040]],
+        (0, 1, 0): [[-0.080, 0], [0, -0.040]],
     },
-    parameter_values={"hybridization": 15.0},
+    parameter_values={"hybridization": 0.015},
     parameter_hoppings={
         "hybridization": {
             (0, 0, 0): [[0, 1], [1, 0]],
         },
     },
+)
+
+stronger_hybridization = model.with_parameters(
+    hybridization=0.020,
+    energy_unit="eV",
 )
 ```
 
@@ -276,6 +304,7 @@ from nfit import (
     band_path,
     calculate_bands,
     density_of_states,
+    electronic_energy_to_meV,
     fermi_surface,
     k_mesh,
 )
@@ -288,11 +317,16 @@ path = band_path(
 bands = calculate_bands(model, path, projections={"d": [0], "p": [1]})
 
 mesh = k_mesh(model, [80, 80])
+energy_unit = "eV"
+energy = electronic_energy_to_meV(
+    np.linspace(-0.4, 0.4, 1000),
+    energy_unit,
+)
 dos = density_of_states(
     model,
     mesh,
-    np.linspace(-400, 400, 1000),
-    broadening_meV=3.0,
+    energy,
+    broadening_meV=electronic_energy_to_meV(0.003, energy_unit),
     projections={"d": [0], "p": [1]},
 )
 surface = fermi_surface(model, [200, 200], target_energy_meV=0.0)
@@ -320,6 +354,12 @@ The calculation arguments beyond the `model` itself are:
 | `fermi_surface.mesh_shape` | extraction-grid size for each periodic axis | `[200, 200]` |
 | `fermi_surface.target_energy_meV` | absolute constant-energy target | `12.5` |
 | `fermi_surface.projections` | optional named basis-index groups evaluated on the surface | `{"d": [0, 1]}` |
+
+`electronic_energy_to_meV` and `electronic_energy_from_meV` are the explicit
+script boundary for these low-level functions. The electronic renderers
+default to eV and accept `energy_unit="meV"` when a low-energy display is more
+useful. When a DOS is rendered in eV, nfit converts states/meV to states/eV as
+well as converting the horizontal axis.
 
 The DOS calculation is chunked under an explicit temporary-memory budget.
 Production backend selection and symmetry-reduced meshes remain part of the
@@ -357,10 +397,11 @@ stored as `model_data`. The remaining workflow is specified in the
 [Tight-binding model-builder plan](tight_binding_builder_plan.md).
 
 Each plot action has a **Copy script** button that exports editable GUI-free
-Python using the same calculation and rendering functions. **Copy structure
-script** exports CIF reload and digest verification, or embeds a manually
-entered crystal, then reconstructs the data group, model component, and
-periodic axes without Qt.
+Python using the same calculation and rendering functions. The exported plot
+script states `energy_unit`, converts its editable values to canonical meV,
+and passes the same unit to the renderer. **Copy structure script** exports CIF
+reload and digest verification, or embeds a manually entered crystal, then
+reconstructs the data group, model component, and periodic axes without Qt.
 
 `ElectronicModel.to_dict()` is a portable, digest-protected representation.
 `save_electronic_model` and `load_electronic_model` write and validate that
@@ -374,6 +415,10 @@ verify the stored canonical digest.
 - G. Pizzi *et al.*, *J. Phys.: Condens. Matter* **32**, 165902 (2020),
   [doi:10.1088/1361-648X/ab51ff](https://doi.org/10.1088/1361-648X/ab51ff).
 - [Wannier90 file-format documentation](https://wannier90.readthedocs.io/en/latest/user_guide/wannier90/files/).
+- [ASE unit conventions](https://docs.ase-lib.org/ase/units.html).
+- [pymatgen electronic-structure API](https://pymatgen.org/pymatgen.electronic_structure.html).
+- [sisl internal unit conventions](https://sisl.readthedocs.io/en/latest/quickstart/overview.html).
+- [PythTB hopping API](https://pythtb.readthedocs.io/en/latest/generated/pythtb/TBModel/pythtb.TBModel.set_hop.html).
 
 ```{toctree}
 :maxdepth: 1

@@ -47,6 +47,9 @@ density-of-states, and Fermi-surface plots. CIF/manual geometry defines
 candidate orbital sites; orbital assignment is not yet available. The
 structure and plot actions expose editable scripts but do not enter a fit
 until a later electronic-response model provides a dataset observable.
+Electronic energy entry and plots default to eV, while the stored canonical
+model remains in meV. The editor's energy-unit selector changes presentation,
+not the physical model or neutron-response units.
 
 ### Temperature and multi-dataset series
 

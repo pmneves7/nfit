@@ -6,6 +6,13 @@ $E$ denoting neutron energy loss. Momentum is in reciprocal-lattice units or
 steradian and per meV. Model kernels produce the dissipative response
 $\chi''(\mathbf Q,E)$ before instrumental factors are applied.
 
+Electronic-structure inputs and plots use eV by default, following common
+DFT and Wannier conventions. nfit converts them once to canonical meV when an
+`ElectronicModel` is built or imported. Neutron energy transfer,
+spin-fluctuation linewidths, magnetic exchange, susceptibilities, and response
+kernels remain in meV. Every unit-neutral electronic adapter must declare its
+input energy unit; nfit never infers a unit from a numerical magnitude.
+
 Common symbols are:
 
 | symbol | meaning |

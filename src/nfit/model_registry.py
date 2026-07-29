@@ -1219,6 +1219,7 @@ def _register_builtin_models() -> None:
             category="electronic_structure",
             data_types=("electronic_structure",),
             factory=_fit_factory("_electronic_structure_factory"),
+            validate_component=_fit_validator("_validate_tight_binding_config"),
             config_fields=(
                 _config_field(
                     "source_path",
@@ -1274,10 +1275,24 @@ def _register_builtin_models() -> None:
                     "[0, 1]",
                 ),
                 _config_field(
+                    "electronic_energy_unit",
+                    "eV",
+                    (
+                        "Input and plot unit for electronic-structure energies; "
+                        "canonical model data remain in meV."
+                    ),
+                    "Either eV or meV.",
+                    "str",
+                    "eV",
+                ),
+                _config_field(
                     "chemical_potential_meV",
                     0.0,
-                    "Chemical potential used as the plotted energy zero.",
-                    "Any finite energy.",
+                    (
+                        "Canonical chemical potential used as the plotted energy "
+                        "zero; the GUI converts it to the selected electronic unit."
+                    ),
+                    "Any finite energy stored in meV.",
                     "float",
                     "12.5",
                     "meV",
@@ -1323,7 +1338,7 @@ def _register_builtin_models() -> None:
                 _config_field(
                     "dos_energy_min_meV",
                     -500.0,
-                    "Lower density-of-states energy.",
+                    "Canonical lower density-of-states energy.",
                     "Finite energy below dos_energy_max_meV.",
                     "float",
                     "-250",
@@ -1332,7 +1347,7 @@ def _register_builtin_models() -> None:
                 _config_field(
                     "dos_energy_max_meV",
                     500.0,
-                    "Upper density-of-states energy.",
+                    "Canonical upper density-of-states energy.",
                     "Finite energy above dos_energy_min_meV.",
                     "float",
                     "250",
@@ -1349,7 +1364,7 @@ def _register_builtin_models() -> None:
                 _config_field(
                     "dos_broadening_meV",
                     5.0,
-                    "Gaussian standard deviation for density of states.",
+                    "Canonical Gaussian standard deviation for density of states.",
                     "Positive finite energy.",
                     "float",
                     "2.0",
@@ -1366,7 +1381,7 @@ def _register_builtin_models() -> None:
                 _config_field(
                     "fermi_energy_meV",
                     0.0,
-                    "Target energy for Fermi-surface extraction.",
+                    "Canonical target energy for Fermi-surface extraction.",
                     "Any finite energy.",
                     "float",
                     "0.0",
@@ -1377,7 +1392,10 @@ def _register_builtin_models() -> None:
                 ModelPlotDefinition(
                     key="bands",
                     label="Band structure",
-                    description="Plot bands and configured orbital projections.",
+                    description=(
+                        "Plot bands and configured orbital projections in the "
+                        "selected electronic energy unit (eV by default)."
+                    ),
                     calculate=_model_plot_calculator("tight_binding_band_structure"),
                     render=_model_plot_renderer("render_band_structure"),
                     script=_tight_binding_plot_script("bands"),
@@ -1385,7 +1403,10 @@ def _register_builtin_models() -> None:
                 ModelPlotDefinition(
                     key="dos",
                     label="Density of states",
-                    description="Plot total and configured orbital-projected DOS.",
+                    description=(
+                        "Plot total and orbital-projected DOS with both axes "
+                        "converted to the selected electronic energy unit."
+                    ),
                     calculate=_model_plot_calculator(
                         "tight_binding_density_of_states"
                     ),
@@ -1395,7 +1416,10 @@ def _register_builtin_models() -> None:
                 ModelPlotDefinition(
                     key="fermi_surface",
                     label="Fermi surface",
-                    description="Plot 1D Fermi points, 2D contours, or a 3D surface.",
+                    description=(
+                        "Plot 1D Fermi points, 2D contours, or a 3D surface and "
+                        "label its target in the selected electronic energy unit."
+                    ),
                     calculate=_model_plot_calculator("tight_binding_fermi_surface"),
                     render=_model_plot_renderer("render_fermi_surface"),
                     script=_tight_binding_plot_script("fermi_surface"),

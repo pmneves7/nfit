@@ -18641,6 +18641,42 @@ class NfitProjectExplorer:
             label = QtWidgets.QLabel(setting_name)
             tooltip = model_config_tooltip(model.type, setting_name)
             label.setToolTip(tooltip)
+            if (
+                model.type == "tight_binding"
+                and setting_name == "electronic_energy_unit"
+            ):
+                from .electronic_structure import (
+                    ELECTRONIC_ENERGY_UNITS,
+                    normalize_electronic_energy_unit,
+                )
+
+                label.setText("Electronic energy unit")
+                tooltip = (
+                    f"{tooltip}\n"
+                    "This controls tight-binding energy entry and electronic "
+                    "plot labels. Canonical model data and neutron-response "
+                    "calculations remain in meV; changing this choice does not "
+                    "change any physical value."
+                )
+                label.setToolTip(tooltip)
+                combo = QtWidgets.QComboBox()
+                combo.setObjectName("tight_binding_energy_unit")
+                combo.setToolTip(tooltip)
+                for unit in ELECTRONIC_ENERGY_UNITS:
+                    combo.addItem(unit, unit)
+                current = normalize_electronic_energy_unit(
+                    model.config.get(setting_name, "eV")
+                )
+                combo.setCurrentIndex(max(combo.findData(current), 0))
+                combo.currentIndexChanged.connect(
+                    lambda _index, combo=combo: self._set_tight_binding_energy_unit(
+                        str(combo.currentData())
+                    )
+                )
+                config_layout.addWidget(label, row, 0)
+                config_layout.addWidget(combo, row, 1)
+                row += 1
+                continue
             if config_definitions[setting_name].choices == "form_factor_ions":
                 label.setText("form_factor")
                 combo = QtWidgets.QComboBox()
@@ -18680,7 +18716,52 @@ class NfitProjectExplorer:
                     config_layout.addWidget(coeff_editor, row, 1)
                     row += 1
                 continue
-            editor = QtWidgets.QLineEdit(_parameter_to_text(model.config.get(setting_name, "")))
+            tight_binding_energy_fields = {
+                "chemical_potential_meV",
+                "dos_energy_min_meV",
+                "dos_energy_max_meV",
+                "dos_broadening_meV",
+                "fermi_energy_meV",
+            }
+            if (
+                model.type == "tight_binding"
+                and setting_name in tight_binding_energy_fields
+            ):
+                from .electronic_structure import (
+                    electronic_energy_from_meV,
+                    normalize_electronic_energy_unit,
+                )
+
+                unit = normalize_electronic_energy_unit(
+                    model.config.get("electronic_energy_unit", "eV")
+                )
+                displayed = electronic_energy_from_meV(
+                    model.config.get(setting_name, 0.0), unit
+                )
+                label.setText(f"{setting_name.removesuffix('_meV')} ({unit})")
+                tooltip = (
+                    f"{tooltip}\n"
+                    f"Enter this electronic energy in {unit}. nfit converts it "
+                    "to canonical meV immediately. Neutron energy transfer and "
+                    "spin-response linewidths are unaffected."
+                )
+                label.setToolTip(tooltip)
+                editor = QtWidgets.QLineEdit(_parameter_to_text(displayed))
+                editor.setObjectName(f"model_config_{setting_name}")
+                editor.setToolTip(tooltip)
+                editor.editingFinished.connect(
+                    lambda setting_name=setting_name, editor=editor: self._set_tight_binding_energy_config(
+                        setting_name, editor.text()
+                    )
+                )
+                config_layout.addWidget(label, row, 0)
+                config_layout.addWidget(editor, row, 1)
+                row += 1
+                continue
+            editor = QtWidgets.QLineEdit(
+                _parameter_to_text(model.config.get(setting_name, ""))
+            )
+            editor.setObjectName(f"model_config_{setting_name}")
             editor.setToolTip(tooltip)
             editor.editingFinished.connect(
                 lambda setting_name=setting_name, editor=editor: self._set_model_config_setting(setting_name, editor.text())
@@ -18716,14 +18797,22 @@ class NfitProjectExplorer:
             Path(source).name if source else "No Wannier90 source loaded"
         )
         source_label.setObjectName("tight_binding_source_summary")
-        source_label.setToolTip(source or "Manual models may be supplied through model_data.")
+        source_label.setToolTip(
+            source
+            or (
+                "Manual models may be supplied through model_data. Builder "
+                "inputs declare eV or meV; model_data are canonical meV."
+            )
+        )
         layout.addWidget(source_label, 0, 0, 1, 3)
 
         import_button = QtWidgets.QPushButton("Import Wannier90...")
         import_button.setObjectName("tight_binding_import_wannier90")
         import_button.setToolTip(
             "Import seedname_tb.dat, or seedname_hr.dat with its associated "
-            ".win, centres, and optional wsvec files."
+            ".win, centres, and optional wsvec files. Wannier90 Hamiltonians "
+            "are read in eV, converted once to canonical meV, and retain the "
+            "conversion in model provenance."
         )
         import_button.clicked.connect(
             lambda _checked=False, model=model: self._import_wannier90_model(model)
@@ -18885,6 +18974,9 @@ class NfitProjectExplorer:
                 model.config.get("periodic_axes") or [0, 1, 2],
                 group_name=owner.name if owner is not None else "Electronic",
                 model_name=model.name,
+                electronic_energy_unit=model.config.get(
+                    "electronic_energy_unit", "eV"
+                ),
             )
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
@@ -19672,6 +19764,43 @@ class NfitProjectExplorer:
                 self._refresh_tree(select_group=group, select_model=model)
         if group is not None:
             self._request_overlay_refresh(group)
+
+    def _set_tight_binding_energy_unit(self, unit: str) -> None:
+        from .electronic_structure import (
+            normalize_electronic_energy_unit,
+            set_electronic_energy_unit,
+        )
+
+        canonical = normalize_electronic_energy_unit(unit)
+
+        def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
+            if model.type != "tight_binding":
+                raise ValueError("electronic energy units apply only to tight binding")
+            if model.config.get("electronic_energy_unit", "eV") == canonical:
+                raise _NoChange()
+            set_electronic_energy_unit(model, canonical)
+
+        self._mutate_selected_model_quietly(mutate)
+
+    def _set_tight_binding_energy_config(self, name: str, text: str) -> None:
+        from .electronic_structure import (
+            electronic_energy_to_meV,
+            normalize_electronic_energy_unit,
+        )
+
+        def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
+            if model.type != "tight_binding" or not name.endswith("_meV"):
+                raise ValueError("expected a canonical tight-binding energy setting")
+            unit = normalize_electronic_energy_unit(
+                model.config.get("electronic_energy_unit", "eV")
+            )
+            displayed = float(_parse_parameter_text(text))
+            canonical = float(electronic_energy_to_meV(displayed, unit))
+            if model.config.get(name) == canonical:
+                raise _NoChange()
+            model.config[name] = canonical
+
+        self._mutate_selected_model_quietly(mutate)
 
     def _set_model_form_factor_choice(self, choice: str) -> None:
         group, _entry, _mask, model, role = self._objects_for_item(self._current_item())
