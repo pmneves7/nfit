@@ -18,7 +18,8 @@ The package provides:
   hopping candidates, eV/meV conversion, bands, orbital projections, density
   of states, Fermi surfaces, shared 3D model-geometry inspection, and
   primitive-cell first-Brillouin-zone views; atoms, orbitals, and bonds in the
-  model-geometry viewer are clickable and identified in its side panel;
+  model-geometry viewer are clickable and identified in its side panel, while
+  all electronic viewers use a common plot-plus-settings layout;
 - an extensible model registry shared by fitting, GUI metadata, diagnostics,
   reports, plots, project files, and workflow scripts;
 - simultaneous least-squares fitting with explicit uncertainty conventions,

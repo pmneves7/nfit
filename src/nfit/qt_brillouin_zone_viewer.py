@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 
 from .brillouin_zone import BrillouinZoneScene
+from .qt_viewer_shell import create_viewer_shell
 
 
 def _zone_mesh(scene: BrillouinZoneScene) -> Any:
@@ -119,16 +120,20 @@ def show_brillouin_zone_scene(
     if application is None:
         application = QtWidgets.QApplication([])
     window = QtWidgets.QMainWindow(parent)
+    window.setObjectName("brillouin_zone_viewer")
     window.setWindowTitle("First Brillouin zone")
-    central = QtWidgets.QWidget()
-    layout = QtWidgets.QVBoxLayout(central)
+    central, viewport_layout, settings = create_viewer_shell(
+        QtWidgets,
+        viewer_key="brillouin_zone",
+    )
     plotter = QtInteractor(central)
     plotter.setObjectName("brillouin_zone_plotter")
-    layout.addWidget(plotter.interactor)
+    viewport_layout.addWidget(plotter.interactor)
     window.setCentralWidget(central)
-    window.resize(900, 760)
+    window.resize(1100, 760)
     window._nfit_plotter = plotter
     window._nfit_application = application
+    window._nfit_settings_panel = settings
     _render_brillouin_zone(plotter, scene)
     window.show()
     return window

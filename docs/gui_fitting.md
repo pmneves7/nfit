@@ -69,6 +69,10 @@ the primitive reciprocal-lattice Wigner--Seitz cell, including conventional
 cell centering, together with the configured labelled band path and reciprocal
 basis vectors. Its adjacent script action reproduces the same view without
 project widgets.
+The Brillouin-zone, band-structure, density-of-states, and Fermi-surface
+viewers share a consistent two-column layout with the visualization on the
+left and a fixed-width **Settings** panel on the right. The settings panels are
+present but intentionally contain no interactive controls yet.
 The builder and plot actions also expose editable scripts but do not enter a
 fit until a later electronic-response model provides a dataset observable.
 Electronic energy entry and plots default to eV, while the stored canonical

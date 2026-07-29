@@ -19709,6 +19709,8 @@ class NfitProjectExplorer:
     def _open_model_plot(self, model: ModelComponentSpec, plot_key: str) -> bool:
         from PySide6 import QtWidgets
 
+        from .qt_electronic_viewer import show_electronic_figure
+
         plot = next(
             (
                 candidate
@@ -19722,7 +19724,16 @@ class NfitProjectExplorer:
         try:
             result = plot.calculate(model)
             figure, _axes = plot.render(result)
-            figure.show()
+            viewer_keys = {
+                "bands": "band_structure",
+                "dos": "density_of_states",
+                "fermi_surface": "fermi_surface",
+            }
+            window = show_electronic_figure(
+                figure,
+                viewer_key=viewer_keys[plot_key],
+                parent=self.window,
+            )
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
                 self.window,
@@ -19730,7 +19741,7 @@ class NfitProjectExplorer:
                 f"Could not calculate the plot:\n{exc}",
             )
             return False
-        self._plot_windows[f"model:{id(model)}:{plot_key}"] = figure
+        self._plot_windows[f"model:{id(model)}:{plot_key}"] = window
         return True
 
     def _copy_model_plot_script(

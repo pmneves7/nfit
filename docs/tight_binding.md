@@ -580,6 +580,13 @@ The DOS calculation is chunked under an explicit temporary-memory budget.
 Production backend selection and symmetry-reduced meshes remain part of the
 later optimization stage.
 
+The band-structure, density-of-states, and Fermi-surface viewers use a common
+two-column window: the interactive plot and its Matplotlib navigation toolbar
+are on the left, and a fixed-width **Settings** panel is on the right. The
+panel is intentionally empty in this release; it establishes one location for
+later plot-specific controls without changing the viewer layout. Plot scripts
+run as files open the same window.
+
 ## Fitting and identifiability
 
 Stage 3 electronic models are calculation-only components. They can be saved
@@ -663,7 +670,9 @@ vector reaches the neighboring reciprocal-lattice point and therefore extends
 past the intervening Brillouin-zone face. The zone is drawn with transparent
 flat faces and an opaque black outline. The path is not inferred automatically
 in Stage 3.3, so its labels and reduced coordinates remain an explicit,
-editable model setting.
+editable model setting. This viewer uses the same visualization-left,
+**Settings**-right layout as the band, density-of-states, and Fermi-surface
+viewers. Its settings panel is reserved for later interactive controls.
 
 `brillouin_zone_scene` is the renderer-independent component API.
 `build_brillouin_zone_scene` accepts the direct-lattice matrix that defines

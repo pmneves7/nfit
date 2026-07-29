@@ -2,6 +2,7 @@ import sys
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from nfit import (
     DataGroup,
@@ -194,3 +195,43 @@ def test_zone_renderer_uses_flat_faces_heavy_outline_and_thin_full_vectors(
     for arguments, vector in zip(arrow_arguments, reciprocal, strict=True):
         assert arguments["shaft_radius"] == 0.008
         assert arguments["scale"] == np.linalg.norm(vector)
+
+
+def test_zone_viewer_uses_standard_right_settings_panel(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    application = QtWidgets.QApplication.instance()
+    if application is None:
+        application = QtWidgets.QApplication([])
+
+    class FakeInteractor:
+        def __init__(self, parent):
+            self.interactor = QtWidgets.QWidget(parent)
+
+        def setObjectName(self, name):
+            self.interactor.setObjectName(name)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "pyvistaqt",
+        SimpleNamespace(QtInteractor=FakeInteractor),
+    )
+    monkeypatch.setattr(
+        "nfit.qt_brillouin_zone_viewer._render_brillouin_zone",
+        lambda _plotter, _scene: None,
+    )
+    from nfit.qt_brillouin_zone_viewer import show_brillouin_zone_scene
+
+    scene = build_brillouin_zone_scene(
+        np.diag([4.0, 4.0, 4.0]),
+        [{"label": "Γ", "k": [0.0, 0.0, 0.0]}],
+    )
+    window = show_brillouin_zone_scene(scene)
+    panel = window.findChild(
+        QtWidgets.QGroupBox,
+        "brillouin_zone_settings_panel",
+    )
+    assert panel is not None
+    assert panel.title() == "Settings"
+    assert window.centralWidget().layout().itemAt(1).widget() is panel
+    window.close()

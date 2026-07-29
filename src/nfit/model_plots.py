@@ -546,5 +546,30 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
         )
     else:
         raise KeyError(f"unknown tight-binding plot {plot_key!r}")
-    lines.extend(["figure.show()", ""])
+    viewer_keys = {
+        "bands": "band_structure",
+        "dos": "density_of_states",
+        "fermi_surface": "fermi_surface",
+    }
+    lines.extend(
+        [
+            "",
+            "# Use nfit's standard plot-plus-settings window when this file is run.",
+            "if globals().get('__name__') == '__main__':",
+            "    from PySide6 import QtWidgets",
+            "    from nfit.qt_electronic_viewer import show_electronic_figure",
+            "    app = QtWidgets.QApplication.instance()",
+            "    owns_app = app is None",
+            "    if owns_app:",
+            "        app = QtWidgets.QApplication([])",
+            "    window = show_electronic_figure(",
+            f"        figure, viewer_key={viewer_keys[plot_key]!r}",
+            "    )",
+            "    if owns_app:",
+            "        app.exec()",
+            "else:",
+            "    figure.show()",
+            "",
+        ]
+    )
     return "\n".join(lines)
