@@ -229,7 +229,7 @@ def test_constraint_requires_global_mode():
 
 def test_applies_to_and_data_type_gating_skip_datasets():
     assert model_supports_data_type("constant_background", "magnetization")
-    assert not model_supports_data_type("mmp_relaxational", "magnetization")
+    assert model_supports_data_type("mmp_relaxational", "magnetization")
     assert model_supports_data_type("local_relaxational", "powder_elastic")
     assert model_supports_data_type("mmp_relaxational", "single_crystal_elastic")
     assert model_supports_data_type("heisenberg_rpa", "powder_elastic")
@@ -261,7 +261,7 @@ def test_component_matching_no_dataset_emits_no_parameters():
     )
     compiled = compile_fit_problem(
         [mmp, _constant_component()],
-        [FitDatasetInput("m", _points(1.0), data_type="magnetization")],
+        [FitDatasetInput("m", _points(1.0), data_type="heat_capacity")],
     )
     names = [spec.name for spec in compiled.problem.parameter_specs]
     assert names == ["bg.constant"]

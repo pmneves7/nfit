@@ -64,6 +64,7 @@ from .fitting import (
 )
 from .form_factors import form_factor_sq
 from .heat_capacity import debye_heat_capacity, low_temperature_heat_capacity
+from .magnetization import curie_weiss_susceptibility
 from .model_registry import MODEL_TYPE_REGISTRY, validate_model_component
 from .quantities import convert_quantity
 from .spin_fluctuations import (
@@ -205,8 +206,11 @@ def _curie_weiss_factory(component: Any) -> ModelFunction:
         if data.metadata.get("quantity_type") != "bulk_susceptibility":
             raise ValueError("Curie-Weiss model requires a bulk-susceptibility channel")
         temperature = _point_temperature(data)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            values = float(params[curie_key]) / (temperature - float(params[theta_key]))
+        values = curie_weiss_susceptibility(
+            temperature,
+            float(params[curie_key]),
+            float(params[theta_key]),
+        )
         unit = str(data.metadata.get("unit", "cm^3/mol"))
         if unit == "cm^3/mol":
             return values
@@ -354,6 +358,104 @@ def _dataset_magnetic_field(data: PointData4D) -> np.ndarray:
             "parameters to orient the direction"
         )
     return np.asarray(field_vector, dtype=float)
+
+
+def _scalar_bulk_observable(
+    data: PointData4D,
+    chi_uniform: float | np.ndarray,
+    *,
+    g_factor: float,
+    magnetic_ions_per_formula_unit: float,
+) -> np.ndarray:
+    """Convert uniform static spin susceptibility to a bulk fit channel.
+
+    ``chi_uniform`` is one Cartesian spin-susceptibility component in
+    meV^-1 per magnetic ion. Relative channels retain the historical model
+    units. Absolute channels are converted to molar CGS or rationalized SI
+    susceptibility, or to the requested linear-response moment.
+    """
+
+    from .sum_rules import (
+        EMU_PER_MOL_PER_MODEL_CHI,
+        EMU_PER_MOL_PER_MU_B,
+        OERSTED_PER_TESLA,
+    )
+
+    metadata = data.metadata if isinstance(data.metadata, dict) else {}
+    quantity_type = str(metadata.get("quantity_type", "magnetic_moment"))
+    if quantity_type not in {
+        "magnetic_moment",
+        "magnetization",
+        "bulk_susceptibility",
+    }:
+        raise ValueError(f"bulk model cannot predict quantity type {quantity_type!r}")
+    g_value = float(g_factor)
+    sites_per_fu = float(magnetic_ions_per_formula_unit)
+    if not np.isfinite(g_value) or g_value <= 0.0:
+        raise ValueError("bulk g factor must be finite and positive")
+    if not np.isfinite(sites_per_fu) or sites_per_fu <= 0.0:
+        raise ValueError(
+            "magnetic ions per formula unit must be finite and positive"
+        )
+    chi = np.broadcast_to(np.asarray(chi_uniform, dtype=float), (data.size,))
+    if np.any(~np.isfinite(chi)):
+        raise ValueError("uniform static susceptibility must be finite")
+
+    raw_field = data.magnetic_field
+    if raw_field is None:
+        field_magnitude = np.zeros(data.size, dtype=float)
+    elif np.ndim(raw_field) == 1:
+        field_magnitude = np.full(
+            data.size, float(np.linalg.norm(np.asarray(raw_field, dtype=float)))
+        )
+    else:
+        field_magnitude = np.linalg.norm(np.asarray(raw_field, dtype=float), axis=1)
+
+    values = g_value**2 * chi
+    if quantity_type != "bulk_susceptibility":
+        values = values * field_magnitude
+
+    if not bool(metadata.get("absolute_units")):
+        return np.asarray(values, dtype=float)
+
+    target_unit = str(metadata.get("unit", ""))
+    if quantity_type == "bulk_susceptibility":
+        values = values * EMU_PER_MOL_PER_MODEL_CHI * sites_per_fu
+        if target_unit == "m^3/mol":
+            values = convert_quantity(
+                values, "bulk_susceptibility", "cm^3/mol", target_unit
+            )
+        elif target_unit != "cm^3/mol":
+            raise ValueError(
+                "absolute bulk susceptibility must use cm^3/mol or m^3/mol"
+            )
+        return np.asarray(values, dtype=float)
+
+    mass_g = float(metadata.get("sample_mass_mg", 0.0)) / 1000.0
+    molar_mass = float(metadata.get("molar_mass_g_mol", 0.0))
+    if molar_mass <= 0.0 or mass_g <= 0.0:
+        raise ValueError(
+            "absolute magnetic moment requires a positive sample mass and molar mass"
+        )
+    moles = mass_g / molar_mass
+    values = (
+        values
+        * EMU_PER_MOL_PER_MODEL_CHI
+        * moles
+        * OERSTED_PER_TESLA
+        * sites_per_fu
+    )
+    if target_unit == "emu/mol":
+        values = values / moles
+    elif target_unit == "mu_B/f.u.":
+        values = values / (moles * EMU_PER_MOL_PER_MU_B)
+    elif target_unit == "A m^2":
+        values = convert_quantity(values, "magnetic_moment", "emu", target_unit)
+    elif target_unit not in {"", "emu"}:
+        raise ValueError(
+            "absolute magnetic moment must use emu, emu/mol, mu_B/f.u., or A m^2"
+        )
+    return np.asarray(values, dtype=float)
 
 
 def _form_factor_sq_from_config(component: Any, data: PointData4D) -> float | np.ndarray:
@@ -566,6 +668,7 @@ def _generalized_paramagnon_factory(component: Any) -> ModelFunction:
     powder_orientations = max(int(config.get("powder_orientations", 50)), 6)
 
     def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        bulk = data.metadata.get("data_type") == "magnetization"
         reciprocal = _lattice_reciprocal_matrix(data, lattice)
         powder = (
             data.metadata.get("data_type") in {"powder_inelastic", "powder_elastic"}
@@ -626,7 +729,7 @@ def _generalized_paramagnon_factory(component: Any) -> ModelFunction:
         if combination == "nearest":
             kernels = np.min(kernels, axis=1, keepdims=True)
 
-        if _is_elastic_dataset(data):
+        if bulk or _is_elastic_dataset(data):
             response = np.sum(float(params[keys["chi_peak"]]) / kernels, axis=1)
         else:
             response = np.sum(
@@ -644,6 +747,15 @@ def _generalized_paramagnon_factory(component: Any) -> ModelFunction:
             )
         if powder:
             response = response.reshape(data.size, orientation_count).mean(axis=1)
+        if bulk:
+            return _scalar_bulk_observable(
+                data,
+                response,
+                g_factor=float(config.get("bulk_g_factor", 2.0)),
+                magnetic_ions_per_formula_unit=float(
+                    config.get("magnetic_ions_per_formula_unit", 1.0)
+                ),
+            )
         if _is_elastic_dataset(data):
             return _quasistatic_model_observable(
                 data,
@@ -661,9 +773,24 @@ def _generalized_paramagnon_factory(component: Any) -> ModelFunction:
     return model
 
 
+def _validate_scalar_bulk_config(component: Any) -> None:
+    """Validate shared bulk-normalization settings on a scalar model."""
+
+    config = component.config if isinstance(component.config, dict) else {}
+    g_factor = float(config.get("bulk_g_factor", 2.0))
+    sites_per_fu = float(config.get("magnetic_ions_per_formula_unit", 1.0))
+    if not np.isfinite(g_factor) or g_factor <= 0.0:
+        raise ValueError("bulk_g_factor must be finite and positive")
+    if not np.isfinite(sites_per_fu) or sites_per_fu <= 0.0:
+        raise ValueError(
+            "magnetic_ions_per_formula_unit must be finite and positive"
+        )
+
+
 def _validate_generalized_paramagnon_component(component: Any) -> None:
     """Validate fixed generalized-paramagnon configuration."""
 
+    _validate_scalar_bulk_config(component)
     config = component.config if isinstance(component.config, dict) else {}
     offsets = np.asarray(
         config.get("center_offsets", [[0.0, 0.0, 0.0]]), dtype=float
@@ -740,8 +867,18 @@ def _local_relaxational_factory(component: Any) -> ModelFunction:
     name = component.name
     chi_key = qualified_parameter_name(name, "chi_loc")
     gamma_key = qualified_parameter_name(name, "gamma")
+    config = component.config if isinstance(component.config, dict) else {}
 
     def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        if data.metadata.get("data_type") == "magnetization":
+            return _scalar_bulk_observable(
+                data,
+                float(params[chi_key]),
+                g_factor=float(config.get("bulk_g_factor", 2.0)),
+                magnetic_ions_per_formula_unit=float(
+                    config.get("magnetic_ions_per_formula_unit", 1.0)
+                ),
+            )
         if _is_elastic_dataset(data):
             return _quasistatic_model_observable(
                 data,
@@ -770,6 +907,7 @@ def _mmp_relaxational_factory(component: Any) -> ModelFunction:
         parameter: qualified_parameter_name(name, parameter)
         for parameter in ("chi_pk", "xi", "omega_sf", "q0_h", "q0_k", "q0_l")
     }
+    config = component.config if isinstance(component.config, dict) else {}
 
     def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
         q0 = (
@@ -778,10 +916,19 @@ def _mmp_relaxational_factory(component: Any) -> ModelFunction:
             float(params[keys["q0_l"]]),
         )
         q_offset_sq = _q_offset_sq_inv_angstrom(data, q0)
-        if _is_elastic_dataset(data):
-            chi_static = float(params[keys["chi_pk"]]) / (
-                1.0 + float(params[keys["xi"]]) ** 2 * q_offset_sq
+        chi_static = float(params[keys["chi_pk"]]) / (
+            1.0 + float(params[keys["xi"]]) ** 2 * q_offset_sq
+        )
+        if data.metadata.get("data_type") == "magnetization":
+            return _scalar_bulk_observable(
+                data,
+                chi_static,
+                g_factor=float(config.get("bulk_g_factor", 2.0)),
+                magnetic_ions_per_formula_unit=float(
+                    config.get("magnetic_ions_per_formula_unit", 1.0)
+                ),
             )
+        if _is_elastic_dataset(data):
             return _quasistatic_model_observable(
                 data,
                 chi_static,
@@ -1464,12 +1611,6 @@ class _RpaComponentEvaluator:
         (T, B).
         """
 
-        from .sum_rules import (
-            EMU_PER_MOL_PER_MODEL_CHI,
-            EMU_PER_MOL_PER_MU_B,
-            OERSTED_PER_TESLA,
-        )
-
         n = data.size
         temperature = np.broadcast_to(
             np.atleast_1d(np.asarray(_dataset_temperature(data), dtype=float)), (n,)
@@ -1486,38 +1627,6 @@ class _RpaComponentEvaluator:
         g_factor = (
             float(params[self._zeeman_keys["g_factor"]]) if self.zeeman_mode else 2.0
         )
-        metadata = data.metadata if isinstance(data.metadata, dict) else {}
-        absolute = bool(metadata.get("absolute_units"))
-        quantity_type = str(metadata.get("quantity_type", "magnetic_moment"))
-        target_unit = str(metadata.get("unit", ""))
-        if quantity_type not in {"magnetic_moment", "magnetization", "bulk_susceptibility"}:
-            raise ValueError(
-                f"bulk model cannot predict quantity type {quantity_type!r}"
-            )
-        abs_factor = 1.0
-        if absolute:
-            mass_g = float(metadata.get("sample_mass_mg", 0.0)) / 1000.0
-            molar_mass = float(metadata.get("molar_mass_g_mol", 0.0))
-            sites_per_fu = float(
-                (self.config.get("bulk") or {}).get("sites_per_fu")
-                or self._n_magnetic_sites
-            )
-            if molar_mass <= 0 or mass_g <= 0 or sites_per_fu <= 0:
-                raise ValueError(
-                    "absolute magnetization units require a positive sample mass, "
-                    "molar mass, and sites-per-formula-unit"
-                )
-            moles = mass_g / molar_mass
-            if quantity_type == "bulk_susceptibility":
-                abs_factor = EMU_PER_MOL_PER_MODEL_CHI * sites_per_fu
-            else:
-                abs_factor = (
-                    EMU_PER_MOL_PER_MODEL_CHI * moles * OERSTED_PER_TESLA * sites_per_fu
-                )
-                if target_unit == "emu/mol":
-                    abs_factor /= moles
-                elif target_unit == "mu_B/f.u.":
-                    abs_factor /= moles * EMU_PER_MOL_PER_MU_B
 
         # Group by quantities that can actually change chi. In particular,
         # small MPMS field readback variations must not turn an otherwise
@@ -1537,7 +1646,8 @@ class _RpaComponentEvaluator:
             9,
         )
         unique_keys, inverse = np.unique(keys, axis=0, return_inverse=True)
-        out = np.empty(n, dtype=float)
+        chi_values = np.empty(n, dtype=float)
+        invalid = np.zeros(n, dtype=bool)
         closure_by_temperature: dict[float, Any] = {}
         if self.closure_spec is not None and not self.zeeman_mode:
             closure_by_temperature = self._solve_closures_at_temperatures(
@@ -1563,21 +1673,21 @@ class _RpaComponentEvaluator:
                     lambda_shift = closure.lambda_shift
                 chi_uniform = self._bulk_static_chi(params, chi0, lambda_shift, b_hat)
             except ValueError:
-                out[sel] = 1e6
+                invalid[sel] = True
+                chi_values[sel] = 0.0
                 continue
-            prediction = g_factor**2 * chi_uniform
-            if quantity_type != "bulk_susceptibility":
-                prediction = prediction * b_mag[sel]
-            out[sel] = abs_factor * prediction
-        if absolute:
-            from .quantities import convert_quantity
-
-            if quantity_type == "bulk_susceptibility" and target_unit == "m^3/mol":
-                out = convert_quantity(
-                    out, "bulk_susceptibility", "cm^3/mol", target_unit
-                )
-            elif quantity_type in {"magnetic_moment", "magnetization"} and target_unit == "A m^2":
-                out = convert_quantity(out, "magnetic_moment", "emu", target_unit)
+            chi_values[sel] = chi_uniform
+        sites_per_fu = float(
+            (self.config.get("bulk") or {}).get("sites_per_fu")
+            or self._n_magnetic_sites
+        )
+        out = _scalar_bulk_observable(
+            data,
+            chi_values,
+            g_factor=g_factor,
+            magnetic_ions_per_formula_unit=sites_per_fu,
+        )
+        out[invalid] = 1e6
         return out
 
     def value(self, data: PointData4D, params: dict[str, float]) -> np.ndarray:

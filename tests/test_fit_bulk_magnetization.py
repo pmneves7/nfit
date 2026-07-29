@@ -182,6 +182,164 @@ def test_absolute_bulk_susceptibility_prediction_does_not_multiply_by_field():
     np.testing.assert_allclose(values, expected, rtol=1e-9)
 
 
+@pytest.mark.parametrize(
+    ("model_type", "parameters", "expected_static"),
+    [
+        (
+            "local_relaxational",
+            {"chi_loc": 0.35, "gamma": 2.0},
+            0.35,
+        ),
+        (
+            "mmp_relaxational",
+            {
+                "chi_pk": 0.8,
+                "xi": 1.5,
+                "omega_sf": 2.0,
+                "q0_h": 0.5,
+                "q0_k": 0.0,
+                "q0_l": 0.0,
+            },
+            0.8 / (1.0 + 1.5**2 * (2.0 * np.pi / 4.0 * 0.5) ** 2),
+        ),
+        (
+            "generalized_paramagnon",
+            {
+                "chi_peak": 0.8,
+                "gamma0": 2.0,
+                "relaxation_power": 1.0,
+                "inverse_mode_energy_sq": 0.04,
+                "xi_x": 1.5,
+                "xi_y": 1.5,
+                "xi_z": 1.5,
+                "xi_yx": 0.0,
+                "xi_zx": 0.0,
+                "xi_zy": 0.0,
+                "q0_h": 0.5,
+                "q0_k": 0.0,
+                "q0_l": 0.0,
+            },
+            0.8 / (1.0 + 1.5**2 * (2.0 * np.pi / 4.0 * 0.5) ** 2),
+        ),
+    ],
+)
+def test_phenomenological_models_calculate_absolute_bulk_susceptibility(
+    model_type, parameters, expected_static
+):
+    from nfit.fitting import evaluate_problem_model
+    from nfit.model_registry import default_model_config
+    from nfit.sum_rules import EMU_PER_MOL_PER_MODEL_CHI
+
+    config = default_model_config(model_type)
+    config.update(
+        {
+            "bulk_g_factor": 2.2,
+            "magnetic_ions_per_formula_unit": 2.0,
+        }
+    )
+    component = ModelComponentSpec(
+        name="response",
+        type=model_type,
+        parameters=parameters,
+        fit_parameters={},
+        config=config,
+    )
+    points = _magnetization_points(
+        [5.0, 100.0],
+        np.array([0.1, 4.0]),
+        np.zeros(2),
+    )
+    points.metadata.update(
+        {
+            "absolute_units": True,
+            "quantity_type": "bulk_susceptibility",
+            "unit": "cm^3/mol",
+            "rlu_to_inv_angstrom_matrix": _rlu_matrix(4.0),
+        }
+    )
+    compiled = compile_fit_problem(
+        [component],
+        [FitDatasetInput("bulk", points, data_type="magnetization")],
+    )
+    values = evaluate_problem_model(
+        compiled.problem,
+        "bulk",
+        {spec.name: spec.value for spec in compiled.problem.parameter_specs},
+    )
+    expected = (
+        EMU_PER_MOL_PER_MODEL_CHI * 2.0 * 2.2**2 * expected_static
+    )
+    np.testing.assert_allclose(values, expected, rtol=1.0e-12)
+
+
+def test_local_relaxational_joint_fit_uses_one_static_susceptibility():
+    from nfit.fitting import fit_problem_least_squares
+    from nfit.model_registry import default_model_config
+    from nfit.spin_fluctuations import local_relaxational_chipp
+    from nfit.sum_rules import EMU_PER_MOL_PER_MODEL_CHI
+
+    truth_chi = 0.42
+    truth_gamma = 2.6
+    energy = np.linspace(0.2, 8.0, 60)
+    neutron = PointData4D(
+        H=np.zeros(energy.size),
+        K=np.zeros(energy.size),
+        L=np.zeros(energy.size),
+        E=energy,
+        intensity=local_relaxational_chipp(
+            energy, chi_loc=truth_chi, gamma=truth_gamma
+        ),
+        sigma=np.full(energy.size, 1.0e-4),
+        temperature=20.0,
+        metadata={
+            "data_type": "single_crystal_inelastic",
+            "spectral_observable": {
+                "fit_representation": "chi_double_prime",
+                "unit": "spin^2/meV",
+                "moment_unit": "spin_squared",
+                "g_factor": 2.0,
+                "kf_ki_state": "removed",
+            },
+        },
+    )
+    bulk_value = EMU_PER_MOL_PER_MODEL_CHI * 2.0**2 * truth_chi
+    bulk = _magnetization_points(
+        [20.0],
+        np.array([1.0]),
+        np.array([bulk_value]),
+        sigma=1.0e-6,
+    )
+    bulk.metadata.update(
+        {
+            "absolute_units": True,
+            "sample_mass_mg": 10.0,
+            "molar_mass_g_mol": 200.0,
+            "quantity_type": "bulk_susceptibility",
+            "unit": "cm^3/mol",
+        }
+    )
+    component = ModelComponentSpec(
+        name="loc",
+        type="local_relaxational",
+        parameters={"chi_loc": 0.25, "gamma": 1.5},
+        fit_parameters={"chi_loc": True, "gamma": True},
+        config=default_model_config("local_relaxational"),
+    )
+    result = fit_problem_least_squares(
+        compile_fit_problem(
+            [component],
+            [
+                FitDatasetInput(
+                    "neutron", neutron, data_type="single_crystal_inelastic"
+                ),
+                FitDatasetInput("bulk", bulk, data_type="magnetization"),
+            ],
+        ).problem
+    )
+    assert result.params["loc.chi_loc"] == pytest.approx(truth_chi, rel=1.0e-5)
+    assert result.params["loc.gamma"] == pytest.approx(truth_gamma, rel=1.0e-5)
+
+
 def test_magnetization_point_data_maps_temperature_and_field():
     from nfit.dataset import PointListData
     from nfit.pipeline import DataGroup, DatasetEntry

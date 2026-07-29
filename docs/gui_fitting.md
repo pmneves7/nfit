@@ -53,11 +53,13 @@ determined from the data. A self-consistency closure instead derives that
 dependence from a smaller set of global parameters; see
 [Theory: sum rules and self-consistency](theory_notes.md).
 
-Measured bulk-susceptibility channels currently support the `curie_weiss` and
-`heisenberg_rpa` models. Heisenberg RPA may be fitted jointly to neutron and
-bulk datasets with shared response and exchange parameters. The local, MMP,
-and generalized-paramagnon components currently apply only to neutron
-datasets.
+Measured bulk-susceptibility channels support `curie_weiss` and the four
+spin-fluctuation models. The spin-fluctuation components may be fitted jointly
+to neutron and bulk datasets with shared response parameters. For MMP and
+generalized-paramagnon responses, the calculated bulk value extrapolates a
+finite-momentum peak model to $\mathbf Q=0$; disagreement can be useful
+evidence that the model is incomplete there. Including a bulk dataset remains
+optional.
 
 ### Constraints
 

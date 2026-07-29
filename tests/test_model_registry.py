@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -72,6 +74,8 @@ def test_builtin_registry_is_the_gui_and_fit_source_of_truth():
     assert default_model_config("local_relaxational") == {
         "ion": "",
         "form_factor_coefficients": "",
+        "bulk_g_factor": 2.0,
+        "magnetic_ions_per_formula_unit": 1.0,
     }
     assert default_model_fit_parameters("local_relaxational") == {
         "chi_loc": False,
@@ -92,6 +96,7 @@ def test_generalized_paramagnon_registry_exposes_complete_extension_contract():
         "powder_inelastic",
         "single_crystal_elastic",
         "powder_elastic",
+        "magnetization",
     }
     plot = model_plot_definitions("generalized_paramagnon")[0]
     result = plot.calculate(
@@ -111,6 +116,40 @@ def test_generalized_paramagnon_registry_exposes_complete_extension_contract():
     )
     assert "generalized_paramagnon_energy_scan" in script
     compile(script, "<model-plot>", "exec")
+
+
+def test_every_physical_model_has_a_standard_documentation_page():
+    docs = Path(__file__).resolve().parents[1] / "docs"
+    physical = [
+        definition
+        for definition in MODEL_TYPE_REGISTRY.values()
+        if definition.category != "background"
+    ]
+
+    for definition in physical:
+        page = docs / definition.documentation
+        assert page.is_file(), definition.key
+        text = page.read_text()
+        assert "## Calculable data" in text, definition.key
+        assert "## Parameters" in text, definition.key
+
+
+@pytest.mark.parametrize(
+    "model_type",
+    ["local_relaxational", "mmp_relaxational", "generalized_paramagnon"],
+)
+def test_scalar_bulk_models_reject_invalid_normalization(model_type):
+    component = ModelComponentSpec(
+        name="response",
+        type=model_type,
+        config={
+            **default_model_config(model_type),
+            "bulk_g_factor": 0.0,
+        },
+    )
+
+    with pytest.raises(ValueError, match="bulk_g_factor"):
+        nfit.validate_model_component(component)
 
 
 def test_registered_model_drives_creation_diagnostics_plots_and_serialization():

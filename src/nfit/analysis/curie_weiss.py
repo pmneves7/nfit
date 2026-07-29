@@ -8,6 +8,7 @@ import numpy as np
 from scipy.optimize import curve_fit
 
 from ..dataset import PointListData
+from ..magnetization import curie_weiss_susceptibility
 from ..quantities import convert_quantity
 from .core import AnalysisExecution, AnalysisInput, DatasetOutput, ScalarOutput
 
@@ -15,16 +16,6 @@ _AVOGADRO = 6.02214076e23
 _BOLTZMANN_CGS = 1.380649e-16  # erg/K
 _MU_B_CGS = 9.2740100783e-21  # erg/G
 _MU_EFF_PER_SQRT_C = np.sqrt(3.0 * _BOLTZMANN_CGS / (_AVOGADRO * _MU_B_CGS**2))
-
-
-def curie_weiss_susceptibility(
-    temperature_K: np.ndarray, curie_constant: float, theta_K: float
-) -> np.ndarray:
-    """Return ``C / (T - theta_CW)`` in CGS molar susceptibility units."""
-
-    temperature = np.asarray(temperature_K, dtype=float)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        return curie_constant / (temperature - theta_K)
 
 
 def validate_curie_weiss(inputs, parameters) -> None:

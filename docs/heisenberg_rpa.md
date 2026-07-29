@@ -4,6 +4,19 @@ The `heisenberg_rpa` model couples local relaxational spins through a
 crystallographic exchange network. This page defines its phase convention,
 observable, extensions, and fitting controls.
 
+## Parameters
+
+| API name | Meaning | Unit |
+| --- | --- | --- |
+| `chi0` | static single-site susceptibility $\chi_0$ | meV$^{-1}$ |
+| `gamma0` | bare single-site relaxation energy $\Gamma_0$ | meV |
+| exchange-orbit label, such as `J1` | exchange assigned to every bond in that orbit | meV |
+
+The crystal and exchange editor determines the orbit labels. Tensor exchange,
+single-ion anisotropy, dipolar interactions, Zeeman coupling, and
+self-consistency closures add the parameters described in their sections
+below.
+
 ## Scalar model
 
 For $N$ magnetic sites in the chosen crystallographic cell,
@@ -107,6 +120,21 @@ Useful checks are:
 
 Positive $J$ favors the wavevector where the largest eigenvalue of
 $J(\mathbf Q)$ is maximal under this convention.
+
+## Calculable data
+
+The model calculates:
+
+- single-crystal and powder inelastic neutron scattering;
+- single-crystal and powder quasistatic elastic magnetic scattering;
+- uniform bulk susceptibility; and
+- magnetic moment or magnetization, including field-dependent tensor and
+  self-consistent responses when those extensions are enabled.
+
+All channels are evaluations of the same response parameters and may be
+fitted jointly. Inelastic data constrain the relaxation scale; elastic and
+bulk data evaluate static limits and cannot determine $\Gamma_0$ by
+themselves.
 
 ## Crystal and exchange network
 
@@ -274,6 +302,14 @@ $\phi$ is the uniform sublattice vector for the neutron observable, $J_o$ is
 the exchange assigned to orbit $o$, and $P_o$ is that orbit's exchange
 structure matrix. The expression remains well defined at degenerate bands and
 reuses the model factorization. Tensor mode currently uses central differences.
+
+## Scripting and export
+
+The numerical API exposes `build_rpa_geometry`, `heisenberg_rpa_chipp`, and
+the related derivative and exchange-matrix functions. Fitting uses
+`ModelComponentSpec(type="heisenberg_rpa", ...)`; project files, workflow
+scripts, fit-result export, reports, and model/residual channels use the shared
+model machinery.
 
 ## References
 

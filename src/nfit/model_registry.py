@@ -539,6 +539,37 @@ def _form_factor_fields(
     )
 
 
+def _bulk_response_fields() -> tuple[ModelConfigDefinition, ...]:
+    """Shared normalization fields for scalar uniform-response models."""
+
+    return (
+        ModelConfigDefinition(
+            name="bulk_g_factor",
+            default=2.0,
+            description=(
+                "Lande g factor used to convert the uniform spin susceptibility "
+                "to bulk susceptibility or linear-response moment."
+            ),
+            allowed="Positive finite number.",
+            type="float",
+            example="2.0",
+            unit="dimensionless",
+        ),
+        ModelConfigDefinition(
+            name="magnetic_ions_per_formula_unit",
+            default=1.0,
+            description=(
+                "Number of equivalent magnetic ions represented by the response "
+                "per formula unit for molar bulk normalization."
+            ),
+            allowed="Positive finite number.",
+            type="float",
+            example="2.0",
+            unit="ions/f.u.",
+        ),
+    )
+
+
 def _register_builtin_models() -> None:
     register_model_definition(
         ModelDefinition(
@@ -612,6 +643,7 @@ def _register_builtin_models() -> None:
                 "powder_inelastic",
                 "single_crystal_elastic",
                 "powder_elastic",
+                "magnetization",
             ),
             factory=_fit_factory("_local_relaxational_factory"),
             parameter_fields=(
@@ -635,9 +667,11 @@ def _register_builtin_models() -> None:
             config_fields=_form_factor_fields(
                 "Fe2",
                 mention_lattice_requirement=True,
-            ),
+            )
+            + _bulk_response_fields(),
+            validate_component=_fit_validator("_validate_scalar_bulk_config"),
             default_lower_bounds=(("chi_loc", 0.0), ("gamma", 0.0)),
-            documentation="spin_fluctuation_models.md#local-relaxational-model",
+            documentation="local_relaxational.md",
         )
     )
     register_model_definition(
@@ -652,7 +686,11 @@ def _register_builtin_models() -> None:
                 "temperature and lattice metadata."
             ),
             category="spin_fluctuation",
-            data_types=("single_crystal_inelastic", "single_crystal_elastic"),
+            data_types=(
+                "single_crystal_inelastic",
+                "single_crystal_elastic",
+                "magnetization",
+            ),
             factory=_fit_factory("_mmp_relaxational_factory"),
             parameter_fields=(
                 _parameter(
@@ -705,13 +743,14 @@ def _register_builtin_models() -> None:
                     "0.0",
                 ),
             ),
-            config_fields=_form_factor_fields("Fe2"),
+            config_fields=_form_factor_fields("Fe2") + _bulk_response_fields(),
+            validate_component=_fit_validator("_validate_scalar_bulk_config"),
             default_lower_bounds=(
                 ("chi_pk", 0.0),
                 ("xi", 0.0),
                 ("omega_sf", 0.0),
             ),
-            documentation="spin_fluctuation_models.md#mmp-relaxational-model",
+            documentation="mmp_relaxational.md",
             citations=(
                 "https://doi.org/10.1103/PhysRevB.42.167",
                 "https://doi.org/10.1103/PhysRevB.47.6069",
@@ -734,6 +773,7 @@ def _register_builtin_models() -> None:
                 "powder_inelastic",
                 "single_crystal_elastic",
                 "powder_elastic",
+                "magnetization",
             ),
             factory=_fit_factory("_generalized_paramagnon_factory"),
             parameter_fields=(
@@ -917,6 +957,7 @@ def _register_builtin_models() -> None:
                     ),
                 ),
                 *_form_factor_fields("Fe2"),
+                *_bulk_response_fields(),
             ),
             validate_component=_fit_validator(
                 "_validate_generalized_paramagnon_component"
@@ -1063,7 +1104,8 @@ def _register_builtin_models() -> None:
                 ("debye_temperature", 0.0),
                 ("oscillator_count", 0.0),
             ),
-            documentation="heat_capacity.md",
+            documentation="debye_heat_capacity.md",
+            citations=("https://doi.org/10.1002/andp.19123441404",),
         )
     )
     register_model_definition(
@@ -1096,7 +1138,11 @@ def _register_builtin_models() -> None:
                 ("sommerfeld_gamma", 0.0),
                 ("debye_beta", 0.0),
             ),
-            documentation="heat_capacity.md",
+            documentation="low_temperature_heat_capacity.md",
+            citations=(
+                "https://doi.org/10.1007/BF01391052",
+                "https://doi.org/10.1002/andp.19123441404",
+            ),
         )
     )
     register_model_definition(
@@ -1126,7 +1172,10 @@ def _register_builtin_models() -> None:
                 ),
             ),
             default_lower_bounds=(("curie_constant", 0.0),),
-            documentation="physics_conventions.md#si-bulk-susceptibility-and-magnetization",
+            documentation="curie_weiss.md",
+            citations=(
+                "https://doi.org/10.1051/jphystap:019070060066100",
+            ),
         )
     )
 

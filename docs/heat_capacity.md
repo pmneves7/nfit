@@ -21,31 +21,24 @@ Enabling molar normalization creates **Heat capacity** in `mJ/(mol K)` and
 viewer coordinate selector to draw `C/T` versus `T^2` without a dedicated plot
 mode.
 
-## Fit components
+## Models
 
-**Debye phonon heat capacity** evaluates
+| Model | Main response | Typical use |
+| --- | --- | --- |
+| `debye_heat_capacity` | Debye phonon integral | Lattice heat capacity over a broad temperature range |
+| `low_temperature_heat_capacity` | $C=\gamma T+\beta T^3$ | Electronic and leading phonon terms at low temperature |
 
-$$
-C_D(T)=9nR\left(\frac{T}{\Theta_D}\right)^3
-\int_0^{\Theta_D/T}\frac{x^4e^x}{(e^x-1)^2}\,dx .
-$$
+Both models calculate either $C$ or $C/T$ according to the selected fit
+channel. Their equations, parameters, calculable data, fitting limitations,
+scripts, and references are documented separately.
 
-Here $T$ is absolute temperature, $\Theta_D$ is the Debye temperature, $n$ is
-the number of atoms per formula unit, $R$ is the molar gas constant, and $x$
-is a dimensionless integration variable. The high-temperature limit is $3nR$.
-Use $R$ in the same energy units as the heat-capacity ordinate. The model is
-registered only for heat-capacity datasets.
+```{toctree}
+:maxdepth: 1
+:caption: Heat-capacity models
 
-**Low-temperature heat capacity** evaluates
-
-$$
-C(T)=\gamma T+\beta T^3,
-\qquad \frac{C}{T}=\gamma+\beta T^2.
-$$
-
-Both models automatically return either $C$ or $C/T$ according to the selected
-fit channel. $\gamma$ is the electronic coefficient in `mJ/(mol K^2)` and
-$\beta$ is the cubic phonon coefficient in `mJ/(mol K^4)`.
+debye_heat_capacity
+low_temperature_heat_capacity
+```
 
 ## Low-temperature analysis
 

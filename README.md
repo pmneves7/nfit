@@ -10,7 +10,8 @@ The package provides:
 - powder-cut, MPMS magnetization, PPMS heat-capacity, and tabular imports;
 - masking, symmetry-aware rebinning, backgrounds, and non-destructive analyses;
 - local, MMP, generalized-paramagnon/damped-mode, and Heisenberg-RPA
-  spin-fluctuation models for inelastic and quasistatic elastic scattering;
+  spin-fluctuation models for inelastic, quasistatic elastic, and optional
+  bulk-response comparisons;
 - an extensible model registry shared by fitting, GUI metadata, diagnostics,
   reports, plots, project files, and workflow scripts;
 - simultaneous least-squares fitting with explicit uncertainty conventions,

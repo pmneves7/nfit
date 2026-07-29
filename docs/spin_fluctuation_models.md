@@ -3,12 +3,12 @@
 nfit provides four magnetic-response models. Start with the least structured
 model that resolves the features in the data.
 
-| Model | Main response | Typical use |
-| --- | --- | --- |
-| `local_relaxational` | $\chi=\chi_{\rm loc}/(1-iE/\Gamma)$ | Local or momentum-independent fluctuations |
-| `mmp_relaxational` | $\chi=\chi_{\rm pk}/(1+\xi^2q^2-iE/E_{\rm sf})$ | One isotropic peak in a nearly antiferromagnetic metal |
-| `generalized_paramagnon` | $\chi=(\chi_{\rm pk}/A)/(1-a_EE^2/A-iE/[\Gamma_0A^z])$ | Anisotropic peaks, critical slowing down, and damped propagating modes |
-| `heisenberg_rpa` | $\boldsymbol\chi=[\mathbb 1-\chi_0J(\mathbf Q)]^{-1}\chi_0$ | Dispersive fluctuations constrained by a crystal and exchange network |
+| Model | Main response | Typical use | Calculable data |
+| --- | --- | --- | --- |
+| `local_relaxational` | $\chi=\chi_{\rm loc}/(1-iE/\Gamma)$ | Local or momentum-independent fluctuations | Single-crystal and powder neutron scattering; bulk linear response |
+| `mmp_relaxational` | $\chi=\chi_{\rm pk}/(1+\xi^2q^2-iE/E_{\rm sf})$ | One isotropic peak in a nearly antiferromagnetic metal | Single-crystal neutron scattering; extrapolated bulk linear response |
+| `generalized_paramagnon` | $\chi=(\chi_{\rm pk}/A)/(1-a_EE^2/A-iE/[\Gamma_0A^z])$ | Anisotropic peaks, critical slowing down, and damped propagating modes | Single-crystal and powder neutron scattering; extrapolated bulk linear response |
+| `heisenberg_rpa` | $\boldsymbol\chi=[\mathbb 1-\chi_0J(\mathbf Q)]^{-1}\chi_0$ | Dispersive fluctuations constrained by a crystal and exchange network | Single-crystal and powder neutron scattering; bulk linear response |
 
 ```{toctree}
 :maxdepth: 1
@@ -36,6 +36,10 @@ The [local relaxational](local_relaxational.md),
 [Heisenberg RPA](heisenberg_rpa.md) pages define their parameters, complex
 susceptibilities, dissipative responses, elastic limits, scripts, and
 references.
+
+Bulk comparison is optional. For models constructed near finite-momentum
+peaks, the $\mathbf Q=0$ result is an extrapolation whose failure can itself be
+a useful model diagnostic.
 
 ## Units
 

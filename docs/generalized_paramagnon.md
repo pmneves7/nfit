@@ -83,6 +83,18 @@ imaginary part.
 | `xi_yx`, `xi_zx`, `xi_zy` | off-diagonal entries of $L$ | Å |
 | `q0_h`, `q0_k`, `q0_l` | fitted primary center | r.l.u. |
 
+For comparison with bulk data, two fixed model settings specify the conversion
+from spin susceptibility:
+
+| API name | Meaning | Unit |
+| --- | --- | --- |
+| `bulk_g_factor` | Landé factor $g$ | dimensionless |
+| `magnetic_ions_per_formula_unit` | equivalent magnetic ions represented by the response | ions/f.u. |
+
+These settings do not alter the dynamical susceptibility. In a joint neutron
+and bulk fit, `bulk_g_factor` should agree with the Landé factor in the neutron
+dataset's spectral convention.
+
 The diagonal correlation parameters, susceptibility, relaxation energy,
 relaxation power, and inertial coefficient are nonnegative; $\Gamma_0$ must be
 strictly positive.
@@ -109,23 +121,42 @@ is the finite boundary `inverse_mode_energy_sq=0`, rather than
 $E_0\rightarrow\infty$. Fit diagnostics report $E_0$ and the damping
 quantities when the coefficient is nonzero.
 
-## Dataset comparison
+## Calculable data
 
-Inelastic datasets use $\chi''$. Elastic datasets use the exact static limit
+The model calculates:
+
+- single-crystal and powder inelastic neutron scattering;
+- single-crystal and powder quasistatic elastic magnetic scattering;
+- uniform bulk susceptibility; and
+- magnetic moment or magnetization in linear response to an applied field.
+
+Inelastic calculations use $\chi''$. Quasistatic elastic calculations use the
+static limit
 
 $$
 \chi'(\mathbf q,0)=\frac{\chi_{\rm pk}}{A(\mathbf q)}
 $$
 
-and then the common quasistatic cross-section conversion. Elastic-only data
-cannot constrain `gamma0`, `relaxation_power`, or
-`inverse_mode_energy_sq`.
+for each included center. The bulk prediction evaluates the same sum at
+$\mathbf q=0$. This makes a joint comparison possible, but does not assert
+that a peak expansion developed at finite momentum is quantitatively valid at
+the zone center. Calculating the extrapolation does not require the user to
+include bulk data in a fit.
 
 Powder datasets average the same response over orientations. The
 fluctuation--dissipation relation, polarization factor, magnetic form factor,
 and experimental normalization then convert the intrinsic susceptibility into
 the measured neutron intensity, as described in
 [Physics conventions](physics_conventions.md).
+
+## Fitting and identifiability
+
+Inelastic data are needed to constrain `gamma0`, `relaxation_power`, and
+`inverse_mode_energy_sq`. Elastic and bulk data constrain only the static
+spatial response. A bulk value alone usually constrains a combination of peak
+amplitude, correlation metric, and center positions rather than those
+quantities separately. Bulk conversion uses the stated Landé factor and number
+of magnetic ions per formula unit.
 
 ## Scripting and plots
 

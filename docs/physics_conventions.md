@@ -362,13 +362,17 @@ have dimensions of inverse energy.
 
 Bulk susceptibility is the uniform response and therefore requires
 $\mathbf Q=0$. It is not obtained by integrating a finite-$\mathbf Q$ neutron
-spectrum over momentum. In the current fitting interface, `heisenberg_rpa`
-evaluates this uniform static response and can share parameters between bulk
-and neutron datasets. The `curie_weiss` model fits molar susceptibility
-directly. The local, MMP, and generalized-paramagnon components do not
-currently accept bulk-susceptibility datasets; in particular, nfit does not
-assume that a peak expansion about a nonzero ordering vector remains valid at
-$\mathbf Q=0$.
+spectrum over momentum. The `local_relaxational`, `mmp_relaxational`,
+`generalized_paramagnon`, and `heisenberg_rpa` models evaluate their uniform
+static limits and can share response parameters between bulk and neutron
+datasets. The `curie_weiss` model instead fits molar susceptibility directly.
+
+For MMP and generalized-paramagnon models, the bulk value is an extrapolation
+of a response constructed around one or more finite-$\mathbf Q$ peaks. That
+form need not remain quantitatively valid at $\mathbf Q=0$. Comparing the
+extrapolation with bulk susceptibility can therefore test the model's
+insufficiency; it is optional and does not imply that the finite-$\mathbf Q$
+form is expected to describe the bulk response.
 
 For $\chi'_s$ in J$^{-1}$ per magnetic ion and a number density
 $n_{\rm mag}$ in m$^{-3}$ of equivalent magnetic ions,

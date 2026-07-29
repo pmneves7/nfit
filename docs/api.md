@@ -258,6 +258,12 @@ calculation.
 .. automodule:: nfit.spin_fluctuations
    :members:
 
+.. automodule:: nfit.magnetization
+   :members:
+
+.. automodule:: nfit.heat_capacity
+   :members:
+
 .. automodule:: nfit.form_factors
    :members:
 

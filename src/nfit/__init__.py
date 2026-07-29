@@ -123,6 +123,11 @@ from .form_factors import (
     form_factor_sq,
     magnetic_form_factor_j0,
 )
+from .heat_capacity import (
+    debye_heat_capacity,
+    debye_temperature_from_beta,
+    low_temperature_heat_capacity,
+)
 from .importers import (
     IMPORTERS,
     ImporterSpec,
@@ -136,6 +141,7 @@ from .importers import (
     read_delimited_text,
     split_name_and_unit,
 )
+from .magnetization import curie_weiss_susceptibility
 from .mdevent import (
     DetectorNormalization,
     MDEventRunInfo,
@@ -376,6 +382,9 @@ __all__ = [
     "chipp_from_cross_section",
     "chipp_from_intensity",
     "cross_section_from_chipp",
+    "curie_weiss_susceptibility",
+    "debye_heat_capacity",
+    "debye_temperature_from_beta",
     "quasistatic_cross_section_from_chi",
     "FitResult",
     "FitCancellationRequested",
@@ -497,6 +506,7 @@ __all__ = [
     "heisenberg_rpa_chipp_and_gradients",
     "local_relaxational_chipp",
     "local_relaxational_susceptibility",
+    "low_temperature_heat_capacity",
     "mmp_chipp",
     "mmp_susceptibility",
     "damped_mode_susceptibility",

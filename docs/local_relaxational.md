@@ -28,14 +28,46 @@ The susceptibility has no intrinsic momentum dependence. Momentum dependence
 in the magnetic neutron intensity appears only through the magnetic form
 factor.
 
-## Elastic and inelastic data
+For comparison with bulk data, two fixed model settings specify the conversion
+from spin susceptibility:
 
-Inelastic fits use $\chi''(E)$ and the dataset’s declared spectral convention.
-Elastic fits use the quasistatic response
-$\chi'(0)=\chi_{\rm loc}$ before the form factor and cross-section conversion.
-Elastic-only data therefore cannot constrain `gamma`.
+| API name | Meaning | Unit |
+| --- | --- | --- |
+| `bulk_g_factor` | Landé factor $g$ | dimensionless |
+| `magnetic_ions_per_formula_unit` | equivalent magnetic ions represented by the response | ions/f.u. |
 
-The model supports single-crystal and powder inelastic or elastic datasets.
+These settings do not change the intrinsic susceptibility. In a joint neutron
+and bulk fit, `bulk_g_factor` should agree with the Landé factor in the neutron
+dataset's spectral convention.
+
+## Calculable data
+
+The model calculates:
+
+- single-crystal and powder inelastic neutron scattering;
+- single-crystal and powder quasistatic elastic magnetic scattering;
+- uniform bulk susceptibility; and
+- magnetic moment or magnetization in linear response to an applied field.
+
+For neutron scattering, inelastic calculations use $\chi''(E)$ and
+quasistatic elastic calculations use $\chi'(0)=\chi_{\rm loc}$. Because the
+response is independent of momentum, its uniform static limit is also
+
+$$
+\chi_{\rm uniform}=\chi_{\rm loc}.
+$$
+
+Bulk conversion uses the Landé factor and number of magnetic ions per formula
+unit stated with the model, together with the sample normalization and units
+stored by the dataset.
+
+## Fitting and identifiability
+
+Inelastic data can constrain both $\chi_{\rm loc}$ and $\Gamma$. Elastic and
+bulk-susceptibility data constrain only $\chi_{\rm loc}$; they contain no
+information about the relaxation energy. The model has no intrinsic
+temperature dependence, so a temperature series requires per-dataset or
+grouped values of $\chi_{\rm loc}$ unless another relation is imposed.
 
 ## Scripting
 
@@ -50,5 +82,6 @@ chi = local_relaxational_susceptibility(
 chipp = chi.imag
 ```
 
-Use `ModelComponentSpec(type="local_relaxational", ...)` for fitting and
-workflow export.
+Use `ModelComponentSpec(type="local_relaxational", ...)` for fitting. Project
+files, workflow scripts, fit-result export, reports, and model/residual
+channels use the shared model machinery.
