@@ -31,15 +31,22 @@ def _render_brillouin_zone(plotter: Any, scene: BrillouinZoneScene) -> None:
     plotter.set_background("white")
     if hasattr(plotter, "enable_lightkit"):
         plotter.enable_lightkit()
+    zone = _zone_mesh(scene)
     plotter.add_mesh(
-        _zone_mesh(scene),
-        color="aliceblue",
-        opacity=0.22,
-        show_edges=True,
-        edge_color="black",
-        line_width=2,
-        lighting=True,
-        smooth_shading=True,
+        zone,
+        color="lightsteelblue",
+        opacity=0.10,
+        show_edges=False,
+        lighting=False,
+        smooth_shading=False,
+    )
+    plotter.add_mesh(
+        zone,
+        style="wireframe",
+        color="black",
+        opacity=1.0,
+        line_width=4,
+        lighting=False,
     )
     nodes = np.asarray(
         [node.cartesian_inv_angstrom for node in scene.path_nodes],
@@ -68,20 +75,23 @@ def _render_brillouin_zone(plotter: Any, scene: BrillouinZoneScene) -> None:
             always_visible=True,
         )
     reciprocal = np.asarray(scene.reciprocal_vectors, dtype=float)
-    vector_scale = 0.52
     colors = ("red", "green", "blue")
-    labels = ("b₁", "b₂", "b₃")
+    labels = ("b1", "b2", "b3")
     endpoints = []
     for vector, color in zip(reciprocal, colors, strict=True):
-        endpoint = vector_scale * vector
+        endpoint = vector
         endpoints.append(endpoint)
         plotter.add_mesh(
             pv.Arrow(
                 start=(0.0, 0.0, 0.0),
                 direction=vector,
                 scale=float(np.linalg.norm(endpoint)),
+                tip_length=0.08,
+                tip_radius=0.025,
+                shaft_radius=0.008,
             ),
             color=color,
+            lighting=False,
         )
     plotter.add_point_labels(
         np.asarray(endpoints),

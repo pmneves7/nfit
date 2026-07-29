@@ -269,6 +269,8 @@ def _validate_tight_binding_config(component: Any) -> None:
     cutoff = float(config.get("hopping_cutoff_angstrom", 0.0))
     if not np.isfinite(cutoff) or cutoff < 0.0:
         raise ValueError("hopping_cutoff_angstrom must be finite and nonnegative")
+    for item in config.get("hopping_candidates", ()):
+        HoppingInvariant.from_dict(item)
     for item in config.get("hopping_terms", ()):
         HoppingInvariant.from_dict(item)
 

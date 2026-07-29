@@ -10,9 +10,11 @@ from nfit import (
     NfitProject,
     OrbitalManifold,
     OrbitalSymmetryError,
+    add_tight_binding_hopping_term,
     add_tight_binding_orbital_manifold,
     create_model_component,
     generate_onsite_terms,
+    hopping_endpoint_orbitals,
     load_project,
     manifold_symmetry_representation,
     model_geometry_scene,
@@ -21,6 +23,7 @@ from nfit import (
     orbital_manifold_from_site_symmetry,
     orbital_manifold_preset,
     regenerate_tight_binding_hopping_terms,
+    remove_tight_binding_hopping_term,
     save_project,
     set_tight_binding_hopping_term,
     set_tight_binding_onsite_term,
@@ -278,6 +281,19 @@ def test_symmetry_generated_hopping_resolves_dispersion_and_script_round_trip():
     assert len(generation.terms) == 1
     term = generation.terms[0]
     np.testing.assert_allclose(term.matrix, [[1.0]])
+    assert "M1_effective[effective]" in term.label
+    assert hopping_endpoint_orbitals(term) == (
+        ("M1_effective:effective",),
+        ("M1_effective:effective",),
+    )
+    assert len(component.config["hopping_candidates"]) == 1
+    assert component.config["hopping_terms"] == []
+    flat = ElectronicModel.from_dict(component.config["model_data"])
+    np.testing.assert_allclose(
+        np.linalg.eigvalsh(flat.hamiltonian([0, 0, 0])),
+        [0.0],
+    )
+    add_tight_binding_hopping_term(component, term.identifier)
     set_tight_binding_hopping_term(
         component,
         term.identifier,
@@ -332,6 +348,16 @@ def test_symmetry_generated_hopping_resolves_dispersion_and_script_round_trip():
         namespace["electronic_model"].content_digest
         == component.config["model_digest"]
     )
+    assert len(namespace["model"].config["hopping_candidates"]) == 1
+    assert len(namespace["model"].config["hopping_terms"]) == 1
+
+    remove_tight_binding_hopping_term(component, term.identifier)
+    assert component.config["hopping_terms"] == []
+    assert len(component.config["hopping_candidates"]) == 1
+    add_tight_binding_hopping_term(component, term.identifier)
+    restored = component.config["hopping_terms"][0]
+    assert restored["value_meV"] == pytest.approx(-100.0)
+    assert restored["fit"] is True
 
 
 def test_model_geometry_scene_shows_active_ghost_orbitals_and_frames():

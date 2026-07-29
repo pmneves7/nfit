@@ -52,10 +52,11 @@ spherical-harmonic, or custom manifolds with explicit local frames. For an
 $s$, $p$, $d$, or $f$ shell it identifies the selected site's point group and
 can add one calculated symmetry-closed subspace. **Onsite terms** generates the
 complete symmetry-allowed static onsite basis and stores values, bounds, and
-future fit selections. **Hoppings** selects a distance cutoff, generates
-symmetry-allowed matrix terms for each spatial bond orbit, and stores their
-values, bounds, and future fit selections. These terms produce the dispersive
-resolved Hamiltonian.
+future fit selections. **Hoppings** selects a distance cutoff and generates a
+suggestion table of symmetry-allowed matrix terms for each spatial bond orbit.
+Each suggestion identifies its source and destination sites and orbitals. Only
+the rows selected and added by the user become active Hamiltonian terms with
+values, bounds, and future fit selections.
 
 **View model in 3D** shows the unit cell, active or ghost sites, orbital
 tokens, local frames, and available hopping or exchange pathways. Atom spheres
@@ -63,8 +64,9 @@ use distinct element colors; geometry is batched to reduce scene-construction
 time. **Copy 3D viewer script** exports the same renderer-independent scene.
 The model geometry view can select one hopping matrix term, one representative
 path, or all symmetry-equivalent paths. **View Brillouin zone in 3D** shows
-the configured labelled band path and reciprocal basis vectors in the first
-Brillouin zone; its adjacent script action reproduces the same view without
+the primitive reciprocal-lattice Wigner--Seitz cell, including conventional
+cell centering, together with the configured labelled band path and reciprocal
+basis vectors. Its adjacent script action reproduces the same view without
 project widgets.
 The builder and plot actions also expose editable scripts but do not enter a
 fit until a later electronic-response model provides a dataset observable.

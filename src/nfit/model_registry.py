@@ -1312,6 +1312,17 @@ def _register_builtin_models() -> None:
                     "[]",
                 ),
                 _config_field(
+                    "hopping_candidates",
+                    [],
+                    (
+                        "Generated symmetry-allowed hopping suggestions; only "
+                        "selected candidates enter the Hamiltonian."
+                    ),
+                    "A generated list of HoppingInvariant dictionaries.",
+                    "list",
+                    "[]",
+                ),
+                _config_field(
                     "hopping_terms",
                     [],
                     (

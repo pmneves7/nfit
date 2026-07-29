@@ -7,8 +7,8 @@ models. The detailed current behavior is documented on
 Stages 3.1 through 3.3 are implemented. The GUI and public API share CIF import,
 editable crystal geometry, site expansion, orbital manifolds and local frames,
 site-point-group identification, calculated harmonic subspaces,
-site-symmetry representations, static onsite invariants, symmetry-generated
-hopping invariants, canonical model resolution, project and builder-script
+site-symmetry representations, static onsite invariants, selectable
+symmetry-generated hopping candidates, canonical model resolution, project and builder-script
 serialization, and an eV-default input unit backed by canonical meV storage.
 The shared 3D model viewer displays the cell, smooth element-colored atom
 spheres, active or ghost sites, orbital tokens, local frames, and selected
@@ -188,10 +188,11 @@ does not encode hopping magnitude or phase: geometry must not imply that a
 multiorbital hopping matrix is a single scalar.
 
 The renderer-independent Brillouin-zone scene is separate from the crystal
-scene. It constructs the first reciprocal-space Wigner--Seitz cell and
-overlays the configured labelled band path plus $\mathbf b_1$, $\mathbf b_2$,
-and $\mathbf b_3$. The three-dimensional view and band plot use the same path
-configuration.
+scene. It constructs the Wigner--Seitz cell of the primitive reciprocal
+translation lattice, including the centering translations of a conventional
+crystal cell, and overlays the configured labelled band path plus
+$\mathbf b_1$, $\mathbf b_2$, and $\mathbf b_3$. The three-dimensional view
+and band plot use the same path configuration.
 
 ## Spin-orbit coupling
 
@@ -224,8 +225,9 @@ The model editor should present five focused sections:
    local frames, and inspect the expanded ordered basis.
 3. **Onsite terms** — generate symmetry-allowed onsite invariants, set
    crystal-field energies and hybridizations, and choose fitted terms.
-4. **Hoppings** — choose a distance cutoff, generate spatial bond orbits,
-   inspect allowed matrix terms, set values, and choose fitted terms.
+4. **Hoppings** — choose a distance cutoff, generate suggested spatial-orbit
+   matrix terms, inspect their source and destination orbitals, select terms
+   to add to the Hamiltonian, set values, and choose fitted terms.
 5. **Calculations** — configure projections, bands, DOS, and Fermi surfaces
    using the current model-owned plot actions.
 
@@ -307,13 +309,14 @@ When fitting is enabled:
 ### 3.3 — Hopping generator (implemented)
 
 - Reuse spatial bond orbits and add orbital covariance matrices.
-- Generate symmetry-allowed hopping bases up to a cutoff.
+- Generate symmetry-allowed hopping candidates up to a cutoff and activate
+  only user-selected terms.
 - Resolve named parameters into canonical $H(\mathbf R)$ blocks and add the
   Hoppings GUI section.
 - Extend the shared viewer with representative and symmetry-equivalent hopping
   paths and matrix-term selection.
-- Add a labelled first-Brillouin-zone viewer using the configured band path
-  and reciprocal basis vectors.
+- Add a labelled first-Brillouin-zone viewer using the primitive translation
+  lattice, configured band path, and reciprocal basis vectors.
 
 ### 3.4 — Parameter and fit integration
 

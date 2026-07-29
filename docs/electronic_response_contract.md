@@ -439,6 +439,7 @@ Stage 3.1 supplies shared CIF/manual crystal geometry. Stage 3.2 adds
 site-attached orbital manifolds, local frames, site-point-group harmonic
 subspaces, symmetry-allowed static onsite terms, resolved flat-band
 Hamiltonians, builder-script round trips, and the shared model-geometry viewer
-foundation. Stage 3.3 adds symmetry-covariant real hopping matrices, dispersive
-Hamiltonians, hopping-path inspection, and a labelled first-Brillouin-zone
-viewer using the configured band path.
+foundation. Stage 3.3 adds selectable symmetry-covariant real hopping
+candidates with explicit source and destination orbitals, dispersive
+Hamiltonians, hopping-path inspection, and a labelled primitive-lattice
+first-Brillouin-zone viewer using the configured band path.

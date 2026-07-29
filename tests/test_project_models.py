@@ -211,11 +211,29 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
     cutoff.setText("5.1")
     generate.click()
     assert model.config["spatial_orbits"]
-    assert model.config["hopping_terms"]
+    assert model.config["hopping_candidates"]
+    assert model.config["hopping_terms"] == []
+    suggestions = explorer.model_parameter_widget.findChild(
+        QtWidgets.QTableWidget, "tight_binding_hopping_suggestions"
+    )
+    add_hopping = explorer.model_parameter_widget.findChild(
+        QtWidgets.QPushButton, "tight_binding_hopping_add_selected"
+    )
+    assert suggestions is not None and suggestions.rowCount() > 0
+    assert suggestions.horizontalHeaderItem(4).text() == "From orbital(s)"
+    assert "M1_d_subspace" in suggestions.item(0, 4).text()
+    assert "←" in suggestions.item(0, 0).text()
+    suggestions.selectRow(0)
+    add_hopping.click()
+    assert len(model.config["hopping_terms"]) == 1
     hopping_value = explorer.model_parameter_widget.findChild(
         QtWidgets.QLineEdit, "tight_binding_hopping_value_0"
     )
     assert hopping_value is not None and "canonical meV" in hopping_value.toolTip()
+    remove_hopping = explorer.model_parameter_widget.findChild(
+        QtWidgets.QPushButton, "tight_binding_hopping_remove_0"
+    )
+    assert remove_hopping is not None and remove_hopping.toolTip()
 
     config_group = explorer.model_parameter_widget.findChild(
         QtWidgets.QGroupBox, "model_config_group"

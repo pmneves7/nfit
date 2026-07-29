@@ -176,7 +176,8 @@ dictionaries can be entered directly in the model editor.
 | `onsite_terms` | generated Hermitian onsite matrix bases, canonical values, bounds, and future fit selections | `[]` | `[term.to_dict() for term in generate_onsite_terms(crystal, manifolds)]` |
 | `hopping_cutoff_angstrom` | maximum representative-bond distance used by the symmetry hopping generator; zero disables generated hoppings | `0.0` | `4.2` |
 | `spatial_orbits` | generated symmetry-equivalent bond families retained for editing and visualization | `[]` | `[orbit.to_dict() for orbit in generation.orbits]` |
-| `hopping_terms` | symmetry-allowed hopping matrix bases with canonical values, bounds, and future fit selections | `[]` | `[term.to_dict() for term in generation.terms]` |
+| `hopping_candidates` | complete generated list of symmetry-allowed matrix terms; candidates do not affect $H(\mathbf k)$ | `[]` | `[term.to_dict() for term in generation.terms]` |
+| `hopping_terms` | selected active hopping terms with canonical values, bounds, and future fit selections | `[]` | `[selected_term.to_dict()]` |
 | `periodic_axes` | periodic lattice axes; empty asks a Wannier import to infer them from nonzero translations | `[]` | `[0]`, `[0, 1]`, or `[0, 1, 2]` |
 | `electronic_energy_unit` | input and electronic-plot unit; changing it does not alter canonical values | `"eV"` | `"eV"` or `"meV"` |
 | `chemical_potential_meV` | canonical chemical potential subtracted on band and DOS plots; displayed in `electronic_energy_unit` | `0.0` | `12.5` for 0.0125 eV |
@@ -374,6 +375,13 @@ $$
 Reversing the directed bond transposes the current real matrix. The resolved
 Hamiltonian contains both directions and therefore obeys
 $H(-\mathbf R)=H(\mathbf R)^\dagger$ exactly.
+Generation populates `hopping_candidates`. The user selects which candidates
+to add to `hopping_terms`; only those active terms enter the Hamiltonian.
+Automatic names retain the compact orbit and basis index while summarizing the
+active orbital support, for example
+`B2 t1: V1_d[d_xy,d_yz,+3] ← Li1_s[s]`. The arrow follows the convention that
+$T_{ij}(\mathbf R)$ maps orbitals on site $j$ in cell $\mathbf R$ to site $i$
+in the home cell.
 
 | Field | Meaning | Acceptable input example |
 | --- | --- | --- |
@@ -399,12 +407,17 @@ otherwise its representation matrices must be supplied by a future adapter.
 
 ```python
 from nfit import (
+    add_tight_binding_hopping_term,
     regenerate_tight_binding_hopping_terms,
     set_tight_binding_hopping_term,
 )
 
-regenerate_tight_binding_hopping_terms(model, cutoff_angstrom=4.2)
-hopping_id = model.config["hopping_terms"][0]["identifier"]
+generation = regenerate_tight_binding_hopping_terms(
+    model,
+    cutoff_angstrom=4.2,
+)
+hopping_id = generation.terms[0].identifier
+add_tight_binding_hopping_term(model, hopping_id)
 set_tight_binding_hopping_term(
     model,
     hopping_id,
@@ -632,19 +645,28 @@ edges, sites, orbital tokens, frames, and pathways as immutable records.
 ## Three-dimensional Brillouin-zone viewer
 
 **View Brillouin zone in 3D** constructs the first Brillouin zone as the
-Wigner--Seitz cell of the reciprocal lattice. It overlays the configured
-`band_path`, including every node label, and the reciprocal basis vectors
-$\mathbf b_1$, $\mathbf b_2$, and $\mathbf b_3$. Coordinates and vectors are
-defined in Å$^{-1}$; the displayed basis arrows are uniformly shortened when
-necessary so they remain legible beside the zone. The path is not inferred
-automatically in Stage 3.3, so its labels and reduced coordinates remain an
-explicit, editable model setting.
+Wigner--Seitz cell of the **primitive** reciprocal translation lattice. For a
+centered conventional crystal cell, including F-centered space groups, nfit
+uses the space-group centering translations to construct primitive direct
+vectors before finding the zone. The path retains the reduced-coordinate basis
+used by the electronic Hamiltonian, so a conventional-cell model and its band
+plot remain consistent.
+
+The viewer overlays the configured `band_path`, including every node label,
+and the primitive reciprocal vectors $\mathbf b_1$, $\mathbf b_2$, and
+$\mathbf b_3$. Coordinates and vectors are in Å$^{-1}$. Each reciprocal
+vector reaches the neighboring reciprocal-lattice point and therefore extends
+past the intervening Brillouin-zone face. The zone is drawn with transparent
+flat faces and an opaque black outline. The path is not inferred automatically
+in Stage 3.3, so its labels and reduced coordinates remain an explicit,
+editable model setting.
 
 `brillouin_zone_scene` is the renderer-independent component API.
-`build_brillouin_zone_scene` accepts a direct-lattice matrix and path
-dictionaries, while `brillouin_zone_script` exports an editable standalone
-viewer. The band plot and three-dimensional view consume the same
-`band_path`, so changing a node or label updates both.
+`build_brillouin_zone_scene` accepts the direct-lattice matrix that defines
+path coordinates, path dictionaries, and an optional `primitive_lattice`
+matrix for centered-cell models. `brillouin_zone_script` exports both lattices
+in an editable standalone viewer. The band plot and three-dimensional view
+consume the same `band_path`, so changing a node or label updates both.
 
 `ElectronicModel.to_dict()` is a portable, digest-protected representation.
 `save_electronic_model` and `load_electronic_model` write and validate that

@@ -449,6 +449,72 @@ class HoppingGeneration:
     terms: tuple[HoppingInvariant, ...]
 
 
+def hopping_endpoint_orbitals(
+    term: HoppingInvariant | Mapping[str, Any],
+    *,
+    tolerance: float = 1e-10,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return active ``(from_j, to_i)`` orbitals of one hopping matrix basis."""
+
+    item = (
+        term
+        if isinstance(term, HoppingInvariant)
+        else HoppingInvariant.from_dict(term)
+    )
+    threshold = float(tolerance)
+    if not np.isfinite(threshold) or threshold < 0.0:
+        raise ValueError("tolerance must be finite and nonnegative")
+    support = np.abs(item.matrix) > threshold
+    from_j = tuple(
+        label
+        for label, active in zip(item.basis_j, np.any(support, axis=0), strict=True)
+        if active
+    )
+    to_i = tuple(
+        label
+        for label, active in zip(item.basis_i, np.any(support, axis=1), strict=True)
+        if active
+    )
+    return from_j, to_i
+
+
+def _compact_orbital_group(labels: Sequence[str]) -> str:
+    groups: dict[str, list[str]] = {}
+    for label in labels:
+        manifold, separator, orbital = str(label).partition(":")
+        groups.setdefault(manifold, []).append(orbital if separator else manifold)
+    parts = []
+    for manifold, orbitals in groups.items():
+        shown = orbitals[:3]
+        suffix = f",+{len(orbitals) - 3}" if len(orbitals) > 3 else ""
+        parts.append(f"{manifold}[{','.join(shown)}{suffix}]")
+    return "+".join(parts)
+
+
+def _descriptive_hopping_label(
+    orbit_label: str,
+    index: int,
+    basis_i: Sequence[str],
+    basis_j: Sequence[str],
+    matrix: ArrayLike,
+) -> str:
+    support = np.abs(np.asarray(matrix)) > 1e-10
+    from_j = tuple(
+        label
+        for label, active in zip(basis_j, np.any(support, axis=0), strict=True)
+        if active
+    )
+    to_i = tuple(
+        label
+        for label, active in zip(basis_i, np.any(support, axis=1), strict=True)
+        if active
+    )
+    return (
+        f"{orbit_label} t{index}: "
+        f"{_compact_orbital_group(to_i)} ← {_compact_orbital_group(from_j)}"
+    )
+
+
 def _real_harmonic_layout(l: int) -> tuple[tuple[str, int], ...]:
     if l == 0:
         return (("m0", 0),)
@@ -1408,7 +1474,13 @@ def hopping_invariants(
         result.append(
             HoppingInvariant(
                 identifier=f"{orbit.label}:hopping:{digest}",
-                label=f"{orbit.label} t{index + 1}",
+                label=_descriptive_hopping_label(
+                    orbit.label,
+                    index + 1,
+                    context_i.basis_labels,
+                    context_j.basis_labels,
+                    matrix,
+                ),
                 orbit_label=orbit.label,
                 distance_angstrom=orbit.distance_angstrom,
                 representative_bond=representative,
@@ -1723,6 +1795,15 @@ def _component_hopping_terms(component: Any) -> tuple[HoppingInvariant, ...]:
     )
 
 
+def _component_hopping_candidates(
+    component: Any,
+) -> tuple[HoppingInvariant, ...]:
+    return tuple(
+        HoppingInvariant.from_dict(item)
+        for item in component.config.get("hopping_candidates", ())
+    )
+
+
 def _component_hopping_orbits(component: Any) -> tuple[BondOrbit, ...]:
     return tuple(orbits_from_config(component.config.get("spatial_orbits", ())))
 
@@ -1731,6 +1812,9 @@ def _install_hopping_generation(
     component: Any,
     generation: HoppingGeneration,
 ) -> None:
+    active_identifiers = {
+        item.identifier for item in _component_hopping_terms(component)
+    }
     component.config["site_positions"] = sites_to_config(generation.sites)
     component.config["expanded_crystal_sites"] = [
         {
@@ -1746,8 +1830,13 @@ def _install_hopping_generation(
         for site in generation.sites
     ]
     component.config["spatial_orbits"] = orbits_to_config(generation.orbits)
-    component.config["hopping_terms"] = [
+    component.config["hopping_candidates"] = [
         item.to_dict() for item in generation.terms
+    ]
+    component.config["hopping_terms"] = [
+        item.to_dict()
+        for item in generation.terms
+        if item.identifier in active_identifiers
     ]
 
 
@@ -1816,6 +1905,7 @@ def set_tight_binding_orbital_manifolds(
             resolve_tight_binding_builder(component)
         else:
             component.config["onsite_terms"] = []
+            component.config["hopping_candidates"] = []
             component.config["hopping_terms"] = []
             component.config["spatial_orbits"] = []
             component.config["site_positions"] = []
@@ -1919,6 +2009,73 @@ def regenerate_tight_binding_hopping_terms(
         component.config.update(before)
         raise
     return generation
+
+
+def add_tight_binding_hopping_term(
+    component: Any,
+    identifier: str,
+) -> HoppingInvariant:
+    """Activate one generated hopping candidate in the resolved Hamiltonian."""
+
+    key = str(identifier)
+    active = list(_component_hopping_terms(component))
+    for term in active:
+        if term.identifier == key:
+            return term
+    candidate = next(
+        (
+            term
+            for term in _component_hopping_candidates(component)
+            if term.identifier == key
+        ),
+        None,
+    )
+    if candidate is None:
+        raise KeyError(f"unknown hopping candidate {identifier!r}")
+    before = deepcopy(component.config)
+    try:
+        component.config["hopping_terms"] = [
+            item.to_dict() for item in (*active, candidate)
+        ]
+        resolve_tight_binding_builder(component)
+    except Exception:
+        component.config.clear()
+        component.config.update(before)
+        raise
+    return candidate
+
+
+def remove_tight_binding_hopping_term(
+    component: Any,
+    identifier: str,
+) -> None:
+    """Remove one active hopping term while retaining it as a suggestion."""
+
+    key = str(identifier)
+    active = list(_component_hopping_terms(component))
+    retained = [term for term in active if term.identifier != key]
+    if len(retained) == len(active):
+        raise KeyError(f"unknown active hopping term {identifier!r}")
+    before = deepcopy(component.config)
+    try:
+        removed = next(term for term in active if term.identifier == key)
+        candidates = list(_component_hopping_candidates(component))
+        candidates = [
+            removed if term.identifier == key else term for term in candidates
+        ]
+        if not any(term.identifier == key for term in candidates):
+            candidates.append(removed)
+        component.config["hopping_candidates"] = [
+            item.to_dict() for item in candidates
+        ]
+        component.config["hopping_terms"] = [
+            item.to_dict() for item in retained
+        ]
+        resolve_tight_binding_builder(component)
+    except Exception:
+        component.config.clear()
+        component.config.update(before)
+        raise
 
 
 def set_tight_binding_onsite_term(
@@ -2035,6 +2192,17 @@ def set_tight_binding_hopping_term(
         terms[index] = updated
         before = deepcopy(component.config)
         try:
+            candidates = [
+                updated if item.identifier == updated.identifier else item
+                for item in _component_hopping_candidates(component)
+            ]
+            if not any(
+                item.identifier == updated.identifier for item in candidates
+            ):
+                candidates.append(updated)
+            component.config["hopping_candidates"] = [
+                item.to_dict() for item in candidates
+            ]
             component.config["hopping_terms"] = [
                 item.to_dict() for item in terms
             ]
@@ -2114,16 +2282,19 @@ def configure_tight_binding_builder(
                     item.identifier: item for item in parsed_hoppings
                 }
                 generated_hoppings = list(generation.terms)
-                if set(supplied_hoppings) != {
+                generated_identifiers = {
                     item.identifier for item in generated_hoppings
-                }:
+                }
+                if not set(supplied_hoppings).issubset(generated_identifiers):
                     raise ValueError(
-                        "stored hopping terms do not match the invariants "
+                        "stored active hopping terms do not match the candidates "
                         "regenerated from the crystal and orbital manifolds"
                     )
                 merged_hoppings = []
                 for term in generated_hoppings:
-                    source = supplied_hoppings[term.identifier]
+                    source = supplied_hoppings.get(term.identifier)
+                    if source is None:
+                        continue
                     if not np.allclose(source.matrix, term.matrix, atol=1e-9):
                         raise ValueError(
                             f"stored matrix for hopping term "
@@ -2147,6 +2318,13 @@ def configure_tight_binding_builder(
                     )
                 component.config["hopping_terms"] = [
                     item.to_dict() for item in merged_hoppings
+                ]
+                candidate_values = {
+                    item.identifier: item for item in merged_hoppings
+                }
+                component.config["hopping_candidates"] = [
+                    candidate_values.get(item.identifier, item).to_dict()
+                    for item in generated_hoppings
                 ]
         return resolve_tight_binding_builder(component)
     except Exception:

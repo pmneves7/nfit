@@ -76,20 +76,37 @@ def _first_zone_faces(
 def build_brillouin_zone_scene(
     direct_lattice: ArrayLike,
     band_path: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    *,
+    primitive_lattice: ArrayLike | None = None,
 ) -> BrillouinZoneScene:
-    """Build the first Brillouin zone and a labelled reduced-coordinate path."""
+    """Build the first Brillouin zone and a labelled reduced-coordinate path.
+
+    ``direct_lattice`` defines the reduced coordinates of ``band_path``.
+    ``primitive_lattice`` generates the reciprocal translation lattice and
+    defaults to ``direct_lattice``. Supplying both supports a Hamiltonian
+    represented in a centered conventional cell.
+    """
 
     direct = np.asarray(direct_lattice, dtype=float)
     if direct.shape != (3, 3) or not np.all(np.isfinite(direct)):
         raise ValueError("direct_lattice must be a finite 3x3 column-vector matrix")
-    reciprocal = 2.0 * np.pi * np.linalg.inv(direct).T
-    vertices, faces = _first_zone_faces(reciprocal)
+    primitive = np.asarray(
+        direct if primitive_lattice is None else primitive_lattice,
+        dtype=float,
+    )
+    if primitive.shape != (3, 3) or not np.all(np.isfinite(primitive)):
+        raise ValueError(
+            "primitive_lattice must be a finite 3x3 column-vector matrix"
+        )
+    path_reciprocal = 2.0 * np.pi * np.linalg.inv(direct).T
+    primitive_reciprocal = 2.0 * np.pi * np.linalg.inv(primitive).T
+    vertices, faces = _first_zone_faces(primitive_reciprocal)
     nodes = []
     for item in band_path:
         reduced = np.asarray(item.get("k", ()), dtype=float)
         if reduced.shape != (3,) or not np.all(np.isfinite(reduced)):
             raise ValueError("every band-path node requires three finite k coordinates")
-        cartesian = reciprocal @ reduced
+        cartesian = path_reciprocal @ reduced
         nodes.append(
             BrillouinZoneNode(
                 label=str(item.get("label", "")),
@@ -99,7 +116,7 @@ def build_brillouin_zone_scene(
         )
     return BrillouinZoneScene(
         reciprocal_vectors=tuple(
-            tuple(float(value) for value in reciprocal[:, axis])
+            tuple(float(value) for value in primitive_reciprocal[:, axis])
             for axis in range(3)
         ),
         vertices_inv_angstrom=tuple(map(tuple, vertices)),
@@ -108,20 +125,35 @@ def build_brillouin_zone_scene(
     )
 
 
-def brillouin_zone_scene(component: Any) -> BrillouinZoneScene:
-    """Build a Brillouin-zone scene from a tight-binding component."""
-
-    from .crystal import lattice_vectors
+def _component_lattices(component: Any) -> tuple[FloatArray, FloatArray | None]:
+    from .crystal import lattice_vectors, primitive_lattice_vectors
     from .electronic_structure import ElectronicModel, import_wannier90
 
     if getattr(component, "type", None) != "tight_binding":
         raise TypeError("Brillouin-zone viewing requires a tight_binding component")
     config = component.config
     crystal = config.get("crystal")
+    primitive = None
     if isinstance(config.get("model_data"), dict) and config["model_data"]:
-        direct = ElectronicModel.from_dict(config["model_data"]).direct_lattice
+        model = ElectronicModel.from_dict(config["model_data"])
+        direct = model.direct_lattice
+        if (
+            isinstance(crystal, dict)
+            and crystal.get("sites")
+            and config.get("orbital_manifolds")
+        ):
+            crystal_direct = lattice_vectors(crystal["lattice"])
+            if np.allclose(crystal_direct, direct, atol=1e-9):
+                primitive = primitive_lattice_vectors(
+                    crystal["lattice"],
+                    str(crystal.get("spacegroup", "P 1")),
+                )
     elif isinstance(crystal, dict) and crystal.get("sites"):
         direct = lattice_vectors(crystal["lattice"])
+        primitive = primitive_lattice_vectors(
+            crystal["lattice"],
+            str(crystal.get("spacegroup", "P 1")),
+        )
     elif str(config.get("source_path", "")).strip():
         direct = import_wannier90(
             str(config["source_path"]),
@@ -129,9 +161,18 @@ def brillouin_zone_scene(component: Any) -> BrillouinZoneScene:
         ).direct_lattice
     else:
         raise ValueError("the tight-binding model has no electronic lattice")
+    return np.asarray(direct, dtype=float), primitive
+
+
+def brillouin_zone_scene(component: Any) -> BrillouinZoneScene:
+    """Build a Brillouin-zone scene from a tight-binding component."""
+
+    direct, primitive = _component_lattices(component)
+    config = component.config
     return build_brillouin_zone_scene(
         direct,
         list(config.get("band_path", ())),
+        primitive_lattice=primitive,
     )
 
 
@@ -139,8 +180,9 @@ def brillouin_zone_script(component: Any) -> str:
     """Return editable Python reproducing the component's 3D zone view."""
 
     scene = brillouin_zone_scene(component)
+    direct, _primitive = _component_lattices(component)
     reciprocal = np.asarray(scene.reciprocal_vectors, dtype=float).T
-    direct = 2.0 * np.pi * np.linalg.inv(reciprocal).T
+    primitive = 2.0 * np.pi * np.linalg.inv(reciprocal).T
     band_path = [
         {"label": node.label, "k": list(node.reduced)}
         for node in scene.path_nodes
@@ -154,8 +196,13 @@ def brillouin_zone_script(component: Any) -> str:
             "from PySide6 import QtWidgets",
             "",
             f"direct_lattice = {pformat(direct.tolist())}",
+            f"primitive_lattice = {pformat(primitive.tolist())}",
             f"band_path = {pformat(band_path)}",
-            "scene = build_brillouin_zone_scene(direct_lattice, band_path)",
+            "scene = build_brillouin_zone_scene(",
+            "    direct_lattice,",
+            "    band_path,",
+            "    primitive_lattice=primitive_lattice,",
+            ")",
             "app = QtWidgets.QApplication.instance()",
             "owns_app = app is None",
             "if owns_app:",

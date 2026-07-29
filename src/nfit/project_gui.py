@@ -2053,6 +2053,7 @@ def set_model_crystal(
                 model.config["orbital_manifolds"] = []
                 model.config["onsite_terms"] = []
                 model.config["hopping_cutoff_angstrom"] = 0.0
+                model.config["hopping_candidates"] = []
                 model.config["hopping_terms"] = []
                 model.config["spatial_orbits"] = []
                 model.config["site_positions"] = []
@@ -18670,6 +18671,7 @@ class NfitProjectExplorer:
                 "onsite_terms",
                 "hopping_cutoff_angstrom",
                 "spatial_orbits",
+                "hopping_candidates",
                 "hopping_terms",
             }:
                 continue
@@ -19353,11 +19355,14 @@ class NfitProjectExplorer:
     def _build_tight_binding_hopping_editor(
         self, model: ModelComponentSpec
     ) -> None:
-        """Build symmetry-generated hopping controls."""
+        """Build generated hopping suggestions and active-term controls."""
 
-        from PySide6 import QtWidgets
+        from PySide6 import QtCore, QtWidgets
 
-        from .electronic_builder import HoppingInvariant
+        from .electronic_builder import (
+            HoppingInvariant,
+            hopping_endpoint_orbitals,
+        )
         from .electronic_structure import electronic_energy_from_meV
 
         group = QtWidgets.QGroupBox("Hoppings")
@@ -19377,12 +19382,12 @@ class NfitProjectExplorer:
         )
         cutoff_label.setToolTip(cutoff_tooltip)
         cutoff.setToolTip(cutoff_tooltip)
-        generate = QtWidgets.QPushButton("Generate hopping terms")
+        generate = QtWidgets.QPushButton("Generate suggestions")
         generate.setObjectName("tight_binding_hopping_generate")
         generate.setToolTip(
             "Generate spatial bond orbits and the complete real spinless "
-            "hopping-matrix basis allowed by each bond stabilizer. Stable "
-            "values, bounds, and fit selections are retained."
+            "hopping-matrix basis allowed by each bond stabilizer. Generated "
+            "candidates do not enter the Hamiltonian until selected below."
         )
         generate.setEnabled(bool(model.config.get("orbital_manifolds")))
         generate.clicked.connect(
@@ -19394,39 +19399,153 @@ class NfitProjectExplorer:
         layout.addWidget(cutoff, 0, 1)
         layout.addWidget(generate, 0, 2, 1, 2)
 
-        unit = str(model.config.get("electronic_energy_unit", "eV"))
-        headers = (
+        multiplicities = {
+            str(item.get("label", "")): len(item.get("bonds", ()))
+            for item in model.config.get("spatial_orbits", ())
+        }
+        sites = list(model.config.get("expanded_crystal_sites", ()))
+
+        def endpoint_text(
+            term: HoppingInvariant,
+        ) -> tuple[str, str]:
+            from_orbitals, to_orbitals = hopping_endpoint_orbitals(term)
+            bond = term.representative_bond
+            from_site = (
+                str(sites[bond.site_j].get("label", f"site {bond.site_j}"))
+                if bond.site_j < len(sites)
+                else f"site {bond.site_j}"
+            )
+            to_site = (
+                str(sites[bond.site_i].get("label", f"site {bond.site_i}"))
+                if bond.site_i < len(sites)
+                else f"site {bond.site_i}"
+            )
+            offset = tuple(int(value) for value in bond.offset)
+            return (
+                f"{from_site} + {offset}: {', '.join(from_orbitals)}",
+                f"{to_site}: {', '.join(to_orbitals)}",
+            )
+
+        active = [
+            HoppingInvariant.from_dict(item)
+            for item in model.config.get("hopping_terms", ())
+        ]
+        active_ids = {item.identifier for item in active}
+        candidates = [
+            HoppingInvariant.from_dict(item)
+            for item in model.config.get("hopping_candidates", ())
+            if str(item.get("identifier", "")) not in active_ids
+        ]
+        suggestion_headers = (
             "Term",
             "Orbit",
             "Distance (Å)",
             "Multiplicity",
+            "From orbital(s)",
+            "To orbital(s)",
+            "Matrix basis",
+        )
+        suggestion_table = QtWidgets.QTableWidget(
+            len(candidates),
+            len(suggestion_headers),
+        )
+        suggestion_table.setObjectName("tight_binding_hopping_suggestions")
+        suggestion_table.setToolTip(
+            "Symmetry-allowed candidates. T_ij(R) maps the listed source "
+            "orbital(s) in cell R to the listed destination orbital(s) in the "
+            "home cell. Select rows and add only the terms required by the model."
+        )
+        suggestion_table.setHorizontalHeaderLabels(suggestion_headers)
+        suggestion_table.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        suggestion_table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
+        )
+        suggestion_table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        for row, term in enumerate(candidates):
+            from_text, to_text = endpoint_text(term)
+            values = (
+                term.label,
+                term.orbit_label,
+                f"{term.distance_angstrom:.5g}",
+                str(multiplicities.get(term.orbit_label, 0)),
+                from_text,
+                to_text,
+                f"{len(term.basis_i)}x{len(term.basis_j)}",
+            )
+            for column, text in enumerate(values):
+                item = QtWidgets.QTableWidgetItem(text)
+                item.setData(
+                    QtCore.Qt.ItemDataRole.UserRole,
+                    term.identifier,
+                )
+                if column == 6:
+                    item.setToolTip(
+                        "Unit-Frobenius representative matrix:\n"
+                        f"{np.array2string(term.matrix, precision=4)}"
+                    )
+                suggestion_table.setItem(row, column, item)
+        suggestion_table.resizeColumnsToContents()
+        suggestion_table.resizeRowsToContents()
+        visible_rows = min(max(len(candidates), 3), 9)
+        row_height = max(
+            suggestion_table.verticalHeader().defaultSectionSize(),
+            24,
+        )
+        table_height = (
+            suggestion_table.horizontalHeader().height()
+            + visible_rows * row_height
+            + 2 * suggestion_table.frameWidth()
+            + 8
+        )
+        suggestion_table.setMinimumHeight(table_height)
+        suggestion_table.setMaximumHeight(table_height)
+        layout.addWidget(suggestion_table, 1, 0, 1, 10)
+        add_selected = QtWidgets.QPushButton("Add selected hopping terms")
+        add_selected.setObjectName("tight_binding_hopping_add_selected")
+        add_selected.setToolTip(
+            "Add the selected generated matrix terms to the active "
+            "tight-binding Hamiltonian."
+        )
+        add_selected.setEnabled(bool(candidates))
+        add_selected.clicked.connect(
+            lambda _checked=False, table=suggestion_table: self._add_selected_tight_binding_hoppings(
+                table
+            )
+        )
+        layout.addWidget(add_selected, 2, 0, 1, 3)
+
+        unit = str(model.config.get("electronic_energy_unit", "eV"))
+        active_headers = (
+            "Active term",
+            "From orbital(s)",
+            "To orbital(s)",
+            "Distance (Å)",
             f"Value ({unit})",
             f"Lower ({unit})",
             f"Upper ({unit})",
             "Fit later",
             "Matrix basis",
+            "",
         )
-        for column, text in enumerate(headers):
-            layout.addWidget(QtWidgets.QLabel(text), 1, column)
-        multiplicities = {
-            str(item.get("label", "")): len(item.get("bonds", ()))
-            for item in model.config.get("spatial_orbits", ())
-        }
-        terms = [
-            HoppingInvariant.from_dict(item)
-            for item in model.config.get("hopping_terms", ())
-        ]
-        for index, term in enumerate(terms):
-            row = index + 2
-            layout.addWidget(QtWidgets.QLabel(term.label), row, 0)
-            layout.addWidget(QtWidgets.QLabel(term.orbit_label), row, 1)
+        for column, text in enumerate(active_headers):
+            layout.addWidget(QtWidgets.QLabel(text), 3, column)
+        for index, term in enumerate(active):
+            row = index + 4
+            from_text, to_text = endpoint_text(term)
+            for column, text in enumerate(
+                (term.label, from_text, to_text)
+            ):
+                label = QtWidgets.QLabel(text)
+                label.setToolTip(text)
+                label.setWordWrap(True)
+                label.setMaximumWidth(280)
+                layout.addWidget(label, row, column)
             layout.addWidget(
                 QtWidgets.QLabel(f"{term.distance_angstrom:.5g}"),
-                row,
-                2,
-            )
-            layout.addWidget(
-                QtWidgets.QLabel(str(multiplicities.get(term.orbit_label, 0))),
                 row,
                 3,
             )
@@ -19500,17 +19619,32 @@ class NfitProjectExplorer:
                 f"Matrix:\n{np.array2string(term.matrix, precision=4)}"
             )
             layout.addWidget(matrix, row, 8)
-        status = QtWidgets.QLabel(
-            (
-                f"{len(terms)} hopping coefficient(s) on "
-                f"{len(multiplicities)} spatial orbit(s)."
+            remove = QtWidgets.QPushButton("Remove")
+            remove.setObjectName(f"tight_binding_hopping_remove_{index}")
+            remove.setToolTip(
+                "Remove this term from the Hamiltonian while retaining it in "
+                "the generated suggestion list."
             )
-            if terms
-            else "No hopping terms. Choose a positive cutoff and generate."
+            remove.clicked.connect(
+                lambda _checked=False, identifier=term.identifier: self._remove_tight_binding_hopping(
+                    identifier
+                )
+            )
+            layout.addWidget(remove, row, 9)
+        status = QtWidgets.QLabel(
+            f"{len(candidates)} available suggestion(s); "
+            f"{len(active)} active hopping coefficient(s) on "
+            f"{len(multiplicities)} spatial orbit(s)."
         )
         status.setObjectName("tight_binding_hopping_status")
         status.setWordWrap(True)
-        layout.addWidget(status, len(terms) + 2, 0, 1, len(headers))
+        layout.addWidget(
+            status,
+            len(active) + 4,
+            0,
+            1,
+            len(active_headers),
+        )
         self.model_parameter_layout.addWidget(group, 7, 0, 1, 4)
 
     def _import_wannier90_model(self, model: ModelComponentSpec) -> bool:
@@ -19550,6 +19684,7 @@ class NfitProjectExplorer:
         model.config["orbital_manifolds"] = []
         model.config["onsite_terms"] = []
         model.config["hopping_cutoff_angstrom"] = 0.0
+        model.config["hopping_candidates"] = []
         model.config["hopping_terms"] = []
         model.config["spatial_orbits"] = []
         model.config["site_positions"] = []
@@ -20332,6 +20467,39 @@ class NfitProjectExplorer:
             lambda model, _group: regenerate_tight_binding_hopping_terms(
                 model,
                 float(_parse_parameter_text(text)),
+            )
+        )
+
+    def _add_selected_tight_binding_hoppings(self, table: Any) -> None:
+        from PySide6 import QtCore
+
+        from .electronic_builder import add_tight_binding_hopping_term
+
+        identifiers = {
+            str(
+                table.item(index.row(), 0).data(
+                    QtCore.Qt.ItemDataRole.UserRole
+                )
+            )
+            for index in table.selectionModel().selectedRows()
+            if table.item(index.row(), 0) is not None
+        }
+        if not identifiers:
+            return
+
+        def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
+            for identifier in sorted(identifiers):
+                add_tight_binding_hopping_term(model, identifier)
+
+        self._mutate_selected_model(mutate)
+
+    def _remove_tight_binding_hopping(self, identifier: str) -> None:
+        from .electronic_builder import remove_tight_binding_hopping_term
+
+        self._mutate_selected_model(
+            lambda model, _group: remove_tight_binding_hopping_term(
+                model,
+                identifier,
             )
         )
 

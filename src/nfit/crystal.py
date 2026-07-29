@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from itertools import combinations, product
 from pathlib import Path
 from typing import Any
 
@@ -198,6 +199,99 @@ def lattice_vectors(lattice: Mapping[str, Any]) -> FloatArray:
         raise ValueError("lattice parameters produce a non-positive unit-cell volume")
     cvec = np.array([cx, cy, np.sqrt(cz_sq)])
     return np.column_stack([avec, bvec, cvec])
+
+
+def primitive_lattice_vectors(
+    lattice: Mapping[str, Any],
+    spacegroup: str,
+) -> FloatArray:
+    """Return primitive direct-lattice vectors for a conventional crystal cell.
+
+    Gemmi supplies the centering translations of the selected space-group
+    setting. The returned columns generate that complete translation lattice,
+    including A-, B-, C-, I-, F-, and rhombohedrally centered cells.
+    """
+
+    conventional = lattice_vectors(lattice)
+    gemmi = _require_gemmi()
+    group = _resolve_spacegroup(gemmi, spacegroup)
+    denominator = float(gemmi.Op.DEN)
+    centerings = tuple(
+        np.asarray(value, dtype=float) / denominator
+        for value in group.operations().cen_ops
+    )
+    transforms = {
+        "P": np.eye(3),
+        "A": np.asarray(
+            [[1.0, 0.0, 0.0], [0.0, 0.5, -0.5], [0.0, 0.5, 0.5]]
+        ),
+        "B": np.asarray(
+            [[0.5, 0.0, -0.5], [0.0, 1.0, 0.0], [0.5, 0.0, 0.5]]
+        ),
+        "C": np.asarray(
+            [[0.5, -0.5, 0.0], [0.5, 0.5, 0.0], [0.0, 0.0, 1.0]]
+        ),
+        "I": np.asarray(
+            [[-0.5, 0.5, 0.5], [0.5, -0.5, 0.5], [0.5, 0.5, -0.5]]
+        ),
+        "F": np.asarray(
+            [[0.0, 0.5, 0.5], [0.5, 0.0, 0.5], [0.5, 0.5, 0.0]]
+        ),
+        "R": np.asarray(
+            [
+                [2.0 / 3.0, -1.0 / 3.0, -1.0 / 3.0],
+                [1.0 / 3.0, 1.0 / 3.0, -2.0 / 3.0],
+                [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0],
+            ]
+        ),
+    }
+    centering_type = str(group.centring_type())
+    if centering_type in transforms:
+        transform = transforms[centering_type]
+        expected = 1.0 / len(centerings)
+        if np.isclose(abs(np.linalg.det(transform)), expected, atol=1e-10):
+            return conventional @ transform
+
+    # Fallback for an uncommon future setting: search the centering translation
+    # lattice for a shortest right-handed primitive basis.
+    candidates: dict[tuple[float, float, float], FloatArray] = {}
+    for centering in centerings:
+        for offset in product((-1, 0, 1), repeat=3):
+            vector = centering + np.asarray(offset, dtype=float)
+            if np.linalg.norm(vector) <= 1e-12:
+                continue
+            key = tuple(float(value) for value in np.round(vector, 12))
+            candidates[key] = vector
+    ordered = sorted(
+        candidates.values(),
+        key=lambda value: (
+            float(np.linalg.norm(conventional @ value)),
+            tuple(float(item) for item in value),
+        ),
+    )
+    target_volume = 1.0 / len(centerings)
+    best: tuple[tuple[float, float, tuple[float, ...]], FloatArray] | None = None
+    for vectors in combinations(ordered, 3):
+        transform = np.column_stack(vectors)
+        determinant = float(np.linalg.det(transform))
+        if not np.isclose(abs(determinant), target_volume, atol=1e-10):
+            continue
+        if determinant < 0.0:
+            transform = transform[:, [1, 0, 2]]
+        physical = conventional @ transform
+        lengths = np.linalg.norm(physical, axis=0)
+        score = (
+            float(np.sum(lengths * lengths)),
+            float(np.linalg.cond(physical)),
+            tuple(float(value) for value in transform.ravel(order="F")),
+        )
+        if best is None or score < best[0]:
+            best = (score, physical)
+    if best is None:
+        raise ValueError(
+            f"could not construct a primitive lattice for space group {spacegroup!r}"
+        )
+    return best[1]
 
 
 def validate_crystal(crystal: Mapping[str, Any]) -> None:
