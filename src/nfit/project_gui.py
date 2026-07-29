@@ -9136,7 +9136,19 @@ class NfitProjectExplorer:
         self._build()
         self._refresh_tree()
         self._sync_details()
+        self._apply_initial_window_size()
         configure_numeric_spin_boxes(self.app)
+
+    def _apply_initial_window_size(self) -> None:
+        """Apply the requested startup size after hidden controls update hints."""
+
+        central = self.window.centralWidget()
+        if central is not None:
+            for index in range(central.count()):
+                layout = central.widget(index).layout()
+                if layout is not None:
+                    layout.activate()
+        self.window.resize(1120, 760)
 
     def show(self) -> NfitProjectExplorer:
         self.window.show()
@@ -11953,7 +11965,6 @@ class NfitProjectExplorer:
         window_class = _make_project_window_class()
         self.window = window_class(self)
         self.window.setWindowTitle("nfit Project Explorer")
-        self.window.resize(1120, 760)
 
         toolbar = QtWidgets.QToolBar("Project")
         toolbar.setMovable(False)

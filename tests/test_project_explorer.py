@@ -12,6 +12,18 @@ from tests.project_gui_test_support import (
 )
 
 
+def test_project_explorer_opens_at_requested_initial_size(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    explorer = NfitProjectExplorer()
+    explorer.show()
+    QtWidgets.QApplication.processEvents()
+
+    assert explorer.window.size().toTuple() == (1120, 760)
+    explorer.window.close()
+
+
 def test_project_helpers_name_import_and_round_trip(tmp_path):
     assert nfit.create_data_group is create_data_group
     assert nfit.import_dataset_paths is import_dataset_paths
