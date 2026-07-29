@@ -18,6 +18,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from pprint import pformat
 from types import MappingProxyType
 from typing import Any, Literal
 
@@ -1065,6 +1066,61 @@ def load_electronic_model(path: str | Path) -> ElectronicModel:
     """Load and validate a portable canonical electronic-model JSON file."""
 
     return ElectronicModel.from_dict(json.loads(Path(path).read_text()))
+
+
+def tight_binding_structure_script(
+    crystal: Mapping[str, Any],
+    periodic_axes: Sequence[int],
+    *,
+    group_name: str = "Electronic",
+    model_name: str = "tight_binding",
+) -> str:
+    """Return an editable script that rebuilds tight-binding crystal geometry."""
+
+    from .crystal import validate_crystal
+
+    payload = deepcopy(dict(crystal))
+    validate_crystal(payload)
+    axes = tuple(int(axis) for axis in periodic_axes)
+    if not axes or len(set(axes)) != len(axes) or any(
+        axis not in (0, 1, 2) for axis in axes
+    ):
+        raise ValueError(
+            "periodic_axes must contain one to three unique indices from 0, 1, 2"
+        )
+    lines = [
+        '"""Rebuild tight-binding crystal geometry without GUI state."""',
+        "",
+        "from nfit import DataGroup, create_model_component, set_model_crystal",
+    ]
+    provenance = payload.get("provenance", {})
+    if (
+        isinstance(provenance, Mapping)
+        and provenance.get("source") == "cif"
+        and provenance.get("path")
+        and provenance.get("sha256")
+    ):
+        lines.extend(
+            [
+                "from nfit import crystal_from_cif",
+                "",
+                f"crystal = crystal_from_cif({str(provenance['path'])!r})",
+                "assert crystal['provenance']['sha256'] == "
+                f"{str(provenance['sha256'])!r}",
+            ]
+        )
+    else:
+        lines.extend(["", f"crystal = {pformat(payload, sort_dicts=True)}"])
+    lines.extend(
+        [
+            "",
+            f"group = DataGroup({str(group_name)!r})",
+            f"model = create_model_component(group, {str(model_name)!r}, type='tight_binding')",
+            f"set_model_crystal(model, crystal, group=group, periodic_axes={axes!r})",
+            "",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def _source_record(path: Path, role: str) -> dict[str, Any]:

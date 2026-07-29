@@ -418,3 +418,5 @@ Stage 2 relaxational and damped-propagating limits through one causal complex
 response. Stage 3 supplies arbitrary orthonormal electronic models, native
 Wannier90 import, shared path and mesh sampling, bands and orbital projections,
 density of states, Fermi surfaces, model-owned GUI plots, and editable scripts.
+Stage 3.1 also supplies shared CIF/manual crystal geometry and structure-script
+round trips for the structure-first tight-binding builder.

@@ -1922,9 +1922,9 @@ def model_crystal_config(model: ModelComponentSpec) -> dict[str, Any]:
     """Return (creating if needed) the nested crystal config of a model.
 
     Shape: ``{"lattice": {"a", "b", "c", "alpha", "beta", "gamma"},
-    "spacegroup": str, "sites": [{"label", "position", "ion"}]}``. The dict
-    lives inside ``model.config`` and is plain JSON data, so it serializes
-    with the project file.
+    "spacegroup": str, "sites": [{"label", "element", "position", "ion"}],
+    "provenance": {...}}``. Provenance is optional. The dict lives inside
+    ``model.config`` and is plain JSON data, so it serializes with the project.
     """
 
     crystal = model.config.get("crystal")
@@ -1943,6 +1943,15 @@ def model_crystal_config(model: ModelComponentSpec) -> dict[str, Any]:
     crystal.setdefault("spacegroup", "P 1")
     crystal.setdefault("sites", [])
     return crystal
+
+
+def _mark_tight_binding_crystal_manual(
+    model: ModelComponentSpec, crystal: dict[str, Any]
+) -> None:
+    """Prevent a manually edited structure script from reloading stale CIF data."""
+
+    if model.type == "tight_binding":
+        crystal["provenance"] = {"source": "manual"}
 
 
 # Default starting values for the non-orbit dynamic parameters (all others
@@ -1987,28 +1996,66 @@ def reconcile_model_orbit_parameters(model: ModelComponentSpec) -> None:
         model.sharing.setdefault(name, {"mode": "global", "groups": {}})
 
 
+def set_model_crystal(
+    model: ModelComponentSpec,
+    crystal: dict[str, Any],
+    *,
+    group: DataGroup | None = None,
+    periodic_axes: Sequence[int] | None = None,
+) -> dict[str, Any]:
+    """Install validated shared crystal geometry on a model component.
+
+    Electronic models default a newly installed crystal to three-dimensional
+    periodicity. Heisenberg models clear selections and derived bond data whose
+    indices belonged to the previous crystal. The optional data group receives
+    the same lattice, space group, and crystal metadata.
+    """
+
+    from .crystal import validate_crystal
+
+    payload = copy.deepcopy(crystal)
+    validate_crystal(payload)
+    model.config["crystal"] = payload
+    if model.type == "tight_binding":
+        axes = (0, 1, 2) if periodic_axes is None else tuple(
+            int(axis) for axis in periodic_axes
+        )
+        if not axes or len(set(axes)) != len(axes) or any(
+            axis not in (0, 1, 2) for axis in axes
+        ):
+            raise ValueError(
+                "periodic_axes must contain one to three unique indices from 0, 1, 2"
+            )
+        model.config["periodic_axes"] = list(axes)
+        for name in ("spatial_orbits", "expanded_crystal_sites"):
+            model.config.pop(name, None)
+    elif model.type == "heisenberg_rpa":
+        model.config["magnetic_sites"] = []
+        for name in ("orbits", "site_positions", "site_rotations"):
+            model.config.pop(name, None)
+        model.config.pop("anisotropy", None)
+        model.config.pop("sia", None)
+        reconcile_model_orbit_parameters(model)
+    if group is not None:
+        group.lattice_parameters = dict(payload["lattice"])
+        group.spacegroup = str(payload["spacegroup"])
+        group.metadata["crystal"] = copy.deepcopy(payload)
+    return payload
+
+
 def import_cif_into_model(
     model: ModelComponentSpec, path: str, *, group: DataGroup | None = None
 ) -> dict[str, Any]:
     """Load a CIF file into a model's crystal config (and optionally its group).
 
-    Existing bond orbits are cleared because their site indices refer to the
-    previous crystal. Returns the imported crystal dict.
+    Model-specific derived geometry whose indices referred to the previous
+    crystal is cleared. Returns the imported crystal dict.
     """
 
     from .crystal import crystal_from_cif
 
     imported = crystal_from_cif(path)
-    model.config["crystal"] = imported
-    model.config["magnetic_sites"] = []
-    model.config.pop("orbits", None)
-    model.config.pop("site_positions", None)
-    reconcile_model_orbit_parameters(model)
-    if group is not None:
-        group.lattice_parameters = dict(imported["lattice"])
-        group.spacegroup = imported["spacegroup"]
-        group.metadata["crystal"] = copy.deepcopy(imported)
-    return imported
+    return set_model_crystal(model, imported, group=group)
 
 
 def generate_model_bond_orbits(model: ModelComponentSpec) -> list[str]:
@@ -18588,6 +18635,7 @@ class NfitProjectExplorer:
                 "source_path",
                 "model_digest",
                 "model_data",
+                "crystal",
             }:
                 continue
             label = QtWidgets.QLabel(setting_name)
@@ -18642,6 +18690,7 @@ class NfitProjectExplorer:
             row += 1
         self.model_parameter_layout.addWidget(config_group, 2, 0, 1, 4)
         if model.type == "tight_binding":
+            self._build_model_crystal_editor(model, structure_only=True)
             self._build_tight_binding_editor(model)
         elif definition.structured_config:
             self._build_model_crystal_editor(model)
@@ -18679,7 +18728,19 @@ class NfitProjectExplorer:
         import_button.clicked.connect(
             lambda _checked=False, model=model: self._import_wannier90_model(model)
         )
-        layout.addWidget(import_button, 1, 0, 1, 3)
+        layout.addWidget(import_button, 1, 0, 1, 2)
+        structure_script = QtWidgets.QPushButton("Copy structure script")
+        structure_script.setObjectName("tight_binding_structure_script")
+        structure_script.setToolTip(
+            "Copy editable Python that rebuilds the CIF or manual crystal, "
+            "periodic axes, data group, and tight-binding component."
+        )
+        structure_script.clicked.connect(
+            lambda _checked=False, model=model: self._copy_tight_binding_structure_script(
+                model
+            )
+        )
+        layout.addWidget(structure_script, 1, 2)
 
         definition = model_definition(model.type)
         for row, plot in enumerate(definition.plots, start=2):
@@ -18703,7 +18764,7 @@ class NfitProjectExplorer:
             )
             layout.addWidget(calculate, row, 0, 1, 2)
             layout.addWidget(copy_script, row, 2)
-        self.model_parameter_layout.addWidget(group, 3, 0, 1, 4)
+        self.model_parameter_layout.addWidget(group, 5, 0, 1, 4)
 
     def _import_wannier90_model(self, model: ModelComponentSpec) -> bool:
         from PySide6 import QtWidgets
@@ -18810,12 +18871,39 @@ class NfitProjectExplorer:
         QtWidgets.QApplication.clipboard().setText(script)
         return True
 
-    def _build_model_crystal_editor(self, model: ModelComponentSpec) -> None:
-        """Structured crystal / magnetic-site / bond-orbit editor.
+    def _copy_tight_binding_structure_script(
+        self, model: ModelComponentSpec
+    ) -> bool:
+        from PySide6 import QtWidgets
 
-        Shown for model types flagged ``structured_config`` (heisenberg_rpa).
-        Everything edits plain JSON data in ``model.config`` so the state
-        serializes with the project and drives the fit factory directly.
+        from .electronic_structure import tight_binding_structure_script
+
+        owner = self._group_for_model(model)
+        try:
+            script = tight_binding_structure_script(
+                model_crystal_config(model),
+                model.config.get("periodic_axes") or [0, 1, 2],
+                group_name=owner.name if owner is not None else "Electronic",
+                model_name=model.name,
+            )
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Tight-binding structure script",
+                f"Could not create the script:\n{exc}",
+            )
+            return False
+        QtWidgets.QApplication.clipboard().setText(script)
+        return True
+
+    def _build_model_crystal_editor(
+        self, model: ModelComponentSpec, *, structure_only: bool = False
+    ) -> None:
+        """Structured crystal editor with optional magnetic interactions.
+
+        Tight binding uses the shared lattice and site sections without
+        magnetic selection or exchange bonds. Heisenberg RPA continues into
+        the bond, interaction, and closure sections.
         """
 
         from PySide6 import QtWidgets
@@ -18827,8 +18915,11 @@ class NfitProjectExplorer:
         crystal_group.setObjectName("model_crystal_group")
         crystal_layout = QtWidgets.QGridLayout(crystal_group)
         lattice_tooltip = (
-            "Unit-cell parameter used to build exchange bonds and convert HKL "
-            "to |Q|. Lengths in Angstrom, angles in degrees."
+            "Unit-cell parameter used for orbital locations and electronic "
+            "wavevectors. Lengths in Angstrom, angles in degrees."
+            if structure_only
+            else "Unit-cell parameter used to build exchange bonds and convert "
+            "HKL to |Q|. Lengths in Angstrom, angles in degrees."
         )
         for column, name in enumerate(("a", "b", "c", "alpha", "beta", "gamma")):
             label = QtWidgets.QLabel(name)
@@ -18844,9 +18935,13 @@ class NfitProjectExplorer:
             crystal_layout.addWidget(editor, 0, 2 * column + 1)
         spacegroup_label = QtWidgets.QLabel("Space group")
         spacegroup_tooltip = (
-            "Hermann-Mauguin space group symbol (e.g. 'F d -3 m:2'). Used to "
-            "expand the magnetic sites and to group bonds into symmetry-"
-            "distinct orbits sharing one exchange constant."
+            "Hermann-Mauguin space group symbol (e.g. 'F d -3 m:2'). It will "
+            "expand orbital-bearing sites and constrain onsite and hopping "
+            "terms in later builder stages."
+            if structure_only
+            else "Hermann-Mauguin space group symbol (e.g. 'F d -3 m:2'). "
+            "Used to expand the magnetic sites and to group bonds into "
+            "symmetry-distinct orbits sharing one exchange constant."
         )
         spacegroup_label.setToolTip(spacegroup_tooltip)
         spacegroup_editor = QtWidgets.QLineEdit(str(crystal.get("spacegroup", "P 1")))
@@ -18861,8 +18956,12 @@ class NfitProjectExplorer:
         import_button.setObjectName("model_crystal_import_cif")
         import_button.setToolTip(
             "Load lattice, space group, and atomic sites from a CIF file into "
-            "this model (and offer them to the data group). Clears previously "
-            "generated bond orbits."
+            "this model and its data group."
+            + (
+                " Sets periodic axes to all three lattice directions."
+                if structure_only
+                else " Clears previously generated bond orbits."
+            )
         )
         import_button.clicked.connect(self._import_cif_into_selected_model)
         crystal_layout.addWidget(import_button, 1, 6, 1, 2)
@@ -18880,13 +18979,21 @@ class NfitProjectExplorer:
         sites_group.setObjectName("model_crystal_sites_group")
         sites_layout = QtWidgets.QGridLayout(sites_group)
         magnetic_labels = {str(name) for name in model.config.get("magnetic_sites", [])}
-        for header_column, header in enumerate(("Label", "x", "y", "z", "Ion", "", "")):
+        headers = (
+            ("Label", "x", "y", "z", "Element", "")
+            if structure_only
+            else ("Label", "x", "y", "z", "Ion", "", "")
+        )
+        for header_column, header in enumerate(headers):
             if header:
                 sites_layout.addWidget(QtWidgets.QLabel(header), 0, header_column)
         site_tooltip = (
-            "Wyckoff site of the crystal: label, fractional coordinates, and "
-            "the magnetic ion for the <j0> form factor. Check 'Magnetic' to "
-            "include the site in exchange-bond generation."
+            "Crystallographic site label, chemical element, and fractional "
+            "coordinates. These sites become candidate orbital locations."
+            if structure_only
+            else "Wyckoff site of the crystal: label, fractional coordinates, "
+            "and the magnetic ion for the <j0> form factor. Check 'Magnetic' "
+            "to include the site in exchange-bond generation."
         )
         for index, site in enumerate(crystal["sites"]):
             row = index + 1
@@ -18907,44 +19014,85 @@ class NfitProjectExplorer:
                     lambda index=index, axis=axis, editor=editor: self._set_model_crystal_site(index, axis, editor.text())
                 )
                 sites_layout.addWidget(editor, row, 1 + axis)
-            ion_combo = QtWidgets.QComboBox()
-            ion_combo.setObjectName(f"model_crystal_site_ion_{index}")
-            ion_combo.setToolTip(
-                "Magnetic ion of this site; sets the tabulated <j0> form "
-                "factor key. '(none)' leaves the site without a form factor."
-            )
-            ion_combo.addItem("(none)", "")
-            for ion in available_ions():
-                ion_combo.addItem(ion, ion)
-            ion_combo.setCurrentIndex(max(ion_combo.findData(str(site.get("ion", "") or "")), 0))
-            ion_combo.currentIndexChanged.connect(
-                lambda _index, index=index, combo=ion_combo: self._set_model_crystal_site(index, "ion", str(combo.currentData() or ""))
-            )
-            sites_layout.addWidget(ion_combo, row, 4)
-            magnetic_check = QtWidgets.QCheckBox("Magnetic")
-            magnetic_check.setObjectName(f"model_crystal_site_magnetic_{index}")
-            magnetic_check.setToolTip(
-                "Include this site in magnetic-site expansion and exchange-"
-                "bond generation."
-            )
-            magnetic_check.setChecked(str(site.get("label", "")) in magnetic_labels)
-            magnetic_check.toggled.connect(
-                lambda checked, index=index: self._set_model_site_magnetic(index, checked)
-            )
-            sites_layout.addWidget(magnetic_check, row, 5)
+            if structure_only:
+                element_editor = QtWidgets.QLineEdit(str(site.get("element", "")))
+                element_editor.setObjectName(
+                    f"model_crystal_site_element_{index}"
+                )
+                element_editor.setToolTip(site_tooltip)
+                element_editor.setMaximumWidth(70)
+                element_editor.editingFinished.connect(
+                    lambda index=index, editor=element_editor: self._set_model_crystal_site(
+                        index, "element", editor.text()
+                    )
+                )
+                sites_layout.addWidget(element_editor, row, 4)
+            else:
+                ion_combo = QtWidgets.QComboBox()
+                ion_combo.setObjectName(f"model_crystal_site_ion_{index}")
+                ion_combo.setToolTip(
+                    "Magnetic ion of this site; sets the tabulated <j0> form "
+                    "factor key. '(none)' leaves the site without a form factor."
+                )
+                ion_combo.addItem("(none)", "")
+                for ion in available_ions():
+                    ion_combo.addItem(ion, ion)
+                ion_combo.setCurrentIndex(
+                    max(ion_combo.findData(str(site.get("ion", "") or "")), 0)
+                )
+                ion_combo.currentIndexChanged.connect(
+                    lambda _index, index=index, combo=ion_combo: self._set_model_crystal_site(
+                        index, "ion", str(combo.currentData() or "")
+                    )
+                )
+                sites_layout.addWidget(ion_combo, row, 4)
+                magnetic_check = QtWidgets.QCheckBox("Magnetic")
+                magnetic_check.setObjectName(
+                    f"model_crystal_site_magnetic_{index}"
+                )
+                magnetic_check.setToolTip(
+                    "Include this site in magnetic-site expansion and exchange-"
+                    "bond generation."
+                )
+                magnetic_check.setChecked(
+                    str(site.get("label", "")) in magnetic_labels
+                )
+                magnetic_check.toggled.connect(
+                    lambda checked, index=index: self._set_model_site_magnetic(
+                        index, checked
+                    )
+                )
+                sites_layout.addWidget(magnetic_check, row, 5)
             remove_button = QtWidgets.QPushButton("Remove")
             remove_button.setObjectName(f"model_crystal_site_remove_{index}")
             remove_button.setToolTip("Remove this atomic site from the crystal.")
             remove_button.clicked.connect(
                 lambda _checked=False, index=index: self._remove_model_crystal_site(index)
             )
-            sites_layout.addWidget(remove_button, row, 6)
+            sites_layout.addWidget(remove_button, row, 5 if structure_only else 6)
         add_site_button = QtWidgets.QPushButton("Add site")
         add_site_button.setObjectName("model_crystal_site_add")
         add_site_button.setToolTip("Append a new atomic site to the crystal.")
         add_site_button.clicked.connect(self._add_model_crystal_site)
         sites_layout.addWidget(add_site_button, len(crystal["sites"]) + 1, 0)
+        if structure_only:
+            status = QtWidgets.QLabel(
+                "The crystal is ready for orbital assignment; orbital "
+                "manifolds are added in the next builder stage."
+            )
+            status.setObjectName("tight_binding_structure_status")
+            status.setToolTip(
+                "Stage 3.1 stores editable crystal geometry. It does not yet "
+                "construct a Hamiltonian without model_data or Wannier90."
+            )
+            status.setWordWrap(True)
+            sites_layout.addWidget(
+                status, len(crystal["sites"]) + 2, 0, 1, len(headers)
+            )
         self.model_parameter_layout.addWidget(sites_group, 4, 0, 1, 4)
+
+        if structure_only:
+            return
 
         bonds_group = QtWidgets.QGroupBox("Exchange Bonds")
         bonds_group.setObjectName("model_bonds_group")
@@ -19297,11 +19445,13 @@ class NfitProjectExplorer:
 
     def _set_model_crystal_lattice(self, name: str, text: str) -> None:
         def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
-            lattice = model_crystal_config(model)["lattice"]
+            crystal = model_crystal_config(model)
+            lattice = crystal["lattice"]
             value = float(_parse_parameter_text(text))
             if lattice.get(name) == value:
                 raise _NoChange()
             lattice[name] = value
+            _mark_tight_binding_crystal_manual(model, crystal)
 
         self._mutate_selected_model_quietly(mutate)
 
@@ -19312,12 +19462,14 @@ class NfitProjectExplorer:
             if crystal.get("spacegroup") == value:
                 raise _NoChange()
             crystal["spacegroup"] = value
+            _mark_tight_binding_crystal_manual(model, crystal)
 
         self._mutate_selected_model_quietly(mutate)
 
     def _set_model_crystal_site(self, index: int, field: Any, text: str) -> None:
         def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
-            sites = model_crystal_config(model)["sites"]
+            crystal = model_crystal_config(model)
+            sites = crystal["sites"]
             if not (0 <= index < len(sites)):
                 raise _NoChange()
             site = sites[index]
@@ -19325,15 +19477,21 @@ class NfitProjectExplorer:
                 value = text.strip()
                 if site.get("label") == value:
                     raise _NoChange()
-                magnetic = [str(name) for name in model.config.get("magnetic_sites", [])]
-                model.config["magnetic_sites"] = [
-                    value if name == str(site.get("label", "")) else name for name in magnetic
-                ]
+                if model.type == "heisenberg_rpa":
+                    magnetic = [
+                        str(name)
+                        for name in model.config.get("magnetic_sites", [])
+                    ]
+                    model.config["magnetic_sites"] = [
+                        value if name == str(site.get("label", "")) else name
+                        for name in magnetic
+                    ]
                 site["label"] = value
-            elif field == "ion":
-                if site.get("ion") == text:
+            elif field in {"ion", "element"}:
+                value = text.strip()
+                if site.get(str(field), "") == value:
                     raise _NoChange()
-                site["ion"] = text
+                site[str(field)] = value
             else:
                 position = list(site.get("position", [0.0, 0.0, 0.0]))
                 value = float(_parse_parameter_text(text))
@@ -19341,6 +19499,7 @@ class NfitProjectExplorer:
                     raise _NoChange()
                 position[int(field)] = value
                 site["position"] = position
+            _mark_tight_binding_crystal_manual(model, crystal)
 
         self._mutate_selected_model_quietly(mutate)
 
@@ -19363,27 +19522,35 @@ class NfitProjectExplorer:
 
     def _add_model_crystal_site(self) -> None:
         def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
-            sites = model_crystal_config(model)["sites"]
+            crystal = model_crystal_config(model)
+            sites = crystal["sites"]
             sites.append(
                 {
                     "label": f"Site{len(sites) + 1}",
+                    "element": "",
                     "position": [0.0, 0.0, 0.0],
                     "ion": "",
                 }
             )
+            _mark_tight_binding_crystal_manual(model, crystal)
 
         self._mutate_selected_model(mutate)
 
     def _remove_model_crystal_site(self, index: int) -> None:
         def mutate(model: ModelComponentSpec, _group: DataGroup | None) -> None:
-            sites = model_crystal_config(model)["sites"]
+            crystal = model_crystal_config(model)
+            sites = crystal["sites"]
             if not (0 <= index < len(sites)):
                 raise _NoChange()
             removed = sites.pop(index)
             label = str(removed.get("label", ""))
-            model.config["magnetic_sites"] = [
-                str(name) for name in model.config.get("magnetic_sites", []) if str(name) != label
-            ]
+            if model.type == "heisenberg_rpa":
+                model.config["magnetic_sites"] = [
+                    str(name)
+                    for name in model.config.get("magnetic_sites", [])
+                    if str(name) != label
+                ]
+            _mark_tight_binding_crystal_manual(model, crystal)
 
         self._mutate_selected_model(mutate)
 
@@ -19410,9 +19577,9 @@ class NfitProjectExplorer:
                 raise ValueError("the model is not attached to a data group")
             stored = group.metadata.get("crystal")
             if isinstance(stored, dict) and stored.get("sites"):
-                model.config["crystal"] = copy.deepcopy(stored)
+                set_model_crystal(model, stored)
             elif isinstance(group.lattice_parameters, dict):
-                crystal = model_crystal_config(model)
+                crystal = copy.deepcopy(model_crystal_config(model))
                 crystal["lattice"] = {
                     name: float(group.lattice_parameters.get(name, fallback))
                     for name, fallback in (
@@ -19422,14 +19589,12 @@ class NfitProjectExplorer:
                 }
                 if group.spacegroup:
                     crystal["spacegroup"] = str(group.spacegroup)
+                set_model_crystal(model, crystal)
             else:
                 raise ValueError(
                     "the data group stores no crystal information; import a "
                     "CIF or set lattice parameters on the group first"
                 )
-            model.config.pop("orbits", None)
-            model.config.pop("site_positions", None)
-            reconcile_model_orbit_parameters(model)
 
         self._mutate_selected_model(mutate)
 

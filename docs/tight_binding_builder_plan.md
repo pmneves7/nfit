@@ -1,9 +1,14 @@
 # Tight-binding model-builder plan
 
-This page specifies the planned structure-first builder for manual
-tight-binding models. It does not describe behavior available in the current
-GUI. The current implementation boundary is documented on
+This page tracks the staged structure-first builder for manual tight-binding
+models. The detailed current behavior is documented on
 [Tight-binding electronic structure](tight_binding.md).
+
+Stage 3.1 is implemented: the GUI and public API share CIF import, editable
+crystal geometry, site expansion, spatial bond-orbit geometry, project
+serialization, and structure-script export. Orbital assignment begins in
+Stage 3.2; the later sections on onsite terms, hoppings, fitting, and SOC
+remain planned.
 
 ## Goal
 
@@ -219,7 +224,7 @@ When fitting is enabled:
 
 ## Implementation stages
 
-### 3.1 — Shared crystal geometry
+### 3.1 — Shared crystal geometry (implemented)
 
 - Extract CIF import, lattice conversion, site expansion, and spatial
   bond-orbit generation behind model-independent APIs.

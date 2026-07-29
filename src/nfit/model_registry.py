@@ -1245,6 +1245,27 @@ def _register_builtin_models() -> None:
                     "{}",
                 ),
                 _config_field(
+                    "crystal",
+                    {
+                        "lattice": {
+                            "a": 5.0,
+                            "b": 5.0,
+                            "c": 5.0,
+                            "alpha": 90.0,
+                            "beta": 90.0,
+                            "gamma": 90.0,
+                        },
+                        "spacegroup": "P 1",
+                        "sites": [],
+                    },
+                    "Editable crystal geometry for CIF-based or manual construction.",
+                    "Crystal dictionary with lattice, space group, and site records.",
+                    "dict",
+                    '{"lattice": {"a": 4, "b": 4, "c": 6, '
+                    '"alpha": 90, "beta": 90, "gamma": 90}, '
+                    '"spacegroup": "P 1", "sites": []}',
+                ),
+                _config_field(
                     "periodic_axes",
                     [],
                     "Direct-lattice periodic axes; empty infers them from hoppings.",

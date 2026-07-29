@@ -8,18 +8,42 @@ layout.
 
 ## Response
 
-The canonical Hamiltonian uses the Wannier gauge
+Let $\lvert\mathbf R,b\rangle$ be orthonormal basis orbital $b$ in the cell
+translated by the integer vector $\mathbf R$, and let
+$\lvert\mathbf 0,a\rangle$ be orbital $a$ in the home cell. The real-space
+Hamiltonian is
 
 $$
-H_{ab}(\mathbf k)=
-\sum_{\mathbf R}w_{\mathbf R}H_{ab}(\mathbf R)
-\exp(2\pi i\,\mathbf k\cdot\mathbf R).
+H_{ab}(\mathbf R)
+=\langle\mathbf 0,a\vert\hat H\vert\mathbf R,b\rangle
 $$
 
-$a$ and $b$ are arbitrary orthonormal basis states, $\mathbf R$ is an integer
-cell translation, and $w_{\mathbf R}$ is an interpolation weight. Energies and
-matrix elements are stored in meV. Reduced wavevectors are dimensionless.
-Orbital centers are stored separately and do not enter this Fourier phase.
+in meV. It is the matrix element from the translated copy of orbital $b$ to
+orbital $a$ in the home cell. $H_{aa}(\mathbf 0)$ is an onsite energy;
+off-diagonal elements of $H(\mathbf 0)$ are same-cell hybridizations; and
+$H_{ab}(\mathbf R\ne\mathbf 0)$ contains intercell hopping and hybridization.
+A named hopping parameter $\theta_p$ may multiply one element, a
+symmetry-related group of elements, or a complete dimensionless matrix basis
+$P_p(\mathbf R)$:
+
+$$
+H(\mathbf R)=H_0(\mathbf R)+\sum_p\theta_pP_p(\mathbf R).
+$$
+
+If the fractional centers of the orbitals are
+$\boldsymbol\tau_a$ and $\boldsymbol\tau_b$, their physical separation for
+this matrix element is
+
+$$
+\mathbf d_{ab}(\mathbf R)
+=A\left(\mathbf R+\boldsymbol\tau_b-\boldsymbol\tau_a\right),
+$$
+
+where $A$ is the direct-lattice matrix whose columns are lattice vectors in Å.
+The centers therefore determine orbital locations, hopping distances,
+symmetry actions, and later neutron-scattering position phases. They are
+stored separately and do not enter the Fourier phase below because nfit's
+canonical Hamiltonian uses the Wannier gauge.
 
 The real-space model must satisfy
 
@@ -27,8 +51,22 @@ $$
 H(-\mathbf R)=H(\mathbf R)^\dagger.
 $$
 
+Element by element, this is
+$H_{ab}(\mathbf R)=H_{ba}^*(-\mathbf R)$.
+
 nfit validates this relation and the Hermiticity of interpolated
 $H(\mathbf k)$. It does not silently repair inconsistent imported data.
+
+The reciprocal-space Hamiltonian is
+
+$$
+H_{ab}(\mathbf k)=
+\sum_{\mathbf R}w_{\mathbf R}H_{ab}(\mathbf R)
+\exp(2\pi i\,\mathbf k\cdot\mathbf R),
+$$
+
+where $w_{\mathbf R}$ is an interpolation weight and the reduced wavevector
+$\mathbf k$ is dimensionless. This is the Wannier gauge.
 
 At each wavevector, the band problem is the Hermitian eigenproblem
 
@@ -115,6 +153,7 @@ dictionaries can be entered directly in the model editor.
 | `source_path` | Wannier90 `*_hr.dat` or `*_tb.dat` filesystem path; the GUI stores an absolute path; empty for a stored manual model | `""` | `"/data/run/model_tb.dat"` |
 | `model_digest` | expected SHA-256 digest of the canonical model; source reload fails if it differs | `""` | `"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"` when that is the model's actual digest |
 | `model_data` | portable dictionary returned by `ElectronicModel.to_dict()` | `{}` | `model.to_dict()` |
+| `crystal` | editable lattice, space group, crystallographic sites, and optional CIF provenance used by the structure-first builder | `P 1` cell with no sites | `{"lattice": {"a": 4, "b": 4, "c": 6, "alpha": 90, "beta": 90, "gamma": 90}, "spacegroup": "P 1", "sites": []}` |
 | `periodic_axes` | periodic lattice axes; empty asks a Wannier import to infer them from nonzero translations | `[]` | `[0]`, `[0, 1]`, or `[0, 1, 2]` |
 | `chemical_potential_meV` | chemical potential subtracted on band and DOS plots | `0.0` | `12.5` |
 | `projection_groups` | plot labels mapped to zero-based basis indices | `{}` | `{"d": [0, 1, 2], "p": [3, 4]}` |
@@ -302,16 +341,26 @@ extension and should not be conflated with an onsite energy.
 
 ## Scripting and export
 
-The current **Tight-binding electronic structure** model editor imports
-Wannier90 sources and provides **Band structure**, **Density of states**, and
-**Fermi surface** actions. Manual models can currently be constructed through
-the public scripting API and stored as `model_data`, but the GUI does not yet
-provide a manual crystal-and-orbital builder. The planned CIF-based workflow is
-specified in the
+The **Tight-binding electronic structure** model editor supports three
+structure inputs:
+
+- import a CIF and retain its path, size, and SHA-256 digest;
+- edit the lattice, space group, element labels, and fractional site
+  positions manually; or
+- import a complete Wannier90 Hamiltonian.
+
+CIF import initializes `periodic_axes` to `[0, 1, 2]`. The structure editor
+stores candidate orbital locations but does not yet assign orbital manifolds
+or construct $H(\mathbf R)$ from them; that is Stage 3.2. Complete manual
+Hamiltonians can still be constructed through the public scripting API and
+stored as `model_data`. The remaining workflow is specified in the
 [Tight-binding model-builder plan](tight_binding_builder_plan.md).
 
 Each plot action has a **Copy script** button that exports editable GUI-free
-Python using the same calculation and rendering functions.
+Python using the same calculation and rendering functions. **Copy structure
+script** exports CIF reload and digest verification, or embeds a manually
+entered crystal, then reconstructs the data group, model component, and
+periodic axes without Qt.
 
 `ElectronicModel.to_dict()` is a portable, digest-protected representation.
 `save_electronic_model` and `load_electronic_model` write and validate that

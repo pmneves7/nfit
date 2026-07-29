@@ -18,6 +18,14 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
 
     group = DataGroup("Electronic")
     model = create_model_component(group, "bands", type="tight_binding")
+    model.config["crystal"]["sites"].append(
+        {
+            "label": "M1",
+            "element": "Fe",
+            "position": [0.0, 0.0, 0.0],
+            "ion": "",
+        }
+    )
     explorer = NfitProjectExplorer(NfitProject([group]))
     explorer._refresh_tree(select_group=group, select_model=model)
 
@@ -25,6 +33,22 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
         QtWidgets.QGroupBox, "tight_binding_actions_group"
     )
     assert actions is not None
+    assert explorer.model_parameter_widget.findChild(
+        QtWidgets.QGroupBox, "model_crystal_group"
+    )
+    assert explorer.model_parameter_widget.findChild(
+        QtWidgets.QGroupBox, "model_crystal_sites_group"
+    )
+    assert (
+        explorer.model_parameter_widget.findChild(
+            QtWidgets.QGroupBox, "model_bonds_group"
+        )
+        is None
+    )
+    structure_status = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLabel, "tight_binding_structure_status"
+    )
+    assert structure_status is not None and structure_status.toolTip()
     for key in ("bands", "dos", "fermi_surface"):
         plot_button = explorer.model_parameter_widget.findChild(
             QtWidgets.QPushButton, f"model_plot_{key}"
@@ -39,7 +63,88 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
             QtWidgets.QPushButton, "tight_binding_import_wannier90"
         ).toolTip()
     )
+    assert (
+        explorer.model_parameter_widget.findChild(
+            QtWidgets.QPushButton, "tight_binding_structure_script"
+        ).toolTip()
+    )
+    element = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "model_crystal_site_element_0"
+    )
+    assert element is not None and element.text() == "Fe" and element.toolTip()
+    model.config["crystal"]["provenance"] = {
+        "source": "cif",
+        "path": "/stale/source.cif",
+        "sha256": "0" * 64,
+    }
+    element.setText("Co")
+    element.editingFinished.emit()
+    assert model.config["crystal"]["sites"][0]["element"] == "Co"
+    assert model.config["crystal"]["provenance"] == {"source": "manual"}
+    from nfit import tight_binding_structure_script
+
+    script = tight_binding_structure_script(
+        model.config["crystal"], model.config["periodic_axes"] or [0, 1, 2]
+    )
+    assert "crystal_from_cif" not in script
+    assert "'element': 'Co'" in script
+    explorer.has_unsaved_changes = False
     explorer.window.close()
+
+
+def test_tight_binding_cif_structure_project_and_script_round_trip(tmp_path):
+    from nfit import (
+        import_cif_into_model,
+        tight_binding_structure_script,
+    )
+
+    cif = tmp_path / "structure.cif"
+    cif.write_text(
+        """
+data_structure
+_cell_length_a 4.0
+_cell_length_b 5.0
+_cell_length_c 6.0
+_cell_angle_alpha 90
+_cell_angle_beta 90
+_cell_angle_gamma 90
+_symmetry_space_group_name_H-M 'P 1'
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+M1 Fe 0.125 0.250 0.375
+"""
+    )
+    group = DataGroup("Electronic")
+    model = create_model_component(group, "bands", type="tight_binding")
+    imported = import_cif_into_model(model, str(cif), group=group)
+
+    assert model.config["crystal"] == imported
+    assert model.config["periodic_axes"] == [0, 1, 2]
+    assert imported["sites"][0]["element"] == "Fe"
+    assert group.metadata["crystal"] == imported
+
+    path = tmp_path / "structure.nfit"
+    save_project(NfitProject([group]), path)
+    restored = load_project(path)
+    restored_model = restored.data_groups[0].models["bands"]
+    assert restored_model.config["crystal"] == imported
+    assert restored_model.config["periodic_axes"] == [0, 1, 2]
+
+    script = tight_binding_structure_script(
+        restored_model.config["crystal"],
+        restored_model.config["periodic_axes"],
+        group_name="Electronic",
+        model_name="bands",
+    )
+    namespace = {}
+    exec(compile(script, "<tight-binding-structure>", "exec"), namespace)
+    scripted = namespace["model"]
+    assert scripted.config["crystal"] == imported
+    assert scripted.config["periodic_axes"] == [0, 1, 2]
 
 
 def test_heisenberg_rpa_editor_generates_orbits_and_round_trips(monkeypatch, tmp_path):

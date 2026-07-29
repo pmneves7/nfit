@@ -6,8 +6,11 @@ pytest.importorskip("gemmi")
 from nfit.crystal import (
     Bond,
     crystal_from_cif,
+    expand_crystal_sites,
     expand_magnetic_sites,
     generate_bond_orbits,
+    generate_spatial_bond_orbits,
+    lattice_vectors,
     orbits_from_config,
     orbits_to_config,
     sites_to_config,
@@ -45,6 +48,39 @@ def test_expand_pyrochlore_16c_gives_16_sites():
     assert all(site.ion == "Yb3" for site in sites)
     positions = np.asarray([site.position for site in sites])
     assert np.all((positions >= 0.0) & (positions < 1.0))
+
+
+def test_generic_site_and_spatial_orbit_apis_preserve_heisenberg_geometry():
+    crystal = {
+        **FCC,
+        "sites": [
+            {
+                **FCC["sites"][0],
+                "element": "Ni",
+            }
+        ],
+    }
+    generic_sites = expand_crystal_sites(crystal, ["Ni1"])
+    magnetic_sites = expand_magnetic_sites(crystal, ["Ni1"])
+    assert generic_sites == magnetic_sites
+    assert all(site.element == "Ni" for site in generic_sites)
+
+    sites_b, spatial = generate_spatial_bond_orbits(
+        crystal, ["Ni1"], cutoff_angstrom=3.0
+    )
+    sites_j, exchange = generate_bond_orbits(
+        crystal, ["Ni1"], cutoff_angstrom=3.0
+    )
+    assert sites_b == sites_j
+    assert [orbit.label for orbit in spatial] == ["B1"]
+    assert [orbit.label for orbit in exchange] == ["J1"]
+    assert spatial[0].bonds == exchange[0].bonds
+    assert spatial[0].operations == exchange[0].operations
+
+
+def test_public_lattice_vectors_use_column_vector_convention():
+    basis = lattice_vectors(FCC["lattice"])
+    np.testing.assert_allclose(basis, np.diag([4.0, 4.0, 4.0]), atol=1.0e-14)
 
 
 def test_expand_unknown_label_raises():
@@ -165,6 +201,8 @@ O1 O 0.50000 0.50000 0.50000
     labels = [site["label"] for site in crystal["sites"]]
     assert labels == ["Ni1", "O1"]
     assert crystal["sites"][1]["position"] == [0.5, 0.5, 0.5]
+    assert crystal["provenance"]["path"] == str(cif.resolve())
+    assert len(crystal["provenance"]["sha256"]) == 64
 
     crystal["sites"][0]["ion"] = "Ni2"
     sites, orbits = generate_bond_orbits(crystal, ["Ni1"], cutoff_angstrom=3.0)

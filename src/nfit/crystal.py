@@ -1,18 +1,14 @@
-"""Crystal structures, magnetic sites, and symmetry-distinct exchange bonds.
+"""Model-independent crystal structures, expanded sites, and spatial bonds.
 
-This module supplies the crystallographic input to the coupled
-spin-fluctuation models in :mod:`nfit.spin_fluctuations`: it reads crystal
-structures from CIF files, expands magnetic Wyckoff sites through the space
-group, and enumerates neighbor bonds grouped into *symmetry orbits* --- sets of
-bonds mapped onto each other by space-group operations, which therefore share
-one exchange constant.
+This module reads CIF files, expands selected crystallographic sites through a
+space group, and enumerates neighbor bonds grouped into symmetry orbits. The
+geometry is shared by magnetic exchange and electronic tight-binding models;
+model-specific interactions are attached in their own layers.
 
-Orbits are labeled ``J1``, ``J2``, ... in order of increasing bond length.
-When symmetry-inequivalent orbits occur at the same distance they receive
-letter suffixes (``J3a``, ``J3b``), following the convention popularized by
-Sunny.jl [Dahlbom et al., https://github.com/SunnySuite/Sunny.jl]; the
-canonical example is the third-neighbor shell of the pyrochlore lattice, whose
-two inequivalent exchange paths of equal length must be fit independently.
+The generic spatial-orbit API labels shells ``B1``, ``B2``, ... . The
+Heisenberg wrapper retains ``J1``, ``J2``, ... . Symmetry-inequivalent orbits
+at the same distance receive suffixes such as ``B3a``/``B3b`` or
+``J3a``/``J3b``.
 
 All public entry points accept and return plain JSON-serializable dicts so
 crystal and bond configuration can be stored directly in project files and
@@ -24,8 +20,10 @@ imported lazily so the rest of the package works without it.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -52,17 +50,18 @@ def _require_gemmi():
 
 @dataclass(frozen=True)
 class CrystalSite:
-    """One magnetic site of the expanded unit cell (fractional coordinates).
+    """One selected site of the expanded unit cell in fractional coordinates.
 
     ``rotation`` is the fractional rotation matrix of the space-group operation
     that generated this site from its Wyckoff representative (``None`` for
-    legacy payloads). Site-anisotropy tensors of the representative are carried
-    to this site with it.
+    legacy payloads). ``ion`` remains available for magnetic form factors;
+    ``element`` carries the crystallographic species independently.
     """
 
     label: str
     position: tuple[float, float, float]
     ion: str = ""
+    element: str = ""
     rotation: tuple[tuple[float, float, float], ...] | None = None
 
 
@@ -102,12 +101,12 @@ class Bond:
 
 @dataclass(frozen=True)
 class BondOrbit:
-    """All bonds equivalent under the space group, sharing one exchange constant.
+    """All spatial bonds equivalent under the space group.
 
     ``operations`` (when present) is aligned with ``bonds`` and records, per
     bond, the symmetry operation carrying the orbit's representative bond
-    (``bonds[0]``, whose entry is the identity) onto it — needed to rotate
-    anisotropic exchange tensors onto each bond.
+    (``bonds[0]``, whose entry is the identity) onto it. Interaction layers use
+    this information to rotate exchange tensors or orbital hopping matrices.
     """
 
     label: str
@@ -130,7 +129,9 @@ def crystal_from_cif(path: str) -> dict[str, Any]:
     """
 
     gemmi = _require_gemmi()
-    structure = gemmi.read_small_structure(str(path))
+    source = Path(path)
+    content = source.read_bytes()
+    structure = gemmi.read_small_structure(str(source))
     if not structure.sites:
         raise ValueError(f"CIF file {path!r} defines no atomic sites")
     cell = structure.cell
@@ -170,10 +171,16 @@ def crystal_from_cif(path: str) -> dict[str, Any]:
         },
         "spacegroup": str(spacegroup),
         "sites": sites,
+        "provenance": {
+            "source": "cif",
+            "path": str(source.resolve()),
+            "size_bytes": len(content),
+            "sha256": hashlib.sha256(content).hexdigest(),
+        },
     }
 
 
-def _lattice_vectors(lattice: Mapping[str, Any]) -> FloatArray:
+def lattice_vectors(lattice: Mapping[str, Any]) -> FloatArray:
     """Return the 3x3 matrix whose columns are the lattice vectors in Angstrom."""
 
     a = float(lattice["a"])
@@ -191,6 +198,43 @@ def _lattice_vectors(lattice: Mapping[str, Any]) -> FloatArray:
         raise ValueError("lattice parameters produce a non-positive unit-cell volume")
     cvec = np.array([cx, cy, np.sqrt(cz_sq)])
     return np.column_stack([avec, bvec, cvec])
+
+
+def validate_crystal(crystal: Mapping[str, Any]) -> None:
+    """Validate the shared JSON crystal geometry contract."""
+
+    if not isinstance(crystal, Mapping):
+        raise TypeError("crystal must be a mapping")
+    lattice = crystal.get("lattice")
+    if not isinstance(lattice, Mapping):
+        raise ValueError("crystal must define a lattice mapping")
+    basis = lattice_vectors(lattice)
+    if np.any(~np.isfinite(basis)):
+        raise ValueError("crystal lattice must be finite")
+    if not str(crystal.get("spacegroup", "")).strip():
+        raise ValueError("crystal spacegroup cannot be empty")
+    sites = crystal.get("sites")
+    if not isinstance(sites, Sequence) or isinstance(sites, (str, bytes)):
+        raise ValueError("crystal sites must be a sequence")
+    labels: set[str] = set()
+    for site in sites:
+        if not isinstance(site, Mapping):
+            raise ValueError("every crystal site must be a mapping")
+        label = str(site.get("label", "")).strip()
+        if not label or label in labels:
+            raise ValueError("crystal site labels must be nonempty and unique")
+        labels.add(label)
+        position = np.asarray(site.get("position", []), dtype=float)
+        if position.shape != (3,) or np.any(~np.isfinite(position)):
+            raise ValueError(
+                f"crystal site {label!r} must have three finite fractional coordinates"
+            )
+
+
+def _lattice_vectors(lattice: Mapping[str, Any]) -> FloatArray:
+    """Compatibility alias for the former private lattice helper."""
+
+    return lattice_vectors(lattice)
 
 
 def _symmetry_operations(spacegroup: str) -> list[tuple[FloatArray, FloatArray]]:
@@ -239,7 +283,7 @@ def _wrap_fractional(position: FloatArray) -> FloatArray:
     return np.round(wrapped, _POSITION_DECIMALS)
 
 
-def expand_magnetic_sites(
+def expand_crystal_sites(
     crystal: Mapping[str, Any], site_labels: Sequence[str]
 ) -> list[CrystalSite]:
     """Expand the chosen Wyckoff sites through the space group.
@@ -253,7 +297,7 @@ def expand_magnetic_sites(
     missing = [label for label in site_labels if str(label) not in sites]
     if missing:
         raise ValueError(
-            f"magnetic site label(s) {missing!r} not found; crystal defines "
+            f"site label(s) {missing!r} not found; crystal defines "
             f"{sorted(sites)}"
         )
     operations = _symmetry_operations(crystal.get("spacegroup", "P 1"))
@@ -264,6 +308,7 @@ def expand_magnetic_sites(
         site = sites[str(label)]
         base = np.asarray(site["position"], dtype=float)
         ion = str(site.get("ion", "") or "")
+        element = str(site.get("element", "") or "")
         count = 0
         for rotation, translation in operations:
             position = _wrap_fractional(rotation @ base + translation)
@@ -277,10 +322,19 @@ def expand_magnetic_sites(
                     label=f"{label}_{count}",
                     position=(float(position[0]), float(position[1]), float(position[2])),
                     ion=ion,
+                    element=element,
                     rotation=_rotation_tuple(rotation),
                 )
             )
     return expanded
+
+
+def expand_magnetic_sites(
+    crystal: Mapping[str, Any], site_labels: Sequence[str]
+) -> list[CrystalSite]:
+    """Compatibility wrapper for magnetic models using the shared site expansion."""
+
+    return expand_crystal_sites(crystal, site_labels)
 
 
 def _rotation_tuple(rotation: FloatArray) -> tuple[tuple[float, float, float], ...]:
@@ -329,26 +383,31 @@ def _transform_bond(
     return canonical, canonical != image
 
 
-def generate_bond_orbits(
+def generate_spatial_bond_orbits(
     crystal: Mapping[str, Any],
     site_labels: Sequence[str],
     cutoff_angstrom: float,
+    *,
+    label_prefix: str = "B",
 ) -> tuple[list[CrystalSite], list[BondOrbit]]:
     """Enumerate bonds up to a cutoff and group them into symmetry orbits.
 
-    Returns ``(sites, orbits)`` where ``sites`` is the expanded magnetic site
-    list (bond indices refer to it) and ``orbits`` are sorted by bond length
-    and labeled ``J1``, ``J2``, ..., with letter suffixes (``J3a``, ``J3b``)
-    for symmetry-inequivalent orbits of equal length.
+    Returns ``(sites, orbits)`` where ``sites`` is the expanded selected-site
+    list (bond indices refer to it) and ``orbits`` are sorted by bond length.
+    ``label_prefix`` selects stable labels such as ``B1`` for generic spatial
+    orbits or ``J1`` for Heisenberg exchange.
     """
 
     if cutoff_angstrom <= 0.0:
         raise ValueError("cutoff_angstrom must be positive")
-    sites = expand_magnetic_sites(crystal, site_labels)
+    prefix = str(label_prefix).strip()
+    if not prefix:
+        raise ValueError("label_prefix cannot be empty")
+    sites = expand_crystal_sites(crystal, site_labels)
     if not sites:
-        raise ValueError("no magnetic sites to bond")
+        raise ValueError("no selected sites to bond")
     positions = np.asarray([site.position for site in sites], dtype=float)
-    lattice = _lattice_vectors(crystal["lattice"])
+    lattice = lattice_vectors(crystal["lattice"])
     operations = _symmetry_operations(crystal.get("spacegroup", "P 1"))
 
     # Cell offsets to search: |n_i| up to cutoff over the spacing of lattice
@@ -420,13 +479,28 @@ def generate_bond_orbits(
                 suffix = chr(ord("a") + orbit_number)
             labeled.append(
                 BondOrbit(
-                    label=f"J{shell_number}{suffix}",
+                    label=f"{prefix}{shell_number}{suffix}",
                     distance_angstrom=distance,
                     bonds=tuple(orbit),
                     operations=tuple(symmetries),
                 )
             )
     return sites, labeled
+
+
+def generate_bond_orbits(
+    crystal: Mapping[str, Any],
+    site_labels: Sequence[str],
+    cutoff_angstrom: float,
+) -> tuple[list[CrystalSite], list[BondOrbit]]:
+    """Generate Heisenberg-compatible ``J``-labeled spatial bond orbits."""
+
+    return generate_spatial_bond_orbits(
+        crystal,
+        site_labels,
+        cutoff_angstrom,
+        label_prefix="J",
+    )
 
 
 def cartesian_rotation(
@@ -438,7 +512,7 @@ def cartesian_rotation(
     crystallographic operation the result is orthogonal (proper or improper).
     """
 
-    basis = _lattice_vectors(lattice)
+    basis = lattice_vectors(lattice)
     return basis @ np.asarray(rotation, dtype=float) @ np.linalg.inv(basis)
 
 

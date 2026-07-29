@@ -31,8 +31,10 @@ The CIF-to-orbital manual construction workflow is specified separately in the
 
 The shared model registry, generalized paramagnon/damped-mode response, and
 arbitrary tight-binding electronic-structure layer are implemented. Subsequent
-stages add the complex bare susceptibility, interaction dressings, production
-fitting, BCS superconductivity, and advanced correlated extensions. Electronic
+builder stages start from the available CIF/manual crystal geometry and add
+orbital manifolds, onsite invariants, and symmetry-constrained hoppings.
+Response stages add the complex bare susceptibility, interaction dressings,
+production fitting, BCS superconductivity, and advanced correlated extensions. Electronic
 calculations should eventually share the rebinner's bounded-memory and
 selectable-backend approach, including symmetry-reduced Brillouin-zone work
 where valid. A capability remains planned until its model page documents an
