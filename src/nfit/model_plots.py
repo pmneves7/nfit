@@ -242,7 +242,7 @@ def tight_binding_fermi_surface(component: Any) -> FermiSurfaceResult:
     return _with_electronic_display_unit(
         fermi_surface(
             model,
-            config.get("fermi_mesh", [100, 100, 40]),
+            config.get("fermi_mesh", [64, 64, 64]),
             target_energy_meV=float(
                 config.get(
                     "fermi_energy_meV",
@@ -529,7 +529,7 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
                 "from nfit.model_plots import render_fermi_surface",
                 f"target_energy = {target!r}",
                 "target_energy_meV = electronic_energy_to_meV(target_energy, energy_unit)",
-                f"result = fermi_surface(model, {config.get('fermi_mesh', [100, 100, 40])!r}, target_energy_meV=target_energy_meV, projections={projections!r})",
+                f"result = fermi_surface(model, {config.get('fermi_mesh', [64, 64, 64])!r}, target_energy_meV=target_energy_meV, projections={projections!r})",
             ]
         )
     else:

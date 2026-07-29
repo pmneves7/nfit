@@ -197,7 +197,7 @@ dictionaries can be entered directly in the model editor.
 | `dos_energy_max_meV` | canonical upper absolute energy sampled for the DOS | `500.0` | `250.0` |
 | `dos_energy_points` | number of DOS energy samples, at least two | `600` | `1000` |
 | `dos_broadening_meV` | canonical Gaussian standard deviation used for the DOS | `5.0` | `2.0` |
-| `fermi_mesh` | extraction-grid sizes, each at least two | `[100, 100, 40]` | `[200, 200]` for a two-dimensional model |
+| `fermi_mesh` | extraction-grid sizes, each at least two | `[64, 64, 64]` | `[200, 200]` for a two-dimensional model |
 | `fermi_energy_meV` | canonical absolute target energy of the extracted constant-energy surface | `0.0` | `12.5` to extract the Fermi surface when $\mu=12.5$ meV |
 
 For a reduced-dimensional model, a mesh may contain one size per periodic

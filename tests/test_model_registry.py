@@ -157,6 +157,7 @@ def test_tight_binding_registry_validates_energy_unit_and_canonical_window():
     assert config["electronic_energy_unit"] == "eV"
     assert config["orbital_manifolds"] == []
     assert config["onsite_terms"] == []
+    assert config["fermi_mesh"] == [64, 64, 64]
     component = ModelComponentSpec(
         name="bands",
         type="tight_binding",

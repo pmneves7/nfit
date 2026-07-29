@@ -1535,7 +1535,7 @@ def _register_builtin_models() -> None:
                 ),
                 _config_field(
                     "fermi_mesh",
-                    [100, 100, 40],
+                    [64, 64, 64],
                     "Periodic grid used to extract the Fermi surface.",
                     "One size per periodic dimension, or three lattice-axis sizes.",
                     "list",
