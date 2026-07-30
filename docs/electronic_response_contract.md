@@ -197,9 +197,13 @@ record requested and resolved backend, precision, batch size, worker count,
 and approximation state. A non-reference response backend can be checked on a
 deterministic probe against serial NumPy before use.
 
-Caches are bounded, evaluator local, and keyed by the complete model digest,
-sampling, operators, thermodynamic state, broadening, and execution inputs.
-They may retain eigensystems or completed bare responses. They are performance
+Caches are bounded, owned by one compiled observable component, and shared by
+all compatible datasets evaluated by that component. Keys include the complete
+parameter-point model digest, sampling, operators, thermodynamic state,
+broadening, and execution inputs. A separate structural digest permits exact
+reuse of Fourier-transformed \(H_0(\mathbf k)\) and \(H_a(\mathbf k)\) across
+fitted Hamiltonian coefficients. Host or accelerator caches may retain those
+components, eigensystems, or completed bare responses. They are performance
 state and are not serialized as part of the scientific model.
 
 Distributed response work is partitioned by deterministic contiguous point

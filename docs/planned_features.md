@@ -51,9 +51,12 @@ Planned response models include:
   without embedding those solvers in nfit.
 
 Performance work may add wider operator-aware symmetry reduction,
-workload-specific compiled or sparse kernels, and more complete accelerator
-support. Such paths must be checked against the serial float64/complex128
-reference and retain deterministic provenance.
+workload-specific compiled or sparse CPU kernels, multi-GPU execution, and
+persistent distributed workers. Such paths must be checked against the serial
+float64/complex128 reference and retain deterministic provenance. Current
+fits already share bounded response contexts across datasets, reuse
+parameter-resolved momentum Hamiltonians, and can keep the full Lindhard
+contraction on one explicitly selected CuPy device.
 
 Automatic Brillouin-zone density selection should use observable-specific
 certificates: an energy-resolved DOS norm, topology and geometric distance for

@@ -109,9 +109,19 @@ back to NumPy. `NFIT_ELECTRONIC_BACKEND` sets the process default, while
 `NFIT_NUM_THREADS` supplies the automatic CPU allocation. Execution details
 and the absence of numerical approximations are stored in result provenance.
 
-Immutable electronic models cache their reciprocal lattice, parameter-resolved
-real-space blocks, and scientific digest. Updating a named coefficient creates
-a new model and therefore a new cache.
+Immutable electronic models cache their reciprocal lattice and scientific
+structure digest. For a repeated path or mesh, nfit also caches the
+Fourier-transformed basis
+
+\[
+H(\mathbf k;\mathbf p)=H_0(\mathbf k)+
+\sum_a p_a H_a(\mathbf k).
+\]
+
+Changing a fitted onsite, hopping, or spin--orbit coefficient then combines
+the cached matrices before diagonalization instead of repeating their Fourier
+transforms. The cache is bounded and automatically uses the direct
+real-space path when the component basis would exceed its memory limit.
 
 For total DOS, `k_mesh(..., symmetry="auto")` can use exact orbit
 multiplicities from a GUI-built model's certified reciprocal symmetry.
@@ -130,14 +140,18 @@ The Lindhard and electronic-RPA path separates three memory controls:
 - `response_transition_max_batch_mb` bounds particle--hole matrix elements and
   denominators; and
 - `response_cache_mb` plus `response_cache_entries` bound reusable immutable
-  eigensystems and completed bare responses.
+  eigensystems, completed bare responses, and CuPy-resident Hamiltonian
+  components.
 
 Cache keys include the electronic-model digest, sampling, operators,
 thermodynamic state, broadening, and execution inputs. Varying only an
 interaction vertex can reuse the completed bare susceptibility; varying only
 broadening can still reuse eigensystems. Changing an onsite, hopping, or SOC
-coefficient creates a different digest. The cache is local to one compiled
-response evaluator and is never serialized as scientific state.
+coefficient creates a different parameter-point digest while retaining the
+same structural digest and reusable process-level CPU Hamiltonian components.
+A compiled fit constructs one response evaluator per observable component, so
+all compatible datasets and dataset groups share its bounded response cache.
+Cache contents are never serialized as scientific state.
 
 On a complete uniform mesh, commensurate transferred wavevectors use an exact
 periodic permutation of the base eigenvalues and eigenvectors. No shifted
@@ -151,17 +165,24 @@ Hamiltonian evaluation caches parameter-independent Fourier coefficients for
 repeated paths and meshes. Lindhard energy points and electronic-RPA linear
 systems are processed in bounded batches.
 
+With explicit `response_backend="cupy"`, Fourier Hamiltonian components,
+eigensystems, occupations, magnetic matrix elements, denominators, and the
+Lindhard contraction remain on the GPU. nfit copies only the completed complex
+susceptibility to host memory. Reusable device arrays obey the same configured
+cache limits; an oversized Hamiltonian-component basis falls back to bounded
+on-device assembly without changing the calculation.
+
 Threaded response execution first constructs a bounded wave of Hamiltonians
 serially and then diagonalizes those completed matrices in parallel. This
 prevents Apple Accelerate or another LAPACK implementation from overlapping
 with complex Hamiltonian assembly. Results retain input order and use the same
 NumPy eigensolver as the serial reference.
 
-`response_validate_backend=true` compares a deterministic mesh probe with
-serial NumPy before a new model digest uses threaded or CuPy execution.
+`response_validate_backend=true` compares a deterministic eigensystem probe
+with serial NumPy before a new model digest uses threaded or CuPy execution.
 Requested CuPy response execution therefore fails clearly when CuPy is
-unavailable or exceeds its tolerance, even though the lower-level electronic
-service retains its documented NumPy fallback.
+unavailable or its eigenvalues exceed the configured tolerance, even though
+the lower-level electronic service retains its documented NumPy fallback.
 
 `response_symmetry="auto"` uses only the certified little group that fixes all
 requested wavevectors. It currently applies to nfit-built implicit isotropic

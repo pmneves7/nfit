@@ -1443,8 +1443,9 @@ def _register_builtin_models() -> None:
                     "response_backend",
                     "numpy",
                     (
-                        "Eigensystem backend for the reference response. NumPy "
-                        "is the Phase 4 default; acceleration is explicit."
+                        "Execution backend for the reference response. CuPy "
+                        "keeps eigensystems and the Lindhard contraction on "
+                        "the GPU; acceleration is explicit."
                     ),
                     "One of numpy, threaded, or cupy.",
                     "str",
@@ -1520,7 +1521,9 @@ def _register_builtin_models() -> None:
                     512.0,
                     (
                         "Maximum numerical-array memory retained for reusable "
-                        "base and shifted eigensystems; zero disables retention."
+                        "eigensystems, completed responses, and CuPy "
+                        "Hamiltonian components on each host or GPU cache; "
+                        "zero disables this response cache."
                     ),
                     "Finite nonnegative memory size.",
                     "float",
@@ -1530,7 +1533,10 @@ def _register_builtin_models() -> None:
                 _config_field(
                     "response_cache_entries",
                     64,
-                    "Maximum number of reusable eigensystems retained by this response.",
+                    (
+                        "Maximum number of reusable response intermediates "
+                        "retained by this compiled response component."
+                    ),
                     "Nonnegative integer.",
                     "int",
                     "128",

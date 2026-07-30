@@ -3464,6 +3464,11 @@ def compile_fit_problem(
     derived = _compile_constraints(active, applicable, specs, instances)
 
     fit_datasets: list[FitDataset] = []
+    # Context-aware evaluators own expensive immutable setup and bounded
+    # scientific caches. Build one evaluator per observable component for the
+    # whole compiled problem so compatible datasets and dataset groups reuse
+    # the same electronic response context.
+    context_evaluators: dict[str, ModelFunction] = {}
     for dataset in fitted:
         fit_data = dataset.data
         if dataset.data_type and fit_data.metadata.get("data_type") != dataset.data_type:
@@ -3475,17 +3480,20 @@ def compile_fit_problem(
             for component in active
             if dataset.name in observable_applicable[component.name]
         ]
-        evaluators = [
-            (
-                MODEL_TYPE_REGISTRY[component.type].context_factory(
-                    component,
-                    active_by_name,
-                )
-                if MODEL_TYPE_REGISTRY[component.type].context_factory is not None
-                else MODEL_TYPE_REGISTRY[component.type].factory(component)
-            )
-            for component in components_here
-        ]
+        evaluators = []
+        for component in components_here:
+            definition = MODEL_TYPE_REGISTRY[component.type]
+            if definition.context_factory is None:
+                evaluator = definition.factory(component)
+            else:
+                evaluator = context_evaluators.get(component.name)
+                if evaluator is None:
+                    evaluator = definition.context_factory(
+                        component,
+                        active_by_name,
+                    )
+                    context_evaluators[component.name] = evaluator
+            evaluators.append(evaluator)
         # An analytic Jacobian is available for the dataset only when *every*
         # component on it provides one; otherwise the optimizer falls back to
         # finite differences for the whole problem.

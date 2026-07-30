@@ -7,6 +7,7 @@ from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from itertools import product
+from threading import RLock
 from types import MappingProxyType
 from typing import Any, Literal
 
@@ -21,6 +22,11 @@ from .electronic_backends import (
     evaluate_eigensystem,
 )
 from .electronic_structure import ElectronicModel, WavevectorSampling
+
+try:
+    from . import _electronic_cupy as _CUPY_RESPONSE_BACKEND
+except Exception:  # pragma: no cover - CuPy or a GPU is unavailable
+    _CUPY_RESPONSE_BACKEND = None
 
 FloatArray = NDArray[np.float64]
 ComplexArray = NDArray[np.complex128]
@@ -41,6 +47,8 @@ class ElectronicResponseCache:
     hits: int = 0
     misses: int = 0
     _entries: OrderedDict = field(default_factory=OrderedDict, repr=False)
+    _device_entries: OrderedDict = field(default_factory=OrderedDict, repr=False)
+    _lock: RLock = field(default_factory=RLock, repr=False)
 
     def __post_init__(self) -> None:
         if int(self.max_bytes) < 0 or int(self.max_entries) < 0:
@@ -51,13 +59,14 @@ class ElectronicResponseCache:
     def get(self, key: tuple[Any, ...]) -> Any | None:
         """Return and refresh one cached response object."""
 
-        result = self._entries.get(key)
-        if result is None:
-            self.misses += 1
-            return None
-        self._entries.move_to_end(key)
-        self.hits += 1
-        return result
+        with self._lock:
+            result = self._entries.get(key)
+            if result is None:
+                self.misses += 1
+                return None
+            self._entries.move_to_end(key)
+            self.hits += 1
+            return result
 
     def put(
         self,
@@ -66,24 +75,59 @@ class ElectronicResponseCache:
     ) -> None:
         """Store one immutable object within count and numerical-byte limits."""
 
-        lru_store(
-            self._entries,
-            key,
-            value,
-            self.max_entries,
-            max_array_bytes=self.max_bytes,
-        )
+        with self._lock:
+            lru_store(
+                self._entries,
+                key,
+                value,
+                self.max_entries,
+                max_array_bytes=self.max_bytes,
+            )
+
+    def get_device(self, key: tuple[Any, ...]) -> Any | None:
+        """Return one accelerator-resident intermediate without host transfer."""
+
+        with self._lock:
+            result = self._device_entries.get(key)
+            if result is None:
+                self.misses += 1
+                return None
+            self._device_entries.move_to_end(key)
+            self.hits += 1
+            return result
+
+    def put_device(self, key: tuple[Any, ...], value: Any) -> None:
+        """Store a bounded accelerator-resident intermediate."""
+
+        with self._lock:
+            lru_store(
+                self._device_entries,
+                key,
+                value,
+                self.max_entries,
+                max_array_bytes=self.max_bytes,
+            )
 
     def clear(self) -> None:
         """Remove cached arrays and reset hit/miss counters."""
 
-        self._entries.clear()
-        self.hits = 0
-        self.misses = 0
+        with self._lock:
+            self._entries.clear()
+            self._device_entries.clear()
+            self.hits = 0
+            self.misses = 0
 
     @property
     def entries(self) -> int:
-        return len(self._entries)
+        with self._lock:
+            return len(self._entries)
+
+    @property
+    def device_entries(self) -> int:
+        """Number of accelerator-resident cached intermediates."""
+
+        with self._lock:
+            return len(self._device_entries)
 
 
 def _coordinate_digest(coordinates: np.ndarray) -> str:
@@ -1007,6 +1051,98 @@ def _bare_lindhard_direct(
         cached_response = cache.get(response_cache_key)
         if cached_response is not None:
             return cached_response
+    requested_backend = (
+        "" if backend is None else str(backend).strip().lower()
+    )
+    if requested_backend == "cupy" and _CUPY_RESPONSE_BACKEND is not None:
+        unique_q = np.unique(q, axis=0)
+        permutations = [
+            _commensurate_mesh_permutation(model, mesh, q_value)
+            for q_value in unique_q
+        ]
+        gpu_values, gpu_record = _CUPY_RESPONSE_BACKEND.evaluate_lindhard(
+            model,
+            k,
+            weights,
+            q,
+            energy,
+            point_operators,
+            temperature_K=temperature,
+            chemical_potential_meV=mu,
+            broadening_meV=eta,
+            max_batch_bytes=int(max_batch_bytes),
+            transition_max_batch_bytes=transition_budget,
+            permutations=permutations,
+            cache=cache,
+        )
+        response = SusceptibilityResult(
+            q_reduced=q,
+            Q_reduced=transferred_q,
+            energy_meV=energy,
+            values_per_meV_cell=gpu_values,
+            operator_labels=operators.labels,
+            conjugate_indices=operators.conjugate_indices,
+            model_digest=model.content_digest,
+            temperature_K=temperature,
+            chemical_potential_meV=mu,
+            broadening_meV=eta,
+            provenance={
+                "formula": "generalized_lindhard",
+                "sign": "-(f_nk-f_mkq)/(E+e_nk-e_mkq+i eta)",
+                "operator_basis": dict(operators.metadata),
+                "extended_zone_Q_reduced": transferred_q.tolist(),
+                "mesh": mesh.to_dict(),
+                "base_execution": dict(gpu_record["base_execution"]),
+                "shifted_execution": list(
+                    gpu_record["shifted_execution"]
+                ),
+                "precision": "float64/complex128",
+                "symmetry": dict(mesh.provenance).get(
+                    "response_symmetry_reduction",
+                    {
+                        "policy": "full",
+                        "applied": False,
+                        "reason": "no response reduction metadata",
+                    },
+                ),
+                "approximation": "finite lifetime broadening only",
+                "transition_batch_size": int(
+                    gpu_record["transition_batch_size"]
+                ),
+                "energy_batch_size": int(gpu_record["energy_batch_size"]),
+                "transition_max_batch_bytes": transition_budget,
+                "q_evaluation": {
+                    "policy": "exact",
+                    "commensurate_permutation_count": int(
+                        gpu_record["commensurate_permutation_count"]
+                    ),
+                    "direct_shift_count": int(
+                        gpu_record["direct_shift_count"]
+                    ),
+                    "approximation": "none",
+                },
+                "cache": {
+                    "enabled": cache is not None,
+                    "hits": (
+                        0 if cache is None else cache.hits - cache_hits_before
+                    ),
+                    "misses": (
+                        0
+                        if cache is None
+                        else cache.misses - cache_misses_before
+                    ),
+                    "entries": 0 if cache is None else cache.entries,
+                    "device_entries": (
+                        0 if cache is None else cache.device_entries
+                    ),
+                },
+                "response_execution": "cupy_end_to_end",
+                "host_transfer": "completed susceptibility only",
+            },
+        )
+        if cache is not None:
+            cache.put(response_cache_key, response)
+        return response
     base = _cached_eigensystem(
         model,
         k,

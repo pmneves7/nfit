@@ -310,6 +310,78 @@ def test_immutable_model_caches_do_not_cross_parameter_updates():
     )
 
 
+def test_existing_full_payload_model_digest_remains_loadable():
+    model = _chain_model(hopping=-13.0, onsite=2.0)
+    payload = model.to_dict()
+    payload["content_digest"] = model._legacy_content_digest()
+
+    restored = ElectronicModel.from_dict(payload)
+
+    np.testing.assert_array_equal(
+        restored.hamiltonian([[0.17, 0.0, 0.0]]),
+        model.hamiltonian([[0.17, 0.0, 0.0]]),
+    )
+
+
+def test_parameter_trials_reuse_momentum_hamiltonian_components(monkeypatch):
+    import nfit.electronic_structure as electronic_structure
+
+    model = build_electronic_model(
+        direct_lattice=np.diag([1.2345, 7.0, 9.0]),
+        basis=["unique_parameter_cache_state"],
+        hoppings={(0, 0, 0): [[3.0]]},
+        periodic_axes=(0,),
+        parameter_values={"unique_t": -7.0},
+        parameter_hoppings={"unique_t": {(1, 0, 0): [[1.0]]}},
+        energy_unit="meV",
+    )
+    coordinates = np.asarray(
+        [[0.1234567, 0.0, 0.0], [0.3456789, 0.0, 0.0]]
+    )
+    changed = model.with_parameters(unique_t=-11.0, energy_unit="meV")
+    calls = 0
+    original = electronic_structure.np.einsum
+
+    def counted(*args, **kwargs):
+        nonlocal calls
+        if args and args[0] == "kr,crij->ckij":
+            calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(electronic_structure.np, "einsum", counted)
+    first = model.hamiltonian(coordinates)
+    second = changed.hamiltonian(coordinates)
+
+    assert calls == 1
+    assert changed.structure_digest == model.structure_digest
+    phase = np.exp(
+        2.0j * np.pi * coordinates @ model.translations.astype(float).T
+    )
+    phase *= model.interpolation_weights[None, :]
+    np.testing.assert_allclose(
+        first,
+        original(
+            "kr,rij->kij",
+            phase,
+            model.resolved_hamiltonian_blocks,
+            optimize=True,
+        ),
+        rtol=2.0e-15,
+        atol=2.0e-15,
+    )
+    np.testing.assert_allclose(
+        second,
+        original(
+            "kr,rij->kij",
+            phase,
+            changed.resolved_hamiltonian_blocks,
+            optimize=True,
+        ),
+        rtol=2.0e-15,
+        atol=2.0e-15,
+    )
+
+
 def test_eigensystem_backends_preserve_reference_values_and_order(monkeypatch):
     model = _square_two_orbital_model()
     coordinates = k_mesh(model, (17, 13)).reduced_coordinates

@@ -110,7 +110,7 @@ parameters remain on the referenced tight-binding component.
 | `response_q_validation_points` | deterministic off-mesh points calculated directly during certification | `8` | `16` |
 | `chemical_potential_mode` | use the source chemical potential or solve from filling | `"source"` | `"source"` or `"filling"` |
 | `filling_per_cell` | electron count per primitive cell in filling mode | `1.0` | `3.0` |
-| `response_backend` | eigensystem backend used by the reference response | `"numpy"` | `"numpy"`, `"threaded"`, or `"cupy"` |
+| `response_backend` | execution backend; CuPy keeps the full Lindhard contraction on the GPU and returns only the completed response | `"numpy"` | `"numpy"`, `"threaded"`, or `"cupy"` |
 | `response_workers` | bounded CPU worker count | `1` | `8` |
 | `response_validate_backend` | compare a deterministic probe with serial NumPy before threaded or GPU use | `true` | `false` |
 | `response_backend_probe_points` | mesh points in the backend-equivalence probe | `8` | `12` |
@@ -118,8 +118,8 @@ parameters remain on the referenced tight-binding component.
 | `response_backend_atol_meV` | absolute eigenvalue tolerance for the probe | `1e-8` | `1e-7` |
 | `response_max_batch_mb` | eigensystem temporary-memory target | `256.0` | `512.0` |
 | `response_transition_max_batch_mb` | particle--hole transition temporary-memory target | `256.0` | `512.0` |
-| `response_cache_mb` | retained eigensystem-array memory; zero disables retention | `512.0` | `1024.0` |
-| `response_cache_entries` | maximum retained eigensystem entries | `64` | `128` |
+| `response_cache_mb` | host and device limit for retained eigensystems, completed responses, and CuPy Hamiltonian components; zero disables this response cache | `512.0` | `1024.0` |
+| `response_cache_entries` | maximum retained response-cache entries | `64` | `128` |
 | `powder_orientations` | deterministic sphere directions for powder averaging | `50` | `96` |
 | `formula_units_per_cell` | formula units in the primitive electronic cell for molar bulk conversion | `1.0` | `2.0` |
 | `ion` | tabulated magnetic form-factor ion; empty applies none | `""` | `"Fe2"` |

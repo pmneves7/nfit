@@ -41,6 +41,12 @@ _FOURIER_COEFFICIENT_CACHE: OrderedDict[tuple[str, str], ComplexArray] = (
     OrderedDict()
 )
 _FOURIER_CACHE_LOCK = RLock()
+_HAMILTONIAN_COMPONENT_CACHE_MAX_BYTES = 512 * 1024**2
+_HAMILTONIAN_COMPONENT_CACHE_MAX_ENTRIES = 32
+_HAMILTONIAN_COMPONENT_CACHE: OrderedDict[
+    tuple[str, str], tuple[tuple[str, ...], ComplexArray]
+] = OrderedDict()
+_HAMILTONIAN_COMPONENT_CACHE_LOCK = RLock()
 
 
 def _numeric_digest(value: ArrayLike, dtype: Any) -> str:
@@ -81,6 +87,63 @@ def _fourier_coefficients(
             max_array_bytes=_FOURIER_CACHE_MAX_BYTES,
         )
     return coefficients
+
+
+def _momentum_hamiltonian_components(
+    model: ElectronicModel,
+    wavevectors: FloatArray,
+) -> tuple[tuple[str, ...], ComplexArray] | None:
+    """Return cached ``H_0(k)`` and named ``dH(k)/dp`` matrices.
+
+    The cache key excludes the current parameter values, so every trial point
+    in a fit can reuse the same Fourier-transformed Hamiltonian basis.
+    """
+
+    component_bytes = (
+        16
+        * (len(model.parameter_blocks) + 1)
+        * int(wavevectors.shape[0])
+        * model.n_basis
+        * model.n_basis
+    )
+    if component_bytes > _HAMILTONIAN_COMPONENT_CACHE_MAX_BYTES:
+        return None
+    key = (model.structure_digest, _numeric_digest(wavevectors, np.float64))
+    with _HAMILTONIAN_COMPONENT_CACHE_LOCK:
+        cached = _HAMILTONIAN_COMPONENT_CACHE.get(key)
+        if cached is not None:
+            _HAMILTONIAN_COMPONENT_CACHE.move_to_end(key)
+            return cached
+    names = tuple(model.parameter_blocks)
+    real_space = np.stack(
+        (
+            model.hamiltonian_blocks,
+            *(model.parameter_blocks[name] for name in names),
+        ),
+        axis=0,
+    )
+    coefficients = _fourier_coefficients(
+        model.translations,
+        model.interpolation_weights,
+        wavevectors,
+    )
+    components = np.einsum(
+        "kr,crij->ckij",
+        coefficients,
+        real_space,
+        optimize=True,
+    )
+    components.setflags(write=False)
+    result = (names, components)
+    with _HAMILTONIAN_COMPONENT_CACHE_LOCK:
+        lru_store(
+            _HAMILTONIAN_COMPONENT_CACHE,
+            key,
+            result,
+            _HAMILTONIAN_COMPONENT_CACHE_MAX_ENTRIES,
+            max_array_bytes=_HAMILTONIAN_COMPONENT_CACHE_MAX_BYTES,
+        )
+    return result
 
 
 def normalize_electronic_energy_unit(unit: str) -> Literal["eV", "meV"]:
@@ -393,6 +456,12 @@ class ElectronicModel:
                 else getattr(self, model_field.name)
             )
             object.__setattr__(updated, model_field.name, value)
+        if "structure_digest" in self.__dict__:
+            object.__setattr__(
+                updated,
+                "structure_digest",
+                self.__dict__["structure_digest"],
+            )
         return updated
 
     @cached_property
@@ -413,22 +482,36 @@ class ElectronicModel:
         wavevectors = np.atleast_2d(wavevectors)
         if wavevectors.shape[1] != 3 or not np.all(np.isfinite(wavevectors)):
             raise ValueError("reduced_k must have shape (n_k, 3) and be finite")
-        coefficients = _fourier_coefficients(
-            self.translations,
-            self.interpolation_weights,
+        component_result = _momentum_hamiltonian_components(
+            self,
             wavevectors,
         )
-        result = np.einsum(
-            "kr,rij->kij",
-            coefficients,
-            self.resolved_hamiltonian_blocks,
-            optimize=True,
-        )
+        if component_result is None:
+            coefficients = _fourier_coefficients(
+                self.translations,
+                self.interpolation_weights,
+                wavevectors,
+            )
+            result = np.einsum(
+                "kr,rij->kij",
+                coefficients,
+                self.resolved_hamiltonian_blocks,
+                optimize=True,
+            )
+        else:
+            names, components = component_result
+            coefficients = np.asarray(
+                [1.0, *(self.parameter_values[name] for name in names)],
+                dtype=float,
+            )
+            result = np.tensordot(coefficients, components, axes=(0, 0))
         if not np.allclose(result, result.swapaxes(1, 2).conj(), rtol=1e-9, atol=1e-8):
             raise ValueError("interpolated Hamiltonian is not Hermitian")
         return result[0] if single else result
 
-    def _scientific_payload(self) -> dict[str, Any]:
+    def _scientific_structure_payload(self) -> dict[str, Any]:
+        """Return the parameter-value-independent scientific definition."""
+
         return {
             "schema_version": 1,
             "direct_lattice": self.direct_lattice.tolist(),
@@ -438,7 +521,6 @@ class ElectronicModel:
             "interpolation_weights": self.interpolation_weights.tolist(),
             "orbital_centers": self.orbital_centers.tolist(),
             "periodic_axes": list(self.periodic_axes),
-            "parameter_values": dict(self.parameter_values),
             "parameter_blocks": {
                 name: _complex_payload(values)
                 for name, values in self.parameter_blocks.items()
@@ -453,7 +535,39 @@ class ElectronicModel:
         }
 
     @cached_property
+    def structure_digest(self) -> str:
+        """Hash the immutable Hamiltonian structure, excluding trial values."""
+
+        encoded = json.dumps(
+            self._scientific_structure_payload(),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _scientific_payload(self) -> dict[str, Any]:
+        return {
+            **self._scientific_structure_payload(),
+            "parameter_values": dict(self.parameter_values),
+        }
+
+    @cached_property
     def content_digest(self) -> str:
+        """Hash one parameter point without reserializing fixed model arrays."""
+
+        encoded = json.dumps(
+            {
+                "structure_digest": self.structure_digest,
+                "parameter_values": dict(self.parameter_values),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _legacy_content_digest(self) -> str:
+        """Return the pre-0.49 digest accepted in existing project files."""
+
         encoded = json.dumps(
             self._scientific_payload(), sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
@@ -499,7 +613,10 @@ class ElectronicModel:
             fourier_gauge=str(payload.get("fourier_gauge", "wannier")),
         )
         expected = payload.get("content_digest")
-        if expected is not None and str(expected) != model.content_digest:
+        if expected is not None and str(expected) not in {
+            model.content_digest,
+            model._legacy_content_digest(),
+        }:
             raise ValueError("electronic-model content digest does not match its payload")
         return model
 

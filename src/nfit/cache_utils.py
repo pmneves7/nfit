@@ -31,6 +31,10 @@ def _array_payload_nbytes(value: Any, *, seen: set[int]) -> int:
 
     if isinstance(value, np.ndarray):
         return int(value.nbytes)
+    if hasattr(value, "__cuda_array_interface__") and hasattr(value, "nbytes"):
+        # Count CuPy and other CUDA array-interface allocations without
+        # importing an optional accelerator package.
+        return int(value.nbytes)
     if isinstance(value, memoryview):
         return int(value.nbytes)
     if isinstance(value, Mapping):

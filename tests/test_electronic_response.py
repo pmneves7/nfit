@@ -374,6 +374,112 @@ def test_response_cache_reuses_completed_bare_susceptibility():
     )
 
 
+def test_cupy_response_dispatch_keeps_intermediates_in_accelerator_backend(
+    monkeypatch,
+):
+    import nfit.electronic_response as electronic_response
+
+    calls = []
+
+    class FakeCupyResponse:
+        @staticmethod
+        def evaluate_lindhard(
+            model,
+            k,
+            weights,
+            q,
+            energy,
+            point_operators,
+            **kwargs,
+        ):
+            calls.append((model, k, weights, q, energy, point_operators, kwargs))
+            return (
+                np.full((q.shape[0], point_operators.shape[1], point_operators.shape[1]), 7.0j),
+                {
+                    "base_execution": {
+                        "requested_backend": "cupy",
+                        "resolved_backend": "cupy",
+                        "precision": "float64/complex128",
+                        "device_resident": True,
+                    },
+                    "shifted_execution": [],
+                    "transition_batch_size": 4,
+                    "energy_batch_size": 2,
+                    "commensurate_permutation_count": 1,
+                    "direct_shift_count": 0,
+                },
+            )
+
+    monkeypatch.setattr(
+        electronic_response,
+        "_CUPY_RESPONSE_BACKEND",
+        FakeCupyResponse,
+    )
+    model = _chain_model()
+    response = bare_spin_susceptibility(
+        model,
+        [0.25, 0.0, 0.0],
+        1.0,
+        k_mesh(model, (4,)),
+        temperature_K=20.0,
+        chemical_potential_meV=0.0,
+        broadening_meV=0.4,
+        backend="cupy",
+    )
+
+    assert len(calls) == 1
+    assert response.provenance["response_execution"] == "cupy_end_to_end"
+    assert response.provenance["host_transfer"] == "completed susceptibility only"
+    np.testing.assert_array_equal(
+        np.diagonal(response.values_per_meV_cell, axis1=1, axis2=2),
+        np.full((1, 3), 3.5j),
+    )
+
+
+def test_cupy_end_to_end_lindhard_matches_numpy_when_available():
+    import nfit.electronic_response as electronic_response
+
+    if electronic_response._CUPY_RESPONSE_BACKEND is None:
+        pytest.skip("CuPy electronic-response backend is unavailable")
+    model = _chain_model()
+    mesh = k_mesh(model, (16,))
+    settings = {
+        "temperature_K": 20.0,
+        "chemical_potential_meV": 0.0,
+        "broadening_meV": 0.4,
+    }
+    q = np.asarray([[0.25, 0.0, 0.0], [0.137, 0.0, 0.0]])
+    energy = np.asarray([0.0, 1.5])
+    reference = bare_spin_susceptibility(
+        model,
+        q,
+        energy,
+        mesh,
+        backend="numpy",
+        **settings,
+    )
+    accelerated = bare_spin_susceptibility(
+        model,
+        q,
+        energy,
+        mesh,
+        backend="cupy",
+        cache=ElectronicResponseCache(
+            max_bytes=32 * 1024**2,
+            max_entries=8,
+        ),
+        **settings,
+    )
+
+    assert accelerated.provenance["response_execution"] == "cupy_end_to_end"
+    np.testing.assert_allclose(
+        accelerated.values_per_meV_cell,
+        reference.values_per_meV_cell,
+        rtol=1.0e-10,
+        atol=1.0e-11,
+    )
+
+
 def test_rpa_reports_and_can_reject_sampled_static_instability():
     bare = SusceptibilityResult(
         q_reduced=[[0.0, 0.0, 0.0]],
@@ -827,6 +933,94 @@ def test_fit_compiler_uses_electronic_component_as_dependency_not_observable():
                 )
             ],
         )
+
+
+def test_fit_compiler_shares_one_lindhard_context_across_datasets(monkeypatch):
+    import nfit.electronic_response as electronic_response
+    import nfit.fit_config as fit_config
+
+    model = _chain_model()
+    tight_binding = ModelComponentSpec(
+        name="bands",
+        type="tight_binding",
+        config={
+            **{
+                field.name: field.default
+                for field in model_definition("tight_binding").config_fields
+            },
+            "model_data": model.to_dict(),
+            "periodic_axes": [0],
+        },
+    )
+    lindhard = ModelComponentSpec(
+        name="response",
+        type="lindhard",
+        parameters={"broadening": 0.5},
+        config={
+            **{
+                field.name: field.default
+                for field in model_definition("lindhard").config_fields
+            },
+            "electronic_component": "bands",
+            "response_mesh": [8],
+            "response_mesh_shift": [0.0],
+        },
+    )
+    points = PointData4D(
+        H=np.asarray([0.25]),
+        K=np.zeros(1),
+        L=np.zeros(1),
+        E=np.asarray([1.0]),
+        intensity=np.zeros(1),
+        sigma=np.ones(1),
+        temperature=20.0,
+    )
+    calls = 0
+    eigensystem_calls = 0
+    original = fit_config._lindhard_factory
+    original_eigensystem = electronic_response.evaluate_eigensystem
+
+    def counted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    def counted_eigensystem(*args, **kwargs):
+        nonlocal eigensystem_calls
+        eigensystem_calls += 1
+        return original_eigensystem(*args, **kwargs)
+
+    monkeypatch.setattr(fit_config, "_lindhard_factory", counted)
+    monkeypatch.setattr(
+        electronic_response,
+        "evaluate_eigensystem",
+        counted_eigensystem,
+    )
+    compiled = compile_fit_problem(
+        [tight_binding, lindhard],
+        [
+            FitDatasetInput(
+                "scan_a",
+                points,
+                data_type="single_crystal_inelastic",
+            ),
+            FitDatasetInput(
+                "scan_b",
+                points,
+                data_type="single_crystal_inelastic",
+            ),
+        ],
+    )
+
+    assert calls == 1
+    first_evaluator = compiled.problem.datasets[0].model.__closure__[0].cell_contents[0]
+    second_evaluator = compiled.problem.datasets[1].model.__closure__[0].cell_contents[0]
+    assert first_evaluator is second_evaluator
+    parameters = {"response.broadening": 0.5}
+    first = evaluate_problem_model(compiled.problem, "scan_a", parameters)
+    second = evaluate_problem_model(compiled.problem, "scan_b", parameters)
+    assert eigensystem_calls == 1
+    np.testing.assert_array_equal(second, first)
 
 
 def test_stoner_component_replaces_bare_observable_and_reuses_its_parameters():
