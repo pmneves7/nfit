@@ -278,6 +278,31 @@ def test_basis_vector_surface_and_dashed_modes(monkeypatch):
     )
 
 
+def test_coincident_path_nodes_have_one_combined_label():
+    from nfit.qt_brillouin_zone_viewer import _unique_path_labels
+
+    scene = build_brillouin_zone_scene(
+        np.diag([4.0, 4.0, 4.0]),
+        [
+            {"label": "Γ", "k": [0.0, 0.0, 0.0]},
+            {"label": "X", "k": [0.5, 0.0, 0.0]},
+            {"label": "Γ", "k": [0.0, 0.0, 0.0], "break_before": True},
+            {"label": "G", "k": [0.0, 0.0, 0.0]},
+            {"label": "X", "k": [0.5, 0.0, 0.0]},
+        ],
+    )
+
+    points, labels = _unique_path_labels(scene)
+
+    assert labels == ("Γ|G", "X")
+    assert points.shape == (2, 3)
+    np.testing.assert_allclose(points[0], [0.0, 0.0, 0.0])
+    np.testing.assert_allclose(
+        points[1],
+        scene.path_nodes[1].cartesian_inv_angstrom,
+    )
+
+
 def test_zone_renderer_uses_flat_faces_heavy_outline_and_thin_full_vectors(
     monkeypatch,
 ):

@@ -41,7 +41,9 @@ Seek-path or the Setyawan--Curtarolo convention from ASE.
 The scene contains the zone polyhedron, labelled path, and reciprocal vectors
 $\mathbf b_1,\mathbf b_2,\mathbf b_3$ in Å$^{-1}$. Each reciprocal vector
 extends to the neighboring reciprocal-lattice point and therefore passes
-through the zone surface.
+through the zone surface. When a path revisits the same reciprocal-space
+point, the viewer draws each repeated label only once. Distinct labels assigned
+to one point are combined with a vertical bar, such as `X|Y`.
 
 `BrillouinZoneViewOptions` exposes:
 

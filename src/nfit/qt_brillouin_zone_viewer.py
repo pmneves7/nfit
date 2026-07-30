@@ -27,6 +27,42 @@ def _label_font_file() -> str:
     return str(path)
 
 
+def _unique_path_labels(
+    scene: BrillouinZoneScene,
+) -> tuple[np.ndarray, tuple[str, ...]]:
+    """Return one label per coincident path position."""
+
+    positions: list[np.ndarray] = []
+    labels: list[list[str]] = []
+    raw_positions = np.asarray(
+        [node.cartesian_inv_angstrom for node in scene.path_nodes],
+        dtype=float,
+    )
+    scale = max(
+        1.0,
+        float(np.max(np.linalg.norm(raw_positions, axis=1)))
+        if len(raw_positions)
+        else 1.0,
+    )
+    tolerance = 1.0e-10 * scale
+    for node, position in zip(scene.path_nodes, raw_positions, strict=True):
+        match = next(
+            (
+                index
+                for index, existing in enumerate(positions)
+                if np.linalg.norm(position - existing) <= tolerance
+            ),
+            None,
+        )
+        if match is None:
+            positions.append(position)
+            labels.append([node.label])
+        elif node.label not in labels[match]:
+            labels[match].append(node.label)
+    points = np.asarray(positions, dtype=float).reshape((-1, 3))
+    return points, tuple("|".join(group) for group in labels)
+
+
 def _zone_mesh(scene: BrillouinZoneScene) -> Any:
     import pyvista as pv
 
@@ -141,9 +177,10 @@ def _render_brillouin_zone(
             render_points_as_spheres=True,
         )
     if settings.show_path_labels and len(nodes):
+        label_points, label_text = _unique_path_labels(scene)
         plotter.add_point_labels(
-            nodes,
-            [node.label for node in scene.path_nodes],
+            label_points,
+            label_text,
             text_color="black",
             font_size=settings.label_font_size,
             bold=settings.label_bold,
