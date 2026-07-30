@@ -153,6 +153,13 @@ def test_component_brillouin_zone_and_script_use_configured_band_path():
     assert "show_brillouin_zone_scene" in script
 
 
+def test_brillouin_zone_label_defaults_and_bold_option():
+    options = BrillouinZoneViewOptions()
+    assert options.label_font_size == 18
+    assert options.label_bold is False
+    assert BrillouinZoneViewOptions(label_bold=True).label_bold is True
+
+
 def test_f_centered_default_path_uses_primitive_reciprocal_coordinates():
     lattice = {
         "a": 8.0,
@@ -328,6 +335,7 @@ def test_zone_renderer_uses_flat_faces_heavy_outline_and_thin_full_vectors(
         path_color="#551111",
         cell_surface_opacity=0.25,
         cell_outline_thickness=5.0,
+        label_bold=True,
         show_compass=True,
     )
     _render_brillouin_zone(plotter, scene, options)
@@ -345,6 +353,8 @@ def test_zone_renderer_uses_flat_faces_heavy_outline_and_thin_full_vectors(
         assert arguments["shaft_radius"] == options.basis_vector_thickness
         assert arguments["scale"] == np.linalg.norm(vector)
     assert plotter.point_labels[-1]["show_points"] is False
+    assert plotter.point_labels[-1]["font_size"] == 18
+    assert plotter.point_labels[-1]["bold"] is True
     assert plotter.point_labels[-1]["font_file"].endswith("DejaVuSans.ttf")
     assert plotter.axes[-1]["x_color"] == "#FF0000"
     assert plotter.axes[-1]["y_color"] == "#00A000"
@@ -442,6 +452,7 @@ def test_zone_viewer_uses_standard_right_settings_panel(monkeypatch, tmp_path):
         "brillouin_zone_path_color",
         "brillouin_zone_path_thickness",
         "brillouin_zone_label_font_size",
+        "brillouin_zone_label_bold",
         "brillouin_zone_surface_color",
         "brillouin_zone_surface_opacity",
         "brillouin_zone_outline_color",
@@ -460,6 +471,13 @@ def test_zone_viewer_uses_standard_right_settings_panel(monkeypatch, tmp_path):
         QtWidgets.QCheckBox,
         "brillouin_zone_show_compass",
     ).isChecked()
+    bold = window.findChild(
+        QtWidgets.QCheckBox,
+        "brillouin_zone_label_bold",
+    )
+    assert not bold.isChecked()
+    bold.setChecked(True)
+    assert window._nfit_view_options.label_bold is True
     projection.setCurrentIndex(projection.findData("perspective"))
     assert window._nfit_view_options.projection == "perspective"
     window._nfit_copy_figure()

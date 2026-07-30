@@ -53,7 +53,8 @@ through the zone surface.
 | `basis_vector_inside_style` | `"solid"` | `"solid"`, `"dashed"`, or `"hidden"` inside the cell |
 | `path_color` | `"#7A1F1F"` | high-symmetry path color |
 | `path_thickness` | `4.0` | path width |
-| `label_font_size` | `14` | high-symmetry label size |
+| `label_font_size` | `18` | high-symmetry and reciprocal-vector label size |
+| `label_bold` | `false` | use bold label text |
 | `cell_surface_color` | `"#B8C7D9"` | Wigner--Seitz face color |
 | `cell_surface_opacity` | `0.10` | face opacity from 0 to 1 |
 | `cell_outline_color` | `"#202020"` | zone-edge color |
@@ -84,7 +85,8 @@ coordinates; applying a manual path uses the entered nodes directly.
 
 `calculate_bands` returns eigenvalues, optional eigenvectors, and any requested
 basis-index projections. `render_band_structure` handles the energy-unit
-conversion. Disconnected endpoint labels sharing one horizontal position are
+conversion and labels the relative energy as $E-\mu$. Disconnected endpoint
+labels sharing one horizontal position are
 combined as, for example, `U|K`. Increase `band_points_per_inv_angstrom` until
 curvature and crossings are visually stable.
 
@@ -109,6 +111,23 @@ The viewer side panel owns the integration method, mesh, certified symmetry
 policy, energy window, energy-point count, and Gaussian width. Selecting
 tetrahedron integration resolves the symmetry policy to the required full
 mesh.
+
+## Band and DOS presentation
+
+The band and DOS viewers share compact, live presentation controls adapted
+from the slice viewer's one-dimensional plotter. Both viewers control curve
+color and width, marker shape (none by default), marker size and fill (none by
+default), a common axes/tick/legend font size, border width, and legend
+visibility. The Fermi-level reference has independent color, width, and line
+style controls. The band viewer also gives the vertical high-symmetry guides
+their own color, width, and style.
+
+Ticks point inward and appear on all four sides. Legends use an opaque black
+outline with square corners; border width also sets the legend-outline and
+tick thickness. `ElectronicPlotStyle` holds these settings for scripts, and
+`apply_electronic_plot_style` applies them to an existing electronic figure.
+`render_band_structure` and `render_density_of_states` accept the same object
+through their `style` argument.
 
 ## Constant-energy and Fermi surfaces
 
@@ -221,8 +240,8 @@ pathways from their multiorbital matrix content.
 ## Viewer window convention
 
 The band, DOS, Fermi-surface, and Brillouin-zone viewers use a plot area on the
-left and a fixed **Settings** panel on the right. Band, DOS, and Fermi-surface
+left and a fixed, scrollable **Settings** panel on the right. Band, DOS, and Fermi-surface
 calculation settings are stored only after **Apply and recalculate** succeeds.
+Band and DOS presentation settings update immediately without recalculation.
 The Brillouin-zone panel controls presentation without rebuilding its cached
-geometry. Standard close shortcuts use Command-W on macOS and Control-W
-elsewhere.
+geometry. Standard close shortcuts use Command-W on macOS and Control-W elsewhere.

@@ -84,6 +84,122 @@ def test_electronic_viewers_share_right_settings_panel(monkeypatch):
     assert application is QtWidgets.QApplication.instance()
 
 
+def test_electronic_plot_style_sets_publication_frame_and_reference_lines():
+    from matplotlib.figure import Figure
+
+    from nfit import ElectronicPlotStyle, apply_electronic_plot_style
+
+    figure = Figure()
+    axis = figure.add_subplot(111)
+    data = axis.plot([0.0, 1.0], [1.0, 2.0], label="band")[0]
+    data.set_gid("nfit-electronic-data")
+    fermi = axis.axhline(0.0)
+    fermi.set_gid("nfit-fermi-line")
+    symmetry = axis.axvline(0.5)
+    symmetry.set_gid("nfit-symmetry-line")
+    legend = axis.legend()
+    style = ElectronicPlotStyle(
+        line_color="#123456",
+        line_width=2.5,
+        marker="s",
+        marker_size=7.0,
+        marker_face_color="none",
+        font_size=15.0,
+        border_width=2.0,
+        fermi_line_color="#654321",
+        fermi_line_width=1.5,
+        fermi_line_style=":",
+        symmetry_line_color="#abcdef",
+        symmetry_line_width=1.2,
+        symmetry_line_style="-.",
+    )
+
+    assert apply_electronic_plot_style(figure, style) is style
+    assert data.get_color() == "#123456"
+    assert data.get_linewidth() == pytest.approx(2.5)
+    assert data.get_marker() == "s"
+    assert data.get_markerfacecolor() == "none"
+    assert fermi.get_color() == "#654321"
+    assert fermi.get_linestyle() == ":"
+    assert symmetry.get_color() == "#abcdef"
+    assert symmetry.get_linestyle() == "-."
+    assert axis.xaxis.majorTicks[0]._tickdir == "in"
+    assert axis.xaxis.majorTicks[0].tick2line.get_visible()
+    assert axis.yaxis.majorTicks[0].tick2line.get_visible()
+    assert all(
+        spine.get_linewidth() == pytest.approx(2.0)
+        for spine in axis.spines.values()
+    )
+    assert legend.get_frame().get_edgecolor()[:3] == pytest.approx((0.0, 0.0, 0.0))
+    assert legend.get_frame().get_linewidth() == pytest.approx(2.0)
+    assert legend.get_texts()[0].get_fontsize() == pytest.approx(15.0)
+
+
+def test_band_viewer_plot_controls_update_figure(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    pytest.importorskip("matplotlib.backends.backend_qtagg")
+    from matplotlib.figure import Figure
+
+    from nfit.qt_electronic_viewer import show_electronic_figure
+
+    application = QtWidgets.QApplication.instance()
+    if application is None:
+        application = QtWidgets.QApplication([])
+    figure = Figure()
+    axis = figure.add_subplot(111)
+    data = axis.plot([0.0, 1.0], [0.0, 1.0], label="band")[0]
+    data.set_gid("nfit-electronic-data")
+    fermi = axis.axhline(0.0)
+    fermi.set_gid("nfit-fermi-line")
+    symmetry = axis.axvline(0.5)
+    symmetry.set_gid("nfit-symmetry-line")
+    axis.legend()
+
+    window = show_electronic_figure(figure, viewer_key="band_structure")
+    assert window.findChild(
+        QtWidgets.QScrollArea,
+        "band_structure_settings_scroll",
+    ) is not None
+    for object_name in (
+        "band_structure_line_color",
+        "band_structure_line_width",
+        "band_structure_marker",
+        "band_structure_marker_size",
+        "band_structure_marker_fill_color",
+        "band_structure_font_size",
+        "band_structure_border_width",
+        "band_structure_show_legend",
+        "band_structure_fermi_line_color",
+        "band_structure_fermi_line_width",
+        "band_structure_fermi_line_style",
+        "band_structure_symmetry_line_color",
+        "band_structure_symmetry_line_width",
+        "band_structure_symmetry_line_style",
+    ):
+        control = window.findChild(QtWidgets.QWidget, object_name)
+        assert control is not None
+        assert control.toolTip()
+    marker = window.findChild(QtWidgets.QComboBox, "band_structure_marker")
+    assert marker.currentData() == ""
+    marker.setCurrentIndex(marker.findData("^"))
+    assert data.get_marker() == "^"
+    width = window.findChild(
+        QtWidgets.QDoubleSpinBox,
+        "band_structure_line_width",
+    )
+    width.setValue(3.0)
+    assert data.get_linewidth() == pytest.approx(3.0)
+    show_legend = window.findChild(
+        QtWidgets.QCheckBox,
+        "band_structure_show_legend",
+    )
+    show_legend.setChecked(False)
+    assert not axis.get_legend().get_visible()
+    assert window._nfit_plot_style.show_legend is False
+    window.close()
+
+
 @pytest.mark.parametrize(
     ("viewer_key", "values", "edited_key", "edited_value"),
     [

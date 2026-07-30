@@ -849,6 +849,8 @@ def test_tight_binding_registry_plots_and_scripts_are_component_driven():
         assert figure.axes
         if plot.key == "bands":
             assert "(eV)" in axes.get_ylabel()
+            assert "E" in axes.get_ylabel()
+            assert r"\epsilon" not in axes.get_ylabel()
             assert [tick.get_text() for tick in axes.get_xticklabels()] == [
                 "G",
                 "X|Y",
@@ -856,6 +858,8 @@ def test_tight_binding_registry_plots_and_scripts_are_component_driven():
             ]
         elif plot.key == "dos":
             assert "(eV)" in axes.get_xlabel()
+            assert "E" in axes.get_xlabel()
+            assert r"\epsilon" not in axes.get_xlabel()
             assert "states / eV" in axes.get_ylabel()
             np.testing.assert_allclose(
                 axes.lines[0].get_ydata(), result.total_per_meV_cell * 1000.0
@@ -864,6 +868,8 @@ def test_tight_binding_registry_plots_and_scripts_are_component_driven():
             assert "eV" in axes.get_title()
         plt.close(figure)
         script = plot.script(component)
+        if plot.key in {"bands", "dos"}:
+            assert "ElectronicPlotStyle" in script
         namespace = {}
         with warnings.catch_warnings():
             warnings.filterwarnings(

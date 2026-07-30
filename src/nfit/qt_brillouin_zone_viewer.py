@@ -146,6 +146,7 @@ def _render_brillouin_zone(
             [node.label for node in scene.path_nodes],
             text_color="black",
             font_size=settings.label_font_size,
+            bold=settings.label_bold,
             font_file=_label_font_file(),
             shape=None,
             show_points=False,
@@ -209,6 +210,7 @@ def _render_brillouin_zone(
             labels,
             text_color="black",
             font_size=settings.label_font_size,
+            bold=settings.label_bold,
             font_file=_label_font_file(),
             shape=None,
             show_points=False,
@@ -453,9 +455,19 @@ def _populate_settings_panel(
     font_size.valueChanged.connect(
         lambda value: update(label_font_size=int(value))
     )
+    label_bold = QtWidgets.QCheckBox("Bold labels")
+    label_bold.setObjectName("brillouin_zone_label_bold")
+    label_bold.setChecked(initial.label_bold)
+    label_bold.setToolTip(
+        "Use bold text for high-symmetry and reciprocal-vector labels."
+    )
+    label_bold.toggled.connect(
+        lambda checked: update(label_bold=bool(checked))
+    )
     path_layout.addRow("Path color", path_color)
     path_layout.addRow("Path width", path_thickness)
     path_layout.addRow("Label size", font_size)
+    path_layout.addRow("", label_bold)
     layout.addWidget(path)
 
     cell = QtWidgets.QGroupBox("Wigner–Seitz cell")

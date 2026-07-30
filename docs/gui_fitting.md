@@ -94,13 +94,15 @@ The Brillouin-zone, band-structure, density-of-states, and Fermi-surface
 viewers share a consistent two-column layout with the visualization on the
 left and a fixed-width **Settings** panel on the right. The Brillouin-zone
 panel controls object visibility, vector and path styling, label size, cell
-face and outline styling, camera projection, and viewport copy/save actions.
+face and outline styling, label boldness, camera projection, and viewport
+copy/save actions. Labels default to 18 pt.
 The reciprocal vectors may be solid throughout, dashed within the zone, or
 start at its surface. The coordinate compass is hidden by default and uses
 saturated red, green, and blue axes when enabled. Figure copying captures the
 rendered framebuffer rather than another application window.
-The other electronic viewer panels reserve this space for their plot-specific
-controls.
+The band and DOS panels also provide live curve, marker, font, border, legend,
+Fermi-level, and high-symmetry-guide styling. Their calculation controls
+remain separate and apply only after recalculation succeeds.
 **Inspect matrices** opens a separate heatmap and exact-element viewer for
 $H(\mathbf k)$, each named parameter basis and contribution, spin operators,
 and representative onsite and hopping matrices. Its right panel summarizes

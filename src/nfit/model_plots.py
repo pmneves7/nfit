@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -47,6 +47,107 @@ _TIGHT_BINDING_PLOT_FIELDS = {
         "fermi_energy_meV",
     },
 }
+
+
+@dataclass(frozen=True)
+class ElectronicPlotStyle:
+    """Scriptable presentation settings shared by 1D electronic plots."""
+
+    line_color: str = "#1f77b4"
+    line_width: float = 1.5
+    marker: str = ""
+    marker_size: float = 5.0
+    marker_face_color: str = "none"
+    font_size: float = 12.0
+    border_width: float = 1.0
+    show_legend: bool = True
+    fermi_line_color: str = "#000000"
+    fermi_line_width: float = 0.8
+    fermi_line_style: str = "--"
+    symmetry_line_color: str = "#d9d9d9"
+    symmetry_line_width: float = 0.8
+    symmetry_line_style: str = "-"
+
+    def __post_init__(self) -> None:
+        for name in (
+            "line_color",
+            "marker_face_color",
+            "fermi_line_color",
+            "symmetry_line_color",
+        ):
+            if not str(getattr(self, name)).strip():
+                raise ValueError(f"{name} must be a nonempty color specification")
+        if str(self.marker) not in {"", "o", "s", "^", "D", "+", "x"}:
+            raise ValueError("marker is not a supported electronic-plot marker")
+        for name in (
+            "line_width",
+            "marker_size",
+            "font_size",
+            "border_width",
+            "fermi_line_width",
+            "symmetry_line_width",
+        ):
+            if float(getattr(self, name)) < 0.0:
+                raise ValueError(f"{name} must be nonnegative")
+        if float(self.font_size) <= 0.0:
+            raise ValueError("font_size must be positive")
+        for name in ("fermi_line_style", "symmetry_line_style"):
+            if str(getattr(self, name)) not in {"-", "--", ":", "-."}:
+                raise ValueError(f"{name} is not a supported line style")
+
+
+def apply_electronic_plot_style(
+    figure: Any,
+    style: ElectronicPlotStyle | None = None,
+) -> ElectronicPlotStyle:
+    """Apply reusable electronic-plot styling to a rendered figure."""
+
+    settings = ElectronicPlotStyle() if style is None else style
+    for axis in figure.axes:
+        for line in axis.lines:
+            role = line.get_gid()
+            if role == "nfit-electronic-data":
+                line.set_color(settings.line_color)
+                line.set_linewidth(settings.line_width)
+                line.set_marker(settings.marker)
+                line.set_markersize(settings.marker_size)
+                line.set_markeredgecolor(settings.line_color)
+                line.set_markerfacecolor(settings.marker_face_color)
+            elif role == "nfit-fermi-line":
+                line.set_color(settings.fermi_line_color)
+                line.set_linewidth(settings.fermi_line_width)
+                line.set_linestyle(settings.fermi_line_style)
+            elif role == "nfit-symmetry-line":
+                line.set_color(settings.symmetry_line_color)
+                line.set_linewidth(settings.symmetry_line_width)
+                line.set_linestyle(settings.symmetry_line_style)
+        axis.xaxis.label.set_fontsize(settings.font_size)
+        axis.yaxis.label.set_fontsize(settings.font_size)
+        if hasattr(axis, "zaxis"):
+            axis.zaxis.label.set_fontsize(settings.font_size)
+        axis.title.set_fontsize(settings.font_size)
+        axis.tick_params(
+            axis="both",
+            which="both",
+            direction="in",
+            top=True,
+            right=True,
+            width=settings.border_width,
+            labelsize=settings.font_size,
+        )
+        for spine in axis.spines.values():
+            spine.set_linewidth(settings.border_width)
+        legend = axis.get_legend()
+        if legend is not None:
+            legend.set_visible(settings.show_legend)
+            for text in legend.get_texts():
+                text.set_fontsize(settings.font_size)
+            frame = legend.get_frame()
+            frame.set_edgecolor("black")
+            frame.set_linewidth(settings.border_width)
+            frame.set_alpha(1.0)
+            frame.set_boxstyle("square", pad=0.25)
+    return settings
 
 
 def configure_tight_binding_plot(
@@ -1168,6 +1269,7 @@ def render_band_structure(
     *,
     energy_unit: str | None = None,
     axes: Sequence[Any] | None = None,
+    style: ElectronicPlotStyle | None = None,
 ) -> tuple[Any, Any]:
     """Render bands in eV by default, or an explicitly requested energy unit."""
 
@@ -1189,7 +1291,9 @@ def render_band_structure(
     relative = electronic_energy_from_meV(
         result.energies_meV - result.chemical_potential_meV, unit
     )
-    axis.plot(distance, relative, color="0.55", linewidth=1.0, zorder=1)
+    band_lines = axis.plot(distance, relative, zorder=1)
+    for line in band_lines:
+        line.set_gid("nfit-electronic-data")
     for group_index, (label, weights) in enumerate(result.projected_weights.items()):
         color = f"C{group_index % 10}"
         for band_index in range(relative.shape[1]):
@@ -1219,13 +1323,16 @@ def render_band_structure(
             tick_labels.append(str(label))
     axis.set_xticks(tick_positions, tick_labels)
     for position in tick_positions:
-        axis.axvline(position, color="0.85", linewidth=0.8, zorder=0)
-    axis.axhline(0.0, color="black", linewidth=0.8, linestyle="--")
+        symmetry_line = axis.axvline(position, zorder=0)
+        symmetry_line.set_gid("nfit-symmetry-line")
+    fermi_line = axis.axhline(0.0)
+    fermi_line.set_gid("nfit-fermi-line")
     axis.set_xlim(distance[0], distance[-1])
-    axis.set_ylabel(rf"$\epsilon-\mu$ ({unit})")
+    axis.set_ylabel(rf"$E-\mu$ ({unit})")
     axis.set_xlabel("Wavevector path")
     if result.projected_weights:
-        axis.legend()
+        axis.legend(fancybox=False)
+    apply_electronic_plot_style(figure, style)
     figure.tight_layout()
     return figure, axis
 
@@ -1235,6 +1342,7 @@ def render_density_of_states(
     *,
     energy_unit: str | None = None,
     axes: Sequence[Any] | None = None,
+    style: ElectronicPlotStyle | None = None,
 ) -> tuple[Any, Any]:
     """Render DOS in eV by default, preserving its integrated state count."""
 
@@ -1254,18 +1362,21 @@ def render_density_of_states(
         result.energy_meV - result.chemical_potential_meV, unit
     )
     density_scale = float(electronic_energy_to_meV(1.0, unit))
-    axis.plot(
+    total_line = axis.plot(
         relative,
         result.total_per_meV_cell * density_scale,
-        color="black",
         label="total",
-    )
+    )[0]
+    total_line.set_gid("nfit-electronic-data")
     for label, values in result.projected_per_meV_cell.items():
-        axis.plot(relative, values * density_scale, label=label)
-    axis.axvline(0.0, color="0.4", linewidth=0.8, linestyle="--")
-    axis.set_xlabel(rf"$\epsilon-\mu$ ({unit})")
+        line = axis.plot(relative, values * density_scale, label=label)[0]
+        line.set_gid("nfit-electronic-data")
+    fermi_line = axis.axvline(0.0)
+    fermi_line.set_gid("nfit-fermi-line")
+    axis.set_xlabel(rf"$E-\mu$ ({unit})")
     axis.set_ylabel(f"DOS (states / {unit} / cell)")
-    axis.legend()
+    axis.legend(fancybox=False)
+    apply_electronic_plot_style(figure, style)
     figure.tight_layout()
     return figure, axis
 
@@ -1414,12 +1525,13 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
         lines.extend(
             [
                 "from nfit import band_path, calculate_bands",
-                "from nfit.model_plots import render_band_structure",
+                "from nfit.model_plots import ElectronicPlotStyle, render_band_structure",
+                "plot_style = ElectronicPlotStyle()",
                 "path_reciprocal_lattice = "
                 f"{band_path_reciprocal_lattice(component).tolist()!r}",
                 f"sampling = band_path(model, {nodes!r}, labels={labels!r}, break_before={breaks!r}, points_per_inv_angstrom={float(config.get('band_points_per_inv_angstrom', 80.0))!r}, coordinate_reciprocal_lattice=path_reciprocal_lattice)",
                 f"result = calculate_bands(model, sampling, chemical_potential_meV=chemical_potential_meV, projections={projections!r}, include_eigenvectors=False, backend=electronic_backend, workers=electronic_workers, max_batch_bytes=max_batch_bytes)",
-                "figure, axis = render_band_structure(result, energy_unit=energy_unit)",
+                "figure, axis = render_band_structure(result, energy_unit=energy_unit, style=plot_style)",
             ]
         )
     elif plot_key == "dos":
@@ -1442,14 +1554,15 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
             [
                 "import numpy as np",
                 "from nfit import density_of_states, k_mesh",
-                "from nfit.model_plots import render_density_of_states",
+                "from nfit.model_plots import ElectronicPlotStyle, render_density_of_states",
+                "plot_style = ElectronicPlotStyle()",
                 f"mesh = k_mesh(model, {config.get('dos_mesh', [40, 40, 40])!r}, symmetry={dos_symmetry!r})",
                 f"energy = np.linspace({energy_min!r}, {energy_max!r}, {int(config.get('dos_energy_points', 600))!r})",
                 "energy_meV = electronic_energy_to_meV(energy, energy_unit)",
                 f"broadening = {broadening!r}",
                 "broadening_meV = electronic_energy_to_meV(broadening, energy_unit)",
                 f"result = density_of_states(model, mesh, energy_meV, broadening_meV=broadening_meV, method={dos_method!r}, chemical_potential_meV=chemical_potential_meV, projections={projections!r}, backend=electronic_backend, workers=electronic_workers, max_batch_bytes=max_batch_bytes)",
-                "figure, axis = render_density_of_states(result, energy_unit=energy_unit)",
+                "figure, axis = render_density_of_states(result, energy_unit=energy_unit, style=plot_style)",
             ]
         )
     elif plot_key == "fermi_surface":
@@ -1518,7 +1631,8 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
             "    if owns_app:",
             "        app = QtWidgets.QApplication([])",
             "    window = show_electronic_figure(",
-            f"        figure, viewer_key={viewer_keys[plot_key]!r}",
+            f"        figure, viewer_key={viewer_keys[plot_key]!r},",
+            "        style=plot_style,",
             "    )",
             "    if owns_app:",
             "        app.exec()",

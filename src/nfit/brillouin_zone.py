@@ -42,7 +42,8 @@ class BrillouinZoneViewOptions:
     basis_vector_inside_style: str = "solid"
     path_color: str = "#7A1F1F"
     path_thickness: float = 4.0
-    label_font_size: int = 14
+    label_font_size: int = 18
+    label_bold: bool = False
     cell_surface_color: str = "#B8C7D9"
     cell_surface_opacity: float = 0.10
     cell_outline_color: str = "#202020"
