@@ -2005,8 +2005,12 @@ def reconcile_model_orbit_parameters(model: ModelComponentSpec) -> None:
     """
 
     if model.type == "tight_binding":
-        from .electronic_builder import reconcile_tight_binding_parameters
+        from .electronic_builder import (
+            ensure_tight_binding_onsite_terms,
+            reconcile_tight_binding_parameters,
+        )
 
+        ensure_tight_binding_onsite_terms(model)
         reconcile_tight_binding_parameters(model)
         return
 
@@ -20342,16 +20346,6 @@ class NfitProjectExplorer:
         group = QtWidgets.QGroupBox("Onsite terms")
         group.setObjectName("tight_binding_onsite_group")
         layout = QtWidgets.QGridLayout(group)
-        regenerate = QtWidgets.QPushButton("Regenerate symmetry invariants")
-        regenerate.setObjectName("tight_binding_onsite_generate")
-        regenerate.setToolTip(
-            "Recompute the complete Hermitian onsite basis allowed by each "
-            "site stabilizer and declared degeneracy. Existing values, bounds, "
-            "and fit selections are retained when a stable identifier survives."
-        )
-        regenerate.setEnabled(bool(model.config.get("orbital_manifolds")))
-        regenerate.clicked.connect(self._regenerate_tight_binding_onsite)
-        layout.addWidget(regenerate, 0, 0, 1, 3)
         unit = str(model.config.get("electronic_energy_unit", "eV"))
         terms = [
             OnsiteInvariant.from_dict(item)
@@ -20370,7 +20364,7 @@ class NfitProjectExplorer:
             for term in terms
         )
         show_details.setChecked(details_expanded)
-        layout.addWidget(show_details, 0, 7, 1, 3)
+        layout.addWidget(show_details, 0, 0, 1, 3)
         detail_widgets: list[Any] = []
         headers = (
             "Term",
@@ -22085,13 +22079,6 @@ class NfitProjectExplorer:
                 fit=checked,
             ),
             rebuild_editor=False,
-        )
-
-    def _regenerate_tight_binding_onsite(self) -> None:
-        from .electronic_builder import regenerate_tight_binding_onsite_terms
-
-        self._mutate_selected_model(
-            lambda model, _group: regenerate_tight_binding_onsite_terms(model)
         )
 
     def _set_tight_binding_onsite_field(

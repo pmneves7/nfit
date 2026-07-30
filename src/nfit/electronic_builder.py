@@ -1832,6 +1832,29 @@ def generate_onsite_terms(
     return tuple(result)
 
 
+def _onsite_invariant_basis_matches(
+    stored: Sequence[OnsiteInvariant],
+    generated: Sequence[OnsiteInvariant],
+) -> bool:
+    """Return whether stored terms are the current generated matrix basis."""
+
+    if len(stored) != len(generated):
+        return False
+    for current, expected in zip(stored, generated, strict=True):
+        if (
+            current.identifier != expected.identifier
+            or current.label != expected.label
+            or current.site_label != expected.site_label
+            or current.basis_labels != expected.basis_labels
+            or current.kind != expected.kind
+            or current.source != expected.source
+            or current.matrix.shape != expected.matrix.shape
+            or not np.allclose(current.matrix, expected.matrix, atol=1.0e-9)
+        ):
+            return False
+    return True
+
+
 def build_orbital_electronic_model(
     crystal: Mapping[str, Any],
     manifolds: Sequence[OrbitalManifold | Mapping[str, Any]],
@@ -2507,6 +2530,7 @@ def resolve_tight_binding_builder(component: Any) -> ElectronicModel:
 
     if getattr(component, "type", None) != "tight_binding":
         raise TypeError("the orbital builder requires a tight_binding component")
+    ensure_tight_binding_onsite_terms(component)
     reconcile_tight_binding_parameters(component)
     manifolds = _component_manifolds(component)
     model = build_orbital_electronic_model(
@@ -2776,6 +2800,32 @@ def regenerate_tight_binding_onsite_terms(
         _restore_builder_state(component, before)
         raise
     return terms
+
+
+def ensure_tight_binding_onsite_terms(
+    component: Any,
+) -> tuple[OnsiteInvariant, ...]:
+    """Repair derived onsite invariants when builder inputs have changed.
+
+    Values, bounds, fit flags, and sharing state are not part of the generated
+    matrix basis. They remain attached to any stable identifiers that survive
+    regeneration.
+    """
+
+    if getattr(component, "type", None) != "tight_binding":
+        raise TypeError("onsite invariants require a tight_binding component")
+    manifolds = _component_manifolds(component)
+    stored = _component_terms(component)
+    if not manifolds:
+        return stored
+    generated = generate_onsite_terms(
+        component.config["crystal"],
+        manifolds,
+        previous=stored,
+    )
+    if _onsite_invariant_basis_matches(stored, generated):
+        return stored
+    return regenerate_tight_binding_onsite_terms(component)
 
 
 def regenerate_tight_binding_hopping_terms(

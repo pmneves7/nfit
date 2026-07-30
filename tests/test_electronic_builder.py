@@ -335,6 +335,41 @@ def test_component_builder_resolves_values_project_and_script_round_trip(tmp_pat
     assert namespace["model"].sharing == component.sharing
 
 
+def test_resolve_repairs_stale_generated_onsite_basis_automatically():
+    group = DataGroup("Electronic")
+    component = create_model_component(group, "bands", type="tight_binding")
+    component.config["crystal"] = _crystal("P m -3 m")
+    add_tight_binding_orbital_manifold(
+        component,
+        orbital_manifold_preset("M1", "d"),
+    )
+    assert len(component.config["onsite_terms"]) == 2
+    retained = component.config["onsite_terms"][0]["identifier"]
+    set_tight_binding_onsite_term(
+        component,
+        retained,
+        value=0.025,
+        lower=-0.2,
+        upper=0.2,
+        energy_unit="eV",
+        fit=True,
+    )
+
+    component.config["onsite_terms"] = component.config["onsite_terms"][:1]
+    assert len(component.config["onsite_terms"]) == 1
+
+    electronic_model_from_component(component)
+
+    assert len(component.config["onsite_terms"]) == 2
+    repaired = {
+        item["identifier"]: item for item in component.config["onsite_terms"]
+    }
+    assert repaired[retained]["value_meV"] == pytest.approx(25.0)
+    assert repaired[retained]["bounds_meV"] == [-200.0, 200.0]
+    assert repaired[retained]["fit"] is True
+    assert component.sharing[retained]["mode"] == "global"
+
+
 def test_symmetry_generated_hopping_resolves_dispersion_and_script_round_trip():
     crystal = _crystal("P m -3 m")
     crystal["sites"] = crystal["sites"][:1]

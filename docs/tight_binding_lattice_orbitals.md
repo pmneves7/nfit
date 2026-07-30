@@ -123,8 +123,13 @@ Each generated onsite term stores:
 | `source` | origin of the constraint | `"site_symmetry"` or `"declared_degeneracy"` |
 
 Values entered in eV are converted immediately to canonical meV. Editing a
-scientific builder input marks the resolved model stale; the next electronic
-or response calculation rebuilds it once. With onsite terms but no active
+crystal, site, orbital manifold, local frame, or degeneracy declaration
+automatically regenerates the allowed onsite matrix basis. Coefficients,
+bounds, fit selections, and sharing survive when their stable identifiers
+remain valid. nfit also checks the generated basis when loading and before
+resolving the Hamiltonian, so no manual regeneration step is required.
+Scientific builder edits mark the resolved model stale; the next electronic or
+response calculation rebuilds it once. With onsite terms but no active
 hoppings, the bands are flat.
 
 ## Primitive-cell resolution

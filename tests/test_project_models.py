@@ -346,6 +346,13 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
     assert len(model.config["orbital_manifolds"][0]["orbitals"]) in {2, 3}
     assert model.config["model_stale"] is True
     assert model.config["model_digest"] == ""
+    assert (
+        explorer.model_parameter_widget.findChild(
+            QtWidgets.QPushButton,
+            "tight_binding_onsite_generate",
+        )
+        is None
+    )
     frame = explorer.model_parameter_widget.findChild(
         QtWidgets.QLineEdit, "tight_binding_manifold_frame_0"
     )
