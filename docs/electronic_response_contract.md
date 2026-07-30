@@ -433,7 +433,7 @@ produce a magnetic susceptibility receive daughter pages under
 user testing only after its public API, GUI behavior where applicable,
 workflow script, fit-result export, documentation, and validation tests agree.
 
-Stages 0--5 are implemented. The generalized-paramagnon model supplies the
+Stages 0--6 are implemented. The generalized-paramagnon model supplies the
 Stage 2 relaxational and damped-propagating limits through one causal complex
 response. Stage 3 supplies arbitrary orthonormal electronic models, native
 Wannier90 import, shared path and mesh sampling, bands and orbital projections,
@@ -459,8 +459,7 @@ as a parameter-providing dependency, not as a second dataset observable.
 Finite temperature, source chemical potential or fixed filling, lifetime
 broadening, full-mesh NumPy reference evaluation, bulk and neutron dataset
 comparison, model-owned plotting, editable scripts, and portable response
-serialization are implemented. Response-level symmetry reduction and
-transition chunking remain Stage 6 work.
+serialization are implemented.
 
 Stage 5 supplies separate scalar Stoner, user-matrix, and local multiorbital
 Hubbard--Hund RPA components. A dressing consumes its referenced bare
@@ -468,3 +467,15 @@ observable on the dressing's dataset scope while retaining the bare
 broadening and electronic Hamiltonian as parameter dependencies. Interaction
 inputs and fit results use eV; immutable vertices store canonical meV,
 operator ordering, channel, multiplication convention, and pole diagnostics.
+
+Stage 6 adds deterministic memory-bounded transition batches, immutable
+eigensystem caches keyed by the complete electronic-model digest,
+serial-assembly/parallel-eigensolver CPU waves, and numerical backend
+certification against serial NumPy. Certified nfit-built implicit-spin
+responses can use the wavevector little group; unsupported operator bases or
+models fall back to the full mesh in `auto` mode. Mesh and broadening
+convergence are evaluated as separate axes. Response-point chunks have a
+scheduler-neutral serialization and verified merge, with an editable Slurm
+array launcher. Electronic and interaction parameters retain the existing
+simultaneous multi-dataset fit, covariance, posterior-sampling, report, and
+export machinery.

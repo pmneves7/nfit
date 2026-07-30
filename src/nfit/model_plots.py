@@ -152,6 +152,47 @@ def _lindhard_source(
     return source
 
 
+def _validate_response_backend_for_plot(
+    model: Any,
+    mesh: Any,
+    config: Mapping[str, Any],
+    *,
+    backend: str,
+    workers: int,
+    max_batch_bytes: int,
+) -> None:
+    if backend == "numpy" or not bool(config.get("response_validate_backend", True)):
+        return
+    from .electronic_backends import validate_electronic_backend
+
+    count = min(
+        int(config.get("response_backend_probe_points", 8)),
+        mesh.reduced_coordinates.shape[0],
+    )
+    indices = np.linspace(
+        0,
+        mesh.reduced_coordinates.shape[0] - 1,
+        count,
+        dtype=int,
+    )
+    validation = validate_electronic_backend(
+        model,
+        mesh.reduced_coordinates[indices],
+        backend,
+        workers=workers,
+        max_batch_bytes=max_batch_bytes,
+        relative_tolerance=float(config.get("response_backend_rtol", 1.0e-10)),
+        absolute_tolerance_meV=float(
+            config.get("response_backend_atol_meV", 1.0e-8)
+        ),
+        require_requested_backend=True,
+    )
+    if not validation.passed:
+        raise RuntimeError(
+            f"electronic response backend validation failed: {validation.reason}"
+        )
+
+
 def lindhard_energy_scan(
     component: Any,
     components: Mapping[str, Any],
@@ -159,8 +200,10 @@ def lindhard_energy_scan(
     """Calculate the configured complex bare spin-response energy scan."""
 
     from .electronic_response import (
+        ElectronicResponseCache,
         bare_spin_susceptibility,
         chemical_potential_for_filling,
+        response_k_mesh,
     )
 
     source = _lindhard_source(component, components)
@@ -175,11 +218,18 @@ def lindhard_energy_scan(
         np.asarray(config.get("plot_q_reduced", [0.0, 0.0, 0.0]), dtype=float),
         (energy.size, 3),
     )
-    mesh = k_mesh(
+    filling_mesh = k_mesh(
         model,
         config.get("response_mesh", [16, 16, 16]),
         shift=config.get("response_mesh_shift", [0.0, 0.0, 0.0]),
         symmetry="full",
+    )
+    mesh = response_k_mesh(
+        model,
+        config.get("response_mesh", [16, 16, 16]),
+        Q,
+        shift=config.get("response_mesh_shift", [0.0, 0.0, 0.0]),
+        symmetry=str(config.get("response_symmetry", "auto")),
     )
     temperature = float(config.get("plot_temperature_K", 10.0))
     execution = {
@@ -188,14 +238,35 @@ def lindhard_energy_scan(
         "max_batch_bytes": int(
             float(config.get("response_max_batch_mb", 256.0)) * 1024**2
         ),
+        "transition_max_batch_bytes": int(
+            float(config.get("response_transition_max_batch_mb", 256.0))
+            * 1024**2
+        ),
+        "cache": ElectronicResponseCache(
+            max_bytes=int(
+                float(config.get("response_cache_mb", 512.0)) * 1024**2
+            ),
+            max_entries=int(config.get("response_cache_entries", 64)),
+        ),
     }
+    _validate_response_backend_for_plot(
+        model,
+        filling_mesh,
+        config,
+        backend=execution["backend"],
+        workers=execution["workers"],
+        max_batch_bytes=execution["max_batch_bytes"],
+    )
     if str(config.get("chemical_potential_mode", "source")) == "filling":
         mu = chemical_potential_for_filling(
             model,
-            mesh,
+            filling_mesh,
             float(config.get("filling_per_cell", 1.0)),
             temperature_K=temperature,
-            **execution,
+            backend=execution["backend"],
+            workers=execution["workers"],
+            max_batch_bytes=execution["max_batch_bytes"],
+            cache=execution["cache"],
         )
     else:
         mu = float(source.config.get("chemical_potential_meV", 0.0))
@@ -273,28 +344,40 @@ def lindhard_energy_scan_script(
             "from nfit import (",
             "    bare_spin_susceptibility,",
             "    chemical_potential_for_filling,",
+            "    ElectronicResponseCache,",
             "    k_mesh,",
+            "    response_k_mesh,",
             ")",
             "from nfit.model_plots import render_lindhard_energy_scan",
             "",
             f"mesh_shape = {config.get('response_mesh', [16, 16, 16])!r}",
             f"mesh_shift = {config.get('response_mesh_shift', [0.0, 0.0, 0.0])!r}",
-            "mesh = k_mesh(model, mesh_shape, shift=mesh_shift, symmetry='full')",
+            "filling_mesh = k_mesh(model, mesh_shape, shift=mesh_shift, symmetry='full')",
             f"temperature_K = {float(config.get('plot_temperature_K', 10.0))!r}",
             f"energy_meV = np.linspace({float(config.get('plot_energy_min_meV', -100.0))!r}, {float(config.get('plot_energy_max_meV', 100.0))!r}, {int(config.get('plot_energy_points', 401))!r})",
             f"Q_reduced = np.broadcast_to(np.asarray({config.get('plot_q_reduced', [0.0, 0.0, 0.0])!r}, dtype=float), (energy_meV.size, 3))",
+            "mesh = response_k_mesh(",
+            "    model, mesh_shape, Q_reduced, shift=mesh_shift,",
+            f"    symmetry={str(config.get('response_symmetry', 'auto'))!r},",
+            ")",
             f"backend = {str(config.get('response_backend', 'numpy'))!r}",
             f"workers = {int(config.get('response_workers', 1))!r}",
             f"max_batch_bytes = {int(float(config.get('response_max_batch_mb', 256.0)) * 1024**2)!r}",
+            f"transition_max_batch_bytes = {int(float(config.get('response_transition_max_batch_mb', 256.0)) * 1024**2)!r}",
+            "response_cache = ElectronicResponseCache(",
+            f"    max_bytes={int(float(config.get('response_cache_mb', 512.0)) * 1024**2)!r},",
+            f"    max_entries={int(config.get('response_cache_entries', 64))!r},",
+            ")",
         ]
     )
     if str(config.get("chemical_potential_mode", "source")) == "filling":
         lines.extend(
             [
                 "chemical_potential_meV = chemical_potential_for_filling(",
-                f"    model, mesh, {float(config.get('filling_per_cell', 1.0))!r},",
+                f"    model, filling_mesh, {float(config.get('filling_per_cell', 1.0))!r},",
                 "    temperature_K=temperature_K, backend=backend,",
                 "    workers=workers, max_batch_bytes=max_batch_bytes,",
+                "    cache=response_cache,",
                 ")",
             ]
         )
@@ -312,6 +395,8 @@ def lindhard_energy_scan_script(
             f"    broadening_meV={float(component.parameters.get('broadening', 5.0))!r},",
             "    backend=backend, workers=workers,",
             "    max_batch_bytes=max_batch_bytes,",
+            "    transition_max_batch_bytes=transition_max_batch_bytes,",
+            "    cache=response_cache,",
             ")",
             "figure, axes = render_lindhard_energy_scan(result)",
             "figure.show()",
@@ -319,6 +404,193 @@ def lindhard_energy_scan_script(
         ]
     )
     return "\n".join(lines)
+
+
+def lindhard_convergence_scan_unbound(component: Any) -> Any:
+    """Explain why convergence needs a linked electronic component."""
+
+    lindhard_energy_scan_unbound(component)
+    raise AssertionError("unreachable")
+
+
+def lindhard_convergence_scan(
+    component: Any,
+    components: Mapping[str, Any],
+) -> Any:
+    """Calculate separate response-mesh and broadening convergence metrics."""
+
+    from .electronic_response import (
+        ElectronicResponseCache,
+        chemical_potential_for_filling,
+        response_convergence_scan,
+    )
+
+    source = _lindhard_source(component, components)
+    model = electronic_model_from_component(source)
+    config = component.config
+    base_shape = tuple(int(value) for value in config.get("response_mesh", [16] * 3))
+    mesh_shapes = []
+    for scale in config.get("convergence_mesh_scales", [0.5, 0.75, 1.0]):
+        shape = tuple(max(1, int(round(value * float(scale)))) for value in base_shape)
+        if shape not in mesh_shapes:
+            mesh_shapes.append(shape)
+    broadening = float(component.parameters.get("broadening", 5.0))
+    broadenings = [
+        broadening * float(scale)
+        for scale in config.get("convergence_broadening_scales", [2.0, 1.0, 0.5])
+    ]
+    energy = np.linspace(
+        float(config.get("plot_energy_min_meV", -100.0)),
+        float(config.get("plot_energy_max_meV", 100.0)),
+        int(config.get("convergence_energy_points", 9)),
+    )
+    Q = np.broadcast_to(
+        np.asarray(config.get("plot_q_reduced", [0.0, 0.0, 0.0]), dtype=float),
+        (energy.size, 3),
+    )
+    temperature = float(config.get("plot_temperature_K", 10.0))
+    backend = str(config.get("response_backend", "numpy"))
+    workers = int(config.get("response_workers", 1))
+    batch_bytes = int(float(config.get("response_max_batch_mb", 256.0)) * 1024**2)
+    transition_bytes = int(
+        float(config.get("response_transition_max_batch_mb", 256.0)) * 1024**2
+    )
+    cache = ElectronicResponseCache(
+        max_bytes=int(float(config.get("response_cache_mb", 512.0)) * 1024**2),
+        max_entries=int(config.get("response_cache_entries", 64)),
+    )
+    validation_mesh = k_mesh(
+        model,
+        mesh_shapes[-1],
+        shift=config.get("response_mesh_shift", [0.0, 0.0, 0.0]),
+        symmetry="full",
+    )
+    _validate_response_backend_for_plot(
+        model,
+        validation_mesh,
+        config,
+        backend=backend,
+        workers=workers,
+        max_batch_bytes=batch_bytes,
+    )
+    if str(config.get("chemical_potential_mode", "source")) == "filling":
+        mu = chemical_potential_for_filling(
+            model,
+            validation_mesh,
+            float(config.get("filling_per_cell", 1.0)),
+            temperature_K=temperature,
+            backend=backend,
+            workers=workers,
+            max_batch_bytes=batch_bytes,
+            cache=cache,
+        )
+    else:
+        mu = float(source.config.get("chemical_potential_meV", 0.0))
+    return response_convergence_scan(
+        model,
+        Q,
+        energy,
+        mesh_shapes=mesh_shapes,
+        broadenings_meV=broadenings,
+        temperature_K=temperature,
+        chemical_potential_meV=mu,
+        mesh_shift=config.get("response_mesh_shift", [0.0, 0.0, 0.0]),
+        relative_floor=float(config.get("convergence_relative_floor", 1.0e-12)),
+        backend=backend,
+        workers=workers,
+        max_batch_bytes=batch_bytes,
+        transition_max_batch_bytes=transition_bytes,
+        cache=cache,
+    )
+
+
+def render_lindhard_convergence_scan(
+    result: Any,
+    *,
+    axes: Sequence[Any] | None = None,
+) -> tuple[Any, tuple[Any, Any]]:
+    """Render mesh errors and broadening changes on separate panels."""
+
+    import matplotlib.pyplot as plt
+
+    if axes is None:
+        figure, created_axes = plt.subplots(1, 2)
+        mesh_axis, broadening_axis = created_axes
+    else:
+        if len(axes) != 2:
+            raise ValueError("axes must contain mesh and broadening axes")
+        mesh_axis, broadening_axis = axes
+        figure = mesh_axis.figure
+    mesh_sizes = np.asarray([np.prod(shape) for shape in result.mesh_shapes])
+    floor = np.finfo(float).tiny
+    for broadening_index, broadening in enumerate(result.broadenings_meV):
+        mesh_axis.semilogy(
+            mesh_sizes,
+            np.maximum(
+                result.mesh_max_relative_error[:, broadening_index],
+                floor,
+            ),
+            marker="o",
+            label=rf"$\eta={broadening:g}$ meV",
+        )
+    for mesh_index, shape in enumerate(result.mesh_shapes):
+        broadening_axis.semilogy(
+            result.broadenings_meV,
+            np.maximum(
+                result.broadening_max_relative_change[mesh_index],
+                floor,
+            ),
+            marker="o",
+            label=str(tuple(shape)),
+        )
+    mesh_axis.set_xlabel("Full-mesh point count")
+    mesh_axis.set_ylabel("Maximum relative mesh error")
+    broadening_axis.set_xlabel(r"Broadening $\eta$ (meV)")
+    broadening_axis.set_ylabel("Maximum relative broadening change")
+    mesh_axis.legend()
+    broadening_axis.legend(title="mesh")
+    figure.suptitle("Bare-response numerical convergence")
+    figure.tight_layout()
+    return figure, (mesh_axis, broadening_axis)
+
+
+def lindhard_convergence_scan_script_unbound(component: Any) -> str:
+    """Explain why a linked component context is required."""
+
+    lindhard_convergence_scan_unbound(component)
+    raise AssertionError("unreachable")
+
+
+def lindhard_convergence_scan_script(
+    component: Any,
+    components: Mapping[str, Any],
+) -> str:
+    """Return an editable GUI-free convergence calculation and plot script."""
+
+    from .model_registry import serialize_model_component
+
+    source = _lindhard_source(component, components)
+    payloads = [
+        serialize_model_component(item, purpose="workflow")
+        for item in (source, component)
+    ]
+    return "\n".join(
+        [
+            "from nfit import ModelComponentSpec",
+            "from nfit.model_plots import (",
+            "    lindhard_convergence_scan,",
+            "    render_lindhard_convergence_scan,",
+            ")",
+            "",
+            f"payloads = {payloads!r}",
+            "models = [ModelComponentSpec(**payload) for payload in payloads]",
+            "components = {item.name: item for item in models}",
+            f"result = lindhard_convergence_scan(components[{component.name!r}], components)",
+            "figure, axes = render_lindhard_convergence_scan(result)",
+            "figure.show()",
+            "",
+        ]
+    )
 
 
 def electronic_rpa_energy_scan_unbound(component: Any) -> Any:
@@ -345,6 +617,7 @@ def electronic_rpa_energy_scan(
         scalar_stoner_vertex,
     )
     from .electronic_response import (
+        ElectronicResponseCache,
         bare_lindhard_susceptibility,
         chemical_potential_for_filling,
         orbital_pair_operator_basis,
@@ -407,6 +680,18 @@ def electronic_rpa_energy_scan(
             float(config.get("response_max_batch_mb", 256.0)) * 1024**2
         ),
     }
+    cache = ElectronicResponseCache(
+        max_bytes=int(float(config.get("response_cache_mb", 512.0)) * 1024**2),
+        max_entries=int(config.get("response_cache_entries", 64)),
+    )
+    _validate_response_backend_for_plot(
+        model,
+        mesh,
+        config,
+        backend=execution["backend"],
+        workers=execution["workers"],
+        max_batch_bytes=execution["max_batch_bytes"],
+    )
     if str(config.get("chemical_potential_mode", "source")) == "filling":
         mu = chemical_potential_for_filling(
             model,
@@ -414,6 +699,7 @@ def electronic_rpa_energy_scan(
             float(config.get("filling_per_cell", 1.0)),
             temperature_K=temperature,
             **execution,
+            cache=cache,
         )
     else:
         mu = float(source.config.get("chemical_potential_meV", 0.0))
@@ -434,6 +720,11 @@ def electronic_rpa_energy_scan(
             response_component.parameters.get("broadening", 5.0)
         ),
         **execution,
+        transition_max_batch_bytes=int(
+            float(config.get("response_transition_max_batch_mb", 256.0))
+            * 1024**2
+        ),
+        cache=cache,
     )
     vertex = hubbard_hund_spin_vertex(
         model,

@@ -100,11 +100,19 @@ parameters remain on the referenced tight-binding component.
 | `electronic_component` | enabled sibling `tight_binding` component supplying $H(\mathbf k)$ | `""` | `"Bands"` |
 | `response_mesh` | full-zone integration-mesh sizes | `[16, 16, 16]` | `[48, 48, 24]` |
 | `response_mesh_shift` | offsets in mesh steps | `[0, 0, 0]` | `[0.5, 0.5, 0.5]` |
+| `response_symmetry` | full mesh, required certified reduction, or automatic reduction with recorded fallback | `"auto"` | `"auto"`, `"full"`, or `"reduced"` |
 | `chemical_potential_mode` | use the source chemical potential or solve from filling | `"source"` | `"source"` or `"filling"` |
 | `filling_per_cell` | electron count per primitive cell in filling mode | `1.0` | `3.0` |
 | `response_backend` | eigensystem backend used by the reference response | `"numpy"` | `"numpy"`, `"threaded"`, or `"cupy"` |
 | `response_workers` | bounded CPU worker count | `1` | `8` |
+| `response_validate_backend` | compare a deterministic probe with serial NumPy before threaded or GPU use | `true` | `false` |
+| `response_backend_probe_points` | mesh points in the backend-equivalence probe | `8` | `12` |
+| `response_backend_rtol` | relative eigenvalue tolerance for the probe | `1e-10` | `1e-9` |
+| `response_backend_atol_meV` | absolute eigenvalue tolerance for the probe | `1e-8` | `1e-7` |
 | `response_max_batch_mb` | eigensystem temporary-memory target | `256.0` | `512.0` |
+| `response_transition_max_batch_mb` | particle--hole transition temporary-memory target | `256.0` | `512.0` |
+| `response_cache_mb` | retained eigensystem-array memory; zero disables retention | `512.0` | `1024.0` |
+| `response_cache_entries` | maximum retained eigensystem entries | `64` | `128` |
 | `powder_orientations` | deterministic sphere directions for powder averaging | `50` | `96` |
 | `formula_units_per_cell` | formula units in the primitive electronic cell for molar bulk conversion | `1.0` | `2.0` |
 | `ion` | tabulated magnetic form-factor ion; empty applies none | `""` | `"Fe2"` |
@@ -115,14 +123,27 @@ parameters remain on the referenced tight-binding component.
 | `plot_energy_max_meV` | upper plotted energy transfer | `100.0` | `50.0` |
 | `plot_energy_points` | plotted energy samples | `401` | `501` |
 | `plot_temperature_K` | plotted response temperature | `10.0` | `20.0` |
+| `convergence_mesh_scales` | factors applied to each response-mesh dimension | `[0.5, 0.75, 1.0]` | `[0.5, 1.0, 1.5]` |
+| `convergence_broadening_scales` | factors applied to the current $\eta$ | `[2.0, 1.0, 0.5]` | `[2.0, 1.0, 0.5]` |
+| `convergence_energy_points` | representative energies across the plot window | `9` | `17` |
+| `convergence_relative_floor` | denominator floor for relative changes | `1e-12` | `1e-10` |
 
 The mesh must match the periodic dimensionality of the electronic model. A
 three-entry mesh or shift is also accepted for a reduced-dimensional model;
-nfit selects its periodic axes. Phase 4 uses the full mesh as its numerical
-reference. Accelerated eigensystem backends are explicit and recorded in
-provenance; response-level symmetry reduction is deferred until the
-Hamiltonian, magnetic operators, and requested observable can all be
-certified.
+nfit selects its periodic axes. With `response_symmetry="auto"`, nfit reduces
+only an nfit-built implicit-spin response under operations that leave every
+requested $\mathbf q$ fixed modulo a reciprocal vector. The result records the
+little-group size and irreducible mesh. Imported models, explicit-spin
+operators, orbital-pair matrices, incompatible meshes, and generic
+wavevectors fall back to the full mesh. `"reduced"` turns the same fallback
+into an error.
+
+Threaded execution constructs bounded waves of Hamiltonians serially before
+parallel eigensolution. This prevents complex Hamiltonian assembly from
+overlapping platform LAPACK calls while preserving input order. Threaded and
+CuPy backends are compared with serial NumPy for each new model digest before
+response evaluation. Explicit CuPy use fails clearly if the requested backend
+is unavailable or exceeds the configured tolerance.
 
 Filling mode solves one chemical potential at each required temperature. It
 therefore requires $T>0$ in the current implementation. Source mode uses
@@ -186,12 +207,34 @@ settings, calculation, and rendering calls as editable Python. The standard
 fit machinery saves and exports the linked electronic and response component
 states, fitted parameters, dataset bindings, and calculated fit channels.
 
+The second model plot evaluates numerical convergence. It reports each mesh
+against the reference mesh at the same $\eta$, and each broadening against the
+reference broadening on the same mesh. `ResponseConvergenceResult` preserves
+the complex samples, absolute and relative metrics, reference indices, and a
+portable dictionary round trip. This separation prevents a broader linewidth
+from being mistaken for wavevector-mesh convergence.
+
+`ElectronicResponseCache` reuses immutable base and shifted eigensystems across
+changes to broadening and interaction parameters. Its key includes the
+electronic-model digest, wavevectors, backend request, worker count, and batch
+setting. Changing an onsite, hopping, or SOC coefficient therefore cannot
+reuse stale bands. Particle--hole matrix elements and denominators are
+evaluated in deterministic memory-bounded batches.
+
+For distributed runs, `partition_response_points` creates deterministic
+contiguous work units and `merge_response_chunks` verifies their scientific
+settings before ordered assembly. `response_slurm_array_script` renders an
+editable scheduler wrapper; calculation and merging remain scheduler-neutral.
+
 ## Current limits
 
-- The kernel evaluates the full band-pair sum and can be expensive for large
-  orbital bases or dense meshes.
-- Response-level symmetry reduction, transition chunking, and distributed
-  execution are not yet enabled.
+- The full band-pair sum can still be expensive for large orbital bases or
+  dense meshes, although transition memory is bounded.
+- Automatic symmetry reduction is intentionally unavailable for imported
+  models, explicit-spin responses, and orbital-pair response matrices until
+  their operator transformations can be certified.
+- The chunk API does not submit jobs or manage a cluster filesystem; those
+  policies remain in editable launcher scripts.
 - This component is the bare bubble with finite lifetime broadening. Separate
   scalar Stoner, matrix, and Hubbard--Hund RPA components can dress it;
   self-energy and superconducting extensions are not yet included.

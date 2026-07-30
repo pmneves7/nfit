@@ -74,6 +74,9 @@ chi_double_prime = dressed.chi_double_prime
 The GUI component references a named bare response, participates in
 simultaneous fitting, and is serialized with its dependency. Fit reports and
 exported results retain the interaction convention and canonical vertex.
+The referenced response also supplies bounded transition batches, digest-aware
+eigensystem reuse, backend certification, symmetry policy, and numerical
+convergence plots.
 
 ## Current limits
 

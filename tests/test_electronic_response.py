@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import warnings
+from dataclasses import replace
+from itertools import product
 
 import numpy as np
 import pytest
@@ -10,8 +12,10 @@ from nfit import (
     BasisState,
     DataGroup,
     ElectronicOperatorBasis,
+    ElectronicResponseCache,
     FitDatasetInput,
     ModelComponentSpec,
+    ResponseConvergenceResult,
     SusceptibilityResult,
     add_tight_binding_orbital_manifold,
     bare_lindhard_susceptibility,
@@ -31,6 +35,8 @@ from nfit import (
     orbital_manifold_preset,
     orbital_pair_operator_basis,
     project_implicit_spin_response,
+    response_convergence_scan,
+    response_k_mesh,
     rpa_dress_susceptibility,
     scalar_stoner_vertex,
 )
@@ -196,6 +202,182 @@ def test_lindhard_response_is_causal_and_retains_extended_zone_transfer():
     np.testing.assert_allclose(component[1], component[0].conjugate())
 
 
+def test_response_cache_reuses_eigensystems_and_transition_chunks_are_equivalent():
+    model = _chain_model()
+    mesh = k_mesh(model, (48,))
+    Q = np.asarray([[0.35, 0.0, 0.0], [0.35, 0.0, 0.0]])
+    energy = np.asarray([1.0, 2.0])
+    cache = ElectronicResponseCache(max_bytes=32 * 1024**2, max_entries=8)
+    settings = {
+        "temperature_K": 20.0,
+        "chemical_potential_meV": 0.0,
+        "broadening_meV": 0.4,
+        "cache": cache,
+    }
+    first = bare_spin_susceptibility(
+        model,
+        Q,
+        energy,
+        mesh,
+        transition_max_batch_bytes=256 * 1024**2,
+        **settings,
+    )
+    second = bare_spin_susceptibility(
+        model,
+        Q,
+        energy,
+        mesh,
+        transition_max_batch_bytes=128,
+        **settings,
+    )
+
+    assert first.provenance["cache"]["misses"] >= 2
+    assert second.provenance["cache"]["hits"] >= 2
+    assert second.provenance["transition_batch_size"] == 1
+    np.testing.assert_allclose(
+        second.values_per_meV_cell,
+        first.values_per_meV_cell,
+        rtol=2.0e-14,
+        atol=2.0e-14,
+    )
+
+
+def test_response_cache_is_bounded_and_model_digest_invalidates_entries():
+    model = build_electronic_model(
+        direct_lattice=np.eye(3),
+        basis=["s"],
+        hoppings={(0, 0, 0): [[0.0]]},
+        parameter_hoppings={"epsilon": {(0, 0, 0): [[1.0]]}},
+        parameter_values={"epsilon": 0.0},
+        periodic_axes=(0,),
+        energy_unit="meV",
+    )
+    mesh = k_mesh(model, (4,))
+    cache = ElectronicResponseCache(max_bytes=1, max_entries=8)
+    kwargs = {
+        "temperature_K": 20.0,
+        "chemical_potential_meV": 0.0,
+        "broadening_meV": 0.2,
+        "cache": cache,
+    }
+    first = bare_spin_susceptibility(model, [0, 0, 0], 0.0, mesh, **kwargs)
+    changed = model.with_parameters(epsilon=1.0, energy_unit="meV")
+    second = bare_spin_susceptibility(changed, [0, 0, 0], 0.0, mesh, **kwargs)
+
+    assert cache.entries == 0
+    assert first.model_digest != second.model_digest
+    assert cache.misses >= 4
+
+
+def test_response_convergence_separates_mesh_and_broadening_axes():
+    model = _chain_model()
+    result = response_convergence_scan(
+        model,
+        [[0.3, 0.0, 0.0], [0.3, 0.0, 0.0]],
+        [0.5, 1.0],
+        mesh_shapes=[(12,), (24,)],
+        broadenings_meV=[0.8, 0.4],
+        temperature_K=20.0,
+        chemical_potential_meV=0.0,
+        transition_max_batch_bytes=1024,
+    )
+
+    assert result.values_per_meV_cell.shape == (2, 2, 2)
+    np.testing.assert_array_equal(
+        result.mesh_max_absolute_error[result.reference_mesh_index],
+        0.0,
+    )
+    np.testing.assert_array_equal(
+        result.broadening_max_absolute_change[
+            :, result.reference_broadening_index
+        ],
+        0.0,
+    )
+    restored = ResponseConvergenceResult.from_dict(result.to_dict())
+    np.testing.assert_array_equal(
+        restored.values_per_meV_cell,
+        result.values_per_meV_cell,
+    )
+    assert "each mesh versus reference mesh" in str(
+        result.provenance["comparison"]["mesh"]
+    )
+
+
+def test_response_mesh_reduction_is_little_group_certified_and_fail_closed():
+    model = build_electronic_model(
+        direct_lattice=np.eye(3),
+        basis=["s"],
+        hoppings={
+            (1, 0, 0): [[-1.0]],
+            (0, 1, 0): [[-1.0]],
+            (0, 0, 1): [[-1.0]],
+        },
+        energy_unit="meV",
+    )
+    rotations = [
+        np.diag(signs).astype(int).tolist()
+        for signs in product((-1, 1), repeat=3)
+    ]
+    model = replace(
+        model,
+        provenance={
+            **dict(model.provenance),
+            "implicit_spin_degeneracy": 2,
+            "reciprocal_symmetry": {
+                "certified_by": "nfit_orbital_builder",
+                "rotations": rotations,
+                "includes_time_reversal": True,
+            },
+        },
+    )
+    full = response_k_mesh(model, (8, 8, 8), [0, 0, 0], symmetry="full")
+    reduced = response_k_mesh(
+        model,
+        (8, 8, 8),
+        [0, 0, 0],
+        symmetry="auto",
+    )
+
+    assert reduced.reduced_coordinates.shape[0] < full.reduced_coordinates.shape[0]
+    assert reduced.provenance["response_symmetry_reduction"]["applied"]
+    settings = {
+        "temperature_K": 20.0,
+        "chemical_potential_meV": 0.0,
+        "broadening_meV": 0.2,
+    }
+    reference = bare_spin_susceptibility(model, [0, 0, 0], 0.0, full, **settings)
+    accelerated = bare_spin_susceptibility(
+        model,
+        [0, 0, 0],
+        0.0,
+        reduced,
+        **settings,
+    )
+    assert not reference.provenance["symmetry"]["applied"]
+    assert accelerated.provenance["symmetry"]["applied"]
+    np.testing.assert_allclose(
+        accelerated.values_per_meV_cell,
+        reference.values_per_meV_cell,
+        rtol=2.0e-13,
+        atol=2.0e-13,
+    )
+
+    fallback = response_k_mesh(
+        model,
+        (8, 8, 8),
+        [0.137, 0.271, 0.389],
+        symmetry="auto",
+    )
+    assert not fallback.provenance["response_symmetry_reduction"]["applied"]
+    with pytest.raises(ValueError, match="little group"):
+        response_k_mesh(
+            model,
+            (8, 8, 8),
+            [0.137, 0.271, 0.389],
+            symmetry="reduced",
+        )
+
+
 def test_uniform_static_limit_matches_fermi_derivative():
     model = build_electronic_model(
         direct_lattice=np.eye(3),
@@ -352,6 +534,63 @@ def test_lindhard_registry_plot_is_linked_and_scriptable():
     plt.close(namespace["figure"])
 
 
+def test_lindhard_convergence_plot_is_scriptable():
+    model = _chain_model()
+    tight_binding = ModelComponentSpec(
+        name="bands",
+        type="tight_binding",
+        config={
+            **{
+                field.name: field.default
+                for field in model_definition("tight_binding").config_fields
+            },
+            "model_data": model.to_dict(),
+            "periodic_axes": [0],
+        },
+    )
+    lindhard = ModelComponentSpec(
+        name="response",
+        type="lindhard",
+        parameters={"broadening": 0.5},
+        config={
+            **{
+                field.name: field.default
+                for field in model_definition("lindhard").config_fields
+            },
+            "electronic_component": "bands",
+            "response_mesh": [12],
+            "response_mesh_shift": [0.0],
+            "plot_q_reduced": [0.3, 0.0, 0.0],
+            "plot_energy_min_meV": -1.0,
+            "plot_energy_max_meV": 1.0,
+            "convergence_energy_points": 3,
+            "convergence_mesh_scales": [0.5, 1.0],
+            "convergence_broadening_scales": [2.0, 1.0],
+        },
+    )
+    components = {"bands": tight_binding, "response": lindhard}
+    plot = model_definition("lindhard").plots[1]
+    result = plot.context_calculate(lindhard, components)
+    assert result.values_per_meV_cell.shape == (2, 2, 3)
+    figure, _axes = plot.render(result)
+    plt.close(figure)
+
+    script = plot.context_script(lindhard, components)
+    namespace: dict[str, object] = {}
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="FigureCanvasAgg is non-interactive",
+            category=UserWarning,
+        )
+        exec(compile(script, "<lindhard-convergence>", "exec"), namespace)
+    np.testing.assert_allclose(
+        namespace["result"].values_per_meV_cell,
+        result.values_per_meV_cell,
+    )
+    plt.close(namespace["figure"])
+
+
 def test_fit_compiler_uses_electronic_component_as_dependency_not_observable():
     model = _chain_model()
     tight_binding = ModelComponentSpec(
@@ -499,6 +738,92 @@ def test_stoner_component_replaces_bare_observable_and_reuses_its_parameters():
     assert prediction.shape == (2,)
     assert np.all(np.isfinite(prediction))
     assert np.all(prediction >= 0.0)
+
+
+def test_dressed_response_shares_parameters_across_multiple_datasets():
+    model = _chain_model()
+    tight_binding = ModelComponentSpec(
+        name="bands",
+        type="tight_binding",
+        config={
+            **{
+                field.name: field.default
+                for field in model_definition("tight_binding").config_fields
+            },
+            "model_data": model.to_dict(),
+            "periodic_axes": [0],
+        },
+    )
+    lindhard = ModelComponentSpec(
+        name="bare",
+        type="lindhard",
+        parameters={"broadening": 0.5},
+        fit_parameters={"broadening": True},
+        config={
+            **{
+                field.name: field.default
+                for field in model_definition("lindhard").config_fields
+            },
+            "electronic_component": "bands",
+            "response_mesh": [16],
+            "response_mesh_shift": [0.0],
+        },
+    )
+    stoner = ModelComponentSpec(
+        name="dressed",
+        type="stoner_rpa",
+        parameters={"I": 0.1},
+        fit_parameters={"I": True},
+        config={
+            **{
+                field.name: field.default
+                for field in model_definition("stoner_rpa").config_fields
+            },
+            "response_component": "bare",
+        },
+    )
+
+    def points(q):
+        return PointData4D(
+            H=np.full(2, q),
+            K=np.zeros(2),
+            L=np.zeros(2),
+            E=np.asarray([1.0, 2.0]),
+            intensity=np.zeros(2),
+            sigma=np.ones(2),
+            temperature=20.0,
+        )
+
+    compiled = compile_fit_problem(
+        [tight_binding, lindhard, stoner],
+        [
+            FitDatasetInput(
+                "scan_a",
+                points(0.25),
+                data_type="single_crystal_inelastic",
+            ),
+            FitDatasetInput(
+                "scan_b",
+                points(0.5),
+                data_type="single_crystal_inelastic",
+            ),
+        ],
+    )
+
+    assert compiled.components_by_dataset == {
+        "scan_a": ["dressed"],
+        "scan_b": ["dressed"],
+    }
+    assert compiled.instances_for("dressed", "I")[0].datasets == (
+        "scan_a",
+        "scan_b",
+    )
+    params = {"bare.broadening": 0.5, "dressed.I": 0.1}
+    first = evaluate_problem_model(compiled.problem, "scan_a", params)
+    second = evaluate_problem_model(compiled.problem, "scan_b", params)
+    assert np.all(np.isfinite(first))
+    assert np.all(np.isfinite(second))
+    assert not np.allclose(first, second)
 
 
 def test_stoner_model_plot_and_exported_script_are_equivalent():

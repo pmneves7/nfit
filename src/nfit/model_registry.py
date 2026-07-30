@@ -1322,6 +1322,17 @@ def _register_builtin_models() -> None:
                     "[0.5, 0.5, 0.5]",
                 ),
                 _config_field(
+                    "response_symmetry",
+                    "auto",
+                    (
+                        "Use a full response mesh, require certified little-group "
+                        "reduction, or reduce automatically with a recorded fallback."
+                    ),
+                    "One of auto, full, or reduced.",
+                    "str",
+                    "auto",
+                ),
+                _config_field(
                     "chemical_potential_mode",
                     "source",
                     (
@@ -1364,6 +1375,42 @@ def _register_builtin_models() -> None:
                     "8",
                 ),
                 _config_field(
+                    "response_validate_backend",
+                    True,
+                    (
+                        "Compare a deterministic probe with serial NumPy before "
+                        "using a threaded or GPU backend for a new model digest."
+                    ),
+                    "Boolean.",
+                    "bool",
+                    "true",
+                ),
+                _config_field(
+                    "response_backend_probe_points",
+                    8,
+                    "Number of mesh points used for backend equivalence certification.",
+                    "Positive integer.",
+                    "int",
+                    "12",
+                ),
+                _config_field(
+                    "response_backend_rtol",
+                    1.0e-10,
+                    "Relative eigenvalue tolerance for backend certification.",
+                    "Finite nonnegative number.",
+                    "float",
+                    "1e-9",
+                ),
+                _config_field(
+                    "response_backend_atol_meV",
+                    1.0e-8,
+                    "Absolute eigenvalue tolerance for backend certification.",
+                    "Finite nonnegative energy.",
+                    "float",
+                    "1e-7",
+                    "meV",
+                ),
+                _config_field(
                     "response_max_batch_mb",
                     256.0,
                     "Temporary-memory target for electronic eigensystem batches.",
@@ -1371,6 +1418,38 @@ def _register_builtin_models() -> None:
                     "float",
                     "512",
                     "MiB",
+                ),
+                _config_field(
+                    "response_transition_max_batch_mb",
+                    256.0,
+                    (
+                        "Temporary-memory target for particle-hole transition "
+                        "matrix-element and denominator batches."
+                    ),
+                    "Positive finite memory size.",
+                    "float",
+                    "512",
+                    "MiB",
+                ),
+                _config_field(
+                    "response_cache_mb",
+                    512.0,
+                    (
+                        "Maximum numerical-array memory retained for reusable "
+                        "base and shifted eigensystems; zero disables retention."
+                    ),
+                    "Finite nonnegative memory size.",
+                    "float",
+                    "1024",
+                    "MiB",
+                ),
+                _config_field(
+                    "response_cache_entries",
+                    64,
+                    "Maximum number of reusable eigensystems retained by this response.",
+                    "Nonnegative integer.",
+                    "int",
+                    "128",
                 ),
                 _config_field(
                     "powder_orientations",
@@ -1451,6 +1530,48 @@ def _register_builtin_models() -> None:
                     "20.0",
                     "K",
                 ),
+                _config_field(
+                    "convergence_mesh_scales",
+                    [0.5, 0.75, 1.0],
+                    (
+                        "Factors applied to each response-mesh dimension for "
+                        "the convergence plot; the last entry is the reference."
+                    ),
+                    "List of positive finite factors.",
+                    "list",
+                    "[0.5, 1.0, 1.5]",
+                ),
+                _config_field(
+                    "convergence_broadening_scales",
+                    [2.0, 1.0, 0.5],
+                    (
+                        "Factors applied to the current broadening for the "
+                        "convergence plot; the last entry is the reference."
+                    ),
+                    "List of positive finite factors.",
+                    "list",
+                    "[2.0, 1.0, 0.5]",
+                ),
+                _config_field(
+                    "convergence_energy_points",
+                    9,
+                    (
+                        "Energy samples spanning the configured plot window "
+                        "for mesh and broadening convergence."
+                    ),
+                    "Integer of at least 1.",
+                    "int",
+                    "17",
+                ),
+                _config_field(
+                    "convergence_relative_floor",
+                    1.0e-12,
+                    "Denominator floor for reported relative convergence changes.",
+                    "Positive finite susceptibility magnitude.",
+                    "float",
+                    "1e-10",
+                    "meV^-1 cell^-1",
+                ),
             ),
             validate_component=_fit_validator("_validate_lindhard_component"),
             report_sections=_report_sections("lindhard_report_sections"),
@@ -1476,6 +1597,29 @@ def _register_builtin_models() -> None:
                     ),
                     context_script=_model_plot_script(
                         "lindhard_energy_scan_script"
+                    ),
+                ),
+                ModelPlotDefinition(
+                    key="convergence",
+                    label="Mesh and broadening convergence",
+                    description=(
+                        "Compare response meshes and broadenings independently "
+                        "over representative Q-energy points."
+                    ),
+                    calculate=_model_plot_calculator(
+                        "lindhard_convergence_scan_unbound"
+                    ),
+                    context_calculate=_model_plot_calculator(
+                        "lindhard_convergence_scan"
+                    ),
+                    render=_model_plot_renderer(
+                        "render_lindhard_convergence_scan"
+                    ),
+                    script=_model_plot_script(
+                        "lindhard_convergence_scan_script_unbound"
+                    ),
+                    context_script=_model_plot_script(
+                        "lindhard_convergence_scan_script"
                     ),
                 ),
             ),

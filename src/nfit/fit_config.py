@@ -251,6 +251,7 @@ def _lindhard_factory(
 ) -> ModelFunction:
     """Build a bare or interaction-dressed response evaluator."""
 
+    from .electronic_backends import validate_electronic_backend
     from .electronic_interactions import (
         correlated_basis_indices,
         hubbard_hund_spin_vertex,
@@ -260,11 +261,13 @@ def _lindhard_factory(
         scalar_stoner_vertex,
     )
     from .electronic_response import (
+        ElectronicResponseCache,
         bare_lindhard_susceptibility,
         bare_spin_susceptibility,
         chemical_potential_for_filling,
         neutron_spin_contraction,
         orbital_pair_operator_basis,
+        response_k_mesh,
     )
     from .electronic_structure import electronic_model_from_component, k_mesh
 
@@ -293,6 +296,14 @@ def _lindhard_factory(
     batch_bytes = int(
         float(config.get("response_max_batch_mb", 256.0)) * 1024**2
     )
+    transition_batch_bytes = int(
+        float(config.get("response_transition_max_batch_mb", 256.0))
+        * 1024**2
+    )
+    response_cache = ElectronicResponseCache(
+        max_bytes=int(float(config.get("response_cache_mb", 512.0)) * 1024**2),
+        max_entries=int(config.get("response_cache_entries", 64)),
+    )
     powder_orientations = int(config.get("powder_orientations", 50))
     formula_units_per_cell = float(config.get("formula_units_per_cell", 1.0))
     dressing_config = (
@@ -309,17 +320,55 @@ def _lindhard_factory(
         if dressing_component is not None
         else {}
     )
+    validated_digests: set[str] = set()
 
     def resolved_model(params: Mapping[str, float]):
         values = {
             parameter: float(params[key])
             for parameter, key in source_parameter_keys.items()
         }
-        return (
+        resolved = (
             base_model.with_parameters(**values, energy_unit="meV")
             if values
             else base_model
         )
+        if (
+            bool(config.get("response_validate_backend", True))
+            and backend != "numpy"
+            and resolved.content_digest not in validated_digests
+        ):
+            count = min(
+                int(config.get("response_backend_probe_points", 8)),
+                mesh.reduced_coordinates.shape[0],
+            )
+            probe_indices = np.linspace(
+                0,
+                mesh.reduced_coordinates.shape[0] - 1,
+                count,
+                dtype=int,
+            )
+            validation = validate_electronic_backend(
+                resolved,
+                mesh.reduced_coordinates[probe_indices],
+                backend,
+                workers=workers,
+                max_batch_bytes=batch_bytes,
+                relative_tolerance=float(
+                    config.get("response_backend_rtol", 1.0e-10)
+                ),
+                absolute_tolerance_meV=float(
+                    config.get("response_backend_atol_meV", 1.0e-8)
+                ),
+                require_requested_backend=True,
+            )
+            if not validation.passed:
+                raise RuntimeError(
+                    "electronic response backend validation failed: "
+                    f"{validation.reason}; max absolute error "
+                    f"{validation.max_absolute_error_meV:g} meV"
+                )
+            validated_digests.add(resolved.content_digest)
+        return resolved
 
     def chemical_potential(model: Any, temperature: float) -> float:
         mode = str(config.get("chemical_potential_mode", "source"))
@@ -333,6 +382,7 @@ def _lindhard_factory(
             backend=backend,
             workers=workers,
             max_batch_bytes=batch_bytes,
+            cache=response_cache,
         )
 
     def response_at_points(
@@ -347,6 +397,18 @@ def _lindhard_factory(
         for value in np.unique(temperature):
             selected = np.flatnonzero(temperature == value)
             mu = chemical_potential(model, float(value))
+            evaluation_mesh = response_k_mesh(
+                model,
+                config.get("response_mesh", [16, 16, 16]),
+                q_reduced[selected],
+                shift=config.get("response_mesh_shift", [0.0, 0.0, 0.0]),
+                symmetry=str(config.get("response_symmetry", "auto")),
+                operator_kind=(
+                    "orbital_pair_matrix"
+                    if dressing_kind == "hubbard_hund"
+                    else "implicit_isotropic_spin"
+                ),
+            )
             common = {
                 "temperature_K": float(value),
                 "chemical_potential_meV": mu,
@@ -354,6 +416,8 @@ def _lindhard_factory(
                 "backend": backend,
                 "workers": workers,
                 "max_batch_bytes": batch_bytes,
+                "transition_max_batch_bytes": transition_batch_bytes,
+                "cache": response_cache,
             }
             if dressing_kind == "hubbard_hund":
                 shells = dressing_config.get("correlated_shells", [])
@@ -367,7 +431,7 @@ def _lindhard_factory(
                     model,
                     q_reduced[selected],
                     energy[selected],
-                    mesh,
+                    evaluation_mesh,
                     operators,
                     **common,
                 )
@@ -399,7 +463,7 @@ def _lindhard_factory(
                     model,
                     q_reduced[selected],
                     energy[selected],
-                    mesh,
+                    evaluation_mesh,
                     **common,
                 )
                 if dressing_kind == "stoner":
@@ -644,6 +708,12 @@ def _validate_lindhard_component(component: Any) -> None:
     shift = tuple(float(value) for value in config.get("response_mesh_shift", ()))
     if len(shift) not in {1, 2, 3} or any(not np.isfinite(value) for value in shift):
         raise ValueError("response_mesh_shift must contain finite mesh offsets")
+    if str(config.get("response_symmetry", "auto")) not in {
+        "auto",
+        "full",
+        "reduced",
+    }:
+        raise ValueError("response_symmetry must be auto, full, or reduced")
     if str(config.get("chemical_potential_mode", "source")) not in {
         "source",
         "filling",
@@ -658,11 +728,33 @@ def _validate_lindhard_component(component: Any) -> None:
         "cupy",
     }:
         raise ValueError("response_backend must be numpy, threaded, or cupy")
+    if int(config.get("response_backend_probe_points", 8)) < 1:
+        raise ValueError("response_backend_probe_points must be positive")
+    backend_rtol = float(config.get("response_backend_rtol", 1.0e-10))
+    backend_atol = float(config.get("response_backend_atol_meV", 1.0e-8))
+    if not np.isfinite(backend_rtol) or backend_rtol < 0.0:
+        raise ValueError("response_backend_rtol must be finite and nonnegative")
+    if not np.isfinite(backend_atol) or backend_atol < 0.0:
+        raise ValueError(
+            "response_backend_atol_meV must be finite and nonnegative"
+        )
     if int(config.get("response_workers", 1)) < 1:
         raise ValueError("response_workers must be positive")
     memory = float(config.get("response_max_batch_mb", 256.0))
     if not np.isfinite(memory) or memory <= 0.0:
         raise ValueError("response_max_batch_mb must be finite and positive")
+    transition_memory = float(
+        config.get("response_transition_max_batch_mb", 256.0)
+    )
+    if not np.isfinite(transition_memory) or transition_memory <= 0.0:
+        raise ValueError(
+            "response_transition_max_batch_mb must be finite and positive"
+        )
+    cache_memory = float(config.get("response_cache_mb", 512.0))
+    if not np.isfinite(cache_memory) or cache_memory < 0.0:
+        raise ValueError("response_cache_mb must be finite and nonnegative")
+    if int(config.get("response_cache_entries", 64)) < 0:
+        raise ValueError("response_cache_entries must be nonnegative")
     if int(config.get("powder_orientations", 50)) < 6:
         raise ValueError("powder_orientations must be at least 6")
     formula_units = float(config.get("formula_units_per_cell", 1.0))
@@ -687,6 +779,35 @@ def _validate_lindhard_component(component: Any) -> None:
         raise ValueError(
             "filling-based plot chemical potential requires positive temperature"
         )
+    mesh_scales = np.asarray(
+        config.get("convergence_mesh_scales", ()),
+        dtype=float,
+    )
+    broadening_scales = np.asarray(
+        config.get("convergence_broadening_scales", ()),
+        dtype=float,
+    )
+    if (
+        mesh_scales.ndim != 1
+        or mesh_scales.size < 1
+        or np.any(~np.isfinite(mesh_scales))
+        or np.any(mesh_scales <= 0.0)
+    ):
+        raise ValueError("convergence_mesh_scales must be positive and finite")
+    if (
+        broadening_scales.ndim != 1
+        or broadening_scales.size < 1
+        or np.any(~np.isfinite(broadening_scales))
+        or np.any(broadening_scales <= 0.0)
+    ):
+        raise ValueError(
+            "convergence_broadening_scales must be positive and finite"
+        )
+    if int(config.get("convergence_energy_points", 9)) < 1:
+        raise ValueError("convergence_energy_points must be positive")
+    relative_floor = float(config.get("convergence_relative_floor", 1.0e-12))
+    if not np.isfinite(relative_floor) or relative_floor <= 0.0:
+        raise ValueError("convergence_relative_floor must be finite and positive")
     _validate_scalar_bulk_config(component)
 
 

@@ -48,12 +48,15 @@ Lindhard response now provides a complex bare susceptibility, Cartesian spin
 and neutron projections, source-chemical-potential or filling control,
 neutron and bulk dataset comparison, plotting, fitting, and script export.
 Scalar Stoner, user-matrix, and local multiorbital Hubbard--Hund RPA
-interaction dressings are implemented. Later response stages add production
-convergence and acceleration, BCS superconductivity, and advanced correlated extensions.
-Later performance work includes scheduler adapters, wider certified symmetry
-support, convergence management, and workload-specific compiled or sparse
-kernels. A capability remains planned until its model page documents an
-implemented public API.
+interaction dressings are implemented. Production response evaluation now
+includes bounded transition batches, model-digest-aware eigensystem reuse,
+backend certification, fail-closed little-group reduction, independent mesh
+and broadening convergence, and scheduler-neutral chunks with an editable
+Slurm launcher. Later response stages add BCS superconductivity and advanced
+correlated extensions. Later performance work includes wider certified
+operator transformations and workload-specific compiled or sparse kernels. A
+capability remains planned until its model page documents an implemented
+public API.
 
 Instrument resolution, finite-bin integration, absorption, and related
 measurement effects will form an optional dataset-owned systematics layer

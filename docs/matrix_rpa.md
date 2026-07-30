@@ -74,6 +74,9 @@ dressed = rpa_dress_susceptibility(bare, vertex)
 The scale can be fixed, fitted, and shared using the standard machinery.
 Projects, fit results, reports, and scripts retain the matrix, operator order,
 channel, unit conversion, and pole diagnostics.
+The referenced response supplies the cache, batching, backend certification,
+and convergence settings. Certified implicit-spin bare responses may use
+little-group mesh reduction before this Cartesian interaction is applied.
 
 ## Current limits
 

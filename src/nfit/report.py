@@ -1177,6 +1177,7 @@ def lindhard_report_sections(
     source = latex_escape(config.get("electronic_component", "--"))
     mode = latex_escape(config.get("chemical_potential_mode", "source"))
     backend = latex_escape(config.get("response_backend", "numpy"))
+    symmetry = latex_escape(config.get("response_symmetry", "auto"))
     lines = [
         f"\\section{{Bare Lindhard spin susceptibility ({name})}}",
         (
@@ -1184,7 +1185,9 @@ def lindhard_report_sections(
             f"on the full mesh \\texttt{{{mesh}}} with mesh-step shift "
             f"\\texttt{{{shift}}}. The chemical-potential policy is "
             f"\\texttt{{{mode}}} and the requested eigensystem backend is "
-            f"\\texttt{{{backend}}}."
+            f"\\texttt{{{backend}}}. Response symmetry policy "
+            f"\\texttt{{{symmetry}}} reduces only a certified little group and "
+            "otherwise records a full-mesh fallback."
         ),
         "\\begin{tabular}{l l}",
         "\\toprule",
@@ -1202,8 +1205,31 @@ def lindhard_report_sections(
             "Powder orientations & "
             f"{_fmt(config.get('powder_orientations', 50))} \\\\"
         ),
+        (
+            "Eigensystem batch target & "
+            f"{_fmt(config.get('response_max_batch_mb', 256.0))} MiB \\\\"
+        ),
+        (
+            "Transition batch target & "
+            f"{_fmt(config.get('response_transition_max_batch_mb', 256.0))} MiB \\\\"
+        ),
+        (
+            "Eigensystem cache limit & "
+            f"{_fmt(config.get('response_cache_mb', 512.0))} MiB \\\\"
+        ),
+        (
+            "Backend certification & "
+            f"{latex_escape(bool(config.get('response_validate_backend', True)))} "
+            f"($r={_fmt(config.get('response_backend_rtol', 1.0e-10))}$, "
+            f"$a={_fmt(config.get('response_backend_atol_meV', 1.0e-8))}$ meV) \\\\"
+        ),
         "\\bottomrule",
         "\\end{tabular}",
+        (
+            "Mesh convergence is compared at fixed broadening, and broadening "
+            "convergence at fixed mesh; changing $\\eta$ is not treated as a "
+            "substitute for increasing the integration mesh."
+        ),
     ]
     return (("Bare Lindhard spin susceptibility", "\n".join(lines)),)
 

@@ -83,11 +83,13 @@ from .crystal import (
 )
 from .dataset import PointData4D, PointListData, from_arrays
 from .electronic_backends import (
+    ElectronicBackendValidation,
     ElectronicEigensystem,
     available_electronic_backends,
     electronic_backend,
     evaluate_eigensystem,
     set_electronic_backend,
+    validate_electronic_backend,
 )
 from .electronic_builder import (
     ORBITAL_PRESETS,
@@ -132,6 +134,13 @@ from .electronic_builder import (
     tight_binding_parameter_names,
     tight_binding_parameter_terms,
 )
+from .electronic_distributed import (
+    ResponseChunkResult,
+    ResponsePointChunk,
+    merge_response_chunks,
+    partition_response_points,
+    response_slurm_array_script,
+)
 from .electronic_interactions import (
     InteractionVertex,
     correlated_basis_indices,
@@ -149,6 +158,8 @@ from .electronic_matrix import (
 )
 from .electronic_response import (
     ElectronicOperatorBasis,
+    ElectronicResponseCache,
+    ResponseConvergenceResult,
     SusceptibilityResult,
     bare_lindhard_susceptibility,
     bare_spin_susceptibility,
@@ -157,6 +168,8 @@ from .electronic_response import (
     isotropic_spin_component,
     neutron_spin_contraction,
     orbital_pair_operator_basis,
+    response_convergence_scan,
+    response_k_mesh,
     spin_operator_matrices,
 )
 from .electronic_spin import (
@@ -313,10 +326,13 @@ from .model_plots import (
     electronic_rpa_energy_scan_script,
     generalized_paramagnon_energy_scan,
     generalized_paramagnon_energy_scan_script,
+    lindhard_convergence_scan,
+    lindhard_convergence_scan_script,
     render_band_structure,
     render_density_of_states,
     render_fermi_surface,
     render_generalized_paramagnon_energy_scan,
+    render_lindhard_convergence_scan,
     tight_binding_band_structure,
     tight_binding_density_of_states,
     tight_binding_fermi_surface,
@@ -523,8 +539,13 @@ __all__ = [
     "DatasetOutput",
     "DensityOfStatesResult",
     "ElectronicOperatorBasis",
+    "ElectronicResponseCache",
+    "ResponseConvergenceResult",
+    "ResponseChunkResult",
+    "ResponsePointChunk",
     "ElectronicModel",
     "ElectronicEigensystem",
+    "ElectronicBackendValidation",
     "InteractionVertex",
     "GeometryFrame",
     "GeometryOrbital",
@@ -816,6 +837,7 @@ __all__ = [
     "symmetry_allowed_exchange_basis",
     "symmetry_allowed_sia_basis",
     "validate_crystal",
+    "validate_electronic_backend",
     "perform_group_fit",
     "qualified_parameter_name",
     "run_group_fit",
@@ -879,6 +901,8 @@ __all__ = [
     "fit_workflow_plan",
     "fit_workflow_script",
     "hubbard_hund_spin_vertex",
+    "lindhard_convergence_scan",
+    "lindhard_convergence_scan_script",
     "render_workflow_script",
     "make_box_mask_transform",
     "make_constant_intensity_model",
@@ -893,6 +917,7 @@ __all__ = [
     "mask_out_ellipsoid",
     "mask_out_energy_q_range",
     "mask_out_phonon_cone",
+    "merge_response_chunks",
     "mdhisto_with_signal_like",
     "plot_mdhisto_auto",
     "plot_mdhisto_fit_comparison",
@@ -900,6 +925,7 @@ __all__ = [
     "plot_mdhisto_line",
     "plot_mdhisto_slice",
     "plot_mdhisto_waterfall",
+    "partition_response_points",
     "prepare_mdhisto_waterfall",
     "project_implicit_spin_response",
     "default_waterfall_offset",
@@ -917,10 +943,14 @@ __all__ = [
     "q_modulus_inv_angstrom",
     "q_vectors_inv_angstrom",
     "rebin_point_data",
+    "response_convergence_scan",
+    "response_k_mesh",
+    "response_slurm_array_script",
     "direct_basis_from_lattice_parameters",
     "magnetic_field_vector",
     "reciprocal_basis_from_lattice_parameters",
     "relaxational_chipp",
+    "render_lindhard_convergence_scan",
     "rpa_dress_susceptibility",
     "residual_mdhisto",
     "rebin_nd",

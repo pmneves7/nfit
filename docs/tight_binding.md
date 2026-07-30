@@ -233,7 +233,8 @@ The tight-binding component itself remains an electronic-structure provider,
 not an additive dataset observable. A separate
 [bare Lindhard response](lindhard.md) can reference it to calculate neutron
 intensity or bulk susceptibility and to fit the electronic coefficients
-through that response. Interaction dressings are Stage 5.
+through that response. Separate scalar Stoner, user-matrix, and
+Hubbard--Hund RPA components can dress the bare response.
 
 ## Structure-first orbital, onsite, and hopping builder
 
@@ -808,7 +809,10 @@ well as converting the horizontal axis.
 
 Electronic calculations use float64/complex128 throughout. `auto` keeps the
 NumPy reference path and may split sufficiently large work across bounded CPU
-workers. `threaded` selects that split explicitly. `cupy` is an explicit GPU
+workers. The threaded path constructs each bounded wave of Hamiltonians
+serially, then diagonalizes only completed matrices in parallel; this avoids
+platform eigensolver calls overlapping Hamiltonian assembly. `threaded`
+selects that split explicitly. `cupy` is an explicit GPU
 opt-in and falls back to NumPy when no compatible CuPy device is available.
 Set the process default with `set_electronic_backend()` or
 `NFIT_ELECTRONIC_BACKEND`; `electronic_workers=0` follows `NFIT_NUM_THREADS`.

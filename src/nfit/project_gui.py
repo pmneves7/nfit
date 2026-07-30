@@ -18802,6 +18802,25 @@ class NfitProjectExplorer:
                 config_layout.addWidget(combo, row, 1)
                 row += 1
                 continue
+            if model.type == "lindhard" and setting_name == "response_symmetry":
+                label.setText("Response symmetry")
+                combo = QtWidgets.QComboBox()
+                combo.setObjectName("lindhard_response_symmetry")
+                combo.setToolTip(tooltip)
+                for policy in ("auto", "full", "reduced"):
+                    combo.addItem(policy, policy)
+                current = str(model.config.get(setting_name, "auto"))
+                combo.setCurrentIndex(max(combo.findData(current), 0))
+                combo.currentIndexChanged.connect(
+                    lambda _index, combo=combo: self._set_model_config_setting(
+                        "response_symmetry",
+                        str(combo.currentData()),
+                    )
+                )
+                config_layout.addWidget(label, row, 0)
+                config_layout.addWidget(combo, row, 1)
+                row += 1
+                continue
             if setting_name in definition.component_reference_fields:
                 reference_types = definition.metadata.get("reference_types", {})
                 allowed_types = (

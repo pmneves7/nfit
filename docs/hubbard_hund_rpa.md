@@ -107,6 +107,12 @@ uncertainty machinery. Exported results record the selected basis, shell
 locality, resolved rotational constraints, operator ordering, interaction
 matrix, and RPA pole diagnostics.
 
+The orbital-pair calculation uses the referenced response's bounded transition
+batches, digest-aware eigensystem cache, and certified execution backend.
+Automatic response-mesh symmetry reduction is intentionally disabled for this
+matrix basis until its full orbital transformation can be certified; the
+calculation records a full-mesh fallback.
+
 ## Current limits
 
 - The standard preset requires an implicit-spin normal-state model. Explicit

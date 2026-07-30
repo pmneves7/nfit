@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 import warnings
 from dataclasses import replace
 from itertools import permutations, product
@@ -31,6 +33,7 @@ from nfit import (
     model_definition,
     save_electronic_model,
     save_project,
+    validate_electronic_backend,
 )
 
 
@@ -257,6 +260,10 @@ def test_eigensystem_backends_preserve_reference_values_and_order(monkeypatch):
     assert threaded.provenance["resolved_backend"] == "threaded"
     assert threaded.provenance["approximation"] == "none"
     assert threaded.provenance["batch_size"] < coordinates.shape[0]
+    assert (
+        threaded.provenance["thread_schedule"]
+        == "serial_hamiltonian_parallel_eigensolver_waves"
+    )
 
     with_vectors = evaluate_eigensystem(
         model,
@@ -299,6 +306,79 @@ def test_eigensystem_backends_preserve_reference_values_and_order(monkeypatch):
             eigenvectors=False,
             workers=-1,
         )
+
+
+def test_threaded_backend_never_overlaps_model_evaluation_with_eigensolver(
+    monkeypatch,
+):
+    import nfit.electronic_backends as backends
+
+    base_model = _square_two_orbital_model()
+    lock = threading.Lock()
+    active_eigensolvers = 0
+    original = backends._numpy_matrices_chunk
+
+    def guarded_eigensolver(matrices, *, eigenvectors):
+        nonlocal active_eigensolvers
+        with lock:
+            active_eigensolvers += 1
+        try:
+            time.sleep(0.005)
+            return original(matrices, eigenvectors=eigenvectors)
+        finally:
+            with lock:
+                active_eigensolvers -= 1
+
+    class GuardedModel:
+        def __getattr__(self, name):
+            return getattr(base_model, name)
+
+        def hamiltonian(self, coordinates):
+            with lock:
+                assert active_eigensolvers == 0
+            return base_model.hamiltonian(coordinates)
+
+    monkeypatch.setattr(
+        backends,
+        "_numpy_matrices_chunk",
+        guarded_eigensolver,
+    )
+    result = evaluate_eigensystem(
+        GuardedModel(),
+        k_mesh(base_model, (31, 17)).reduced_coordinates,
+        eigenvectors=True,
+        backend="threaded",
+        workers=3,
+        max_batch_bytes=2048,
+    )
+
+    assert result.eigenvectors is not None
+    assert result.provenance["resolved_backend"] == "threaded"
+
+
+def test_backend_validation_certifies_threaded_and_reports_fallback(monkeypatch):
+    model = _square_two_orbital_model()
+    coordinates = k_mesh(model, (7, 5)).reduced_coordinates
+    threaded = validate_electronic_backend(
+        model,
+        coordinates,
+        "threaded",
+        workers=2,
+    )
+
+    assert threaded.passed
+    assert threaded.resolved_backend == "threaded"
+    assert threaded.max_absolute_error_meV == 0.0
+
+    monkeypatch.setattr("nfit.electronic_backends._CUPY_BACKEND", None)
+    fallback = validate_electronic_backend(
+        model,
+        coordinates[:2],
+        "cupy",
+    )
+    assert not fallback.passed
+    assert fallback.resolved_backend == "numpy"
+    assert "resolved to" in fallback.reason
 
 
 def test_symmetry_reduced_mesh_is_opt_in_and_preserves_total_dos():

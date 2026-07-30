@@ -122,6 +122,49 @@ mode.
 Fermi-surface extraction also retains a regular full grid because marching
 contours require its topology.
 
+## Electronic response
+
+The Lindhard and electronic-RPA path separates three memory controls:
+
+- `response_max_batch_mb` bounds temporary Hamiltonian/eigensystem waves;
+- `response_transition_max_batch_mb` bounds particle--hole matrix elements and
+  denominators; and
+- `response_cache_mb` plus `response_cache_entries` bound reusable immutable
+  eigensystems.
+
+Cache keys include the electronic-model digest and execution inputs. Varying
+only broadening or an interaction vertex can reuse bands; changing any onsite,
+hopping, or SOC coefficient creates a different digest. The cache is local to
+one compiled response evaluator and is never serialized as scientific state.
+
+Threaded response execution first constructs a bounded wave of Hamiltonians
+serially and then diagonalizes those completed matrices in parallel. This
+prevents Apple Accelerate or another LAPACK implementation from overlapping
+with complex Hamiltonian assembly. Results retain input order and use the same
+NumPy eigensolver as the serial reference.
+
+`response_validate_backend=true` compares a deterministic mesh probe with
+serial NumPy before a new model digest uses threaded or CuPy execution.
+Requested CuPy response execution therefore fails clearly when CuPy is
+unavailable or exceeds its tolerance, even though the lower-level electronic
+service retains its documented NumPy fallback.
+
+`response_symmetry="auto"` uses only the certified little group that fixes all
+requested wavevectors. It currently applies to nfit-built implicit isotropic
+spin responses. Imported models, explicit-spin operators, orbital-pair
+matrices, and generic wavevector sets retain the full mesh. `"reduced"`
+requires certification and `"full"` disables the attempt.
+
+The convergence plot varies mesh and broadening independently. Its mesh metric
+compares meshes at fixed $\eta$; its broadening metric compares $\eta$ values
+at fixed mesh. This distinction is required because extra broadening can hide
+an underconverged mesh.
+
+For jobs larger than one process, `partition_response_points` and
+`merge_response_chunks` define deterministic scheduler-neutral work units.
+`response_slurm_array_script` supplies an editable Slurm wrapper, but nfit
+does not submit jobs or prescribe a shared-filesystem policy.
+
 ## Threads
 
 nfit respects the CPUs available through affinity, cgroups, or a SLURM
