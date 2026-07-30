@@ -79,9 +79,11 @@ P_{\alpha\beta}(\mathbf Q)
 $$
 
 At $\mathbf Q=0$, the orientation-independent limit is
-$P_{\alpha\beta}=\tfrac23\delta_{\alpha\beta}$. The dataset layer then applies
-the magnetic form factor, fluctuation--dissipation factor, normalization, and
-dataset scale described in [Physics conventions](physics_conventions.md).
+$P_{\alpha\beta}=\tfrac23\delta_{\alpha\beta}$. The response configuration
+supplies the magnetic form factor; the dataset's declared spectral convention
+then applies the fluctuation--dissipation factor and normalization. Dataset
+scale remains separate, as described in
+[Physics conventions](physics_conventions.md).
 
 ## Parameters
 

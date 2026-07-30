@@ -20,43 +20,44 @@ releases. Current behavior is documented in the workflow and API pages.
 
 ## Electronic-response models
 
-Electronic-response models are being added in independently testable stages.
-The tight-binding, bare Lindhard, and RPA interaction-dressing stages are
-available; correlated-electron responses beyond RPA remain planned. Their conventions, initial
-scope, provenance requirements, dependency policy, validation matrix, and
-stage gates are fixed in the
-[Electronic-response design contract](electronic_response_contract.md).
-The CIF-to-orbital manual construction workflow is specified separately in the
-[Tight-binding model-builder plan](tight_binding_builder_plan.md).
+Current tight-binding, Lindhard, and RPA capabilities are documented under
+[Electronic-structure and electronic-response models](electronic_structure_models.md).
+The [electronic-response design contract](electronic_response_contract.md)
+defines the conventions that future extensions must preserve.
 
-The shared model registry, generalized paramagnon/damped-mode response, and
-arbitrary tight-binding electronic-structure layer are implemented. The
-CIF/manual builder now includes orbital manifolds, local frames, static onsite
-invariants, symmetry-constrained hoppings, hopping-path inspection, a shared
-tight-binding/Heisenberg 3D geometry viewer, and a labelled 3D
-Brillouin-zone viewer. Named electronic Hamiltonian terms now share the common
-parameter, bounds, fit-selection, dataset-sharing, report, and script
-machinery. Optional explicit collinear and spinor representations,
-manifold-resolved onsite spin-orbit coupling, time-reversal validation, and a
-matrix/subspace inspector are implemented. GUI-built models now provide
-Slater--Koster and general symmetry-matrix hopping conventions, lazy canonical
-Hamiltonian resolution, primitive-cell folding, and Hinuma/HPKOT standard
-paths. Full-precision electronic eigensystems now support bounded serial or
-threaded CPU batches, explicit optional CuPy execution, immutable-model
-caches, and certified symmetry policies for total-DOS meshes. The linked
-Lindhard response now provides a complex bare susceptibility, Cartesian spin
-and neutron projections, source-chemical-potential or filling control,
-neutron and bulk dataset comparison, plotting, fitting, and script export.
-Scalar Stoner, user-matrix, and local multiorbital Hubbard--Hund RPA
-interaction dressings are implemented. Production response evaluation now
-includes bounded transition batches, model-digest-aware eigensystem reuse,
-backend certification, fail-closed little-group reduction, independent mesh
-and broadening convergence, and scheduler-neutral chunks with an editable
-Slurm launcher. Later response stages add BCS superconductivity and advanced
-correlated extensions. Later performance work includes wider certified
-operator transformations and workload-specific compiled or sparse kernels. A
-capability remains planned until its model page documents an implemented
-public API.
+Planned electronic-structure extensions include:
+
+- nonorthogonal bases with an explicit overlap matrix $S(\mathbf k)$;
+- user-supplied symmetry representations for general numerical or Wannier
+  bases;
+- additional external interfaces when they preserve basis, gauge, unit, spin,
+  and provenance information;
+- spin-dependent generated hopping and intentionally time-reversal-breaking
+  electronic Hamiltonians; and
+- richer orbital-resolved controls for electronic plots.
+
+Planned response models include:
+
+- BCS/Nambu quasiparticles, gap functions, coherence factors, and the
+  superconducting particle--hole response;
+- frequency- and momentum-dependent self-energies that separate static onsite
+  coefficients from quasiparticle renormalization and incoherent weight;
+- auxiliary-boson or slave-particle responses for systems where separate
+  itinerant and local degrees of freedom are a useful controlled
+  approximation;
+- additional interaction channels and a spinor-aware Hubbard--Hund vertex;
+  and
+- interfaces to advanced solvers such as DMFT or Bethe--Salpeter workflows
+  without embedding those solvers in nfit.
+
+Performance work may add wider operator-aware symmetry reduction,
+workload-specific compiled or sparse kernels, and more complete accelerator
+support. Such paths must be checked against the serial float64/complex128
+reference and retain deterministic provenance.
+
+A capability is considered implemented only when its public calculation,
+fitting and plotting behavior, scripts, reports, documentation, and validation
+agree.
 
 Instrument resolution, finite-bin integration, absorption, and related
 measurement effects will form an optional dataset-owned systematics layer
