@@ -192,9 +192,9 @@ states, fitted parameters, dataset bindings, and calculated fit channels.
   orbital bases or dense meshes.
 - Response-level symmetry reduction, transition chunking, and distributed
   execution are not yet enabled.
-- The implemented response is the bare bubble with finite lifetime
-  broadening. It has no Stoner, Hubbard--Hund, vertex, self-energy, or
-  superconducting dressing.
+- This component is the bare bubble with finite lifetime broadening. Separate
+  scalar Stoner, matrix, and Hubbard--Hund RPA components can dress it;
+  self-energy and superconducting extensions are not yet included.
 - The basis is orthonormal. Nonorthogonal overlap matrices are not supported.
 
 ## References

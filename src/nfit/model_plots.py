@@ -239,8 +239,13 @@ def render_lindhard_energy_scan(
     )
     imaginary_axis.set_xlabel("Energy transfer (meV)")
     Q = np.asarray(result.Q_reduced[0], dtype=float)
+    response_label = (
+        "Bare spin response"
+        if result.response_kind == "bare"
+        else "Interaction-dressed spin response"
+    )
     real_axis.set_title(
-        rf"Bare spin response at $Q=({Q[0]:g},{Q[1]:g},{Q[2]:g})$ r.l.u."
+        rf"{response_label} at $Q=({Q[0]:g},{Q[1]:g},{Q[2]:g})$ r.l.u."
     )
     figure.tight_layout()
     return figure, (real_axis, imaginary_axis)
@@ -314,6 +319,186 @@ def lindhard_energy_scan_script(
         ]
     )
     return "\n".join(lines)
+
+
+def electronic_rpa_energy_scan_unbound(component: Any) -> Any:
+    """Explain why a linked bare-response component is required."""
+
+    raise ValueError(
+        f"{component.name!r} must be calculated with its referenced "
+        "Lindhard and tight-binding components"
+    )
+
+
+def electronic_rpa_energy_scan(
+    component: Any,
+    components: Mapping[str, Any],
+) -> Any:
+    """Calculate a configured Stoner, matrix, or Hubbard-Hund RPA scan."""
+
+    from .electronic_interactions import (
+        correlated_basis_indices,
+        hubbard_hund_spin_vertex,
+        matrix_interaction_vertex,
+        project_implicit_spin_response,
+        rpa_dress_susceptibility,
+        scalar_stoner_vertex,
+    )
+    from .electronic_response import (
+        bare_lindhard_susceptibility,
+        chemical_potential_for_filling,
+        orbital_pair_operator_basis,
+    )
+
+    response_name = str(component.config.get("response_component", "")).strip()
+    response_component = components.get(response_name)
+    if response_component is None or getattr(response_component, "type", None) != "lindhard":
+        raise ValueError(
+            f"{component.name!r} must reference an enabled Lindhard component"
+        )
+    tolerance = float(component.config.get("singular_tolerance", 1.0e-12))
+    if component.type != "hubbard_hund_rpa":
+        bare = lindhard_energy_scan(response_component, components)
+        if component.type == "stoner_rpa":
+            vertex = scalar_stoner_vertex(
+                bare.operator_labels,
+                float(component.parameters.get("I", 0.1)),
+                energy_unit="eV",
+            )
+        elif component.type == "matrix_rpa":
+            vertex = matrix_interaction_vertex(
+                bare.operator_labels,
+                float(component.parameters.get("scale", 0.1))
+                * np.asarray(component.config.get("vertex_matrix", np.eye(3))),
+                energy_unit="eV",
+                channel=str(component.config.get("channel", "spin")),
+            )
+        else:
+            raise ValueError(f"unsupported electronic RPA model {component.type!r}")
+        return rpa_dress_susceptibility(
+            bare,
+            vertex,
+            singular_tolerance=tolerance,
+        )
+
+    source = _lindhard_source(response_component, components)
+    model = electronic_model_from_component(source)
+    config = response_component.config
+    energy = np.linspace(
+        float(config.get("plot_energy_min_meV", -100.0)),
+        float(config.get("plot_energy_max_meV", 100.0)),
+        int(config.get("plot_energy_points", 401)),
+    )
+    Q = np.broadcast_to(
+        np.asarray(config.get("plot_q_reduced", [0.0, 0.0, 0.0]), dtype=float),
+        (energy.size, 3),
+    )
+    mesh = k_mesh(
+        model,
+        config.get("response_mesh", [16, 16, 16]),
+        shift=config.get("response_mesh_shift", [0.0, 0.0, 0.0]),
+        symmetry="full",
+    )
+    temperature = float(config.get("plot_temperature_K", 10.0))
+    execution = {
+        "backend": str(config.get("response_backend", "numpy")),
+        "workers": int(config.get("response_workers", 1)),
+        "max_batch_bytes": int(
+            float(config.get("response_max_batch_mb", 256.0)) * 1024**2
+        ),
+    }
+    if str(config.get("chemical_potential_mode", "source")) == "filling":
+        mu = chemical_potential_for_filling(
+            model,
+            mesh,
+            float(config.get("filling_per_cell", 1.0)),
+            temperature_K=temperature,
+            **execution,
+        )
+    else:
+        mu = float(source.config.get("chemical_potential_meV", 0.0))
+    shells = component.config.get("correlated_shells", [])
+    if isinstance(shells, str):
+        shells = [item.strip() for item in shells.split(",") if item.strip()]
+    indices = correlated_basis_indices(model, shells)
+    operators = orbital_pair_operator_basis(model, list(indices))
+    bare_pairs = bare_lindhard_susceptibility(
+        model,
+        Q,
+        energy,
+        mesh,
+        operators,
+        temperature_K=temperature,
+        chemical_potential_meV=mu,
+        broadening_meV=float(
+            response_component.parameters.get("broadening", 5.0)
+        ),
+        **execution,
+    )
+    vertex = hubbard_hund_spin_vertex(
+        model,
+        indices,
+        U=float(component.parameters.get("U", 1.0)),
+        U_prime=float(component.parameters.get("U_prime", 0.6)),
+        J_H=float(component.parameters.get("J_H", 0.2)),
+        J_pair=float(component.parameters.get("J_pair", 0.2)),
+        rotationally_invariant=bool(
+            component.config.get("rotationally_invariant", True)
+        ),
+        energy_unit="eV",
+    )
+    return project_implicit_spin_response(
+        rpa_dress_susceptibility(
+            bare_pairs,
+            vertex,
+            singular_tolerance=tolerance,
+        ),
+        model,
+        indices,
+    )
+
+
+def electronic_rpa_energy_scan_script_unbound(component: Any) -> str:
+    """Explain why a linked component context is required."""
+
+    electronic_rpa_energy_scan_unbound(component)
+    raise AssertionError("unreachable")
+
+
+def electronic_rpa_energy_scan_script(
+    component: Any,
+    components: Mapping[str, Any],
+) -> str:
+    """Return an editable GUI-free script for an RPA energy scan."""
+
+    from .model_registry import serialize_model_component
+
+    response_name = str(component.config.get("response_component", "")).strip()
+    response = components.get(response_name)
+    if response is None:
+        electronic_rpa_energy_scan_unbound(component)
+    source = _lindhard_source(response, components)
+    payloads = [
+        serialize_model_component(item, purpose="workflow")
+        for item in (source, response, component)
+    ]
+    return "\n".join(
+        [
+            "from nfit import ModelComponentSpec",
+            "from nfit.model_plots import (",
+            "    electronic_rpa_energy_scan,",
+            "    render_lindhard_energy_scan,",
+            ")",
+            "",
+            f"payloads = {payloads!r}",
+            "models = [ModelComponentSpec(**payload) for payload in payloads]",
+            "components = {item.name: item for item in models}",
+            f"result = electronic_rpa_energy_scan(components[{component.name!r}], components)",
+            "figure, axes = render_lindhard_energy_scan(result)",
+            "figure.show()",
+            "",
+        ]
+    )
 
 
 def _projection_groups(component: Any) -> dict[str, list[int]]:

@@ -148,6 +148,51 @@ def test_lindhard_report_records_linked_response_configuration():
     _check_balanced_environments(tex)
 
 
+def test_hubbard_hund_report_records_constraints_and_electronic_units():
+    entry = _background_entry()
+    entry.snapshot["models"] = [
+        {
+            "name": "interactions",
+            "type": "hubbard_hund_rpa",
+            "enabled": True,
+            "parameters": {
+                "U": 2.0,
+                "U_prime": 1.4,
+                "J_H": 0.3,
+                "J_pair": 0.3,
+            },
+            "config": {
+                "response_component": "bare",
+                "singular_tolerance": 1.0e-10,
+                "correlated_shells": ["M1_3d"],
+                "rotationally_invariant": True,
+            },
+            "fit_parameters": {"U": True, "J_H": True},
+            "sharing": {},
+            "limits": {},
+            "constraints": [],
+            "applies_to": None,
+            "metadata": {},
+        }
+    ]
+    entry.goodness["parameters"] = {
+        "interactions.U": 2.1,
+        "interactions.J_H": 0.28,
+    }
+    entry.goodness["stderr"] = {
+        "interactions.U": 0.1,
+        "interactions.J_H": 0.02,
+    }
+
+    tex = render_fit_report_latex(entry, group_name="Electronic")
+
+    assert "Hubbard-Hund RPA" in tex
+    assert "U'=U-2J_H" in tex
+    assert "M1\\_3d" in tex
+    assert "eV" in tex
+    _check_balanced_environments(tex)
+
+
 def _full_rpa_entry():
     """A synthetic full-featured heisenberg_rpa fit entry."""
     sym = [[0.1, 0.2, 0.0], [0.2, -0.1, 0.0], [0.0, 0.0, 0.0]]

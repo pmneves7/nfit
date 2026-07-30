@@ -245,13 +245,26 @@ def _lindhard_unbound_factory(component: Any) -> ModelFunction:
 def _lindhard_factory(
     component: Any,
     components: Mapping[str, Any],
+    *,
+    dressing_component: Any | None = None,
+    dressing_kind: str = "bare",
 ) -> ModelFunction:
-    """Build a bare spin-response evaluator linked to a tight-binding component."""
+    """Build a bare or interaction-dressed response evaluator."""
 
+    from .electronic_interactions import (
+        correlated_basis_indices,
+        hubbard_hund_spin_vertex,
+        matrix_interaction_vertex,
+        project_implicit_spin_response,
+        rpa_dress_susceptibility,
+        scalar_stoner_vertex,
+    )
     from .electronic_response import (
+        bare_lindhard_susceptibility,
         bare_spin_susceptibility,
         chemical_potential_for_filling,
         neutron_spin_contraction,
+        orbital_pair_operator_basis,
     )
     from .electronic_structure import electronic_model_from_component, k_mesh
 
@@ -282,6 +295,20 @@ def _lindhard_factory(
     )
     powder_orientations = int(config.get("powder_orientations", 50))
     formula_units_per_cell = float(config.get("formula_units_per_cell", 1.0))
+    dressing_config = (
+        dressing_component.config
+        if dressing_component is not None
+        and isinstance(dressing_component.config, dict)
+        else {}
+    )
+    dressing_keys = (
+        {
+            name: qualified_parameter_name(dressing_component.name, name)
+            for name in component_parameter_names(dressing_component)
+        }
+        if dressing_component is not None
+        else {}
+    )
 
     def resolved_model(params: Mapping[str, float]):
         values = {
@@ -314,23 +341,98 @@ def _lindhard_factory(
         energy: np.ndarray,
         temperature: np.ndarray,
         eta: float,
+        params: Mapping[str, float],
     ) -> np.ndarray:
         tensor = np.empty((q_reduced.shape[0], 3, 3), dtype=np.complex128)
         for value in np.unique(temperature):
             selected = np.flatnonzero(temperature == value)
             mu = chemical_potential(model, float(value))
-            result = bare_spin_susceptibility(
-                model,
-                q_reduced[selected],
-                energy[selected],
-                mesh,
-                temperature_K=float(value),
-                chemical_potential_meV=mu,
-                broadening_meV=eta,
-                backend=backend,
-                workers=workers,
-                max_batch_bytes=batch_bytes,
-            )
+            common = {
+                "temperature_K": float(value),
+                "chemical_potential_meV": mu,
+                "broadening_meV": eta,
+                "backend": backend,
+                "workers": workers,
+                "max_batch_bytes": batch_bytes,
+            }
+            if dressing_kind == "hubbard_hund":
+                shells = dressing_config.get("correlated_shells", [])
+                if isinstance(shells, str):
+                    shells = [
+                        item.strip() for item in shells.split(",") if item.strip()
+                    ]
+                basis_indices = correlated_basis_indices(model, shells)
+                operators = orbital_pair_operator_basis(model, list(basis_indices))
+                bare = bare_lindhard_susceptibility(
+                    model,
+                    q_reduced[selected],
+                    energy[selected],
+                    mesh,
+                    operators,
+                    **common,
+                )
+                vertex = hubbard_hund_spin_vertex(
+                    model,
+                    basis_indices,
+                    U=float(params[dressing_keys["U"]]),
+                    U_prime=float(params[dressing_keys["U_prime"]]),
+                    J_H=float(params[dressing_keys["J_H"]]),
+                    J_pair=float(params[dressing_keys["J_pair"]]),
+                    rotationally_invariant=bool(
+                        dressing_config.get("rotationally_invariant", True)
+                    ),
+                    energy_unit="eV",
+                )
+                result = project_implicit_spin_response(
+                    rpa_dress_susceptibility(
+                        bare,
+                        vertex,
+                        singular_tolerance=float(
+                            dressing_config.get("singular_tolerance", 1.0e-12)
+                        ),
+                    ),
+                    model,
+                    basis_indices,
+                )
+            else:
+                result = bare_spin_susceptibility(
+                    model,
+                    q_reduced[selected],
+                    energy[selected],
+                    mesh,
+                    **common,
+                )
+                if dressing_kind == "stoner":
+                    vertex = scalar_stoner_vertex(
+                        result.operator_labels,
+                        float(params[dressing_keys["I"]]),
+                        energy_unit="eV",
+                    )
+                    result = rpa_dress_susceptibility(
+                        result,
+                        vertex,
+                        singular_tolerance=float(
+                            dressing_config.get("singular_tolerance", 1.0e-12)
+                        ),
+                    )
+                elif dressing_kind == "matrix":
+                    matrix = np.asarray(
+                        dressing_config.get("vertex_matrix", np.eye(3)),
+                        dtype=np.complex128,
+                    )
+                    vertex = matrix_interaction_vertex(
+                        result.operator_labels,
+                        float(params[dressing_keys["scale"]]) * matrix,
+                        energy_unit="eV",
+                        channel=str(dressing_config.get("channel", "spin")),
+                    )
+                    result = rpa_dress_susceptibility(
+                        result,
+                        vertex,
+                        singular_tolerance=float(
+                            dressing_config.get("singular_tolerance", 1.0e-12)
+                        ),
+                    )
             tensor[selected] = result.values_per_meV_cell
         return tensor
 
@@ -354,6 +456,7 @@ def _lindhard_factory(
                 np.zeros(data.size),
                 temperatures,
                 eta,
+                params,
             )
             chi = np.asarray(
                 np.trace(tensor.real, axis1=1, axis2=2) / 3.0,
@@ -388,6 +491,7 @@ def _lindhard_factory(
                 repeated_energy,
                 repeated_temperature,
                 eta,
+                params,
             )
             from .electronic_response import SusceptibilityResult
 
@@ -425,53 +529,35 @@ def _lindhard_factory(
                     q_reduced = q_cartesian @ np.linalg.inv(
                         electronic_model.reciprocal_lattice
                     ).T
-            response = bare_spin_susceptibility(
+            point_energy = (
+                np.zeros(data.size)
+                if _is_elastic_dataset(data)
+                else np.asarray(data.E)
+            )
+            tensor = response_at_points(
                 electronic_model,
                 q_reduced,
-                np.zeros(data.size) if _is_elastic_dataset(data) else data.E,
-                mesh,
+                point_energy,
+                temperatures,
+                eta,
+                params,
+            )
+            from .electronic_response import SusceptibilityResult
+
+            response = SusceptibilityResult(
+                q_reduced=q_reduced,
+                energy_meV=point_energy,
+                values_per_meV_cell=tensor,
+                operator_labels=("Sx", "Sy", "Sz"),
+                conjugate_indices=(0, 1, 2),
+                model_digest=electronic_model.content_digest,
                 temperature_K=float(temperatures[0]),
                 chemical_potential_meV=chemical_potential(
                     electronic_model,
                     float(temperatures[0]),
                 ),
                 broadening_meV=eta,
-                backend=backend,
-                workers=workers,
-                max_batch_bytes=batch_bytes,
             )
-            if not np.all(temperatures == temperatures[0]):
-                tensor = response_at_points(
-                    electronic_model,
-                    q_reduced,
-                    (
-                        np.zeros(data.size)
-                        if _is_elastic_dataset(data)
-                        else np.asarray(data.E)
-                    ),
-                    temperatures,
-                    eta,
-                )
-                from .electronic_response import SusceptibilityResult
-
-                response = SusceptibilityResult(
-                    q_reduced=q_reduced,
-                    energy_meV=(
-                        np.zeros(data.size)
-                        if _is_elastic_dataset(data)
-                        else np.asarray(data.E)
-                    ),
-                    values_per_meV_cell=tensor,
-                    operator_labels=("Sx", "Sy", "Sz"),
-                    conjugate_indices=(0, 1, 2),
-                    model_digest=electronic_model.content_digest,
-                    temperature_K=float(temperatures[0]),
-                    chemical_potential_meV=chemical_potential(
-                        electronic_model,
-                        float(temperatures[0]),
-                    ),
-                    broadening_meV=eta,
-                )
             contracted = neutron_spin_contraction(
                 response,
                 electronic_model.reciprocal_lattice,
@@ -492,6 +578,60 @@ def _lindhard_factory(
         )
 
     return model
+
+
+def _rpa_unbound_factory(component: Any) -> ModelFunction:
+    """Guard direct construction when the bare-response context is absent."""
+
+    def model(_data: PointData4D, _params: dict[str, float]) -> np.ndarray:
+        raise ValueError(
+            f"{component.name!r} requires its referenced Lindhard component"
+        )
+
+    return model
+
+
+def _rpa_factory(
+    component: Any,
+    components: Mapping[str, Any],
+    *,
+    dressing_kind: str,
+) -> ModelFunction:
+    config = component.config if isinstance(component.config, dict) else {}
+    response_name = str(config.get("response_component", "")).strip()
+    response = components.get(response_name)
+    if response is None or getattr(response, "type", None) != "lindhard":
+        raise ValueError(
+            f"RPA component {component.name!r} must reference an enabled "
+            "Lindhard component"
+        )
+    return _lindhard_factory(
+        response,
+        components,
+        dressing_component=component,
+        dressing_kind=dressing_kind,
+    )
+
+
+def _stoner_rpa_factory(
+    component: Any,
+    components: Mapping[str, Any],
+) -> ModelFunction:
+    return _rpa_factory(component, components, dressing_kind="stoner")
+
+
+def _matrix_rpa_factory(
+    component: Any,
+    components: Mapping[str, Any],
+) -> ModelFunction:
+    return _rpa_factory(component, components, dressing_kind="matrix")
+
+
+def _hubbard_hund_rpa_factory(
+    component: Any,
+    components: Mapping[str, Any],
+) -> ModelFunction:
+    return _rpa_factory(component, components, dressing_kind="hubbard_hund")
 
 
 def _validate_lindhard_component(component: Any) -> None:
@@ -548,6 +688,47 @@ def _validate_lindhard_component(component: Any) -> None:
             "filling-based plot chemical potential requires positive temperature"
         )
     _validate_scalar_bulk_config(component)
+
+
+def _validate_rpa_component(component: Any) -> None:
+    config = component.config if isinstance(component.config, dict) else {}
+    if not str(config.get("response_component", "")).strip():
+        raise ValueError("response_component must name a Lindhard component")
+    tolerance = float(config.get("singular_tolerance", 1.0e-12))
+    if not np.isfinite(tolerance) or tolerance <= 0.0:
+        raise ValueError("singular_tolerance must be finite and positive")
+
+
+def _validate_stoner_rpa_component(component: Any) -> None:
+    _validate_rpa_component(component)
+    interaction = float(component.parameters.get("I", np.nan))
+    if not np.isfinite(interaction):
+        raise ValueError("Stoner interaction I must be finite")
+
+
+def _validate_matrix_rpa_component(component: Any) -> None:
+    _validate_rpa_component(component)
+    matrix = np.asarray(component.config.get("vertex_matrix", ()), dtype=complex)
+    if matrix.shape != (3, 3) or np.any(~np.isfinite(matrix)):
+        raise ValueError("vertex_matrix must be a finite 3 by 3 matrix")
+    if not np.allclose(matrix, matrix.conj().T, rtol=0.0, atol=1.0e-12):
+        raise ValueError("vertex_matrix must be Hermitian")
+    if not str(component.config.get("channel", "spin")).strip():
+        raise ValueError("interaction channel cannot be empty")
+    scale = float(component.parameters.get("scale", np.nan))
+    if not np.isfinite(scale):
+        raise ValueError("matrix interaction scale must be finite")
+
+
+def _validate_hubbard_hund_rpa_component(component: Any) -> None:
+    _validate_rpa_component(component)
+    config = component.config if isinstance(component.config, dict) else {}
+    shells = config.get("correlated_shells", [])
+    if not isinstance(shells, (str, list, tuple)):
+        raise ValueError("correlated_shells must be a list or comma-separated string")
+    for name in ("U", "U_prime", "J_H", "J_pair"):
+        if not np.isfinite(float(component.parameters.get(name, np.nan))):
+            raise ValueError(f"Hubbard-Hund parameter {name} must be finite")
 
 
 def tight_binding_parameter_names(component: Any) -> tuple[str, ...]:
@@ -2681,6 +2862,12 @@ def _parameter_value(component: Any, parameter: str) -> float:
 def parameter_is_derived_by_closure(component: Any, parameter: str) -> bool:
     """Whether an active closure makes a stored model parameter non-fittable."""
 
+    if (
+        getattr(component, "type", None) == "hubbard_hund_rpa"
+        and parameter in {"U_prime", "J_pair"}
+    ):
+        config = component.config if isinstance(component.config, dict) else {}
+        return bool(config.get("rotationally_invariant", True))
     if getattr(component, "type", None) != "heisenberg_rpa" or parameter != "chi0":
         return False
     config = component.config if isinstance(component.config, dict) else {}
@@ -2789,6 +2976,27 @@ def compile_fit_problem(
 
     for component in active:
         validate_dependency_graph(component.name)
+
+    # A dressing replaces, rather than adds to, its referenced observable on
+    # the dressing's dataset scope. The referenced component remains an
+    # independently usable observable on any other selected datasets.
+    for component in active:
+        definition = MODEL_TYPE_REGISTRY[component.type]
+        if not definition.consumes_referenced_observables:
+            continue
+        consumed_datasets = set(observable_applicable[component.name])
+        for dependency_name in dependencies[component.name]:
+            observable_applicable[dependency_name] = [
+                name
+                for name in observable_applicable[dependency_name]
+                if name not in consumed_datasets
+            ]
+            for dataset_name in consumed_datasets:
+                components_by_dataset[dataset_name] = [
+                    name
+                    for name in components_by_dataset[dataset_name]
+                    if name != dependency_name
+                ]
 
     # Propagate each observable's dataset scope back to all parameter providers.
     for component in active:

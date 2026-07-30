@@ -182,19 +182,33 @@ class SusceptibilityResult:
         )
 
 
-def orbital_pair_operator_basis(model: ElectronicModel) -> ElectronicOperatorBasis:
-    """Return the complete ordered ``|a><b|`` operator basis."""
+def orbital_pair_operator_basis(
+    model: ElectronicModel,
+    basis_indices: tuple[int, ...] | list[int] | None = None,
+) -> ElectronicOperatorBasis:
+    """Return an ordered ``|a><b|`` basis for all or selected basis states."""
 
+    indices = (
+        tuple(range(model.n_basis))
+        if basis_indices is None
+        else tuple(int(value) for value in basis_indices)
+    )
+    if len(indices) != len(set(indices)) or any(
+        value < 0 or value >= model.n_basis for value in indices
+    ):
+        raise ValueError("basis_indices must contain unique valid basis indices")
     labels = []
     matrices = []
     conjugates = []
-    for a, state_a in enumerate(model.basis):
-        for b, state_b in enumerate(model.basis):
+    for local_a, a in enumerate(indices):
+        state_a = model.basis[a]
+        for local_b, b in enumerate(indices):
+            state_b = model.basis[b]
             matrix = np.zeros((model.n_basis, model.n_basis), dtype=np.complex128)
             matrix[a, b] = 1.0
             matrices.append(matrix)
             labels.append(f"{state_a.label}←{state_b.label}")
-            conjugates.append(b * model.n_basis + a)
+            conjugates.append(local_b * len(indices) + local_a)
     return ElectronicOperatorBasis(
         tuple(labels),
         np.asarray(matrices),
@@ -202,6 +216,7 @@ def orbital_pair_operator_basis(model: ElectronicModel) -> ElectronicOperatorBas
         metadata={
             "kind": "ordered_orbital_pairs",
             "multiplication": "chi_AB=<O_A O_B^dagger>",
+            "basis_indices": list(indices),
         },
     )
 

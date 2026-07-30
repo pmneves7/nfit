@@ -14,12 +14,15 @@ from nfit import (
     ModelComponentSpec,
     SusceptibilityResult,
     add_tight_binding_orbital_manifold,
+    bare_lindhard_susceptibility,
     bare_spin_susceptibility,
     build_electronic_model,
     chemical_potential_for_filling,
     compile_fit_problem,
+    correlated_basis_indices,
     create_model_component,
     electron_filling,
+    hubbard_hund_spin_vertex,
     isotropic_spin_component,
     k_mesh,
     lift_electronic_model_spin,
@@ -27,6 +30,9 @@ from nfit import (
     neutron_spin_contraction,
     orbital_manifold_preset,
     orbital_pair_operator_basis,
+    project_implicit_spin_response,
+    rpa_dress_susceptibility,
+    scalar_stoner_vertex,
 )
 from nfit.cross_section import KB_MEV_PER_K
 from nfit.dataset import PointData4D
@@ -81,6 +87,93 @@ def test_operator_basis_and_response_round_trip_preserve_complex_values():
         response.values_per_meV_cell,
     )
     assert restored.provenance == response.provenance
+
+
+def test_scalar_rpa_matches_closed_form_and_records_pole_diagnostic():
+    chi0 = 0.002 + 0.0004j
+    bare = SusceptibilityResult(
+        q_reduced=[[0.0, 0.0, 0.0]],
+        energy_meV=[1.0],
+        values_per_meV_cell=[[[chi0]]],
+        operator_labels=("spin",),
+        conjugate_indices=(0,),
+        model_digest="test",
+        temperature_K=10.0,
+        chemical_potential_meV=0.0,
+        broadening_meV=0.5,
+    )
+    vertex = scalar_stoner_vertex(("spin",), 0.2, energy_unit="eV")
+    dressed = rpa_dress_susceptibility(bare, vertex)
+
+    np.testing.assert_allclose(
+        dressed.values_per_meV_cell[0, 0, 0],
+        chi0 / (1.0 - 200.0 * chi0),
+    )
+    assert dressed.response_kind == "rpa_scalar_stoner"
+    assert dressed.provenance["dressing"]["multiplication_order"] == "I-chi0@Gamma"
+
+
+def test_hubbard_hund_vertex_respects_shell_locality_and_rotational_constraints():
+    model = build_electronic_model(
+        direct_lattice=np.eye(3),
+        basis=[
+            BasisState("A_xz", site="A", orbital="d_xz", correlated_shell="A_d"),
+            BasisState("A_yz", site="A", orbital="d_yz", correlated_shell="A_d"),
+            BasisState("B_xz", site="B", orbital="d_xz", correlated_shell="B_d"),
+        ],
+        hoppings={(0, 0, 0): np.diag([-2.0, 0.0, 2.0])},
+        periodic_axes=(0,),
+        energy_unit="meV",
+    )
+    indices = correlated_basis_indices(model)
+    vertex = hubbard_hund_spin_vertex(
+        model,
+        indices,
+        U=2.0,
+        J_H=0.25,
+        rotationally_invariant=True,
+    )
+    pair = {
+        tuple(label.split("←")): index
+        for index, label in enumerate(vertex.operator_labels)
+    }
+
+    assert vertex.values_meV[pair[("A_xz", "A_xz")], pair[("A_xz", "A_xz")]] == 2000.0
+    assert vertex.values_meV[pair[("A_xz", "A_yz")], pair[("A_xz", "A_yz")]] == 1500.0
+    assert vertex.values_meV[pair[("A_xz", "A_xz")], pair[("A_yz", "A_yz")]] == 250.0
+    assert vertex.values_meV[pair[("A_xz", "A_yz")], pair[("A_yz", "A_xz")]] == 250.0
+    assert vertex.values_meV[pair[("A_xz", "A_xz")], pair[("B_xz", "B_xz")]] == 0.0
+
+
+def test_orbital_pair_subspace_projects_to_implicit_spin_response():
+    model = build_electronic_model(
+        direct_lattice=np.eye(3),
+        basis=[
+            BasisState("a", site="A", orbital="a", correlated_shell="A_d"),
+            BasisState("spectator", site="B", orbital="s"),
+        ],
+        hoppings={(0, 0, 0): np.diag([0.0, 100.0])},
+        orbital_centers=[[0.25, 0.0, 0.0], [0.0, 0.0, 0.0]],
+        periodic_axes=(0,),
+        energy_unit="meV",
+    )
+    indices = correlated_basis_indices(model)
+    operators = orbital_pair_operator_basis(model, indices)
+    pair_response = bare_lindhard_susceptibility(
+        model,
+        [1.0, 0.0, 0.0],
+        0.0,
+        k_mesh(model, (4,)),
+        operators,
+        temperature_K=20.0,
+        chemical_potential_meV=0.0,
+        broadening_meV=0.2,
+    )
+    projected = project_implicit_spin_response(pair_response, model, indices)
+
+    expected = 0.5 * 0.25 / (KB_MEV_PER_K * 20.0)
+    np.testing.assert_allclose(isotropic_spin_component(projected), expected)
+    assert projected.operator_labels == ("Sx", "Sy", "Sz")
 
 
 def test_lindhard_response_is_causal_and_retains_extended_zone_transfer():
@@ -333,6 +426,146 @@ def test_fit_compiler_uses_electronic_component_as_dependency_not_observable():
                 )
             ],
         )
+
+
+def test_stoner_component_replaces_bare_observable_and_reuses_its_parameters():
+    model = _chain_model()
+    tight_binding = ModelComponentSpec(
+        name="bands",
+        type="tight_binding",
+        config={
+            **{
+                field.name: field.default
+                for field in model_definition("tight_binding").config_fields
+            },
+            "model_data": model.to_dict(),
+            "periodic_axes": [0],
+        },
+    )
+    lindhard = ModelComponentSpec(
+        name="bare",
+        type="lindhard",
+        parameters={"broadening": 0.5},
+        fit_parameters={"broadening": True},
+        config={
+            **{
+                field.name: field.default
+                for field in model_definition("lindhard").config_fields
+            },
+            "electronic_component": "bands",
+            "response_mesh": [24],
+            "response_mesh_shift": [0.0],
+        },
+    )
+    stoner = ModelComponentSpec(
+        name="dressed",
+        type="stoner_rpa",
+        parameters={"I": 0.1},
+        fit_parameters={"I": True},
+        config={
+            **{
+                field.name: field.default
+                for field in model_definition("stoner_rpa").config_fields
+            },
+            "response_component": "bare",
+        },
+    )
+    points = PointData4D(
+        H=np.full(2, 0.5),
+        K=np.zeros(2),
+        L=np.zeros(2),
+        E=np.asarray([1.0, 2.0]),
+        intensity=np.zeros(2),
+        sigma=np.ones(2),
+        temperature=20.0,
+    )
+    dataset = FitDatasetInput(
+        "scan",
+        points,
+        data_type="single_crystal_inelastic",
+    )
+    compiled = compile_fit_problem([tight_binding, lindhard, stoner], [dataset])
+
+    assert compiled.components_by_dataset == {"scan": ["dressed"]}
+    assert {spec.name for spec in compiled.problem.parameter_specs} == {
+        "bare.broadening",
+        "dressed.I",
+    }
+    prediction = evaluate_problem_model(
+        compiled.problem,
+        "scan",
+        {"bare.broadening": 0.5, "dressed.I": 0.1},
+    )
+    assert prediction.shape == (2,)
+    assert np.all(np.isfinite(prediction))
+    assert np.all(prediction >= 0.0)
+
+
+def test_stoner_model_plot_and_exported_script_are_equivalent():
+    model = _chain_model()
+    tight_binding = ModelComponentSpec(
+        name="bands",
+        type="tight_binding",
+        config={
+            **{
+                field.name: field.default
+                for field in model_definition("tight_binding").config_fields
+            },
+            "model_data": model.to_dict(),
+            "periodic_axes": [0],
+        },
+    )
+    lindhard = ModelComponentSpec(
+        name="bare",
+        type="lindhard",
+        parameters={"broadening": 0.5},
+        config={
+            **{
+                field.name: field.default
+                for field in model_definition("lindhard").config_fields
+            },
+            "electronic_component": "bands",
+            "response_mesh": [24],
+            "response_mesh_shift": [0.0],
+            "plot_q_reduced": [0.5, 0.0, 0.0],
+            "plot_energy_min_meV": -2.0,
+            "plot_energy_max_meV": 2.0,
+            "plot_energy_points": 5,
+        },
+    )
+    stoner = ModelComponentSpec(
+        name="dressed",
+        type="stoner_rpa",
+        parameters={"I": 0.1},
+        config={
+            **{
+                field.name: field.default
+                for field in model_definition("stoner_rpa").config_fields
+            },
+            "response_component": "bare",
+        },
+    )
+    components = {
+        item.name: item for item in (tight_binding, lindhard, stoner)
+    }
+    plot = model_definition("stoner_rpa").plots[0]
+    result = plot.context_calculate(stoner, components)
+    assert result.response_kind == "rpa_scalar_stoner"
+
+    script = plot.context_script(stoner, components)
+    namespace: dict[str, object] = {}
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="FigureCanvasAgg is non-interactive",
+            category=UserWarning,
+        )
+        exec(compile(script, "<stoner-rpa-plot>", "exec"), namespace)
+    np.testing.assert_allclose(
+        namespace["result"].values_per_meV_cell,
+        result.values_per_meV_cell,
+    )
+    plt.close(namespace["figure"])
 
 
 def test_linked_tight_binding_parameters_inherit_response_dataset_scope():

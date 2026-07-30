@@ -11,7 +11,7 @@ import signal
 import subprocess
 import time
 from collections import OrderedDict
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -18605,8 +18605,15 @@ class NfitProjectExplorer:
             max_editor.setToolTip(limits_tooltip)
             fit_check.setToolTip(
                 (
-                    "Takahashi TAC solves chi0_eff from the conserved amplitude; "
-                    "the stored chi0 is only a root-search seed and cannot be fitted."
+                    (
+                        "Rotational invariance derives U_prime = U - 2 J_H and "
+                        "J_pair = J_H; this stored value is not independently fitted."
+                    )
+                    if model.type == "hubbard_hund_rpa"
+                    else (
+                        "Takahashi TAC solves chi0_eff from the conserved amplitude; "
+                        "the stored chi0 is only a root-search seed and cannot be fitted."
+                    )
                 )
                 if closure_derived
                 else (
@@ -18795,22 +18802,43 @@ class NfitProjectExplorer:
                 config_layout.addWidget(combo, row, 1)
                 row += 1
                 continue
-            if model.type == "lindhard" and setting_name == "electronic_component":
-                label.setText("Electronic structure")
+            if setting_name in definition.component_reference_fields:
+                reference_types = definition.metadata.get("reference_types", {})
+                allowed_types = (
+                    tuple(reference_types.get(setting_name, ()))
+                    if isinstance(reference_types, Mapping)
+                    else ()
+                )
+                if not allowed_types and setting_name == "electronic_component":
+                    allowed_types = ("tight_binding",)
+                if setting_name == "electronic_component":
+                    label.setText("Electronic structure")
+                    prompt = "Select tight-binding model…"
+                elif setting_name == "response_component":
+                    label.setText("Bare response")
+                    prompt = "Select Lindhard response…"
+                else:
+                    prompt = "Select component…"
                 combo = QtWidgets.QComboBox()
-                combo.setObjectName("lindhard_electronic_component")
+                combo.setObjectName(
+                    f"{model.type}_{setting_name}"
+                )
                 combo.setToolTip(tooltip)
-                combo.addItem("Select tight-binding model…", "")
+                combo.addItem(prompt, "")
                 owner = self._group_for_model(model)
                 if owner is not None:
                     for candidate in owner.models.values():
-                        if candidate.type == "tight_binding" and candidate.enabled:
+                        if (
+                            candidate.type in allowed_types
+                            and candidate.enabled
+                            and candidate is not model
+                        ):
                             combo.addItem(candidate.name, candidate.name)
                 current = str(model.config.get(setting_name, ""))
                 combo.setCurrentIndex(max(combo.findData(current), 0))
                 combo.currentIndexChanged.connect(
-                    lambda _index, combo=combo: self._set_model_config_setting(
-                        "electronic_component",
+                    lambda _index, combo=combo, setting_name=setting_name: self._set_model_config_setting(
+                        setting_name,
                         str(combo.currentData()),
                     )
                 )

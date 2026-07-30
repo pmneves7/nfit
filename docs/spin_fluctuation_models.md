@@ -1,6 +1,6 @@
 # Spin-fluctuation models
 
-nfit provides five magnetic-response models. Start with the least structured
+nfit provides eight magnetic-response models. Start with the least structured
 response that resolves the features in the data. Electronic Hamiltonians are
 documented separately under
 [Electronic-structure models](electronic_structure_models.md).
@@ -12,6 +12,9 @@ documented separately under
 | `generalized_paramagnon` | $\chi=(\chi_{\rm pk}/A)/(1-a_EE^2/A-iE/[\Gamma_0A^z])$ | Anisotropic peaks, critical slowing down, and damped propagating modes | Single-crystal and powder neutron scattering; extrapolated bulk linear response |
 | `heisenberg_rpa` | $\boldsymbol\chi=[\mathbb 1-\chi_0J(\mathbf Q)]^{-1}\chi_0$ | Dispersive fluctuations constrained by a crystal and exchange network | Single-crystal and powder neutron scattering; bulk linear response |
 | `lindhard` | $\chi^0=-\sum_{\mathbf k,n,m}(f_{n\mathbf k}-f_{m,\mathbf k+\mathbf q})M_AM_B^*/(E+\epsilon_{n\mathbf k}-\epsilon_{m,\mathbf k+\mathbf q}+i\eta)$ | Bare particle--hole response of a linked tight-binding model | Single-crystal and powder neutron scattering; bulk linear response |
+| `stoner_rpa` | $\boldsymbol\chi=[\mathbb 1-\boldsymbol\chi^0 I]^{-1}\boldsymbol\chi^0$ | Minimal isotropic enhancement of a band response | Single-crystal and powder neutron scattering; bulk linear response |
+| `matrix_rpa` | $\boldsymbol\chi=[\mathbb 1-\boldsymbol\chi^0 g\mathbf V]^{-1}\boldsymbol\chi^0$ | User-supplied anisotropic spin interaction | Single-crystal and powder neutron scattering; bulk linear response |
+| `hubbard_hund_rpa` | $\boldsymbol\chi=[\mathbb 1-\boldsymbol\chi^0\boldsymbol\Gamma_{U,U',J_H,J_{\rm pair}}]^{-1}\boldsymbol\chi^0$ | Local multiorbital correlations on labelled shells | Single-crystal and powder neutron scattering; bulk linear response |
 
 ```{toctree}
 :maxdepth: 1
@@ -22,6 +25,9 @@ mmp_relaxational
 generalized_paramagnon
 heisenberg_rpa
 lindhard
+stoner_rpa
+matrix_rpa
+hubbard_hund_rpa
 ```
 
 For inelastic data, each magnetic-response kernel supplies the dissipative
@@ -38,8 +44,10 @@ Backgrounds are separate additive model components.
 The [local relaxational](local_relaxational.md),
 [MMP relaxational](mmp_relaxational.md),
 [generalized paramagnon](generalized_paramagnon.md), and
-[Heisenberg RPA](heisenberg_rpa.md), and
-[bare Lindhard](lindhard.md) pages define their parameters, complex
+[Heisenberg RPA](heisenberg_rpa.md),
+[bare Lindhard](lindhard.md), [scalar Stoner](stoner_rpa.md),
+[matrix RPA](matrix_rpa.md), and
+[Hubbard--Hund RPA](hubbard_hund_rpa.md) pages define their parameters, complex
 susceptibilities, dissipative responses, elastic limits, scripts, and
 references.
 

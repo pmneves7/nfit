@@ -15,6 +15,9 @@ The package provides:
 - a linked bare Lindhard response with complex multiband susceptibility,
   Cartesian spin and neutron projections, fixed-filling support, full-mesh
   reference evaluation, fitting, model-owned plots, and editable scripts;
+- modular scalar Stoner, user-matrix, and local multiorbital Hubbard--Hund
+  RPA interaction dressings with eV input, canonical meV vertices, shared
+  electronic-response dependencies, pole diagnostics, fitting, and reports;
 - CIF/manual crystal geometry and arbitrary manual or Wannier90 tight-binding
   models with explicit local orbital frames, site-point-group harmonic
   subspaces, symmetry-allowed onsite terms, selectable orbital-explicit

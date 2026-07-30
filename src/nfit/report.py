@@ -1208,6 +1208,70 @@ def lindhard_report_sections(
     return (("Bare Lindhard spin susceptibility", "\n".join(lines)),)
 
 
+def electronic_rpa_report_sections(
+    fit_entry: Any,
+    model: Mapping[str, Any],
+    goodness: Mapping[str, Any],
+    context: Mapping[str, Any],
+) -> tuple[tuple[str, str], ...]:
+    """Return the interaction convention, source, and fitted RPA parameters."""
+
+    del fit_entry, context
+    model_type = str(model.get("type", ""))
+    definition = model_definition(model_type)
+    name = latex_escape(model.get("name"))
+    config = _config(model)
+    source = latex_escape(config.get("response_component", "--"))
+    lines = [
+        f"\\section{{{latex_escape(definition.label)} ({name})}}",
+        (
+            f"This component dresses bare response \\texttt{{{source}}} using "
+            "$\\boldsymbol\\chi=(\\mathbb 1-\\boldsymbol\\chi^0"
+            "\\boldsymbol\\Gamma)^{-1}\\boldsymbol\\chi^0$. Interaction "
+            "parameters are fitted in eV and converted to canonical meV before "
+            "matrix multiplication."
+        ),
+        "\\begin{tabular}{l l}",
+        "\\toprule",
+        "Quantity & Value \\\\",
+        "\\midrule",
+    ]
+    for field in definition.parameter_fields:
+        value, uncertainty = _param_value(goodness, model, field.name)
+        lines.append(
+            f"{latex_escape(field.name)} & "
+            f"{_fmt_pm(value, uncertainty)} {latex_escape(field.unit)} \\\\"
+        )
+    lines.extend(
+        [
+            (
+                "RPA singular tolerance & "
+                f"{_fmt(config.get('singular_tolerance', 1.0e-12))} \\\\"
+            ),
+            "\\bottomrule",
+            "\\end{tabular}",
+        ]
+    )
+    if model_type == "hubbard_hund_rpa":
+        if bool(config.get("rotationally_invariant", True)):
+            lines.append(
+                "Rotational invariance enforces "
+                "$U'=U-2J_H$ and $J_{\\rm pair}=J_H$."
+            )
+        shells = config.get("correlated_shells", [])
+        lines.append(
+            "Selected correlated shells: "
+            f"\\texttt{{{latex_escape(shells if shells else 'all labelled shells')}}}."
+        )
+    elif model_type == "matrix_rpa":
+        lines.append(
+            "The configured dimensionless vertex in the ordered "
+            "$(S_x,S_y,S_z)$ basis is "
+            f"\\texttt{{{latex_escape(config.get('vertex_matrix', []))}}}."
+        )
+    return ((definition.label, "\n".join(lines)),)
+
+
 def tight_binding_report_sections(
     fit_entry: Any,
     model: Mapping[str, Any],

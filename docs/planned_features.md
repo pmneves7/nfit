@@ -21,8 +21,8 @@ releases. Current behavior is documented in the workflow and API pages.
 ## Electronic-response models
 
 Electronic-response models are being added in independently testable stages.
-The tight-binding and bare Lindhard stages are available; interaction-dressed
-and correlated-electron responses remain planned. Their conventions, initial
+The tight-binding, bare Lindhard, and RPA interaction-dressing stages are
+available; correlated-electron responses beyond RPA remain planned. Their conventions, initial
 scope, provenance requirements, dependency policy, validation matrix, and
 stage gates are fixed in the
 [Electronic-response design contract](electronic_response_contract.md).
@@ -47,8 +47,9 @@ caches, and certified symmetry policies for total-DOS meshes. The linked
 Lindhard response now provides a complex bare susceptibility, Cartesian spin
 and neutron projections, source-chemical-potential or filling control,
 neutron and bulk dataset comparison, plotting, fitting, and script export.
-Later response stages add interaction dressings, production convergence and
-acceleration, BCS superconductivity, and advanced correlated extensions.
+Scalar Stoner, user-matrix, and local multiorbital Hubbard--Hund RPA
+interaction dressings are implemented. Later response stages add production
+convergence and acceleration, BCS superconductivity, and advanced correlated extensions.
 Later performance work includes scheduler adapters, wider certified symmetry
 support, convergence management, and workload-specific compiled or sparse
 kernels. A capability remains planned until its model page documents an

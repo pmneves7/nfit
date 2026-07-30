@@ -122,6 +122,7 @@ class ModelDefinition:
     factory: ModelFactory
     context_factory: ContextModelFactory | None = None
     component_reference_fields: tuple[str, ...] = ()
+    consumes_referenced_observables: bool = False
     parameter_fields: tuple[ModelParameterDefinition, ...] = ()
     config_fields: tuple[ModelConfigDefinition, ...] = ()
     version: int = 1
@@ -189,6 +190,12 @@ def register_model_definition(
     ):
         raise ValueError(
             f"model type {definition.key!r} has duplicate component references"
+        )
+    if definition.consumes_referenced_observables and not (
+        definition.component_reference_fields
+    ):
+        raise ValueError(
+            f"model type {definition.key!r} cannot consume an undeclared reference"
         )
     if definition.validate_component is not None and not callable(
         definition.validate_component
@@ -1478,7 +1485,240 @@ def _register_builtin_models() -> None:
                 "Lindhard, Kgl. Danske Videnskab. Selskab, Mat.-Fys. Medd. 28, no. 8 (1954)",
                 "https://doi.org/10.1088/1367-2630/11/2/025016",
             ),
-            metadata={"component_dependencies": True},
+            metadata={
+                "component_dependencies": True,
+                "reference_types": {"electronic_component": ["tight_binding"]},
+            },
+        )
+    )
+    rpa_data_types = (
+        "single_crystal_inelastic",
+        "powder_inelastic",
+        "single_crystal_elastic",
+        "powder_elastic",
+        "magnetization",
+    )
+    rpa_reference_fields = (
+        _config_field(
+            "response_component",
+            "",
+            (
+                "Enabled sibling Lindhard component supplying the bare response, "
+                "mesh, broadening, electronic model, and dataset conversion."
+            ),
+            "Name of one enabled Lindhard component in this workspace.",
+            "str",
+            "Bare response",
+        ),
+        _config_field(
+            "singular_tolerance",
+            1.0e-12,
+            "Relative singular-value threshold for an RPA pole.",
+            "Positive finite number.",
+            "float",
+            "1e-10",
+        ),
+    )
+    rpa_plot_definition = ModelPlotDefinition(
+        key="complex_energy_scan",
+        label="Complex interaction-dressed susceptibility versus energy",
+        description=(
+            "Plot the real and imaginary interaction-dressed spin response "
+            "using the referenced Lindhard plot settings."
+        ),
+        calculate=_model_plot_calculator("electronic_rpa_energy_scan_unbound"),
+        context_calculate=_model_plot_calculator("electronic_rpa_energy_scan"),
+        render=_model_plot_renderer("render_lindhard_energy_scan"),
+        script=_model_plot_script("electronic_rpa_energy_scan_script_unbound"),
+        context_script=_model_plot_script("electronic_rpa_energy_scan_script"),
+    )
+    register_model_definition(
+        ModelDefinition(
+            key="stoner_rpa",
+            label="Scalar Stoner RPA",
+            description=(
+                "Isotropic scalar interaction dressing of a referenced bare "
+                "Lindhard spin susceptibility."
+            ),
+            category="spin_fluctuation",
+            data_types=rpa_data_types,
+            factory=_fit_factory("_rpa_unbound_factory"),
+            context_factory=_fit_context_factory("_stoner_rpa_factory"),
+            component_reference_fields=("response_component",),
+            consumes_referenced_observables=True,
+            parameter_fields=(
+                _parameter(
+                    "I",
+                    0.1,
+                    "Scalar Stoner interaction applied to each Cartesian spin channel.",
+                    "Finite electronic interaction energy.",
+                    "eV",
+                    "0.35",
+                ),
+            ),
+            config_fields=rpa_reference_fields,
+            validate_component=_fit_validator("_validate_stoner_rpa_component"),
+            report_sections=_report_sections("electronic_rpa_report_sections"),
+            plots=(rpa_plot_definition,),
+            default_lower_bounds=(("I", 0.0),),
+            documentation="stoner_rpa.md",
+            citations=(
+                "https://doi.org/10.1007/978-3-642-82499-9",
+            ),
+            metadata={
+                "component_dependencies": True,
+                "reference_types": {"response_component": ["lindhard"]},
+            },
+        )
+    )
+    register_model_definition(
+        ModelDefinition(
+            key="matrix_rpa",
+            label="Matrix RPA interaction",
+            description=(
+                "User-defined Hermitian spin-channel interaction matrix dressing "
+                "of a referenced bare Lindhard response."
+            ),
+            category="spin_fluctuation",
+            data_types=rpa_data_types,
+            factory=_fit_factory("_rpa_unbound_factory"),
+            context_factory=_fit_context_factory("_matrix_rpa_factory"),
+            component_reference_fields=("response_component",),
+            consumes_referenced_observables=True,
+            parameter_fields=(
+                _parameter(
+                    "scale",
+                    0.1,
+                    "Fittable energy multiplying the configured dimensionless matrix.",
+                    "Finite electronic interaction energy.",
+                    "eV",
+                    "0.2",
+                ),
+            ),
+            config_fields=(
+                *rpa_reference_fields,
+                _config_field(
+                    "vertex_matrix",
+                    [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    (
+                        "Dimensionless Hermitian matrix in the ordered "
+                        "(Sx, Sy, Sz) operator basis."
+                    ),
+                    "Finite Hermitian 3 by 3 nested list.",
+                    "list",
+                    "[[1,0,0],[0,0.8,0],[0,0,1.2]]",
+                ),
+                _config_field(
+                    "channel",
+                    "spin",
+                    "Recorded physical channel of the user-defined vertex.",
+                    "Nonempty descriptive string.",
+                    "str",
+                    "spin",
+                ),
+            ),
+            validate_component=_fit_validator("_validate_matrix_rpa_component"),
+            report_sections=_report_sections("electronic_rpa_report_sections"),
+            plots=(rpa_plot_definition,),
+            documentation="matrix_rpa.md",
+            citations=(
+                "https://doi.org/10.1088/1367-2630/11/2/025016",
+            ),
+            metadata={
+                "component_dependencies": True,
+                "reference_types": {"response_component": ["lindhard"]},
+            },
+        )
+    )
+    register_model_definition(
+        ModelDefinition(
+            key="hubbard_hund_rpa",
+            label="Hubbard-Hund RPA",
+            description=(
+                "Local multiorbital spin-channel RPA dressing on selected "
+                "site-attached correlated shells."
+            ),
+            category="spin_fluctuation",
+            data_types=rpa_data_types,
+            factory=_fit_factory("_rpa_unbound_factory"),
+            context_factory=_fit_context_factory("_hubbard_hund_rpa_factory"),
+            component_reference_fields=("response_component",),
+            consumes_referenced_observables=True,
+            parameter_fields=(
+                _parameter(
+                    "U",
+                    1.0,
+                    "Intraorbital Hubbard interaction.",
+                    "Finite electronic interaction energy.",
+                    "eV",
+                    "2.0",
+                ),
+                _parameter(
+                    "U_prime",
+                    0.6,
+                    (
+                        "Interorbital direct interaction; derived as U - 2 J_H "
+                        "when rotational invariance is enabled."
+                    ),
+                    "Finite electronic interaction energy.",
+                    "eV",
+                    "1.4",
+                ),
+                _parameter(
+                    "J_H",
+                    0.2,
+                    "Hund exchange interaction.",
+                    "Finite electronic interaction energy.",
+                    "eV",
+                    "0.3",
+                ),
+                _parameter(
+                    "J_pair",
+                    0.2,
+                    (
+                        "Pair-hopping interaction; derived as J_H when "
+                        "rotational invariance is enabled."
+                    ),
+                    "Finite electronic interaction energy.",
+                    "eV",
+                    "0.3",
+                ),
+            ),
+            config_fields=(
+                *rpa_reference_fields,
+                _config_field(
+                    "correlated_shells",
+                    [],
+                    (
+                        "Correlated-shell labels to dress; an empty list selects "
+                        "all labelled correlated shells."
+                    ),
+                    "List of shell labels or a comma-separated string.",
+                    "list",
+                    '["M1_3d"]',
+                ),
+                _config_field(
+                    "rotationally_invariant",
+                    True,
+                    "Enforce U_prime = U - 2 J_H and J_pair = J_H.",
+                    "Boolean.",
+                    "bool",
+                    "true",
+                ),
+            ),
+            validate_component=_fit_validator("_validate_hubbard_hund_rpa_component"),
+            report_sections=_report_sections("electronic_rpa_report_sections"),
+            plots=(rpa_plot_definition,),
+            default_lower_bounds=(("U", 0.0), ("J_H", 0.0)),
+            documentation="hubbard_hund_rpa.md",
+            citations=(
+                "https://doi.org/10.1088/1367-2630/11/2/025016",
+                "https://doi.org/10.1146/annurev-conmatphys-020911-125045",
+            ),
+            metadata={
+                "component_dependencies": True,
+                "reference_types": {"response_component": ["lindhard"]},
+            },
         )
     )
     register_model_definition(

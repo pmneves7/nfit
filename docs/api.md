@@ -264,6 +264,9 @@ calculation.
 .. automodule:: nfit.electronic_response
    :members:
 
+.. automodule:: nfit.electronic_interactions
+   :members:
+
 .. automodule:: nfit.magnetization
    :members:
 
