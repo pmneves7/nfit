@@ -12,16 +12,36 @@ from tests.project_gui_test_support import (
 )
 
 
-def test_project_explorer_opens_at_requested_initial_size(monkeypatch):
+def test_project_explorer_opens_at_screen_aware_initial_size(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtGui = pytest.importorskip("PySide6.QtGui")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 
     explorer = NfitProjectExplorer()
     explorer.show()
     QtWidgets.QApplication.processEvents()
 
-    assert explorer.window.size().toTuple() == (1120, 760)
+    screen = QtGui.QGuiApplication.screenAt(QtGui.QCursor.pos())
+    if screen is None:
+        screen = explorer.window.screen() or explorer.app.primaryScreen()
+    available = screen.availableGeometry()
+    expected = project_gui._screen_aware_project_window_size(
+        available.width(),
+        available.height(),
+    )
+    assert explorer.window.size().toTuple() == expected
     explorer.window.close()
+
+
+def test_project_window_size_prefers_roomy_layout_but_fits_small_screens():
+    assert project_gui._screen_aware_project_window_size(1920, 1080) == (
+        1560,
+        1000,
+    )
+    assert project_gui._screen_aware_project_window_size(1280, 720) == (
+        1232,
+        672,
+    )
 
 
 def test_project_helpers_name_import_and_round_trip(tmp_path):

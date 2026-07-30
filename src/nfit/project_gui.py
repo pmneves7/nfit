@@ -143,6 +143,8 @@ from .workflow import (
 QtMDHistoSliceViewer = None
 RECENT_PROJECT_LIMIT = 10
 RECENT_PROJECTS_KEY = "recent_projects"
+PROJECT_WINDOW_TARGET_SIZE = (1560, 1000)
+PROJECT_WINDOW_SCREEN_MARGIN = 48
 DATASET_REBIN_KEY = "rebin"
 DATASET_MASK_APPLICATION_KEY = "mask_application"
 GROUP_COMPOSITE_KEY = "composite"
@@ -179,6 +181,23 @@ COORDINATE_RANGE_AXIS_PREFIX = "axis_"
 COORDINATE_RANGE_PARAMETER_NAMES = ("H", "K", "L", "E")
 CUSTOM_FORM_FACTOR_CHOICE = "__custom__"
 POSTERIOR_DISPLAY_KEY = "posterior_display"
+
+
+def _screen_aware_project_window_size(
+    available_width: int,
+    available_height: int,
+) -> tuple[int, int]:
+    """Return the preferred project-window size bounded by one screen."""
+
+    width = min(
+        PROJECT_WINDOW_TARGET_SIZE[0],
+        max(1, int(available_width) - PROJECT_WINDOW_SCREEN_MARGIN),
+    )
+    height = min(
+        PROJECT_WINDOW_TARGET_SIZE[1],
+        max(1, int(available_height) - PROJECT_WINDOW_SCREEN_MARGIN),
+    )
+    return width, height
 
 
 # Data types the GUI can attach to a dataset. ``container`` is "mdhisto" for
@@ -9261,7 +9280,9 @@ class NfitProjectExplorer:
         configure_numeric_spin_boxes(self.app)
 
     def _apply_initial_window_size(self) -> None:
-        """Apply the requested startup size after hidden controls update hints."""
+        """Apply a roomy startup size capped to the screen under the cursor."""
+
+        from PySide6 import QtGui
 
         central = self.window.centralWidget()
         if central is not None:
@@ -9269,7 +9290,18 @@ class NfitProjectExplorer:
                 layout = central.widget(index).layout()
                 if layout is not None:
                     layout.activate()
-        self.window.resize(1120, 760)
+        screen = QtGui.QGuiApplication.screenAt(QtGui.QCursor.pos())
+        if screen is None:
+            screen = self.window.screen() or self.app.primaryScreen()
+        if screen is None:
+            size = PROJECT_WINDOW_TARGET_SIZE
+        else:
+            available = screen.availableGeometry()
+            size = _screen_aware_project_window_size(
+                available.width(),
+                available.height(),
+            )
+        self.window.resize(*size)
 
     def show(self) -> NfitProjectExplorer:
         self.window.show()

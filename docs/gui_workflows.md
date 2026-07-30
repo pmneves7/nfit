@@ -24,6 +24,10 @@ nfit
 
 For local development, `python -m nfit.project_gui` is equivalent.
 
+The Project Explorer initially requests a 1560 by 1000 pixel workspace. On a
+smaller display, nfit reduces each dimension to fit within the available
+desktop while leaving a small margin for window controls.
+
 ## First fit
 
 1. Create or select a workspace.
