@@ -105,7 +105,8 @@ orbital-projection visibility, Fermi-level, and high-symmetry-guide styling.
 The wider, scrollable panel keeps control labels and editors visible. The DOS
 calculation group can derive its energy window from the sampled bands. Other
 calculation controls remain separate and apply only after recalculation
-succeeds.
+succeeds. Recalculation updates the existing viewer in place instead of closing
+and reopening its window.
 **Inspect matrices** opens a separate heatmap and exact-element viewer for
 $H(\mathbf k)$, each named parameter basis and contribution, spin operators,
 and representative onsite and hopping matrices. Its right panel summarizes

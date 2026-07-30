@@ -21185,6 +21185,15 @@ class NfitProjectExplorer:
             return False
         window_holder: dict[str, Any] = {}
 
+        def calculate_result() -> Any:
+            owner = self._group_for_model(model)
+            components = {} if owner is None else owner.models
+            return (
+                plot.context_calculate(model, components)
+                if plot.context_calculate is not None
+                else plot.calculate(model)
+            )
+
         def apply_settings(values: dict[str, str]) -> None:
             if not self._apply_tight_binding_plot_settings(
                 model,
@@ -21193,23 +21202,31 @@ class NfitProjectExplorer:
             ):
                 return
             current = window_holder.get("window")
-            if current is not None and hasattr(current, "close"):
-                current.close()
-            from PySide6 import QtCore
-
-            QtCore.QTimer.singleShot(
-                0,
-                lambda: self._open_model_plot(model, plot_key),
-            )
+            if current is None:
+                return
+            try:
+                updated_result = calculate_result()
+                if plot_key == "fermi_surface" and updated_result.dimension == 3:
+                    current._nfit_replace_result(updated_result)
+                else:
+                    updated_figure, _axes = plot.render(updated_result)
+                    current._nfit_replace_figure(updated_figure)
+                if hasattr(current, "_nfit_update_calculation_settings"):
+                    current._nfit_update_calculation_settings(
+                        self._tight_binding_plot_settings(
+                            model,
+                            plot_key,
+                        )
+                    )
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(
+                    self.window,
+                    "Model plot",
+                    f"Could not recalculate the plot:\n{exc}",
+                )
 
         try:
-            owner = self._group_for_model(model)
-            components = {} if owner is None else owner.models
-            result = (
-                plot.context_calculate(model, components)
-                if plot.context_calculate is not None
-                else plot.calculate(model)
-            )
+            result = calculate_result()
             if plot_key == "fermi_surface" and result.dimension == 3:
                 from .qt_fermi_surface_viewer import show_fermi_surface_result
 

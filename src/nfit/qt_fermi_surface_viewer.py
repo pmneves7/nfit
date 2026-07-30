@@ -12,7 +12,10 @@ from .electronic_structure import (
     electronic_energy_from_meV,
     normalize_electronic_energy_unit,
 )
-from .qt_electronic_viewer import populate_electronic_calculation_settings
+from .qt_electronic_viewer import (
+    populate_electronic_calculation_settings,
+    refresh_electronic_calculation_settings,
+)
 from .qt_pyvista import configure_pyvista_interactor, show_then_render
 from .qt_viewer_shell import create_viewer_shell
 
@@ -28,6 +31,16 @@ _SHEET_COLORS = (
     "#BCBD22",
     "#17BECF",
 )
+
+
+def _mesh_summary(result: FermiSurfaceResult) -> str:
+    triangle_count = sum(
+        int(sheet.connectivity.shape[0]) for sheet in result.sheets
+    )
+    return (
+        f"{len(result.sheets)} band sheet(s)\n"
+        f"{triangle_count:,} displayed triangles"
+    )
 
 
 def _sheet_mesh(vertices: Any, connectivity: Any) -> Any:
@@ -121,12 +134,8 @@ def _populate_settings_panel(
             "The 3D surface uses GPU-accelerated PyVista rendering. "
             "Additional display controls will be added here."
         )
-    triangle_count = sum(
-        int(sheet.connectivity.shape[0]) for sheet in result.sheets
-    )
     details = QtWidgets.QLabel(
-        f"{len(result.sheets)} band sheet(s)\n"
-        f"{triangle_count:,} displayed triangles",
+        _mesh_summary(result),
         settings,
     )
     details.setObjectName("fermi_surface_mesh_summary")
@@ -237,6 +246,35 @@ def show_fermi_surface_result(
             values=settings_config,
             on_apply=on_apply_settings,
         )
+
+        def update_calculation_settings(values: Mapping[str, Any]) -> None:
+            refresh_electronic_calculation_settings(
+                settings,
+                viewer_key="fermi_surface",
+                values=values,
+            )
+
+        window._nfit_update_calculation_settings = update_calculation_settings
+
+    def replace_result(updated: FermiSurfaceResult) -> None:
+        if updated.dimension != 3:
+            raise ValueError(
+                "the PyVista Fermi-surface viewer requires a 3D result"
+            )
+        window._nfit_result = updated
+        summary = settings.findChild(
+            QtWidgets.QLabel,
+            "fermi_surface_mesh_summary",
+        )
+        if summary is not None:
+            summary.setText(_mesh_summary(updated))
+        _render_fermi_surface(
+            plotter,
+            updated,
+            reset_camera=False,
+        )
+
+    window._nfit_replace_result = replace_result
     show_then_render(
         window,
         lambda: _render_fermi_surface(plotter, result),

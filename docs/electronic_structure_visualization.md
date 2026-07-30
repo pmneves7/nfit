@@ -250,6 +250,9 @@ pathways from their multiorbital matrix content.
 The band, DOS, Fermi-surface, and Brillouin-zone viewers use a plot area on the
 left and a fixed, scrollable **Settings** panel on the right. Band, DOS, and Fermi-surface
 calculation settings are stored only after **Apply and recalculate** succeeds.
-Band and DOS presentation settings update immediately without recalculation.
+Successful recalculation replaces the plot inside the existing window, keeping
+its position, size, and presentation controls. The three-dimensional
+Fermi-surface viewer also preserves its camera. Band and DOS presentation
+settings update immediately without recalculation.
 The Brillouin-zone panel controls presentation without rebuilding its cached
 geometry. Standard close shortcuts use Command-W on macOS and Control-W elsewhere.

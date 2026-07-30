@@ -1,5 +1,6 @@
 # ruff: noqa: F401, F403, F405
 import copy
+from types import SimpleNamespace
 
 from nfit import electronic_model_from_component
 from tests.project_gui_test_support import *
@@ -258,6 +259,87 @@ def test_tight_binding_viewer_settings_update_canonical_plot_config(monkeypatch)
     ):
         assert model.config[name] == scripted.config[name]
     explorer.has_unsaved_changes = False
+    explorer.window.close()
+
+
+def test_model_plot_recalculation_updates_existing_window(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+    from matplotlib.figure import Figure
+
+    model = ModelComponentSpec(name="bands", type="tight_binding", config={})
+    explorer = NfitProjectExplorer(NfitProject())
+    calculations = []
+    renders = []
+
+    def calculate(_model):
+        calculations.append(_model)
+        return SimpleNamespace(dimension=1)
+
+    def render(result):
+        renders.append(result)
+        figure = Figure()
+        figure.add_subplot(111)
+        return figure, figure.axes[0]
+
+    plot = SimpleNamespace(
+        key="bands",
+        calculate=calculate,
+        context_calculate=None,
+        render=render,
+    )
+    monkeypatch.setattr(
+        "nfit.project_gui.model_plot_definitions",
+        lambda _model_type: (plot,),
+    )
+    monkeypatch.setattr(
+        explorer,
+        "_apply_tight_binding_plot_settings",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        explorer,
+        "_tight_binding_plot_settings",
+        lambda *_args, **_kwargs: {"band_points_per_inv_angstrom": "120"},
+    )
+
+    class Window:
+        def __init__(self):
+            self.replacements = []
+            self.settings = []
+            self.close_count = 0
+
+        def _nfit_replace_figure(self, figure):
+            self.replacements.append(figure)
+
+        def _nfit_update_calculation_settings(self, settings):
+            self.settings.append(settings)
+
+        def close(self):
+            self.close_count += 1
+
+    window = Window()
+    callbacks = []
+
+    def show_figure(_figure, **kwargs):
+        callbacks.append(kwargs["on_apply_settings"])
+        return window
+
+    monkeypatch.setattr(
+        "nfit.qt_electronic_viewer.show_electronic_figure",
+        show_figure,
+    )
+
+    assert explorer._open_model_plot(model, "bands")
+    assert len(calculations) == 1
+    callbacks[0]({"band_points_per_inv_angstrom": "120"})
+
+    assert len(calculations) == 2
+    assert len(renders) == 2
+    assert len(window.replacements) == 1
+    assert window.settings == [{"band_points_per_inv_angstrom": "120"}]
+    assert window.close_count == 0
+    assert explorer._plot_windows[f"model:{id(model)}:bands"] is window
     explorer.window.close()
 
 

@@ -545,6 +545,42 @@ def populate_electronic_calculation_settings(
     layout.insertWidget(max(layout.count() - 1, 0), apply_button)
 
 
+def refresh_electronic_calculation_settings(
+    settings: Any,
+    *,
+    viewer_key: str,
+    values: Mapping[str, Any],
+) -> None:
+    """Synchronize calculation editors after an in-place recalculation."""
+
+    from PySide6 import QtWidgets
+
+    for key, value in values.items():
+        object_name = f"{viewer_key}_setting_{key}"
+        combo = settings.findChild(QtWidgets.QComboBox, object_name)
+        if combo is not None:
+            index = combo.findData(str(value))
+            if index >= 0:
+                combo.setCurrentIndex(index)
+            continue
+        checkbox = settings.findChild(QtWidgets.QCheckBox, object_name)
+        if checkbox is not None:
+            checked = (
+                bool(value)
+                if isinstance(value, bool)
+                else str(value).strip().lower() in {"1", "true", "yes", "on"}
+            )
+            checkbox.setChecked(checked)
+            continue
+        plain_text = settings.findChild(QtWidgets.QPlainTextEdit, object_name)
+        if plain_text is not None:
+            plain_text.setPlainText(str(value))
+            continue
+        line_edit = settings.findChild(QtWidgets.QLineEdit, object_name)
+        if line_edit is not None:
+            line_edit.setText(str(value))
+
+
 def show_electronic_figure(
     figure: Any,
     *,
@@ -603,7 +639,7 @@ def show_electronic_figure(
 
         def update_style(updated: ElectronicPlotStyle) -> None:
             window._nfit_plot_style = updated
-            apply_electronic_plot_style(figure, updated)
+            apply_electronic_plot_style(window._nfit_figure, updated)
             canvas.draw_idle()
 
         window._nfit_plot_style = current_style
@@ -614,6 +650,20 @@ def show_electronic_figure(
             on_change=update_style,
         )
         apply_electronic_plot_style(figure, current_style)
+
+    def replace_figure(updated_figure: Any) -> None:
+        if viewer_key in {"band_structure", "density_of_states"}:
+            apply_electronic_plot_style(
+                updated_figure,
+                window._nfit_plot_style,
+            )
+        updated_figure.set_canvas(canvas)
+        canvas.figure = updated_figure
+        window._nfit_figure = updated_figure
+        toolbar.update()
+        canvas.draw_idle()
+
+    window._nfit_replace_figure = replace_figure
     if settings_config is not None and on_apply_settings is not None:
         populate_electronic_calculation_settings(
             settings_content,
@@ -621,6 +671,15 @@ def show_electronic_figure(
             values=settings_config,
             on_apply=on_apply_settings,
         )
+
+        def update_calculation_settings(values: Mapping[str, Any]) -> None:
+            refresh_electronic_calculation_settings(
+                settings_content,
+                viewer_key=viewer_key,
+                values=values,
+            )
+
+        window._nfit_update_calculation_settings = update_calculation_settings
     close_shortcut = QtGui.QShortcut(
         QtGui.QKeySequence.StandardKey.Close,
         window,

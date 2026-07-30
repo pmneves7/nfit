@@ -220,6 +220,18 @@ def test_band_viewer_plot_controls_update_figure(monkeypatch):
     show_legend.setChecked(False)
     assert not axis.get_legend().get_visible()
     assert window._nfit_plot_style.show_legend is False
+    canvas = window._nfit_canvas
+    replacement = Figure()
+    replacement_axis = replacement.add_subplot(111)
+    replacement_data = replacement_axis.plot([0.0, 1.0], [1.0, 0.0])[0]
+    replacement_data.set_gid("nfit-electronic-data")
+    window._nfit_replace_figure(replacement)
+    assert window._nfit_canvas is canvas
+    assert canvas.figure is replacement
+    assert window._nfit_figure is replacement
+    assert replacement_data.get_linewidth() == pytest.approx(3.0)
+    width.setValue(4.0)
+    assert replacement_data.get_linewidth() == pytest.approx(4.0)
     window.close()
 
 
@@ -322,6 +334,14 @@ def test_electronic_viewer_settings_apply_plot_owned_configuration(
     assert applied and applied[0][edited_key] == edited_value
     if viewer_key == "density_of_states":
         assert applied[0]["dos_auto_energy_range"] == "true"
+    refreshed = dict(values)
+    refreshed[edited_key] = "96"
+    window._nfit_update_calculation_settings(refreshed)
+    refreshed_editor = window.findChild(
+        QtWidgets.QLineEdit,
+        f"{viewer_key}_setting_{edited_key}",
+    )
+    assert refreshed_editor.text() == "96"
     window.close()
 
 
@@ -458,6 +478,10 @@ def test_gpu_fermi_surface_viewer_uses_standard_shell(monkeypatch):
         QtWidgets.QPushButton,
         "fermi_surface_save_figure",
     ).toolTip()
+    replacement = _fermi_surface_result()
+    window._nfit_replace_result(replacement)
+    assert window._nfit_result is replacement
+    assert rendered == [True, True]
     assert window._nfit_close_shortcut is not None
     window._nfit_close_shortcut.activated.emit()
     assert not window.isVisible()
