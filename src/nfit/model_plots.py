@@ -948,7 +948,9 @@ def tight_binding_band_structure(component: Any) -> BandResult:
         nodes,
         labels=labels,
         break_before=breaks,
-        points_per_segment=int(config.get("band_points_per_segment", 60)),
+        points_per_inv_angstrom=float(
+            config.get("band_points_per_inv_angstrom", 80.0)
+        ),
         coordinate_reciprocal_lattice=band_path_reciprocal_lattice(component),
     )
     return _with_electronic_display_unit(
@@ -1068,8 +1070,20 @@ def render_band_structure(
                 zorder=2,
             )
         axis.plot([], [], marker="o", linestyle="", color=color, label=label)
-    tick_indices, tick_labels = zip(*result.sampling.labels, strict=True)
-    tick_positions = distance[np.asarray(tick_indices, dtype=int)]
+    tick_positions: list[float] = []
+    tick_labels: list[str] = []
+    for index, label in result.sampling.labels:
+        position = float(distance[int(index)])
+        if tick_positions and np.isclose(
+            position,
+            tick_positions[-1],
+            rtol=0.0,
+            atol=1.0e-12,
+        ):
+            tick_labels[-1] = f"{tick_labels[-1]}|{label}"
+        else:
+            tick_positions.append(position)
+            tick_labels.append(str(label))
     axis.set_xticks(tick_positions, tick_labels)
     for position in tick_positions:
         axis.axvline(position, color="0.85", linewidth=0.8, zorder=0)
@@ -1267,7 +1281,7 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
                 "from nfit.model_plots import render_band_structure",
                 "path_reciprocal_lattice = "
                 f"{band_path_reciprocal_lattice(component).tolist()!r}",
-                f"sampling = band_path(model, {nodes!r}, labels={labels!r}, break_before={breaks!r}, points_per_segment={int(config.get('band_points_per_segment', 60))!r}, coordinate_reciprocal_lattice=path_reciprocal_lattice)",
+                f"sampling = band_path(model, {nodes!r}, labels={labels!r}, break_before={breaks!r}, points_per_inv_angstrom={float(config.get('band_points_per_inv_angstrom', 80.0))!r}, coordinate_reciprocal_lattice=path_reciprocal_lattice)",
                 f"result = calculate_bands(model, sampling, chemical_potential_meV=chemical_potential_meV, projections={projections!r}, include_eigenvectors=False, backend=electronic_backend, workers=electronic_workers, max_batch_bytes=max_batch_bytes)",
                 "figure, axis = render_band_structure(result, energy_unit=energy_unit)",
             ]

@@ -80,8 +80,9 @@ potential.
 
 `calculate_bands` returns eigenvalues, optional eigenvectors, and any requested
 basis-index projections. `render_band_structure` handles the energy-unit
-conversion. Increase `band_points_per_segment` until curvature and crossings
-are visually stable.
+conversion. Disconnected endpoint labels sharing one horizontal position are
+combined as, for example, `U|K`. Increase `band_points_per_inv_angstrom` until
+curvature and crossings are visually stable.
 
 ## Density of states
 
@@ -124,7 +125,7 @@ The viewer calculations are GUI independent. Their main inputs are:
 | `band_path.nodes` | two or more reduced-coordinate nodes | `[[0,0,0],[0.5,0,0]]` |
 | `band_path.labels` | optional node labels | `["G","X"]` |
 | `band_path.break_before` | suppress connection from the preceding node | `[False,False,True,False]` |
-| `band_path.points_per_segment` | positive interpolation-interval count | `80` |
+| `band_path.points_per_inv_angstrom` | positive interpolation-interval density per Å$^{-1}$ | `80.0` |
 | `band_path.coordinate_reciprocal_lattice` | optional reciprocal basis in which node coordinates are expressed | primitive reciprocal $3\times3$ matrix |
 | `k_mesh.shape` | positive size per periodic axis, or three lattice-axis sizes | `[80,80]` |
 | `k_mesh.shift` | offset in mesh steps | `[0.5,0.5]` |
@@ -156,7 +157,7 @@ path = band_path(
     model,
     [[0, 0, 0], [0.5, 0, 0]],
     labels=[r"$\Gamma$", "X"],
-    points_per_segment=80,
+    points_per_inv_angstrom=80.0,
 )
 bands = calculate_bands(model, path, projections={"d": [0, 1]})
 

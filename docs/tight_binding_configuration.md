@@ -58,7 +58,7 @@ total-DOS calculation.
 | `band_path` | $\Gamma$--X--M--$\Gamma$ nodes | Ordered labels and primitive reduced coordinates, for example `[{"label":"G","k":[0,0,0]},{"label":"X","k":[0.5,0,0]}]`. |
 | `band_path_convention` | `"hinuma"` | `"hinuma"` for a generated HPKOT path or `"manual"`. |
 | `band_path_metadata` | `{}` | Provider, version, convention, and symmetry tolerance of an automatic path. |
-| `band_points_per_segment` | `60` | Positive interpolation-interval count in each connected segment. |
+| `band_points_per_inv_angstrom` | `80.0` | Positive interpolation-interval density per Å$^{-1}$ of physical path length. |
 
 For a three-dimensional crystal,
 `set_tight_binding_standard_path(component)` uses Seek-path's
@@ -66,6 +66,8 @@ Hinuma/HPKOT convention and converts the standardized path to nfit's primitive
 reciprocal basis. Manual paths remain available for nonstandard or
 reduced-dimensional models. Labels alone have no coordinate meaning: a point
 called X must carry coordinates appropriate to the selected convention.
+Connected segments are sampled at a uniform physical momentum density, so
+longer segments receive proportionally more interpolation points.
 
 ## Density of states
 

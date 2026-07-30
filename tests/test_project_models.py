@@ -81,12 +81,18 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
     chemical_editor = explorer.model_parameter_widget.findChild(
         QtWidgets.QLineEdit, "model_config_chemical_potential_meV"
     )
+    band_density_editor = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit,
+        "model_config_band_points_per_inv_angstrom",
+    )
     dos_min_editor = explorer.model_parameter_widget.findChild(
         QtWidgets.QLineEdit, "model_config_dos_energy_min_meV"
     )
     assert unit_combo is not None and unit_combo.currentData() == "eV"
     assert "canonical" in unit_combo.toolTip()
     assert chemical_editor is not None and chemical_editor.toolTip()
+    assert band_density_editor is not None and band_density_editor.toolTip()
+    assert float(band_density_editor.text()) == pytest.approx(80.0)
     assert float(dos_min_editor.text()) == pytest.approx(-0.5)
     backend_combo = explorer.model_parameter_widget.findChild(
         QtWidgets.QComboBox,

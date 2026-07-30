@@ -914,10 +914,10 @@ def band_path(
     *,
     labels: Sequence[str] | None = None,
     break_before: Sequence[bool] | None = None,
-    points_per_segment: int = 60,
+    points_per_inv_angstrom: float = 80.0,
     coordinate_reciprocal_lattice: ArrayLike | None = None,
 ) -> WavevectorSampling:
-    """Resolve a manual high-symmetry path with physical path distance.
+    """Resolve a manual high-symmetry path at uniform physical point density.
 
     Nodes normally use the model's reduced reciprocal coordinates. Pass a
     ``3x3`` column-vector ``coordinate_reciprocal_lattice`` to describe nodes
@@ -925,6 +925,10 @@ def band_path(
     a centered conventional-cell Hamiltonian. Returned reduced coordinates
     are always converted to the model basis used by
     :meth:`ElectronicModel.hamiltonian`.
+
+    ``points_per_inv_angstrom`` sets the number of interpolation intervals per
+    inverse Angstrom of physical reciprocal-space distance. Each connected
+    segment receives at least one interval.
     """
 
     node_array = np.asarray(nodes, dtype=float)
@@ -936,8 +940,9 @@ def band_path(
         node_array = padded
     if node_array.shape[1] != 3:
         raise ValueError("path nodes must use three reduced coordinates")
-    if points_per_segment < 1:
-        raise ValueError("points_per_segment must be positive")
+    point_density = float(points_per_inv_angstrom)
+    if not np.isfinite(point_density) or point_density <= 0.0:
+        raise ValueError("points_per_inv_angstrom must be finite and positive")
     names = (
         tuple(str(value) for value in labels)
         if labels is not None
@@ -954,24 +959,6 @@ def band_path(
         raise ValueError(
             "break_before must match the nodes and begin with False"
         )
-    points = [node_array[0]]
-    point_breaks = [False]
-    label_points: list[tuple[int, str]] = [(0, names[0])]
-    for segment in range(node_array.shape[0] - 1):
-        if breaks[segment + 1]:
-            points.append(node_array[segment + 1])
-            point_breaks.append(True)
-            label_points.append((len(points) - 1, names[segment + 1]))
-            continue
-        for step in range(1, points_per_segment + 1):
-            fraction = step / points_per_segment
-            points.append(
-                (1.0 - fraction) * node_array[segment]
-                + fraction * node_array[segment + 1]
-            )
-            point_breaks.append(False)
-        label_points.append((len(points) - 1, names[segment + 1]))
-    input_coordinates = np.asarray(points, dtype=float)
     if coordinate_reciprocal_lattice is None:
         coordinate_reciprocal = model.reciprocal_lattice
     else:
@@ -987,6 +974,32 @@ def band_path(
                 "coordinate_reciprocal_lattice must be a finite 3x3 "
                 "column-vector matrix"
             )
+    physical_nodes = node_array @ coordinate_reciprocal.T
+    points = [node_array[0]]
+    point_breaks = [False]
+    label_points: list[tuple[int, str]] = [(0, names[0])]
+    segment_intervals: list[int] = []
+    for segment in range(node_array.shape[0] - 1):
+        if breaks[segment + 1]:
+            points.append(node_array[segment + 1])
+            point_breaks.append(True)
+            label_points.append((len(points) - 1, names[segment + 1]))
+            segment_intervals.append(0)
+            continue
+        segment_length = float(
+            np.linalg.norm(physical_nodes[segment + 1] - physical_nodes[segment])
+        )
+        intervals = max(1, int(np.ceil(point_density * segment_length)))
+        segment_intervals.append(intervals)
+        for step in range(1, intervals + 1):
+            fraction = step / intervals
+            points.append(
+                (1.0 - fraction) * node_array[segment]
+                + fraction * node_array[segment + 1]
+            )
+            point_breaks.append(False)
+        label_points.append((len(points) - 1, names[segment + 1]))
+    input_coordinates = np.asarray(points, dtype=float)
     physical = input_coordinates @ coordinate_reciprocal.T
     coordinates = physical @ np.linalg.inv(model.reciprocal_lattice).T
     increments = np.linalg.norm(np.diff(physical, axis=0), axis=1)
@@ -999,7 +1012,8 @@ def band_path(
         labels=tuple(label_points),
         provenance={
             "provider": "manual",
-            "points_per_segment": points_per_segment,
+            "points_per_inv_angstrom": point_density,
+            "segment_intervals": segment_intervals,
             "break_before": list(breaks),
             "coordinate_reciprocal_lattice_inv_angstrom": (
                 coordinate_reciprocal.tolist()

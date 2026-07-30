@@ -1016,6 +1016,11 @@ def _validate_tight_binding_config(component: Any) -> None:
         raise ValueError("electronic_max_batch_mb must be positive and finite")
     if not isinstance(config.get("band_path_metadata", {}), Mapping):
         raise ValueError("band_path_metadata must be a mapping")
+    point_density = float(config.get("band_points_per_inv_angstrom", 80.0))
+    if not np.isfinite(point_density) or point_density <= 0.0:
+        raise ValueError(
+            "band_points_per_inv_angstrom must be positive and finite"
+        )
     if str(config.get("dos_symmetry", "full")) not in {
         "auto",
         "full",

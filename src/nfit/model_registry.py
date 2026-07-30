@@ -2305,12 +2305,16 @@ def _register_builtin_models() -> None:
                     ),
                 ),
                 _config_field(
-                    "band_points_per_segment",
-                    60,
-                    "Interpolation intervals in each band-path segment.",
-                    "Positive integer.",
-                    "int",
-                    "80",
+                    "band_points_per_inv_angstrom",
+                    80.0,
+                    (
+                        "Band-path interpolation intervals per inverse Angstrom "
+                        "of physical reciprocal-space distance."
+                    ),
+                    "Positive finite number.",
+                    "float",
+                    "100",
+                    "angstrom",
                 ),
                 _config_field(
                     "dos_mesh",

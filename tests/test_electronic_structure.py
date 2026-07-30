@@ -90,7 +90,7 @@ def test_arbitrary_chain_uses_wannier_phase_and_physical_path_distance():
         model,
         [[0.0], [0.5]],
         labels=[r"$\Gamma$", "X"],
-        points_per_segment=4,
+        points_per_inv_angstrom=2.5,
     )
     result = calculate_bands(model, path)
     assert path.labels == ((0, r"$\Gamma$"), (4, "X"))
@@ -111,7 +111,7 @@ def test_arbitrary_chain_uses_wannier_phase_and_physical_path_distance():
         model,
         [[0.0], [0.5]],
         labels=["G", "B"],
-        points_per_segment=1,
+        points_per_inv_angstrom=0.25,
         coordinate_reciprocal_lattice=alternate_reciprocal,
     )
     assert alternate_path.path_distance_inv_angstrom[-1] == pytest.approx(np.pi)
@@ -119,6 +119,15 @@ def test_arbitrary_chain_uses_wannier_phase_and_physical_path_distance():
         alternate_path.reduced_coordinates[-1],
         [1.0, 0.0, 0.0],
     )
+
+    density_path = band_path(
+        model,
+        [[0.0], [0.25], [1.0]],
+        labels=["G", "A", "B"],
+        points_per_inv_angstrom=4.0 / np.pi,
+    )
+    assert density_path.provenance["segment_intervals"] == (1, 3)
+    assert density_path.labels == ((0, "G"), (1, "A"), (4, "B"))
 
 
 def test_projected_bands_and_dos_preserve_state_count():
@@ -676,7 +685,13 @@ def test_tight_binding_registry_plots_and_scripts_are_component_driven():
             "periodic_axes": [0],
             "band_path": [
                 {"label": "G", "k": [0.0, 0.0, 0.0]},
-                {"label": "X", "k": [0.5, 0.0, 0.0]},
+                {"label": "X", "k": [0.25, 0.0, 0.0]},
+                {
+                    "label": "Y",
+                    "k": [0.5, 0.0, 0.0],
+                    "break_before": True,
+                },
+                {"label": "Z", "k": [0.75, 0.0, 0.0]},
             ],
             "dos_mesh": [60],
             "fermi_mesh": [100],
@@ -697,6 +712,11 @@ def test_tight_binding_registry_plots_and_scripts_are_component_driven():
         assert figure.axes
         if plot.key == "bands":
             assert "(eV)" in axes.get_ylabel()
+            assert [tick.get_text() for tick in axes.get_xticklabels()] == [
+                "G",
+                "X|Y",
+                "Z",
+            ]
         elif plot.key == "dos":
             assert "(eV)" in axes.get_xlabel()
             assert "states / eV" in axes.get_ylabel()
