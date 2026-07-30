@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from functools import lru_cache
 from itertools import product
 from threading import RLock
 from types import MappingProxyType
@@ -34,9 +37,25 @@ try:
 except Exception:  # pragma: no cover - Numba is unavailable
     _NUMBA_RESPONSE_BACKEND = None
 
+try:
+    from threadpoolctl import threadpool_limits as _threadpool_limits
+except Exception:  # pragma: no cover - declared dependency is unavailable
+    _threadpool_limits = None
+
 FloatArray = NDArray[np.float64]
 ComplexArray = NDArray[np.complex128]
 _NUMBA_TRANSITION_MIN_WORK = 25_000_000
+_Q_PARALLEL_MIN_WORK = 25_000_000
+
+
+@lru_cache(maxsize=16)
+def _q_executor(workers: int) -> ThreadPoolExecutor:
+    """Return a reusable executor for independent transferred wavevectors."""
+
+    return ThreadPoolExecutor(
+        max_workers=int(workers),
+        thread_name_prefix="nfit-response-q",
+    )
 
 
 def _readonly(value: ArrayLike, dtype: Any) -> np.ndarray:
@@ -1072,6 +1091,100 @@ def _resolved_transition_backend(
     return "numpy"
 
 
+def _ordered_orbital_pair_indices(
+    model: ElectronicModel,
+    operators: ElectronicOperatorBasis,
+) -> tuple[int, ...] | None:
+    """Return certified ``|a><b|`` indices for the factorized contraction."""
+
+    if dict(operators.metadata).get("kind") != "ordered_orbital_pairs":
+        return None
+    try:
+        indices = tuple(
+            int(value)
+            for value in dict(operators.metadata)["basis_indices"]
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+    size = len(indices)
+    if (
+        size < 1
+        or operators.size != size * size
+        or len(set(indices)) != size
+        or any(value < 0 or value >= model.n_basis for value in indices)
+    ):
+        return None
+    if np.count_nonzero(operators.matrices) != size * size:
+        return None
+    for local_a, a in enumerate(indices):
+        for local_b, b in enumerate(indices):
+            if operators.matrices[local_a * size + local_b, a, b] != 1.0:
+                return None
+    return indices
+
+
+def _factorized_orbital_pair_contraction(
+    weights: np.ndarray,
+    energy: np.ndarray,
+    broadening: float,
+    delta_energy: np.ndarray,
+    occupation_difference: np.ndarray,
+    equal_energy: np.ndarray,
+    static_limit: np.ndarray,
+    base_eigenvectors: np.ndarray,
+    shifted_eigenvectors: np.ndarray,
+    basis_indices: tuple[int, ...],
+) -> np.ndarray:
+    """Contract an ordered orbital-pair response without dense operators."""
+
+    kernel = -occupation_difference[None, ...] / (
+        energy[:, None, None, None]
+        + delta_energy[None, ...]
+        + 1.0j * broadening
+    )
+    static_rows = np.abs(energy) <= 1.0e-14
+    if np.any(static_rows):
+        kernel[static_rows] = np.where(
+            equal_energy[None, ...],
+            static_limit[None, ...],
+            kernel[static_rows],
+        )
+    selected = list(basis_indices)
+    base = base_eigenvectors[:, selected, :]
+    shifted = shifted_eigenvectors[:, selected, :]
+    base_density = np.einsum(
+        "kan,kcn->knac",
+        base.conj(),
+        base,
+        optimize=True,
+    )
+    shifted_density = np.einsum(
+        "kbm,kdm->kmbd",
+        shifted,
+        shifted.conj(),
+        optimize=True,
+    )
+    intermediate = np.einsum(
+        "eknm,kmbd,k->eknbd",
+        kernel,
+        shifted_density,
+        weights,
+        optimize=True,
+    )
+    response = np.einsum(
+        "eknbd,knac->eacbd",
+        intermediate,
+        base_density,
+        optimize=True,
+    )
+    size = len(basis_indices)
+    return response.transpose(0, 1, 3, 2, 4).reshape(
+        energy.size,
+        size * size,
+        size * size,
+    )
+
+
 def _bare_lindhard_direct(
     model: ElectronicModel,
     q_reduced: ArrayLike,
@@ -1089,6 +1202,10 @@ def _bare_lindhard_direct(
     transition_max_batch_bytes: int | None = None,
     transition_backend: Literal["auto", "numpy", "numba"] = "auto",
     cache: ElectronicResponseCache | None = None,
+    factorize_ordered_pairs: bool = False,
+    precomputed_base: ElectronicEigensystem | None = None,
+    allow_q_parallel: bool = True,
+    cache_completed_response: bool = True,
 ) -> SusceptibilityResult:
     """Evaluate the causal generalized Lindhard response.
 
@@ -1128,6 +1245,11 @@ def _bare_lindhard_direct(
             "point-dependent operators must have shape "
             "(n_points, n_operators, n_basis, n_basis)"
         )
+    orbital_pair_indices = (
+        _ordered_orbital_pair_indices(model, operators)
+        if factorize_ordered_pairs
+        else None
+    )
 
     k = np.asarray(mesh.reduced_coordinates, dtype=float)
     weights = np.asarray(mesh.weights, dtype=float)
@@ -1162,10 +1284,12 @@ def _bare_lindhard_direct(
         int(max_batch_bytes),
         transition_budget,
         transition_backend_request,
+        bool(factorize_ordered_pairs),
+        bool(allow_q_parallel),
     )
     cache_hits_before = 0 if cache is None else cache.hits
     cache_misses_before = 0 if cache is None else cache.misses
-    if cache is not None:
+    if cache is not None and cache_completed_response:
         cached_response = cache.get(response_cache_key)
         if cached_response is not None:
             return cached_response
@@ -1259,17 +1383,21 @@ def _bare_lindhard_direct(
                 "host_transfer": "completed susceptibility only",
             },
         )
-        if cache is not None:
+        if cache is not None and cache_completed_response:
             cache.put(response_cache_key, response)
         return response
-    base = _cached_eigensystem(
-        model,
-        k,
-        eigenvectors=True,
-        backend=backend,
-        workers=workers,
-        max_batch_bytes=max_batch_bytes,
-        cache=cache,
+    base = (
+        precomputed_base
+        if precomputed_base is not None
+        else _cached_eigensystem(
+            model,
+            k,
+            eigenvectors=True,
+            backend=backend,
+            workers=workers,
+            max_batch_bytes=max_batch_bytes,
+            cache=cache,
+        )
     )
     if base.eigenvectors is None:  # pragma: no cover - defensive
         raise RuntimeError("Lindhard response requires band eigenvectors")
@@ -1283,6 +1411,163 @@ def _bare_lindhard_direct(
         dtype=object,
     )
     unique_q, inverse = np.unique(q, axis=0, return_inverse=True)
+    total_workers = (
+        _parallel.num_threads()
+        if workers is None or int(workers) == 0
+        else max(1, int(workers))
+    )
+    q_parallel_work = (
+        int(q.shape[0])
+        * int(k.shape[0])
+        * model.n_basis
+        * model.n_basis
+        * operators.size
+        * operators.size
+    )
+    q_worker_count = min(total_workers, unique_q.shape[0])
+    if (
+        allow_q_parallel
+        and q_worker_count > 1
+        and q_parallel_work >= _Q_PARALLEL_MIN_WORK
+    ):
+        point_groups = [
+            np.flatnonzero(inverse == q_index)
+            for q_index in range(unique_q.shape[0])
+        ]
+        inner_workers = max(1, total_workers // q_worker_count)
+
+        def evaluate_q_group(indices: np.ndarray) -> SusceptibilityResult:
+            return _bare_lindhard_direct(
+                model,
+                transferred_q[indices],
+                energy[indices],
+                mesh,
+                operators,
+                temperature_K=temperature,
+                chemical_potential_meV=mu,
+                broadening_meV=eta,
+                operator_matrices_by_point=point_operators[indices],
+                backend=backend,
+                workers=inner_workers,
+                max_batch_bytes=max_batch_bytes,
+                transition_max_batch_bytes=transition_budget,
+                transition_backend=transition_backend_request,
+                cache=cache,
+                factorize_ordered_pairs=factorize_ordered_pairs,
+                precomputed_base=base,
+                allow_q_parallel=False,
+                cache_completed_response=False,
+            )
+
+        limiter = (
+            _threadpool_limits(
+                limits=inner_workers,
+                user_api="blas",
+            )
+            if _threadpool_limits is not None
+            else contextlib.nullcontext()
+        )
+        with limiter:
+            q_responses = list(
+                _q_executor(q_worker_count).map(
+                    evaluate_q_group,
+                    point_groups,
+                )
+            )
+        combined_values = np.empty(
+            (q.shape[0], operators.size, operators.size),
+            dtype=np.complex128,
+        )
+        for indices, q_response in zip(
+            point_groups,
+            q_responses,
+            strict=True,
+        ):
+            combined_values[indices] = q_response.values_per_meV_cell
+        reference_provenance = dict(q_responses[0].provenance)
+        transition_backends = {
+            str(item.provenance.get("transition_backend", "unknown"))
+            for item in q_responses
+        }
+        response = SusceptibilityResult(
+            q_reduced=q,
+            Q_reduced=transferred_q,
+            energy_meV=energy,
+            values_per_meV_cell=combined_values,
+            operator_labels=operators.labels,
+            conjugate_indices=operators.conjugate_indices,
+            model_digest=model.content_digest,
+            temperature_K=temperature,
+            chemical_potential_meV=mu,
+            broadening_meV=eta,
+            provenance={
+                **reference_provenance,
+                "extended_zone_Q_reduced": transferred_q.tolist(),
+                "shifted_execution": [
+                    record
+                    for item in q_responses
+                    for record in item.provenance.get(
+                        "shifted_execution",
+                        [],
+                    )
+                ],
+                "transition_batch_size": min(
+                    int(item.provenance["transition_batch_size"])
+                    for item in q_responses
+                ),
+                "energy_batch_size": min(
+                    int(item.provenance["energy_batch_size"])
+                    for item in q_responses
+                ),
+                "transition_backend": (
+                    next(iter(transition_backends))
+                    if len(transition_backends) == 1
+                    else "mixed"
+                ),
+                "q_evaluation": {
+                    "policy": "exact",
+                    "commensurate_permutation_count": sum(
+                        int(
+                            item.provenance["q_evaluation"][
+                                "commensurate_permutation_count"
+                            ]
+                        )
+                        for item in q_responses
+                    ),
+                    "direct_shift_count": sum(
+                        int(
+                            item.provenance["q_evaluation"][
+                                "direct_shift_count"
+                            ]
+                        )
+                        for item in q_responses
+                    ),
+                    "approximation": "none",
+                },
+                "q_parallel_execution": {
+                    "applied": True,
+                    "q_workers": q_worker_count,
+                    "inner_workers": inner_workers,
+                    "unique_q": int(unique_q.shape[0]),
+                    "work_estimate": q_parallel_work,
+                },
+                "cache": {
+                    "enabled": cache is not None,
+                    "hits": (
+                        0 if cache is None else cache.hits - cache_hits_before
+                    ),
+                    "misses": (
+                        0
+                        if cache is None
+                        else cache.misses - cache_misses_before
+                    ),
+                    "entries": 0 if cache is None else cache.entries,
+                },
+            },
+        )
+        if cache is not None and cache_completed_response:
+            cache.put(response_cache_key, response)
+        return response
     execution_records = []
     transition_batch_sizes = []
     energy_batch_sizes = []
@@ -1313,12 +1598,25 @@ def _bare_lindhard_direct(
         execution_records.append(dict(shifted.provenance))
         occupation_q = _fermi_function(shifted.eigenvalues, mu, temperature)
         bands = model.n_basis
-        per_k_bytes = max(
-            1,
-            16 * operators.size * bands * bands
-            + 64 * bands * bands
-            + 32 * bands,
+        factorized_pairs = (
+            orbital_pair_indices is not None
+            and transition_backend_request == "auto"
         )
+        if factorized_pairs:
+            pair_size = len(orbital_pair_indices)
+            per_k_bytes = max(
+                1,
+                32 * bands * pair_size * pair_size
+                + 64 * bands * bands
+                + 32 * bands,
+            )
+        else:
+            per_k_bytes = max(
+                1,
+                16 * operators.size * bands * bands
+                + 64 * bands * bands
+                + 32 * bands,
+            )
         transition_batch = max(
             1,
             min(k.shape[0], transition_budget // per_k_bytes),
@@ -1352,17 +1650,31 @@ def _bare_lindhard_direct(
             )
             batch_k = stop - start
             fixed_bytes = per_k_bytes * batch_k
-            per_energy_bytes = max(1, 16 * batch_k * bands * bands)
+            per_energy_bytes = max(
+                1,
+                16
+                * batch_k
+                * (
+                    bands * bands
+                    + (
+                        bands * pair_size * pair_size
+                        if factorized_pairs
+                        else 0
+                    )
+                ),
+            )
             available = max(per_energy_bytes, transition_budget - fixed_bytes)
             for operator_group in operator_groups:
-                reference_operators = point_operators[operator_group[0]]
-                matrix_elements = np.einsum(
-                    "kan,Aab,kbm->kAnm",
-                    base.eigenvectors[start:stop].conj(),
-                    reference_operators,
-                    shifted.eigenvectors[start:stop],
-                    optimize=True,
-                )
+                matrix_elements = None
+                if not factorized_pairs:
+                    reference_operators = point_operators[operator_group[0]]
+                    matrix_elements = np.einsum(
+                        "kan,Aab,kbm->kAnm",
+                        base.eigenvectors[start:stop].conj(),
+                        reference_operators,
+                        shifted.eigenvectors[start:stop],
+                        optimize=True,
+                    )
                 energy_batch = max(
                     1,
                     min(operator_group.size, available // per_energy_bytes),
@@ -1373,6 +1685,25 @@ def _bare_lindhard_direct(
                         energy_start : energy_start + energy_batch
                     ]
                     transferred = energy[batch_indices]
+                    if factorized_pairs:
+                        resolved_transition_backends.add(
+                            "numpy_orbital_pair_factorized"
+                        )
+                        result[batch_indices] += (
+                            _factorized_orbital_pair_contraction(
+                                weights[start:stop],
+                                transferred,
+                                eta,
+                                delta_energy,
+                                occupation_difference,
+                                equal,
+                                static_limit,
+                                base.eigenvectors[start:stop],
+                                shifted.eigenvectors[start:stop],
+                                orbital_pair_indices,
+                            )
+                        )
+                        continue
                     transition_work = (
                         int(batch_indices.size)
                         * operators.size
@@ -1478,6 +1809,13 @@ def _bare_lindhard_direct(
                 "direct_shift_count": len(unique_q) - commensurate_q_count,
                 "approximation": "none",
             },
+            "q_parallel_execution": {
+                "applied": False,
+                "q_workers": 1,
+                "inner_workers": total_workers,
+                "unique_q": int(unique_q.shape[0]),
+                "work_estimate": q_parallel_work,
+            },
             "cache": {
                 "enabled": cache is not None,
                 "hits": (
@@ -1490,7 +1828,7 @@ def _bare_lindhard_direct(
             },
         },
     )
-    if cache is not None:
+    if cache is not None and cache_completed_response:
         cache.put(response_cache_key, response)
     return response
 
@@ -1714,6 +2052,7 @@ def bare_lindhard_susceptibility(
         "transition_max_batch_bytes": transition_max_batch_bytes,
         "transition_backend": transition_backend,
         "cache": cache,
+        "factorize_ordered_pairs": operator_matrices_by_point is None,
     }
     commensurate = np.asarray(
         [

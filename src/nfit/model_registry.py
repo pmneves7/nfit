@@ -1455,8 +1455,9 @@ def _register_builtin_models() -> None:
                     "response_workers",
                     1,
                     (
-                        "CPU worker count used by the electronic eigensystem "
-                        "service and fused Lindhard contractions."
+                        "Total CPU allocation shared between independent "
+                        "wavevectors, electronic eigensystems, and fused "
+                        "Lindhard contractions."
                     ),
                     "Positive integer.",
                     "int",
@@ -1467,8 +1468,9 @@ def _register_builtin_models() -> None:
                     "auto",
                     (
                         "CPU particle-hole contraction implementation. Auto "
-                        "uses the exact fused Numba kernel only when the "
-                        "operator problem is large enough to benefit."
+                        "factorizes certified ordered orbital pairs and uses "
+                        "the exact fused Numba kernel for other sufficiently "
+                        "large operator problems."
                     ),
                     "One of auto, numpy, or numba.",
                     "str",

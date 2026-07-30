@@ -50,13 +50,15 @@ Planned response models include:
 - interfaces to advanced solvers such as DMFT or Bethe--Salpeter workflows
   without embedding those solvers in nfit.
 
-Performance work may add wider operator-aware symmetry reduction, sparse CPU
-kernels, multi-GPU execution, and persistent distributed workers. Such paths
-must be checked against the serial float64/complex128 reference and retain
-deterministic provenance. Current fits already share bounded response contexts
-across datasets, reuse parameter-resolved momentum Hamiltonians, use a
-workload-gated fused CPU contraction, and can keep the full Lindhard
-contraction on one explicitly selected CuPy device.
+Performance work may add wider operator-aware symmetry reduction, additional
+block-sparse interaction kernels, multi-GPU execution, and persistent
+distributed workers. Such paths must be checked against the serial
+float64/complex128 reference and retain deterministic provenance. Current
+fits already share bounded response contexts across datasets, reuse
+parameter-resolved momentum Hamiltonians, factorize ordered orbital-pair
+responses, schedule independent wavevectors within one CPU allocation, and
+can keep the full Lindhard contraction on one explicitly selected CuPy
+device.
 
 Automatic Brillouin-zone density selection should use observable-specific
 certificates: an energy-resolved DOS norm, topology and geometric distance for

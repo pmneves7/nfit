@@ -168,11 +168,19 @@ Hamiltonian evaluation caches parameter-independent Fourier coefficients for
 repeated paths and meshes. Lindhard energy points and electronic-RPA linear
 systems are processed in bounded batches.
 
-On CPU, `response_transition_backend="auto"` selects an exact fused Numba
-particle--hole contraction only when the operator count and batch size can
-amortize compilation and dispatch. `response_workers` controls both this
-kernel and threaded eigensystems. The NumPy reference can always be forced;
-the resolved implementation is recorded in susceptibility provenance.
+On CPU, `response_transition_backend="auto"` first recognizes ordered
+orbital-pair operators and applies an exact factorized tensor contraction.
+This lowers the arithmetic scaling of the Hubbard--Hund bubble and avoids
+dense one-hot operator matrices. Other sufficiently large operator problems
+use the fused Numba contraction when their batch size can amortize compilation
+and dispatch. The NumPy and Numba reference paths can always be forced; the
+resolved implementation is recorded in susceptibility provenance.
+
+For sufficiently large calculations with several distinct transferred
+wavevectors, nfit partitions the total `response_workers` allocation across
+the independent q groups and assigns the remaining workers within each group.
+The base mesh eigensystem is shared rather than recomputed. Small jobs and
+single-q energy scans stay on the lower-overhead serial-q path.
 
 With explicit `response_backend="cupy"`, Fourier Hamiltonian components,
 eigensystems, occupations, magnetic matrix elements, denominators, and the

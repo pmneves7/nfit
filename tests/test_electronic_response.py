@@ -311,10 +311,77 @@ def test_numba_transition_contraction_matches_numpy():
         workers=2,
         **settings,
     )
+    factorized_result = bare_lindhard_susceptibility(
+        model,
+        q,
+        energy,
+        mesh,
+        operators,
+        transition_backend="auto",
+        workers=2,
+        **settings,
+    )
+    factorized_chunked = bare_lindhard_susceptibility(
+        model,
+        q,
+        energy,
+        mesh,
+        operators,
+        transition_backend="auto",
+        transition_max_batch_bytes=128,
+        workers=2,
+        **{
+            key: value
+            for key, value in settings.items()
+            if key != "transition_max_batch_bytes"
+        },
+    )
 
     assert numba_result.provenance["transition_backend"] == "numba"
+    assert (
+        factorized_result.provenance["transition_backend"]
+        == "numpy_orbital_pair_factorized"
+    )
     np.testing.assert_allclose(
         numba_result.values_per_meV_cell,
+        numpy_result.values_per_meV_cell,
+        rtol=2.0e-13,
+        atol=2.0e-14,
+    )
+    np.testing.assert_allclose(
+        factorized_result.values_per_meV_cell,
+        numpy_result.values_per_meV_cell,
+        rtol=2.0e-13,
+        atol=2.0e-14,
+    )
+    np.testing.assert_allclose(
+        factorized_chunked.values_per_meV_cell,
+        numpy_result.values_per_meV_cell,
+        rtol=2.0e-13,
+        atol=2.0e-14,
+    )
+
+    point_operators = np.broadcast_to(
+        operators.matrices[None, ...],
+        (q.shape[0], *operators.matrices.shape),
+    )
+    explicit_operators = bare_lindhard_susceptibility(
+        model,
+        q,
+        energy,
+        mesh,
+        operators,
+        operator_matrices_by_point=point_operators,
+        transition_backend="auto",
+        workers=2,
+        **settings,
+    )
+    assert (
+        explicit_operators.provenance["transition_backend"]
+        != "numpy_orbital_pair_factorized"
+    )
+    np.testing.assert_allclose(
+        explicit_operators.values_per_meV_cell,
         numpy_result.values_per_meV_cell,
         rtol=2.0e-13,
         atol=2.0e-14,
@@ -356,6 +423,62 @@ def test_commensurate_q_reuses_periodic_mesh_eigensystem_exactly():
             "commensurate_permutation_count"
         ]
         == 1
+    )
+
+
+def test_independent_q_groups_parallelize_without_changing_response(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        electronic_response_module,
+        "_Q_PARALLEL_MIN_WORK",
+        0,
+    )
+    model = _chain_model()
+    mesh = k_mesh(model, (64,))
+    q = np.asarray(
+        [
+            [0.13, 0.0, 0.0],
+            [0.27, 0.0, 0.0],
+            [0.41, 0.0, 0.0],
+            [0.49, 0.0, 0.0],
+        ]
+    )
+    energy = np.asarray([-2.0, -0.5, 1.0, 2.5])
+    settings = {
+        "temperature_K": 20.0,
+        "chemical_potential_meV": 0.0,
+        "broadening_meV": 0.4,
+        "backend": "numpy",
+    }
+    serial = bare_spin_susceptibility(
+        model,
+        q,
+        energy,
+        mesh,
+        workers=1,
+        **settings,
+    )
+    parallel = bare_spin_susceptibility(
+        model,
+        q,
+        energy,
+        mesh,
+        workers=4,
+        **settings,
+    )
+
+    assert serial.provenance["q_parallel_execution"]["applied"] is False
+    assert parallel.provenance["q_parallel_execution"] == {
+        "applied": True,
+        "q_workers": 4,
+        "inner_workers": 1,
+        "unique_q": 4,
+        "work_estimate": 256,
+    }
+    np.testing.assert_array_equal(
+        parallel.values_per_meV_cell,
+        serial.values_per_meV_cell,
     )
 
 

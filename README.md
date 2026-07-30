@@ -20,8 +20,9 @@ The package provides:
   electronic-response dependencies, pole diagnostics, fitting, and reports;
 - production electronic-response controls with bounded transition batches,
   fit-shared response caches, reusable parameter-resolved momentum
-  Hamiltonians, workload-gated fused CPU and end-to-end optional GPU
-  contractions, model-digest-aware eigensystem and bare-response reuse,
+  Hamiltonians, factorized orbital-pair responses, resource-aware
+  independent-Q scheduling, workload-gated fused CPU and end-to-end optional
+  GPU contractions, model-digest-aware eigensystem and bare-response reuse,
   exact commensurate-Q permutation,
   tolerance-certified periodic Q interpolation, certified little-group
   reduction, backend-equivalence probes, separate

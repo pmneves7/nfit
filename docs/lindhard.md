@@ -111,8 +111,8 @@ parameters remain on the referenced tight-binding component.
 | `chemical_potential_mode` | use the source chemical potential or solve from filling | `"source"` | `"source"` or `"filling"` |
 | `filling_per_cell` | electron count per primitive cell in filling mode | `1.0` | `3.0` |
 | `response_backend` | execution backend; CuPy keeps the full Lindhard contraction on the GPU and returns only the completed response | `"numpy"` | `"numpy"`, `"threaded"`, or `"cupy"` |
-| `response_workers` | bounded CPU worker count for eigensystems and fused response contractions | `1` | `8` |
-| `response_transition_backend` | CPU particle--hole contraction; automatic selection is exact and workload-gated | `"auto"` | `"auto"`, `"numpy"`, or `"numba"` |
+| `response_workers` | total CPU allocation shared across independent wavevectors, eigensystems, and fused contractions | `1` | `8` |
+| `response_transition_backend` | CPU particle--hole contraction; automatic selection uses exact orbital-pair factorization or workload-gated Numba | `"auto"` | `"auto"`, `"numpy"`, or `"numba"` |
 | `response_validate_backend` | compare a deterministic probe with serial NumPy before threaded or GPU use | `true` | `false` |
 | `response_backend_probe_points` | mesh points in the backend-equivalence probe | `8` | `12` |
 | `response_backend_rtol` | relative eigenvalue tolerance for the probe | `1e-10` | `1e-9` |
@@ -170,13 +170,23 @@ CuPy backends are compared with serial NumPy for each new model digest before
 response evaluation. Explicit CuPy use fails clearly if the requested backend
 is unavailable or exceeds the configured tolerance.
 
-On CPU, `response_transition_backend="auto"` uses a fused Numba contraction
-only for sufficiently large multi-operator problems. It avoids materializing
-the full energy-dependent denominator tensor and uses `response_workers`
-threads. The kernel retains float64/complex128 arithmetic and the same
-finite-temperature equal-energy limit as the NumPy reference. Select
-`"numpy"` to force the reference contraction for comparison. Explicit CuPy
-response evaluation remains entirely on the GPU and does not use this setting.
+On CPU, `response_transition_backend="auto"` recognizes the ordered
+$|a\rangle\langle b|$ basis used by Hubbard--Hund RPA and contracts its
+separable orbital factors without constructing dense operator matrix elements.
+General sufficiently large multi-operator problems use the fused Numba
+kernel. Both paths retain float64/complex128 arithmetic and the same
+finite-temperature equal-energy limit as the NumPy reference. Explicit
+point-dependent operator matrices use the general path because they need not
+retain the ordered-pair structure. Select `"numpy"` or `"numba"` to force a
+reference implementation for comparison. Explicit CuPy response evaluation
+remains entirely on the GPU and does not use this setting.
+
+When a direct calculation contains several independent transferred
+wavevectors, nfit may divide `response_workers` between those wavevectors and
+the work within each one. The workload threshold prevents thread dispatch for
+small responses. This scheduling changes neither the mesh nor the order of
+the returned points; `q_parallel_execution` in the result provenance records
+whether it was used.
 
 Filling mode solves one chemical potential at each required temperature. It
 therefore requires $T>0$ in the current implementation. Source mode uses
