@@ -2378,6 +2378,17 @@ def _register_builtin_models() -> None:
                     "auto",
                 ),
                 _config_field(
+                    "dos_auto_energy_range",
+                    False,
+                    (
+                        "Derive density-of-states energy limits from sampled "
+                        "band extrema, including Gaussian-tail padding."
+                    ),
+                    "Boolean.",
+                    "bool",
+                    "true",
+                ),
+                _config_field(
                     "dos_energy_min_meV",
                     -500.0,
                     "Canonical lower density-of-states energy.",

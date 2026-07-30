@@ -103,6 +103,7 @@ longer segments receive proportionally more interpolation points.
 | `dos_method` | `"gaussian"` | `"gaussian"` broadening or three-dimensional `"tetrahedron"` integration through ASE. |
 | `dos_mesh` | `[40,40,40]` | Uniform integration mesh. A two-dimensional model may use `[80,80]`. |
 | `dos_symmetry` | `"auto"` | Certified reduction with full-mesh fallback, explicit `"full"`, or required `"reduced"` sampling. |
+| `dos_auto_energy_range` | `false` | Derive limits from sampled band extrema, with Gaussian-tail or tetrahedron margin padding. |
 | `dos_energy_min_meV` | `-500.0` | Lower absolute energy sampled, in canonical meV. |
 | `dos_energy_max_meV` | `500.0` | Upper absolute energy sampled, in canonical meV. |
 | `dos_energy_points` | `600` | Number of energy samples, at least two. |
@@ -115,6 +116,10 @@ piecewise-linear band dispersion without an artificial linewidth. It requires
 a complete uniform three-dimensional mesh, a uniform energy grid, and
 `dos_symmetry="full"`. Gaussian integration remains the appropriate choice for
 one- and two-dimensional models.
+
+When `dos_auto_energy_range=true`, the configured manual minimum and maximum
+are retained but not used. `density_of_states(..., energy_meV=None,
+energy_points=N)` provides the same automatic behavior for scripts.
 
 Symmetry reduction is certified only for a three-dimensional uniform mesh and
 a model built with nfit's known orbital representations. `auto` records a

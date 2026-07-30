@@ -17,6 +17,7 @@ from nfit import (
     ModelComponentSpec,
     NfitProject,
     WavevectorSampling,
+    automatic_dos_energy_limits,
     band_path,
     build_electronic_model,
     calculate_bands,
@@ -181,6 +182,31 @@ def test_projected_bands_and_dos_preserve_state_count():
         rtol=1.0e-12,
         atol=1.0e-12,
     )
+
+
+def test_automatic_dos_range_encloses_bands_and_gaussian_tails():
+    model = _chain_model()
+    mesh = k_mesh(model, (80,))
+    bands = calculate_bands(model, mesh)
+
+    lower, upper = automatic_dos_energy_limits(
+        bands.energies_meV,
+        broadening_meV=5.0,
+    )
+    assert lower == pytest.approx(-220.0)
+    assert upper == pytest.approx(220.0)
+
+    dos = density_of_states(
+        model,
+        mesh,
+        None,
+        broadening_meV=5.0,
+        energy_points=301,
+    )
+    assert dos.energy_meV.shape == (301,)
+    assert dos.energy_meV[0] == pytest.approx(lower)
+    assert dos.energy_meV[-1] == pytest.approx(upper)
+    assert dos.provenance["automatic_energy_range"] is True
 
 
 def test_tetrahedron_dos_preserves_total_and_projected_state_counts():
@@ -831,6 +857,7 @@ def test_tight_binding_registry_plots_and_scripts_are_component_driven():
                 {"label": "Z", "k": [0.75, 0.0, 0.0]},
             ],
             "dos_mesh": [60],
+            "dos_auto_energy_range": True,
             "fermi_mesh": [100],
         },
     )
@@ -857,6 +884,7 @@ def test_tight_binding_registry_plots_and_scripts_are_component_driven():
                 "Z",
             ]
         elif plot.key == "dos":
+            assert result.provenance["automatic_energy_range"] is True
             assert "(eV)" in axes.get_xlabel()
             assert "E" in axes.get_xlabel()
             assert r"\epsilon" not in axes.get_xlabel()
@@ -870,6 +898,8 @@ def test_tight_binding_registry_plots_and_scripts_are_component_driven():
         script = plot.script(component)
         if plot.key in {"bands", "dos"}:
             assert "ElectronicPlotStyle" in script
+        if plot.key == "dos":
+            assert "automatic_energy_range" in script
         namespace = {}
         with warnings.catch_warnings():
             warnings.filterwarnings(

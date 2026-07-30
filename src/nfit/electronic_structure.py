@@ -1417,13 +1417,42 @@ class DensityOfStatesResult:
         object.__setattr__(self, "provenance", _freeze(self.provenance))
 
 
-def density_of_states(
-    model: ElectronicModel,
-    mesh: WavevectorSampling,
-    energy_meV: ArrayLike,
+def automatic_dos_energy_limits(
+    band_energies_meV: ArrayLike,
     *,
     broadening_meV: float,
     method: Literal["gaussian", "tetrahedron"] = "gaussian",
+) -> tuple[float, float]:
+    """Return DOS limits enclosing sampled bands and any Gaussian tails."""
+
+    energies = np.asarray(band_energies_meV, dtype=float)
+    if energies.size == 0 or not np.all(np.isfinite(energies)):
+        raise ValueError("band energies must be nonempty and finite")
+    selected_method = str(method).strip().lower()
+    if selected_method not in {"gaussian", "tetrahedron"}:
+        raise ValueError("density-of-states method must be gaussian or tetrahedron")
+    lower = float(np.min(energies))
+    upper = float(np.max(energies))
+    span = upper - lower
+    numerical_margin = max(1.0, abs(lower), abs(upper)) * 1.0e-9
+    if selected_method == "gaussian":
+        sigma = float(broadening_meV)
+        if not np.isfinite(sigma) or sigma <= 0.0:
+            raise ValueError("Gaussian DOS broadening must be positive")
+        margin = max(4.0 * sigma, 0.02 * span, numerical_margin)
+    else:
+        margin = max(0.02 * span, numerical_margin)
+    return lower - margin, upper + margin
+
+
+def density_of_states(
+    model: ElectronicModel,
+    mesh: WavevectorSampling,
+    energy_meV: ArrayLike | None,
+    *,
+    broadening_meV: float,
+    method: Literal["gaussian", "tetrahedron"] = "gaussian",
+    energy_points: int = 600,
     chemical_potential_meV: float = 0.0,
     projections: Mapping[str, Sequence[int]] | None = None,
     max_chunk_bytes: int = 64 * 1024**2,
@@ -1435,24 +1464,34 @@ def density_of_states(
 
     ``method="gaussian"`` replaces each sampled state with a normalized
     Gaussian. ``method="tetrahedron"`` uses ASE's linear tetrahedron
-    integration on a complete uniform three-dimensional mesh.
+    integration on a complete uniform three-dimensional mesh. Pass
+    ``energy_meV=None`` to derive padded limits from the sampled band extrema
+    and use ``energy_points`` samples between them.
     """
 
     if mesh.kind != "mesh" or mesh.weights is None:
         raise ValueError("density of states requires an integration mesh")
-    energy = np.asarray(energy_meV, dtype=float)
     sigma = float(broadening_meV)
     selected_method = str(method).strip().lower()
     if selected_method not in {"gaussian", "tetrahedron"}:
         raise ValueError("density-of-states method must be gaussian or tetrahedron")
-    if energy.ndim != 1 or energy.size < 2 or not np.all(np.isfinite(energy)):
-        raise ValueError("energy must be a finite 1D grid with at least two points")
-    if np.any(np.diff(energy) <= 0.0):
-        raise ValueError("density-of-states energies must be strictly increasing")
     if selected_method == "gaussian" and (
         not np.isfinite(sigma) or sigma <= 0.0
     ):
         raise ValueError("Gaussian DOS broadening must be positive")
+    if energy_meV is None:
+        points = int(energy_points)
+        if points < 2:
+            raise ValueError("energy_points must be at least two")
+        energy = None
+        automatic_energy_range = True
+    else:
+        energy = np.asarray(energy_meV, dtype=float)
+        automatic_energy_range = False
+        if energy.ndim != 1 or energy.size < 2 or not np.all(np.isfinite(energy)):
+            raise ValueError("energy must be a finite 1D grid with at least two points")
+        if np.any(np.diff(energy) <= 0.0):
+            raise ValueError("density-of-states energies must be strictly increasing")
     bands = calculate_bands(
         model,
         mesh,
@@ -1463,6 +1502,13 @@ def density_of_states(
         workers=workers,
         max_batch_bytes=max_batch_bytes,
     )
+    if energy is None:
+        energy_min, energy_max = automatic_dos_energy_limits(
+            bands.energies_meV,
+            broadening_meV=sigma,
+            method=selected_method,
+        )
+        energy = np.linspace(energy_min, energy_max, points)
     if selected_method == "tetrahedron":
         if (
             model.dimension != 3
@@ -1571,6 +1617,7 @@ def density_of_states(
                         "projection_groups"
                     ].items()
                 },
+                "automatic_energy_range": automatic_energy_range,
             },
         )
 
@@ -1618,6 +1665,7 @@ def density_of_states(
                     "projection_groups"
                 ].items()
             },
+            "automatic_energy_range": automatic_energy_range,
         },
     )
 

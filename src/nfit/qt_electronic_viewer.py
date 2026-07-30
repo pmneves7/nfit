@@ -227,9 +227,21 @@ def populate_electronic_plot_settings(
         lambda checked: update(show_legend=bool(checked))
     )
     controls["show_legend"] = show_legend
+    show_projections = QtWidgets.QCheckBox("Show orbital projections", figure)
+    show_projections.setObjectName(f"{viewer_key}_show_orbital_projections")
+    show_projections.setChecked(initial.show_orbital_projections)
+    show_projections.setToolTip(
+        "Show or hide orbital-projection weights while retaining total "
+        "bands or the total density of states."
+    )
+    show_projections.toggled.connect(
+        lambda checked: update(show_orbital_projections=bool(checked))
+    )
+    controls["show_orbital_projections"] = show_projections
     figure_layout.addRow("Font size", font_size)
     figure_layout.addRow("Border width", border_width)
     figure_layout.addRow("", show_legend)
+    figure_layout.addRow("", show_projections)
     layout.insertWidget(max(layout.count() - 1, 0), figure)
 
     def line_group(
@@ -356,6 +368,28 @@ def populate_electronic_calculation_settings(
         form.addRow(label_widget, editor)
         editors[key] = editor
 
+    def add_check(
+        form: Any,
+        key: str,
+        label: str,
+        tooltip: str,
+    ) -> Any:
+        editor = QtWidgets.QCheckBox()
+        editor.setObjectName(f"{viewer_key}_setting_{key}")
+        editor.setToolTip(tooltip)
+        raw_value = values.get(key, False)
+        checked = (
+            bool(raw_value)
+            if isinstance(raw_value, bool)
+            else str(raw_value).strip().lower() in {"1", "true", "yes", "on"}
+        )
+        editor.setChecked(checked)
+        label_widget = QtWidgets.QLabel(label)
+        label_widget.setToolTip(tooltip)
+        form.addRow(label_widget, editor)
+        editors[key] = editor
+        return editor
+
     calculation = QtWidgets.QGroupBox("Calculation", settings)
     calculation.setObjectName(f"{viewer_key}_calculation_group")
     form = QtWidgets.QFormLayout(calculation)
@@ -425,6 +459,14 @@ def populate_electronic_calculation_settings(
             "Automatic mode uses symmetry only when equivalence is certified "
             "and otherwise falls back to the full mesh.",
         )
+        auto_range = add_check(
+            form,
+            "dos_auto_energy_range",
+            "Automatic range",
+            "Derive the energy minimum and maximum from the sampled band "
+            "extrema. Gaussian integration also includes four standard "
+            "deviations of tail padding.",
+        )
         unit = str(values.get("electronic_energy_unit", "eV"))
         add_line(
             form,
@@ -432,12 +474,21 @@ def populate_electronic_calculation_settings(
             f"Minimum ({unit})",
             "Lower absolute electronic energy included in the DOS grid.",
         )
+        minimum_editor = editors["dos_energy_min_meV"]
         add_line(
             form,
             "dos_energy_max_meV",
             f"Maximum ({unit})",
             "Upper absolute electronic energy included in the DOS grid.",
         )
+        maximum_editor = editors["dos_energy_max_meV"]
+
+        def update_manual_range_enabled(checked: bool) -> None:
+            minimum_editor.setEnabled(not checked)
+            maximum_editor.setEnabled(not checked)
+
+        auto_range.toggled.connect(update_manual_range_enabled)
+        update_manual_range_enabled(auto_range.isChecked())
         add_line(
             form,
             "dos_energy_points",
@@ -482,6 +533,8 @@ def populate_electronic_calculation_settings(
         for key, editor in editors.items():
             if isinstance(editor, QtWidgets.QComboBox):
                 payload[key] = str(editor.currentData())
+            elif isinstance(editor, QtWidgets.QCheckBox):
+                payload[key] = "true" if editor.isChecked() else "false"
             elif isinstance(editor, QtWidgets.QPlainTextEdit):
                 payload[key] = editor.toPlainText()
             else:
@@ -529,6 +582,7 @@ def show_electronic_figure(
         QtWidgets,
         viewer_key=viewer_key,
     )
+    settings.setFixedWidth(360)
     settings_content = _scrollable_settings_content(settings, viewer_key)
     canvas = FigureCanvasQTAgg(figure)
     canvas.setObjectName(f"{viewer_key}_canvas")

@@ -39,6 +39,7 @@ _TIGHT_BINDING_PLOT_FIELDS = {
         "dos_symmetry",
         "dos_energy_min_meV",
         "dos_energy_max_meV",
+        "dos_auto_energy_range",
         "dos_energy_points",
         "dos_broadening_meV",
     },
@@ -59,13 +60,14 @@ class ElectronicPlotStyle:
     marker_size: float = 5.0
     marker_face_color: str = "none"
     font_size: float = 12.0
-    border_width: float = 1.0
+    border_width: float = 1.5
     show_legend: bool = True
+    show_orbital_projections: bool = True
     fermi_line_color: str = "#000000"
-    fermi_line_width: float = 0.8
+    fermi_line_width: float = 1.0
     fermi_line_style: str = "--"
     symmetry_line_color: str = "#d9d9d9"
-    symmetry_line_width: float = 0.8
+    symmetry_line_width: float = 1.0
     symmetry_line_style: str = "-"
 
     def __post_init__(self) -> None:
@@ -113,6 +115,16 @@ def apply_electronic_plot_style(
                 line.set_markersize(settings.marker_size)
                 line.set_markeredgecolor(settings.line_color)
                 line.set_markerfacecolor(settings.marker_face_color)
+            elif role == "nfit-electronic-projection":
+                line.set_color(settings.line_color)
+                line.set_linewidth(settings.line_width)
+                line.set_marker(settings.marker)
+                line.set_markersize(settings.marker_size)
+                line.set_markeredgecolor(settings.line_color)
+                line.set_markerfacecolor(settings.marker_face_color)
+                line.set_visible(settings.show_orbital_projections)
+            elif role == "nfit-electronic-projection-key":
+                line.set_visible(settings.show_orbital_projections)
             elif role == "nfit-fermi-line":
                 line.set_color(settings.fermi_line_color)
                 line.set_linewidth(settings.fermi_line_width)
@@ -121,6 +133,9 @@ def apply_electronic_plot_style(
                 line.set_color(settings.symmetry_line_color)
                 line.set_linewidth(settings.symmetry_line_width)
                 line.set_linestyle(settings.symmetry_line_style)
+        for collection in axis.collections:
+            if collection.get_gid() == "nfit-electronic-projection":
+                collection.set_visible(settings.show_orbital_projections)
         axis.xaxis.label.set_fontsize(settings.font_size)
         axis.yaxis.label.set_fontsize(settings.font_size)
         if hasattr(axis, "zaxis"):
@@ -137,9 +152,31 @@ def apply_electronic_plot_style(
         )
         for spine in axis.spines.values():
             spine.set_linewidth(settings.border_width)
-        legend = axis.get_legend()
+        legend_handles = [
+            line
+            for line in axis.lines
+            if line.get_gid()
+            in {
+                "nfit-electronic-data",
+                "nfit-electronic-projection",
+                "nfit-electronic-projection-key",
+            }
+            and not str(line.get_label()).startswith("_")
+            and (
+                line.get_gid() == "nfit-electronic-data"
+                or settings.show_orbital_projections
+            )
+        ]
+        if legend_handles:
+            legend = axis.legend(
+                handles=legend_handles,
+                labels=[line.get_label() for line in legend_handles],
+                fancybox=False,
+            )
+        else:
+            legend = axis.get_legend()
         if legend is not None:
-            legend.set_visible(settings.show_legend)
+            legend.set_visible(settings.show_legend and bool(legend_handles))
             for text in legend.get_texts():
                 text.set_fontsize(settings.font_size)
             frame = legend.get_frame()
@@ -1218,13 +1255,13 @@ def tight_binding_density_of_states(component: Any) -> DensityOfStatesResult:
         config.get("dos_mesh", [40, 40, 40]),
         symmetry="full" if projections else symmetry,
     )
-    energy_min = float(config.get("dos_energy_min_meV", -500.0))
-    energy_max = float(config.get("dos_energy_max_meV", 500.0))
-    energy = np.linspace(
-        energy_min,
-        energy_max,
-        int(config.get("dos_energy_points", 600)),
-    )
+    energy_points = int(config.get("dos_energy_points", 600))
+    if bool(config.get("dos_auto_energy_range", False)):
+        energy = None
+    else:
+        energy_min = float(config.get("dos_energy_min_meV", -500.0))
+        energy_max = float(config.get("dos_energy_max_meV", 500.0))
+        energy = np.linspace(energy_min, energy_max, energy_points)
     return _with_electronic_display_unit(
         density_of_states(
             model,
@@ -1232,6 +1269,7 @@ def tight_binding_density_of_states(component: Any) -> DensityOfStatesResult:
             energy,
             broadening_meV=float(config.get("dos_broadening_meV", 5.0)),
             method=method,
+            energy_points=energy_points,
             chemical_potential_meV=float(
                 config.get("chemical_potential_meV", 0.0)
             ),
@@ -1297,7 +1335,7 @@ def render_band_structure(
     for group_index, (label, weights) in enumerate(result.projected_weights.items()):
         color = f"C{group_index % 10}"
         for band_index in range(relative.shape[1]):
-            axis.scatter(
+            projection = axis.scatter(
                 distance,
                 relative[:, band_index],
                 s=4.0 + 24.0 * weights[:, band_index],
@@ -1306,7 +1344,16 @@ def render_band_structure(
                 linewidths=0,
                 zorder=2,
             )
-        axis.plot([], [], marker="o", linestyle="", color=color, label=label)
+            projection.set_gid("nfit-electronic-projection")
+        projection_key = axis.plot(
+            [],
+            [],
+            marker="o",
+            linestyle="",
+            color=color,
+            label=label,
+        )[0]
+        projection_key.set_gid("nfit-electronic-projection-key")
     tick_positions: list[float] = []
     tick_labels: list[str] = []
     for index, label in result.sampling.labels:
@@ -1370,7 +1417,7 @@ def render_density_of_states(
     total_line.set_gid("nfit-electronic-data")
     for label, values in result.projected_per_meV_cell.items():
         line = axis.plot(relative, values * density_scale, label=label)[0]
-        line.set_gid("nfit-electronic-data")
+        line.set_gid("nfit-electronic-projection")
     fermi_line = axis.axvline(0.0)
     fermi_line.set_gid("nfit-fermi-line")
     axis.set_xlabel(rf"$E-\mu$ ({unit})")
@@ -1557,11 +1604,13 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
                 "from nfit.model_plots import ElectronicPlotStyle, render_density_of_states",
                 "plot_style = ElectronicPlotStyle()",
                 f"mesh = k_mesh(model, {config.get('dos_mesh', [40, 40, 40])!r}, symmetry={dos_symmetry!r})",
-                f"energy = np.linspace({energy_min!r}, {energy_max!r}, {int(config.get('dos_energy_points', 600))!r})",
-                "energy_meV = electronic_energy_to_meV(energy, energy_unit)",
+                f"automatic_energy_range = {bool(config.get('dos_auto_energy_range', False))!r}",
+                f"energy_points = {int(config.get('dos_energy_points', 600))!r}",
+                f"energy = None if automatic_energy_range else np.linspace({energy_min!r}, {energy_max!r}, energy_points)",
+                "energy_meV = None if energy is None else electronic_energy_to_meV(energy, energy_unit)",
                 f"broadening = {broadening!r}",
                 "broadening_meV = electronic_energy_to_meV(broadening, energy_unit)",
-                f"result = density_of_states(model, mesh, energy_meV, broadening_meV=broadening_meV, method={dos_method!r}, chemical_potential_meV=chemical_potential_meV, projections={projections!r}, backend=electronic_backend, workers=electronic_workers, max_batch_bytes=max_batch_bytes)",
+                f"result = density_of_states(model, mesh, energy_meV, broadening_meV=broadening_meV, method={dos_method!r}, energy_points=energy_points, chemical_potential_meV=chemical_potential_meV, projections={projections!r}, backend=electronic_backend, workers=electronic_workers, max_batch_bytes=max_batch_bytes)",
                 "figure, axis = render_density_of_states(result, energy_unit=energy_unit, style=plot_style)",
             ]
         )

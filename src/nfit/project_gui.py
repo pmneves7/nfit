@@ -20964,6 +20964,9 @@ class NfitProjectExplorer:
                     config.get("dos_mesh", [40, 40, 40])
                 ),
                 "dos_symmetry": config.get("dos_symmetry", "auto"),
+                "dos_auto_energy_range": bool(
+                    config.get("dos_auto_energy_range", False)
+                ),
                 "dos_energy_min_meV": _parameter_to_text(
                     electronic_energy_from_meV(
                         config.get("dos_energy_min_meV", -500.0),
@@ -21053,6 +21056,12 @@ class NfitProjectExplorer:
                 )
             elif plot_key == "dos":
                 method = str(values["dos_method"])
+                automatic_energy_range = (
+                    str(values.get("dos_auto_energy_range", "false"))
+                    .strip()
+                    .lower()
+                    in {"1", "true", "yes", "on"}
+                )
                 mesh = _parse_parameter_text(
                     values["dos_mesh"]
                 )
@@ -21099,6 +21108,7 @@ class NfitProjectExplorer:
                     dos_method=method,
                     dos_mesh=mesh,
                     dos_symmetry=symmetry,
+                    dos_auto_energy_range=automatic_energy_range,
                     dos_energy_points=energy_points,
                     **energies,
                 )

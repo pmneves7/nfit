@@ -217,6 +217,7 @@ def test_tight_binding_viewer_settings_update_canonical_plot_config(monkeypatch)
             "dos_method": "tetrahedron",
             "dos_mesh": "[32, 32, 32]",
             "dos_symmetry": "auto",
+            "dos_auto_energy_range": "true",
             "dos_energy_min_meV": "-0.25",
             "dos_energy_max_meV": "0.75",
             "dos_energy_points": "501",
@@ -225,6 +226,7 @@ def test_tight_binding_viewer_settings_update_canonical_plot_config(monkeypatch)
     )
     assert model.config["dos_method"] == "tetrahedron"
     assert model.config["dos_symmetry"] == "full"
+    assert model.config["dos_auto_energy_range"] is True
     assert model.config["dos_mesh"] == [32, 32, 32]
     assert model.config["dos_energy_min_meV"] == pytest.approx(-250.0)
     assert model.config["dos_energy_max_meV"] == pytest.approx(750.0)
@@ -237,6 +239,7 @@ def test_tight_binding_viewer_settings_update_canonical_plot_config(monkeypatch)
         "dos",
         dos_method="tetrahedron",
         dos_symmetry="full",
+        dos_auto_energy_range=True,
         dos_mesh=[32, 32, 32],
         dos_energy_min_meV=-250.0,
         dos_energy_max_meV=750.0,
@@ -246,6 +249,7 @@ def test_tight_binding_viewer_settings_update_canonical_plot_config(monkeypatch)
     for name in (
         "dos_method",
         "dos_symmetry",
+        "dos_auto_energy_range",
         "dos_mesh",
         "dos_energy_min_meV",
         "dos_energy_max_meV",

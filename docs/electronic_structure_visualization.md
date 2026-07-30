@@ -110,9 +110,11 @@ integration accuracy. For Gaussian DOS, broadening also controls displayed
 energy resolution and should be converged separately.
 
 The viewer side panel owns the integration method, mesh, certified symmetry
-policy, energy window, energy-point count, and Gaussian width. Selecting
-tetrahedron integration resolves the symmetry policy to the required full
-mesh.
+policy, energy window, energy-point count, and Gaussian width. **Automatic
+range** derives the minimum and maximum from the eigenvalues on the selected
+DOS mesh. Gaussian integration adds four standard deviations of padding;
+tetrahedron integration adds a small band-span margin. Selecting tetrahedron
+integration resolves the symmetry policy to the required full mesh.
 
 ## Band and DOS presentation
 
@@ -120,13 +122,17 @@ The band and DOS viewers share compact, live presentation controls adapted
 from the slice viewer's one-dimensional plotter. Both viewers control curve
 color and width, marker shape (none by default), marker size and fill (none by
 default), a common axes/tick/legend font size, border width, and legend
-visibility. The Fermi-level reference has independent color, width, and line
-style controls. The band viewer also gives the vertical high-symmetry guides
-their own color, width, and style.
+visibility. **Show orbital projections** hides projection weights and projected
+DOS curves without hiding the total bands or total DOS. The Fermi-level
+reference has independent color, width, and line style controls. The band
+viewer also gives the vertical high-symmetry guides their own color, width, and
+style.
 
 Ticks point inward and appear on all four sides. Legends use an opaque black
 outline with square corners; border width also sets the legend-outline and
-tick thickness. `ElectronicPlotStyle` holds these settings for scripts, and
+tick thickness. The default border width is 1.5 pt; Fermi-level and
+high-symmetry guides default to 1 pt. `ElectronicPlotStyle` holds these
+settings for scripts, and
 `apply_electronic_plot_style` applies them to an existing electronic figure.
 `render_band_structure` and `render_density_of_states` accept the same object
 through their `style` argument.

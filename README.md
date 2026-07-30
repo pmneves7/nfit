@@ -44,7 +44,8 @@ The package provides:
   all electronic viewers use a common plot-plus-settings layout and the band,
   DOS, and Fermi viewers own their calculation controls; band and DOS figures
   also expose scriptable curve, marker, typography, frame, legend, Fermi-level,
-  and high-symmetry-guide styling,
+  projection-visibility, and high-symmetry-guide styling, while DOS energy
+  limits can be derived automatically from the sampled bands,
   three-dimensional Fermi surfaces use GPU-accelerated interaction, and the
   Brillouin-zone viewer provides scriptable styling, visibility, projection,
   and image-export controls; named onsite, hopping, and SOC coefficients share

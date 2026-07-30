@@ -15,13 +15,14 @@ from .qt_pyvista import configure_pyvista_interactor, show_then_render
 from .qt_viewer_shell import create_viewer_shell
 
 
-@lru_cache(maxsize=1)
-def _label_font_file() -> str:
+@lru_cache(maxsize=2)
+def _label_font_file(*, bold: bool = False) -> str:
     """Return a bundled font containing Greek and Unicode subscript glyphs."""
 
     from matplotlib import get_data_path
 
-    path = Path(get_data_path()) / "fonts" / "ttf" / "DejaVuSans.ttf"
+    filename = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
+    path = Path(get_data_path()) / "fonts" / "ttf" / filename
     if not path.is_file():
         raise FileNotFoundError("Matplotlib's DejaVu Sans font is unavailable")
     return str(path)
@@ -184,7 +185,7 @@ def _render_brillouin_zone(
             text_color="black",
             font_size=settings.label_font_size,
             bold=settings.label_bold,
-            font_file=_label_font_file(),
+            font_file=_label_font_file(bold=settings.label_bold),
             shape=None,
             show_points=False,
             always_visible=True,
@@ -248,7 +249,7 @@ def _render_brillouin_zone(
             text_color="black",
             font_size=settings.label_font_size,
             bold=settings.label_bold,
-            font_file=_label_font_file(),
+            font_file=_label_font_file(bold=settings.label_bold),
             shape=None,
             show_points=False,
             always_visible=True,

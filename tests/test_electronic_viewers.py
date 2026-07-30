@@ -71,7 +71,7 @@ def test_electronic_viewers_share_right_settings_panel(monkeypatch):
 
         assert panel is not None
         assert panel.title() == "Settings"
-        assert panel.minimumWidth() == panel.maximumWidth() == 280
+        assert panel.minimumWidth() == panel.maximumWidth() == 360
         assert panel.toolTip()
         assert placeholder is not None
         assert canvas is not None
@@ -88,6 +88,11 @@ def test_electronic_plot_style_sets_publication_frame_and_reference_lines():
     from matplotlib.figure import Figure
 
     from nfit import ElectronicPlotStyle, apply_electronic_plot_style
+
+    defaults = ElectronicPlotStyle()
+    assert defaults.border_width == pytest.approx(1.5)
+    assert defaults.fermi_line_width == pytest.approx(1.0)
+    assert defaults.symmetry_line_width == pytest.approx(1.0)
 
     figure = Figure()
     axis = figure.add_subplot(111)
@@ -130,6 +135,7 @@ def test_electronic_plot_style_sets_publication_frame_and_reference_lines():
         spine.get_linewidth() == pytest.approx(2.0)
         for spine in axis.spines.values()
     )
+    legend = axis.get_legend()
     assert legend.get_frame().get_edgecolor()[:3] == pytest.approx((0.0, 0.0, 0.0))
     assert legend.get_frame().get_linewidth() == pytest.approx(2.0)
     assert legend.get_texts()[0].get_fontsize() == pytest.approx(15.0)
@@ -148,8 +154,12 @@ def test_band_viewer_plot_controls_update_figure(monkeypatch):
         application = QtWidgets.QApplication([])
     figure = Figure()
     axis = figure.add_subplot(111)
-    data = axis.plot([0.0, 1.0], [0.0, 1.0], label="band")[0]
+    data = axis.plot([0.0, 1.0], [0.0, 1.0])[0]
     data.set_gid("nfit-electronic-data")
+    projection = axis.scatter([0.5], [0.5])
+    projection.set_gid("nfit-electronic-projection")
+    projection_key = axis.plot([], [], marker="o", label="d orbital")[0]
+    projection_key.set_gid("nfit-electronic-projection-key")
     fermi = axis.axhline(0.0)
     fermi.set_gid("nfit-fermi-line")
     symmetry = axis.axvline(0.5)
@@ -170,6 +180,7 @@ def test_band_viewer_plot_controls_update_figure(monkeypatch):
         "band_structure_font_size",
         "band_structure_border_width",
         "band_structure_show_legend",
+        "band_structure_show_orbital_projections",
         "band_structure_fermi_line_color",
         "band_structure_fermi_line_width",
         "band_structure_fermi_line_style",
@@ -190,6 +201,18 @@ def test_band_viewer_plot_controls_update_figure(monkeypatch):
     )
     width.setValue(3.0)
     assert data.get_linewidth() == pytest.approx(3.0)
+    show_projections = window.findChild(
+        QtWidgets.QCheckBox,
+        "band_structure_show_orbital_projections",
+    )
+    show_projections.setChecked(False)
+    assert data.get_visible()
+    assert not projection.get_visible()
+    assert not projection_key.get_visible()
+    assert not axis.get_legend().get_visible()
+    show_projections.setChecked(True)
+    assert projection.get_visible()
+    assert projection_key.get_visible()
     show_legend = window.findChild(
         QtWidgets.QCheckBox,
         "band_structure_show_legend",
@@ -220,6 +243,7 @@ def test_band_viewer_plot_controls_update_figure(monkeypatch):
                 "dos_method": "gaussian",
                 "dos_mesh": "[40, 40, 40]",
                 "dos_symmetry": "auto",
+                "dos_auto_energy_range": False,
                 "dos_energy_min_meV": "-0.5",
                 "dos_energy_max_meV": "0.5",
                 "dos_energy_points": "600",
@@ -272,6 +296,23 @@ def test_electronic_viewer_settings_apply_plot_owned_configuration(
     )
     assert editor is not None and editor.toolTip()
     editor.setText(edited_value)
+    if viewer_key == "density_of_states":
+        auto_range = window.findChild(
+            QtWidgets.QCheckBox,
+            "density_of_states_setting_dos_auto_energy_range",
+        )
+        minimum = window.findChild(
+            QtWidgets.QLineEdit,
+            "density_of_states_setting_dos_energy_min_meV",
+        )
+        maximum = window.findChild(
+            QtWidgets.QLineEdit,
+            "density_of_states_setting_dos_energy_max_meV",
+        )
+        assert auto_range is not None and auto_range.toolTip()
+        auto_range.setChecked(True)
+        assert not minimum.isEnabled()
+        assert not maximum.isEnabled()
     apply = window.findChild(
         QtWidgets.QPushButton,
         f"{viewer_key}_apply_settings",
@@ -279,6 +320,8 @@ def test_electronic_viewer_settings_apply_plot_owned_configuration(
     assert apply is not None and apply.toolTip()
     apply.click()
     assert applied and applied[0][edited_key] == edited_value
+    if viewer_key == "density_of_states":
+        assert applied[0]["dos_auto_energy_range"] == "true"
     window.close()
 
 

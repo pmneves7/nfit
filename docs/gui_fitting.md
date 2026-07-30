@@ -101,8 +101,11 @@ start at its surface. The coordinate compass is hidden by default and uses
 saturated red, green, and blue axes when enabled. Figure copying captures the
 rendered framebuffer rather than another application window.
 The band and DOS panels also provide live curve, marker, font, border, legend,
-Fermi-level, and high-symmetry-guide styling. Their calculation controls
-remain separate and apply only after recalculation succeeds.
+orbital-projection visibility, Fermi-level, and high-symmetry-guide styling.
+The wider, scrollable panel keeps control labels and editors visible. The DOS
+calculation group can derive its energy window from the sampled bands. Other
+calculation controls remain separate and apply only after recalculation
+succeeds.
 **Inspect matrices** opens a separate heatmap and exact-element viewer for
 $H(\mathbf k)$, each named parameter basis and contribution, spin operators,
 and representative onsite and hopping matrices. Its right panel summarizes
