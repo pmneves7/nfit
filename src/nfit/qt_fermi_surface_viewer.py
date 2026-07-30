@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import numpy as np
@@ -11,6 +12,7 @@ from .electronic_structure import (
     electronic_energy_from_meV,
     normalize_electronic_energy_unit,
 )
+from .qt_electronic_viewer import populate_electronic_calculation_settings
 from .qt_pyvista import configure_pyvista_interactor, show_then_render
 from .qt_viewer_shell import create_viewer_shell
 
@@ -153,6 +155,8 @@ def show_fermi_surface_result(
     result: FermiSurfaceResult,
     *,
     parent: Any | None = None,
+    settings_config: Mapping[str, Any] | None = None,
+    on_apply_settings: Callable[[dict[str, str]], None] | None = None,
 ) -> Any:
     """Open a GPU-accelerated Qt window for a three-dimensional Fermi surface."""
 
@@ -226,6 +230,13 @@ def show_fermi_surface_result(
         copy_figure=copy_figure,
         save_figure=save_figure,
     )
+    if settings_config is not None and on_apply_settings is not None:
+        populate_electronic_calculation_settings(
+            settings,
+            viewer_key="fermi_surface",
+            values=settings_config,
+            on_apply=on_apply_settings,
+        )
     show_then_render(
         window,
         lambda: _render_fermi_surface(plotter, result),

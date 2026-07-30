@@ -593,6 +593,34 @@ def test_conventional_f_centered_builder_folds_to_primitive_cell():
     assert conventional.n_basis == 4
 
 
+def test_builder_uses_conventional_cell_when_primitive_reduction_is_not_certified(
+    monkeypatch,
+):
+    crystal = _crystal("F m -3 m")
+    crystal["sites"] = crystal["sites"][:1]
+    group = DataGroup("Electronic")
+    component = create_model_component(group, "bands", type="tight_binding")
+    component.config["crystal"] = crystal
+    add_tight_binding_orbital_manifold(
+        component,
+        orbital_manifold_preset("M1", "effective"),
+    )
+    monkeypatch.setattr(
+        "nfit.electronic_builder.reduce_electronic_model_to_primitive",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError("basis is not complete under primitive translations")
+        ),
+    )
+
+    conventional = electronic_model_from_component(component)
+
+    assert conventional.n_basis == 4
+    assert conventional.provenance["primitive_reduction"] == {
+        "status": "conventional_fallback",
+        "reason": "basis is not complete under primitive translations",
+    }
+
+
 def test_model_geometry_scene_shows_active_ghost_orbitals_and_frames():
     component = ModelComponentSpec(
         name="electrons",

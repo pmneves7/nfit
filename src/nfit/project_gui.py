@@ -18733,7 +18733,8 @@ class NfitProjectExplorer:
             fit_layout.addWidget(fit_check, row, 5)
             fit_layout.addWidget(sharing_combo, row, 6)
             fit_layout.addWidget(sharing_groups, row, 7)
-        self.model_parameter_layout.addWidget(fit_group, 0, 0, 1, 4)
+        if model.type != "tight_binding":
+            self.model_parameter_layout.addWidget(fit_group, 0, 0, 1, 4)
 
         scope_group = QtWidgets.QGroupBox("Dataset Scope")
         scope_group.setObjectName("model_dataset_scope_group")
@@ -18756,9 +18757,14 @@ class NfitProjectExplorer:
         )
         scope_layout.addWidget(applies_label, 0, 0)
         scope_layout.addWidget(applies_editor, 0, 1)
-        self.model_parameter_layout.addWidget(scope_group, 1, 0, 1, 4)
+        if model.type != "tight_binding":
+            self.model_parameter_layout.addWidget(scope_group, 1, 0, 1, 4)
 
-        config_group = QtWidgets.QGroupBox("Configuration Settings")
+        config_group = QtWidgets.QGroupBox(
+            "Advanced model and execution"
+            if model.type == "tight_binding"
+            else "Configuration Settings"
+        )
         config_group.setObjectName("model_config_group")
         config_layout = QtWidgets.QGridLayout(config_group)
         config_layout.setColumnStretch(1, 1)
@@ -18769,6 +18775,31 @@ class NfitProjectExplorer:
         if not config_definitions:
             config_layout.addWidget(QtWidgets.QLabel("No configuration settings."), 0, 0, 1, 2)
         row = 0
+        if model.type == "tight_binding":
+            primitive = QtWidgets.QCheckBox(
+                "Attempt certified primitive-cell reduction"
+            )
+            primitive.setObjectName("tight_binding_use_primitive_cell")
+            primitive.setChecked(
+                bool(model.config.get("use_primitive_cell", True))
+            )
+            primitive.setEnabled(
+                not bool(str(model.config.get("source_path", "")).strip())
+            )
+            primitive.setToolTip(
+                "Try to fold a GUI-built conventional-cell Hamiltonian onto "
+                "the primitive translation lattice. nfit uses the reduced "
+                "model only when the basis and Hamiltonian pass the exact "
+                "compatibility checks; otherwise it records a conventional-cell "
+                "fallback and its reason. Disable only for diagnostic comparison."
+            )
+            primitive.toggled.connect(
+                lambda checked: self._set_tight_binding_use_primitive_cell(
+                    bool(checked)
+                )
+            )
+            config_layout.addWidget(primitive, row, 0, 1, 2)
+            row += 1
         for setting_name in config_definitions:
             if setting_name == "form_factor_coefficients":
                 continue
@@ -18788,13 +18819,35 @@ class NfitProjectExplorer:
                 "spatial_orbits",
                 "hopping_candidates",
                 "hopping_terms",
+                "electronic_energy_unit",
+                "chemical_potential_meV",
                 "band_path_convention",
                 "band_path_metadata",
+                "band_path",
+                "band_points_per_inv_angstrom",
+                "dos_method",
+                "dos_mesh",
+                "dos_symmetry",
+                "dos_energy_min_meV",
+                "dos_energy_max_meV",
+                "dos_energy_points",
+                "dos_broadening_meV",
+                "fermi_mesh",
+                "fermi_energy_meV",
             }:
                 continue
             label = QtWidgets.QLabel(setting_name)
             tooltip = model_config_tooltip(model.type, setting_name)
             label.setToolTip(tooltip)
+            if model.type == "tight_binding":
+                label.setText(
+                    {
+                        "periodic_axes": "Periodic axes",
+                        "projection_groups": "Custom projection groups",
+                        "electronic_workers": "CPU workers",
+                        "electronic_max_batch_mb": "Batch memory (MiB)",
+                    }.get(setting_name, setting_name)
+                )
             if (
                 model.type == "tight_binding"
                 and setting_name == "electronic_energy_unit"
@@ -19076,8 +19129,10 @@ class NfitProjectExplorer:
             self._build_tight_binding_spin_editor(model)
             self._build_tight_binding_onsite_editor(model)
             self._build_tight_binding_hopping_editor(model)
+            self._build_tight_binding_state_editor(model)
             self._build_tight_binding_editor(model)
             self.model_parameter_layout.addWidget(config_group, 10, 0, 1, 4)
+            self._organize_tight_binding_editor(model)
         elif definition.structured_config:
             self.model_parameter_layout.addWidget(config_group, 2, 0, 1, 4)
             self._build_model_crystal_editor(model)
@@ -19103,6 +19158,20 @@ class NfitProjectExplorer:
             and self.model_parameter_widget.isAncestorOf(focused)
             else ""
         )
+        selected_tabs = {
+            name: widget.currentIndex()
+            for name in (
+                "tight_binding_builder_tabs",
+                "tight_binding_hamiltonian_tabs",
+            )
+            if (
+                widget := self.model_parameter_widget.findChild(
+                    QtWidgets.QTabWidget,
+                    name,
+                )
+            )
+            is not None
+        }
         self._rebuild_model_parameter_editor(model)
 
         def restore() -> None:
@@ -19118,6 +19187,15 @@ class NfitProjectExplorer:
                 if replacement is not None and replacement.isEnabled():
                     replacement.setFocus(
                         QtCore.Qt.FocusReason.OtherFocusReason
+                    )
+            for name, index in selected_tabs.items():
+                replacement_tabs = self.model_parameter_widget.findChild(
+                    QtWidgets.QTabWidget,
+                    name,
+                )
+                if replacement_tabs is not None:
+                    replacement_tabs.setCurrentIndex(
+                        min(index, replacement_tabs.count() - 1)
                     )
             scrollbar.setValue(min(position, scrollbar.maximum()))
 
@@ -19136,57 +19214,96 @@ class NfitProjectExplorer:
                 widget.setParent(None)
                 widget.deleteLater()
 
-    def _build_tight_binding_editor(self, model: ModelComponentSpec) -> None:
-        """Build source and scriptable plot actions for an electronic model."""
+    def _build_tight_binding_state_editor(
+        self,
+        model: ModelComponentSpec,
+    ) -> None:
+        """Build the compact energy-reference controls shared by plots."""
 
         from PySide6 import QtWidgets
 
-        group = QtWidgets.QGroupBox("Electronic structure")
-        group.setObjectName("tight_binding_actions_group")
+        from .electronic_structure import (
+            ELECTRONIC_ENERGY_UNITS,
+            electronic_energy_from_meV,
+            normalize_electronic_energy_unit,
+        )
+
+        group = QtWidgets.QGroupBox("Electronic state")
+        group.setObjectName("tight_binding_state_group")
         layout = QtWidgets.QGridLayout(group)
-        source = str(model.config.get("source_path", "")).strip()
-        source_label = QtWidgets.QLabel(
-            Path(source).name if source else "No Wannier90 source loaded"
+
+        unit_tooltip = (
+            "Electronic-structure entries and plot labels use this display "
+            "unit. nfit stores canonical energies in meV and converts without "
+            "changing the physical Hamiltonian or neutron-energy convention."
         )
-        source_label.setObjectName("tight_binding_source_summary")
-        source_label.setToolTip(
-            source
-            or (
-                "Manual models may be supplied through model_data. Builder "
-                "inputs declare eV or meV; model_data are canonical meV."
+        unit_label = QtWidgets.QLabel("Energy unit")
+        unit_label.setToolTip(unit_tooltip)
+        unit = QtWidgets.QComboBox()
+        unit.setObjectName("tight_binding_energy_unit")
+        unit.setToolTip(unit_tooltip)
+        for choice in ELECTRONIC_ENERGY_UNITS:
+            unit.addItem(choice, choice)
+        current_unit = normalize_electronic_energy_unit(
+            model.config.get("electronic_energy_unit", "eV")
+        )
+        unit.setCurrentIndex(max(unit.findData(current_unit), 0))
+        unit.currentIndexChanged.connect(
+            lambda _index, combo=unit: self._set_tight_binding_energy_unit(
+                str(combo.currentData())
             )
         )
-        layout.addWidget(source_label, 0, 0, 1, 3)
-        primitive = QtWidgets.QCheckBox(
-            "Evaluate GUI-built models in the primitive cell"
+        layout.addWidget(unit_label, 0, 0)
+        layout.addWidget(unit, 0, 1)
+
+        chemical_tooltip = (
+            "Energy reference used for electronic plots and, when selected by "
+            "a linked Lindhard component, for occupations. Enter it in the "
+            "displayed electronic unit; nfit stores canonical meV."
         )
-        primitive.setObjectName("tight_binding_use_primitive_cell")
-        primitive.setChecked(
-            bool(model.config.get("use_primitive_cell", True))
+        chemical_label = QtWidgets.QLabel(
+            f"Chemical potential ({current_unit})"
         )
-        primitive.setToolTip(
-            "Fold translationally equivalent conventional-cell orbitals and "
-            "hoppings onto the primitive lattice before diagonalization. "
-            "Disable only to compare against the unreduced construction."
-        )
-        primitive.toggled.connect(
-            lambda checked: self._set_tight_binding_use_primitive_cell(
-                bool(checked)
+        chemical_label.setToolTip(chemical_tooltip)
+        chemical = QtWidgets.QLineEdit(
+            _parameter_to_text(
+                electronic_energy_from_meV(
+                    model.config.get("chemical_potential_meV", 0.0),
+                    current_unit,
+                )
             )
         )
-        layout.addWidget(primitive, 1, 0, 1, 3)
-        path_convention = QtWidgets.QComboBox()
-        path_convention.setObjectName("tight_binding_path_convention")
-        path_convention.addItem("Manual path", "manual")
-        path_convention.addItem("Hinuma / Seek-path", "hinuma")
-        path_convention.addItem(
+        chemical.setObjectName("model_config_chemical_potential_meV")
+        chemical.setToolTip(chemical_tooltip)
+        chemical.editingFinished.connect(
+            lambda editor=chemical: self._set_tight_binding_energy_config(
+                "chemical_potential_meV",
+                editor.text(),
+            )
+        )
+        layout.addWidget(chemical_label, 1, 0)
+        layout.addWidget(chemical, 1, 1)
+
+        path_tooltip = (
+            "Shared labelled path used by the Brillouin-zone and band viewers. "
+            "Generate a standard Hinuma/HPKOT path with Seek-path or a "
+            "Setyawan–Curtarolo path with ASE, or select Manual and edit its "
+            "nodes in the band viewer."
+        )
+        path_label = QtWidgets.QLabel("Band-path convention")
+        path_label.setToolTip(path_tooltip)
+        path = QtWidgets.QComboBox()
+        path.setObjectName("tight_binding_path_convention")
+        path.setToolTip(path_tooltip)
+        path.addItem("Manual path", "manual")
+        path.addItem("Hinuma / Seek-path", "hinuma")
+        path.addItem(
             "Setyawan–Curtarolo / ASE",
             "setyawan_curtarolo",
         )
-        path_convention.setCurrentIndex(
+        path.setCurrentIndex(
             max(
-                0,
-                path_convention.findData(
+                path.findData(
                     str(
                         model.config.get(
                             "band_path_convention",
@@ -19194,27 +19311,205 @@ class NfitProjectExplorer:
                         )
                     )
                 ),
+                0,
             )
         )
-        path_convention.setToolTip(
-            "Choose a manually entered path, the Hinuma/HPKOT convention "
-            "generated by Seek-path, or the Setyawan–Curtarolo convention "
-            "generated by ASE. Standard paths are converted to nfit's "
-            "primitive reciprocal basis."
+        generate_path = QtWidgets.QPushButton("Generate path")
+        generate_path.setObjectName(
+            "tight_binding_generate_standard_path"
         )
-        generate_path = QtWidgets.QPushButton("Generate selected path")
-        generate_path.setObjectName("tight_binding_generate_standard_path")
-        generate_path.setToolTip(
-            "Replace the configured band path with the selected standard "
-            "convention. Disconnected sections remain explicitly separated."
-        )
+        generate_path.setToolTip(path_tooltip)
         generate_path.clicked.connect(
-            lambda _checked=False, combo=path_convention: self._generate_tight_binding_standard_path(
+            lambda _checked=False, combo=path: self._generate_tight_binding_standard_path(
                 str(combo.currentData())
             )
         )
-        layout.addWidget(path_convention, 2, 0, 1, 2)
+        layout.addWidget(path_label, 2, 0)
+        layout.addWidget(path, 2, 1)
         layout.addWidget(generate_path, 2, 2)
+
+        projection_count = len(model.config.get("projection_groups") or {})
+        projection_summary = QtWidgets.QLabel(
+            f"{projection_count} automatic/custom projection group(s)"
+        )
+        projection_summary.setObjectName(
+            "tight_binding_projection_summary"
+        )
+        projection_summary.setToolTip(
+            "Projection groups are generated from the active orbital "
+            "manifolds. Custom basis-index groups remain available under Advanced."
+        )
+        layout.addWidget(projection_summary, 3, 0, 1, 3)
+        self.model_parameter_layout.addWidget(group, 11, 0, 1, 4)
+
+    def _organize_tight_binding_editor(
+        self,
+        model: ModelComponentSpec,
+    ) -> None:
+        """Collect the long tight-binding workflow into focused tabs."""
+
+        from PySide6 import QtWidgets
+
+        from .electronic_spin import resolved_spin_treatment
+
+        def take(name: str) -> Any | None:
+            widget = self.model_parameter_widget.findChild(
+                QtWidgets.QWidget,
+                name,
+            )
+            if widget is not None:
+                self.model_parameter_layout.removeWidget(widget)
+            return widget
+
+        groups = {
+            name: take(name)
+            for name in (
+                "tight_binding_source_group",
+                "model_crystal_group",
+                "model_crystal_sites_group",
+                "tight_binding_orbitals_group",
+                "tight_binding_onsite_group",
+                "tight_binding_hopping_group",
+                "tight_binding_spin_group",
+                "tight_binding_state_group",
+                "tight_binding_actions_group",
+                "model_config_group",
+            )
+        }
+
+        manifolds = model.config.get("orbital_manifolds") or []
+        orbital_count = sum(
+            len(item.get("orbitals") or ())
+            for item in manifolds
+            if isinstance(item, dict)
+        )
+        try:
+            spin = resolved_spin_treatment(
+                str(model.config.get("spin_treatment", "auto")),
+                model.config.get("soc_terms") or (),
+            )
+        except ValueError:
+            spin = str(model.config.get("spin_treatment", "auto"))
+        reduction = "primitive reduction off"
+        if bool(model.config.get("use_primitive_cell", True)):
+            reduction = "primitive reduction automatic"
+            model_data = model.config.get("model_data")
+            if isinstance(model_data, dict):
+                provenance = model_data.get("provenance")
+                if isinstance(provenance, dict):
+                    detail = provenance.get("primitive_reduction")
+                    if isinstance(detail, dict):
+                        if detail.get("status") == "conventional_fallback":
+                            reduction = "conventional-cell fallback"
+                        elif "cell_multiplicity" in detail:
+                            reduction = (
+                                f"primitive cell "
+                                f"({int(detail['cell_multiplicity'])}× reduction)"
+                            )
+        stale = " · rebuild pending" if model.config.get("model_stale") else ""
+        summary = QtWidgets.QGroupBox("Model summary")
+        summary.setObjectName("tight_binding_model_summary_group")
+        summary_layout = QtWidgets.QVBoxLayout(summary)
+        summary_label = QtWidgets.QLabel(
+            f"{orbital_count} spatial orbital(s) · {spin} spin · "
+            f"{len(model.config.get('onsite_terms') or ())} onsite and "
+            f"{len(model.config.get('hopping_terms') or ())} hopping "
+            f"coefficient(s) · {reduction}{stale}"
+        )
+        summary_label.setObjectName("tight_binding_model_summary")
+        summary_label.setWordWrap(True)
+        summary_label.setToolTip(
+            "Resolved compact status of the orbital basis, spin treatment, "
+            "active Hamiltonian terms, and cell-reduction policy."
+        )
+        summary_layout.addWidget(summary_label)
+
+        tabs = QtWidgets.QTabWidget()
+        tabs.setObjectName("tight_binding_builder_tabs")
+        tabs.setToolTip(
+            "Build the structure and basis, define Hamiltonian terms, inspect "
+            "electronic results, and access uncommon overrides."
+        )
+
+        def add_page(label: str, names: tuple[str, ...]) -> Any:
+            page = QtWidgets.QWidget()
+            page.setObjectName(
+                f"tight_binding_{label.lower().replace(' ', '_')}_tab"
+            )
+            page_layout = QtWidgets.QVBoxLayout(page)
+            for name in names:
+                widget = groups.get(name)
+                if widget is not None:
+                    page_layout.addWidget(widget)
+            page_layout.addStretch(1)
+            tabs.addTab(page, label)
+            return page
+
+        add_page(
+            "Structure and basis",
+            (
+                "tight_binding_source_group",
+                "model_crystal_group",
+                "model_crystal_sites_group",
+                "tight_binding_orbitals_group",
+            ),
+        )
+
+        hamiltonian_page = QtWidgets.QWidget()
+        hamiltonian_page.setObjectName("tight_binding_hamiltonian_tab")
+        hamiltonian_layout = QtWidgets.QVBoxLayout(hamiltonian_page)
+        term_tabs = QtWidgets.QTabWidget()
+        term_tabs.setObjectName("tight_binding_hamiltonian_tabs")
+        for label, name in (
+            ("Onsite", "tight_binding_onsite_group"),
+            ("Hoppings", "tight_binding_hopping_group"),
+            ("Spin and SOC", "tight_binding_spin_group"),
+        ):
+            page = QtWidgets.QWidget()
+            page_layout = QtWidgets.QVBoxLayout(page)
+            widget = groups.get(name)
+            if widget is not None:
+                page_layout.addWidget(widget)
+            page_layout.addStretch(1)
+            term_tabs.addTab(page, label)
+        hamiltonian_layout.addWidget(term_tabs)
+        tabs.addTab(hamiltonian_page, "Hamiltonian")
+
+        add_page(
+            "Calculate and inspect",
+            (
+                "tight_binding_state_group",
+                "tight_binding_actions_group",
+            ),
+        )
+        add_page("Advanced", ("model_config_group",))
+
+        self.model_parameter_layout.addWidget(summary, 0, 0, 1, 4)
+        self.model_parameter_layout.addWidget(tabs, 1, 0, 1, 4)
+
+    def _build_tight_binding_editor(self, model: ModelComponentSpec) -> None:
+        """Build source and scriptable plot actions for an electronic model."""
+
+        from PySide6 import QtWidgets
+
+        source_group = QtWidgets.QGroupBox("Model source")
+        source_group.setObjectName("tight_binding_source_group")
+        source_layout = QtWidgets.QGridLayout(source_group)
+        source = str(model.config.get("source_path", "")).strip()
+        source_label = QtWidgets.QLabel(
+            Path(source).name
+            if source
+            else "Crystal and orbital builder"
+        )
+        source_label.setObjectName("tight_binding_source_summary")
+        source_label.setToolTip(
+            source
+            or (
+                "This model is constructed from the editable crystal, orbital "
+                "manifolds, and Hamiltonian terms below."
+            )
+        )
+        source_layout.addWidget(source_label, 0, 0, 1, 3)
 
         import_button = QtWidgets.QPushButton("Import Wannier90...")
         import_button.setObjectName("tight_binding_import_wannier90")
@@ -19227,7 +19522,7 @@ class NfitProjectExplorer:
         import_button.clicked.connect(
             lambda _checked=False, model=model: self._import_wannier90_model(model)
         )
-        layout.addWidget(import_button, 3, 0, 1, 2)
+        source_layout.addWidget(import_button, 1, 0, 1, 2)
         structure_script = QtWidgets.QPushButton("Copy builder script")
         structure_script.setObjectName("tight_binding_structure_script")
         structure_script.setToolTip(
@@ -19240,7 +19535,12 @@ class NfitProjectExplorer:
                 model
             )
         )
-        layout.addWidget(structure_script, 3, 2)
+        source_layout.addWidget(structure_script, 1, 2)
+        self.model_parameter_layout.addWidget(source_group, 9, 0, 1, 4)
+
+        group = QtWidgets.QGroupBox("Electronic structure")
+        group.setObjectName("tight_binding_actions_group")
+        layout = QtWidgets.QGridLayout(group)
 
         zone_button = QtWidgets.QPushButton("View Brillouin zone in 3D")
         zone_button.setObjectName("tight_binding_brillouin_zone")
@@ -19264,8 +19564,8 @@ class NfitProjectExplorer:
                 model
             )
         )
-        layout.addWidget(zone_button, 4, 0, 1, 2)
-        layout.addWidget(zone_script, 4, 2)
+        layout.addWidget(zone_button, 0, 0, 1, 2)
+        layout.addWidget(zone_script, 0, 2)
 
         matrix_button = QtWidgets.QPushButton("Inspect matrices")
         matrix_button.setObjectName("tight_binding_matrix_inspector")
@@ -19289,11 +19589,11 @@ class NfitProjectExplorer:
                 model
             )
         )
-        layout.addWidget(matrix_button, 5, 0, 1, 2)
-        layout.addWidget(matrix_script, 5, 2)
+        layout.addWidget(matrix_button, 1, 0, 1, 2)
+        layout.addWidget(matrix_script, 1, 2)
 
         definition = model_definition(model.type)
-        for row, plot in enumerate(definition.plots, start=6):
+        for row, plot in enumerate(definition.plots, start=2):
             calculate = QtWidgets.QPushButton(plot.label)
             calculate.setObjectName(f"model_plot_{plot.key}")
             calculate.setToolTip(plot.description)
@@ -19314,7 +19614,7 @@ class NfitProjectExplorer:
             )
             layout.addWidget(calculate, row, 0, 1, 2)
             layout.addWidget(copy_script, row, 2)
-        self.model_parameter_layout.addWidget(group, 9, 0, 1, 4)
+        self.model_parameter_layout.addWidget(group, 10, 0, 1, 4)
 
     def _build_model_plot_actions(self, model: ModelComponentSpec) -> None:
         """Add registered plot and script actions for a non-electronic model."""
@@ -20021,6 +20321,25 @@ class NfitProjectExplorer:
         regenerate.clicked.connect(self._regenerate_tight_binding_onsite)
         layout.addWidget(regenerate, 0, 0, 1, 3)
         unit = str(model.config.get("electronic_energy_unit", "eV"))
+        terms = [
+            OnsiteInvariant.from_dict(item)
+            for item in model.config.get("onsite_terms", ())
+        ]
+        show_details = QtWidgets.QCheckBox("Show fit details")
+        show_details.setObjectName("tight_binding_onsite_show_details")
+        show_details.setToolTip(
+            "Show optional bounds, dataset sharing, and matrix-basis details. "
+            "Values and Fit selections remain visible in the compact table."
+        )
+        details_expanded = any(
+            term.fit
+            or any(bound is not None for bound in term.bounds_meV)
+            or sharing_mode(model, term.identifier) != "global"
+            for term in terms
+        )
+        show_details.setChecked(details_expanded)
+        layout.addWidget(show_details, 0, 7, 1, 3)
+        detail_widgets: list[Any] = []
         headers = (
             "Term",
             "Site",
@@ -20034,11 +20353,10 @@ class NfitProjectExplorer:
             "Matrix basis",
         )
         for column, text in enumerate(headers):
-            layout.addWidget(QtWidgets.QLabel(text), 1, column)
-        terms = [
-            OnsiteInvariant.from_dict(item)
-            for item in model.config.get("onsite_terms", ())
-        ]
+            header = QtWidgets.QLabel(text)
+            layout.addWidget(header, 1, column)
+            if column in {4, 5, 7, 8, 9}:
+                detail_widgets.append(header)
         for index, term in enumerate(terms):
             row = index + 2
             layout.addWidget(QtWidgets.QLabel(term.label), row, 0)
@@ -20084,6 +20402,7 @@ class NfitProjectExplorer:
                     )
                 )
                 layout.addWidget(editor, row, column)
+                detail_widgets.append(editor)
             fit = QtWidgets.QCheckBox()
             fit.setObjectName(f"tight_binding_onsite_fit_{index}")
             fit.setChecked(term.fit)
@@ -20105,6 +20424,7 @@ class NfitProjectExplorer:
             )
             layout.addWidget(sharing, row, 7)
             layout.addWidget(groups, row, 8)
+            detail_widgets.extend((sharing, groups))
             matrix = QtWidgets.QLabel(
                 f"{len(term.basis_labels)}x{len(term.basis_labels)}; {term.source}"
             )
@@ -20114,6 +20434,7 @@ class NfitProjectExplorer:
                 f"Matrix:\n{np.array2string(term.matrix, precision=4)}"
             )
             layout.addWidget(matrix, row, 9)
+            detail_widgets.append(matrix)
         status_text = (
             f"{len(terms)} onsite invariant(s)."
             if terms
@@ -20127,6 +20448,13 @@ class NfitProjectExplorer:
         )
         status.setWordWrap(True)
         layout.addWidget(status, len(terms) + 2, 0, 1, len(headers))
+
+        def set_details_visible(visible: bool) -> None:
+            for widget in detail_widgets:
+                widget.setVisible(bool(visible))
+
+        set_details_visible(details_expanded)
+        show_details.toggled.connect(set_details_visible)
         self.model_parameter_layout.addWidget(group, 7, 0, 1, 4)
 
     def _build_tight_binding_hopping_editor(
@@ -20340,6 +20668,21 @@ class NfitProjectExplorer:
         layout.addWidget(add_selected, 3, 0, 1, 3)
 
         unit = str(model.config.get("electronic_energy_unit", "eV"))
+        show_details = QtWidgets.QCheckBox("Show fit details")
+        show_details.setObjectName("tight_binding_hopping_show_details")
+        show_details.setToolTip(
+            "Show optional bounds, dataset sharing, and matrix-basis details. "
+            "Orbital endpoints, values, Fit selections, and removal stay visible."
+        )
+        details_expanded = any(
+            term.fit
+            or any(bound is not None for bound in term.bounds_meV)
+            or sharing_mode(model, term.identifier) != "global"
+            for term in active
+        )
+        show_details.setChecked(details_expanded)
+        layout.addWidget(show_details, 3, 7, 1, 4)
+        detail_widgets: list[Any] = []
         active_headers = (
             "Active term",
             "From orbital(s)",
@@ -20355,7 +20698,10 @@ class NfitProjectExplorer:
             "",
         )
         for column, text in enumerate(active_headers):
-            layout.addWidget(QtWidgets.QLabel(text), 4, column)
+            header = QtWidgets.QLabel(text)
+            layout.addWidget(header, 4, column)
+            if column in {5, 6, 8, 9, 10}:
+                detail_widgets.append(header)
         for index, term in enumerate(active):
             row = index + 5
             from_text, to_text = endpoint_text(term)
@@ -20417,6 +20763,7 @@ class NfitProjectExplorer:
                     )
                 )
                 layout.addWidget(editor, row, column)
+                detail_widgets.append(editor)
             fit = QtWidgets.QCheckBox()
             fit.setObjectName(f"tight_binding_hopping_fit_{index}")
             fit.setChecked(term.fit)
@@ -20439,6 +20786,7 @@ class NfitProjectExplorer:
             )
             layout.addWidget(sharing, row, 8)
             layout.addWidget(groups, row, 9)
+            detail_widgets.extend((sharing, groups))
             matrix = QtWidgets.QLabel(
                 f"{len(term.basis_i)}x{len(term.basis_j)}"
             )
@@ -20451,6 +20799,7 @@ class NfitProjectExplorer:
                 f"Matrix:\n{np.array2string(term.matrix, precision=4)}"
             )
             layout.addWidget(matrix, row, 10)
+            detail_widgets.append(matrix)
             remove = QtWidgets.QPushButton("Remove")
             remove.setObjectName(f"tight_binding_hopping_remove_{index}")
             remove.setToolTip(
@@ -20477,6 +20826,13 @@ class NfitProjectExplorer:
             1,
             len(active_headers),
         )
+
+        def set_details_visible(visible: bool) -> None:
+            for widget in detail_widgets:
+                widget.setVisible(bool(visible))
+
+        set_details_visible(details_expanded)
+        show_details.toggled.connect(set_details_visible)
         self.model_parameter_layout.addWidget(group, 8, 0, 1, 4)
 
     def _import_wannier90_model(self, model: ModelComponentSpec) -> bool:
@@ -20543,6 +20899,239 @@ class NfitProjectExplorer:
             None,
         )
 
+    def _tight_binding_plot_settings(
+        self,
+        model: ModelComponentSpec,
+        plot_key: str,
+    ) -> dict[str, Any]:
+        """Return viewer-owned settings in their displayed electronic unit."""
+
+        from .electronic_structure import (
+            electronic_energy_from_meV,
+            normalize_electronic_energy_unit,
+        )
+
+        config = model.config
+        unit = normalize_electronic_energy_unit(
+            config.get("electronic_energy_unit", "eV")
+        )
+        common = {"electronic_energy_unit": unit}
+        if plot_key == "bands":
+            return {
+                **common,
+                "band_path_convention": config.get(
+                    "band_path_convention",
+                    "hinuma",
+                ),
+                "band_path": _parameter_to_text(
+                    config.get("band_path", [])
+                ),
+                "band_points_per_inv_angstrom": _parameter_to_text(
+                    config.get("band_points_per_inv_angstrom", 80.0)
+                ),
+            }
+        if plot_key == "dos":
+            return {
+                **common,
+                "dos_method": config.get("dos_method", "gaussian"),
+                "dos_mesh": _parameter_to_text(
+                    config.get("dos_mesh", [40, 40, 40])
+                ),
+                "dos_symmetry": config.get("dos_symmetry", "auto"),
+                "dos_energy_min_meV": _parameter_to_text(
+                    electronic_energy_from_meV(
+                        config.get("dos_energy_min_meV", -500.0),
+                        unit,
+                    )
+                ),
+                "dos_energy_max_meV": _parameter_to_text(
+                    electronic_energy_from_meV(
+                        config.get("dos_energy_max_meV", 500.0),
+                        unit,
+                    )
+                ),
+                "dos_energy_points": _parameter_to_text(
+                    config.get("dos_energy_points", 600)
+                ),
+                "dos_broadening_meV": _parameter_to_text(
+                    electronic_energy_from_meV(
+                        config.get("dos_broadening_meV", 5.0),
+                        unit,
+                    )
+                ),
+            }
+        if plot_key == "fermi_surface":
+            return {
+                **common,
+                "fermi_mesh": _parameter_to_text(
+                    config.get("fermi_mesh", [64, 64, 64])
+                ),
+                "fermi_energy_meV": _parameter_to_text(
+                    electronic_energy_from_meV(
+                        config.get(
+                            "fermi_energy_meV",
+                            config.get("chemical_potential_meV", 0.0),
+                        ),
+                        unit,
+                    )
+                ),
+            }
+        return common
+
+    def _apply_tight_binding_plot_settings(
+        self,
+        model: ModelComponentSpec,
+        plot_key: str,
+        values: Mapping[str, str],
+    ) -> bool:
+        """Validate and store one viewer's calculation settings."""
+
+        from PySide6 import QtWidgets
+
+        from .electronic_structure import (
+            electronic_energy_to_meV,
+            normalize_electronic_energy_unit,
+        )
+        from .model_plots import configure_tight_binding_plot
+
+        previous = copy.deepcopy(model.config)
+        unit = normalize_electronic_energy_unit(
+            model.config.get("electronic_energy_unit", "eV")
+        )
+        try:
+            if plot_key == "bands":
+                convention = str(
+                    values.get("band_path_convention", "manual")
+                )
+                updates = {
+                    "band_path_convention": convention,
+                    "band_points_per_inv_angstrom": float(
+                        _parse_parameter_text(
+                            values["band_points_per_inv_angstrom"]
+                        )
+                    ),
+                }
+                if convention == "manual":
+                    path = _parse_parameter_text(
+                        values["band_path"]
+                    )
+                    if not isinstance(path, list) or len(path) < 2:
+                        raise ValueError(
+                            "manual band_path must contain at least two nodes"
+                        )
+                    updates["band_path"] = path
+                configure_tight_binding_plot(
+                    model,
+                    plot_key,
+                    **updates,
+                )
+            elif plot_key == "dos":
+                method = str(values["dos_method"])
+                mesh = _parse_parameter_text(
+                    values["dos_mesh"]
+                )
+                symmetry = str(values["dos_symmetry"])
+                energies: dict[str, float] = {}
+                for name in (
+                    "dos_energy_min_meV",
+                    "dos_energy_max_meV",
+                    "dos_broadening_meV",
+                ):
+                    energies[name] = float(
+                        electronic_energy_to_meV(
+                            float(_parse_parameter_text(values[name])),
+                            unit,
+                        )
+                    )
+                energy_points = int(
+                    _parse_parameter_text(values["dos_energy_points"])
+                )
+                if (
+                    not isinstance(mesh, (list, tuple))
+                    or not mesh
+                    or any(int(size) < 1 for size in mesh)
+                ):
+                    raise ValueError(
+                        "dos_mesh must contain positive integer sizes"
+                    )
+                if energy_points < 2:
+                    raise ValueError(
+                        "dos_energy_points must be at least two"
+                    )
+                if method == "tetrahedron":
+                    symmetry = "full"
+                if (
+                    model.config.get("projection_groups")
+                    and symmetry == "reduced"
+                ):
+                    raise ValueError(
+                        "projected DOS cannot require symmetry reduction"
+                    )
+                configure_tight_binding_plot(
+                    model,
+                    plot_key,
+                    dos_method=method,
+                    dos_mesh=mesh,
+                    dos_symmetry=symmetry,
+                    dos_energy_points=energy_points,
+                    **energies,
+                )
+            elif plot_key == "fermi_surface":
+                mesh = _parse_parameter_text(
+                    values["fermi_mesh"]
+                )
+                if (
+                    not isinstance(mesh, (list, tuple))
+                    or not mesh
+                    or any(int(size) < 2 for size in mesh)
+                ):
+                    raise ValueError(
+                        "fermi_mesh must contain integer sizes of at least two"
+                    )
+                energy = float(
+                    electronic_energy_to_meV(
+                        float(
+                            _parse_parameter_text(
+                                values["fermi_energy_meV"]
+                            )
+                        ),
+                        unit,
+                    )
+                )
+                configure_tight_binding_plot(
+                    model,
+                    plot_key,
+                    fermi_mesh=mesh,
+                    fermi_energy_meV=energy,
+                )
+            else:
+                raise ValueError(
+                    f"unsupported tight-binding plot settings {plot_key!r}"
+                )
+        except Exception as exc:
+            model.config = previous
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Electronic plot settings",
+                f"Could not apply the settings:\n{exc}",
+            )
+            return False
+
+        if model.config == previous:
+            return True
+        group = self._group_for_model(model)
+        branch_created = (
+            self._record_data_group_state_change(group)
+            if group is not None
+            else False
+        )
+        self._mark_dirty()
+        if group is not None:
+            if branch_created:
+                self._refresh_tree(select_group=group, select_model=model)
+            self._request_overlay_refresh(group)
+        return True
+
     def _open_model_plot(self, model: ModelComponentSpec, plot_key: str) -> bool:
         from PySide6 import QtWidgets
 
@@ -20558,6 +21147,25 @@ class NfitProjectExplorer:
         )
         if plot is None or plot.render is None:
             return False
+        window_holder: dict[str, Any] = {}
+
+        def apply_settings(values: dict[str, str]) -> None:
+            if not self._apply_tight_binding_plot_settings(
+                model,
+                plot_key,
+                values,
+            ):
+                return
+            current = window_holder.get("window")
+            if current is not None and hasattr(current, "close"):
+                current.close()
+            from PySide6 import QtCore
+
+            QtCore.QTimer.singleShot(
+                0,
+                lambda: self._open_model_plot(model, plot_key),
+            )
+
         try:
             owner = self._group_for_model(model)
             components = {} if owner is None else owner.models
@@ -20572,6 +21180,11 @@ class NfitProjectExplorer:
                 window = show_fermi_surface_result(
                     result,
                     parent=self.window,
+                    settings_config=self._tight_binding_plot_settings(
+                        model,
+                        plot_key,
+                    ),
+                    on_apply_settings=apply_settings,
                 )
             else:
                 figure, _axes = plot.render(result)
@@ -20585,6 +21198,16 @@ class NfitProjectExplorer:
                     figure,
                     viewer_key=viewer_keys.get(plot_key, "model_plot"),
                     parent=self.window,
+                    settings_config=(
+                        self._tight_binding_plot_settings(model, plot_key)
+                        if model.type == "tight_binding"
+                        else None
+                    ),
+                    on_apply_settings=(
+                        apply_settings
+                        if model.type == "tight_binding"
+                        else None
+                    ),
                 )
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
@@ -20593,6 +21216,7 @@ class NfitProjectExplorer:
                 f"Could not calculate the plot:\n{exc}",
             )
             return False
+        window_holder["window"] = window
         self._plot_windows[f"model:{id(model)}:{plot_key}"] = window
         return True
 

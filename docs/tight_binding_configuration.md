@@ -5,6 +5,31 @@ hopping, and spin--orbit coefficients are dynamic fit parameters described on
 their construction pages; the fields below are fixed scientific or execution
 configuration.
 
+## Builder organization
+
+The GUI follows the construction workflow rather than displaying every stored
+field in one form:
+
+- **Structure and basis** contains the model source, crystal, sites, orbital
+  manifolds, and local frames.
+- **Hamiltonian** contains separate Onsite, Hoppings, and Spin and SOC tabs.
+- **Calculate and inspect** contains the electronic energy reference, shared
+  high-symmetry path, matrix and Brillouin-zone tools, and plot launchers.
+- **Advanced** contains dimensionality, custom projections, execution
+  overrides, and the diagnostic primitive-cell switch.
+
+Band, DOS, and Fermi-surface sampling controls live in their viewer side
+panels. **Apply and recalculate** validates the entries, stores the same
+component settings listed below, and replaces the result. This organization
+does not create GUI-only scientific state: project files and copied scripts
+retain the complete configuration. Scripts can update the same plot-owned
+fields atomically with `configure_tight_binding_plot`.
+
+Onsite and hopping tables show the term identity, orbital endpoints, value,
+and Fit selection by default. **Show fit details** reveals bounds, dataset
+sharing, and matrix-basis metadata; it opens automatically when a term already
+uses a bound, non-global sharing, or fitting.
+
 ## Source and builder state
 
 | Setting | Default | Meaning |
@@ -13,7 +38,7 @@ configuration.
 | `model_digest` | `""` | Expected SHA-256 digest of the resolved canonical model. A source reload fails if it differs. |
 | `model_data` | `{}` | Portable `ElectronicModel.to_dict()` payload. |
 | `model_stale` | `false` | Derived flag indicating that builder edits require one canonical rebuild. It is not a physical option. |
-| `use_primitive_cell` | `true` | Exactly fold a compatible GUI-built conventional-cell model before evaluation. |
+| `use_primitive_cell` | `true` | Attempt exact folding of a GUI-built conventional-cell model. A failed compatibility certificate records its reason and uses the conventional model. |
 | `crystal` | cubic `P 1` cell with no sites | Editable lattice, space group, sites, and optional CIF provenance. |
 | `orbital_manifolds` | `[]` | Site-attached basis definitions, symmetry choices, and local frames. |
 | `onsite_terms` | `[]` | Generated onsite matrices and mirrored parameter state. |
@@ -24,7 +49,7 @@ configuration.
 | `hopping_terms` | `[]` | Selected active hopping coefficients. |
 | `spin_treatment` | `"auto"` | `"auto"`, `"implicit"`, `"collinear"`, or `"spinor"`. |
 | `soc_terms` | `[]` | Enabled manifold-resolved onsite $\lambda\mathbf L\cdot\mathbf S$ terms. |
-| `periodic_axes` | `[]` | Periodic direct-lattice axes. Empty lets a Wannier import infer them from nonzero translations. |
+| `periodic_axes` | `[]` | Periodic direct-lattice axes. Empty means all three for a GUI-built crystal and lets a Wannier import infer them from nonzero translations. |
 
 Structured fields contain JSON-compatible dictionaries or lists. Their
 detailed record schemas are defined in
@@ -77,7 +102,7 @@ longer segments receive proportionally more interpolation points.
 | --- | --- | --- |
 | `dos_method` | `"gaussian"` | `"gaussian"` broadening or three-dimensional `"tetrahedron"` integration through ASE. |
 | `dos_mesh` | `[40,40,40]` | Uniform integration mesh. A two-dimensional model may use `[80,80]`. |
-| `dos_symmetry` | `"full"` | `"full"`, certified `"auto"` reduction with fallback, or required `"reduced"` sampling. |
+| `dos_symmetry` | `"auto"` | Certified reduction with full-mesh fallback, explicit `"full"`, or required `"reduced"` sampling. |
 | `dos_energy_min_meV` | `-500.0` | Lower absolute energy sampled, in canonical meV. |
 | `dos_energy_max_meV` | `500.0` | Upper absolute energy sampled, in canonical meV. |
 | `dos_energy_points` | `600` | Number of energy samples, at least two. |
@@ -114,9 +139,10 @@ surfaces in three dimensions.
 
 The following changes preserve the model but alter cost:
 
-1. **Use the primitive cell.** Matrix diagonalization scales approximately as
-   the cube of basis dimension. An exact conventional-to-primitive fold often
-   gives the largest speedup.
+1. **Use automatic primitive-cell resolution.** Matrix diagonalization scales
+   approximately as the cube of basis dimension. An exact
+   conventional-to-primitive fold often gives the largest speedup; an
+   incompatible basis remains in the conventional cell with a recorded reason.
 2. **Keep spin implicit when valid.** Explicit collinear or spinor treatment
    doubles matrix dimension.
 3. **Avoid unused eigenvectors.** Total bands and total DOS use eigenvalues

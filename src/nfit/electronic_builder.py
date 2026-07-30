@@ -2520,18 +2520,30 @@ def resolve_tight_binding_builder(component: Any) -> ElectronicModel:
     if bool(component.config.get("use_primitive_cell", True)):
         from .crystal import primitive_lattice_vectors
 
-        model = reduce_electronic_model_to_primitive(
-            model,
-            primitive_lattice_vectors(
-                component.config["crystal"]["lattice"],
-                str(
-                    component.config["crystal"].get(
-                        "spacegroup",
-                        "P 1",
-                    )
+        try:
+            model = reduce_electronic_model_to_primitive(
+                model,
+                primitive_lattice_vectors(
+                    component.config["crystal"]["lattice"],
+                    str(
+                        component.config["crystal"].get(
+                            "spacegroup",
+                            "P 1",
+                        )
+                    ),
                 ),
-            ),
-        )
+            )
+        except ValueError as exc:
+            model = replace(
+                model,
+                provenance={
+                    **dict(model.provenance),
+                    "primitive_reduction": {
+                        "status": "conventional_fallback",
+                        "reason": str(exc),
+                    },
+                },
+            )
     from .electronic_spin import lift_electronic_model_spin
 
     model = lift_electronic_model_spin(

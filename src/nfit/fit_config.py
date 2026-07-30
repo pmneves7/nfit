@@ -1040,7 +1040,7 @@ def _validate_tight_binding_config(component: Any) -> None:
         raise ValueError(
             "band_points_per_inv_angstrom must be positive and finite"
         )
-    dos_symmetry = str(config.get("dos_symmetry", "full"))
+    dos_symmetry = str(config.get("dos_symmetry", "auto"))
     if dos_symmetry not in {
         "auto",
         "full",

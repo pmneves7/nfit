@@ -2208,7 +2208,11 @@ def _register_builtin_models() -> None:
                 _config_field(
                     "periodic_axes",
                     [],
-                    "Direct-lattice periodic axes; empty infers them from hoppings.",
+                    (
+                        "Direct-lattice periodic axes. Empty uses all three "
+                        "for a GUI-built crystal and infers active translated "
+                        "axes for a Wannier90 import."
+                    ),
                     "Empty, or one to three unique indices chosen from 0, 1, and 2.",
                     "list",
                     "[0, 1]",
@@ -2363,7 +2367,7 @@ def _register_builtin_models() -> None:
                 ),
                 _config_field(
                     "dos_symmetry",
-                    "full",
+                    "auto",
                     (
                         "Brillouin-zone symmetry policy for total density of "
                         "states. Auto reduces only when certified, full keeps "

@@ -1,4 +1,6 @@
 # ruff: noqa: F401, F403, F405
+import copy
+
 from nfit import electronic_model_from_component
 from tests.project_gui_test_support import *
 from tests.project_gui_test_support import (
@@ -98,9 +100,8 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
     assert unit_combo is not None and unit_combo.currentData() == "eV"
     assert "canonical" in unit_combo.toolTip()
     assert chemical_editor is not None and chemical_editor.toolTip()
-    assert band_density_editor is not None and band_density_editor.toolTip()
-    assert float(band_density_editor.text()) == pytest.approx(80.0)
-    assert float(dos_min_editor.text()) == pytest.approx(-0.5)
+    assert band_density_editor is None
+    assert dos_min_editor is None
     backend_combo = explorer.model_parameter_widget.findChild(
         QtWidgets.QComboBox,
         "tight_binding_electronic_backend",
@@ -111,13 +112,7 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
         QtWidgets.QComboBox,
         "tight_binding_dos_method",
     )
-    assert dos_method_combo is not None
-    assert dos_method_combo.currentData() == "gaussian"
-    assert "tetrahedron" in dos_method_combo.toolTip().lower()
-    dos_method_combo.setCurrentIndex(
-        dos_method_combo.findData("tetrahedron")
-    )
-    assert model.config["dos_method"] == "tetrahedron"
+    assert dos_method_combo is None
     backend_combo.setCurrentIndex(backend_combo.findData("threaded"))
     assert model.config["electronic_backend"] == "threaded"
     chemical_editor.setText("0.0125")
@@ -136,7 +131,48 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
         QtWidgets.QLineEdit, "model_config_dos_energy_min_meV"
     )
     assert float(chemical_editor.text()) == pytest.approx(12.5)
-    assert float(dos_min_editor.text()) == pytest.approx(-500.0)
+    assert dos_min_editor is None
+    tabs = explorer.model_parameter_widget.findChild(
+        QtWidgets.QTabWidget,
+        "tight_binding_builder_tabs",
+    )
+    assert tabs is not None
+    assert tabs.toolTip()
+    assert [tabs.tabText(index) for index in range(tabs.count())] == [
+        "Structure and basis",
+        "Hamiltonian",
+        "Calculate and inspect",
+        "Advanced",
+    ]
+    summary = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLabel,
+        "tight_binding_model_summary",
+    )
+    assert summary is not None and summary.toolTip()
+    advanced = explorer.model_parameter_widget.findChild(
+        QtWidgets.QGroupBox,
+        "model_config_group",
+    )
+    assert advanced.title() == "Advanced model and execution"
+    primitive = explorer.model_parameter_widget.findChild(
+        QtWidgets.QCheckBox,
+        "tight_binding_use_primitive_cell",
+    )
+    assert primitive.isChecked() and "fallback" in primitive.toolTip()
+    assert (
+        explorer.model_parameter_widget.findChild(
+            QtWidgets.QGroupBox,
+            "model_fit_parameters_group",
+        )
+        is None
+    )
+    assert (
+        explorer.model_parameter_widget.findChild(
+            QtWidgets.QGroupBox,
+            "model_dataset_scope_group",
+        )
+        is None
+    )
     element = explorer.model_parameter_widget.findChild(
         QtWidgets.QLineEdit, "model_crystal_site_element_0"
     )
@@ -160,6 +196,63 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
     assert "crystal_from_cif" not in script
     assert "'element': 'Co'" in script
     assert "set_electronic_energy_unit(model, 'meV')" in script
+    explorer.has_unsaved_changes = False
+    explorer.window.close()
+
+
+def test_tight_binding_viewer_settings_update_canonical_plot_config(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Electronic")
+    model = create_model_component(group, "bands", type="tight_binding")
+    scripted = copy.deepcopy(model)
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer._refresh_tree(select_group=group, select_model=model)
+
+    assert explorer._apply_tight_binding_plot_settings(
+        model,
+        "dos",
+        {
+            "dos_method": "tetrahedron",
+            "dos_mesh": "[32, 32, 32]",
+            "dos_symmetry": "auto",
+            "dos_energy_min_meV": "-0.25",
+            "dos_energy_max_meV": "0.75",
+            "dos_energy_points": "501",
+            "dos_broadening_meV": "0.004",
+        },
+    )
+    assert model.config["dos_method"] == "tetrahedron"
+    assert model.config["dos_symmetry"] == "full"
+    assert model.config["dos_mesh"] == [32, 32, 32]
+    assert model.config["dos_energy_min_meV"] == pytest.approx(-250.0)
+    assert model.config["dos_energy_max_meV"] == pytest.approx(750.0)
+    assert model.config["dos_broadening_meV"] == pytest.approx(4.0)
+    assert model.config["dos_energy_points"] == 501
+    from nfit import configure_tight_binding_plot
+
+    configure_tight_binding_plot(
+        scripted,
+        "dos",
+        dos_method="tetrahedron",
+        dos_symmetry="full",
+        dos_mesh=[32, 32, 32],
+        dos_energy_min_meV=-250.0,
+        dos_energy_max_meV=750.0,
+        dos_broadening_meV=4.0,
+        dos_energy_points=501,
+    )
+    for name in (
+        "dos_method",
+        "dos_symmetry",
+        "dos_mesh",
+        "dos_energy_min_meV",
+        "dos_energy_max_meV",
+        "dos_broadening_meV",
+        "dos_energy_points",
+    ):
+        assert model.config[name] == scripted.config[name]
     explorer.has_unsaved_changes = False
     explorer.window.close()
 
@@ -281,6 +374,14 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
         QtWidgets.QComboBox, "tight_binding_onsite_0_sharing"
     )
     assert onsite_sharing is not None and onsite_sharing.toolTip()
+    onsite_details = explorer.model_parameter_widget.findChild(
+        QtWidgets.QCheckBox,
+        "tight_binding_onsite_show_details",
+    )
+    assert onsite_details is not None and onsite_details.toolTip()
+    assert onsite_sharing.isHidden()
+    onsite_details.setChecked(True)
+    assert not onsite_sharing.isHidden()
     onsite_sharing.setCurrentIndex(onsite_sharing.findData("per_dataset"))
     assert model.sharing[onsite_identifier]["mode"] == "per_dataset"
 
@@ -323,6 +424,11 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
         QtWidgets.QComboBox, "tight_binding_hopping_0_sharing"
     )
     assert hopping_sharing is not None and hopping_sharing.toolTip()
+    hopping_details = explorer.model_parameter_widget.findChild(
+        QtWidgets.QCheckBox,
+        "tight_binding_hopping_show_details",
+    )
+    assert hopping_details is not None and hopping_details.toolTip()
     remove_hopping = explorer.model_parameter_widget.findChild(
         QtWidgets.QPushButton, "tight_binding_hopping_remove_0"
     )
@@ -334,12 +440,12 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
     electronic_group = explorer.model_parameter_widget.findChild(
         QtWidgets.QGroupBox, "tight_binding_actions_group"
     )
-    config_index = explorer.model_parameter_layout.indexOf(config_group)
-    electronic_index = explorer.model_parameter_layout.indexOf(electronic_group)
-    assert (
-        explorer.model_parameter_layout.getItemPosition(config_index)[0]
-        > explorer.model_parameter_layout.getItemPosition(electronic_index)[0]
+    tabs = explorer.model_parameter_widget.findChild(
+        QtWidgets.QTabWidget,
+        "tight_binding_builder_tabs",
     )
+    assert tabs.indexOf(config_group.parentWidget()) == 3
+    assert tabs.indexOf(electronic_group.parentWidget()) == 2
 
     copied = explorer.model_parameter_widget.findChild(
         QtWidgets.QPushButton, "tight_binding_structure_script"

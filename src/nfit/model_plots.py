@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any
@@ -25,6 +26,123 @@ from .electronic_structure import (
     normalize_electronic_energy_unit,
 )
 from .spin_fluctuations import generalized_paramagnon_susceptibility
+
+_TIGHT_BINDING_PLOT_FIELDS = {
+    "bands": {
+        "band_path",
+        "band_path_convention",
+        "band_points_per_inv_angstrom",
+    },
+    "dos": {
+        "dos_method",
+        "dos_mesh",
+        "dos_symmetry",
+        "dos_energy_min_meV",
+        "dos_energy_max_meV",
+        "dos_energy_points",
+        "dos_broadening_meV",
+    },
+    "fermi_surface": {
+        "fermi_mesh",
+        "fermi_energy_meV",
+    },
+}
+
+
+def configure_tight_binding_plot(
+    component: Any,
+    plot_key: str,
+    **settings: Any,
+) -> Any:
+    """Atomically store one tight-binding plot's scriptable configuration."""
+
+    if getattr(component, "type", None) != "tight_binding":
+        raise TypeError("plot configuration requires a tight_binding component")
+    key = str(plot_key)
+    try:
+        allowed = _TIGHT_BINDING_PLOT_FIELDS[key]
+    except KeyError as exc:
+        choices = ", ".join(sorted(_TIGHT_BINDING_PLOT_FIELDS))
+        raise ValueError(
+            f"unknown tight-binding plot {plot_key!r}; expected {choices}"
+        ) from exc
+    unexpected = set(settings) - allowed
+    if unexpected:
+        names = ", ".join(sorted(unexpected))
+        raise ValueError(
+            f"unsupported {key} plot setting(s): {names}"
+        )
+
+    previous = copy.deepcopy(component.config)
+    try:
+        if key == "bands":
+            convention = str(
+                settings.get(
+                    "band_path_convention",
+                    component.config.get("band_path_convention", "manual"),
+                )
+            )
+            if convention != "manual":
+                from .brillouin_zone import set_tight_binding_standard_path
+
+                set_tight_binding_standard_path(component, convention)
+                settings = {
+                    name: value
+                    for name, value in settings.items()
+                    if name not in {"band_path", "band_path_convention"}
+                }
+            else:
+                settings["band_path_convention"] = "manual"
+                component.config["band_path_metadata"] = {}
+        component.config.update(settings)
+        from .model_registry import validate_model_component
+
+        validate_model_component(component)
+        if key == "bands":
+            path = component.config.get("band_path", ())
+            if not isinstance(path, list) or len(path) < 2:
+                raise ValueError(
+                    "band_path must contain at least two labelled nodes"
+                )
+        elif key == "dos":
+            mesh = component.config.get("dos_mesh", ())
+            if (
+                not isinstance(mesh, (list, tuple))
+                or not mesh
+                or any(
+                    int(size) != float(size) or int(size) < 1
+                    for size in mesh
+                )
+            ):
+                raise ValueError(
+                    "dos_mesh must contain positive integer sizes"
+                )
+            if int(component.config.get("dos_energy_points", 0)) < 2:
+                raise ValueError("dos_energy_points must be at least two")
+            if (
+                component.config.get("projection_groups")
+                and component.config.get("dos_symmetry") == "reduced"
+            ):
+                raise ValueError(
+                    "projected DOS cannot require symmetry reduction"
+                )
+        elif key == "fermi_surface":
+            mesh = component.config.get("fermi_mesh", ())
+            if (
+                not isinstance(mesh, (list, tuple))
+                or not mesh
+                or any(
+                    int(size) != float(size) or int(size) < 2
+                    for size in mesh
+                )
+            ):
+                raise ValueError(
+                    "fermi_mesh must contain integer sizes of at least two"
+                )
+    except Exception:
+        component.config = previous
+        raise
+    return component
 
 
 def generalized_paramagnon_energy_scan(
@@ -985,7 +1103,7 @@ def tight_binding_density_of_states(component: Any) -> DensityOfStatesResult:
     model = electronic_model_from_component(component)
     config = component.config
     projections = _projection_groups(component)
-    symmetry = str(config.get("dos_symmetry", "full"))
+    symmetry = str(config.get("dos_symmetry", "auto"))
     method = str(config.get("dos_method", "gaussian"))
     if method == "tetrahedron" and symmetry != "full":
         raise ValueError("tetrahedron DOS requires dos_symmetry='full'")
@@ -1256,7 +1374,7 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
     max_batch_bytes = int(
         float(config.get("electronic_max_batch_mb", 256.0)) * 1024**2
     )
-    dos_symmetry = str(config.get("dos_symmetry", "full"))
+    dos_symmetry = str(config.get("dos_symmetry", "auto"))
     dos_method = str(config.get("dos_method", "gaussian"))
     if dos_method == "tetrahedron" and dos_symmetry != "full":
         raise ValueError("tetrahedron DOS requires dos_symmetry='full'")

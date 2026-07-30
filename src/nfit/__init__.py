@@ -322,6 +322,7 @@ from .model_geometry import (
     model_geometry_script,
 )
 from .model_plots import (
+    configure_tight_binding_plot,
     electronic_rpa_energy_scan,
     electronic_rpa_energy_scan_script,
     generalized_paramagnon_energy_scan,
@@ -702,6 +703,7 @@ __all__ = [
     "ModelPlotDefinition",
     "model_definition",
     "model_plot_definitions",
+    "configure_tight_binding_plot",
     "generalized_paramagnon_energy_scan",
     "generalized_paramagnon_energy_scan_script",
     "tight_binding_band_structure",

@@ -84,6 +84,88 @@ def test_electronic_viewers_share_right_settings_panel(monkeypatch):
     assert application is QtWidgets.QApplication.instance()
 
 
+@pytest.mark.parametrize(
+    ("viewer_key", "values", "edited_key", "edited_value"),
+    [
+        (
+            "band_structure",
+            {
+                "band_path_convention": "manual",
+                "band_path": '[{"label":"G","k":[0,0,0]},{"label":"X","k":[1,0,0]}]',
+                "band_points_per_inv_angstrom": "80",
+            },
+            "band_points_per_inv_angstrom",
+            "120",
+        ),
+        (
+            "density_of_states",
+            {
+                "electronic_energy_unit": "eV",
+                "dos_method": "gaussian",
+                "dos_mesh": "[40, 40, 40]",
+                "dos_symmetry": "auto",
+                "dos_energy_min_meV": "-0.5",
+                "dos_energy_max_meV": "0.5",
+                "dos_energy_points": "600",
+                "dos_broadening_meV": "0.005",
+            },
+            "dos_mesh",
+            "[48, 48, 48]",
+        ),
+        (
+            "fermi_surface",
+            {
+                "electronic_energy_unit": "eV",
+                "fermi_mesh": "[64, 64, 64]",
+                "fermi_energy_meV": "0",
+            },
+            "fermi_mesh",
+            "[72, 72, 72]",
+        ),
+    ],
+)
+def test_electronic_viewer_settings_apply_plot_owned_configuration(
+    monkeypatch,
+    viewer_key,
+    values,
+    edited_key,
+    edited_value,
+):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    pytest.importorskip("matplotlib.backends.backend_qtagg")
+    from matplotlib.figure import Figure
+
+    from nfit.qt_electronic_viewer import show_electronic_figure
+
+    application = QtWidgets.QApplication.instance()
+    if application is None:
+        application = QtWidgets.QApplication([])
+    applied = []
+    figure = Figure()
+    figure.add_subplot(111)
+    window = show_electronic_figure(
+        figure,
+        viewer_key=viewer_key,
+        settings_config=values,
+        on_apply_settings=applied.append,
+    )
+    editor = window.findChild(
+        QtWidgets.QLineEdit,
+        f"{viewer_key}_setting_{edited_key}",
+    )
+    assert editor is not None and editor.toolTip()
+    editor.setText(edited_value)
+    apply = window.findChild(
+        QtWidgets.QPushButton,
+        f"{viewer_key}_apply_settings",
+    )
+    assert apply is not None and apply.toolTip()
+    apply.click()
+    assert applied and applied[0][edited_key] == edited_value
+    window.close()
+
+
 def test_fermi_surface_renderer_uses_pyvista_triangle_mesh(monkeypatch):
     from nfit.qt_fermi_surface_viewer import _render_fermi_surface
 

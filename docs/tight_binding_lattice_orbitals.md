@@ -139,8 +139,10 @@ Orbitals are matched by primitive center, manifold, orbital, species,
 correlated shell, and spin label. The fold is accepted only when every class
 has the crystallographic multiplicity and all Hamiltonian terms are
 translation compatible. It is an exact change of representation, not a
-symmetry approximation. Disable it for diagnostic comparison, or when the
-constructed basis intentionally breaks the centering translations.
+symmetry approximation. If nfit cannot certify those conditions, it retains
+the conventional-cell Hamiltonian and records the reason in
+`provenance["primitive_reduction"]`. Disable the attempt only for diagnostic
+comparison.
 
 ## Minimal scripted construction
 

@@ -78,6 +78,10 @@ axis is cumulative physical distance in Å$^{-1}$, with disconnected sections
 kept separate. Energies are shown relative to the configured chemical
 potential.
 
+Its **Calculation** panel edits the path convention, manual labelled nodes,
+and sampling density. Applying a standard convention regenerates its
+coordinates; applying a manual path uses the entered nodes directly.
+
 `calculate_bands` returns eigenvalues, optional eigenvectors, and any requested
 basis-index projections. `render_band_structure` handles the energy-unit
 conversion. Disconnected endpoint labels sharing one horizontal position are
@@ -101,6 +105,11 @@ converts the ordinate to states per eV per cell. Mesh density controls
 integration accuracy. For Gaussian DOS, broadening also controls displayed
 energy resolution and should be converged separately.
 
+The viewer side panel owns the integration method, mesh, certified symmetry
+policy, energy window, energy-point count, and Gaussian width. Selecting
+tetrahedron integration resolves the symmetry policy to the required full
+mesh.
+
 ## Constant-energy and Fermi surfaces
 
 The surface viewer extracts $\varepsilon_n(\mathbf k)=E_{\rm target}$ for
@@ -121,6 +130,9 @@ One- and two-dimensional results use Matplotlib.
 The regular extraction grid includes its periodic boundary and is not
 symmetry reduced. Increase all periodic mesh dimensions until topology and
 small pockets are stable.
+
+The viewer side panel owns the extraction mesh and constant-energy target.
+These remain manual convergence settings.
 
 ## Calculation API inputs
 
@@ -209,7 +221,8 @@ pathways from their multiorbital matrix content.
 ## Viewer window convention
 
 The band, DOS, Fermi-surface, and Brillouin-zone viewers use a plot area on the
-left and a fixed **Settings** panel on the right. Not every panel has
-interactive scientific controls yet; the shared layout reserves one stable
-place for them. Standard close shortcuts use Command-W on macOS and Control-W
+left and a fixed **Settings** panel on the right. Band, DOS, and Fermi-surface
+calculation settings are stored only after **Apply and recalculate** succeeds.
+The Brillouin-zone panel controls presentation without rebuilding its cached
+geometry. Standard close shortcuts use Command-W on macOS and Control-W
 elsewhere.
