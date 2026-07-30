@@ -50,23 +50,40 @@ Planned response models include:
 - interfaces to advanced solvers such as DMFT or Bethe--Salpeter workflows
   without embedding those solvers in nfit.
 
-Performance work may add wider operator-aware symmetry reduction, additional
-block-sparse interaction kernels, multi-GPU execution, and persistent
-distributed workers. Such paths must be checked against the serial
-float64/complex128 reference and retain deterministic provenance. Current
-fits already share bounded response contexts across datasets, reuse
+Current fits already share bounded response contexts across datasets, reuse
 parameter-resolved momentum Hamiltonians, factorize ordered orbital-pair
 responses, schedule independent wavevectors within one CPU allocation, and
 can keep the full Lindhard contraction on one explicitly selected CuPy
-device.
+device. Larger future speedups may come from:
+
+- operator-aware Brillouin-zone symmetry for general orbital, Wannier, spin,
+  and spin--orbit bases, with an exact full-zone fallback whenever basis
+  transformations or gauge information are incomplete;
+- matrix-free projected Hubbard--Hund RPA, so neutron projections can be
+  solved without materializing and inverting the complete orbital-pair
+  response tensor;
+- fused, memory-aware GPU kernels and q batching, followed by multi-GPU
+  distribution when a single device is insufficient;
+- analytic or tangent electronic derivatives with a documented treatment of
+  degeneracies, reducing repeated finite-difference band calculations during
+  fitting; and
+- persistent distributed workers that retain Fourier components,
+  eigensystems, and response workspaces across fit evaluations.
+
+More speculative work includes all-q FFT formulations and certified
+reduced-order surrogates over parameter space. Any accelerated path must be
+checked against the serial float64/complex128 reference, preserve the stated
+scientific tolerance, and retain deterministic provenance.
 
 Automatic Brillouin-zone density selection should use observable-specific
 certificates: an energy-resolved DOS norm, topology and geometric distance for
 Fermi surfaces, and complex matrix errors for Lindhard response. A selected
 mesh should remain fixed during a fit so adaptive refinement does not make the
-objective discontinuous. Electronic-RPA stability scans should similarly
-converge the static feedback over a declared q mesh; current diagnostics report
-evaluated zero-energy points and do not claim a global stability proof.
+objective discontinuous. The same certification framework could govern
+energy-window pruning of inactive particle--hole transitions. Electronic-RPA
+stability scans should similarly converge the static feedback over a declared
+q mesh; current diagnostics report evaluated zero-energy points and do not
+claim a global stability proof.
 
 A capability is considered implemented only when its public calculation,
 fitting and plotting behavior, scripts, reports, documentation, and validation
