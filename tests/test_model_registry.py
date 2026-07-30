@@ -161,6 +161,7 @@ def test_tight_binding_registry_validates_energy_unit_and_canonical_window():
     assert config["electronic_backend"] == "auto"
     assert config["electronic_workers"] == 0
     assert config["electronic_max_batch_mb"] == 256.0
+    assert config["dos_method"] == "gaussian"
     assert config["dos_symmetry"] == "full"
     component = ModelComponentSpec(
         name="bands",
@@ -185,6 +186,15 @@ def test_tight_binding_registry_validates_energy_unit_and_canonical_window():
     component.config["dos_energy_max_meV"] = -10.0
     with pytest.raises(ValueError, match="dos_energy_min_meV"):
         nfit.validate_model_component(component)
+    component.config["dos_energy_min_meV"] = -10.0
+    component.config["dos_energy_max_meV"] = 10.0
+    component.config["dos_method"] = "tetrahedron"
+    component.config["dos_symmetry"] = "auto"
+    with pytest.raises(ValueError, match="dos_symmetry='full'"):
+        nfit.validate_model_component(component)
+    component.config["dos_symmetry"] = "full"
+    component.config["band_path_convention"] = "setyawan_curtarolo"
+    nfit.validate_model_component(component)
 
 
 def test_registered_model_drives_creation_diagnostics_plots_and_serialization():

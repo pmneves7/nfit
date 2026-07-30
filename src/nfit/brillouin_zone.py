@@ -217,18 +217,21 @@ def standard_band_path(
 ) -> tuple[dict[str, Any], ...]:
     """Return a standard labelled path in nfit's primitive reciprocal basis.
 
-    The initial standard convention is the Hinuma--Pizzi--Kumagai--Oba--Tanaka
-    (HPKOT) convention implemented by Seek-path. Disconnected path sections
-    carry ``break_before=True`` so plots and the 3D viewer do not join them.
+    ``"hinuma"`` selects the Hinuma--Pizzi--Kumagai--Oba--Tanaka (HPKOT)
+    convention implemented by Seek-path. ``"setyawan_curtarolo"`` selects
+    ASE's Setyawan--Curtarolo convention. Disconnected path sections carry
+    ``break_before=True`` so plots and the 3D viewer do not join them.
     """
 
     selected = str(convention).strip().lower()
-    if selected not in {"hinuma", "hpkot", "seekpath"}:
-        raise ValueError("standard path convention must be 'hinuma'")
-    try:
-        import seekpath
-    except ImportError as exc:  # pragma: no cover - declared dependency
-        raise ImportError("standard high-symmetry paths require seekpath") from exc
+    if selected in {"hinuma", "hpkot", "seekpath"}:
+        selected = "hinuma"
+    elif selected in {"setyawan_curtarolo", "setyawan-curtarolo", "sc", "ase"}:
+        selected = "setyawan_curtarolo"
+    else:
+        raise ValueError(
+            "standard path convention must be hinuma or setyawan_curtarolo"
+        )
 
     from .crystal import (
         expand_crystal_sites,
@@ -238,6 +241,66 @@ def standard_band_path(
     )
 
     validate_crystal(crystal)
+    nfit_primitive = primitive_lattice_vectors(
+        crystal["lattice"],
+        str(crystal.get("spacegroup", "P 1")),
+    )
+
+    def display_label(label: str) -> str:
+        return "Γ" if label.upper() in {"G", "GAMMA"} else label
+
+    if selected == "setyawan_curtarolo":
+        try:
+            from ase.cell import Cell
+            from ase.dft.kpoints import parse_path_string
+        except ImportError as exc:  # pragma: no cover - declared dependency
+            raise ImportError(
+                "Setyawan-Curtarolo paths require ASE"
+            ) from exc
+
+        bravais = Cell(nfit_primitive.T).get_bravais_lattice(
+            eps=float(symprec)
+        )
+        ase_path = bravais.bandpath()
+        ase_reciprocal = np.asarray(
+            ase_path.cell.reciprocal(),
+            dtype=float,
+        )
+        nfit_reciprocal = np.linalg.inv(nfit_primitive).T
+        point_coordinates = {
+            str(label): (
+                np.asarray(coordinate, dtype=float)
+                @ ase_reciprocal
+                @ np.linalg.inv(nfit_reciprocal.T)
+            )
+            for label, coordinate in ase_path.special_points.items()
+        }
+        nodes: list[dict[str, Any]] = []
+        for section in parse_path_string(ase_path.path):
+            for index, label in enumerate(section):
+                nodes.append(
+                    {
+                        "label": display_label(str(label)),
+                        "k": np.round(
+                            point_coordinates[str(label)],
+                            12,
+                        ).tolist(),
+                        **(
+                            {"break_before": True}
+                            if nodes and index == 0
+                            else {}
+                        ),
+                    }
+                )
+        if len(nodes) < 2:
+            raise ValueError("ASE returned no connected path segments")
+        return tuple(nodes)
+
+    try:
+        import seekpath
+    except ImportError as exc:  # pragma: no cover - declared dependency
+        raise ImportError("standard high-symmetry paths require seekpath") from exc
+
     labels = [str(site["label"]) for site in crystal.get("sites", ())]
     sites = expand_crystal_sites(crystal, labels)
     if not sites:
@@ -260,10 +323,6 @@ def standard_band_path(
         symprec=float(symprec),
     )
     seek_primitive = np.asarray(result["primitive_lattice"], dtype=float).T
-    nfit_primitive = primitive_lattice_vectors(
-        crystal["lattice"],
-        str(crystal.get("spacegroup", "P 1")),
-    )
     seek_reciprocal = 2.0 * np.pi * np.linalg.inv(seek_primitive).T
     nfit_reciprocal = 2.0 * np.pi * np.linalg.inv(nfit_primitive).T
     point_coordinates = {
@@ -273,9 +332,6 @@ def standard_band_path(
         )
         for label, coordinate in result["point_coords"].items()
     }
-
-    def display_label(label: str) -> str:
-        return "Γ" if label.upper() == "GAMMA" else label
 
     nodes: list[dict[str, Any]] = []
     previous_end = ""
@@ -310,21 +366,42 @@ def set_tight_binding_standard_path(
 
     if getattr(component, "type", None) != "tight_binding":
         raise TypeError("standard band paths require a tight_binding component")
-    import seekpath
+    selected = str(convention).strip().lower()
+    if selected in {"hinuma", "hpkot", "seekpath"}:
+        normalized = "hinuma"
+        import seekpath
+
+        provider = "seekpath"
+        provider_version = str(getattr(seekpath, "__version__", "unknown"))
+        convention_label = "HPKOT"
+    elif selected in {
+        "setyawan_curtarolo",
+        "setyawan-curtarolo",
+        "sc",
+        "ase",
+    }:
+        normalized = "setyawan_curtarolo"
+        import ase
+
+        provider = "ASE"
+        provider_version = str(getattr(ase, "__version__", "unknown"))
+        convention_label = "Setyawan-Curtarolo"
+    else:
+        raise ValueError(
+            "standard path convention must be hinuma or setyawan_curtarolo"
+        )
 
     path = standard_band_path(
         component.config.get("crystal", {}),
-        convention=convention,
+        convention=normalized,
         symprec=symprec,
     )
     component.config["band_path"] = [dict(node) for node in path]
-    component.config["band_path_convention"] = "hinuma"
+    component.config["band_path_convention"] = normalized
     component.config["band_path_metadata"] = {
-        "provider": "seekpath",
-        "provider_version": str(
-            getattr(seekpath, "__version__", "unknown")
-        ),
-        "convention": "HPKOT",
+        "provider": provider,
+        "provider_version": provider_version,
+        "convention": convention_label,
         "symprec": float(symprec),
     }
     return path

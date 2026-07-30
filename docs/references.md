@@ -40,6 +40,11 @@ endorsement.
   [doi:10.1088/0953-8984/27/16/166002](https://doi.org/10.1088/0953-8984/27/16/166002);
   and D. Dahlbom *et al.*, “Sunny.jl: A Julia Package for Spin Dynamics”
   (2025), [arXiv:2501.13095](https://doi.org/10.48550/arXiv.2501.13095).
+- **ASE** supplies nfit's Setyawan--Curtarolo band paths and linear
+  tetrahedron density-of-states integration. See A. H. Larsen *et al.*,
+  *J. Phys.: Condens. Matter* **29**, 273002 (2017),
+  [doi:10.1088/1361-648X/aa680e](https://doi.org/10.1088/1361-648X/aa680e),
+  and the [ASE documentation](https://docs.ase-lib.org/).
 
 Use this list to credit intellectual and interface influences. Software
 actually used to reduce, simulate, or fit published data should also be cited

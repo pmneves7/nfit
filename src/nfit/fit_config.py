@@ -996,8 +996,15 @@ def _validate_tight_binding_config(component: Any) -> None:
             "hopping_parameterization must be 'slater_koster' or 'general'"
         )
     path_convention = str(config.get("band_path_convention", "hinuma"))
-    if path_convention not in {"hinuma", "manual"}:
-        raise ValueError("band_path_convention must be 'hinuma' or 'manual'")
+    if path_convention not in {
+        "hinuma",
+        "setyawan_curtarolo",
+        "manual",
+    }:
+        raise ValueError(
+            "band_path_convention must be hinuma, "
+            "setyawan_curtarolo, or manual"
+        )
     electronic_backend = str(config.get("electronic_backend", "auto"))
     if electronic_backend not in {"auto", "numpy", "threaded", "cupy"}:
         raise ValueError(
@@ -1021,12 +1028,18 @@ def _validate_tight_binding_config(component: Any) -> None:
         raise ValueError(
             "band_points_per_inv_angstrom must be positive and finite"
         )
-    if str(config.get("dos_symmetry", "full")) not in {
+    dos_symmetry = str(config.get("dos_symmetry", "full"))
+    if dos_symmetry not in {
         "auto",
         "full",
         "reduced",
     }:
         raise ValueError("dos_symmetry must be auto, full, or reduced")
+    dos_method = str(config.get("dos_method", "gaussian"))
+    if dos_method not in {"gaussian", "tetrahedron"}:
+        raise ValueError("dos_method must be gaussian or tetrahedron")
+    if dos_method == "tetrahedron" and dos_symmetry != "full":
+        raise ValueError("tetrahedron DOS requires dos_symmetry='full'")
     energy_names = (
         "chemical_potential_meV",
         "dos_energy_min_meV",
@@ -1039,8 +1052,11 @@ def _validate_tight_binding_config(component: Any) -> None:
         raise ValueError("tight-binding canonical energy settings must be finite")
     if energies["dos_energy_min_meV"] >= energies["dos_energy_max_meV"]:
         raise ValueError("dos_energy_min_meV must be below dos_energy_max_meV")
-    if energies["dos_broadening_meV"] <= 0.0:
-        raise ValueError("dos_broadening_meV must be positive")
+    if (
+        dos_method == "gaussian"
+        and energies["dos_broadening_meV"] <= 0.0
+    ):
+        raise ValueError("Gaussian dos_broadening_meV must be positive")
     from .electronic_builder import (
         HoppingInvariant,
         OnsiteInvariant,

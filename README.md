@@ -28,8 +28,9 @@ The package provides:
   models with explicit local orbital frames, site-point-group harmonic
   subspaces, symmetry-allowed onsite terms, selectable orbital-explicit
   Slater--Koster or general-matrix hopping candidates, lazy primitive-cell
-  resolution, Hinuma/HPKOT paths, eV/meV conversion, bands, orbital
-  projections, density of states, Fermi surfaces, bounded CPU and optional
+  resolution, Hinuma/HPKOT and Setyawan--Curtarolo paths, eV/meV conversion,
+  bands, orbital projections, Gaussian and linear-tetrahedron density of
+  states, Fermi surfaces, bounded CPU and optional
   GPU eigensystem backends, certified total-DOS symmetry reduction,
   implicit/collinear/spinor bases,
   manifold-resolved onsite spin-orbit coupling, Hamiltonian and orbital-block

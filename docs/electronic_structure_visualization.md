@@ -35,8 +35,8 @@ space-group centering translations define the primitive direct vectors.
 
 Configured `band_path` coordinates use that primitive reciprocal basis. A
 node `[0.5,0,0]` means $\mathbf b_1/2$; the label X alone does not define its
-location. Use the generated Hinuma/HPKOT path when standard labels are
-desired.
+location. Standard paths can follow the Hinuma/HPKOT convention from
+Seek-path or the Setyawan--Curtarolo convention from ASE.
 
 The scene contains the zone polyhedron, labelled path, and reciprocal vectors
 $\mathbf b_1,\mathbf b_2,\mathbf b_3$ in Å$^{-1}$. Each reciprocal vector
@@ -86,14 +86,20 @@ curvature and crossings are visually stable.
 
 ## Density of states
 
-The DOS viewer samples a uniform Brillouin-zone mesh and replaces each
-eigenvalue with a normalized Gaussian of standard deviation
-`dos_broadening_meV`. It can show the total DOS and basis-index projections.
+The DOS viewer offers two integrations:
+
+- **Gaussian** replaces each sampled eigenvalue with a normalized Gaussian of
+  standard deviation `dos_broadening_meV`. It supports every model dimension
+  and the certified total-DOS symmetry reduction.
+- **Linear tetrahedron** uses ASE to interpolate each band inside the
+  tetrahedra of a complete uniform three-dimensional mesh. It introduces no
+  artificial broadening and supports the same basis-index projections, but it
+  cannot use a symmetry-reduced mesh.
 
 `density_of_states` returns states per meV per primitive cell. Plotting in eV
 converts the ordinate to states per eV per cell. Mesh density controls
-integration accuracy; Gaussian broadening controls displayed energy
-resolution. They should be converged separately.
+integration accuracy. For Gaussian DOS, broadening also controls displayed
+energy resolution and should be converged separately.
 
 ## Constant-energy and Fermi surfaces
 
@@ -137,6 +143,7 @@ The viewer calculations are GUI independent. Their main inputs are:
 | `density_of_states.mesh` | mesh-valued sampling with weights | result of `k_mesh(...)` |
 | `density_of_states.energy_meV` | one-dimensional absolute energy grid | `np.linspace(-250,250,1000)` |
 | `density_of_states.broadening_meV` | positive Gaussian standard deviation | `2.0` |
+| `density_of_states.method` | `"gaussian"` or three-dimensional `"tetrahedron"` integration | `"tetrahedron"` |
 | `density_of_states.projections` | optional basis-index groups | `{"d":[0,1]}` |
 | `density_of_states.max_chunk_bytes` | temporary Gaussian-kernel memory target | `67108864` |
 | `fermi_surface.mesh_shape` | at least two points per periodic axis | `[64,64,64]` |
@@ -167,6 +174,7 @@ dos = density_of_states(
     mesh,
     np.linspace(-250.0, 250.0, 1000),
     broadening_meV=2.0,
+    method="gaussian",
 )
 ```
 

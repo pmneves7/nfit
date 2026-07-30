@@ -12,6 +12,7 @@ from nfit import (
     build_brillouin_zone_scene,
     create_model_component,
     primitive_lattice_vectors,
+    set_tight_binding_standard_path,
     standard_band_path,
 )
 from nfit.electronic_builder import (
@@ -510,3 +511,57 @@ def test_hinuma_standard_path_uses_primitive_reciprocal_coordinates():
     x_node = next(node for node in path if node["label"] == "X")
     assert x_node["k"] != [0.5, 0.0, 0.0]
     assert any(bool(node.get("break_before", False)) for node in path)
+
+
+def test_setyawan_curtarolo_path_uses_ase_and_nfit_primitive_coordinates():
+    crystal = {
+        "lattice": {
+            "a": 8.0,
+            "b": 8.0,
+            "c": 8.0,
+            "alpha": 90.0,
+            "beta": 90.0,
+            "gamma": 90.0,
+        },
+        "spacegroup": "F d -3 m:2",
+        "sites": [
+            {
+                "label": "M1",
+                "element": "Fe",
+                "position": [0.0, 0.0, 0.0],
+            }
+        ],
+    }
+
+    path = standard_band_path(
+        crystal,
+        convention="setyawan_curtarolo",
+    )
+    assert [node["label"] for node in path[:6]] == [
+        "Γ",
+        "X",
+        "W",
+        "K",
+        "Γ",
+        "L",
+    ]
+    x_node = next(node for node in path if node["label"] == "X")
+    np.testing.assert_allclose(x_node["k"], [0.5, 0.0, 0.5], atol=1.0e-12)
+    assert any(bool(node.get("break_before", False)) for node in path)
+
+    component = create_model_component(
+        DataGroup("electronic"),
+        "bands",
+        type="tight_binding",
+    )
+    component.config["crystal"] = crystal
+    set_tight_binding_standard_path(
+        component,
+        "setyawan_curtarolo",
+    )
+    assert component.config["band_path_convention"] == "setyawan_curtarolo"
+    assert component.config["band_path_metadata"]["provider"] == "ASE"
+    assert (
+        component.config["band_path_metadata"]["convention"]
+        == "Setyawan-Curtarolo"
+    )

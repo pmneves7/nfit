@@ -975,6 +975,9 @@ def tight_binding_density_of_states(component: Any) -> DensityOfStatesResult:
     config = component.config
     projections = _projection_groups(component)
     symmetry = str(config.get("dos_symmetry", "full"))
+    method = str(config.get("dos_method", "gaussian"))
+    if method == "tetrahedron" and symmetry != "full":
+        raise ValueError("tetrahedron DOS requires dos_symmetry='full'")
     if projections and symmetry == "reduced":
         raise ValueError(
             "projected DOS cannot require symmetry reduction because an "
@@ -998,6 +1001,7 @@ def tight_binding_density_of_states(component: Any) -> DensityOfStatesResult:
             mesh,
             energy,
             broadening_meV=float(config.get("dos_broadening_meV", 5.0)),
+            method=method,
             chemical_potential_meV=float(
                 config.get("chemical_potential_meV", 0.0)
             ),
@@ -1242,6 +1246,9 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
         float(config.get("electronic_max_batch_mb", 256.0)) * 1024**2
     )
     dos_symmetry = str(config.get("dos_symmetry", "full"))
+    dos_method = str(config.get("dos_method", "gaussian"))
+    if dos_method == "tetrahedron" and dos_symmetry != "full":
+        raise ValueError("tetrahedron DOS requires dos_symmetry='full'")
     if projections and dos_symmetry == "reduced":
         raise ValueError(
             "projected DOS cannot require symmetry reduction because an "
@@ -1312,7 +1319,7 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
                 "energy_meV = electronic_energy_to_meV(energy, energy_unit)",
                 f"broadening = {broadening!r}",
                 "broadening_meV = electronic_energy_to_meV(broadening, energy_unit)",
-                f"result = density_of_states(model, mesh, energy_meV, broadening_meV=broadening_meV, chemical_potential_meV=chemical_potential_meV, projections={projections!r}, backend=electronic_backend, workers=electronic_workers, max_batch_bytes=max_batch_bytes)",
+                f"result = density_of_states(model, mesh, energy_meV, broadening_meV=broadening_meV, method={dos_method!r}, chemical_potential_meV=chemical_potential_meV, projections={projections!r}, backend=electronic_backend, workers=electronic_workers, max_batch_bytes=max_batch_bytes)",
                 "figure, axis = render_density_of_states(result, energy_unit=energy_unit)",
             ]
         )

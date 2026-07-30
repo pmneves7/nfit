@@ -56,13 +56,15 @@ total-DOS calculation.
 | Setting | Default | Meaning and example |
 | --- | --- | --- |
 | `band_path` | $\Gamma$--X--M--$\Gamma$ nodes | Ordered labels and primitive reduced coordinates, for example `[{"label":"G","k":[0,0,0]},{"label":"X","k":[0.5,0,0]}]`. |
-| `band_path_convention` | `"hinuma"` | `"hinuma"` for a generated HPKOT path or `"manual"`. |
+| `band_path_convention` | `"hinuma"` | `"hinuma"` for HPKOT, `"setyawan_curtarolo"` for the ASE convention, or `"manual"`. |
 | `band_path_metadata` | `{}` | Provider, version, convention, and symmetry tolerance of an automatic path. |
 | `band_points_per_inv_angstrom` | `80.0` | Positive interpolation-interval density per Å$^{-1}$ of physical path length. |
 
 For a three-dimensional crystal,
-`set_tight_binding_standard_path(component)` uses Seek-path's
-Hinuma/HPKOT convention and converts the standardized path to nfit's primitive
+`set_tight_binding_standard_path(component, "hinuma")` uses Seek-path's
+Hinuma/HPKOT convention.
+`set_tight_binding_standard_path(component, "setyawan_curtarolo")` uses ASE's
+Setyawan--Curtarolo convention. Both are converted to nfit's primitive
 reciprocal basis. Manual paths remain available for nonstandard or
 reduced-dimensional models. Labels alone have no coordinate meaning: a point
 called X must carry coordinates appropriate to the selected convention.
@@ -73,22 +75,28 @@ longer segments receive proportionally more interpolation points.
 
 | Setting | Default | Meaning and example |
 | --- | --- | --- |
+| `dos_method` | `"gaussian"` | `"gaussian"` broadening or three-dimensional `"tetrahedron"` integration through ASE. |
 | `dos_mesh` | `[40,40,40]` | Uniform integration mesh. A two-dimensional model may use `[80,80]`. |
 | `dos_symmetry` | `"full"` | `"full"`, certified `"auto"` reduction with fallback, or required `"reduced"` sampling. |
 | `dos_energy_min_meV` | `-500.0` | Lower absolute energy sampled, in canonical meV. |
 | `dos_energy_max_meV` | `500.0` | Upper absolute energy sampled, in canonical meV. |
 | `dos_energy_points` | `600` | Number of energy samples, at least two. |
-| `dos_broadening_meV` | `5.0` | Positive Gaussian standard deviation in meV. |
+| `dos_broadening_meV` | `5.0` | Positive Gaussian standard deviation in meV; unused by the tetrahedron method. |
 
 The total DOS is normalized per primitive cell and per energy. Rendering in eV
 converts both the energy axis and states/meV to states/eV, preserving the
-integrated number of states.
+integrated number of states. Linear tetrahedron integration evaluates the
+piecewise-linear band dispersion without an artificial linewidth. It requires
+a complete uniform three-dimensional mesh, a uniform energy grid, and
+`dos_symmetry="full"`. Gaussian integration remains the appropriate choice for
+one- and two-dimensional models.
 
 Symmetry reduction is certified only for a three-dimensional uniform mesh and
 a model built with nfit's known orbital representations. `auto` records a
 full-mesh fallback when it cannot prove equivalence; `reduced` raises instead.
 The component setting applies only to total DOS because an arbitrary orbital
-projection need not be symmetry invariant.
+projection need not be symmetry invariant. Tetrahedron integration can compute
+projected DOS, but it retains the complete mesh to preserve cell topology.
 
 ## Constant-energy and Fermi surfaces
 
@@ -167,4 +175,10 @@ Low-level calculations expose corresponding `backend`, `workers`, and
 
 - Y. Hinuma *et al.*, *Comput. Mater. Sci.* **128**, 140 (2017),
   [doi:10.1016/j.commatsci.2016.10.015](https://doi.org/10.1016/j.commatsci.2016.10.015).
+- W. Setyawan and S. Curtarolo, *Comput. Mater. Sci.* **49**, 299 (2010),
+  [doi:10.1016/j.commatsci.2010.05.010](https://doi.org/10.1016/j.commatsci.2010.05.010).
+- A. H. MacDonald, S. H. Vosko, and P. T. Coleridge, *J. Phys. C:
+  Solid State Phys.* **12**, 2991 (1979),
+  [doi:10.1088/0022-3719/12/15/008](https://doi.org/10.1088/0022-3719/12/15/008).
 - [Seek-path documentation](https://seekpath.readthedocs.io/).
+- [ASE documentation](https://docs.ase-lib.org/).

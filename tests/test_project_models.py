@@ -75,6 +75,13 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
             QtWidgets.QPushButton, "tight_binding_structure_script"
         ).toolTip()
     )
+    path_combo = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox,
+        "tight_binding_path_convention",
+    )
+    assert path_combo is not None
+    assert path_combo.findData("setyawan_curtarolo") >= 0
+    assert "ASE" in path_combo.toolTip()
     unit_combo = explorer.model_parameter_widget.findChild(
         QtWidgets.QComboBox, "tight_binding_energy_unit"
     )
@@ -100,6 +107,17 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
     )
     assert backend_combo is not None and backend_combo.currentData() == "auto"
     assert "CuPy" in backend_combo.toolTip()
+    dos_method_combo = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox,
+        "tight_binding_dos_method",
+    )
+    assert dos_method_combo is not None
+    assert dos_method_combo.currentData() == "gaussian"
+    assert "tetrahedron" in dos_method_combo.toolTip().lower()
+    dos_method_combo.setCurrentIndex(
+        dos_method_combo.findData("tetrahedron")
+    )
+    assert model.config["dos_method"] == "tetrahedron"
     backend_combo.setCurrentIndex(backend_combo.findData("threaded"))
     assert model.config["electronic_backend"] == "threaded"
     chemical_editor.setText("0.0125")

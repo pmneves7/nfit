@@ -71,6 +71,26 @@ def _square_two_orbital_model():
     )
 
 
+def _cubic_two_orbital_model():
+    onsite = np.diag([-30.0, 30.0])
+    hopping = np.diag([-35.0, -20.0])
+    return build_electronic_model(
+        direct_lattice=np.diag([4.0, 4.0, 4.0]),
+        basis=[
+            BasisState("d", site="M", orbital="d"),
+            BasisState("p", site="X", orbital="p"),
+        ],
+        hoppings={
+            (0, 0, 0): onsite,
+            (1, 0, 0): hopping,
+            (0, 1, 0): hopping,
+            (0, 0, 1): hopping,
+        },
+        periodic_axes=(0, 1, 2),
+        energy_unit="meV",
+    )
+
+
 def test_arbitrary_chain_uses_wannier_phase_and_physical_path_distance():
     model = _chain_model(hopping=-100.0, onsite=12.0)
     wavevectors = np.array(
@@ -161,6 +181,51 @@ def test_projected_bands_and_dos_preserve_state_count():
         rtol=1.0e-12,
         atol=1.0e-12,
     )
+
+
+def test_tetrahedron_dos_preserves_total_and_projected_state_counts():
+    model = _cubic_two_orbital_model()
+    mesh = k_mesh(model, (18, 18, 18), symmetry="full")
+    energy = np.linspace(-300.0, 300.0, 2401)
+
+    dos = density_of_states(
+        model,
+        mesh,
+        energy,
+        broadening_meV=5.0,
+        method="tetrahedron",
+        projections={"d": [0], "p": [1]},
+    )
+
+    assert dos.broadening_meV == 0.0
+    assert dos.provenance["method"] == "tetrahedron"
+    assert dos.provenance["provider"] == "ASE"
+    assert dos.provenance["provider_version"]
+    assert np.trapezoid(dos.total_per_meV_cell, energy) == pytest.approx(
+        2.0,
+        rel=2.0e-3,
+    )
+    np.testing.assert_allclose(
+        dos.projected_per_meV_cell["d"]
+        + dos.projected_per_meV_cell["p"],
+        dos.total_per_meV_cell,
+        rtol=1.0e-11,
+        atol=1.0e-12,
+    )
+
+
+def test_tetrahedron_dos_requires_full_three_dimensional_uniform_mesh():
+    model = _square_two_orbital_model()
+    mesh = k_mesh(model, (8, 8), symmetry="full")
+
+    with pytest.raises(ValueError, match="three-dimensional"):
+        density_of_states(
+            model,
+            mesh,
+            np.linspace(-300.0, 300.0, 101),
+            broadening_meV=5.0,
+            method="tetrahedron",
+        )
 
 
 def test_basis_permutation_and_orbital_origin_do_not_change_bands():
@@ -753,6 +818,52 @@ def test_tight_binding_registry_plots_and_scripts_are_component_driven():
     assert "(meV)" in axis.get_ylabel()
     plt.close(figure)
     assert "energy_unit = 'meV'" in definition.plots[0].script(component)
+
+
+def test_tetrahedron_dos_component_and_exported_script_agree():
+    model = _cubic_two_orbital_model()
+    component = ModelComponentSpec(
+        name="bands",
+        type="tight_binding",
+        config={
+            **{
+                field.name: field.default
+                for field in model_definition("tight_binding").config_fields
+            },
+            "model_data": model.to_dict(),
+            "periodic_axes": [0, 1, 2],
+            "dos_method": "tetrahedron",
+            "dos_symmetry": "full",
+            "dos_mesh": [12, 12, 12],
+            "dos_energy_min_meV": -300.0,
+            "dos_energy_max_meV": 300.0,
+            "dos_energy_points": 601,
+        },
+    )
+    plot = next(
+        item
+        for item in model_definition("tight_binding").plots
+        if item.key == "dos"
+    )
+
+    result = plot.calculate(component)
+    script = plot.script(component)
+    namespace = {}
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="FigureCanvasAgg is non-interactive",
+            category=UserWarning,
+        )
+        exec(compile(script, "<tight-binding-tetrahedron-dos>", "exec"), namespace)
+
+    assert result.provenance["method"] == "tetrahedron"
+    assert "method='tetrahedron'" in script
+    np.testing.assert_allclose(
+        namespace["result"].total_per_meV_cell,
+        result.total_per_meV_cell,
+    )
+    plt.close(namespace["figure"])
 
 
 def test_manual_electronic_model_reopens_from_a_project(tmp_path):

@@ -2286,7 +2286,10 @@ def _register_builtin_models() -> None:
                         "Source convention for the configured high-symmetry "
                         "path."
                     ),
-                    "Either manual or hinuma.",
+                    (
+                        "One of manual, hinuma, or "
+                        "setyawan_curtarolo."
+                    ),
                     "str",
                     "hinuma",
                 ),
@@ -2315,6 +2318,17 @@ def _register_builtin_models() -> None:
                     "float",
                     "100",
                     "angstrom",
+                ),
+                _config_field(
+                    "dos_method",
+                    "gaussian",
+                    (
+                        "Integrate the density of states using Gaussian "
+                        "broadening or ASE's linear tetrahedron method."
+                    ),
+                    "Either gaussian or tetrahedron.",
+                    "str",
+                    "tetrahedron",
                 ),
                 _config_field(
                     "dos_mesh",
@@ -2365,8 +2379,11 @@ def _register_builtin_models() -> None:
                 _config_field(
                     "dos_broadening_meV",
                     5.0,
-                    "Canonical Gaussian standard deviation for density of states.",
-                    "Positive finite energy.",
+                    (
+                        "Canonical Gaussian standard deviation for density "
+                        "of states; unused by tetrahedron integration."
+                    ),
+                    "Positive finite energy when dos_method is gaussian.",
                     "float",
                     "2.0",
                     "meV",

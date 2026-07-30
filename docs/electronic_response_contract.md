@@ -241,9 +241,11 @@ A new electronic adapter is acceptable only if it defines:
 7. source provenance and deterministic digest; and
 8. validation against the source package on representative bands.
 
-Wannier90 is the implemented external Hamiltonian interface. ASE, pymatgen,
-PythTB, sisl, and external many-body engines are not implied compatibility
-targets merely because their outputs can be adapted in a user script.
+Wannier90 is the implemented external Hamiltonian interface. ASE supplies
+Setyawan--Curtarolo paths and linear-tetrahedron DOS, but nfit does not import
+ASE calculator or `Atoms` electronic models. Pymatgen, PythTB, sisl, and
+external many-body engines are not implied compatibility targets merely
+because their outputs can be adapted in a user script.
 
 ## Validation requirements
 

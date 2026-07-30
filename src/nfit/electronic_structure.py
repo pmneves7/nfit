@@ -1306,6 +1306,7 @@ def density_of_states(
     energy_meV: ArrayLike,
     *,
     broadening_meV: float,
+    method: Literal["gaussian", "tetrahedron"] = "gaussian",
     chemical_potential_meV: float = 0.0,
     projections: Mapping[str, Sequence[int]] | None = None,
     max_chunk_bytes: int = 64 * 1024**2,
@@ -1313,14 +1314,28 @@ def density_of_states(
     workers: int | None = None,
     max_batch_bytes: int = 256 * 1024**2,
 ) -> DensityOfStatesResult:
-    """Calculate Gaussian-broadened total and projected density of states."""
+    """Calculate total and projected density of states.
+
+    ``method="gaussian"`` replaces each sampled state with a normalized
+    Gaussian. ``method="tetrahedron"`` uses ASE's linear tetrahedron
+    integration on a complete uniform three-dimensional mesh.
+    """
 
     if mesh.kind != "mesh" or mesh.weights is None:
         raise ValueError("density of states requires an integration mesh")
     energy = np.asarray(energy_meV, dtype=float)
     sigma = float(broadening_meV)
-    if energy.ndim != 1 or energy.size < 2 or sigma <= 0.0:
-        raise ValueError("energy must be a 1D grid and broadening must be positive")
+    selected_method = str(method).strip().lower()
+    if selected_method not in {"gaussian", "tetrahedron"}:
+        raise ValueError("density-of-states method must be gaussian or tetrahedron")
+    if energy.ndim != 1 or energy.size < 2 or not np.all(np.isfinite(energy)):
+        raise ValueError("energy must be a finite 1D grid with at least two points")
+    if np.any(np.diff(energy) <= 0.0):
+        raise ValueError("density-of-states energies must be strictly increasing")
+    if selected_method == "gaussian" and (
+        not np.isfinite(sigma) or sigma <= 0.0
+    ):
+        raise ValueError("Gaussian DOS broadening must be positive")
     bands = calculate_bands(
         model,
         mesh,
@@ -1331,6 +1346,117 @@ def density_of_states(
         workers=workers,
         max_batch_bytes=max_batch_bytes,
     )
+    if selected_method == "tetrahedron":
+        if (
+            model.dimension != 3
+            or len(mesh.mesh_shape) != 3
+            or len(mesh.shift) != 3
+        ):
+            raise ValueError(
+                "tetrahedron DOS requires a three-dimensional electronic model"
+            )
+        if int(np.prod(mesh.mesh_shape)) != mesh.reduced_coordinates.shape[0]:
+            raise ValueError(
+                "tetrahedron DOS requires a complete uniform integration mesh"
+            )
+        expected_axes = [
+            (np.arange(size, dtype=float) + offset) / size
+            for size, offset in zip(
+                mesh.mesh_shape,
+                mesh.shift,
+                strict=True,
+            )
+        ]
+        expected_local = np.stack(
+            np.meshgrid(*expected_axes, indexing="ij"),
+            axis=-1,
+        ).reshape(-1, 3)
+        expected_coordinates = np.zeros_like(mesh.reduced_coordinates)
+        expected_coordinates[:, model.periodic_axes] = expected_local
+        if not np.allclose(
+            mesh.reduced_coordinates,
+            expected_coordinates,
+            rtol=0.0,
+            atol=1.0e-12,
+        ):
+            raise ValueError(
+                "tetrahedron DOS requires the ordered uniform mesh from k_mesh"
+            )
+        expected_weight = 1.0 / mesh.reduced_coordinates.shape[0]
+        if not np.allclose(
+            mesh.weights,
+            expected_weight,
+            rtol=1.0e-12,
+            atol=1.0e-15,
+        ):
+            raise ValueError(
+                "tetrahedron DOS does not support symmetry-reduced mesh weights"
+            )
+        spacing = np.diff(energy)
+        if not np.allclose(
+            spacing,
+            spacing[0],
+            rtol=1.0e-10,
+            atol=max(abs(float(spacing[0])) * 1.0e-12, 1.0e-14),
+        ):
+            raise ValueError("tetrahedron DOS requires a uniform energy grid")
+        try:
+            import ase
+            from ase.dft.dos import linear_tetrahedron_integration
+        except ImportError as exc:  # pragma: no cover - declared dependency
+            raise ImportError("tetrahedron DOS requires ASE") from exc
+
+        grid_shape = (*mesh.mesh_shape, model.n_basis)
+        eigenvalues = bands.energies_meV.reshape(grid_shape)
+        labels = tuple(bands.projected_weights)
+        weight_channels = np.stack(
+            [
+                np.ones(grid_shape, dtype=float),
+                *(
+                    bands.projected_weights[label].reshape(grid_shape)
+                    for label in labels
+                ),
+            ],
+            axis=-1,
+        )
+        integrated = np.asarray(
+            linear_tetrahedron_integration(
+                model.direct_lattice.T,
+                eigenvalues,
+                energy,
+                weights=weight_channels,
+            ),
+            dtype=float,
+        )
+        return DensityOfStatesResult(
+            energy_meV=_readonly(energy, float),
+            total_per_meV_cell=_readonly(integrated[0], float),
+            projected_per_meV_cell={
+                label: _readonly(integrated[index + 1], float)
+                for index, label in enumerate(labels)
+            },
+            chemical_potential_meV=float(chemical_potential_meV),
+            broadening_meV=0.0,
+            mesh=mesh,
+            model_digest=model.content_digest,
+            provenance={
+                "backend": bands.provenance["backend"],
+                "precision": "float64/complex128",
+                "method": "tetrahedron",
+                "provider": "ASE",
+                "provider_version": str(
+                    getattr(ase, "__version__", "unknown")
+                ),
+                "execution": dict(bands.provenance["execution"]),
+                "projection_groups": {
+                    label: list(indices)
+                    for label, indices in bands.provenance[
+                        "projection_groups"
+                    ].items()
+                },
+            },
+        )
+
     flat_energy = bands.energies_meV.reshape(-1)
     state_weight = np.repeat(np.asarray(mesh.weights), model.n_basis)
     projected_flat = {

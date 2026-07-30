@@ -125,11 +125,13 @@ scientific state without Qt.
 
 ## Other electronic-structure packages
 
-nfit does not currently provide ASE, pymatgen, PythTB, or sisl model adapters.
-They remain useful references and can be used in a script to prepare explicit
-matrices, but the conversion must state its lattice, basis order, energy unit,
-Fourier gauge, and orbital centers. Wannier90 is the only implemented external
-Hamiltonian interface.
+nfit uses ASE for Setyawan--Curtarolo paths and linear-tetrahedron DOS, but
+does not currently import ASE calculator or `Atoms` electronic models.
+Pymatgen, PythTB, and sisl model adapters are also not implemented. These
+packages remain useful references and can be used in a script to prepare
+explicit matrices, but the conversion must state its lattice, basis order,
+energy unit, Fourier gauge, and orbital centers. Wannier90 is the only
+implemented external Hamiltonian interface.
 
 ## References
 
