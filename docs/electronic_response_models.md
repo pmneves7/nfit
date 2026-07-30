@@ -170,7 +170,9 @@ valid for the uniform response.
 Response calculations support:
 
 - bounded eigensystem and particle--hole transition batches;
-- eigensystem caching keyed by the complete electronic-model digest;
+- eigensystem and completed-bare-response caching keyed by complete inputs;
+- exact periodic permutation for commensurate transferred wavevectors;
+- tolerance-validated periodic interpolation with exact fallback;
 - serial NumPy, bounded CPU threading, and explicit CuPy execution;
 - deterministic backend comparison with serial NumPy;
 - fail-closed little-group reduction for certified implicit-spin responses;

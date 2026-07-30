@@ -57,12 +57,21 @@ stores meV.
 | --- | --- | --- | --- |
 | `response_component` | sibling `lindhard` component supplying the electronic model and bare-response settings | `""` | `"Bare response"` |
 | `singular_tolerance` | relative singular-value threshold for an RPA pole | `1e-12` | `1e-10` |
+| `near_pole_tolerance` | relative minimum singular value below which an evaluated denominator is flagged | `1e-3` | `0.01` |
+| `static_stability_warning_margin` | sampled static margin below which the result is marked near instability | `0.05` | `0.1` |
+| `reject_sampled_static_instability` | give sampled zero-energy crossings a finite fitting penalty | `false` | `true` |
 | `correlated_shells` | shell labels included in the interaction; empty selects every labelled shell | `[]` | `["M1_3d"]` |
 | `rotationally_invariant` | enforce $U'=U-2J_H$ and $J_{\rm pair}=J_H$ | `true` | `false` |
 
 The dressing replaces the referenced bare observable on its own dataset
 scope. The broadening, mesh, chemical-potential policy, form factor, and
 normalization remain defined once on the referenced Lindhard component.
+The reported pole and static-margin diagnostics cover evaluated points.
+Because finding the global electronic instability requires a separately
+converged $\mathbf q$ scan, the sampled margin is not described as a full-BZ
+stability proof. Rejection is opt-in and supplies a finite fit penalty at a
+sampled zero-energy crossing. Post-fit diagnostics report the corresponding
+probe at the referenced Lindhard component's `plot_q_reduced`.
 
 ## Calculable data
 

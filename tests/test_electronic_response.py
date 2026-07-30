@@ -242,6 +242,168 @@ def test_response_cache_reuses_eigensystems_and_transition_chunks_are_equivalent
     )
 
 
+def test_commensurate_q_reuses_periodic_mesh_eigensystem_exactly():
+    model = _chain_model()
+    mesh = k_mesh(model, (32,), shift=(0.5,))
+    reference_mesh = replace(mesh, provenance={"provider": "reference"})
+    settings = {
+        "temperature_K": 20.0,
+        "chemical_potential_meV": 0.0,
+        "broadening_meV": 0.4,
+    }
+    accelerated = bare_spin_susceptibility(
+        model,
+        [5.0 / 32.0, 0.0, 0.0],
+        1.5,
+        mesh,
+        **settings,
+    )
+    reference = bare_spin_susceptibility(
+        model,
+        [5.0 / 32.0, 0.0, 0.0],
+        1.5,
+        reference_mesh,
+        **settings,
+    )
+
+    np.testing.assert_allclose(
+        accelerated.values_per_meV_cell,
+        reference.values_per_meV_cell,
+        rtol=2.0e-14,
+        atol=2.0e-14,
+    )
+    assert (
+        accelerated.provenance["q_evaluation"][
+            "commensurate_permutation_count"
+        ]
+        == 1
+    )
+
+
+def test_auto_q_interpolation_validates_or_falls_back_to_exact_response():
+    model = _chain_model()
+    mesh = k_mesh(model, (32,))
+    settings = {
+        "temperature_K": 30.0,
+        "chemical_potential_meV": 0.0,
+        "broadening_meV": 2.0,
+    }
+    Q = np.asarray([[0.137, 0.0, 0.0], [0.283, 0.0, 0.0]])
+    energy = np.asarray([1.0, 2.0])
+    reference = bare_spin_susceptibility(
+        model,
+        Q,
+        energy,
+        mesh,
+        q_evaluation="direct",
+        **settings,
+    )
+    automatic = bare_spin_susceptibility(
+        model,
+        Q,
+        energy,
+        mesh,
+        q_evaluation="auto",
+        q_interpolation_rtol=0.2,
+        q_interpolation_atol=1.0e-8,
+        q_interpolation_mesh=(8,),
+        q_validation_points=2,
+        **settings,
+    )
+    policy = automatic.provenance["q_evaluation"]
+
+    assert policy["resolved_policy"] == "validated_interpolation"
+    np.testing.assert_allclose(
+        automatic.values_per_meV_cell,
+        reference.values_per_meV_cell,
+        rtol=0.2,
+        atol=1.0e-8,
+    )
+    strict = bare_spin_susceptibility(
+        model,
+        Q,
+        energy,
+        mesh,
+        q_evaluation="auto",
+        q_interpolation_rtol=1.0e-14,
+        q_interpolation_atol=0.0,
+        q_interpolation_mesh=(8,),
+        q_validation_points=2,
+        **settings,
+    )
+    assert strict.provenance["q_evaluation"]["resolved_policy"] == "exact_fallback"
+    np.testing.assert_allclose(
+        strict.values_per_meV_cell,
+        reference.values_per_meV_cell,
+        rtol=2.0e-14,
+        atol=2.0e-14,
+    )
+
+
+def test_response_cache_reuses_completed_bare_susceptibility():
+    model = _chain_model()
+    mesh = k_mesh(model, (24,))
+    cache = ElectronicResponseCache(max_bytes=32 * 1024**2, max_entries=8)
+    settings = {
+        "temperature_K": 20.0,
+        "chemical_potential_meV": 0.0,
+        "broadening_meV": 0.4,
+        "cache": cache,
+    }
+    first = bare_spin_susceptibility(
+        model,
+        [0.25, 0.0, 0.0],
+        1.0,
+        mesh,
+        **settings,
+    )
+    hits = cache.hits
+    second = bare_spin_susceptibility(
+        model,
+        [0.25, 0.0, 0.0],
+        1.0,
+        mesh,
+        **settings,
+    )
+
+    assert second is not first
+    assert cache.hits > hits
+    np.testing.assert_array_equal(
+        second.values_per_meV_cell,
+        first.values_per_meV_cell,
+    )
+
+
+def test_rpa_reports_and_can_reject_sampled_static_instability():
+    bare = SusceptibilityResult(
+        q_reduced=[[0.0, 0.0, 0.0]],
+        energy_meV=[0.0],
+        values_per_meV_cell=[[[1.1 + 0.0j]]],
+        operator_labels=("spin",),
+        conjugate_indices=(0,),
+        model_digest="test",
+        temperature_K=10.0,
+        chemical_potential_meV=0.0,
+        broadening_meV=0.5,
+    )
+    vertex = scalar_stoner_vertex(("spin",), 1.0, energy_unit="meV")
+    reported = rpa_dress_susceptibility(
+        bare,
+        vertex,
+        reject_sampled_static_instability=False,
+    )
+    stability = reported.provenance["dressing"]["static_stability"]
+
+    assert stability["unstable"]
+    assert stability["margin"] < 0.0
+    with pytest.raises(np.linalg.LinAlgError, match="sampled static RPA"):
+        rpa_dress_susceptibility(
+            bare,
+            vertex,
+            reject_sampled_static_instability=True,
+        )
+
+
 def test_response_cache_is_bounded_and_model_digest_invalidates_entries():
     model = build_electronic_model(
         direct_lattice=np.eye(3),
@@ -890,6 +1052,15 @@ def test_stoner_model_plot_and_exported_script_are_equivalent():
         namespace["result"].values_per_meV_cell,
         result.values_per_meV_cell,
     )
+    diagnostics = model_definition("stoner_rpa").context_diagnostics(
+        stoner,
+        None,
+        {"bare.broadening": 0.5, "dressed.I": 0.1},
+        components,
+    )
+    assert np.isfinite(diagnostics["stability_margin"])
+    assert np.isfinite(diagnostics["minimum_relative_singular_value"])
+    assert diagnostics["stability_sample_scope"] == "configured plot Q at E=0"
     plt.close(namespace["figure"])
 
 

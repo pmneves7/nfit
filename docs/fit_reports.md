@@ -53,7 +53,9 @@ from any historical fit result, including after reloading a project.
    restored when the selection is cleared.
 5. **Physics diagnostics** — the per-dataset derived quantities
    ($\mu_{\text{eff}}^2$, static susceptibilities, distance to instability,
-   closure internals).
+   closure internals). Electronic-RPA entries identify their sampled
+   zero-energy stability margin and relative pole distance; this configured
+   wavevector probe is not labelled as a global Brillouin-zone bound.
 6. **Methods** and a bibliography citing only the references relevant to the
    terms actually used.
 

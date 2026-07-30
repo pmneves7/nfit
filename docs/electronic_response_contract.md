@@ -185,14 +185,22 @@ Symmetry reduction is fail closed:
 - `auto` records a full-mesh fallback, while `reduced` raises when proof is
   unavailable.
 
+Wavevector acceleration is also fail closed. A transfer commensurate with a
+complete uniform integration mesh may reuse the base eigensystem by exact
+periodic permutation. Off-mesh interpolation is permitted only under an
+explicit absolute or relative tolerance, direct validation, deterministic
+refinement, and recorded exact fallback. Interaction dressing and
+extended-zone magnetic projection occur after interpolation.
+
 Backend and memory policies must not change scientific sampling. Results
 record requested and resolved backend, precision, batch size, worker count,
 and approximation state. A non-reference response backend can be checked on a
 deterministic probe against serial NumPy before use.
 
-Caches are bounded, evaluator local, and keyed by the complete model digest
-and execution inputs. They are performance state and are not serialized as
-part of the scientific model.
+Caches are bounded, evaluator local, and keyed by the complete model digest,
+sampling, operators, thermodynamic state, broadening, and execution inputs.
+They may retain eigensystems or completed bare responses. They are performance
+state and are not serialized as part of the scientific model.
 
 Distributed response work is partitioned by deterministic contiguous point
 ranges. Merging verifies the model digest, operator ordering, thermodynamic

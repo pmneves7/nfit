@@ -22,9 +22,9 @@ $\boldsymbol\chi_s''=\operatorname{Im}\boldsymbol\chi_s$. The real static
 limit is used for quasistatic elastic and bulk comparisons.
 
 The implementation records the operator order, interaction matrix, RPA
-multiplication order, smallest singular value, and condition number. A
-denominator within `singular_tolerance` of a pole raises an error instead of
-returning an unstable finite number.
+multiplication order, smallest relative singular value, condition number, and
+sampled static stability margin. A denominator within `singular_tolerance` of
+a pole raises an error instead of returning an unstable finite number.
 
 ## Parameters
 
@@ -41,10 +41,23 @@ parameter controls.
 | --- | --- | --- | --- |
 | `response_component` | sibling `lindhard` component supplying $\chi^0_s$, the tight-binding model, mesh, broadening, and dataset conversion | `""` | `"Bare response"` |
 | `singular_tolerance` | relative singular-value threshold used to identify an RPA pole | `1e-12` | `1e-10` |
+| `near_pole_tolerance` | relative minimum singular value below which an evaluated denominator is flagged | `1e-3` | `0.01` |
+| `static_stability_warning_margin` | sampled static margin below which the result is marked near instability | `0.05` | `0.1` |
+| `reject_sampled_static_instability` | give sampled zero-energy crossings a finite fitting penalty | `false` | `true` |
 
 The dressing replaces its referenced bare component on the datasets to which
 the dressing applies. The same bare component may still be compared directly
 with other datasets by giving the two components different dataset scopes.
+
+At an evaluated zero-energy point, nfit reports
+$1-\lambda_{\max}$ using the Hermitian part of
+$\boldsymbol\chi^0\boldsymbol\Gamma$. This is a sampled diagnostic, not proof
+of stability throughout the Brillouin zone. If rejection is enabled, a sampled
+crossing produces the same kind of large finite fitting penalty used by the
+Heisenberg RPA model. Model energy plots identify near sampled poles or
+instabilities. Post-fit diagnostics repeat the zero-energy test at
+`plot_q_reduced` and include its margin, feedback ratio, and relative minimum
+singular value in the GUI and fit report.
 
 ## Calculable data
 

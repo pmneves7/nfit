@@ -1506,6 +1506,7 @@ _DIAGNOSTIC_REPORT_COLUMNS = (
     ("chi0_gamma0", "$\\chi_0\\Gamma_0$"),
     ("stability_margin", "$D_{\\min}$"),
     ("stability_ratio", "$r_{\\max}$"),
+    ("minimum_relative_singular_value", "$s_{\\min}^{\\rm rel}$"),
     ("lambda_shift", "$\\lambda_{\\rm shift}$ (meV)"),
     ("chi0_eff", "$\\chi_{0,\\mathrm{eff}}$"),
     ("mode_energy_qpeak", "$E_0$ (meV)"),
@@ -1523,7 +1524,9 @@ def _section_diagnostics(fit_entry: Any) -> str:
     lines = ["\\section{Physics diagnostics}"]
     lines.append(
         "Model-derived quantities per dataset. RPA components report moment, "
-        "static-response, and stability checks; generalized paramagnons report "
+        "static-response, and stability checks. Electronic RPA margins are "
+        "sampled at the configured plot Q and zero energy, rather than a "
+        "global BZ proof. Generalized paramagnons report "
         "principal correlation lengths and, when inertia is nonzero, the "
         "natural mode energy, damping coefficient, and damping ratio."
     )

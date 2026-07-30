@@ -6,6 +6,7 @@ import hashlib
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from itertools import product
 from types import MappingProxyType
 from typing import Any, Literal
 
@@ -33,7 +34,7 @@ def _readonly(value: ArrayLike, dtype: Any) -> np.ndarray:
 
 @dataclass
 class ElectronicResponseCache:
-    """Bounded in-memory cache of immutable electronic eigensystems."""
+    """Bounded in-memory cache of immutable electronic-response intermediates."""
 
     max_bytes: int = 512 * 1024**2
     max_entries: int = 64
@@ -47,8 +48,8 @@ class ElectronicResponseCache:
         self.max_bytes = int(self.max_bytes)
         self.max_entries = int(self.max_entries)
 
-    def get(self, key: tuple[Any, ...]) -> ElectronicEigensystem | None:
-        """Return and refresh one cached eigensystem."""
+    def get(self, key: tuple[Any, ...]) -> Any | None:
+        """Return and refresh one cached response object."""
 
         result = self._entries.get(key)
         if result is None:
@@ -61,9 +62,9 @@ class ElectronicResponseCache:
     def put(
         self,
         key: tuple[Any, ...],
-        value: ElectronicEigensystem,
+        value: Any,
     ) -> None:
-        """Store one eigensystem within count and numerical-byte limits."""
+        """Store one immutable object within count and numerical-byte limits."""
 
         lru_store(
             self._entries,
@@ -93,6 +94,14 @@ def _coordinate_digest(coordinates: np.ndarray) -> str:
     return digest.hexdigest()
 
 
+def _array_digest(value: ArrayLike, dtype: Any) -> str:
+    contiguous = np.ascontiguousarray(value, dtype=dtype)
+    digest = hashlib.sha256()
+    digest.update(str(contiguous.shape).encode("ascii"))
+    digest.update(contiguous.tobytes())
+    return digest.hexdigest()
+
+
 def _cached_eigensystem(
     model: ElectronicModel,
     coordinates: np.ndarray,
@@ -104,6 +113,7 @@ def _cached_eigensystem(
     cache: ElectronicResponseCache | None,
 ) -> ElectronicEigensystem:
     key = (
+        "eigensystem",
         model.content_digest,
         _coordinate_digest(coordinates),
         bool(eigenvectors),
@@ -116,7 +126,7 @@ def _cached_eigensystem(
         if cached is not None:
             return cached
         if not eigenvectors:
-            richer_key = (*key[:2], True, *key[3:])
+            richer_key = (*key[:3], True, *key[4:])
             cached = cache.get(richer_key)
             if cached is not None:
                 return cached
@@ -851,7 +861,64 @@ def response_k_mesh(
     )
 
 
-def bare_lindhard_susceptibility(
+def _commensurate_mesh_permutation(
+    model: ElectronicModel,
+    mesh: WavevectorSampling,
+    q_reduced: np.ndarray,
+    *,
+    tolerance: float = 1.0e-10,
+) -> NDArray[np.int64] | None:
+    """Map ``k`` to ``k + q`` on a complete uniform periodic mesh."""
+
+    shape = tuple(int(value) for value in mesh.mesh_shape)
+    q = np.asarray(q_reduced, dtype=float)
+    local_q = q[list(model.periodic_axes)]
+    if np.allclose(local_q, np.rint(local_q), rtol=0.0, atol=tolerance):
+        return np.arange(mesh.reduced_coordinates.shape[0], dtype=np.int64)
+    if (
+        not shape
+        or len(shape) != model.dimension
+        or int(np.prod(shape)) != mesh.reduced_coordinates.shape[0]
+        or dict(mesh.provenance).get("provider") != "uniform"
+    ):
+        return None
+    shifts_float = local_q * np.asarray(shape, dtype=float)
+    shifts = np.rint(shifts_float).astype(np.int64)
+    if not np.allclose(shifts_float, shifts, rtol=0.0, atol=tolerance):
+        return None
+    indices = np.indices(shape, dtype=np.int64).reshape(len(shape), -1).T
+    shifted = np.mod(indices + shifts[None, :], np.asarray(shape)[None, :])
+    return np.ravel_multi_index(shifted.T, shape)
+
+
+def _permuted_eigensystem(
+    base: ElectronicEigensystem,
+    permutation: NDArray[np.int64],
+    q_reduced: np.ndarray,
+) -> ElectronicEigensystem:
+    values = np.asarray(base.eigenvalues)[permutation]
+    values.setflags(write=False)
+    vectors = (
+        None
+        if base.eigenvectors is None
+        else np.asarray(base.eigenvectors)[permutation]
+    )
+    if vectors is not None:
+        vectors.setflags(write=False)
+    return ElectronicEigensystem(
+        eigenvalues=values,
+        eigenvectors=vectors,
+        provenance={
+            **dict(base.provenance),
+            "resolved_backend": "commensurate_permutation",
+            "commensurate_q_reduced": np.asarray(q_reduced, dtype=float).tolist(),
+            "source_backend": dict(base.provenance).get("resolved_backend"),
+            "approximation": "none",
+        },
+    )
+
+
+def _bare_lindhard_direct(
     model: ElectronicModel,
     q_reduced: ArrayLike,
     energy_meV: ArrayLike,
@@ -916,8 +983,30 @@ def bare_lindhard_susceptibility(
     )
     if transition_budget < 1:
         raise ValueError("transition_max_batch_bytes must be positive")
+    response_cache_key = (
+        "bare_lindhard",
+        model.content_digest,
+        _array_digest(k, np.float64),
+        _array_digest(weights, np.float64),
+        _array_digest(transferred_q, np.float64),
+        _array_digest(energy, np.float64),
+        _array_digest(point_operators, np.complex128),
+        operators.labels,
+        operators.conjugate_indices,
+        temperature,
+        mu,
+        eta,
+        None if backend is None else str(backend),
+        workers,
+        int(max_batch_bytes),
+        transition_budget,
+    )
     cache_hits_before = 0 if cache is None else cache.hits
     cache_misses_before = 0 if cache is None else cache.misses
+    if cache is not None:
+        cached_response = cache.get(response_cache_key)
+        if cached_response is not None:
+            return cached_response
     base = _cached_eigensystem(
         model,
         k,
@@ -934,28 +1023,35 @@ def bare_lindhard_susceptibility(
         (q.shape[0], operators.size, operators.size),
         dtype=np.complex128,
     )
+    operator_keys = np.asarray(
+        [_array_digest(value, np.complex128) for value in point_operators],
+        dtype=object,
+    )
     unique_q, inverse = np.unique(q, axis=0, return_inverse=True)
     execution_records = []
     transition_batch_sizes = []
+    energy_batch_sizes = []
+    commensurate_q_count = 0
     for q_index, q_value in enumerate(unique_q):
         point_indices = np.flatnonzero(inverse == q_index)
-        reference_operators = point_operators[point_indices[0]]
-        if not np.allclose(
-            point_operators[point_indices],
-            reference_operators[None, ...],
-            rtol=0.0,
-            atol=1.0e-13,
-        ):
-            raise ValueError("equal q points must use equal operator matrices")
-        shifted = _cached_eigensystem(
-            model,
-            k + q_value[None, :],
-            eigenvectors=True,
-            backend=backend,
-            workers=workers,
-            max_batch_bytes=max_batch_bytes,
-            cache=cache,
-        )
+        operator_groups = [
+            point_indices[operator_keys[point_indices] == key]
+            for key in np.unique(operator_keys[point_indices])
+        ]
+        permutation = _commensurate_mesh_permutation(model, mesh, q_value)
+        if permutation is None:
+            shifted = _cached_eigensystem(
+                model,
+                k + q_value[None, :],
+                eigenvectors=True,
+                backend=backend,
+                workers=workers,
+                max_batch_bytes=max_batch_bytes,
+                cache=cache,
+            )
+        else:
+            shifted = _permuted_eigensystem(base, permutation, q_value)
+            commensurate_q_count += 1
         if shifted.eigenvectors is None:  # pragma: no cover - defensive
             raise RuntimeError("Lindhard response requires band eigenvectors")
         execution_records.append(dict(shifted.provenance))
@@ -986,13 +1082,6 @@ def bare_lindhard_susceptibility(
             occupation_difference = (
                 occupation_base[:, :, None] - occupation_shifted[:, None, :]
             )
-            matrix_elements = np.einsum(
-                "kan,Aab,kbm->kAnm",
-                base.eigenvectors[start:stop].conj(),
-                reference_operators,
-                shifted.eigenvectors[start:stop],
-                optimize=True,
-            )
             equal = np.abs(delta_energy) <= 1.0e-10
             static_limit = _static_equal_energy_limit(
                 0.5 * (base_values[:, :, None] + shifted_values[:, None, :]),
@@ -1005,23 +1094,51 @@ def bare_lindhard_susceptibility(
                 temperature_K=temperature,
                 broadening_meV=eta,
             )
-            for point_index in point_indices:
-                transferred = energy[point_index]
-                kernel = -occupation_difference / (
-                    transferred + delta_energy + 1.0j * eta
-                )
-                if abs(transferred) <= 1.0e-14:
-                    kernel = np.where(equal, static_limit, kernel)
-                result[point_index] += np.einsum(
-                    "k,knm,kAnm,kBnm->AB",
-                    weights[start:stop],
-                    kernel,
-                    matrix_elements,
-                    matrix_elements.conj(),
+            batch_k = stop - start
+            fixed_bytes = per_k_bytes * batch_k
+            per_energy_bytes = max(1, 16 * batch_k * bands * bands)
+            available = max(per_energy_bytes, transition_budget - fixed_bytes)
+            for operator_group in operator_groups:
+                reference_operators = point_operators[operator_group[0]]
+                matrix_elements = np.einsum(
+                    "kan,Aab,kbm->kAnm",
+                    base.eigenvectors[start:stop].conj(),
+                    reference_operators,
+                    shifted.eigenvectors[start:stop],
                     optimize=True,
                 )
+                energy_batch = max(
+                    1,
+                    min(operator_group.size, available // per_energy_bytes),
+                )
+                energy_batch_sizes.append(energy_batch)
+                for energy_start in range(0, operator_group.size, energy_batch):
+                    batch_indices = operator_group[
+                        energy_start : energy_start + energy_batch
+                    ]
+                    transferred = energy[batch_indices]
+                    kernel = -occupation_difference[None, ...] / (
+                        transferred[:, None, None, None]
+                        + delta_energy[None, ...]
+                        + 1.0j * eta
+                    )
+                    static_rows = np.abs(transferred) <= 1.0e-14
+                    if np.any(static_rows):
+                        kernel[static_rows] = np.where(
+                            equal[None, ...],
+                            static_limit[None, ...],
+                            kernel[static_rows],
+                        )
+                    result[batch_indices] += np.einsum(
+                        "k,eknm,kAnm,kBnm->eAB",
+                        weights[start:stop],
+                        kernel,
+                        matrix_elements,
+                        matrix_elements.conj(),
+                        optimize=True,
+                    )
 
-    return SusceptibilityResult(
+    response = SusceptibilityResult(
         q_reduced=q,
         Q_reduced=transferred_q,
         energy_meV=energy,
@@ -1053,7 +1170,16 @@ def bare_lindhard_susceptibility(
             "transition_batch_size": (
                 min(transition_batch_sizes) if transition_batch_sizes else 0
             ),
+            "energy_batch_size": (
+                min(energy_batch_sizes) if energy_batch_sizes else 0
+            ),
             "transition_max_batch_bytes": transition_budget,
+            "q_evaluation": {
+                "policy": "exact",
+                "commensurate_permutation_count": commensurate_q_count,
+                "direct_shift_count": len(unique_q) - commensurate_q_count,
+                "approximation": "none",
+            },
             "cache": {
                 "enabled": cache is not None,
                 "hits": (
@@ -1063,6 +1189,425 @@ def bare_lindhard_susceptibility(
                     0 if cache is None else cache.misses - cache_misses_before
                 ),
                 "entries": 0 if cache is None else cache.entries,
+            },
+        },
+    )
+    if cache is not None:
+        cache.put(response_cache_key, response)
+    return response
+
+
+def _q_mesh_candidates(
+    mesh_shape: Sequence[int],
+    initial_shape: Sequence[int] | None,
+) -> tuple[tuple[int, ...], ...]:
+    full = tuple(int(value) for value in mesh_shape)
+    divisors = [
+        tuple(value for value in range(1, size + 1) if size % value == 0)
+        for size in full
+    ]
+    if initial_shape is None:
+        current = tuple(
+            max(value for value in axis_divisors if value <= min(8, size))
+            for size, axis_divisors in zip(full, divisors, strict=True)
+        )
+    else:
+        current = tuple(int(value) for value in initial_shape)
+        if len(current) != len(full):
+            raise ValueError("q_interpolation_mesh must match the model dimension")
+        if any(
+            value < 1 or size % value
+            for value, size in zip(current, full, strict=True)
+        ):
+            raise ValueError(
+                "q_interpolation_mesh sizes must be positive divisors of the "
+                "integration mesh"
+            )
+    candidates = [current]
+    while current != full:
+        current = tuple(
+            next(
+                (value for value in axis_divisors if value > old),
+                size,
+            )
+            for old, size, axis_divisors in zip(
+                current, full, divisors, strict=True
+            )
+        )
+        candidates.append(current)
+    return tuple(candidates)
+
+
+def _periodic_linear_stencils(
+    model: ElectronicModel,
+    q_reduced: np.ndarray,
+    mesh_shape: Sequence[int],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return node coordinates, parent indices, and periodic linear weights."""
+
+    shape = np.asarray(tuple(int(value) for value in mesh_shape), dtype=np.int64)
+    nodes: list[np.ndarray] = []
+    parents: list[int] = []
+    weights: list[float] = []
+    for point_index, q_value in enumerate(np.mod(q_reduced, 1.0)):
+        choices = []
+        for local_axis, axis in enumerate(model.periodic_axes):
+            coordinate = q_value[axis] * shape[local_axis]
+            lower = int(np.floor(coordinate + 1.0e-13))
+            fraction = float(coordinate - np.floor(coordinate))
+            if fraction <= 1.0e-12 or 1.0 - fraction <= 1.0e-12:
+                choices.append(((lower % shape[local_axis], 1.0),))
+            else:
+                choices.append(
+                    (
+                        (lower % shape[local_axis], 1.0 - fraction),
+                        ((lower + 1) % shape[local_axis], fraction),
+                    )
+                )
+        for selection in product(*choices):
+            node = np.array(q_value, copy=True)
+            weight = 1.0
+            for local_axis, axis in enumerate(model.periodic_axes):
+                node[axis] = selection[local_axis][0] / shape[local_axis]
+                weight *= selection[local_axis][1]
+            nodes.append(node)
+            parents.append(point_index)
+            weights.append(weight)
+    return (
+        np.asarray(nodes, dtype=float),
+        np.asarray(parents, dtype=np.int64),
+        np.asarray(weights, dtype=float),
+    )
+
+
+def _interpolated_lindhard_response(
+    model: ElectronicModel,
+    transferred_q: np.ndarray,
+    energy: np.ndarray,
+    mesh: WavevectorSampling,
+    operators: ElectronicOperatorBasis,
+    point_operators: np.ndarray,
+    *,
+    q_mesh_shape: Sequence[int],
+    direct_kwargs: Mapping[str, Any],
+) -> SusceptibilityResult:
+    nodes, parents, interpolation_weights = _periodic_linear_stencils(
+        model,
+        transferred_q,
+        q_mesh_shape,
+    )
+    node_response = _bare_lindhard_direct(
+        model,
+        nodes,
+        energy[parents],
+        mesh,
+        operators,
+        operator_matrices_by_point=point_operators[parents],
+        **direct_kwargs,
+    )
+    values = np.zeros(
+        (transferred_q.shape[0], operators.size, operators.size),
+        dtype=np.complex128,
+    )
+    np.add.at(
+        values,
+        parents,
+        interpolation_weights[:, None, None]
+        * node_response.values_per_meV_cell,
+    )
+    return SusceptibilityResult(
+        q_reduced=np.mod(transferred_q, 1.0),
+        Q_reduced=transferred_q,
+        energy_meV=energy,
+        values_per_meV_cell=values,
+        operator_labels=operators.labels,
+        conjugate_indices=operators.conjugate_indices,
+        model_digest=model.content_digest,
+        temperature_K=node_response.temperature_K,
+        chemical_potential_meV=node_response.chemical_potential_meV,
+        broadening_meV=node_response.broadening_meV,
+        provenance={
+            **dict(node_response.provenance),
+            "approximation": "finite lifetime broadening and q interpolation",
+            "q_interpolation": {
+                "method": "periodic_linear",
+                "mesh_shape": list(q_mesh_shape),
+                "requested_points": int(transferred_q.shape[0]),
+                "evaluated_stencil_points": int(nodes.shape[0]),
+                "unique_stencil_q": int(np.unique(nodes, axis=0).shape[0]),
+            },
+        },
+    )
+
+
+def bare_lindhard_susceptibility(
+    model: ElectronicModel,
+    q_reduced: ArrayLike,
+    energy_meV: ArrayLike,
+    mesh: WavevectorSampling,
+    operators: ElectronicOperatorBasis,
+    *,
+    temperature_K: float,
+    chemical_potential_meV: float = 0.0,
+    broadening_meV: float = 1.0,
+    operator_matrices_by_point: ArrayLike | None = None,
+    backend: ElectronicBackend | str | None = "numpy",
+    workers: int | None = 1,
+    max_batch_bytes: int = 256 * 1024**2,
+    transition_max_batch_bytes: int | None = None,
+    cache: ElectronicResponseCache | None = None,
+    q_evaluation: Literal[
+        "auto", "direct", "commensurate", "interpolated"
+    ] = "auto",
+    q_interpolation_rtol: float | None = None,
+    q_interpolation_atol: float | None = None,
+    q_interpolation_mesh: Sequence[int] | None = None,
+    q_validation_points: int = 8,
+) -> SusceptibilityResult:
+    """Evaluate a direct, commensurate, or validated interpolated response.
+
+    ``auto`` is exact unless at least one interpolation tolerance is supplied.
+    Commensurate points always use the exact periodic mesh permutation.
+    """
+
+    policy = str(q_evaluation).strip().lower()
+    if policy not in {"auto", "direct", "commensurate", "interpolated"}:
+        raise ValueError(
+            "q_evaluation must be auto, direct, commensurate, or interpolated"
+        )
+    rtol = 0.0 if q_interpolation_rtol is None else float(q_interpolation_rtol)
+    atol = 0.0 if q_interpolation_atol is None else float(q_interpolation_atol)
+    if (
+        not np.isfinite(rtol)
+        or not np.isfinite(atol)
+        or rtol < 0.0
+        or atol < 0.0
+    ):
+        raise ValueError("q interpolation tolerances must be finite and nonnegative")
+    if int(q_validation_points) < 1:
+        raise ValueError("q_validation_points must be positive")
+    Q, energy = _point_inputs(q_reduced, energy_meV)
+    point_operators = (
+        np.broadcast_to(
+            np.asarray(operators.matrices)[None, ...],
+            (Q.shape[0], *operators.matrices.shape),
+        )
+        if operator_matrices_by_point is None
+        else np.asarray(operator_matrices_by_point, dtype=np.complex128)
+    )
+    if point_operators.shape != (
+        Q.shape[0],
+        operators.size,
+        model.n_basis,
+        model.n_basis,
+    ):
+        raise ValueError(
+            "point-dependent operators must have shape "
+            "(n_points, n_operators, n_basis, n_basis)"
+        )
+    direct_kwargs = {
+        "temperature_K": temperature_K,
+        "chemical_potential_meV": chemical_potential_meV,
+        "broadening_meV": broadening_meV,
+        "backend": backend,
+        "workers": workers,
+        "max_batch_bytes": max_batch_bytes,
+        "transition_max_batch_bytes": transition_max_batch_bytes,
+        "cache": cache,
+    }
+    commensurate = np.asarray(
+        [
+            _commensurate_mesh_permutation(model, mesh, np.mod(value, 1.0))
+            is not None
+            for value in Q
+        ],
+        dtype=bool,
+    )
+    if policy == "commensurate" and not np.all(commensurate):
+        first = int(np.flatnonzero(~commensurate)[0])
+        raise ValueError(
+            f"response point {first} is not commensurate with the integration mesh"
+        )
+    interpolation_enabled = (rtol > 0.0 or atol > 0.0) and policy in {
+        "auto",
+        "interpolated",
+    }
+    if policy == "interpolated" and not interpolation_enabled:
+        raise ValueError(
+            "interpolated q evaluation requires a positive relative or "
+            "absolute interpolation tolerance"
+        )
+    if policy in {"direct", "commensurate"} or not interpolation_enabled:
+        return _bare_lindhard_direct(
+            model,
+            Q,
+            energy,
+            mesh,
+            operators,
+            operator_matrices_by_point=point_operators,
+            **direct_kwargs,
+        )
+    if np.all(commensurate):
+        return _bare_lindhard_direct(
+            model,
+            Q,
+            energy,
+            mesh,
+            operators,
+            operator_matrices_by_point=point_operators,
+            **direct_kwargs,
+        )
+    if (
+        not mesh.mesh_shape
+        or int(np.prod(mesh.mesh_shape)) != mesh.reduced_coordinates.shape[0]
+        or dict(mesh.provenance).get("provider") != "uniform"
+    ):
+        if policy == "interpolated":
+            raise ValueError(
+                "q interpolation requires a complete uniform integration mesh"
+            )
+        return _bare_lindhard_direct(
+            model,
+            Q,
+            energy,
+            mesh,
+            operators,
+            operator_matrices_by_point=point_operators,
+            **direct_kwargs,
+        )
+
+    exact_indices = np.flatnonzero(commensurate)
+    approximate_indices = np.flatnonzero(~commensurate)
+    validation_count = min(int(q_validation_points), approximate_indices.size)
+    validation_local = np.unique(
+        np.linspace(
+            0,
+            approximate_indices.size - 1,
+            validation_count,
+            dtype=int,
+        )
+    )
+    validation_indices = approximate_indices[validation_local]
+    validation = _bare_lindhard_direct(
+        model,
+        Q[validation_indices],
+        energy[validation_indices],
+        mesh,
+        operators,
+        operator_matrices_by_point=point_operators[validation_indices],
+        **direct_kwargs,
+    )
+    accepted: SusceptibilityResult | None = None
+    validation_absolute = np.inf
+    validation_relative = np.inf
+    selected_shape: tuple[int, ...] | None = None
+    attempted_shapes = []
+    for candidate in _q_mesh_candidates(mesh.mesh_shape, q_interpolation_mesh):
+        attempted_shapes.append(list(candidate))
+        interpolated = _interpolated_lindhard_response(
+            model,
+            Q[approximate_indices],
+            energy[approximate_indices],
+            mesh,
+            operators,
+            point_operators[approximate_indices],
+            q_mesh_shape=candidate,
+            direct_kwargs=direct_kwargs,
+        )
+        trial = interpolated.values_per_meV_cell[validation_local]
+        reference = validation.values_per_meV_cell
+        difference = np.abs(trial - reference)
+        validation_absolute = float(np.max(difference))
+        validation_relative = float(
+            np.max(
+                difference
+                / np.maximum(np.abs(reference), max(atol, np.finfo(float).tiny))
+            )
+        )
+        if np.all(difference <= atol + rtol * np.abs(reference)):
+            accepted = interpolated
+            selected_shape = candidate
+            break
+    if accepted is None:
+        if policy == "interpolated":
+            raise ValueError(
+                "q interpolation did not satisfy the requested tolerance; "
+                f"maximum absolute error {validation_absolute:g}, maximum "
+                f"relative error {validation_relative:g}"
+            )
+        accepted = _bare_lindhard_direct(
+            model,
+            Q[approximate_indices],
+            energy[approximate_indices],
+            mesh,
+            operators,
+            operator_matrices_by_point=point_operators[approximate_indices],
+            **direct_kwargs,
+        )
+
+    exact = (
+        None
+        if exact_indices.size == 0
+        else _bare_lindhard_direct(
+            model,
+            Q[exact_indices],
+            energy[exact_indices],
+            mesh,
+            operators,
+            operator_matrices_by_point=point_operators[exact_indices],
+            **direct_kwargs,
+        )
+    )
+    values = np.empty(
+        (Q.shape[0], operators.size, operators.size),
+        dtype=np.complex128,
+    )
+    values[approximate_indices] = accepted.values_per_meV_cell
+    if exact is not None:
+        values[exact_indices] = exact.values_per_meV_cell
+    used_interpolation = selected_shape is not None
+    return SusceptibilityResult(
+        q_reduced=np.mod(Q, 1.0),
+        Q_reduced=Q,
+        energy_meV=energy,
+        values_per_meV_cell=values,
+        operator_labels=operators.labels,
+        conjugate_indices=operators.conjugate_indices,
+        model_digest=model.content_digest,
+        temperature_K=accepted.temperature_K,
+        chemical_potential_meV=accepted.chemical_potential_meV,
+        broadening_meV=accepted.broadening_meV,
+        provenance={
+            **dict(accepted.provenance),
+            "approximation": (
+                "finite lifetime broadening and validated q interpolation"
+                if used_interpolation
+                else "finite lifetime broadening only"
+            ),
+            "q_evaluation": {
+                "requested_policy": policy,
+                "resolved_policy": (
+                    "validated_interpolation" if used_interpolation else "exact_fallback"
+                ),
+                "exact_commensurate_points": int(exact_indices.size),
+                "interpolated_points": (
+                    int(approximate_indices.size) if used_interpolation else 0
+                ),
+                "direct_off_mesh_points": (
+                    0 if used_interpolation else int(approximate_indices.size)
+                ),
+                "interpolation_method": (
+                    "periodic_linear" if used_interpolation else None
+                ),
+                "selected_mesh_shape": (
+                    None if selected_shape is None else list(selected_shape)
+                ),
+                "attempted_mesh_shapes": attempted_shapes,
+                "relative_tolerance": rtol,
+                "absolute_tolerance": atol,
+                "validation_points": validation_indices.tolist(),
+                "validation_max_absolute_error": validation_absolute,
+                "validation_max_relative_error": validation_relative,
             },
         },
     )

@@ -35,6 +35,7 @@ Constraints
 
 from __future__ import annotations
 
+import copy
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -418,6 +419,23 @@ def _lindhard_factory(
                 "max_batch_bytes": batch_bytes,
                 "transition_max_batch_bytes": transition_batch_bytes,
                 "cache": response_cache,
+                "q_evaluation": str(
+                    config.get("response_q_evaluation", "auto")
+                ),
+                "q_interpolation_rtol": float(
+                    config.get("response_q_interpolation_rtol", 0.0)
+                ),
+                "q_interpolation_atol": float(
+                    config.get("response_q_interpolation_atol", 0.0)
+                ),
+                "q_interpolation_mesh": (
+                    None
+                    if not config.get("response_q_interpolation_mesh", [])
+                    else config.get("response_q_interpolation_mesh")
+                ),
+                "q_validation_points": int(
+                    config.get("response_q_validation_points", 8)
+                ),
             }
             if dressing_kind == "hubbard_hund":
                 shells = dressing_config.get("correlated_shells", [])
@@ -454,6 +472,19 @@ def _lindhard_factory(
                         singular_tolerance=float(
                             dressing_config.get("singular_tolerance", 1.0e-12)
                         ),
+                        near_pole_tolerance=float(
+                            dressing_config.get("near_pole_tolerance", 1.0e-3)
+                        ),
+                        static_warning_margin=float(
+                            dressing_config.get(
+                                "static_stability_warning_margin", 0.05
+                            )
+                        ),
+                        reject_sampled_static_instability=bool(
+                            dressing_config.get(
+                                "reject_sampled_static_instability", False
+                            )
+                        ),
                     ),
                     model,
                     basis_indices,
@@ -478,6 +509,19 @@ def _lindhard_factory(
                         singular_tolerance=float(
                             dressing_config.get("singular_tolerance", 1.0e-12)
                         ),
+                        near_pole_tolerance=float(
+                            dressing_config.get("near_pole_tolerance", 1.0e-3)
+                        ),
+                        static_warning_margin=float(
+                            dressing_config.get(
+                                "static_stability_warning_margin", 0.05
+                            )
+                        ),
+                        reject_sampled_static_instability=bool(
+                            dressing_config.get(
+                                "reject_sampled_static_instability", False
+                            )
+                        ),
                     )
                 elif dressing_kind == "matrix":
                     matrix = np.asarray(
@@ -495,6 +539,19 @@ def _lindhard_factory(
                         vertex,
                         singular_tolerance=float(
                             dressing_config.get("singular_tolerance", 1.0e-12)
+                        ),
+                        near_pole_tolerance=float(
+                            dressing_config.get("near_pole_tolerance", 1.0e-3)
+                        ),
+                        static_warning_margin=float(
+                            dressing_config.get(
+                                "static_stability_warning_margin", 0.05
+                            )
+                        ),
+                        reject_sampled_static_instability=bool(
+                            dressing_config.get(
+                                "reject_sampled_static_instability", False
+                            )
                         ),
                     )
             tensor[selected] = result.values_per_meV_cell
@@ -641,7 +698,19 @@ def _lindhard_factory(
             polarization=1.0,
         )
 
-    return model
+    if dressing_kind == "bare":
+        return model
+
+    def stable_model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        try:
+            return model(data, params)
+        except np.linalg.LinAlgError:
+            # RPA trial parameters can cross a sampled pole while an optimizer
+            # explores. Match the Heisenberg-RPA behavior by returning a large
+            # finite residual target instead of aborting the fit.
+            return np.full(data.size, 1.0e6, dtype=float)
+
+    return stable_model
 
 
 def _rpa_unbound_factory(component: Any) -> ModelFunction:
@@ -714,6 +783,46 @@ def _validate_lindhard_component(component: Any) -> None:
         "reduced",
     }:
         raise ValueError("response_symmetry must be auto, full, or reduced")
+    if str(config.get("response_q_evaluation", "auto")) not in {
+        "auto",
+        "direct",
+        "commensurate",
+        "interpolated",
+    }:
+        raise ValueError(
+            "response_q_evaluation must be auto, direct, commensurate, or "
+            "interpolated"
+        )
+    q_rtol = float(config.get("response_q_interpolation_rtol", 0.0))
+    q_atol = float(config.get("response_q_interpolation_atol", 0.0))
+    if not np.isfinite(q_rtol) or q_rtol < 0.0:
+        raise ValueError(
+            "response_q_interpolation_rtol must be finite and nonnegative"
+        )
+    if not np.isfinite(q_atol) or q_atol < 0.0:
+        raise ValueError(
+            "response_q_interpolation_atol must be finite and nonnegative"
+        )
+    if (
+        str(config.get("response_q_evaluation", "auto")) == "interpolated"
+        and q_rtol == 0.0
+        and q_atol == 0.0
+    ):
+        raise ValueError(
+            "interpolated response_q_evaluation requires a positive "
+            "interpolation tolerance"
+        )
+    q_mesh = tuple(
+        int(value)
+        for value in config.get("response_q_interpolation_mesh", ())
+    )
+    if q_mesh and (len(q_mesh) not in {1, 2, 3} or any(value < 1 for value in q_mesh)):
+        raise ValueError(
+            "response_q_interpolation_mesh must be empty or contain one to "
+            "three positive sizes"
+        )
+    if int(config.get("response_q_validation_points", 8)) < 1:
+        raise ValueError("response_q_validation_points must be positive")
     if str(config.get("chemical_potential_mode", "source")) not in {
         "source",
         "filling",
@@ -818,6 +927,18 @@ def _validate_rpa_component(component: Any) -> None:
     tolerance = float(config.get("singular_tolerance", 1.0e-12))
     if not np.isfinite(tolerance) or tolerance <= 0.0:
         raise ValueError("singular_tolerance must be finite and positive")
+    near_pole = float(config.get("near_pole_tolerance", 1.0e-3))
+    if not np.isfinite(near_pole) or near_pole <= tolerance:
+        raise ValueError(
+            "near_pole_tolerance must be finite and exceed singular_tolerance"
+        )
+    warning_margin = float(
+        config.get("static_stability_warning_margin", 0.05)
+    )
+    if not np.isfinite(warning_margin) or warning_margin < 0.0:
+        raise ValueError(
+            "static_stability_warning_margin must be finite and nonnegative"
+        )
 
 
 def _validate_stoner_rpa_component(component: Any) -> None:
@@ -2829,8 +2950,75 @@ def _heisenberg_rpa_component_diagnostics(
     return _RpaComponentEvaluator(component).diagnostics(data, dict(params))
 
 
+def _electronic_rpa_component_diagnostics(
+    component: Any,
+    _data: PointData4D,
+    params: Mapping[str, float],
+    components: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Return sampled zero-energy pole diagnostics at the configured plot Q."""
+
+    from .model_plots import electronic_rpa_energy_scan
+
+    local_components = {}
+    for name, value in components.items():
+        local = copy.copy(value)
+        local.parameters = dict(getattr(value, "parameters", {}))
+        local.config = dict(getattr(value, "config", {}))
+        local_components[name] = local
+    for local in local_components.values():
+        for parameter in getattr(local, "parameters", {}):
+            key = qualified_parameter_name(local.name, parameter)
+            if key in params:
+                local.parameters[parameter] = float(params[key])
+    local_component = local_components.get(component.name)
+    if local_component is None:
+        return None
+    local_component.config["reject_sampled_static_instability"] = False
+    response_name = str(
+        local_component.config.get("response_component", "")
+    ).strip()
+    response = local_components.get(response_name)
+    if response is None:
+        return None
+    response.config["plot_energy_min_meV"] = -1.0e-9
+    response.config["plot_energy_max_meV"] = 1.0e-9
+    response.config["plot_energy_points"] = 3
+    result = electronic_rpa_energy_scan(
+        local_component,
+        local_components,
+    )
+    dressing = result.provenance.get("dressing", {})
+    if not isinstance(dressing, Mapping):
+        return None
+    stability = dressing.get("static_stability", {})
+    if not isinstance(stability, Mapping):
+        return None
+    q = np.asarray(result.Q_reduced[1], dtype=float)
+    return {
+        "stability_margin": float(stability.get("margin", np.nan)),
+        "stability_ratio": float(stability.get("ratio", np.nan)),
+        "stability_q_h": float(q[0]),
+        "stability_q_k": float(q[1]),
+        "stability_q_l": float(q[2]),
+        "minimum_relative_singular_value": float(
+            dressing.get("minimum_relative_singular_value", np.nan)
+        ),
+        "near_rpa_pole": float(bool(dressing.get("near_pole", False))),
+        "near_rpa_instability": float(
+            bool(stability.get("near_instability", False))
+        ),
+        "unstable": float(bool(stability.get("unstable", False))),
+        "stability_sample_scope": "configured plot Q at E=0",
+    }
+
+
 def compute_component_diagnostics(
-    component: Any, data: PointData4D, params: Mapping[str, float]
+    component: Any,
+    data: PointData4D,
+    params: Mapping[str, float],
+    *,
+    components: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Run a component's registered post-fit diagnostics, when available.
 
@@ -2840,11 +3028,23 @@ def compute_component_diagnostics(
     """
 
     info = MODEL_TYPE_REGISTRY.get(getattr(component, "type", None))
-    if info is None or info.diagnostics is None:
+    if info is None or (
+        info.diagnostics is None and info.context_diagnostics is None
+    ):
         return None
     try:
-        result = info.diagnostics(component, data, params)
-    except (ValueError, KeyError):
+        if info.context_diagnostics is not None and components is not None:
+            result = info.context_diagnostics(
+                component,
+                data,
+                params,
+                components,
+            )
+        elif info.diagnostics is not None:
+            result = info.diagnostics(component, data, params)
+        else:
+            return None
+    except (ValueError, KeyError, np.linalg.LinAlgError):
         return None
     return None if result is None else dict(result)
 

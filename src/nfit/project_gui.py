@@ -5346,7 +5346,10 @@ def _fit_diagnostics_from_result(
         for component in components
         if component.enabled
         and component.type in MODEL_TYPE_REGISTRY
-        and MODEL_TYPE_REGISTRY[component.type].diagnostics is not None
+        and (
+            MODEL_TYPE_REGISTRY[component.type].diagnostics is not None
+            or MODEL_TYPE_REGISTRY[component.type].context_diagnostics is not None
+        )
     }
     if not diagnostic_by_name:
         return {}
@@ -5368,7 +5371,14 @@ def _fit_diagnostics_from_result(
             continue
         per_dataset: dict[str, Any] = {}
         for component in applicable:
-            record = compute_component_diagnostics(component, subset, resolved)
+            record = compute_component_diagnostics(
+                component,
+                subset,
+                resolved,
+                components={
+                    item.name: item for item in components if item.enabled
+                },
+            )
             if not record:
                 continue
             if len(applicable) == 1:
@@ -15301,6 +15311,9 @@ class NfitProjectExplorer:
          "boundary, and negative is unstable."),
         ("stability_ratio", "r_max", "Largest dimensionless RPA feedback "
          "(lambda_max - lambda_shift) * chi0_eff; D_min = 1 - r_max."),
+        ("minimum_relative_singular_value", "RPA s_min", "Smallest relative "
+         "singular value of the evaluated electronic-RPA denominator. Values "
+         "near zero indicate a sampled pole."),
         ("lambda_shift", "lambda_shift", "Onsager reaction-field energy "
          "subtracted from every interaction eigenvalue to enforce the moment "
          "sum rule. It is zero without an Onsager closure."),
@@ -15312,7 +15325,7 @@ class NfitProjectExplorer:
     def _fit_diagnostics_group_box(self, fit_entry: FitTimelineEntry) -> Any:
         """Per-dataset physics diagnostics table, or ``None`` when absent."""
 
-        from PySide6 import QtCore, QtWidgets
+        from PySide6 import QtCore, QtGui, QtWidgets
 
         diagnostics = (
             fit_entry.metadata.get("diagnostics")
@@ -15355,6 +15368,13 @@ class NfitProjectExplorer:
                     f"{dataset_name}: parameters were at or beyond the RPA "
                     "instability when diagnostics were computed."
                 )
+                name_item.setBackground(QtGui.QColor("#5a2929"))
+            elif record.get("near_rpa_instability") or record.get("near_rpa_pole"):
+                name_item.setToolTip(
+                    f"{dataset_name}: the configured electronic-RPA stability "
+                    "probe is near an instability or pole."
+                )
+                name_item.setBackground(QtGui.QColor("#65521f"))
             table.setItem(row_index, 0, name_item)
             for column_index, (key, _header, tip) in enumerate(columns):
                 value = record.get(key)
@@ -18814,6 +18834,30 @@ class NfitProjectExplorer:
                 combo.currentIndexChanged.connect(
                     lambda _index, combo=combo: self._set_model_config_setting(
                         "response_symmetry",
+                        str(combo.currentData()),
+                    )
+                )
+                config_layout.addWidget(label, row, 0)
+                config_layout.addWidget(combo, row, 1)
+                row += 1
+                continue
+            if model.type == "lindhard" and setting_name == "response_q_evaluation":
+                label.setText("Q evaluation")
+                combo = QtWidgets.QComboBox()
+                combo.setObjectName("lindhard_response_q_evaluation")
+                combo.setToolTip(tooltip)
+                for policy in (
+                    "auto",
+                    "direct",
+                    "commensurate",
+                    "interpolated",
+                ):
+                    combo.addItem(policy, policy)
+                current = str(model.config.get(setting_name, "auto"))
+                combo.setCurrentIndex(max(combo.findData(current), 0))
+                combo.currentIndexChanged.connect(
+                    lambda _index, combo=combo: self._set_model_config_setting(
+                        "response_q_evaluation",
                         str(combo.currentData()),
                     )
                 )

@@ -242,6 +242,21 @@ def lindhard_energy_scan(
             float(config.get("response_transition_max_batch_mb", 256.0))
             * 1024**2
         ),
+        "q_evaluation": str(config.get("response_q_evaluation", "auto")),
+        "q_interpolation_rtol": float(
+            config.get("response_q_interpolation_rtol", 0.0)
+        ),
+        "q_interpolation_atol": float(
+            config.get("response_q_interpolation_atol", 0.0)
+        ),
+        "q_interpolation_mesh": (
+            None
+            if not config.get("response_q_interpolation_mesh", [])
+            else config.get("response_q_interpolation_mesh")
+        ),
+        "q_validation_points": int(
+            config.get("response_q_validation_points", 8)
+        ),
         "cache": ElectronicResponseCache(
             max_bytes=int(
                 float(config.get("response_cache_mb", 512.0)) * 1024**2
@@ -315,8 +330,26 @@ def render_lindhard_energy_scan(
         if result.response_kind == "bare"
         else "Interaction-dressed spin response"
     )
+    dressing = (
+        result.provenance.get("dressing", {})
+        if isinstance(result.provenance, Mapping)
+        else {}
+    )
+    static_stability = (
+        dressing.get("static_stability", {})
+        if isinstance(dressing, Mapping)
+        else {}
+    )
+    warning = ""
+    if isinstance(static_stability, Mapping) and static_stability.get(
+        "near_instability"
+    ):
+        warning = " — near sampled RPA instability"
+    elif isinstance(dressing, Mapping) and dressing.get("near_pole"):
+        warning = " — near sampled RPA pole"
     real_axis.set_title(
         rf"{response_label} at $Q=({Q[0]:g},{Q[1]:g},{Q[2]:g})$ r.l.u."
+        + warning
     )
     figure.tight_layout()
     return figure, (real_axis, imaginary_axis)
@@ -364,6 +397,11 @@ def lindhard_energy_scan_script(
             f"workers = {int(config.get('response_workers', 1))!r}",
             f"max_batch_bytes = {int(float(config.get('response_max_batch_mb', 256.0)) * 1024**2)!r}",
             f"transition_max_batch_bytes = {int(float(config.get('response_transition_max_batch_mb', 256.0)) * 1024**2)!r}",
+            f"q_evaluation = {str(config.get('response_q_evaluation', 'auto'))!r}",
+            f"q_interpolation_rtol = {float(config.get('response_q_interpolation_rtol', 0.0))!r}",
+            f"q_interpolation_atol = {float(config.get('response_q_interpolation_atol', 0.0))!r}",
+            f"q_interpolation_mesh = {config.get('response_q_interpolation_mesh', [])!r} or None",
+            f"q_validation_points = {int(config.get('response_q_validation_points', 8))!r}",
             "response_cache = ElectronicResponseCache(",
             f"    max_bytes={int(float(config.get('response_cache_mb', 512.0)) * 1024**2)!r},",
             f"    max_entries={int(config.get('response_cache_entries', 64))!r},",
@@ -396,6 +434,11 @@ def lindhard_energy_scan_script(
             "    backend=backend, workers=workers,",
             "    max_batch_bytes=max_batch_bytes,",
             "    transition_max_batch_bytes=transition_max_batch_bytes,",
+            "    q_evaluation=q_evaluation,",
+            "    q_interpolation_rtol=q_interpolation_rtol,",
+            "    q_interpolation_atol=q_interpolation_atol,",
+            "    q_interpolation_mesh=q_interpolation_mesh,",
+            "    q_validation_points=q_validation_points,",
             "    cache=response_cache,",
             ")",
             "figure, axes = render_lindhard_energy_scan(result)",
@@ -652,6 +695,19 @@ def electronic_rpa_energy_scan(
             bare,
             vertex,
             singular_tolerance=tolerance,
+            near_pole_tolerance=float(
+                component.config.get("near_pole_tolerance", 1.0e-3)
+            ),
+            static_warning_margin=float(
+                component.config.get(
+                    "static_stability_warning_margin", 0.05
+                )
+            ),
+            reject_sampled_static_instability=bool(
+                component.config.get(
+                    "reject_sampled_static_instability", False
+                )
+            ),
         )
 
     source = _lindhard_source(response_component, components)
@@ -725,6 +781,21 @@ def electronic_rpa_energy_scan(
             * 1024**2
         ),
         cache=cache,
+        q_evaluation=str(config.get("response_q_evaluation", "auto")),
+        q_interpolation_rtol=float(
+            config.get("response_q_interpolation_rtol", 0.0)
+        ),
+        q_interpolation_atol=float(
+            config.get("response_q_interpolation_atol", 0.0)
+        ),
+        q_interpolation_mesh=(
+            None
+            if not config.get("response_q_interpolation_mesh", [])
+            else config.get("response_q_interpolation_mesh")
+        ),
+        q_validation_points=int(
+            config.get("response_q_validation_points", 8)
+        ),
     )
     vertex = hubbard_hund_spin_vertex(
         model,
@@ -743,6 +814,19 @@ def electronic_rpa_energy_scan(
             bare_pairs,
             vertex,
             singular_tolerance=tolerance,
+            near_pole_tolerance=float(
+                component.config.get("near_pole_tolerance", 1.0e-3)
+            ),
+            static_warning_margin=float(
+                component.config.get(
+                    "static_stability_warning_margin", 0.05
+                )
+            ),
+            reject_sampled_static_instability=bool(
+                component.config.get(
+                    "reject_sampled_static_instability", False
+                )
+            ),
         ),
         model,
         indices,

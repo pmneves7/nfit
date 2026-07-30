@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, fields, replace
@@ -20,17 +21,66 @@ from functools import cached_property
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from pprint import pformat
+from threading import RLock
 from types import MappingProxyType
 from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from .cache_utils import lru_store
 from .electronic_backends import ElectronicBackend, evaluate_eigensystem
 
 FloatArray = NDArray[np.float64]
 ComplexArray = NDArray[np.complex128]
 ELECTRONIC_ENERGY_UNITS = ("eV", "meV")
+
+_FOURIER_CACHE_MAX_BYTES = 256 * 1024**2
+_FOURIER_CACHE_MAX_ENTRIES = 64
+_FOURIER_COEFFICIENT_CACHE: OrderedDict[tuple[str, str], ComplexArray] = (
+    OrderedDict()
+)
+_FOURIER_CACHE_LOCK = RLock()
+
+
+def _numeric_digest(value: ArrayLike, dtype: Any) -> str:
+    array = np.ascontiguousarray(value, dtype=dtype)
+    digest = hashlib.sha256()
+    digest.update(str(array.shape).encode("ascii"))
+    digest.update(array.tobytes())
+    return digest.hexdigest()
+
+
+def _fourier_coefficients(
+    translations: NDArray[np.int64],
+    weights: FloatArray,
+    wavevectors: FloatArray,
+) -> ComplexArray:
+    """Return cached, parameter-independent Fourier coefficients."""
+
+    structure_digest = _numeric_digest(translations, np.int64) + _numeric_digest(
+        weights, np.float64
+    )
+    key = (structure_digest, _numeric_digest(wavevectors, np.float64))
+    with _FOURIER_CACHE_LOCK:
+        cached = _FOURIER_COEFFICIENT_CACHE.get(key)
+        if cached is not None:
+            _FOURIER_COEFFICIENT_CACHE.move_to_end(key)
+            return cached
+    coefficients = np.exp(
+        2j * np.pi * wavevectors @ np.asarray(translations, dtype=float).T
+    )
+    coefficients *= np.asarray(weights, dtype=float)[None, :]
+    coefficients.setflags(write=False)
+    with _FOURIER_CACHE_LOCK:
+        lru_store(
+            _FOURIER_COEFFICIENT_CACHE,
+            key,
+            coefficients,
+            _FOURIER_CACHE_MAX_ENTRIES,
+            max_array_bytes=_FOURIER_CACHE_MAX_BYTES,
+        )
+    return coefficients
 
 
 def normalize_electronic_energy_unit(unit: str) -> Literal["eV", "meV"]:
@@ -363,13 +413,14 @@ class ElectronicModel:
         wavevectors = np.atleast_2d(wavevectors)
         if wavevectors.shape[1] != 3 or not np.all(np.isfinite(wavevectors)):
             raise ValueError("reduced_k must have shape (n_k, 3) and be finite")
-        phase = np.exp(
-            2j * np.pi * wavevectors @ np.asarray(self.translations, dtype=float).T
+        coefficients = _fourier_coefficients(
+            self.translations,
+            self.interpolation_weights,
+            wavevectors,
         )
         result = np.einsum(
-            "kr,r,rij->kij",
-            phase,
-            self.interpolation_weights,
+            "kr,rij->kij",
+            coefficients,
             self.resolved_hamiltonian_blocks,
             optimize=True,
         )

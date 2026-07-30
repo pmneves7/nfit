@@ -42,6 +42,10 @@ ContextModelFactory = Callable[
 ModelJacobianFactory = Callable[[Any], Callable[..., Any] | None]
 DynamicParameters = Callable[[Any], tuple[str, ...]]
 ModelDiagnostics = Callable[[Any, Any, Mapping[str, float]], Mapping[str, Any] | None]
+ContextModelDiagnostics = Callable[
+    [Any, Any, Mapping[str, float], Mapping[str, Any]],
+    Mapping[str, Any] | None,
+]
 ModelValidator = Callable[[Any], None]
 ModelReportSections = Callable[
     [Any, Mapping[str, Any], Mapping[str, Any], Mapping[str, Any]],
@@ -133,6 +137,7 @@ class ModelDefinition:
     jacobian_factory: ModelJacobianFactory | None = None
     validate_component: ModelValidator | None = None
     diagnostics: ModelDiagnostics | None = None
+    context_diagnostics: ContextModelDiagnostics | None = None
     report_sections: ModelReportSections | None = None
     plots: tuple[ModelPlotDefinition, ...] = ()
     project_serializer: ModelSerializer = _default_component_serializer
@@ -205,6 +210,7 @@ def register_model_definition(
         "dynamic parameter provider": definition.dynamic_parameters,
         "Jacobian factory": definition.jacobian_factory,
         "diagnostics provider": definition.diagnostics,
+        "context diagnostics provider": definition.context_diagnostics,
         "report provider": definition.report_sections,
     }
     for label, hook in optional_hooks.items():
@@ -489,6 +495,20 @@ def _fit_diagnostics(name: str) -> ModelDiagnostics:
         from . import fit_config
 
         return getattr(fit_config, name)(component, data, params)
+
+    return diagnostics
+
+
+def _fit_context_diagnostics(name: str) -> ContextModelDiagnostics:
+    def diagnostics(
+        component: Any,
+        data: Any,
+        params: Mapping[str, float],
+        components: Mapping[str, Any],
+    ) -> Mapping[str, Any] | None:
+        from . import fit_config
+
+        return getattr(fit_config, name)(component, data, params, components)
 
     return diagnostics
 
@@ -1333,6 +1353,70 @@ def _register_builtin_models() -> None:
                     "auto",
                 ),
                 _config_field(
+                    "response_q_evaluation",
+                    "auto",
+                    (
+                        "Evaluate arbitrary transferred wavevectors directly, "
+                        "require exact commensurate mesh shifts, or permit "
+                        "validated periodic interpolation. Auto remains exact "
+                        "when both interpolation tolerances are zero."
+                    ),
+                    "One of auto, direct, commensurate, or interpolated.",
+                    "str",
+                    "auto",
+                ),
+                _config_field(
+                    "response_q_interpolation_rtol",
+                    0.0,
+                    (
+                        "Maximum relative error accepted from automatic "
+                        "wavevector interpolation; zero disables the relative "
+                        "criterion."
+                    ),
+                    "Finite nonnegative number.",
+                    "float",
+                    "0.01",
+                ),
+                _config_field(
+                    "response_q_interpolation_atol",
+                    0.0,
+                    (
+                        "Maximum absolute complex-susceptibility error accepted "
+                        "from automatic wavevector interpolation; zero disables "
+                        "the absolute criterion."
+                    ),
+                    "Finite nonnegative susceptibility magnitude.",
+                    "float",
+                    "1e-5",
+                    "meV^-1 cell^-1",
+                ),
+                _config_field(
+                    "response_q_interpolation_mesh",
+                    [],
+                    (
+                        "Optional initial commensurate interpolation mesh. An "
+                        "empty list selects a small divisor of the integration "
+                        "mesh and refines deterministically."
+                    ),
+                    (
+                        "Empty list or one positive divisor of the response "
+                        "mesh size per periodic direction."
+                    ),
+                    "list",
+                    "[8, 8, 8]",
+                ),
+                _config_field(
+                    "response_q_validation_points",
+                    8,
+                    (
+                        "Number of deterministic off-mesh points evaluated "
+                        "directly to certify wavevector interpolation."
+                    ),
+                    "Positive integer.",
+                    "int",
+                    "16",
+                ),
+                _config_field(
                     "chemical_potential_mode",
                     "source",
                     (
@@ -1662,6 +1746,40 @@ def _register_builtin_models() -> None:
             "float",
             "1e-10",
         ),
+        _config_field(
+            "near_pole_tolerance",
+            1.0e-3,
+            (
+                "Relative minimum singular value below which an evaluated RPA "
+                "denominator is reported as near a pole."
+            ),
+            "Finite number greater than singular_tolerance.",
+            "float",
+            "0.01",
+        ),
+        _config_field(
+            "static_stability_warning_margin",
+            0.05,
+            (
+                "Warn when the sampled static feedback leaves less than this "
+                "margin before its RPA instability."
+            ),
+            "Finite nonnegative number.",
+            "float",
+            "0.1",
+        ),
+        _config_field(
+            "reject_sampled_static_instability",
+            False,
+            (
+                "Give unstable zero-energy trial parameters a finite fitting "
+                "penalty when an evaluated wavevector crosses the sampled RPA "
+                "stability boundary."
+            ),
+            "Boolean.",
+            "bool",
+            "true",
+        ),
     )
     rpa_plot_definition = ModelPlotDefinition(
         key="complex_energy_scan",
@@ -1702,6 +1820,9 @@ def _register_builtin_models() -> None:
             ),
             config_fields=rpa_reference_fields,
             validate_component=_fit_validator("_validate_stoner_rpa_component"),
+            context_diagnostics=_fit_context_diagnostics(
+                "_electronic_rpa_component_diagnostics"
+            ),
             report_sections=_report_sections("electronic_rpa_report_sections"),
             plots=(rpa_plot_definition,),
             default_lower_bounds=(("I", 0.0),),
@@ -1762,6 +1883,9 @@ def _register_builtin_models() -> None:
                 ),
             ),
             validate_component=_fit_validator("_validate_matrix_rpa_component"),
+            context_diagnostics=_fit_context_diagnostics(
+                "_electronic_rpa_component_diagnostics"
+            ),
             report_sections=_report_sections("electronic_rpa_report_sections"),
             plots=(rpa_plot_definition,),
             documentation="matrix_rpa.md",
@@ -1851,6 +1975,9 @@ def _register_builtin_models() -> None:
                 ),
             ),
             validate_component=_fit_validator("_validate_hubbard_hund_rpa_component"),
+            context_diagnostics=_fit_context_diagnostics(
+                "_electronic_rpa_component_diagnostics"
+            ),
             report_sections=_report_sections("electronic_rpa_report_sections"),
             plots=(rpa_plot_definition,),
             default_lower_bounds=(("U", 0.0), ("J_H", 0.0)),

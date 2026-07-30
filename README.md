@@ -19,9 +19,11 @@ The package provides:
   RPA interaction dressings with eV input, canonical meV vertices, shared
   electronic-response dependencies, pole diagnostics, fitting, and reports;
 - production electronic-response controls with bounded transition batches,
-  model-digest-aware eigensystem reuse, certified little-group reduction,
-  backend-equivalence probes, separate mesh/broadening convergence plots, and
-  scheduler-neutral response chunks with editable Slurm launchers;
+  model-digest-aware eigensystem and bare-response reuse, exact commensurate-Q
+  permutation, tolerance-certified periodic Q interpolation, certified
+  little-group reduction, backend-equivalence probes, separate
+  mesh/broadening convergence plots, and scheduler-neutral response chunks
+  with editable Slurm launchers;
 - CIF/manual crystal geometry and arbitrary manual or Wannier90 tight-binding
   models with explicit local orbital frames, site-point-group harmonic
   subspaces, symmetry-allowed onsite terms, selectable orbital-explicit

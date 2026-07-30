@@ -257,6 +257,10 @@ def rpa_dress_susceptibility(
     vertex: InteractionVertex,
     *,
     singular_tolerance: float = 1.0e-12,
+    max_batch_bytes: int = 256 * 1024**2,
+    near_pole_tolerance: float = 1.0e-3,
+    static_warning_margin: float = 0.05,
+    reject_sampled_static_instability: bool = False,
 ) -> SusceptibilityResult:
     """Apply ``chi = (I - chi0 Gamma)^-1 chi0`` point by point."""
 
@@ -267,6 +271,17 @@ def rpa_dress_susceptibility(
     threshold = float(singular_tolerance)
     if not np.isfinite(threshold) or threshold <= 0.0:
         raise ValueError("singular_tolerance must be finite and positive")
+    memory_budget = int(max_batch_bytes)
+    if memory_budget < 1:
+        raise ValueError("max_batch_bytes must be positive")
+    pole_warning = float(near_pole_tolerance)
+    stability_warning = float(static_warning_margin)
+    if not np.isfinite(pole_warning) or pole_warning <= threshold:
+        raise ValueError(
+            "near_pole_tolerance must be finite and exceed singular_tolerance"
+        )
+    if not np.isfinite(stability_warning) or stability_warning < 0.0:
+        raise ValueError("static_warning_margin must be finite and nonnegative")
     values = np.asarray(bare.values_per_meV_cell)
     matrices = np.asarray(vertex.values_meV)
     if matrices.ndim == 2:
@@ -277,22 +292,62 @@ def rpa_dress_susceptibility(
     dressed = np.empty_like(values)
     minimum_singular_values = np.empty(values.shape[0], dtype=float)
     condition_numbers = np.empty(values.shape[0], dtype=float)
-    for index, (chi0, gamma) in enumerate(zip(values, matrices, strict=True)):
-        denominator = identity - chi0 @ gamma
+    relative_singular_values = np.empty(values.shape[0], dtype=float)
+    size = values.shape[-1]
+    per_point_bytes = max(1, 16 * size * size * 4 + 8 * size)
+    batch_size = max(1, min(values.shape[0], memory_budget // per_point_bytes))
+    for start in range(0, values.shape[0], batch_size):
+        stop = min(start + batch_size, values.shape[0])
+        denominator = identity[None, ...] - values[start:stop] @ matrices[start:stop]
         singular_values = np.linalg.svd(denominator, compute_uv=False)
-        minimum_singular_values[index] = float(singular_values[-1])
-        condition_numbers[index] = float(
-            singular_values[0] / singular_values[-1]
-            if singular_values[-1] > 0.0
-            else np.inf
+        minimum_singular_values[start:stop] = singular_values[:, -1]
+        condition_numbers[start:stop] = np.divide(
+            singular_values[:, 0],
+            singular_values[:, -1],
+            out=np.full(stop - start, np.inf, dtype=float),
+            where=singular_values[:, -1] > 0.0,
         )
-        scale = max(1.0, float(singular_values[0]))
-        if singular_values[-1] <= threshold * scale:
+        scale = np.maximum(1.0, singular_values[:, 0])
+        relative_singular_values[start:stop] = singular_values[:, -1] / scale
+        singular = singular_values[:, -1] <= threshold * scale
+        if np.any(singular):
+            index = start + int(np.flatnonzero(singular)[0])
             raise np.linalg.LinAlgError(
                 "RPA denominator is singular within the configured tolerance "
                 f"at response point {index}"
             )
-        dressed[index] = np.linalg.solve(denominator, chi0)
+        dressed[start:stop] = np.linalg.solve(
+            denominator,
+            values[start:stop],
+        )
+    minimum_relative_index = int(np.argmin(relative_singular_values))
+    static_indices = np.flatnonzero(np.abs(bare.energy_meV) <= 1.0e-14)
+    static_ratios = np.full(values.shape[0], np.nan, dtype=float)
+    for index in static_indices:
+        feedback = values[index] @ matrices[index]
+        hermitian_feedback = 0.5 * (feedback + feedback.conj().T)
+        static_ratios[index] = float(
+            np.max(np.linalg.eigvalsh(hermitian_feedback))
+        )
+    if static_indices.size:
+        sampled_static_index = int(
+            static_indices[np.nanargmax(static_ratios[static_indices])]
+        )
+        sampled_static_ratio = float(static_ratios[sampled_static_index])
+        sampled_static_margin = 1.0 - sampled_static_ratio
+    else:
+        sampled_static_index = -1
+        sampled_static_ratio = float("nan")
+        sampled_static_margin = float("nan")
+    if (
+        bool(reject_sampled_static_instability)
+        and static_indices.size
+        and sampled_static_margin <= 0.0
+    ):
+        raise np.linalg.LinAlgError(
+            "sampled static RPA response is at or beyond an instability "
+            f"at response point {sampled_static_index}"
+        )
     return SusceptibilityResult(
         q_reduced=bare.q_reduced,
         Q_reduced=bare.Q_reduced,
@@ -314,8 +369,42 @@ def rpa_dress_susceptibility(
                 "multiplication_order": "I-chi0@Gamma",
                 "channel": vertex.channel,
                 "singular_tolerance": threshold,
+                "batch_size": batch_size,
+                "max_batch_bytes": memory_budget,
                 "minimum_singular_value": minimum_singular_values.tolist(),
                 "condition_number": condition_numbers.tolist(),
+                "relative_minimum_singular_value": (
+                    relative_singular_values.tolist()
+                ),
+                "near_pole_tolerance": pole_warning,
+                "near_pole": bool(
+                    relative_singular_values[minimum_relative_index]
+                    <= pole_warning
+                ),
+                "near_pole_point_index": minimum_relative_index,
+                "minimum_relative_singular_value": float(
+                    relative_singular_values[minimum_relative_index]
+                ),
+                "static_stability": {
+                    "criterion": (
+                        "1 - lambda_max(Hermitian part of chi0@Gamma)"
+                    ),
+                    "sampled_zero_energy_points": static_indices.tolist(),
+                    "margin": sampled_static_margin,
+                    "ratio": sampled_static_ratio,
+                    "point_index": sampled_static_index,
+                    "warning_margin": stability_warning,
+                    "near_instability": bool(
+                        static_indices.size
+                        and sampled_static_margin <= stability_warning
+                    ),
+                    "unstable": bool(
+                        static_indices.size and sampled_static_margin <= 0.0
+                    ),
+                    "reject_unstable": bool(
+                        reject_sampled_static_instability
+                    ),
+                },
             },
         },
     )

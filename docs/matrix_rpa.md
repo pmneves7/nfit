@@ -39,11 +39,19 @@ unambiguous.
 | --- | --- | --- | --- |
 | `response_component` | sibling `lindhard` component supplying the bare spin response and its source settings | `""` | `"Bare response"` |
 | `singular_tolerance` | relative singular-value threshold for an RPA pole | `1e-12` | `1e-10` |
+| `near_pole_tolerance` | relative minimum singular value below which an evaluated denominator is flagged | `1e-3` | `0.01` |
+| `static_stability_warning_margin` | sampled static margin below which the result is marked near instability | `0.05` | `0.1` |
+| `reject_sampled_static_instability` | give sampled zero-energy crossings a finite fitting penalty | `false` | `true` |
 | `vertex_matrix` | dimensionless Hermitian matrix ordered as $(S_x,S_y,S_z)$ | identity | `[[1,0,0],[0,0.8,0],[0,0,1.2]]` |
 | `channel` | descriptive channel stored with the vertex | `"spin"` | `"spin"` |
 
 The dressing consumes the referenced bare observable only on its own dataset
 scope. The bare component remains available independently on other datasets.
+Pole diagnostics cover every evaluated response point. The static stability
+margin uses evaluated zero-energy points only and is therefore not a global
+Brillouin-zone proof. Enabling rejection turns a sampled crossing into a large
+finite fit penalty. Post-fit diagnostics report the corresponding zero-energy
+probe at the referenced Lindhard component's `plot_q_reduced`.
 
 ## Calculable data
 

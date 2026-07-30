@@ -103,6 +103,11 @@ parameters remain on the referenced tight-binding component.
 | `response_mesh` | full-zone integration-mesh sizes | `[16, 16, 16]` | `[48, 48, 24]` |
 | `response_mesh_shift` | offsets in mesh steps | `[0, 0, 0]` | `[0.5, 0.5, 0.5]` |
 | `response_symmetry` | full mesh, required certified reduction, or automatic reduction with recorded fallback | `"auto"` | `"auto"`, `"full"`, or `"reduced"` |
+| `response_q_evaluation` | direct, required commensurate, validated interpolated, or automatic wavevector evaluation | `"auto"` | `"interpolated"` |
+| `response_q_interpolation_rtol` | accepted relative error for automatic periodic interpolation; zero disables this criterion | `0.0` | `0.01` |
+| `response_q_interpolation_atol` | accepted absolute complex-response error; zero disables this criterion | `0.0` | `1e-5` |
+| `response_q_interpolation_mesh` | optional initial commensurate interpolation mesh; empty chooses automatically | `[]` | `[8, 8, 8]` |
+| `response_q_validation_points` | deterministic off-mesh points calculated directly during certification | `8` | `16` |
 | `chemical_potential_mode` | use the source chemical potential or solve from filling | `"source"` | `"source"` or `"filling"` |
 | `filling_per_cell` | electron count per primitive cell in filling mode | `1.0` | `3.0` |
 | `response_backend` | eigensystem backend used by the reference response | `"numpy"` | `"numpy"`, `"threaded"`, or `"cupy"` |
@@ -139,6 +144,23 @@ little-group size and irreducible mesh. Imported models, explicit-spin
 operators, orbital-pair matrices, incompatible meshes, and generic
 wavevectors fall back to the full mesh. `"reduced"` turns the same fallback
 into an error.
+
+`response_q_evaluation="auto"` does not interpolate by default. A transfer
+commensurate with the integration mesh reuses the base eigensystem by an exact
+periodic index permutation; other transfers use direct evaluation. Setting a
+positive interpolation tolerance permits periodic linear interpolation of the
+complex bare response. nfit calculates only the commensurate stencil nodes
+needed by the requested points, compares deterministic points with direct
+calculations, and refines through divisors of the integration mesh. Failure to
+meet the tolerance falls back to direct evaluation. `"interpolated"` raises
+instead of falling back, while `"commensurate"` rejects an off-mesh transfer.
+
+Interaction dressing follows interpolation. Position-dependent magnetic
+operators retain the exact extended-zone $\mathbf Q$, so orbital-center
+phases, form factors, and neutron polarization are not replaced by their
+values at an interpolation node. The result provenance records the resolved
+policy, mesh attempts, validation errors, and exact or interpolated point
+counts.
 
 Threaded execution constructs bounded waves of Hamiltonians serially before
 parallel eigensolution. This prevents complex Hamiltonian assembly from
@@ -216,12 +238,13 @@ the complex samples, absolute and relative metrics, reference indices, and a
 portable dictionary round trip. This separation prevents a broader linewidth
 from being mistaken for wavevector-mesh convergence.
 
-`ElectronicResponseCache` reuses immutable base and shifted eigensystems across
-changes to broadening and interaction parameters. Its key includes the
-electronic-model digest, wavevectors, backend request, worker count, and batch
-setting. Changing an onsite, hopping, or SOC coefficient therefore cannot
-reuse stale bands. Particle--hole matrix elements and denominators are
-evaluated in deterministic memory-bounded batches.
+`ElectronicResponseCache` reuses immutable eigensystems and completed bare
+responses. Its keys include the electronic-model digest, sampling, operators,
+thermodynamic state, broadening, backend request, and execution settings.
+Changing an onsite, hopping, SOC, temperature, or operator cannot reuse a
+stale response. Interaction-only fits can reuse $\boldsymbol\chi^0$ directly.
+Particle--hole transitions and energy transfers are evaluated in separate
+deterministic memory-bounded batches.
 
 For distributed runs, `partition_response_points` creates deterministic
 contiguous work units and `merge_response_chunks` verifies their scientific
@@ -232,6 +255,10 @@ editable scheduler wrapper; calculation and merging remain scheduler-neutral.
 
 - The full band-pair sum can still be expensive for large orbital bases or
   dense meshes, although transition memory is bounded.
+- Automatic integration-mesh density is not yet selected during a fit. DOS,
+  Fermi-surface geometry, and Lindhard matrices require different convergence
+  criteria; changing a mesh during optimization could also make the objective
+  discontinuous. Use their convergence tools before fitting.
 - Automatic symmetry reduction is intentionally unavailable for imported
   models, explicit-spin responses, and orbital-pair response matrices until
   their operator transformations can be certified.

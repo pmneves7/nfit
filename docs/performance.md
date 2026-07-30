@@ -130,12 +130,26 @@ The Lindhard and electronic-RPA path separates three memory controls:
 - `response_transition_max_batch_mb` bounds particle--hole matrix elements and
   denominators; and
 - `response_cache_mb` plus `response_cache_entries` bound reusable immutable
-  eigensystems.
+  eigensystems and completed bare responses.
 
-Cache keys include the electronic-model digest and execution inputs. Varying
-only broadening or an interaction vertex can reuse bands; changing any onsite,
-hopping, or SOC coefficient creates a different digest. The cache is local to
-one compiled response evaluator and is never serialized as scientific state.
+Cache keys include the electronic-model digest, sampling, operators,
+thermodynamic state, broadening, and execution inputs. Varying only an
+interaction vertex can reuse the completed bare susceptibility; varying only
+broadening can still reuse eigensystems. Changing an onsite, hopping, or SOC
+coefficient creates a different digest. The cache is local to one compiled
+response evaluator and is never serialized as scientific state.
+
+On a complete uniform mesh, commensurate transferred wavevectors use an exact
+periodic permutation of the base eigenvalues and eigenvectors. No shifted
+Hamiltonian is assembled or diagonalized. Off-mesh points remain direct unless
+a positive interpolation tolerance is configured. Validated interpolation
+uses only required periodic-linear stencils, refines through commensurate mesh
+divisors, and falls back to the direct reference when `auto` cannot meet the
+tolerance.
+
+Hamiltonian evaluation caches parameter-independent Fourier coefficients for
+repeated paths and meshes. Lindhard energy points and electronic-RPA linear
+systems are processed in bounded batches.
 
 Threaded response execution first constructs a bounded wave of Hamiltonians
 serially and then diagonalizes those completed matrices in parallel. This
@@ -159,6 +173,12 @@ The convergence plot varies mesh and broadening independently. Its mesh metric
 compares meshes at fixed $\eta$; its broadening metric compares $\eta$ values
 at fixed mesh. This distinction is required because extra broadening can hide
 an underconverged mesh.
+
+Automatic density selection remains observable-specific. A DOS curve needs an
+energy-resolved norm, a Fermi surface needs topology and geometric-distance
+checks, and a Lindhard response needs complex matrix errors at representative
+$(\mathbf Q,E)$. These criteria should certify a fixed production mesh before
+a fit rather than change the objective's sampling during optimization.
 
 For jobs larger than one process, `partition_response_points` and
 `merge_response_chunks` define deterministic scheduler-neutral work units.
