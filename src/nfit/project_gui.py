@@ -4023,24 +4023,35 @@ def fit_dataset_inputs(
     return inputs, bundles
 
 
-_OPTIMIZER_KWARG_NAMES = ("max_nfev", "xtol", "ftol", "gtol", "loss", "f_scale")
+_OPTIMIZER_KWARG_NAMES = (
+    "max_nfev",
+    "xtol",
+    "ftol",
+    "gtol",
+    "loss",
+    "f_scale",
+    "finite_difference_workers",
+)
 
 
 def _optimizer_kwargs(optimizer_config: dict[str, Any] | None) -> dict[str, Any]:
-    if not isinstance(optimizer_config, dict):
-        return {}
-    kwargs: dict[str, Any] = {}
+    config = optimizer_config if isinstance(optimizer_config, dict) else {}
+    kwargs: dict[str, Any] = {
+        "finite_difference_workers": int(
+            config.get("finite_difference_workers", -1)
+        )
+    }
     for name in _OPTIMIZER_KWARG_NAMES:
-        value = optimizer_config.get(name)
+        value = config.get(name)
         if value in (None, ""):
             continue
-        if name == "max_nfev":
+        if name in {"max_nfev", "finite_difference_workers"}:
             kwargs[name] = int(value)
         elif name == "loss":
             kwargs[name] = str(value)
         else:
             kwargs[name] = float(value)
-    init_config = optimizer_config.get("initialization")
+    init_config = config.get("initialization")
     if isinstance(init_config, dict) and init_config.get("enabled", False):
         kwargs["initialization"] = {
             key: value for key, value in init_config.items() if key != "enabled"
@@ -9177,6 +9188,7 @@ class NfitProjectExplorer:
         self.fit_optimizer_config_editor = None
         self.fit_loss_combo = None
         self.fit_f_scale_spin = None
+        self.fit_finite_difference_workers_spin = None
         self.fit_de_check = None
         self.fit_de_maxiter_spin = None
         self.fit_de_popsize_spin = None
@@ -12434,6 +12446,20 @@ class NfitProjectExplorer:
             "Residual scale where robust losses begin down-weighting points. With normalized residuals, 1.0 means about one sigma."
         )
         self.fit_f_scale_spin.valueChanged.connect(self._set_selected_fit_controls_config)
+        self.fit_finite_difference_workers_spin = QtWidgets.QSpinBox()
+        self.fit_finite_difference_workers_spin.setObjectName(
+            "fit_finite_difference_workers_spin"
+        )
+        self.fit_finite_difference_workers_spin.setRange(-1, 256)
+        self.fit_finite_difference_workers_spin.setValue(-1)
+        self.fit_finite_difference_workers_spin.setToolTip(
+            "Parallel residual evaluations used for numerical parameter "
+            "derivatives. Use -1 for a conservative automatic CPU choice or "
+            "1 for serial evaluation. Analytic Jacobians ignore this setting."
+        )
+        self.fit_finite_difference_workers_spin.valueChanged.connect(
+            self._set_selected_fit_controls_config
+        )
         self.fit_de_check = QtWidgets.QCheckBox("Differential evolution initialization")
         self.fit_de_check.setToolTip(
             "Search the bounded parameter space before least squares. Requires finite bounds on every fitted parameter."
@@ -12590,8 +12616,18 @@ class NfitProjectExplorer:
         optimizer_layout.addWidget(self.fit_covariance_mode_combo, 2, 1)
         optimizer_layout.addWidget(QtWidgets.QLabel("Loss scale"), 3, 0)
         optimizer_layout.addWidget(self.fit_f_scale_spin, 3, 1)
-        optimizer_layout.addWidget(QtWidgets.QLabel("Advanced config"), 4, 0)
-        optimizer_layout.addWidget(self.fit_optimizer_config_editor, 4, 1)
+        optimizer_layout.addWidget(
+            QtWidgets.QLabel("Derivative workers"),
+            4,
+            0,
+        )
+        optimizer_layout.addWidget(
+            self.fit_finite_difference_workers_spin,
+            4,
+            1,
+        )
+        optimizer_layout.addWidget(QtWidgets.QLabel("Advanced config"), 5, 0)
+        optimizer_layout.addWidget(self.fit_optimizer_config_editor, 5, 1)
         fit_settings_layout.addWidget(optimizer_group)
 
         de_group = QtWidgets.QGroupBox("Differential Evolution")
@@ -17796,6 +17832,7 @@ class NfitProjectExplorer:
             self.fit_loss_combo,
             self.fit_covariance_mode_combo,
             self.fit_f_scale_spin,
+            self.fit_finite_difference_workers_spin,
             self.fit_de_check,
             self.fit_de_maxiter_spin,
             self.fit_de_popsize_spin,
@@ -17816,6 +17853,9 @@ class NfitProjectExplorer:
         )
         self.fit_covariance_mode_combo.setCurrentIndex(max(covariance_index, 0))
         self.fit_f_scale_spin.setValue(float(config.get("f_scale", 1.0) or 1.0))
+        self.fit_finite_difference_workers_spin.setValue(
+            int(config.get("finite_difference_workers", -1))
+        )
         initialization = config.get("initialization") if isinstance(config.get("initialization"), dict) else {}
         self.fit_de_check.setChecked(bool(initialization.get("enabled", False)))
         self.fit_de_maxiter_spin.setValue(int(initialization.get("maxiter", 60) or 60))
@@ -17888,6 +17928,13 @@ class NfitProjectExplorer:
             config.pop("covariance_mode", None)
         else:
             config["covariance_mode"] = covariance_mode
+        derivative_workers = int(
+            self.fit_finite_difference_workers_spin.value()
+        )
+        if derivative_workers == -1:
+            config.pop("finite_difference_workers", None)
+        else:
+            config["finite_difference_workers"] = derivative_workers
         if self.fit_de_check.isChecked():
             config["initialization"] = {
                 "enabled": True,

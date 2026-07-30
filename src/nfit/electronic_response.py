@@ -14,7 +14,8 @@ from typing import Any, Literal
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from .cache_utils import lru_store
+from . import _parallel
+from .cache_utils import array_payload_nbytes
 from .cross_section import KB_MEV_PER_K
 from .electronic_backends import (
     ElectronicBackend,
@@ -28,8 +29,14 @@ try:
 except Exception:  # pragma: no cover - CuPy or a GPU is unavailable
     _CUPY_RESPONSE_BACKEND = None
 
+try:
+    from . import _electronic_numba as _NUMBA_RESPONSE_BACKEND
+except Exception:  # pragma: no cover - Numba is unavailable
+    _NUMBA_RESPONSE_BACKEND = None
+
 FloatArray = NDArray[np.float64]
 ComplexArray = NDArray[np.complex128]
+_NUMBA_TRANSITION_MIN_WORK = 25_000_000
 
 
 def _readonly(value: ArrayLike, dtype: Any) -> np.ndarray:
@@ -48,6 +55,16 @@ class ElectronicResponseCache:
     misses: int = 0
     _entries: OrderedDict = field(default_factory=OrderedDict, repr=False)
     _device_entries: OrderedDict = field(default_factory=OrderedDict, repr=False)
+    _entry_bytes: dict[tuple[Any, ...], int] = field(
+        default_factory=dict,
+        repr=False,
+    )
+    _device_entry_bytes: dict[tuple[Any, ...], int] = field(
+        default_factory=dict,
+        repr=False,
+    )
+    _host_bytes: int = field(default=0, repr=False)
+    _device_bytes: int = field(default=0, repr=False)
     _lock: RLock = field(default_factory=RLock, repr=False)
 
     def __post_init__(self) -> None:
@@ -76,12 +93,12 @@ class ElectronicResponseCache:
         """Store one immutable object within count and numerical-byte limits."""
 
         with self._lock:
-            lru_store(
+            self._host_bytes = self._store(
                 self._entries,
+                self._entry_bytes,
                 key,
                 value,
-                self.max_entries,
-                max_array_bytes=self.max_bytes,
+                current_bytes=self._host_bytes,
             )
 
     def get_device(self, key: tuple[Any, ...]) -> Any | None:
@@ -100,13 +117,41 @@ class ElectronicResponseCache:
         """Store a bounded accelerator-resident intermediate."""
 
         with self._lock:
-            lru_store(
+            self._device_bytes = self._store(
                 self._device_entries,
+                self._device_entry_bytes,
                 key,
                 value,
-                self.max_entries,
-                max_array_bytes=self.max_bytes,
+                current_bytes=self._device_bytes,
             )
+
+    def _store(
+        self,
+        entries: OrderedDict,
+        entry_bytes: dict[tuple[Any, ...], int],
+        key: tuple[Any, ...],
+        value: Any,
+        *,
+        current_bytes: int,
+    ) -> int:
+        """Insert one entry with constant-time total-byte accounting."""
+
+        previous_bytes = entry_bytes.pop(key, 0)
+        if key in entries:
+            del entries[key]
+        total = current_bytes - previous_bytes
+        size = _response_cache_payload_nbytes(value)
+        if self.max_entries == 0 or self.max_bytes == 0 or size > self.max_bytes:
+            return total
+        entries[key] = value
+        entry_bytes[key] = size
+        total += size
+        while entries and (
+            len(entries) > self.max_entries or total > self.max_bytes
+        ):
+            oldest, _discarded = entries.popitem(last=False)
+            total -= entry_bytes.pop(oldest)
+        return total
 
     def clear(self) -> None:
         """Remove cached arrays and reset hit/miss counters."""
@@ -114,6 +159,10 @@ class ElectronicResponseCache:
         with self._lock:
             self._entries.clear()
             self._device_entries.clear()
+            self._entry_bytes.clear()
+            self._device_entry_bytes.clear()
+            self._host_bytes = 0
+            self._device_bytes = 0
             self.hits = 0
             self.misses = 0
 
@@ -128,6 +177,20 @@ class ElectronicResponseCache:
 
         with self._lock:
             return len(self._device_entries)
+
+    @property
+    def host_bytes(self) -> int:
+        """Conservative numerical bytes retained in the host cache."""
+
+        with self._lock:
+            return self._host_bytes
+
+    @property
+    def device_bytes(self) -> int:
+        """Conservative numerical bytes retained in the accelerator cache."""
+
+        with self._lock:
+            return self._device_bytes
 
 
 def _coordinate_digest(coordinates: np.ndarray) -> str:
@@ -345,6 +408,25 @@ class SusceptibilityResult:
         )
 
 
+def _response_cache_payload_nbytes(value: Any) -> int:
+    """Size known response objects without traversing scalar provenance."""
+
+    if isinstance(value, ElectronicEigensystem):
+        return int(value.eigenvalues.nbytes) + (
+            0 if value.eigenvectors is None else int(value.eigenvectors.nbytes)
+        )
+    if isinstance(value, SusceptibilityResult):
+        arrays = (
+            value.q_reduced,
+            value.Q_reduced,
+            value.energy_meV,
+            value.values_per_meV_cell,
+        )
+        distinct = {id(array): array for array in arrays if array is not None}
+        return sum(int(array.nbytes) for array in distinct.values())
+    return array_payload_nbytes(value)
+
+
 @dataclass(frozen=True)
 class ResponseConvergenceResult:
     """Mesh and broadening convergence of a complex scalar response."""
@@ -474,6 +556,7 @@ def response_convergence_scan(
     workers: int | None = 1,
     max_batch_bytes: int = 256 * 1024**2,
     transition_max_batch_bytes: int | None = None,
+    transition_backend: Literal["auto", "numpy", "numba"] = "auto",
     cache: ElectronicResponseCache | None = None,
 ) -> ResponseConvergenceResult:
     """Evaluate mesh and broadening convergence as separate numerical axes."""
@@ -519,6 +602,7 @@ def response_convergence_scan(
                 workers=workers,
                 max_batch_bytes=max_batch_bytes,
                 transition_max_batch_bytes=transition_max_batch_bytes,
+                transition_backend=transition_backend,
                 cache=response_cache,
             )
             values[mesh_index, broadening_index] = isotropic_spin_component(
@@ -962,6 +1046,32 @@ def _permuted_eigensystem(
     )
 
 
+def _resolved_transition_backend(
+    requested: str,
+    *,
+    work: int,
+    n_operators: int,
+) -> str:
+    """Choose the exact CPU transition-contraction implementation."""
+
+    choice = str(requested).strip().lower()
+    if choice not in {"auto", "numpy", "numba"}:
+        raise ValueError(
+            "transition_backend must be auto, numpy, or numba"
+        )
+    if choice == "numpy":
+        return "numpy"
+    if choice == "numba":
+        return "numba" if _NUMBA_RESPONSE_BACKEND is not None else "numpy"
+    if (
+        _NUMBA_RESPONSE_BACKEND is not None
+        and n_operators > 1
+        and int(work) >= _NUMBA_TRANSITION_MIN_WORK
+    ):
+        return "numba"
+    return "numpy"
+
+
 def _bare_lindhard_direct(
     model: ElectronicModel,
     q_reduced: ArrayLike,
@@ -977,6 +1087,7 @@ def _bare_lindhard_direct(
     workers: int | None = 1,
     max_batch_bytes: int = 256 * 1024**2,
     transition_max_batch_bytes: int | None = None,
+    transition_backend: Literal["auto", "numpy", "numba"] = "auto",
     cache: ElectronicResponseCache | None = None,
 ) -> SusceptibilityResult:
     """Evaluate the causal generalized Lindhard response.
@@ -1027,6 +1138,12 @@ def _bare_lindhard_direct(
     )
     if transition_budget < 1:
         raise ValueError("transition_max_batch_bytes must be positive")
+    transition_backend_request = str(transition_backend).strip().lower()
+    _resolved_transition_backend(
+        transition_backend_request,
+        work=0,
+        n_operators=operators.size,
+    )
     response_cache_key = (
         "bare_lindhard",
         model.content_digest,
@@ -1044,6 +1161,7 @@ def _bare_lindhard_direct(
         workers,
         int(max_batch_bytes),
         transition_budget,
+        transition_backend_request,
     )
     cache_hits_before = 0 if cache is None else cache.hits
     cache_misses_before = 0 if cache is None else cache.misses
@@ -1137,6 +1255,7 @@ def _bare_lindhard_direct(
                     ),
                 },
                 "response_execution": "cupy_end_to_end",
+                "transition_backend": "cupy",
                 "host_transfer": "completed susceptibility only",
             },
         )
@@ -1168,6 +1287,7 @@ def _bare_lindhard_direct(
     transition_batch_sizes = []
     energy_batch_sizes = []
     commensurate_q_count = 0
+    resolved_transition_backends: set[str] = set()
     for q_index, q_value in enumerate(unique_q):
         point_indices = np.flatnonzero(inverse == q_index)
         operator_groups = [
@@ -1253,26 +1373,63 @@ def _bare_lindhard_direct(
                         energy_start : energy_start + energy_batch
                     ]
                     transferred = energy[batch_indices]
-                    kernel = -occupation_difference[None, ...] / (
-                        transferred[:, None, None, None]
-                        + delta_energy[None, ...]
-                        + 1.0j * eta
+                    transition_work = (
+                        int(batch_indices.size)
+                        * operators.size
+                        * operators.size
+                        * batch_k
+                        * bands
+                        * bands
                     )
-                    static_rows = np.abs(transferred) <= 1.0e-14
-                    if np.any(static_rows):
-                        kernel[static_rows] = np.where(
-                            equal[None, ...],
-                            static_limit[None, ...],
-                            kernel[static_rows],
+                    resolved_transition = _resolved_transition_backend(
+                        transition_backend_request,
+                        work=transition_work,
+                        n_operators=operators.size,
+                    )
+                    resolved_transition_backends.add(resolved_transition)
+                    if resolved_transition == "numba":
+                        worker_count = (
+                            _parallel.num_threads()
+                            if workers is None or int(workers) == 0
+                            else max(1, int(workers))
                         )
-                    result[batch_indices] += np.einsum(
-                        "k,eknm,kAnm,kBnm->eAB",
-                        weights[start:stop],
-                        kernel,
-                        matrix_elements,
-                        matrix_elements.conj(),
-                        optimize=True,
-                    )
+                        _NUMBA_RESPONSE_BACKEND.initialize_num_threads(
+                            worker_count
+                        )
+                        result[batch_indices] += (
+                            _NUMBA_RESPONSE_BACKEND.contract_lindhard(
+                                weights[start:stop],
+                                transferred,
+                                eta,
+                                delta_energy,
+                                occupation_difference,
+                                equal,
+                                static_limit,
+                                matrix_elements,
+                                parallel=worker_count > 1,
+                            )
+                        )
+                    else:
+                        kernel = -occupation_difference[None, ...] / (
+                            transferred[:, None, None, None]
+                            + delta_energy[None, ...]
+                            + 1.0j * eta
+                        )
+                        static_rows = np.abs(transferred) <= 1.0e-14
+                        if np.any(static_rows):
+                            kernel[static_rows] = np.where(
+                                equal[None, ...],
+                                static_limit[None, ...],
+                                kernel[static_rows],
+                            )
+                        result[batch_indices] += np.einsum(
+                            "k,eknm,kAnm,kBnm->eAB",
+                            weights[start:stop],
+                            kernel,
+                            matrix_elements,
+                            matrix_elements.conj(),
+                            optimize=True,
+                        )
 
     response = SusceptibilityResult(
         q_reduced=q,
@@ -1310,6 +1467,11 @@ def _bare_lindhard_direct(
                 min(energy_batch_sizes) if energy_batch_sizes else 0
             ),
             "transition_max_batch_bytes": transition_budget,
+            "transition_backend": (
+                next(iter(resolved_transition_backends))
+                if len(resolved_transition_backends) == 1
+                else "mixed"
+            ),
             "q_evaluation": {
                 "policy": "exact",
                 "commensurate_permutation_count": commensurate_q_count,
@@ -1491,6 +1653,7 @@ def bare_lindhard_susceptibility(
     workers: int | None = 1,
     max_batch_bytes: int = 256 * 1024**2,
     transition_max_batch_bytes: int | None = None,
+    transition_backend: Literal["auto", "numpy", "numba"] = "auto",
     cache: ElectronicResponseCache | None = None,
     q_evaluation: Literal[
         "auto", "direct", "commensurate", "interpolated"
@@ -1549,6 +1712,7 @@ def bare_lindhard_susceptibility(
         "workers": workers,
         "max_batch_bytes": max_batch_bytes,
         "transition_max_batch_bytes": transition_max_batch_bytes,
+        "transition_backend": transition_backend,
         "cache": cache,
     }
     commensurate = np.asarray(

@@ -1,19 +1,22 @@
 from __future__ import annotations
 
 import ast
+import contextlib
+import inspect
 import math
-import os
 import re
 import time
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from multiprocessing.pool import ThreadPool
+from threading import RLock
 from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from . import _parallel
 from .dataset import PointData4D
 from .rebin import rebin_nd, rebin_nd_symmetry
 
@@ -26,6 +29,11 @@ try:  # pragma: no cover - exercised only when SciPy is importable.
     from scipy.optimize import differential_evolution as _scipy_differential_evolution
 except Exception:  # SciPy may be absent or have a broken compiled dependency.
     _scipy_differential_evolution = None
+
+try:
+    from threadpoolctl import threadpool_limits as _threadpool_limits
+except Exception:  # pragma: no cover - declared dependency is unavailable
+    _threadpool_limits = None
 
 
 FloatArray = NDArray[np.float64]
@@ -48,7 +56,7 @@ def _resolve_parallel_workers(value: Any) -> int:
 
     requested = int(value or 1)
     if requested == -1:
-        available = os.cpu_count() or 1
+        available = _parallel.detect_cpu_budget()
         return max(1, min(available - 1, 8))
     return max(1, requested)
 
@@ -2093,38 +2101,93 @@ def _run_least_squares(
     if progress_callback is not None:
         evaluation = 0
         fit_start = time.perf_counter()
+        progress_lock = RLock()
 
         def wrapped_residual_fn(x: FloatArray) -> FloatArray:
             nonlocal best_cost, best_x, evaluation
-            evaluation += 1
             residual = residual_fn(x)
             cost = _least_squares_objective_cost(
                 residual,
                 loss=optimizer_kwargs.get("loss", "linear"),
                 f_scale=optimizer_kwargs.get("f_scale", 1.0),
             )
-            if np.isfinite(cost) and cost < best_cost:
-                best_cost = cost
-                best_x = np.asarray(x, dtype=float).copy()
-            if evaluation == 1 or evaluation % 10 == 0:
-                params = unpack_parameters(x, names, {} if fixed is None else fixed)
-                elapsed = time.perf_counter() - fit_start
-                progress_callback(
-                    {
-                        "stage": "least_squares",
-                        "iteration": evaluation,
-                        "elapsed_seconds": elapsed,
-                        "seconds_per_step": elapsed / max(evaluation, 1),
-                        "parameters": {name: float(params[name]) for name in names},
-                        "cost": cost,
-                        "message": f"least-squares residual evaluation {evaluation}",
-                    }
-                )
+            with progress_lock:
+                evaluation += 1
+                if np.isfinite(cost) and cost < best_cost:
+                    best_cost = cost
+                    best_x = np.asarray(x, dtype=float).copy()
+                if evaluation == 1 or evaluation % 10 == 0:
+                    params = unpack_parameters(
+                        x,
+                        names,
+                        {} if fixed is None else fixed,
+                    )
+                    elapsed = time.perf_counter() - fit_start
+                    progress_callback(
+                        {
+                            "stage": "least_squares",
+                            "iteration": evaluation,
+                            "elapsed_seconds": elapsed,
+                            "seconds_per_step": elapsed / max(evaluation, 1),
+                            "parameters": {
+                                name: float(params[name]) for name in names
+                            },
+                            "cost": cost,
+                            "message": (
+                                "least-squares residual evaluation "
+                                f"{evaluation}"
+                            ),
+                        }
+                    )
             return residual
 
+    finite_difference_request = optimizer_kwargs.pop(
+        "finite_difference_workers",
+        1,
+    )
+    finite_difference_workers = min(
+        len(names),
+        _resolve_parallel_workers(finite_difference_request),
+    )
+    finite_difference_pool: ThreadPool | None = None
     if _scipy_least_squares is not None:
         if jac is not None:
             optimizer_kwargs.setdefault("jac", jac)
+        elif finite_difference_workers > 1:
+            supports_workers = (
+                "workers"
+                in inspect.signature(_scipy_least_squares).parameters
+            )
+            if supports_workers:
+                finite_difference_pool = ThreadPool(
+                    finite_difference_workers
+                )
+                blas_threads = max(
+                    1,
+                    _parallel.detect_cpu_budget()
+                    // finite_difference_workers,
+                )
+
+                def worker_map(function: Callable, values: Any) -> list[Any]:
+                    limiter = (
+                        _threadpool_limits(
+                            limits=blas_threads,
+                            user_api="blas",
+                        )
+                        if _threadpool_limits is not None
+                        else contextlib.nullcontext()
+                    )
+                    with limiter:
+                        return finite_difference_pool.map(function, values)
+
+                optimizer_kwargs.setdefault("workers", worker_map)
+            else:
+                warnings.warn(
+                    "parallel finite differences require SciPy >= 1.16; "
+                    "using serial numerical derivatives",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
         try:
             scipy_result = _scipy_least_squares(
                 wrapped_residual_fn,
@@ -2134,6 +2197,10 @@ def _run_least_squares(
             )
         except FitCancellationRequested:
             return _cancelled_least_squares_result(best_x, best_cost)
+        finally:
+            if finite_difference_pool is not None:
+                finite_difference_pool.close()
+                finite_difference_pool.join()
         return _LeastSquaresResult(
             x=np.asarray(scipy_result.x, dtype=float),
             jac=np.asarray(scipy_result.jac, dtype=float),

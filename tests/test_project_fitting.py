@@ -515,6 +515,7 @@ def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(
         explorer.fit_loss_combo,
         explorer.fit_covariance_mode_combo,
         explorer.fit_f_scale_spin,
+        explorer.fit_finite_difference_workers_spin,
         explorer.fit_de_check,
         explorer.fit_de_maxiter_spin,
         explorer.fit_de_popsize_spin,
@@ -546,12 +547,14 @@ def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(
         is not None
     )
     assert explorer.fit_emcee_workers_spin.value() == -1
+    assert explorer.fit_finite_difference_workers_spin.value() == -1
 
     explorer.fit_loss_combo.setCurrentText("soft_l1")
     explorer.fit_covariance_mode_combo.setCurrentIndex(
         explorer.fit_covariance_mode_combo.findData("residual")
     )
     explorer.fit_f_scale_spin.setValue(2.0)
+    explorer.fit_finite_difference_workers_spin.setValue(3)
     explorer.fit_de_check.setChecked(True)
     explorer.fit_de_maxiter_spin.setValue(11)
     explorer.fit_de_popsize_spin.setValue(4)
@@ -567,6 +570,7 @@ def test_project_explorer_fit_pipeline_controls_have_tooltips_and_update_config(
     assert fit_entry.optimizer_config["loss"] == "soft_l1"
     assert fit_entry.optimizer_config["f_scale"] == 2.0
     assert fit_entry.optimizer_config["covariance_mode"] == "residual"
+    assert fit_entry.optimizer_config["finite_difference_workers"] == 3
     assert fit_entry.optimizer_config["initialization"] == {
         "enabled": True,
         "method": "differential_evolution",

@@ -211,10 +211,18 @@ fit and evaluates its model and residual channels. It does not report local
 covariance errors for this unconverged result. A completed least-squares result
 is not discarded if posterior sampling is terminated later.
 
-Parallel worker controls apply to differential evolution and emcee objective
-evaluations. `1` is serial; `-1` selects a conservative automatic CPU count.
-See [Performance notes](performance.md) before increasing worker counts on
-large problems.
+**Derivative workers** controls independent residual evaluations used by
+SciPy's numerical least-squares Jacobian. `1` is serial; `-1` selects a
+conservative count from the process CPU allocation and never exceeds the
+number of varied parameters. nfit divides the available BLAS threads among
+these evaluations to limit oversubscription. An analytic model Jacobian
+ignores this setting.
+
+The same `1` and `-1` conventions apply to differential evolution and emcee.
+For an expensive electronic response, use either several outer derivative
+workers with a small response-worker count, or fewer outer workers with more
+threads inside each response. See [Performance notes](performance.md) before
+increasing both.
 
 ## Results
 

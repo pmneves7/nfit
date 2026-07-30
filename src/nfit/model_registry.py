@@ -1454,10 +1454,25 @@ def _register_builtin_models() -> None:
                 _config_field(
                     "response_workers",
                     1,
-                    "CPU worker count used by the electronic eigensystem service.",
+                    (
+                        "CPU worker count used by the electronic eigensystem "
+                        "service and fused Lindhard contractions."
+                    ),
                     "Positive integer.",
                     "int",
                     "8",
+                ),
+                _config_field(
+                    "response_transition_backend",
+                    "auto",
+                    (
+                        "CPU particle-hole contraction implementation. Auto "
+                        "uses the exact fused Numba kernel only when the "
+                        "operator problem is large enough to benefit."
+                    ),
+                    "One of auto, numpy, or numba.",
+                    "str",
+                    "auto",
                 ),
                 _config_field(
                     "response_validate_backend",

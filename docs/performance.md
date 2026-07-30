@@ -151,7 +151,10 @@ coefficient creates a different parameter-point digest while retaining the
 same structural digest and reusable process-level CPU Hamiltonian components.
 A compiled fit constructs one response evaluator per observable component, so
 all compatible datasets and dataset groups share its bounded response cache.
-Cache contents are never serialized as scientific state.
+Each insertion records its retained array bytes once, so eviction remains
+constant-time as a fit visits new parameter points. Host and device entries
+have independent byte accounting. Cache contents are never serialized as
+scientific state.
 
 On a complete uniform mesh, commensurate transferred wavevectors use an exact
 periodic permutation of the base eigenvalues and eigenvectors. No shifted
@@ -164,6 +167,12 @@ tolerance.
 Hamiltonian evaluation caches parameter-independent Fourier coefficients for
 repeated paths and meshes. Lindhard energy points and electronic-RPA linear
 systems are processed in bounded batches.
+
+On CPU, `response_transition_backend="auto"` selects an exact fused Numba
+particle--hole contraction only when the operator count and batch size can
+amortize compilation and dispatch. `response_workers` controls both this
+kernel and threaded eigensystems. The NumPy reference can always be forced;
+the resolved implementation is recorded in susceptibility provenance.
 
 With explicit `response_backend="cupy"`, Fourier Hamiltonian components,
 eigensystems, occupations, magnetic matrix elements, denominators, and the

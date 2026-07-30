@@ -301,6 +301,9 @@ def _lindhard_factory(
         float(config.get("response_transition_max_batch_mb", 256.0))
         * 1024**2
     )
+    transition_backend = str(
+        config.get("response_transition_backend", "auto")
+    )
     response_cache = ElectronicResponseCache(
         max_bytes=int(float(config.get("response_cache_mb", 512.0)) * 1024**2),
         max_entries=int(config.get("response_cache_entries", 64)),
@@ -418,6 +421,7 @@ def _lindhard_factory(
                 "workers": workers,
                 "max_batch_bytes": batch_bytes,
                 "transition_max_batch_bytes": transition_batch_bytes,
+                "transition_backend": transition_backend,
                 "cache": response_cache,
                 "q_evaluation": str(
                     config.get("response_q_evaluation", "auto")
@@ -849,6 +853,14 @@ def _validate_lindhard_component(component: Any) -> None:
         )
     if int(config.get("response_workers", 1)) < 1:
         raise ValueError("response_workers must be positive")
+    if str(config.get("response_transition_backend", "auto")) not in {
+        "auto",
+        "numpy",
+        "numba",
+    }:
+        raise ValueError(
+            "response_transition_backend must be auto, numpy, or numba"
+        )
     memory = float(config.get("response_max_batch_mb", 256.0))
     if not np.isfinite(memory) or memory <= 0.0:
         raise ValueError("response_max_batch_mb must be finite and positive")

@@ -20,8 +20,9 @@ The package provides:
   electronic-response dependencies, pole diagnostics, fitting, and reports;
 - production electronic-response controls with bounded transition batches,
   fit-shared response caches, reusable parameter-resolved momentum
-  Hamiltonians, end-to-end optional GPU contraction, model-digest-aware
-  eigensystem and bare-response reuse, exact commensurate-Q permutation,
+  Hamiltonians, workload-gated fused CPU and end-to-end optional GPU
+  contractions, model-digest-aware eigensystem and bare-response reuse,
+  exact commensurate-Q permutation,
   tolerance-certified periodic Q interpolation, certified little-group
   reduction, backend-equivalence probes, separate
   mesh/broadening convergence plots, and scheduler-neutral response chunks
@@ -47,9 +48,9 @@ The package provides:
   machinery;
 - an extensible model registry shared by fitting, GUI metadata, diagnostics,
   reports, plots, project files, and workflow scripts;
-- simultaneous least-squares fitting with explicit uncertainty conventions,
-  optional differential-evolution initialization, and `emcee` posterior
-  sampling;
+- simultaneous least-squares fitting with resource-aware parallel numerical
+  derivatives, explicit uncertainty conventions, optional
+  differential-evolution initialization, and `emcee` posterior sampling;
 - project files with fit timelines and provenance, plus editable script export
   for dataset preparation, analyses, fits, and saved plots;
 - interactive slice, waterfall, and volumetric visualization with independent,

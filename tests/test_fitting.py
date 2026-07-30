@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -194,6 +196,98 @@ def test_least_squares_progress_reports_time_per_step():
     assert timed
     assert all(event["elapsed_seconds"] >= 0.0 for event in timed)
     assert all(event["seconds_per_step"] >= 0.0 for event in timed)
+
+
+def test_least_squares_can_parallelize_numerical_derivative_evaluations(
+    monkeypatch,
+):
+    observed = {}
+
+    def fake_least_squares(
+        fun,
+        *,
+        x0,
+        bounds,
+        workers=None,
+        **kwargs,
+    ):
+        del bounds, kwargs
+        assert callable(workers)
+        points = [
+            np.asarray(x0, dtype=float) + offset
+            for offset in np.eye(len(x0))
+        ]
+        values = workers(fun, points)
+        observed["values"] = values
+        return SimpleNamespace(
+            x=np.asarray(x0, dtype=float),
+            jac=np.eye(len(x0)),
+            success=True,
+            message="parallel derivative probe",
+            cost=0.0,
+        )
+
+    monkeypatch.setattr(
+        fitting_module,
+        "_scipy_least_squares",
+        fake_least_squares,
+    )
+    result = fitting_module._run_least_squares(
+        lambda values: np.asarray(values, dtype=float),
+        x0=np.zeros(3, dtype=float),
+        bounds=(
+            np.full(3, -np.inf, dtype=float),
+            np.full(3, np.inf, dtype=float),
+        ),
+        kwargs={"finite_difference_workers": 3},
+        names=("a", "b", "c"),
+    )
+
+    assert result.success is True
+    assert len(observed["values"]) == 3
+    np.testing.assert_array_equal(
+        np.asarray(observed["values"]),
+        np.eye(3),
+    )
+
+
+def test_parallel_numerical_derivatives_preserve_fit_result():
+    coordinate = np.linspace(-1.0, 1.0, 9)
+    data = PointData4D(
+        H=coordinate,
+        K=np.zeros_like(coordinate),
+        L=np.zeros_like(coordinate),
+        E=np.ones_like(coordinate),
+        intensity=1.7 * coordinate - 0.4,
+        sigma=np.full_like(coordinate, 0.1),
+    )
+    problem = FitProblem(
+        datasets=[FitDataset("line", data)],
+        model=lambda values, params: (
+            params["slope"] * values.H + params["offset"]
+        ),
+        parameter_specs=[
+            ParameterSpec("slope", 1.0),
+            ParameterSpec("offset", 0.0),
+        ],
+    )
+
+    serial = fit_problem_least_squares(
+        problem,
+        config=OptimizationConfig(
+            kwargs={"finite_difference_workers": 1}
+        ),
+    )
+    parallel = fit_problem_least_squares(
+        problem,
+        config=OptimizationConfig(
+            kwargs={"finite_difference_workers": 2}
+        ),
+    )
+
+    assert serial.success and parallel.success
+    assert parallel.params == pytest.approx(serial.params, rel=1.0e-12)
+    assert parallel.cost == pytest.approx(serial.cost, abs=1.0e-20)
 
 
 def test_cancelled_least_squares_returns_lowest_objective_point(monkeypatch):
@@ -496,7 +590,10 @@ def test_emcee_sampling_cancellation_returns_partial_chain():
 def test_parallel_worker_auto_uses_conservative_cpu_count(monkeypatch):
     from nfit.fitting import _resolve_parallel_workers
 
-    monkeypatch.setattr("nfit.fitting.os.cpu_count", lambda: 12)
+    monkeypatch.setattr(
+        "nfit.fitting._parallel.detect_cpu_budget",
+        lambda: 12,
+    )
 
     assert _resolve_parallel_workers(-1) == 8
     assert _resolve_parallel_workers(1) == 1

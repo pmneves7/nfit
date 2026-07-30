@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from matplotlib import pyplot as plt
 
+import nfit.electronic_response as electronic_response_module
 from nfit import (
     BasisState,
     DataGroup,
@@ -238,6 +239,84 @@ def test_response_cache_reuses_eigensystems_and_transition_chunks_are_equivalent
         second.values_per_meV_cell,
         first.values_per_meV_cell,
         rtol=2.0e-14,
+        atol=2.0e-14,
+    )
+
+
+def test_response_cache_sizes_each_insert_once(monkeypatch):
+    calls = []
+
+    def payload_size(value):
+        calls.append(value)
+        return int(np.asarray(value).nbytes)
+
+    monkeypatch.setattr(
+        electronic_response_module,
+        "array_payload_nbytes",
+        payload_size,
+    )
+    cache = ElectronicResponseCache(max_bytes=24, max_entries=2)
+    values = [np.arange(2, dtype=float) + index for index in range(4)]
+    for index, value in enumerate(values):
+        cache.put(("entry", index), value)
+
+    assert len(calls) == len(values)
+    assert cache.entries == 1
+    assert cache.host_bytes == values[-1].nbytes
+    assert cache.get(("entry", 3)) is values[-1]
+    assert len(calls) == len(values)
+
+
+def test_numba_transition_contraction_matches_numpy():
+    pytest.importorskip("numba")
+    model = build_electronic_model(
+        direct_lattice=np.eye(3),
+        basis=[
+            BasisState("a", site="A", orbital="a"),
+            BasisState("b", site="A", orbital="b"),
+        ],
+        hoppings={
+            (0, 0, 0): [[-2.0, 0.4j], [-0.4j, 3.0]],
+            (1, 0, 0): [[-6.0, 1.0], [0.5j, 4.0]],
+        },
+        periodic_axes=(0,),
+        energy_unit="meV",
+    )
+    mesh = k_mesh(model, (48,))
+    operators = orbital_pair_operator_basis(model)
+    q = np.tile([0.173, 0.0, 0.0], (3, 1))
+    energy = np.asarray([-2.0, 0.0, 3.0])
+    settings = {
+        "temperature_K": 25.0,
+        "chemical_potential_meV": 0.0,
+        "broadening_meV": 0.5,
+        "transition_max_batch_bytes": 32 * 1024**2,
+    }
+    numpy_result = bare_lindhard_susceptibility(
+        model,
+        q,
+        energy,
+        mesh,
+        operators,
+        transition_backend="numpy",
+        **settings,
+    )
+    numba_result = bare_lindhard_susceptibility(
+        model,
+        q,
+        energy,
+        mesh,
+        operators,
+        transition_backend="numba",
+        workers=2,
+        **settings,
+    )
+
+    assert numba_result.provenance["transition_backend"] == "numba"
+    np.testing.assert_allclose(
+        numba_result.values_per_meV_cell,
+        numpy_result.values_per_meV_cell,
+        rtol=2.0e-13,
         atol=2.0e-14,
     )
 

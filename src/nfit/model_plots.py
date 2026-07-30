@@ -242,6 +242,9 @@ def lindhard_energy_scan(
             float(config.get("response_transition_max_batch_mb", 256.0))
             * 1024**2
         ),
+        "transition_backend": str(
+            config.get("response_transition_backend", "auto")
+        ),
         "q_evaluation": str(config.get("response_q_evaluation", "auto")),
         "q_interpolation_rtol": float(
             config.get("response_q_interpolation_rtol", 0.0)
@@ -397,6 +400,7 @@ def lindhard_energy_scan_script(
             f"workers = {int(config.get('response_workers', 1))!r}",
             f"max_batch_bytes = {int(float(config.get('response_max_batch_mb', 256.0)) * 1024**2)!r}",
             f"transition_max_batch_bytes = {int(float(config.get('response_transition_max_batch_mb', 256.0)) * 1024**2)!r}",
+            f"transition_backend = {str(config.get('response_transition_backend', 'auto'))!r}",
             f"q_evaluation = {str(config.get('response_q_evaluation', 'auto'))!r}",
             f"q_interpolation_rtol = {float(config.get('response_q_interpolation_rtol', 0.0))!r}",
             f"q_interpolation_atol = {float(config.get('response_q_interpolation_atol', 0.0))!r}",
@@ -434,6 +438,7 @@ def lindhard_energy_scan_script(
             "    backend=backend, workers=workers,",
             "    max_batch_bytes=max_batch_bytes,",
             "    transition_max_batch_bytes=transition_max_batch_bytes,",
+            "    transition_backend=transition_backend,",
             "    q_evaluation=q_evaluation,",
             "    q_interpolation_rtol=q_interpolation_rtol,",
             "    q_interpolation_atol=q_interpolation_atol,",
@@ -543,6 +548,9 @@ def lindhard_convergence_scan(
         workers=workers,
         max_batch_bytes=batch_bytes,
         transition_max_batch_bytes=transition_bytes,
+        transition_backend=str(
+            config.get("response_transition_backend", "auto")
+        ),
         cache=cache,
     )
 
@@ -779,6 +787,9 @@ def electronic_rpa_energy_scan(
         transition_max_batch_bytes=int(
             float(config.get("response_transition_max_batch_mb", 256.0))
             * 1024**2
+        ),
+        transition_backend=str(
+            config.get("response_transition_backend", "auto")
         ),
         cache=cache,
         q_evaluation=str(config.get("response_q_evaluation", "auto")),
