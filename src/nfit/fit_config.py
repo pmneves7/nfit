@@ -231,6 +231,325 @@ def _electronic_structure_factory(component: Any) -> ModelFunction:
     return model
 
 
+def _lindhard_unbound_factory(component: Any) -> ModelFunction:
+    """Guard direct construction when the sibling-component context is absent."""
+
+    def model(_data: PointData4D, _params: dict[str, float]) -> np.ndarray:
+        raise ValueError(
+            f"{component.name!r} requires its referenced tight-binding component"
+        )
+
+    return model
+
+
+def _lindhard_factory(
+    component: Any,
+    components: Mapping[str, Any],
+) -> ModelFunction:
+    """Build a bare spin-response evaluator linked to a tight-binding component."""
+
+    from .electronic_response import (
+        bare_spin_susceptibility,
+        chemical_potential_for_filling,
+        neutron_spin_contraction,
+    )
+    from .electronic_structure import electronic_model_from_component, k_mesh
+
+    config = component.config if isinstance(component.config, dict) else {}
+    source_name = str(config.get("electronic_component", "")).strip()
+    source = components.get(source_name)
+    if source is None or getattr(source, "type", None) != "tight_binding":
+        raise ValueError(
+            f"Lindhard component {component.name!r} must reference an enabled "
+            "tight-binding component"
+        )
+    base_model = electronic_model_from_component(source)
+    mesh = k_mesh(
+        base_model,
+        config.get("response_mesh", [16, 16, 16]),
+        shift=config.get("response_mesh_shift", [0.0, 0.0, 0.0]),
+        symmetry="full",
+    )
+    eta_key = qualified_parameter_name(component.name, "broadening")
+    source_parameter_keys = {
+        parameter: qualified_parameter_name(source.name, parameter)
+        for parameter in tight_binding_parameter_names(source)
+    }
+    backend = str(config.get("response_backend", "numpy"))
+    workers = int(config.get("response_workers", 1))
+    batch_bytes = int(
+        float(config.get("response_max_batch_mb", 256.0)) * 1024**2
+    )
+    powder_orientations = int(config.get("powder_orientations", 50))
+    formula_units_per_cell = float(config.get("formula_units_per_cell", 1.0))
+
+    def resolved_model(params: Mapping[str, float]):
+        values = {
+            parameter: float(params[key])
+            for parameter, key in source_parameter_keys.items()
+        }
+        return (
+            base_model.with_parameters(**values, energy_unit="meV")
+            if values
+            else base_model
+        )
+
+    def chemical_potential(model: Any, temperature: float) -> float:
+        mode = str(config.get("chemical_potential_mode", "source"))
+        if mode == "source":
+            return float(source.config.get("chemical_potential_meV", 0.0))
+        return chemical_potential_for_filling(
+            model,
+            mesh,
+            float(config.get("filling_per_cell", 1.0)),
+            temperature_K=temperature,
+            backend=backend,
+            workers=workers,
+            max_batch_bytes=batch_bytes,
+        )
+
+    def response_at_points(
+        model: Any,
+        q_reduced: np.ndarray,
+        energy: np.ndarray,
+        temperature: np.ndarray,
+        eta: float,
+    ) -> np.ndarray:
+        tensor = np.empty((q_reduced.shape[0], 3, 3), dtype=np.complex128)
+        for value in np.unique(temperature):
+            selected = np.flatnonzero(temperature == value)
+            mu = chemical_potential(model, float(value))
+            result = bare_spin_susceptibility(
+                model,
+                q_reduced[selected],
+                energy[selected],
+                mesh,
+                temperature_K=float(value),
+                chemical_potential_meV=mu,
+                broadening_meV=eta,
+                backend=backend,
+                workers=workers,
+                max_batch_bytes=batch_bytes,
+            )
+            tensor[selected] = result.values_per_meV_cell
+        return tensor
+
+    def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        electronic_model = resolved_model(params)
+        eta = float(params[eta_key])
+        temperatures = np.broadcast_to(
+            np.asarray(_dataset_temperature(data), dtype=float),
+            (data.size,),
+        )
+        data_type = str(data.metadata.get("data_type", ""))
+        bulk = data_type == "magnetization"
+        powder = data_type in {"powder_inelastic", "powder_elastic"} or bool(
+            data.metadata.get("powder_q_modulus_axis")
+        )
+        if bulk:
+            q_reduced = np.zeros((data.size, 3), dtype=float)
+            tensor = response_at_points(
+                electronic_model,
+                q_reduced,
+                np.zeros(data.size),
+                temperatures,
+                eta,
+            )
+            chi = np.asarray(
+                np.trace(tensor.real, axis1=1, axis2=2) / 3.0,
+                dtype=float,
+            ) / formula_units_per_cell
+            return _scalar_bulk_observable(
+                data,
+                chi,
+                g_factor=float(config.get("bulk_g_factor", 2.0)),
+                magnetic_ions_per_formula_unit=1.0,
+            )
+
+        if powder:
+            from .fitting import q_modulus_inv_angstrom
+
+            directions = _powder_sphere_directions(powder_orientations)
+            q_modulus = np.asarray(q_modulus_inv_angstrom(data), dtype=float)
+            q_cartesian = (
+                q_modulus[:, None, None] * directions[None, :, :]
+            ).reshape(-1, 3)
+            q_reduced = q_cartesian @ np.linalg.inv(
+                electronic_model.reciprocal_lattice
+            ).T
+            repeated_energy = np.repeat(
+                np.zeros(data.size) if _is_elastic_dataset(data) else data.E,
+                powder_orientations,
+            )
+            repeated_temperature = np.repeat(temperatures, powder_orientations)
+            tensor = response_at_points(
+                electronic_model,
+                q_reduced,
+                repeated_energy,
+                repeated_temperature,
+                eta,
+            )
+            from .electronic_response import SusceptibilityResult
+
+            shell_response = SusceptibilityResult(
+                q_reduced=q_reduced,
+                energy_meV=repeated_energy,
+                values_per_meV_cell=tensor,
+                operator_labels=("Sx", "Sy", "Sz"),
+                conjugate_indices=(0, 1, 2),
+                model_digest=electronic_model.content_digest,
+                temperature_K=float(repeated_temperature[0]),
+                chemical_potential_meV=chemical_potential(
+                    electronic_model,
+                    float(repeated_temperature[0]),
+                ),
+                broadening_meV=eta,
+            )
+            contracted = neutron_spin_contraction(
+                shell_response,
+                electronic_model.reciprocal_lattice,
+            ).reshape(data.size, powder_orientations).mean(axis=1)
+        else:
+            coordinates = np.column_stack((data.H, data.K, data.L)).astype(float)
+            if _metadata_coordinate_units_are_inv_angstrom(data.metadata):
+                q_cartesian = coordinates
+                q_reduced = q_cartesian @ np.linalg.inv(
+                    electronic_model.reciprocal_lattice
+                ).T
+            else:
+                matrix = data.metadata.get("rlu_to_inv_angstrom_matrix")
+                if matrix is None:
+                    q_reduced = coordinates
+                else:
+                    q_cartesian = coordinates @ np.asarray(matrix, dtype=float).T
+                    q_reduced = q_cartesian @ np.linalg.inv(
+                        electronic_model.reciprocal_lattice
+                    ).T
+            response = bare_spin_susceptibility(
+                electronic_model,
+                q_reduced,
+                np.zeros(data.size) if _is_elastic_dataset(data) else data.E,
+                mesh,
+                temperature_K=float(temperatures[0]),
+                chemical_potential_meV=chemical_potential(
+                    electronic_model,
+                    float(temperatures[0]),
+                ),
+                broadening_meV=eta,
+                backend=backend,
+                workers=workers,
+                max_batch_bytes=batch_bytes,
+            )
+            if not np.all(temperatures == temperatures[0]):
+                tensor = response_at_points(
+                    electronic_model,
+                    q_reduced,
+                    (
+                        np.zeros(data.size)
+                        if _is_elastic_dataset(data)
+                        else np.asarray(data.E)
+                    ),
+                    temperatures,
+                    eta,
+                )
+                from .electronic_response import SusceptibilityResult
+
+                response = SusceptibilityResult(
+                    q_reduced=q_reduced,
+                    energy_meV=(
+                        np.zeros(data.size)
+                        if _is_elastic_dataset(data)
+                        else np.asarray(data.E)
+                    ),
+                    values_per_meV_cell=tensor,
+                    operator_labels=("Sx", "Sy", "Sz"),
+                    conjugate_indices=(0, 1, 2),
+                    model_digest=electronic_model.content_digest,
+                    temperature_K=float(temperatures[0]),
+                    chemical_potential_meV=chemical_potential(
+                        electronic_model,
+                        float(temperatures[0]),
+                    ),
+                    broadening_meV=eta,
+                )
+            contracted = neutron_spin_contraction(
+                response,
+                electronic_model.reciprocal_lattice,
+            )
+
+        if _is_elastic_dataset(data):
+            return _quasistatic_model_observable(
+                data,
+                np.asarray(contracted.real),
+                form_factor_sq=_form_factor_sq_from_config(component, data),
+                polarization=1.0,
+            )
+        return _spectral_model_observable(
+            data,
+            np.asarray(contracted.imag),
+            form_factor_sq=_form_factor_sq_from_config(component, data),
+            polarization=1.0,
+        )
+
+    return model
+
+
+def _validate_lindhard_component(component: Any) -> None:
+    config = component.config if isinstance(component.config, dict) else {}
+    if not str(config.get("electronic_component", "")).strip():
+        raise ValueError("electronic_component must name a tight-binding component")
+    mesh = tuple(int(value) for value in config.get("response_mesh", ()))
+    if len(mesh) not in {1, 2, 3} or any(value < 1 for value in mesh):
+        raise ValueError("response_mesh must contain one to three positive sizes")
+    shift = tuple(float(value) for value in config.get("response_mesh_shift", ()))
+    if len(shift) not in {1, 2, 3} or any(not np.isfinite(value) for value in shift):
+        raise ValueError("response_mesh_shift must contain finite mesh offsets")
+    if str(config.get("chemical_potential_mode", "source")) not in {
+        "source",
+        "filling",
+    }:
+        raise ValueError("chemical_potential_mode must be source or filling")
+    filling = float(config.get("filling_per_cell", 1.0))
+    if not np.isfinite(filling) or filling <= 0.0:
+        raise ValueError("filling_per_cell must be finite and positive")
+    if str(config.get("response_backend", "numpy")) not in {
+        "numpy",
+        "threaded",
+        "cupy",
+    }:
+        raise ValueError("response_backend must be numpy, threaded, or cupy")
+    if int(config.get("response_workers", 1)) < 1:
+        raise ValueError("response_workers must be positive")
+    memory = float(config.get("response_max_batch_mb", 256.0))
+    if not np.isfinite(memory) or memory <= 0.0:
+        raise ValueError("response_max_batch_mb must be finite and positive")
+    if int(config.get("powder_orientations", 50)) < 6:
+        raise ValueError("powder_orientations must be at least 6")
+    formula_units = float(config.get("formula_units_per_cell", 1.0))
+    if not np.isfinite(formula_units) or formula_units <= 0.0:
+        raise ValueError("formula_units_per_cell must be finite and positive")
+    plot_q = np.asarray(config.get("plot_q_reduced", ()), dtype=float)
+    if plot_q.shape != (3,) or np.any(~np.isfinite(plot_q)):
+        raise ValueError("plot_q_reduced must contain three finite coordinates")
+    plot_min = float(config.get("plot_energy_min_meV", -100.0))
+    plot_max = float(config.get("plot_energy_max_meV", 100.0))
+    if not np.isfinite(plot_min) or not np.isfinite(plot_max) or plot_min >= plot_max:
+        raise ValueError("plot energy limits must be finite and increasing")
+    if int(config.get("plot_energy_points", 401)) < 2:
+        raise ValueError("plot_energy_points must be at least 2")
+    plot_temperature = float(config.get("plot_temperature_K", 10.0))
+    if not np.isfinite(plot_temperature) or plot_temperature < 0.0:
+        raise ValueError("plot_temperature_K must be finite and nonnegative")
+    if (
+        str(config.get("chemical_potential_mode", "source")) == "filling"
+        and plot_temperature == 0.0
+    ):
+        raise ValueError(
+            "filling-based plot chemical potential requires positive temperature"
+        )
+    _validate_scalar_bulk_config(component)
+
+
 def tight_binding_parameter_names(component: Any) -> tuple[str, ...]:
     """Return active named Hamiltonian coefficients for shared fit machinery."""
 
@@ -274,8 +593,12 @@ def _validate_tight_binding_config(component: Any) -> None:
         raise ValueError("electronic_max_batch_mb must be positive and finite")
     if not isinstance(config.get("band_path_metadata", {}), Mapping):
         raise ValueError("band_path_metadata must be a mapping")
-    if not isinstance(config.get("dos_symmetry_reduce", False), bool):
-        raise ValueError("dos_symmetry_reduce must be boolean")
+    if str(config.get("dos_symmetry", "full")) not in {
+        "auto",
+        "full",
+        "reduced",
+    }:
+        raise ValueError("dos_symmetry must be auto, full, or reduced")
     energy_names = (
         "chemical_potential_meV",
         "dos_energy_min_meV",
@@ -2408,7 +2731,7 @@ def compile_fit_problem(
             raise ValueError(f"duplicate model component name {component.name!r}")
         seen.add(component.name)
 
-    applicable: dict[str, list[str]] = {}
+    observable_applicable: dict[str, list[str]] = {}
     components_by_dataset: dict[str, list[str]] = {name: [] for name in dataset_names}
     for component in active:
         names: list[str] = []
@@ -2419,7 +2742,69 @@ def compile_fit_problem(
                 continue
             names.append(dataset.name)
             components_by_dataset[dataset.name].append(component.name)
-        applicable[component.name] = names
+        observable_applicable[component.name] = names
+
+    active_by_name = {component.name: component for component in active}
+    applicable = {
+        name: list(names) for name, names in observable_applicable.items()
+    }
+    dependencies: dict[str, tuple[str, ...]] = {}
+    for component in active:
+        definition = MODEL_TYPE_REGISTRY[component.type]
+        references = []
+        for field_name in definition.component_reference_fields:
+            referenced_name = str(component.config.get(field_name, "")).strip()
+            if not referenced_name:
+                raise ValueError(
+                    f"model component {component.name!r} requires a "
+                    f"{field_name!r} component reference"
+                )
+            if referenced_name == component.name:
+                raise ValueError(
+                    f"model component {component.name!r} cannot depend on itself"
+                )
+            if referenced_name not in active_by_name:
+                raise ValueError(
+                    f"model component {component.name!r} references missing or "
+                    f"disabled component {referenced_name!r}"
+                )
+            references.append(referenced_name)
+        dependencies[component.name] = tuple(references)
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def validate_dependency_graph(component_name: str) -> None:
+        if component_name in visiting:
+            raise ValueError(
+                f"model component dependency cycle includes {component_name!r}"
+            )
+        if component_name in visited:
+            return
+        visiting.add(component_name)
+        for dependency_name in dependencies[component_name]:
+            validate_dependency_graph(dependency_name)
+        visiting.remove(component_name)
+        visited.add(component_name)
+
+    for component in active:
+        validate_dependency_graph(component.name)
+
+    # Propagate each observable's dataset scope back to all parameter providers.
+    for component in active:
+        dependent_names = set(observable_applicable[component.name])
+        stack = list(dependencies[component.name])
+        seen_dependencies: set[str] = set()
+        while stack:
+            dependency_name = stack.pop()
+            if dependency_name in seen_dependencies:
+                continue
+            seen_dependencies.add(dependency_name)
+            applicable[dependency_name] = sorted(
+                set(applicable[dependency_name]) | dependent_names,
+                key=dataset_names.index,
+            )
+            stack.extend(dependencies[dependency_name])
 
     fitted = [dataset for dataset in datasets if components_by_dataset[dataset.name]]
     skipped = [name for name in dataset_names if not components_by_dataset[name]]
@@ -2536,10 +2921,19 @@ def compile_fit_problem(
             point_metadata["data_type"] = dataset.data_type
             fit_data = fit_data.with_updates(metadata=point_metadata)
         components_here = [
-            component for component in active if dataset.name in applicable[component.name]
+            component
+            for component in active
+            if dataset.name in observable_applicable[component.name]
         ]
         evaluators = [
-            MODEL_TYPE_REGISTRY[component.type].factory(component)
+            (
+                MODEL_TYPE_REGISTRY[component.type].context_factory(
+                    component,
+                    active_by_name,
+                )
+                if MODEL_TYPE_REGISTRY[component.type].context_factory is not None
+                else MODEL_TYPE_REGISTRY[component.type].factory(component)
+            )
             for component in components_here
         ]
         # An analytic Jacobian is available for the dataset only when *every*

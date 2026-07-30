@@ -331,7 +331,7 @@ def test_symmetry_reduced_mesh_is_opt_in_and_preserves_total_dos():
         },
     )
     full = k_mesh(model, (8, 8, 8))
-    reduced = k_mesh(model, (8, 8, 8), symmetry_reduce=True)
+    reduced = k_mesh(model, (8, 8, 8), symmetry="reduced")
 
     assert full.reduced_coordinates.shape[0] == 512
     assert reduced.reduced_coordinates.shape[0] == 35
@@ -362,10 +362,20 @@ def test_symmetry_reduced_mesh_is_opt_in_and_preserves_total_dos():
     unchanged = k_mesh(
         uncertified,
         (7, 9),
-        symmetry_reduce=True,
+        symmetry="auto",
     )
     assert unchanged.reduced_coordinates.shape[0] == 63
     assert unchanged.provenance["symmetry_reduction"]["applied"] is False
+    with pytest.raises(ValueError, match="not certified"):
+        k_mesh(uncertified, (7, 9), symmetry="reduced")
+
+    chain_mesh = k_mesh(
+        _chain_model(),
+        (8, 1, 1),
+        shift=(0.5, 0.0, 0.0),
+    )
+    assert chain_mesh.shift == (0.5,)
+    assert chain_mesh.reduced_coordinates[0, 0] == pytest.approx(0.5 / 8.0)
 
 
 def test_manual_builder_converts_declared_electronic_units_once():

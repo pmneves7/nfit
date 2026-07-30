@@ -35,6 +35,10 @@ __all__ = [
 ]
 
 ModelFactory = Callable[[Any], Callable[..., Any]]
+ContextModelFactory = Callable[
+    [Any, Mapping[str, Any]],
+    Callable[..., Any],
+]
 ModelJacobianFactory = Callable[[Any], Callable[..., Any] | None]
 DynamicParameters = Callable[[Any], tuple[str, ...]]
 ModelDiagnostics = Callable[[Any, Any, Mapping[str, float]], Mapping[str, Any] | None]
@@ -79,6 +83,8 @@ class ModelPlotDefinition:
     calculate: Callable[..., Any]
     render: Callable[..., Any] | None = None
     script: Callable[..., str] | None = None
+    context_calculate: Callable[..., Any] | None = None
+    context_script: Callable[..., str] | None = None
 
 
 def _default_component_serializer(component: Any) -> dict[str, Any]:
@@ -114,6 +120,8 @@ class ModelDefinition:
     description: str
     data_types: tuple[str, ...]
     factory: ModelFactory
+    context_factory: ContextModelFactory | None = None
+    component_reference_fields: tuple[str, ...] = ()
     parameter_fields: tuple[ModelParameterDefinition, ...] = ()
     config_fields: tuple[ModelConfigDefinition, ...] = ()
     version: int = 1
@@ -170,6 +178,18 @@ def register_model_definition(
         raise ValueError(f"model type {definition.key!r} must declare compatible data types")
     if not callable(definition.factory):
         raise TypeError(f"model type {definition.key!r} factory is not callable")
+    if definition.context_factory is not None and not callable(
+        definition.context_factory
+    ):
+        raise TypeError(
+            f"model type {definition.key!r} context factory is not callable"
+        )
+    if len(definition.component_reference_fields) != len(
+        set(definition.component_reference_fields)
+    ):
+        raise ValueError(
+            f"model type {definition.key!r} has duplicate component references"
+        )
     if definition.validate_component is not None and not callable(
         definition.validate_component
     ):
@@ -197,6 +217,12 @@ def register_model_definition(
         raise ValueError(f"model type {definition.key!r} has duplicate parameters")
     if len(config_names) != len(set(config_names)):
         raise ValueError(f"model type {definition.key!r} has duplicate configuration fields")
+    unknown_references = set(definition.component_reference_fields) - set(config_names)
+    if unknown_references:
+        raise ValueError(
+            f"model type {definition.key!r} references unknown configuration "
+            f"field {sorted(unknown_references)[0]!r}"
+        )
     overlap = set(parameter_names) & set(config_names)
     if overlap:
         raise ValueError(
@@ -228,6 +254,18 @@ def register_model_definition(
             raise TypeError(
                 f"model type {definition.key!r} plot {plot.key!r} script provider "
                 "is not callable"
+            )
+        if plot.context_calculate is not None and not callable(
+            plot.context_calculate
+        ):
+            raise TypeError(
+                f"model type {definition.key!r} plot {plot.key!r} context "
+                "calculator is not callable"
+            )
+        if plot.context_script is not None and not callable(plot.context_script):
+            raise TypeError(
+                f"model type {definition.key!r} plot {plot.key!r} context "
+                "script provider is not callable"
             )
     json.dumps(dict(definition.metadata))
     MODEL_TYPE_REGISTRY[definition.key] = definition
@@ -403,6 +441,18 @@ def _fit_factory(name: str) -> ModelFactory:
         from . import fit_config
 
         return getattr(fit_config, name)(component)
+
+    return factory
+
+
+def _fit_context_factory(name: str) -> ContextModelFactory:
+    def factory(
+        component: Any,
+        components: Mapping[str, Any],
+    ) -> Callable[..., Any]:
+        from . import fit_config
+
+        return getattr(fit_config, name)(component, components)
 
     return factory
 
@@ -1209,6 +1259,230 @@ def _register_builtin_models() -> None:
     )
     register_model_definition(
         ModelDefinition(
+            key="lindhard",
+            label="Bare Lindhard spin susceptibility",
+            description=(
+                "Generalized complex particle-hole response projected onto "
+                "physical spin operators from a referenced tight-binding model."
+            ),
+            category="spin_fluctuation",
+            data_types=(
+                "single_crystal_inelastic",
+                "powder_inelastic",
+                "single_crystal_elastic",
+                "powder_elastic",
+                "magnetization",
+            ),
+            factory=_fit_factory("_lindhard_unbound_factory"),
+            context_factory=_fit_context_factory("_lindhard_factory"),
+            component_reference_fields=("electronic_component",),
+            parameter_fields=(
+                _parameter(
+                    "broadening",
+                    5.0,
+                    "Positive particle-hole lifetime broadening eta.",
+                    "Positive finite energy in meV.",
+                    "meV",
+                    "2.0",
+                ),
+            ),
+            config_fields=(
+                _config_field(
+                    "electronic_component",
+                    "",
+                    (
+                        "Name of the sibling tight-binding component supplying "
+                        "the Hamiltonian and its fitted coefficients."
+                    ),
+                    "Name of one enabled tight-binding component in this workspace.",
+                    "str",
+                    "Bands",
+                ),
+                _config_field(
+                    "response_mesh",
+                    [16, 16, 16],
+                    "Full Brillouin-zone integration mesh for the bare response.",
+                    "One positive size per periodic model direction.",
+                    "list",
+                    "[24, 24, 24]",
+                ),
+                _config_field(
+                    "response_mesh_shift",
+                    [0.0, 0.0, 0.0],
+                    "Mesh-step offsets for the full response mesh.",
+                    "One finite offset per periodic model direction.",
+                    "list",
+                    "[0.5, 0.5, 0.5]",
+                ),
+                _config_field(
+                    "chemical_potential_mode",
+                    "source",
+                    (
+                        "Use the tight-binding component chemical potential or "
+                        "solve it from a fixed electron filling."
+                    ),
+                    "Either source or filling.",
+                    "str",
+                    "source",
+                ),
+                _config_field(
+                    "filling_per_cell",
+                    1.0,
+                    (
+                        "Electron count per primitive cell when chemical "
+                        "potential mode is filling."
+                    ),
+                    "Positive finite number below the basis capacity.",
+                    "float",
+                    "3.0",
+                    "electrons/cell",
+                ),
+                _config_field(
+                    "response_backend",
+                    "numpy",
+                    (
+                        "Eigensystem backend for the reference response. NumPy "
+                        "is the Phase 4 default; acceleration is explicit."
+                    ),
+                    "One of numpy, threaded, or cupy.",
+                    "str",
+                    "numpy",
+                ),
+                _config_field(
+                    "response_workers",
+                    1,
+                    "CPU worker count used by the electronic eigensystem service.",
+                    "Positive integer.",
+                    "int",
+                    "8",
+                ),
+                _config_field(
+                    "response_max_batch_mb",
+                    256.0,
+                    "Temporary-memory target for electronic eigensystem batches.",
+                    "Positive finite memory size.",
+                    "float",
+                    "512",
+                    "MiB",
+                ),
+                _config_field(
+                    "powder_orientations",
+                    50,
+                    "Deterministic sphere directions used for powder averaging.",
+                    "Integer of at least 6.",
+                    "int",
+                    "96",
+                ),
+                _config_field(
+                    "formula_units_per_cell",
+                    1.0,
+                    (
+                        "Formula units represented by the primitive electronic "
+                        "cell, used only for molar bulk normalization."
+                    ),
+                    "Positive finite number.",
+                    "float",
+                    "2.0",
+                    "f.u./cell",
+                ),
+                *_form_factor_fields("Fe2"),
+                _config_field(
+                    "bulk_g_factor",
+                    2.0,
+                    (
+                        "Lande g factor converting uniform spin response to "
+                        "bulk susceptibility or moment."
+                    ),
+                    "Positive finite number.",
+                    "float",
+                    "2.0",
+                ),
+                _config_field(
+                    "plot_q_reduced",
+                    [0.0, 0.0, 0.0],
+                    (
+                        "Transferred wavevector Q for the model-owned energy "
+                        "scan, in the tight-binding reciprocal basis."
+                    ),
+                    "Three finite reduced coordinates.",
+                    "list",
+                    "[0.5, 0.5, 0.0]",
+                    "r.l.u.",
+                ),
+                _config_field(
+                    "plot_energy_min_meV",
+                    -100.0,
+                    "Lower energy transfer for the model-owned response plot.",
+                    "Finite energy below plot_energy_max_meV.",
+                    "float",
+                    "-50.0",
+                    "meV",
+                ),
+                _config_field(
+                    "plot_energy_max_meV",
+                    100.0,
+                    "Upper energy transfer for the model-owned response plot.",
+                    "Finite energy above plot_energy_min_meV.",
+                    "float",
+                    "50.0",
+                    "meV",
+                ),
+                _config_field(
+                    "plot_energy_points",
+                    401,
+                    "Number of samples in the model-owned response plot.",
+                    "Integer of at least 2.",
+                    "int",
+                    "501",
+                ),
+                _config_field(
+                    "plot_temperature_K",
+                    10.0,
+                    "Temperature used for the model-owned response plot.",
+                    "Finite nonnegative temperature.",
+                    "float",
+                    "20.0",
+                    "K",
+                ),
+            ),
+            validate_component=_fit_validator("_validate_lindhard_component"),
+            report_sections=_report_sections("lindhard_report_sections"),
+            plots=(
+                ModelPlotDefinition(
+                    key="complex_energy_scan",
+                    label="Complex spin susceptibility versus energy",
+                    description=(
+                        "Plot the isotropic bare spin response at the configured "
+                        "transferred wavevector."
+                    ),
+                    calculate=_model_plot_calculator(
+                        "lindhard_energy_scan_unbound"
+                    ),
+                    context_calculate=_model_plot_calculator(
+                        "lindhard_energy_scan"
+                    ),
+                    render=_model_plot_renderer(
+                        "render_lindhard_energy_scan"
+                    ),
+                    script=_model_plot_script(
+                        "lindhard_energy_scan_script_unbound"
+                    ),
+                    context_script=_model_plot_script(
+                        "lindhard_energy_scan_script"
+                    ),
+                ),
+            ),
+            default_lower_bounds=(("broadening", 0.0),),
+            documentation="lindhard.md",
+            citations=(
+                "Lindhard, Kgl. Danske Videnskab. Selskab, Mat.-Fys. Medd. 28, no. 8 (1954)",
+                "https://doi.org/10.1088/1367-2630/11/2/025016",
+            ),
+            metadata={"component_dependencies": True},
+        )
+    )
+    register_model_definition(
+        ModelDefinition(
             key="tight_binding",
             label="Tight-binding electronic structure",
             description=(
@@ -1536,20 +1810,16 @@ def _register_builtin_models() -> None:
                     "[80, 80, 1]",
                 ),
                 _config_field(
-                    "dos_symmetry_reduce",
-                    False,
+                    "dos_symmetry",
+                    "full",
                     (
-                        "Use only symmetry-unique density-of-states mesh points "
-                        "when the nfit-built model certifies compatible reciprocal "
-                        "symmetry. Leave disabled for bit-for-bit continuity with "
-                        "the full mesh."
+                        "Brillouin-zone symmetry policy for total density of "
+                        "states. Auto reduces only when certified, full keeps "
+                        "the original mesh, and reduced fails if unsafe."
                     ),
-                    (
-                        "Boolean. Unsupported models or mesh shifts safely retain "
-                        "the full mesh."
-                    ),
-                    "bool",
-                    "true",
+                    "One of auto, full, or reduced.",
+                    "str",
+                    "auto",
                 ),
                 _config_field(
                     "dos_energy_min_meV",

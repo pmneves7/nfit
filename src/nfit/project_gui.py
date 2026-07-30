@@ -18776,6 +18776,48 @@ class NfitProjectExplorer:
                 config_layout.addWidget(combo, row, 1)
                 row += 1
                 continue
+            if model.type == "tight_binding" and setting_name == "dos_symmetry":
+                label.setText("DOS symmetry")
+                combo = QtWidgets.QComboBox()
+                combo.setObjectName("tight_binding_dos_symmetry")
+                combo.setToolTip(tooltip)
+                for policy in ("full", "auto", "reduced"):
+                    combo.addItem(policy, policy)
+                current = str(model.config.get(setting_name, "full"))
+                combo.setCurrentIndex(max(combo.findData(current), 0))
+                combo.currentIndexChanged.connect(
+                    lambda _index, combo=combo: self._set_model_config_setting(
+                        "dos_symmetry",
+                        str(combo.currentData()),
+                    )
+                )
+                config_layout.addWidget(label, row, 0)
+                config_layout.addWidget(combo, row, 1)
+                row += 1
+                continue
+            if model.type == "lindhard" and setting_name == "electronic_component":
+                label.setText("Electronic structure")
+                combo = QtWidgets.QComboBox()
+                combo.setObjectName("lindhard_electronic_component")
+                combo.setToolTip(tooltip)
+                combo.addItem("Select tight-binding model…", "")
+                owner = self._group_for_model(model)
+                if owner is not None:
+                    for candidate in owner.models.values():
+                        if candidate.type == "tight_binding" and candidate.enabled:
+                            combo.addItem(candidate.name, candidate.name)
+                current = str(model.config.get(setting_name, ""))
+                combo.setCurrentIndex(max(combo.findData(current), 0))
+                combo.currentIndexChanged.connect(
+                    lambda _index, combo=combo: self._set_model_config_setting(
+                        "electronic_component",
+                        str(combo.currentData()),
+                    )
+                )
+                config_layout.addWidget(label, row, 0)
+                config_layout.addWidget(combo, row, 1)
+                row += 1
+                continue
             if config_definitions[setting_name].choices == "form_factor_ions":
                 label.setText("form_factor")
                 combo = QtWidgets.QComboBox()
@@ -18879,8 +18921,10 @@ class NfitProjectExplorer:
         elif definition.structured_config:
             self.model_parameter_layout.addWidget(config_group, 2, 0, 1, 4)
             self._build_model_crystal_editor(model)
+            self._build_model_plot_actions(model)
         else:
             self.model_parameter_layout.addWidget(config_group, 2, 0, 1, 4)
+            self._build_model_plot_actions(model)
 
     def _rebuild_model_parameter_editor_preserving_scroll(
         self,
@@ -19105,6 +19149,41 @@ class NfitProjectExplorer:
             )
             layout.addWidget(calculate, row, 0, 1, 2)
             layout.addWidget(copy_script, row, 2)
+        self.model_parameter_layout.addWidget(group, 9, 0, 1, 4)
+
+    def _build_model_plot_actions(self, model: ModelComponentSpec) -> None:
+        """Add registered plot and script actions for a non-electronic model."""
+
+        from PySide6 import QtWidgets
+
+        plots = model_plot_definitions(model.type)
+        if not plots:
+            return
+        group = QtWidgets.QGroupBox("Model plots")
+        group.setObjectName("model_plot_actions_group")
+        layout = QtWidgets.QGridLayout(group)
+        for row, plot in enumerate(plots):
+            calculate = QtWidgets.QPushButton(plot.label)
+            calculate.setObjectName(f"model_plot_{plot.key}")
+            calculate.setToolTip(plot.description)
+            calculate.clicked.connect(
+                lambda _checked=False, model=model, key=plot.key: self._open_model_plot(
+                    model, key
+                )
+            )
+            copy_script = QtWidgets.QPushButton("Copy script")
+            copy_script.setObjectName(f"model_plot_script_{plot.key}")
+            copy_script.setToolTip(
+                f"Copy editable Python that reproduces the "
+                f"{plot.label.lower()} calculation."
+            )
+            copy_script.clicked.connect(
+                lambda _checked=False, model=model, key=plot.key: self._copy_model_plot_script(
+                    model, key
+                )
+            )
+            layout.addWidget(calculate, row, 0)
+            layout.addWidget(copy_script, row, 1)
         self.model_parameter_layout.addWidget(group, 9, 0, 1, 4)
 
     def _open_electronic_matrix_inspector(
@@ -20315,7 +20394,13 @@ class NfitProjectExplorer:
         if plot is None or plot.render is None:
             return False
         try:
-            result = plot.calculate(model)
+            owner = self._group_for_model(model)
+            components = {} if owner is None else owner.models
+            result = (
+                plot.context_calculate(model, components)
+                if plot.context_calculate is not None
+                else plot.calculate(model)
+            )
             if plot_key == "fermi_surface" and result.dimension == 3:
                 from .qt_fermi_surface_viewer import show_fermi_surface_result
 
@@ -20329,16 +20414,17 @@ class NfitProjectExplorer:
                     "bands": "band_structure",
                     "dos": "density_of_states",
                     "fermi_surface": "fermi_surface",
+                    "complex_energy_scan": "susceptibility",
                 }
                 window = show_electronic_figure(
                     figure,
-                    viewer_key=viewer_keys[plot_key],
+                    viewer_key=viewer_keys.get(plot_key, "model_plot"),
                     parent=self.window,
                 )
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
                 self.window,
-                "Electronic-structure plot",
+                "Model plot",
                 f"Could not calculate the plot:\n{exc}",
             )
             return False
@@ -20361,11 +20447,17 @@ class NfitProjectExplorer:
         if plot is None or plot.script is None:
             return False
         try:
-            script = plot.script(model)
+            owner = self._group_for_model(model)
+            components = {} if owner is None else owner.models
+            script = (
+                plot.context_script(model, components)
+                if plot.context_script is not None
+                else plot.script(model)
+            )
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
                 self.window,
-                "Electronic-structure script",
+                "Model plot script",
                 f"Could not create the script:\n{exc}",
             )
             return False

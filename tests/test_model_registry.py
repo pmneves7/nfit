@@ -161,7 +161,7 @@ def test_tight_binding_registry_validates_energy_unit_and_canonical_window():
     assert config["electronic_backend"] == "auto"
     assert config["electronic_workers"] == 0
     assert config["electronic_max_batch_mb"] == 256.0
-    assert config["dos_symmetry_reduce"] is False
+    assert config["dos_symmetry"] == "full"
     component = ModelComponentSpec(
         name="bands",
         type="tight_binding",

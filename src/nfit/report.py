@@ -1160,6 +1160,54 @@ def generalized_paramagnon_report_sections(
     return (("model", "\n".join(lines) + "\n"),)
 
 
+def lindhard_report_sections(
+    fit_entry: Any,
+    model: Mapping[str, Any],
+    goodness: Mapping[str, Any],
+    context: Mapping[str, Any],
+) -> tuple[tuple[str, str], ...]:
+    """Return the linked bare-response configuration and fitted broadening."""
+
+    del fit_entry, context
+    name = latex_escape(model.get("name"))
+    config = _config(model)
+    broadening, uncertainty = _param_value(goodness, model, "broadening")
+    mesh = latex_escape(config.get("response_mesh", ()))
+    shift = latex_escape(config.get("response_mesh_shift", ()))
+    source = latex_escape(config.get("electronic_component", "--"))
+    mode = latex_escape(config.get("chemical_potential_mode", "source"))
+    backend = latex_escape(config.get("response_backend", "numpy"))
+    lines = [
+        f"\\section{{Bare Lindhard spin susceptibility ({name})}}",
+        (
+            f"The response uses tight-binding component \\texttt{{{source}}} "
+            f"on the full mesh \\texttt{{{mesh}}} with mesh-step shift "
+            f"\\texttt{{{shift}}}. The chemical-potential policy is "
+            f"\\texttt{{{mode}}} and the requested eigensystem backend is "
+            f"\\texttt{{{backend}}}."
+        ),
+        "\\begin{tabular}{l l}",
+        "\\toprule",
+        "Quantity & Value \\\\",
+        "\\midrule",
+        (
+            "Lifetime broadening $\\eta$ & "
+            f"{_fmt_pm(broadening, uncertainty)} meV \\\\"
+        ),
+        (
+            "Formula units per primitive cell & "
+            f"{_fmt(config.get('formula_units_per_cell', 1.0))} \\\\"
+        ),
+        (
+            "Powder orientations & "
+            f"{_fmt(config.get('powder_orientations', 50))} \\\\"
+        ),
+        "\\bottomrule",
+        "\\end{tabular}",
+    ]
+    return (("Bare Lindhard spin susceptibility", "\n".join(lines)),)
+
+
 def tight_binding_report_sections(
     fit_entry: Any,
     model: Mapping[str, Any],

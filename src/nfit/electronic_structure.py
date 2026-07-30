@@ -962,13 +962,13 @@ def k_mesh(
     shape: Sequence[int],
     *,
     shift: Sequence[float] | None = None,
-    symmetry_reduce: bool = False,
+    symmetry: Literal["auto", "full", "reduced"] = "full",
 ) -> WavevectorSampling:
     """Build a uniform periodic integration mesh for the model dimension.
 
-    Symmetry reduction is applied only when the model carries reciprocal-space
-    operations certified by nfit's symmetry-aware orbital builder. Unsupported
-    models or meshes remain full and record why reduction was not applied.
+    ``"auto"`` reduces only when nfit can certify the model and mesh.
+    ``"full"`` always retains the original mesh. ``"reduced"`` raises rather
+    than silently falling back when reduction cannot be certified.
     """
 
     dimensions = tuple(int(value) for value in shape)
@@ -981,6 +981,8 @@ def k_mesh(
         if shift is None
         else tuple(float(value) for value in shift)
     )
+    if len(offsets) == 3 and model.dimension != 3:
+        offsets = tuple(offsets[axis] for axis in model.periodic_axes)
     if len(offsets) != model.dimension:
         raise ValueError("mesh shift must match the model dimension")
     axes = [
@@ -1000,24 +1002,35 @@ def k_mesh(
         shift=offsets,
         provenance={"provider": "uniform"},
     )
-    if not symmetry_reduce:
+    policy = str(symmetry).strip().lower()
+    if policy not in {"auto", "full", "reduced"}:
+        raise ValueError("mesh symmetry policy must be auto, full, or reduced")
+    if policy == "full":
         return full
-    return _symmetry_reduced_k_mesh(model, full)
+    return _symmetry_reduced_k_mesh(
+        model,
+        full,
+        required=policy == "reduced",
+    )
 
 
 def _symmetry_reduced_k_mesh(
     model: ElectronicModel,
     full: WavevectorSampling,
+    *,
+    required: bool,
 ) -> WavevectorSampling:
     metadata = model.provenance.get("reciprocal_symmetry", {})
 
     def unchanged(reason: str) -> WavevectorSampling:
+        if required:
+            raise ValueError(f"mesh symmetry reduction is not certified: {reason}")
         return replace(
             full,
             provenance={
                 **dict(full.provenance),
                 "symmetry_reduction": {
-                    "requested": True,
+                    "policy": "auto",
                     "applied": False,
                     "reason": reason,
                 },
@@ -1082,7 +1095,7 @@ def _symmetry_reduced_k_mesh(
         provenance={
             **dict(full.provenance),
             "symmetry_reduction": {
-                "requested": True,
+                "policy": "reduced" if required else "auto",
                 "applied": True,
                 "full_size": int(indices.shape[0]),
                 "irreducible_size": int(unique.size),

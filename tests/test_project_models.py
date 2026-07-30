@@ -140,6 +140,39 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
     explorer.window.close()
 
 
+def test_lindhard_editor_selects_a_sibling_electronic_model(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Electronic")
+    source = create_model_component(group, "bands", type="tight_binding")
+    response = create_model_component(group, "response", type="lindhard")
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer._refresh_tree(select_group=group, select_model=response)
+
+    selector = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox,
+        "lindhard_electronic_component",
+    )
+    assert selector is not None and selector.toolTip()
+    assert selector.findData(source.name) >= 0
+    selector.setCurrentIndex(selector.findData(source.name))
+    assert response.config["electronic_component"] == source.name
+
+    plot_button = explorer.model_parameter_widget.findChild(
+        QtWidgets.QPushButton,
+        "model_plot_complex_energy_scan",
+    )
+    script_button = explorer.model_parameter_widget.findChild(
+        QtWidgets.QPushButton,
+        "model_plot_script_complex_energy_scan",
+    )
+    assert plot_button is not None and plot_button.toolTip()
+    assert script_button is not None and script_button.toolTip()
+    explorer.has_unsaved_changes = False
+    explorer.window.close()
+
+
 def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")

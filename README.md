@@ -12,6 +12,9 @@ The package provides:
 - local, MMP, generalized-paramagnon/damped-mode, and Heisenberg-RPA
   spin-fluctuation models for inelastic, quasistatic elastic, and optional
   bulk-response comparisons;
+- a linked bare Lindhard response with complex multiband susceptibility,
+  Cartesian spin and neutron projections, fixed-filling support, full-mesh
+  reference evaluation, fitting, model-owned plots, and editable scripts;
 - CIF/manual crystal geometry and arbitrary manual or Wannier90 tight-binding
   models with explicit local orbital frames, site-point-group harmonic
   subspaces, symmetry-allowed onsite terms, selectable orbital-explicit

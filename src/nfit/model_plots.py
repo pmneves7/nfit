@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
@@ -129,6 +129,193 @@ def generalized_paramagnon_energy_scan_script(
     )
 
 
+def lindhard_energy_scan_unbound(component: Any) -> Any:
+    """Explain why a linked electronic component is required."""
+
+    raise ValueError(
+        f"{component.name!r} must be calculated with its referenced "
+        "tight-binding component"
+    )
+
+
+def _lindhard_source(
+    component: Any,
+    components: Mapping[str, Any],
+) -> Any:
+    config = component.config if isinstance(component.config, dict) else {}
+    source_name = str(config.get("electronic_component", "")).strip()
+    source = components.get(source_name)
+    if source is None or getattr(source, "type", None) != "tight_binding":
+        raise ValueError(
+            f"{component.name!r} must reference an enabled tight-binding component"
+        )
+    return source
+
+
+def lindhard_energy_scan(
+    component: Any,
+    components: Mapping[str, Any],
+) -> Any:
+    """Calculate the configured complex bare spin-response energy scan."""
+
+    from .electronic_response import (
+        bare_spin_susceptibility,
+        chemical_potential_for_filling,
+    )
+
+    source = _lindhard_source(component, components)
+    model = electronic_model_from_component(source)
+    config = component.config
+    energy = np.linspace(
+        float(config.get("plot_energy_min_meV", -100.0)),
+        float(config.get("plot_energy_max_meV", 100.0)),
+        int(config.get("plot_energy_points", 401)),
+    )
+    Q = np.broadcast_to(
+        np.asarray(config.get("plot_q_reduced", [0.0, 0.0, 0.0]), dtype=float),
+        (energy.size, 3),
+    )
+    mesh = k_mesh(
+        model,
+        config.get("response_mesh", [16, 16, 16]),
+        shift=config.get("response_mesh_shift", [0.0, 0.0, 0.0]),
+        symmetry="full",
+    )
+    temperature = float(config.get("plot_temperature_K", 10.0))
+    execution = {
+        "backend": str(config.get("response_backend", "numpy")),
+        "workers": int(config.get("response_workers", 1)),
+        "max_batch_bytes": int(
+            float(config.get("response_max_batch_mb", 256.0)) * 1024**2
+        ),
+    }
+    if str(config.get("chemical_potential_mode", "source")) == "filling":
+        mu = chemical_potential_for_filling(
+            model,
+            mesh,
+            float(config.get("filling_per_cell", 1.0)),
+            temperature_K=temperature,
+            **execution,
+        )
+    else:
+        mu = float(source.config.get("chemical_potential_meV", 0.0))
+    return bare_spin_susceptibility(
+        model,
+        Q,
+        energy,
+        mesh,
+        temperature_K=temperature,
+        chemical_potential_meV=mu,
+        broadening_meV=float(component.parameters.get("broadening", 5.0)),
+        **execution,
+    )
+
+
+def render_lindhard_energy_scan(
+    result: Any,
+    *,
+    axes: Sequence[Any] | None = None,
+) -> tuple[Any, tuple[Any, Any]]:
+    """Render real and imaginary isotropic bare spin susceptibility."""
+
+    import matplotlib.pyplot as plt
+
+    from .electronic_response import isotropic_spin_component
+
+    if axes is None:
+        figure, created_axes = plt.subplots(2, 1, sharex=True)
+        real_axis, imaginary_axis = created_axes
+    else:
+        if len(axes) != 2:
+            raise ValueError("axes must contain real and imaginary axes")
+        real_axis, imaginary_axis = axes
+        figure = real_axis.figure
+    response = isotropic_spin_component(result)
+    real_axis.plot(result.energy_meV, response.real)
+    imaginary_axis.plot(result.energy_meV, response.imag)
+    real_axis.set_ylabel(r"$\chi'_{\mathrm{iso}}$ (meV$^{-1}$ cell$^{-1}$)")
+    imaginary_axis.set_ylabel(
+        r"$\chi''_{\mathrm{iso}}$ (meV$^{-1}$ cell$^{-1}$)"
+    )
+    imaginary_axis.set_xlabel("Energy transfer (meV)")
+    Q = np.asarray(result.Q_reduced[0], dtype=float)
+    real_axis.set_title(
+        rf"Bare spin response at $Q=({Q[0]:g},{Q[1]:g},{Q[2]:g})$ r.l.u."
+    )
+    figure.tight_layout()
+    return figure, (real_axis, imaginary_axis)
+
+
+def lindhard_energy_scan_script_unbound(component: Any) -> str:
+    """Explain why a linked electronic component is required."""
+
+    lindhard_energy_scan_unbound(component)
+    raise AssertionError("unreachable")
+
+
+def lindhard_energy_scan_script(
+    component: Any,
+    components: Mapping[str, Any],
+) -> str:
+    """Return an editable GUI-free script for a bare response energy scan."""
+
+    source = _lindhard_source(component, components)
+    config = component.config
+    lines = _component_model_script(source)
+    lines.extend(
+        [
+            "import numpy as np",
+            "from nfit import (",
+            "    bare_spin_susceptibility,",
+            "    chemical_potential_for_filling,",
+            "    k_mesh,",
+            ")",
+            "from nfit.model_plots import render_lindhard_energy_scan",
+            "",
+            f"mesh_shape = {config.get('response_mesh', [16, 16, 16])!r}",
+            f"mesh_shift = {config.get('response_mesh_shift', [0.0, 0.0, 0.0])!r}",
+            "mesh = k_mesh(model, mesh_shape, shift=mesh_shift, symmetry='full')",
+            f"temperature_K = {float(config.get('plot_temperature_K', 10.0))!r}",
+            f"energy_meV = np.linspace({float(config.get('plot_energy_min_meV', -100.0))!r}, {float(config.get('plot_energy_max_meV', 100.0))!r}, {int(config.get('plot_energy_points', 401))!r})",
+            f"Q_reduced = np.broadcast_to(np.asarray({config.get('plot_q_reduced', [0.0, 0.0, 0.0])!r}, dtype=float), (energy_meV.size, 3))",
+            f"backend = {str(config.get('response_backend', 'numpy'))!r}",
+            f"workers = {int(config.get('response_workers', 1))!r}",
+            f"max_batch_bytes = {int(float(config.get('response_max_batch_mb', 256.0)) * 1024**2)!r}",
+        ]
+    )
+    if str(config.get("chemical_potential_mode", "source")) == "filling":
+        lines.extend(
+            [
+                "chemical_potential_meV = chemical_potential_for_filling(",
+                f"    model, mesh, {float(config.get('filling_per_cell', 1.0))!r},",
+                "    temperature_K=temperature_K, backend=backend,",
+                "    workers=workers, max_batch_bytes=max_batch_bytes,",
+                ")",
+            ]
+        )
+    else:
+        lines.append(
+            "chemical_potential_meV = "
+            f"{float(source.config.get('chemical_potential_meV', 0.0))!r}"
+        )
+    lines.extend(
+        [
+            "result = bare_spin_susceptibility(",
+            "    model, Q_reduced, energy_meV, mesh,",
+            "    temperature_K=temperature_K,",
+            "    chemical_potential_meV=chemical_potential_meV,",
+            f"    broadening_meV={float(component.parameters.get('broadening', 5.0))!r},",
+            "    backend=backend, workers=workers,",
+            "    max_batch_bytes=max_batch_bytes,",
+            ")",
+            "figure, axes = render_lindhard_energy_scan(result)",
+            "figure.show()",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _projection_groups(component: Any) -> dict[str, list[int]]:
     config = component.config if isinstance(component.config, dict) else {}
     raw = config.get("projection_groups", {})
@@ -225,12 +412,16 @@ def tight_binding_density_of_states(component: Any) -> DensityOfStatesResult:
     model = electronic_model_from_component(component)
     config = component.config
     projections = _projection_groups(component)
+    symmetry = str(config.get("dos_symmetry", "full"))
+    if projections and symmetry == "reduced":
+        raise ValueError(
+            "projected DOS cannot require symmetry reduction because an "
+            "arbitrary orbital projector need not be symmetry invariant"
+        )
     mesh = k_mesh(
         model,
         config.get("dos_mesh", [40, 40, 40]),
-        symmetry_reduce=bool(
-            config.get("dos_symmetry_reduce", False) and not projections
-        ),
+        symmetry="full" if projections else symmetry,
     )
     energy_min = float(config.get("dos_energy_min_meV", -500.0))
     energy_max = float(config.get("dos_energy_max_meV", 500.0))
@@ -476,9 +667,14 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
     max_batch_bytes = int(
         float(config.get("electronic_max_batch_mb", 256.0)) * 1024**2
     )
-    dos_symmetry_reduce = bool(
-        config.get("dos_symmetry_reduce", False) and not projections
-    )
+    dos_symmetry = str(config.get("dos_symmetry", "full"))
+    if projections and dos_symmetry == "reduced":
+        raise ValueError(
+            "projected DOS cannot require symmetry reduction because an "
+            "arbitrary orbital projector need not be symmetry invariant"
+        )
+    if projections:
+        dos_symmetry = "full"
     lines.extend(
         [
             "from nfit import electronic_energy_to_meV",
@@ -537,7 +733,7 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
                 "import numpy as np",
                 "from nfit import density_of_states, k_mesh",
                 "from nfit.model_plots import render_density_of_states",
-                f"mesh = k_mesh(model, {config.get('dos_mesh', [40, 40, 40])!r}, symmetry_reduce={dos_symmetry_reduce!r})",
+                f"mesh = k_mesh(model, {config.get('dos_mesh', [40, 40, 40])!r}, symmetry={dos_symmetry!r})",
                 f"energy = np.linspace({energy_min!r}, {energy_max!r}, {int(config.get('dos_energy_points', 600))!r})",
                 "energy_meV = electronic_energy_to_meV(energy, energy_unit)",
                 f"broadening = {broadening!r}",

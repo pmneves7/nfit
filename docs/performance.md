@@ -113,10 +113,12 @@ Immutable electronic models cache their reciprocal lattice, parameter-resolved
 real-space blocks, and scientific digest. Updating a named coefficient creates
 a new model and therefore a new cache.
 
-For total DOS, `k_mesh(..., symmetry_reduce=True)` can use exact orbit
-multiplicities from a GUI-built model's certified reciprocal symmetry. The
-default remains the full mesh. Wannier90 models, reduced-dimensional meshes,
-incompatible shifts, and component-level projected DOS retain full sampling.
+For total DOS, `k_mesh(..., symmetry="auto")` can use exact orbit
+multiplicities from a GUI-built model's certified reciprocal symmetry.
+`symmetry="full"` is the default, while `"reduced"` fails if reduction cannot
+be certified. Wannier90 models, reduced-dimensional meshes, incompatible
+shifts, and component-level projected DOS retain full sampling in automatic
+mode.
 Fermi-surface extraction also retains a regular full grid because marching
 contours require its topology.
 

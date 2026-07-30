@@ -1,8 +1,8 @@
 # Electronic-response design contract
 
 This page fixes the architecture and conventions for nfit's tight-binding and
-itinerant spin-response models. Stages 0--3 are implemented; later response and
-interaction stages remain an implementation contract. Electronic Hamiltonians
+itinerant spin-response models. Stages 0--4 are implemented; later interaction
+and advanced-response stages remain an implementation contract. Electronic Hamiltonians
 are listed under
 [Electronic-structure models](electronic_structure_models.md), while response
 models are listed under [Spin-fluctuation models](spin_fluctuation_models.md).
@@ -433,7 +433,7 @@ produce a magnetic susceptibility receive daughter pages under
 user testing only after its public API, GUI behavior where applicable,
 workflow script, fit-result export, documentation, and validation tests agree.
 
-Stages 0--3 are implemented. The generalized-paramagnon model supplies the
+Stages 0--4 are implemented. The generalized-paramagnon model supplies the
 Stage 2 relaxational and damped-propagating limits through one causal complex
 response. Stage 3 supplies arbitrary orthonormal electronic models, native
 Wannier90 import, shared path and mesh sampling, bands and orbital projections,
@@ -448,5 +448,16 @@ Hamiltonians, hopping-path inspection, and a labelled primitive-lattice
 first-Brillouin-zone viewer using the configured band path.
 Stage 3.4 connects every generated onsite and hopping coefficient to the
 common parameter values, bounds, fit selections, dataset-sharing rules,
-reports, and builder scripts. Tight binding remains calculation-only until the
-Stage 4 response supplies a dataset observable.
+reports, and builder scripts.
+
+Stage 4 supplies the generalized complex Lindhard kernel, ordered
+orbital-pair operators and conjugate maps, explicit or implicit Cartesian spin
+projection, extended-zone orbital-center phases, and the neutron polarization
+contraction. The `lindhard` response component references a sibling
+`tight_binding` component. The fit compiler treats that electronic component
+as a parameter-providing dependency, not as a second dataset observable.
+Finite temperature, source chemical potential or fixed filling, lifetime
+broadening, full-mesh NumPy reference evaluation, bulk and neutron dataset
+comparison, model-owned plotting, editable scripts, and portable response
+serialization are implemented. Response-level symmetry reduction and
+transition chunking remain Stage 6 work.

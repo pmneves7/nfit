@@ -111,6 +111,43 @@ def test_tight_binding_report_lists_named_parameter_state():
     _check_balanced_environments(tex)
 
 
+def test_lindhard_report_records_linked_response_configuration():
+    entry = _background_entry()
+    entry.snapshot["models"] = [
+        {
+            "name": "response",
+            "type": "lindhard",
+            "enabled": True,
+            "parameters": {"broadening": 2.0},
+            "config": {
+                "electronic_component": "bands",
+                "response_mesh": [24, 24, 12],
+                "response_mesh_shift": [0.5, 0.5, 0.0],
+                "chemical_potential_mode": "filling",
+                "response_backend": "numpy",
+                "formula_units_per_cell": 2.0,
+                "powder_orientations": 96,
+            },
+            "fit_parameters": {"broadening": True},
+            "sharing": {},
+            "limits": {},
+            "constraints": [],
+            "applies_to": None,
+            "metadata": {},
+        }
+    ]
+    entry.goodness["parameters"] = {"response.broadening": 1.8}
+    entry.goodness["stderr"] = {"response.broadening": 0.2}
+
+    tex = render_fit_report_latex(entry, group_name="Electronic")
+
+    assert r"\section{Bare Lindhard spin susceptibility (response)}" in tex
+    assert r"\texttt{bands}" in tex
+    assert "1.80" in tex
+    assert "96" in tex
+    _check_balanced_environments(tex)
+
+
 def _full_rpa_entry():
     """A synthetic full-featured heisenberg_rpa fit entry."""
     sym = [[0.1, 0.2, 0.0], [0.2, -0.1, 0.0], [0.0, 0.0, 0.0]]

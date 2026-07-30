@@ -1,6 +1,6 @@
 # Spin-fluctuation models
 
-nfit provides four magnetic-response models. Start with the least structured
+nfit provides five magnetic-response models. Start with the least structured
 response that resolves the features in the data. Electronic Hamiltonians are
 documented separately under
 [Electronic-structure models](electronic_structure_models.md).
@@ -11,6 +11,7 @@ documented separately under
 | `mmp_relaxational` | $\chi=\chi_{\rm pk}/(1+\xi^2q^2-iE/E_{\rm sf})$ | One isotropic peak in a nearly antiferromagnetic metal | Single-crystal neutron scattering; extrapolated bulk linear response |
 | `generalized_paramagnon` | $\chi=(\chi_{\rm pk}/A)/(1-a_EE^2/A-iE/[\Gamma_0A^z])$ | Anisotropic peaks, critical slowing down, and damped propagating modes | Single-crystal and powder neutron scattering; extrapolated bulk linear response |
 | `heisenberg_rpa` | $\boldsymbol\chi=[\mathbb 1-\chi_0J(\mathbf Q)]^{-1}\chi_0$ | Dispersive fluctuations constrained by a crystal and exchange network | Single-crystal and powder neutron scattering; bulk linear response |
+| `lindhard` | $\chi^0=-\sum_{\mathbf k,n,m}(f_{n\mathbf k}-f_{m,\mathbf k+\mathbf q})M_AM_B^*/(E+\epsilon_{n\mathbf k}-\epsilon_{m,\mathbf k+\mathbf q}+i\eta)$ | Bare particle--hole response of a linked tight-binding model | Single-crystal and powder neutron scattering; bulk linear response |
 
 ```{toctree}
 :maxdepth: 1
@@ -20,11 +21,12 @@ local_relaxational
 mmp_relaxational
 generalized_paramagnon
 heisenberg_rpa
+lindhard
 ```
 
-For inelastic data, each magnetic-response kernel returns one Cartesian
-component of the dissipative spin susceptibility
-$\chi''_s(\mathbf Q,E)$ in `spin^2/meV`.
+For inelastic data, each magnetic-response kernel supplies the dissipative
+spin susceptibility $\chi''_s(\mathbf Q,E)$ in `spin^2/meV` in its documented
+site, formula-unit, or primitive-cell normalization.
 The dataset convention determines
 whether nfit compares that response directly with $\chi''$ data or converts it
 to a neutron cross section. See [Physics conventions](physics_conventions.md)
@@ -36,7 +38,8 @@ Backgrounds are separate additive model components.
 The [local relaxational](local_relaxational.md),
 [MMP relaxational](mmp_relaxational.md),
 [generalized paramagnon](generalized_paramagnon.md), and
-[Heisenberg RPA](heisenberg_rpa.md) pages define their parameters, complex
+[Heisenberg RPA](heisenberg_rpa.md), and
+[bare Lindhard](lindhard.md) pages define their parameters, complex
 susceptibilities, dissipative responses, elastic limits, scripts, and
 references.
 

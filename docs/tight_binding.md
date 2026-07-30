@@ -196,7 +196,7 @@ dictionaries can be entered directly in the model editor.
 | `band_path_metadata` | provider, version, convention, and symmetry tolerance for an automatic path | `{}` until a path is generated | `{"provider": "seekpath", "provider_version": "2.2.1", "convention": "HPKOT", "symprec": 1e-5}` |
 | `band_points_per_segment` | interpolation intervals in each path segment | `60` | `80` |
 | `dos_mesh` | uniform mesh sizes, one per periodic axis or one per lattice axis | `[40, 40, 40]` | `[80, 80]` for a two-dimensional model |
-| `dos_symmetry_reduce` | use an nfit-certified symmetry-unique mesh for total DOS; projected or unsupported calculations retain the full mesh | `false` | `true` |
+| `dos_symmetry` | total-DOS mesh policy: full mesh, certified automatic reduction, or required certified reduction | `"full"` | `"full"`, `"auto"`, or `"reduced"` |
 | `dos_energy_min_meV` | canonical lower absolute energy sampled for the DOS | `-500.0` | `-250.0` |
 | `dos_energy_max_meV` | canonical upper absolute energy sampled for the DOS | `500.0` | `250.0` |
 | `dos_energy_points` | number of DOS energy samples, at least two | `600` | `1000` |
@@ -229,9 +229,11 @@ Meshes carry normalized integration weights, dimensions, and shifts. Fermi
 surface results retain vertices in both reduced and physical reciprocal
 coordinates.
 
-This stage does not yet calculate neutron intensity, bulk susceptibility, or a
-fit observable. The generalized Lindhard response and its magnetic projections
-are Stage 4; interaction dressings are Stage 5.
+The tight-binding component itself remains an electronic-structure provider,
+not an additive dataset observable. A separate
+[bare Lindhard response](lindhard.md) can reference it to calculate neutron
+intensity or bulk susceptibility and to fit the electronic coefficients
+through that response. Interaction dressings are Stage 5.
 
 ## Structure-first orbital, onsite, and hopping builder
 
@@ -770,7 +772,7 @@ The calculation arguments beyond the `model` itself are:
 | `band_path.points_per_segment` | positive interpolation-interval count | `80` |
 | `k_mesh.shape` | positive size for each periodic axis, or three lattice-axis sizes | `[80, 80]` |
 | `k_mesh.shift` | optional offset in mesh steps for each periodic axis | `[0.5, 0.5]` for a half-step shift |
-| `k_mesh.symmetry_reduce` | request an nfit-certified irreducible integration mesh; unsupported cases return the full mesh with a provenance reason | `True` |
+| `k_mesh.symmetry` | choose `"full"`, certified `"auto"` reduction with fallback, or required `"reduced"` sampling | `"auto"` |
 | `calculate_bands.sampling` | `WavevectorSampling` path or mesh | `path` or `mesh` from the functions above |
 | `calculate_bands.chemical_potential_meV` | energy stored as the plotting reference | `12.5` |
 | `calculate_bands.projections` | optional named zero-based basis-index groups | `{"d": [0, 1]}` |
@@ -818,13 +820,15 @@ calculations use `eigvalsh` and avoid constructing eigenvectors. Projected
 bands, projected DOS, and projected Fermi surfaces still calculate the
 eigenvectors they require.
 
-`k_mesh(..., symmetry_reduce=True)` reduces only a three-dimensional uniform
-mesh with reciprocal operations certified by nfit's symmetry-aware orbital
+`k_mesh(..., symmetry="auto")` reduces only a three-dimensional uniform mesh
+with reciprocal operations certified by nfit's symmetry-aware orbital
 builder. It retains exact orbit multiplicities as integration weights.
-Wannier90 imports and incompatible shifts safely return the full mesh.
-The component-level option is limited to total DOS because an arbitrary
-orbital projection need not be invariant under the crystal symmetry. It is
-off by default, preserving the previous full-mesh summation order.
+Wannier90 imports and incompatible shifts safely return the full mesh in
+automatic mode. `symmetry="reduced"` instead raises an error when that
+certification is unavailable. The component-level option is limited to total
+DOS because an arbitrary orbital projection need not be invariant under the
+crystal symmetry. It defaults to `"full"`, preserving the full-mesh summation
+order.
 
 The band-structure, density-of-states, and Fermi-surface viewers use a common
 two-column window: the interactive plot and its Matplotlib navigation toolbar
