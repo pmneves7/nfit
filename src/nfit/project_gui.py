@@ -78,8 +78,9 @@ from .mdhisto import (
     mdhisto_measured_bins,
 )
 from .model_registry import (
+    MODEL_CATEGORY_LABELS,
     MODEL_TYPE_REGISTRY,
-    available_model_types,
+    available_model_categories,
     default_model_config,
     default_model_fit_parameters,
     default_model_parameters,
@@ -87,6 +88,7 @@ from .model_registry import (
     model_definition,
     model_parameter_tooltip,
     model_plot_definitions,
+    model_types_in_category,
 )
 from .pipeline import (
     BackgroundSpec,
@@ -9432,6 +9434,8 @@ class NfitProjectExplorer:
         self.mask_parameter_widget = None
         self.mask_parameter_layout = None
         self.mask_application_status_label = None
+        self.model_selector_widget = None
+        self.model_category_combo = None
         self.model_type_combo = None
         self.model_parameter_scroll = None
         self.model_parameter_widget = None
@@ -12659,10 +12663,30 @@ class NfitProjectExplorer:
         self.mask_parameter_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
         self.mask_parameter_layout.setColumnStretch(1, 1)
         model_combo_class = _make_refreshing_combo_class()
+        self.model_selector_widget = QtWidgets.QWidget()
+        self.model_selector_widget.setObjectName("model_selector_widget")
+        model_selector_layout = QtWidgets.QHBoxLayout(
+            self.model_selector_widget
+        )
+        model_selector_layout.setContentsMargins(0, 0, 0, 0)
+        model_selector_layout.setSpacing(8)
+        self.model_category_combo = QtWidgets.QComboBox()
+        self.model_category_combo.setObjectName("model_category_combo")
+        self.model_category_combo.setToolTip(
+            "Choose a broad model family. The model list on the right is "
+            "filtered to this category."
+        )
+        self.model_category_combo.currentIndexChanged.connect(
+            self._set_selected_model_category
+        )
         self.model_type_combo = model_combo_class(self._refresh_model_type_combo)
         self.model_type_combo.setObjectName("model_type_combo")
-        self.model_type_combo.setToolTip("Choose the model function used by the selected model component.")
+        self.model_type_combo.setToolTip(
+            "Choose the model function within the selected category."
+        )
         self.model_type_combo.currentTextChanged.connect(self._set_selected_model_type)
+        model_selector_layout.addWidget(self.model_category_combo, 1)
+        model_selector_layout.addWidget(self.model_type_combo, 2)
         self.model_parameter_scroll = QtWidgets.QScrollArea()
         self.model_parameter_scroll.setObjectName("model_parameter_scroll")
         self.model_parameter_scroll.setWidgetResizable(True)
@@ -12933,7 +12957,7 @@ class NfitProjectExplorer:
         right_layout.addLayout(title_row)
         right_layout.addWidget(self.mask_type_combo)
         right_layout.addWidget(self.mask_parameter_widget)
-        right_layout.addWidget(self.model_type_combo)
+        right_layout.addWidget(self.model_selector_widget)
         right_layout.addWidget(self.model_parameter_scroll, 5)
         right_layout.addWidget(self.fit_editor_widget)
         right_layout.addWidget(self.details_scroll, 1)
@@ -13475,7 +13499,7 @@ class NfitProjectExplorer:
         mask_editing = role in {"mask", "group_mask"}
         self.mask_type_combo.setVisible(mask_editing)
         self.mask_parameter_widget.setVisible(mask_editing)
-        self.model_type_combo.setVisible(role == "model")
+        self.model_selector_widget.setVisible(role == "model")
         self.model_parameter_scroll.setVisible(role == "model")
         # The dedicated model editor already contains the selected model's
         # settings. Let it use the generic-details area rather than leaving a
@@ -18877,11 +18901,47 @@ class NfitProjectExplorer:
         self._rebuild_mask_parameter_editor(mask, _entry)
         return True
 
-    def _refresh_model_type_combo(self) -> None:
-        current = self.model_type_combo.currentData()
+    def _refresh_model_category_combo(
+        self,
+        selected_category: str | None = None,
+    ) -> None:
+        current = (
+            selected_category
+            if selected_category is not None
+            else self.model_category_combo.currentData()
+        )
+        self.model_category_combo.blockSignals(True)
+        self.model_category_combo.clear()
+        for category in available_model_categories():
+            self.model_category_combo.addItem(
+                MODEL_CATEGORY_LABELS[category],
+                category,
+            )
+        index = self.model_category_combo.findData(current)
+        self.model_category_combo.setCurrentIndex(max(index, 0))
+        self.model_category_combo.blockSignals(False)
+
+    def _refresh_model_type_combo(
+        self,
+        selected_type: str | None = None,
+        *,
+        include_placeholder: bool = False,
+    ) -> None:
+        current = (
+            selected_type
+            if selected_type is not None
+            else self.model_type_combo.currentData()
+        )
+        category = self.model_category_combo.currentData()
         self.model_type_combo.blockSignals(True)
         self.model_type_combo.clear()
-        for type_name in available_model_types():
+        if include_placeholder or current is None:
+            self.model_type_combo.addItem("Choose model…", None)
+        for type_name in (
+            model_types_in_category(str(category))
+            if category is not None
+            else ()
+        ):
             self.model_type_combo.addItem(model_definition(type_name).label, type_name)
         if current is not None:
             index = self.model_type_combo.findData(current)
@@ -18890,12 +18950,29 @@ class NfitProjectExplorer:
         self.model_type_combo.blockSignals(False)
 
     def _sync_model_editor(self, model: ModelComponentSpec) -> None:
-        self._refresh_model_type_combo()
-        index = self.model_type_combo.findData(model.type)
-        self.model_type_combo.blockSignals(True)
-        self.model_type_combo.setCurrentIndex(max(index, 0))
-        self.model_type_combo.blockSignals(False)
+        category = model_definition(model.type).category
+        self._refresh_model_category_combo(category)
+        self._refresh_model_type_combo(model.type)
         self._rebuild_model_parameter_editor(model)
+
+    def _set_selected_model_category(self, _index: int) -> None:
+        category = self.model_category_combo.currentData()
+        if category is None:
+            return
+        _group, _entry, _mask, model, role = self._objects_for_item(
+            self._current_item()
+        )
+        selected_type = (
+            model.type
+            if role == "model"
+            and model is not None
+            and model_definition(model.type).category == category
+            else None
+        )
+        self._refresh_model_type_combo(
+            selected_type,
+            include_placeholder=selected_type is None,
+        )
 
     def _set_selected_model_type(self, _label: str) -> None:
         group, _entry, _mask, model, role = self._objects_for_item(self._current_item())

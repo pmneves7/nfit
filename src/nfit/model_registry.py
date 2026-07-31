@@ -15,24 +15,57 @@ from dataclasses import dataclass, field
 from typing import Any
 
 __all__ = [
+    "MODEL_CATEGORY_LABELS",
     "MODEL_TYPE_REGISTRY",
     "ModelConfigDefinition",
     "ModelDefinition",
     "ModelFieldDefinition",
     "ModelParameterDefinition",
     "ModelPlotDefinition",
+    "available_model_categories",
     "available_model_types",
     "default_model_config",
     "default_model_fit_parameters",
     "default_model_parameters",
     "model_config_tooltip",
     "model_definition",
+    "model_types_in_category",
     "model_parameter_tooltip",
     "model_plot_definitions",
     "register_model_definition",
     "serialize_model_component",
     "validate_model_component",
 ]
+
+MODEL_CATEGORY_LABELS: Mapping[str, str] = {
+    "primitive": "Primitive models",
+    "spin_fluctuation": "Spin fluctuations",
+    "electronic_structure": "Electronic structure",
+    "heat_capacity": "Heat capacity",
+    "magnetization": "Magnetization",
+}
+
+_MODEL_CATEGORY_PREFERRED_ORDER: Mapping[str, tuple[str, ...]] = {
+    "primitive": ("constant_background", "linear_background"),
+    "spin_fluctuation": (
+        "local_relaxational",
+        "mmp_relaxational",
+        "generalized_paramagnon",
+        "heisenberg_rpa",
+    ),
+    "electronic_structure": (
+        "tight_binding",
+        "lindhard",
+        "stoner_rpa",
+        "matrix_rpa",
+        "hubbard_hund_rpa",
+    ),
+    "heat_capacity": (
+        "debye_heat_capacity",
+        "low_temperature_heat_capacity",
+    ),
+    "magnetization": ("curie_weiss",),
+}
 
 ModelFactory = Callable[[Any], Callable[..., Any]]
 ContextModelFactory = Callable[
@@ -130,7 +163,7 @@ class ModelDefinition:
     parameter_fields: tuple[ModelParameterDefinition, ...] = ()
     config_fields: tuple[ModelConfigDefinition, ...] = ()
     version: int = 1
-    category: str = "physical"
+    category: str = "primitive"
     dynamic_parameters: DynamicParameters | None = None
     dynamic_parameter_description: str = "Configuration-derived fit parameter {name}."
     dynamic_parameter_unit: str = ""
@@ -178,6 +211,11 @@ def register_model_definition(
         raise ValueError("model type key cannot be empty")
     if definition.key in MODEL_TYPE_REGISTRY and not replace:
         raise ValueError(f"model type {definition.key!r} is already registered")
+    if definition.category not in MODEL_CATEGORY_LABELS:
+        raise ValueError(
+            f"model type {definition.key!r} has unknown category "
+            f"{definition.category!r}"
+        )
     if definition.version < 1:
         raise ValueError(f"model type {definition.key!r} has an invalid version")
     if not definition.data_types:
@@ -298,6 +336,30 @@ def available_model_types() -> tuple[str, ...]:
     """Return model type keys in registration order."""
 
     return tuple(MODEL_TYPE_REGISTRY)
+
+
+def available_model_categories() -> tuple[str, ...]:
+    """Return model-selector category keys in display order."""
+
+    return tuple(MODEL_CATEGORY_LABELS)
+
+
+def model_types_in_category(category: str) -> tuple[str, ...]:
+    """Return registered model types belonging to one selector category."""
+
+    if category not in MODEL_CATEGORY_LABELS:
+        raise KeyError(f"unknown model category {category!r}")
+    registered = tuple(
+        key
+        for key, definition in MODEL_TYPE_REGISTRY.items()
+        if definition.category == category
+    )
+    preferred = tuple(
+        key
+        for key in _MODEL_CATEGORY_PREFERRED_ORDER.get(category, ())
+        if key in registered
+    )
+    return preferred + tuple(key for key in registered if key not in preferred)
 
 
 def default_model_parameters(type_name: str) -> dict[str, Any]:
@@ -682,7 +744,7 @@ def _register_builtin_models() -> None:
             key="constant_background",
             label="Constant background",
             description="Measured-intensity background that is constant across Q and energy.",
-            category="background",
+            category="primitive",
             data_types=("*",),
             factory=_fit_factory("_constant_background_factory"),
             jacobian_factory=_fit_jacobian_factory(
@@ -706,7 +768,7 @@ def _register_builtin_models() -> None:
             key="linear_background",
             label="Linear background",
             description="Measured-intensity background linear in energy transfer.",
-            category="background",
+            category="primitive",
             data_types=("single_crystal_inelastic", "powder_inelastic"),
             factory=_fit_factory("_linear_background_factory"),
             jacobian_factory=_fit_jacobian_factory(
@@ -1306,7 +1368,7 @@ def _register_builtin_models() -> None:
                 "Generalized complex particle-hole response projected onto "
                 "physical spin operators from a referenced tight-binding model."
             ),
-            category="spin_fluctuation",
+            category="electronic_structure",
             data_types=(
                 "single_crystal_inelastic",
                 "powder_inelastic",
@@ -1924,7 +1986,7 @@ def _register_builtin_models() -> None:
                 "Isotropic scalar interaction dressing of a referenced bare "
                 "Lindhard spin susceptibility."
             ),
-            category="spin_fluctuation",
+            category="electronic_structure",
             data_types=rpa_data_types,
             factory=_fit_factory("_rpa_unbound_factory"),
             context_factory=_fit_context_factory("_stoner_rpa_factory"),
@@ -1966,7 +2028,7 @@ def _register_builtin_models() -> None:
                 "User-defined Hermitian spin-channel interaction matrix dressing "
                 "of a referenced bare Lindhard response."
             ),
-            category="spin_fluctuation",
+            category="electronic_structure",
             data_types=rpa_data_types,
             factory=_fit_factory("_rpa_unbound_factory"),
             context_factory=_fit_context_factory("_matrix_rpa_factory"),
@@ -2028,7 +2090,7 @@ def _register_builtin_models() -> None:
                 "Local multiorbital spin-channel RPA dressing on selected "
                 "site-attached correlated shells."
             ),
-            category="spin_fluctuation",
+            category="electronic_structure",
             data_types=rpa_data_types,
             factory=_fit_factory("_rpa_unbound_factory"),
             context_factory=_fit_context_factory("_hubbard_hund_rpa_factory"),

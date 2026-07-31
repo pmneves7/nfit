@@ -89,14 +89,19 @@ component. Each registered definition supplies:
 tooltips derive from the same definitions, and project saving, workflow export,
 diagnostics, reports, and model-owned plots resolve their hooks there. This
 keeps an extension scriptable even when it also supplies GUI presentation.
+The registry category must be one of `primitive`, `spin_fluctuation`,
+`electronic_structure`, `heat_capacity`, or `magnetization`; it drives the
+left tier of the GUI model selector. `model_types_in_category` supplies the
+filtered right tier. Electronic response components, including Lindhard and
+its interaction dressings, use `electronic_structure`.
 
 Register a definition with `register_model_definition`. Registration validates
 duplicate fields, bounds, and plot keys. Extension code should register during
 package initialization, before loading projects that use its type key. A
-scientific model still needs a focused documentation page under
-[Spin-fluctuation models](spin_fluctuation_models.md), validation against known
-limits, and workflow-equivalence tests; registry membership alone is not a
-physics validation.
+scientific model still needs a focused page in the appropriate spin,
+electronic, heat-capacity, or magnetization documentation section, validation
+against known limits, and workflow-equivalence tests; registry membership
+alone is not a physics validation.
 
 An optional external engine such as Sunny or PyCrystalField uses the same
 contract. Its model factory calls a public adapter function, while `config` and

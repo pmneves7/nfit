@@ -123,7 +123,7 @@ def test_every_physical_model_has_a_standard_documentation_page():
     physical = [
         definition
         for definition in MODEL_TYPE_REGISTRY.values()
-        if definition.category != "background"
+        if definition.category != "primitive"
     ]
 
     for definition in physical:
@@ -132,6 +132,30 @@ def test_every_physical_model_has_a_standard_documentation_page():
         text = page.read_text()
         assert "## Calculable data" in text, definition.key
         assert "## Parameters" in text, definition.key
+
+
+def test_model_categories_form_the_tiered_selector_contract():
+    assert nfit.available_model_categories() == (
+        "primitive",
+        "spin_fluctuation",
+        "electronic_structure",
+        "heat_capacity",
+        "magnetization",
+    )
+    assert tuple(nfit.MODEL_CATEGORY_LABELS.values()) == (
+        "Primitive models",
+        "Spin fluctuations",
+        "Electronic structure",
+        "Heat capacity",
+        "Magnetization",
+    )
+    assert nfit.model_types_in_category("electronic_structure") == (
+        "tight_binding",
+        "lindhard",
+        "stoner_rpa",
+        "matrix_rpa",
+        "hubbard_hund_rpa",
+    )
 
 
 @pytest.mark.parametrize(

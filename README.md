@@ -61,7 +61,9 @@ The package provides:
   the standard bounds, fit-selection, dataset-sharing, report, and script
   machinery;
 - an extensible model registry shared by fitting, GUI metadata, diagnostics,
-  reports, plots, project files, and workflow scripts;
+  reports, plots, project files, and workflow scripts, with a tiered
+  category/model selector for primitive, spin-fluctuation, electronic,
+  heat-capacity, and magnetization components;
 - simultaneous least-squares fitting with resource-aware parallel numerical
   derivatives, explicit uncertainty conventions, optional
   differential-evolution initialization, and `emcee` posterior sampling;

@@ -817,6 +817,8 @@ def test_heisenberg_rpa_editor_generates_orbits_and_round_trips(monkeypatch, tmp
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
     model = explorer.add_model_to_selection()
 
+    category = explorer.model_category_combo
+    category.setCurrentIndex(category.findData("spin_fluctuation"))
     combo = explorer.model_type_combo
     combo.setCurrentIndex(combo.findData("heisenberg_rpa"))
     assert model.type == "heisenberg_rpa"
@@ -903,6 +905,8 @@ def test_heisenberg_rpa_editor_toggles_tensor_interactions(monkeypatch, tmp_path
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
     model = explorer.add_model_to_selection()
 
+    category = explorer.model_category_combo
+    category.setCurrentIndex(category.findData("spin_fluctuation"))
     combo = explorer.model_type_combo
     combo.setCurrentIndex(combo.findData("heisenberg_rpa"))
 
@@ -984,6 +988,8 @@ def test_heisenberg_rpa_editor_closure_controls(monkeypatch, tmp_path):
     explorer = NfitProjectExplorer(NfitProject([group]))
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
     model = explorer.add_model_to_selection()
+    category = explorer.model_category_combo
+    category.setCurrentIndex(category.findData("spin_fluctuation"))
     combo = explorer.model_type_combo
     combo.setCurrentIndex(combo.findData("heisenberg_rpa"))
 
@@ -1268,6 +1274,8 @@ def test_heisenberg_rpa_editor_scrolls_while_fit_parameters_grow(monkeypatch):
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
     model = explorer.add_model_to_selection()
 
+    category = explorer.model_category_combo
+    category.setCurrentIndex(category.findData("spin_fluctuation"))
     combo = explorer.model_type_combo
     combo.setCurrentIndex(combo.findData("heisenberg_rpa"))
     model.config["orbits"] = [{"label": f"J{index}", "bonds": []} for index in range(1, 25)]

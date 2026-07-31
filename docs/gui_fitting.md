@@ -11,8 +11,14 @@ objects and script API are described in
 ## Model components
 
 A workspace model is the sum of its enabled components. Add components from the
-**Models** branch, then set each parameter's value, fitted/fixed state, bounds,
-and sharing:
+**Models** branch. The left selector chooses **Primitive models**, **Spin
+fluctuations**, **Electronic structure**, **Heat capacity**, or
+**Magnetization**; the right selector lists only models in that family.
+Tight binding, bare Lindhard response, and the Stoner, matrix, and
+Hubbard--Hund dressings are grouped under **Electronic structure** because
+they form one electronic-response workflow, even though several predict spin
+fluctuations. Then set each parameter's value, fitted/fixed state, bounds, and
+sharing:
 
 - **Global** uses one value across the fit.
 - **Per dataset** fits an independent value for each dataset.

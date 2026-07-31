@@ -1258,6 +1258,55 @@ def test_project_explorer_model_limits_and_applies_to_controls(monkeypatch):
     assert model.applies_to is None
 
 
+def test_model_selector_filters_models_by_category(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Datagroup1")
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
+    model = explorer.add_model_to_selection()
+
+    category = explorer.model_category_combo
+    model_type = explorer.model_type_combo
+    assert category is not None and category.toolTip()
+    assert model_type is not None and model_type.toolTip()
+    assert [
+        category.itemText(index) for index in range(category.count())
+    ] == [
+        "Primitive models",
+        "Spin fluctuations",
+        "Electronic structure",
+        "Heat capacity",
+        "Magnetization",
+    ]
+    assert category.currentData() == "primitive"
+    assert [
+        model_type.itemData(index) for index in range(model_type.count())
+    ] == ["constant_background", "linear_background"]
+
+    category.setCurrentIndex(category.findData("electronic_structure"))
+    assert model.type == "constant_background"
+    assert model_type.currentData() is None
+    assert [
+        model_type.itemData(index)
+        for index in range(1, model_type.count())
+    ] == [
+        "tight_binding",
+        "lindhard",
+        "stoner_rpa",
+        "matrix_rpa",
+        "hubbard_hund_rpa",
+    ]
+
+    model_type.setCurrentIndex(model_type.findData("lindhard"))
+    assert model.type == "lindhard"
+    assert category.currentData() == "electronic_structure"
+    assert not explorer.model_selector_widget.isHidden()
+    explorer.has_unsaved_changes = False
+    explorer.window.close()
+
+
 def test_spin_model_form_factor_custom_choice_controls_coefficients(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
@@ -1267,6 +1316,8 @@ def test_spin_model_form_factor_custom_choice_controls_coefficients(monkeypatch)
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
     model = explorer.add_model_to_selection()
 
+    category = explorer.model_category_combo
+    category.setCurrentIndex(category.findData("spin_fluctuation"))
     combo = explorer.model_type_combo
     combo.setCurrentIndex(combo.findData("local_relaxational"))
 
