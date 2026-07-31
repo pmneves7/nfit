@@ -54,7 +54,8 @@ The package provides:
   projection-visibility, and high-symmetry-guide styling, while DOS energy
   limits can be derived automatically from the sampled bands,
   band, DOS, and Fermi-surface viewers can copy or save their rendered figures,
-  three-dimensional Fermi surfaces use GPU-accelerated interaction, and the
+  three-dimensional Fermi surfaces use GPU-accelerated interaction with
+  scriptable opacity, text, grid, legend, and smooth/flat shading controls, and the
   Brillouin-zone viewer provides scriptable styling, visibility, projection,
   and image-export controls; named onsite, hopping, and SOC coefficients share
   the standard bounds, fit-selection, dataset-sharing, report, and script

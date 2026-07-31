@@ -1728,9 +1728,6 @@ def render_fermi_surface(
             raise ValueError("axes must contain one Fermi-surface axis")
         axis = axes[0]
         figure = axis.figure
-    unit = normalize_electronic_energy_unit(
-        energy_unit or result.provenance.get("display_energy_unit", "eV")
-    )
     for sheet in result.sheets:
         color = f"C{sheet.band_index % 10}"
         if result.dimension == 1:
@@ -1769,8 +1766,6 @@ def render_fermi_surface(
         axis.set_ylim(0.0, 1.0)
     if result.sheets:
         axis.legend()
-    target = float(electronic_energy_from_meV(result.target_energy_meV, unit))
-    axis.set_title(f"Constant-energy surface at E = {target:g} {unit}")
     figure.tight_layout()
     return figure, axis
 
@@ -1936,8 +1931,15 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
                 "    if owns_app:",
                 "        app = QtWidgets.QApplication([])",
                 "    if result.dimension == 3:",
-                "        from nfit.qt_fermi_surface_viewer import show_fermi_surface_result",
-                "        window = show_fermi_surface_result(result)",
+                "        from nfit.qt_fermi_surface_viewer import FermiSurfaceViewOptions, show_fermi_surface_result",
+                "        view_options = FermiSurfaceViewOptions(",
+                "            band_opacity=0.65,",
+                "            text_size=14,",
+                "            grid_line_width=1.0,",
+                "            show_legend=True,",
+                "            shading='smooth',",
+                "        )",
+                "        window = show_fermi_surface_result(result, view_options=view_options)",
                 "    else:",
                 "        from nfit.qt_electronic_viewer import show_electronic_figure",
                 "        figure, axis = render_fermi_surface(result, energy_unit=energy_unit)",

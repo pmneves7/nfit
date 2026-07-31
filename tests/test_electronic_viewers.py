@@ -452,7 +452,10 @@ def test_electronic_viewer_settings_apply_plot_owned_configuration(
 
 
 def test_fermi_surface_renderer_uses_pyvista_triangle_mesh(monkeypatch):
-    from nfit.qt_fermi_surface_viewer import _render_fermi_surface
+    from nfit.qt_fermi_surface_viewer import (
+        FermiSurfaceViewOptions,
+        _render_fermi_surface,
+    )
 
     created_meshes = []
     monkeypatch.setitem(
@@ -471,7 +474,6 @@ def test_fermi_surface_renderer_uses_pyvista_triangle_mesh(monkeypatch):
             self.meshes = []
             self.bounds = None
             self.legend = None
-            self.text = None
             self.isometric = False
 
         def clear(self):
@@ -488,12 +490,10 @@ def test_fermi_surface_renderer_uses_pyvista_triangle_mesh(monkeypatch):
 
         def show_bounds(self, **kwargs):
             self.bounds = kwargs
+            return SimpleNamespace()
 
         def add_legend(self, **kwargs):
             self.legend = kwargs
-
-        def add_text(self, text, **kwargs):
-            self.text = (text, kwargs)
 
         def view_isometric(self):
             self.isometric = True
@@ -502,15 +502,40 @@ def test_fermi_surface_renderer_uses_pyvista_triangle_mesh(monkeypatch):
             return None
 
     plotter = Plotter()
-    _render_fermi_surface(plotter, _fermi_surface_result())
+    _render_fermi_surface(
+        plotter,
+        _fermi_surface_result(),
+        options=FermiSurfaceViewOptions(
+            band_opacity=0.4,
+            text_size=18,
+            grid_line_width=2.0,
+            shading="smooth",
+        ),
+    )
 
     np.testing.assert_array_equal(created_meshes[0][1], [3, 0, 1, 2])
     assert plotter.meshes[0][1]["label"] == "band 2"
+    assert plotter.meshes[0][1]["opacity"] == pytest.approx(0.4)
     assert plotter.meshes[0][1]["show_edges"] is False
+    assert plotter.meshes[0][1]["smooth_shading"] is True
     assert plotter.bounds["bounds"] == (0.0, 1.0, 0.0, 1.0, 0.0, 1.0)
+    assert plotter.bounds["font_size"] == 18
     assert plotter.legend is not None
-    assert plotter.text[0].endswith("0 eV")
     assert plotter.isometric is True
+
+    hidden_legend = Plotter()
+    _render_fermi_surface(
+        hidden_legend,
+        _fermi_surface_result(),
+        options=FermiSurfaceViewOptions(
+            show_legend=False,
+            shading="flat",
+        ),
+    )
+    assert hidden_legend.legend is None
+    assert hidden_legend.meshes[0][1]["smooth_shading"] is False
+    with pytest.raises(ValueError, match="shading"):
+        FermiSurfaceViewOptions(shading="gouraud")
 
 
 def test_sampling_progress_dialog_records_metrics(monkeypatch):
@@ -625,10 +650,45 @@ def test_gpu_fermi_surface_viewer_uses_standard_shell(monkeypatch):
         QtWidgets.QPushButton,
         "fermi_surface_save_figure",
     ).toolTip()
+    opacity = window.findChild(
+        QtWidgets.QDoubleSpinBox,
+        "fermi_surface_band_opacity",
+    )
+    text_size = window.findChild(
+        QtWidgets.QSpinBox,
+        "fermi_surface_text_size",
+    )
+    grid_width = window.findChild(
+        QtWidgets.QDoubleSpinBox,
+        "fermi_surface_grid_line_width",
+    )
+    shading = window.findChild(
+        QtWidgets.QComboBox,
+        "fermi_surface_shading",
+    )
+    legend = window.findChild(
+        QtWidgets.QCheckBox,
+        "fermi_surface_show_legend",
+    )
+    assert all(
+        control is not None and control.toolTip()
+        for control in (opacity, text_size, grid_width, shading, legend)
+    )
+    opacity.setValue(0.35)
+    text_size.setValue(20)
+    grid_width.setValue(2.5)
+    shading.setCurrentIndex(shading.findData("flat"))
+    legend.setChecked(False)
+    assert window._nfit_view_options.band_opacity == pytest.approx(0.35)
+    assert window._nfit_view_options.text_size == 20
+    assert window._nfit_view_options.grid_line_width == pytest.approx(2.5)
+    assert window._nfit_view_options.shading == "flat"
+    assert window._nfit_view_options.show_legend is False
+    render_count = len(rendered)
     replacement = _fermi_surface_result()
     window._nfit_replace_result(replacement)
     assert window._nfit_result is replacement
-    assert rendered == [True, True]
+    assert len(rendered) == render_count + 1
     assert window._nfit_close_shortcut is not None
     window._nfit_close_shortcut.activated.emit()
     assert not window.isVisible()

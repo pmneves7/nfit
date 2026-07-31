@@ -893,7 +893,7 @@ def test_tight_binding_registry_plots_and_scripts_are_component_driven():
                 axes.lines[0].get_ydata(), result.total_per_meV_cell * 1000.0
             )
         else:
-            assert "eV" in axes.get_title()
+            assert axes.get_title() == ""
         plt.close(figure)
         script = plot.script(component)
         if plot.key in {"bands", "dos"}:

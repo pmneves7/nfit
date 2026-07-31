@@ -158,6 +158,31 @@ keeps the physical sampling density comparable in anisotropic cells. Select
 Three-dimensional results use a PyVista renderer for responsive rotation.
 One- and two-dimensional results use Matplotlib.
 `render_fermi_surface` remains available for a static scripted figure.
+The 3D side panel controls band-sheet opacity, reciprocal-grid line width,
+axes and legend text size, legend visibility, and shading. Smooth shading is
+the default and interpolates vertex normals across the extracted triangles;
+flat shading deliberately preserves visible facets. These settings affect
+only rendering, not the surface vertices or connectivity. Fermi-surface
+viewers omit a title so the viewport remains focused on the geometry.
+
+Scripts can configure the same presentation with
+`FermiSurfaceViewOptions`:
+
+```python
+from nfit.qt_fermi_surface_viewer import (
+    FermiSurfaceViewOptions,
+    show_fermi_surface_result,
+)
+
+options = FermiSurfaceViewOptions(
+    band_opacity=0.5,
+    text_size=18,
+    grid_line_width=1.5,
+    show_legend=False,
+    shading="smooth",
+)
+window = show_fermi_surface_result(result, view_options=options)
+```
 
 The regular extraction grid includes its periodic boundary and is not
 symmetry reduced. Increase all periodic mesh dimensions until topology and

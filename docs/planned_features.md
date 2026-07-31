@@ -36,6 +36,18 @@ Planned electronic-structure extensions include:
   electronic Hamiltonians; and
 - richer orbital-resolved controls for electronic plots.
 
+Planned Fermi-surface visualization extensions include:
+
+- display in the primitive or conventional reciprocal parallelepiped, or in
+  the first Wigner--Seitz Brillouin zone with its outline;
+- independent integer tiling along the three reciprocal basis directions; and
+- an arbitrary-plane slicer that reports and plots the two-dimensional
+  intersections of every band sheet.
+
+The cell choices and tiling workflow may take design inspiration from IFermi,
+while retaining nfit's own reciprocal-coordinate, scripting, and provenance
+conventions.
+
 Planned response models include:
 
 - BCS/Nambu quasiparticles, gap functions, coherence factors, and the
