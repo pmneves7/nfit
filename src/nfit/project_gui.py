@@ -19956,6 +19956,37 @@ class NfitProjectExplorer:
         accuracy_label.setToolTip(accuracy_tooltip)
         layout.addRow(accuracy_label, accuracy_combo)
 
+        symmetry_tooltip = (
+            "Choose the Brillouin-zone symmetry policy for DOS evaluation. "
+            "Auto uses a certified reduced eigensolve when it is exactly "
+            "reconstructible and otherwise falls back to the full mesh. Full "
+            "mesh disables reduction. Require reduced mesh raises instead of "
+            "falling back. Tetrahedron integration always reconstructs the "
+            "complete ordered grid before integration."
+        )
+        symmetry_combo = QtWidgets.QComboBox()
+        symmetry_combo.setObjectName("tight_binding_dos_symmetry")
+        symmetry_combo.setToolTip(symmetry_tooltip)
+        symmetry_combo.addItem("Auto", "auto")
+        symmetry_combo.addItem("Full mesh", "full")
+        symmetry_combo.addItem("Require reduced mesh", "reduced")
+        symmetry_combo.setCurrentIndex(
+            max(
+                symmetry_combo.findData(
+                    str(model.config.get("dos_symmetry", "auto"))
+                ),
+                0,
+            )
+        )
+        symmetry_combo.currentIndexChanged.connect(
+            lambda _index, combo=symmetry_combo: self._set_model_config_setting(
+                "dos_symmetry", str(combo.currentData())
+            )
+        )
+        symmetry_label = QtWidgets.QLabel("Symmetry")
+        symmetry_label.setToolTip(symmetry_tooltip)
+        layout.addRow(symmetry_label, symmetry_combo)
+
         if mode == "automatic" and accuracy == "custom":
             custom_tooltip = (
                 "Positive normalized DOS error required for two successive "

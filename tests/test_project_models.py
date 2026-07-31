@@ -131,6 +131,10 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
         QtWidgets.QComboBox,
         "tight_binding_dos_sampling_accuracy",
     )
+    dos_symmetry = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox,
+        "tight_binding_dos_symmetry",
+    )
     dos_sampling_mesh = explorer.model_parameter_widget.findChild(
         QtWidgets.QLineEdit,
         "model_config_dos_mesh",
@@ -154,6 +158,10 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
     assert dos_sampling_mode.currentData() == "automatic"
     assert dos_sampling_accuracy is not None
     assert dos_sampling_accuracy.isEnabled()
+    assert dos_symmetry is not None and dos_symmetry.toolTip()
+    assert dos_symmetry.currentData() == "auto"
+    assert dos_symmetry.findData("full") >= 0
+    assert dos_symmetry.findData("reduced") >= 0
     assert dos_sampling_mesh is not None and not dos_sampling_mesh.isEnabled()
     assert dos_sampling_button is not None and dos_sampling_button.toolTip()
     assert dos_auto_range is not None and dos_auto_range.toolTip()
