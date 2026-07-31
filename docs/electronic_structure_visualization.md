@@ -114,10 +114,22 @@ on the nearest energy-grid sample, or splits it between the two neighboring
 samples when necessary. Refining the energy grid makes the displayed peak
 narrower and taller without changing its integrated number of states.
 
-`density_of_states` returns states per meV per primitive cell. Plotting in eV
-converts the ordinate to states per eV per cell. Mesh density controls
-integration accuracy. For Gaussian DOS, broadening also controls displayed
-energy resolution and should be converged separately.
+`density_of_states` returns states per meV per primitive cell, **counting both
+spin states**. An implicit-spin model is multiplied by its two-fold degeneracy,
+so the total integrates to $2N_{\rm basis}$ states per cell and agrees with the
+electron count from `electron_filling`; a collinear or spinor model already
+carries spin in its basis and uses a degeneracy of one. The applied factor is
+recorded as `provenance["spin_degeneracy"]`, and $D(E_{\rm F})$ can be used
+directly for a Sommerfeld coefficient or a Stoner criterion.
+
+Plotting in eV converts the ordinate to states per eV per cell. Mesh density
+controls integration accuracy. For Gaussian DOS, broadening also controls
+displayed energy resolution and should be converged separately.
+
+```{note}
+Before nfit 0.59 the DOS omitted the spin degeneracy, so an implicit-spin total
+was half the value reported now.
+```
 
 The viewer side panel owns the integration method, mesh, certified symmetry
 policy, energy window, energy-point count, and Gaussian width. **Automatic

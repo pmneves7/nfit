@@ -113,7 +113,10 @@ def accumulate_batch(
             if inverse_variance:
                 mean_weight = spatial_weight * point_mean_weight
                 bd_sum[flat_index] += mean_weight * data[point]
-                err_sum[flat_index] += mean_weight
+                # Var(sum w x / sum w) = sum w^2 sigma^2 / (sum w)^2; the
+                # 1/sum(w) shortcut only holds when every w is exactly
+                # 1/sigma^2, which fractional and statistical weights break.
+                err_sum[flat_index] += mean_weight * mean_weight * error * error
                 norm_sum[flat_index] += mean_weight
             else:
                 normalization_weight = spatial_weight * point_mean_weight
@@ -202,7 +205,8 @@ def accumulate_batch_sparse(
             if inverse_variance:
                 mean_weight = spatial_weight * point_mean_weight
                 bd_value = mean_weight * data[point]
-                err_value = mean_weight
+                # See the dense kernel: sum w^2 sigma^2, not sum w.
+                err_value = mean_weight * mean_weight * error * error
                 norm_value = mean_weight
             else:
                 norm_value = spatial_weight * point_mean_weight

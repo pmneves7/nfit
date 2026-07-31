@@ -187,27 +187,25 @@ def _dense_group_data(data: PointData4D, sorted_indices: FloatArray, dense_e: Fl
     )
 
 
-def _subset_point_data(data: PointData4D, indices: FloatArray) -> PointData4D:
-    if isinstance(data.temperature, np.ndarray):
-        temperature: float | FloatArray | None = data.temperature[indices]
-    else:
-        temperature = data.temperature
-    return PointData4D(
-        H=data.H[indices],
-        K=data.K[indices],
-        L=data.L[indices],
-        E=data.E[indices],
-        intensity=data.intensity[indices],
-        sigma=data.sigma[indices],
-        mask=np.ones(len(indices), dtype=bool),
-        temperature=temperature,
-        magnetic_field=None if data.magnetic_field is None else np.array(data.magnetic_field),
-        metadata=dict(data.metadata),
-    )
-
-
 def _sigma_from_fwhm(fwhm: FloatArray) -> FloatArray:
     return np.asarray(fwhm, dtype=float) / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+
+
+# Target complex elements per convolution block: block * n_dense stays near
+# this, so the (block, n_dense) kernel holds ~4e6 floats (~32 MB).
+_CONVOLUTION_BLOCK_ELEMENTS = 4.0e6
+
+
+def _trapezoid_weights(x: FloatArray) -> FloatArray:
+    """Composite-trapezoid quadrature weights for a monotonic grid."""
+
+    weights = np.empty_like(x, dtype=float)
+    spacing = np.diff(x)
+    weights[0] = 0.5 * spacing[0]
+    weights[-1] = 0.5 * spacing[-1]
+    if x.size > 2:
+        weights[1:-1] = 0.5 * (spacing[:-1] + spacing[1:])
+    return weights
 
 
 def _convolve_to_targets(
@@ -217,20 +215,35 @@ def _convolve_to_targets(
     target_e: FloatArray,
     target_fwhm: FloatArray,
 ) -> FloatArray:
+    """Normalized Gaussian convolution of a dense model onto target energies.
+
+    Each target is the trapezoid-weighted mean of ``dense_values`` under its own
+    Gaussian, normalized by the same truncated integral so the finite dense
+    window does not bias the result. Evaluated as two matrix products over
+    blocks of targets rather than one Gaussian per target.
+    """
+
     sigma = _sigma_from_fwhm(target_fwhm)
+    if np.any(~np.isfinite(sigma)) or np.any(sigma <= 0.0):
+        raise ValueError("energy-resolution sigma must be finite and positive")
+    quadrature = _trapezoid_weights(dense_e)
+    weighted_values = quadrature * np.asarray(dense_values, dtype=float)
     out = np.empty_like(target_e, dtype=float)
-    for i, (energy, width) in enumerate(zip(target_e, sigma, strict=True)):
-        weights = np.exp(-0.5 * ((dense_e - energy) / width) ** 2)
-        denominator = _trapezoid(weights, dense_e)
-        if denominator <= 0.0 or not np.isfinite(denominator):
+    block = max(
+        1, min(target_e.size, int(_CONVOLUTION_BLOCK_ELEMENTS / max(dense_e.size, 1)))
+    )
+    for start in range(0, target_e.size, block):
+        stop = min(start + block, target_e.size)
+        kernel = np.exp(
+            -0.5
+            * (
+                (dense_e[None, :] - target_e[start:stop, None])
+                / sigma[start:stop, None]
+            )
+            ** 2
+        )
+        denominator = kernel @ quadrature
+        if np.any(denominator <= 0.0) or np.any(~np.isfinite(denominator)):
             raise ValueError("energy-resolution kernel normalization failed")
-        out[i] = float(_trapezoid(dense_values * weights, dense_e) / denominator)
+        out[start:stop] = (kernel @ weighted_values) / denominator
     return out
-
-
-def _trapezoid(y: FloatArray, x: FloatArray) -> float:
-    """Integrate with NumPy 1.x/2.x compatibility."""
-
-    if hasattr(np, "trapezoid"):
-        return float(np.trapezoid(y, x))
-    return float(np.trapz(y, x))

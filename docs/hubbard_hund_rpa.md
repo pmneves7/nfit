@@ -51,6 +51,12 @@ are not fitted. With it disabled, all four parameters are independent.
 Interaction inputs and fit results use eV. The canonical interaction vertex
 stores meV.
 
+Because this vertex dresses the orbital-pair response *before* the spin trace
+is applied, $U$ needs no extra factor: for a single correlated orbital the
+instability is at $U D_\uparrow(\mu)=1$. That is the same scale as the $I$ of
+[Scalar Stoner RPA](stoner_rpa.md), so the two interaction parameters are
+directly comparable.
+
 ## Configuration
 
 | Setting | Meaning | Default | Acceptable input example |

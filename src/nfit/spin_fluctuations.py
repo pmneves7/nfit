@@ -1166,8 +1166,17 @@ def heisenberg_rpa_chipp_and_gradients(
     chi0: float,
     gamma0: float,
     j_values: Mapping[str, float],
+    lambda_shift: float = 0.0,
 ) -> tuple[FloatArray, dict[str, FloatArray]]:
     """RPA ``chi''`` together with its exact parameter gradients.
+
+    Unlike :func:`heisenberg_rpa_chipp` this path does not support a nonzero
+    ``lambda_shift``: a sum-rule closure makes ``chi0_eff`` and ``lambda`` an
+    implicit function of every fitted parameter, so the derivatives below are
+    no longer the total derivatives. The argument is accepted only so that a
+    caller cannot silently get inconsistent values and gradients; closures use
+    finite differences instead (see
+    ``nfit.fit_config._heisenberg_rpa_jacobian_factory``).
 
     Returns ``(chipp, gradients)`` where ``gradients`` maps ``"chi0"``,
     ``"gamma0"``, and each exchange orbit label to ``d chi'' / d parameter``
@@ -1195,6 +1204,11 @@ def heisenberg_rpa_chipp_and_gradients(
     chi0 = float(chi0)
     gamma0 = float(gamma0)
     _validate_rpa_scalars(chi0, gamma0)
+    if float(lambda_shift) != 0.0:
+        raise NotImplementedError(
+            "analytic RPA gradients do not support a nonzero lambda_shift; "
+            "a sum-rule closure requires the finite-difference Jacobian"
+        )
     energy = np.asarray(E, dtype=float).ravel()
     _validate_rpa_energy(geometry, energy)
 

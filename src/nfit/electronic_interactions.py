@@ -10,16 +10,11 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from .cache_utils import readonly_array
 from .electronic_response import SusceptibilityResult
 from .electronic_structure import ElectronicModel, electronic_energy_to_meV
 
 ComplexArray = NDArray[np.complex128]
-
-
-def _readonly(value: ArrayLike, dtype: Any) -> np.ndarray:
-    result = np.array(value, dtype=dtype, copy=True)
-    result.setflags(write=False)
-    return result
 
 
 @dataclass(frozen=True)
@@ -33,7 +28,7 @@ class InteractionVertex:
     provenance: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        values = _readonly(self.values_meV, np.complex128)
+        values = readonly_array(self.values_meV, np.complex128)
         size = len(self.operator_labels)
         if values.ndim not in {2, 3} or values.shape[-2:] != (size, size):
             raise ValueError(
@@ -75,26 +70,70 @@ class InteractionVertex:
         )
 
 
+CARTESIAN_SPIN_LABELS = ("Sx", "Sy", "Sz")
+"""Operator labels of the physical Cartesian spin response."""
+
+CARTESIAN_SPIN_VERTEX_FACTOR = 2.0
+r"""Vertex factor for a response in the Cartesian spin-operator basis.
+
+An on-site interaction written for the electron densities, ``H = I n_up
+n_down``, is ``-I S_z^2`` up to a charge term, because ``S_z = (n_up -
+n_down)/2`` carries a factor ``1/2`` per spin index. The irreducible vertex
+conjugate to the *dimensionless spin operator* ``S_alpha`` is therefore ``2 I``,
+and the RPA denominator is ``1 - 2 I chi_s`` with ``chi_s`` one Cartesian
+component of the spin susceptibility.
+
+Because nfit's bare Cartesian spin response is ``chi_s = D_up(mu) / 2`` for an
+implicit-spin model (the ``1/2`` is the analytic spin trace), this factor makes
+the instability occur at ``I D_up(mu) = 1`` -- the textbook Stoner criterion --
+so ``I`` is numerically comparable with the Hubbard ``U`` of
+:func:`hubbard_hund_spin_vertex`, which dresses the orbital-pair response
+*before* the same spin trace is applied.
+"""
+
+
 def scalar_stoner_vertex(
     operator_labels: Sequence[str],
     interaction: float,
     *,
     energy_unit: str = "eV",
 ) -> InteractionVertex:
-    """Return an isotropic scalar Stoner vertex in a declared operator basis."""
+    """Return an isotropic scalar Stoner vertex in a declared operator basis.
+
+    ``interaction`` is the Stoner parameter ``I`` in ``energy_unit``. For the
+    physical Cartesian spin basis ``("Sx", "Sy", "Sz")`` the stored vertex is
+    ``2 I`` (see :data:`CARTESIAN_SPIN_VERTEX_FACTOR`), which puts the
+    instability at the textbook Stoner criterion ``I D_up(mu) = 1``. For any
+    other operator basis the value is placed on the diagonal unchanged, because
+    the spin-trace factor is a property of the spin operator rather than of the
+    interaction. The applied factor is recorded in the vertex provenance.
+    """
 
     value_meV = float(electronic_energy_to_meV(interaction, energy_unit))
     if not np.isfinite(value_meV):
         raise ValueError("Stoner interaction must be finite")
     labels = tuple(str(label) for label in operator_labels)
+    factor = (
+        CARTESIAN_SPIN_VERTEX_FACTOR
+        if labels == CARTESIAN_SPIN_LABELS
+        else 1.0
+    )
     return InteractionVertex(
         operator_labels=labels,
-        values_meV=value_meV * np.eye(len(labels), dtype=np.complex128),
+        values_meV=factor * value_meV * np.eye(len(labels), dtype=np.complex128),
         channel="spin",
         kind="scalar_stoner",
         provenance={
             "input_energy_unit": energy_unit,
             "input_interaction": float(interaction),
+            "interaction_meV": value_meV,
+            "spin_channel_vertex_factor": factor,
+            "vertex_meV": factor * value_meV,
+            "criterion": (
+                "instability at I * D_up(mu) = 1 (textbook Stoner)"
+                if factor != 1.0
+                else "instability at I * chi0 = 1 in the declared operator basis"
+            ),
         },
     )
 

@@ -28,7 +28,7 @@ from typing import Any, Literal
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from .cache_utils import lru_store
+from .cache_utils import array_digest, lru_store, readonly_array
 from .electronic_backends import ElectronicBackend, evaluate_eigensystem
 
 FloatArray = NDArray[np.float64]
@@ -49,14 +49,6 @@ _HAMILTONIAN_COMPONENT_CACHE: OrderedDict[
 _HAMILTONIAN_COMPONENT_CACHE_LOCK = RLock()
 
 
-def _numeric_digest(value: ArrayLike, dtype: Any) -> str:
-    array = np.ascontiguousarray(value, dtype=dtype)
-    digest = hashlib.sha256()
-    digest.update(str(array.shape).encode("ascii"))
-    digest.update(array.tobytes())
-    return digest.hexdigest()
-
-
 def _fourier_coefficients(
     translations: NDArray[np.int64],
     weights: FloatArray,
@@ -64,10 +56,10 @@ def _fourier_coefficients(
 ) -> ComplexArray:
     """Return cached, parameter-independent Fourier coefficients."""
 
-    structure_digest = _numeric_digest(translations, np.int64) + _numeric_digest(
+    structure_digest = array_digest(translations, np.int64) + array_digest(
         weights, np.float64
     )
-    key = (structure_digest, _numeric_digest(wavevectors, np.float64))
+    key = (structure_digest, array_digest(wavevectors, np.float64))
     with _FOURIER_CACHE_LOCK:
         cached = _FOURIER_COEFFICIENT_CACHE.get(key)
         if cached is not None:
@@ -108,7 +100,7 @@ def _momentum_hamiltonian_components(
     )
     if component_bytes > _HAMILTONIAN_COMPONENT_CACHE_MAX_BYTES:
         return None
-    key = (model.structure_digest, _numeric_digest(wavevectors, np.float64))
+    key = (model.structure_digest, array_digest(wavevectors, np.float64))
     with _HAMILTONIAN_COMPONENT_CACHE_LOCK:
         cached = _HAMILTONIAN_COMPONENT_CACHE.get(key)
         if cached is not None:
@@ -186,12 +178,6 @@ def set_electronic_energy_unit(component: Any, unit: str) -> str:
         raise TypeError("component must provide a mutable config dictionary")
     config["electronic_energy_unit"] = canonical
     return canonical
-
-
-def _readonly(array: ArrayLike, dtype: Any) -> np.ndarray:
-    result = np.array(array, dtype=dtype, copy=True)
-    result.setflags(write=False)
-    return result
 
 
 def _freeze(value: Any) -> Any:
@@ -290,15 +276,15 @@ class ElectronicModel:
     fourier_gauge: str = "wannier"
 
     def __post_init__(self) -> None:
-        lattice = _readonly(self.direct_lattice, float)
-        translations = _readonly(self.translations, np.int64)
-        blocks = _readonly(self.hamiltonian_blocks, np.complex128)
-        weights = _readonly(self.interpolation_weights, float)
-        centers = _readonly(self.orbital_centers, float)
+        lattice = readonly_array(self.direct_lattice, float)
+        translations = readonly_array(self.translations, np.int64)
+        blocks = readonly_array(self.hamiltonian_blocks, np.complex128)
+        weights = readonly_array(self.interpolation_weights, float)
+        centers = readonly_array(self.orbital_centers, float)
         spin = (
             None
             if self.spin_operators is None
-            else _readonly(self.spin_operators, np.complex128)
+            else readonly_array(self.spin_operators, np.complex128)
         )
         object.__setattr__(self, "direct_lattice", lattice)
         object.__setattr__(self, "translations", translations)
@@ -318,7 +304,7 @@ class ElectronicModel:
             "parameter_blocks",
             MappingProxyType(
                 {
-                    str(name): _readonly(values, np.complex128)
+                    str(name): readonly_array(values, np.complex128)
                     for name, values in self.parameter_blocks.items()
                 }
             ),
@@ -962,7 +948,7 @@ class WavevectorSampling:
     provenance: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        coordinates = _readonly(self.reduced_coordinates, float)
+        coordinates = readonly_array(self.reduced_coordinates, float)
         object.__setattr__(self, "reduced_coordinates", coordinates)
         object.__setattr__(self, "provenance", _freeze(self.provenance))
         if coordinates.ndim != 2 or coordinates.shape[1] != 3:
@@ -970,12 +956,12 @@ class WavevectorSampling:
         if self.kind not in {"path", "mesh"}:
             raise ValueError("wavevector sampling kind must be 'path' or 'mesh'")
         if self.kind == "path":
-            distance = _readonly(self.path_distance_inv_angstrom, float)
+            distance = readonly_array(self.path_distance_inv_angstrom, float)
             object.__setattr__(self, "path_distance_inv_angstrom", distance)
             if distance.shape != (coordinates.shape[0],):
                 raise ValueError("a path requires one physical distance per wavevector")
         else:
-            weights = _readonly(self.weights, float)
+            weights = readonly_array(self.weights, float)
             object.__setattr__(self, "weights", weights)
             if weights.shape != (coordinates.shape[0],) or not np.isclose(
                 weights.sum(), 1.0
@@ -1351,17 +1337,17 @@ class BandResult:
     provenance: Mapping[str, Any]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "energies_meV", _readonly(self.energies_meV, float))
+        object.__setattr__(self, "energies_meV", readonly_array(self.energies_meV, float))
         if self.eigenvectors is not None:
             object.__setattr__(
-                self, "eigenvectors", _readonly(self.eigenvectors, np.complex128)
+                self, "eigenvectors", readonly_array(self.eigenvectors, np.complex128)
             )
         object.__setattr__(
             self,
             "projected_weights",
             MappingProxyType(
                 {
-                    str(label): _readonly(values, float)
+                    str(label): readonly_array(values, float)
                     for label, values in self.projected_weights.items()
                 }
             ),
@@ -1418,10 +1404,10 @@ def calculate_bands(
         )
     return BandResult(
         sampling=sampling,
-        energies_meV=_readonly(energies, float),
+        energies_meV=readonly_array(energies, float),
         chemical_potential_meV=float(chemical_potential_meV),
         eigenvectors=(
-            _readonly(eigenvectors, np.complex128)
+            readonly_array(eigenvectors, np.complex128)
             if include_eigenvectors
             else None
         ),
@@ -1443,6 +1429,16 @@ def calculate_bands(
 
 @dataclass(frozen=True)
 class DensityOfStatesResult:
+    """Total and projected density of states, per primitive cell.
+
+    ``total_per_meV_cell`` counts **both spin states**: an implicit-spin model
+    is multiplied by its declared spin degeneracy, so the total integrates to
+    ``spin_degeneracy * n_basis`` states per cell and matches the electron
+    count returned by :func:`nfit.electron_filling`. A collinear or spinor
+    model already carries spin in its basis and uses a degeneracy of one. The
+    factor applied is recorded as ``provenance["spin_degeneracy"]``.
+    """
+
     energy_meV: FloatArray
     total_per_meV_cell: FloatArray
     projected_per_meV_cell: Mapping[str, FloatArray]
@@ -1453,16 +1449,16 @@ class DensityOfStatesResult:
     provenance: Mapping[str, Any]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "energy_meV", _readonly(self.energy_meV, float))
+        object.__setattr__(self, "energy_meV", readonly_array(self.energy_meV, float))
         object.__setattr__(
-            self, "total_per_meV_cell", _readonly(self.total_per_meV_cell, float)
+            self, "total_per_meV_cell", readonly_array(self.total_per_meV_cell, float)
         )
         object.__setattr__(
             self,
             "projected_per_meV_cell",
             MappingProxyType(
                 {
-                    str(label): _readonly(values, float)
+                    str(label): readonly_array(values, float)
                     for label, values in self.projected_per_meV_cell.items()
                 }
             ),
@@ -1549,6 +1545,11 @@ def density_of_states(
     integration on a complete uniform three-dimensional mesh. Pass
     ``energy_meV=None`` to derive padded limits from the sampled band extrema
     and use ``energy_points`` samples between them.
+
+    The result includes the model's spin degeneracy (two for an implicit-spin
+    model, one when spin is explicit in the basis), so it integrates to the
+    same electron capacity that :func:`nfit.electron_filling` reports. See
+    :class:`DensityOfStatesResult`.
     """
 
     if mesh.kind != "mesh" or mesh.weights is None:
@@ -1578,6 +1579,15 @@ def density_of_states(
     if selected_symmetry not in {"auto", "full", "reduced"}:
         raise ValueError("DOS symmetry policy must be auto, full, or reduced")
     projection_indices = _projection_indices(model, projections)
+    # Implicit-spin models carry a two-fold degeneracy that is not in the
+    # basis; explicit collinear/spinor models already count both spin states.
+    # Applying it here keeps the DOS on the same footing as electron_filling.
+    spin_degeneracy = float(
+        model.provenance.get(
+            "implicit_spin_degeneracy",
+            2 if model.spin_operators is None else 1,
+        )
+    )
     bands: BandResult
     tetrahedron_reduction: Mapping[str, Any] = {
         "policy": selected_symmetry,
@@ -1791,11 +1801,12 @@ def density_of_states(
             float(np.mean(eigenvalues[..., index]))
             for index in flat_band_indices
         ]
+        integrated = integrated * spin_degeneracy
         return DensityOfStatesResult(
-            energy_meV=_readonly(energy, float),
-            total_per_meV_cell=_readonly(integrated[0], float),
+            energy_meV=readonly_array(energy, float),
+            total_per_meV_cell=readonly_array(integrated[0], float),
             projected_per_meV_cell={
-                label: _readonly(integrated[index + 1], float)
+                label: readonly_array(integrated[index + 1], float)
                 for index, label in enumerate(labels)
             },
             chemical_potential_meV=float(chemical_potential_meV),
@@ -1819,6 +1830,8 @@ def density_of_states(
                     ].items()
                 },
                 "automatic_energy_range": automatic_energy_range,
+                "spin_degeneracy": spin_degeneracy,
+                "normalization": "states per meV per primitive cell, both spins",
                 "flat_band_indices": flat_band_indices,
                 "flat_band_energies_meV": flat_band_energies,
                 "flat_band_representation": "normalized energy-grid delta",
@@ -1847,11 +1860,15 @@ def density_of_states(
             projected[label] += np.sum(
                 weights * values[start:stop, None] * kernel, axis=0
             )
+    total = total * spin_degeneracy
+    projected = {
+        label: values * spin_degeneracy for label, values in projected.items()
+    }
     return DensityOfStatesResult(
-        energy_meV=_readonly(energy, float),
-        total_per_meV_cell=_readonly(total, float),
+        energy_meV=readonly_array(energy, float),
+        total_per_meV_cell=readonly_array(total, float),
         projected_per_meV_cell={
-            label: _readonly(values, float) for label, values in projected.items()
+            label: readonly_array(values, float) for label, values in projected.items()
         },
         chemical_potential_meV=float(chemical_potential_meV),
         broadening_meV=sigma,
@@ -1870,6 +1887,8 @@ def density_of_states(
                 ].items()
             },
             "automatic_energy_range": automatic_energy_range,
+            "spin_degeneracy": spin_degeneracy,
+            "normalization": "states per meV per primitive cell, both spins",
         },
     )
 
@@ -1884,22 +1903,22 @@ class FermiSurfaceSheet:
 
     def __post_init__(self) -> None:
         object.__setattr__(
-            self, "vertices_reduced", _readonly(self.vertices_reduced, float)
+            self, "vertices_reduced", readonly_array(self.vertices_reduced, float)
         )
         object.__setattr__(
             self,
             "vertices_inv_angstrom",
-            _readonly(self.vertices_inv_angstrom, float),
+            readonly_array(self.vertices_inv_angstrom, float),
         )
         object.__setattr__(
-            self, "connectivity", _readonly(self.connectivity, np.int64)
+            self, "connectivity", readonly_array(self.connectivity, np.int64)
         )
         object.__setattr__(
             self,
             "projected_weights",
             MappingProxyType(
                 {
-                    str(label): _readonly(values, float)
+                    str(label): readonly_array(values, float)
                     for label, values in self.projected_weights.items()
                 }
             ),
@@ -2101,9 +2120,9 @@ def fermi_surface(
         sheets.append(
             FermiSurfaceSheet(
                 band_index,
-                _readonly(vertices, float),
-                _readonly(vertices @ model.reciprocal_lattice.T, float),
-                _readonly(connectivity, np.int64),
+                readonly_array(vertices, float),
+                readonly_array(vertices @ model.reciprocal_lattice.T, float),
+                readonly_array(connectivity, np.int64),
                 projected,
             )
         )

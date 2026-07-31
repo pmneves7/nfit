@@ -71,3 +71,67 @@ def test_dipole_coupling_constant_scales_with_g_squared():
     np.testing.assert_allclose(
         dipole_coupling_constant(3.0) / dipole_coupling_constant(2.0), (3.0 / 2.0) ** 2, rtol=1e-12
     )
+
+
+def test_dipole_term_enters_the_interaction_with_the_ferromagnetic_sign():
+    """A positive ``D_dip`` must reproduce the physical dipolar easy axis.
+
+    nfit's interaction matrix uses ``H = -(1/2) sum S_i J S_j`` (positive
+    Heisenberg J is ferromagnetic), while the dipolar Hamiltonian is
+    ``H = +(1/2) D sum S_i T S_j``. The structure matrix therefore has to carry
+    the sign flip. In a cell with a short ``c`` axis the dipoles form chains
+    along ``c`` and prefer head-to-tail alignment, so ``lambda_max`` of ``J(0)``
+    must belong to the ``z`` component.
+    """
+
+    from nfit.spin_fluctuations import build_rpa_geometry
+    from nfit.tensor_rpa import assemble_tensor_exchange, build_tensor_structure
+
+    lattice = {"a": 10.0, "b": 10.0, "c": 2.5, "alpha": 90.0, "beta": 90.0, "gamma": 90.0}
+    hkl = np.zeros((1, 3))
+    geometry = build_rpa_geometry(hkl[:, 0], hkl[:, 1], hkl[:, 2], [[0.0, 0.0, 0.0]], [])
+    structure = build_tensor_structure(
+        geometry, [[0.0, 0.0, 0.0]], [], lattice=lattice, dipole={"enabled": True}
+    )
+    exchange = assemble_tensor_exchange(
+        structure, {"D_dip": dipole_coupling_constant(2.0)}
+    )[0]
+
+    eigenvalues, eigenvectors = np.linalg.eigh(exchange)
+    easy_axis = np.abs(eigenvectors[:, int(np.argmax(eigenvalues))])
+    assert easy_axis[2] > 0.99
+    # The chain (z) component is favoured and the two transverse ones are not.
+    diagonal = exchange.real.diagonal()
+    assert diagonal[2] > 0.0
+    assert diagonal[0] < 0.0 and diagonal[1] < 0.0
+
+
+def test_ewald_dipole_converges_for_a_strongly_anisotropic_cell():
+    """Per-axis image counts, not a single index range, set the cutoffs.
+
+    A fixed six-shell range reaches 6c along a short axis and 6a along a long
+    one, so an anisotropic cell is under-converged in one direction. The
+    splitting parameter is the diagnostic: alpha may only change the split
+    between the real and reciprocal sums, never the result.
+    """
+
+    lattice = {"a": 12.0, "b": 12.0, "c": 2.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0}
+    hkl = np.array([[0.0, 0.0, 0.0], [0.3, 0.1, 0.25]])
+    frac = [[0.0, 0.0, 0.0]]
+
+    low = ewald_dipole_tensor(hkl, frac, lattice, alpha=0.15)
+    high = ewald_dipole_tensor(hkl, frac, lattice, alpha=0.45)
+    auto = ewald_dipole_tensor(hkl, frac, lattice)
+
+    np.testing.assert_allclose(low, high, atol=1e-12)
+    np.testing.assert_allclose(low, auto, atol=1e-12)
+
+    # A fixed index range on the same cell is measurably worse, which is what
+    # the automatic per-axis counts exist to avoid.
+    fixed_low = ewald_dipole_tensor(
+        hkl, frac, lattice, alpha=0.15, real_shells=6, recip_shells=6
+    )
+    fixed_high = ewald_dipole_tensor(
+        hkl, frac, lattice, alpha=0.45, real_shells=6, recip_shells=6
+    )
+    assert np.max(np.abs(fixed_low - fixed_high)) > 1e-6

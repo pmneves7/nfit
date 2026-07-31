@@ -357,6 +357,22 @@ def _lindhard_factory(
         if dressing_component is not None
         else {}
     )
+    # Pole and stability diagnostics are configured identically for every
+    # dressing kind, so resolve them once instead of at each call site.
+    dressing_diagnostics = {
+        "singular_tolerance": float(
+            dressing_config.get("singular_tolerance", 1.0e-12)
+        ),
+        "near_pole_tolerance": float(
+            dressing_config.get("near_pole_tolerance", 1.0e-3)
+        ),
+        "static_warning_margin": float(
+            dressing_config.get("static_stability_warning_margin", 0.05)
+        ),
+        "reject_sampled_static_instability": bool(
+            dressing_config.get("reject_sampled_static_instability", False)
+        ),
+    }
     validated_digests: set[str] = set()
 
     def resolved_model(params: Mapping[str, float]):
@@ -503,26 +519,7 @@ def _lindhard_factory(
                     energy_unit="eV",
                 )
                 result = project_implicit_spin_response(
-                    rpa_dress_susceptibility(
-                        bare,
-                        vertex,
-                        singular_tolerance=float(
-                            dressing_config.get("singular_tolerance", 1.0e-12)
-                        ),
-                        near_pole_tolerance=float(
-                            dressing_config.get("near_pole_tolerance", 1.0e-3)
-                        ),
-                        static_warning_margin=float(
-                            dressing_config.get(
-                                "static_stability_warning_margin", 0.05
-                            )
-                        ),
-                        reject_sampled_static_instability=bool(
-                            dressing_config.get(
-                                "reject_sampled_static_instability", False
-                            )
-                        ),
-                    ),
+                    rpa_dress_susceptibility(bare, vertex, **dressing_diagnostics),
                     model,
                     basis_indices,
                 )
@@ -541,24 +538,7 @@ def _lindhard_factory(
                         energy_unit="eV",
                     )
                     result = rpa_dress_susceptibility(
-                        result,
-                        vertex,
-                        singular_tolerance=float(
-                            dressing_config.get("singular_tolerance", 1.0e-12)
-                        ),
-                        near_pole_tolerance=float(
-                            dressing_config.get("near_pole_tolerance", 1.0e-3)
-                        ),
-                        static_warning_margin=float(
-                            dressing_config.get(
-                                "static_stability_warning_margin", 0.05
-                            )
-                        ),
-                        reject_sampled_static_instability=bool(
-                            dressing_config.get(
-                                "reject_sampled_static_instability", False
-                            )
-                        ),
+                        result, vertex, **dressing_diagnostics
                     )
                 elif dressing_kind == "matrix":
                     matrix = np.asarray(
@@ -572,24 +552,7 @@ def _lindhard_factory(
                         channel=str(dressing_config.get("channel", "spin")),
                     )
                     result = rpa_dress_susceptibility(
-                        result,
-                        vertex,
-                        singular_tolerance=float(
-                            dressing_config.get("singular_tolerance", 1.0e-12)
-                        ),
-                        near_pole_tolerance=float(
-                            dressing_config.get("near_pole_tolerance", 1.0e-3)
-                        ),
-                        static_warning_margin=float(
-                            dressing_config.get(
-                                "static_stability_warning_margin", 0.05
-                            )
-                        ),
-                        reject_sampled_static_instability=bool(
-                            dressing_config.get(
-                                "reject_sampled_static_instability", False
-                            )
-                        ),
+                        result, vertex, **dressing_diagnostics
                     )
             tensor[selected] = result.values_per_meV_cell
         return tensor

@@ -179,6 +179,13 @@ class NDRebin:
 
     Notes
     -----
+    Both averaging modes report the standard propagated uncertainty of a
+    weighted mean, ``sqrt(sum w_i^2 sigma_i^2) / sum w_i``, where ``w_i`` is the
+    point's total averaging weight (mean weight times fractional spatial
+    contribution). For inverse-variance weighting with unit spatial and
+    statistical weights this reduces to the familiar
+    ``1 / sqrt(sum 1 / sigma_i^2)``.
+
     The source implementation is distributed by SasView under the BSD-3-Clause
     license; see ``THIRD_PARTY_LICENSES.md`` for the full notice.
     """
@@ -806,7 +813,12 @@ class NDRebin:
             inv_var = statistical_weights[valid] / (errors[valid] ** 2)
             mean_weights = spatial_weights[valid] * inv_var
             data_weights = mean_weights * self.data_flat[point_indices[valid]]
-            err_weights = mean_weights
+            # Var(sum w x / sum w) = sum w^2 sigma^2 / (sum w)^2. The familiar
+            # 1/sqrt(sum w) shortcut is only valid when every w is exactly
+            # 1/sigma^2; fractional spatial weights and statistical weights
+            # break that, so accumulate the general numerator. This reduces to
+            # the shortcut exactly when all those weights are one.
+            err_weights = (mean_weights**2) * (errors[valid] ** 2)
             norm_weights = mean_weights
             sample_weights = spatial_weights[valid]
             flat_idx = flat_idx[valid]

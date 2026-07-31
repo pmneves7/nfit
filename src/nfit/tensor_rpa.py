@@ -187,6 +187,15 @@ def build_tensor_structure(
     dense_terms: dict[str, ComplexArray] = {}
     # Dipole-dipole: one strength D_dip times the Ewald-summed dipole tensor,
     # cached densely (it is not bond-local).
+    #
+    # Sign: ``ewald_dipole_tensor`` returns the physical kernel
+    # ``T = (delta - 3 rhat rhat) / r^3``, whose Hamiltonian is
+    # ``H = +(1/2) D_dip sum_{i != j} S_i T(r_ij) S_j``. nfit's interaction
+    # matrix uses the opposite sign convention, ``H = -(1/2) sum S_i J S_j``,
+    # so that a positive Heisenberg J is ferromagnetic. The structure matrix
+    # multiplying D_dip is therefore ``-T(Q)``, which makes a *positive*
+    # ``D_dip`` the physical point-dipole interaction (see
+    # :func:`nfit.dipole.dipole_coupling_constant`).
     if dipole and dipole.get("enabled"):
         if lattice is None:
             raise ValueError("dipole-dipole coupling requires lattice parameters")
@@ -197,7 +206,7 @@ def build_tensor_structure(
         dim = 3 * n_sites
         dense = np.transpose(tensor, (0, 1, 3, 2, 4)).reshape(geometry.n_q, dim, dim)
         parameter_names.append("D_dip")
-        dense_terms["D_dip"] = np.ascontiguousarray(dense)
+        dense_terms["D_dip"] = np.ascontiguousarray(-dense)
 
     return TensorStructure(
         n_sites=n_sites,
@@ -332,6 +341,13 @@ def zeeman_cartesian_propagator(
     ``omega_L -> 0`` with unit ratios it becomes the scalar ``chi0(omega) I3``.
     """
 
+    field_axis = np.asarray(b_hat, dtype=float).reshape(3)
+    norm = float(np.linalg.norm(field_axis))
+    if not np.all(np.isfinite(field_axis)) or norm == 0.0:
+        raise ValueError("b_hat must be a finite nonzero 3-vector")
+    # The frame construction below (and the zz / antisymmetric projectors) is
+    # only correct for a unit vector, so normalize rather than trusting callers.
+    b_hat = field_axis / norm
     e = np.asarray(energy, dtype=float)
     x_par = chi0 / (1.0 - 1j * e / gamma0)
     chi_perp = chi_perp_ratio * chi0
@@ -341,8 +357,8 @@ def zeeman_cartesian_propagator(
     diag_perp = 0.5 * (x_plus + x_minus)
     off_perp = 0.5j * (x_plus - x_minus)  # gyrotropic, -> 0 as omega_L -> 0
 
-    x_axis, y_axis = _perpendicular_frame(np.asarray(b_hat, dtype=float))
-    z_axis = np.asarray(b_hat, dtype=float)
+    x_axis, y_axis = _perpendicular_frame(b_hat)
+    z_axis = b_hat
     # X0_frame = diag_perp (xx,yy) + off_perp (xy antisymmetric) + x_par (zz).
     # Build directly in Cartesian: X0 = a (I - zz^T) + s (zz^T) + g [xy antisym],
     # where the antisymmetric transverse part is off_perp * (x y^T - y x^T).

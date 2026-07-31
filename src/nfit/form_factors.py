@@ -9,7 +9,14 @@ approximation
 ``f(s) = A exp(-a s^2) + B exp(-b s^2) + C exp(-c s^2) + D``
 
 with ``s = |Q| / (4 pi) = sin(theta) / lambda`` in inverse Angstrom. The
-coefficients satisfy ``f(0) = A + B + C + D = 1`` for magnetic ions.
+tabulated coefficients satisfy ``f(0) = A + B + C + D = 1`` for magnetic ions
+to about ``1e-3``, which is the precision of the published fits rather than an
+exact constraint.
+
+Coverage gaps: the table has no ``5d`` ion (Re, Os, Ir, Pt), no ``Ru2``/``Ru3``
+or ``Rh3``, and no ``Ce3``. Pass explicit ``coefficients`` from the ILL tables
+for those ions. Only ``<j0>`` is tabulated, so rare-earth entries are used in
+the spin-only dipole approximation with no ``<j2>`` orbital term.
 
 References
 ----------

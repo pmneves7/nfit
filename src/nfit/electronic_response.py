@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import hashlib
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -18,7 +17,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from . import _parallel
-from .cache_utils import array_payload_nbytes
+from .cache_utils import array_digest, array_payload_nbytes, readonly_array
 from .cross_section import KB_MEV_PER_K
 from .electronic_backends import (
     ElectronicBackend,
@@ -56,12 +55,6 @@ def _q_executor(workers: int) -> ThreadPoolExecutor:
         max_workers=int(workers),
         thread_name_prefix="nfit-response-q",
     )
-
-
-def _readonly(value: ArrayLike, dtype: Any) -> np.ndarray:
-    result = np.array(value, dtype=dtype, copy=True)
-    result.setflags(write=False)
-    return result
 
 
 @dataclass
@@ -212,22 +205,6 @@ class ElectronicResponseCache:
             return self._device_bytes
 
 
-def _coordinate_digest(coordinates: np.ndarray) -> str:
-    contiguous = np.ascontiguousarray(coordinates, dtype=np.float64)
-    digest = hashlib.sha256()
-    digest.update(str(contiguous.shape).encode("ascii"))
-    digest.update(contiguous.tobytes())
-    return digest.hexdigest()
-
-
-def _array_digest(value: ArrayLike, dtype: Any) -> str:
-    contiguous = np.ascontiguousarray(value, dtype=dtype)
-    digest = hashlib.sha256()
-    digest.update(str(contiguous.shape).encode("ascii"))
-    digest.update(contiguous.tobytes())
-    return digest.hexdigest()
-
-
 def _cached_eigensystem(
     model: ElectronicModel,
     coordinates: np.ndarray,
@@ -241,7 +218,7 @@ def _cached_eigensystem(
     key = (
         "eigensystem",
         model.content_digest,
-        _coordinate_digest(coordinates),
+        array_digest(coordinates, np.float64),
         bool(eigenvectors),
         None if backend is None else str(backend),
         workers,
@@ -279,7 +256,7 @@ class ElectronicOperatorBasis:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        matrices = _readonly(self.matrices, np.complex128)
+        matrices = readonly_array(self.matrices, np.complex128)
         if matrices.ndim != 3 or matrices.shape[1] != matrices.shape[2]:
             raise ValueError("operator matrices must have shape (n, basis, basis)")
         if len(self.labels) != matrices.shape[0] or len(set(self.labels)) != len(
@@ -348,10 +325,10 @@ class SusceptibilityResult:
     provenance: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        q = _readonly(self.q_reduced, float)
-        energy = _readonly(self.energy_meV, float)
-        values = _readonly(self.values_per_meV_cell, np.complex128)
-        transferred = q if self.Q_reduced is None else _readonly(self.Q_reduced, float)
+        q = readonly_array(self.q_reduced, float)
+        energy = readonly_array(self.energy_meV, float)
+        values = readonly_array(self.values_per_meV_cell, np.complex128)
+        transferred = q if self.Q_reduced is None else readonly_array(self.Q_reduced, float)
         count = len(self.operator_labels)
         if q.ndim != 2 or q.shape[1] != 3:
             raise ValueError("q_reduced must have shape (n, 3)")
@@ -464,14 +441,14 @@ class ResponseConvergenceResult:
     provenance: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        broadenings = _readonly(self.broadenings_meV, float)
-        q = _readonly(self.q_reduced, float)
-        energy = _readonly(self.energy_meV, float)
-        values = _readonly(self.values_per_meV_cell, np.complex128)
-        mesh_absolute = _readonly(self.mesh_max_absolute_error, float)
-        mesh_relative = _readonly(self.mesh_max_relative_error, float)
-        broad_absolute = _readonly(self.broadening_max_absolute_change, float)
-        broad_relative = _readonly(self.broadening_max_relative_change, float)
+        broadenings = readonly_array(self.broadenings_meV, float)
+        q = readonly_array(self.q_reduced, float)
+        energy = readonly_array(self.energy_meV, float)
+        values = readonly_array(self.values_per_meV_cell, np.complex128)
+        mesh_absolute = readonly_array(self.mesh_max_absolute_error, float)
+        mesh_relative = readonly_array(self.mesh_max_relative_error, float)
+        broad_absolute = readonly_array(self.broadening_max_absolute_change, float)
+        broad_relative = readonly_array(self.broadening_max_relative_change, float)
         expected = (len(self.mesh_shapes), broadenings.size, energy.size)
         if values.shape != expected or q.shape != (energy.size, 3):
             raise ValueError("convergence values must match mesh, broadening, and points")
@@ -1065,6 +1042,82 @@ def _permuted_eigensystem(
     )
 
 
+def _mesh_symmetry_record(mesh: WavevectorSampling) -> dict[str, Any]:
+    """Return the mesh's response-reduction record, or the full-mesh default."""
+
+    return dict(mesh.provenance).get(
+        "response_symmetry_reduction",
+        {
+            "policy": "full",
+            "applied": False,
+            "reason": "no response reduction metadata",
+        },
+    )
+
+
+def _cache_record(
+    cache: ElectronicResponseCache | None,
+    *,
+    hits_before: int,
+    misses_before: int,
+    include_device: bool = False,
+) -> dict[str, Any]:
+    """Return the per-call cache statistics recorded in response provenance."""
+
+    record: dict[str, Any] = {
+        "enabled": cache is not None,
+        "hits": 0 if cache is None else cache.hits - hits_before,
+        "misses": 0 if cache is None else cache.misses - misses_before,
+        "entries": 0 if cache is None else cache.entries,
+    }
+    if include_device:
+        record["device_entries"] = 0 if cache is None else cache.device_entries
+    return record
+
+
+def _q_evaluation_record(
+    *,
+    commensurate_permutation_count: int,
+    direct_shift_count: int,
+) -> dict[str, Any]:
+    """Return the exact-evaluation record shared by every non-interpolated path."""
+
+    return {
+        "policy": "exact",
+        "commensurate_permutation_count": int(commensurate_permutation_count),
+        "direct_shift_count": int(direct_shift_count),
+        "approximation": "none",
+    }
+
+
+def _base_response_provenance(
+    operators: ElectronicOperatorBasis,
+    mesh: WavevectorSampling,
+    transferred_q: np.ndarray,
+    *,
+    transition_budget: int,
+) -> dict[str, Any]:
+    """Return the provenance keys every ``_bare_lindhard_direct`` path shares."""
+
+    return {
+        "formula": "generalized_lindhard",
+        "sign": "-(f_nk-f_mkq)/(E+e_nk-e_mkq+i eta)",
+        "operator_basis": dict(operators.metadata),
+        "extended_zone_Q_reduced": transferred_q.tolist(),
+        "mesh": mesh.to_dict(),
+        "precision": "float64/complex128",
+        "symmetry": _mesh_symmetry_record(mesh),
+        "approximation": "finite lifetime broadening only",
+        "transition_max_batch_bytes": int(transition_budget),
+    }
+
+
+def _validate_transition_backend(requested: str) -> None:
+    """Reject an unknown transition-backend name before any work is done."""
+
+    _resolved_transition_backend(requested, work=0, n_operators=1)
+
+
 def _resolved_transition_backend(
     requested: str,
     *,
@@ -1261,19 +1314,15 @@ def _bare_lindhard_direct(
     if transition_budget < 1:
         raise ValueError("transition_max_batch_bytes must be positive")
     transition_backend_request = str(transition_backend).strip().lower()
-    _resolved_transition_backend(
-        transition_backend_request,
-        work=0,
-        n_operators=operators.size,
-    )
+    _validate_transition_backend(transition_backend_request)
     response_cache_key = (
         "bare_lindhard",
         model.content_digest,
-        _array_digest(k, np.float64),
-        _array_digest(weights, np.float64),
-        _array_digest(transferred_q, np.float64),
-        _array_digest(energy, np.float64),
-        _array_digest(point_operators, np.complex128),
+        array_digest(k, np.float64),
+        array_digest(weights, np.float64),
+        array_digest(transferred_q, np.float64),
+        array_digest(energy, np.float64),
+        array_digest(point_operators, np.complex128),
         operators.labels,
         operators.conjugate_indices,
         temperature,
@@ -1329,55 +1378,30 @@ def _bare_lindhard_direct(
             chemical_potential_meV=mu,
             broadening_meV=eta,
             provenance={
-                "formula": "generalized_lindhard",
-                "sign": "-(f_nk-f_mkq)/(E+e_nk-e_mkq+i eta)",
-                "operator_basis": dict(operators.metadata),
-                "extended_zone_Q_reduced": transferred_q.tolist(),
-                "mesh": mesh.to_dict(),
+                **_base_response_provenance(
+                    operators,
+                    mesh,
+                    transferred_q,
+                    transition_budget=transition_budget,
+                ),
                 "base_execution": dict(gpu_record["base_execution"]),
-                "shifted_execution": list(
-                    gpu_record["shifted_execution"]
-                ),
-                "precision": "float64/complex128",
-                "symmetry": dict(mesh.provenance).get(
-                    "response_symmetry_reduction",
-                    {
-                        "policy": "full",
-                        "applied": False,
-                        "reason": "no response reduction metadata",
-                    },
-                ),
-                "approximation": "finite lifetime broadening only",
+                "shifted_execution": list(gpu_record["shifted_execution"]),
                 "transition_batch_size": int(
                     gpu_record["transition_batch_size"]
                 ),
                 "energy_batch_size": int(gpu_record["energy_batch_size"]),
-                "transition_max_batch_bytes": transition_budget,
-                "q_evaluation": {
-                    "policy": "exact",
-                    "commensurate_permutation_count": int(
-                        gpu_record["commensurate_permutation_count"]
-                    ),
-                    "direct_shift_count": int(
-                        gpu_record["direct_shift_count"]
-                    ),
-                    "approximation": "none",
-                },
-                "cache": {
-                    "enabled": cache is not None,
-                    "hits": (
-                        0 if cache is None else cache.hits - cache_hits_before
-                    ),
-                    "misses": (
-                        0
-                        if cache is None
-                        else cache.misses - cache_misses_before
-                    ),
-                    "entries": 0 if cache is None else cache.entries,
-                    "device_entries": (
-                        0 if cache is None else cache.device_entries
-                    ),
-                },
+                "q_evaluation": _q_evaluation_record(
+                    commensurate_permutation_count=gpu_record[
+                        "commensurate_permutation_count"
+                    ],
+                    direct_shift_count=gpu_record["direct_shift_count"],
+                ),
+                "cache": _cache_record(
+                    cache,
+                    hits_before=cache_hits_before,
+                    misses_before=cache_misses_before,
+                    include_device=True,
+                ),
                 "response_execution": "cupy_end_to_end",
                 "transition_backend": "cupy",
                 "host_transfer": "completed susceptibility only",
@@ -1407,7 +1431,7 @@ def _bare_lindhard_direct(
         dtype=np.complex128,
     )
     operator_keys = np.asarray(
-        [_array_digest(value, np.complex128) for value in point_operators],
+        [array_digest(value, np.complex128) for value in point_operators],
         dtype=object,
     )
     unique_q, inverse = np.unique(q, axis=0, return_inverse=True)
@@ -1524,9 +1548,8 @@ def _bare_lindhard_direct(
                     if len(transition_backends) == 1
                     else "mixed"
                 ),
-                "q_evaluation": {
-                    "policy": "exact",
-                    "commensurate_permutation_count": sum(
+                "q_evaluation": _q_evaluation_record(
+                    commensurate_permutation_count=sum(
                         int(
                             item.provenance["q_evaluation"][
                                 "commensurate_permutation_count"
@@ -1534,16 +1557,11 @@ def _bare_lindhard_direct(
                         )
                         for item in q_responses
                     ),
-                    "direct_shift_count": sum(
-                        int(
-                            item.provenance["q_evaluation"][
-                                "direct_shift_count"
-                            ]
-                        )
+                    direct_shift_count=sum(
+                        int(item.provenance["q_evaluation"]["direct_shift_count"])
                         for item in q_responses
                     ),
-                    "approximation": "none",
-                },
+                ),
                 "q_parallel_execution": {
                     "applied": True,
                     "q_workers": q_worker_count,
@@ -1551,18 +1569,11 @@ def _bare_lindhard_direct(
                     "unique_q": int(unique_q.shape[0]),
                     "work_estimate": q_parallel_work,
                 },
-                "cache": {
-                    "enabled": cache is not None,
-                    "hits": (
-                        0 if cache is None else cache.hits - cache_hits_before
-                    ),
-                    "misses": (
-                        0
-                        if cache is None
-                        else cache.misses - cache_misses_before
-                    ),
-                    "entries": 0 if cache is None else cache.entries,
-                },
+                "cache": _cache_record(
+                    cache,
+                    hits_before=cache_hits_before,
+                    misses_before=cache_misses_before,
+                ),
             },
         )
         if cache is not None and cache_completed_response:
@@ -1602,8 +1613,10 @@ def _bare_lindhard_direct(
             orbital_pair_indices is not None
             and transition_backend_request == "auto"
         )
+        # Bound unconditionally: the per-energy byte estimate below reads it
+        # inside a conditional expression, which is easy to break when edited.
+        pair_size = 0 if orbital_pair_indices is None else len(orbital_pair_indices)
         if factorized_pairs:
-            pair_size = len(orbital_pair_indices)
             per_k_bytes = max(
                 1,
                 32 * bands * pair_size * pair_size
@@ -1774,41 +1787,29 @@ def _bare_lindhard_direct(
         chemical_potential_meV=mu,
         broadening_meV=eta,
         provenance={
-            "formula": "generalized_lindhard",
-            "sign": "-(f_nk-f_mkq)/(E+e_nk-e_mkq+i eta)",
-            "operator_basis": dict(operators.metadata),
-            "extended_zone_Q_reduced": transferred_q.tolist(),
-            "mesh": mesh.to_dict(),
+            **_base_response_provenance(
+                operators,
+                mesh,
+                transferred_q,
+                transition_budget=transition_budget,
+            ),
             "base_execution": dict(base.provenance),
             "shifted_execution": execution_records,
-            "precision": "float64/complex128",
-            "symmetry": dict(mesh.provenance).get(
-                "response_symmetry_reduction",
-                {
-                    "policy": "full",
-                    "applied": False,
-                    "reason": "no response reduction metadata",
-                },
-            ),
-            "approximation": "finite lifetime broadening only",
             "transition_batch_size": (
                 min(transition_batch_sizes) if transition_batch_sizes else 0
             ),
             "energy_batch_size": (
                 min(energy_batch_sizes) if energy_batch_sizes else 0
             ),
-            "transition_max_batch_bytes": transition_budget,
             "transition_backend": (
                 next(iter(resolved_transition_backends))
                 if len(resolved_transition_backends) == 1
                 else "mixed"
             ),
-            "q_evaluation": {
-                "policy": "exact",
-                "commensurate_permutation_count": commensurate_q_count,
-                "direct_shift_count": len(unique_q) - commensurate_q_count,
-                "approximation": "none",
-            },
+            "q_evaluation": _q_evaluation_record(
+                commensurate_permutation_count=commensurate_q_count,
+                direct_shift_count=len(unique_q) - commensurate_q_count,
+            ),
             "q_parallel_execution": {
                 "applied": False,
                 "q_workers": 1,
@@ -1816,16 +1817,11 @@ def _bare_lindhard_direct(
                 "unique_q": int(unique_q.shape[0]),
                 "work_estimate": q_parallel_work,
             },
-            "cache": {
-                "enabled": cache is not None,
-                "hits": (
-                    0 if cache is None else cache.hits - cache_hits_before
-                ),
-                "misses": (
-                    0 if cache is None else cache.misses - cache_misses_before
-                ),
-                "entries": 0 if cache is None else cache.entries,
-            },
+            "cache": _cache_record(
+                cache,
+                hits_before=cache_hits_before,
+                misses_before=cache_misses_before,
+            ),
         },
     )
     if cache is not None and cache_completed_response:

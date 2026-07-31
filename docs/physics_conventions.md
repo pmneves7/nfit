@@ -323,10 +323,15 @@ s=\frac{|\mathbf Q|}{4\pi}.
 $$
 
 $f$ and $A,B,C,D$ are dimensionless. Since $s$ has units Å$^{-1}$,
-$a,b,c$ have units Å$^2$. The tabulated ions cover common $3d$, $4d$, $4f$,
-and $5f$ magnetic ions; the same expression can be used with explicit custom
-coefficients. Evaluating $|\mathbf Q|$ from reciprocal-lattice coordinates
-requires the crystal lattice or a UB-derived reciprocal basis.
+$a,b,c$ have units Å$^2$. Evaluating $|\mathbf Q|$ from reciprocal-lattice
+coordinates requires the crystal lattice or a UB-derived reciprocal basis.
+
+The built-in table covers common $3d$, $4d$, $4f$, and $5f$ magnetic ions. It
+does **not** currently include any $5d$ ion (Re, Os, Ir, Pt), Ru$^{2+}$,
+Ru$^{3+}$, Rh$^{3+}$, or Ce$^{3+}$. Use explicit custom coefficients from the
+ILL tables for those; `nfit.available_ions()` lists what is tabulated. Only
+$\langle j_0\rangle$ is tabulated, so the $4f$ entries are used in the
+spin-only dipole approximation without an orbital $\langle j_2\rangle$ term.
 
 For direct geometry,
 
@@ -566,9 +571,11 @@ single-ion anisotropy, dipole–dipole, or Zeeman terms (see
   $\mu_B=0.05788\,\text{meV/T}$. The dipole strength $D_{\mathrm{dip}}$ is in
   meV·Å³, with physical default $(\mu_0/4\pi)(g\mu_B)^2$; this product has
   dimensions energy times volume.
-- **Sign convention.** Positive couplings favour the ordering where the largest
-  eigenvalue $\lambda_{\max}(\mathbf{Q})$ of $\mathbb{J}(\mathbf{Q})$ peaks; the
-  RPA instability is at $\lambda_{\max}\chi_0 \to 1$.
+- **Sign convention.** The interaction matrix is defined by
+  $H=-\tfrac12\sum_{ij}\mathbf S_i\,\mathbb J\,\mathbf S_j$, so positive
+  couplings favour the ordering where the largest eigenvalue
+  $\lambda_{\max}(\mathbf{Q})$ of $\mathbb{J}(\mathbf{Q})$ peaks; the RPA
+  instability is at $\lambda_{\max}\chi_0 \to 1$.
   $\lambda_{\max}$ has energy units and $\chi_0$ inverse-energy units, so their
   product is dimensionless. With a self-consistency closure, the denominator is
   $1-[\lambda_\nu(\mathbf Q)-\lambda_{\rm shift}]\chi_{0,\rm eff}$.
@@ -576,6 +583,33 @@ single-ion anisotropy, dipole–dipole, or Zeeman terms (see
   reaction field `lambda_shift` is an energy subtracted from every interaction
   eigenvalue. nfit reports the smallest sampled denominator as
   `stability_margin`. This is the same sign convention as the scalar model.
+- **Dipole sign.** The dipolar Hamiltonian is
+  $H=+\tfrac12 D_{\mathrm{dip}}\sum_{i\neq j}\mathbf S_i\,\mathbb
+  T(\mathbf r_{ij})\,\mathbf S_j$ with
+  $\mathbb T=(\delta_{\alpha\beta}-3\hat r_\alpha\hat r_\beta)/r^3$, which is
+  the *opposite* sign to the exchange convention above. nfit therefore assembles
+  $-\mathbb T(\mathbf Q)$ into $\mathbb J(\mathbf Q)$, so a **positive**
+  $D_{\mathrm{dip}}$ is the physical point-dipole interaction and favours
+  head-to-tail alignment along the shortest lattice direction.
+
+## Electronic-response conventions
+
+- **Cartesian spin response.** `bare_spin_susceptibility` returns the
+  susceptibility of the dimensionless spin operator. For an implicit-spin model
+  it evaluates the spin trace analytically, giving
+  $\chi^0_{s}(\mathbf 0,0)=D_\uparrow(\mu)/2$ with $D_\uparrow$ the per-spin
+  density of states.
+- **RPA vertices.** The vertex conjugate to $S^\alpha$ is twice an on-site
+  density interaction, so `stoner_rpa` uses $\Gamma=2I$ and its instability is
+  the textbook $I D_\uparrow(\mu)=1$. `hubbard_hund_rpa` dresses the
+  orbital-pair response before the spin trace and so uses $U$ directly; the two
+  interaction parameters are on the same scale. See
+  [Scalar Stoner RPA](stoner_rpa.md).
+- **Density of states.** `density_of_states` includes the model's spin
+  degeneracy: an implicit-spin total integrates to $2N_{\rm basis}$ states per
+  primitive cell and matches the electron count from `electron_filling`. A
+  collinear or spinor model already carries spin in its basis and uses a
+  degeneracy of one. The factor is recorded as `provenance["spin_degeneracy"]`.
 
 Model-specific form-factor and exchange symbols are defined in
 [Spin-fluctuation models](spin_fluctuation_models.md) and

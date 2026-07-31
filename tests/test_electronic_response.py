@@ -1637,3 +1637,118 @@ def test_linked_tight_binding_parameters_inherit_response_dataset_scope():
     assert compiled.instances_for("bands", parameter_name)[0].datasets == (
         "scan",
     )
+
+
+def _cubic_band_model():
+    """One s band on a simple cubic lattice, implicit spin."""
+
+    return build_electronic_model(
+        direct_lattice=np.diag([3.0, 3.0, 3.0]),
+        basis=[BasisState("s", site="A", orbital="s")],
+        hoppings={
+            (1, 0, 0): [[-100.0]],
+            (0, 1, 0): [[-100.0]],
+            (0, 0, 1): [[-100.0]],
+        },
+        orbital_centers=[[0.0, 0.0, 0.0]],
+        energy_unit="meV",
+    )
+
+
+def _thermal_per_spin_dos(model, mesh, mu, temperature):
+    """Sum_k w_k sum_n (-df/de), the quantity the static Lindhard limit uses."""
+
+    from nfit.electronic_backends import evaluate_eigensystem
+    from nfit.electronic_response import _fermi_function
+
+    eigensystem = evaluate_eigensystem(
+        model, mesh.reduced_coordinates, eigenvectors=False
+    )
+    occupation = _fermi_function(eigensystem.eigenvalues, mu, temperature)
+    return float(
+        np.einsum("k,kn->", mesh.weights, occupation * (1.0 - occupation))
+        / (KB_MEV_PER_K * temperature)
+    )
+
+
+def test_bare_cartesian_spin_response_carries_the_half_spin_trace():
+    """chi_s(0, 0) is exactly half the per-spin density of states at mu."""
+
+    model = _cubic_band_model()
+    mesh = k_mesh(model, (40, 40, 40), shift=[0.5, 0.5, 0.5], symmetry="full")
+    mu, temperature = -200.0, 60.0
+    response = bare_spin_susceptibility(
+        model,
+        np.zeros((1, 3)),
+        np.zeros(1),
+        mesh,
+        temperature_K=temperature,
+        chemical_potential_meV=mu,
+        broadening_meV=1.0,
+    )
+    chi = float(isotropic_spin_component(response).real[0])
+    assert chi == pytest.approx(
+        0.5 * _thermal_per_spin_dos(model, mesh, mu, temperature), rel=1.0e-10
+    )
+
+
+def test_scalar_stoner_uses_the_textbook_stoner_criterion():
+    """Enhancement is 1 / (1 - I * D_up(mu)), matching the Hubbard U scale.
+
+    The Cartesian spin response carries the analytic 1/2 spin trace, so the
+    vertex conjugate to S_alpha is 2I. Without that factor the instability
+    would sit at I * D_up = 2 and I would silently be twice the textbook
+    Stoner parameter (and twice the equivalent hubbard_hund_rpa U).
+    """
+
+    model = _cubic_band_model()
+    mesh = k_mesh(model, (40, 40, 40), shift=[0.5, 0.5, 0.5], symmetry="full")
+    mu, temperature = -200.0, 60.0
+    bare = bare_spin_susceptibility(
+        model,
+        np.zeros((1, 3)),
+        np.zeros(1),
+        mesh,
+        temperature_K=temperature,
+        chemical_potential_meV=mu,
+        broadening_meV=1.0,
+    )
+    critical = 1.0 / _thermal_per_spin_dos(model, mesh, mu, temperature)
+    bare_value = float(isotropic_spin_component(bare).real[0])
+    for fraction in (0.25, 0.5, 0.9):
+        vertex = scalar_stoner_vertex(
+            bare.operator_labels, fraction * critical, energy_unit="meV"
+        )
+        assert vertex.provenance["spin_channel_vertex_factor"] == 2.0
+        dressed = rpa_dress_susceptibility(bare, vertex)
+        enhancement = (
+            float(isotropic_spin_component(dressed).real[0]) / bare_value
+        )
+        assert enhancement == pytest.approx(1.0 / (1.0 - fraction), rel=1.0e-9)
+
+
+def test_stoner_vertex_leaves_a_non_spin_operator_basis_unscaled():
+    """The 1/2 spin trace belongs to the spin operator, not the interaction."""
+
+    vertex = scalar_stoner_vertex(("spin",), 0.2, energy_unit="eV")
+    assert vertex.provenance["spin_channel_vertex_factor"] == 1.0
+    np.testing.assert_allclose(vertex.values_meV, [[200.0]])
+
+
+def test_density_of_states_matches_the_electron_filling_capacity():
+    """DOS and filling must use the same spin convention."""
+
+    from nfit.electronic_structure import density_of_states
+
+    model = _cubic_band_model()
+    mesh = k_mesh(model, (36, 36, 36), shift=[0.5, 0.5, 0.5], symmetry="full")
+    dos = density_of_states(
+        model, mesh, np.linspace(-700.0, 700.0, 2801), broadening_meV=6.0
+    )
+    capacity = electron_filling(
+        model, mesh, chemical_potential_meV=700.0, temperature_K=10.0
+    )
+    assert dos.provenance["spin_degeneracy"] == 2.0
+    assert np.trapezoid(dos.total_per_meV_cell, dos.energy_meV) == pytest.approx(
+        capacity, rel=1.0e-6
+    )

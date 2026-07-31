@@ -48,8 +48,12 @@ def test_rebin_nd_inverse_variance_respects_extra_data_weights():
         fractional=False,
     )
 
+    # Averaging weights are w = data_weights / sigma^2 = [1, 3], so the mean is
+    # 0.25 * 0 + 0.75 * 10. Its uncertainty is the general weighted-mean
+    # propagation sqrt(sum w^2 sigma^2) / sum w = sqrt(1 + 9) / 4; the
+    # 1 / sqrt(sum w) shortcut does not apply once data_weights differ from one.
     np.testing.assert_allclose(result.binned_data, [7.5])
-    np.testing.assert_allclose(result.binned_data_errs, [0.5])
+    np.testing.assert_allclose(result.binned_data_errs, [np.sqrt(10.0) / 4.0])
     np.testing.assert_allclose(result.n_samples, [2.0])
 
 

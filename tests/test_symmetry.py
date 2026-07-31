@@ -103,3 +103,45 @@ def test_point_list_rebin_supports_hkl_symmetry():
         symmetry_operations=[operation.matrix_hkl for operation in operations],
     )
     np.testing.assert_allclose(np.sort(output.column("H")), [-0.5, 0.5])
+
+
+def _operation_matrices(point_group: str) -> set[bytes]:
+    return {
+        np.round(operation.matrix_hkl, 6).tobytes()
+        for operation in resolve_symmetry(SymmetrySpec("point_group", point_group))
+    }
+
+
+def _with_inversion(point_group: str) -> set[bytes]:
+    matrices: set[bytes] = set()
+    for operation in resolve_symmetry(SymmetrySpec("point_group", point_group)):
+        matrices.add(np.round(operation.matrix_hkl, 6).tobytes())
+        matrices.add(np.round(-operation.matrix_hkl, 6).tobytes())
+    return matrices
+
+
+@pytest.mark.parametrize(
+    ("noncentrosymmetric", "laue"),
+    [
+        ("3m1", "-3m1"),
+        ("31m", "-31m"),
+        ("321", "-3m1"),
+        ("312", "-31m"),
+    ],
+)
+def test_trigonal_laue_groups_extend_their_own_setting(noncentrosymmetric, laue):
+    """The secondary/tertiary setting must survive adding inversion.
+
+    ``-3m1`` and ``-31m`` share the abbreviated Hermann-Mauguin symbol ``-3m``,
+    so they are resolved through an explicit space-group alias. Getting that
+    alias backwards silently folds trigonal data with mirrors along the wrong
+    in-plane directions, which no other test would catch.
+    """
+
+    assert _with_inversion(noncentrosymmetric) == _operation_matrices(laue)
+
+
+def test_trigonal_laue_settings_are_distinct():
+    assert _operation_matrices("-3m1") != _operation_matrices("-31m")
+    assert _operation_matrices("-6m2") != _operation_matrices("-62m")
+    assert _operation_matrices("3m1") != _operation_matrices("31m")

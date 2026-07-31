@@ -6,10 +6,12 @@ from numpy.typing import ArrayLike, NDArray
 KB_MEV_PER_K = 0.08617333262
 # Standard magnetic neutron cross-section constant
 # (gamma r_0 / 2)^2 = 0.07265 barn / mu_B^2. Equivalently, a spin-operator
-# response carries (gamma r_0)^2 (g/2)^2 = 0.07265 g^2 barn. Keep the
-# historical square-root name as a compatibility alias; callers that square it
-# obtain the constant.
+# response carries (gamma r_0)^2 (g/2)^2 = 0.07265 g^2 barn. This is the only
+# form used inside nfit; every cross-section expression multiplies by it once.
 MAGNETIC_CROSS_SECTION_BARN_PER_MU_B_SQ = 0.07265
+# Compatibility alias: the square root of the constant above, i.e. gamma r_0 / 2
+# in sqrt(barn) / mu_B. Retained because it is part of the public API; prefer
+# MAGNETIC_CROSS_SECTION_BARN_PER_MU_B_SQ, which needs no squaring at use.
 MAGNETIC_GAMMA0_PER_MU_B = np.sqrt(MAGNETIC_CROSS_SECTION_BARN_PER_MU_B_SQ)
 FloatArray = NDArray[np.float64]
 MILLIBARN_PER_BARN = 1000.0
@@ -147,7 +149,7 @@ def intensity_from_chipp(
         signal = signal / bose_denominator(E_meV, temperature_K)
     return (
         float(scale)
-        * MAGNETIC_GAMMA0_PER_MU_B**2
+        * MAGNETIC_CROSS_SECTION_BARN_PER_MU_B_SQ
         / np.pi
         * np.asarray(form_factor_sq, dtype=float)
         * np.asarray(polarization, dtype=float)
@@ -180,7 +182,7 @@ def chipp_from_intensity(
     signal = (np.asarray(intensity, dtype=float) - np.asarray(background, dtype=float))
     signal = signal * np.pi / (
         float(scale)
-        * MAGNETIC_GAMMA0_PER_MU_B**2
+        * MAGNETIC_CROSS_SECTION_BARN_PER_MU_B_SQ
         * form_factor
         * polarization_array
     )

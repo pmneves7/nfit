@@ -173,9 +173,11 @@ def test_projected_bands_and_dos_preserve_state_count():
         projections={"d": [0], "p": [1]},
         max_chunk_bytes=1_000_000,
     )
+    # Two basis states times the two-fold implicit spin degeneracy.
     assert np.trapezoid(dos.total_per_meV_cell, energy) == pytest.approx(
-        2.0, rel=2.0e-3
+        4.0, rel=2.0e-3
     )
+    assert dos.provenance["spin_degeneracy"] == 2.0
     np.testing.assert_allclose(
         dos.projected_per_meV_cell["d"] + dos.projected_per_meV_cell["p"],
         dos.total_per_meV_cell,
@@ -227,10 +229,12 @@ def test_tetrahedron_dos_preserves_total_and_projected_state_counts():
     assert dos.provenance["method"] == "tetrahedron"
     assert dos.provenance["provider"] == "ASE"
     assert dos.provenance["provider_version"]
+    # Two basis states times the two-fold implicit spin degeneracy.
     assert np.trapezoid(dos.total_per_meV_cell, energy) == pytest.approx(
-        2.0,
+        4.0,
         rel=2.0e-3,
     )
+    assert dos.provenance["spin_degeneracy"] == 2.0
     np.testing.assert_allclose(
         dos.projected_per_meV_cell["d"]
         + dos.projected_per_meV_cell["p"],
@@ -263,13 +267,14 @@ def test_tetrahedron_dos_represents_an_exact_flat_band_as_a_delta():
         projections={"dispersive": [0], "flat": [1]},
     )
 
-    assert np.trapezoid(dos.total_per_meV_cell, energy) == pytest.approx(2.0)
+    # One state per band times the two-fold implicit spin degeneracy.
+    assert np.trapezoid(dos.total_per_meV_cell, energy) == pytest.approx(4.0)
     assert np.trapezoid(
         dos.projected_per_meV_cell["dispersive"], energy
-    ) == pytest.approx(1.0)
+    ) == pytest.approx(2.0)
     assert np.trapezoid(
         dos.projected_per_meV_cell["flat"], energy
-    ) == pytest.approx(1.0)
+    ) == pytest.approx(2.0)
     flat_peak = int(np.argmax(dos.projected_per_meV_cell["flat"]))
     assert energy[flat_peak] == pytest.approx(100.0)
     assert dos.provenance["flat_band_indices"] == (1,)

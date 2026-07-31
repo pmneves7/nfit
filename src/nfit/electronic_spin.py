@@ -10,6 +10,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from .electronic_structure import BasisState, ElectronicModel
+from .harmonics import complex_harmonic_angular_momentum, real_harmonic_transform
 
 ComplexArray = NDArray[np.complex128]
 
@@ -164,67 +165,6 @@ def spin_half_operators(n_orbitals: int = 1) -> ComplexArray:
     )
 
 
-def _complex_harmonic_angular_momentum(l: int) -> ComplexArray:
-    angular_momentum = int(l)
-    size = 2 * angular_momentum + 1
-    m_values = np.arange(-angular_momentum, angular_momentum + 1, dtype=float)
-    raising = np.zeros((size, size), dtype=np.complex128)
-    for column, m_value in enumerate(m_values[:-1]):
-        raising[column + 1, column] = np.sqrt(
-            angular_momentum * (angular_momentum + 1.0)
-            - m_value * (m_value + 1.0)
-        )
-    lowering = raising.conj().T
-    return np.asarray(
-        (
-            (raising + lowering) / 2.0,
-            (raising - lowering) / (2.0j),
-            np.diag(m_values),
-        ),
-        dtype=np.complex128,
-    )
-
-
-def _real_harmonic_transform(l: int) -> ComplexArray:
-    """Map nfit's ordered real harmonics into complex ``m=-l..l`` states."""
-
-    angular_momentum = int(l)
-    if angular_momentum == 0:
-        layout = (("m0", 0),)
-    elif angular_momentum == 1:
-        layout = (("cos", 1), ("sin", 1), ("m0", 0))
-    elif angular_momentum == 2:
-        layout = (
-            ("sin", 2),
-            ("sin", 1),
-            ("cos", 1),
-            ("cos", 2),
-            ("m0", 0),
-        )
-    else:
-        layout = (("m0", 0),) + tuple(
-            entry
-            for m_value in range(1, angular_momentum + 1)
-            for entry in (("cos", m_value), ("sin", m_value))
-        )
-    size = 2 * angular_momentum + 1
-    result = np.zeros((size, size), dtype=np.complex128)
-    for column, (kind, m_value) in enumerate(layout):
-        if kind == "m0":
-            result[angular_momentum, column] = 1.0
-        elif kind == "cos":
-            result[angular_momentum + m_value, column] = (
-                (-1) ** m_value / np.sqrt(2.0)
-            )
-            result[angular_momentum - m_value, column] = 1.0 / np.sqrt(2.0)
-        else:
-            result[angular_momentum + m_value, column] = (
-                -1.0j * (-1) ** m_value / np.sqrt(2.0)
-            )
-            result[angular_momentum - m_value, column] = 1.0j / np.sqrt(2.0)
-    return result
-
-
 def manifold_orbital_operators(
     manifold: Any,
     *,
@@ -258,9 +198,9 @@ def manifold_orbital_operators(
                 "the projected prescription for this truncated subspace"
             )
         transform = np.asarray(manifold.harmonic_transform, dtype=np.complex128)
-        full = _complex_harmonic_angular_momentum(int(manifold.l))
+        full = complex_harmonic_angular_momentum(int(manifold.l))
         if manifold.basis_kind == "real_harmonic":
-            real_transform = _real_harmonic_transform(int(manifold.l))
+            real_transform = real_harmonic_transform(int(manifold.l))
             full = np.asarray(
                 [
                     real_transform.conj().T

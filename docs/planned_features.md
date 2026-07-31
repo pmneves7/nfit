@@ -17,6 +17,13 @@ releases. Current behavior is documented in the workflow and API pages.
   the required infrastructure.
 - Evaluate additional temperature-dependent closures only when their assumptions
   and parameter identifiability can be documented and tested.
+- Extend the magnetic form-factor table. It currently has no $5d$ ion (Re, Os,
+  Ir, Pt), no Ru$^{2+}$/Ru$^{3+}$ or Rh$^{3+}$, and no Ce$^{3+}$, so iridates,
+  osmates, and ruthenates need explicit custom coefficients. New entries should
+  be generated programmatically from a verified source rather than transcribed,
+  with a test that re-derives the table.
+- Add the $\langle j_2\rangle$ term so rare-earth ions can use the full dipole
+  approximation instead of the spin-only $\langle j_0\rangle$ form.
 
 ## Electronic-response models
 

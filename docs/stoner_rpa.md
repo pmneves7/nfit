@@ -11,15 +11,43 @@ For the Cartesian bare spin tensor $\boldsymbol\chi^0_s(\mathbf Q,E)$,
 
 $$
 \boldsymbol\chi_s=
-\left[\mathbb 1-\boldsymbol\chi^0_s I\right]^{-1}
-\boldsymbol\chi^0_s .
+\left[\mathbb 1-\boldsymbol\chi^0_s\,\Gamma\right]^{-1}
+\boldsymbol\chi^0_s ,
+\qquad
+\Gamma=2I .
 $$
 
-$I$ is entered in eV and converted to meV before multiplication by
-$\chi^0_s$, which is in meV$^{-1}$ per primitive electronic cell. The
-dissipative response used for inelastic scattering is
+$I$ is entered in eV and converted to meV before it enters the vertex
+$\Gamma$, which multiplies $\chi^0_s$ in meV$^{-1}$ per primitive electronic
+cell. The dissipative response used for inelastic scattering is
 $\boldsymbol\chi_s''=\operatorname{Im}\boldsymbol\chi_s$. The real static
 limit is used for quasistatic elastic and bulk comparisons.
+
+### Why the vertex is $2I$
+
+$\chi^0_s$ is the susceptibility of the *dimensionless* spin operator
+$S^\alpha$. Since $S_z=(n_\uparrow-n_\downarrow)/2$ carries a factor $1/2$ per
+spin index, an on-site interaction written for the densities,
+$H=I\,n_\uparrow n_\downarrow$, becomes $-I S_z^2$ up to a charge term, so the
+irreducible vertex conjugate to $S^\alpha$ is $2I$. For an implicit-spin model
+nfit's bare response is $\chi^0_s=D_\uparrow(\mu)/2$, where $D_\uparrow$ is the
+per-spin density of states, so the RPA denominator is
+
+$$
+1-2I\chi^0_s=1-I D_\uparrow(\mu),
+$$
+
+and the instability sits at the textbook Stoner criterion
+$I D_\uparrow(\mu)=1$. With this convention $I$ is directly comparable with the
+Hubbard $U$ of [Hubbard--Hund RPA](hubbard_hund_rpa.md), which dresses the
+orbital-pair response *before* the same spin trace is applied. The applied
+factor is recorded in the exported vertex provenance as
+`spin_channel_vertex_factor`.
+
+```{note}
+Before nfit 0.59 the vertex was $I$ rather than $2I$, so a previously fitted
+`I` corresponds to half its value under the current convention.
+```
 
 The implementation records the operator order, interaction matrix, RPA
 multiplication order, smallest relative singular value, condition number, and
@@ -30,7 +58,7 @@ a pole raises an error instead of returning an unstable finite number.
 
 | API name | Meaning | Unit | Acceptable input example |
 | --- | --- | --- | --- |
-| `I` | scalar Stoner interaction in each Cartesian spin channel | eV | `0.35` |
+| `I` | Stoner interaction; instability at $I D_\uparrow(\mu)=1$ | eV | `0.35` |
 
 `I` may be fixed, fitted, or shared across datasets using the common model
 parameter controls.

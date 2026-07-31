@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
@@ -7,6 +8,34 @@ from types import FunctionType
 from typing import Any
 
 import numpy as np
+from numpy.typing import ArrayLike
+
+
+def readonly_array(value: ArrayLike, dtype: Any) -> np.ndarray:
+    """Return an immutable copy of ``value`` with the requested dtype.
+
+    Shared by the frozen scientific dataclasses so that a stored array cannot
+    be mutated behind a cache key that was computed from its contents.
+    """
+
+    result = np.array(value, dtype=dtype, copy=True)
+    result.setflags(write=False)
+    return result
+
+
+def array_digest(value: ArrayLike, dtype: Any) -> str:
+    """Return a shape-and-content SHA-256 digest of a numerical array.
+
+    Used to key caches on array *contents*: the shape is hashed alongside the
+    bytes so that two arrays with the same buffer but different shapes cannot
+    collide.
+    """
+
+    contiguous = np.ascontiguousarray(value, dtype=dtype)
+    digest = hashlib.sha256()
+    digest.update(str(contiguous.shape).encode("ascii"))
+    digest.update(contiguous.tobytes())
+    return digest.hexdigest()
 
 
 def array_payload_nbytes(value: Any) -> int:

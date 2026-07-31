@@ -132,9 +132,14 @@ def _space_group_operations(expression: str) -> tuple[ReciprocalSymmetryOperatio
     return _unique_operations(operations)
 
 
+# Trigonal and hexagonal point groups whose Hermann-Mauguin symbol distinguishes
+# the secondary (<100>) from the tertiary (<1-10>) direction. Gemmi reports both
+# settings of each pair under one abbreviated ``point_group_hm`` (for example
+# "-3m" for both P-3m1 and P-31m), so the full orientation has to be pinned by
+# naming a representative space group of the matching setting.
 _POINT_GROUP_ALIASES = {
-    "-3m1": "P -3 1 m",
-    "-31m": "P -3 m 1",
+    "-3m1": "P -3 m 1",
+    "-31m": "P -3 1 m",
     "3m1": "P 3 m 1",
     "31m": "P 3 1 m",
     "312": "P 3 1 2",

@@ -44,8 +44,35 @@ This convention gives positive diagonal $\chi^{0\prime\prime}$ for a
 positive-energy absorption process. The response obeys the corresponding
 causal frequency and $\mathbf q\leftrightarrow-\mathbf q$ conjugation
 relation; a Hermitian scalar response at a symmetry-equivalent wavevector has
-$\chi^0(-E)=\chi^0(E)^*$. At $E=0$, exactly degenerate intraband terms use the
-Fermi-function derivative rather than the undefined ratio $0/0$.
+$\chi^0(-E)=\chi^0(E)^*$.
+
+### Degenerate transitions and the static limit
+
+At $E=0$ a transition with
+$\epsilon_{n\mathbf k}=\epsilon_{m,\mathbf k+\mathbf q}$ would give the
+undefined ratio $0/0$, so nfit substitutes the limit explicitly. Two details
+matter when interpreting a static response:
+
+- The substitution applies only where $|E|\le10^{-14}$ meV **and**
+  $|\epsilon_{n\mathbf k}-\epsilon_{m,\mathbf k+\mathbf q}|\le10^{-10}$ meV.
+  It is the exact degeneracy limit, not a small-denominator regularization.
+- At $T>0$ the limit is $-\partial f/\partial\epsilon=f(1-f)/k_BT$, evaluated
+  without $\eta$. At $T=0$ that derivative is a delta function, so nfit uses
+  the Lorentzian $\eta/\pi[(\epsilon-\mu)^2+\eta^2]$ instead; the two branches
+  therefore describe the Fermi window with different widths, and a $T=0$ static
+  response depends on $\eta$ where a finite-temperature one does not.
+
+Away from exact degeneracy the finite $\eta$ suppresses near-degenerate
+intraband weight whenever
+$|\epsilon_{n\mathbf k}-\epsilon_{m,\mathbf k+\mathbf q}|\ll\eta$, which is the
+usual small-$\mathbf q$ artefact of a broadened Lindhard function. Approach the
+uniform limit by evaluating exactly at $\mathbf q=0$ rather than at a small
+finite $\mathbf q$, and check the broadening convergence scan.
+
+With an implicit-spin model and the Cartesian spin operators, the exact
+$\mathbf q=0$, $E=0$ response is $\chi^{0}_s=D_\uparrow(\mu)/2$, where
+$D_\uparrow$ is the per-spin density of states; see
+[Physics conventions](physics_conventions.md#electronic-response-conventions).
 
 `orbital_pair_operator_basis(model)` constructs the complete ordered
 $|a\rangle\langle b|$ basis and its conjugate map.

@@ -44,6 +44,7 @@ from .electronic_structure import (
     normalize_electronic_energy_unit,
     reduce_electronic_model_to_primitive,
 )
+from .harmonics import real_harmonic_names, real_harmonic_transform
 
 FloatArray = NDArray[np.float64]
 ComplexArray = NDArray[np.complex128]
@@ -517,32 +518,6 @@ def _descriptive_hopping_label(
     )
 
 
-def _real_harmonic_layout(l: int) -> tuple[tuple[str, int], ...]:
-    if l == 0:
-        return (("m0", 0),)
-    if l == 1:
-        return (("cos", 1), ("sin", 1), ("m0", 0))
-    if l == 2:
-        return (("sin", 2), ("sin", 1), ("cos", 1), ("cos", 2), ("m0", 0))
-    return (("m0", 0),) + tuple(
-        entry for m in range(1, l + 1) for entry in (("cos", m), ("sin", m))
-    )
-
-
-def _real_harmonic_names(l: int) -> tuple[str, ...]:
-    if l == 0:
-        return ("s",)
-    if l == 1:
-        return ("p_x", "p_y", "p_z")
-    if l == 2:
-        return ("d_xy", "d_yz", "d_zx", "d_x2_y2", "d_z2")
-    shell = {3: "f"}.get(l, f"l{l}")
-    return tuple(
-        f"{shell}_{kind}{m}" if kind != "m0" else f"{shell}_m0"
-        for kind, m in _real_harmonic_layout(l)
-    )
-
-
 def _selection(rows: int, indices: Sequence[int]) -> ComplexArray:
     result = np.zeros((rows, len(indices)), dtype=np.complex128)
     for column, row in enumerate(indices):
@@ -588,7 +563,7 @@ def orbital_manifold_preset(
         )
     if key in {"s", "p", "d", "f"}:
         l = {"s": 0, "p": 1, "d": 2, "f": 3}[key]
-        names = _real_harmonic_names(l)
+        names = real_harmonic_names(l)
         return OrbitalManifold(
             site_label=str(site_label),
             label=label or default_label,
@@ -627,21 +602,6 @@ def _complex_harmonic_values(l: int, points: FloatArray) -> ComplexArray:
     return np.column_stack(columns)
 
 
-def _real_transform(l: int) -> ComplexArray:
-    size = 2 * l + 1
-    result = np.zeros((size, size), dtype=np.complex128)
-    for column, (kind, m) in enumerate(_real_harmonic_layout(l)):
-        if kind == "m0":
-            result[l, column] = 1.0
-        elif kind == "cos":
-            result[l + m, column] = (-1) ** m / np.sqrt(2.0)
-            result[l - m, column] = 1.0 / np.sqrt(2.0)
-        else:
-            result[l + m, column] = -1j * (-1) ** m / np.sqrt(2.0)
-            result[l - m, column] = 1j / np.sqrt(2.0)
-    return result
-
-
 def spherical_harmonic_representation(
     l: int,
     rotation: ArrayLike,
@@ -659,7 +619,7 @@ def spherical_harmonic_representation(
     values = _complex_harmonic_values(int(l), points)
     transformed = _complex_harmonic_values(int(l), points @ operation)
     if basis_kind == "real_harmonic":
-        transform = _real_transform(int(l))
+        transform = real_harmonic_transform(int(l))
         values = values @ transform
         transformed = transformed @ transform
     representation = np.linalg.lstsq(values, transformed, rcond=None)[0]
@@ -835,7 +795,7 @@ def site_symmetry_harmonic_submanifolds(
         raise ValueError("site-symmetry submanifolds require an s, p, d, or f shell")
     frame = np.eye(3) if local_frame is None else _frame(local_frame)
     l = {"s": 0, "p": 1, "d": 2, "f": 3}[key]
-    names = _real_harmonic_names(l)
+    names = real_harmonic_names(l)
     complete = orbital_manifold_preset(
         site_label,
         key,
@@ -1523,7 +1483,7 @@ def _slater_koster_manifold_data(
         manifold.harmonic_transform,
         dtype=np.complex128,
     )
-    selected_to_complex = _real_transform(l_value) @ selected_to_declared
+    selected_to_complex = real_harmonic_transform(l_value) @ selected_to_declared
     local_frame = (
         np.asarray(context.generator_cartesian, dtype=float)
         @ np.asarray(manifold.local_frame, dtype=float)

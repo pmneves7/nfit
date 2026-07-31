@@ -571,8 +571,11 @@ def test_data_group_composite_uses_scale_fit_weight_and_rebinning():
     composite = project_gui.composite_dataset_data(group)
 
     assert isinstance(composite, MDHistoData)
+    # Averaging weights are fit_weight / sigma^2 = [1, 3] with unit sigma, so
+    # the composite is 0.25 * 1 + 0.75 * (-5) and its uncertainty is the
+    # weighted-mean propagation sqrt(1 + 9) / 4.
     np.testing.assert_allclose(composite.signal, [[-3.5]])
-    np.testing.assert_allclose(composite.errors, [[0.5]])
+    np.testing.assert_allclose(composite.errors, [[np.sqrt(10.0) / 4.0]])
     np.testing.assert_allclose(composite.num_events, [[2.0]])
     assert composite.metadata["rebin"]["weighted_by_fit_weight"] is True
 

@@ -43,6 +43,14 @@ def dipole_coupling_constant(g_factor: float = 2.0) -> float:
     multiplies the (dimensionless-per-volume) Ewald tensor; pin ``D_dip`` to it
     (vary off) for the physical dipolar interaction, or fit it as an effective
     moment.
+
+    The value is positive: the dipolar Hamiltonian is
+    ``H = +(1/2) D_dip sum_{i != j} S_i T(r_ij) S_j`` with ``T`` as returned by
+    :func:`ewald_dipole_tensor`, and :func:`nfit.tensor_rpa.build_tensor_structure`
+    supplies the sign flip into nfit's ``H = -(1/2) sum S_i J S_j`` interaction
+    matrix. A positive ``D_dip`` therefore gives the physical dipole coupling,
+    which favours head-to-tail moment alignment along the shortest lattice
+    direction.
     """
 
     return _DIPOLE_CONSTANT_G2 * float(g_factor) ** 2
@@ -52,6 +60,42 @@ def _erfc(x: FloatArray) -> FloatArray:
     from scipy.special import erfc
 
     return erfc(x)
+
+
+def _axis_shells(basis: FloatArray, radius: float, minimum: int) -> list[int]:
+    """Per-axis image counts covering ``radius`` in every lattice direction.
+
+    A single index range is wrong for an anisotropic cell: six shells along a
+    2 Angstrom axis reach 12 Angstrom while six along a 20 Angstrom axis reach
+    120, so the sum is either under-converged or wastefully large depending on
+    the axis. Each axis instead gets enough images to cover ``radius``, using
+    the interplanar spacing (the component of the lattice vector perpendicular
+    to the other two) rather than its length.
+    """
+
+    shells = []
+    for axis in range(3):
+        others = [basis[:, other] for other in range(3) if other != axis]
+        normal = np.cross(others[0], others[1])
+        norm = float(np.linalg.norm(normal))
+        spacing = (
+            abs(float(basis[:, axis] @ normal)) / norm
+            if norm > 0.0
+            else float(np.linalg.norm(basis[:, axis]))
+        )
+        spacing = max(spacing, 1.0e-12)
+        shells.append(max(int(minimum), int(np.ceil(radius / spacing))))
+    return shells
+
+
+def _lattice_images(basis: FloatArray, shells: Sequence[int]) -> FloatArray:
+    ranges = [np.arange(-count, count + 1, dtype=float) for count in shells]
+    grid = np.stack(np.meshgrid(*ranges, indexing="ij"), axis=-1).reshape(-1, 3)
+    return grid @ basis.T
+
+
+# Cap on the (n_q, n_G, 3, 3) reciprocal working set, in complex128 elements.
+_RECIPROCAL_BLOCK_ELEMENTS = 4.0e6
 
 
 def ewald_dipole_tensor(
@@ -68,7 +112,16 @@ def ewald_dipole_tensor(
     ``hkl`` are the unique momentum points in RLU; ``site_positions_frac`` the
     fractional magnetic-site coordinates; ``lattice`` the cell parameters. The
     result is in inverse-cubic-angstrom units, so an energy coupling is
-    ``D_dip * D(Q)`` with ``D_dip`` in meV*Angstrom^3.
+    ``D_dip * D(Q)`` with ``D_dip`` in meV*Angstrom^3. The returned kernel is
+    the physical ``T = (delta - 3 rhat rhat) / r^3``; see
+    :func:`dipole_coupling_constant` for the sign convention used when it
+    enters an RPA interaction matrix.
+
+    ``real_shells`` and ``recip_shells`` override the automatic per-axis image
+    counts with a single count on every axis. Leaving them at ``None`` chooses
+    each axis independently so that a strongly anisotropic cell converges;
+    ``alpha`` and the cutoffs affect convergence only, not the converged
+    result.
     """
 
     basis = _lattice_vectors(lattice)  # columns = a, b, c (Angstrom)
@@ -82,10 +135,16 @@ def ewald_dipole_tensor(
 
     if alpha is None:
         alpha = np.sqrt(np.pi) / volume ** (1.0 / 3.0)
+    # erfc(alpha r) and exp(-k^2 / 4 alpha^2) both fall below ~1e-16 by the
+    # time their argument reaches 6, which sets the two cutoff radii.
     if real_shells is None:
-        real_shells = 6
+        real_shell_counts = _axis_shells(basis, 6.0 / alpha, 6)
+    else:
+        real_shell_counts = [int(real_shells)] * 3
     if recip_shells is None:
-        recip_shells = 6
+        recip_shell_counts = _axis_shells(recip, 12.0 * alpha, 6)
+    else:
+        recip_shell_counts = [int(recip_shells)] * 3
 
     tau_diff = tau[None, :, :] - tau[:, None, :]  # (N, N, 3): tau_k - tau_j
 
@@ -94,10 +153,7 @@ def ewald_dipole_tensor(
     eye3 = np.eye(3)
 
     # --- real space: erfc-screened dipole kernel over lattice images ---
-    shell = range(-real_shells, real_shells + 1)
-    r_lattice = np.array(
-        [basis @ np.array([n1, n2, n3], dtype=float) for n1 in shell for n2 in shell for n3 in shell]
-    )
+    r_lattice = _lattice_images(basis, real_shell_counts)
     for j in range(n_sites):
         for k in range(n_sites):
             d = tau_diff[j, k][None, :] + r_lattice  # (n_R, 3)
@@ -118,21 +174,36 @@ def ewald_dipole_tensor(
             dipole[:, j, k] += np.einsum("qr,rab->qab", phase, tensor)
 
     # --- reciprocal space: Gaussian-screened smooth part (tinfoil: drop k=0) ---
-    g_lattice = np.array(
-        [recip @ np.array([m1, m2, m3], dtype=float) for m1 in shell for m2 in shell for m3 in shell]
-    )
-    # k = G - Q per (G, q); phase e^{i G . tau_jk}.
-    kk = g_lattice[None, :, :] - q_cart[:, None, :]  # (n_q, n_G, 3)
-    k2 = np.einsum("qga,qga->qg", kk, kk)  # (n_q, n_G)
-    finite = k2 > 1e-12
-    coeff = np.zeros_like(k2)
-    coeff[finite] = (4.0 * np.pi / volume) * np.exp(-k2[finite] / (4.0 * alpha ** 2)) / k2[finite]
-    outer_k = kk[:, :, :, None] * kk[:, :, None, :]  # (n_q, n_G, 3, 3)
-    recip_block = coeff[:, :, None, None] * outer_k  # (n_q, n_G, 3, 3)
-    for j in range(n_sites):
-        for k in range(n_sites):
-            phase = np.exp(1j * (g_lattice @ tau_diff[j, k]))  # (n_G,)
-            dipole[:, j, k] += np.einsum("qgab,g->qab", recip_block, phase)
+    g_lattice = _lattice_images(recip, recip_shell_counts)
+    n_g = g_lattice.shape[0]
+    site_phases = np.asarray(
+        [
+            [np.exp(1j * (g_lattice @ tau_diff[j, k])) for k in range(n_sites)]
+            for j in range(n_sites)
+        ]
+    )  # (N, N, n_G)
+    # The (n_q, n_G, 3, 3) working set is the memory peak of this routine, so
+    # walk the momentum axis in blocks instead of materializing it whole.
+    block = max(1, min(n_q, int(_RECIPROCAL_BLOCK_ELEMENTS / max(9 * n_g, 1))))
+    for start in range(0, n_q, block):
+        stop = min(start + block, n_q)
+        kk = g_lattice[None, :, :] - q_cart[start:stop, None, :]  # (m, n_G, 3)
+        k2 = np.einsum("qga,qga->qg", kk, kk)  # (m, n_G)
+        finite = k2 > 1e-12
+        coeff = np.zeros_like(k2)
+        coeff[finite] = (
+            (4.0 * np.pi / volume)
+            * np.exp(-k2[finite] / (4.0 * alpha ** 2))
+            / k2[finite]
+        )
+        recip_block = coeff[:, :, None, None] * (
+            kk[:, :, :, None] * kk[:, :, None, :]
+        )  # (m, n_G, 3, 3)
+        for j in range(n_sites):
+            for k in range(n_sites):
+                dipole[start:stop, j, k] += np.einsum(
+                    "qgab,g->qab", recip_block, site_phases[j, k]
+                )
 
     # --- self correction: the reciprocal sum includes the d = 0 smooth term ---
     self_coeff = (4.0 * alpha ** 3) / (3.0 * np.sqrt(np.pi))
