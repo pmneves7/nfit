@@ -20988,11 +20988,8 @@ class NfitProjectExplorer:
                 model
             )
         )
-        layout.addWidget(matrix_button, 1, 0, 1, 2)
-        layout.addWidget(matrix_script, 1, 2)
-
         definition = model_definition(model.type)
-        for row, plot in enumerate(definition.plots, start=2):
+        for row, plot in enumerate(definition.plots, start=1):
             calculate = QtWidgets.QPushButton(plot.label)
             calculate.setObjectName(f"model_plot_{plot.key}")
             calculate.setToolTip(plot.description)
@@ -21013,6 +21010,9 @@ class NfitProjectExplorer:
             )
             layout.addWidget(calculate, row, 0, 1, 2)
             layout.addWidget(copy_script, row, 2)
+        matrix_row = 1 + len(definition.plots)
+        layout.addWidget(matrix_button, matrix_row, 0, 1, 2)
+        layout.addWidget(matrix_script, matrix_row, 2)
         self.model_parameter_layout.addWidget(group, 10, 0, 1, 4)
 
     def _build_model_plot_actions(self, model: ModelComponentSpec) -> None:

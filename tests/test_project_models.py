@@ -644,6 +644,16 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
     )
     assert tabs.indexOf(config_group.parentWidget()) == 3
     assert tabs.indexOf(electronic_group.parentWidget()) == 2
+    matrix_action = explorer.model_parameter_widget.findChild(
+        QtWidgets.QPushButton, "tight_binding_matrix_inspector"
+    )
+    fermi_action = explorer.model_parameter_widget.findChild(
+        QtWidgets.QPushButton, "model_plot_fermi_surface"
+    )
+    action_layout = electronic_group.layout()
+    matrix_row = action_layout.getItemPosition(action_layout.indexOf(matrix_action))[0]
+    fermi_row = action_layout.getItemPosition(action_layout.indexOf(fermi_action))[0]
+    assert matrix_row > fermi_row
 
     copied = explorer.model_parameter_widget.findChild(
         QtWidgets.QPushButton, "tight_binding_structure_script"
