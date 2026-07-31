@@ -269,6 +269,15 @@ susceptibility predicts $\chi_{\rm mol}$ directly; selecting moment also
 multiplies by field. See [Physics conventions](physics_conventions.md) for the
 rationalized-SI relation $M=\chi_{\rm SI}H$.
 
+When the crystal contains every chemical site and element, nfit derives the
+reduced formula and divides the expanded magnetic-site count by the formula
+units in the crystallographic cell. This gives magnetic ions per formula unit
+without confusing a centered conventional cell with one formula unit.
+`bulk.sites_per_fu` remains an explicit override. Older magnetic-only crystal
+definitions do not contain enough composition information for this inference;
+they retain the historical expanded-magnetic-site fallback until an override
+or complete crystal is supplied.
+
 ## Fitting a temperature series
 
 For an unconstrained series, use per-dataset or grouped sharing for $\chi_0$

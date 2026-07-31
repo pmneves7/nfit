@@ -1319,9 +1319,13 @@ def _register_builtin_models() -> None:
                     "",
                     (
                         "Name of the sibling tight-binding component supplying "
-                        "the Hamiltonian and its fitted coefficients."
+                        "the Hamiltonian and its fitted coefficients. An empty "
+                        "value selects the only enabled compatible component."
                     ),
-                    "Name of one enabled tight-binding component in this workspace.",
+                    (
+                        "Empty with exactly one enabled tight-binding component, "
+                        "or the name of one enabled component."
+                    ),
                     "str",
                     "Bands",
                 ),
@@ -1441,27 +1445,29 @@ def _register_builtin_models() -> None:
                 ),
                 _config_field(
                     "response_backend",
-                    "numpy",
+                    "auto",
                     (
-                        "Execution backend for the reference response. CuPy "
-                        "keeps eigensystems and the Lindhard contraction on "
-                        "the GPU; acceleration is explicit."
+                        "Execution backend for the response. Auto selects serial "
+                        "or threaded CPU execution by workload. CuPy keeps "
+                        "eigensystems and the Lindhard contraction on the GPU "
+                        "and remains an explicit, validated choice."
                     ),
-                    "One of numpy, threaded, or cupy.",
+                    "One of auto, numpy, threaded, or cupy.",
                     "str",
-                    "numpy",
+                    "auto",
                 ),
                 _config_field(
                     "response_workers",
-                    1,
+                    0,
                     (
                         "Total CPU allocation shared between independent "
                         "wavevectors, electronic eigensystems, and fused "
-                        "Lindhard contractions."
+                        "Lindhard contractions. Zero detects the current process, "
+                        "affinity, cgroup, or scheduler allocation."
                     ),
-                    "Positive integer.",
+                    "Nonnegative integer; zero selects automatically.",
                     "int",
-                    "8",
+                    "0",
                 ),
                 _config_field(
                     "response_transition_backend",
@@ -1561,17 +1567,33 @@ def _register_builtin_models() -> None:
                 _config_field(
                     "powder_orientations",
                     50,
-                    "Deterministic sphere directions used for powder averaging.",
+                    (
+                        "Deterministic approximately equal-area sphere directions "
+                        "used automatically when a powder dataset is evaluated."
+                    ),
                     "Integer of at least 6.",
                     "int",
                     "96",
                 ),
                 _config_field(
+                    "formula_units_mode",
+                    "auto",
+                    (
+                        "Infer formula units in the actual electronic model cell "
+                        "from the complete linked crystal, or use an explicit "
+                        "override."
+                    ),
+                    "Either auto or manual.",
+                    "str",
+                    "auto",
+                ),
+                _config_field(
                     "formula_units_per_cell",
                     1.0,
                     (
-                        "Formula units represented by the primitive electronic "
-                        "cell, used only for molar bulk normalization."
+                        "Formula units represented by the electronic model cell "
+                        "when formula_units_mode is manual, used only for molar "
+                        "bulk normalization."
                     ),
                     "Positive finite number.",
                     "float",

@@ -274,11 +274,20 @@ def _lindhard_factory(
 
     config = component.config if isinstance(component.config, dict) else {}
     source_name = str(config.get("electronic_component", "")).strip()
-    source = components.get(source_name)
+    source = components.get(source_name) if source_name else None
+    if source is None and not source_name:
+        candidates = [
+            item
+            for item in components.values()
+            if getattr(item, "type", None) == "tight_binding"
+            and bool(getattr(item, "enabled", True))
+        ]
+        source = candidates[0] if len(candidates) == 1 else None
     if source is None or getattr(source, "type", None) != "tight_binding":
         raise ValueError(
             f"Lindhard component {component.name!r} must reference an enabled "
-            "tight-binding component"
+            "tight-binding component; an empty reference is automatic only "
+            "when exactly one compatible component is enabled"
         )
     base_model = electronic_model_from_component(source)
     mesh = k_mesh(
@@ -292,8 +301,8 @@ def _lindhard_factory(
         parameter: qualified_parameter_name(source.name, parameter)
         for parameter in tight_binding_parameter_names(source)
     }
-    backend = str(config.get("response_backend", "numpy"))
-    workers = int(config.get("response_workers", 1))
+    backend = str(config.get("response_backend", "auto"))
+    workers = int(config.get("response_workers", 0))
     batch_bytes = int(
         float(config.get("response_max_batch_mb", 256.0)) * 1024**2
     )
@@ -309,7 +318,31 @@ def _lindhard_factory(
         max_entries=int(config.get("response_cache_entries", 64)),
     )
     powder_orientations = int(config.get("powder_orientations", 50))
-    formula_units_per_cell = float(config.get("formula_units_per_cell", 1.0))
+    formula_units_per_cell: float | None
+    formula_units_error = ""
+    formula_mode = str(
+        config.get(
+            "formula_units_mode",
+            "manual",
+        )
+    ).strip().lower()
+    if formula_mode == "auto":
+        try:
+            from .crystal import infer_crystal_formula_units
+
+            formula_units_per_cell = float(
+                infer_crystal_formula_units(
+                    source.config.get("crystal") or {},
+                    model_lattice=base_model.direct_lattice,
+                ).formula_units_per_model_cell
+            )
+        except (ImportError, KeyError, TypeError, ValueError) as exc:
+            formula_units_per_cell = None
+            formula_units_error = str(exc)
+    else:
+        formula_units_per_cell = float(
+            config.get("formula_units_per_cell", 1.0)
+        )
     dressing_config = (
         dressing_component.config
         if dressing_component is not None
@@ -574,6 +607,12 @@ def _lindhard_factory(
             data.metadata.get("powder_q_modulus_axis")
         )
         if bulk:
+            if formula_units_per_cell is None:
+                raise ValueError(
+                    "automatic formula-unit normalization is unavailable: "
+                    f"{formula_units_error}; select an explicit formula-units-"
+                    "per-cell override on the Lindhard component"
+                )
             q_reduced = np.zeros((data.size, 3), dtype=float)
             tensor = response_at_points(
                 electronic_model,
@@ -586,7 +625,7 @@ def _lindhard_factory(
             chi = np.asarray(
                 np.trace(tensor.real, axis1=1, axis2=2) / 3.0,
                 dtype=float,
-            ) / formula_units_per_cell
+            ) / float(formula_units_per_cell)
             return _scalar_bulk_observable(
                 data,
                 chi,
@@ -773,8 +812,6 @@ def _hubbard_hund_rpa_factory(
 
 def _validate_lindhard_component(component: Any) -> None:
     config = component.config if isinstance(component.config, dict) else {}
-    if not str(config.get("electronic_component", "")).strip():
-        raise ValueError("electronic_component must name a tight-binding component")
     mesh = tuple(int(value) for value in config.get("response_mesh", ()))
     if len(mesh) not in {1, 2, 3} or any(value < 1 for value in mesh):
         raise ValueError("response_mesh must contain one to three positive sizes")
@@ -835,12 +872,15 @@ def _validate_lindhard_component(component: Any) -> None:
     filling = float(config.get("filling_per_cell", 1.0))
     if not np.isfinite(filling) or filling <= 0.0:
         raise ValueError("filling_per_cell must be finite and positive")
-    if str(config.get("response_backend", "numpy")) not in {
+    if str(config.get("response_backend", "auto")) not in {
+        "auto",
         "numpy",
         "threaded",
         "cupy",
     }:
-        raise ValueError("response_backend must be numpy, threaded, or cupy")
+        raise ValueError(
+            "response_backend must be auto, numpy, threaded, or cupy"
+        )
     if int(config.get("response_backend_probe_points", 8)) < 1:
         raise ValueError("response_backend_probe_points must be positive")
     backend_rtol = float(config.get("response_backend_rtol", 1.0e-10))
@@ -851,8 +891,8 @@ def _validate_lindhard_component(component: Any) -> None:
         raise ValueError(
             "response_backend_atol_meV must be finite and nonnegative"
         )
-    if int(config.get("response_workers", 1)) < 1:
-        raise ValueError("response_workers must be positive")
+    if int(config.get("response_workers", 0)) < 0:
+        raise ValueError("response_workers must be nonnegative")
     if str(config.get("response_transition_backend", "auto")) not in {
         "auto",
         "numpy",
@@ -878,9 +918,17 @@ def _validate_lindhard_component(component: Any) -> None:
         raise ValueError("response_cache_entries must be nonnegative")
     if int(config.get("powder_orientations", 50)) < 6:
         raise ValueError("powder_orientations must be at least 6")
-    formula_units = float(config.get("formula_units_per_cell", 1.0))
-    if not np.isfinite(formula_units) or formula_units <= 0.0:
-        raise ValueError("formula_units_per_cell must be finite and positive")
+    formula_mode = str(
+        config.get("formula_units_mode", "manual")
+    ).strip().lower()
+    if formula_mode not in {"auto", "manual"}:
+        raise ValueError("formula_units_mode must be auto or manual")
+    if formula_mode == "manual":
+        formula_units = float(config.get("formula_units_per_cell", 1.0))
+        if not np.isfinite(formula_units) or formula_units <= 0.0:
+            raise ValueError(
+                "formula_units_per_cell must be finite and positive"
+            )
     plot_q = np.asarray(config.get("plot_q_reduced", ()), dtype=float)
     if plot_q.shape != (3,) or np.any(~np.isfinite(plot_q)):
         raise ValueError("plot_q_reduced must contain three finite coordinates")
@@ -1971,9 +2019,28 @@ class _RpaComponentEvaluator:
             )
         self.component = component
         self.config = config
-        # Magnetic sites in the user's cell (before primitive reduction) --
-        # the default sites-per-formula-unit for absolute bulk normalization.
+        # Magnetic sites in the user's cell (before primitive reduction).
+        # A complete chemical crystal converts this count to sites per formula
+        # unit; legacy magnetic-only structures retain the historical fallback.
         self._n_magnetic_sites = len(site_positions)
+        self._magnetic_sites_per_formula_unit: float | None = None
+        try:
+            from .crystal import infer_crystal_formula_units
+
+            formula = infer_crystal_formula_units(
+                config.get("crystal") or {},
+                cell_multiplicity=1,
+            )
+            inferred = (
+                self._n_magnetic_sites
+                / formula.conventional_formula_units
+            )
+            if np.isfinite(inferred) and inferred > 0.0:
+                self._magnetic_sites_per_formula_unit = float(inferred)
+        except (ImportError, KeyError, TypeError, ValueError):
+            # Legacy manually entered magnetic models may not contain the
+            # complete chemical structure needed for formula-unit inference.
+            pass
         self.labels = heisenberg_rpa_orbit_labels(component)
         self.j_keys = {label: qualified_parameter_name(name, label) for label in self.labels}
         self.chi0_key = qualified_parameter_name(name, "chi0")
@@ -2589,6 +2656,7 @@ class _RpaComponentEvaluator:
             chi_values[sel] = chi_uniform
         sites_per_fu = float(
             (self.config.get("bulk") or {}).get("sites_per_fu")
+            or self._magnetic_sites_per_formula_unit
             or self._n_magnetic_sites
         )
         out = _scalar_bulk_observable(

@@ -10,9 +10,11 @@ from nfit.crystal import (
     expand_magnetic_sites,
     generate_bond_orbits,
     generate_spatial_bond_orbits,
+    infer_crystal_formula_units,
     lattice_vectors,
     orbits_from_config,
     orbits_to_config,
+    primitive_lattice_vectors,
     sites_to_config,
 )
 
@@ -81,6 +83,66 @@ def test_generic_site_and_spatial_orbit_apis_preserve_heisenberg_geometry():
 def test_public_lattice_vectors_use_column_vector_convention():
     basis = lattice_vectors(FCC["lattice"])
     np.testing.assert_allclose(basis, np.diag([4.0, 4.0, 4.0]), atol=1.0e-14)
+
+
+def test_formula_units_follow_complete_composition_and_model_cell():
+    crystal = {
+        "lattice": {
+            "a": 8.24,
+            "b": 8.24,
+            "c": 8.24,
+            "alpha": 90.0,
+            "beta": 90.0,
+            "gamma": 90.0,
+        },
+        "spacegroup": "F d -3 m:2",
+        "sites": [
+            {
+                "label": "Li1",
+                "element": "Li+",
+                "position": [0.125, 0.125, 0.125],
+            },
+            {
+                "label": "V1",
+                "element": "V4+",
+                "position": [0.5, 0.5, 0.5],
+            },
+            {
+                "label": "O1",
+                "element": "O2-",
+                "position": [0.261, 0.261, 0.261],
+            },
+        ],
+    }
+    conventional = infer_crystal_formula_units(crystal)
+    assert conventional.formula == "LiO4V2"
+    assert conventional.conventional_formula_units == 8
+    assert conventional.formula_units_per_model_cell == 8
+
+    primitive = infer_crystal_formula_units(
+        crystal,
+        model_lattice=primitive_lattice_vectors(
+            crystal["lattice"],
+            crystal["spacegroup"],
+        ),
+    )
+    assert primitive.cell_multiplicity == 4
+    assert primitive.formula_units_per_model_cell == 2
+
+
+def test_formula_unit_inference_rejects_partial_occupancy():
+    crystal = {
+        **FCC,
+        "sites": [
+            {
+                **FCC["sites"][0],
+                "element": "Ni",
+                "occupancy": 0.5,
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match="partially occupied"):
+        infer_crystal_formula_units(crystal)
 
 
 def test_expand_unknown_label_raises():

@@ -182,6 +182,53 @@ def test_absolute_bulk_susceptibility_prediction_does_not_multiply_by_field():
     np.testing.assert_allclose(values, expected, rtol=1e-9)
 
 
+def test_heisenberg_bulk_normalization_infers_magnetic_sites_per_formula_unit():
+    from nfit.fitting import evaluate_problem_model
+    from nfit.sum_rules import EMU_PER_MOL_PER_MODEL_CHI
+
+    component = _magnetization_component(chi0=0.3, J1=0.0)
+    component.config["crystal"] = {
+        "lattice": {
+            "a": 5.0,
+            "b": 5.0,
+            "c": 5.0,
+            "alpha": 90.0,
+            "beta": 90.0,
+            "gamma": 90.0,
+        },
+        "spacegroup": "P 1",
+        "sites": [
+            {"label": "Fe1", "element": "Fe", "position": [0.0, 0.0, 0.0]},
+            {"label": "Fe2", "element": "Fe", "position": [0.5, 0.5, 0.5]},
+            {"label": "O1", "element": "O", "position": [0.25, 0.0, 0.0]},
+            {"label": "O2", "element": "O", "position": [0.75, 0.0, 0.0]},
+            {"label": "O3", "element": "O", "position": [0.0, 0.25, 0.0]},
+            {"label": "O4", "element": "O", "position": [0.0, 0.75, 0.0]},
+        ],
+    }
+    points = _magnetization_points([5.0], np.array([1.0]), np.zeros(1))
+    points.metadata.update(
+        {
+            "absolute_units": True,
+            "quantity_type": "bulk_susceptibility",
+            "unit": "cm^3/mol",
+        }
+    )
+    compiled = compile_fit_problem(
+        [component],
+        [FitDatasetInput("m", points, data_type="magnetization")],
+    )
+    values = evaluate_problem_model(
+        compiled.problem,
+        "m",
+        {spec.name: spec.value for spec in compiled.problem.parameter_specs},
+    )
+
+    # Fe2O4 reduces to FeO2, hence one magnetic site per formula unit.
+    expected = EMU_PER_MOL_PER_MODEL_CHI * 1.0 * 2.0**2 * 0.3
+    np.testing.assert_allclose(values, expected, rtol=1e-9)
+
+
 def test_absolute_bulk_normalization_matches_direct_si_formula():
     from nfit.fitting import evaluate_problem_model
     from nfit.sum_rules import SI_M3_PER_MOL_PER_MODEL_CHI

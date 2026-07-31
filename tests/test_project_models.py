@@ -358,6 +358,33 @@ def test_lindhard_editor_selects_a_sibling_electronic_model(monkeypatch):
         "lindhard_electronic_component",
     )
     assert selector is not None and selector.toolTip()
+    tabs = explorer.model_parameter_widget.findChild(
+        QtWidgets.QTabWidget,
+        "lindhard_builder_tabs",
+    )
+    assert tabs is not None and tabs.toolTip()
+    assert [tabs.tabText(index) for index in range(tabs.count())] == [
+        "Response",
+        "Sampling",
+        "Experimental coupling",
+        "Calculate and inspect",
+        "Advanced",
+    ]
+    mesh = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit,
+        "model_config_response_mesh",
+    )
+    q_accuracy = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox,
+        "lindhard_q_accuracy",
+    )
+    formula_mode = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox,
+        "lindhard_formula_units_mode",
+    )
+    assert mesh is not None and mesh.toolTip()
+    assert q_accuracy is not None and q_accuracy.currentData() == "exact"
+    assert formula_mode is not None and formula_mode.currentData() == "auto"
     assert selector.findData(source.name) >= 0
     selector.setCurrentIndex(selector.findData(source.name))
     assert response.config["electronic_component"] == source.name

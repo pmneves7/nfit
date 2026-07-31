@@ -283,6 +283,60 @@ def configure_tight_binding_plot(
     return component
 
 
+_LINDHARD_PLOT_FIELDS = {
+    "complex_energy_scan": {
+        "plot_q_reduced",
+        "plot_energy_min_meV",
+        "plot_energy_max_meV",
+        "plot_energy_points",
+        "plot_temperature_K",
+    },
+    "convergence": {
+        "plot_q_reduced",
+        "plot_energy_min_meV",
+        "plot_energy_max_meV",
+        "plot_temperature_K",
+        "convergence_mesh_scales",
+        "convergence_broadening_scales",
+        "convergence_energy_points",
+        "convergence_relative_floor",
+    },
+}
+
+
+def configure_lindhard_plot(
+    component: Any,
+    plot_key: str,
+    **settings: Any,
+) -> Any:
+    """Atomically store one Lindhard viewer's scriptable calculation settings."""
+
+    if getattr(component, "type", None) != "lindhard":
+        raise TypeError("Lindhard plot configuration requires a lindhard component")
+    key = str(plot_key)
+    try:
+        allowed = _LINDHARD_PLOT_FIELDS[key]
+    except KeyError as exc:
+        choices = ", ".join(sorted(_LINDHARD_PLOT_FIELDS))
+        raise ValueError(
+            f"unknown Lindhard plot {plot_key!r}; expected {choices}"
+        ) from exc
+    unexpected = set(settings) - allowed
+    if unexpected:
+        names = ", ".join(sorted(unexpected))
+        raise ValueError(f"unsupported {key} plot setting(s): {names}")
+    previous = copy.deepcopy(component.config)
+    try:
+        component.config.update(settings)
+        from .model_registry import validate_model_component
+
+        validate_model_component(component)
+    except Exception:
+        component.config = previous
+        raise
+    return component
+
+
 def generalized_paramagnon_energy_scan(
     energy: ArrayLike,
     *,
@@ -400,10 +454,20 @@ def _lindhard_source(
 ) -> Any:
     config = component.config if isinstance(component.config, dict) else {}
     source_name = str(config.get("electronic_component", "")).strip()
-    source = components.get(source_name)
+    source = components.get(source_name) if source_name else None
+    if source is None and not source_name:
+        candidates = [
+            item
+            for item in components.values()
+            if getattr(item, "type", None) == "tight_binding"
+            and bool(getattr(item, "enabled", True))
+        ]
+        source = candidates[0] if len(candidates) == 1 else None
     if source is None or getattr(source, "type", None) != "tight_binding":
         raise ValueError(
-            f"{component.name!r} must reference an enabled tight-binding component"
+            f"{component.name!r} must reference an enabled tight-binding "
+            "component; an empty reference is automatic only when exactly "
+            "one compatible component is enabled"
         )
     return source
 
@@ -489,8 +553,8 @@ def lindhard_energy_scan(
     )
     temperature = float(config.get("plot_temperature_K", 10.0))
     execution = {
-        "backend": str(config.get("response_backend", "numpy")),
-        "workers": int(config.get("response_workers", 1)),
+        "backend": str(config.get("response_backend", "auto")),
+        "workers": int(config.get("response_workers", 0)),
         "max_batch_bytes": int(
             float(config.get("response_max_batch_mb", 256.0)) * 1024**2
         ),
@@ -652,8 +716,8 @@ def lindhard_energy_scan_script(
             "    model, mesh_shape, Q_reduced, shift=mesh_shift,",
             f"    symmetry={str(config.get('response_symmetry', 'auto'))!r},",
             ")",
-            f"backend = {str(config.get('response_backend', 'numpy'))!r}",
-            f"workers = {int(config.get('response_workers', 1))!r}",
+            f"backend = {str(config.get('response_backend', 'auto'))!r}",
+            f"workers = {int(config.get('response_workers', 0))!r}",
             f"max_batch_bytes = {int(float(config.get('response_max_batch_mb', 256.0)) * 1024**2)!r}",
             f"transition_max_batch_bytes = {int(float(config.get('response_transition_max_batch_mb', 256.0)) * 1024**2)!r}",
             f"transition_backend = {str(config.get('response_transition_backend', 'auto'))!r}",
@@ -753,8 +817,8 @@ def lindhard_convergence_scan(
         (energy.size, 3),
     )
     temperature = float(config.get("plot_temperature_K", 10.0))
-    backend = str(config.get("response_backend", "numpy"))
-    workers = int(config.get("response_workers", 1))
+    backend = str(config.get("response_backend", "auto"))
+    workers = int(config.get("response_workers", 0))
     batch_bytes = int(float(config.get("response_max_batch_mb", 256.0)) * 1024**2)
     transition_bytes = int(
         float(config.get("response_transition_max_batch_mb", 256.0)) * 1024**2
@@ -994,8 +1058,8 @@ def electronic_rpa_energy_scan(
     )
     temperature = float(config.get("plot_temperature_K", 10.0))
     execution = {
-        "backend": str(config.get("response_backend", "numpy")),
-        "workers": int(config.get("response_workers", 1)),
+        "backend": str(config.get("response_backend", "auto")),
+        "workers": int(config.get("response_workers", 0)),
         "max_batch_bytes": int(
             float(config.get("response_max_batch_mb", 256.0)) * 1024**2
         ),

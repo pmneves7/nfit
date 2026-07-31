@@ -18769,7 +18769,7 @@ class NfitProjectExplorer:
             fit_layout.addWidget(fit_check, row, 5)
             fit_layout.addWidget(sharing_combo, row, 6)
             fit_layout.addWidget(sharing_groups, row, 7)
-        if model.type != "tight_binding":
+        if model.type not in {"tight_binding", "lindhard"}:
             self.model_parameter_layout.addWidget(fit_group, 0, 0, 1, 4)
 
         scope_group = QtWidgets.QGroupBox("Dataset Scope")
@@ -18793,12 +18793,12 @@ class NfitProjectExplorer:
         )
         scope_layout.addWidget(applies_label, 0, 0)
         scope_layout.addWidget(applies_editor, 0, 1)
-        if model.type != "tight_binding":
+        if model.type not in {"tight_binding", "lindhard"}:
             self.model_parameter_layout.addWidget(scope_group, 1, 0, 1, 4)
 
         config_group = QtWidgets.QGroupBox(
             "Advanced model and execution"
-            if model.type == "tight_binding"
+            if model.type in {"tight_binding", "lindhard"}
             else "Configuration Settings"
         )
         config_group.setObjectName("model_config_group")
@@ -18838,6 +18838,28 @@ class NfitProjectExplorer:
             row += 1
         for setting_name in config_definitions:
             if setting_name == "form_factor_coefficients":
+                continue
+            if model.type == "lindhard" and setting_name in {
+                "electronic_component",
+                "response_mesh",
+                "response_q_evaluation",
+                "response_q_interpolation_rtol",
+                "chemical_potential_mode",
+                "filling_per_cell",
+                "formula_units_mode",
+                "formula_units_per_cell",
+                "ion",
+                "bulk_g_factor",
+                "plot_q_reduced",
+                "plot_energy_min_meV",
+                "plot_energy_max_meV",
+                "plot_energy_points",
+                "plot_temperature_K",
+                "convergence_mesh_scales",
+                "convergence_broadening_scales",
+                "convergence_energy_points",
+                "convergence_relative_floor",
+            }:
                 continue
             if model.type == "tight_binding" and setting_name in {
                 "source_path",
@@ -18992,6 +19014,25 @@ class NfitProjectExplorer:
                 combo.currentIndexChanged.connect(
                     lambda _index, combo=combo: self._set_model_config_setting(
                         "response_symmetry",
+                        str(combo.currentData()),
+                    )
+                )
+                config_layout.addWidget(label, row, 0)
+                config_layout.addWidget(combo, row, 1)
+                row += 1
+                continue
+            if model.type == "lindhard" and setting_name == "response_backend":
+                label.setText("Response backend")
+                combo = QtWidgets.QComboBox()
+                combo.setObjectName("lindhard_response_backend")
+                combo.setToolTip(tooltip)
+                for backend in ("auto", "numpy", "threaded", "cupy"):
+                    combo.addItem(backend, backend)
+                current = str(model.config.get(setting_name, "auto"))
+                combo.setCurrentIndex(max(combo.findData(current), 0))
+                combo.currentIndexChanged.connect(
+                    lambda _index, combo=combo: self._set_model_config_setting(
+                        "response_backend",
                         str(combo.currentData()),
                     )
                 )
@@ -19169,6 +19210,15 @@ class NfitProjectExplorer:
             self._build_tight_binding_editor(model)
             self.model_parameter_layout.addWidget(config_group, 10, 0, 1, 4)
             self._organize_tight_binding_editor(model)
+        elif model.type == "lindhard":
+            self._build_lindhard_editor(model)
+            self._build_model_plot_actions(model)
+            self._organize_lindhard_editor(
+                model,
+                fit_group=fit_group,
+                scope_group=scope_group,
+                advanced_group=config_group,
+            )
         elif definition.structured_config:
             self.model_parameter_layout.addWidget(config_group, 2, 0, 1, 4)
             self._build_model_crystal_editor(model)
@@ -19199,6 +19249,7 @@ class NfitProjectExplorer:
             for name in (
                 "tight_binding_builder_tabs",
                 "tight_binding_hamiltonian_tabs",
+                "lindhard_builder_tabs",
             )
             if (
                 widget := self.model_parameter_widget.findChild(
@@ -19521,6 +19572,497 @@ class NfitProjectExplorer:
         add_page("Advanced", ("model_config_group",))
 
         self.model_parameter_layout.addWidget(summary, 0, 0, 1, 4)
+        self.model_parameter_layout.addWidget(tabs, 1, 0, 1, 4)
+
+    def _lindhard_source_component(
+        self,
+        model: ModelComponentSpec,
+    ) -> ModelComponentSpec | None:
+        """Resolve an explicit or uniquely implied electronic source."""
+
+        owner = self._group_for_model(model)
+        if owner is None:
+            return None
+        requested = str(model.config.get("electronic_component", "")).strip()
+        if requested:
+            candidate = owner.models.get(requested)
+            return (
+                candidate
+                if candidate is not None
+                and candidate.enabled
+                and candidate.type == "tight_binding"
+                else None
+            )
+        candidates = [
+            candidate
+            for candidate in owner.models.values()
+            if candidate.enabled
+            and candidate.type == "tight_binding"
+            and candidate is not model
+        ]
+        return candidates[0] if len(candidates) == 1 else None
+
+    def _build_lindhard_editor(self, model: ModelComponentSpec) -> None:
+        """Build the ordinary Lindhard workflow without exposing every override."""
+
+        from PySide6 import QtWidgets
+
+        from .crystal import infer_crystal_formula_units
+
+        source = self._lindhard_source_component(model)
+        mesh = model.config.get("response_mesh", [16, 16, 16])
+        broadening = model.parameters.get("broadening", 5.0)
+        q_policy = str(model.config.get("response_q_evaluation", "auto"))
+        q_rtol = float(model.config.get("response_q_interpolation_rtol", 0.0))
+        q_atol = float(model.config.get("response_q_interpolation_atol", 0.0))
+        accuracy = (
+            "exact"
+            if q_policy == "auto" and q_rtol == 0.0 and q_atol == 0.0
+            else (
+                "validated"
+                if q_policy == "auto" and (q_rtol > 0.0 or q_atol > 0.0)
+                else "advanced"
+            )
+        )
+
+        summary = QtWidgets.QGroupBox("Model summary")
+        summary.setObjectName("lindhard_model_summary_group")
+        summary_layout = QtWidgets.QVBoxLayout(summary)
+        source_text = (
+            source.name
+            if source is not None
+            else "electronic source unresolved"
+        )
+        backend = str(model.config.get("response_backend", "auto"))
+        workers = int(model.config.get("response_workers", 0))
+        worker_text = "automatic CPU allocation" if workers == 0 else f"{workers} CPU worker(s)"
+        summary_label = QtWidgets.QLabel(
+            f"{source_text} · {tuple(mesh)} k mesh · η={broadening:g} meV · "
+            f"{'exact Q' if accuracy == 'exact' else 'validated Q interpolation' if accuracy == 'validated' else q_policy + ' Q'} · "
+            f"{backend} backend, {worker_text}"
+        )
+        summary_label.setObjectName("lindhard_model_summary")
+        summary_label.setWordWrap(True)
+        summary_label.setToolTip(
+            "Resolved electronic source, integration mesh, lifetime broadening, "
+            "wavevector policy, and execution allocation."
+        )
+        summary_layout.addWidget(summary_label)
+        self.model_parameter_layout.addWidget(summary, 10, 0, 1, 4)
+
+        response = QtWidgets.QGroupBox("Electronic response")
+        response.setObjectName("lindhard_response_group")
+        response_layout = QtWidgets.QFormLayout(response)
+
+        source_tooltip = (
+            "Tight-binding Hamiltonian used for band energies, occupations, and "
+            "spin matrix elements. With exactly one enabled tight-binding model, "
+            "Automatic is deterministic and scriptable."
+        )
+        source_combo = QtWidgets.QComboBox()
+        source_combo.setObjectName("lindhard_electronic_component")
+        source_combo.setToolTip(source_tooltip)
+        owner = self._group_for_model(model)
+        candidates = (
+            [
+                candidate
+                for candidate in owner.models.values()
+                if candidate.enabled
+                and candidate.type == "tight_binding"
+                and candidate is not model
+            ]
+            if owner is not None
+            else []
+        )
+        automatic_label = (
+            f"Automatic ({candidates[0].name})"
+            if len(candidates) == 1
+            else "Automatic (requires one tight-binding model)"
+        )
+        source_combo.addItem(automatic_label, "")
+        for candidate in candidates:
+            source_combo.addItem(candidate.name, candidate.name)
+        source_combo.setCurrentIndex(
+            max(
+                source_combo.findData(
+                    str(model.config.get("electronic_component", ""))
+                ),
+                0,
+            )
+        )
+        source_combo.currentIndexChanged.connect(
+            lambda _index, combo=source_combo: self._set_lindhard_config_values(
+                electronic_component=str(combo.currentData())
+            )
+        )
+        source_label = QtWidgets.QLabel("Electronic structure")
+        source_label.setToolTip(source_tooltip)
+        response_layout.addRow(source_label, source_combo)
+
+        occupation_tooltip = (
+            "Use the chemical potential stored in the electronic model, or solve "
+            "for the chemical potential that gives a specified electron count."
+        )
+        occupation = QtWidgets.QComboBox()
+        occupation.setObjectName("lindhard_chemical_potential_mode")
+        occupation.setToolTip(occupation_tooltip)
+        occupation.addItem("Use source chemical potential", "source")
+        occupation.addItem("Solve from filling", "filling")
+        occupation.setCurrentIndex(
+            max(
+                occupation.findData(
+                    str(model.config.get("chemical_potential_mode", "source"))
+                ),
+                0,
+            )
+        )
+        occupation.currentIndexChanged.connect(
+            lambda _index, combo=occupation: self._set_lindhard_config_values(
+                chemical_potential_mode=str(combo.currentData())
+            )
+        )
+        occupation_label = QtWidgets.QLabel("Occupations")
+        occupation_label.setToolTip(occupation_tooltip)
+        response_layout.addRow(occupation_label, occupation)
+        if occupation.currentData() == "filling":
+            filling_tooltip = (
+                "Total electron count in the electronic model cell. nfit solves "
+                "the finite-temperature chemical potential for this filling."
+            )
+            filling = QtWidgets.QLineEdit(
+                _parameter_to_text(model.config.get("filling_per_cell", 1.0))
+            )
+            filling.setObjectName("model_config_filling_per_cell")
+            filling.setToolTip(filling_tooltip)
+            filling.editingFinished.connect(
+                lambda editor=filling: self._set_model_config_setting(
+                    "filling_per_cell", editor.text()
+                )
+            )
+            filling_label = QtWidgets.QLabel("Filling (electrons/cell)")
+            filling_label.setToolTip(filling_tooltip)
+            response_layout.addRow(filling_label, filling)
+        self.model_parameter_layout.addWidget(response, 11, 0, 1, 4)
+
+        sampling = QtWidgets.QGroupBox("Brillouin-zone sampling")
+        sampling.setObjectName("lindhard_sampling_group")
+        sampling_layout = QtWidgets.QFormLayout(sampling)
+        mesh_tooltip = (
+            "Uniform full-zone integration mesh. Increase it until the response "
+            "and fitted parameters are converged; the convergence viewer compares "
+            "deterministic mesh refinements."
+        )
+        mesh_editor = QtWidgets.QLineEdit(_parameter_to_text(mesh))
+        mesh_editor.setObjectName("model_config_response_mesh")
+        mesh_editor.setToolTip(mesh_tooltip)
+        mesh_editor.editingFinished.connect(
+            lambda editor=mesh_editor: self._set_model_config_setting(
+                "response_mesh", editor.text()
+            )
+        )
+        mesh_label = QtWidgets.QLabel("Integration mesh")
+        mesh_label.setToolTip(mesh_tooltip)
+        sampling_layout.addRow(mesh_label, mesh_editor)
+
+        accuracy_tooltip = (
+            "Exact evaluates arbitrary experimental Q directly. Validated "
+            "interpolation may accelerate repeated fits, but nfit accepts it only "
+            "after deterministic direct evaluations satisfy the requested error."
+        )
+        accuracy_combo = QtWidgets.QComboBox()
+        accuracy_combo.setObjectName("lindhard_q_accuracy")
+        accuracy_combo.setToolTip(accuracy_tooltip)
+        accuracy_combo.addItem("Exact Q evaluation", "exact")
+        accuracy_combo.addItem("Validated interpolation", "validated")
+        if accuracy == "advanced":
+            accuracy_combo.addItem(
+                f"Advanced override ({q_policy})",
+                "advanced",
+            )
+        accuracy_combo.setCurrentIndex(max(accuracy_combo.findData(accuracy), 0))
+        accuracy_combo.currentIndexChanged.connect(
+            lambda _index, combo=accuracy_combo: self._set_lindhard_q_accuracy(
+                str(combo.currentData())
+            )
+        )
+        accuracy_label = QtWidgets.QLabel("Experimental Q")
+        accuracy_label.setToolTip(accuracy_tooltip)
+        sampling_layout.addRow(accuracy_label, accuracy_combo)
+        if accuracy == "validated":
+            tolerance_tooltip = (
+                "Maximum accepted relative complex-susceptibility error at "
+                "deterministic off-mesh validation points."
+            )
+            tolerance = QtWidgets.QLineEdit(_parameter_to_text(q_rtol))
+            tolerance.setObjectName(
+                "model_config_response_q_interpolation_rtol"
+            )
+            tolerance.setToolTip(tolerance_tooltip)
+            tolerance.editingFinished.connect(
+                lambda editor=tolerance: self._set_model_config_setting(
+                    "response_q_interpolation_rtol", editor.text()
+                )
+            )
+            tolerance_label = QtWidgets.QLabel("Relative tolerance")
+            tolerance_label.setToolTip(tolerance_tooltip)
+            sampling_layout.addRow(tolerance_label, tolerance)
+        convergence = QtWidgets.QLabel(
+            "Convergence is user-certified; use the convergence viewer below "
+            "before interpreting fitted parameters."
+        )
+        convergence.setObjectName("lindhard_convergence_status")
+        convergence.setWordWrap(True)
+        convergence.setToolTip(
+            "nfit does not silently choose a scientific integration density. "
+            "The model-owned convergence viewer compares mesh and broadening changes."
+        )
+        sampling_layout.addRow(convergence)
+        self.model_parameter_layout.addWidget(sampling, 12, 0, 1, 4)
+
+        experiment = QtWidgets.QGroupBox("Experimental coupling")
+        experiment.setObjectName("lindhard_experiment_group")
+        experiment_layout = QtWidgets.QFormLayout(experiment)
+        form_factor_tooltip = (
+            "Magnetic form factor multiplying the neutron response. Choose the "
+            "ion represented by the active spin-carrying orbitals, omit it for "
+            "an unweighted response, or supply custom coefficients."
+        )
+        form_factor = QtWidgets.QComboBox()
+        form_factor.setObjectName("model_config_choice_ion")
+        form_factor.setToolTip(form_factor_tooltip)
+        form_factor.addItem("(none)", "")
+        for ion_name in available_ions():
+            form_factor.addItem(ion_name, ion_name)
+        form_factor.addItem("Custom…", CUSTOM_FORM_FACTOR_CHOICE)
+        current_ion = str(model.config.get("ion", "") or "")
+        if str(model.config.get("form_factor_coefficients", "") or "").strip():
+            current_ion = CUSTOM_FORM_FACTOR_CHOICE
+        form_factor.setCurrentIndex(max(form_factor.findData(current_ion), 0))
+        form_factor.currentIndexChanged.connect(
+            lambda _index, combo=form_factor: self._set_model_form_factor_choice(
+                str(combo.currentData() or "")
+            )
+        )
+        form_factor_label = QtWidgets.QLabel("Magnetic form factor")
+        form_factor_label.setToolTip(form_factor_tooltip)
+        experiment_layout.addRow(form_factor_label, form_factor)
+        if current_ion == CUSTOM_FORM_FACTOR_CHOICE:
+            coefficient_tooltip = (
+                "Seven coefficients a1,b1,a2,b2,a3,b3,c for "
+                "f(Q)=Σ aᵢ exp[-bᵢ(|Q|/4π)²]+c."
+            )
+            coefficients = QtWidgets.QLineEdit(
+                _parameter_to_text(
+                    model.config.get("form_factor_coefficients", "")
+                )
+            )
+            coefficients.setObjectName("model_config_form_factor_coefficients")
+            coefficients.setToolTip(coefficient_tooltip)
+            coefficients.editingFinished.connect(
+                lambda editor=coefficients: self._set_model_config_setting(
+                    "form_factor_coefficients", editor.text()
+                )
+            )
+            coefficient_label = QtWidgets.QLabel("Custom coefficients")
+            coefficient_label.setToolTip(coefficient_tooltip)
+            experiment_layout.addRow(coefficient_label, coefficients)
+
+        formula_tooltip = (
+            "Automatic mode derives the reduced chemical formula and the number "
+            "of formula units in the actual electronic model cell from a complete "
+            "crystal. Manual mode is an explicit normalization override."
+        )
+        formula_mode = QtWidgets.QComboBox()
+        formula_mode.setObjectName("lindhard_formula_units_mode")
+        formula_mode.setToolTip(formula_tooltip)
+        formula_mode.addItem("Automatic from crystal", "auto")
+        formula_mode.addItem("Manual override", "manual")
+        formula_mode.setCurrentIndex(
+            max(
+                formula_mode.findData(
+                    str(model.config.get("formula_units_mode", "manual"))
+                ),
+                0,
+            )
+        )
+        formula_mode.currentIndexChanged.connect(
+            lambda _index, combo=formula_mode: self._set_lindhard_config_values(
+                formula_units_mode=str(combo.currentData())
+            )
+        )
+        formula_label = QtWidgets.QLabel("Formula units")
+        formula_label.setToolTip(formula_tooltip)
+        experiment_layout.addRow(formula_label, formula_mode)
+        if formula_mode.currentData() == "manual":
+            formula_value = QtWidgets.QLineEdit(
+                _parameter_to_text(
+                    model.config.get("formula_units_per_cell", 1.0)
+                )
+            )
+            formula_value.setObjectName("model_config_formula_units_per_cell")
+            formula_value.setToolTip(
+                "Explicit formula units represented by the electronic model "
+                "cell, used only for molar q=0 bulk normalization."
+            )
+            formula_value.editingFinished.connect(
+                lambda editor=formula_value: self._set_model_config_setting(
+                    "formula_units_per_cell", editor.text()
+                )
+            )
+            experiment_layout.addRow("Formula units / model cell", formula_value)
+        else:
+            formula_status = "Automatic normalization requires a complete linked crystal."
+            if source is not None:
+                try:
+                    crystal = source.config["crystal"]
+                    model_data = source.config.get("model_data")
+                    lattice = (
+                        model_data.get("direct_lattice")
+                        if isinstance(model_data, dict)
+                        and not bool(source.config.get("model_stale", False))
+                        else None
+                    )
+                    if lattice is None and not bool(
+                        source.config.get("use_primitive_cell", True)
+                    ):
+                        from .crystal import lattice_vectors
+
+                        lattice = lattice_vectors(crystal["lattice"])
+                    if lattice is None:
+                        raise ValueError(
+                            "the actual electronic model cell has not been "
+                            "resolved yet"
+                        )
+                    result = infer_crystal_formula_units(
+                        crystal,
+                        model_lattice=lattice,
+                    )
+                    formula_status = (
+                        f"{result.formula}: {result.formula_units_per_model_cell} "
+                        "formula unit(s) per electronic model cell"
+                    )
+                except (KeyError, TypeError, ValueError):
+                    pass
+            status = QtWidgets.QLabel(formula_status)
+            status.setObjectName("lindhard_formula_units_status")
+            status.setWordWrap(True)
+            status.setToolTip(formula_tooltip)
+            experiment_layout.addRow(status)
+
+        g_tooltip = (
+            "Landé g factor used only when the q=0 spin response is converted "
+            "to bulk susceptibility or field-induced moment."
+        )
+        g_factor = QtWidgets.QLineEdit(
+            _parameter_to_text(model.config.get("bulk_g_factor", 2.0))
+        )
+        g_factor.setObjectName("model_config_bulk_g_factor")
+        g_factor.setToolTip(g_tooltip)
+        g_factor.editingFinished.connect(
+            lambda editor=g_factor: self._set_model_config_setting(
+                "bulk_g_factor", editor.text()
+            )
+        )
+        g_label = QtWidgets.QLabel("Bulk g factor")
+        g_label.setToolTip(g_tooltip)
+        experiment_layout.addRow(g_label, g_factor)
+
+        powder = QtWidgets.QLabel(
+            "Powder |Q| datasets are converted automatically by orientational "
+            "averaging in the linked reciprocal lattice."
+        )
+        powder.setObjectName("lindhard_powder_conversion_status")
+        powder.setWordWrap(True)
+        powder.setToolTip(
+            "The number of deterministic sphere directions is available under "
+            "Advanced model and execution."
+        )
+        experiment_layout.addRow(powder)
+        self.model_parameter_layout.addWidget(experiment, 13, 0, 1, 4)
+
+    def _organize_lindhard_editor(
+        self,
+        model: ModelComponentSpec,
+        *,
+        fit_group: Any,
+        scope_group: Any,
+        advanced_group: Any,
+    ) -> None:
+        """Collect the response workflow into focused tabs."""
+
+        from PySide6 import QtWidgets
+
+        def take(widget: Any | None) -> Any | None:
+            if widget is not None:
+                self.model_parameter_layout.removeWidget(widget)
+            return widget
+
+        groups = {
+            "summary": take(
+                self.model_parameter_widget.findChild(
+                    QtWidgets.QWidget,
+                    "lindhard_model_summary_group",
+                )
+            ),
+            "response": take(
+                self.model_parameter_widget.findChild(
+                    QtWidgets.QWidget,
+                    "lindhard_response_group",
+                )
+            ),
+            "sampling": take(
+                self.model_parameter_widget.findChild(
+                    QtWidgets.QWidget,
+                    "lindhard_sampling_group",
+                )
+            ),
+            "experiment": take(
+                self.model_parameter_widget.findChild(
+                    QtWidgets.QWidget,
+                    "lindhard_experiment_group",
+                )
+            ),
+            "plots": take(
+                self.model_parameter_widget.findChild(
+                    QtWidgets.QWidget,
+                    "model_plot_actions_group",
+                )
+            ),
+            "fit": take(fit_group),
+            "scope": take(scope_group),
+            "advanced": take(advanced_group),
+        }
+
+        tabs = QtWidgets.QTabWidget()
+        tabs.setObjectName("lindhard_builder_tabs")
+        tabs.setToolTip(
+            "Define the response, choose sampling accuracy, connect it to "
+            "experimental normalization, inspect calculations, and access "
+            "uncommon execution overrides."
+        )
+
+        def add_page(label: str, names: tuple[str, ...]) -> None:
+            page = QtWidgets.QWidget()
+            page.setObjectName(
+                f"lindhard_{label.lower().replace(' ', '_')}_tab"
+            )
+            layout = QtWidgets.QVBoxLayout(page)
+            for name in names:
+                widget = groups.get(name)
+                if widget is not None:
+                    layout.addWidget(widget)
+            layout.addStretch(1)
+            tabs.addTab(page, label)
+
+        add_page("Response", ("response", "fit", "scope"))
+        add_page("Sampling", ("sampling",))
+        add_page("Experimental coupling", ("experiment",))
+        add_page("Calculate and inspect", ("plots",))
+        add_page("Advanced", ("advanced",))
+        if groups["summary"] is not None:
+            self.model_parameter_layout.addWidget(
+                groups["summary"], 0, 0, 1, 4
+            )
         self.model_parameter_layout.addWidget(tabs, 1, 0, 1, 4)
 
     def _build_tight_binding_editor(self, model: ModelComponentSpec) -> None:
@@ -21168,6 +21710,86 @@ class NfitProjectExplorer:
             self._request_overlay_refresh(group)
         return True
 
+    def _lindhard_plot_settings(
+        self,
+        model: ModelComponentSpec,
+        plot_key: str,
+    ) -> dict[str, Any]:
+        """Return the scientific settings owned by one Lindhard viewer."""
+
+        names = {
+            "complex_energy_scan": (
+                "plot_q_reduced",
+                "plot_energy_min_meV",
+                "plot_energy_max_meV",
+                "plot_energy_points",
+                "plot_temperature_K",
+            ),
+            "convergence": (
+                "plot_q_reduced",
+                "plot_energy_min_meV",
+                "plot_energy_max_meV",
+                "plot_temperature_K",
+                "convergence_mesh_scales",
+                "convergence_broadening_scales",
+                "convergence_energy_points",
+            ),
+        }.get(plot_key, ())
+        return {
+            name: _parameter_to_text(model.config.get(name, ""))
+            for name in names
+        }
+
+    def _apply_lindhard_plot_settings(
+        self,
+        model: ModelComponentSpec,
+        plot_key: str,
+        values: Mapping[str, str],
+    ) -> bool:
+        """Validate and store one Lindhard viewer's calculation settings."""
+
+        from PySide6 import QtWidgets
+
+        from .model_plots import configure_lindhard_plot
+
+        previous = copy.deepcopy(model.config)
+        try:
+            updates = {
+                name: _parse_parameter_text(text)
+                for name, text in values.items()
+            }
+            q = updates.get("plot_q_reduced")
+            if q is not None and (
+                not isinstance(q, (list, tuple)) or len(q) != 3
+            ):
+                raise ValueError(
+                    "plot_q_reduced must contain three reduced coordinates"
+                )
+            configure_lindhard_plot(model, plot_key, **updates)
+        except Exception as exc:
+            model.config = previous
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Lindhard plot settings",
+                f"Could not apply the settings:\n{exc}",
+            )
+            return False
+
+        if model.config == previous:
+            return True
+        group = self._group_for_model(model)
+        branch_created = (
+            self._record_data_group_state_change(group)
+            if group is not None
+            else False
+        )
+        self._mark_dirty()
+        if group is not None:
+            if branch_created:
+                self._refresh_tree(select_group=group, select_model=model)
+            self._request_overlay_refresh(group)
+        return True
+
     def _open_model_plot(self, model: ModelComponentSpec, plot_key: str) -> bool:
         from PySide6 import QtWidgets
 
@@ -21195,11 +21817,22 @@ class NfitProjectExplorer:
             )
 
         def apply_settings(values: dict[str, str]) -> None:
-            if not self._apply_tight_binding_plot_settings(
-                model,
-                plot_key,
-                values,
-            ):
+            applied = (
+                self._apply_tight_binding_plot_settings(
+                    model,
+                    plot_key,
+                    values,
+                )
+                if model.type == "tight_binding"
+                else self._apply_lindhard_plot_settings(
+                    model,
+                    plot_key,
+                    values,
+                )
+                if model.type == "lindhard"
+                else False
+            )
+            if not applied:
                 return
             current = window_holder.get("window")
             if current is None:
@@ -21213,10 +21846,9 @@ class NfitProjectExplorer:
                     current._nfit_replace_figure(updated_figure)
                 if hasattr(current, "_nfit_update_calculation_settings"):
                     current._nfit_update_calculation_settings(
-                        self._tight_binding_plot_settings(
-                            model,
-                            plot_key,
-                        )
+                        self._tight_binding_plot_settings(model, plot_key)
+                        if model.type == "tight_binding"
+                        else self._lindhard_plot_settings(model, plot_key)
                     )
             except Exception as exc:
                 QtWidgets.QMessageBox.warning(
@@ -21246,19 +21878,23 @@ class NfitProjectExplorer:
                     "dos": "density_of_states",
                     "fermi_surface": "fermi_surface",
                     "complex_energy_scan": "susceptibility",
+                    "convergence": "response_convergence",
                 }
+                settings_config = (
+                    self._tight_binding_plot_settings(model, plot_key)
+                    if model.type == "tight_binding"
+                    else self._lindhard_plot_settings(model, plot_key)
+                    if model.type == "lindhard"
+                    else None
+                )
                 window = show_electronic_figure(
                     figure,
                     viewer_key=viewer_keys.get(plot_key, "model_plot"),
                     parent=self.window,
-                    settings_config=(
-                        self._tight_binding_plot_settings(model, plot_key)
-                        if model.type == "tight_binding"
-                        else None
-                    ),
+                    settings_config=settings_config,
                     on_apply_settings=(
                         apply_settings
-                        if model.type == "tight_binding"
+                        if model.type in {"tight_binding", "lindhard"}
                         else None
                     ),
                 )
@@ -22589,6 +23225,45 @@ class NfitProjectExplorer:
         if group is not None:
             self._request_overlay_refresh(group)
 
+    def _set_lindhard_config_values(self, **updates: Any) -> None:
+        """Apply ordinary Lindhard choices and refresh conditional controls."""
+
+        def mutate(
+            model: ModelComponentSpec,
+            _group: DataGroup | None,
+        ) -> None:
+            if model.type != "lindhard":
+                raise ValueError("expected a Lindhard response component")
+            changed = False
+            for name, value in updates.items():
+                if model.config.get(name) != value:
+                    model.config[name] = value
+                    changed = True
+            if not changed:
+                raise _NoChange()
+
+        self._mutate_selected_model_quietly(mutate)
+
+    def _set_lindhard_q_accuracy(self, accuracy: str) -> None:
+        """Select exact or validated automatic Q evaluation as one policy."""
+
+        if accuracy == "advanced":
+            return
+        if accuracy == "exact":
+            updates = {
+                "response_q_evaluation": "auto",
+                "response_q_interpolation_rtol": 0.0,
+                "response_q_interpolation_atol": 0.0,
+            }
+        elif accuracy == "validated":
+            updates = {
+                "response_q_evaluation": "auto",
+                "response_q_interpolation_rtol": 0.01,
+            }
+        else:
+            raise ValueError(f"unknown Lindhard Q accuracy {accuracy!r}")
+        self._set_lindhard_config_values(**updates)
+
     def _set_tight_binding_energy_unit(self, unit: str) -> None:
         from .electronic_structure import (
             normalize_electronic_energy_unit,
@@ -22647,7 +23322,7 @@ class NfitProjectExplorer:
         if changed:
             branch_created = self._record_data_group_state_change(group) if group is not None else False
             self._mark_dirty()
-            self._rebuild_model_parameter_editor(model)
+            self._rebuild_model_parameter_editor_preserving_scroll(model)
             if group is not None and branch_created:
                 self._refresh_tree(select_group=group, select_model=model)
         if group is not None:

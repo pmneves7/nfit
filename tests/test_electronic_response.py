@@ -24,6 +24,7 @@ from nfit import (
     build_electronic_model,
     chemical_potential_for_filling,
     compile_fit_problem,
+    configure_lindhard_plot,
     correlated_basis_indices,
     create_model_component,
     electron_filling,
@@ -1004,6 +1005,36 @@ def test_lindhard_registry_plot_is_linked_and_scriptable():
     plt.close(namespace["figure"])
 
 
+def test_lindhard_plot_configuration_is_public_and_atomic():
+    lindhard = ModelComponentSpec(
+        name="response",
+        type="lindhard",
+        parameters={"broadening": 0.5},
+        config={
+            field.name: field.default
+            for field in model_definition("lindhard").config_fields
+        },
+    )
+
+    configure_lindhard_plot(
+        lindhard,
+        "complex_energy_scan",
+        plot_q_reduced=[0.5, 0.25, 0.0],
+        plot_energy_points=201,
+    )
+    assert lindhard.config["plot_q_reduced"] == [0.5, 0.25, 0.0]
+    assert lindhard.config["plot_energy_points"] == 201
+
+    previous = dict(lindhard.config)
+    with pytest.raises(ValueError, match="plot_energy_points"):
+        configure_lindhard_plot(
+            lindhard,
+            "complex_energy_scan",
+            plot_energy_points=1,
+        )
+    assert lindhard.config == previous
+
+
 def test_lindhard_convergence_plot_is_scriptable():
     model = _chain_model()
     tight_binding = ModelComponentSpec(
@@ -1059,6 +1090,100 @@ def test_lindhard_convergence_plot_is_scriptable():
         result.values_per_meV_cell,
     )
     plt.close(namespace["figure"])
+
+
+def test_lindhard_bulk_normalization_uses_inferred_model_cell_formula_units():
+    model = _chain_model()
+    tight_binding = ModelComponentSpec(
+        name="bands",
+        type="tight_binding",
+        config={
+            **{
+                field.name: field.default
+                for field in model_definition("tight_binding").config_fields
+            },
+            "model_data": model.to_dict(),
+            "periodic_axes": [0],
+            "crystal": {
+                "lattice": {
+                    "a": 2.0,
+                    "b": 8.0,
+                    "c": 9.0,
+                    "alpha": 90.0,
+                    "beta": 90.0,
+                    "gamma": 90.0,
+                },
+                "spacegroup": "P 1",
+                "sites": [
+                    {
+                        "label": "A1",
+                        "element": "Li",
+                        "position": [0.0, 0.0, 0.0],
+                    },
+                    {
+                        "label": "A2",
+                        "element": "Li",
+                        "position": [0.5, 0.0, 0.0],
+                    },
+                ],
+            },
+        },
+    )
+    defaults = {
+        field.name: field.default
+        for field in model_definition("lindhard").config_fields
+    }
+    automatic = ModelComponentSpec(
+        name="response",
+        type="lindhard",
+        parameters={"broadening": 0.5},
+        config={
+            **defaults,
+            "electronic_component": "bands",
+            "response_mesh": [16],
+            "response_mesh_shift": [0.0],
+        },
+    )
+    manual = replace(
+        automatic,
+        config={
+            **automatic.config,
+            "formula_units_mode": "manual",
+            "formula_units_per_cell": 1.0,
+        },
+    )
+    points = PointData4D(
+        H=np.zeros(1),
+        K=np.zeros(1),
+        L=np.zeros(1),
+        E=np.zeros(1),
+        intensity=np.zeros(1),
+        sigma=np.ones(1),
+        temperature=20.0,
+        metadata={
+            "absolute_units": True,
+            "quantity_type": "bulk_susceptibility",
+            "unit": "cm^3/mol",
+        },
+    )
+    dataset = FitDatasetInput("bulk", points, data_type="magnetization")
+
+    def prediction(response):
+        compiled = compile_fit_problem([tight_binding, response], [dataset])
+        return evaluate_problem_model(
+            compiled.problem,
+            "bulk",
+            {
+                spec.name: spec.value
+                for spec in compiled.problem.parameter_specs
+            },
+        )
+
+    np.testing.assert_allclose(
+        prediction(automatic),
+        prediction(manual) / 2.0,
+        rtol=1.0e-12,
+    )
 
 
 def test_fit_compiler_uses_electronic_component_as_dependency_not_observable():

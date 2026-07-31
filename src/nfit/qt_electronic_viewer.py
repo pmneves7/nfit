@@ -13,6 +13,8 @@ _VIEWER_TITLES = {
     "band_structure": "Band structure",
     "density_of_states": "Density of states",
     "fermi_surface": "Fermi surface",
+    "response_convergence": "Lindhard convergence",
+    "susceptibility": "Spin susceptibility",
 }
 
 _MARKERS = (
@@ -517,6 +519,83 @@ def populate_electronic_calculation_settings(
             "Absolute constant-energy target. Set it equal to the model "
             "chemical potential for a Fermi surface.",
         )
+    elif viewer_key == "susceptibility":
+        add_line(
+            form,
+            "plot_q_reduced",
+            "Q (r.l.u.)",
+            "Extended-zone transferred wavevector in the linked electronic "
+            "model's reciprocal basis.",
+        )
+        add_line(
+            form,
+            "plot_energy_min_meV",
+            "Minimum (meV)",
+            "Lower energy transfer displayed by the susceptibility scan.",
+        )
+        add_line(
+            form,
+            "plot_energy_max_meV",
+            "Maximum (meV)",
+            "Upper energy transfer displayed by the susceptibility scan.",
+        )
+        add_line(
+            form,
+            "plot_energy_points",
+            "Energy points",
+            "Number of uniformly spaced energy-transfer samples.",
+        )
+        add_line(
+            form,
+            "plot_temperature_K",
+            "Temperature (K)",
+            "Temperature used for occupations in this model-owned inspection plot.",
+        )
+    elif viewer_key == "response_convergence":
+        add_line(
+            form,
+            "plot_q_reduced",
+            "Q (r.l.u.)",
+            "Representative transferred wavevector used for the convergence check.",
+        )
+        add_line(
+            form,
+            "plot_energy_min_meV",
+            "Minimum (meV)",
+            "Lower energy transfer sampled by the convergence calculation.",
+        )
+        add_line(
+            form,
+            "plot_energy_max_meV",
+            "Maximum (meV)",
+            "Upper energy transfer sampled by the convergence calculation.",
+        )
+        add_line(
+            form,
+            "plot_temperature_K",
+            "Temperature (K)",
+            "Representative temperature used for the convergence calculation.",
+        )
+        add_line(
+            form,
+            "convergence_mesh_scales",
+            "Mesh scales",
+            "JSON list of factors applied to the production response mesh. "
+            "The final entry is the reference mesh.",
+        )
+        add_line(
+            form,
+            "convergence_broadening_scales",
+            "Broadening scales",
+            "JSON list of factors applied to the current Lindhard broadening. "
+            "Broadening and mesh convergence are reported separately.",
+        )
+        add_line(
+            form,
+            "convergence_energy_points",
+            "Energy points",
+            "Number of representative energies sampled across the configured window.",
+        )
     else:
         return
 
@@ -524,7 +603,7 @@ def populate_electronic_calculation_settings(
     apply_button = QtWidgets.QPushButton("Apply and recalculate", settings)
     apply_button.setObjectName(f"{viewer_key}_apply_settings")
     apply_button.setToolTip(
-        "Validate these settings, save them with the tight-binding component, "
+        "Validate these settings, save them with the model component, "
         "and replace this viewer with a recalculated result."
     )
 

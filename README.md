@@ -13,8 +13,9 @@ The package provides:
   spin-fluctuation models for inelastic, quasistatic elastic, and optional
   bulk-response comparisons;
 - a linked bare Lindhard response with complex multiband susceptibility,
-  Cartesian spin and neutron projections, fixed-filling support, full-mesh
-  reference evaluation, fitting, model-owned plots, and editable scripts;
+  Cartesian spin and neutron projections, fixed-filling support, automatic
+  formula-unit normalization, workflow-focused controls, fitting,
+  model-owned plots, and editable scripts;
 - modular scalar Stoner, user-matrix, and local multiorbital Hubbard--Hund
   RPA interaction dressings with eV input, canonical meV vertices, shared
   electronic-response dependencies, pole diagnostics, fitting, and reports;

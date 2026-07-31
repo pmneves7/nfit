@@ -131,14 +131,16 @@ population factor and absolute cross-section factors when requested.
 For quasistatic elastic data, nfit evaluates the real static response and uses
 the documented quasistatic conversion. For bulk susceptibility or
 magnetization, it evaluates the real isotropic $\mathbf Q=0$, $E=0$ response,
-divides by `formula_units_per_cell`, and applies `bulk_g_factor` and the
-dataset's unit convention.
+divides by the formula units represented by the electronic model cell, and
+applies `bulk_g_factor` and the dataset's unit convention. By default nfit
+derives that count from the complete crystal and the actual conventional or
+certified primitive cell; `formula_units_per_cell` is the explicit override.
 
-The electronic response is normalized per primitive electronic cell before
-these conversions. `formula_units_per_cell` is therefore a physical
-normalization input, not a fit scale. Experimental intensity scale remains a
-dataset quantity and is fixed to one for normalized data or fitted through
-dataset scale parameters otherwise.
+The electronic response is normalized per electronic model cell before these
+conversions. Its formula-unit count is therefore a physical normalization,
+not a fit scale. Experimental intensity scale remains a dataset quantity and
+is fixed to one for normalized data or fitted through dataset scale parameters
+otherwise.
 
 Instrument resolution, finite-bin integration, absorption, and related
 measurement corrections belong to the optional dataset systematics layer

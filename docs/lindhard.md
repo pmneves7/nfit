@@ -97,21 +97,55 @@ parameters remain on the referenced tight-binding component.
 
 ## Configuration
 
+The GUI separates routine choices from execution overrides. **Response**
+selects the electronic model and occupations, **Sampling** controls the
+integration and experimental-$\mathbf Q$ accuracy, and **Experimental
+coupling** contains form-factor and bulk-normalization choices. Plot-specific
+coordinates and energy grids live in the corresponding viewer. The remaining
+controls are under **Advanced**; they are still serialized and available to
+scripts.
+
+### Response and sampling
+
 | Setting | Meaning | Default | Acceptable input example |
 | --- | --- | --- | --- |
-| `electronic_component` | enabled sibling `tight_binding` component supplying $H(\mathbf k)$ | `""` | `"Bands"` |
+| `electronic_component` | enabled sibling `tight_binding` component supplying $H(\mathbf k)$; empty selects it automatically when exactly one is enabled | `""` | `"Bands"` |
 | `response_mesh` | full-zone integration-mesh sizes | `[16, 16, 16]` | `[48, 48, 24]` |
-| `response_mesh_shift` | offsets in mesh steps | `[0, 0, 0]` | `[0.5, 0.5, 0.5]` |
-| `response_symmetry` | full mesh, required certified reduction, or automatic reduction with recorded fallback | `"auto"` | `"auto"`, `"full"`, or `"reduced"` |
 | `response_q_evaluation` | direct, required commensurate, validated interpolated, or automatic wavevector evaluation | `"auto"` | `"interpolated"` |
 | `response_q_interpolation_rtol` | accepted relative error for automatic periodic interpolation; zero disables this criterion | `0.0` | `0.01` |
+| `chemical_potential_mode` | use the source chemical potential or solve from filling | `"source"` | `"source"` or `"filling"` |
+| `filling_per_cell` | electron count per electronic model cell in filling mode | `1.0` | `3.0` |
+| `ion` | tabulated magnetic form-factor ion; empty applies none | `""` | `"Fe2"` |
+| `form_factor_coefficients` | custom form-factor coefficients instead of `ion` | `""` | `"0.0263,34.96,0.3668,15.94,0.6188,5.594,-0.0119"` |
+| `formula_units_mode` | infer formula units in the actual electronic model cell or use an explicit override | `"auto"` | `"auto"` or `"manual"` |
+| `formula_units_per_cell` | formula units in the electronic model cell when manual mode is selected | `1.0` | `2.0` |
+| `bulk_g_factor` | Landé factor for bulk conversion | `2.0` | `2.1` |
+
+Automatic formula-unit normalization expands the complete crystallographic
+cell, reduces its integer composition, and accounts for any certified
+primitive-cell reduction used by the electronic Hamiltonian. It deliberately
+refuses partial occupancy, mixed occupancy, missing elements, or an
+incompatible model cell. These cases do not affect neutron calculations, but
+a bulk calculation requires a manual override. Older projects without
+`formula_units_mode` retain their stored manual normalization.
+
+The GUI's **Exact Q evaluation** policy is
+`response_q_evaluation="auto"` with both interpolation tolerances zero.
+**Validated interpolation** sets a positive relative tolerance. Direct,
+commensurate-only, and forced-interpolation policies remain available as
+advanced script settings.
+
+### Advanced execution
+
+| Setting | Meaning | Default | Acceptable input example |
+| --- | --- | --- | --- |
+| `response_mesh_shift` | offsets in mesh steps | `[0, 0, 0]` | `[0.5, 0.5, 0.5]` |
+| `response_symmetry` | full mesh, required certified reduction, or automatic reduction with recorded fallback | `"auto"` | `"auto"`, `"full"`, or `"reduced"` |
 | `response_q_interpolation_atol` | accepted absolute complex-response error; zero disables this criterion | `0.0` | `1e-5` |
 | `response_q_interpolation_mesh` | optional initial commensurate interpolation mesh; empty chooses automatically | `[]` | `[8, 8, 8]` |
 | `response_q_validation_points` | deterministic off-mesh points calculated directly during certification | `8` | `16` |
-| `chemical_potential_mode` | use the source chemical potential or solve from filling | `"source"` | `"source"` or `"filling"` |
-| `filling_per_cell` | electron count per primitive cell in filling mode | `1.0` | `3.0` |
-| `response_backend` | execution backend; CuPy keeps the full Lindhard contraction on the GPU and returns only the completed response | `"numpy"` | `"numpy"`, `"threaded"`, or `"cupy"` |
-| `response_workers` | total CPU allocation shared across independent wavevectors, eigensystems, and fused contractions | `1` | `8` |
+| `response_backend` | CPU execution policy, or explicit CuPy execution | `"auto"` | `"auto"`, `"numpy"`, `"threaded"`, or `"cupy"` |
+| `response_workers` | total CPU allocation; zero detects affinity, cgroup, or scheduler allocation | `0` | `0` or `8` |
 | `response_transition_backend` | CPU particle--hole contraction; automatic selection uses exact orbital-pair factorization or workload-gated Numba | `"auto"` | `"auto"`, `"numpy"`, or `"numba"` |
 | `response_validate_backend` | compare a deterministic probe with serial NumPy before threaded or GPU use | `true` | `false` |
 | `response_backend_probe_points` | mesh points in the backend-equivalence probe | `8` | `12` |
@@ -121,11 +155,22 @@ parameters remain on the referenced tight-binding component.
 | `response_transition_max_batch_mb` | particle--hole transition temporary-memory target | `256.0` | `512.0` |
 | `response_cache_mb` | host and device limit for retained eigensystems, completed responses, and CuPy Hamiltonian components; zero disables this response cache | `512.0` | `1024.0` |
 | `response_cache_entries` | maximum retained response-cache entries | `64` | `128` |
-| `powder_orientations` | deterministic sphere directions for powder averaging | `50` | `96` |
-| `formula_units_per_cell` | formula units in the primitive electronic cell for molar bulk conversion | `1.0` | `2.0` |
-| `ion` | tabulated magnetic form-factor ion; empty applies none | `""` | `"Fe2"` |
-| `form_factor_coefficients` | custom form-factor coefficients instead of `ion` | `""` | `"0.0263,34.96,0.3668,15.94,0.6188,5.594,-0.0119"` |
-| `bulk_g_factor` | Landé factor for bulk conversion | `2.0` | `2.1` |
+| `powder_orientations` | deterministic directions used automatically for a powder dataset | `50` | `96` |
+
+`response_backend="auto"` stays on the reference CPU implementations and
+selects serial or bounded threaded execution from the workload and available
+CPU allocation. GPU execution remains an explicit `cupy` choice and is
+checked against serial NumPy before use.
+
+### Viewer calculations
+
+These settings belong to calculation viewers rather than the model-building
+form. **Apply and recalculate** validates them, stores them in the component,
+and updates the existing viewer. `configure_lindhard_plot` provides the same
+atomic operation in a script.
+
+| Setting | Meaning | Default | Acceptable input example |
+| --- | --- | --- | --- |
 | `plot_q_reduced` | extended-zone $\mathbf Q$ for the model energy scan | `[0, 0, 0]` | `[0.5, 0.5, 0]` |
 | `plot_energy_min_meV` | lower plotted energy transfer | `-100.0` | `-50.0` |
 | `plot_energy_max_meV` | upper plotted energy transfer | `100.0` | `50.0` |
@@ -204,10 +249,11 @@ The model calculates:
 - magnetic moment or magnetization in linear response to an applied field.
 
 Powder calculations average the tensor response and neutron polarization over
-the configured sphere directions. Bulk calculations use the isotropic
+deterministic sphere directions selected automatically when a powder dataset
+is encountered. Bulk calculations use the isotropic
 $\operatorname{Tr}\boldsymbol\chi_s(\mathbf 0,0)/3$ response, convert from the
-primitive-cell normalization to a formula-unit normalization, and then follow
-the bulk units on the physics-conventions page.
+electronic model-cell normalization to a formula-unit normalization, and then
+follow the bulk units on the physics-conventions page.
 
 The bulk comparison is optional. A bare band response may be intentionally
 insufficient at $\mathbf q=0$, especially near an interaction-driven magnetic
@@ -245,12 +291,15 @@ backend, and provenance. `to_dict()` and `from_dict()` provide a portable
 round trip for modest results.
 
 The GUI model plot shows the real and imaginary isotropic response at
-`plot_q_reduced`. **Copy script** exports the electronic source, response
-settings, calculation, and rendering calls as editable Python. The standard
-fit machinery saves and exports the linked electronic and response component
+`plot_q_reduced`. Its right panel owns the plotted momentum, energy grid, and
+temperature. **Copy script** exports the electronic source, response settings,
+calculation, and rendering calls as editable Python. The standard fit
+machinery saves and exports the linked electronic and response component
 states, fitted parameters, dataset bindings, and calculated fit channels.
 
-The second model plot evaluates numerical convergence. It reports each mesh
+The second model plot evaluates numerical convergence and exposes its
+representative momentum, energy window, mesh scales, and broadening scales in
+the same kind of right panel. It reports each mesh
 against the reference mesh at the same $\eta$, and each broadening against the
 reference broadening on the same mesh. `ResponseConvergenceResult` preserves
 the complex samples, absolute and relative metrics, reference indices, and a

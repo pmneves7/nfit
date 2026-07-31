@@ -52,6 +52,8 @@ def test_electronic_viewers_share_right_settings_panel(monkeypatch):
         "band_structure",
         "density_of_states",
         "fermi_surface",
+        "susceptibility",
+        "response_convergence",
     ):
         figure = Figure()
         figure.add_subplot(111)
@@ -273,6 +275,32 @@ def test_band_viewer_plot_controls_update_figure(monkeypatch):
             },
             "fermi_mesh",
             "[72, 72, 72]",
+        ),
+        (
+            "susceptibility",
+            {
+                "plot_q_reduced": "[0.5, 0.5, 0]",
+                "plot_energy_min_meV": "-50",
+                "plot_energy_max_meV": "50",
+                "plot_energy_points": "401",
+                "plot_temperature_K": "10",
+            },
+            "plot_energy_points",
+            "501",
+        ),
+        (
+            "response_convergence",
+            {
+                "plot_q_reduced": "[0.5, 0.5, 0]",
+                "plot_energy_min_meV": "-50",
+                "plot_energy_max_meV": "50",
+                "plot_temperature_K": "10",
+                "convergence_mesh_scales": "[0.5, 1.0]",
+                "convergence_broadening_scales": "[2.0, 1.0]",
+                "convergence_energy_points": "9",
+            },
+            "convergence_energy_points",
+            "17",
         ),
     ],
 )

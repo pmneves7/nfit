@@ -1174,15 +1174,17 @@ def lindhard_report_sections(
     broadening, uncertainty = _param_value(goodness, model, "broadening")
     mesh = latex_escape(config.get("response_mesh", ()))
     shift = latex_escape(config.get("response_mesh_shift", ()))
-    source = latex_escape(config.get("electronic_component", "--"))
+    source_name = str(config.get("electronic_component", "")).strip()
+    source = latex_escape(source_name or "automatic unique source")
     mode = latex_escape(config.get("chemical_potential_mode", "source"))
-    backend = latex_escape(config.get("response_backend", "numpy"))
+    backend = latex_escape(config.get("response_backend", "auto"))
     symmetry = latex_escape(config.get("response_symmetry", "auto"))
+    formula_mode = str(config.get("formula_units_mode", "manual"))
     lines = [
         f"\\section{{Bare Lindhard spin susceptibility ({name})}}",
         (
             f"The response uses tight-binding component \\texttt{{{source}}} "
-            f"on the full mesh \\texttt{{{mesh}}} with mesh-step shift "
+            f"on integration mesh \\texttt{{{mesh}}} with mesh-step shift "
             f"\\texttt{{{shift}}}. The chemical-potential policy is "
             f"\\texttt{{{mode}}} and the requested eigensystem backend is "
             f"\\texttt{{{backend}}}. Response symmetry policy "
@@ -1198,8 +1200,15 @@ def lindhard_report_sections(
             f"{_fmt_pm(broadening, uncertainty)} meV \\\\"
         ),
         (
-            "Formula units per primitive cell & "
-            f"{_fmt(config.get('formula_units_per_cell', 1.0))} \\\\"
+            "Formula-unit normalization & "
+            + (
+                "automatic from crystal and model cell \\\\"
+                if formula_mode == "auto"
+                else (
+                    f"{_fmt(config.get('formula_units_per_cell', 1.0))} "
+                    "f.u./model cell (manual) \\\\"
+                )
+            )
         ),
         (
             "Powder orientations & "

@@ -21,6 +21,8 @@ imported lazily so the rest of the package works without it.
 from __future__ import annotations
 
 import hashlib
+import math
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from itertools import combinations, product
@@ -64,6 +66,25 @@ class CrystalSite:
     ion: str = ""
     element: str = ""
     rotation: tuple[tuple[float, float, float], ...] | None = None
+
+
+@dataclass(frozen=True)
+class CrystalFormulaUnits:
+    """Crystallographic formula-unit count for one selected model cell."""
+
+    reduced_composition: tuple[tuple[str, int], ...]
+    conventional_formula_units: int
+    cell_multiplicity: int
+    formula_units_per_model_cell: int
+
+    @property
+    def formula(self) -> str:
+        """Return a compact empirical-formula label."""
+
+        return "".join(
+            f"{element}{'' if count == 1 else count}"
+            for element, count in self.reduced_composition
+        )
 
 
 @dataclass(frozen=True)
@@ -152,6 +173,7 @@ def crystal_from_cif(path: str) -> dict[str, Any]:
         {
             "label": site.label or site.type_symbol,
             "element": site.type_symbol,
+            "occupancy": float(site.occ),
             "position": [
                 round(float(site.fract.x), _POSITION_DECIMALS),
                 round(float(site.fract.y), _POSITION_DECIMALS),
@@ -479,6 +501,104 @@ def expand_crystal_sites(
                 )
             )
     return expanded
+
+
+def infer_crystal_formula_units(
+    crystal: Mapping[str, Any],
+    *,
+    model_lattice: Any | None = None,
+    cell_multiplicity: int | None = None,
+) -> CrystalFormulaUnits:
+    """Infer formula units represented by a conventional or reduced cell.
+
+    The inference requires a complete, fully occupied integer-composition
+    crystal. ``model_lattice`` may identify an actual reduced electronic cell;
+    otherwise ``cell_multiplicity`` explicitly gives how many model cells tile
+    the supplied conventional cell.
+    """
+
+    validate_crystal(crystal)
+    sites = tuple(crystal.get("sites", ()))
+    if not sites:
+        raise ValueError("formula-unit inference requires crystallographic sites")
+    counts: dict[str, int] = {}
+    occupied_positions: dict[tuple[float, float, float], str] = {}
+    for site in sites:
+        raw_element = str(site.get("element", "") or "").strip()
+        match = re.match(r"^([A-Z][a-z]?)", raw_element)
+        if match is None:
+            raise ValueError(
+                "formula-unit inference requires an element on every crystal site"
+            )
+        occupancy = float(site.get("occupancy", 1.0))
+        if not np.isfinite(occupancy) or not np.isclose(
+            occupancy,
+            1.0,
+            rtol=0.0,
+            atol=1.0e-10,
+        ):
+            raise ValueError(
+                "formula-unit inference does not guess partially occupied sites"
+            )
+        element = match.group(1)
+        expanded = expand_crystal_sites(crystal, [str(site["label"])])
+        for item in expanded:
+            key = tuple(float(value) for value in item.position)
+            prior = occupied_positions.get(key)
+            if prior is not None:
+                raise ValueError(
+                    "formula-unit inference does not guess overlapping or "
+                    "mixed-occupancy sites"
+                )
+            occupied_positions[key] = element
+        counts[element] = counts.get(element, 0) + len(expanded)
+    if not counts:
+        raise ValueError("formula-unit inference found no occupied sites")
+    conventional_formula_units = math.gcd(*counts.values())
+    reduced = tuple(
+        (element, count // conventional_formula_units)
+        for element, count in sorted(counts.items())
+    )
+
+    if model_lattice is not None and cell_multiplicity is not None:
+        raise ValueError("specify model_lattice or cell_multiplicity, not both")
+    if model_lattice is not None:
+        conventional = lattice_vectors(crystal["lattice"])
+        selected = np.asarray(model_lattice, dtype=float)
+        if (
+            selected.shape != (3, 3)
+            or np.any(~np.isfinite(selected))
+            or abs(float(np.linalg.det(selected))) <= 1.0e-14
+        ):
+            raise ValueError("model_lattice must be a finite invertible 3x3 matrix")
+        ratio = abs(
+            float(np.linalg.det(conventional))
+            / float(np.linalg.det(selected))
+        )
+        multiplicity = int(round(ratio))
+        if multiplicity < 1 or not np.isclose(
+            ratio,
+            multiplicity,
+            rtol=1.0e-8,
+            atol=1.0e-8,
+        ):
+            raise ValueError(
+                "model cell must have an integer multiplicity in the crystal cell"
+            )
+    else:
+        multiplicity = 1 if cell_multiplicity is None else int(cell_multiplicity)
+        if multiplicity < 1:
+            raise ValueError("cell_multiplicity must be positive")
+    if conventional_formula_units % multiplicity:
+        raise ValueError(
+            "the inferred formula-unit count is incompatible with the model cell"
+        )
+    return CrystalFormulaUnits(
+        reduced_composition=reduced,
+        conventional_formula_units=conventional_formula_units,
+        cell_multiplicity=multiplicity,
+        formula_units_per_model_cell=conventional_formula_units // multiplicity,
+    )
 
 
 def expand_magnetic_sites(
