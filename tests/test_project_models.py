@@ -85,6 +85,15 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
     assert path_combo is not None
     assert path_combo.findData("setyawan_curtarolo") >= 0
     assert "ASE" in path_combo.toolTip()
+    assert (
+        explorer.model_parameter_widget.findChild(
+            QtWidgets.QPushButton,
+            "tight_binding_generate_standard_path",
+        )
+        is None
+    )
+    path_combo.setCurrentIndex(path_combo.findData("manual"))
+    assert model.config["band_path_convention"] == "manual"
     unit_combo = explorer.model_parameter_widget.findChild(
         QtWidgets.QComboBox, "tight_binding_energy_unit"
     )
@@ -521,13 +530,6 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
         QtWidgets.QComboBox, "tight_binding_onsite_0_sharing"
     )
     assert onsite_sharing is not None and onsite_sharing.toolTip()
-    onsite_details = explorer.model_parameter_widget.findChild(
-        QtWidgets.QCheckBox,
-        "tight_binding_onsite_show_details",
-    )
-    assert onsite_details is not None and onsite_details.toolTip()
-    assert onsite_sharing.isHidden()
-    onsite_details.setChecked(True)
     assert not onsite_sharing.isHidden()
     onsite_sharing.setCurrentIndex(onsite_sharing.findData("per_dataset"))
     assert model.sharing[onsite_identifier]["mode"] == "per_dataset"
@@ -571,11 +573,21 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
         QtWidgets.QComboBox, "tight_binding_hopping_0_sharing"
     )
     assert hopping_sharing is not None and hopping_sharing.toolTip()
-    hopping_details = explorer.model_parameter_widget.findChild(
-        QtWidgets.QCheckBox,
-        "tight_binding_hopping_show_details",
+    assert not hopping_sharing.isHidden()
+    assert (
+        explorer.model_parameter_widget.findChild(
+            QtWidgets.QCheckBox,
+            "tight_binding_hopping_show_details",
+        )
+        is None
     )
-    assert hopping_details is not None and hopping_details.toolTip()
+    assert (
+        explorer.model_parameter_widget.findChild(
+            QtWidgets.QCheckBox,
+            "tight_binding_onsite_show_details",
+        )
+        is None
+    )
     remove_hopping = explorer.model_parameter_widget.findChild(
         QtWidgets.QPushButton, "tight_binding_hopping_remove_0"
     )

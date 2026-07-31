@@ -25,10 +25,9 @@ does not create GUI-only scientific state: project files and copied scripts
 retain the complete configuration. Scripts can update the same plot-owned
 fields atomically with `configure_tight_binding_plot`.
 
-Onsite and hopping tables show the term identity, orbital endpoints, value,
-and Fit selection by default. **Show fit details** reveals bounds, dataset
-sharing, and matrix-basis metadata; it opens automatically when a term already
-uses a bound, non-global sharing, or fitting.
+Onsite and hopping tables always show values, bounds, Fit selection, dataset
+sharing, group assignments, and matrix-basis metadata. Hopping rows also show
+their orbital endpoints.
 
 ## Source and builder state
 
@@ -95,6 +94,8 @@ reduced-dimensional models. Labels alone have no coordinate meaning: a point
 called X must carry coordinates appropriate to the selected convention.
 Connected segments are sampled at a uniform physical momentum density, so
 longer segments receive proportionally more interpolation points.
+Selecting a standard convention in the model editor regenerates the shared
+path immediately; a separate generation action is unnecessary.
 
 ## Density of states
 

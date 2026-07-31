@@ -725,6 +725,34 @@ def refresh_electronic_calculation_settings(
             label.setText(str(value))
 
 
+def _populate_figure_output_controls(
+    settings: Any,
+    *,
+    viewer_key: str,
+    copy_figure: Callable[[], None],
+    save_figure: Callable[[], None],
+) -> None:
+    """Add standard image output actions to an electronic plot panel."""
+
+    from PySide6 import QtWidgets
+
+    layout = settings.layout()
+    output = QtWidgets.QGroupBox("Output", settings)
+    output.setObjectName(f"{viewer_key}_output_group")
+    output_layout = QtWidgets.QHBoxLayout(output)
+    copy_button = QtWidgets.QPushButton("Copy figure", output)
+    copy_button.setObjectName(f"{viewer_key}_copy_figure")
+    copy_button.setToolTip("Copy the current rendered figure to the clipboard.")
+    copy_button.clicked.connect(copy_figure)
+    save_button = QtWidgets.QPushButton("Save figure", output)
+    save_button.setObjectName(f"{viewer_key}_save_figure")
+    save_button.setToolTip("Save the current figure as PNG, PDF, or SVG.")
+    save_button.clicked.connect(save_figure)
+    output_layout.addWidget(copy_button)
+    output_layout.addWidget(save_button)
+    layout.insertWidget(max(layout.count() - 1, 0), output)
+
+
 def show_electronic_figure(
     figure: Any,
     *,
@@ -778,6 +806,23 @@ def show_electronic_figure(
     window._nfit_figure = figure
     window._nfit_canvas = canvas
     window._nfit_settings_panel = settings
+
+    def copy_figure() -> None:
+        QtWidgets.QApplication.clipboard().setPixmap(canvas.grab())
+
+    def save_figure() -> None:
+        stem = viewer_key.replace("_", "-")
+        path, _selected = QtWidgets.QFileDialog.getSaveFileName(
+            window,
+            f"Save {title.lower()} figure",
+            f"nfit_{stem}.png",
+            "Figures (*.png *.pdf *.svg)",
+        )
+        if path:
+            window._nfit_figure.savefig(str(path))
+
+    window._nfit_copy_figure = copy_figure
+    window._nfit_save_figure = save_figure
     if viewer_key in {"band_structure", "density_of_states"}:
         current_style = ElectronicPlotStyle() if style is None else style
 
@@ -824,6 +869,13 @@ def show_electronic_figure(
             )
 
         window._nfit_update_calculation_settings = update_calculation_settings
+    if viewer_key in {"band_structure", "density_of_states"}:
+        _populate_figure_output_controls(
+            settings_content,
+            viewer_key=viewer_key,
+            copy_figure=copy_figure,
+            save_figure=save_figure,
+        )
     close_shortcut = QtGui.QShortcut(
         QtGui.QKeySequence.StandardKey.Close,
         window,

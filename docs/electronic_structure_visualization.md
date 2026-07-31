@@ -55,6 +55,7 @@ to one point are combined with a vertical bar, such as `X|Y`.
 | `basis_vector_inside_style` | `"solid"` | `"solid"`, `"dashed"`, or `"hidden"` inside the cell |
 | `path_color` | `"#7A1F1F"` | high-symmetry path color |
 | `path_thickness` | `4.0` | path width |
+| `path_point_size` | `16.0` | high-symmetry point diameter in screen pixels |
 | `label_font_size` | `18` | high-symmetry and reciprocal-vector label size |
 | `label_bold` | `false` | use bold label text |
 | `cell_surface_color` | `"#B8C7D9"` | Wigner--Seitz face color |
@@ -253,6 +254,8 @@ calculation settings are stored only after **Apply and recalculate** succeeds.
 Successful recalculation replaces the plot inside the existing window, keeping
 its position, size, and presentation controls. The three-dimensional
 Fermi-surface viewer also preserves its camera. Band and DOS presentation
-settings update immediately without recalculation.
+settings update immediately without recalculation. Band, DOS, and
+Fermi-surface viewers provide **Copy figure** and **Save figure** actions in
+their Output panels.
 The Brillouin-zone panel controls presentation without rebuilding its cached
 geometry. Standard close shortcuts use Command-W on macOS and Control-W elsewhere.

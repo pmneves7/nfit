@@ -142,6 +142,7 @@ def test_component_brillouin_zone_and_script_use_configured_band_path():
         component,
         view_options=BrillouinZoneViewOptions(
             path_color="#551111",
+            path_point_size=22.0,
             projection="perspective",
         ),
     )
@@ -149,6 +150,7 @@ def test_component_brillouin_zone_and_script_use_configured_band_path():
     assert "primitive_lattice" in script
     assert "BrillouinZoneViewOptions" in script
     assert "path_color='#551111'" in script
+    assert "path_point_size=22.0" in script
     assert "projection='perspective'" in script
     assert "show_brillouin_zone_scene" in script
 
@@ -157,6 +159,7 @@ def test_brillouin_zone_label_defaults_and_bold_option():
     options = BrillouinZoneViewOptions()
     assert options.label_font_size == 18
     assert options.label_bold is False
+    assert options.path_point_size == pytest.approx(16.0)
     assert BrillouinZoneViewOptions(label_bold=True).label_bold is True
 
 
@@ -203,6 +206,8 @@ def test_view_options_validate_scriptable_appearance():
         BrillouinZoneViewOptions(projection="fish-eye")
     with pytest.raises(ValueError, match="inside_style"):
         BrillouinZoneViewOptions(basis_vector_inside_style="fade")
+    with pytest.raises(ValueError, match="path_point_size"):
+        BrillouinZoneViewOptions(path_point_size=0.0)
 
 
 def test_basis_vector_surface_and_dashed_modes(monkeypatch):
@@ -319,6 +324,7 @@ def test_zone_renderer_uses_flat_faces_heavy_outline_and_thin_full_vectors(
     class Plotter:
         def __init__(self):
             self.meshes = []
+            self.points = []
             self.point_labels = []
             self.axes = []
             self.axes_shown = False
@@ -335,8 +341,8 @@ def test_zone_renderer_uses_flat_faces_heavy_outline_and_thin_full_vectors(
         def add_mesh(self, mesh, **kwargs):
             self.meshes.append((mesh, kwargs))
 
-        def add_points(self, *_args, **_kwargs):
-            return None
+        def add_points(self, points, **kwargs):
+            self.points.append((points, kwargs))
 
         def add_point_labels(self, *_args, **kwargs):
             self.point_labels.append(kwargs)
@@ -372,6 +378,10 @@ def test_zone_renderer_uses_flat_faces_heavy_outline_and_thin_full_vectors(
     assert face_style["lighting"] is False
     assert edge_style["style"] == "wireframe"
     assert edge_style["line_width"] == 5.0
+    assert plotter.points[-1][1]["point_size"] == pytest.approx(
+        options.path_point_size
+    )
+    assert plotter.points[-1][1]["render_points_as_spheres"] is True
     assert len(arrow_arguments) == 3
     reciprocal = np.asarray(scene.reciprocal_vectors)
     for arguments, vector in zip(arrow_arguments, reciprocal, strict=True):
@@ -478,6 +488,7 @@ def test_zone_viewer_uses_standard_right_settings_panel(monkeypatch, tmp_path):
         "brillouin_zone_basis_inside_style",
         "brillouin_zone_path_color",
         "brillouin_zone_path_thickness",
+        "brillouin_zone_path_point_size",
         "brillouin_zone_label_font_size",
         "brillouin_zone_label_bold",
         "brillouin_zone_surface_color",
@@ -505,6 +516,13 @@ def test_zone_viewer_uses_standard_right_settings_panel(monkeypatch, tmp_path):
     assert not bold.isChecked()
     bold.setChecked(True)
     assert window._nfit_view_options.label_bold is True
+    point_size = window.findChild(
+        QtWidgets.QDoubleSpinBox,
+        "brillouin_zone_path_point_size",
+    )
+    assert point_size.value() == pytest.approx(16.0)
+    point_size.setValue(24.0)
+    assert window._nfit_view_options.path_point_size == pytest.approx(24.0)
     projection.setCurrentIndex(projection.findData("perspective"))
     assert window._nfit_view_options.projection == "perspective"
     window._nfit_copy_figure()

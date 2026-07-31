@@ -95,13 +95,15 @@ viewers share a consistent two-column layout with the visualization on the
 left and a fixed-width **Settings** panel on the right. The Brillouin-zone
 panel controls object visibility, vector and path styling, label size, cell
 face and outline styling, label boldness, camera projection, and viewport
-copy/save actions. Labels default to 18 pt.
+copy/save actions. High-symmetry point size is adjustable and defaults to
+16 screen pixels; labels default to 18 pt.
 The reciprocal vectors may be solid throughout, dashed within the zone, or
 start at its surface. The coordinate compass is hidden by default and uses
 saturated red, green, and blue axes when enabled. Figure copying captures the
 rendered framebuffer rather than another application window.
 The band and DOS panels also provide live curve, marker, font, border, legend,
 orbital-projection visibility, Fermi-level, and high-symmetry-guide styling.
+Band, DOS, and Fermi-surface Output panels copy or save the rendered figure.
 The wider, scrollable panel keeps control labels and editors visible. The DOS
 calculation group can derive its energy window from the sampled bands. Other
 calculation controls remain separate and apply only after recalculation

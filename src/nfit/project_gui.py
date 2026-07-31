@@ -19421,19 +19421,13 @@ class NfitProjectExplorer:
                 0,
             )
         )
-        generate_path = QtWidgets.QPushButton("Generate path")
-        generate_path.setObjectName(
-            "tight_binding_generate_standard_path"
-        )
-        generate_path.setToolTip(path_tooltip)
-        generate_path.clicked.connect(
-            lambda _checked=False, combo=path: self._generate_tight_binding_standard_path(
+        path.currentIndexChanged.connect(
+            lambda _index, combo=path: self._generate_tight_binding_standard_path(
                 str(combo.currentData())
             )
         )
         layout.addWidget(path_label, 2, 0)
-        layout.addWidget(path, 2, 1)
-        layout.addWidget(generate_path, 2, 2)
+        layout.addWidget(path, 2, 1, 1, 2)
 
         projection_count = len(model.config.get("projection_groups") or {})
         projection_summary = QtWidgets.QLabel(
@@ -21151,21 +21145,6 @@ class NfitProjectExplorer:
             OnsiteInvariant.from_dict(item)
             for item in model.config.get("onsite_terms", ())
         ]
-        show_details = QtWidgets.QCheckBox("Show fit details")
-        show_details.setObjectName("tight_binding_onsite_show_details")
-        show_details.setToolTip(
-            "Show optional bounds, dataset sharing, and matrix-basis details. "
-            "Values and Fit selections remain visible in the compact table."
-        )
-        details_expanded = any(
-            term.fit
-            or any(bound is not None for bound in term.bounds_meV)
-            or sharing_mode(model, term.identifier) != "global"
-            for term in terms
-        )
-        show_details.setChecked(details_expanded)
-        layout.addWidget(show_details, 0, 0, 1, 3)
-        detail_widgets: list[Any] = []
         headers = (
             "Term",
             "Site",
@@ -21180,11 +21159,9 @@ class NfitProjectExplorer:
         )
         for column, text in enumerate(headers):
             header = QtWidgets.QLabel(text)
-            layout.addWidget(header, 1, column)
-            if column in {4, 5, 7, 8, 9}:
-                detail_widgets.append(header)
+            layout.addWidget(header, 0, column)
         for index, term in enumerate(terms):
-            row = index + 2
+            row = index + 1
             layout.addWidget(QtWidgets.QLabel(term.label), row, 0)
             layout.addWidget(QtWidgets.QLabel(term.site_label), row, 1)
             layout.addWidget(QtWidgets.QLabel(term.kind), row, 2)
@@ -21228,7 +21205,6 @@ class NfitProjectExplorer:
                     )
                 )
                 layout.addWidget(editor, row, column)
-                detail_widgets.append(editor)
             fit = QtWidgets.QCheckBox()
             fit.setObjectName(f"tight_binding_onsite_fit_{index}")
             fit.setChecked(term.fit)
@@ -21250,7 +21226,6 @@ class NfitProjectExplorer:
             )
             layout.addWidget(sharing, row, 7)
             layout.addWidget(groups, row, 8)
-            detail_widgets.extend((sharing, groups))
             matrix = QtWidgets.QLabel(
                 f"{len(term.basis_labels)}x{len(term.basis_labels)}; {term.source}"
             )
@@ -21260,7 +21235,6 @@ class NfitProjectExplorer:
                 f"Matrix:\n{np.array2string(term.matrix, precision=4)}"
             )
             layout.addWidget(matrix, row, 9)
-            detail_widgets.append(matrix)
         status_text = (
             f"{len(terms)} onsite invariant(s)."
             if terms
@@ -21273,14 +21247,7 @@ class NfitProjectExplorer:
             "the static R=0 Hamiltonian."
         )
         status.setWordWrap(True)
-        layout.addWidget(status, len(terms) + 2, 0, 1, len(headers))
-
-        def set_details_visible(visible: bool) -> None:
-            for widget in detail_widgets:
-                widget.setVisible(bool(visible))
-
-        set_details_visible(details_expanded)
-        show_details.toggled.connect(set_details_visible)
+        layout.addWidget(status, len(terms) + 1, 0, 1, len(headers))
         self.model_parameter_layout.addWidget(group, 7, 0, 1, 4)
 
     def _build_tight_binding_hopping_editor(
@@ -21494,21 +21461,6 @@ class NfitProjectExplorer:
         layout.addWidget(add_selected, 3, 0, 1, 3)
 
         unit = str(model.config.get("electronic_energy_unit", "eV"))
-        show_details = QtWidgets.QCheckBox("Show fit details")
-        show_details.setObjectName("tight_binding_hopping_show_details")
-        show_details.setToolTip(
-            "Show optional bounds, dataset sharing, and matrix-basis details. "
-            "Orbital endpoints, values, Fit selections, and removal stay visible."
-        )
-        details_expanded = any(
-            term.fit
-            or any(bound is not None for bound in term.bounds_meV)
-            or sharing_mode(model, term.identifier) != "global"
-            for term in active
-        )
-        show_details.setChecked(details_expanded)
-        layout.addWidget(show_details, 3, 7, 1, 4)
-        detail_widgets: list[Any] = []
         active_headers = (
             "Active term",
             "From orbital(s)",
@@ -21526,8 +21478,6 @@ class NfitProjectExplorer:
         for column, text in enumerate(active_headers):
             header = QtWidgets.QLabel(text)
             layout.addWidget(header, 4, column)
-            if column in {5, 6, 8, 9, 10}:
-                detail_widgets.append(header)
         for index, term in enumerate(active):
             row = index + 5
             from_text, to_text = endpoint_text(term)
@@ -21589,7 +21539,6 @@ class NfitProjectExplorer:
                     )
                 )
                 layout.addWidget(editor, row, column)
-                detail_widgets.append(editor)
             fit = QtWidgets.QCheckBox()
             fit.setObjectName(f"tight_binding_hopping_fit_{index}")
             fit.setChecked(term.fit)
@@ -21612,7 +21561,6 @@ class NfitProjectExplorer:
             )
             layout.addWidget(sharing, row, 8)
             layout.addWidget(groups, row, 9)
-            detail_widgets.extend((sharing, groups))
             matrix = QtWidgets.QLabel(
                 f"{len(term.basis_i)}x{len(term.basis_j)}"
             )
@@ -21625,7 +21573,6 @@ class NfitProjectExplorer:
                 f"Matrix:\n{np.array2string(term.matrix, precision=4)}"
             )
             layout.addWidget(matrix, row, 10)
-            detail_widgets.append(matrix)
             remove = QtWidgets.QPushButton("Remove")
             remove.setObjectName(f"tight_binding_hopping_remove_{index}")
             remove.setToolTip(
@@ -21653,12 +21600,6 @@ class NfitProjectExplorer:
             len(active_headers),
         )
 
-        def set_details_visible(visible: bool) -> None:
-            for widget in detail_widgets:
-                widget.setVisible(bool(visible))
-
-        set_details_visible(details_expanded)
-        show_details.toggled.connect(set_details_visible)
         self.model_parameter_layout.addWidget(group, 8, 0, 1, 4)
 
     def _import_wannier90_model(self, model: ModelComponentSpec) -> bool:

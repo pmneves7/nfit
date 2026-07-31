@@ -42,6 +42,7 @@ class BrillouinZoneViewOptions:
     basis_vector_inside_style: str = "solid"
     path_color: str = "#7A1F1F"
     path_thickness: float = 4.0
+    path_point_size: float = 16.0
     label_font_size: int = 18
     label_bold: bool = False
     cell_surface_color: str = "#B8C7D9"
@@ -77,6 +78,8 @@ class BrillouinZoneViewOptions:
             raise ValueError("basis_vector_thickness must be positive")
         if float(self.path_thickness) <= 0.0:
             raise ValueError("path_thickness must be positive")
+        if float(self.path_point_size) <= 0.0:
+            raise ValueError("path_point_size must be positive")
         if float(self.cell_outline_thickness) <= 0.0:
             raise ValueError("cell_outline_thickness must be positive")
         if int(self.label_font_size) <= 0:

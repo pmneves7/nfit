@@ -80,10 +80,68 @@ def test_electronic_viewers_share_right_settings_panel(monkeypatch):
         root = window.centralWidget().layout()
         assert root.itemAt(root.count() - 1).widget() is panel
         assert window._nfit_close_shortcut is not None
+        if viewer_key in {"band_structure", "density_of_states"}:
+            assert window.findChild(
+                QtWidgets.QPushButton,
+                f"{viewer_key}_copy_figure",
+            ).toolTip()
+            assert window.findChild(
+                QtWidgets.QPushButton,
+                f"{viewer_key}_save_figure",
+            ).toolTip()
         window._nfit_close_shortcut.activated.emit()
         assert not window.isVisible()
 
     assert application is QtWidgets.QApplication.instance()
+
+
+@pytest.mark.parametrize(
+    "viewer_key",
+    ("band_structure", "density_of_states"),
+)
+def test_band_and_dos_viewers_copy_and_save_figure(
+    monkeypatch,
+    tmp_path,
+    viewer_key,
+):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    pytest.importorskip("matplotlib.backends.backend_qtagg")
+    from matplotlib.figure import Figure
+
+    from nfit.qt_electronic_viewer import show_electronic_figure
+
+    application = QtWidgets.QApplication.instance()
+    if application is None:
+        application = QtWidgets.QApplication([])
+    figure = Figure()
+    figure.add_subplot(111).plot([0.0, 1.0], [0.0, 1.0])
+    saved = []
+    monkeypatch.setattr(
+        figure,
+        "savefig",
+        lambda path: saved.append(str(path)),
+    )
+    output_path = tmp_path / f"{viewer_key}.png"
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
+        "getSaveFileName",
+        lambda *_args, **_kwargs: (str(output_path), "Figures (*.png)"),
+    )
+    window = show_electronic_figure(figure, viewer_key=viewer_key)
+    application.processEvents()
+
+    window.findChild(
+        QtWidgets.QPushButton,
+        f"{viewer_key}_copy_figure",
+    ).click()
+    assert not QtWidgets.QApplication.clipboard().pixmap().isNull()
+    window.findChild(
+        QtWidgets.QPushButton,
+        f"{viewer_key}_save_figure",
+    ).click()
+    assert saved == [str(output_path)]
+    window.close()
 
 
 def test_electronic_plot_style_sets_publication_frame_and_reference_lines():

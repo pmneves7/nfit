@@ -174,7 +174,7 @@ def _render_brillouin_zone(
         plotter.add_points(
             nodes,
             color=settings.path_color,
-            point_size=max(6.0, 2.5 * settings.path_thickness),
+            point_size=settings.path_point_size,
             render_points_as_spheres=True,
         )
     if settings.show_path_labels and len(nodes):
@@ -482,6 +482,19 @@ def _populate_settings_panel(
     path_thickness.valueChanged.connect(
         lambda value: update(path_thickness=float(value))
     )
+    path_point_size = QtWidgets.QDoubleSpinBox()
+    path_point_size.setObjectName("brillouin_zone_path_point_size")
+    path_point_size.setRange(1.0, 80.0)
+    path_point_size.setSingleStep(1.0)
+    path_point_size.setValue(initial.path_point_size)
+    path_point_size.setSuffix(" px")
+    path_point_size.setToolTip(
+        "Set the diameter of high-symmetry path points. Increase this on "
+        "high-resolution displays."
+    )
+    path_point_size.valueChanged.connect(
+        lambda value: update(path_point_size=float(value))
+    )
     font_size = QtWidgets.QSpinBox()
     font_size.setObjectName("brillouin_zone_label_font_size")
     font_size.setRange(6, 48)
@@ -504,6 +517,7 @@ def _populate_settings_panel(
     )
     path_layout.addRow("Path color", path_color)
     path_layout.addRow("Path width", path_thickness)
+    path_layout.addRow("Point size", path_point_size)
     path_layout.addRow("Label size", font_size)
     path_layout.addRow("", label_bold)
     layout.addWidget(path)
