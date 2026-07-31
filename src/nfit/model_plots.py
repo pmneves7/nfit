@@ -24,6 +24,7 @@ from .electronic_structure import (
     fermi_surface,
     k_mesh,
     normalize_electronic_energy_unit,
+    reciprocal_mesh_shape_for_spacing,
 )
 from .spin_fluctuations import generalized_paramagnon_susceptibility
 
@@ -47,6 +48,8 @@ _TIGHT_BINDING_PLOT_FIELDS = {
         "dos_broadening_meV",
     },
     "fermi_surface": {
+        "fermi_mesh_mode",
+        "fermi_spacing_inv_angstrom",
         "fermi_mesh",
         "fermi_energy_meV",
     },
@@ -268,6 +271,21 @@ def configure_tight_binding_plot(
                     "projected DOS cannot require symmetry reduction"
                 )
         elif key == "fermi_surface":
+            mode = str(component.config.get("fermi_mesh_mode", "spacing"))
+            if mode not in {"spacing", "size"}:
+                raise ValueError(
+                    "fermi_mesh_mode must be spacing or size"
+                )
+            spacing = float(
+                component.config.get(
+                    "fermi_spacing_inv_angstrom",
+                    0.025,
+                )
+            )
+            if not np.isfinite(spacing) or spacing <= 0.0:
+                raise ValueError(
+                    "fermi_spacing_inv_angstrom must be positive and finite"
+                )
             mesh = component.config.get("fermi_mesh", ())
             if (
                 not isinstance(mesh, (list, tuple))
@@ -357,7 +375,11 @@ def _component_sampling_policy(
     )
 
 
-def certify_tight_binding_dos_sampling(component: Any) -> Any:
+def certify_tight_binding_dos_sampling(
+    component: Any,
+    *,
+    progress_callback: Any | None = None,
+) -> Any:
     """Certify and store one concrete DOS production mesh."""
 
     from .electronic_sampling import certify_dos_sampling
@@ -396,6 +418,7 @@ def certify_tight_binding_dos_sampling(component: Any) -> Any:
                 config.get("chemical_potential_meV", 0.0)
             ),
             projections=_projection_groups(component),
+            progress_callback=progress_callback,
             **_electronic_execution_kwargs(component),
         )
         component.config["dos_sampling_certificate"] = certificate.to_dict()
@@ -417,6 +440,7 @@ def certify_lindhard_component_sampling(
     q_reduced: ArrayLike | None = None,
     energy_meV: ArrayLike | None = None,
     temperature_K: float | None = None,
+    progress_callback: Any | None = None,
 ) -> Any:
     """Certify and store a Lindhard mesh on an explicit or inspection domain."""
 
@@ -502,6 +526,7 @@ def certify_lindhard_component_sampling(
             transition_backend=str(
                 config.get("response_transition_backend", "auto")
             ),
+            progress_callback=progress_callback,
         )
         payload = certificate.to_dict()
         payload["provenance"]["domain_kind"] = domain_kind
@@ -1533,10 +1558,16 @@ def tight_binding_fermi_surface(component: Any) -> FermiSurfaceResult:
 
     model = electronic_model_from_component(component)
     config = component.config
+    mesh = config.get("fermi_mesh", [64, 64, 64])
+    if str(config.get("fermi_mesh_mode", "spacing")) == "spacing":
+        mesh = reciprocal_mesh_shape_for_spacing(
+            model,
+            float(config.get("fermi_spacing_inv_angstrom", 0.025)),
+        )
     return _with_electronic_display_unit(
         fermi_surface(
             model,
-            config.get("fermi_mesh", [64, 64, 64]),
+            mesh,
             target_energy_meV=float(
                 config.get(
                     "fermi_energy_meV",
@@ -1875,11 +1906,16 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
         )
         lines.extend(
             [
-                "from nfit import fermi_surface",
+                "from nfit import fermi_surface, reciprocal_mesh_shape_for_spacing",
                 "from nfit.model_plots import render_fermi_surface",
                 f"target_energy = {target!r}",
                 "target_energy_meV = electronic_energy_to_meV(target_energy, energy_unit)",
-                f"result = fermi_surface(model, {config.get('fermi_mesh', [64, 64, 64])!r}, target_energy_meV=target_energy_meV, projections={projections!r}, backend=electronic_backend, workers=electronic_workers, max_batch_bytes=max_batch_bytes)",
+                f"fermi_mesh_mode = {config.get('fermi_mesh_mode', 'spacing')!r}",
+                f"fermi_spacing_inv_angstrom = {float(config.get('fermi_spacing_inv_angstrom', 0.025))!r}",
+                f"fermi_mesh = {config.get('fermi_mesh', [64, 64, 64])!r}",
+                "if fermi_mesh_mode == 'spacing':",
+                "    fermi_mesh = reciprocal_mesh_shape_for_spacing(model, fermi_spacing_inv_angstrom)",
+                f"result = fermi_surface(model, fermi_mesh, target_energy_meV=target_energy_meV, projections={projections!r}, backend=electronic_backend, workers=electronic_workers, max_batch_bytes=max_batch_bytes)",
             ]
         )
     else:

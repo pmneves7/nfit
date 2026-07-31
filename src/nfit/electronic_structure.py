@@ -1196,6 +1196,34 @@ def k_mesh(
     )
 
 
+def reciprocal_mesh_shape_for_spacing(
+    model: ElectronicModel,
+    spacing_inv_angstrom: float,
+    *,
+    minimum_axis_size: int = 2,
+) -> tuple[int, ...]:
+    """Choose the nearest periodic mesh shape to one physical k spacing.
+
+    Each periodic reciprocal vector is treated independently, so a single
+    spacing naturally produces anisotropic meshes for lower-symmetry cells.
+    """
+
+    spacing = float(spacing_inv_angstrom)
+    minimum = int(minimum_axis_size)
+    if not np.isfinite(spacing) or spacing <= 0.0:
+        raise ValueError("reciprocal mesh spacing must be positive and finite")
+    if minimum < 1:
+        raise ValueError("minimum_axis_size must be positive")
+    reciprocal = np.asarray(model.reciprocal_lattice, dtype=float)
+    return tuple(
+        max(
+            minimum,
+            int(round(np.linalg.norm(reciprocal[:, axis]) / spacing)),
+        )
+        for axis in model.periodic_axes
+    )
+
+
 def _symmetry_reduced_k_mesh(
     model: ElectronicModel,
     full: WavevectorSampling,

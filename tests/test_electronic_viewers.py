@@ -313,11 +313,7 @@ def test_band_viewer_plot_controls_update_figure(monkeypatch):
             {
                 "electronic_energy_unit": "eV",
                 "dos_method": "gaussian",
-                "dos_sampling_mode": "automatic",
-                "dos_sampling_accuracy": "standard",
-                "dos_sampling_custom_rtol": "0.01",
                 "dos_sampling_status": "Not certified.",
-                "dos_mesh": "[40, 40, 40]",
                 "dos_symmetry": "auto",
                 "dos_auto_energy_range": False,
                 "dos_energy_min_meV": "-0.5",
@@ -325,18 +321,20 @@ def test_band_viewer_plot_controls_update_figure(monkeypatch):
                 "dos_energy_points": "600",
                 "dos_broadening_meV": "0.005",
             },
-            "dos_mesh",
-            "[48, 48, 48]",
+            "dos_energy_points",
+            "800",
         ),
         (
             "fermi_surface",
             {
                 "electronic_energy_unit": "eV",
+                "fermi_mesh_mode": "spacing",
+                "fermi_spacing_inv_angstrom": "0.025",
                 "fermi_mesh": "[64, 64, 64]",
                 "fermi_energy_meV": "0",
             },
-            "fermi_mesh",
-            "[72, 72, 72]",
+            "fermi_spacing_inv_angstrom",
+            "0.02",
         ),
         (
             "susceptibility",
@@ -399,25 +397,11 @@ def test_electronic_viewer_settings_apply_plot_owned_configuration(
     assert editor is not None and editor.toolTip()
     editor.setText(edited_value)
     if viewer_key == "density_of_states":
-        sampling_mode = window.findChild(
-            QtWidgets.QComboBox,
-            "density_of_states_setting_dos_sampling_mode",
-        )
-        sampling_accuracy = window.findChild(
-            QtWidgets.QComboBox,
-            "density_of_states_setting_dos_sampling_accuracy",
-        )
         sampling_status = window.findChild(
             QtWidgets.QLabel,
             "density_of_states_setting_dos_sampling_status",
         )
-        assert sampling_mode is not None and sampling_mode.toolTip()
-        assert sampling_mode.currentData() == "automatic"
-        assert sampling_accuracy is not None and sampling_accuracy.isEnabled()
         assert sampling_status is not None and sampling_status.toolTip()
-        assert not editor.isEnabled()
-        sampling_mode.setCurrentIndex(sampling_mode.findData("manual"))
-        assert editor.isEnabled()
         auto_range = window.findChild(
             QtWidgets.QCheckBox,
             "density_of_states_setting_dos_auto_energy_range",
@@ -434,6 +418,19 @@ def test_electronic_viewer_settings_apply_plot_owned_configuration(
         auto_range.setChecked(True)
         assert not minimum.isEnabled()
         assert not maximum.isEnabled()
+    if viewer_key == "fermi_surface":
+        mode = window.findChild(
+            QtWidgets.QComboBox,
+            "fermi_surface_setting_fermi_mesh_mode",
+        )
+        mesh = window.findChild(
+            QtWidgets.QLineEdit,
+            "fermi_surface_setting_fermi_mesh",
+        )
+        assert mode is not None and mode.toolTip()
+        assert mesh is not None and not mesh.isEnabled()
+        mode.setCurrentIndex(mode.findData("size"))
+        assert mesh.isEnabled() and not editor.isEnabled()
     apply = window.findChild(
         QtWidgets.QPushButton,
         f"{viewer_key}_apply_settings",
@@ -514,6 +511,47 @@ def test_fermi_surface_renderer_uses_pyvista_triangle_mesh(monkeypatch):
     assert plotter.legend is not None
     assert plotter.text[0].endswith("0 eV")
     assert plotter.isometric is True
+
+
+def test_sampling_progress_dialog_records_metrics(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    from nfit import SamplingComparison, SamplingProgress
+    from nfit.qt_sampling_progress import SamplingProgressDialog
+
+    application = QtWidgets.QApplication.instance()
+    if application is None:
+        application = QtWidgets.QApplication([])
+    progress = SamplingProgressDialog("DOS convergence")
+    progress.update(
+        SamplingProgress(
+            observable="density_of_states",
+            iteration=2,
+            candidate_count=4,
+            mesh=(24, 16, 8),
+            phase="completed",
+            elapsed_seconds=1.25,
+            comparison=SamplingComparison(
+                coarse_mesh=(18, 12, 6),
+                fine_mesh=(24, 16, 8),
+                maximum_relative_error=0.008,
+                rms_relative_error=0.004,
+                integrated_relative_error=0.002,
+                passed=True,
+            ),
+            consecutive_passes=1,
+            required_passes=2,
+        )
+    )
+    assert progress.table.rowCount() == 2
+    assert progress.table.item(1, 1).text() == "24 × 16 × 8"
+    assert progress.table.item(1, 6).text() == "Pass"
+    progress.finish(
+        SimpleNamespace(certified=True, chosen_mesh=(24, 16, 8))
+    )
+    assert progress.close_button.isEnabled()
+    progress.dialog.close()
 
 
 def test_gpu_fermi_surface_viewer_uses_standard_shell(monkeypatch):

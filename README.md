@@ -46,7 +46,10 @@ The package provides:
   primitive-cell first-Brillouin-zone views; atoms, orbitals, and bonds in the
   model-geometry viewer are clickable and identified in its side panel, while
   all electronic viewers use a common plot-plus-settings layout and the band,
-  DOS, and Fermi viewers own their calculation controls; band and DOS figures
+  DOS, and Fermi viewers own their plot-specific calculation controls; DOS
+  production meshes are selected and certified in the model editor with
+  per-iteration convergence progress, while Fermi grids may use a physical
+  reciprocal-space spacing or explicit axis sizes. Band and DOS figures
   also expose scriptable curve, marker, typography, frame, legend, Fermi-level,
   projection-visibility, and high-symmetry-guide styling, while DOS energy
   limits can be derived automatically from the sampled bands,

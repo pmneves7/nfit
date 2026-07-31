@@ -35,6 +35,11 @@ corresponding reciprocal vectors, giving approximately uniform physical
 spacing in anisotropic cells. Every attempted mesh and comparison is saved in
 a `SamplingCertificate`.
 
+In the GUI, a progress window remains visible during a search. It
+records the iteration, candidate mesh, maximum, root-sum-square, and integrated
+metrics, pass state, and wall time for each completed candidate. Closing the
+record after completion does not affect the stored certificate.
+
 For successive results $A_c$ and $A_f$, nfit records a globally normalized
 maximum change and an $L^2$ change,
 
@@ -69,10 +74,12 @@ projection on the same fixed energy grid. For Gaussian integration,
 `dos_broadening_meV` is held fixed. Tetrahedron integration uses its
 unbroadened piecewise-linear result and a complete three-dimensional mesh.
 
-In the DOS viewer, choose **Automatic certification**, select an accuracy
-profile, and press **Apply and recalculate**. nfit runs the search first and
-replaces `dos_mesh` only if the requested tolerance is certified. **Manual
-mesh** uses `dos_mesh` directly and makes no automatic accuracy claim.
+In the tight-binding model's **Calculate and inspect** tab, choose **Automatic
+certification**, select an accuracy profile, and press **Check/refine
+convergence**. nfit replaces `dos_mesh` only if the requested tolerance is
+certified. **Manual mesh** uses `dos_mesh` directly and makes no automatic
+accuracy claim. The DOS viewer controls the integration and display domain but
+uses this model-level production mesh.
 
 ## Lindhard certification
 
@@ -110,6 +117,7 @@ certificate = certify_dos_sampling(
     seed_mesh=[40, 40, 40],
     broadening_meV=5.0,
     policy=sampling_policy("standard"),
+    progress_callback=lambda step: print(step.iteration, step.mesh, step.phase),
 )
 if not certificate.certified:
     raise RuntimeError("DOS mesh did not converge within the declared budget")
@@ -121,8 +129,10 @@ For project components,
 `certify_lindhard_component_sampling(component, components, ...)` store the
 serialized certificate and update the production mesh only after success.
 The Lindhard wrapper accepts explicit `q_reduced`, `energy_meV`, and
-`temperature_K` arguments for analysis-specific domains. Copied calculation
-scripts include the concrete mesh and stored certificate.
+`temperature_K` arguments for analysis-specific domains. Both wrappers accept
+the same optional `progress_callback`; GUI progress is built on this public
+hook. Copied calculation scripts include the concrete mesh and stored
+certificate.
 
 Automatic selection does not establish Fermi-surface topology convergence,
 global electronic-RPA stability, or convergence with respect to lifetime

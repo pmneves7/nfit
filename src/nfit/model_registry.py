@@ -2589,9 +2589,35 @@ def _register_builtin_models() -> None:
                     "meV",
                 ),
                 _config_field(
+                    "fermi_mesh_mode",
+                    "spacing",
+                    (
+                        "Choose the Fermi-surface extraction mesh from one "
+                        "physical reciprocal-space spacing or enter all grid sizes."
+                    ),
+                    "Either spacing or size.",
+                    "str",
+                    "spacing",
+                ),
+                _config_field(
+                    "fermi_spacing_inv_angstrom",
+                    0.025,
+                    (
+                        "Target physical spacing between neighboring "
+                        "Fermi-surface grid points."
+                    ),
+                    "Positive finite reciprocal length.",
+                    "float",
+                    "0.02",
+                    "angstrom^-1",
+                ),
+                _config_field(
                     "fermi_mesh",
                     [64, 64, 64],
-                    "Periodic grid used to extract the Fermi surface.",
+                    (
+                        "Resolved periodic grid used to extract the Fermi "
+                        "surface, or the requested grid in explicit-size mode."
+                    ),
                     "One size per periodic dimension, or three lattice-axis sizes.",
                     "list",
                     "[200, 200, 1]",

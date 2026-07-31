@@ -123,6 +123,28 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
         "tight_binding_dos_method",
     )
     assert dos_method_combo is None
+    dos_sampling_mode = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox,
+        "tight_binding_dos_sampling_mode",
+    )
+    dos_sampling_accuracy = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox,
+        "tight_binding_dos_sampling_accuracy",
+    )
+    dos_sampling_mesh = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit,
+        "model_config_dos_mesh",
+    )
+    dos_sampling_button = explorer.model_parameter_widget.findChild(
+        QtWidgets.QPushButton,
+        "tight_binding_dos_certify_sampling",
+    )
+    assert dos_sampling_mode is not None and dos_sampling_mode.toolTip()
+    assert dos_sampling_mode.currentData() == "automatic"
+    assert dos_sampling_accuracy is not None
+    assert dos_sampling_accuracy.isEnabled()
+    assert dos_sampling_mesh is not None and not dos_sampling_mesh.isEnabled()
+    assert dos_sampling_button is not None and dos_sampling_button.toolTip()
     backend_combo.setCurrentIndex(backend_combo.findData("threaded"))
     assert model.config["electronic_backend"] == "threaded"
     chemical_editor.setText("0.0125")
@@ -225,10 +247,6 @@ def test_tight_binding_viewer_settings_update_canonical_plot_config(monkeypatch)
         "dos",
         {
             "dos_method": "tetrahedron",
-            "dos_sampling_mode": "manual",
-            "dos_sampling_accuracy": "standard",
-            "dos_sampling_custom_rtol": "0.01",
-            "dos_mesh": "[32, 32, 32]",
             "dos_symmetry": "auto",
             "dos_auto_energy_range": "true",
             "dos_energy_min_meV": "-0.25",
@@ -240,7 +258,7 @@ def test_tight_binding_viewer_settings_update_canonical_plot_config(monkeypatch)
     assert model.config["dos_method"] == "tetrahedron"
     assert model.config["dos_symmetry"] == "full"
     assert model.config["dos_auto_energy_range"] is True
-    assert model.config["dos_mesh"] == [32, 32, 32]
+    assert model.config["dos_mesh"] == [40, 40, 40]
     assert model.config["dos_energy_min_meV"] == pytest.approx(-250.0)
     assert model.config["dos_energy_max_meV"] == pytest.approx(750.0)
     assert model.config["dos_broadening_meV"] == pytest.approx(4.0)
@@ -251,12 +269,8 @@ def test_tight_binding_viewer_settings_update_canonical_plot_config(monkeypatch)
         scripted,
         "dos",
         dos_method="tetrahedron",
-        dos_sampling_mode="manual",
-        dos_sampling_accuracy="standard",
-        dos_sampling_custom_rtol=0.01,
         dos_symmetry="full",
         dos_auto_energy_range=True,
-        dos_mesh=[32, 32, 32],
         dos_energy_min_meV=-250.0,
         dos_energy_max_meV=750.0,
         dos_broadening_meV=4.0,
@@ -266,13 +280,38 @@ def test_tight_binding_viewer_settings_update_canonical_plot_config(monkeypatch)
         "dos_method",
         "dos_symmetry",
         "dos_auto_energy_range",
-        "dos_mesh",
         "dos_energy_min_meV",
         "dos_energy_max_meV",
         "dos_broadening_meV",
         "dos_energy_points",
     ):
         assert model.config[name] == scripted.config[name]
+    explorer.has_unsaved_changes = False
+    explorer.window.close()
+
+
+def test_fermi_surface_spacing_policy_updates_model_configuration(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Electronic")
+    model = create_model_component(group, "bands", type="tight_binding")
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer._refresh_tree(select_group=group, select_model=model)
+
+    assert explorer._apply_tight_binding_plot_settings(
+        model,
+        "fermi_surface",
+        {
+            "fermi_mesh_mode": "spacing",
+            "fermi_spacing_inv_angstrom": "0.02",
+            "fermi_mesh": "[64, 64, 64]",
+            "fermi_energy_meV": "0.01",
+        },
+    )
+    assert model.config["fermi_mesh_mode"] == "spacing"
+    assert model.config["fermi_spacing_inv_angstrom"] == pytest.approx(0.02)
+    assert model.config["fermi_energy_meV"] == pytest.approx(10.0)
     explorer.has_unsaved_changes = False
     explorer.window.close()
 

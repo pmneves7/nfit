@@ -158,6 +158,8 @@ def test_tight_binding_registry_validates_energy_unit_and_canonical_window():
     assert config["orbital_manifolds"] == []
     assert config["onsite_terms"] == []
     assert config["fermi_mesh"] == [64, 64, 64]
+    assert config["fermi_mesh_mode"] == "spacing"
+    assert config["fermi_spacing_inv_angstrom"] == pytest.approx(0.025)
     assert config["electronic_backend"] == "auto"
     assert config["electronic_workers"] == 0
     assert config["electronic_max_batch_mb"] == 256.0
@@ -174,6 +176,15 @@ def test_tight_binding_registry_validates_energy_unit_and_canonical_window():
     component.config["electronic_energy_unit"] = "joule"
     with pytest.raises(ValueError, match="eV.*meV"):
         nfit.validate_model_component(component)
+    component.config["electronic_energy_unit"] = "eV"
+    component.config["fermi_mesh_mode"] = "unknown"
+    with pytest.raises(ValueError, match="fermi_mesh_mode"):
+        nfit.validate_model_component(component)
+    component.config["fermi_mesh_mode"] = "spacing"
+    component.config["fermi_spacing_inv_angstrom"] = 0.0
+    with pytest.raises(ValueError, match="fermi_spacing"):
+        nfit.validate_model_component(component)
+    component.config["fermi_spacing_inv_angstrom"] = 0.025
     component.config["electronic_energy_unit"] = "meV"
     component.config["electronic_backend"] = "quantum"
     with pytest.raises(ValueError, match="electronic_backend"):

@@ -442,48 +442,6 @@ def populate_electronic_calculation_settings(
             "Gaussian integration applies the displayed broadening. Linear "
             "tetrahedron integration requires a complete three-dimensional mesh.",
         )
-        add_choice(
-            form,
-            "dos_sampling_mode",
-            "Mesh selection",
-            (
-                ("Automatic certification", "automatic"),
-                ("Manual mesh", "manual"),
-            ),
-            "Automatic mode searches observable-specific meshes and stores "
-            "one concrete production mesh before fitting. The mesh remains "
-            "fixed inside an optimizer.",
-        )
-        sampling_mode = editors["dos_sampling_mode"]
-        add_choice(
-            form,
-            "dos_sampling_accuracy",
-            "Accuracy",
-            (
-                ("Preview (5%)", "preview"),
-                ("Standard (1%)", "standard"),
-                ("High (0.2%)", "high"),
-                ("Custom", "custom"),
-            ),
-            "Maximum normalized DOS change required for two successive mesh "
-            "refinements. Computational budget is configured independently.",
-        )
-        sampling_accuracy = editors["dos_sampling_accuracy"]
-        add_line(
-            form,
-            "dos_sampling_custom_rtol",
-            "Custom tolerance",
-            "Positive normalized error used only by the Custom profile.",
-        )
-        custom_tolerance = editors["dos_sampling_custom_rtol"]
-        add_line(
-            form,
-            "dos_mesh",
-            "k mesh",
-            "Concrete production mesh. It is editable in Manual mode and "
-            "is replaced only by a successful automatic certificate.",
-        )
-        mesh_editor = editors["dos_mesh"]
         status = QtWidgets.QLabel(
             str(values.get("dos_sampling_status", "Not certified."))
         )
@@ -492,24 +450,10 @@ def populate_electronic_calculation_settings(
         )
         status.setWordWrap(True)
         status.setToolTip(
-            "Current certificate state. Applying Automatic mode runs the "
-            "mesh search before recalculating the plot."
+            "Current model-level DOS certificate state. Select or refine the "
+            "production mesh in Calculate and inspect in the main window."
         )
         form.addRow("Certificate", status)
-
-        def update_sampling_controls() -> None:
-            automatic = sampling_mode.currentData() == "automatic"
-            sampling_accuracy.setEnabled(automatic)
-            custom_tolerance.setEnabled(
-                automatic and sampling_accuracy.currentData() == "custom"
-            )
-            mesh_editor.setEnabled(not automatic)
-
-        sampling_mode.currentIndexChanged.connect(update_sampling_controls)
-        sampling_accuracy.currentIndexChanged.connect(
-            update_sampling_controls
-        )
-        update_sampling_controls()
         add_choice(
             form,
             "dos_symmetry",
@@ -565,13 +509,43 @@ def populate_electronic_calculation_settings(
             "Gaussian standard deviation. It is ignored by tetrahedron integration.",
         )
     elif viewer_key == "fermi_surface":
+        add_choice(
+            form,
+            "fermi_mesh_mode",
+            "Grid definition",
+            (
+                ("Physical spacing", "spacing"),
+                ("Explicit grid size", "size"),
+            ),
+            "Physical spacing chooses the nearest grid independently along "
+            "each reciprocal basis vector. Explicit size uses the entered "
+            "three-dimensional grid directly.",
+        )
+        mesh_mode = editors["fermi_mesh_mode"]
+        add_line(
+            form,
+            "fermi_spacing_inv_angstrom",
+            "Spacing (Å⁻¹)",
+            "Target reciprocal-space point spacing. Lower-symmetry cells "
+            "generally resolve to different sizes along the three axes.",
+        )
+        spacing_editor = editors["fermi_spacing_inv_angstrom"]
         add_line(
             form,
             "fermi_mesh",
-            "k mesh",
-            "Uniform extraction grid. Mesh density remains a manual "
-            "convergence choice.",
+            "Resolved grid size",
+            "Nearest full three-dimensional extraction grid in Physical "
+            "spacing mode, or the requested grid in Explicit grid size mode.",
         )
+        mesh_editor = editors["fermi_mesh"]
+
+        def update_fermi_mesh_controls() -> None:
+            by_spacing = mesh_mode.currentData() == "spacing"
+            spacing_editor.setEnabled(by_spacing)
+            mesh_editor.setEnabled(not by_spacing)
+
+        mesh_mode.currentIndexChanged.connect(update_fermi_mesh_controls)
+        update_fermi_mesh_controls()
         unit = str(values.get("electronic_energy_unit", "eV"))
         add_line(
             form,

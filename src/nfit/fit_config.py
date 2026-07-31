@@ -1132,6 +1132,16 @@ def _validate_tight_binding_config(component: Any) -> None:
         raise ValueError("dos_method must be gaussian or tetrahedron")
     if dos_method == "tetrahedron" and dos_symmetry != "full":
         raise ValueError("tetrahedron DOS requires dos_symmetry='full'")
+    fermi_mesh_mode = str(config.get("fermi_mesh_mode", "spacing"))
+    if fermi_mesh_mode not in {"spacing", "size"}:
+        raise ValueError("fermi_mesh_mode must be spacing or size")
+    fermi_spacing = float(
+        config.get("fermi_spacing_inv_angstrom", 0.025)
+    )
+    if not np.isfinite(fermi_spacing) or fermi_spacing <= 0.0:
+        raise ValueError(
+            "fermi_spacing_inv_angstrom must be positive and finite"
+        )
     energy_names = (
         "chemical_potential_meV",
         "dos_energy_min_meV",

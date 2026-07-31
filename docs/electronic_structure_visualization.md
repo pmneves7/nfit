@@ -150,6 +150,10 @@ every crossing band. The result is:
 Set the target equal to the chemical potential for a Fermi surface.
 `fermi_surface` retains vertices in reduced and physical reciprocal
 coordinates, connectivity, band index, and optional projected weights.
+By default the viewer accepts one target grid spacing in Å$^{-1}$ and resolves
+the nearest grid size separately along each reciprocal basis vector. This
+keeps the physical sampling density comparable in anisotropic cells. Select
+**Explicit grid size** to enter the full three-dimensional grid directly.
 
 Three-dimensional results use a PyVista renderer for responsive rotation.
 One- and two-dimensional results use Matplotlib.
@@ -159,8 +163,8 @@ The regular extraction grid includes its periodic boundary and is not
 symmetry reduced. Increase all periodic mesh dimensions until topology and
 small pockets are stable.
 
-The viewer side panel owns the extraction mesh and constant-energy target.
-These remain manual convergence settings.
+The viewer side panel owns the extraction policy and constant-energy target.
+These remain visualization settings rather than certified convergence claims.
 
 ## Calculation API inputs
 

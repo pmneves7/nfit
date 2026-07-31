@@ -14,16 +14,18 @@ field in one form:
   manifolds, and local frames.
 - **Hamiltonian** contains separate Onsite, Hoppings, and Spin and SOC tabs.
 - **Calculate and inspect** contains the electronic energy reference, shared
-  high-symmetry path, matrix and Brillouin-zone tools, and plot launchers.
+  high-symmetry path, DOS mesh selection, matrix and Brillouin-zone tools, and
+  plot launchers.
 - **Advanced** contains dimensionality, custom projections, execution
   overrides, and the diagnostic primitive-cell switch.
 
-Band, DOS, and Fermi-surface sampling controls live in their viewer side
-panels. **Apply and recalculate** validates the entries, stores the same
-component settings listed below, and replaces the result. This organization
-does not create GUI-only scientific state: project files and copied scripts
-retain the complete configuration. Scripts can update the same plot-owned
-fields atomically with `configure_tight_binding_plot`.
+The DOS production mesh is model state and is selected under **Calculate and
+inspect**. Band-path density and Fermi-surface extraction settings live in
+their viewer side panels. **Apply and recalculate** validates viewer entries,
+stores the same component settings listed below, and replaces the result. This
+organization does not create GUI-only scientific state: project files and
+copied scripts retain the complete configuration. Scripts can update the same
+plot-owned fields atomically with `configure_tight_binding_plot`.
 
 Onsite and hopping tables always show values, bounds, Fit selection, dataset
 sharing, group assignments, and matrix-basis metadata. Hopping rows also show
@@ -143,13 +145,20 @@ projected DOS, but it retains the complete mesh to preserve cell topology.
 
 | Setting | Default | Meaning and example |
 | --- | --- | --- |
+| `fermi_mesh_mode` | `"spacing"` | `"spacing"` derives the grid from a physical reciprocal-space spacing; `"size"` uses `fermi_mesh` directly. |
+| `fermi_spacing_inv_angstrom` | `0.025` | Target point spacing in Å$^{-1}$. Each reciprocal direction is rounded independently. |
 | `fermi_mesh` | `[64,64,64]` | Extraction grid with at least two points per periodic axis. |
 | `fermi_energy_meV` | `0.0` | Absolute target energy in canonical meV. |
 
 Set `fermi_energy_meV` equal to the chemical potential for a Fermi surface.
 Another value produces a general constant-energy surface. nfit extracts
 crossing points in one dimension, contours in two dimensions, and triangulated
-surfaces in three dimensions.
+surfaces in three dimensions. The default physical-spacing mode chooses
+$N_i=\operatorname{round}(|\mathbf b_i|/\Delta k)$, subject to at least two
+points per periodic direction. Consequently, a lower-symmetry reciprocal cell
+usually produces an anisotropic mesh even though the requested $\Delta k$ is
+one scalar. Explicit-size mode is useful for reproducibility studies that
+require a particular full three-dimensional grid.
 
 ## Making calculations efficient
 

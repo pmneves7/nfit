@@ -13,6 +13,7 @@ from nfit import (
     certify_lindhard_sampling,
     certify_tight_binding_dos_sampling,
     model_definition,
+    reciprocal_mesh_shape_for_spacing,
     sampling_policy,
 )
 
@@ -58,6 +59,45 @@ def test_automatic_mesh_ladder_uses_physical_reciprocal_anisotropy():
         all(fine[index] > coarse[index] for index in range(3))
         for coarse, fine in zip(meshes, meshes[1:], strict=False)
     )
+
+
+def test_physical_spacing_resolves_anisotropic_reciprocal_mesh():
+    model = build_electronic_model(
+        direct_lattice=np.diag([2.0, 4.0, 8.0]),
+        basis=["s"],
+        hoppings={(0, 0, 0): [[0.0]]},
+        periodic_axes=(0, 1, 2),
+        energy_unit="meV",
+    )
+
+    assert reciprocal_mesh_shape_for_spacing(model, 0.1) == (31, 16, 8)
+
+
+def test_sampling_progress_reports_each_completed_candidate():
+    model = _one_dimensional_model()
+    events = []
+    certificate = certify_dos_sampling(
+        model,
+        np.linspace(-25.0, 25.0, 101),
+        seed_mesh=[12],
+        policy=sampling_policy("preview"),
+        max_refinements=4,
+        max_mesh_points=64,
+        broadening_meV=8.0,
+        progress_callback=events.append,
+    )
+
+    started = [event for event in events if event.phase == "started"]
+    completed = [event for event in events if event.phase == "completed"]
+    assert len(started) == len(completed) == len(
+        certificate.attempted_meshes
+    )
+    assert [event.mesh for event in completed] == list(
+        certificate.attempted_meshes
+    )
+    assert all(event.elapsed_seconds >= 0.0 for event in completed)
+    assert completed[0].comparison is None
+    assert all(event.comparison is not None for event in completed[1:])
 
 
 def test_dos_sampling_certificate_round_trip_and_budget_failure():

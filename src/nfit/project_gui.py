@@ -19210,6 +19210,8 @@ class NfitProjectExplorer:
                 "dos_energy_max_meV",
                 "dos_energy_points",
                 "dos_broadening_meV",
+                "fermi_mesh_mode",
+                "fermi_spacing_inv_angstrom",
                 "fermi_mesh",
                 "fermi_energy_meV",
             }:
@@ -19527,6 +19529,7 @@ class NfitProjectExplorer:
             self._build_tight_binding_onsite_editor(model)
             self._build_tight_binding_hopping_editor(model)
             self._build_tight_binding_state_editor(model)
+            self._build_tight_binding_dos_sampling_editor(model)
             self._build_tight_binding_editor(model)
             self.model_parameter_layout.addWidget(config_group, 10, 0, 1, 4)
             self._organize_tight_binding_editor(model)
@@ -19755,6 +19758,181 @@ class NfitProjectExplorer:
         layout.addWidget(projection_summary, 3, 0, 1, 3)
         self.model_parameter_layout.addWidget(group, 11, 0, 1, 4)
 
+    def _tight_binding_dos_sampling_status(
+        self,
+        model: ModelComponentSpec,
+    ) -> str:
+        config = model.config
+        certificate = config.get("dos_sampling_certificate", {})
+        if str(config.get("dos_sampling_mode", "automatic")) == "manual":
+            return "Manual mesh: no automatic accuracy claim."
+        if not isinstance(certificate, dict) or not certificate:
+            return "Not certified. Check/refine before production use."
+        if certificate.get("status") != "certified":
+            return "Not certified within the configured refinement budget."
+        if list(certificate.get("chosen_mesh") or ()) != list(
+            config.get("dos_mesh", ())
+        ):
+            return "Certificate is stale because the mesh changed."
+        if bool(config.get("model_stale", False)):
+            return (
+                "Certificate is stale because the electronic model must be rebuilt."
+            )
+        if (
+            config.get("model_digest")
+            and certificate.get("provenance", {}).get("model_digest")
+            != config.get("model_digest")
+        ):
+            return "Certificate is stale because the electronic model changed."
+        if certificate.get("provenance", {}).get("method") != str(
+            config.get("dos_method", "gaussian")
+        ):
+            return "Certificate is stale because the integration method changed."
+        if not _sampling_float_matches(
+            certificate.get("provenance", {}).get("broadening_meV"),
+            config.get("dos_broadening_meV", 5.0),
+        ):
+            return "Certificate is stale because the broadening changed."
+        if certificate.get("provenance", {}).get("symmetry") != str(
+            config.get("dos_symmetry", "auto")
+        ):
+            return "Certificate is stale because the symmetry policy changed."
+        return (
+            "Certified at normalized tolerance "
+            f"{certificate.get('policy', {}).get('relative_tolerance', '?')}."
+        )
+
+    def _build_tight_binding_dos_sampling_editor(
+        self,
+        model: ModelComponentSpec,
+    ) -> None:
+        """Build model-level DOS mesh selection and certification controls."""
+
+        from PySide6 import QtWidgets
+
+        group = QtWidgets.QGroupBox("Density-of-states sampling")
+        group.setObjectName("tight_binding_dos_sampling_group")
+        layout = QtWidgets.QFormLayout(group)
+        mode = str(model.config.get("dos_sampling_mode", "automatic"))
+
+        mode_tooltip = (
+            "Automatic mode compares successive density-of-states calculations "
+            "and stores a certified production mesh. Manual mode uses the "
+            "entered mesh directly."
+        )
+        mode_combo = QtWidgets.QComboBox()
+        mode_combo.setObjectName("tight_binding_dos_sampling_mode")
+        mode_combo.setToolTip(mode_tooltip)
+        mode_combo.addItem("Automatic certification", "automatic")
+        mode_combo.addItem("Manual mesh", "manual")
+        mode_combo.setCurrentIndex(max(mode_combo.findData(mode), 0))
+        mode_combo.currentIndexChanged.connect(
+            lambda _index, combo=mode_combo: self._set_model_config_setting(
+                "dos_sampling_mode", str(combo.currentData())
+            )
+        )
+        mode_label = QtWidgets.QLabel("Mesh selection")
+        mode_label.setToolTip(mode_tooltip)
+        layout.addRow(mode_label, mode_combo)
+
+        accuracy = str(
+            model.config.get("dos_sampling_accuracy", "standard")
+        )
+        accuracy_tooltip = (
+            "Preview, Standard, and High require at most 5%, 1%, and 0.2% "
+            "normalized change, respectively, for two successive refinements."
+        )
+        accuracy_combo = QtWidgets.QComboBox()
+        accuracy_combo.setObjectName("tight_binding_dos_sampling_accuracy")
+        accuracy_combo.setToolTip(accuracy_tooltip)
+        for label, value in (
+            ("Preview (5%)", "preview"),
+            ("Standard (1%)", "standard"),
+            ("High (0.2%)", "high"),
+            ("Custom", "custom"),
+        ):
+            accuracy_combo.addItem(label, value)
+        accuracy_combo.setCurrentIndex(
+            max(accuracy_combo.findData(accuracy), 0)
+        )
+        accuracy_combo.setEnabled(mode == "automatic")
+        accuracy_combo.currentIndexChanged.connect(
+            lambda _index, combo=accuracy_combo: self._set_model_config_setting(
+                "dos_sampling_accuracy", str(combo.currentData())
+            )
+        )
+        accuracy_label = QtWidgets.QLabel("Accuracy")
+        accuracy_label.setToolTip(accuracy_tooltip)
+        layout.addRow(accuracy_label, accuracy_combo)
+
+        if mode == "automatic" and accuracy == "custom":
+            custom_tooltip = (
+                "Positive normalized DOS error required for two successive "
+                "mesh refinements."
+            )
+            custom = QtWidgets.QLineEdit(
+                _parameter_to_text(
+                    model.config.get("dos_sampling_custom_rtol", 0.01)
+                )
+            )
+            custom.setObjectName(
+                "model_config_dos_sampling_custom_rtol"
+            )
+            custom.setToolTip(custom_tooltip)
+            custom.editingFinished.connect(
+                lambda editor=custom: self._set_model_config_setting(
+                    "dos_sampling_custom_rtol", editor.text()
+                )
+            )
+            custom_label = QtWidgets.QLabel("Custom tolerance")
+            custom_label.setToolTip(custom_tooltip)
+            layout.addRow(custom_label, custom)
+
+        mesh_tooltip = (
+            "Concrete Brillouin-zone mesh used by DOS calculations. Automatic "
+            "certification replaces it only after the requested accuracy passes."
+        )
+        mesh = QtWidgets.QLineEdit(
+            _parameter_to_text(model.config.get("dos_mesh", [40, 40, 40]))
+        )
+        mesh.setObjectName("model_config_dos_mesh")
+        mesh.setToolTip(mesh_tooltip)
+        mesh.setEnabled(mode == "manual")
+        mesh.editingFinished.connect(
+            lambda editor=mesh: self._set_model_config_setting(
+                "dos_mesh", editor.text()
+            )
+        )
+        mesh_label = QtWidgets.QLabel("Production mesh")
+        mesh_label.setToolTip(mesh_tooltip)
+        layout.addRow(mesh_label, mesh)
+
+        status = QtWidgets.QLabel(
+            self._tight_binding_dos_sampling_status(model)
+        )
+        status.setObjectName("tight_binding_dos_sampling_status")
+        status.setWordWrap(True)
+        status.setToolTip(
+            "The certificate records every attempted mesh and its observable "
+            "errors. Relevant model or DOS-setting changes make it stale."
+        )
+        layout.addRow(status)
+
+        certify = QtWidgets.QPushButton("Check/refine convergence")
+        certify.setObjectName("tight_binding_dos_certify_sampling")
+        certify.setEnabled(mode == "automatic")
+        certify.setToolTip(
+            "Search physically spaced meshes for the configured DOS energy "
+            "range, integration method, broadening, and projections."
+        )
+        certify.clicked.connect(
+            lambda _checked=False, model=model: self._certify_tight_binding_dos_sampling(
+                model
+            )
+        )
+        layout.addRow(certify)
+        self.model_parameter_layout.addWidget(group, 12, 0, 1, 4)
+
     def _organize_tight_binding_editor(
         self,
         model: ModelComponentSpec,
@@ -19785,6 +19963,7 @@ class NfitProjectExplorer:
                 "tight_binding_hopping_group",
                 "tight_binding_spin_group",
                 "tight_binding_state_group",
+                "tight_binding_dos_sampling_group",
                 "tight_binding_actions_group",
                 "model_config_group",
             )
@@ -19892,6 +20071,7 @@ class NfitProjectExplorer:
             "Calculate and inspect",
             (
                 "tight_binding_state_group",
+                "tight_binding_dos_sampling_group",
                 "tight_binding_actions_group",
             ),
         )
@@ -22010,58 +22190,11 @@ class NfitProjectExplorer:
                 ),
             }
         if plot_key == "dos":
-            certificate = config.get("dos_sampling_certificate", {})
-            mode = str(config.get("dos_sampling_mode", "automatic"))
-            if mode == "manual":
-                status = "Manual mesh: no automatic accuracy claim."
-            elif not isinstance(certificate, dict) or not certificate:
-                status = "Not certified."
-            elif certificate.get("status") != "certified":
-                status = "Not certified within budget."
-            elif list(certificate.get("chosen_mesh") or ()) != list(
-                config.get("dos_mesh", ())
-            ):
-                status = "Certificate stale: mesh changed."
-            elif bool(config.get("model_stale", False)):
-                status = "Certificate stale: electronic model must be rebuilt."
-            elif (
-                config.get("model_digest")
-                and certificate.get("provenance", {}).get("model_digest")
-                != config.get("model_digest")
-            ):
-                status = "Certificate stale: electronic model changed."
-            elif certificate.get("provenance", {}).get("method") != str(
-                config.get("dos_method", "gaussian")
-            ):
-                status = "Certificate stale: integration method changed."
-            elif not _sampling_float_matches(
-                certificate.get("provenance", {}).get("broadening_meV"),
-                config.get("dos_broadening_meV", 5.0),
-            ):
-                status = "Certificate stale: broadening changed."
-            elif certificate.get("provenance", {}).get("symmetry") != str(
-                config.get("dos_symmetry", "auto")
-            ):
-                status = "Certificate stale: symmetry policy changed."
-            else:
-                status = (
-                    "Certified at normalized tolerance "
-                    f"{certificate.get('policy', {}).get('relative_tolerance', '?')}."
-                )
             return {
                 **common,
                 "dos_method": config.get("dos_method", "gaussian"),
-                "dos_sampling_mode": mode,
-                "dos_sampling_accuracy": config.get(
-                    "dos_sampling_accuracy",
-                    "standard",
-                ),
-                "dos_sampling_custom_rtol": _parameter_to_text(
-                    config.get("dos_sampling_custom_rtol", 0.01)
-                ),
-                "dos_sampling_status": status,
-                "dos_mesh": _parameter_to_text(
-                    config.get("dos_mesh", [40, 40, 40])
+                "dos_sampling_status": (
+                    self._tight_binding_dos_sampling_status(model)
                 ),
                 "dos_symmetry": config.get("dos_symmetry", "auto"),
                 "dos_auto_energy_range": bool(
@@ -22090,10 +22223,35 @@ class NfitProjectExplorer:
                 ),
             }
         if plot_key == "fermi_surface":
+            resolved_mesh = config.get("fermi_mesh", [64, 64, 64])
+            if str(config.get("fermi_mesh_mode", "spacing")) == "spacing":
+                try:
+                    from .electronic_structure import (
+                        electronic_model_from_component,
+                        reciprocal_mesh_shape_for_spacing,
+                    )
+
+                    resolved_mesh = reciprocal_mesh_shape_for_spacing(
+                        electronic_model_from_component(model),
+                        float(
+                            config.get(
+                                "fermi_spacing_inv_angstrom",
+                                0.025,
+                            )
+                        ),
+                    )
+                except (ImportError, TypeError, ValueError):
+                    pass
             return {
                 **common,
+                "fermi_mesh_mode": config.get(
+                    "fermi_mesh_mode", "spacing"
+                ),
+                "fermi_spacing_inv_angstrom": _parameter_to_text(
+                    config.get("fermi_spacing_inv_angstrom", 0.025)
+                ),
                 "fermi_mesh": _parameter_to_text(
-                    config.get("fermi_mesh", [64, 64, 64])
+                    resolved_mesh
                 ),
                 "fermi_energy_meV": _parameter_to_text(
                     electronic_energy_from_meV(
@@ -22115,19 +22273,15 @@ class NfitProjectExplorer:
     ) -> bool:
         """Validate and store one viewer's calculation settings."""
 
-        from PySide6 import QtCore, QtWidgets
+        from PySide6 import QtWidgets
 
         from .electronic_structure import (
             electronic_energy_to_meV,
             normalize_electronic_energy_unit,
         )
-        from .model_plots import (
-            certify_tight_binding_dos_sampling,
-            configure_tight_binding_plot,
-        )
+        from .model_plots import configure_tight_binding_plot
 
         previous = copy.deepcopy(model.config)
-        certificate = None
         unit = normalize_electronic_energy_unit(
             model.config.get("electronic_energy_unit", "eV")
         )
@@ -22160,25 +22314,11 @@ class NfitProjectExplorer:
                 )
             elif plot_key == "dos":
                 method = str(values["dos_method"])
-                sampling_mode = str(
-                    values.get("dos_sampling_mode", "automatic")
-                )
-                sampling_accuracy = str(
-                    values.get("dos_sampling_accuracy", "standard")
-                )
-                sampling_custom_rtol = float(
-                    _parse_parameter_text(
-                        values.get("dos_sampling_custom_rtol", "0.01")
-                    )
-                )
                 automatic_energy_range = (
                     str(values.get("dos_auto_energy_range", "false"))
                     .strip()
                     .lower()
                     in {"1", "true", "yes", "on"}
-                )
-                mesh = _parse_parameter_text(
-                    values["dos_mesh"]
                 )
                 symmetry = str(values["dos_symmetry"])
                 energies: dict[str, float] = {}
@@ -22196,14 +22336,6 @@ class NfitProjectExplorer:
                 energy_points = int(
                     _parse_parameter_text(values["dos_energy_points"])
                 )
-                if (
-                    not isinstance(mesh, (list, tuple))
-                    or not mesh
-                    or any(int(size) < 1 for size in mesh)
-                ):
-                    raise ValueError(
-                        "dos_mesh must contain positive integer sizes"
-                    )
                 if energy_points < 2:
                     raise ValueError(
                         "dos_energy_points must be at least two"
@@ -22221,29 +22353,23 @@ class NfitProjectExplorer:
                     model,
                     plot_key,
                     dos_method=method,
-                    dos_mesh=mesh,
-                    dos_sampling_mode=sampling_mode,
-                    dos_sampling_accuracy=sampling_accuracy,
-                    dos_sampling_custom_rtol=sampling_custom_rtol,
                     dos_symmetry=symmetry,
                     dos_auto_energy_range=automatic_energy_range,
                     dos_energy_points=energy_points,
                     **energies,
                 )
-                if sampling_mode == "automatic":
-                    application = QtWidgets.QApplication.instance()
-                    if application is not None:
-                        application.setOverrideCursor(
-                            QtCore.Qt.CursorShape.WaitCursor
-                        )
-                    try:
-                        certificate = certify_tight_binding_dos_sampling(
-                            model
-                        )
-                    finally:
-                        if application is not None:
-                            application.restoreOverrideCursor()
             elif plot_key == "fermi_surface":
+                mesh_mode = str(
+                    values.get("fermi_mesh_mode", "spacing")
+                )
+                spacing = float(
+                    _parse_parameter_text(
+                        values.get(
+                            "fermi_spacing_inv_angstrom",
+                            "0.025",
+                        )
+                    )
+                )
                 mesh = _parse_parameter_text(
                     values["fermi_mesh"]
                 )
@@ -22254,6 +22380,14 @@ class NfitProjectExplorer:
                 ):
                     raise ValueError(
                         "fermi_mesh must contain integer sizes of at least two"
+                    )
+                if mesh_mode not in {"spacing", "size"}:
+                    raise ValueError(
+                        "fermi_mesh_mode must be spacing or size"
+                    )
+                if not np.isfinite(spacing) or spacing <= 0.0:
+                    raise ValueError(
+                        "Fermi-surface spacing must be positive and finite"
                     )
                 energy = float(
                     electronic_energy_to_meV(
@@ -22268,6 +22402,8 @@ class NfitProjectExplorer:
                 configure_tight_binding_plot(
                     model,
                     plot_key,
+                    fermi_mesh_mode=mesh_mode,
+                    fermi_spacing_inv_angstrom=spacing,
                     fermi_mesh=mesh,
                     fermi_energy_meV=energy,
                 )
@@ -22283,16 +22419,6 @@ class NfitProjectExplorer:
                 f"Could not apply the settings:\n{exc}",
             )
             return False
-
-        if certificate is not None and not certificate.certified:
-            QtWidgets.QMessageBox.information(
-                self.window,
-                "DOS mesh convergence",
-                "The requested accuracy was not certified within the "
-                "configured mesh budget. The attempted meshes and errors "
-                "were saved; increase the Advanced budget or loosen the "
-                "accuracy profile.",
-            )
 
         if model.config == previous:
             return True
@@ -23920,16 +24046,16 @@ class NfitProjectExplorer:
     ) -> None:
         """Run the explicit pre-fit Lindhard mesh search."""
 
-        from PySide6 import QtCore, QtWidgets
+        from PySide6 import QtWidgets
 
         from .model_plots import certify_lindhard_component_sampling
+        from .qt_sampling_progress import SamplingProgressDialog
 
         result: dict[str, Any] = {}
-        application = QtWidgets.QApplication.instance()
-        if application is not None:
-            application.setOverrideCursor(
-                QtCore.Qt.CursorShape.WaitCursor
-            )
+        progress = SamplingProgressDialog(
+            "Lindhard mesh convergence",
+            parent=self.window,
+        )
         try:
             def mutate(
                 model: ModelComponentSpec,
@@ -23942,24 +24068,77 @@ class NfitProjectExplorer:
                 result["certificate"] = certify_lindhard_component_sampling(
                     model,
                     group.models,
+                    progress_callback=progress.update,
                 )
 
             self._mutate_selected_model(mutate)
         except Exception as exc:
+            progress.fail(str(exc))
             QtWidgets.QMessageBox.warning(
                 self.window,
                 "Response-mesh convergence",
                 f"Could not certify the response mesh:\n{exc}",
             )
             return
-        finally:
-            if application is not None:
-                application.restoreOverrideCursor()
         certificate = result.get("certificate")
+        if certificate is not None:
+            progress.finish(certificate)
         if certificate is not None and not certificate.certified:
             QtWidgets.QMessageBox.information(
                 self.window,
                 "Response-mesh convergence",
+                "The requested accuracy was not certified within the "
+                "configured mesh budget. The attempted meshes and errors "
+                "were saved; increase the Advanced budget or loosen the "
+                "accuracy profile.",
+            )
+
+    def _certify_tight_binding_dos_sampling(
+        self,
+        expected_model: ModelComponentSpec,
+    ) -> None:
+        """Run the explicit model-level DOS mesh search."""
+
+        from PySide6 import QtWidgets
+
+        from .model_plots import certify_tight_binding_dos_sampling
+        from .qt_sampling_progress import SamplingProgressDialog
+
+        result: dict[str, Any] = {}
+        progress = SamplingProgressDialog(
+            "Density-of-states mesh convergence",
+            parent=self.window,
+        )
+        try:
+            def mutate(
+                model: ModelComponentSpec,
+                _group: DataGroup | None,
+            ) -> None:
+                if model is not expected_model or model.type != "tight_binding":
+                    raise ValueError(
+                        "select the tight-binding component before certification"
+                    )
+                result["certificate"] = certify_tight_binding_dos_sampling(
+                    model,
+                    progress_callback=progress.update,
+                )
+
+            self._mutate_selected_model(mutate)
+        except Exception as exc:
+            progress.fail(str(exc))
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "DOS mesh convergence",
+                f"Could not certify the DOS mesh:\n{exc}",
+            )
+            return
+        certificate = result.get("certificate")
+        if certificate is not None:
+            progress.finish(certificate)
+        if certificate is not None and not certificate.certified:
+            QtWidgets.QMessageBox.information(
+                self.window,
+                "DOS mesh convergence",
                 "The requested accuracy was not certified within the "
                 "configured mesh budget. The attempted meshes and errors "
                 "were saved; increase the Advanced budget or loosen the "
