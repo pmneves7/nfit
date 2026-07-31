@@ -131,6 +131,11 @@ With `dos_symmetry="auto"` or `"reduced"`, nfit may diagonalize only the
 symmetry-unique points and expand their eigenvalues back onto that full ordered
 grid before calling the same tetrahedron integrator. Gaussian integration
 remains the appropriate choice for one- and two-dimensional models.
+An exactly dispersionless band contributes a Dirac delta to the mathematical
+DOS. ASE's ordinary tetrahedron expression is singular in this limit, so nfit
+detects such bands and places their normalized spectral weight on the one or
+two nearest energy-grid samples. The plotted peak height therefore depends on
+the energy spacing, while its integrated state count remains exact.
 
 When `dos_auto_energy_range=true`, the configured manual minimum and maximum
 are retained but not used. `density_of_states(..., energy_meV=None,

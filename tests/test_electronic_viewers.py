@@ -95,6 +95,45 @@ def test_electronic_viewers_share_right_settings_panel(monkeypatch):
     assert application is QtWidgets.QApplication.instance()
 
 
+def test_replacing_dos_figure_matches_the_existing_canvas(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    pytest.importorskip("matplotlib.backends.backend_qtagg")
+    from matplotlib.figure import Figure
+
+    from nfit.qt_electronic_viewer import show_electronic_figure
+
+    application = QtWidgets.QApplication.instance()
+    if application is None:
+        application = QtWidgets.QApplication([])
+    original = Figure()
+    original.add_subplot(111).plot([0.0, 1.0], [0.0, 1.0])
+    window = show_electronic_figure(
+        original,
+        viewer_key="density_of_states",
+    )
+    application.processEvents()
+    replacement = Figure()
+    replacement.add_subplot(111).plot([0.0, 1.0], [1.0, 0.0])
+    window._nfit_replace_figure(replacement)
+    canvas = window._nfit_canvas
+    expected = np.asarray(
+        [
+            canvas.width() * canvas.device_pixel_ratio,
+            canvas.height() * canvas.device_pixel_ratio,
+        ],
+        dtype=float,
+    )
+    np.testing.assert_allclose(
+        replacement.get_size_inches() * replacement.dpi,
+        expected,
+        rtol=0.0,
+        atol=1.0,
+    )
+    assert canvas.figure is replacement
+    window.close()
+
+
 @pytest.mark.parametrize(
     "viewer_key",
     ("band_structure", "density_of_states"),

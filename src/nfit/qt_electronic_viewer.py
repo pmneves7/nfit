@@ -822,9 +822,20 @@ def show_electronic_figure(
             )
         updated_figure.set_canvas(canvas)
         canvas.figure = updated_figure
+        pixel_ratio = float(canvas.device_pixel_ratio)
+        width_pixels = max(float(canvas.width()) * pixel_ratio, 1.0)
+        height_pixels = max(float(canvas.height()) * pixel_ratio, 1.0)
+        updated_figure.set_size_inches(
+            width_pixels / float(updated_figure.dpi),
+            height_pixels / float(updated_figure.dpi),
+            forward=False,
+        )
         window._nfit_figure = updated_figure
         toolbar.update()
-        canvas.draw_idle()
+        # A newly rendered Figure retains its default pixel dimensions. A
+        # synchronous draw after matching the existing Qt canvas prevents the
+        # old larger renderer buffer from remaining visible around it.
+        canvas.draw()
 
     window._nfit_replace_figure = replace_figure
     if settings_config is not None and on_apply_settings is not None:

@@ -240,6 +240,42 @@ def test_tetrahedron_dos_preserves_total_and_projected_state_counts():
     )
 
 
+def test_tetrahedron_dos_represents_an_exact_flat_band_as_a_delta():
+    model = build_electronic_model(
+        direct_lattice=np.eye(3),
+        basis=["dispersive", "flat"],
+        hoppings={
+            (0, 0, 0): np.diag([0.0, 100.0]),
+            (1, 0, 0): np.diag([-10.0, 0.0]),
+            (0, 1, 0): np.diag([-10.0, 0.0]),
+            (0, 0, 1): np.diag([-10.0, 0.0]),
+        },
+        energy_unit="meV",
+    )
+    energy = np.linspace(-80.0, 120.0, 2001)
+    dos = density_of_states(
+        model,
+        k_mesh(model, (8, 8, 8), symmetry="full"),
+        energy,
+        broadening_meV=1.0,
+        method="tetrahedron",
+        symmetry="full",
+        projections={"dispersive": [0], "flat": [1]},
+    )
+
+    assert np.trapezoid(dos.total_per_meV_cell, energy) == pytest.approx(2.0)
+    assert np.trapezoid(
+        dos.projected_per_meV_cell["dispersive"], energy
+    ) == pytest.approx(1.0)
+    assert np.trapezoid(
+        dos.projected_per_meV_cell["flat"], energy
+    ) == pytest.approx(1.0)
+    flat_peak = int(np.argmax(dos.projected_per_meV_cell["flat"]))
+    assert energy[flat_peak] == pytest.approx(100.0)
+    assert dos.provenance["flat_band_indices"] == (1,)
+    assert dos.provenance["flat_band_energies_meV"] == pytest.approx((100.0,))
+
+
 def test_tetrahedron_dos_requires_full_three_dimensional_uniform_mesh():
     model = _square_two_orbital_model()
     mesh = k_mesh(model, (8, 8), symmetry="full")

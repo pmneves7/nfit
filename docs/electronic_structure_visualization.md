@@ -108,6 +108,12 @@ The DOS viewer offers two integrations:
   use this exact acceleration; arbitrary orbital projections use the full
   eigensystem unless their symmetry transformation is known.
 
+An exactly flat band is a delta function in the DOS and makes the usual
+tetrahedron denominators singular. nfit represents its full normalized weight
+on the nearest energy-grid sample, or splits it between the two neighboring
+samples when necessary. Refining the energy grid makes the displayed peak
+narrower and taller without changing its integrated number of states.
+
 `density_of_states` returns states per meV per primitive cell. Plotting in eV
 converts the ordinate to states per eV per cell. Mesh density controls
 integration accuracy. For Gaussian DOS, broadening also controls displayed

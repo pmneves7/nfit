@@ -1498,6 +1498,34 @@ def automatic_dos_energy_limits(
     return lower - margin, upper + margin
 
 
+def _energy_grid_delta(energy: FloatArray, target: float) -> FloatArray:
+    """Represent one unit delta mass on a uniform trapezoidal energy grid."""
+
+    result = np.zeros(energy.size, dtype=float)
+    if target < float(energy[0]) or target > float(energy[-1]):
+        return result
+    spacing = float(energy[1] - energy[0])
+    quadrature_weights = np.full(energy.size, spacing, dtype=float)
+    quadrature_weights[[0, -1]] *= 0.5
+    upper = int(np.searchsorted(energy, target, side="left"))
+    if upper < energy.size and np.isclose(
+        target,
+        energy[upper],
+        rtol=0.0,
+        atol=abs(spacing) * 1.0e-12,
+    ):
+        result[upper] = 1.0 / quadrature_weights[upper]
+        return result
+    upper = min(max(upper, 1), energy.size - 1)
+    lower = upper - 1
+    fraction = (target - float(energy[lower])) / (
+        float(energy[upper]) - float(energy[lower])
+    )
+    result[lower] = (1.0 - fraction) / quadrature_weights[lower]
+    result[upper] = fraction / quadrature_weights[upper]
+    return result
+
+
 def density_of_states(
     model: ElectronicModel,
     mesh: WavevectorSampling,
@@ -1732,15 +1760,37 @@ def density_of_states(
             ],
             axis=-1,
         )
-        integrated = np.asarray(
-            linear_tetrahedron_integration(
-                model.direct_lattice.T,
-                eigenvalues,
-                energy,
-                weights=weight_channels,
-            ),
-            dtype=float,
-        )
+        band_span = np.ptp(eigenvalues, axis=(0, 1, 2))
+        energy_scale = max(float(np.max(np.abs(eigenvalues))), 1.0)
+        flat_tolerance = max(1.0e-9, 1.0e-12 * energy_scale)
+        flat_bands = band_span <= flat_tolerance
+        dispersive_bands = ~flat_bands
+        channel_count = weight_channels.shape[-1]
+        if np.any(dispersive_bands):
+            integrated = np.asarray(
+                linear_tetrahedron_integration(
+                    model.direct_lattice.T,
+                    eigenvalues[..., dispersive_bands],
+                    energy,
+                    weights=weight_channels[..., dispersive_bands, :],
+                ),
+                dtype=float,
+            )
+        else:
+            integrated = np.zeros((channel_count, energy.size), dtype=float)
+        for band_index in np.flatnonzero(flat_bands):
+            target = float(np.mean(eigenvalues[..., band_index]))
+            delta = _energy_grid_delta(energy, target)
+            channel_weights = np.mean(
+                weight_channels[..., band_index, :],
+                axis=(0, 1, 2),
+            )
+            integrated += channel_weights[:, None] * delta[None, :]
+        flat_band_indices = np.flatnonzero(flat_bands).astype(int).tolist()
+        flat_band_energies = [
+            float(np.mean(eigenvalues[..., index]))
+            for index in flat_band_indices
+        ]
         return DensityOfStatesResult(
             energy_meV=_readonly(energy, float),
             total_per_meV_cell=_readonly(integrated[0], float),
@@ -1769,6 +1819,9 @@ def density_of_states(
                     ].items()
                 },
                 "automatic_energy_range": automatic_energy_range,
+                "flat_band_indices": flat_band_indices,
+                "flat_band_energies_meV": flat_band_energies,
+                "flat_band_representation": "normalized energy-grid delta",
             },
         )
 
