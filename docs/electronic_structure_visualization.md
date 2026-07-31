@@ -126,11 +126,6 @@ Plotting in eV converts the ordinate to states per eV per cell. Mesh density
 controls integration accuracy. For Gaussian DOS, broadening also controls
 displayed energy resolution and should be converged separately.
 
-```{note}
-Before nfit 0.59 the DOS omitted the spin degeneracy, so an implicit-spin total
-was half the value reported now.
-```
-
 The viewer side panel owns the integration method, mesh, certified symmetry
 policy, energy window, energy-point count, and Gaussian width. **Automatic
 range** derives the minimum and maximum from the eigenvalues on the selected

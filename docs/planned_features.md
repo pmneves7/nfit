@@ -25,6 +25,13 @@ releases. Current behavior is documented in the workflow and API pages.
 - Add the $\langle j_2\rangle$ term so rare-earth ions can use the full dipole
   approximation instead of the spin-only $\langle j_0\rangle$ form.
 
+- Fold a conventional-cell model onto the primitive cell even when symmetry
+  expansion gave translation-equivalent sites different local orbital frames
+  (the $Fd\bar3m$ $16c$ pyrochlore case). This needs the orbital rotation
+  between the two frames, so it belongs with the manifold representation
+  machinery rather than the current label-and-position matching. Until then
+  those models keep the correct but larger conventional cell.
+
 ## Electronic-response models
 
 Current tight-binding, Lindhard, and RPA capabilities are documented under

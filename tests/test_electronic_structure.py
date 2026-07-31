@@ -1065,3 +1065,138 @@ def test_manual_electronic_model_reopens_from_a_project(tmp_path):
     )
 
     assert result.model_digest == model.content_digest
+
+
+def _pyrochlore_component(preset):
+    """Fd-3m 16c (pyrochlore) site carrying one orbital manifold."""
+
+    from nfit import (
+        DataGroup,
+        add_tight_binding_orbital_manifold,
+        create_model_component,
+        orbital_manifold_preset,
+    )
+    from nfit.electronic_builder import (
+        add_tight_binding_hopping_term,
+        regenerate_tight_binding_hopping_terms,
+        regenerate_tight_binding_onsite_terms,
+        set_tight_binding_hopping_term,
+        set_tight_binding_onsite_term,
+    )
+
+    crystal = {
+        "lattice": {
+            "a": 8.0, "b": 8.0, "c": 8.0,
+            "alpha": 90.0, "beta": 90.0, "gamma": 90.0,
+        },
+        "spacegroup": "F d -3 m",
+        "sites": [
+            {"label": "M1", "element": "Fe", "position": [0.0, 0.0, 0.0], "ion": ""}
+        ],
+    }
+    group = DataGroup("Electronic")
+    component = create_model_component(group, "bands", type="tight_binding")
+    component.config["crystal"] = crystal
+    add_tight_binding_orbital_manifold(
+        component, orbital_manifold_preset("M1", preset)
+    )
+    for term in regenerate_tight_binding_onsite_terms(component):
+        set_tight_binding_onsite_term(
+            component, term.identifier, value=0.3, energy_unit="eV"
+        )
+    generation = regenerate_tight_binding_hopping_terms(component, 3.0)
+    for term in generation.terms:
+        add_tight_binding_hopping_term(component, term.identifier)
+        set_tight_binding_hopping_term(
+            component, term.identifier, value=-0.25, energy_unit="eV"
+        )
+    return component, crystal
+
+
+@pytest.mark.parametrize("preset", ["s", "p", "d"])
+def test_primitive_reduction_never_changes_the_band_structure(preset):
+    """A folded model must reproduce the conventional spectrum, or refuse.
+
+    Fold groups are keyed by wrapped position, orbital, and manifold, which
+    does not see the site's local orbital frame. Symmetry expansion gives the
+    Fd-3m 16c pyrochlore site's translation-equivalent copies different frames,
+    so averaging their matrix elements silently produced a wrong Hamiltonian
+    for l > 0. The fold is now certified numerically and falls back to the
+    conventional cell when it cannot be trusted.
+    """
+
+    pytest.importorskip("gemmi")
+    from nfit import electronic_model_from_component
+    from nfit.electronic_builder import (
+        _component_hopping_orbits,
+        _component_hopping_terms,
+        _component_manifolds,
+        _component_terms,
+        build_orbital_electronic_model,
+        ensure_tight_binding_onsite_terms,
+        reconcile_tight_binding_parameters,
+    )
+
+    component, crystal = _pyrochlore_component(preset)
+    resolved = electronic_model_from_component(component)
+
+    ensure_tight_binding_onsite_terms(component)
+    reconcile_tight_binding_parameters(component)
+    conventional = build_orbital_electronic_model(
+        crystal,
+        _component_manifolds(component),
+        _component_terms(component),
+        hopping_orbits=_component_hopping_orbits(component),
+        hopping_terms=_component_hopping_terms(component),
+        periodic_axes=(0, 1, 2),
+    )
+
+    cartesian = np.array(
+        [[0.11, 0.23, 0.37], [-0.42, 0.17, 0.29], [0.31, -0.19, 0.07]]
+    )
+    resolved_k = cartesian @ np.linalg.inv(resolved.reciprocal_lattice).T
+    conventional_k = cartesian @ np.linalg.inv(conventional.reciprocal_lattice).T
+    resolved_bands = np.sort(
+        np.linalg.eigvalsh(resolved.hamiltonian(resolved_k)), axis=-1
+    )
+    conventional_bands = np.sort(
+        np.linalg.eigvalsh(conventional.hamiltonian(conventional_k)), axis=-1
+    )
+    deviation = np.max(
+        np.min(
+            np.abs(resolved_bands[:, :, None] - conventional_bands[:, None, :]),
+            axis=2,
+        )
+    )
+    assert deviation < 1.0e-6
+
+
+@pytest.mark.parametrize("preset", ["p", "d"])
+def test_symmetry_generated_hamiltonian_is_space_group_invariant(preset):
+    """Generated onsite and hopping terms must give invariant band energies."""
+
+    pytest.importorskip("gemmi")
+    from nfit import electronic_model_from_component
+    from nfit.crystal import cartesian_rotation, spacegroup_operations
+
+    component, crystal = _pyrochlore_component(preset)
+    model = electronic_model_from_component(component)
+    reciprocal = model.reciprocal_lattice
+    rotations = {
+        np.round(
+            cartesian_rotation(np.asarray(rotation, dtype=float), crystal["lattice"]),
+            9,
+        ).tobytes(): cartesian_rotation(
+            np.asarray(rotation, dtype=float), crystal["lattice"]
+        )
+        for rotation, _translation in spacegroup_operations(crystal)
+    }
+    k = np.array([[0.13, 0.29, 0.41], [-0.22, 0.37, 0.11]])
+    reference = np.sort(np.linalg.eigvalsh(model.hamiltonian(k)), axis=-1)
+    scale = max(1.0, float(np.max(np.abs(reference))))
+    for rotation in rotations.values():
+        mapped = np.linalg.inv(reciprocal) @ rotation @ reciprocal
+        rotated = np.sort(
+            np.linalg.eigvalsh(model.hamiltonian(k @ mapped.T)), axis=-1
+        )
+        assert np.max(np.abs(rotated - reference)) < 1.0e-9 * scale

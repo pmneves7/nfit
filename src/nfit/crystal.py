@@ -37,6 +37,15 @@ FloatArray = NDArray[np.float64]
 _POSITION_DECIMALS = 6
 _POSITION_TOL = 10.0**-_POSITION_DECIMALS
 _DISTANCE_DECIMALS = 5
+# Distance-shell clustering tolerance in Angstrom. Symmetry-expanded fractional
+# coordinates are rounded to _POSITION_DECIMALS, so bonds that are exactly
+# equivalent by symmetry can differ in computed length by ~1e-5 Angstrom (a
+# rhombohedral 1/3, 2/3 site is the usual case). Binning by a rounded value
+# splits such an orbit across two shells and makes orbit detection fail, so
+# shells are clustered with a tolerance instead. Erring towards merging is safe:
+# the orbit decomposition below separates inequivalent bonds inside a shell
+# anyway, whereas a split orbit is unrecoverable.
+_DISTANCE_SHELL_TOL = 1.0e-4
 
 
 def _require_gemmi():
@@ -425,6 +434,22 @@ def site_symmetry_operations(
     return result
 
 
+def _spacegroup_name_candidates(name: str) -> tuple[str, ...]:
+    """Return lookup spellings for a user-entered Hermann-Mauguin symbol.
+
+    In Hermann-Mauguin symbols an underscore only ever marks a screw-axis
+    subscript between two digits, so ``P 2_1/c`` and ``P 21/c`` name the same
+    group. Gemmi accepts the underscore form for some symbols (``P 6_3/m m c``)
+    but not for short ones (``P 2_1/c``), so both spellings are tried.
+    """
+
+    candidates = [name]
+    stripped = re.sub(r"(?<=\d)_(?=\d)", "", name)
+    if stripped != name:
+        candidates.append(stripped)
+    return tuple(candidates)
+
+
 def _resolve_spacegroup(gemmi: Any, spacegroup: str):
     """Resolve a user-entered space group, preferring reference origin choices.
 
@@ -440,7 +465,12 @@ def _resolve_spacegroup(gemmi: Any, spacegroup: str):
         except (RuntimeError, ValueError) as exc:
             raise ValueError(f"unknown space group {spacegroup!r}") from exc
 
-    group = gemmi.find_spacegroup_by_name(name)
+    group = None
+    for candidate in _spacegroup_name_candidates(name):
+        group = gemmi.find_spacegroup_by_name(candidate)
+        if group is not None:
+            name = candidate
+            break
     if group is None:
         raise ValueError(f"unknown space group {spacegroup!r}")
 
@@ -687,7 +717,7 @@ def generate_spatial_bond_orbits(
     plane_spacing = 1.0 / np.linalg.norm(np.linalg.inv(lattice), axis=1)
     max_offsets = np.ceil(cutoff_angstrom / plane_spacing).astype(int) + 1
 
-    bonds_by_distance: dict[float, list[Bond]] = {}
+    measured: list[tuple[float, Bond]] = []
     offsets = [
         (n1, n2, n3)
         for n1 in range(-max_offsets[0], max_offsets[0] + 1)
@@ -708,7 +738,22 @@ def generate_spatial_bond_orbits(
                 if bond in seen:
                     continue
                 seen.add(bond)
-                bonds_by_distance.setdefault(round(distance, _DISTANCE_DECIMALS), []).append(bond)
+                measured.append((distance, bond))
+
+    # Cluster into shells with a tolerance rather than a rounded key; see
+    # _DISTANCE_SHELL_TOL.
+    bonds_by_distance: dict[float, list[Bond]] = {}
+    shell_distances: list[float] = []
+    for distance, bond in sorted(measured, key=lambda item: item[0]):
+        if shell_distances and distance - shell_distances[-1] <= _DISTANCE_SHELL_TOL:
+            bonds_by_distance[shell_distances[-1]].append(bond)
+            continue
+        shell_distances.append(distance)
+        bonds_by_distance[distance] = [bond]
+    bonds_by_distance = {
+        round(distance, _DISTANCE_DECIMALS): bonds
+        for distance, bonds in bonds_by_distance.items()
+    }
 
     # Group bonds into orbits under the space group, shell by shell. For each
     # orbit member remember the (first) operation carrying the representative
@@ -731,7 +776,10 @@ def generate_spatial_bond_orbits(
                     )
             orbit = set(mapped)
             if not orbit <= remaining:
-                stray = sorted(orbit - remaining)[0]
+                stray = min(
+                    orbit - remaining,
+                    key=lambda b: (b.site_i, b.site_j, b.offset),
+                )
                 raise ValueError(
                     f"symmetry maps bond {seed} onto {stray}, which is not in "
                     "the same distance shell; inconsistent crystal input"

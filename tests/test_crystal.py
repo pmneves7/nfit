@@ -512,3 +512,64 @@ def test_orbit_config_round_trips_symmetry_operations():
     # Legacy payloads without rotations still load, with operations=None.
     legacy = [{"label": "J1", "bonds": [{"site_i": 0, "site_j": 1, "offset": [0, 0, 0]}]}]
     assert orbits_from_config(legacy)[0].operations is None
+
+
+def test_screw_axis_subscripts_resolve_with_or_without_underscores():
+    """``P 2_1/c`` is the ITA typography of ``P 21/c`` and must resolve.
+
+    Gemmi accepts the underscore form for some symbols but not for short ones,
+    so nfit normalizes the screw-axis subscript before lookup.
+    """
+    from nfit.crystal import _symmetry_operations
+
+    assert len(_symmetry_operations("P 2_1/c")) == len(
+        _symmetry_operations("P 21/c")
+    )
+    assert len(_symmetry_operations("P 2_1 2_1 2_1")) == 4
+    with pytest.raises(ValueError, match="unknown space group"):
+        _symmetry_operations("P not-a-group")
+
+
+def test_bond_shells_survive_rounded_rhombohedral_site_coordinates():
+    """Symmetry-equivalent bonds must land in one distance shell.
+
+    Symmetry-expanded fractional coordinates are rounded, so a rhombohedral
+    1/3, 2/3 site makes equivalent bond lengths differ by ~1e-5 Angstrom.
+    Binning shells by a rounded value split such an orbit and made orbit
+    detection raise; shells are clustered with a tolerance instead.
+    """
+    crystal = {
+        "lattice": {
+            "a": 4.0,
+            "b": 4.0,
+            "c": 10.0,
+            "alpha": 90.0,
+            "beta": 90.0,
+            "gamma": 120.0,
+        },
+        "spacegroup": "R -3 m",
+        "sites": [
+            {"label": "M1", "element": "Fe", "position": [0.0, 0.0, 0.0], "ion": ""}
+        ],
+    }
+    sites, orbits = generate_spatial_bond_orbits(crystal, ["M1"], 4.6)
+    assert orbits
+    # Every bond of an orbit sits at the same length, and each orbit is closed
+    # under the space group (a split shell would have raised above).
+    lattice = lattice_vectors(crystal["lattice"])
+    positions = np.asarray([site.position for site in sites])
+    for orbit in orbits:
+        lengths = [
+            float(
+                np.linalg.norm(
+                    lattice
+                    @ (
+                        positions[bond.site_j]
+                        + np.asarray(bond.offset, dtype=float)
+                        - positions[bond.site_i]
+                    )
+                )
+            )
+            for bond in orbit.bonds
+        ]
+        assert max(lengths) - min(lengths) < 1.0e-3

@@ -44,11 +44,6 @@ orbital-pair response *before* the same spin trace is applied. The applied
 factor is recorded in the exported vertex provenance as
 `spin_channel_vertex_factor`.
 
-```{note}
-Before nfit 0.59 the vertex was $I$ rather than $2I$, so a previously fitted
-`I` corresponds to half its value under the current convention.
-```
-
 The implementation records the operator order, interaction matrix, RPA
 multiplication order, smallest relative singular value, condition number, and
 sampled static stability margin. A denominator within `singular_tolerance` of

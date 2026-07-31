@@ -607,6 +607,82 @@ class ElectronicModel:
         return model
 
 
+_FOLD_PROBE_WAVEVECTORS = (
+    (0.137, 0.229, 0.317),
+    (0.401, -0.163, 0.089),
+    (-0.271, 0.353, 0.191),
+    (0.083, 0.457, -0.311),
+)
+
+
+def _verify_primitive_fold(
+    model: ElectronicModel,
+    *,
+    primitive: FloatArray,
+    transform: FloatArray,
+    block_maps: Mapping[str, Mapping[tuple[int, int, int], ComplexArray]],
+    reduced_size: int,
+    tolerance: float,
+) -> None:
+    """Raise unless every folded block family reproduces the source spectrum.
+
+    A supercell Hamiltonian evaluated at a Cartesian wavevector carries the
+    primitive bands at that same wavevector plus the bands at the folding
+    vectors, so the primitive spectrum must be a sub-multiset of the
+    conventional one. Each block family is probed separately with unit
+    coefficient, which makes the check independent of parameter values.
+    """
+
+    conventional_reciprocal = 2.0 * np.pi * np.linalg.inv(model.direct_lattice).T
+    primitive_reciprocal = 2.0 * np.pi * np.linalg.inv(primitive).T
+    probes = np.asarray(_FOLD_PROBE_WAVEVECTORS, dtype=float)
+    cartesian = probes @ primitive_reciprocal.T
+    conventional_k = cartesian @ np.linalg.inv(conventional_reciprocal).T
+
+    sources: dict[str, ComplexArray] = {"hamiltonian": model.hamiltonian_blocks}
+    sources.update(model.parameter_blocks)
+    for name, source in sources.items():
+        folded = block_maps[name]
+        if not folded and not np.any(np.abs(source) > tolerance):
+            continue
+        translations = np.asarray(sorted(folded), dtype=float)
+        blocks = np.asarray(
+            [folded[tuple(int(v) for v in key)] for key in translations],
+            dtype=np.complex128,
+        ) if len(folded) else np.zeros(
+            (1, reduced_size, reduced_size), dtype=np.complex128
+        )
+        if not len(folded):
+            translations = np.zeros((1, 3), dtype=float)
+        phases_primitive = np.exp(2j * np.pi * (probes @ translations.T))
+        reduced_h = np.einsum("kr,rij->kij", phases_primitive, blocks)
+        phases_conventional = np.exp(
+            2j * np.pi * (conventional_k @ model.translations.T.astype(float))
+        ) * np.asarray(model.interpolation_weights, dtype=float)[None, :]
+        full_h = np.einsum("kr,rij->kij", phases_conventional, source)
+        reduced_values = np.sort(np.linalg.eigvalsh(reduced_h), axis=-1)
+        full_values = np.sort(np.linalg.eigvalsh(full_h), axis=-1)
+        scale = max(1.0, float(np.max(np.abs(full_values))))
+        deviation = float(
+            np.max(
+                np.min(
+                    np.abs(
+                        reduced_values[:, :, None] - full_values[:, None, :]
+                    ),
+                    axis=2,
+                )
+            )
+        )
+        if deviation > 1.0e-7 * scale:
+            raise ValueError(
+                "primitive reduction does not reproduce the source spectrum "
+                f"for block family {name!r} (maximum band deviation "
+                f"{deviation:.3g} meV); this usually means symmetry expansion "
+                "gave translation-equivalent basis states different local "
+                "orbital frames, so the conventional cell is required"
+            )
+
+
 def reduce_electronic_model_to_primitive(
     model: ElectronicModel,
     primitive_lattice: ArrayLike,
@@ -661,7 +737,7 @@ def reduce_electronic_model_to_primitive(
     key_to_index: dict[tuple[Any, ...], int] = {}
     old_to_new: list[int] = []
     representative_indices: list[int] = []
-    group_sizes: dict[int, int] = {}
+    group_members: dict[int, list[int]] = {}
     for old_index in range(model.n_basis):
         key = basis_key(old_index)
         new_index = key_to_index.get(key)
@@ -670,8 +746,8 @@ def reduce_electronic_model_to_primitive(
             key_to_index[key] = new_index
             representative_indices.append(old_index)
         old_to_new.append(new_index)
-        group_sizes[new_index] = group_sizes.get(new_index, 0) + 1
-    if any(size != multiplicity for size in group_sizes.values()):
+        group_members.setdefault(new_index, []).append(old_index)
+    if any(len(members) != multiplicity for members in group_members.values()):
         raise ValueError(
             "electronic basis is not complete under primitive translations"
         )
@@ -729,6 +805,25 @@ def reduce_electronic_model_to_primitive(
     fold_blocks(model.hamiltonian_blocks, block_maps["hamiltonian"])
     for name, source in model.parameter_blocks.items():
         fold_blocks(source, block_maps[name])
+
+    # Certify the fold numerically instead of trusting that merged states are
+    # interchangeable. Grouping by wrapped position, orbital, and manifold does
+    # not see the site's local orbital frame, and symmetry expansion can give
+    # translation-equivalent copies different frames (the Fd-3m 16c pyrochlore
+    # site is the standard case). Averaging matrix elements written in
+    # different frames silently produces a wrong Hamiltonian for any l > 0
+    # manifold. Each block family is checked with unit coefficient so the
+    # certificate is independent of the current parameter values, which
+    # with_parameters may change after the fold is cached.
+    _verify_primitive_fold(
+        model,
+        primitive=primitive,
+        transform=transform,
+        block_maps=block_maps,
+        reduced_size=reduced_size,
+        tolerance=tolerance,
+    )
+
     all_translations = sorted(
         {
             translation

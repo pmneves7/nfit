@@ -149,6 +149,17 @@ the conventional-cell Hamiltonian and records the reason in
 `provenance["primitive_reduction"]`. Disable the attempt only for diagnostic
 comparison.
 
+Matching by label and position does not see a site's local orbital frame, and
+symmetry expansion can give translation-equivalent copies different frames —
+the $Fd\bar3m$ $16c$ pyrochlore site is the standard case. Merging those would
+average matrix elements written in different orientations and silently change
+the band structure for any $l>0$ manifold, so nfit additionally certifies the
+fold numerically: each block family must reproduce the conventional spectrum at
+probe wavevectors. A model that fails keeps the conventional cell, which is
+correct but larger and therefore slower to diagonalize. Folding such a model
+exactly would require rotating the merged orbitals onto a common frame; that is
+tracked in [Planned features](planned_features.md).
+
 ## Minimal scripted construction
 
 ```python
