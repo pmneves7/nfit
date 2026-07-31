@@ -192,6 +192,19 @@ larger jobs remain pending until **Rebin now** or until an operation requires
 current rebinned data. The batch target controls temporary work, not the
 persistent output-grid allocation.
 
+**Minimum coverage** masks an output bin when the measured source support
+occupies less than the selected fraction of its requested geometric volume.
+The default is 0.9. Coverage is saved as an independent auxiliary channel, and
+the resulting coverage mask is used consistently for viewing, histogram
+exports, and fitting. Changing the cutoff does not rewrite the source file or
+nfit masks.
+
+For gridded inputs, nfit propagates native-bin volume and any existing
+fractional coverage through the rebin. A legacy histogram without fractional
+coverage falls back to covered/uncovered native bins. Point collections that
+do not define source-cell geometry cannot provide sub-bin geometric coverage;
+their populated-bin behavior is unchanged.
+
 **Copy settings** and **Paste settings** transfer compatible rebin recipes.
 **Create dataset from rebin** materializes an independent project dataset.
 

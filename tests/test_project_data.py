@@ -150,6 +150,7 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     assert config["fractional"] is True
     assert config["max_batch_mb"] == 192
     assert config["auto_rebin"] is True
+    assert config["minimum_coverage"] == pytest.approx(0.9)
 
     enable_check = explorer.details_widget.findChild(QtWidgets.QCheckBox, "dataset_rebin_enabled")
     assert enable_check is not None
@@ -172,6 +173,15 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     mean_combo = rebin_panel.findChild(QtWidgets.QComboBox, "dataset_rebin_mean_weighting")
     assert mean_combo is not None
     assert mean_combo.currentData() == "inverse_variance"
+    coverage_edit = rebin_panel.findChild(
+        QtWidgets.QLineEdit, "dataset_rebin_minimum_coverage"
+    )
+    assert coverage_edit is not None
+    assert float(coverage_edit.text()) == pytest.approx(0.9)
+    assert coverage_edit.toolTip()
+    coverage_edit.setText("0.8")
+    coverage_edit.editingFinished.emit()
+    assert dataset_rebin_config(dataset)["minimum_coverage"] == pytest.approx(0.8)
     batch_spin = rebin_panel.findChild(QtWidgets.QSpinBox, "dataset_rebin_max_batch_mb")
     assert batch_spin is not None
     assert batch_spin.value() == 192
@@ -629,6 +639,14 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
     config = project_gui.data_group_composite_config(group)
     assert config["enabled"] is True
     assert config["mean_weighting"] == "inverse_variance"
+    coverage_edit = explorer.details_widget.findChild(
+        QtWidgets.QLineEdit, "group_composite_minimum_coverage"
+    )
+    assert coverage_edit is not None
+    assert float(coverage_edit.text()) == pytest.approx(0.9)
+    coverage_edit.setText("0.85")
+    coverage_edit.editingFinished.emit()
+    assert config["minimum_coverage"] == pytest.approx(0.85)
     resolution_mode = explorer.details_widget.findChild(
         QtWidgets.QComboBox, "group_composite_resolution_mode"
     )
@@ -783,7 +801,55 @@ def test_mdhisto_rebin_applies_enabled_masks_before_binning():
 
     assert viewed is not None
     np.testing.assert_allclose(viewed.signal, [100.0])
+    np.testing.assert_allclose(
+        viewed.auxiliary_channels["coverage_fraction"].values,
+        [0.5],
+    )
+    assert viewed.mask[0]
     assert viewed.metadata["rebin"]["source_nfit_mask_count"] == 1
+
+
+def test_mdhisto_composite_masks_output_below_geometric_coverage_cutoff():
+    axis = MDHistoAxis("H", np.array([0.0, 1.0, 2.0]), "rlu", "momentum")
+
+    def source(value):
+        return MDHistoData(
+            axes=(axis,),
+            signal=np.array([value, value]),
+            errors=np.ones(2),
+            mask=np.array([True, False]),
+            num_events=np.ones(2),
+        )
+
+    group = DataGroup(
+        "Datagroup1",
+        datasets=[
+            DatasetEntry("first", source(1.0), kind="mdhisto"),
+            DatasetEntry("second", source(2.0), kind="mdhisto"),
+        ],
+    )
+    config = project_gui.data_group_composite_config(group)
+    config["enabled"] = True
+    config["fractional"] = False
+    config["resolution_mode"] = "bins"
+    config["axes"][0].update(
+        {"lower": 0.0, "upper": 2.0, "num_bins": 1, "step_size": 2.0}
+    )
+
+    strict = project_gui.composite_dataset_data(group)
+
+    np.testing.assert_allclose(
+        strict.auxiliary_channels["coverage_fraction"].values,
+        [0.5],
+    )
+    assert strict.mask[0]
+    assert project_gui._mdhisto_fit_bin_count(strict) == 0
+
+    config["minimum_coverage"] = 0.5
+    permissive = project_gui.composite_dataset_data(group)
+
+    assert not permissive.mask[0]
+    assert project_gui._mdhisto_fit_bin_count(permissive) == 1
 
 
 def test_point_data_rebin_applies_enabled_masks_before_binning():

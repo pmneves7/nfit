@@ -74,6 +74,7 @@ from .mdhisto import (
     MDHistoChannel,
     MDHistoData,
     load_mantid_mdhisto_nxs,
+    mdhisto_coverage_fraction,
     mdhisto_measured_bins,
 )
 from .model_registry import (
@@ -150,6 +151,7 @@ DATASET_MASK_APPLICATION_KEY = "mask_application"
 GROUP_COMPOSITE_KEY = "composite"
 GROUP_COMPOSITE_NAME = "Composite"
 DEFAULT_REBIN_MAX_BATCH_MB = 192
+DEFAULT_MINIMUM_COVERAGE = 0.9
 REBIN_COORDINATE_BASIS_VERSION = 2
 REBIN_RESOLUTION_MODE_KEY = "resolution_mode"
 REBIN_SETTINGS_CLIPBOARD_SCHEMA = "nfit.rebin-settings"
@@ -160,6 +162,7 @@ REBIN_SETTINGS_KEYS = (
     "fractional",
     "auto_rebin",
     "mean_weighting",
+    "minimum_coverage",
     "max_batch_mb",
     "normalize",
     "symmetry",
@@ -2451,6 +2454,7 @@ def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str,
         config[REBIN_RESOLUTION_MODE_KEY] = "step"
     if config.get("mean_weighting") not in {"inverse_variance", "uniform"}:
         config["mean_weighting"] = "inverse_variance"
+    config["minimum_coverage"] = _rebin_minimum_coverage(config)
     try:
         config["max_batch_mb"] = max(int(config.get("max_batch_mb", DEFAULT_REBIN_MAX_BATCH_MB)), 1)
     except (TypeError, ValueError):
@@ -2806,7 +2810,33 @@ def composite_dataset_data(
         )
     else:
         raise ValueError(f"unsupported composite dataset kind {kind!r}")
+    if isinstance(result, MDHistoData):
+        result = _apply_mdhisto_coverage_threshold(result, config)
     return _apply_composite_backgrounds(group, result)
+
+
+def _apply_mdhisto_coverage_threshold(
+    data: MDHistoData,
+    config: dict[str, Any],
+) -> MDHistoData:
+    coverage = mdhisto_coverage_fraction(data)
+    coverage_mask = coverage < _rebin_minimum_coverage(config)
+    channels = dict(data.auxiliary_channels)
+    channels["coverage_fraction"] = MDHistoChannel(
+        coverage,
+        label="Coverage",
+        unit="fraction",
+    )
+    metadata = dict(data.metadata)
+    metadata["coverage_mask_count"] = int(np.count_nonzero(coverage_mask))
+    rebin_metadata = dict(metadata.get("rebin", {}))
+    rebin_metadata["minimum_coverage"] = _rebin_minimum_coverage(config)
+    metadata["rebin"] = rebin_metadata
+    return data.with_updates(
+        mask=np.asarray(data.mask, dtype=bool) | coverage_mask,
+        metadata=metadata,
+        auxiliary_channels=channels,
+    )
 
 
 def _apply_composite_backgrounds(
@@ -2949,6 +2979,7 @@ def _composite_mdhisto_data(
     signal_parts: list[np.ndarray] = []
     error_parts: list[np.ndarray] = []
     weight_parts: list[np.ndarray] = []
+    coverage_inputs: list[tuple[MDHistoData, np.ndarray]] = []
     first_data: MDHistoData | None = None
     for dataset in _composite_candidates(group):
         data = _source_data_for_group_composite(group, dataset)
@@ -2958,6 +2989,7 @@ def _composite_mdhisto_data(
             first_data = data
         source_grids = np.meshgrid(*(axis.centers for axis in data.axes), indexing="ij")
         coords = np.stack(source_grids, axis=-1)
+        coverage_inputs.append((data, coords))
         valid = np.isfinite(data.signal) & np.isfinite(data.errors) & ~np.asarray(data.mask, dtype=bool)
         if data.num_events is not None:
             valid &= mdhisto_measured_bins(data)
@@ -3007,12 +3039,27 @@ def _composite_mdhisto_data(
     )
     mask = ~np.isfinite(result.binned_data) | ~np.isfinite(result.binned_data_errs)
     mask |= result.n_samples <= 0.0
+    coverage = np.maximum.reduce(
+        [
+            _rebin_mdhisto_coverage(
+                source,
+                source_coords,
+                config,
+                axes_config,
+                result.bins_list,
+            )
+            for source, source_coords in coverage_inputs
+        ]
+    )
+    coverage_mask = coverage < _rebin_minimum_coverage(config)
+    mask |= coverage_mask
     metadata = {
         "composite": True,
         "source_group": group.name,
         "source_datasets": [dataset.name for dataset in _composite_candidates(group)],
         "signal_semantics": "density",
         "signal_semantics_source": "nfit_normalized_rebin",
+        "coverage_mask_count": int(np.count_nonzero(coverage_mask)),
         "rebin": {
             "lower": lower,
             "upper": upper,
@@ -3025,6 +3072,7 @@ def _composite_mdhisto_data(
             "fractional": bool(config.get("fractional", True)),
             "normalize": True,
             "mean_weighting": _rebin_mean_weighting(config),
+            "minimum_coverage": _rebin_minimum_coverage(config),
             "max_batch_mb": _rebin_max_batch_mb(config),
             "max_batch_bytes": _rebin_max_batch_bytes(config),
             "weighted_by_fit_weight": True,
@@ -3051,6 +3099,13 @@ def _composite_mdhisto_data(
         coordinate_system=first_data.coordinate_system,
         visual_normalization=first_data.visual_normalization,
         metadata=metadata,
+        auxiliary_channels={
+            "coverage_fraction": MDHistoChannel(
+                coverage,
+                label="Coverage",
+                unit="fraction",
+            )
+        },
     )
 
 
@@ -5884,6 +5939,7 @@ def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
         config["max_batch_mb"] = DEFAULT_REBIN_MAX_BATCH_MB
     if config.get("mean_weighting") not in {"inverse_variance", "uniform"}:
         config["mean_weighting"] = "inverse_variance"
+    config["minimum_coverage"] = _rebin_minimum_coverage(config)
     config["normalize"] = True
     axes = config.get("axes")
     # Only materialize transformed coordinates when defaults are actually
@@ -6278,6 +6334,14 @@ def _rebin_point_list_data(dataset: DatasetEntry, config: dict[str, Any]) -> Poi
 def _rebin_mean_weighting(config: dict[str, Any]) -> str:
     value = config.get("mean_weighting")
     return str(value) if value in {"inverse_variance", "uniform"} else "inverse_variance"
+
+
+def _rebin_minimum_coverage(config: dict[str, Any]) -> float:
+    try:
+        value = float(config.get("minimum_coverage", DEFAULT_MINIMUM_COVERAGE))
+    except (TypeError, ValueError):
+        return DEFAULT_MINIMUM_COVERAGE
+    return float(np.clip(value, 0.0, 1.0))
 
 
 def _rebin_max_batch_mb(config: dict[str, Any]) -> int:
@@ -6884,6 +6948,153 @@ def _mdhisto_rebin_component(
     return component
 
 
+def _mdhisto_axis_edges(axis: MDHistoAxis, size: int) -> np.ndarray:
+    values = np.asarray(axis.values, dtype=float)
+    if values.size == size + 1:
+        return values
+    if values.size == size:
+        if size == 1:
+            return np.asarray([values[0] - 0.5, values[0] + 0.5])
+        edges = np.empty(size + 1, dtype=float)
+        edges[1:-1] = 0.5 * (values[:-1] + values[1:])
+        edges[0] = values[0] - 0.5 * (values[1] - values[0])
+        edges[-1] = values[-1] + 0.5 * (values[-1] - values[-2])
+        return edges
+    raise ValueError(f"axis {axis.name!r} does not define {size} bins")
+
+
+def _mdhisto_cell_volumes(data: MDHistoData) -> np.ndarray:
+    """Return native hypervolumes represented by MDHisto bin centers."""
+
+    volume = np.ones(data.shape, dtype=float)
+    for dim, (axis, size) in enumerate(zip(data.axes, data.shape, strict=True)):
+        edges = _mdhisto_axis_edges(axis, size)
+        widths = np.diff(edges)
+        shape = [1] * data.signal.ndim
+        shape[dim] = size
+        volume *= widths.reshape(shape)
+    return np.abs(volume)
+
+
+def _output_bin_volumes(bins_list: Sequence[np.ndarray]) -> np.ndarray:
+    shape = tuple(len(values) - 1 for values in bins_list)
+    volume = np.ones(shape, dtype=float)
+    for dim, values in enumerate(bins_list):
+        widths = np.abs(np.diff(np.asarray(values, dtype=float)))
+        reshape = [1] * len(shape)
+        reshape[dim] = widths.size
+        volume *= widths.reshape(reshape)
+    return volume
+
+
+def _rebin_mdhisto_coverage(
+    data: MDHistoData,
+    coords: np.ndarray,
+    config: dict[str, Any],
+    axes_config: Sequence[dict[str, Any]],
+    bins_list: Sequence[np.ndarray],
+    *,
+    symmetry: Sequence[np.ndarray] | None = None,
+    output_axes: np.ndarray | None = None,
+) -> np.ndarray:
+    """Map measured native-bin hypervolume into requested output bins."""
+
+    source_coverage = mdhisto_coverage_fraction(data)
+    usable = (
+        np.isfinite(data.signal)
+        & np.isfinite(data.errors)
+        & ~np.asarray(data.mask, dtype=bool)
+        & mdhisto_measured_bins(data)
+    )
+    source_coverage = np.where(usable, source_coverage, 0.0)
+    source_volume = _mdhisto_cell_volumes(data)
+    vectors = np.asarray(
+        [
+            _rebin_axis_vector(axis_config, index, data.signal.ndim)
+            for index, axis_config in enumerate(axes_config)
+        ],
+        dtype=float,
+    )
+    mapping = (
+        _mdhisto_rebin_basis_transform(data, list(axes_config))
+        if data.signal.ndim == 4
+        else vectors.T
+    )
+    if mapping.shape == (data.signal.ndim, data.signal.ndim):
+        source_volume = source_volume * abs(float(np.linalg.det(mapping)))
+    if (
+        symmetry is None
+        and mapping.shape == (data.signal.ndim, data.signal.ndim)
+        and np.allclose(mapping, np.eye(data.signal.ndim))
+    ):
+        covered_volume = source_coverage
+        for dim, (axis, size, output_edges) in enumerate(
+            zip(data.axes, data.shape, bins_list, strict=True)
+        ):
+            source_edges = _mdhisto_axis_edges(axis, size)
+            output_edges = np.asarray(output_edges, dtype=float)
+            overlap = np.maximum(
+                0.0,
+                np.minimum(output_edges[1:, None], source_edges[None, 1:])
+                - np.maximum(output_edges[:-1, None], source_edges[None, :-1]),
+            )
+            covered_volume = np.tensordot(
+                overlap,
+                covered_volume,
+                axes=(1, dim),
+            )
+            covered_volume = np.moveaxis(covered_volume, 0, dim)
+        output_volume = _output_bin_volumes(bins_list)
+        coverage = np.zeros(output_volume.shape, dtype=float)
+        np.divide(
+            covered_volume,
+            output_volume,
+            out=coverage,
+            where=output_volume > 0.0,
+        )
+        return np.clip(coverage, 0.0, 1.0)
+    weights = (source_volume * source_coverage).ravel()
+    kwargs = dict(
+        data_weights=weights,
+        lower=[float(np.asarray(values)[0]) for values in bins_list],
+        upper=[float(np.asarray(values)[-1]) for values in bins_list],
+        **_rebin_grid_kwargs(config, list(axes_config)),
+        # Coverage is geometric even when the signal reducer uses nearest-bin
+        # assignment. Cloud-in-cell deposition avoids assigning an entire
+        # rotated native voxel to whichever output bin contains its center.
+        fractional=True,
+        normalize=False,
+        mean_weighting="uniform",
+        max_batch_bytes=_rebin_max_batch_bytes(config),
+    )
+    coverage_rebin = (
+        rebin_nd_symmetry(
+            np.ones(data.signal.size, dtype=float),
+            np.asarray(coords, dtype=float).reshape(-1, data.signal.ndim),
+            symmetry,
+            axes=output_axes,
+            **kwargs,
+        )
+        if symmetry is not None
+        else rebin_nd(
+            np.ones(data.signal.size, dtype=float),
+            np.asarray(coords, dtype=float).reshape(-1, data.signal.ndim),
+            **kwargs,
+        )
+    )
+    if coverage_rebin.binned_data is None:
+        raise RuntimeError("coverage rebinning did not produce binned data")
+    output_volume = _output_bin_volumes(bins_list)
+    coverage = np.zeros(output_volume.shape, dtype=float)
+    np.divide(
+        np.asarray(coverage_rebin.binned_data, dtype=float),
+        output_volume,
+        out=coverage,
+        where=output_volume > 0.0,
+    )
+    return np.clip(coverage, 0.0, 1.0)
+
+
 def _rebin_mdhisto_data(
     data: MDHistoData,
     config: dict[str, Any],
@@ -6968,9 +7179,21 @@ def _rebin_mdhisto_data(
     )
     mask = ~np.isfinite(result.binned_data) | ~np.isfinite(result.binned_data_errs)
     mask |= result.n_samples <= 0.0
+    coverage = _rebin_mdhisto_coverage(
+        data,
+        coords,
+        config,
+        axes_config,
+        result.bins_list,
+        symmetry=symmetry,
+        output_axes=output_axes,
+    )
+    coverage_mask = coverage < _rebin_minimum_coverage(config)
+    mask |= coverage_mask
     metadata = dict(data.metadata)
     metadata["signal_semantics"] = "density"
     metadata["signal_semantics_source"] = "nfit_normalized_rebin"
+    metadata["coverage_mask_count"] = int(np.count_nonzero(coverage_mask))
     metadata["rebin"] = {
         "lower": lower,
         "upper": upper,
@@ -6980,6 +7203,7 @@ def _rebin_mdhisto_data(
         "fractional": bool(config.get("fractional", False)),
         "normalize": True,
         "mean_weighting": _rebin_mean_weighting(config),
+        "minimum_coverage": _rebin_minimum_coverage(config),
         "max_batch_mb": _rebin_max_batch_mb(config),
         "max_batch_bytes": _rebin_max_batch_bytes(config),
     }
@@ -6995,6 +7219,13 @@ def _rebin_mdhisto_data(
         coordinate_system=data.coordinate_system,
         visual_normalization=data.visual_normalization,
         metadata=metadata,
+        auxiliary_channels={
+            "coverage_fraction": MDHistoChannel(
+                coverage,
+                label="Coverage",
+                unit="fraction",
+            )
+        },
     )
 
 
@@ -15081,26 +15312,47 @@ class NfitProjectExplorer:
         symmetry_expression.setPlaceholderText("P -1")
         symmetry_expression.setToolTip("Examples: P -1; -1; x,y,z;-x,-y,-z; rotate(order=3, axis=[1,1,1]).")
         symmetry_expression.editingFinished.connect(lambda editor=symmetry_expression: self._set_group_composite_symmetry_expression(group, editor.text()))
+        coverage_label = QtWidgets.QLabel("Minimum coverage")
+        coverage_edit = QtWidgets.QLineEdit(_format_number(_rebin_minimum_coverage(config)))
+        coverage_edit.setObjectName("group_composite_minimum_coverage")
+        coverage_edit.setMaximumWidth(70)
+        coverage_tooltip = (
+            "Mask composite output bins whose measured geometric support is below this fraction "
+            "of the requested bin volume. Enter a value from 0 to 1."
+        )
+        coverage_label.setToolTip(coverage_tooltip)
+        coverage_edit.setToolTip(coverage_tooltip)
+        coverage_edit.editingFinished.connect(
+            lambda editor=coverage_edit: self._set_group_composite_minimum_coverage(
+                group, editor
+            )
+        )
         option_row.addWidget(fractional_check)
         option_row.addWidget(auto_check)
         option_row.addWidget(mean_label)
         option_row.addWidget(mean_combo)
-        option_row.addWidget(batch_label)
-        option_row.addWidget(batch_spin)
         option_row.addStretch(1)
         controls_layout.addLayout(option_row, len(axes) + 1, 0, 1, len(headers))
+        quality_row = QtWidgets.QHBoxLayout()
+        quality_row.addWidget(coverage_label)
+        quality_row.addWidget(coverage_edit)
+        quality_row.addSpacing(12)
+        quality_row.addWidget(batch_label)
+        quality_row.addWidget(batch_spin)
+        quality_row.addStretch(1)
+        controls_layout.addLayout(quality_row, len(axes) + 2, 0, 1, len(headers))
         symmetry_row = QtWidgets.QHBoxLayout()
         symmetry_row.addWidget(symmetry_check)
         symmetry_row.addWidget(symmetry_mode)
         symmetry_row.addWidget(symmetry_expression, 1)
-        controls_layout.addLayout(symmetry_row, len(axes) + 2, 0, 1, len(headers))
+        controls_layout.addLayout(symmetry_row, len(axes) + 3, 0, 1, len(headers))
         status_label = QtWidgets.QLabel(_composite_rebin_status_text(group, config))
         status_label.setObjectName("group_composite_status")
         status_label.setWordWrap(True)
         status_label.setToolTip(
             "Shows whether the cached composite rebin is current. Pending manual rebinning will be forced automatically for fit and viewer operations."
         )
-        controls_layout.addWidget(status_label, len(axes) + 3, 0, 1, len(headers))
+        controls_layout.addWidget(status_label, len(axes) + 4, 0, 1, len(headers))
         action_row = QtWidgets.QHBoxLayout()
         rebin_now_button = QtWidgets.QPushButton("Rebin now")
         rebin_now_button.setObjectName("group_composite_rebin_now")
@@ -15111,7 +15363,7 @@ class NfitProjectExplorer:
         rebin_now_button.clicked.connect(lambda: self.rebin_composite_now(group))
         action_row.addWidget(rebin_now_button)
         action_row.addStretch(1)
-        controls_layout.addLayout(action_row, len(axes) + 4, 0, 1, len(headers))
+        controls_layout.addLayout(action_row, len(axes) + 5, 0, 1, len(headers))
         layout.addWidget(controls)
         return box
 
@@ -16529,33 +16781,54 @@ class NfitProjectExplorer:
         save_rebin_button.setEnabled(_dataset_can_rebin(dataset))
         save_rebin_button.setToolTip("Export the current rebinned dataset directly to a NumPy archive.")
         save_rebin_button.clicked.connect(self.save_rebin_for_selection)
+        coverage_label = QtWidgets.QLabel("Minimum coverage")
+        coverage_edit = QtWidgets.QLineEdit(_format_number(_rebin_minimum_coverage(config)))
+        coverage_edit.setObjectName("dataset_rebin_minimum_coverage")
+        coverage_edit.setMaximumWidth(70)
+        coverage_tooltip = (
+            "Mask rebinned output bins whose measured geometric support is below this fraction "
+            "of the requested bin volume. Enter a value from 0 to 1."
+        )
+        coverage_label.setToolTip(coverage_tooltip)
+        coverage_edit.setToolTip(coverage_tooltip)
+        coverage_edit.editingFinished.connect(
+            lambda editor=coverage_edit: self._set_dataset_rebin_minimum_coverage(
+                dataset, group, editor
+            )
+        )
         option_row.addWidget(fractional_check)
         option_row.addWidget(auto_check)
         option_row.addWidget(mean_label)
         option_row.addWidget(mean_combo)
-        option_row.addWidget(batch_label)
-        option_row.addWidget(batch_spin)
         option_row.addStretch(1)
         controls_layout.addLayout(option_row, len(config.get("axes", [])) + 1, 0, 1, last_column + 1)
+        quality_row = QtWidgets.QHBoxLayout()
+        quality_row.addWidget(coverage_label)
+        quality_row.addWidget(coverage_edit)
+        quality_row.addSpacing(12)
+        quality_row.addWidget(batch_label)
+        quality_row.addWidget(batch_spin)
+        quality_row.addStretch(1)
+        controls_layout.addLayout(quality_row, len(config.get("axes", [])) + 2, 0, 1, last_column + 1)
         symmetry_row = QtWidgets.QHBoxLayout()
         symmetry_row.addWidget(symmetry_check)
         symmetry_row.addWidget(symmetry_mode)
         symmetry_row.addWidget(symmetry_expression, 1)
         symmetry_row.addWidget(symmetry_preview)
-        controls_layout.addLayout(symmetry_row, len(config.get("axes", [])) + 2, 0, 1, last_column + 1)
+        controls_layout.addLayout(symmetry_row, len(config.get("axes", [])) + 3, 0, 1, last_column + 1)
         status_label = QtWidgets.QLabel(_dataset_rebin_status_text(dataset, config))
         status_label.setObjectName("dataset_rebin_status")
         status_label.setWordWrap(True)
         status_label.setToolTip(
             "Shows whether the cached rebinned data is current. Pending manual rebinning will be forced automatically for fit, view, and export operations."
         )
-        controls_layout.addWidget(status_label, len(config.get("axes", [])) + 3, 0, 1, last_column + 1)
+        controls_layout.addWidget(status_label, len(config.get("axes", [])) + 4, 0, 1, last_column + 1)
         action_row = QtWidgets.QHBoxLayout()
         action_row.addWidget(rebin_now_button)
         action_row.addWidget(create_button)
         action_row.addWidget(save_rebin_button)
         action_row.addStretch(1)
-        controls_layout.addLayout(action_row, len(config.get("axes", [])) + 4, 0, 1, last_column + 1)
+        controls_layout.addLayout(action_row, len(config.get("axes", [])) + 5, 0, 1, last_column + 1)
         rebin_layout.addWidget(controls)
         layout.addWidget(rebin_box)
         return group_box
@@ -17313,6 +17586,26 @@ class NfitProjectExplorer:
         config["normalize"] = True
         self._after_dataset_rebin_changed(dataset, group)
 
+    def _set_dataset_rebin_minimum_coverage(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup | None,
+        editor: Any,
+    ) -> None:
+        config = dataset_rebin_config(dataset)
+        try:
+            value = float(editor.text())
+        except ValueError:
+            editor.setText(_format_number(_rebin_minimum_coverage(config)))
+            return
+        if not np.isfinite(value) or not 0.0 <= value <= 1.0:
+            editor.setText(_format_number(_rebin_minimum_coverage(config)))
+            return
+        if np.isclose(_rebin_minimum_coverage(config), value):
+            return
+        config["minimum_coverage"] = value
+        self._after_dataset_rebin_changed(dataset, group)
+
     def _set_dataset_rebin_max_batch_mb(
         self,
         dataset: DatasetEntry,
@@ -17409,6 +17702,25 @@ class NfitProjectExplorer:
             return
         config["mean_weighting"] = value
         config["normalize"] = True
+        self._after_group_composite_changed(group)
+
+    def _set_group_composite_minimum_coverage(
+        self,
+        group: DataGroup | _CompositeScope,
+        editor: Any,
+    ) -> None:
+        config = data_group_composite_config(group)
+        try:
+            value = float(editor.text())
+        except ValueError:
+            editor.setText(_format_number(_rebin_minimum_coverage(config)))
+            return
+        if not np.isfinite(value) or not 0.0 <= value <= 1.0:
+            editor.setText(_format_number(_rebin_minimum_coverage(config)))
+            return
+        if np.isclose(_rebin_minimum_coverage(config), value):
+            return
+        config["minimum_coverage"] = value
         self._after_group_composite_changed(group)
 
     def _set_group_composite_max_batch_mb(self, group: DataGroup | _CompositeScope, value: int) -> None:

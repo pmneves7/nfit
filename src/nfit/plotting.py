@@ -8,7 +8,7 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 from .dataset import PointData4D, PointListData
-from .mdhisto import MDHistoData, mdhisto_measured_bins
+from .mdhisto import MDHistoData, mdhisto_coverage_fraction, mdhisto_measured_bins
 from .quantities import display_axis_label, display_channel_label, display_unit
 
 
@@ -145,6 +145,7 @@ def plot_mdhisto_slice(
     channel: str = "signal",
     selections: dict[int, tuple[float, float]] | None = None,
     integrate_checks: dict[int, bool] | None = None,
+    coverage_threshold: float = 0.9,
     cmap: str = "viridis",
     color_scale: str = "linear",
     auto_limits: str = "min/max",
@@ -185,6 +186,7 @@ def plot_mdhisto_slice(
         cmap=cmap,
         color_scale=color_scale,
         auto_limits=auto_limits,
+        coverage_threshold=coverage_threshold,
     )
     if selections:
         model.selections.update({int(dim): tuple(value) for dim, value in selections.items()})
@@ -321,6 +323,7 @@ def prepare_mdhisto_waterfall(
     selections: dict[int, tuple[float, float]] | None = None,
     integrate_checks: dict[int, bool] | None = None,
     waterfall_step: float | None = None,
+    coverage_threshold: float = 0.9,
     masked: bool = True,
     smoothing_sigma_x: float = 0.0,
     smoothing_sigma_waterfall: float = 0.0,
@@ -369,6 +372,7 @@ def prepare_mdhisto_waterfall(
                 y_dim=_waterfall_other_axis(dataset, axis_index),
                 channel=channel,
                 masked=masked,
+                coverage_threshold=coverage_threshold,
             )
             view = smooth_mdhisto_view(
                 model.slice_arrays(),
@@ -385,6 +389,7 @@ def prepare_mdhisto_waterfall(
                     y_dim=_waterfall_other_axis(dataset, axis_index),
                     channel="fit",
                     masked=False,
+                    coverage_threshold=0.0,
                 )
                 fit_view = smooth_mdhisto_view(
                     fit_model.slice_arrays(),
@@ -417,6 +422,7 @@ def prepare_mdhisto_waterfall(
         y_dim=waterfall_index,
         channel=channel,
         masked=masked,
+        coverage_threshold=0.0,
     )
     if selections:
         model.selections.update(
@@ -441,6 +447,7 @@ def prepare_mdhisto_waterfall(
             y_dim=waterfall_index,
             channel="fit",
             masked=False,
+            coverage_threshold=0.0,
         )
         if selections:
             fit_model.selections.update(
@@ -466,6 +473,8 @@ def prepare_mdhisto_waterfall(
         errors,
         model_values,
         step=waterfall_step,
+        coverage_threshold=coverage_threshold,
+        unmask_model=unmask_model,
         axis_name=axis.name,
         axis_units=axis.units,
     )
@@ -481,6 +490,7 @@ def plot_mdhisto_waterfall(
     selections: dict[int, tuple[float, float]] | None = None,
     integrate_checks: dict[int, bool] | None = None,
     waterfall_step: float | None = None,
+    coverage_threshold: float = 0.9,
     trace_offset: float | None = None,
     cmap: str = "viridis",
     color_range: tuple[float, float] = (0.0, 1.0),
@@ -530,6 +540,7 @@ def plot_mdhisto_waterfall(
         selections=selections,
         integrate_checks=integrate_checks,
         waterfall_step=waterfall_step,
+        coverage_threshold=coverage_threshold,
         masked=masked,
         smoothing_sigma_x=smoothing_sigma_x,
         smoothing_sigma_waterfall=smoothing_sigma_waterfall,
@@ -807,6 +818,8 @@ def _coarsen_waterfall_view(
     model_values: np.ndarray | None,
     *,
     step: float | None,
+    coverage_threshold: float,
+    unmask_model: bool,
     axis_name: str,
     axis_units: str,
 ) -> list[WaterfallTrace]:
@@ -831,10 +844,27 @@ def _coarsen_waterfall_view(
             selected_values,
             selected_errors,
         )
+        selected_coverage = np.asarray(
+            view.get("coverage_fraction", np.ones(values.shape, dtype=float))[selected, :],
+            dtype=float,
+        )
+        widths = np.diff(y_edges)[selected]
+        coverage = np.sum(
+            selected_coverage * widths[:, None],
+            axis=0,
+        ) / np.sum(widths)
+        insufficient = ~np.isfinite(coverage) | (
+            coverage < float(np.clip(coverage_threshold, 0.0, 1.0))
+        )
+        profile = np.where(insufficient, np.nan, profile)
+        if uncertainty is not None:
+            uncertainty = np.where(insufficient, np.nan, uncertainty)
         model_profile = None
         if model_values is not None:
             selected_model = np.asarray(model_values[selected, :], dtype=float)
             model_profile = _waterfall_profile_with_weights(selected_model, weights)
+            if not unmask_model:
+                model_profile = np.where(insufficient, np.nan, model_profile)
         coordinate = float(np.nanmean(y[selected]))
         displayed_unit = display_unit(axis_units) if axis_units else ""
         unit_suffix = f" {displayed_unit}" if displayed_unit else ""
@@ -1354,6 +1384,21 @@ def _draw_mdhisto_roi_cuts(
         y_cut, y_error = inverse_variance_weighted_profile(
             z[selected], errors[selected], axis=1
         )
+        coverage = np.asarray(view["coverage_fraction"], dtype=float)[selected]
+        x_widths = np.diff(np.asarray(view["x_edges"], dtype=float))[x_mask]
+        y_widths = np.diff(np.asarray(view["y_edges"], dtype=float))[y_mask]
+        x_coverage = np.sum(coverage * y_widths[:, None], axis=0) / np.sum(
+            y_widths
+        )
+        y_coverage = np.sum(coverage * x_widths[None, :], axis=1) / np.sum(
+            x_widths
+        )
+        x_insufficient = x_coverage < model.coverage_threshold
+        y_insufficient = y_coverage < model.coverage_threshold
+        x_cut = np.where(x_insufficient, np.nan, x_cut)
+        x_error = np.where(x_insufficient, np.nan, x_error)
+        y_cut = np.where(y_insufficient, np.nan, y_cut)
+        y_error = np.where(y_insufficient, np.nan, y_error)
         ax_xcut.errorbar(
             view["x_centers"][x_mask], x_cut, yerr=x_error, fmt="-", lw=1.2, capsize=0
         )
@@ -1445,7 +1490,16 @@ class MDHistoSliceViewer:
     COLOR_SCALES = ("linear", "log", "symmetriclog", "asinh", "power")
     AUTO_LIMITS = ("min/max", "N-sigma", "N IQR", "Nth percentile")
     COLORMAPS = ("viridis", "magma", "plasma", "cividis", "turbo", "grey")
-    CHANNELS = ("signal", "errors", "num_events", "combined_mask", "file_mask", "nfit_mask")
+    CHANNELS = (
+        "signal",
+        "errors",
+        "num_events",
+        "coverage_fraction",
+        "coverage_mask",
+        "combined_mask",
+        "file_mask",
+        "nfit_mask",
+    )
     CHANNEL_ALIASES = {
         "multiplicity": "num_events",
         "events": "num_events",
@@ -1457,6 +1511,8 @@ class MDHistoSliceViewer:
         "signal": "Signal",
         "errors": "Error",
         "num_events": "Multiplicity",
+        "coverage_fraction": "Coverage",
+        "coverage_mask": "Coverage mask",
         "combined_mask": "Combined mask",
         "file_mask": "File mask",
         "nfit_mask": "Nfit mask",
@@ -1474,6 +1530,7 @@ class MDHistoSliceViewer:
         auto_limits: str = "min/max",
         integrate: bool = False,
         masked: bool = True,
+        coverage_threshold: float = 0.9,
     ) -> None:
         self.data = data
         self.is_point_list = isinstance(data, PointListData)
@@ -1530,6 +1587,7 @@ class MDHistoSliceViewer:
         self.manual_vmax: float | None = None
         self.integrate = integrate
         self.masked = masked
+        self.coverage_threshold = float(np.clip(coverage_threshold, 0.0, 1.0))
         self.selections = self._default_selections()
 
         self.fig = None
@@ -1643,7 +1701,9 @@ class MDHistoSliceViewer:
         if getattr(self, "is_point_list", False):
             return self._point_slice_arrays()
         selections = self._normalized_selections()
-        signal, variance, events, mask = self._reduce_arrays(selections)
+        signal, variance, events, mask, coverage, coverage_mask = self._reduce_arrays(
+            selections
+        )
 
         remaining = [dim for dim in range(self.data.signal.ndim) if dim in (self.x_dim, self.y_dim)]
         y_pos = remaining.index(self.y_dim)
@@ -1668,8 +1728,16 @@ class MDHistoSliceViewer:
             "mask": mask2d,
             "file_mask": self._slice_metadata_mask("file_mask", selections),
             "nfit_mask": self._slice_metadata_mask("nfit_mask", selections),
+            "coverage_fraction": np.moveaxis(
+                coverage, (y_pos, x_pos), (0, 1)
+            ),
+            "coverage_mask": np.moveaxis(
+                coverage_mask, (y_pos, x_pos), (0, 1)
+            ),
         }
         for name in self._metadata_channel_names():
+            if name == "coverage_fraction":
+                continue
             values2d = self._slice_metadata_channel(name, selections)
             if self.masked:
                 values2d = np.where(mask2d, np.nan, values2d)
@@ -1714,6 +1782,7 @@ class MDHistoSliceViewer:
     def _reduce_arrays(self, selections: dict[int, tuple[int, int] | int]):
         index = []
         reduce_axes = []
+        integrated_dims: list[tuple[int, int, int, int]] = []
         output_axis = 0
         for dim in range(self.data.signal.ndim):
             if dim in (self.x_dim, self.y_dim):
@@ -1725,6 +1794,7 @@ class MDHistoSliceViewer:
                     start, stop = selection
                     index.append(slice(start, stop + 1))
                     reduce_axes.append(output_axis)
+                    integrated_dims.append((output_axis, dim, start, stop))
                     output_axis += 1
                 else:
                     index.append(selection)
@@ -1733,18 +1803,45 @@ class MDHistoSliceViewer:
         variance = np.asarray(self.data.errors[tuple(index)], dtype=float) ** 2
         events = np.asarray(self.data.num_events[tuple(index)], dtype=float)
         mask = np.asarray(self.data.mask[tuple(index)], dtype=bool)
+        coverage = np.asarray(
+            mdhisto_coverage_fraction(self.data)[tuple(index)],
+            dtype=float,
+        )
         if self.masked:
             signal = np.where(mask, np.nan, signal)
             variance = np.where(mask, np.nan, variance)
             events = np.where(mask, 0.0, events)
+            coverage = np.where(mask, 0.0, coverage)
+        coverage_weight = np.ones(coverage.shape, dtype=float)
+        for axis, dim, start, stop in integrated_dims:
+            widths = np.diff(self._axis_edges(dim))[start : stop + 1]
+            shape = [1] * coverage.ndim
+            shape[axis] = widths.size
+            coverage_weight *= widths.reshape(shape)
+        coverage_numerator = coverage * coverage_weight
+        coverage_denominator = coverage_weight
         for axis in sorted(reduce_axes, reverse=True):
             signal = np.nansum(signal, axis=axis)
             variance = np.nansum(variance, axis=axis)
             events = np.nansum(events, axis=axis)
             mask = np.all(mask, axis=axis)
+            coverage_numerator = np.sum(coverage_numerator, axis=axis)
+            coverage_denominator = np.sum(coverage_denominator, axis=axis)
             signal, variance, mask = self._blank_empty_bins(signal, variance, events, mask)
+        coverage = np.zeros(np.asarray(coverage_numerator).shape, dtype=float)
+        np.divide(
+            coverage_numerator,
+            coverage_denominator,
+            out=coverage,
+            where=coverage_denominator > 0.0,
+        )
+        coverage = np.clip(coverage, 0.0, 1.0)
+        coverage_mask = coverage < self.coverage_threshold
+        mask = np.asarray(mask, dtype=bool) | coverage_mask
+        signal = np.where(coverage_mask, np.nan, signal)
+        variance = np.where(coverage_mask, np.nan, variance)
         signal, variance, mask = self._blank_empty_bins(signal, variance, events, mask)
-        return signal, variance, events, mask
+        return signal, variance, events, mask, coverage, coverage_mask
 
     def _metadata_channel_names(self) -> tuple[str, ...]:
         """Return grid-shaped float channels stored in metadata (fit results)."""
@@ -1756,7 +1853,11 @@ class MDHistoSliceViewer:
             value = self.data.metadata.get(name)
             if isinstance(value, np.ndarray) and value.shape == self.data.shape:
                 names.append(name)
-        names.extend(self.data.auxiliary_channels)
+        names.extend(
+            name
+            for name in self.data.auxiliary_channels
+            if name not in type(self).CHANNELS
+        )
         return tuple(names)
 
     def refresh_metadata_channels(self) -> None:
@@ -2422,13 +2523,29 @@ def smooth_mdhisto_view(
         return result
     if not any(value > 0.0 for value in sigma):
         return result
-    excluded = {"combined_mask", "mask", "file_mask", "nfit_mask"}
+    excluded = {
+        "combined_mask",
+        "mask",
+        "file_mask",
+        "nfit_mask",
+        "coverage_fraction",
+        "coverage_mask",
+    }
     for name, values in view.items():
         array = np.asarray(values)
         if name in excluded or array.shape != reference.shape or array.dtype == bool:
             continue
         if name == "errors":
-            result[name] = gaussian_smooth_uncertainty(array, sigma)
+            smoothed = gaussian_smooth_uncertainty(array, sigma)
         else:
-            result[name] = gaussian_smooth_nan(array, sigma)
+            smoothed = gaussian_smooth_nan(array, sigma)
+        coverage_mask = np.asarray(
+            view.get("coverage_mask", np.zeros(reference.shape, dtype=bool)),
+            dtype=bool,
+        )
+        result[name] = (
+            np.where(coverage_mask, np.nan, smoothed)
+            if coverage_mask.shape == smoothed.shape
+            else smoothed
+        )
     return result

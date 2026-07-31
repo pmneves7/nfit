@@ -19,6 +19,13 @@ or integrate a range. Channel labels and units come from the dataset's declared
 physical quantities. **Apply masks** hides the combined file and nfit mask in
 the figure; fitting always excludes masked data.
 
+**Minimum coverage** applies independently to viewer reductions. A displayed
+pixel is masked when the measured fraction of its requested hidden-axis
+integration volume is below the cutoff. The same cutoff is recomputed over
+each box selected by the histogram tool before its horizontal and vertical
+profiles are drawn. Coverage is available as its own channel and in the cursor
+readout; it does not alter pixel opacity or the intensity colormap.
+
 For a histogram box cut, data are combined with inverse-variance weights:
 
 $$
@@ -62,6 +69,8 @@ Choose **Visualization > Waterfall** to stack one-dimensional traces.
   that sibling's immediate group.
 - **Bin width** controls coarsening along the waterfall axis; **Auto** targets
   roughly ten traces.
+- **Minimum coverage** is specific to waterfall trace bins. It is independent
+  of the slice and histogram cutoff.
 
 Trace offset, colors, marker fill, zero references, labels, and model overlays
 are configurable. Saved plot recipes and generated scripts retain these

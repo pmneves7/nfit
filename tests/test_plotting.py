@@ -391,6 +391,7 @@ def test_qt_channel_dropdown_switches_displayed_channel_and_export_script():
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
 
     viewer.channel_combo.setCurrentText("errors")
+    viewer.coverage_threshold_spin.setValue(0.83)
 
     assert viewer.model.channel == "errors"
     assert (
@@ -399,6 +400,40 @@ def test_qt_channel_dropdown_switches_displayed_channel_and_export_script():
     )
     np.testing.assert_allclose(viewer.image.get_array(), viewer.slice_arrays()["errors"])
     assert "channel='errors'" in viewer.figure_script()
+    assert "coverage_threshold=0.83" in viewer.figure_script()
+    assert viewer.current_plot_settings()["coverage_threshold"] == pytest.approx(0.83)
+
+
+def test_qt_histogram_tool_recomputes_coverage_over_selected_box():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_mdhisto_data()
+    coverage = np.ones(data.shape, dtype=float)
+    coverage[:, :, :2, :] = 0.5
+    data = data.with_updates(
+        auxiliary_channels={
+            "coverage_fraction": MDHistoChannel(
+                coverage,
+                label="Coverage",
+                unit="fraction",
+            )
+        }
+    )
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    viewer.coverage_threshold_spin.setValue(0.8)
+    view = viewer._current_slice
+    viewer._update_histogram_cuts_from_extents(
+        (
+            float(view["x_edges"][0]),
+            float(view["x_edges"][-1]),
+            float(view["y_edges"][0]),
+            float(view["y_edges"][-1]),
+        )
+    )
+
+    assert viewer.ax_xcut.lines
+    assert np.all(np.isnan(viewer.ax_xcut.lines[0].get_ydata()))
 
 
 def test_qt_plot_smoothing_is_axis_specific_and_does_not_modify_dataset_values():
@@ -988,6 +1023,7 @@ def test_qt_waterfall_mode_exposes_controls_and_exports_script():
     )
     assert not viewer.waterfall_group.isHidden()
     assert not viewer.waterfall_step_spin.isHidden()
+    assert viewer.coverage_threshold_spin.toolTip()
     assert viewer.waterfall_offset_auto_check.isChecked()
     assert viewer.waterfall_offset_auto is True
     for control in (
@@ -995,6 +1031,7 @@ def test_qt_waterfall_mode_exposes_controls_and_exports_script():
         viewer.waterfall_step_spin,
         viewer.waterfall_step_slider,
         viewer.waterfall_step_auto_check,
+        viewer.waterfall_coverage_threshold_spin,
         viewer.waterfall_offset_spin,
         viewer.waterfall_offset_slider,
         viewer.waterfall_offset_auto_check,
@@ -1033,6 +1070,7 @@ def test_qt_waterfall_mode_exposes_controls_and_exports_script():
     viewer.marker_face_color_combo.setCurrentText("outline")
     viewer.waterfall_offset_slider.setValue(250)
     viewer.waterfall_step_slider.setValue(600)
+    viewer.waterfall_coverage_threshold_spin.setValue(0.82)
 
     settings = viewer.current_plot_settings()
     script = viewer.figure_script()
@@ -1040,6 +1078,7 @@ def test_qt_waterfall_mode_exposes_controls_and_exports_script():
     assert settings["waterfall_cmap"] == "plasma"
     assert settings["waterfall_color_min"] == pytest.approx(0.1)
     assert settings["waterfall_color_max"] == pytest.approx(0.85)
+    assert settings["waterfall_coverage_threshold"] == pytest.approx(0.82)
     assert settings["waterfall_zero_style"] == ":"
     assert settings["waterfall_model_color"] == "#000000"
     assert settings["waterfall_trace_label_suffix"] == " at 6 K"
@@ -1051,6 +1090,7 @@ def test_qt_waterfall_mode_exposes_controls_and_exports_script():
         for trace in viewer._current_waterfall_traces
     )
     assert "plot_mdhisto_waterfall" in script
+    assert "coverage_threshold=0.82" in script
     compile(script, "waterfall_figure.py", "exec")
 
     restored = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
@@ -1059,6 +1099,7 @@ def test_qt_waterfall_mode_exposes_controls_and_exports_script():
     assert restored.waterfall_cmap == "plasma"
     assert restored.waterfall_color_min == pytest.approx(0.1)
     assert restored.waterfall_color_max == pytest.approx(0.85)
+    assert restored.waterfall_coverage_threshold == pytest.approx(0.82)
     assert restored.waterfall_zero_style == ":"
     assert restored.waterfall_trace_label_suffix == " at 6 K"
     assert restored.waterfall_trace_label_font_size == pytest.approx(14.0)
@@ -1492,7 +1533,10 @@ def test_qt_cursor_readout_uses_fixed_labels_and_uncertainty_precision():
     assert viewer.cursor_xy_label.text() == "(x, y) = (0, 0.75)"
     assert viewer.cursor_hkle_label.text() == "(H, K, L, E) = (1.5, -1.5, 0.75, 0.75)"
     assert viewer.cursor_q_label.text() == "|Q| = ? Å⁻¹"
-    assert viewer.cursor_intensity_label.text() == "Signal = -0.0067 ± 0.0013"
+    assert (
+        viewer.cursor_intensity_label.text()
+        == "Signal = -0.0067 ± 0.0013; coverage = 100.0%"
+    )
     assert viewer.ax_image.format_coord(1.0, 2.0) == ""
 
 

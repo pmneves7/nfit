@@ -189,6 +189,8 @@ class QtMDHistoSliceViewer:
         self.cmap_reverse_button = None
         self.channel_combo = None
         self.apply_masks_check = None
+        self.coverage_threshold_label = None
+        self.coverage_threshold_spin = None
         self.scale_combo = None
         self.limits_combo = None
         self.autoscale_check = None
@@ -253,6 +255,7 @@ class QtMDHistoSliceViewer:
         self.waterfall_step_spin = None
         self.waterfall_step_slider = None
         self.waterfall_step_auto_check = None
+        self.waterfall_coverage_threshold_spin = None
         self.waterfall_offset_spin = None
         self.waterfall_offset_slider = None
         self.waterfall_offset_auto_check = None
@@ -294,7 +297,9 @@ class QtMDHistoSliceViewer:
         self.fit_line_color = "#d62728"
         self.fit_line_width = 2.0
         self.residual_percent = 30
+        self.coverage_threshold = 0.9
         self.waterfall_step = 1.0
+        self.waterfall_coverage_threshold = 0.9
         self.waterfall_step_auto = True
         self.waterfall_offset = 1.0
         self.waterfall_offset_auto = True
@@ -484,9 +489,11 @@ class QtMDHistoSliceViewer:
             "unmask_model": self.unmask_model,
             "show_residual": self.show_residual,
             "apply_masks": self.model.masked,
+            "coverage_threshold": self.coverage_threshold,
             "show_box_tool": bool(self.show_box_check and self.show_box_check.isChecked()),
             "roi_enabled": bool(self.roi_button and self.roi_button.isChecked()),
             "waterfall_step": self.waterfall_step,
+            "waterfall_coverage_threshold": self.waterfall_coverage_threshold,
             "waterfall_step_auto": self.waterfall_step_auto,
             "waterfall_offset": self.waterfall_offset,
             "waterfall_offset_auto": self.waterfall_offset_auto,
@@ -556,7 +563,17 @@ class QtMDHistoSliceViewer:
         self._set_show_residual(bool(settings.get("show_residual", self.show_residual)))
         self.model.masked = bool(settings.get("apply_masks", self.model.masked))
         self._set_checkbox_silent(self.apply_masks_check, self.model.masked)
+        self._set_coverage_threshold(
+            float(settings.get("coverage_threshold", self.coverage_threshold)),
+            redraw=False,
+        )
         self.waterfall_step = float(settings.get("waterfall_step", self.waterfall_step))
+        self.waterfall_coverage_threshold = float(
+            settings.get(
+                "waterfall_coverage_threshold",
+                self.waterfall_coverage_threshold,
+            )
+        )
         self.waterfall_step_auto = bool(
             settings.get("waterfall_step_auto", self.waterfall_step_auto)
         )
@@ -803,6 +820,7 @@ class QtMDHistoSliceViewer:
                 f"    channel={self.model.channel!r},",
                 f"    selections={self._export_selections()!r},",
                 f"    integrate_checks={self._export_integrate_checks()!r},",
+                f"    coverage_threshold={self.coverage_threshold!r},",
                 f"    cmap={self.model._effective_cmap()!r},",
                 f"    color_scale={self.model.color_scale!r},",
                 f"    auto_limits={self.model.auto_limits!r},",
@@ -875,6 +893,7 @@ class QtMDHistoSliceViewer:
                 f"    selections={self._export_selections()!r},",
                 f"    integrate_checks={self._export_integrate_checks()!r},",
                 f"    waterfall_step={self.waterfall_step!r},",
+                f"    coverage_threshold={self.waterfall_coverage_threshold!r},",
                 f"    trace_offset={self.waterfall_offset!r},",
                 f"    cmap={self.waterfall_cmap!r},",
                 f"    color_range={(self.waterfall_color_min, self.waterfall_color_max)!r},",
@@ -1114,6 +1133,25 @@ class QtMDHistoSliceViewer:
         dataset_layout.addWidget(self.show_fit_check, 2, 1)
         dataset_layout.addWidget(self.show_residual_check, 2, 2)
         dataset_layout.addWidget(self.unmask_model_check, 3, 1)
+        coverage_label = QtWidgets.QLabel("Coverage")
+        self.coverage_threshold_label = coverage_label
+        self.coverage_threshold_spin = _make_float_spinbox(0.0, 1.0)
+        self.coverage_threshold_spin.setObjectName("viewer_coverage_threshold")
+        self.coverage_threshold_spin.setDecimals(3)
+        self.coverage_threshold_spin.setSingleStep(0.05)
+        self.coverage_threshold_spin.setMaximumWidth(82)
+        self.coverage_threshold_spin.setValue(self.coverage_threshold)
+        coverage_tooltip = (
+            "Mask slice pixels and histogram-tool reductions whose measured support "
+            "is below this fraction of the requested integration volume."
+        )
+        coverage_label.setToolTip(coverage_tooltip)
+        self.coverage_threshold_spin.setToolTip(coverage_tooltip)
+        self.coverage_threshold_spin.valueChanged.connect(
+            self._set_coverage_threshold
+        )
+        dataset_layout.addWidget(coverage_label, 4, 0)
+        dataset_layout.addWidget(self.coverage_threshold_spin, 4, 1)
         self.residual_split_label = QtWidgets.QLabel()
         self.residual_split_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.residual_split_slider.setMinimumWidth(80)
@@ -1125,8 +1163,8 @@ class QtMDHistoSliceViewer:
             "Vertical position of the separator between the data and residual axes."
         )
         self.residual_split_slider.valueChanged.connect(self._set_residual_percent)
-        dataset_layout.addWidget(self.residual_split_label, 4, 0)
-        dataset_layout.addWidget(self.residual_split_slider, 4, 1, 1, 2)
+        dataset_layout.addWidget(self.residual_split_label, 5, 0)
+        dataset_layout.addWidget(self.residual_split_slider, 5, 1, 1, 2)
         dataset_layout.setColumnStretch(1, 1)
         controls_layout.addWidget(dataset_group)
 
@@ -1494,6 +1532,33 @@ class QtMDHistoSliceViewer:
         waterfall_layout.addWidget(self.waterfall_step_auto_check, 1, 2, 1, 2)
         waterfall_layout.addWidget(self.waterfall_step_slider, 2, 0, 1, 4)
 
+        waterfall_coverage_label = QtWidgets.QLabel("Coverage")
+        self.waterfall_coverage_threshold_spin = _make_float_spinbox(0.0, 1.0)
+        self.waterfall_coverage_threshold_spin.setObjectName(
+            "waterfall_coverage_threshold"
+        )
+        self.waterfall_coverage_threshold_spin.setDecimals(3)
+        self.waterfall_coverage_threshold_spin.setSingleStep(0.05)
+        self.waterfall_coverage_threshold_spin.setMaximumWidth(82)
+        self.waterfall_coverage_threshold_spin.setValue(
+            self.waterfall_coverage_threshold
+        )
+        waterfall_coverage_tooltip = (
+            "Mask coarse waterfall samples whose measured support is below this "
+            "fraction of the requested trace-bin volume."
+        )
+        waterfall_coverage_label.setToolTip(waterfall_coverage_tooltip)
+        self.waterfall_coverage_threshold_spin.setToolTip(
+            waterfall_coverage_tooltip
+        )
+        self.waterfall_coverage_threshold_spin.valueChanged.connect(
+            self._set_waterfall_coverage_threshold
+        )
+        waterfall_layout.addWidget(waterfall_coverage_label, 3, 0)
+        waterfall_layout.addWidget(
+            self.waterfall_coverage_threshold_spin, 3, 1
+        )
+
         self.waterfall_offset_spin = _make_float_spinbox(0.0, 1.0e12)
         self.waterfall_offset_spin.setDecimals(8)
         self.waterfall_offset_spin.setValue(self.waterfall_offset)
@@ -1518,10 +1583,10 @@ class QtMDHistoSliceViewer:
             "Set the trace offset to half the largest absolute intensity among the prepared traces."
         )
         self.waterfall_offset_auto_check.toggled.connect(self._set_waterfall_offset_auto)
-        waterfall_layout.addWidget(QtWidgets.QLabel("Trace offset"), 3, 0)
-        waterfall_layout.addWidget(self.waterfall_offset_spin, 3, 1)
-        waterfall_layout.addWidget(self.waterfall_offset_auto_check, 3, 2, 1, 2)
-        waterfall_layout.addWidget(self.waterfall_offset_slider, 4, 0, 1, 4)
+        waterfall_layout.addWidget(QtWidgets.QLabel("Trace offset"), 4, 0)
+        waterfall_layout.addWidget(self.waterfall_offset_spin, 4, 1)
+        waterfall_layout.addWidget(self.waterfall_offset_auto_check, 4, 2, 1, 2)
+        waterfall_layout.addWidget(self.waterfall_offset_slider, 5, 0, 1, 4)
 
         self.waterfall_cmap_combo = QtWidgets.QComboBox()
         self.waterfall_cmap_combo.addItems(_WATERFALL_COLORMAPS)
@@ -1535,9 +1600,9 @@ class QtMDHistoSliceViewer:
         self.waterfall_reverse_check.setChecked(self.waterfall_reverse_colors)
         self.waterfall_reverse_check.setToolTip("Reverse the order of colors sampled from the sequence.")
         self.waterfall_reverse_check.toggled.connect(self._set_waterfall_reverse_colors)
-        waterfall_layout.addWidget(QtWidgets.QLabel("Colors"), 5, 0)
-        waterfall_layout.addWidget(self.waterfall_cmap_combo, 5, 1)
-        waterfall_layout.addWidget(self.waterfall_reverse_check, 5, 2, 1, 2)
+        waterfall_layout.addWidget(QtWidgets.QLabel("Colors"), 6, 0)
+        waterfall_layout.addWidget(self.waterfall_cmap_combo, 6, 1)
+        waterfall_layout.addWidget(self.waterfall_reverse_check, 6, 2, 1, 2)
 
         self.waterfall_color_range_slider = _DualRangeSlider()
         self.waterfall_color_range_slider.set_values(0, 1000)
@@ -1549,10 +1614,10 @@ class QtMDHistoSliceViewer:
             self._set_waterfall_color_range
         )
         self.waterfall_color_range_label = QtWidgets.QLabel("Color range")
-        waterfall_layout.addWidget(self.waterfall_color_range_label, 6, 0)
+        waterfall_layout.addWidget(self.waterfall_color_range_label, 7, 0)
         waterfall_layout.addWidget(
             self.waterfall_color_range_slider,
-            6,
+            7,
             1,
             1,
             3,
@@ -1576,8 +1641,8 @@ class QtMDHistoSliceViewer:
         self.waterfall_zero_color_combo.currentTextChanged.connect(
             self._set_waterfall_zero_color
         )
-        waterfall_layout.addWidget(self.waterfall_zero_check, 7, 0, 1, 2)
-        waterfall_layout.addWidget(self.waterfall_zero_color_combo, 7, 2, 1, 2)
+        waterfall_layout.addWidget(self.waterfall_zero_check, 8, 0, 1, 2)
+        waterfall_layout.addWidget(self.waterfall_zero_color_combo, 8, 2, 1, 2)
 
         self.waterfall_zero_style_combo = QtWidgets.QComboBox()
         self.waterfall_zero_style_combo.addItems(
@@ -1597,10 +1662,10 @@ class QtMDHistoSliceViewer:
         self.waterfall_zero_width_spin.valueChanged.connect(
             self._set_waterfall_zero_width
         )
-        waterfall_layout.addWidget(QtWidgets.QLabel("Reference style"), 8, 0)
-        waterfall_layout.addWidget(self.waterfall_zero_style_combo, 8, 1)
-        waterfall_layout.addWidget(QtWidgets.QLabel("Width"), 8, 2)
-        waterfall_layout.addWidget(self.waterfall_zero_width_spin, 8, 3)
+        waterfall_layout.addWidget(QtWidgets.QLabel("Reference style"), 9, 0)
+        waterfall_layout.addWidget(self.waterfall_zero_style_combo, 9, 1)
+        waterfall_layout.addWidget(QtWidgets.QLabel("Width"), 9, 2)
+        waterfall_layout.addWidget(self.waterfall_zero_width_spin, 9, 3)
 
         self.waterfall_model_color_combo = QtWidgets.QComboBox()
         self.waterfall_model_color_combo.addItems(
@@ -1623,9 +1688,9 @@ class QtMDHistoSliceViewer:
         self.waterfall_trace_labels_check.toggled.connect(
             self._set_waterfall_trace_labels
         )
-        waterfall_layout.addWidget(QtWidgets.QLabel("Model colors"), 9, 0)
-        waterfall_layout.addWidget(self.waterfall_model_color_combo, 9, 1)
-        waterfall_layout.addWidget(self.waterfall_trace_labels_check, 9, 2, 1, 2)
+        waterfall_layout.addWidget(QtWidgets.QLabel("Model colors"), 10, 0)
+        waterfall_layout.addWidget(self.waterfall_model_color_combo, 10, 1)
+        waterfall_layout.addWidget(self.waterfall_trace_labels_check, 10, 2, 1, 2)
 
         self.waterfall_trace_label_suffix_edit = QtWidgets.QLineEdit()
         self.waterfall_trace_label_suffix_edit.setText(
@@ -1642,10 +1707,10 @@ class QtMDHistoSliceViewer:
         self.waterfall_trace_label_suffix_edit.textChanged.connect(
             self._set_waterfall_trace_label_suffix
         )
-        waterfall_layout.addWidget(QtWidgets.QLabel("Label suffix"), 10, 0)
+        waterfall_layout.addWidget(QtWidgets.QLabel("Label suffix"), 11, 0)
         waterfall_layout.addWidget(
             self.waterfall_trace_label_suffix_edit,
-            10,
+            11,
             1,
             1,
             3,
@@ -1674,16 +1739,16 @@ class QtMDHistoSliceViewer:
         self.waterfall_trace_label_color_combo.currentTextChanged.connect(
             self._set_waterfall_trace_label_color
         )
-        waterfall_layout.addWidget(QtWidgets.QLabel("Label size"), 11, 0)
+        waterfall_layout.addWidget(QtWidgets.QLabel("Label size"), 12, 0)
         waterfall_layout.addWidget(
             self.waterfall_trace_label_font_size_spin,
-            11,
+            12,
             1,
         )
-        waterfall_layout.addWidget(QtWidgets.QLabel("Label color"), 11, 2)
+        waterfall_layout.addWidget(QtWidgets.QLabel("Label color"), 12, 2)
         waterfall_layout.addWidget(
             self.waterfall_trace_label_color_combo,
-            11,
+            12,
             3,
         )
 
@@ -2163,6 +2228,7 @@ class QtMDHistoSliceViewer:
             auto_limits=self._initial_auto_limits,
             integrate=self._initial_integrate,
             masked=self._initial_masked,
+            coverage_threshold=self.coverage_threshold,
         )
         return _DatasetViewState(
             model=model,
@@ -2203,6 +2269,7 @@ class QtMDHistoSliceViewer:
             self.smoothing_x = float(state.smoothing_x)
             self.smoothing_y = float(state.smoothing_y)
             self.model.masked = bool(state.apply_masks)
+            self.model.coverage_threshold = self.coverage_threshold
             self.model.cmap_reversed = bool(state.cmap_reversed)
             self._box_tool_has_auto_shown_hist_axes = bool(state.box_tool_has_auto_shown_hist_axes)
             self._current_slice = None
@@ -2215,6 +2282,10 @@ class QtMDHistoSliceViewer:
             self._set_combo_silent(self.limits_combo, self.model.auto_limits)
             self._set_checkbox_silent(self.autoscale_check, self.model.autoscale)
             self._set_checkbox_silent(self.apply_masks_check, self.model.masked)
+            self._set_spin_silent(
+                self.coverage_threshold_spin,
+                self.coverage_threshold,
+            )
             self._set_spin_silent(self.gamma_spin, self.model.power_gamma)
             self._set_spin_silent(self.limit_n_spin, self._current_limit_n())
             self._set_spin_silent(self.font_size_spin, self.font_size)
@@ -2307,6 +2378,10 @@ class QtMDHistoSliceViewer:
         if self.waterfall_step_spin is None:
             return
         self._set_spin_silent(self.waterfall_step_spin, self.waterfall_step)
+        self._set_spin_silent(
+            self.waterfall_coverage_threshold_spin,
+            self.waterfall_coverage_threshold,
+        )
         self._set_checkbox_silent(
             self.waterfall_step_auto_check,
             self.waterfall_step_auto,
@@ -2498,6 +2573,22 @@ class QtMDHistoSliceViewer:
     def _set_apply_masks(self, checked: bool) -> None:
         self.model.masked = bool(checked)
         self.update_plot()
+
+    def _set_coverage_threshold(
+        self,
+        value: float,
+        *,
+        redraw: bool = True,
+    ) -> None:
+        self.coverage_threshold = float(np.clip(value, 0.0, 1.0))
+        self.model.coverage_threshold = self.coverage_threshold
+        if self.coverage_threshold_spin is not None:
+            self._set_spin_silent(
+                self.coverage_threshold_spin,
+                self.coverage_threshold,
+            )
+        if redraw:
+            self.update_plot()
 
     def _has_fit_channel(self) -> bool:
         return self._channel_available("fit")
@@ -2735,6 +2826,15 @@ class QtMDHistoSliceViewer:
         if self.waterfall_step_auto_check is not None and self.waterfall_step_auto_check.isChecked():
             self._set_checkbox_silent(self.waterfall_step_auto_check, False)
             self.waterfall_step_auto = False
+        self.update_plot(preserve_view=False)
+
+    def _set_waterfall_coverage_threshold(self, value: float) -> None:
+        self.waterfall_coverage_threshold = float(np.clip(value, 0.0, 1.0))
+        if self.waterfall_coverage_threshold_spin is not None:
+            self._set_spin_silent(
+                self.waterfall_coverage_threshold_spin,
+                self.waterfall_coverage_threshold,
+            )
         self.update_plot(preserve_view=False)
 
     def _set_waterfall_step_from_slider(self, position: int) -> None:
@@ -3174,6 +3274,12 @@ class QtMDHistoSliceViewer:
             self.line_group.setVisible(is_line or compare_active or is_waterfall)
         if self.waterfall_group is not None:
             self.waterfall_group.setVisible(is_waterfall)
+        for widget in (
+            self.coverage_threshold_label,
+            self.coverage_threshold_spin,
+        ):
+            if widget is not None:
+                widget.setVisible(not is_point and not is_waterfall)
         if self.waterfall_source_label is not None:
             if grouped_waterfall:
                 count = len(self._waterfall_1d_source_indices())
@@ -3520,6 +3626,7 @@ class QtMDHistoSliceViewer:
                 x_dim=self.data.axes[x_dim].name,
                 channel=self.model.channel,
                 masked=self.model.masked,
+                coverage_threshold=self.waterfall_coverage_threshold,
                 smoothing_sigma_x=self.smoothing_x,
                 include_model=self.show_fit,
                 unmask_model=self.unmask_model,
@@ -3547,6 +3654,7 @@ class QtMDHistoSliceViewer:
                 selections=self._export_selections(),
                 integrate_checks=self._export_integrate_checks(),
                 waterfall_step=self.waterfall_step,
+                coverage_threshold=self.waterfall_coverage_threshold,
                 masked=self.model.masked,
                 smoothing_sigma_x=self.smoothing_x,
                 smoothing_sigma_waterfall=self.smoothing_y,
@@ -3755,6 +3863,11 @@ class QtMDHistoSliceViewer:
             y = y_centers[y_mask]
             data_z = self.model._display_values(data_view)
             errors = np.asarray(data_view.get("errors"), dtype=float)
+            x_coverage, y_coverage = self._histogram_cut_coverage(
+                data_view, x_mask, y_mask
+            )
+            x_insufficient = x_coverage < self.coverage_threshold
+            y_insufficient = y_coverage < self.coverage_threshold
             if errors.shape == data_z.shape:
                 selected = np.ix_(y_mask, x_mask)
                 data_cut, err_cut = inverse_variance_weighted_profile(
@@ -3763,6 +3876,10 @@ class QtMDHistoSliceViewer:
                 data_y_cut, err_y_cut = inverse_variance_weighted_profile(
                     data_z[selected], errors[selected], axis=1
                 )
+                data_cut = np.where(x_insufficient, np.nan, data_cut)
+                err_cut = np.where(x_insufficient, np.nan, err_cut)
+                data_y_cut = np.where(y_insufficient, np.nan, data_y_cut)
+                err_y_cut = np.where(y_insufficient, np.nan, err_y_cut)
                 self.ax_fit_cut.errorbar(
                     x, data_cut, yerr=err_cut, marker="o", linestyle="None",
                     ms=self.marker_size, mfc=self.marker_face_color or "none",
@@ -3772,6 +3889,8 @@ class QtMDHistoSliceViewer:
             else:
                 data_cut = np.nansum(data_z[np.ix_(y_mask, x_mask)], axis=0)
                 data_y_cut = np.nansum(data_z[np.ix_(y_mask, x_mask)], axis=1)
+                data_cut = np.where(x_insufficient, np.nan, data_cut)
+                data_y_cut = np.where(y_insufficient, np.nan, data_y_cut)
                 err_y_cut = None
                 self.ax_fit_cut.plot(
                     x, data_cut, marker="o", linestyle="None",
@@ -3799,6 +3918,9 @@ class QtMDHistoSliceViewer:
             else:
                 fit_cut = np.nansum(fit_z[np.ix_(y_mask, x_mask)], axis=0)
                 fit_y_cut = np.nansum(fit_z[np.ix_(y_mask, x_mask)], axis=1)
+            if not self.unmask_model:
+                fit_cut = np.where(x_insufficient, np.nan, fit_cut)
+                fit_y_cut = np.where(y_insufficient, np.nan, fit_y_cut)
             self.ax_fit_cut.plot(
                 x, fit_cut, linestyle="-", marker="", color=self.fit_line_color,
                 lw=self.fit_line_width, zorder=1.5, label="fit",
@@ -3895,6 +4017,11 @@ class QtMDHistoSliceViewer:
             auto_limits=self.model.auto_limits,
             integrate=self.model.integrate,
             masked=masked,
+            coverage_threshold=(
+                0.0
+                if not masked and channel in {"fit", "residual"}
+                else self.coverage_threshold
+            ),
         )
         model.selections.update(dict(self.model.selections))
         model.integrate_checks.update(dict(self.model.integrate_checks))
@@ -4420,6 +4547,15 @@ class QtMDHistoSliceViewer:
             y_cut, y_error = inverse_variance_weighted_profile(
                 z[selected], errors[selected], axis=1
             )
+            x_coverage, y_coverage = self._histogram_cut_coverage(
+                view, x_mask, y_mask
+            )
+            x_insufficient = x_coverage < self.coverage_threshold
+            y_insufficient = y_coverage < self.coverage_threshold
+            x_cut = np.where(x_insufficient, np.nan, x_cut)
+            x_error = np.where(x_insufficient, np.nan, x_error)
+            y_cut = np.where(y_insufficient, np.nan, y_cut)
+            y_error = np.where(y_insufficient, np.nan, y_error)
             self.ax_xcut.errorbar(
                 view["x_centers"][x_mask], x_cut, yerr=x_error, fmt="-", lw=1.2, capsize=0
             )
@@ -4431,6 +4567,25 @@ class QtMDHistoSliceViewer:
         self.ax_ycut.set_xlabel("Weighted mean")
         self.ax_ycut.set_ylabel(self.model._axis_label(self.model.y_dim))
         self._apply_histogram_axes_layout(draw=False)
+
+    def _histogram_cut_coverage(
+        self,
+        view: dict[str, np.ndarray],
+        x_mask: np.ndarray,
+        y_mask: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        coverage = np.asarray(view["coverage_fraction"], dtype=float)[
+            np.ix_(y_mask, x_mask)
+        ]
+        x_widths = np.diff(np.asarray(view["x_edges"], dtype=float))[x_mask]
+        y_widths = np.diff(np.asarray(view["y_edges"], dtype=float))[y_mask]
+        x_coverage = np.sum(coverage * y_widths[:, None], axis=0) / np.sum(
+            y_widths
+        )
+        y_coverage = np.sum(coverage * x_widths[None, :], axis=1) / np.sum(
+            x_widths
+        )
+        return x_coverage, y_coverage
 
     def _on_motion(self, event) -> None:
         if self._current_slice is None or event.inaxes != self.ax_image:
@@ -4463,7 +4618,10 @@ class QtMDHistoSliceViewer:
             f"{_format_coord(coords['L'])}, {_format_coord(coords['E'])})"
         )
         self.cursor_q_label.setText(self._format_q_modulus(coords))
-        self.cursor_intensity_label.setText(f"Signal = {value_text} ± {error_text}")
+        coverage = float(view["coverage_fraction"][y_idx, x_idx])
+        self.cursor_intensity_label.setText(
+            f"Signal = {value_text} ± {error_text}; coverage = {coverage:.1%}"
+        )
 
     def _on_waterfall_motion(self, event) -> None:
         candidates = []

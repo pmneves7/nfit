@@ -78,6 +78,9 @@ def render_plot(
             selections=_selections(settings),
             integrate_checks=_integrate_checks(settings),
             waterfall_step=float(settings.get("waterfall_step", 1.0)),
+            coverage_threshold=float(
+                settings.get("waterfall_coverage_threshold", 0.9)
+            ),
             trace_offset=float(settings.get("waterfall_offset", 1.0)),
             cmap=settings.get("waterfall_cmap", "viridis"),
             color_range=(
@@ -166,6 +169,7 @@ def render_plot(
             channel=settings.get("channel", "signal"),
             selections=_selections(settings),
             integrate_checks=_integrate_checks(settings),
+            coverage_threshold=float(settings.get("coverage_threshold", 0.9)),
             cmap=settings.get("cmap", "viridis"),
             color_scale=settings.get("color_scale", "linear"),
             auto_limits=settings.get("auto_limits", "min/max"),

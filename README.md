@@ -8,7 +8,8 @@ The package provides:
 
 - native MDHisto, MDEvent, and compatible direct-geometry spectrometer workflows;
 - powder-cut, MPMS magnetization, PPMS heat-capacity, and tabular imports;
-- masking, symmetry-aware rebinning, backgrounds, and non-destructive analyses;
+- masking, coverage-aware symmetry/rebinning and composites, backgrounds, and
+  non-destructive analyses;
 - local, MMP, generalized-paramagnon/damped-mode, and Heisenberg-RPA
   spin-fluctuation models for inelastic, quasistatic elastic, and optional
   bulk-response comparisons, with a tabbed crystal/exchange workflow and

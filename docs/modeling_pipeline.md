@@ -141,6 +141,9 @@ memory.
 
 Project rebinning applies masks first, then returns a density-valued normalized
 histogram. Composite datasets additionally apply source scales and fit weights.
+Both retain a geometric coverage channel and mask output bins below their
+configured minimum coverage. Because MDHisto fitting consumes the resulting
+mask, incomplete bins are excluded without a separate optimizer rule.
 See [API reference](api.md#n-dimensional-rebinning).
 
 ## Simultaneous least squares

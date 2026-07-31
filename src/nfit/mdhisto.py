@@ -302,6 +302,34 @@ def mdhisto_measured_bins(data: MDHistoData) -> BoolArray:
     return (np.asarray(data.num_events, dtype=float) > 0.0) & ~np.asarray(data.mask, dtype=bool)
 
 
+def mdhisto_coverage_fraction(data: MDHistoData) -> FloatArray:
+    """Return each bin's measured fraction of its requested geometric support.
+
+    New reductions store coverage as an auxiliary channel so it remains
+    independently viewable and serializable. Older data fall back to binary
+    measured-bin coverage; that fallback can distinguish covered from empty
+    bins but cannot reconstruct partial support inside a native bin.
+    """
+
+    channel = data.auxiliary_channels.get("coverage_fraction")
+    if channel is not None and channel.values.shape == data.shape:
+        values = np.asarray(channel.values, dtype=float)
+        return np.clip(np.where(np.isfinite(values), values, 0.0), 0.0, 1.0)
+    stored = data.metadata.get("coverage_fraction")
+    if isinstance(stored, np.ndarray) and stored.shape == data.shape:
+        values = np.asarray(stored, dtype=float)
+        return np.clip(np.where(np.isfinite(values), values, 0.0), 0.0, 1.0)
+    if bool(data.metadata.get("zero_event_bins_are_measured", False)):
+        denominator = data.metadata.get("normalization_denominator")
+        if isinstance(denominator, np.ndarray) and denominator.shape == data.shape:
+            return np.asarray(
+                np.isfinite(denominator) & (denominator > 0.0),
+                dtype=float,
+            )
+        return np.ones(data.shape, dtype=float)
+    return np.asarray(np.asarray(data.num_events, dtype=float) > 0.0, dtype=float)
+
+
 def load_mantid_mdhisto_nxs(
     path: str | Path,
     *,

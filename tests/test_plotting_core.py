@@ -322,6 +322,79 @@ def test_mdhisto_slice_viewer_integrates_hidden_axis_ranges():
     np.testing.assert_allclose(view["num_events"], np.sum(data.num_events[:, 1, :, :], axis=0))
 
 
+def test_mdhisto_slice_viewer_masks_integrated_bins_below_coverage_threshold():
+    data = _tiny_mdhisto_data()
+    coverage = np.ones(data.shape, dtype=float)
+    coverage[0, ...] = 0.5
+    data = data.with_updates(
+        auxiliary_channels={
+            "coverage_fraction": MDHistoChannel(
+                coverage,
+                label="Coverage",
+                unit="fraction",
+            )
+        }
+    )
+    viewer = MDHistoSliceViewer(
+        data,
+        x_dim=3,
+        y_dim=2,
+        coverage_threshold=0.8,
+    )
+    viewer.selections[0] = (0.25, 0.75)
+    viewer.selections[1] = (1.5, 1.5)
+    viewer.integrate_checks[0] = True
+
+    masked = viewer.slice_arrays()
+
+    np.testing.assert_allclose(masked["coverage_fraction"], 0.75)
+    assert np.all(masked["coverage_mask"])
+    assert np.all(np.isnan(masked["signal"]))
+
+    viewer.coverage_threshold = 0.7
+    retained = viewer.slice_arrays()
+
+    assert not np.any(retained["coverage_mask"])
+    np.testing.assert_allclose(
+        retained["signal"],
+        np.sum(data.signal[:, 1, :, :], axis=0),
+    )
+
+
+def test_waterfall_coarsening_uses_its_own_coverage_threshold():
+    data = _tiny_mdhisto_data()
+    coverage = np.ones(data.shape, dtype=float)
+    coverage[:, :, :2, :] = 0.5
+    data = data.with_updates(
+        auxiliary_channels={
+            "coverage_fraction": MDHistoChannel(
+                coverage,
+                label="Coverage",
+                unit="fraction",
+            )
+        }
+    )
+
+    strict = prepare_mdhisto_waterfall(
+        data,
+        x_dim=3,
+        waterfall_dim=2,
+        waterfall_step=4.0,
+        coverage_threshold=0.8,
+    )
+    permissive = prepare_mdhisto_waterfall(
+        data,
+        x_dim=3,
+        waterfall_dim=2,
+        waterfall_step=4.0,
+        coverage_threshold=0.7,
+    )
+
+    assert strict
+    assert np.all(np.isnan(strict[0].values))
+    assert np.any(np.isfinite(permissive[0].values))
+
+
 def test_mdhisto_slice_viewer_reduces_after_fixed_hidden_axis():
     data = _tiny_mdhisto_data()
     data.metadata["fit"] = data.signal * 2.0
@@ -357,4 +430,3 @@ def test_mdhisto_slice_viewer_blanks_empty_bins_when_integrating_ranges():
     assert np.isnan(view["errors"][2, 3])
     assert view["combined_mask"][2, 3]
     assert view["mask"][2, 3]
-
