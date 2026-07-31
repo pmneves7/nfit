@@ -36,6 +36,9 @@ _TIGHT_BINDING_PLOT_FIELDS = {
     "dos": {
         "dos_method",
         "dos_mesh",
+        "dos_sampling_mode",
+        "dos_sampling_accuracy",
+        "dos_sampling_custom_rtol",
         "dos_symmetry",
         "dos_energy_min_meV",
         "dos_energy_max_meV",
@@ -335,6 +338,186 @@ def configure_lindhard_plot(
         component.config = previous
         raise
     return component
+
+
+def _component_sampling_policy(
+    config: Mapping[str, Any],
+    prefix: str,
+) -> Any:
+    from .electronic_sampling import sampling_policy
+
+    accuracy = str(config.get(f"{prefix}_sampling_accuracy", "standard"))
+    return sampling_policy(
+        accuracy,
+        relative_tolerance=(
+            float(config.get(f"{prefix}_sampling_custom_rtol", 0.01))
+            if accuracy == "custom"
+            else None
+        ),
+    )
+
+
+def certify_tight_binding_dos_sampling(component: Any) -> Any:
+    """Certify and store one concrete DOS production mesh."""
+
+    from .electronic_sampling import certify_dos_sampling
+
+    if getattr(component, "type", None) != "tight_binding":
+        raise TypeError("DOS sampling certification requires tight_binding")
+    previous = copy.deepcopy(component.config)
+    try:
+        model = electronic_model_from_component(component)
+        config = component.config
+        points = int(config.get("dos_energy_points", 600))
+        if bool(config.get("dos_auto_energy_range", False)):
+            provisional = tight_binding_density_of_states(component)
+            energy = np.asarray(provisional.energy_meV, dtype=float)
+        else:
+            energy = np.linspace(
+                float(config.get("dos_energy_min_meV", -500.0)),
+                float(config.get("dos_energy_max_meV", 500.0)),
+                points,
+            )
+        certificate = certify_dos_sampling(
+            model,
+            energy,
+            seed_mesh=config.get("dos_mesh", [40, 40, 40]),
+            policy=_component_sampling_policy(config, "dos"),
+            max_refinements=int(
+                config.get("dos_sampling_max_refinements", 7)
+            ),
+            max_mesh_points=int(
+                config.get("dos_sampling_max_mesh_points", 2_000_000)
+            ),
+            symmetry=str(config.get("dos_symmetry", "auto")),
+            broadening_meV=float(config.get("dos_broadening_meV", 5.0)),
+            method=str(config.get("dos_method", "gaussian")),
+            chemical_potential_meV=float(
+                config.get("chemical_potential_meV", 0.0)
+            ),
+            projections=_projection_groups(component),
+            **_electronic_execution_kwargs(component),
+        )
+        component.config["dos_sampling_certificate"] = certificate.to_dict()
+        if certificate.certified:
+            component.config["dos_mesh"] = list(certificate.chosen_mesh or ())
+        from .model_registry import validate_model_component
+
+        validate_model_component(component)
+    except Exception:
+        component.config = previous
+        raise
+    return certificate
+
+
+def certify_lindhard_component_sampling(
+    component: Any,
+    components: Mapping[str, Any],
+    *,
+    q_reduced: ArrayLike | None = None,
+    energy_meV: ArrayLike | None = None,
+    temperature_K: float | None = None,
+) -> Any:
+    """Certify and store a Lindhard mesh on an explicit or inspection domain."""
+
+    from .electronic_sampling import certify_lindhard_sampling
+
+    if getattr(component, "type", None) != "lindhard":
+        raise TypeError("response sampling certification requires lindhard")
+    previous = copy.deepcopy(component.config)
+    try:
+        source = _lindhard_source(component, components)
+        model = electronic_model_from_component(source)
+        config = component.config
+        if energy_meV is None:
+            energy = np.linspace(
+                float(config.get("plot_energy_min_meV", -100.0)),
+                float(config.get("plot_energy_max_meV", 100.0)),
+                int(config.get("convergence_energy_points", 9)),
+            )
+        else:
+            energy = np.asarray(energy_meV, dtype=float)
+        if q_reduced is None:
+            q = np.broadcast_to(
+                np.asarray(
+                    config.get("plot_q_reduced", [0.0, 0.0, 0.0]),
+                    dtype=float,
+                ),
+                (energy.size, 3),
+            )
+            domain_kind = "model convergence viewer"
+        else:
+            q = np.asarray(q_reduced, dtype=float)
+            domain_kind = "explicit caller-supplied points"
+        temperature = (
+            float(config.get("plot_temperature_K", 10.0))
+            if temperature_K is None
+            else float(temperature_K)
+        )
+        filling = (
+            float(config.get("filling_per_cell", 1.0))
+            if str(config.get("chemical_potential_mode", "source"))
+            == "filling"
+            else None
+        )
+        certificate = certify_lindhard_sampling(
+            model,
+            q,
+            energy,
+            seed_mesh=config.get("response_mesh", [16, 16, 16]),
+            temperature_K=temperature,
+            broadening_meV=float(
+                component.parameters.get("broadening", 5.0)
+            ),
+            chemical_potential_meV=float(
+                source.config.get("chemical_potential_meV", 0.0)
+            ),
+            filling_per_cell=filling,
+            policy=_component_sampling_policy(config, "response"),
+            max_refinements=int(
+                config.get("response_sampling_max_refinements", 7)
+            ),
+            max_mesh_points=int(
+                config.get("response_sampling_max_mesh_points", 500_000)
+            ),
+            mesh_shift=config.get(
+                "response_mesh_shift", [0.0, 0.0, 0.0]
+            ),
+            symmetry=str(config.get("response_symmetry", "auto")),
+            backend=str(config.get("response_backend", "auto")),
+            workers=int(config.get("response_workers", 0)),
+            max_batch_bytes=int(
+                float(config.get("response_max_batch_mb", 256.0))
+                * 1024**2
+            ),
+            transition_max_batch_bytes=int(
+                float(
+                    config.get(
+                        "response_transition_max_batch_mb",
+                        256.0,
+                    )
+                )
+                * 1024**2
+            ),
+            transition_backend=str(
+                config.get("response_transition_backend", "auto")
+            ),
+        )
+        payload = certificate.to_dict()
+        payload["provenance"]["domain_kind"] = domain_kind
+        payload["provenance"]["source_component"] = source.name
+        component.config["response_sampling_certificate"] = payload
+        if certificate.certified:
+            component.config["response_mesh"] = list(
+                certificate.chosen_mesh or ()
+            )
+        from .model_registry import validate_model_component
+
+        validate_model_component(component)
+    except Exception:
+        component.config = previous
+        raise
+    return certificate
 
 
 def generalized_paramagnon_energy_scan(
@@ -706,6 +889,7 @@ def lindhard_energy_scan_script(
             ")",
             "from nfit.model_plots import render_lindhard_energy_scan",
             "",
+            f"sampling_certificate = {config.get('response_sampling_certificate', {})!r}",
             f"mesh_shape = {config.get('response_mesh', [16, 16, 16])!r}",
             f"mesh_shift = {config.get('response_mesh_shift', [0.0, 0.0, 0.0])!r}",
             "filling_mesh = k_mesh(model, mesh_shape, shift=mesh_shift, symmetry='full')",
@@ -1667,6 +1851,7 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
                 "from nfit import density_of_states, k_mesh",
                 "from nfit.model_plots import ElectronicPlotStyle, render_density_of_states",
                 "plot_style = ElectronicPlotStyle()",
+                f"sampling_certificate = {config.get('dos_sampling_certificate', {})!r}",
                 f"mesh = k_mesh(model, {config.get('dos_mesh', [40, 40, 40])!r}, symmetry={dos_symmetry!r})",
                 f"automatic_energy_range = {bool(config.get('dos_auto_energy_range', False))!r}",
                 f"energy_points = {int(config.get('dos_energy_points', 600))!r}",

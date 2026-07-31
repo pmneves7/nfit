@@ -47,6 +47,8 @@ subspaces, or a declared custom basis.
 - [Configuration and performance](tight_binding_configuration.md) defines
   every registered `tight_binding` setting and gives practical execution
   guidance.
+- [Automatic Brillouin-zone sampling](electronic_sampling.md) defines the
+  shared DOS and Lindhard accuracy profiles and convergence certificates.
 - [Electronic-structure visualization](electronic_structure_visualization.md)
   covers the geometry, Brillouin-zone, band, DOS, Fermi-surface, and matrix
   viewers.
@@ -68,6 +70,7 @@ tight_binding_hoppings
 tight_binding_spin
 tight_binding_imports
 tight_binding_configuration
+electronic_sampling
 electronic_structure_visualization
 electronic_response_models
 ```

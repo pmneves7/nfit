@@ -110,7 +110,10 @@ scripts.
 | Setting | Meaning | Default | Acceptable input example |
 | --- | --- | --- | --- |
 | `electronic_component` | enabled sibling `tight_binding` component supplying $H(\mathbf k)$; empty selects it automatically when exactly one is enabled | `""` | `"Bands"` |
-| `response_mesh` | full-zone integration-mesh sizes | `[16, 16, 16]` | `[48, 48, 24]` |
+| `response_mesh` | concrete full-zone integration mesh used by calculations and fits | `[16, 16, 16]` | `[48, 48, 24]` |
+| `response_sampling_mode` | derive and certify a production mesh, or use a manual mesh without an automatic accuracy claim | `"automatic"` | `"automatic"` or `"manual"` |
+| `response_sampling_accuracy` | normalized tensor-error profile | `"standard"` | `"preview"`, `"standard"`, `"high"`, or `"custom"` |
+| `response_sampling_custom_rtol` | positive tolerance used only by the custom profile | `0.01` | `0.005` |
 | `response_q_evaluation` | direct, required commensurate, validated interpolated, or automatic wavevector evaluation | `"auto"` | `"interpolated"` |
 | `response_q_interpolation_rtol` | accepted relative error for automatic periodic interpolation; zero disables this criterion | `0.0` | `0.01` |
 | `chemical_potential_mode` | use the source chemical potential or solve from filling | `"source"` | `"source"` or `"filling"` |
@@ -140,6 +143,9 @@ advanced script settings.
 | Setting | Meaning | Default | Acceptable input example |
 | --- | --- | --- | --- |
 | `response_mesh_shift` | offsets in mesh steps | `[0, 0, 0]` | `[0.5, 0.5, 0.5]` |
+| `response_sampling_max_refinements` | maximum candidate meshes in one certificate | `7` | `8` |
+| `response_sampling_max_mesh_points` | independent full-mesh point budget | `500000` | `1000000` |
+| `response_sampling_certificate` | derived serialized meshes, errors, domain, and provenance | `{}` | normally written by nfit |
 | `response_symmetry` | full mesh, required certified reduction, or automatic reduction with recorded fallback | `"auto"` | `"auto"`, `"full"`, or `"reduced"` |
 | `response_q_interpolation_atol` | accepted absolute complex-response error; zero disables this criterion | `0.0` | `1e-5` |
 | `response_q_interpolation_mesh` | optional initial commensurate interpolation mesh; empty chooses automatically | `[]` | `[8, 8, 8]` |
@@ -190,6 +196,15 @@ little-group size and irreducible mesh. Imported models, explicit-spin
 operators, orbital-pair matrices, incompatible meshes, and generic
 wavevectors fall back to the full mesh. `"reduced"` turns the same fallback
 into an error.
+
+**Check/refine convergence** constructs an anisotropic mesh ladder, compares
+the full complex Cartesian spin tensor on the convergence viewer's declared
+domain, and requires two successive passing refinements. Preview, Standard,
+and High correspond to 5%, 1%, and 0.2% normalized error. A successful search
+stores one concrete `response_mesh`; a budget failure is reported without
+weakening the tolerance. See
+[Automatic Brillouin-zone sampling](electronic_sampling.md) for the common
+certificate and the explicit-domain scripting API.
 
 `response_q_evaluation="auto"` does not interpolate by default. A transfer
 commensurate with the integration mesh reuses the base eigensystem by an exact
@@ -323,10 +338,10 @@ editable scheduler wrapper; calculation and merging remain scheduler-neutral.
 
 - The full band-pair sum can still be expensive for large orbital bases or
   dense meshes, although transition memory is bounded.
-- Automatic integration-mesh density is not yet selected during a fit. DOS,
-  Fermi-surface geometry, and Lindhard matrices require different convergence
-  criteria; changing a mesh during optimization could also make the objective
-  discontinuous. Use their convergence tools before fitting.
+- Automatic Lindhard certification selects a fixed mesh before fitting; it
+  does not adapt the mesh inside the optimizer. Recheck a stale certificate at
+  the fitted parameters. Fermi-surface topology still requires a separate
+  manual density check.
 - Automatic symmetry reduction is intentionally unavailable for imported
   models, explicit-spin responses, and orbital-pair response matrices until
   their operator transformations can be certified.

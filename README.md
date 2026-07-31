@@ -27,7 +27,8 @@ The package provides:
   GPU contractions, model-digest-aware eigensystem and bare-response reuse,
   exact commensurate-Q permutation,
   tolerance-certified periodic Q interpolation, certified little-group
-  reduction, backend-equivalence probes, separate
+  reduction, observable-specific automatic DOS and Lindhard mesh certificates,
+  backend-equivalence probes, separate
   mesh/broadening convergence plots, and scheduler-neutral response chunks
   with editable Slurm launchers;
 - CIF/manual crystal geometry and arbitrary manual or Wannier90 tight-binding

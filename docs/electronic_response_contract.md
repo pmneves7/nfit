@@ -176,6 +176,14 @@ Paths and meshes share `WavevectorSampling`. A path stores ordered physical
 distance and labels. A mesh stores normalized weights, shape, shift, and
 provenance.
 
+Observable-specific automatic sampling resolves to a concrete mesh before
+fitting. A `SamplingCertificate` records the declared domain, input digest,
+accuracy policy, attempted meshes, errors, and either a certified production
+mesh or explicit budget exhaustion. Accuracy tolerances and computational
+budgets remain independent. An optimizer must never refine the mesh as a
+function of its trial parameters; changed scientific inputs make the saved
+certificate stale and require a separate recertification.
+
 Symmetry reduction is fail closed:
 
 - total electronic DOS may use the full reciprocal group only for a

@@ -75,15 +75,13 @@ reduced-order surrogates over parameter space. Any accelerated path must be
 checked against the serial float64/complex128 reference, preserve the stated
 scientific tolerance, and retain deterministic provenance.
 
-Automatic Brillouin-zone density selection should use observable-specific
-certificates: an energy-resolved DOS norm, topology and geometric distance for
-Fermi surfaces, and complex matrix errors for Lindhard response. A selected
-mesh should remain fixed during a fit so adaptive refinement does not make the
-objective discontinuous. The same certification framework could govern
-energy-window pruning of inactive particle--hole transitions. Electronic-RPA
-stability scans should similarly converge the static feedback over a declared
-q mesh; current diagnostics report evaluated zero-energy points and do not
-claim a global stability proof.
+The shared convergence-certificate framework now selects fixed DOS and
+Lindhard production meshes. Future extensions should add topology and
+geometric-distance checks for Fermi surfaces and could govern energy-window
+pruning of inactive particle--hole transitions. Electronic-RPA stability scans
+should similarly converge the static feedback over a declared q mesh; current
+diagnostics report evaluated zero-energy points and do not claim a global
+stability proof.
 
 A capability is considered implemented only when its public calculation,
 fitting and plotting behavior, scripts, reports, documentation, and validation

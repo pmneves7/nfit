@@ -264,6 +264,9 @@ calculation.
 .. automodule:: nfit.electronic_response
    :members:
 
+.. automodule:: nfit.electronic_sampling
+   :members:
+
 .. automodule:: nfit.electronic_interactions
    :members:
 

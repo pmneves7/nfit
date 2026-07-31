@@ -101,13 +101,23 @@ longer segments receive proportionally more interpolation points.
 | Setting | Default | Meaning and example |
 | --- | --- | --- |
 | `dos_method` | `"gaussian"` | `"gaussian"` broadening or three-dimensional `"tetrahedron"` integration through ASE. |
-| `dos_mesh` | `[40,40,40]` | Uniform integration mesh. A two-dimensional model may use `[80,80]`. |
+| `dos_mesh` | `[40,40,40]` | Concrete production mesh. A two-dimensional model may use `[80,80]`. |
+| `dos_sampling_mode` | `"automatic"` | Derive and certify a production mesh, or use `"manual"` without an automatic accuracy claim. |
+| `dos_sampling_accuracy` | `"standard"` | `"preview"` (5%), `"standard"` (1%), `"high"` (0.2%), or `"custom"`. |
+| `dos_sampling_custom_rtol` | `0.01` | Positive normalized tolerance used only by the custom profile. |
 | `dos_symmetry` | `"auto"` | Certified reduction with full-mesh fallback, explicit `"full"`, or required `"reduced"` sampling. |
 | `dos_auto_energy_range` | `false` | Derive limits from sampled band extrema, with Gaussian-tail or tetrahedron margin padding. |
 | `dos_energy_min_meV` | `-500.0` | Lower absolute energy sampled, in canonical meV. |
 | `dos_energy_max_meV` | `500.0` | Upper absolute energy sampled, in canonical meV. |
 | `dos_energy_points` | `600` | Number of energy samples, at least two. |
 | `dos_broadening_meV` | `5.0` | Positive Gaussian standard deviation in meV; unused by the tetrahedron method. |
+
+`dos_sampling_max_refinements` (default `7`) and
+`dos_sampling_max_mesh_points` (default `2000000`) are independent Advanced
+safety budgets. `dos_sampling_certificate` is derived provenance rather than a
+physical input. See
+[Automatic Brillouin-zone sampling](electronic_sampling.md) for the stopping
+rule and certificate contents.
 
 The total DOS is normalized per primitive cell and per energy. Rendering in eV
 converts both the energy axis and states/meV to states/eV, preserving the
@@ -152,8 +162,9 @@ The following changes preserve the model but alter cost:
    doubles matrix dimension.
 3. **Avoid unused eigenvectors.** Total bands and total DOS use eigenvalues
    only; projections require eigenvectors.
-4. **Converge meshes from below.** Increase band-path density, DOS mesh, or
-   Fermi mesh until the feature of interest is stable.
+4. **Certify the observable.** Use automatic DOS certification for a declared
+   energy grid. Band paths and Fermi-surface geometry retain manual density
+   checks because they require different criteria.
 5. **Use a bounded memory target.** A larger
    `electronic_max_batch_mb` reduces dispatch overhead but increases temporary
    memory. It does not change the sampled points or numerical formula.

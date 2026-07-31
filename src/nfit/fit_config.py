@@ -810,8 +810,39 @@ def _hubbard_hund_rpa_factory(
     return _rpa_factory(component, components, dressing_kind="hubbard_hund")
 
 
+def _validate_electronic_sampling_config(
+    config: Mapping[str, Any],
+    prefix: str,
+) -> None:
+    mode = str(config.get(f"{prefix}_sampling_mode", "automatic"))
+    if mode not in {"automatic", "manual"}:
+        raise ValueError(f"{prefix}_sampling_mode must be automatic or manual")
+    accuracy = str(config.get(f"{prefix}_sampling_accuracy", "standard"))
+    if accuracy not in {"preview", "standard", "high", "custom"}:
+        raise ValueError(
+            f"{prefix}_sampling_accuracy must be preview, standard, high, or custom"
+        )
+    custom = float(config.get(f"{prefix}_sampling_custom_rtol", 0.01))
+    if not np.isfinite(custom) or custom <= 0.0:
+        raise ValueError(
+            f"{prefix}_sampling_custom_rtol must be finite and positive"
+        )
+    if int(config.get(f"{prefix}_sampling_max_refinements", 7)) < 3:
+        raise ValueError(
+            f"{prefix}_sampling_max_refinements must be at least three"
+        )
+    if int(config.get(f"{prefix}_sampling_max_mesh_points", 1)) < 1:
+        raise ValueError(
+            f"{prefix}_sampling_max_mesh_points must be positive"
+        )
+    certificate = config.get(f"{prefix}_sampling_certificate", {})
+    if not isinstance(certificate, Mapping):
+        raise ValueError(f"{prefix}_sampling_certificate must be a mapping")
+
+
 def _validate_lindhard_component(component: Any) -> None:
     config = component.config if isinstance(component.config, dict) else {}
+    _validate_electronic_sampling_config(config, "response")
     mesh = tuple(int(value) for value in config.get("response_mesh", ()))
     if len(mesh) not in {1, 2, 3} or any(value < 1 for value in mesh):
         raise ValueError("response_mesh must contain one to three positive sizes")
@@ -1047,6 +1078,7 @@ def _validate_tight_binding_config(component: Any) -> None:
     from .electronic_structure import normalize_electronic_energy_unit
 
     config = component.config
+    _validate_electronic_sampling_config(config, "dos")
     normalize_electronic_energy_unit(config.get("electronic_energy_unit", "eV"))
     hopping_parameterization = str(
         config.get("hopping_parameterization", "slater_koster")

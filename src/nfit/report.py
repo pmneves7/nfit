@@ -1180,6 +1180,19 @@ def lindhard_report_sections(
     backend = latex_escape(config.get("response_backend", "auto"))
     symmetry = latex_escape(config.get("response_symmetry", "auto"))
     formula_mode = str(config.get("formula_units_mode", "manual"))
+    sampling_certificate = config.get("response_sampling_certificate", {})
+    sampling_status = (
+        str(sampling_certificate.get("status", "not run"))
+        if isinstance(sampling_certificate, Mapping)
+        and sampling_certificate
+        else "not run"
+    )
+    sampling_policy = (
+        sampling_certificate.get("policy", {})
+        if isinstance(sampling_certificate, Mapping)
+        else {}
+    )
+    sampling_tolerance = sampling_policy.get("relative_tolerance")
     lines = [
         f"\\section{{Bare Lindhard spin susceptibility ({name})}}",
         (
@@ -1198,6 +1211,13 @@ def lindhard_report_sections(
         (
             "Lifetime broadening $\\eta$ & "
             f"{_fmt_pm(broadening, uncertainty)} meV \\\\"
+        ),
+        (
+            "Response-mesh certificate & "
+            f"{latex_escape(sampling_status)}, mesh "
+            f"\\texttt{{{latex_escape(config.get('response_mesh', ()))}}}, "
+            "tolerance "
+            f"{'--' if sampling_tolerance is None else _fmt(sampling_tolerance)} \\\\"
         ),
         (
             "Formula-unit normalization & "
@@ -1398,6 +1418,26 @@ def tight_binding_report_sections(
         "response component supplies the measured susceptibility or neutron "
         "observable used by an optimizer."
     )
+    dos_certificate = config.get("dos_sampling_certificate", {})
+    if isinstance(dos_certificate, Mapping) and dos_certificate:
+        policy = dos_certificate.get("policy", {})
+        tolerance = (
+            policy.get("relative_tolerance")
+            if isinstance(policy, Mapping)
+            else None
+        )
+        lines.append(
+            "\\paragraph{DOS sampling} "
+            f"mode \\texttt{{{latex_escape(config.get('dos_sampling_mode', 'automatic'))}}}; "
+            f"status \\texttt{{{latex_escape(dos_certificate.get('status', '--'))}}}; "
+            f"production mesh \\texttt{{{latex_escape(config.get('dos_mesh', ()))}}}; "
+            f"requested normalized tolerance "
+            f"{'--' if tolerance is None else _fmt(tolerance)}."
+        )
+    else:
+        lines.append(
+            "\\paragraph{DOS sampling} No automatic mesh certificate was stored."
+        )
     return (("model", "\n".join(lines) + "\n"),)
 
 

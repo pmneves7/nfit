@@ -216,6 +216,9 @@ def test_tight_binding_viewer_settings_update_canonical_plot_config(monkeypatch)
         "dos",
         {
             "dos_method": "tetrahedron",
+            "dos_sampling_mode": "manual",
+            "dos_sampling_accuracy": "standard",
+            "dos_sampling_custom_rtol": "0.01",
             "dos_mesh": "[32, 32, 32]",
             "dos_symmetry": "auto",
             "dos_auto_energy_range": "true",
@@ -239,6 +242,9 @@ def test_tight_binding_viewer_settings_update_canonical_plot_config(monkeypatch)
         scripted,
         "dos",
         dos_method="tetrahedron",
+        dos_sampling_mode="manual",
+        dos_sampling_accuracy="standard",
+        dos_sampling_custom_rtol=0.01,
         dos_symmetry="full",
         dos_auto_energy_range=True,
         dos_mesh=[32, 32, 32],
@@ -378,11 +384,32 @@ def test_lindhard_editor_selects_a_sibling_electronic_model(monkeypatch):
         QtWidgets.QComboBox,
         "lindhard_q_accuracy",
     )
+    sampling_mode = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox,
+        "lindhard_sampling_mode",
+    )
+    sampling_accuracy = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox,
+        "lindhard_sampling_accuracy",
+    )
+    sampling_button = explorer.model_parameter_widget.findChild(
+        QtWidgets.QPushButton,
+        "lindhard_certify_sampling",
+    )
+    sampling_status = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLabel,
+        "lindhard_convergence_status",
+    )
     formula_mode = explorer.model_parameter_widget.findChild(
         QtWidgets.QComboBox,
         "lindhard_formula_units_mode",
     )
     assert mesh is not None and mesh.toolTip()
+    assert not mesh.isEnabled()
+    assert sampling_mode is not None and sampling_mode.currentData() == "automatic"
+    assert sampling_accuracy is not None and sampling_accuracy.currentData() == "standard"
+    assert sampling_button is not None and sampling_button.toolTip()
+    assert sampling_status is not None and sampling_status.toolTip()
     assert q_accuracy is not None and q_accuracy.currentData() == "exact"
     assert formula_mode is not None and formula_mode.currentData() == "auto"
     assert selector.findData(source.name) >= 0

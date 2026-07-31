@@ -442,13 +442,74 @@ def populate_electronic_calculation_settings(
             "Gaussian integration applies the displayed broadening. Linear "
             "tetrahedron integration requires a complete three-dimensional mesh.",
         )
+        add_choice(
+            form,
+            "dos_sampling_mode",
+            "Mesh selection",
+            (
+                ("Automatic certification", "automatic"),
+                ("Manual mesh", "manual"),
+            ),
+            "Automatic mode searches observable-specific meshes and stores "
+            "one concrete production mesh before fitting. The mesh remains "
+            "fixed inside an optimizer.",
+        )
+        sampling_mode = editors["dos_sampling_mode"]
+        add_choice(
+            form,
+            "dos_sampling_accuracy",
+            "Accuracy",
+            (
+                ("Preview (5%)", "preview"),
+                ("Standard (1%)", "standard"),
+                ("High (0.2%)", "high"),
+                ("Custom", "custom"),
+            ),
+            "Maximum normalized DOS change required for two successive mesh "
+            "refinements. Computational budget is configured independently.",
+        )
+        sampling_accuracy = editors["dos_sampling_accuracy"]
+        add_line(
+            form,
+            "dos_sampling_custom_rtol",
+            "Custom tolerance",
+            "Positive normalized error used only by the Custom profile.",
+        )
+        custom_tolerance = editors["dos_sampling_custom_rtol"]
         add_line(
             form,
             "dos_mesh",
             "k mesh",
-            "Uniform Brillouin-zone mesh. Mesh density remains a manual "
-            "convergence choice.",
+            "Concrete production mesh. It is editable in Manual mode and "
+            "is replaced only by a successful automatic certificate.",
         )
+        mesh_editor = editors["dos_mesh"]
+        status = QtWidgets.QLabel(
+            str(values.get("dos_sampling_status", "Not certified."))
+        )
+        status.setObjectName(
+            "density_of_states_setting_dos_sampling_status"
+        )
+        status.setWordWrap(True)
+        status.setToolTip(
+            "Current certificate state. Applying Automatic mode runs the "
+            "mesh search before recalculating the plot."
+        )
+        form.addRow("Certificate", status)
+
+        def update_sampling_controls() -> None:
+            automatic = sampling_mode.currentData() == "automatic"
+            sampling_accuracy.setEnabled(automatic)
+            custom_tolerance.setEnabled(
+                automatic and sampling_accuracy.currentData() == "custom"
+            )
+            mesh_editor.setEnabled(not automatic)
+
+        sampling_mode.currentIndexChanged.connect(update_sampling_controls)
+        sampling_accuracy.currentIndexChanged.connect(
+            update_sampling_controls
+        )
+        update_sampling_controls()
         add_choice(
             form,
             "dos_symmetry",
@@ -658,6 +719,10 @@ def refresh_electronic_calculation_settings(
         line_edit = settings.findChild(QtWidgets.QLineEdit, object_name)
         if line_edit is not None:
             line_edit.setText(str(value))
+            continue
+        label = settings.findChild(QtWidgets.QLabel, object_name)
+        if label is not None:
+            label.setText(str(value))
 
 
 def show_electronic_figure(

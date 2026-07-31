@@ -255,6 +255,10 @@ def test_band_viewer_plot_controls_update_figure(monkeypatch):
             {
                 "electronic_energy_unit": "eV",
                 "dos_method": "gaussian",
+                "dos_sampling_mode": "automatic",
+                "dos_sampling_accuracy": "standard",
+                "dos_sampling_custom_rtol": "0.01",
+                "dos_sampling_status": "Not certified.",
                 "dos_mesh": "[40, 40, 40]",
                 "dos_symmetry": "auto",
                 "dos_auto_energy_range": False,
@@ -337,6 +341,25 @@ def test_electronic_viewer_settings_apply_plot_owned_configuration(
     assert editor is not None and editor.toolTip()
     editor.setText(edited_value)
     if viewer_key == "density_of_states":
+        sampling_mode = window.findChild(
+            QtWidgets.QComboBox,
+            "density_of_states_setting_dos_sampling_mode",
+        )
+        sampling_accuracy = window.findChild(
+            QtWidgets.QComboBox,
+            "density_of_states_setting_dos_sampling_accuracy",
+        )
+        sampling_status = window.findChild(
+            QtWidgets.QLabel,
+            "density_of_states_setting_dos_sampling_status",
+        )
+        assert sampling_mode is not None and sampling_mode.toolTip()
+        assert sampling_mode.currentData() == "automatic"
+        assert sampling_accuracy is not None and sampling_accuracy.isEnabled()
+        assert sampling_status is not None and sampling_status.toolTip()
+        assert not editor.isEnabled()
+        sampling_mode.setCurrentIndex(sampling_mode.findData("manual"))
+        assert editor.isEnabled()
         auto_range = window.findChild(
             QtWidgets.QCheckBox,
             "density_of_states_setting_dos_auto_energy_range",

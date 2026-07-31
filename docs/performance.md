@@ -212,11 +212,14 @@ compares meshes at fixed $\eta$; its broadening metric compares $\eta$ values
 at fixed mesh. This distinction is required because extra broadening can hide
 an underconverged mesh.
 
-Automatic density selection remains observable-specific. A DOS curve needs an
-energy-resolved norm, a Fermi surface needs topology and geometric-distance
-checks, and a Lindhard response needs complex matrix errors at representative
-$(\mathbf Q,E)$. These criteria should certify a fixed production mesh before
-a fit rather than change the objective's sampling during optimization.
+Automatic density selection is observable-specific. DOS certification compares
+total and projected energy-resolved curves, including an integrated error.
+Lindhard certification compares the full complex Cartesian tensor at declared
+$(\mathbf Q,E)$ points. Both require two successive passing refinements and
+store a fixed production mesh before fitting; they never change the objective's
+sampling during optimization. Fermi-surface topology and geometric-distance
+certification remain future work. See
+[Automatic Brillouin-zone sampling](electronic_sampling.md).
 
 For jobs larger than one process, `partition_response_points` and
 `merge_response_chunks` define deterministic scheduler-neutral work units.

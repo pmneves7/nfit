@@ -18842,6 +18842,10 @@ class NfitProjectExplorer:
             if model.type == "lindhard" and setting_name in {
                 "electronic_component",
                 "response_mesh",
+                "response_sampling_mode",
+                "response_sampling_accuracy",
+                "response_sampling_custom_rtol",
+                "response_sampling_certificate",
                 "response_q_evaluation",
                 "response_q_interpolation_rtol",
                 "chemical_potential_mode",
@@ -18885,6 +18889,10 @@ class NfitProjectExplorer:
                 "band_points_per_inv_angstrom",
                 "dos_method",
                 "dos_mesh",
+                "dos_sampling_mode",
+                "dos_sampling_accuracy",
+                "dos_sampling_custom_rtol",
+                "dos_sampling_certificate",
                 "dos_symmetry",
                 "dos_energy_min_meV",
                 "dos_energy_max_meV",
@@ -19850,14 +19858,94 @@ class NfitProjectExplorer:
         sampling = QtWidgets.QGroupBox("Brillouin-zone sampling")
         sampling.setObjectName("lindhard_sampling_group")
         sampling_layout = QtWidgets.QFormLayout(sampling)
+        sampling_mode = str(
+            model.config.get("response_sampling_mode", "automatic")
+        )
+        mode_tooltip = (
+            "Automatic mode searches observable-specific meshes before fitting "
+            "and stores one concrete production mesh. Manual mode uses the "
+            "entered mesh directly. Neither mode changes a mesh inside an optimizer."
+        )
+        mode_combo = QtWidgets.QComboBox()
+        mode_combo.setObjectName("lindhard_sampling_mode")
+        mode_combo.setToolTip(mode_tooltip)
+        mode_combo.addItem("Automatic certification", "automatic")
+        mode_combo.addItem("Manual mesh", "manual")
+        mode_combo.setCurrentIndex(
+            max(mode_combo.findData(sampling_mode), 0)
+        )
+        mode_combo.currentIndexChanged.connect(
+            lambda _index, combo=mode_combo: self._set_lindhard_config_values(
+                response_sampling_mode=str(combo.currentData())
+            )
+        )
+        mode_label = QtWidgets.QLabel("Mesh selection")
+        mode_label.setToolTip(mode_tooltip)
+        sampling_layout.addRow(mode_label, mode_combo)
+
+        profile = str(
+            model.config.get("response_sampling_accuracy", "standard")
+        )
+        profile_tooltip = (
+            "Preview, Standard, and High require at most 5%, 1%, and 0.2% "
+            "normalized change, respectively, for two successive refinements. "
+            "The independent Advanced budget may stop without certification."
+        )
+        profile_combo = QtWidgets.QComboBox()
+        profile_combo.setObjectName("lindhard_sampling_accuracy")
+        profile_combo.setToolTip(profile_tooltip)
+        for label, value in (
+            ("Preview (5%)", "preview"),
+            ("Standard (1%)", "standard"),
+            ("High (0.2%)", "high"),
+            ("Custom", "custom"),
+        ):
+            profile_combo.addItem(label, value)
+        profile_combo.setCurrentIndex(max(profile_combo.findData(profile), 0))
+        profile_combo.setEnabled(sampling_mode == "automatic")
+        profile_combo.currentIndexChanged.connect(
+            lambda _index, combo=profile_combo: self._set_lindhard_config_values(
+                response_sampling_accuracy=str(combo.currentData())
+            )
+        )
+        profile_label = QtWidgets.QLabel("Accuracy")
+        profile_label.setToolTip(profile_tooltip)
+        sampling_layout.addRow(profile_label, profile_combo)
+        if sampling_mode == "automatic" and profile == "custom":
+            custom_tooltip = (
+                "Positive normalized error required for two successive "
+                "response-mesh refinements."
+            )
+            custom = QtWidgets.QLineEdit(
+                _parameter_to_text(
+                    model.config.get(
+                        "response_sampling_custom_rtol",
+                        0.01,
+                    )
+                )
+            )
+            custom.setObjectName(
+                "model_config_response_sampling_custom_rtol"
+            )
+            custom.setToolTip(custom_tooltip)
+            custom.editingFinished.connect(
+                lambda editor=custom: self._set_model_config_setting(
+                    "response_sampling_custom_rtol", editor.text()
+                )
+            )
+            custom_label = QtWidgets.QLabel("Custom tolerance")
+            custom_label.setToolTip(custom_tooltip)
+            sampling_layout.addRow(custom_label, custom)
+
         mesh_tooltip = (
-            "Uniform full-zone integration mesh. Increase it until the response "
-            "and fitted parameters are converged; the convergence viewer compares "
-            "deterministic mesh refinements."
+            "Concrete uniform integration mesh used by plots and fits. Automatic "
+            "certification updates this value before fitting; it remains fixed "
+            "inside the optimizer."
         )
         mesh_editor = QtWidgets.QLineEdit(_parameter_to_text(mesh))
         mesh_editor.setObjectName("model_config_response_mesh")
         mesh_editor.setToolTip(mesh_tooltip)
+        mesh_editor.setEnabled(sampling_mode == "manual")
         mesh_editor.editingFinished.connect(
             lambda editor=mesh_editor: self._set_model_config_setting(
                 "response_mesh", editor.text()
@@ -19909,17 +19997,84 @@ class NfitProjectExplorer:
             tolerance_label = QtWidgets.QLabel("Relative tolerance")
             tolerance_label.setToolTip(tolerance_tooltip)
             sampling_layout.addRow(tolerance_label, tolerance)
-        convergence = QtWidgets.QLabel(
-            "Convergence is user-certified; use the convergence viewer below "
-            "before interpreting fitted parameters."
-        )
+        certificate = model.config.get("response_sampling_certificate", {})
+        if sampling_mode == "manual":
+            status_text = "Manual mesh: no automatic accuracy claim."
+        elif not isinstance(certificate, dict) or not certificate:
+            status_text = "Not certified. Check/refine before fitting."
+        elif certificate.get("status") != "certified":
+            status_text = (
+                "Not certified within the configured refinement budget."
+            )
+        elif list(certificate.get("chosen_mesh") or ()) != list(mesh):
+            status_text = "Certificate is stale because the mesh changed."
+        elif source is not None and bool(
+            source.config.get("model_stale", False)
+        ):
+            status_text = (
+                "Certificate is stale because the electronic model must be rebuilt."
+            )
+        elif (
+            source is not None
+            and source.config.get("model_digest")
+            and certificate.get("provenance", {}).get("model_digest")
+            != source.config.get("model_digest")
+        ):
+            status_text = (
+                "Certificate is stale because the electronic model changed."
+            )
+        elif not _sampling_float_matches(
+            certificate.get("provenance", {}).get("broadening_meV"),
+            model.parameters.get("broadening", 5.0),
+        ):
+            status_text = (
+                "Certificate is stale because the response broadening changed."
+            )
+        elif certificate.get("provenance", {}).get("symmetry") != str(
+            model.config.get("response_symmetry", "auto")
+        ):
+            status_text = (
+                "Certificate is stale because the symmetry policy changed."
+            )
+        elif not _sampling_float_matches(
+            certificate.get("domain", {}).get("temperature_K"),
+            model.config.get("plot_temperature_K", 10.0),
+        ):
+            status_text = (
+                "Certificate is stale because the certified temperature changed."
+            )
+        else:
+            tolerance = certificate.get("policy", {}).get(
+                "relative_tolerance",
+                "?",
+            )
+            status_text = (
+                f"Certified on {certificate.get('domain', {}).get('points', '?')} "
+                f"representative point(s) at tolerance {tolerance}."
+            )
+        convergence = QtWidgets.QLabel(status_text)
         convergence.setObjectName("lindhard_convergence_status")
         convergence.setWordWrap(True)
         convergence.setToolTip(
-            "nfit does not silently choose a scientific integration density. "
-            "The model-owned convergence viewer compares mesh and broadening changes."
+            "The certificate records all attempted meshes and observable errors. "
+            "Changing relevant physics marks it stale; final parameters should "
+            "be recertified after fitting."
         )
         sampling_layout.addRow(convergence)
+        certify = QtWidgets.QPushButton("Check/refine convergence")
+        certify.setObjectName("lindhard_certify_sampling")
+        certify.setEnabled(sampling_mode == "automatic")
+        certify.setToolTip(
+            "Search deterministic physically spaced meshes on the configured "
+            "convergence-viewer Q, energy, and temperature domain. Store a "
+            "concrete mesh only after two successive refinements pass."
+        )
+        certify.clicked.connect(
+            lambda _checked=False, model=model: self._certify_lindhard_sampling(
+                model
+            )
+        )
+        sampling_layout.addRow(certify)
         self.model_parameter_layout.addWidget(sampling, 12, 0, 1, 4)
 
         experiment = QtWidgets.QGroupBox("Experimental coupling")
@@ -21602,9 +21757,56 @@ class NfitProjectExplorer:
                 ),
             }
         if plot_key == "dos":
+            certificate = config.get("dos_sampling_certificate", {})
+            mode = str(config.get("dos_sampling_mode", "automatic"))
+            if mode == "manual":
+                status = "Manual mesh: no automatic accuracy claim."
+            elif not isinstance(certificate, dict) or not certificate:
+                status = "Not certified."
+            elif certificate.get("status") != "certified":
+                status = "Not certified within budget."
+            elif list(certificate.get("chosen_mesh") or ()) != list(
+                config.get("dos_mesh", ())
+            ):
+                status = "Certificate stale: mesh changed."
+            elif bool(config.get("model_stale", False)):
+                status = "Certificate stale: electronic model must be rebuilt."
+            elif (
+                config.get("model_digest")
+                and certificate.get("provenance", {}).get("model_digest")
+                != config.get("model_digest")
+            ):
+                status = "Certificate stale: electronic model changed."
+            elif certificate.get("provenance", {}).get("method") != str(
+                config.get("dos_method", "gaussian")
+            ):
+                status = "Certificate stale: integration method changed."
+            elif not _sampling_float_matches(
+                certificate.get("provenance", {}).get("broadening_meV"),
+                config.get("dos_broadening_meV", 5.0),
+            ):
+                status = "Certificate stale: broadening changed."
+            elif certificate.get("provenance", {}).get("symmetry") != str(
+                config.get("dos_symmetry", "auto")
+            ):
+                status = "Certificate stale: symmetry policy changed."
+            else:
+                status = (
+                    "Certified at normalized tolerance "
+                    f"{certificate.get('policy', {}).get('relative_tolerance', '?')}."
+                )
             return {
                 **common,
                 "dos_method": config.get("dos_method", "gaussian"),
+                "dos_sampling_mode": mode,
+                "dos_sampling_accuracy": config.get(
+                    "dos_sampling_accuracy",
+                    "standard",
+                ),
+                "dos_sampling_custom_rtol": _parameter_to_text(
+                    config.get("dos_sampling_custom_rtol", 0.01)
+                ),
+                "dos_sampling_status": status,
                 "dos_mesh": _parameter_to_text(
                     config.get("dos_mesh", [40, 40, 40])
                 ),
@@ -21660,15 +21862,19 @@ class NfitProjectExplorer:
     ) -> bool:
         """Validate and store one viewer's calculation settings."""
 
-        from PySide6 import QtWidgets
+        from PySide6 import QtCore, QtWidgets
 
         from .electronic_structure import (
             electronic_energy_to_meV,
             normalize_electronic_energy_unit,
         )
-        from .model_plots import configure_tight_binding_plot
+        from .model_plots import (
+            certify_tight_binding_dos_sampling,
+            configure_tight_binding_plot,
+        )
 
         previous = copy.deepcopy(model.config)
+        certificate = None
         unit = normalize_electronic_energy_unit(
             model.config.get("electronic_energy_unit", "eV")
         )
@@ -21701,6 +21907,17 @@ class NfitProjectExplorer:
                 )
             elif plot_key == "dos":
                 method = str(values["dos_method"])
+                sampling_mode = str(
+                    values.get("dos_sampling_mode", "automatic")
+                )
+                sampling_accuracy = str(
+                    values.get("dos_sampling_accuracy", "standard")
+                )
+                sampling_custom_rtol = float(
+                    _parse_parameter_text(
+                        values.get("dos_sampling_custom_rtol", "0.01")
+                    )
+                )
                 automatic_energy_range = (
                     str(values.get("dos_auto_energy_range", "false"))
                     .strip()
@@ -21752,11 +21969,27 @@ class NfitProjectExplorer:
                     plot_key,
                     dos_method=method,
                     dos_mesh=mesh,
+                    dos_sampling_mode=sampling_mode,
+                    dos_sampling_accuracy=sampling_accuracy,
+                    dos_sampling_custom_rtol=sampling_custom_rtol,
                     dos_symmetry=symmetry,
                     dos_auto_energy_range=automatic_energy_range,
                     dos_energy_points=energy_points,
                     **energies,
                 )
+                if sampling_mode == "automatic":
+                    application = QtWidgets.QApplication.instance()
+                    if application is not None:
+                        application.setOverrideCursor(
+                            QtCore.Qt.CursorShape.WaitCursor
+                        )
+                    try:
+                        certificate = certify_tight_binding_dos_sampling(
+                            model
+                        )
+                    finally:
+                        if application is not None:
+                            application.restoreOverrideCursor()
             elif plot_key == "fermi_surface":
                 mesh = _parse_parameter_text(
                     values["fermi_mesh"]
@@ -21797,6 +22030,16 @@ class NfitProjectExplorer:
                 f"Could not apply the settings:\n{exc}",
             )
             return False
+
+        if certificate is not None and not certificate.certified:
+            QtWidgets.QMessageBox.information(
+                self.window,
+                "DOS mesh convergence",
+                "The requested accuracy was not certified within the "
+                "configured mesh budget. The attempted meshes and errors "
+                "were saved; increase the Advanced budget or loosen the "
+                "accuracy profile.",
+            )
 
         if model.config == previous:
             return True
@@ -23418,6 +23661,58 @@ class NfitProjectExplorer:
             raise ValueError(f"unknown Lindhard Q accuracy {accuracy!r}")
         self._set_lindhard_config_values(**updates)
 
+    def _certify_lindhard_sampling(
+        self,
+        expected_model: ModelComponentSpec,
+    ) -> None:
+        """Run the explicit pre-fit Lindhard mesh search."""
+
+        from PySide6 import QtCore, QtWidgets
+
+        from .model_plots import certify_lindhard_component_sampling
+
+        result: dict[str, Any] = {}
+        application = QtWidgets.QApplication.instance()
+        if application is not None:
+            application.setOverrideCursor(
+                QtCore.Qt.CursorShape.WaitCursor
+            )
+        try:
+            def mutate(
+                model: ModelComponentSpec,
+                group: DataGroup | None,
+            ) -> None:
+                if model is not expected_model or group is None:
+                    raise ValueError(
+                        "select the Lindhard component before certification"
+                    )
+                result["certificate"] = certify_lindhard_component_sampling(
+                    model,
+                    group.models,
+                )
+
+            self._mutate_selected_model(mutate)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Response-mesh convergence",
+                f"Could not certify the response mesh:\n{exc}",
+            )
+            return
+        finally:
+            if application is not None:
+                application.restoreOverrideCursor()
+        certificate = result.get("certificate")
+        if certificate is not None and not certificate.certified:
+            QtWidgets.QMessageBox.information(
+                self.window,
+                "Response-mesh convergence",
+                "The requested accuracy was not certified within the "
+                "configured mesh budget. The attempted meshes and errors "
+                "were saved; increase the Advanced budget or loosen the "
+                "accuracy profile.",
+            )
+
     def _set_tight_binding_energy_unit(self, unit: str) -> None:
         from .electronic_structure import (
             normalize_electronic_energy_unit,
@@ -24625,6 +24920,21 @@ def _unique_name(base: str, existing: list[str]) -> str:
     while f"{candidate}{index}" in existing:
         index += 1
     return f"{candidate}{index}"
+
+
+def _sampling_float_matches(saved: Any, current: Any) -> bool:
+    """Return whether a serialized certificate scalar matches current state."""
+
+    try:
+        saved_value = float(saved)
+        current_value = float(current)
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        np.isfinite(saved_value)
+        and np.isfinite(current_value)
+        and saved_value == current_value
+    )
 
 
 def _parameter_to_text(value: Any) -> str:

@@ -1352,6 +1352,69 @@ def _register_builtin_models() -> None:
                     "[24, 24, 24]",
                 ),
                 _config_field(
+                    "response_sampling_mode",
+                    "automatic",
+                    (
+                        "Use a stored manually selected response mesh or certify "
+                        "a concrete mesh before fitting."
+                    ),
+                    "Either automatic or manual.",
+                    "str",
+                    "automatic",
+                ),
+                _config_field(
+                    "response_sampling_accuracy",
+                    "standard",
+                    (
+                        "Observable-error profile for automatic response-mesh "
+                        "certification."
+                    ),
+                    "One of preview, standard, high, or custom.",
+                    "str",
+                    "standard",
+                ),
+                _config_field(
+                    "response_sampling_custom_rtol",
+                    0.01,
+                    (
+                        "Relative error target used only by the custom response "
+                        "sampling profile."
+                    ),
+                    "Positive finite number.",
+                    "float",
+                    "0.005",
+                ),
+                _config_field(
+                    "response_sampling_max_refinements",
+                    7,
+                    "Maximum candidate meshes in one response certificate.",
+                    "Integer of at least 3.",
+                    "int",
+                    "8",
+                ),
+                _config_field(
+                    "response_sampling_max_mesh_points",
+                    500000,
+                    (
+                        "Independent safety budget for full response-mesh "
+                        "points; exceeding it reports an uncertified result."
+                    ),
+                    "Positive integer.",
+                    "int",
+                    "1000000",
+                ),
+                _config_field(
+                    "response_sampling_certificate",
+                    {},
+                    (
+                        "Derived serialized response-mesh certificate. It records "
+                        "tested meshes and errors and is not a physical input."
+                    ),
+                    "JSON dictionary.",
+                    "dict",
+                    "{}",
+                ),
+                _config_field(
                     "response_mesh_shift",
                     [0.0, 0.0, 0.0],
                     "Mesh-step offsets for the full response mesh.",
@@ -2400,6 +2463,69 @@ def _register_builtin_models() -> None:
                     "One size per periodic dimension, or three lattice-axis sizes.",
                     "list",
                     "[80, 80, 1]",
+                ),
+                _config_field(
+                    "dos_sampling_mode",
+                    "automatic",
+                    (
+                        "Use a stored manually selected DOS mesh or certify a "
+                        "concrete production mesh."
+                    ),
+                    "Either automatic or manual.",
+                    "str",
+                    "automatic",
+                ),
+                _config_field(
+                    "dos_sampling_accuracy",
+                    "standard",
+                    (
+                        "Observable-error profile for automatic DOS-mesh "
+                        "certification."
+                    ),
+                    "One of preview, standard, high, or custom.",
+                    "str",
+                    "standard",
+                ),
+                _config_field(
+                    "dos_sampling_custom_rtol",
+                    0.01,
+                    (
+                        "Relative error target used only by the custom DOS "
+                        "sampling profile."
+                    ),
+                    "Positive finite number.",
+                    "float",
+                    "0.005",
+                ),
+                _config_field(
+                    "dos_sampling_max_refinements",
+                    7,
+                    "Maximum candidate meshes in one DOS certificate.",
+                    "Integer of at least 3.",
+                    "int",
+                    "8",
+                ),
+                _config_field(
+                    "dos_sampling_max_mesh_points",
+                    2000000,
+                    (
+                        "Independent safety budget for full DOS-mesh points; "
+                        "exceeding it reports an uncertified result."
+                    ),
+                    "Positive integer.",
+                    "int",
+                    "4000000",
+                ),
+                _config_field(
+                    "dos_sampling_certificate",
+                    {},
+                    (
+                        "Derived serialized DOS-mesh certificate. It records "
+                        "tested meshes and errors and is not a physical input."
+                    ),
+                    "JSON dictionary.",
+                    "dict",
+                    "{}",
                 ),
                 _config_field(
                     "dos_symmetry",
