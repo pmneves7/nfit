@@ -3,9 +3,13 @@ import pytest
 
 from nfit.form_factors import (
     J0_COEFFICIENTS,
+    J2_COEFFICIENTS,
     available_ions,
+    dipole_j2_weight,
     form_factor_sq,
+    magnetic_form_factor,
     magnetic_form_factor_j0,
+    magnetic_form_factor_j2,
 )
 
 
@@ -91,3 +95,106 @@ def test_available_ions_sorted_and_nonempty():
     ions = available_ions()
     assert "Mn2" in ions and "Fe2" in ions and "U4" in ions
     assert ions == sorted(ions)
+
+
+def _periodictable_tables():
+    """Return the ``<j0>`` and ``<j2>`` tables as nfit keys them."""
+
+    periodictable = pytest.importorskip("periodictable")
+    j0: dict[str, tuple[float, ...]] = {}
+    j2: dict[str, tuple[float, ...]] = {}
+    for element in periodictable.elements:
+        magnetic = getattr(element, "magnetic_ff", None)
+        if not magnetic:
+            continue
+        for charge, data in magnetic.items():
+            key = f"{element.symbol}{charge}"
+            if getattr(data, "j0", None) is not None:
+                j0[key] = tuple(float(value) for value in data.j0)
+            if getattr(data, "j2", None) is not None:
+                j2[key] = tuple(float(value) for value in data.j2)
+    return j0, j2
+
+
+def test_vendored_tables_match_their_periodictable_source():
+    """The vendored coefficients must stay identical to the cited source.
+
+    nfit vendors the tables so a published result cannot change because a
+    dependency was updated, which makes an upstream revision or a transcription
+    slip invisible without this check.
+    """
+
+    source_j0, source_j2 = _periodictable_tables()
+    assert set(J0_COEFFICIENTS) == set(source_j0)
+    assert set(J2_COEFFICIENTS) == set(source_j2)
+    for key, values in J0_COEFFICIENTS.items():
+        np.testing.assert_allclose(
+            values, source_j0[key], rtol=0.0, atol=1.0e-6, err_msg=f"<j0> {key}"
+        )
+    for key, values in J2_COEFFICIENTS.items():
+        np.testing.assert_allclose(
+            values, source_j2[key], rtol=0.0, atol=1.0e-6, err_msg=f"<j2> {key}"
+        )
+
+
+def test_radial_integrals_match_periodictable_evaluation():
+    """Evaluating the tables must reproduce the source implementation."""
+
+    _source_j0, _source_j2 = _periodictable_tables()
+    periodictable = pytest.importorskip("periodictable")
+    q = np.array([0.0, 0.7, 1.9, 4.4, 8.0])
+    for symbol, charge in (("Yb", 3), ("Nd", 3), ("Fe", 2), ("Mn", 2)):
+        data = getattr(periodictable, symbol).magnetic_ff[charge]
+        ion = f"{symbol}{charge}"
+        np.testing.assert_allclose(
+            magnetic_form_factor_j0(q, ion=ion), data.j0_Q(q), atol=1.0e-6
+        )
+        np.testing.assert_allclose(
+            magnetic_form_factor_j2(q, ion=ion), data.j2_Q(q), atol=1.0e-6
+        )
+
+
+def test_j2_vanishes_at_zero_momentum_transfer():
+    """<j2> carries a leading s^2, so it must vanish at Q = 0."""
+
+    for ion in ("Yb3", "Nd3", "Fe2"):
+        assert magnetic_form_factor_j2(0.0, ion=ion) == pytest.approx(0.0)
+
+
+def test_dipole_approximation_reduces_to_j0_for_a_spin_only_moment():
+    """g_J = 2 must return <j0> exactly and never consult the <j2> table."""
+
+    q = np.array([0.0, 1.3, 5.5])
+    assert dipole_j2_weight(2.0) == 0.0
+    np.testing.assert_array_equal(
+        magnetic_form_factor(q, ion="Yb3"), magnetic_form_factor_j0(q, ion="Yb3")
+    )
+    # Pr3 has <j0> but no <j2>; the spin-only default must still work.
+    np.testing.assert_array_equal(
+        magnetic_form_factor(q, ion="Pr3"), magnetic_form_factor_j0(q, ion="Pr3")
+    )
+    with pytest.raises(KeyError, match="no tabulated <j2>"):
+        magnetic_form_factor(q, ion="Pr3", g_J=1.5)
+
+
+def test_dipole_approximation_adds_the_orbital_term():
+    """f = <j0> + (2/g_J - 1) <j2>, a large correction for a rare earth."""
+
+    q = np.array([0.0, 2.0, 6.0])
+    g_J = 8.0 / 7.0  # Yb(3+)
+    assert dipole_j2_weight(g_J) == pytest.approx(0.75)
+    expected = magnetic_form_factor_j0(q, ion="Yb3") + 0.75 * magnetic_form_factor_j2(
+        q, ion="Yb3"
+    )
+    np.testing.assert_allclose(
+        magnetic_form_factor(q, ion="Yb3", g_J=g_J), expected, rtol=1.0e-12
+    )
+    np.testing.assert_allclose(
+        form_factor_sq(q, ion="Yb3", g_J=g_J), expected**2, rtol=1.0e-12
+    )
+    # The orbital term matters: at 6 inverse Angstrom it is a third of f.
+    spin_only = magnetic_form_factor_j0(q, ion="Yb3")[-1]
+    assert magnetic_form_factor(q, ion="Yb3", g_J=g_J)[-1] / spin_only > 1.3
+    for bad in (0.0, -1.0, np.nan):
+        with pytest.raises(ValueError, match="g_J"):
+            dipole_j2_weight(bad)

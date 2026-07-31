@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nfit"
-version = "0.59.1"
+version = "0.60.0"
 description = "Reduced magnetic-scattering analysis for nearly magnetic metals"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -63,6 +63,11 @@ dev = [
   "ruff>=0.12",
   "twine>=5",
   "numba>=0.58",
+  # Source of the vendored magnetic form-factor tables (Brown, International
+  # Tables C 4.4.5). Only needed to regenerate them and to run the drift test
+  # that re-derives them; nfit itself has no runtime dependency on it, so a
+  # published result never changes because this package was updated.
+  "periodictable>=1.7",
 ]
 # Accelerated compute backends for large spin-fluctuation fits. Both are
 # optional: nfit falls back to numpy when they are absent, and selects a

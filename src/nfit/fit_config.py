@@ -1424,6 +1424,8 @@ def _form_factor_sq_from_config(component: Any, data: PointData4D) -> float | np
 
     Returns 1.0 when the component configures no form factor. Computing
     ``|Q|`` in inverse angstrom requires lattice or UB metadata on the data.
+    ``form_factor_g_J`` selects the dipole approximation; its default of 2.0 is
+    the spin-only ``<j0>`` form factor.
     """
 
     config = component.config if isinstance(component.config, dict) else {}
@@ -1436,7 +1438,13 @@ def _form_factor_sq_from_config(component: Any, data: PointData4D) -> float | np
     from .fitting import q_modulus_inv_angstrom
 
     q = q_modulus_inv_angstrom(data)
-    return form_factor_sq(q, ion=ion or None, coefficients=coefficients)
+    return form_factor_sq(
+        q,
+        ion=ion or None,
+        coefficients=coefficients,
+        j2_coefficients=config.get("form_factor_j2_coefficients"),
+        g_J=float(config.get("form_factor_g_J", 2.0)),
+    )
 
 
 def _powder_sphere_directions(count: int) -> np.ndarray:

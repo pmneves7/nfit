@@ -146,7 +146,9 @@ scripts.
 | `chemical_potential_mode` | use the source chemical potential or solve from filling | `"source"` | `"source"` or `"filling"` |
 | `filling_per_cell` | electron count per electronic model cell in filling mode | `1.0` | `3.0` |
 | `ion` | tabulated magnetic form-factor ion; empty applies none | `""` | `"Fe2"` |
-| `form_factor_coefficients` | custom form-factor coefficients instead of `ion` | `""` | `"0.0263,34.96,0.3668,15.94,0.6188,5.594,-0.0119"` |
+| `form_factor_coefficients` | custom $\langle j_0\rangle$ coefficients instead of `ion` | `""` | `"0.0263,34.96,0.3668,15.94,0.6188,5.594,-0.0119"` |
+| `form_factor_g_J` | ion Landé factor for the dipole approximation $f=\langle j_0\rangle+(2/g_J-1)\langle j_2\rangle$; the default 2 is spin-only $\langle j_0\rangle$ | `2.0` | `1.1428` |
+| `form_factor_j2_coefficients` | custom $\langle j_2\rangle$ coefficients instead of `ion` | `""` | `"0.157,18.555,0.8484,6.54,0.888,2.037,0.0318"` |
 | `formula_units_mode` | infer formula units in the actual electronic model cell or use an explicit override | `"auto"` | `"auto"` or `"manual"` |
 | `formula_units_per_cell` | formula units in the electronic model cell when manual mode is selected | `1.0` | `2.0` |
 | `bulk_g_factor` | Landé factor for bulk conversion | `2.0` | `2.1` |

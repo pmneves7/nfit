@@ -284,9 +284,14 @@ from .fitting import (
 )
 from .form_factors import (
     J0_COEFFICIENTS,
+    J2_COEFFICIENTS,
+    available_dipole_ions,
     available_ions,
+    dipole_j2_weight,
     form_factor_sq,
+    magnetic_form_factor,
     magnetic_form_factor_j0,
+    magnetic_form_factor_j2,
 )
 from .heat_capacity import (
     debye_heat_capacity,
@@ -765,9 +770,14 @@ __all__ = [
     "component_parameter_names",
     "heisenberg_rpa_orbit_labels",
     "J0_COEFFICIENTS",
+    "J2_COEFFICIENTS",
+    "available_dipole_ions",
     "available_ions",
+    "dipole_j2_weight",
     "form_factor_sq",
+    "magnetic_form_factor",
     "magnetic_form_factor_j0",
+    "magnetic_form_factor_j2",
     "RpaGeometry",
     "available_rpa_backends",
     "build_rpa_geometry",

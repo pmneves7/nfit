@@ -534,6 +534,42 @@ def test_heisenberg_rpa_blank_custom_form_factor_uses_selected_ion():
     assert np.all(np.isfinite(result.model_values))
 
 
+def test_form_factor_g_J_selects_the_dipole_approximation():
+    """form_factor_g_J must reach the evaluated model, and default to spin-only."""
+
+    from nfit.fitting import evaluate_problem_model
+
+    H = np.linspace(0.4, 1.4, 8)
+    points = _spin_fluctuation_points(
+        np.ones(H.size),
+        H,
+        np.ones(H.size),
+        temperature=5.0,
+        lattice_a=8.24062,
+    )
+
+    def evaluate(**config):
+        component = _heisenberg_chain_component()
+        component.config["ion"] = "Yb3"
+        component.config["form_factor_coefficients"] = ""
+        component.config.update(config)
+        component.fit_parameters = {}
+        compiled = compile_fit_problem([component], [FitDatasetInput("a", points)])
+        params = {spec.name: spec.value for spec in compiled.problem.parameter_specs}
+        return evaluate_problem_model(compiled.problem, "a", params)
+
+    spin_only = evaluate()
+    explicit_two = evaluate(form_factor_g_J=2.0)
+    dipole = evaluate(form_factor_g_J=8.0 / 7.0)
+
+    # The default and an explicit g_J = 2 are the spin-only <j0> form factor.
+    np.testing.assert_allclose(spin_only, explicit_two, rtol=1.0e-12)
+    # Yb(3+) picks up a substantial orbital contribution, growing with |Q|.
+    ratio = dipole / spin_only
+    assert np.all(ratio > 1.0)
+    assert ratio[-1] > ratio[0]
+
+
 def test_heisenberg_rpa_evaluates_powder_chipp_with_spherical_average():
     from nfit.fitting import evaluate_problem_model
     from nfit.spin_fluctuations import (

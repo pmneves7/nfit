@@ -2,21 +2,36 @@
 
 The magnetic neutron scattering cross section from unpolarized neutrons is
 proportional to ``|f(Q)|^2`` where ``f(Q)`` is the magnetic form factor of the
-scattering ion. In the spherical (dipole) approximation truncated at lowest
-order, ``f(Q) = <j0(Q)>``, which is tabulated as a three-Gaussian analytic
-approximation
+scattering ion. The radial integrals are tabulated as three-Gaussian analytic
+approximations in ``s = |Q| / (4 pi) = sin(theta) / lambda`` (inverse Angstrom):
 
-``f(s) = A exp(-a s^2) + B exp(-b s^2) + C exp(-c s^2) + D``
+``<j0>(s) = A exp(-a s^2) + B exp(-b s^2) + C exp(-c s^2) + D``,
+``<j2>(s) = s^2 [A exp(-a s^2) + B exp(-b s^2) + C exp(-c s^2) + D]``.
 
-with ``s = |Q| / (4 pi) = sin(theta) / lambda`` in inverse Angstrom. The
-tabulated coefficients satisfy ``f(0) = A + B + C + D = 1`` for magnetic ions
-to about ``1e-3``, which is the precision of the published fits rather than an
-exact constraint.
+The extra ``s^2`` on ``<j2>`` is part of the tabulation, and makes
+``<j2>(0) = 0`` as a spherical Bessel function of order two requires.
 
-Coverage gaps: the table has no ``5d`` ion (Re, Os, Ir, Pt), no ``Ru2``/``Ru3``
-or ``Rh3``, and no ``Ce3``. Pass explicit ``coefficients`` from the ILL tables
-for those ions. Only ``<j0>`` is tabulated, so rare-earth entries are used in
-the spin-only dipole approximation with no ``<j2>`` orbital term.
+Spin-only and dipole approximation
+----------------------------------
+For a spin-only moment ``f(Q) = <j0(Q)>``. When the moment carries orbital
+angular momentum, the dipole approximation is
+
+``f(Q) = <j0(Q)> + (2 / g_J - 1) <j2(Q)>``,
+
+with ``g_J`` the Lande factor of the ion. Writing the moment as
+``mu = (<L> + 2<S>) mu_B`` and projecting onto ``J`` gives ``<L> = (2 - g_J) J``
+and ``2<S> = 2 (g_J - 1) J``, so the orbital part weights ``<j0> + <j2>`` and
+the spin part weights ``<j0>``; the ratio is the coefficient above. ``g_J = 2``
+returns ``<j0>`` exactly, which is the default everywhere in nfit.
+
+The correction is not small for rare earths: Yb(3+) has ``g_J = 8/7``, giving a
+``<j2>`` coefficient of ``0.75``.
+
+Coverage gaps: the tables have no ``5d`` ion (Re, Os, Ir, Pt, W, Ta), no
+``Ru2``/``Ru3`` or ``Rh3``, and no ``Ce3``. This is a gap in Section 4.4.5
+itself rather than a transcription omission, so pass explicit coefficients from
+the literature for those ions. ``Pr3`` and ``O1`` have ``<j0>`` but no tabulated
+``<j2>`` and therefore support only the spin-only form.
 
 References
 ----------
@@ -25,6 +40,7 @@ References
 - ILL form factor tables: https://www.ill.eu/sites/ccsl/ffacts/
 - Coefficients transcribed from the public-domain ``periodictable`` package
   (P. Kienzle), which encodes the CrysFML / International Tables values.
+  ``tests/test_form_factors.py`` re-derives both tables from it.
 """
 
 from __future__ import annotations
@@ -137,16 +153,139 @@ J0_COEFFICIENTS: dict[str, tuple[float, float, float, float, float, float, float
 }
 
 
+# <j2> coefficients (A, a, B, b, C, c, D) in the same ion-label keying and
+# from the same source as J0_COEFFICIENTS. <j2> carries an extra s^2 factor
+# (see the module docstring). "Pr3" and "O1" have <j0> but no tabulated <j2>.
+J2_COEFFICIENTS: dict[str, tuple[float, float, float, float, float, float, float]] = {
+    "Sc0": (10.817200, 54.327000, 4.735300, 14.847000, 0.607100, 4.218000, 0.001100),
+    "Sc1": (8.502100, 34.285000, 3.211600, 10.994000, 0.424400, 3.605000, 0.000900),
+    "Sc2": (4.368300, 28.654000, 3.723100, 10.823000, 0.607400, 3.668000, 0.001400),
+    "Ti0": (4.358300, 36.056000, 3.823000, 11.133000, 0.685500, 3.469000, 0.002000),
+    "Ti1": (6.156700, 27.275000, 2.683300, 8.983000, 0.407000, 3.052000, 0.001100),
+    "Ti2": (4.310700, 18.348000, 2.096000, 6.797000, 0.298400, 2.548000, 0.000700),
+    "Ti3": (3.371700, 14.444000, 1.825800, 5.713000, 0.247000, 2.265000, 0.000500),
+    "V0": (3.809900, 21.347000, 2.329500, 7.409000, 0.433300, 2.632000, 0.001500),
+    "V1": (4.747400, 23.323000, 2.360900, 7.808000, 0.410500, 2.706000, 0.001400),
+    "V2": (3.438600, 16.530000, 1.963800, 6.141000, 0.299700, 2.267000, 0.000900),
+    "V3": (2.300500, 14.682000, 2.036400, 6.130000, 0.409900, 2.382000, 0.001400),
+    "V4": (1.837700, 12.267000, 1.824700, 5.458000, 0.397900, 2.248000, 0.001200),
+    "Cr0": (3.408500, 20.127000, 2.100600, 6.802000, 0.426600, 2.394000, 0.001900),
+    "Cr1": (3.776800, 20.346000, 2.102800, 6.893000, 0.401000, 2.411000, 0.001700),
+    "Cr2": (2.642200, 16.060000, 1.919800, 6.253000, 0.444600, 2.372000, 0.002000),
+    "Cr3": (1.626200, 15.066000, 2.061800, 6.284000, 0.528100, 2.368000, 0.002300),
+    "Cr4": (1.029300, 13.950000, 1.993300, 6.059000, 0.597400, 2.346000, 0.002700),
+    "Mn0": (2.668100, 16.060000, 1.756100, 5.640000, 0.367500, 2.049000, 0.001700),
+    "Mn1": (3.295300, 18.695000, 1.879200, 6.240000, 0.392700, 2.201000, 0.002200),
+    "Mn2": (2.051500, 15.556000, 1.884100, 6.063000, 0.478700, 2.232000, 0.002700),
+    "Mn3": (1.242700, 14.997000, 1.956700, 6.118000, 0.573200, 2.258000, 0.003100),
+    "Mn4": (0.787900, 13.886000, 1.871700, 5.743000, 0.598100, 2.182000, 0.003400),
+    "Fe0": (1.940500, 18.473000, 1.956600, 6.323000, 0.516600, 2.161000, 0.003600),
+    "Fe1": (2.629000, 18.660000, 1.870400, 6.331000, 0.469000, 2.163000, 0.003100),
+    "Fe2": (1.649000, 16.559000, 1.906400, 6.133000, 0.520600, 2.137000, 0.003500),
+    "Fe3": (1.360200, 11.998000, 1.518800, 5.003000, 0.470500, 1.991000, 0.003800),
+    "Fe4": (1.558200, 8.275000, 1.186300, 3.279000, 0.136600, 1.107000, -0.002200),
+    "Co0": (1.967800, 14.170000, 1.491100, 4.948000, 0.384400, 1.797000, 0.002700),
+    "Co1": (2.409700, 16.161000, 1.578000, 5.460000, 0.409500, 1.914000, 0.003100),
+    "Co2": (1.904900, 11.644000, 1.315900, 4.357000, 0.314600, 1.645000, 0.001700),
+    "Co3": (1.705800, 8.859000, 1.140900, 3.309000, 0.147400, 1.090000, -0.002500),
+    "Co4": (1.311000, 8.025000, 1.155100, 3.179000, 0.160800, 1.130000, -0.001100),
+    "Ni0": (1.030200, 12.252000, 1.466900, 4.745000, 0.452100, 1.744000, 0.003600),
+    "Ni1": (2.104000, 14.866000, 1.430200, 5.071000, 0.403100, 1.778000, 0.003400),
+    "Ni2": (1.708000, 11.016000, 1.214700, 4.103000, 0.315000, 1.533000, 0.001800),
+    "Ni3": (1.161200, 7.700000, 1.002700, 3.263000, 0.271900, 1.378000, 0.002500),
+    "Ni4": (1.161200, 7.700000, 1.002700, 3.263000, 0.271900, 1.378000, 0.002500),
+    "Cu0": (1.918200, 14.490000, 1.332900, 4.730000, 0.384200, 1.639000, 0.003500),
+    "Cu1": (1.881400, 13.433000, 1.280900, 4.545000, 0.364600, 1.602000, 0.003300),
+    "Cu2": (1.518900, 10.478000, 1.151200, 3.813000, 0.291800, 1.398000, 0.001700),
+    "Cu3": (1.279700, 8.450000, 1.031500, 3.280000, 0.240100, 1.250000, 0.001500),
+    "Cu4": (0.956800, 7.448000, 0.909900, 3.396000, 0.372900, 1.494000, 0.004900),
+    "Y0": (14.408400, 44.658000, 5.104500, 14.904000, -0.053500, 3.319000, 0.002800),
+    "Zr0": (10.137800, 35.337000, 4.773400, 12.545000, -0.048900, 2.672000, 0.003600),
+    "Zr1": (11.872200, 34.920000, 4.050200, 12.127000, -0.063200, 2.828000, 0.003400),
+    "Nb0": (7.479600, 33.179000, 5.088400, 11.571000, -0.028100, 1.564000, 0.004700),
+    "Nb1": (8.773500, 33.285000, 4.655600, 11.605000, -0.026800, 1.539000, 0.004400),
+    "Mo0": (5.118000, 23.422000, 4.180900, 9.208000, -0.050500, 1.743000, 0.005300),
+    "Mo1": (7.236700, 28.128000, 4.070500, 9.923000, -0.031700, 1.455000, 0.004900),
+    "Tc0": (4.244100, 21.397000, 3.943900, 8.375000, -0.037100, 1.187000, 0.006600),
+    "Tc1": (6.405600, 24.824000, 3.540000, 8.611000, -0.036600, 1.485000, 0.004400),
+    "Ru0": (3.744500, 18.613000, 3.474900, 7.420000, -0.036300, 1.007000, 0.007300),
+    "Ru1": (5.282600, 23.683000, 3.581300, 8.152000, -0.025700, 0.426000, 0.013100),
+    "Rh0": (3.365100, 17.344000, 3.212100, 6.804000, -0.035000, 0.503000, 0.014600),
+    "Rh1": (4.026000, 18.950000, 3.166300, 7.000000, -0.029600, 0.486000, 0.012700),
+    "Pd0": (3.310500, 14.726000, 2.633200, 5.862000, -0.043700, 1.130000, 0.005300),
+    "Pd1": (4.274900, 17.900000, 2.702100, 6.354000, -0.025800, 0.700000, 0.007100),
+    "Ce2": (0.980900, 18.063000, 1.841300, 7.769000, 0.990500, 2.845000, 0.012000),
+    "Nd2": (1.453000, 18.340000, 1.619600, 7.285000, 0.875200, 2.622000, 0.012600),
+    "Nd3": (0.675100, 18.342000, 1.627200, 7.260000, 0.964400, 2.602000, 0.015000),
+    "Sm2": (1.036000, 18.425000, 1.476900, 7.032000, 0.881000, 2.437000, 0.015200),
+    "Sm3": (0.470700, 18.430000, 1.426100, 7.034000, 0.957400, 2.439000, 0.018200),
+    "Eu2": (0.897000, 18.443000, 1.376900, 7.005000, 0.906000, 2.421000, 0.019000),
+    "Eu3": (0.398500, 18.451000, 1.330700, 6.956000, 0.960300, 2.378000, 0.019700),
+    "Gd2": (0.775600, 18.469000, 1.312400, 6.899000, 0.895600, 2.338000, 0.019900),
+    "Gd3": (0.334700, 18.476000, 1.246500, 6.877000, 0.953700, 2.318000, 0.021700),
+    "Tb2": (0.668800, 18.491000, 1.248700, 6.822000, 0.888800, 2.275000, 0.021500),
+    "Tb3": (0.289200, 18.497000, 1.167800, 6.797000, 0.943700, 2.257000, 0.023200),
+    "Dy2": (0.591700, 18.511000, 1.182800, 6.747000, 0.880100, 2.214000, 0.022900),
+    "Dy3": (0.252300, 18.517000, 1.091400, 6.736000, 0.934500, 2.208000, 0.025000),
+    "Ho2": (0.509400, 18.515000, 1.123400, 6.706000, 0.872700, 2.159000, 0.024200),
+    "Ho3": (0.218800, 18.516000, 1.024000, 6.707000, 0.925100, 2.161000, 0.026800),
+    "Er2": (0.469300, 18.528000, 1.054500, 6.649000, 0.867900, 2.120000, 0.026100),
+    "Er3": (0.171000, 18.534000, 0.987900, 6.625000, 0.904400, 2.100000, 0.027800),
+    "Tm2": (0.419800, 18.542000, 0.995900, 6.600000, 0.859300, 2.082000, 0.028400),
+    "Tm3": (0.176000, 18.542000, 0.910500, 6.579000, 0.897000, 2.062000, 0.029400),
+    "Yb2": (0.385200, 18.550000, 0.941500, 6.551000, 0.849200, 2.043000, 0.030100),
+    "Yb3": (0.157000, 18.555000, 0.848400, 6.540000, 0.888000, 2.037000, 0.031800),
+    "U3": (4.158200, 16.534000, 2.467500, 5.952000, -0.025200, 0.765000, 0.005700),
+    "U4": (3.744900, 13.894000, 2.645300, 4.863000, -0.521800, 3.192000, 0.000900),
+    "U5": (3.072400, 12.546000, 2.307600, 5.231000, -0.064400, 1.474000, 0.003500),
+    "Np3": (3.717000, 15.133000, 2.321600, 5.503000, -0.027500, 0.800000, 0.005200),
+    "Np4": (2.920300, 14.646000, 2.597900, 5.559000, -0.030100, 0.367000, 0.014100),
+    "Np5": (2.330800, 13.654000, 2.721900, 5.494000, -0.135700, 0.049000, 0.122400),
+    "Np6": (1.824500, 13.180000, 2.850800, 5.407000, -0.157900, 0.044000, 0.143800),
+    "Pu3": (2.088500, 12.871000, 2.596100, 5.190000, -0.146500, 0.039000, 0.134300),
+    "Pu4": (2.724400, 12.926000, 2.338700, 5.163000, -0.130000, 0.046000, 0.117700),
+    "Pu5": (2.140900, 12.832000, 2.566400, 5.152000, -0.133800, 0.046000, 0.121000),
+    "Pu6": (1.726200, 12.324000, 2.665200, 5.066000, -0.169500, 0.041000, 0.155000),
+    "Am2": (3.523700, 15.955000, 2.285500, 5.195000, -0.014200, 0.585000, 0.003300),
+    "Am3": (2.862200, 14.733000, 2.409900, 5.144000, -0.132600, 0.031000, 0.123300),
+    "Am4": (2.414100, 12.948000, 2.368700, 4.945000, -0.249000, 0.022000, 0.237100),
+    "Am5": (2.010900, 12.053000, 2.415500, 4.836000, -0.226400, 0.027000, 0.212800),
+    "Am6": (1.677800, 11.337000, 2.453100, 4.725000, -0.204300, 0.034000, 0.189200),
+    "Am7": (1.884500, 9.161000, 2.074600, 4.042000, -0.131800, 1.723000, 0.002000),
+}
+
+
 def available_ions() -> list[str]:
     """Return the ion labels with tabulated ``<j0>`` coefficients."""
 
     return sorted(J0_COEFFICIENTS)
 
 
+def available_dipole_ions() -> list[str]:
+    """Return the ion labels usable with the ``g_J`` dipole approximation."""
+
+    return sorted(J2_COEFFICIENTS)
+
+
+def dipole_j2_weight(g_J: float) -> float:
+    """Return the ``<j2>`` weight ``2 / g_J - 1`` of the dipole approximation.
+
+    ``g_J = 2`` gives zero, i.e. the spin-only ``<j0>`` form factor.
+    """
+
+    value = float(g_J)
+    if not np.isfinite(value) or value <= 0.0:
+        raise ValueError("g_J must be finite and positive")
+    return 2.0 / value - 1.0
+
+
 def _resolve_coefficients(
     ion: str | None,
     coefficients: ArrayLike | None,
+    table: dict[str, tuple[float, float, float, float, float, float, float]] = None,
+    label: str = "<j0>",
 ) -> tuple[float, float, float, float, float, float, float]:
+    lookup = J0_COEFFICIENTS if table is None else table
     values = _coerce_coefficients(coefficients)
     if values is not None:
         return values
@@ -154,10 +293,12 @@ def _resolve_coefficients(
         raise ValueError("provide either an ion label or explicit coefficients")
     key = str(ion).strip()
     try:
-        return J0_COEFFICIENTS[key]
+        return lookup[key]
     except KeyError:
+        known = ", ".join(sorted(lookup))
         raise KeyError(
-            f"unknown magnetic ion {key!r}; known ions: {', '.join(available_ions())}"
+            f"magnetic ion {key!r} has no tabulated {label} coefficients; "
+            f"ions with {label}: {known}"
         ) from None
 
 
@@ -218,15 +359,73 @@ def magnetic_form_factor_j0(
     return A * np.exp(-a * s_sq) + B * np.exp(-b * s_sq) + C * np.exp(-c * s_sq) + D
 
 
-def form_factor_sq(
+def magnetic_form_factor_j2(
     q_modulus_inv_angstrom: ArrayLike,
     *,
     ion: str | None = None,
     coefficients: ArrayLike | None = None,
 ) -> FloatArray:
-    """Return ``|f(|Q|)|^2`` in the ``<j0>`` approximation."""
+    """Return the ``<j2>`` radial integral.
 
-    f = magnetic_form_factor_j0(
+    ``<j2>(s) = s^2 [A exp(-a s^2) + B exp(-b s^2) + C exp(-c s^2) + D]`` with
+    ``s = |Q|/(4 pi)`` in inverse Angstrom. The leading ``s^2`` is part of the
+    tabulation, so ``<j2>(0) = 0``. Pass a tabulated ``ion`` label (see
+    :func:`available_dipole_ions`) or explicit ``coefficients``.
+    """
+
+    A, a, B, b, C, c, D = _resolve_coefficients(
+        ion, coefficients, J2_COEFFICIENTS, "<j2>"
+    )
+    q = np.asarray(q_modulus_inv_angstrom, dtype=float)
+    s_sq = (q / (4.0 * np.pi)) ** 2
+    return s_sq * (
+        A * np.exp(-a * s_sq) + B * np.exp(-b * s_sq) + C * np.exp(-c * s_sq) + D
+    )
+
+
+def magnetic_form_factor(
+    q_modulus_inv_angstrom: ArrayLike,
+    *,
+    ion: str | None = None,
+    coefficients: ArrayLike | None = None,
+    j2_coefficients: ArrayLike | None = None,
+    g_J: float = 2.0,
+) -> FloatArray:
+    """Return ``f(|Q|)`` in the spin-only or ``g_J`` dipole approximation.
+
+    ``g_J = 2`` (the default) returns ``<j0>`` unchanged and never consults the
+    ``<j2>`` table, so a spin-only ion needs no ``<j2>`` entry. Any other
+    ``g_J`` adds ``(2 / g_J - 1) <j2>``; see the module docstring for the
+    derivation and :func:`dipole_j2_weight` for the coefficient alone.
+    """
+
+    j0 = magnetic_form_factor_j0(
         q_modulus_inv_angstrom, ion=ion, coefficients=coefficients
+    )
+    weight = dipole_j2_weight(g_J)
+    if weight == 0.0 and j2_coefficients is None:
+        return j0
+    j2 = magnetic_form_factor_j2(
+        q_modulus_inv_angstrom, ion=ion, coefficients=j2_coefficients
+    )
+    return j0 + weight * j2
+
+
+def form_factor_sq(
+    q_modulus_inv_angstrom: ArrayLike,
+    *,
+    ion: str | None = None,
+    coefficients: ArrayLike | None = None,
+    j2_coefficients: ArrayLike | None = None,
+    g_J: float = 2.0,
+) -> FloatArray:
+    """Return ``|f(|Q|)|^2`` in the spin-only or ``g_J`` dipole approximation."""
+
+    f = magnetic_form_factor(
+        q_modulus_inv_angstrom,
+        ion=ion,
+        coefficients=coefficients,
+        j2_coefficients=j2_coefficients,
+        g_J=g_J,
     )
     return f * f

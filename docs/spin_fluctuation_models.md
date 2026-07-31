@@ -39,6 +39,15 @@ to a neutron cross section. See [Physics conventions](physics_conventions.md)
 for the Bose factor, polarization, form factor, Landé factor, and absolute
 normalization.
 
+Every model that applies a magnetic form factor reads the same three settings:
+`ion` selects a tabulated ion, `form_factor_coefficients` and
+`form_factor_j2_coefficients` override the $\langle j_0\rangle$ and
+$\langle j_2\rangle$ coefficients, and `form_factor_g_J` selects the dipole
+approximation. `form_factor_g_J` defaults to 2, which is the spin-only
+$\langle j_0\rangle$ form factor; set it to the ion's Landé factor for a moment
+with an orbital contribution. It is independent of the dataset `g_factor`,
+which converts a spin response to a magnetic moment.
+
 Backgrounds are separate additive model components.
 
 The [local relaxational](local_relaxational.md),

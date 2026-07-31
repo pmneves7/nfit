@@ -326,12 +326,40 @@ $f$ and $A,B,C,D$ are dimensionless. Since $s$ has units Å$^{-1}$,
 $a,b,c$ have units Å$^2$. Evaluating $|\mathbf Q|$ from reciprocal-lattice
 coordinates requires the crystal lattice or a UB-derived reciprocal basis.
 
-The built-in table covers common $3d$, $4d$, $4f$, and $5f$ magnetic ions. It
-does **not** currently include any $5d$ ion (Re, Os, Ir, Pt), Ru$^{2+}$,
-Ru$^{3+}$, Rh$^{3+}$, or Ce$^{3+}$. Use explicit custom coefficients from the
-ILL tables for those; `nfit.available_ions()` lists what is tabulated. Only
-$\langle j_0\rangle$ is tabulated, so the $4f$ entries are used in the
-spin-only dipole approximation without an orbital $\langle j_2\rangle$ term.
+### Orbital moments and the dipole approximation
+
+$\langle j_0\rangle$ alone is the spin-only form factor. When the moment
+carries orbital angular momentum, nfit uses the dipole approximation
+
+$$
+f(Q)=\langle j_0(Q)\rangle
++\left(\frac{2}{g_J}-1\right)\langle j_2(Q)\rangle,
+\qquad
+\langle j_2\rangle(s)=s^2\left[Ae^{-as^2}+Be^{-bs^2}+Ce^{-cs^2}+D\right].
+$$
+
+The leading $s^2$ is part of the tabulation and makes $\langle j_2(0)\rangle=0$.
+Writing the moment as $\boldsymbol\mu=(\langle\mathbf L\rangle+2\langle\mathbf
+S\rangle)\mu_B$ and projecting onto $\mathbf J$ gives
+$\langle L\rangle=(2-g_J)J$ and $2\langle S\rangle=2(g_J-1)J$, so the orbital
+part weights $\langle j_0\rangle+\langle j_2\rangle$ and the spin part weights
+$\langle j_0\rangle$; their ratio is the coefficient above.
+
+$g_J$ is the **ion's Landé factor**, set by the model component's
+`form_factor_g_J`. It is deliberately separate from the dataset `g_factor`,
+which converts a spin-operator response to a magnetic moment and may be fitted.
+The default $g_J=2$ returns $\langle j_0\rangle$ exactly and never consults the
+$\langle j_2\rangle$ table, so spin-only models are unaffected. The correction
+is not small for rare earths: Yb$^{3+}$ has $g_J=8/7$, giving a
+$\langle j_2\rangle$ weight of $0.75$.
+
+The built-in tables cover common $3d$, $4d$, $4f$, and $5f$ magnetic ions
+(97 with $\langle j_0\rangle$, 95 of those also with $\langle j_2\rangle$;
+Pr$^{3+}$ and O$^{1-}$ are spin-only). They do **not** include any $5d$ ion
+(Re, Os, Ir, Pt, W, Ta), Ru$^{2+}$, Ru$^{3+}$, Rh$^{3+}$, or Ce$^{3+}$ — that
+is a gap in Section 4.4.5 itself, not a transcription omission, so those ions
+need explicit coefficients from the literature. `nfit.available_ions()` and
+`nfit.available_dipole_ions()` list what is tabulated.
 
 For direct geometry,
 

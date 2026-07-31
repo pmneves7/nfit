@@ -17,14 +17,14 @@ releases. Current behavior is documented in the workflow and API pages.
   the required infrastructure.
 - Evaluate additional temperature-dependent closures only when their assumptions
   and parameter identifiability can be documented and tested.
-- Extend the magnetic form-factor table. It currently has no $5d$ ion (Re, Os,
-  Ir, Pt), no Ru$^{2+}$/Ru$^{3+}$ or Rh$^{3+}$, and no Ce$^{3+}$, so iridates,
-  osmates, and ruthenates need explicit custom coefficients. New entries should
-  be generated programmatically from a verified source rather than transcribed,
-  with a test that re-derives the table.
-- Add the $\langle j_2\rangle$ term so rare-earth ions can use the full dipole
-  approximation instead of the spin-only $\langle j_0\rangle$ form.
-
+- Extend the magnetic form-factor tables to $5d$ ions (Re, Os, Ir, Pt, W, Ta)
+  and to Ru$^{2+}$/Ru$^{3+}$, Rh$^{3+}$, and Ce$^{3+}$, so iridates, osmates,
+  and ruthenates do not need explicit custom coefficients. These are absent from
+  International Tables C 4.4.5 itself, so they need a separately cited source
+  rather than a regeneration from the existing one.
+- Add $\langle j_4\rangle$ and $\langle j_6\rangle$ if a beyond-dipole
+  (multipolar) form factor is ever needed; the dipole approximation using
+  $\langle j_0\rangle$ and $\langle j_2\rangle$ is implemented.
 - Fold a conventional-cell model onto the primitive cell even when symmetry
   expansion gave translation-equivalent sites different local orbital frames
   (the $Fd\bar3m$ $16c$ pyrochlore case). This needs the orbital rotation
