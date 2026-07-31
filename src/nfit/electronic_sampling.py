@@ -40,7 +40,7 @@ class SamplingPolicy:
     accuracy: SamplingAccuracy = "standard"
     relative_tolerance: float = 1.0e-2
     consecutive_passes: int = 2
-    refinement_factor: float = 1.35
+    refinement_factor: float = 1.3
 
     def __post_init__(self) -> None:
         accuracy = str(self.accuracy).strip().lower()
@@ -81,7 +81,7 @@ class SamplingPolicy:
                 payload.get("relative_tolerance", 1.0e-2)
             ),
             consecutive_passes=int(payload.get("consecutive_passes", 2)),
-            refinement_factor=float(payload.get("refinement_factor", 1.35)),
+            refinement_factor=float(payload.get("refinement_factor", 1.3)),
         )
 
 
@@ -90,7 +90,7 @@ def sampling_policy(
     *,
     relative_tolerance: float | None = None,
     consecutive_passes: int = 2,
-    refinement_factor: float = 1.35,
+    refinement_factor: float = 1.3,
 ) -> SamplingPolicy:
     """Return one named accuracy policy or an explicit custom policy."""
 

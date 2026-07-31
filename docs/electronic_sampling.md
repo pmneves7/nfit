@@ -78,8 +78,13 @@ In the tight-binding model's **Calculate and inspect** tab, choose **Automatic
 certification**, select an accuracy profile, and press **Check/refine
 convergence**. nfit replaces `dos_mesh` only if the requested tolerance is
 certified. **Manual mesh** uses `dos_mesh` directly and makes no automatic
-accuracy claim. The DOS viewer controls the integration and display domain but
-uses this model-level production mesh.
+accuracy claim. Automatic DOS searches begin with 16 points along the longest
+reciprocal direction and increase that linear density by a factor of 1.3; the
+other axes follow the same physical reciprocal-space spacing. The DOS viewer
+uses the same model-level production mesh. Set the automatic or explicit energy
+limits and the number of comparison energies in **Density-of-states sampling**
+before starting certification; these settings define the domain claimed by the
+stored certificate.
 
 ## Lindhard certification
 

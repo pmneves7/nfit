@@ -111,7 +111,7 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
     assert "canonical" in unit_combo.toolTip()
     assert chemical_editor is not None and chemical_editor.toolTip()
     assert band_density_editor is None
-    assert dos_min_editor is None
+    assert dos_min_editor is not None and dos_min_editor.toolTip()
     backend_combo = explorer.model_parameter_widget.findChild(
         QtWidgets.QComboBox,
         "tight_binding_electronic_backend",
@@ -139,12 +139,27 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
         QtWidgets.QPushButton,
         "tight_binding_dos_certify_sampling",
     )
+    dos_auto_range = explorer.model_parameter_widget.findChild(
+        QtWidgets.QCheckBox,
+        "tight_binding_dos_auto_energy_range",
+    )
+    dos_energy_points = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit,
+        "model_config_dos_energy_points",
+    )
+    dos_min_editor = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "model_config_dos_energy_min_meV"
+    )
     assert dos_sampling_mode is not None and dos_sampling_mode.toolTip()
     assert dos_sampling_mode.currentData() == "automatic"
     assert dos_sampling_accuracy is not None
     assert dos_sampling_accuracy.isEnabled()
     assert dos_sampling_mesh is not None and not dos_sampling_mesh.isEnabled()
     assert dos_sampling_button is not None and dos_sampling_button.toolTip()
+    assert dos_auto_range is not None and dos_auto_range.toolTip()
+    assert dos_energy_points is not None and dos_energy_points.toolTip()
+    assert dos_min_editor is not None and dos_min_editor.toolTip()
+    assert dos_min_editor.isEnabled() is not dos_auto_range.isChecked()
     backend_combo.setCurrentIndex(backend_combo.findData("threaded"))
     assert model.config["electronic_backend"] == "threaded"
     chemical_editor.setText("0.0125")
@@ -163,7 +178,7 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
         QtWidgets.QLineEdit, "model_config_dos_energy_min_meV"
     )
     assert float(chemical_editor.text()) == pytest.approx(12.5)
-    assert dos_min_editor is None
+    assert dos_min_editor is not None
     tabs = explorer.model_parameter_widget.findChild(
         QtWidgets.QTabWidget,
         "tight_binding_builder_tabs",

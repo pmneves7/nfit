@@ -403,7 +403,10 @@ def certify_tight_binding_dos_sampling(
         certificate = certify_dos_sampling(
             model,
             energy,
-            seed_mesh=config.get("dos_mesh", [40, 40, 40]),
+            # automatic_mesh_ladder begins at half the supplied longest-axis
+            # size. Keep certification independent of a previously accepted
+            # production mesh and begin with a sparse 16-point longest axis.
+            seed_mesh=[32] * model.dimension,
             policy=_component_sampling_policy(config, "dos"),
             max_refinements=int(
                 config.get("dos_sampling_max_refinements", 7)

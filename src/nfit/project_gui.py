@@ -19874,6 +19874,20 @@ class NfitProjectExplorer:
             config.get("dos_symmetry", "auto")
         ):
             return "Certificate is stale because the symmetry policy changed."
+        domain = certificate.get("domain", {})
+        if int(domain.get("energy_points", -1)) != int(
+            config.get("dos_energy_points", 600)
+        ):
+            return "Certificate is stale because the DOS energy grid changed."
+        if not bool(config.get("dos_auto_energy_range", False)):
+            if not _sampling_float_matches(
+                domain.get("energy_min_meV"),
+                config.get("dos_energy_min_meV", -500.0),
+            ) or not _sampling_float_matches(
+                domain.get("energy_max_meV"),
+                config.get("dos_energy_max_meV", 500.0),
+            ):
+                return "Certificate is stale because the DOS energy limits changed."
         return (
             "Certified at normalized tolerance "
             f"{certificate.get('policy', {}).get('relative_tolerance', '?')}."
@@ -19964,6 +19978,92 @@ class NfitProjectExplorer:
             custom_label = QtWidgets.QLabel("Custom tolerance")
             custom_label.setToolTip(custom_tooltip)
             layout.addRow(custom_label, custom)
+
+        from .electronic_structure import (
+            electronic_energy_from_meV,
+            normalize_electronic_energy_unit,
+        )
+
+        unit = normalize_electronic_energy_unit(
+            model.config.get("electronic_energy_unit", "eV")
+        )
+        automatic_range = bool(
+            model.config.get("dos_auto_energy_range", False)
+        )
+        range_tooltip = (
+            "Derive fixed DOS limits from the sampled band extrema before "
+            "testing mesh convergence. Disable this to certify a user-defined "
+            f"energy interval in {unit}."
+        )
+        range_checkbox = QtWidgets.QCheckBox("Use automatic energy limits")
+        range_checkbox.setObjectName("tight_binding_dos_auto_energy_range")
+        range_checkbox.setChecked(automatic_range)
+        range_checkbox.setToolTip(range_tooltip)
+        range_label = QtWidgets.QLabel("Energy range")
+        range_label.setToolTip(range_tooltip)
+        layout.addRow(range_label, range_checkbox)
+
+        limit_editors = []
+        for field, label_text, default in (
+            ("dos_energy_min_meV", "Lower energy", -500.0),
+            ("dos_energy_max_meV", "Upper energy", 500.0),
+        ):
+            tooltip = (
+                f"Limit of the fixed DOS convergence domain in {unit}. "
+                "The value is converted immediately to canonical meV."
+            )
+            editor = QtWidgets.QLineEdit(
+                _parameter_to_text(
+                    electronic_energy_from_meV(
+                        model.config.get(field, default),
+                        unit,
+                    )
+                )
+            )
+            editor.setObjectName(f"model_config_{field}")
+            editor.setEnabled(not automatic_range)
+            editor.setToolTip(tooltip)
+            editor.editingFinished.connect(
+                lambda field=field, editor=editor: self._set_tight_binding_energy_config(
+                    field, editor.text()
+                )
+            )
+            label = QtWidgets.QLabel(f"{label_text} ({unit})")
+            label.setToolTip(tooltip)
+            layout.addRow(label, editor)
+            limit_editors.append(editor)
+
+        def set_automatic_range(
+            checked: bool,
+            editors: tuple[Any, ...] = tuple(limit_editors),
+        ) -> None:
+            self._set_model_config_setting(
+                "dos_auto_energy_range",
+                "true" if checked else "false",
+            )
+            for editor in editors:
+                editor.setEnabled(not checked)
+
+        range_checkbox.toggled.connect(set_automatic_range)
+
+        points_tooltip = (
+            "Number of uniformly spaced energies used to compare successive "
+            "DOS curves. More points resolve sharper structure but increase "
+            "tetrahedron integration and comparison cost."
+        )
+        points = QtWidgets.QLineEdit(
+            _parameter_to_text(model.config.get("dos_energy_points", 600))
+        )
+        points.setObjectName("model_config_dos_energy_points")
+        points.setToolTip(points_tooltip)
+        points.editingFinished.connect(
+            lambda editor=points: self._set_model_config_setting(
+                "dos_energy_points", editor.text()
+            )
+        )
+        points_label = QtWidgets.QLabel("Energy points")
+        points_label.setToolTip(points_tooltip)
+        layout.addRow(points_label, points)
 
         mesh_tooltip = (
             "Concrete Brillouin-zone mesh used by DOS calculations. Automatic "

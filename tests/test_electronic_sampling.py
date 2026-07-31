@@ -203,6 +203,9 @@ def test_component_certificates_apply_only_a_certified_concrete_mesh():
     assert tight_binding.config["dos_sampling_certificate"]["status"] == (
         dos_certificate.status
     )
+    assert dos_certificate.attempted_meshes[0] == (16,)
+    if len(dos_certificate.attempted_meshes) > 1:
+        assert dos_certificate.attempted_meshes[1] == (22,)
     if dos_certificate.certified:
         assert tight_binding.config["dos_mesh"] == list(
             dos_certificate.chosen_mesh
