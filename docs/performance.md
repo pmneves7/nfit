@@ -216,9 +216,10 @@ Automatic density selection is observable-specific. DOS certification compares
 total and projected energy-resolved curves, including an integrated error.
 Lindhard certification compares the full complex Cartesian tensor at declared
 $(\mathbf Q,E)$ points. Both require two successive passing refinements and
-store a fixed production mesh before fitting; they never change the objective's
-sampling during optimization. Fermi-surface topology and geometric-distance
-certification remain future work. See
+store the tested middle mesh from the final two passing comparisons before
+fitting; they never change the objective's sampling during optimization.
+Fermi-surface topology and geometric-distance certification remain future
+work. See
 [Automatic Brillouin-zone sampling](electronic_sampling.md).
 
 For jobs larger than one process, `partition_response_points` and

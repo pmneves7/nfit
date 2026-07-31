@@ -132,7 +132,7 @@ def test_dos_sampling_certificate_round_trip_and_budget_failure():
     assert exhausted.attempted_meshes == ()
 
 
-def test_dos_sampling_selects_third_mesh_after_two_passing_refinements():
+def test_dos_sampling_selects_tested_middle_mesh_after_two_passing_refinements():
     model = build_electronic_model(
         direct_lattice=np.diag([2.0, 8.0, 9.0]),
         basis=["s"],
@@ -151,7 +151,7 @@ def test_dos_sampling_selects_third_mesh_after_two_passing_refinements():
     )
 
     assert certificate.certified
-    assert certificate.chosen_mesh == certificate.attempted_meshes[2]
+    assert certificate.chosen_mesh == certificate.attempted_meshes[1]
     assert len(certificate.comparisons) == 2
     assert all(comparison.passed for comparison in certificate.comparisons)
 

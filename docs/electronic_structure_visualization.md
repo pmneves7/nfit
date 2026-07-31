@@ -102,8 +102,11 @@ The DOS viewer offers two integrations:
   and the certified total-DOS symmetry reduction.
 - **Linear tetrahedron** uses ASE to interpolate each band inside the
   tetrahedra of a complete uniform three-dimensional mesh. It introduces no
-  artificial broadening and supports the same basis-index projections, but it
-  cannot use a symmetry-reduced mesh.
+  artificial broadening. For certified models, nfit can diagonalize the
+  symmetry-unique points and expand the eigenvalues back onto the complete
+  ordered grid before integration. Total DOS and complete-basis projections
+  use this exact acceleration; arbitrary orbital projections use the full
+  eigensystem unless their symmetry transformation is known.
 
 `density_of_states` returns states per meV per primitive cell. Plotting in eV
 converts the ordinate to states per eV per cell. Mesh density controls
@@ -114,8 +117,7 @@ The viewer side panel owns the integration method, mesh, certified symmetry
 policy, energy window, energy-point count, and Gaussian width. **Automatic
 range** derives the minimum and maximum from the eigenvalues on the selected
 DOS mesh. Gaussian integration adds four standard deviations of padding;
-tetrahedron integration adds a small band-span margin. Selecting tetrahedron
-integration resolves the symmetry policy to the required full mesh.
+tetrahedron integration adds a small band-span margin.
 
 ## Band and DOS presentation
 

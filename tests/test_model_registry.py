@@ -226,8 +226,7 @@ def test_tight_binding_registry_validates_energy_unit_and_canonical_window():
     component.config["dos_energy_max_meV"] = 10.0
     component.config["dos_method"] = "tetrahedron"
     component.config["dos_symmetry"] = "auto"
-    with pytest.raises(ValueError, match="dos_symmetry='full'"):
-        nfit.validate_model_component(component)
+    nfit.validate_model_component(component)
     component.config["dos_symmetry"] = "full"
     component.config["band_path_convention"] = "setyawan_curtarolo"
     nfit.validate_model_component(component)

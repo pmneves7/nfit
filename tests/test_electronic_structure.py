@@ -609,6 +609,40 @@ def test_symmetry_reduced_mesh_is_opt_in_and_preserves_total_dos():
         rtol=2.0e-14,
         atol=2.0e-14,
     )
+    full_tetrahedron = density_of_states(
+        model,
+        full,
+        energy,
+        broadening_meV=0.2,
+        method="tetrahedron",
+        symmetry="full",
+        projections={"all": [0]},
+    )
+    reduced_tetrahedron = density_of_states(
+        model,
+        full,
+        energy,
+        broadening_meV=0.2,
+        method="tetrahedron",
+        symmetry="reduced",
+        projections={"all": [0]},
+    )
+    np.testing.assert_allclose(
+        reduced_tetrahedron.total_per_meV_cell,
+        full_tetrahedron.total_per_meV_cell,
+        rtol=2.0e-14,
+        atol=2.0e-14,
+    )
+    np.testing.assert_allclose(
+        reduced_tetrahedron.projected_per_meV_cell["all"],
+        full_tetrahedron.projected_per_meV_cell["all"],
+        rtol=2.0e-14,
+        atol=2.0e-14,
+    )
+    reduction = reduced_tetrahedron.provenance["symmetry_reduction"]
+    assert reduction["applied"] is True
+    assert reduction["full_size"] == 512
+    assert reduction["irreducible_size"] == 35
 
     uncertified = _square_two_orbital_model()
     unchanged = k_mesh(

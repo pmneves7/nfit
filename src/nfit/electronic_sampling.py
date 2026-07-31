@@ -453,7 +453,10 @@ def _certificate_from_evaluations(
             )
         if comparison is not None:
             if passing_run >= policy.consecutive_passes:
-                chosen = mesh
+                # The coarser member has just been measured against this finer
+                # reference. Requiring a second consecutive pass establishes
+                # that the comparison is in a stable refinement regime.
+                chosen = previous_mesh
                 break
         previous = values
         previous_mesh = mesh
@@ -504,10 +507,17 @@ def certify_dos_sampling(
         )
     selected_method = str(method).strip().lower()
     selected_symmetry = str(symmetry).strip().lower()
-    if selected_method == "tetrahedron":
-        selected_symmetry = "full"
     if projections and selected_symmetry == "reduced":
-        raise ValueError("projected DOS cannot require symmetry reduction")
+        full_basis = np.arange(model.n_basis, dtype=np.int64)
+        if any(
+            len(indices) != model.n_basis
+            or not np.array_equal(np.sort(np.asarray(indices)), full_basis)
+            for indices in projections.values()
+        ):
+            raise ValueError(
+                "projected DOS can require symmetry reduction only for "
+                "full-basis projection groups"
+            )
     meshes = automatic_mesh_ladder(
         model,
         seed_mesh,
@@ -521,7 +531,11 @@ def certify_dos_sampling(
         mesh = k_mesh(
             model,
             shape,
-            symmetry="full" if projections else selected_symmetry,
+            symmetry=(
+                "full"
+                if selected_method == "tetrahedron" or projections
+                else selected_symmetry
+            ),
         )
         result: DensityOfStatesResult = density_of_states(
             model,
@@ -529,6 +543,7 @@ def certify_dos_sampling(
             energy,
             broadening_meV=broadening_meV,
             method=selected_method,
+            symmetry=selected_symmetry,
             chemical_potential_meV=chemical_potential_meV,
             projections=projections,
             backend=backend,

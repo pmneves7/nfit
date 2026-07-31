@@ -263,13 +263,6 @@ def configure_tight_binding_plot(
                 )
             if int(component.config.get("dos_energy_points", 0)) < 2:
                 raise ValueError("dos_energy_points must be at least two")
-            if (
-                component.config.get("projection_groups")
-                and component.config.get("dos_symmetry") == "reduced"
-            ):
-                raise ValueError(
-                    "projected DOS cannot require symmetry reduction"
-                )
         elif key == "fermi_surface":
             mode = str(component.config.get("fermi_mesh_mode", "spacing"))
             if mode not in {"spacing", "size"}:
@@ -1519,17 +1512,10 @@ def tight_binding_density_of_states(component: Any) -> DensityOfStatesResult:
     projections = _projection_groups(component)
     symmetry = str(config.get("dos_symmetry", "auto"))
     method = str(config.get("dos_method", "gaussian"))
-    if method == "tetrahedron" and symmetry != "full":
-        raise ValueError("tetrahedron DOS requires dos_symmetry='full'")
-    if projections and symmetry == "reduced":
-        raise ValueError(
-            "projected DOS cannot require symmetry reduction because an "
-            "arbitrary orbital projector need not be symmetry invariant"
-        )
     mesh = k_mesh(
         model,
         config.get("dos_mesh", [40, 40, 40]),
-        symmetry="full" if projections else symmetry,
+        symmetry="full" if method == "tetrahedron" or projections else symmetry,
     )
     energy_points = int(config.get("dos_energy_points", 600))
     if bool(config.get("dos_auto_energy_range", False)):
@@ -1545,6 +1531,7 @@ def tight_binding_density_of_states(component: Any) -> DensityOfStatesResult:
             energy,
             broadening_meV=float(config.get("dos_broadening_meV", 5.0)),
             method=method,
+            symmetry=symmetry,
             energy_points=energy_points,
             chemical_potential_meV=float(
                 config.get("chemical_potential_meV", 0.0)
@@ -1811,15 +1798,9 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
     )
     dos_symmetry = str(config.get("dos_symmetry", "auto"))
     dos_method = str(config.get("dos_method", "gaussian"))
-    if dos_method == "tetrahedron" and dos_symmetry != "full":
-        raise ValueError("tetrahedron DOS requires dos_symmetry='full'")
-    if projections and dos_symmetry == "reduced":
-        raise ValueError(
-            "projected DOS cannot require symmetry reduction because an "
-            "arbitrary orbital projector need not be symmetry invariant"
-        )
-    if projections:
-        dos_symmetry = "full"
+    mesh_symmetry = (
+        "full" if dos_method == "tetrahedron" or projections else dos_symmetry
+    )
     lines.extend(
         [
             "from nfit import electronic_energy_to_meV",
@@ -1881,14 +1862,14 @@ def tight_binding_plot_script(component: Any, plot_key: str) -> str:
                 "from nfit.model_plots import ElectronicPlotStyle, render_density_of_states",
                 "plot_style = ElectronicPlotStyle()",
                 f"sampling_certificate = {config.get('dos_sampling_certificate', {})!r}",
-                f"mesh = k_mesh(model, {config.get('dos_mesh', [40, 40, 40])!r}, symmetry={dos_symmetry!r})",
+                f"mesh = k_mesh(model, {config.get('dos_mesh', [40, 40, 40])!r}, symmetry={mesh_symmetry!r})",
                 f"automatic_energy_range = {bool(config.get('dos_auto_energy_range', False))!r}",
                 f"energy_points = {int(config.get('dos_energy_points', 600))!r}",
                 f"energy = None if automatic_energy_range else np.linspace({energy_min!r}, {energy_max!r}, energy_points)",
                 "energy_meV = None if energy is None else electronic_energy_to_meV(energy, energy_unit)",
                 f"broadening = {broadening!r}",
                 "broadening_meV = electronic_energy_to_meV(broadening, energy_unit)",
-                f"result = density_of_states(model, mesh, energy_meV, broadening_meV=broadening_meV, method={dos_method!r}, energy_points=energy_points, chemical_potential_meV=chemical_potential_meV, projections={projections!r}, backend=electronic_backend, workers=electronic_workers, max_batch_bytes=max_batch_bytes)",
+                f"result = density_of_states(model, mesh, energy_meV, broadening_meV=broadening_meV, method={dos_method!r}, symmetry={dos_symmetry!r}, energy_points=energy_points, chemical_potential_meV=chemical_potential_meV, projections={projections!r}, backend=electronic_backend, workers=electronic_workers, max_batch_bytes=max_batch_bytes)",
                 "figure, axis = render_density_of_states(result, energy_unit=energy_unit, style=plot_style)",
             ]
         )

@@ -271,7 +271,7 @@ def test_tight_binding_viewer_settings_update_canonical_plot_config(monkeypatch)
         },
     )
     assert model.config["dos_method"] == "tetrahedron"
-    assert model.config["dos_symmetry"] == "full"
+    assert model.config["dos_symmetry"] == "auto"
     assert model.config["dos_auto_energy_range"] is True
     assert model.config["dos_mesh"] == [40, 40, 40]
     assert model.config["dos_energy_min_meV"] == pytest.approx(-250.0)
@@ -284,7 +284,7 @@ def test_tight_binding_viewer_settings_update_canonical_plot_config(monkeypatch)
         scripted,
         "dos",
         dos_method="tetrahedron",
-        dos_symmetry="full",
+        dos_symmetry="auto",
         dos_auto_energy_range=True,
         dos_energy_min_meV=-250.0,
         dos_energy_max_meV=750.0,

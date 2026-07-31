@@ -22517,15 +22517,6 @@ class NfitProjectExplorer:
                     raise ValueError(
                         "dos_energy_points must be at least two"
                     )
-                if method == "tetrahedron":
-                    symmetry = "full"
-                if (
-                    model.config.get("projection_groups")
-                    and symmetry == "reduced"
-                ):
-                    raise ValueError(
-                        "projected DOS cannot require symmetry reduction"
-                    )
                 configure_tight_binding_plot(
                     model,
                     plot_key,

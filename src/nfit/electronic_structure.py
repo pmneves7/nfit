@@ -1230,21 +1230,42 @@ def _symmetry_reduced_k_mesh(
     *,
     required: bool,
 ) -> WavevectorSampling:
+    reduced, _full_to_reduced = _symmetry_reduced_k_mesh_with_mapping(
+        model,
+        full,
+        required=required,
+    )
+    return reduced
+
+
+def _symmetry_reduced_k_mesh_with_mapping(
+    model: ElectronicModel,
+    full: WavevectorSampling,
+    *,
+    required: bool,
+) -> tuple[WavevectorSampling, NDArray[np.int64] | None]:
+    """Reduce a regular mesh and retain its exact full-grid reconstruction."""
+
     metadata = model.provenance.get("reciprocal_symmetry", {})
 
-    def unchanged(reason: str) -> WavevectorSampling:
+    def unchanged(
+        reason: str,
+    ) -> tuple[WavevectorSampling, NDArray[np.int64] | None]:
         if required:
             raise ValueError(f"mesh symmetry reduction is not certified: {reason}")
-        return replace(
-            full,
-            provenance={
-                **dict(full.provenance),
-                "symmetry_reduction": {
-                    "policy": "auto",
-                    "applied": False,
-                    "reason": reason,
+        return (
+            replace(
+                full,
+                provenance={
+                    **dict(full.provenance),
+                    "symmetry_reduction": {
+                        "policy": "auto",
+                        "applied": False,
+                        "reason": reason,
+                    },
                 },
-            },
+            ),
+            None,
         )
 
     if model.dimension != 3:
@@ -1285,8 +1306,9 @@ def _symmetry_reduced_k_mesh(
     if transformed_count < 2:
         return unchanged("mesh shape or shift is incompatible with the symmetry")
 
-    unique, counts = np.unique(
+    unique, full_to_reduced, counts = np.unique(
         representatives,
+        return_inverse=True,
         return_counts=True,
     )
     # A complete operation list maps every member directly onto the minimum
@@ -1296,22 +1318,25 @@ def _symmetry_reduced_k_mesh(
         return unchanged("certified operations do not close on this mesh")
     reduced_coordinates = full.reduced_coordinates[unique]
     weights = counts.astype(float) / float(indices.shape[0])
-    return WavevectorSampling(
-        "mesh",
-        reduced_coordinates,
-        weights=weights,
-        mesh_shape=full.mesh_shape,
-        shift=full.shift,
-        provenance={
-            **dict(full.provenance),
-            "symmetry_reduction": {
-                "policy": "reduced" if required else "auto",
-                "applied": True,
-                "full_size": int(indices.shape[0]),
-                "irreducible_size": int(unique.size),
-                "operation_count": int(transformed_count),
+    return (
+        WavevectorSampling(
+            "mesh",
+            reduced_coordinates,
+            weights=weights,
+            mesh_shape=full.mesh_shape,
+            shift=full.shift,
+            provenance={
+                **dict(full.provenance),
+                "symmetry_reduction": {
+                    "policy": "reduced" if required else "auto",
+                    "applied": True,
+                    "full_size": int(indices.shape[0]),
+                    "irreducible_size": int(unique.size),
+                    "operation_count": int(transformed_count),
+                },
             },
-        },
+        ),
+        np.asarray(full_to_reduced, dtype=np.int64),
     )
 
 
@@ -1480,6 +1505,7 @@ def density_of_states(
     *,
     broadening_meV: float,
     method: Literal["gaussian", "tetrahedron"] = "gaussian",
+    symmetry: Literal["auto", "full", "reduced"] = "auto",
     energy_points: int = 600,
     chemical_potential_meV: float = 0.0,
     projections: Mapping[str, Sequence[int]] | None = None,
@@ -1520,16 +1546,112 @@ def density_of_states(
             raise ValueError("energy must be a finite 1D grid with at least two points")
         if np.any(np.diff(energy) <= 0.0):
             raise ValueError("density-of-states energies must be strictly increasing")
-    bands = calculate_bands(
-        model,
-        mesh,
-        chemical_potential_meV=chemical_potential_meV,
-        projections=projections,
-        include_eigenvectors=False,
-        backend=backend,
-        workers=workers,
-        max_batch_bytes=max_batch_bytes,
-    )
+    selected_symmetry = str(symmetry).strip().lower()
+    if selected_symmetry not in {"auto", "full", "reduced"}:
+        raise ValueError("DOS symmetry policy must be auto, full, or reduced")
+    projection_indices = _projection_indices(model, projections)
+    bands: BandResult
+    tetrahedron_reduction: Mapping[str, Any] = {
+        "policy": selected_symmetry,
+        "applied": False,
+    }
+    if selected_method == "tetrahedron" and selected_symmetry != "full":
+        if (
+            model.dimension != 3
+            or len(mesh.mesh_shape) != 3
+            or int(np.prod(mesh.mesh_shape)) != mesh.reduced_coordinates.shape[0]
+        ):
+            raise ValueError(
+                "tetrahedron symmetry reduction requires a complete "
+                "three-dimensional uniform mesh"
+            )
+        full_basis = np.arange(model.n_basis, dtype=np.int64)
+        unsafe_labels = [
+            label
+            for label, indices in projection_indices.items()
+            if indices.size != model.n_basis
+            or not np.array_equal(np.sort(indices), full_basis)
+        ]
+        if unsafe_labels and selected_symmetry == "reduced":
+            labels = ", ".join(unsafe_labels)
+            raise ValueError(
+                "tetrahedron symmetry reduction cannot certify the orbital "
+                f"projector(s) {labels}; use auto fallback or full sampling"
+            )
+        reduced_mesh, full_to_reduced = _symmetry_reduced_k_mesh_with_mapping(
+            model,
+            mesh,
+            required=selected_symmetry == "reduced",
+        )
+        if full_to_reduced is not None and not unsafe_labels:
+            reduced_bands = calculate_bands(
+                model,
+                reduced_mesh,
+                chemical_potential_meV=chemical_potential_meV,
+                projections=None,
+                include_eigenvectors=False,
+                backend=backend,
+                workers=workers,
+                max_batch_bytes=max_batch_bytes,
+            )
+            expanded_energies = reduced_bands.energies_meV[full_to_reduced]
+            projected = {
+                label: np.ones_like(expanded_energies, dtype=float)
+                for label in projection_indices
+            }
+            tetrahedron_reduction = dict(
+                reduced_mesh.provenance["symmetry_reduction"]
+            )
+            bands = BandResult(
+                sampling=mesh,
+                energies_meV=expanded_energies,
+                chemical_potential_meV=float(chemical_potential_meV),
+                eigenvectors=None,
+                projected_weights=projected,
+                model_digest=model.content_digest,
+                provenance={
+                    **dict(reduced_bands.provenance),
+                    "projection_groups": {
+                        label: indices.tolist()
+                        for label, indices in projection_indices.items()
+                    },
+                    "tetrahedron_symmetry_reduction": tetrahedron_reduction,
+                },
+            )
+        else:
+            reason = (
+                "an orbital projector is not certified as symmetry invariant"
+                if unsafe_labels
+                else reduced_mesh.provenance["symmetry_reduction"].get(
+                    "reason", "symmetry reduction was unavailable"
+                )
+            )
+            tetrahedron_reduction = {
+                "policy": selected_symmetry,
+                "applied": False,
+                "reason": reason,
+            }
+            bands = calculate_bands(
+                model,
+                mesh,
+                chemical_potential_meV=chemical_potential_meV,
+                projections=projections,
+                include_eigenvectors=False,
+                backend=backend,
+                workers=workers,
+                max_batch_bytes=max_batch_bytes,
+            )
+    else:
+        bands = calculate_bands(
+            model,
+            mesh,
+            chemical_potential_meV=chemical_potential_meV,
+            projections=projections,
+            include_eigenvectors=False,
+            backend=backend,
+            workers=workers,
+            max_batch_bytes=max_batch_bytes,
+        )
     if energy is None:
         energy_min, energy_max = automatic_dos_energy_limits(
             bands.energies_meV,
@@ -1639,6 +1761,7 @@ def density_of_states(
                     getattr(ase, "__version__", "unknown")
                 ),
                 "execution": dict(bands.provenance["execution"]),
+                "symmetry_reduction": dict(tetrahedron_reduction),
                 "projection_groups": {
                     label: list(indices)
                     for label, indices in bands.provenance[

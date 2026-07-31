@@ -20,7 +20,10 @@ surface topology needs a different convergence test.
 
 The profile sets an accuracy target, not a particular mesh. The search must
 pass the target on two successive refinements. This guards against accepting
-one accidentally favorable comparison.
+one accidentally favorable comparison. After two passes, nfit accepts the
+middle mesh: it has been compared directly with the finer reference, while the
+preceding pass establishes that the ladder has entered a stable refinement
+regime.
 
 The maximum number of refinements and maximum mesh points are independent
 safety budgets under **Advanced**. Exhausting a budget produces an explicit
@@ -29,8 +32,9 @@ silently claim convergence.
 
 ## Mesh search and certificate
 
-nfit starts below the current concrete mesh and constructs a deterministic
-refinement ladder. Axis counts are proportional to the lengths of the
+nfit constructs a deterministic refinement ladder. DOS certification starts
+with 16 points along the longest reciprocal direction and increases the linear
+density by 1.3. Axis counts are proportional to the lengths of the
 corresponding reciprocal vectors, giving approximately uniform physical
 spacing in anisotropic cells. Every attempted mesh and comparison is saved in
 a `SamplingCertificate`.
@@ -72,7 +76,12 @@ certificate is retained as provenance but is not an accuracy claim.
 DOS certification compares the total DOS and every requested orbital
 projection on the same fixed energy grid. For Gaussian integration,
 `dos_broadening_meV` is held fixed. Tetrahedron integration uses its
-unbroadened piecewise-linear result and a complete three-dimensional mesh.
+unbroadened piecewise-linear result and a complete three-dimensional topology.
+For a certified nfit-built model, `auto` diagonalizes only symmetry-unique
+points, expands the eigenvalues exactly onto the ordered full grid, and then
+performs the unchanged tetrahedron integration. `full` disables this
+acceleration, while `reduced` requires it. Arbitrary orbital projections fall
+back to full evaluation unless the projection spans the complete basis.
 
 In the tight-binding model's **Calculate and inspect** tab, choose **Automatic
 certification**, select an accuracy profile, and press **Check/refine

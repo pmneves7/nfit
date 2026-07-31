@@ -126,9 +126,11 @@ The total DOS is normalized per primitive cell and per energy. Rendering in eV
 converts both the energy axis and states/meV to states/eV, preserving the
 integrated number of states. Linear tetrahedron integration evaluates the
 piecewise-linear band dispersion without an artificial linewidth. It requires
-a complete uniform three-dimensional mesh, a uniform energy grid, and
-`dos_symmetry="full"`. Gaussian integration remains the appropriate choice for
-one- and two-dimensional models.
+a complete uniform three-dimensional topology and a uniform energy grid.
+With `dos_symmetry="auto"` or `"reduced"`, nfit may diagonalize only the
+symmetry-unique points and expand their eigenvalues back onto that full ordered
+grid before calling the same tetrahedron integrator. Gaussian integration
+remains the appropriate choice for one- and two-dimensional models.
 
 When `dos_auto_energy_range=true`, the configured manual minimum and maximum
 are retained but not used. `density_of_states(..., energy_meV=None,
@@ -137,9 +139,9 @@ energy_points=N)` provides the same automatic behavior for scripts.
 Symmetry reduction is certified only for a three-dimensional uniform mesh and
 a model built with nfit's known orbital representations. `auto` records a
 full-mesh fallback when it cannot prove equivalence; `reduced` raises instead.
-The component setting applies only to total DOS because an arbitrary orbital
-projection need not be symmetry invariant. Tetrahedron integration can compute
-projected DOS, but it retains the complete mesh to preserve cell topology.
+Total DOS and a projection spanning the complete basis can use the reduced
+tetrahedron eigensolve. An arbitrary orbital projection need not be symmetry
+invariant, so `auto` retains full evaluation for it and `reduced` raises.
 
 ## Constant-energy and Fermi surfaces
 
