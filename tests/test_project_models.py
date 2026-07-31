@@ -122,7 +122,20 @@ def test_tight_binding_model_editor_exposes_scriptable_plot_actions(monkeypatch)
         QtWidgets.QComboBox,
         "tight_binding_dos_method",
     )
-    assert dos_method_combo is None
+    dos_broadening = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit,
+        "model_config_dos_broadening_meV",
+    )
+    assert dos_method_combo is not None and dos_method_combo.toolTip()
+    assert dos_method_combo.currentData() == "gaussian"
+    assert dos_broadening is not None and dos_broadening.toolTip()
+    assert dos_broadening.isEnabled()
+    dos_method_combo.setCurrentIndex(
+        dos_method_combo.findData("tetrahedron")
+    )
+    assert model.config["dos_method"] == "tetrahedron"
+    assert not dos_broadening.isEnabled()
+    dos_method_combo.setCurrentIndex(dos_method_combo.findData("gaussian"))
     dos_sampling_mode = explorer.model_parameter_widget.findChild(
         QtWidgets.QComboBox,
         "tight_binding_dos_sampling_mode",

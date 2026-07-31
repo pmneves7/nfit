@@ -34,6 +34,21 @@ _LINE_STYLES = (
 )
 
 
+def _fit_replacement_figure_to_canvas(figure: Any, canvas: Any) -> None:
+    """Match a new figure to an existing Qt canvas, including Retina DPI."""
+
+    pixel_ratio = float(canvas.device_pixel_ratio)
+    original_dpi = float(getattr(figure, "_original_dpi", figure.dpi))
+    figure.set_dpi(original_dpi * pixel_ratio)
+    width_pixels = max(float(canvas.width()) * pixel_ratio, 1.0)
+    height_pixels = max(float(canvas.height()) * pixel_ratio, 1.0)
+    figure.set_size_inches(
+        width_pixels / float(figure.dpi),
+        height_pixels / float(figure.dpi),
+        forward=False,
+    )
+
+
 def _scrollable_settings_content(settings: Any, viewer_key: str) -> Any:
     """Install a compact scroll area inside a fixed-width settings panel."""
 
@@ -822,16 +837,10 @@ def show_electronic_figure(
             )
         updated_figure.set_canvas(canvas)
         canvas.figure = updated_figure
-        pixel_ratio = float(canvas.device_pixel_ratio)
-        width_pixels = max(float(canvas.width()) * pixel_ratio, 1.0)
-        height_pixels = max(float(canvas.height()) * pixel_ratio, 1.0)
-        updated_figure.set_size_inches(
-            width_pixels / float(updated_figure.dpi),
-            height_pixels / float(updated_figure.dpi),
-            forward=False,
-        )
+        _fit_replacement_figure_to_canvas(updated_figure, canvas)
         window._nfit_figure = updated_figure
         toolbar.update()
+        toolbar.push_current()
         # A newly rendered Figure retains its default pixel dimensions. A
         # synchronous draw after matching the existing Qt canvas prevents the
         # old larger renderer buffer from remaining visible around it.

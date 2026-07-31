@@ -91,9 +91,10 @@ accuracy claim. Automatic DOS searches begin with 16 points along the longest
 reciprocal direction and increase that linear density by a factor of 1.3; the
 other axes follow the same physical reciprocal-space spacing. The DOS viewer
 uses the same model-level production mesh. Set the automatic or explicit energy
-limits, number of comparison energies, and symmetry policy in
-**Density-of-states sampling** before starting certification; these settings
-define the domain and evaluation policy claimed by the stored certificate.
+limits, number of comparison energies, integration method, Gaussian standard
+deviation when applicable, and symmetry policy in **Density-of-states
+sampling** before starting certification. These settings define the domain and
+evaluation policy claimed by the stored certificate.
 
 ## Lindhard certification
 

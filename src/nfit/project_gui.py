@@ -19901,6 +19901,11 @@ class NfitProjectExplorer:
 
         from PySide6 import QtWidgets
 
+        from .electronic_structure import (
+            electronic_energy_from_meV,
+            normalize_electronic_energy_unit,
+        )
+
         group = QtWidgets.QGroupBox("Density-of-states sampling")
         group.setObjectName("tight_binding_dos_sampling_group")
         layout = QtWidgets.QFormLayout(group)
@@ -19956,6 +19961,58 @@ class NfitProjectExplorer:
         accuracy_label.setToolTip(accuracy_tooltip)
         layout.addRow(accuracy_label, accuracy_combo)
 
+        unit = normalize_electronic_energy_unit(
+            model.config.get("electronic_energy_unit", "eV")
+        )
+        method = str(model.config.get("dos_method", "gaussian"))
+        method_tooltip = (
+            "Choose the integration used for every candidate mesh. Gaussian "
+            "broadening uses the displayed standard deviation. Linear "
+            "tetrahedron integration is unbroadened and requires a complete "
+            "three-dimensional mesh topology."
+        )
+        method_combo = QtWidgets.QComboBox()
+        method_combo.setObjectName("tight_binding_dos_method")
+        method_combo.setToolTip(method_tooltip)
+        method_combo.addItem("Gaussian broadening", "gaussian")
+        method_combo.addItem("Linear tetrahedron", "tetrahedron")
+        method_combo.setCurrentIndex(max(method_combo.findData(method), 0))
+        method_label = QtWidgets.QLabel("Integration")
+        method_label.setToolTip(method_tooltip)
+        layout.addRow(method_label, method_combo)
+
+        broadening_tooltip = (
+            f"Gaussian standard deviation in {unit}. It is converted "
+            "immediately to canonical meV and held fixed throughout automatic "
+            "mesh certification. Tetrahedron integration ignores this value."
+        )
+        broadening = QtWidgets.QLineEdit(
+            _parameter_to_text(
+                electronic_energy_from_meV(
+                    model.config.get("dos_broadening_meV", 5.0),
+                    unit,
+                )
+            )
+        )
+        broadening.setObjectName("model_config_dos_broadening_meV")
+        broadening.setToolTip(broadening_tooltip)
+        broadening.setEnabled(method == "gaussian")
+        broadening.editingFinished.connect(
+            lambda editor=broadening: self._set_tight_binding_energy_config(
+                "dos_broadening_meV", editor.text()
+            )
+        )
+        broadening_label = QtWidgets.QLabel(f"Gaussian σ ({unit})")
+        broadening_label.setToolTip(broadening_tooltip)
+        layout.addRow(broadening_label, broadening)
+
+        def set_method(_index: int) -> None:
+            selected = str(method_combo.currentData())
+            self._set_model_config_setting("dos_method", selected)
+            broadening.setEnabled(selected == "gaussian")
+
+        method_combo.currentIndexChanged.connect(set_method)
+
         symmetry_tooltip = (
             "Choose the Brillouin-zone symmetry policy for DOS evaluation. "
             "Auto uses a certified reduced eigensolve when it is exactly "
@@ -20010,14 +20067,6 @@ class NfitProjectExplorer:
             custom_label.setToolTip(custom_tooltip)
             layout.addRow(custom_label, custom)
 
-        from .electronic_structure import (
-            electronic_energy_from_meV,
-            normalize_electronic_energy_unit,
-        )
-
-        unit = normalize_electronic_energy_unit(
-            model.config.get("electronic_energy_unit", "eV")
-        )
         automatic_range = bool(
             model.config.get("dos_auto_energy_range", False)
         )

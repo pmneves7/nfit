@@ -134,6 +134,23 @@ def test_replacing_dos_figure_matches_the_existing_canvas(monkeypatch):
     window.close()
 
 
+def test_replacement_figure_inherits_retina_dpi_before_resize():
+    from matplotlib.figure import Figure
+
+    from nfit.qt_electronic_viewer import _fit_replacement_figure_to_canvas
+
+    figure = Figure(dpi=100.0)
+    canvas = SimpleNamespace(
+        device_pixel_ratio=2.0,
+        width=lambda: 800,
+        height=lambda: 600,
+    )
+    _fit_replacement_figure_to_canvas(figure, canvas)
+
+    assert figure.dpi == pytest.approx(200.0)
+    np.testing.assert_allclose(figure.get_size_inches(), [8.0, 6.0])
+
+
 @pytest.mark.parametrize(
     "viewer_key",
     ("band_structure", "density_of_states"),
