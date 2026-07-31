@@ -460,7 +460,7 @@ def certify_lindhard_component_sampling(
         if q_reduced is None:
             q = np.broadcast_to(
                 np.asarray(
-                    config.get("plot_q_reduced", [0.0, 0.0, 0.0]),
+                    config.get("plot_q_reduced", [0.5, 0.5, 0.5]),
                     dtype=float,
                 ),
                 (energy.size, 3),
@@ -739,7 +739,7 @@ def lindhard_energy_scan(
         int(config.get("plot_energy_points", 401)),
     )
     Q = np.broadcast_to(
-        np.asarray(config.get("plot_q_reduced", [0.0, 0.0, 0.0]), dtype=float),
+        np.asarray(config.get("plot_q_reduced", [0.5, 0.5, 0.5]), dtype=float),
         (energy.size, 3),
     )
     filling_mesh = k_mesh(
@@ -916,7 +916,7 @@ def lindhard_energy_scan_script(
             "filling_mesh = k_mesh(model, mesh_shape, shift=mesh_shift, symmetry='full')",
             f"temperature_K = {float(config.get('plot_temperature_K', 10.0))!r}",
             f"energy_meV = np.linspace({float(config.get('plot_energy_min_meV', -100.0))!r}, {float(config.get('plot_energy_max_meV', 100.0))!r}, {int(config.get('plot_energy_points', 401))!r})",
-            f"Q_reduced = np.broadcast_to(np.asarray({config.get('plot_q_reduced', [0.0, 0.0, 0.0])!r}, dtype=float), (energy_meV.size, 3))",
+            f"Q_reduced = np.broadcast_to(np.asarray({config.get('plot_q_reduced', [0.5, 0.5, 0.5])!r}, dtype=float), (energy_meV.size, 3))",
             "mesh = response_k_mesh(",
             "    model, mesh_shape, Q_reduced, shift=mesh_shift,",
             f"    symmetry={str(config.get('response_symmetry', 'auto'))!r},",
@@ -1018,7 +1018,7 @@ def lindhard_convergence_scan(
         int(config.get("convergence_energy_points", 9)),
     )
     Q = np.broadcast_to(
-        np.asarray(config.get("plot_q_reduced", [0.0, 0.0, 0.0]), dtype=float),
+        np.asarray(config.get("plot_q_reduced", [0.5, 0.5, 0.5]), dtype=float),
         (energy.size, 3),
     )
     temperature = float(config.get("plot_temperature_K", 10.0))
@@ -1252,7 +1252,7 @@ def electronic_rpa_energy_scan(
         int(config.get("plot_energy_points", 401)),
     )
     Q = np.broadcast_to(
-        np.asarray(config.get("plot_q_reduced", [0.0, 0.0, 0.0]), dtype=float),
+        np.asarray(config.get("plot_q_reduced", [0.5, 0.5, 0.5]), dtype=float),
         (energy.size, 3),
     )
     mesh = k_mesh(

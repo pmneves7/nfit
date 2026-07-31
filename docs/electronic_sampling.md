@@ -111,6 +111,18 @@ viewer. Scripts can instead supply the actual experimental points. A
 certificate on representative points supports a declared local claim; it is
 not a proof over the entire Brillouin zone or every fit condition.
 
+New Lindhard components use a finite zone-boundary representative momentum,
+with reduced coordinate `0.5` on each periodic electronic axis. This avoids
+silently selecting the unusually demanding static Pauli limit at
+$\mathbf Q=0$, $E=0$. Choosing that limit explicitly remains supported; the
+sampling panel warns that its narrow $-\partial f/\partial E$ shell may need a
+much denser mesh and is not smoothed by the finite-energy response broadening.
+The same panel exposes the complete scientific certificate domain
+($\mathbf Q$, energy interval and count, and temperature), symmetry and mesh
+shift, accuracy profile, concrete production mesh, and refinement and
+full-mesh point budgets. Backend, memory, and interpolation diagnostics remain
+under **Advanced** because they do not redefine the requested integral.
+
 Automatic certification stores the accepted mesh in `response_mesh`. Fits then
 use that concrete mesh without adapting it inside the optimizer, preserving a
 fixed numerical objective. Re-run certification at the fitted parameters when

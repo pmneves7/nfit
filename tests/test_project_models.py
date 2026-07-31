@@ -484,6 +484,26 @@ def test_lindhard_editor_selects_a_sibling_electronic_model(monkeypatch):
         QtWidgets.QLabel,
         "lindhard_convergence_status",
     )
+    representative_q = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit,
+        "model_config_plot_q_reduced",
+    )
+    representative_energies = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit,
+        "model_config_convergence_energy_points",
+    )
+    sampling_symmetry = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox,
+        "lindhard_response_symmetry",
+    )
+    mesh_shift = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit,
+        "model_config_response_mesh_shift",
+    )
+    mesh_budget = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit,
+        "model_config_response_sampling_max_mesh_points",
+    )
     formula_mode = explorer.model_parameter_widget.findChild(
         QtWidgets.QComboBox,
         "lindhard_formula_units_mode",
@@ -494,6 +514,12 @@ def test_lindhard_editor_selects_a_sibling_electronic_model(monkeypatch):
     assert sampling_accuracy is not None and sampling_accuracy.currentData() == "standard"
     assert sampling_button is not None and sampling_button.toolTip()
     assert sampling_status is not None and sampling_status.toolTip()
+    assert representative_q is not None and representative_q.toolTip()
+    assert representative_energies is not None and representative_energies.toolTip()
+    assert sampling_symmetry is not None and sampling_symmetry.currentData() == "auto"
+    assert sampling_symmetry.toolTip()
+    assert mesh_shift is not None and mesh_shift.toolTip()
+    assert mesh_budget is not None and mesh_budget.toolTip()
     assert q_accuracy is not None and q_accuracy.currentData() == "exact"
     assert formula_mode is not None and formula_mode.currentData() == "auto"
     assert selector.findData(source.name) >= 0
@@ -510,6 +536,40 @@ def test_lindhard_editor_selects_a_sibling_electronic_model(monkeypatch):
     )
     assert plot_button is not None and plot_button.toolTip()
     assert script_button is not None and script_button.toolTip()
+    explorer.has_unsaved_changes = False
+    explorer.window.close()
+
+
+def test_new_lindhard_component_uses_periodic_zone_boundary_default():
+    group = DataGroup("Electronic")
+    source = create_model_component(group, "bands", type="tight_binding")
+    source.config["periodic_axes"] = [0, 2]
+
+    response = create_model_component(group, "response", type="lindhard")
+
+    assert response.config["plot_q_reduced"] == [0.5, 0.0, 0.5]
+
+
+def test_lindhard_editor_warns_for_static_gamma_certificate(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Electronic")
+    create_model_component(group, "bands", type="tight_binding")
+    response = create_model_component(group, "response", type="lindhard")
+    response.config["plot_q_reduced"] = [0.0, 0.0, 0.0]
+    response.config["plot_energy_min_meV"] = -10.0
+    response.config["plot_energy_max_meV"] = 10.0
+    response.config["convergence_energy_points"] = 9
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer._refresh_tree(select_group=group, select_model=response)
+
+    warning = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLabel,
+        "lindhard_gamma_static_warning",
+    )
+    assert warning is not None and warning.toolTip()
+    assert "Pauli" in warning.text()
     explorer.has_unsaved_changes = False
     explorer.window.close()
 

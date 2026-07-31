@@ -1309,11 +1309,31 @@ def create_model_component(
 
     if type not in MODEL_TYPE_REGISTRY:
         raise ValueError(f"unknown model type {type!r}")
+    config = default_model_config(type)
+    if type == "lindhard":
+        electronic_sources = [
+            candidate
+            for candidate in group.models.values()
+            if candidate.enabled and candidate.type == "tight_binding"
+        ]
+        if len(electronic_sources) == 1:
+            axes = tuple(
+                int(axis)
+                for axis in electronic_sources[0].config.get(
+                    "periodic_axes",
+                    [0, 1, 2],
+                )
+            )
+            representative_q = [0.0, 0.0, 0.0]
+            for axis in axes:
+                if 0 <= axis < 3:
+                    representative_q[axis] = 0.5
+            config["plot_q_reduced"] = representative_q
     model = ModelComponentSpec(
         name=next_model_name(group.models),
         type=type,
         parameters=default_model_parameters(type),
-        config=default_model_config(type),
+        config=config,
         fit_parameters=default_model_fit_parameters(type),
         sharing={
             name: {"mode": "global", "groups": {}}
@@ -19234,7 +19254,11 @@ class NfitProjectExplorer:
                 "response_sampling_mode",
                 "response_sampling_accuracy",
                 "response_sampling_custom_rtol",
+                "response_sampling_max_refinements",
+                "response_sampling_max_mesh_points",
                 "response_sampling_certificate",
+                "response_mesh_shift",
+                "response_symmetry",
                 "response_q_evaluation",
                 "response_q_interpolation_rtol",
                 "chemical_potential_mode",
@@ -20680,6 +20704,149 @@ class NfitProjectExplorer:
             custom_label.setToolTip(custom_tooltip)
             sampling_layout.addRow(custom_label, custom)
 
+        symmetry_tooltip = (
+            "Auto uses a certified little-group reduction when it is exact and "
+            "otherwise falls back to the full mesh. Full disables reduction. "
+            "Require reduced raises instead of falling back."
+        )
+        symmetry = QtWidgets.QComboBox()
+        symmetry.setObjectName("lindhard_response_symmetry")
+        symmetry.setToolTip(symmetry_tooltip)
+        symmetry.addItem("Auto", "auto")
+        symmetry.addItem("Full mesh", "full")
+        symmetry.addItem("Require reduced mesh", "reduced")
+        symmetry.setCurrentIndex(
+            max(
+                symmetry.findData(
+                    str(model.config.get("response_symmetry", "auto"))
+                ),
+                0,
+            )
+        )
+        symmetry.currentIndexChanged.connect(
+            lambda _index, combo=symmetry: self._set_lindhard_config_values(
+                response_symmetry=str(combo.currentData())
+            )
+        )
+        symmetry_label = QtWidgets.QLabel("Symmetry")
+        symmetry_label.setToolTip(symmetry_tooltip)
+        sampling_layout.addRow(symmetry_label, symmetry)
+
+        shift_tooltip = (
+            "Fractional offsets in mesh-step units along the electronic model's "
+            "periodic axes. Zero is a Γ-centered mesh; 0.5 gives a half-shifted "
+            "mesh that can reduce Fermi-surface shell effects."
+        )
+        shift = QtWidgets.QLineEdit(
+            _parameter_to_text(
+                model.config.get("response_mesh_shift", [0.0, 0.0, 0.0])
+            )
+        )
+        shift.setObjectName("model_config_response_mesh_shift")
+        shift.setToolTip(shift_tooltip)
+        shift.editingFinished.connect(
+            lambda editor=shift: self._set_model_config_setting(
+                "response_mesh_shift", editor.text()
+            )
+        )
+        shift_label = QtWidgets.QLabel("Mesh shift")
+        shift_label.setToolTip(shift_tooltip)
+        sampling_layout.addRow(shift_label, shift)
+
+        domain = QtWidgets.QGroupBox("Certification domain")
+        domain.setObjectName("lindhard_certification_domain_group")
+        domain_layout = QtWidgets.QFormLayout(domain)
+
+        def add_domain_editor(
+            name: str,
+            label_text: str,
+            default: Any,
+            tooltip: str,
+        ) -> Any:
+            editor = QtWidgets.QLineEdit(
+                _parameter_to_text(model.config.get(name, default))
+            )
+            editor.setObjectName(f"model_config_{name}")
+            editor.setToolTip(tooltip)
+            editor.editingFinished.connect(
+                lambda name=name, editor=editor: self._set_model_config_setting(
+                    name, editor.text()
+                )
+            )
+            label = QtWidgets.QLabel(label_text)
+            label.setToolTip(tooltip)
+            domain_layout.addRow(label, editor)
+            return editor
+
+        add_domain_editor(
+            "plot_q_reduced",
+            "Representative Q (r.l.u.)",
+            [0.5, 0.5, 0.5],
+            "Transferred wavevector used for the default convergence "
+            "certificate, in the linked electronic model's reciprocal basis.",
+        )
+        add_domain_editor(
+            "plot_energy_min_meV",
+            "Minimum energy (meV)",
+            -100.0,
+            "Lower energy transfer included in the representative certificate.",
+        )
+        add_domain_editor(
+            "plot_energy_max_meV",
+            "Maximum energy (meV)",
+            100.0,
+            "Upper energy transfer included in the representative certificate.",
+        )
+        add_domain_editor(
+            "convergence_energy_points",
+            "Representative energies",
+            9,
+            "Number of uniformly spaced energies used between the displayed "
+            "limits during automatic mesh certification.",
+        )
+        add_domain_editor(
+            "plot_temperature_K",
+            "Temperature (K)",
+            10.0,
+            "Temperature used for occupations throughout the representative "
+            "mesh certificate.",
+        )
+        sampling_layout.addRow(domain)
+
+        budget = QtWidgets.QGroupBox("Search budget")
+        budget.setObjectName("lindhard_sampling_budget_group")
+        budget_layout = QtWidgets.QFormLayout(budget)
+        for name, label_text, default, tooltip in (
+            (
+                "response_sampling_max_refinements",
+                "Candidate meshes",
+                7,
+                "Maximum number of meshes evaluated before reporting that the "
+                "accuracy target was not certified.",
+            ),
+            (
+                "response_sampling_max_mesh_points",
+                "Maximum mesh points",
+                500000,
+                "Largest allowed full-mesh point count. This is a safety budget, "
+                "even when symmetry reduces the actual eigensolves.",
+            ),
+        ):
+            editor = QtWidgets.QLineEdit(
+                _parameter_to_text(model.config.get(name, default))
+            )
+            editor.setObjectName(f"model_config_{name}")
+            editor.setToolTip(tooltip)
+            editor.editingFinished.connect(
+                lambda name=name, editor=editor: self._set_model_config_setting(
+                    name, editor.text()
+                )
+            )
+            label = QtWidgets.QLabel(label_text)
+            label.setToolTip(tooltip)
+            budget_layout.addRow(label, editor)
+        sampling_layout.addRow(budget)
+
         mesh_tooltip = (
             "Concrete uniform integration mesh used by plots and fits. Automatic "
             "certification updates this value before fitting; it remains fixed "
@@ -20786,6 +20953,95 @@ class NfitProjectExplorer:
             status_text = (
                 "Certificate is stale because the certified temperature changed."
             )
+        elif not _sampling_float_matches(
+            certificate.get("domain", {}).get("energy_min_meV"),
+            model.config.get("plot_energy_min_meV", -100.0),
+        ) or not _sampling_float_matches(
+            certificate.get("domain", {}).get("energy_max_meV"),
+            model.config.get("plot_energy_max_meV", 100.0),
+        ):
+            status_text = (
+                "Certificate is stale because the certified energy range changed."
+            )
+        elif int(certificate.get("domain", {}).get("points", -1)) != int(
+            model.config.get("convergence_energy_points", 9)
+        ):
+            status_text = (
+                "Certificate is stale because the representative energy count changed."
+            )
+        elif not np.allclose(
+            np.asarray(
+                certificate.get("domain", {}).get(
+                    "q_min_reduced",
+                    [np.nan, np.nan, np.nan],
+                ),
+                dtype=float,
+            ),
+            np.asarray(
+                model.config.get("plot_q_reduced", [0.5, 0.5, 0.5]),
+                dtype=float,
+            ),
+            rtol=0.0,
+            atol=1.0e-12,
+        ) or not np.allclose(
+            np.asarray(
+                certificate.get("domain", {}).get(
+                    "q_max_reduced",
+                    [np.nan, np.nan, np.nan],
+                ),
+                dtype=float,
+            ),
+            np.asarray(
+                model.config.get("plot_q_reduced", [0.5, 0.5, 0.5]),
+                dtype=float,
+            ),
+            rtol=0.0,
+            atol=1.0e-12,
+        ):
+            status_text = (
+                "Certificate is stale because the representative Q changed."
+            )
+        elif not np.allclose(
+            np.asarray(
+                certificate.get("provenance", {}).get(
+                    "mesh_shift",
+                    [np.nan] * len(model.config.get("response_mesh_shift", [])),
+                ),
+                dtype=float,
+            ),
+            np.asarray(
+                model.config.get("response_mesh_shift", [0.0, 0.0, 0.0]),
+                dtype=float,
+            ),
+            rtol=0.0,
+            atol=1.0e-12,
+        ):
+            status_text = "Certificate is stale because the mesh shift changed."
+        elif (
+            str(model.config.get("chemical_potential_mode", "source"))
+            == "source"
+            and source is not None
+            and not _sampling_float_matches(
+                certificate.get("provenance", {}).get(
+                    "chemical_potential_meV"
+                ),
+                source.config.get("chemical_potential_meV", 0.0),
+            )
+        ):
+            status_text = (
+                "Certificate is stale because the source chemical potential changed."
+            )
+        elif (
+            str(model.config.get("chemical_potential_mode", "source"))
+            == "filling"
+            and not _sampling_float_matches(
+                certificate.get("provenance", {}).get("filling_per_cell"),
+                model.config.get("filling_per_cell", 1.0),
+            )
+        ):
+            status_text = (
+                "Certificate is stale because the electronic filling changed."
+            )
         else:
             tolerance = certificate.get("policy", {}).get(
                 "relative_tolerance",
@@ -20804,6 +21060,43 @@ class NfitProjectExplorer:
             "be recertified after fitting."
         )
         sampling_layout.addRow(convergence)
+        q = np.asarray(
+            model.config.get("plot_q_reduced", [0.5, 0.5, 0.5]),
+            dtype=float,
+        )
+        convergence_energies = np.linspace(
+            float(model.config.get("plot_energy_min_meV", -100.0)),
+            float(model.config.get("plot_energy_max_meV", 100.0)),
+            int(model.config.get("convergence_energy_points", 9)),
+        )
+        gamma_static = (
+            q.shape == (3,)
+            and np.allclose(q - np.rint(q), 0.0, rtol=0.0, atol=1.0e-12)
+            and np.any(
+                np.isclose(
+                    convergence_energies,
+                    0.0,
+                    rtol=0.0,
+                    atol=1.0e-12,
+                )
+            )
+        )
+        if gamma_static:
+            warning = QtWidgets.QLabel(
+                "The representative domain includes Q = 0 and E = 0. This "
+                "static Pauli limit samples a very narrow Fermi-surface shell "
+                "and may require much denser meshes than a finite-Q neutron "
+                "response. Choose a representative experimental Q unless the "
+                "uniform static susceptibility is intentional."
+            )
+            warning.setObjectName("lindhard_gamma_static_warning")
+            warning.setWordWrap(True)
+            warning.setToolTip(
+                "At finite temperature the Q=0, E=0 intraband limit contains "
+                "-df/dE. Its width is set by kBT rather than the response "
+                "broadening, so coarse uniform meshes can converge irregularly."
+            )
+            sampling_layout.addRow("Convergence warning", warning)
         certify = QtWidgets.QPushButton("Check/refine convergence")
         certify.setObjectName("lindhard_certify_sampling")
         certify.setEnabled(sampling_mode == "automatic")

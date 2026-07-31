@@ -177,7 +177,7 @@ atomic operation in a script.
 
 | Setting | Meaning | Default | Acceptable input example |
 | --- | --- | --- | --- |
-| `plot_q_reduced` | extended-zone $\mathbf Q$ for the model energy scan | `[0, 0, 0]` | `[0.5, 0.5, 0]` |
+| `plot_q_reduced` | representative extended-zone $\mathbf Q$ for the model energy scan and default convergence certificate | `[0.5, 0.5, 0.5]` in 3D; new linked components use `0.5` only on periodic axes | `[0.5, 0.5, 0]` |
 | `plot_energy_min_meV` | lower plotted energy transfer | `-100.0` | `-50.0` |
 | `plot_energy_max_meV` | upper plotted energy transfer | `100.0` | `50.0` |
 | `plot_energy_points` | plotted energy samples | `401` | `501` |
@@ -307,10 +307,13 @@ round trip for modest results.
 
 The GUI model plot shows the real and imaginary isotropic response at
 `plot_q_reduced`. Its right panel owns the plotted momentum, energy grid, and
-temperature. **Copy script** exports the electronic source, response settings,
-calculation, and rendering calls as editable Python. The standard fit
-machinery saves and exports the linked electronic and response component
-states, fitted parameters, dataset bindings, and calculated fit channels.
+temperature. The main model editor's **Sampling** tab owns the representative
+certificate momentum, energy interval and count, temperature, symmetry and
+mesh shift, accuracy profile, production mesh, and search budgets. **Copy
+script** exports the electronic source, response settings, calculation, and
+rendering calls as editable Python. The standard fit machinery saves and
+exports the linked electronic and response component states, fitted
+parameters, dataset bindings, and calculated fit channels.
 
 The second model plot evaluates numerical convergence and exposes its
 representative momentum, energy window, mesh scales, and broadening scales in

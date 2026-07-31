@@ -744,11 +744,17 @@ def certify_lindhard_sampling(
             "q_evaluation_during_certificate": "direct",
             "symmetry": str(symmetry),
             "broadening_meV": float(broadening_meV),
+            "chemical_potential_meV": float(chemical_potential_meV),
             "chemical_potential_mode": (
                 "source" if filling_per_cell is None else "filling"
             ),
             "filling_per_cell": (
                 None if filling_per_cell is None else float(filling_per_cell)
+            ),
+            "mesh_shift": (
+                None
+                if mesh_shift is None
+                else [float(value) for value in mesh_shift]
             ),
         },
         progress_callback=progress_callback,

@@ -1753,10 +1753,11 @@ def _register_builtin_models() -> None:
                 ),
                 _config_field(
                     "plot_q_reduced",
-                    [0.0, 0.0, 0.0],
+                    [0.5, 0.5, 0.5],
                     (
-                        "Transferred wavevector Q for the model-owned energy "
-                        "scan, in the tight-binding reciprocal basis."
+                        "Representative transferred wavevector Q for the "
+                        "model-owned energy scan and default convergence "
+                        "certificate, in the tight-binding reciprocal basis."
                     ),
                     "Three finite reduced coordinates.",
                     "list",
