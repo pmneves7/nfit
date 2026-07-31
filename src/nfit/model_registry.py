@@ -1153,7 +1153,21 @@ def _register_builtin_models() -> None:
                     "5.0",
                 ),
             ),
-            config_fields=_form_factor_fields("Yb3"),
+            config_fields=(
+                ModelConfigDefinition(
+                    name="powder_orientations",
+                    default=50,
+                    description=(
+                        "Number of deterministic sphere directions in a powder "
+                        "average."
+                    ),
+                    allowed="Integer of at least 6.",
+                    type="int",
+                    unit="directions",
+                    example="96",
+                ),
+                *_form_factor_fields("Yb3"),
+            ),
             dynamic_parameters=_fit_dynamic_parameters(
                 "heisenberg_rpa_parameter_labels"
             ),

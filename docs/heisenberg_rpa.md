@@ -138,9 +138,11 @@ themselves.
 
 ## Crystal and exchange network
 
-The GUI crystal editor stores lattice parameters, space group, magnetic sites,
-and a bond cutoff. **Generate symmetry orbits** expands the magnetic sites and
-groups symmetry-equivalent bonds into parameters `J1`, `J2`, and so on.
+The GUI keeps the workflow in three tabs: **Structure and exchange**,
+**Response and fit**, and **Advanced**. The first tab stores lattice
+parameters, space group, magnetic sites, and a bond cutoff.
+**Generate symmetry orbits** expands the magnetic sites and groups
+symmetry-equivalent bonds into parameters `J1`, `J2`, and so on.
 Symmetry-inequivalent orbits at the same distance receive suffixes such as
 `J3a` and `J3b`.
 
@@ -167,10 +169,10 @@ single-crystal response on deterministic approximately equal-area sphere
 directions, converts each Cartesian momentum to model HKL, and averages the
 result.
 
-The default uses 50 directions. Advanced configuration may change
-`powder_orientations` to another value of at least 6. Increasing it increases
-cost proportionally; quantitative work should check angular convergence.
-A lattice or UB matrix is required.
+The default uses 50 directions. The **Advanced** tab exposes
+`powder_orientations`, which may be set to another value of at least 6.
+Increasing it increases cost proportionally; quantitative work should check
+angular convergence. A lattice or UB matrix is required.
 
 ## Tensor interactions
 
@@ -238,8 +240,11 @@ $\lambda$ and the mode-coupling coefficient $u$ have energy units, and
 $\langle m^2\rangle$ is the dimensionless component-summed fluctuating spin
 amplitude.
 
-The closure configuration selects its energy cutoff, Brillouin-zone grid, and
-field-on energy quadrature. Solved quantities such as $\lambda(T)$,
+The closure configuration selects its energy cutoff. The **Advanced** tab
+shows the $N\times N\times N$ Brillouin-zone grid only when a closure is
+active, because bare RPA evaluates requested data points directly without a
+full-zone grid. With both a closure and a Zeeman term, the tab also exposes
+the field-on energy quadrature. Solved quantities such as $\lambda(T)$,
 $\chi_{0,\rm eff}$, and $\langle m^2\rangle$ appear in fit diagnostics.
 
 Closures use finite-difference gradients and support scalar, tensor, and

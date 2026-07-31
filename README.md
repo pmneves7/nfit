@@ -11,7 +11,8 @@ The package provides:
 - masking, symmetry-aware rebinning, backgrounds, and non-destructive analyses;
 - local, MMP, generalized-paramagnon/damped-mode, and Heisenberg-RPA
   spin-fluctuation models for inelastic, quasistatic elastic, and optional
-  bulk-response comparisons;
+  bulk-response comparisons, with a tabbed crystal/exchange workflow and
+  explicit powder and self-consistency convergence controls;
 - a linked bare Lindhard response with complex multiband susceptibility,
   Cartesian spin and neutron projections, fixed-filling support, automatic
   formula-unit normalization, workflow-focused controls, fitting,

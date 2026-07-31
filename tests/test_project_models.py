@@ -909,6 +909,38 @@ def test_heisenberg_rpa_editor_closure_controls(monkeypatch, tmp_path):
     combo = explorer.model_type_combo
     combo.setCurrentIndex(combo.findData("heisenberg_rpa"))
 
+    tabs = explorer.model_parameter_widget.findChild(
+        QtWidgets.QTabWidget, "heisenberg_builder_tabs"
+    )
+    assert tabs is not None and tabs.toolTip().strip()
+    assert [tabs.tabText(index) for index in range(tabs.count())] == [
+        "Structure and exchange",
+        "Response and fit",
+        "Advanced",
+    ]
+    summary = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLabel, "heisenberg_model_summary"
+    )
+    assert summary is not None and "bare RPA" in summary.text()
+    powder = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "model_config_powder_orientations"
+    )
+    assert powder is not None and powder.toolTip().strip()
+    powder.setText("72")
+    powder.editingFinished.emit()
+    assert model.config["powder_orientations"] == 72
+    numerical_status = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLabel, "heisenberg_numerical_status"
+    )
+    assert numerical_status is not None
+    assert "does not use" in numerical_status.text()
+    assert (
+        explorer.model_parameter_widget.findChild(
+            QtWidgets.QLineEdit, "model_closure_bz_grid"
+        )
+        is None
+    )
+
     for name in ("a", "b", "c"):
         explorer._set_model_crystal_lattice(name, "4.0")
     explorer._set_model_crystal_spacegroup("F m -3 m")
@@ -936,6 +968,13 @@ def test_heisenberg_rpa_editor_closure_controls(monkeypatch, tmp_path):
     # Select the fitted-target Onsager closure.
     mode_combo.setCurrentIndex(mode_combo.findData("onsager"))
     assert model.config["closure"]["mode"] == "onsager"
+    grid = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "model_closure_bz_grid"
+    )
+    assert grid is not None and grid.toolTip().strip()
+    grid.setText("20")
+    grid.editingFinished.emit()
+    assert model.config["closure"]["bz_grid"] == 20
     moment_check = explorer.model_parameter_widget.findChild(
         QtWidgets.QCheckBox, "model_closure_moment_mode"
     )
@@ -998,6 +1037,8 @@ def test_heisenberg_rpa_editor_closure_controls(monkeypatch, tmp_path):
     loaded_model = next(iter(load_project(path).data_groups[0].models.values()))
     assert loaded_model.config["closure"]["mode"] == "tac"
     assert loaded_model.config["closure"]["energy_cutoff_mev"] == 50.0
+    assert loaded_model.config["closure"]["bz_grid"] == 20
+    assert loaded_model.config["powder_orientations"] == 72
     assert "total_amplitude" in loaded_model.parameters
 
     # Back to none: config section and closure params are cleared.

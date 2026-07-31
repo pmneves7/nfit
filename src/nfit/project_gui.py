@@ -18798,7 +18798,7 @@ class NfitProjectExplorer:
 
         config_group = QtWidgets.QGroupBox(
             "Advanced model and execution"
-            if model.type in {"tight_binding", "lindhard"}
+            if model.type in {"tight_binding", "lindhard", "heisenberg_rpa"}
             else "Configuration Settings"
         )
         config_group.setObjectName("model_config_group")
@@ -19219,6 +19219,17 @@ class NfitProjectExplorer:
                 scope_group=scope_group,
                 advanced_group=config_group,
             )
+        elif model.type == "heisenberg_rpa":
+            self.model_parameter_layout.addWidget(config_group, 2, 0, 1, 4)
+            self._build_model_crystal_editor(model)
+            self._build_heisenberg_advanced_editor(model)
+            self._build_model_plot_actions(model)
+            self._organize_heisenberg_editor(
+                model,
+                fit_group=fit_group,
+                scope_group=scope_group,
+                advanced_group=config_group,
+            )
         elif definition.structured_config:
             self.model_parameter_layout.addWidget(config_group, 2, 0, 1, 4)
             self._build_model_crystal_editor(model)
@@ -19250,6 +19261,7 @@ class NfitProjectExplorer:
                 "tight_binding_builder_tabs",
                 "tight_binding_hamiltonian_tabs",
                 "lindhard_builder_tabs",
+                "heisenberg_builder_tabs",
             )
             if (
                 widget := self.model_parameter_widget.findChild(
@@ -19571,6 +19583,97 @@ class NfitProjectExplorer:
         )
         add_page("Advanced", ("model_config_group",))
 
+        self.model_parameter_layout.addWidget(summary, 0, 0, 1, 4)
+        self.model_parameter_layout.addWidget(tabs, 1, 0, 1, 4)
+
+    def _organize_heisenberg_editor(
+        self,
+        model: ModelComponentSpec,
+        *,
+        fit_group: Any,
+        scope_group: Any,
+        advanced_group: Any,
+    ) -> None:
+        """Collect the Heisenberg RPA workflow into focused tabs."""
+
+        from PySide6 import QtWidgets
+
+        def take(widget: Any | None) -> Any | None:
+            if widget is not None:
+                self.model_parameter_layout.removeWidget(widget)
+            return widget
+
+        def named(name: str) -> Any | None:
+            return self.model_parameter_widget.findChild(QtWidgets.QWidget, name)
+
+        groups = {
+            "crystal": take(named("model_crystal_group")),
+            "sites": take(named("model_crystal_sites_group")),
+            "bonds": take(named("model_bonds_group")),
+            "fit": take(fit_group),
+            "interactions": take(named("model_interactions_group")),
+            "closure": take(named("model_closure_group")),
+            "scope": take(scope_group),
+            "plots": take(named("model_plot_actions_group")),
+            "advanced": take(advanced_group),
+            "numerical": take(named("heisenberg_numerical_group")),
+        }
+
+        interaction_names = []
+        if model.config.get("anisotropy"):
+            interaction_names.append("anisotropic exchange")
+        if model.config.get("sia"):
+            interaction_names.append("single-ion anisotropy")
+        if (model.config.get("dipole") or {}).get("enabled"):
+            interaction_names.append("dipole")
+        if (model.config.get("zeeman") or {}).get("enabled"):
+            interaction_names.append("field")
+        closure = str((model.config.get("closure") or {}).get("mode", "none"))
+        summary = QtWidgets.QGroupBox("Model summary")
+        summary.setObjectName("heisenberg_model_summary_group")
+        summary_layout = QtWidgets.QVBoxLayout(summary)
+        summary_label = QtWidgets.QLabel(
+            f"{len(model.config.get('site_positions') or ())} magnetic site(s) · "
+            f"{len(model.config.get('orbits') or ())} exchange orbit(s) · "
+            f"{', '.join(interaction_names) if interaction_names else 'isotropic'} · "
+            f"{'bare RPA' if closure == 'none' else closure.upper() + ' closure'}"
+        )
+        summary_label.setObjectName("heisenberg_model_summary")
+        summary_label.setWordWrap(True)
+        summary_label.setToolTip(
+            "Resolved status of the generated magnetic network, enabled "
+            "interactions, and self-consistency treatment."
+        )
+        summary_layout.addWidget(summary_label)
+
+        tabs = QtWidgets.QTabWidget()
+        tabs.setObjectName("heisenberg_builder_tabs")
+        tabs.setToolTip(
+            "Define the magnetic structure and exchange network, configure the "
+            "response and fit, and tune numerical convergence."
+        )
+
+        def add_page(label: str, names: tuple[str, ...]) -> None:
+            page = QtWidgets.QWidget()
+            page.setObjectName(
+                f"heisenberg_{label.lower().replace(' ', '_')}_tab"
+            )
+            layout = QtWidgets.QVBoxLayout(page)
+            for name in names:
+                widget = groups.get(name)
+                if widget is not None:
+                    layout.addWidget(widget)
+            layout.addStretch(1)
+            tabs.addTab(page, label)
+
+        add_page("Structure and exchange", ("crystal", "sites", "bonds"))
+        add_page(
+            "Response and fit",
+            ("fit", "interactions", "closure", "scope"),
+        )
+        if groups["plots"] is not None:
+            add_page("Calculate and inspect", ("plots",))
+        add_page("Advanced", ("advanced", "numerical"))
         self.model_parameter_layout.addWidget(summary, 0, 0, 1, 4)
         self.model_parameter_layout.addWidget(tabs, 1, 0, 1, 4)
 
@@ -22471,15 +22574,6 @@ class NfitProjectExplorer:
             "logarithmically with it, so it must be set deliberately.",
             closure.get("energy_cutoff_mev", 100.0),
         )
-        add_numeric(
-            2,
-            "bz_grid",
-            "BZ grid (N per axis)",
-            "Brillouin-zone sampling is an N x N x N grid over the reduced "
-            "cell. Larger N is more accurate but costs more; N=8 is a good "
-            "starting point while exploring, especially with a field on.",
-            closure.get("bz_grid", 16),
-        )
         if mode in ("onsager", "tac"):
             moment_tooltip = (
                 "Expose the conserved moment budget as a model parameter "
@@ -22513,17 +22607,77 @@ class NfitProjectExplorer:
                     "rigid local moment this is ~ S(S+1).",
                     closure.get("moment_target", 1.0),
                 )
-        if (model.config.get("zeeman") or {}).get("enabled"):
-            add_numeric(
-                5,
-                "omega_points",
-                "Energy points (field)",
-                "Number of energy-quadrature points for the field-on (Tier-B) "
-                "moment integral. Only used when the Zeeman term is active.",
-                closure.get("omega_points", 200),
-            )
-
         self.model_parameter_layout.addWidget(group, 7, 0, 1, 4)
+
+    def _build_heisenberg_advanced_editor(
+        self,
+        model: ModelComponentSpec,
+    ) -> None:
+        """Build convergence controls used only by self-consistent RPA."""
+
+        from PySide6 import QtWidgets
+
+        closure = model.config.get("closure") or {}
+        mode = str(closure.get("mode", "none")).lower()
+        group = QtWidgets.QGroupBox("Numerical convergence")
+        group.setObjectName("heisenberg_numerical_group")
+        layout = QtWidgets.QFormLayout(group)
+
+        if mode == "none":
+            status = QtWidgets.QLabel(
+                "Bare RPA evaluates the requested data points directly and "
+                "does not use a Brillouin-zone integration grid."
+            )
+            status.setObjectName("heisenberg_numerical_status")
+            status.setWordWrap(True)
+            status.setToolTip(
+                "A full-zone grid is introduced only by Onsager, SCR, or TAC "
+                "self-consistency."
+            )
+            layout.addRow(status)
+        else:
+            grid_tooltip = (
+                "Brillouin-zone sampling for the self-consistency integral, "
+                "using an N x N x N grid over the reduced cell. Increase N "
+                "until fitted values are converged; cost grows as N cubed."
+            )
+            grid_label = QtWidgets.QLabel("Closure BZ grid (N per axis)")
+            grid_label.setToolTip(grid_tooltip)
+            grid = QtWidgets.QLineEdit(
+                _parameter_to_text(closure.get("bz_grid", 16))
+            )
+            grid.setObjectName("model_closure_bz_grid")
+            grid.setToolTip(grid_tooltip)
+            grid.setMaximumWidth(90)
+            grid.editingFinished.connect(
+                lambda editor=grid: self._set_model_closure(
+                    {"bz_grid": _parse_parameter_text(editor.text())}
+                )
+            )
+            layout.addRow(grid_label, grid)
+
+            if (model.config.get("zeeman") or {}).get("enabled"):
+                omega_tooltip = (
+                    "Energy-quadrature points for the field-on closure moment "
+                    "integral. Increase this together with the BZ grid until "
+                    "the self-consistent result is stable."
+                )
+                omega_label = QtWidgets.QLabel("Field energy points")
+                omega_label.setToolTip(omega_tooltip)
+                omega = QtWidgets.QLineEdit(
+                    _parameter_to_text(closure.get("omega_points", 200))
+                )
+                omega.setObjectName("model_closure_omega_points")
+                omega.setToolTip(omega_tooltip)
+                omega.setMaximumWidth(90)
+                omega.editingFinished.connect(
+                    lambda editor=omega: self._set_model_closure(
+                        {"omega_points": _parse_parameter_text(editor.text())}
+                    )
+                )
+                layout.addRow(omega_label, omega)
+
+        self.model_parameter_layout.addWidget(group, 8, 0, 1, 4)
 
     def _add_tight_binding_manifold(
         self,
