@@ -96,6 +96,24 @@ Hamiltonian and Hermitian NumPy solver in serial or across independent
 wavevector batches. Unprojected calculations use `eigvalsh`, avoiding the
 eigenvectors needed only for orbital projections.
 
+Three exact reductions cut the sampled wavevector count before any
+diagonalization, none of which changes a returned value:
+
+- Gaussian and tetrahedron density of states integrate on the irreducible
+  mesh, using orbit multiplicities as weights. Gaussian DOS additionally saves
+  the broadening kernel, because it never needs the full ordered grid.
+- Constant-energy surfaces drop the repeated zone face, then reduce to the
+  irreducible wedge, and gather eigenvalues back onto the full grid.
+- The orbit decomposition itself depends only on the certified rotations and
+  the mesh shape and shift, never on parameter values, so it is memoized. That
+  matters because reducing a large mesh costs an order of magnitude more than
+  diagonalizing the resulting irreducible set, and a fit or a convergence scan
+  repeats the same reduction many times.
+
+A projector that does not cover the whole basis is not certified as symmetry
+invariant, so requesting one declines the reduction under `auto` and raises
+under `reduced`.
+
 The component settings are:
 
 - `electronic_backend`: `auto`, `numpy`, `threaded`, or explicit optional
@@ -158,7 +176,10 @@ scientific state.
 
 On a complete uniform mesh, commensurate transferred wavevectors use an exact
 periodic permutation of the base eigenvalues and eigenvectors. No shifted
-Hamiltonian is assembled or diagonalized. Off-mesh points remain direct unless
+Hamiltonian is assembled or diagonalized. Whether a wavevector is commensurate
+is decided once per distinct wavevector rather than once per response point,
+which matters because a constant-Q cut repeats one wavevector at every energy.
+Off-mesh points remain direct unless
 a positive interpolation tolerance is configured. Validated interpolation
 uses only required periodic-linear stencils, refines through commensurate mesh
 divisors, and falls back to the direct reference when `auto` cannot meet the

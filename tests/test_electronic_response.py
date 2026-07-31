@@ -1752,3 +1752,68 @@ def test_density_of_states_matches_the_electron_filling_capacity():
     assert np.trapezoid(dos.total_per_meV_cell, dos.energy_meV) == pytest.approx(
         capacity, rel=1.0e-6
     )
+
+
+def test_commensurability_is_resolved_once_per_distinct_wavevector():
+    """The per-point commensurability test must agree with the per-q one.
+
+    Response points repeat a handful of wavevectors (one per energy of a
+    constant-Q cut), so the test is deduplicated. This locks the deduplicated
+    result against the direct permutation test it replaced.
+    """
+
+    from nfit.electronic_response import (
+        _commensurate_mesh_permutation,
+        _commensurate_point_flags,
+    )
+
+    model = _cubic_band_model()
+    mesh = k_mesh(model, (12, 12, 12), shift=[0.5, 0.5, 0.5], symmetry="full")
+    Q = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [0.25, 0.0, 0.0],      # commensurate with a 12-point axis
+            [1.0 / 3.0, 0.0, 0.0], # commensurate
+            [0.137, 0.2, 0.0],     # off mesh
+            [0.25, 0.0, 0.0],      # repeat
+            [2.0, -1.0, 3.0],      # integral, trivially commensurate
+        ]
+    )
+    expected = np.asarray(
+        [
+            _commensurate_mesh_permutation(model, mesh, np.mod(value, 1.0))
+            is not None
+            for value in Q
+        ],
+        dtype=bool,
+    )
+    np.testing.assert_array_equal(
+        _commensurate_point_flags(model, mesh, Q), expected
+    )
+    assert expected.tolist() == [True, True, True, False, True, True]
+
+
+def test_repeated_wavevectors_do_not_change_the_response():
+    """Deduplication must not alter the evaluated susceptibility."""
+
+    model = _cubic_band_model()
+    mesh = k_mesh(model, (10, 10, 10), shift=[0.5, 0.5, 0.5], symmetry="full")
+    energy = np.linspace(1.0, 40.0, 12)
+    q = np.tile([0.2, 0.1, 0.0], (energy.size, 1))
+    common = dict(
+        temperature_K=60.0, chemical_potential_meV=-150.0, broadening_meV=4.0
+    )
+    together = isotropic_spin_component(
+        bare_spin_susceptibility(model, q, energy, mesh, **common)
+    )
+    separate = np.concatenate(
+        [
+            isotropic_spin_component(
+                bare_spin_susceptibility(
+                    model, q[i : i + 1], energy[i : i + 1], mesh, **common
+                )
+            )
+            for i in range(energy.size)
+        ]
+    )
+    np.testing.assert_allclose(together, separate, rtol=1.0e-12, atol=1.0e-18)

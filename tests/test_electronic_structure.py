@@ -1200,3 +1200,146 @@ def test_symmetry_generated_hamiltonian_is_space_group_invariant(preset):
             np.linalg.eigvalsh(model.hamiltonian(k @ mapped.T)), axis=-1
         )
         assert np.max(np.abs(rotated - reference)) < 1.0e-9 * scale
+
+
+def _cubic_d_component():
+    """Pm-3m d manifold with certified reciprocal symmetry."""
+
+    from nfit import (
+        DataGroup,
+        add_tight_binding_orbital_manifold,
+        create_model_component,
+        orbital_manifold_preset,
+    )
+    from nfit.electronic_builder import (
+        add_tight_binding_hopping_term,
+        regenerate_tight_binding_hopping_terms,
+        regenerate_tight_binding_onsite_terms,
+        set_tight_binding_hopping_term,
+        set_tight_binding_onsite_term,
+    )
+
+    crystal = {
+        "lattice": {
+            "a": 4.0, "b": 4.0, "c": 4.0,
+            "alpha": 90.0, "beta": 90.0, "gamma": 90.0,
+        },
+        "spacegroup": "P m -3 m",
+        "sites": [
+            {"label": "M1", "element": "Fe", "position": [0.0, 0.0, 0.0], "ion": ""}
+        ],
+    }
+    group = DataGroup("Electronic")
+    component = create_model_component(group, "bands", type="tight_binding")
+    component.config["crystal"] = crystal
+    add_tight_binding_orbital_manifold(
+        component, orbital_manifold_preset("M1", "d")
+    )
+    for term in regenerate_tight_binding_onsite_terms(component):
+        set_tight_binding_onsite_term(
+            component, term.identifier, value=0.05, energy_unit="eV"
+        )
+    for term in regenerate_tight_binding_hopping_terms(component, 4.01).terms:
+        add_tight_binding_hopping_term(component, term.identifier)
+        set_tight_binding_hopping_term(
+            component, term.identifier, value=-0.2, energy_unit="eV"
+        )
+    return component
+
+
+def test_gaussian_dos_symmetry_reduction_is_numerically_exact():
+    """Reducing the Gaussian DOS mesh must not change a single value.
+
+    Symmetry-equivalent wavevectors carry identical eigenvalues, so summing
+    over the irreducible mesh with orbit multiplicities as weights is an exact
+    rewrite. This is the property that makes the speedup safe.
+    """
+
+    pytest.importorskip("gemmi")
+    from nfit import electronic_model_from_component
+
+    model = electronic_model_from_component(_cubic_d_component())
+    mesh = k_mesh(model, (12, 12, 12), symmetry="full")
+    energy = np.linspace(-3000.0, 3000.0, 400)
+
+    full = density_of_states(model, mesh, energy, broadening_meV=20.0, symmetry="full")
+    reduced = density_of_states(
+        model, mesh, energy, broadening_meV=20.0, symmetry="reduced"
+    )
+
+    record = dict(reduced.provenance)["symmetry_reduction"]
+    assert record["applied"] is True
+    assert record["irreducible_size"] < record["full_size"]
+    assert dict(full.provenance)["symmetry_reduction"]["applied"] is False
+    np.testing.assert_allclose(
+        reduced.total_per_meV_cell,
+        full.total_per_meV_cell,
+        rtol=1.0e-12,
+        atol=1.0e-12 * float(np.max(full.total_per_meV_cell)),
+    )
+
+
+def test_gaussian_dos_declines_reduction_for_a_partial_orbital_projector():
+    """A projector that is not the whole basis is not symmetry invariant."""
+
+    pytest.importorskip("gemmi")
+    from nfit import electronic_model_from_component
+
+    model = electronic_model_from_component(_cubic_d_component())
+    mesh = k_mesh(model, (8, 8, 8), symmetry="full")
+    energy = np.linspace(-3000.0, 3000.0, 200)
+
+    auto = density_of_states(
+        model, mesh, energy, broadening_meV=30.0,
+        symmetry="auto", projections={"one": [0]},
+    )
+    assert dict(auto.provenance)["symmetry_reduction"]["applied"] is False
+    with pytest.raises(ValueError, match="cannot certify the orbital"):
+        density_of_states(
+            model, mesh, energy, broadening_meV=30.0,
+            symmetry="reduced", projections={"one": [0]},
+        )
+    # A full-basis projector is invariant and stays reducible.
+    full_projector = density_of_states(
+        model, mesh, energy, broadening_meV=30.0,
+        symmetry="reduced", projections={"all": list(range(model.n_basis))},
+    )
+    np.testing.assert_allclose(
+        full_projector.projected_per_meV_cell["all"],
+        full_projector.total_per_meV_cell,
+        rtol=1.0e-12,
+    )
+
+
+def test_fermi_surface_symmetry_reduction_reproduces_the_full_grid():
+    """Deduplicating the zone face and reducing to the wedge must be exact."""
+
+    pytest.importorskip("gemmi")
+    from dataclasses import replace as dataclass_replace
+
+    from nfit import electronic_model_from_component
+
+    model = electronic_model_from_component(_cubic_d_component())
+    plain = dataclass_replace(
+        model,
+        provenance={
+            key: value
+            for key, value in dict(model.provenance).items()
+            if key != "reciprocal_symmetry"
+        },
+    )
+    reference = fermi_surface(plain, (14, 14, 14), target_energy_meV=-100.0)
+    reduced = fermi_surface(model, (14, 14, 14), target_energy_meV=-100.0)
+
+    record = dict(reduced.provenance)["symmetry_reduction"]
+    assert record["applied"] is True
+    assert record["irreducible_size"] < record["distinct_size"] < record["full_size"]
+    assert dict(reference.provenance)["symmetry_reduction"]["applied"] is False
+
+    assert len(reduced.sheets) == len(reference.sheets)
+    for expected, actual in zip(reference.sheets, reduced.sheets, strict=True):
+        assert expected.band_index == actual.band_index
+        np.testing.assert_allclose(
+            actual.vertices_reduced, expected.vertices_reduced, atol=1.0e-12
+        )
+        np.testing.assert_array_equal(actual.connectivity, expected.connectivity)

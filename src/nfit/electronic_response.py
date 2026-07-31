@@ -985,6 +985,39 @@ def response_k_mesh(
     )
 
 
+def _commensurate_mesh_shift(
+    model: ElectronicModel,
+    mesh: WavevectorSampling,
+    q_reduced: np.ndarray,
+    *,
+    tolerance: float = 1.0e-10,
+) -> NDArray[np.int64] | None:
+    """Return the integer mesh shift carrying ``k`` to ``k + q``, or ``None``.
+
+    Split out of :func:`_commensurate_mesh_permutation` so that testing whether
+    a wavevector is commensurate costs a few comparisons instead of building
+    and discarding a full ``(n_k,)`` permutation.
+    """
+
+    q = np.asarray(q_reduced, dtype=float)
+    local_q = q[list(model.periodic_axes)]
+    if np.allclose(local_q, np.rint(local_q), rtol=0.0, atol=tolerance):
+        return np.zeros(len(model.periodic_axes), dtype=np.int64)
+    shape = tuple(int(value) for value in mesh.mesh_shape)
+    if (
+        not shape
+        or len(shape) != model.dimension
+        or int(np.prod(shape)) != mesh.reduced_coordinates.shape[0]
+        or mesh.provenance.get("provider") != "uniform"
+    ):
+        return None
+    shifts_float = local_q * np.asarray(shape, dtype=float)
+    shifts = np.rint(shifts_float).astype(np.int64)
+    if not np.allclose(shifts_float, shifts, rtol=0.0, atol=tolerance):
+        return None
+    return shifts
+
+
 def _commensurate_mesh_permutation(
     model: ElectronicModel,
     mesh: WavevectorSampling,
@@ -994,25 +1027,39 @@ def _commensurate_mesh_permutation(
 ) -> NDArray[np.int64] | None:
     """Map ``k`` to ``k + q`` on a complete uniform periodic mesh."""
 
-    shape = tuple(int(value) for value in mesh.mesh_shape)
-    q = np.asarray(q_reduced, dtype=float)
-    local_q = q[list(model.periodic_axes)]
-    if np.allclose(local_q, np.rint(local_q), rtol=0.0, atol=tolerance):
+    shifts = _commensurate_mesh_shift(model, mesh, q_reduced, tolerance=tolerance)
+    if shifts is None:
+        return None
+    if not np.any(shifts):
         return np.arange(mesh.reduced_coordinates.shape[0], dtype=np.int64)
-    if (
-        not shape
-        or len(shape) != model.dimension
-        or int(np.prod(shape)) != mesh.reduced_coordinates.shape[0]
-        or dict(mesh.provenance).get("provider") != "uniform"
-    ):
-        return None
-    shifts_float = local_q * np.asarray(shape, dtype=float)
-    shifts = np.rint(shifts_float).astype(np.int64)
-    if not np.allclose(shifts_float, shifts, rtol=0.0, atol=tolerance):
-        return None
+    shape = tuple(int(value) for value in mesh.mesh_shape)
     indices = np.indices(shape, dtype=np.int64).reshape(len(shape), -1).T
     shifted = np.mod(indices + shifts[None, :], np.asarray(shape)[None, :])
     return np.ravel_multi_index(shifted.T, shape)
+
+
+def _commensurate_point_flags(
+    model: ElectronicModel,
+    mesh: WavevectorSampling,
+    q_reduced: np.ndarray,
+) -> NDArray[np.bool_]:
+    """Return, per response point, whether its wavevector is on the mesh.
+
+    Response points overwhelmingly repeat a handful of wavevectors (one per
+    energy of a constant-Q cut), so the test is evaluated once per distinct
+    wavevector and broadcast back.
+    """
+
+    reduced = np.mod(np.asarray(q_reduced, dtype=float), 1.0)
+    unique, inverse = np.unique(reduced, axis=0, return_inverse=True)
+    flags = np.asarray(
+        [
+            _commensurate_mesh_shift(model, mesh, value) is not None
+            for value in unique
+        ],
+        dtype=bool,
+    )
+    return flags[np.asarray(inverse, dtype=np.intp).ravel()]
 
 
 def _permuted_eigensystem(
@@ -2050,14 +2097,7 @@ def bare_lindhard_susceptibility(
         "cache": cache,
         "factorize_ordered_pairs": operator_matrices_by_point is None,
     }
-    commensurate = np.asarray(
-        [
-            _commensurate_mesh_permutation(model, mesh, np.mod(value, 1.0))
-            is not None
-            for value in Q
-        ],
-        dtype=bool,
-    )
+    commensurate = _commensurate_point_flags(model, mesh, Q)
     if policy == "commensurate" and not np.all(commensurate):
         first = int(np.flatnonzero(~commensurate)[0])
         raise ValueError(

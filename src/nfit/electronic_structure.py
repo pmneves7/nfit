@@ -17,7 +17,7 @@ from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, fields, replace
-from functools import cached_property
+from functools import cached_property, lru_cache
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from pprint import pformat
@@ -1319,6 +1319,91 @@ def _symmetry_reduced_k_mesh(
     return reduced
 
 
+def _certified_reciprocal_rotations(
+    model: ElectronicModel,
+) -> tuple[tuple[tuple[int, ...], ...], bool]:
+    """Return flattened certified reciprocal rotations and the time-reversal flag.
+
+    Returns an empty tuple when the model carries no nfit-certified symmetry,
+    which is the fail-closed default for hand-built and imported models.
+    """
+
+    metadata = model.provenance.get("reciprocal_symmetry", {})
+    if (
+        not isinstance(metadata, Mapping)
+        or metadata.get("certified_by") != "nfit_orbital_builder"
+    ):
+        return (), False
+    rotations = []
+    for raw in metadata.get("rotations", ()):
+        rotation = np.asarray(raw, dtype=np.int64)
+        if rotation.shape != (3, 3):
+            return (), False
+        rotations.append(tuple(int(value) for value in rotation.ravel()))
+    return tuple(rotations), bool(metadata.get("includes_time_reversal"))
+
+
+@lru_cache(maxsize=32)
+def _mesh_orbit_representatives(
+    rotations: tuple[tuple[int, ...], ...],
+    includes_time_reversal: bool,
+    shape: tuple[int, ...],
+    shift: tuple[float, ...],
+) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.int64], int] | None:
+    """Return ``(unique, full_to_reduced, counts, operations)`` for a mesh.
+
+    This is pure geometry: it depends on the certified rotations and the mesh
+    shape and shift, never on parameter values or band energies. Reducing a
+    24^3 mesh costs an order of magnitude more than diagonalizing the resulting
+    irreducible set, so the result is memoized across the repeated calls a fit
+    or a convergence scan makes. Returns ``None`` when the mesh is incompatible
+    with the symmetry.
+    """
+
+    mesh_shape = np.asarray(shape, dtype=np.int64)
+    mesh_shift = np.asarray(shift, dtype=float)
+    indices = np.indices(tuple(mesh_shape), dtype=np.int64).reshape(3, -1).T
+    coordinates = (indices + mesh_shift[None, :]) / mesh_shape[None, :]
+    representatives = np.arange(indices.shape[0], dtype=np.int64)
+    operations = 0
+    signs = (1, -1) if includes_time_reversal else (1,)
+    for flat_rotation in rotations:
+        rotation = np.asarray(flat_rotation, dtype=np.int64).reshape(3, 3)
+        for sign in signs:
+            transformed = sign * (coordinates @ rotation.T)
+            transformed_indices = (
+                transformed * mesh_shape[None, :] - mesh_shift[None, :]
+            )
+            rounded = np.rint(transformed_indices).astype(np.int64)
+            if not np.allclose(transformed_indices, rounded, atol=1.0e-9):
+                continue
+            wrapped = np.mod(rounded, mesh_shape[None, :])
+            flat = np.ravel_multi_index(wrapped.T, tuple(mesh_shape))
+            representatives = np.minimum(representatives, flat)
+            operations += 1
+    if operations < 2:
+        return None
+    unique, full_to_reduced, counts = np.unique(
+        representatives,
+        return_inverse=True,
+        return_counts=True,
+    )
+    # A complete operation list maps every member directly onto the minimum
+    # orbit representative. This assertion prevents an incomplete metadata set
+    # from silently producing incorrect multiplicities.
+    if np.any(representatives[unique] != unique):
+        return None
+    result = (
+        unique,
+        np.asarray(full_to_reduced, dtype=np.int64).ravel(),
+        counts,
+        operations,
+    )
+    for array in result[:3]:
+        array.setflags(write=False)
+    return result
+
+
 def _symmetry_reduced_k_mesh_with_mapping(
     model: ElectronicModel,
     full: WavevectorSampling,
@@ -1356,49 +1441,24 @@ def _symmetry_reduced_k_mesh_with_mapping(
         or metadata.get("certified_by") != "nfit_orbital_builder"
     ):
         return unchanged("model has no nfit-certified reciprocal symmetry")
-    raw_rotations = metadata.get("rotations", ())
-    rotations = []
-    for raw in raw_rotations:
-        rotation = np.asarray(raw, dtype=np.int64)
-        if rotation.shape != (3, 3):
-            return unchanged("certified rotation metadata is invalid")
-        rotations.append(rotation)
+    rotations, includes_time_reversal = _certified_reciprocal_rotations(model)
     if not rotations:
-        return unchanged("certified rotation metadata is empty")
+        return unchanged("certified rotation metadata is empty or invalid")
+    if int(np.prod(full.mesh_shape)) != full.reduced_coordinates.shape[0]:
+        return unchanged("symmetry reduction requires a complete uniform mesh")
 
-    shape = np.asarray(full.mesh_shape, dtype=np.int64)
-    shift = np.asarray(full.shift, dtype=float)
-    indices = np.indices(tuple(shape), dtype=np.int64).reshape(3, -1).T
-    coordinates = (indices + shift[None, :]) / shape[None, :]
-    representatives = np.arange(indices.shape[0], dtype=np.int64)
-    transformed_count = 0
-    signs = (1, -1) if bool(metadata.get("includes_time_reversal")) else (1,)
-    for rotation in rotations:
-        for sign in signs:
-            transformed = sign * (coordinates @ rotation.T)
-            transformed_indices = transformed * shape[None, :] - shift[None, :]
-            rounded = np.rint(transformed_indices).astype(np.int64)
-            if not np.allclose(transformed_indices, rounded, atol=1.0e-9):
-                continue
-            wrapped = np.mod(rounded, shape[None, :])
-            flat = np.ravel_multi_index(wrapped.T, tuple(shape))
-            representatives = np.minimum(representatives, flat)
-            transformed_count += 1
-    if transformed_count < 2:
-        return unchanged("mesh shape or shift is incompatible with the symmetry")
-
-    unique, full_to_reduced, counts = np.unique(
-        representatives,
-        return_inverse=True,
-        return_counts=True,
+    resolved = _mesh_orbit_representatives(
+        rotations,
+        includes_time_reversal,
+        tuple(int(value) for value in full.mesh_shape),
+        tuple(float(value) for value in full.shift),
     )
-    # A complete operation list maps every member directly onto the minimum
-    # orbit representative. This assertion prevents an incomplete metadata set
-    # from silently producing incorrect multiplicities.
-    if np.any(representatives[unique] != unique):
-        return unchanged("certified operations do not close on this mesh")
+    if resolved is None:
+        return unchanged("mesh shape or shift is incompatible with the symmetry")
+    unique, full_to_reduced, counts, transformed_count = resolved
+    total = int(full.reduced_coordinates.shape[0])
     reduced_coordinates = full.reduced_coordinates[unique]
-    weights = counts.astype(float) / float(indices.shape[0])
+    weights = counts.astype(float) / float(total)
     return (
         WavevectorSampling(
             "mesh",
@@ -1411,13 +1471,13 @@ def _symmetry_reduced_k_mesh_with_mapping(
                 "symmetry_reduction": {
                     "policy": "reduced" if required else "auto",
                     "applied": True,
-                    "full_size": int(indices.shape[0]),
+                    "full_size": total,
                     "irreducible_size": int(unique.size),
                     "operation_count": int(transformed_count),
                 },
             },
         ),
-        np.asarray(full_to_reduced, dtype=np.int64),
+        full_to_reduced,
     )
 
 
@@ -1683,12 +1743,83 @@ def density_of_states(
             2 if model.spin_operators is None else 1,
         )
     )
+    full_basis = np.arange(model.n_basis, dtype=np.int64)
+    unsafe_projectors = [
+        label
+        for label, indices in projection_indices.items()
+        if indices.size != model.n_basis
+        or not np.array_equal(np.sort(indices), full_basis)
+    ]
     bands: BandResult
+    # Set by the Gaussian branch when it integrates on the irreducible mesh.
+    integration_mesh = mesh
+    gaussian_reduction: Mapping[str, Any] = {
+        "policy": selected_symmetry,
+        "applied": False,
+    }
     tetrahedron_reduction: Mapping[str, Any] = {
         "policy": selected_symmetry,
         "applied": False,
     }
-    if selected_method == "tetrahedron" and selected_symmetry != "full":
+    if selected_method == "gaussian" and selected_symmetry != "full":
+        # Symmetry-equivalent wavevectors carry identical eigenvalues, so
+        # summing Gaussians over the irreducible mesh with its orbit
+        # multiplicities as weights is an exact rewrite of the full-mesh sum,
+        # not an approximation. Unlike the tetrahedron path this needs no
+        # expansion back onto the ordered grid, so it saves the broadening
+        # kernel as well as the diagonalization. An orbital projector is only
+        # certified when it covers the whole basis, exactly as there.
+        if unsafe_projectors and selected_symmetry == "reduced":
+            labels = ", ".join(unsafe_projectors)
+            raise ValueError(
+                "Gaussian symmetry reduction cannot certify the orbital "
+                f"projector(s) {labels}; use auto fallback or full sampling"
+            )
+        reduced_mesh = (
+            mesh
+            if unsafe_projectors
+            else _symmetry_reduced_k_mesh(
+                model, mesh, required=selected_symmetry == "reduced"
+            )
+        )
+        applied = (
+            not unsafe_projectors
+            and bool(reduced_mesh.provenance["symmetry_reduction"]["applied"])
+        )
+        if applied:
+            integration_mesh = reduced_mesh
+            gaussian_reduction = dict(reduced_mesh.provenance["symmetry_reduction"])
+        else:
+            gaussian_reduction = {
+                "policy": selected_symmetry,
+                "applied": False,
+                "reason": (
+                    "an orbital projector is not certified as symmetry invariant"
+                    if unsafe_projectors
+                    else reduced_mesh.provenance["symmetry_reduction"].get(
+                        "reason", "symmetry reduction was unavailable"
+                    )
+                ),
+            }
+        bands = calculate_bands(
+            model,
+            integration_mesh,
+            chemical_potential_meV=chemical_potential_meV,
+            projections=None if applied else projections,
+            include_eigenvectors=False,
+            backend=backend,
+            workers=workers,
+            max_batch_bytes=max_batch_bytes,
+        )
+        if applied and projection_indices:
+            bands = replace(
+                bands,
+                projected_weights={
+                    label: np.ones_like(bands.energies_meV, dtype=float)
+                    for label in projection_indices
+                },
+            )
+    elif selected_method == "tetrahedron" and selected_symmetry != "full":
         if (
             model.dimension != 3
             or len(mesh.mesh_shape) != 3
@@ -1698,13 +1829,7 @@ def density_of_states(
                 "tetrahedron symmetry reduction requires a complete "
                 "three-dimensional uniform mesh"
             )
-        full_basis = np.arange(model.n_basis, dtype=np.int64)
-        unsafe_labels = [
-            label
-            for label, indices in projection_indices.items()
-            if indices.size != model.n_basis
-            or not np.array_equal(np.sort(indices), full_basis)
-        ]
+        unsafe_labels = unsafe_projectors
         if unsafe_labels and selected_symmetry == "reduced":
             labels = ", ".join(unsafe_labels)
             raise ValueError(
@@ -1934,7 +2059,7 @@ def density_of_states(
         )
 
     flat_energy = bands.energies_meV.reshape(-1)
-    state_weight = np.repeat(np.asarray(mesh.weights), model.n_basis)
+    state_weight = np.repeat(np.asarray(integration_mesh.weights), model.n_basis)
     projected_flat = {
         label: values.reshape(-1) for label, values in bands.projected_weights.items()
     }
@@ -1984,6 +2109,7 @@ def density_of_states(
             "automatic_energy_range": automatic_energy_range,
             "spin_degeneracy": spin_degeneracy,
             "normalization": "states per meV per primitive cell, both spins",
+            "symmetry_reduction": dict(gaussian_reduction),
         },
     )
 
@@ -2162,15 +2288,66 @@ def fermi_surface(
     coordinates = np.zeros((*local_grid.shape[:-1], 3), dtype=float)
     coordinates[..., model.periodic_axes] = local_grid
     flat = coordinates.reshape(-1, 3)
+    # The isosurface grid repeats the zone face (both 0 and 1 on every axis) so
+    # that marching cubes closes, but those points are periodic images and the
+    # interior is a plain shift-zero mesh. Diagonalize only the distinct
+    # wavevectors -- further reduced to the irreducible wedge when the model
+    # carries certified reciprocal symmetry -- and gather the eigenvalues back
+    # onto the full grid. Symmetry-equivalent wavevectors have identical
+    # eigenvalues, so this is exact.
+    grid_indices = np.indices(
+        tuple(value + 1 for value in shape), dtype=np.int64
+    ).reshape(len(shape), -1).T
+    distinct_of_grid = np.ravel_multi_index(
+        np.mod(grid_indices, np.asarray(shape, dtype=np.int64)[None, :]).T,
+        tuple(shape),
+    )
+    distinct_indices = np.indices(tuple(shape), dtype=np.int64).reshape(
+        len(shape), -1
+    ).T
+    distinct_local = distinct_indices / np.asarray(shape, dtype=float)[None, :]
+    distinct = np.zeros((distinct_local.shape[0], 3), dtype=float)
+    distinct[:, model.periodic_axes] = distinct_local
+    gather = distinct_of_grid
+    reduction: dict[str, Any] = {"applied": False, "reason": "not attempted"}
+    rotations, includes_time_reversal = _certified_reciprocal_rotations(model)
+    if model.dimension == 3 and rotations:
+        resolved = _mesh_orbit_representatives(
+            rotations,
+            includes_time_reversal,
+            tuple(int(value) for value in shape),
+            (0.0, 0.0, 0.0),
+        )
+        if resolved is not None:
+            unique, full_to_reduced, _counts, operations = resolved
+            gather = full_to_reduced[distinct_of_grid]
+            distinct = distinct[unique]
+            reduction = {
+                "applied": True,
+                "full_size": int(grid_indices.shape[0]),
+                "distinct_size": int(distinct_of_grid.max()) + 1,
+                "irreducible_size": int(unique.size),
+                "operation_count": int(operations),
+            }
+        else:
+            reduction = {
+                "applied": False,
+                "reason": "mesh shape is incompatible with the certified symmetry",
+            }
+    elif model.dimension == 3:
+        reduction = {
+            "applied": False,
+            "reason": "model has no nfit-certified reciprocal symmetry",
+        }
     mesh_eigensystem = evaluate_eigensystem(
         model,
-        flat,
+        distinct,
         eigenvectors=False,
         backend=backend,
         workers=workers,
         max_batch_bytes=max_batch_bytes,
     )
-    energies = mesh_eigensystem.eigenvalues.reshape(
+    energies = mesh_eigensystem.eigenvalues[gather].reshape(
         *coordinates.shape[:-1], model.n_basis
     )
     projection_indices = _projection_indices(model, projections)
@@ -2241,6 +2418,7 @@ def fermi_surface(
                 label: indices.tolist()
                 for label, indices in projection_indices.items()
             },
+            "symmetry_reduction": dict(reduction),
         },
     )
 

@@ -99,7 +99,12 @@ The DOS viewer offers two integrations:
 
 - **Gaussian** replaces each sampled eigenvalue with a normalized Gaussian of
   standard deviation `dos_broadening_meV`. It supports every model dimension
-  and the certified total-DOS symmetry reduction.
+  and the certified total-DOS symmetry reduction. Because symmetry-equivalent
+  wavevectors carry identical eigenvalues, the Gaussian sum is evaluated
+  directly on the irreducible mesh with orbit multiplicities as weights. That
+  is an exact rewrite of the full-mesh sum — it reproduces it to machine
+  precision — and it saves the broadening kernel as well as the
+  diagonalization.
 - **Linear tetrahedron** uses ASE to interpolate each band inside the
   tetrahedra of a complete uniform three-dimensional mesh. It introduces no
   artificial broadening. For certified models, nfit can diagonalize the
@@ -165,6 +170,16 @@ every crossing band. The result is:
 Set the target equal to the chemical potential for a Fermi surface.
 `fermi_surface` retains vertices in reduced and physical reciprocal
 coordinates, connectivity, band index, and optional projected weights.
+
+The isosurface grid repeats the zone face so that the surface closes, but
+those points are periodic images of the interior. nfit diagonalizes only the
+distinct wavevectors, further reduced to the irreducible wedge when the model
+carries certified reciprocal symmetry, then gathers the eigenvalues back onto
+the full grid. Both steps are exact — the extracted vertices are identical —
+and the applied reduction is recorded in
+`provenance["symmetry_reduction"]`. Bands that never reach the target energy
+are skipped entirely, and eigenvectors for projected weights are computed only
+at the surface vertices.
 By default the viewer accepts one target grid spacing in Å$^{-1}$ and resolves
 the nearest grid size separately along each reciprocal basis vector. This
 keeps the physical sampling density comparable in anisotropic cells. Select
