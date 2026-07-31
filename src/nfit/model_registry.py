@@ -1478,11 +1478,15 @@ def _register_builtin_models() -> None:
                 ),
                 _config_field(
                     "response_mesh_shift",
-                    [0.0, 0.0, 0.0],
-                    "Mesh-step offsets for the full response mesh.",
+                    [0.5, 0.5, 0.5],
+                    (
+                        "Mesh-step offsets for the full response mesh. The "
+                        "default half shift reduces special-point and "
+                        "Fermi-surface shell artifacts."
+                    ),
                     "One finite offset per periodic model direction.",
                     "list",
-                    "[0.5, 0.5, 0.5]",
+                    "[0.0, 0.0, 0.0]",
                 ),
                 _config_field(
                     "response_symmetry",

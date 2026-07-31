@@ -232,6 +232,12 @@ def test_tight_binding_registry_validates_energy_unit_and_canonical_window():
     nfit.validate_model_component(component)
 
 
+def test_lindhard_registry_defaults_to_half_shifted_response_mesh():
+    config = default_model_config("lindhard")
+
+    assert config["response_mesh_shift"] == [0.5, 0.5, 0.5]
+
+
 def test_registered_model_drives_creation_diagnostics_plots_and_serialization():
     key = "_registry_contract_test"
 

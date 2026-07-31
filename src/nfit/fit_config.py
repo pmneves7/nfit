@@ -293,7 +293,7 @@ def _lindhard_factory(
     mesh = k_mesh(
         base_model,
         config.get("response_mesh", [16, 16, 16]),
-        shift=config.get("response_mesh_shift", [0.0, 0.0, 0.0]),
+        shift=config.get("response_mesh_shift", [0.5, 0.5, 0.5]),
         symmetry="full",
     )
     eta_key = qualified_parameter_name(component.name, "broadening")
@@ -438,7 +438,7 @@ def _lindhard_factory(
                 model,
                 config.get("response_mesh", [16, 16, 16]),
                 q_reduced[selected],
-                shift=config.get("response_mesh_shift", [0.0, 0.0, 0.0]),
+                shift=config.get("response_mesh_shift", [0.5, 0.5, 0.5]),
                 symmetry=str(config.get("response_symmetry", "auto")),
                 operator_kind=(
                     "orbital_pair_matrix"

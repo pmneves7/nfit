@@ -1325,10 +1325,13 @@ def create_model_component(
                 )
             )
             representative_q = [0.0, 0.0, 0.0]
+            mesh_shift = [0.0, 0.0, 0.0]
             for axis in axes:
                 if 0 <= axis < 3:
                     representative_q[axis] = 0.5
+                    mesh_shift[axis] = 0.5
             config["plot_q_reduced"] = representative_q
+            config["response_mesh_shift"] = mesh_shift
     model = ModelComponentSpec(
         name=next_model_name(group.models),
         type=type,
@@ -20734,12 +20737,13 @@ class NfitProjectExplorer:
 
         shift_tooltip = (
             "Fractional offsets in mesh-step units along the electronic model's "
-            "periodic axes. Zero is a Γ-centered mesh; 0.5 gives a half-shifted "
-            "mesh that can reduce Fermi-surface shell effects."
+            "periodic axes. The default 0.5 half shift reduces special-point "
+            "and Fermi-surface shell artifacts in metallic systems. Use zero "
+            "for an explicitly Γ-centered mesh."
         )
         shift = QtWidgets.QLineEdit(
             _parameter_to_text(
-                model.config.get("response_mesh_shift", [0.0, 0.0, 0.0])
+                model.config.get("response_mesh_shift", [0.5, 0.5, 0.5])
             )
         )
         shift.setObjectName("model_config_response_mesh_shift")
@@ -21010,7 +21014,7 @@ class NfitProjectExplorer:
                 dtype=float,
             ),
             np.asarray(
-                model.config.get("response_mesh_shift", [0.0, 0.0, 0.0]),
+                model.config.get("response_mesh_shift", [0.5, 0.5, 0.5]),
                 dtype=float,
             ),
             rtol=0.0,

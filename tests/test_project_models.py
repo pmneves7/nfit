@@ -548,6 +548,7 @@ def test_new_lindhard_component_uses_periodic_zone_boundary_default():
     response = create_model_component(group, "response", type="lindhard")
 
     assert response.config["plot_q_reduced"] == [0.5, 0.0, 0.5]
+    assert response.config["response_mesh_shift"] == [0.5, 0.0, 0.5]
 
 
 def test_lindhard_editor_warns_for_static_gamma_certificate(monkeypatch):

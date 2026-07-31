@@ -501,7 +501,7 @@ def certify_lindhard_component_sampling(
                 config.get("response_sampling_max_mesh_points", 500_000)
             ),
             mesh_shift=config.get(
-                "response_mesh_shift", [0.0, 0.0, 0.0]
+                "response_mesh_shift", [0.5, 0.5, 0.5]
             ),
             symmetry=str(config.get("response_symmetry", "auto")),
             backend=str(config.get("response_backend", "auto")),
@@ -745,14 +745,14 @@ def lindhard_energy_scan(
     filling_mesh = k_mesh(
         model,
         config.get("response_mesh", [16, 16, 16]),
-        shift=config.get("response_mesh_shift", [0.0, 0.0, 0.0]),
+        shift=config.get("response_mesh_shift", [0.5, 0.5, 0.5]),
         symmetry="full",
     )
     mesh = response_k_mesh(
         model,
         config.get("response_mesh", [16, 16, 16]),
         Q,
-        shift=config.get("response_mesh_shift", [0.0, 0.0, 0.0]),
+        shift=config.get("response_mesh_shift", [0.5, 0.5, 0.5]),
         symmetry=str(config.get("response_symmetry", "auto")),
     )
     temperature = float(config.get("plot_temperature_K", 10.0))
@@ -912,7 +912,7 @@ def lindhard_energy_scan_script(
             "",
             f"sampling_certificate = {config.get('response_sampling_certificate', {})!r}",
             f"mesh_shape = {config.get('response_mesh', [16, 16, 16])!r}",
-            f"mesh_shift = {config.get('response_mesh_shift', [0.0, 0.0, 0.0])!r}",
+            f"mesh_shift = {config.get('response_mesh_shift', [0.5, 0.5, 0.5])!r}",
             "filling_mesh = k_mesh(model, mesh_shape, shift=mesh_shift, symmetry='full')",
             f"temperature_K = {float(config.get('plot_temperature_K', 10.0))!r}",
             f"energy_meV = np.linspace({float(config.get('plot_energy_min_meV', -100.0))!r}, {float(config.get('plot_energy_max_meV', 100.0))!r}, {int(config.get('plot_energy_points', 401))!r})",
@@ -1035,7 +1035,7 @@ def lindhard_convergence_scan(
     validation_mesh = k_mesh(
         model,
         mesh_shapes[-1],
-        shift=config.get("response_mesh_shift", [0.0, 0.0, 0.0]),
+        shift=config.get("response_mesh_shift", [0.5, 0.5, 0.5]),
         symmetry="full",
     )
     _validate_response_backend_for_plot(
@@ -1067,7 +1067,7 @@ def lindhard_convergence_scan(
         broadenings_meV=broadenings,
         temperature_K=temperature,
         chemical_potential_meV=mu,
-        mesh_shift=config.get("response_mesh_shift", [0.0, 0.0, 0.0]),
+        mesh_shift=config.get("response_mesh_shift", [0.5, 0.5, 0.5]),
         relative_floor=float(config.get("convergence_relative_floor", 1.0e-12)),
         backend=backend,
         workers=workers,
@@ -1258,7 +1258,7 @@ def electronic_rpa_energy_scan(
     mesh = k_mesh(
         model,
         config.get("response_mesh", [16, 16, 16]),
-        shift=config.get("response_mesh_shift", [0.0, 0.0, 0.0]),
+        shift=config.get("response_mesh_shift", [0.5, 0.5, 0.5]),
         symmetry="full",
     )
     temperature = float(config.get("plot_temperature_K", 10.0))

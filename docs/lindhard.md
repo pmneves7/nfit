@@ -142,7 +142,7 @@ advanced script settings.
 
 | Setting | Meaning | Default | Acceptable input example |
 | --- | --- | --- | --- |
-| `response_mesh_shift` | offsets in mesh steps | `[0, 0, 0]` | `[0.5, 0.5, 0.5]` |
+| `response_mesh_shift` | offsets in mesh steps; the default half shift reduces special-point and Fermi-surface shell artifacts | `[0.5, 0.5, 0.5]` on periodic axes | `[0, 0, 0]` for a Γ-centered mesh |
 | `response_sampling_max_refinements` | maximum candidate meshes in one certificate | `7` | `8` |
 | `response_sampling_max_mesh_points` | independent full-mesh point budget | `500000` | `1000000` |
 | `response_sampling_certificate` | derived serialized meshes, errors, domain, and provenance | `{}` | normally written by nfit |
@@ -162,6 +162,14 @@ advanced script settings.
 | `response_cache_mb` | host and device limit for retained eigensystems, completed responses, and CuPy Hamiltonian components; zero disables this response cache | `512.0` | `1024.0` |
 | `response_cache_entries` | maximum retained response-cache entries | `64` | `128` |
 | `powder_orientations` | deterministic directions used automatically for a powder dataset | `50` | `96` |
+
+The half-shifted response mesh is the general default because metallic
+susceptibilities are often sensitive to whether a mesh samples a special point
+or a narrow Fermi-surface shell exactly. It retains exact commensurate
+wavevector permutation on nfit's even automatic mesh ladder. A Γ-centered mesh
+remains available when sampling Γ itself is required by a specific numerical
+comparison or convention. Nonperiodic reciprocal axes are stored with zero
+shift in GUI-built lower-dimensional models.
 
 `response_backend="auto"` stays on the reference CPU implementations and
 selects serial or bounded threaded execution from the workload and available
