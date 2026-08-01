@@ -424,6 +424,11 @@ from .plotting import (
     waterfall_colors,
     waterfall_step_bounds,
 )
+from .powder import (
+    PowderConvergenceResult,
+    is_powder_dataset,
+    powder_convergence_scan,
+)
 from .project_gui import (
     DATA_TYPE_DEFINITIONS,
     MASK_TYPE_DEFINITIONS,
@@ -568,6 +573,7 @@ __all__ = [
     "DensityOfStatesResult",
     "ElectronicOperatorBasis",
     "ElectronicResponseCache",
+    "PowderConvergenceResult",
     "ResponseConvergenceResult",
     "SamplingCertificate",
     "SamplingComparison",
@@ -846,6 +852,7 @@ __all__ = [
     "bare_spin_susceptibility",
     "chemical_potential_for_filling",
     "electron_filling",
+    "is_powder_dataset",
     "isotropic_spin_component",
     "neutron_spin_contraction",
     "orbital_pair_operator_basis",
@@ -884,6 +891,7 @@ __all__ = [
     "lattice_vectors",
     "orbits_from_config",
     "orbits_to_config",
+    "powder_convergence_scan",
     "primitive_lattice_vectors",
     "site_rotations_to_config",
     "site_symmetry_operations",

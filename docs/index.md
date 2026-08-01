@@ -9,7 +9,7 @@ and general point tables.
 nfit was authored by Paul M. Neves (Johns Hopkins University,
 pneves1@jhu.edu) with use of LLM coding tools.
 
-Current package version: 0.60.1.
+Current package version: 0.61.0.
 
 Start with [Getting started](getting_started.md), then use
 [GUI workflows](gui_workflows.md) for interactive work or the
@@ -37,6 +37,7 @@ plotting
 physics_conventions
 electronic_structure_models
 spin_fluctuation_models
+powder_convergence
 electronic_response_contract
 curie_weiss
 heat_capacity

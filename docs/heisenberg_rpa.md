@@ -171,8 +171,12 @@ result.
 
 The default uses 50 directions. The **Advanced** tab exposes
 `powder_orientations`, which may be set to another value of at least 6.
-Increasing it increases cost proportionally; quantitative work should check
-angular convergence. A lattice or UB matrix is required.
+Increasing it increases cost proportionally. A lattice or UB matrix is
+required.
+
+The orientation count is a numerical approximation like an integration mesh or
+a lifetime broadening, so it is converged the same way — see
+[Powder angular convergence](powder_convergence.md).
 
 ## Tensor interactions
 
