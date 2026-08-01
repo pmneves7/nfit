@@ -514,11 +514,14 @@ from .spin_fluctuations import (
     RpaGeometry,
     available_rpa_backends,
     build_rpa_geometry,
+    conserved_ferromagnetic_chipp,
+    conserved_ferromagnetic_susceptibility,
     damped_mode_susceptibility,
     generalized_paramagnon_chipp,
     generalized_paramagnon_susceptibility,
     heisenberg_rpa_chipp,
     heisenberg_rpa_chipp_and_gradients,
+    heisenberg_rpa_susceptibility,
     local_relaxational_chipp,
     local_relaxational_susceptibility,
     mmp_chipp,
@@ -531,6 +534,10 @@ from .spin_fluctuations import (
     rpa_exchange_matrix,
     set_num_threads,
     set_rpa_backend,
+)
+from .susceptibility import (
+    ScalarSusceptibilityResponse,
+    coupled_scalar_susceptibility,
 )
 from .symmetry import ReciprocalSymmetryOperation, SymmetrySpec, resolve_symmetry
 from .workflow import (
@@ -859,6 +866,7 @@ __all__ = [
     "spin_operator_matrices",
     "heisenberg_rpa_chipp",
     "heisenberg_rpa_chipp_and_gradients",
+    "heisenberg_rpa_susceptibility",
     "local_relaxational_chipp",
     "local_relaxational_susceptibility",
     "low_temperature_heat_capacity",
@@ -867,6 +875,10 @@ __all__ = [
     "damped_mode_susceptibility",
     "generalized_paramagnon_chipp",
     "generalized_paramagnon_susceptibility",
+    "conserved_ferromagnetic_chipp",
+    "conserved_ferromagnetic_susceptibility",
+    "ScalarSusceptibilityResponse",
+    "coupled_scalar_susceptibility",
     "paramagnon_spatial_kernel",
     "num_threads",
     "reduce_site_network",

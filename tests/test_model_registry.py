@@ -118,6 +118,36 @@ def test_generalized_paramagnon_registry_exposes_complete_extension_contract():
     compile(script, "<model-plot>", "exec")
 
 
+def test_new_spin_response_registry_contracts_are_composable():
+    conserved = model_definition("conserved_ferromagnetic")
+    assert conserved.susceptibility_factory is not None
+    assert conserved.parameters[:2] == ("chi_uniform", "gamma_scale")
+    assert default_model_config("conserved_ferromagnetic")["damping_kind"] == "clean"
+    assert set(conserved.data_types) == {
+        "single_crystal_inelastic",
+        "powder_inelastic",
+        "single_crystal_elastic",
+        "powder_elastic",
+        "magnetization",
+    }
+
+    heisenberg = model_definition("heisenberg_rpa")
+    assert heisenberg.susceptibility_factory is not None
+    assert default_model_parameters("heisenberg_rpa")[
+        "inverse_mode_energy_sq"
+    ] == 0.0
+
+    coupled = model_definition("coupled_susceptibility")
+    assert coupled.context_factory is not None
+    assert coupled.susceptibility_factory is not None
+    assert coupled.component_reference_fields == ("response_a", "response_b")
+    assert coupled.consumes_referenced_observables
+    assert coupled.data_types == (
+        "single_crystal_inelastic",
+        "single_crystal_elastic",
+    )
+
+
 def test_every_physical_model_has_a_standard_documentation_page():
     docs = Path(__file__).resolve().parents[1] / "docs"
     physical = [

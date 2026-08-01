@@ -1,8 +1,10 @@
-# Heisenberg RPA
+# Relaxational and inertial Heisenberg RPA
 
-The `heisenberg_rpa` model couples local relaxational spins through a
-crystallographic exchange network. This page defines its phase convention,
-observable, extensions, and fitting controls.
+The `heisenberg_rpa` model couples local spins through a crystallographic
+exchange network. A continuous inertia parameter selects either the historical
+relaxational response or an exchange-paramagnon response with damped
+propagating modes. Both limits share one crystal, exchange network, static
+susceptibility, stability criterion, and fitting workflow.
 
 ## Parameters
 
@@ -10,6 +12,7 @@ observable, extensions, and fitting controls.
 | --- | --- | --- |
 | `chi0` | static single-site susceptibility $\chi_0$ | meV$^{-1}$ |
 | `gamma0` | bare single-site relaxation energy $\Gamma_0$ | meV |
+| `inverse_mode_energy_sq` | local inertial coefficient $a_E=1/E_0^2$; zero is exactly relaxational | meV$^{-2}$ |
 | exchange-orbit label, such as `J1` | exchange assigned to every bond in that orbit | meV |
 
 The crystal and exchange editor determines the orbit labels. Tensor exchange,
@@ -22,7 +25,7 @@ below.
 For $N$ magnetic sites in the chosen crystallographic cell,
 
 $$
-\chi_0(E)=\frac{\chi_0}{1-iE/\Gamma_0},
+\chi_0(E)=\frac{\chi_0}{1-a_EE^2-iE/\Gamma_0},
 $$
 
 and
@@ -32,9 +35,11 @@ $$
 \left[\mathbb 1-\chi_0(E)J(\mathbf Q)\right]^{-1}\chi_0(E).
 $$
 
-$\chi_0$ is the static single-site susceptibility in meV$^{-1}$ and
-$\Gamma_0$ is its relaxation energy in meV. Each fitted exchange $J_i$ is also
-in meV, so $J_i\chi_0$ is dimensionless. $E$ is transferred energy,
+$\chi_0$ is the static single-site susceptibility in meV$^{-1}$,
+$\Gamma_0$ is its relaxation energy in meV, and $a_E$ is nonnegative in
+meV$^{-2}$. Setting $a_E=0$ recovers the original relaxational model. For
+$a_E>0$, the bare local natural energy is $E_0=1/\sqrt{a_E}$. Each fitted
+exchange $J_i$ is in meV, so $J_i\chi_0$ is dimensionless. $E$ is transferred energy,
 $\mathbf Q$ is momentum transfer, $N$ is the number of magnetic sites, and
 $\mathbb 1$ is the $N\times N$ identity matrix. The scalar $\chi$ is one
 Cartesian spin-susceptibility component.
@@ -66,14 +71,12 @@ exchange energy assigned to that bond orbit.
 Diagonalize
 $J(\mathbf Q)=U\Lambda U^\dagger$, where the columns of the unitary matrix
 $U$ are eigenvectors and the diagonal entries $\lambda_\nu$ of $\Lambda$ are
-exchange eigenvalues in meV. Mode $\nu$ has
+exchange eigenvalues in meV. Define
+$\delta_\nu(\mathbf Q)=1-\lambda_\nu(\mathbf Q)\chi_0$. Mode $\nu$ has
 
 $$
-\chi_{\mathbf Q\nu}=
-\frac{\chi_0}{1-\lambda_\nu(\mathbf Q)\chi_0},
-\qquad
-\Gamma_\nu=
-\Gamma_0[1-\lambda_\nu(\mathbf Q)\chi_0],
+\chi_{\mathbf Q\nu}(E)=
+\frac{\chi_0}{\delta_\nu(\mathbf Q)-a_EE^2-iE/\Gamma_0},
 $$
 
 and contributes
@@ -81,8 +84,22 @@ and contributes
 $$
 \chi''(\mathbf Q,E)=
 \sum_\nu w_\nu(\mathbf Q)
-\frac{\chi_0\Gamma_0E}{E^2+\Gamma_\nu^2}.
+\frac{\chi_0E/\Gamma_0}
+{[\delta_\nu(\mathbf Q)-a_EE^2]^2+(E/\Gamma_0)^2}.
 $$
+
+Its static susceptibility is $\chi_0/\delta_\nu$. In the relaxational limit,
+$\Gamma_\nu=\Gamma_0\delta_\nu$ and the last equation reduces to
+$\chi_0\Gamma_0E/(E^2+\Gamma_\nu^2)$. With $a_E>0$, the undamped
+exchange-mode energy is
+
+$$
+E_\nu(\mathbf Q)=\sqrt{\delta_\nu(\mathbf Q)/a_E}.
+$$
+
+Exchange therefore softens the same static denominator into either critical
+relaxation or a propagating paramagnon, without introducing a second model
+type or a separate interaction dressing.
 
 The dimensionless neutron weight is
 
@@ -112,11 +129,13 @@ least-squares penalty.
 
 Useful checks are:
 
-- with every $J_i=0$, the model reduces to the local relaxational response;
+- with every $J_i=0$, the model reduces to the selected local relaxational or
+  inertial response;
 - $\chi''(\mathbf Q,-E)=-\chi''(\mathbf Q,E)$;
 - at small positive energy, the response is enhanced by
   $[1-\lambda_\nu\chi_0]^{-2}$; and
-- the leading high-energy tail is $\chi_0\Gamma_0/E$, independent of exchange.
+- for $a_E=0$, the leading high-energy tail is
+  $\chi_0\Gamma_0/E$, independent of exchange.
 
 Positive $J$ favors the wavevector where the largest eigenvalue of
 $J(\mathbf Q)$ is maximal under this convention.
@@ -251,8 +270,11 @@ full-zone grid. With both a closure and a Zeeman term, the tab also exposes
 the field-on energy quadrature. Solved quantities such as $\lambda(T)$,
 $\chi_{0,\rm eff}$, and $\langle m^2\rangle$ appear in fit diagnostics.
 
-Closures use finite-difference gradients and support scalar, tensor, and
-field-on models. Their assumptions and sum rules are discussed in
+Closures use finite-difference gradients and support the relaxational scalar,
+tensor, and field-on models. Sum-rule closures and the Zeeman propagator
+currently require `inverse_mode_energy_sq=0`, because their finite-frequency
+moment equations have not yet been generalized to the inertial local
+propagator. Their assumptions and sum rules are discussed in
 [Theory: sum rules and self-consistency](theory_notes.md).
 
 ## Bulk susceptibility and magnetometry
@@ -324,8 +346,9 @@ reuses the model factorization. Tensor mode currently uses central differences.
 
 ## Scripting and export
 
-The numerical API exposes `build_rpa_geometry`, `heisenberg_rpa_chipp`, and
-the related derivative and exchange-matrix functions. Fitting uses
+The numerical API exposes `build_rpa_geometry`,
+`heisenberg_rpa_susceptibility`, `heisenberg_rpa_chipp`, and the related
+derivative and exchange-matrix functions. Fitting uses
 `ModelComponentSpec(type="heisenberg_rpa", ...)`; project files, workflow
 scripts, fit-result export, reports, and model/residual channels use the shared
 model machinery.

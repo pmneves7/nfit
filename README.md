@@ -10,10 +10,11 @@ The package provides:
 - powder-cut, MPMS magnetization, PPMS heat-capacity, and tabular imports;
 - masking, coverage-aware symmetry/rebinning and composites, backgrounds, and
   non-destructive analyses;
-- local, MMP, generalized-paramagnon/damped-mode, and Heisenberg-RPA
-  spin-fluctuation models for inelastic, quasistatic elastic, and optional
-  bulk-response comparisons, with a tabbed crystal/exchange workflow and
-  explicit powder and self-consistency convergence controls;
+- local, MMP, generalized-paramagnon/damped-mode, conserved-ferromagnetic,
+  relaxational or inertial Heisenberg-RPA, and coupled-susceptibility models
+  for inelastic, quasistatic elastic, and optional bulk-response comparisons,
+  with a tabbed crystal/exchange workflow and explicit powder and
+  self-consistency convergence controls;
 - a linked bare Lindhard response with complex multiband susceptibility,
   Cartesian spin and neutron projections, fixed-filling support, automatic
   formula-unit normalization, workflow-focused controls, fitting,

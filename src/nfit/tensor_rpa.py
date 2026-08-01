@@ -318,16 +318,24 @@ def tensor_susceptibility(
     gamma0: float,
     param_values: Mapping[str, float],
     lambda_shift: float = 0.0,
+    inverse_mode_energy_sq: float = 0.0,
 ) -> ComplexArray:
     """Return the ``(n_points, 3, 3)`` dynamic susceptibility ``chi_{alpha beta}``.
 
     ``chi(Q, w) = (1/N) sum_nu w_nu w_nu^dagger chi0(w) / (1 - chi0(w) lam_nu)``
     with uniform Cartesian mode amplitudes ``w_{alpha nu} = sum_a U[(a
-    alpha), nu]`` and ``chi0(w) = chi0 / (1 - i w / gamma0)``. Raises on RPA
+    alpha), nu]`` and
+    ``chi0(w) = chi0 / (1 - a_E w^2 - i w / gamma0)``. The coefficient
+    ``inverse_mode_energy_sq`` is :math:`a_E`; zero recovers the relaxational
+    response exactly. Raises on RPA
     instability (``1 - lam chi0 <= 0``). ``lambda_shift`` is the Onsager
     reaction field (rigid shift of every eigenvalue); 0.0 leaves the
     computation untouched.
     """
+
+    inertia = float(inverse_mode_energy_sq)
+    if not np.isfinite(inertia) or inertia < 0.0:
+        raise ValueError("inverse_mode_energy_sq must be finite and nonnegative")
 
     lam, amplitudes = _tensor_modes(
         structure, geometry, param_values, chi0=chi0, lambda_shift=lambda_shift
@@ -346,7 +354,11 @@ def tensor_susceptibility(
         stop = min(start + block, n_points)
         sel = slice(start, stop)
         idx_c = idx[sel]
-        f = chi0 / (1.0 - 1j * energy[sel] / gamma0)  # (block,)
+        f = chi0 / (
+            1.0
+            - inertia * energy[sel] ** 2
+            - 1j * energy[sel] / gamma0
+        )  # (block,)
         denom = 1.0 - f[:, None] * lam[idx_c]  # (block, 3N)
         weight = f[:, None] / denom  # chi0(w)/(1 - chi0(w) lam)
         amp_c = amplitudes[idx_c]  # (block, 3, 3N)
@@ -556,6 +568,7 @@ def tensor_rpa_unpolarized_chipp(
     gamma0: float,
     param_values: Mapping[str, float],
     lambda_shift: float = 0.0,
+    inverse_mode_energy_sq: float = 0.0,
 ) -> FloatArray:
     """Unpolarized ``chi''`` per point: ``sum_{ab} W_{ab}(Qhat) chi''_{ab}``.
 
@@ -570,7 +583,11 @@ def tensor_rpa_unpolarized_chipp(
     without Numba.
     """
 
-    if _NUMBA_KERNELS is not None and _select_rpa_backend(energy.shape[0]) != "numpy":
+    if (
+        float(inverse_mode_energy_sq) == 0.0
+        and _NUMBA_KERNELS is not None
+        and _select_rpa_backend(energy.shape[0]) != "numpy"
+    ):
         lam, amplitudes = _tensor_modes(
             structure, geometry, param_values, chi0=chi0, lambda_shift=lambda_shift
         )
@@ -596,5 +613,6 @@ def tensor_rpa_unpolarized_chipp(
         gamma0=gamma0,
         param_values=param_values,
         lambda_shift=lambda_shift,
+        inverse_mode_energy_sq=inverse_mode_energy_sq,
     )
     return _chipp_from_chi(chi, q_hat)

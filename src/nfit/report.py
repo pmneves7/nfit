@@ -800,8 +800,8 @@ def _section_dynamic_response(
 ) -> str:
     lines = ["\\subsection{Dynamic response}"]
     lines.append(
-        "The local spins relax with a single-site susceptibility "
-        "$\\chi_0(\\omega) = \\chi_0/(1 - i\\omega/\\Gamma_0)$, coupled in the "
+        "The local spins have a single-site susceptibility "
+        "$\\chi_0(E) = \\chi_0/(1-a_EE^2-iE/\\Gamma_0)$, coupled in the "
         "random phase approximation "
         + cite.cite("moriya1985")
         + ":"
@@ -814,29 +814,27 @@ def _section_dynamic_response(
     lines.append(
         "Diagonalizing the (Hermitian) exchange matrix at each $\\mathbf{Q}$, "
         "$J(\\mathbf{Q})\\,U_\\nu(\\mathbf{Q}) = \\lambda_\\nu(\\mathbf{Q})\\,"
-        "U_\\nu(\\mathbf{Q})$, decouples the response into $N$ relaxational "
-        "modes, and the measured dissipative susceptibility is their sum with "
+        "U_\\nu(\\mathbf{Q})$, decouples the response into $N$ modes. With "
+        "$\\delta_\\nu=1-\\lambda_\\nu\\chi_0$, the measured dissipative "
+        "susceptibility is their sum with "
         "neutron structure-factor weights:"
     )
     lines.append(
         "\\begin{equation}\n\\chi''_{s}(\\mathbf{Q}, E) = \\sum_\\nu "
-        "w_\\nu(\\mathbf{Q})\\; \\frac{\\chi_0\\Gamma_0\\,E}"
-        "{E^2 + \\Gamma_\\nu^2},\n\\end{equation}"
+        "w_\\nu(\\mathbf{Q})\\; \\frac{\\chi_0 E/\\Gamma_0}"
+        "{(\\delta_\\nu-a_EE^2)^2+(E/\\Gamma_0)^2}.\n\\end{equation}"
     )
     lines.append(
-        "where the mode susceptibility and relaxation rate are\n"
-        "\\begin{equation}\n\\chi_{\\mathbf{Q}\\nu} = \\frac{\\chi_0}"
-        "{1 - \\lambda_\\nu(\\mathbf{Q})\\,\\chi_0}, \\qquad "
-        "\\Gamma_\\nu = \\Gamma_0\\,\\bigl[\\,1 - \\lambda_\\nu(\\mathbf{Q})\\,"
-        "\\chi_0\\,\\bigr],\n\\end{equation}"
-    )
-    lines.append(
-        "The simplified numerator follows exactly from "
-        "$\\chi_{\\mathbf{Q}\\nu}\\Gamma_\\nu=\\chi_0\\Gamma_0$. The scalar "
+        "The static mode susceptibility is $\\chi_0/\\delta_\\nu$. For "
+        "$a_E=0$ its relaxation rate is $\\Gamma_\\nu=\\Gamma_0\\delta_\\nu$; "
+        "for $a_E>0$ its undamped energy is "
+        "$E_\\nu=\\sqrt{\\delta_\\nu/a_E}$. Thus zero inertia is exactly the "
+        "relaxational model and positive inertia gives exchange-paramagnon "
+        "dynamics. The scalar "
         "$\\chi''_s$ is one Cartesian component of the spin-operator response. "
         "The weight $w_\\nu(\\mathbf{Q}) = |\\sum_a U_{a\\nu}(\\mathbf{Q})|^2/N$ "
         "is the uniform sublattice sum (the extended-zone $J(\\mathbf{Q})$ "
-        "already carries the pair phases). The relaxation rate softens as the "
+        "already carries the pair phases). The mode softens as the "
         "Stoner-like criterion $\\max_{\\mathbf{Q},\\nu}\\lambda_\\nu(\\mathbf{Q})"
         "\\,\\chi_0 \\to 1$ is approached, at which the RPA denominator "
         "$1 - \\lambda_\\nu\\chi_0$ vanishes and the system orders."
@@ -851,15 +849,17 @@ def _section_dynamic_response(
         )
     chi0_scopes = _per_dataset_values(model, "chi0")
     gamma0_scopes = _per_dataset_values(model, "gamma0")
-    if chi0_scopes or gamma0_scopes:
-        names = sorted(set(chi0_scopes) | set(gamma0_scopes))
+    inertia_scopes = _per_dataset_values(model, "inverse_mode_energy_sq")
+    if chi0_scopes or gamma0_scopes or inertia_scopes:
+        names = sorted(set(chi0_scopes) | set(gamma0_scopes) | set(inertia_scopes))
         lines.append(
             "The local parameters were fitted per dataset:"
         )
-        lines.append("\\begin{longtable}{l r r}")
+        lines.append("\\begin{longtable}{l r r r}")
         lines.append("\\toprule")
         lines.append(
-            "Dataset & $\\chi_0$ (meV$^{-1}$) & $\\Gamma_0$ (meV) \\\\"
+            "Dataset & $\\chi_0$ (meV$^{-1}$) & $\\Gamma_0$ (meV) & "
+            "$a_E$ (meV$^{-2}$) \\\\"
         )
         lines.append("\\midrule")
         for name in names:
@@ -869,6 +869,7 @@ def _section_dynamic_response(
                         latex_escape(name),
                         _fmt(chi0_scopes.get(name)),
                         _fmt(gamma0_scopes.get(name)),
+                        _fmt(inertia_scopes.get(name)),
                     ]
                 )
                 + " \\\\"
@@ -878,10 +879,14 @@ def _section_dynamic_response(
     else:
         chi0, chi0_err = _param_value(goodness, model, "chi0")
         gamma0, gamma0_err = _param_value(goodness, model, "gamma0")
+        inertia, inertia_err = _param_value(
+            goodness, model, "inverse_mode_energy_sq"
+        )
         lines.append(
             f"Fitted values: $\\chi_0 = {_pm(chi0, chi0_err)}$"
             "\\,meV$^{-1}$, "
-            f"$\\Gamma_0 = {_pm(gamma0, gamma0_err)}$\\,meV "
+            f"$\\Gamma_0 = {_pm(gamma0, gamma0_err)}$\\,meV, and "
+            f"$a_E = {_pm(inertia, inertia_err)}$\\,meV$^{{-2}}$ "
             "(shared across the fitted datasets)."
         )
     return "\n".join(lines) + "\n"

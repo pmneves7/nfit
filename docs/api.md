@@ -227,9 +227,14 @@ factories, GUI metadata, diagnostics, reports, plots, and serialization.
 Complex phenomenological responses are available from
 `local_relaxational_susceptibility`, `mmp_susceptibility`,
 `damped_mode_susceptibility`, and
-`generalized_paramagnon_susceptibility`; the corresponding `*_chipp`
+`generalized_paramagnon_susceptibility`,
+`conserved_ferromagnetic_susceptibility`, and
+`heisenberg_rpa_susceptibility`; the corresponding `*_chipp`
 functions return their imaginary parts. `paramagnon_spatial_kernel` builds the
-positive anisotropic momentum kernel. For model-owned plotting,
+positive anisotropic momentum kernel. `ScalarSusceptibilityResponse` is the
+pre-cross-section interchange type used by composable scalar responses, and
+`coupled_scalar_susceptibility` solves a bilinearly coupled two-sector
+response. For model-owned plotting,
 `generalized_paramagnon_energy_scan`,
 `render_generalized_paramagnon_energy_scan`, and
 `generalized_paramagnon_energy_scan_script` share the same GUI-free
@@ -264,6 +269,9 @@ calculation.
    :members:
 
 .. automodule:: nfit.spin_fluctuations
+   :members:
+
+.. automodule:: nfit.susceptibility
    :members:
 
 .. automodule:: nfit.electronic_structure

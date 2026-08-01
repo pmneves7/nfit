@@ -537,10 +537,11 @@ def test_full_rpa_report_covers_every_term():
     assert "Zeeman term" in tex
     assert "\\omega_L = g\\mu_B B" in tex
     assert "Dynamic response" in tex
-    # chi'' is written out explicitly as the relaxational mode sum.
+    # chi'' is written out explicitly for the shared relaxational/inertial form.
     assert "\\chi''_{s}(\\mathbf{Q}, E) = \\sum_\\nu" in tex
-    assert "\\chi_0\\Gamma_0\\,E" in tex
-    assert "\\Gamma_\\nu = \\Gamma_0" in tex
+    assert "\\chi_0 E/\\Gamma_0" in tex
+    assert "(\\delta_\\nu-a_EE^2)^2" in tex
+    assert "\\Gamma_\\nu=\\Gamma_0\\delta_\\nu" in tex
     assert "w_\\nu(\\mathbf{Q})" in tex
     # Per-dataset chi0/gamma0 table from fitted_values.
     assert "0.021" in tex and "0.018" in tex

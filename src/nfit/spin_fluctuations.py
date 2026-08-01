@@ -37,9 +37,16 @@ Models
    and MMP responses and becomes a damped propagating mode when its inertial
    coefficient is nonzero.
 
-4. **Heisenberg RPA** (:func:`heisenberg_rpa_chipp`): a single-site
-   relaxational susceptibility ``chi0(w) = chi0 / (1 - i w / Gamma0)`` coupled
-   through real-space Heisenberg exchange in the random phase approximation,
+4. **Conserved ferromagnetic paramagnon**
+   (:func:`conserved_ferromagnetic_susceptibility`): a nearly-ferromagnetic
+   response whose relaxation rate vanishes at the ordering wavevector. Clean
+   and diffusive dynamics use rates proportional to ``rho`` and ``rho^2``,
+   respectively, where ``rho`` is the dimensionless correlation-scaled
+   momentum offset.
+
+5. **Heisenberg RPA** (:func:`heisenberg_rpa_susceptibility`): a single-site
+   relaxational or inertial susceptibility coupled through real-space
+   Heisenberg exchange in the random phase approximation,
 
    ``chi(Q, w) = [1 - chi0(w) J(Q)]^{-1} chi0(w)``,
 
@@ -569,6 +576,83 @@ def generalized_paramagnon_chipp(
             gamma0=gamma0,
             relaxation_power=relaxation_power,
             inverse_mode_energy_sq=inverse_mode_energy_sq,
+        ).imag,
+        dtype=float,
+    )
+
+
+def conserved_ferromagnetic_susceptibility(
+    scaled_momentum_radius: ArrayLike,
+    E: ArrayLike,
+    *,
+    chi_uniform: float,
+    gamma_scale: float,
+    damping_power: float = 1.0,
+) -> ComplexArray:
+    r"""Return a conserved nearly-ferromagnetic susceptibility.
+
+    With dimensionless correlation-scaled momentum radius :math:`\rho\geq0`,
+
+    .. math::
+
+       \chi(\rho,0) &= \frac{\chi_{\rm u}}{1+\rho^2},\\
+       \Gamma(\rho) &= \Gamma_s\rho^m(1+\rho^2),\\
+       \chi(\rho,E) &= \chi(\rho,0)
+       \frac{\Gamma(\rho)}{\Gamma(\rho)-iE}.
+
+    ``damping_power=1`` is the clean (ballistic Landau-damped) form and
+    ``damping_power=2`` is the diffusive form. ``gamma_scale`` absorbs the
+    appropriate power of the inverse correlation length and therefore has
+    energy units. At :math:`\rho=0`, conservation gives zero finite-energy
+    response while the exactly static value remains :math:`\chi_{\rm u}`.
+    """
+
+    rho = np.asarray(scaled_momentum_radius, dtype=float)
+    energy = np.asarray(E, dtype=float)
+    if np.any(~np.isfinite(rho)) or np.any(rho < 0.0):
+        raise ValueError("scaled_momentum_radius must be finite and nonnegative")
+    if np.any(~np.isfinite(energy)):
+        raise ValueError("E must be finite")
+    if not np.isfinite(chi_uniform) or chi_uniform < 0.0:
+        raise ValueError("chi_uniform must be finite and nonnegative")
+    if not np.isfinite(gamma_scale) or gamma_scale <= 0.0:
+        raise ValueError("gamma_scale must be finite and positive")
+    if not np.isfinite(damping_power) or damping_power <= 0.0:
+        raise ValueError("damping_power must be finite and positive")
+    rho, energy = np.broadcast_arrays(rho, energy)
+    spatial = 1.0 + rho * rho
+    chi_static = float(chi_uniform) / spatial
+    gamma = float(gamma_scale) * rho ** float(damping_power) * spatial
+    result = np.empty(rho.shape, dtype=np.complex128)
+    static = energy == 0.0
+    result[static] = chi_static[static]
+    dynamic = ~static
+    if np.any(dynamic):
+        result[dynamic] = (
+            chi_static[dynamic]
+            * gamma[dynamic]
+            / (gamma[dynamic] - 1j * energy[dynamic])
+        )
+    return result
+
+
+def conserved_ferromagnetic_chipp(
+    scaled_momentum_radius: ArrayLike,
+    E: ArrayLike,
+    *,
+    chi_uniform: float,
+    gamma_scale: float,
+    damping_power: float = 1.0,
+) -> FloatArray:
+    """Return ``imag(conserved_ferromagnetic_susceptibility(...))``."""
+
+    return np.asarray(
+        conserved_ferromagnetic_susceptibility(
+            scaled_momentum_radius,
+            E,
+            chi_uniform=chi_uniform,
+            gamma_scale=gamma_scale,
+            damping_power=damping_power,
         ).imag,
         dtype=float,
     )
@@ -1147,7 +1231,7 @@ def _stacked_phases(geometry: RpaGeometry, labels: Sequence[str]) -> ComplexArra
     return stack
 
 
-def heisenberg_rpa_chipp(
+def heisenberg_rpa_susceptibility(
     geometry: RpaGeometry,
     E: ArrayLike,
     *,
@@ -1155,8 +1239,9 @@ def heisenberg_rpa_chipp(
     gamma0: float,
     j_values: Mapping[str, float],
     lambda_shift: float = 0.0,
-) -> FloatArray:
-    """RPA ``chi''(Q, E)`` for relaxational local spins coupled by ``J(Q)``.
+    inverse_mode_energy_sq: float = 0.0,
+) -> ComplexArray:
+    """Complex exchange-RPA susceptibility for relaxational or inertial spins.
 
     See the module docstring for the full model and conventions. Raises
     ``ValueError`` when the RPA denominator ``1 - lambda_nu(Q) chi0`` is not
@@ -1165,11 +1250,20 @@ def heisenberg_rpa_chipp(
     Onsager reaction field of the sum-rule closures: a rigid, Q-independent
     shift ``J(Q) -> J(Q) - lambda_shift`` (equivalently of every eigenvalue);
     the default 0.0 leaves the computation untouched.
+
+    ``inverse_mode_energy_sq`` is the local inertial coefficient
+    :math:`a_E` in ``chi0(E) = chi0 / (1 - a_E E^2 - i E/gamma0)``. Zero is
+    exactly the historical relaxational Heisenberg-RPA model. A positive value
+    gives an exchange-paramagnon response with damped propagating modes while
+    preserving the same static susceptibility and instability condition.
     """
 
     chi0 = float(chi0)
     gamma0 = float(gamma0)
     _validate_rpa_scalars(chi0, gamma0)
+    inertia = float(inverse_mode_energy_sq)
+    if not np.isfinite(inertia) or inertia < 0.0:
+        raise ValueError("inverse_mode_energy_sq must be finite and nonnegative")
     energy = np.asarray(E, dtype=float).ravel()
     _validate_rpa_energy(geometry, energy)
 
@@ -1178,30 +1272,64 @@ def heisenberg_rpa_chipp(
         lam = lam - lambda_shift
     idx = geometry.point_index
 
-    backend = _select_rpa_backend(energy.shape[0])
-    if backend == "numba":
-        amplitudes = _mode_amplitudes(geometry, modes)
-        return np.asarray(
-            _NUMBA_KERNELS.rpa_value_kernel(lam, amplitudes, idx, energy, chi0, gamma0),
-            dtype=float,
-        )
-    if backend == "cupy":
-        return np.asarray(
-            _CUPY_KERNELS.rpa_value(lam, modes, idx, energy, chi0, gamma0), dtype=float
-        )
-
-    denominator = 1.0 - lam * chi0
-    chi_q = chi0 / denominator
-    gamma_q = gamma0 * denominator
-    # Uniform sublattice weight: the extended-zone J(Q) already carries the
-    # full pair phases, so the neutron amplitude of mode nu is sum_a U_{a nu}.
+    local = chi0 / (1.0 - inertia * energy**2 - 1j * energy / gamma0)
+    denominator = 1.0 - local[:, None] * lam[idx]
     weights = np.abs(modes.sum(axis=1)) ** 2 / geometry.n_sites
+    response = np.sum(weights[idx] * local[:, None] / denominator, axis=1)
+    return np.asarray(response, dtype=np.complex128)
 
-    chi_pts = (weights * chi_q)[idx]
-    gamma_pts = gamma_q[idx]
-    e = energy[:, np.newaxis]
-    chipp = chi_pts * gamma_pts * e / (e * e + gamma_pts * gamma_pts)
-    return np.asarray(chipp.sum(axis=1), dtype=float)
+
+def heisenberg_rpa_chipp(
+    geometry: RpaGeometry,
+    E: ArrayLike,
+    *,
+    chi0: float,
+    gamma0: float,
+    j_values: Mapping[str, float],
+    lambda_shift: float = 0.0,
+    inverse_mode_energy_sq: float = 0.0,
+) -> FloatArray:
+    """Dissipative exchange-RPA response for relaxational or inertial spins."""
+
+    inertia = float(inverse_mode_energy_sq)
+    if inertia == 0.0:
+        chi0_value = float(chi0)
+        gamma0_value = float(gamma0)
+        _validate_rpa_scalars(chi0_value, gamma0_value)
+        energy = np.asarray(E, dtype=float).ravel()
+        _validate_rpa_energy(geometry, energy)
+        lam, modes = _rpa_modes(geometry, j_values, chi0_value, lambda_shift)
+        if lambda_shift != 0.0:
+            lam = lam - lambda_shift
+        idx = geometry.point_index
+        backend = _select_rpa_backend(energy.shape[0])
+        if backend == "numba":
+            amplitudes = _mode_amplitudes(geometry, modes)
+            return np.asarray(
+                _NUMBA_KERNELS.rpa_value_kernel(
+                    lam, amplitudes, idx, energy, chi0_value, gamma0_value
+                ),
+                dtype=float,
+            )
+        if backend == "cupy":
+            return np.asarray(
+                _CUPY_KERNELS.rpa_value(
+                    lam, modes, idx, energy, chi0_value, gamma0_value
+                ),
+                dtype=float,
+            )
+    return np.asarray(
+        heisenberg_rpa_susceptibility(
+            geometry,
+            E,
+            chi0=chi0,
+            gamma0=gamma0,
+            j_values=j_values,
+            lambda_shift=lambda_shift,
+            inverse_mode_energy_sq=inertia,
+        ).imag,
+        dtype=float,
+    )
 
 
 def heisenberg_rpa_chipp_and_gradients(
@@ -1212,6 +1340,7 @@ def heisenberg_rpa_chipp_and_gradients(
     gamma0: float,
     j_values: Mapping[str, float],
     lambda_shift: float = 0.0,
+    inverse_mode_energy_sq: float = 0.0,
 ) -> tuple[FloatArray, dict[str, FloatArray]]:
     """RPA ``chi''`` together with its exact parameter gradients.
 
@@ -1249,6 +1378,9 @@ def heisenberg_rpa_chipp_and_gradients(
     chi0 = float(chi0)
     gamma0 = float(gamma0)
     _validate_rpa_scalars(chi0, gamma0)
+    inertia = float(inverse_mode_energy_sq)
+    if not np.isfinite(inertia) or inertia < 0.0:
+        raise ValueError("inverse_mode_energy_sq must be finite and nonnegative")
     if float(lambda_shift) != 0.0:
         raise NotImplementedError(
             "analytic RPA gradients do not support a nonzero lambda_shift; "
@@ -1262,7 +1394,7 @@ def heisenberg_rpa_chipp_and_gradients(
     idx = geometry.point_index
     labels = list(j_values)
 
-    backend = _select_rpa_backend(energy.shape[0])
+    backend = _select_rpa_backend(energy.shape[0]) if inertia == 0.0 else "numpy"
     if backend in ("numba", "cupy"):
         phases = _stacked_phases(geometry, labels)
         if backend == "numba":
@@ -1273,9 +1405,22 @@ def heisenberg_rpa_chipp_and_gradients(
             chipp, grad_chi0, grad_gamma0, grad_j = _CUPY_KERNELS.rpa_value_grad(
                 lam, modes, idx, energy, phases, chi0, gamma0
             )
+        # The accelerated kernels predate the inertial parameter. Its
+        # derivative needs only the eigenvalues and uniform mode amplitudes,
+        # so calculate that one inexpensive column here without giving up the
+        # accelerated exchange derivatives.
+        amplitudes = modes.sum(axis=1)
+        amp_sq = np.abs(amplitudes[idx]) ** 2
+        f = chi0 / (1.0 - 1j * energy / gamma0)
+        denom = 1.0 - f[:, None] * lam[idx]
+        phi_x = np.sum(amp_sq / denom, axis=1)
+        z_j_x = np.sum(amp_sq * lam[idx] / (denom * denom), axis=1)
+        common = (phi_x + f * z_j_x) / geometry.n_sites
+        inertia_gradient = (common * energy**2 * f**2 / chi0).imag
         gradients = {
             "chi0": np.asarray(grad_chi0, dtype=float),
             "gamma0": np.asarray(grad_gamma0, dtype=float),
+            "inverse_mode_energy_sq": np.asarray(inertia_gradient, dtype=float),
         }
         for i, label in enumerate(labels):
             gradients[label] = np.asarray(grad_j[i], dtype=float)
@@ -1290,7 +1435,8 @@ def heisenberg_rpa_chipp_and_gradients(
     n_pts = energy.shape[0]
     chipp = np.empty(n_pts, dtype=float)
     gradients: dict[str, FloatArray] = {
-        name: np.empty(n_pts, dtype=float) for name in ("chi0", "gamma0", *labels)
+        name: np.empty(n_pts, dtype=float)
+        for name in ("chi0", "gamma0", "inverse_mode_energy_sq", *labels)
     }
 
     # Process points in blocks: the per-point site-basis resolvent vectors and
@@ -1304,7 +1450,9 @@ def heisenberg_rpa_chipp_and_gradients(
         sel = slice(start, stop)
         idx_c = idx[sel]
         energy_c = energy[sel]
-        f = chi0 / (1.0 - 1j * energy_c / gamma0)  # chi0(w), per point
+        f = chi0 / (
+            1.0 - inertia * energy_c**2 - 1j * energy_c / gamma0
+        )  # chi0(w), per point
         lam_c = lam[idx_c]
         c_c = c[idx_c]
         amp_sq_c = amp_sq[idx_c]
@@ -1321,6 +1469,9 @@ def heisenberg_rpa_chipp_and_gradients(
         gradients["chi0"][sel] = (common * f / chi0).imag
         gradients["gamma0"][sel] = (
             common * (-1j * energy_c * f * f / (chi0 * gamma0 * gamma0))
+        ).imag
+        gradients["inverse_mode_energy_sq"][sel] = (
+            common * (energy_c * energy_c * f * f / chi0)
         ).imag
 
         # Site-basis resolvent vectors x = U y and z = U w, shared across orbits.

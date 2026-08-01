@@ -38,7 +38,13 @@ def test_heisenberg_rpa_emits_dynamic_orbit_parameters():
     points = _spin_fluctuation_points(np.ones(16), H, np.ones(16), temperature=10.0)
     compiled = compile_fit_problem([component], [FitDatasetInput("a", points)])
     names = [spec.name for spec in compiled.problem.parameter_specs]
-    assert names == ["rpa.chi0", "rpa.gamma0", "rpa.J1", "rpa.J3a"]
+    assert names == [
+        "rpa.chi0",
+        "rpa.gamma0",
+        "rpa.inverse_mode_energy_sq",
+        "rpa.J1",
+        "rpa.J3a",
+    ]
 
 
 def test_spin_fluctuation_models_require_temperature():

@@ -64,22 +64,31 @@ from .fitting import (
     _resolve_q_transform,
     parameter_expression_names,
 )
-from .form_factors import form_factor_sq
+from .form_factors import magnetic_form_factor
 from .heat_capacity import debye_heat_capacity, low_temperature_heat_capacity
 from .magnetization import curie_weiss_susceptibility
 from .model_registry import MODEL_TYPE_REGISTRY, validate_model_component
 from .quantities import convert_quantity
 from .spin_fluctuations import (
     build_rpa_geometry,
+    conserved_ferromagnetic_susceptibility,
     generalized_paramagnon_chipp,
+    generalized_paramagnon_susceptibility,
     heisenberg_rpa_chipp,
     heisenberg_rpa_chipp_and_gradients,
+    heisenberg_rpa_susceptibility,
     local_relaxational_chipp,
+    local_relaxational_susceptibility,
     mmp_chipp,
+    mmp_susceptibility,
     paramagnon_spatial_kernel,
     reduce_site_network,
     reduce_site_network_with_tensors,
     rpa_exchange_matrix,
+)
+from .susceptibility import (
+    ScalarSusceptibilityResponse,
+    coupled_scalar_susceptibility,
 )
 
 FALLBACK_DATA_TYPE = "single_crystal_inelastic"
@@ -774,6 +783,114 @@ def _hubbard_hund_rpa_factory(
     return _rpa_factory(component, components, dressing_kind="hubbard_hund")
 
 
+def _coupled_susceptibility_factory(
+    component: Any,
+    components: Mapping[str, Any],
+) -> ModelFunction:
+    """Build a bilinearly coupled pair of complex scalar responses."""
+
+    config = component.config if isinstance(component.config, dict) else {}
+    names = (
+        str(config.get("response_a", "")).strip(),
+        str(config.get("response_b", "")).strip(),
+    )
+    sources = []
+    providers = []
+    for name in names:
+        source = components.get(name)
+        if source is None:
+            raise ValueError(
+                f"coupled susceptibility {component.name!r} references missing "
+                f"component {name!r}"
+            )
+        definition = MODEL_TYPE_REGISTRY.get(str(source.type))
+        if definition is None or definition.susceptibility_factory is None:
+            raise ValueError(
+                f"component {name!r} of type {source.type!r} does not expose "
+                "a composable complex susceptibility"
+            )
+        sources.append(source)
+        providers.append(definition.susceptibility_factory(source, components))
+    coupling_key = qualified_parameter_name(component.name, "coupling")
+    tolerance = float(config.get("singular_tolerance", 1.0e-12))
+
+    def complex_response(
+        data: PointData4D, params: Mapping[str, float]
+    ) -> ScalarSusceptibilityResponse:
+        response_data = (
+            data.with_updates(E=np.zeros(data.size, dtype=float))
+            if _is_elastic_dataset(data)
+            else data
+        )
+        response_a = providers[0](response_data, params)
+        response_b = providers[1](response_data, params)
+        chi = coupled_scalar_susceptibility(
+            response_a.chi,
+            response_b.chi,
+            coupling=float(params[coupling_key]),
+            amplitude_a=response_a.form_factor,
+            amplitude_b=response_b.form_factor,
+            singular_tolerance=tolerance,
+        )
+        return ScalarSusceptibilityResponse(
+            chi,
+            np.ones(data.size, dtype=float),
+            f"{sources[0].name}<->{sources[1].name}",
+        )
+
+    def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        try:
+            response = complex_response(data, params).chi
+        except (ValueError, np.linalg.LinAlgError):
+            return np.full(data.size, 1.0e6, dtype=float)
+        if _is_elastic_dataset(data):
+            return _quasistatic_model_observable(
+                data,
+                response.real,
+                form_factor_sq=1.0,
+                polarization=ISOTROPIC_POLARIZATION,
+            )
+        return _spectral_model_observable(
+            data,
+            response.imag,
+            form_factor_sq=1.0,
+            polarization=ISOTROPIC_POLARIZATION,
+        )
+
+    model.susceptibility_response = complex_response  # type: ignore[attr-defined]
+    return model
+
+
+def _coupled_susceptibility_unbound_factory(component: Any) -> ModelFunction:
+    def model(_data: PointData4D, _params: dict[str, float]) -> np.ndarray:
+        raise ValueError(
+            f"{component.name!r} requires its two referenced susceptibility components"
+        )
+
+    return model
+
+
+def _coupled_susceptibility_provider_factory(
+    component: Any,
+    components: Mapping[str, Any],
+) -> Callable[[PointData4D, Mapping[str, float]], ScalarSusceptibilityResponse]:
+    model = _coupled_susceptibility_factory(component, components)
+    return model.susceptibility_response  # type: ignore[attr-defined, no-any-return]
+
+
+def _validate_coupled_susceptibility_component(component: Any) -> None:
+    config = component.config if isinstance(component.config, dict) else {}
+    response_a = str(config.get("response_a", "")).strip()
+    response_b = str(config.get("response_b", "")).strip()
+    if not response_a or not response_b:
+        raise ValueError("response_a and response_b must name response components")
+    if response_a == response_b:
+        raise ValueError("response_a and response_b must be different components")
+    tolerance = float(config.get("singular_tolerance", 1.0e-12))
+    if not np.isfinite(tolerance) or tolerance <= 0.0:
+        raise ValueError("singular_tolerance must be finite and positive")
+
+
 def _validate_electronic_sampling_config(
     config: Mapping[str, Any],
     prefix: str,
@@ -1440,6 +1557,13 @@ def _form_factor_sq_from_config(component: Any, data: PointData4D) -> float | np
     the spin-only ``<j0>`` form factor.
     """
 
+    amplitude = _form_factor_from_config(component, data)
+    return np.asarray(amplitude, dtype=float) ** 2
+
+
+def _form_factor_from_config(component: Any, data: PointData4D) -> float | np.ndarray:
+    """Return the signed magnetic form-factor amplitude for a component."""
+
     config = component.config if isinstance(component.config, dict) else {}
     ion = str(config.get("ion", "") or "").strip()
     if ion == "__custom__":
@@ -1450,7 +1574,7 @@ def _form_factor_sq_from_config(component: Any, data: PointData4D) -> float | np
     from .fitting import q_modulus_inv_angstrom
 
     q = q_modulus_inv_angstrom(data)
-    return form_factor_sq(
+    return magnetic_form_factor(
         q,
         ion=ion or None,
         coefficients=coefficients,
@@ -1754,6 +1878,145 @@ def _generalized_paramagnon_factory(component: Any) -> ModelFunction:
     return model
 
 
+def _conserved_ferromagnetic_factory(component: Any) -> ModelFunction:
+    """Build the clean or diffusive conserved-ferromagnetic response."""
+
+    name = component.name
+    parameter_names = (
+        "chi_uniform",
+        "gamma_scale",
+        "xi_x",
+        "xi_y",
+        "xi_z",
+        "xi_yx",
+        "xi_zx",
+        "xi_zy",
+        "q0_h",
+        "q0_k",
+        "q0_l",
+    )
+    keys = {
+        parameter: qualified_parameter_name(name, parameter)
+        for parameter in parameter_names
+    }
+    config = component.config if isinstance(component.config, dict) else {}
+    lattice = config.get("lattice")
+    center_offsets = np.asarray(
+        config.get("center_offsets", [[0.0, 0.0, 0.0]]), dtype=float
+    )
+    periodic = bool(config.get("periodic", True))
+    combination = str(config.get("center_combination", "nearest")).strip().lower()
+    powder_orientations = max(int(config.get("powder_orientations", 50)), 6)
+    damping_power = 1.0 if str(config.get("damping_kind", "clean")) == "clean" else 2.0
+
+    def complex_response(
+        data: PointData4D, params: Mapping[str, float]
+    ) -> tuple[np.ndarray, int]:
+        reciprocal = _lattice_reciprocal_matrix(data, lattice)
+        powder = (
+            data.metadata.get("data_type") in {"powder_inelastic", "powder_elastic"}
+            or bool(data.metadata.get("powder_q_modulus_axis"))
+        )
+        orientation_count = 1
+        if powder:
+            from .fitting import q_modulus_inv_angstrom
+
+            orientation_count = powder_orientations
+            directions = _powder_sphere_directions(orientation_count)
+            q_modulus = np.asarray(q_modulus_inv_angstrom(data), dtype=float)
+            q_cartesian = (
+                q_modulus[:, None, None] * directions[None, :, :]
+            ).reshape(-1, 3)
+            q_rlu = q_cartesian @ np.linalg.inv(reciprocal).T
+            source_energy = (
+                np.zeros(data.size, dtype=float)
+                if _is_elastic_dataset(data)
+                or data.metadata.get("data_type") == "magnetization"
+                else np.asarray(data.E, dtype=float)
+            )
+            energy = np.repeat(source_energy, orientation_count)
+        else:
+            coordinates = np.column_stack([data.H, data.K, data.L]).astype(float)
+            if _metadata_coordinate_units_are_inv_angstrom(data.metadata):
+                q_cartesian = coordinates
+                q_rlu = q_cartesian @ np.linalg.inv(reciprocal).T
+            else:
+                q_rlu = coordinates
+                q_cartesian = q_rlu @ reciprocal.T
+            energy = (
+                np.zeros(data.size, dtype=float)
+                if _is_elastic_dataset(data)
+                or data.metadata.get("data_type") == "magnetization"
+                else np.asarray(data.E, dtype=float)
+            )
+        q0 = np.asarray(
+            [params[keys["q0_h"]], params[keys["q0_k"]], params[keys["q0_l"]]],
+            dtype=float,
+        )
+        centers = q0[None, :] + center_offsets
+        cholesky = np.asarray(
+            [
+                [params[keys["xi_x"]], 0.0, 0.0],
+                [params[keys["xi_yx"]], params[keys["xi_y"]], 0.0],
+                [params[keys["xi_zx"]], params[keys["xi_zy"]], params[keys["xi_z"]]],
+            ],
+            dtype=float,
+        )
+        kernels = _generalized_paramagnon_kernels(
+            q_cartesian,
+            q_rlu,
+            reciprocal_matrix=reciprocal,
+            centers_rlu=centers,
+            correlation_cholesky=cholesky,
+            spatial_power=2.0,
+            periodic=periodic,
+        )
+        if combination == "nearest":
+            kernels = np.min(kernels, axis=1, keepdims=True)
+        rho = np.sqrt(np.maximum(kernels - 1.0, 0.0))
+        response = np.sum(
+            conserved_ferromagnetic_susceptibility(
+                rho,
+                energy[:, None],
+                chi_uniform=float(params[keys["chi_uniform"]]),
+                gamma_scale=float(params[keys["gamma_scale"]]),
+                damping_power=damping_power,
+            ),
+            axis=1,
+        )
+        return response, orientation_count
+
+    def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
+        response, orientation_count = complex_response(data, params)
+        if orientation_count > 1:
+            response = response.reshape(data.size, orientation_count).mean(axis=1)
+        if data.metadata.get("data_type") == "magnetization":
+            return _scalar_bulk_observable(
+                data,
+                response.real,
+                g_factor=float(config.get("bulk_g_factor", 2.0)),
+                magnetic_ions_per_formula_unit=float(
+                    config.get("magnetic_ions_per_formula_unit", 1.0)
+                ),
+            )
+        if _is_elastic_dataset(data):
+            return _quasistatic_model_observable(
+                data,
+                response.real,
+                form_factor_sq=_form_factor_sq_from_config(component, data),
+                polarization=ISOTROPIC_POLARIZATION,
+            )
+        return _spectral_model_observable(
+            data,
+            response.imag,
+            form_factor_sq=_form_factor_sq_from_config(component, data),
+            polarization=ISOTROPIC_POLARIZATION,
+        )
+
+    model.complex_response = complex_response  # type: ignore[attr-defined]
+    return model
+
+
 def _validate_scalar_bulk_config(component: Any) -> None:
     """Validate shared bulk-normalization settings on a scalar model."""
 
@@ -1799,6 +2062,15 @@ def _validate_generalized_paramagnon_component(component: Any) -> None:
         raise ValueError("center_combination must be 'sum' or 'nearest'")
     if int(config.get("powder_orientations", 50)) < 6:
         raise ValueError("powder_orientations must be at least 6")
+
+
+def _validate_conserved_ferromagnetic_component(component: Any) -> None:
+    """Validate the fixed conserved-ferromagnetic configuration."""
+
+    _validate_generalized_paramagnon_component(component)
+    config = component.config if isinstance(component.config, dict) else {}
+    if str(config.get("damping_kind", "clean")) not in {"clean", "diffusive"}:
+        raise ValueError("damping_kind must be 'clean' or 'diffusive'")
 
 
 def _generalized_paramagnon_component_diagnostics(
@@ -1931,6 +2203,150 @@ def _mmp_relaxational_factory(component: Any) -> ModelFunction:
         )
 
     return model
+
+
+def _local_susceptibility_factory(
+    component: Any, _components: Mapping[str, Any]
+) -> Callable[[PointData4D, Mapping[str, float]], ScalarSusceptibilityResponse]:
+    chi_key = qualified_parameter_name(component.name, "chi_loc")
+    gamma_key = qualified_parameter_name(component.name, "gamma")
+
+    def response(
+        data: PointData4D, params: Mapping[str, float]
+    ) -> ScalarSusceptibilityResponse:
+        chi = local_relaxational_susceptibility(
+            data.E,
+            chi_loc=float(params[chi_key]),
+            gamma=float(params[gamma_key]),
+        )
+        return ScalarSusceptibilityResponse(
+            chi,
+            _form_factor_from_config(component, data),
+            component.name,
+        )
+
+    return response
+
+
+def _mmp_susceptibility_factory(
+    component: Any, _components: Mapping[str, Any]
+) -> Callable[[PointData4D, Mapping[str, float]], ScalarSusceptibilityResponse]:
+    keys = {
+        parameter: qualified_parameter_name(component.name, parameter)
+        for parameter in ("chi_pk", "xi", "omega_sf", "q0_h", "q0_k", "q0_l")
+    }
+
+    def response(
+        data: PointData4D, params: Mapping[str, float]
+    ) -> ScalarSusceptibilityResponse:
+        q0 = tuple(float(params[keys[name]]) for name in ("q0_h", "q0_k", "q0_l"))
+        chi = mmp_susceptibility(
+            _q_offset_sq_inv_angstrom(data, q0),
+            data.E,
+            chi_pk=float(params[keys["chi_pk"]]),
+            xi=float(params[keys["xi"]]),
+            omega_sf=float(params[keys["omega_sf"]]),
+        )
+        return ScalarSusceptibilityResponse(
+            chi,
+            _form_factor_from_config(component, data),
+            component.name,
+        )
+
+    return response
+
+
+def _generalized_paramagnon_susceptibility_factory(
+    component: Any, _components: Mapping[str, Any]
+) -> Callable[[PointData4D, Mapping[str, float]], ScalarSusceptibilityResponse]:
+    names = (
+        "chi_peak", "gamma0", "relaxation_power", "inverse_mode_energy_sq",
+        "xi_x", "xi_y", "xi_z", "xi_yx", "xi_zx", "xi_zy",
+        "q0_h", "q0_k", "q0_l",
+    )
+    keys = {name: qualified_parameter_name(component.name, name) for name in names}
+    config = component.config if isinstance(component.config, dict) else {}
+    reciprocal_lattice = config.get("lattice")
+    offsets = np.asarray(config.get("center_offsets", [[0.0, 0.0, 0.0]]), dtype=float)
+    periodic = bool(config.get("periodic", True))
+    combination = str(config.get("center_combination", "sum")).strip().lower()
+    spatial_power = float(config.get("spatial_power", 2.0))
+
+    def response(
+        data: PointData4D, params: Mapping[str, float]
+    ) -> ScalarSusceptibilityResponse:
+        reciprocal = _lattice_reciprocal_matrix(data, reciprocal_lattice)
+        coordinates = np.column_stack([data.H, data.K, data.L]).astype(float)
+        if _metadata_coordinate_units_are_inv_angstrom(data.metadata):
+            q_cartesian = coordinates
+            q_rlu = q_cartesian @ np.linalg.inv(reciprocal).T
+        else:
+            q_rlu = coordinates
+            q_cartesian = q_rlu @ reciprocal.T
+        q0 = np.asarray(
+            [params[keys["q0_h"]], params[keys["q0_k"]], params[keys["q0_l"]]],
+            dtype=float,
+        )
+        cholesky = np.asarray(
+            [
+                [params[keys["xi_x"]], 0.0, 0.0],
+                [params[keys["xi_yx"]], params[keys["xi_y"]], 0.0],
+                [params[keys["xi_zx"]], params[keys["xi_zy"]], params[keys["xi_z"]]],
+            ],
+            dtype=float,
+        )
+        kernels = _generalized_paramagnon_kernels(
+            q_cartesian,
+            q_rlu,
+            reciprocal_matrix=reciprocal,
+            centers_rlu=q0[None, :] + offsets,
+            correlation_cholesky=cholesky,
+            spatial_power=spatial_power,
+            periodic=periodic,
+        )
+        if combination == "nearest":
+            kernels = np.min(kernels, axis=1, keepdims=True)
+        chi = np.sum(
+            generalized_paramagnon_susceptibility(
+                kernels,
+                np.asarray(data.E, dtype=float)[:, None],
+                chi_peak=float(params[keys["chi_peak"]]),
+                gamma0=float(params[keys["gamma0"]]),
+                relaxation_power=float(params[keys["relaxation_power"]]),
+                inverse_mode_energy_sq=float(params[keys["inverse_mode_energy_sq"]]),
+            ),
+            axis=1,
+        )
+        return ScalarSusceptibilityResponse(
+            chi,
+            _form_factor_from_config(component, data),
+            component.name,
+        )
+
+    return response
+
+
+def _conserved_ferromagnetic_susceptibility_factory(
+    component: Any, _components: Mapping[str, Any]
+) -> Callable[[PointData4D, Mapping[str, float]], ScalarSusceptibilityResponse]:
+    model = _conserved_ferromagnetic_factory(component)
+    complex_response = model.complex_response  # type: ignore[attr-defined]
+
+    def response(
+        data: PointData4D, params: Mapping[str, float]
+    ) -> ScalarSusceptibilityResponse:
+        chi, orientation_count = complex_response(data, params)
+        if orientation_count != 1:
+            raise ValueError(
+                "coupled susceptibility currently requires single-crystal source data"
+            )
+        return ScalarSusceptibilityResponse(
+            chi,
+            _form_factor_from_config(component, data),
+            component.name,
+        )
+
+    return response
 
 
 def heisenberg_rpa_orbit_labels(component: Any) -> tuple[str, ...]:
@@ -2068,6 +2484,7 @@ class _RpaComponentEvaluator:
         self.j_keys = {label: qualified_parameter_name(name, label) for label in self.labels}
         self.chi0_key = qualified_parameter_name(name, "chi0")
         self.gamma0_key = qualified_parameter_name(name, "gamma0")
+        self.inertia_key = qualified_parameter_name(name, "inverse_mode_energy_sq")
         self.tensor_mode = _component_has_tensor_terms(config)
         self.zeeman_mode = _component_has_zeeman(config)
         self._zeeman_keys = {
@@ -2296,6 +2713,16 @@ class _RpaComponentEvaluator:
         if count == 1:
             return result
         return np.mean(result.reshape(data_size, count), axis=1)
+
+    def _inertia(self, params: Mapping[str, float]) -> float:
+        """Return inertia, treating pre-inertia project components as zero."""
+
+        return float(
+            params.get(
+                self.inertia_key,
+                self.component.parameters.get("inverse_mode_energy_sq", 0.0),
+            )
+        )
 
     def _j_values(self, params: dict[str, float]) -> dict[str, float]:
         return {label: float(params[key]) for label, key in self.j_keys.items()}
@@ -2838,6 +3265,7 @@ class _RpaComponentEvaluator:
                         gamma0=float(params[self.gamma0_key]),
                         param_values=self._tensor_values(params),
                         lambda_shift=lambda_shift,
+                        inverse_mode_energy_sq=self._inertia(params),
                     )
                     response = unpolarized_static_chi(chi_tensor, q_hat)
                 else:
@@ -2850,6 +3278,7 @@ class _RpaComponentEvaluator:
                         gamma0=float(params[self.gamma0_key]),
                         param_values=self._tensor_values(params),
                         lambda_shift=lambda_shift,
+                        inverse_mode_energy_sq=self._inertia(params),
                     )
                 # The unpolarized channel already carries the polarization
                 # average, so no extra scalar polarization factor here.
@@ -2877,6 +3306,7 @@ class _RpaComponentEvaluator:
                         gamma0=float(params[self.gamma0_key]),
                         j_values=self._j_values(params),
                         lambda_shift=lambda_shift,
+                        inverse_mode_energy_sq=self._inertia(params),
                     )
                 polarization = ISOTROPIC_POLARIZATION
         except ValueError:
@@ -2899,6 +3329,48 @@ class _RpaComponentEvaluator:
             form_factor_sq=form_factor_sq,
             polarization=polarization,
             bose_denominator_values=self._bose_denominator(data),
+        )
+
+    def susceptibility_response(
+        self, data: PointData4D, params: Mapping[str, float]
+    ) -> ScalarSusceptibilityResponse:
+        """Return the complex scalar response before neutron factors.
+
+        The initial composable contract supports the scalar exchange network.
+        Tensor and Zeeman models retain their full internal response and are
+        rejected here until the coupling component has a tensor-valued block
+        contract.
+        """
+
+        if self.tensor_mode or self.zeeman_mode:
+            raise ValueError(
+                "coupled susceptibility currently supports scalar Heisenberg-RPA sources only"
+            )
+        geometry, _form_factor_sq, _tensor_context, powder_count = self._geometry(data)
+        if powder_count != 1:
+            raise ValueError(
+                "coupled susceptibility currently requires single-crystal source data"
+            )
+        chi0 = float(params[self.chi0_key])
+        lambda_shift = 0.0
+        if self.closure_spec is not None:
+            temperature = _dataset_temperature(data)
+            closure = self._solve_closure(dict(params), temperature, None)
+            chi0 = closure.chi0_eff
+            lambda_shift = closure.lambda_shift
+        chi = heisenberg_rpa_susceptibility(
+            geometry,
+            data.E,
+            chi0=chi0,
+            gamma0=float(params[self.gamma0_key]),
+            j_values=self._j_values(params),
+            lambda_shift=lambda_shift,
+            inverse_mode_energy_sq=self._inertia(params),
+        )
+        return ScalarSusceptibilityResponse(
+            chi,
+            _form_factor_from_config(self.component, data),
+            self.component.name,
         )
 
     def _static_chi_grid_and_q0(
@@ -3006,6 +3478,7 @@ class _RpaComponentEvaluator:
         t = float(t_values[0]) if t_values.size else float("nan")
         chi0 = float(params[self.chi0_key])
         gamma0 = float(params[self.gamma0_key])
+        inertia = self._inertia(params)
         lambda_shift = 0.0
         cutoff = (
             self.closure_spec.energy_cutoff_mev
@@ -3016,6 +3489,7 @@ class _RpaComponentEvaluator:
             "temperature": t,
             "gamma0": gamma0,
             "chi0_bare": chi0,
+            "inverse_mode_energy_sq": inertia,
         }
         try:
             model = self._closure_moment_model(params, field)
@@ -3057,6 +3531,23 @@ class _RpaComponentEvaluator:
                 "closure_solution": 1.0,
             }
         )
+        if inertia > 0.0:
+            try:
+                chi_q0, chi_peak = self._static_chi_grid_and_q0(
+                    params, chi0, lambda_shift
+                )
+            except ValueError as exc:
+                record.update({"unstable": 1.0, "diagnostic_error": str(exc)})
+                return record
+            record.update(
+                {
+                    "chi_static_q0": chi_q0,
+                    "chi_static_qpeak": chi_peak,
+                    "moment_integral_available": 0.0,
+                    "unstable": 0.0,
+                }
+            )
+            return record
         try:
             zero_point, thermal = model.moment(
                 chi0=chi0,
@@ -3077,6 +3568,7 @@ class _RpaComponentEvaluator:
                 "m2_thermal": thermal,
                 "chi_static_q0": chi_q0,
                 "chi_static_qpeak": chi_peak,
+                "moment_integral_available": 1.0,
                 "unstable": 0.0,
             }
         )
@@ -3099,12 +3591,17 @@ class _RpaComponentEvaluator:
                 chi0=float(params[self.chi0_key]),
                 gamma0=float(params[self.gamma0_key]),
                 j_values=self._j_values(params),
+                inverse_mode_energy_sq=self._inertia(params),
             )
         except ValueError:
             # Sentinel-penalty region: the value is a constant with no
             # parameter dependence, so every column is zero.
             zero = np.zeros(data.size, dtype=float)
-            columns = {self.chi0_key: zero, self.gamma0_key: zero}
+            columns = {
+                self.chi0_key: zero,
+                self.gamma0_key: zero,
+                self.inertia_key: zero,
+            }
             columns.update({key: zero for key in self.j_keys.values()})
             return columns
         chipp = self._powder_average(chipp, data.size, powder_count)
@@ -3120,6 +3617,9 @@ class _RpaComponentEvaluator:
         columns = {}
         columns[self.chi0_key] = d_intensity_d_chipp * chipp_grads["chi0"]
         columns[self.gamma0_key] = d_intensity_d_chipp * chipp_grads["gamma0"]
+        columns[self.inertia_key] = (
+            d_intensity_d_chipp * chipp_grads["inverse_mode_energy_sq"]
+        )
         for label, key in self.j_keys.items():
             columns[key] = d_intensity_d_chipp * chipp_grads[label]
         return columns
@@ -3127,6 +3627,36 @@ class _RpaComponentEvaluator:
 
 def _heisenberg_rpa_factory(component: Any) -> ModelFunction:
     return _RpaComponentEvaluator(component).value
+
+
+def _heisenberg_rpa_susceptibility_factory(
+    component: Any, _components: Mapping[str, Any]
+) -> Callable[[PointData4D, Mapping[str, float]], ScalarSusceptibilityResponse]:
+    return _RpaComponentEvaluator(component).susceptibility_response
+
+
+def _validate_heisenberg_rpa_component(component: Any) -> None:
+    inertia = float(component.parameters.get("inverse_mode_energy_sq", 0.0))
+    if not np.isfinite(inertia) or inertia < 0.0:
+        raise ValueError("inverse_mode_energy_sq must be finite and nonnegative")
+    may_be_inertial = inertia > 0.0 or bool(
+        component.fit_parameters.get("inverse_mode_energy_sq", False)
+    )
+    if not may_be_inertial:
+        return
+    config = component.config if isinstance(component.config, dict) else {}
+    from .closures import ClosureSpec
+
+    if ClosureSpec.from_config(config) is not None:
+        raise ValueError(
+            "inertial Heisenberg RPA does not yet support sum-rule closures; "
+            "fix inverse_mode_energy_sq at zero or disable the closure"
+        )
+    if _component_has_zeeman(config):
+        raise ValueError(
+            "inertial Heisenberg RPA does not yet support the Zeeman propagator; "
+            "fix inverse_mode_energy_sq at zero or disable Zeeman coupling"
+        )
 
 
 def _heisenberg_rpa_component_diagnostics(

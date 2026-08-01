@@ -285,6 +285,179 @@ def test_physical_model_parameters_receive_default_nonnegative_bounds():
     }
 
 
+def test_conserved_ferromagnetic_component_enforces_the_q_zero_conservation_law():
+    from nfit.fitting import evaluate_problem_model
+
+    component = ModelComponentSpec(
+        name="fm",
+        type="conserved_ferromagnetic",
+        parameters={
+            "chi_uniform": 2.0,
+            "gamma_scale": 3.0,
+            "xi_x": 2.0,
+            "xi_y": 2.0,
+            "xi_z": 2.0,
+            "xi_yx": 0.0,
+            "xi_zx": 0.0,
+            "xi_zy": 0.0,
+            "q0_h": 0.0,
+            "q0_k": 0.0,
+            "q0_l": 0.0,
+        },
+        fit_parameters={},
+        config={"damping_kind": "clean"},
+    )
+    points = _spin_fluctuation_points(
+        np.zeros(2),
+        np.array([0.0, 0.1]),
+        np.ones(2),
+        temperature=10.0,
+        lattice_a=4.0,
+    )
+    compiled = compile_fit_problem(
+        [component],
+        [FitDatasetInput("scan", points, data_type="single_crystal_inelastic")],
+    )
+    values = evaluate_problem_model(
+        compiled.problem,
+        "scan",
+        {spec.name: spec.value for spec in compiled.problem.parameter_specs},
+    )
+    assert values[0] == pytest.approx(0.0, abs=1e-15)
+    assert values[1] > 0.0
+
+
+def test_zero_coupling_component_exactly_replaces_two_additive_sources():
+    from nfit.fitting import evaluate_problem_model
+
+    first = ModelComponentSpec(
+        name="slow",
+        type="local_relaxational",
+        parameters={"chi_loc": 1.5, "gamma": 1.0},
+        fit_parameters={"chi_loc": True},
+    )
+    second = ModelComponentSpec(
+        name="fast",
+        type="local_relaxational",
+        parameters={"chi_loc": 0.7, "gamma": 4.0},
+        fit_parameters={"gamma": True},
+    )
+    coupled = ModelComponentSpec(
+        name="hybrid",
+        type="coupled_susceptibility",
+        parameters={"coupling": 0.0},
+        fit_parameters={"coupling": True},
+        config={"response_a": "slow", "response_b": "fast"},
+    )
+    energy = np.linspace(0.4, 6.0, 24)
+    points = _spin_fluctuation_points(
+        np.zeros(energy.size),
+        np.zeros(energy.size),
+        energy,
+        temperature=8.0,
+    )
+    dataset = FitDatasetInput(
+        "scan", points, data_type="single_crystal_inelastic"
+    )
+    additive_problem = compile_fit_problem([first, second], [dataset])
+    coupled_problem = compile_fit_problem([first, second, coupled], [dataset])
+
+    def evaluate(compiled):
+        return evaluate_problem_model(
+            compiled.problem,
+            "scan",
+            {spec.name: spec.value for spec in compiled.problem.parameter_specs},
+        )
+
+    np.testing.assert_allclose(
+        evaluate(coupled_problem),
+        evaluate(additive_problem),
+        rtol=5.0e-15,
+        atol=1.0e-15,
+    )
+    assert {spec.name for spec in coupled_problem.problem.parameter_specs} == {
+        "slow.chi_loc",
+        "slow.gamma",
+        "fast.chi_loc",
+        "fast.gamma",
+        "hybrid.coupling",
+    }
+    finite = {
+        spec.name: (0.5 if spec.name == "hybrid.coupling" else spec.value)
+        for spec in coupled_problem.problem.parameter_specs
+    }
+    assert np.max(
+        np.abs(
+            evaluate_problem_model(coupled_problem.problem, "scan", finite)
+            - evaluate(additive_problem)
+        )
+    ) > 1.0e-8
+
+
+def test_coupled_susceptibility_rejects_nonresponse_dependencies():
+    source = _constant_component()
+    other = ModelComponentSpec(
+        name="spin",
+        type="local_relaxational",
+        parameters={"chi_loc": 1.0, "gamma": 2.0},
+    )
+    coupled = ModelComponentSpec(
+        name="hybrid",
+        type="coupled_susceptibility",
+        parameters={"coupling": 0.0},
+        config={"response_a": source.name, "response_b": other.name},
+    )
+    points = _spin_fluctuation_points(
+        np.zeros(3), np.zeros(3), np.ones(3), temperature=5.0
+    )
+    with pytest.raises(ValueError, match="composable complex susceptibility"):
+        compile_fit_problem(
+            [source, other, coupled],
+            [FitDatasetInput("scan", points, data_type="single_crystal_inelastic")],
+        )
+
+
+def test_coupled_elastic_response_uses_static_source_limits():
+    from nfit.fitting import evaluate_problem_model
+
+    first = ModelComponentSpec(
+        name="slow",
+        type="local_relaxational",
+        parameters={"chi_loc": 1.5, "gamma": 1.0},
+    )
+    second = ModelComponentSpec(
+        name="fast",
+        type="local_relaxational",
+        parameters={"chi_loc": 0.7, "gamma": 4.0},
+    )
+    coupled = ModelComponentSpec(
+        name="hybrid",
+        type="coupled_susceptibility",
+        parameters={"coupling": 0.2},
+        config={"response_a": "slow", "response_b": "fast"},
+    )
+    datasets = [
+        FitDatasetInput(
+            name,
+            _spin_fluctuation_points(
+                np.zeros(3),
+                np.zeros(3),
+                np.full(3, energy),
+                temperature=5.0,
+                lattice_a=4.0,
+            ),
+            data_type="single_crystal_elastic",
+        )
+        for name, energy in (("nominal_zero", 0.0), ("arbitrary_axis", 8.0))
+    ]
+    compiled = compile_fit_problem([first, second, coupled], datasets)
+    params = {spec.name: spec.value for spec in compiled.problem.parameter_specs}
+    np.testing.assert_array_equal(
+        evaluate_problem_model(compiled.problem, "nominal_zero", params),
+        evaluate_problem_model(compiled.problem, "arbitrary_axis", params),
+    )
+
+
 def test_disabled_component_is_ignored():
     disabled = _constant_component()
     disabled.enabled = False

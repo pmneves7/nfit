@@ -51,7 +51,9 @@ _MODEL_CATEGORY_PREFERRED_ORDER: Mapping[str, tuple[str, ...]] = {
         "local_relaxational",
         "mmp_relaxational",
         "generalized_paramagnon",
+        "conserved_ferromagnetic",
         "heisenberg_rpa",
+        "coupled_susceptibility",
     ),
     "electronic_structure": (
         "tight_binding",
@@ -69,6 +71,10 @@ _MODEL_CATEGORY_PREFERRED_ORDER: Mapping[str, tuple[str, ...]] = {
 
 ModelFactory = Callable[[Any], Callable[..., Any]]
 ContextModelFactory = Callable[
+    [Any, Mapping[str, Any]],
+    Callable[..., Any],
+]
+SusceptibilityFactory = Callable[
     [Any, Mapping[str, Any]],
     Callable[..., Any],
 ]
@@ -158,6 +164,7 @@ class ModelDefinition:
     data_types: tuple[str, ...]
     factory: ModelFactory
     context_factory: ContextModelFactory | None = None
+    susceptibility_factory: SusceptibilityFactory | None = None
     component_reference_fields: tuple[str, ...] = ()
     consumes_referenced_observables: bool = False
     parameter_fields: tuple[ModelParameterDefinition, ...] = ()
@@ -227,6 +234,12 @@ def register_model_definition(
     ):
         raise TypeError(
             f"model type {definition.key!r} context factory is not callable"
+        )
+    if definition.susceptibility_factory is not None and not callable(
+        definition.susceptibility_factory
+    ):
+        raise TypeError(
+            f"model type {definition.key!r} susceptibility factory is not callable"
         )
     if len(definition.component_reference_fields) != len(
         set(definition.component_reference_fields)
@@ -532,6 +545,18 @@ def _fit_context_factory(name: str) -> ContextModelFactory:
     return factory
 
 
+def _fit_susceptibility_factory(name: str) -> SusceptibilityFactory:
+    def factory(
+        component: Any,
+        components: Mapping[str, Any],
+    ) -> Callable[..., Any]:
+        from . import fit_config
+
+        return getattr(fit_config, name)(component, components)
+
+    return factory
+
+
 def _fit_jacobian_factory(name: str) -> ModelJacobianFactory:
     def factory(component: Any) -> Callable[..., Any] | None:
         from . import fit_config
@@ -814,6 +839,9 @@ def _register_builtin_models() -> None:
                 "magnetization",
             ),
             factory=_fit_factory("_local_relaxational_factory"),
+            susceptibility_factory=_fit_susceptibility_factory(
+                "_local_susceptibility_factory"
+            ),
             parameter_fields=(
                 _parameter(
                     "chi_loc",
@@ -860,6 +888,9 @@ def _register_builtin_models() -> None:
                 "magnetization",
             ),
             factory=_fit_factory("_mmp_relaxational_factory"),
+            susceptibility_factory=_fit_susceptibility_factory(
+                "_mmp_susceptibility_factory"
+            ),
             parameter_fields=(
                 _parameter(
                     "chi_pk",
@@ -944,6 +975,9 @@ def _register_builtin_models() -> None:
                 "magnetization",
             ),
             factory=_fit_factory("_generalized_paramagnon_factory"),
+            susceptibility_factory=_fit_susceptibility_factory(
+                "_generalized_paramagnon_susceptibility_factory"
+            ),
             parameter_fields=(
                 _parameter(
                     "chi_peak",
@@ -1173,12 +1207,109 @@ def _register_builtin_models() -> None:
     )
     register_model_definition(
         ModelDefinition(
+            key="conserved_ferromagnetic",
+            label="Conserved ferromagnetic paramagnon",
+            description=(
+                "Nearly-ferromagnetic relaxational response with anisotropic "
+                "Ornstein-Zernike correlations and a relaxation rate that vanishes "
+                "at the ordering wavevector. Clean dynamics use Gamma proportional "
+                "to rho(1+rho^2); diffusive dynamics use rho^2(1+rho^2)."
+            ),
+            category="spin_fluctuation",
+            data_types=(
+                "single_crystal_inelastic",
+                "powder_inelastic",
+                "single_crystal_elastic",
+                "powder_elastic",
+                "magnetization",
+            ),
+            factory=_fit_factory("_conserved_ferromagnetic_factory"),
+            susceptibility_factory=_fit_susceptibility_factory(
+                "_conserved_ferromagnetic_susceptibility_factory"
+            ),
+            parameter_fields=(
+                _parameter(
+                    "chi_uniform", 1.0,
+                    "Static susceptibility at the ferromagnetic peak.",
+                    "Nonnegative finite number.", "meV^-1", "3.0",
+                ),
+                _parameter(
+                    "gamma_scale", 2.0,
+                    "Energy scale multiplying the conserved momentum-dependent relaxation rate.",
+                    "Positive finite number in meV.", "meV", "4.0",
+                ),
+                _parameter("xi_x", 1.0, "x diagonal of the correlation-metric Cholesky factor.", "Nonnegative finite number in Angstrom.", "angstrom", "4.0"),
+                _parameter("xi_y", 1.0, "y diagonal of the correlation-metric Cholesky factor.", "Nonnegative finite number in Angstrom.", "angstrom", "3.0"),
+                _parameter("xi_z", 1.0, "z diagonal of the correlation-metric Cholesky factor.", "Nonnegative finite number in Angstrom.", "angstrom", "1.0"),
+                _parameter("xi_yx", 0.0, "yx off-diagonal of the correlation-metric Cholesky factor.", "Any finite number in Angstrom.", "angstrom", "0.0"),
+                _parameter("xi_zx", 0.0, "zx off-diagonal of the correlation-metric Cholesky factor.", "Any finite number in Angstrom.", "angstrom", "0.0"),
+                _parameter("xi_zy", 0.0, "zy off-diagonal of the correlation-metric Cholesky factor.", "Any finite number in Angstrom.", "angstrom", "0.0"),
+                _parameter("q0_h", 0.0, "H coordinate of the ferromagnetic or weakly incommensurate peak.", "Finite number in reciprocal lattice units.", "rlu", "0.0"),
+                _parameter("q0_k", 0.0, "K coordinate of the ferromagnetic or weakly incommensurate peak.", "Finite number in reciprocal lattice units.", "rlu", "0.0"),
+                _parameter("q0_l", 0.0, "L coordinate of the ferromagnetic or weakly incommensurate peak.", "Finite number in reciprocal lattice units.", "rlu", "0.0"),
+            ),
+            config_fields=(
+                ModelConfigDefinition(
+                    name="damping_kind", default="clean",
+                    description="Clean Landau damping (power one) or diffusive damping (power two).",
+                    allowed="'clean' or 'diffusive'.", type="str", example="clean",
+                    choices=("clean", "diffusive"),
+                ),
+                ModelConfigDefinition(
+                    name="center_offsets", default=[[0.0, 0.0, 0.0]],
+                    description="Peak-center offsets added to fitted Q0, one [dH,dK,dL] row per domain.",
+                    allowed="Nonempty JSON list of unique three-number rows.", type="list",
+                    unit="rlu", example="[[0,0,0]]",
+                ),
+                ModelConfigDefinition(
+                    name="center_combination", default="nearest",
+                    description="Use the nearest conserved center or sum distinct domain responses.",
+                    allowed="'nearest' or 'sum'.", type="str", example="nearest",
+                    choices=("nearest", "sum"),
+                ),
+                ModelConfigDefinition(
+                    name="periodic", default=True,
+                    description="Use the closest reciprocal-lattice image of every center.",
+                    allowed="true or false.", type="bool", example="true",
+                ),
+                ModelConfigDefinition(
+                    name="powder_orientations", default=50,
+                    description="Number of deterministic sphere directions in a powder average.",
+                    allowed="Integer of at least 6.", type="int", unit="directions", example="96",
+                ),
+                ModelConfigDefinition(
+                    name="lattice", default={},
+                    description="Optional lattice dictionary; dataset reciprocal metadata takes precedence.",
+                    allowed="JSON lattice dictionary or empty dictionary.", type="dict",
+                    example='{"a":4,"b":4,"c":6,"alpha":90,"beta":90,"gamma":90}',
+                ),
+                *_form_factor_fields("Fe0"),
+                *_bulk_response_fields(),
+            ),
+            validate_component=_fit_validator(
+                "_validate_conserved_ferromagnetic_component"
+            ),
+            default_lower_bounds=(
+                ("chi_uniform", 0.0), ("gamma_scale", 0.0),
+                ("xi_x", 0.0), ("xi_y", 0.0), ("xi_z", 0.0),
+            ),
+            documentation="conserved_ferromagnetic.md",
+            citations=(
+                "https://doi.org/10.1007/978-3-642-82499-9",
+                "https://doi.org/10.1088/0953-8984/7/37/006",
+            ),
+        )
+    )
+    register_model_definition(
+        ModelDefinition(
             key="heisenberg_rpa",
             label="Heisenberg RPA spin fluctuations",
             description=(
-                "Local relaxational spins coupled by Heisenberg exchange in the "
-                "RPA: chi(Q,w) = [1 - chi0(w) J(Q)]^-1 chi0(w) with chi0(w) = "
-                "chi0/(1 - i w/Gamma0). J(Q) is built from symmetry-distinct bond "
+                "Local relaxational or inertial spins coupled by Heisenberg "
+                "exchange in the RPA: chi(Q,w) = [1 - chi0(w) J(Q)]^-1 "
+                "chi0(w). The inertial coefficient continuously selects "
+                "relaxational or exchange-paramagnon dynamics. J(Q) is built "
+                "from symmetry-distinct bond "
                 "orbits (J1, J2, J3a, ...), each an exchange fit parameter in meV; "
                 "J > 0 favors ordering where J(Q) is maximal and the fit is "
                 "restricted to the paramagnetic side max J(Q) chi0 < 1. Configure "
@@ -1194,6 +1325,9 @@ def _register_builtin_models() -> None:
                 "magnetization",
             ),
             factory=_fit_factory("_heisenberg_rpa_factory"),
+            susceptibility_factory=_fit_susceptibility_factory(
+                "_heisenberg_rpa_susceptibility_factory"
+            ),
             parameter_fields=(
                 _parameter(
                     "chi0",
@@ -1213,6 +1347,18 @@ def _register_builtin_models() -> None:
                     "Positive finite number in meV.",
                     "meV",
                     "5.0",
+                ),
+                _parameter(
+                    "inverse_mode_energy_sq",
+                    0.0,
+                    (
+                        "Local inertial coefficient 1/E0^2. Zero is exactly the "
+                        "relaxational Heisenberg RPA; a positive value produces "
+                        "damped exchange-paramagnon modes."
+                    ),
+                    "Nonnegative finite number in meV^-2.",
+                    "meV^-2",
+                    "0.01",
                 ),
             ),
             config_fields=(
@@ -1245,11 +1391,86 @@ def _register_builtin_models() -> None:
             diagnostics=_fit_diagnostics(
                 "_heisenberg_rpa_component_diagnostics"
             ),
+            validate_component=_fit_validator(
+                "_validate_heisenberg_rpa_component"
+            ),
             report_sections=_report_sections("heisenberg_rpa_report_sections"),
-            default_lower_bounds=(("chi0", 0.0), ("gamma0", 0.0)),
+            default_lower_bounds=(
+                ("chi0", 0.0),
+                ("gamma0", 0.0),
+                ("inverse_mode_energy_sq", 0.0),
+            ),
             structured_config=True,
             documentation="heisenberg_rpa.md",
             citations=("https://doi.org/10.1007/978-3-642-82499-9",),
+        )
+    )
+    register_model_definition(
+        ModelDefinition(
+            key="coupled_susceptibility",
+            label="Coupled susceptibilities",
+            description=(
+                "Bilinear two-sector Dyson coupling between two referenced "
+                "complex scalar susceptibility components. The coupling is "
+                "applied before Bose, cross-section, and dataset-scale factors."
+            ),
+            category="spin_fluctuation",
+            data_types=("single_crystal_inelastic", "single_crystal_elastic"),
+            factory=_fit_factory("_coupled_susceptibility_unbound_factory"),
+            context_factory=_fit_context_factory("_coupled_susceptibility_factory"),
+            susceptibility_factory=_fit_susceptibility_factory(
+                "_coupled_susceptibility_provider_factory"
+            ),
+            component_reference_fields=("response_a", "response_b"),
+            consumes_referenced_observables=True,
+            parameter_fields=(
+                _parameter(
+                    "coupling",
+                    0.0,
+                    "Bilinear interaction energy g between the two response sectors.",
+                    "Any finite energy; either sign is allowed.",
+                    "meV",
+                    "0.5",
+                ),
+            ),
+            config_fields=(
+                _config_field(
+                    "response_a", "",
+                    "First enabled component supplying a complex susceptibility.",
+                    "Name of a distinct enabled susceptibility component.",
+                    "str", "Local response",
+                ),
+                _config_field(
+                    "response_b", "",
+                    "Second enabled component supplying a complex susceptibility.",
+                    "Name of a distinct enabled susceptibility component.",
+                    "str", "Itinerant response",
+                ),
+                _config_field(
+                    "singular_tolerance", 1.0e-12,
+                    "Relative denominator threshold used to reject a sampled coupled-mode pole.",
+                    "Positive finite number.", "float", "1e-10",
+                ),
+            ),
+            validate_component=_fit_validator(
+                "_validate_coupled_susceptibility_component"
+            ),
+            documentation="coupled_susceptibility.md",
+            metadata={
+                "component_dependencies": True,
+                "reference_types": {
+                    "response_a": [
+                        "local_relaxational", "mmp_relaxational",
+                        "generalized_paramagnon", "conserved_ferromagnetic",
+                        "heisenberg_rpa", "coupled_susceptibility",
+                    ],
+                    "response_b": [
+                        "local_relaxational", "mmp_relaxational",
+                        "generalized_paramagnon", "conserved_ferromagnetic",
+                        "heisenberg_rpa", "coupled_susceptibility",
+                    ],
+                },
+            },
         )
     )
     register_model_definition(

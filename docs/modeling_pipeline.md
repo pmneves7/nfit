@@ -81,7 +81,9 @@ component. Each registered definition supplies:
   types, documentation target, and citations;
 - typed parameter and fixed-configuration fields with defaults, units,
   validation guidance, examples, and optional dynamic parameter discovery;
-- the numerical factory and optional analytic-Jacobian factory;
+- the numerical factory, optional context-aware and complex-susceptibility
+  factories, declared component references, and optional analytic-Jacobian
+  factory;
 - optional post-fit diagnostics, report-section, and model-plot providers; and
 - project and workflow serialization hooks.
 
@@ -290,6 +292,15 @@ model = compound_additive_model(
 
 The component compiler performs the same addition while preserving qualified
 parameter names and component diagnostics.
+
+Some components compose responses instead of adding observables. A definition
+declares its component-reference fields and whether it consumes the referenced
+observables on its own dataset scope. The compiler validates missing sources
+and dependency cycles, keeps source parameters active, and suppresses the bare
+source terms only where the composed observable applies. The
+`coupled_susceptibility` model uses this contract to combine two causal scalar
+susceptibilities before neutron and Bose factors; electronic RPA dressings use
+the same dependency machinery for a linked bare response.
 
 ## Analytic Jacobians
 

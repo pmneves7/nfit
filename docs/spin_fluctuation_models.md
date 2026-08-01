@@ -1,6 +1,6 @@
 # Spin-fluctuation models
 
-nfit provides eight magnetic-response models. Start with the least structured
+nfit provides ten magnetic-response models. Start with the least structured
 response that resolves the features in the data. Electronic Hamiltonians are
 documented separately under
 [Electronic-structure models](electronic_structure_models.md).
@@ -10,7 +10,9 @@ documented separately under
 | `local_relaxational` | $\chi=\chi_{\rm loc}/(1-iE/\Gamma)$ | Local or momentum-independent fluctuations | Single-crystal and powder neutron scattering; bulk linear response |
 | `mmp_relaxational` | $\chi=\chi_{\rm pk}/(1+\xi^2q^2-iE/E_{\rm sf})$ | One isotropic peak in a nearly antiferromagnetic metal | Single-crystal neutron scattering; extrapolated bulk linear response |
 | `generalized_paramagnon` | $\chi=(\chi_{\rm pk}/A)/(1-a_EE^2/A-iE/[\Gamma_0A^z])$ | Anisotropic peaks, critical slowing down, and damped propagating modes | Single-crystal and powder neutron scattering; extrapolated bulk linear response |
-| `heisenberg_rpa` | $\boldsymbol\chi=[\mathbb 1-\chi_0J(\mathbf Q)]^{-1}\chi_0$ | Dispersive fluctuations constrained by a crystal and exchange network | Single-crystal and powder neutron scattering; bulk linear response |
+| `conserved_ferromagnetic` | $\chi=(\chi_{\rm u}/[1+\rho^2])\Gamma(\rho)/[\Gamma(\rho)-iE]$ | Clean or diffusive long-wavelength fluctuations with a conserved ferromagnetic center | Single-crystal and powder neutron scattering; bulk linear response |
+| `heisenberg_rpa` | $\boldsymbol\chi=[\mathbb 1-\chi_0(E)J(\mathbf Q)]^{-1}\chi_0(E)$ | Relaxational or inertial exchange-paramagnon modes constrained by a crystal and exchange network | Single-crystal and powder neutron scattering; bulk linear response |
+| `coupled_susceptibility` | $\chi_O=(F_A^2\chi_A+F_B^2\chi_B+2F_AF_Bg\chi_A\chi_B)/(1-g^2\chi_A\chi_B)$ | Hybridization of two independently parameterized scalar response sectors | Single-crystal neutron scattering |
 | `lindhard` | $\chi^0=-\sum_{\mathbf k,n,m}(f_{n\mathbf k}-f_{m,\mathbf k+\mathbf q})M_AM_B^*/(E+\epsilon_{n\mathbf k}-\epsilon_{m,\mathbf k+\mathbf q}+i\eta)$ | Bare particle--hole response of a linked tight-binding model | Single-crystal and powder neutron scattering; bulk linear response |
 | `stoner_rpa` | $\boldsymbol\chi=[\mathbb 1-\boldsymbol\chi^0 I]^{-1}\boldsymbol\chi^0$ | Minimal isotropic enhancement of a band response | Single-crystal and powder neutron scattering; bulk linear response |
 | `matrix_rpa` | $\boldsymbol\chi=[\mathbb 1-\boldsymbol\chi^0 g\mathbf V]^{-1}\boldsymbol\chi^0$ | User-supplied anisotropic spin interaction | Single-crystal and powder neutron scattering; bulk linear response |
@@ -23,7 +25,9 @@ documented separately under
 local_relaxational
 mmp_relaxational
 generalized_paramagnon
+conserved_ferromagnetic
 heisenberg_rpa
+coupled_susceptibility
 lindhard
 stoner_rpa
 matrix_rpa
@@ -52,8 +56,10 @@ Backgrounds are separate additive model components.
 
 The [local relaxational](local_relaxational.md),
 [MMP relaxational](mmp_relaxational.md),
-[generalized paramagnon](generalized_paramagnon.md), and
-[Heisenberg RPA](heisenberg_rpa.md),
+[generalized paramagnon](generalized_paramagnon.md),
+[conserved ferromagnetic paramagnon](conserved_ferromagnetic.md),
+[Heisenberg RPA](heisenberg_rpa.md), and
+[coupled susceptibilities](coupled_susceptibility.md),
 [bare Lindhard](lindhard.md), [scalar Stoner](stoner_rpa.md),
 [matrix RPA](matrix_rpa.md), and
 [Hubbard--Hund RPA](hubbard_hund_rpa.md) pages define their parameters, complex
@@ -68,8 +74,8 @@ a useful model diagnostic.
 
 | Quantity | Unit |
 | --- | --- |
-| $E$, $\Gamma$, $\Gamma_0$, $E_{\rm sf}$, $E_0$, $J_i$ | meV |
-| $\chi_{\rm loc}$, $\chi_{\rm pk}$, $\chi_0$ | meV$^{-1}$ in the model normalization |
+| $E$, $\Gamma$, $\Gamma_0$, $\Gamma_s$, $E_{\rm sf}$, $E_0$, $J_i$, $g$ | meV |
+| $\chi_{\rm loc}$, $\chi_{\rm pk}$, $\chi_{\rm u}$, $\chi_0$ | meV$^{-1}$ in the model normalization |
 | $\xi$ | Å |
 | $a_E=1/E_0^2$ | meV$^{-2}$ |
 | $H,K,L$ | r.l.u. |

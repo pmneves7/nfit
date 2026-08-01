@@ -8,9 +8,12 @@ import pytest
 
 from nfit.spin_fluctuations import (
     build_rpa_geometry,
+    conserved_ferromagnetic_chipp,
+    conserved_ferromagnetic_susceptibility,
     damped_mode_susceptibility,
     generalized_paramagnon_susceptibility,
     heisenberg_rpa_chipp,
+    heisenberg_rpa_susceptibility,
     local_relaxational_chipp,
     local_relaxational_susceptibility,
     mmp_chipp,
@@ -255,6 +258,101 @@ def test_rpa_with_zero_exchange_reduces_to_local_relaxational():
     np.testing.assert_allclose(coupled, local, rtol=1e-12)
 
 
+def test_inertial_rpa_with_zero_exchange_reduces_to_damped_local_mode():
+    rng = np.random.default_rng(31)
+    geometry = _two_site_geometry(rng)
+    energy = np.linspace(-5.0, 6.0, geometry.point_index.size)
+    inertia = 0.04
+    response = heisenberg_rpa_susceptibility(
+        geometry,
+        energy,
+        chi0=1.5,
+        gamma0=2.5,
+        j_values={"J1": 0.0, "J2": 0.0},
+        inverse_mode_energy_sq=inertia,
+    )
+    expected = damped_mode_susceptibility(
+        energy,
+        chi_static=1.5,
+        relaxation_energy=2.5,
+        inverse_mode_energy_sq=inertia,
+    )
+    np.testing.assert_allclose(response, expected, rtol=1e-12, atol=1e-14)
+    np.testing.assert_allclose(
+        heisenberg_rpa_chipp(
+            geometry,
+            energy,
+            chi0=1.5,
+            gamma0=2.5,
+            j_values={"J1": 0.0, "J2": 0.0},
+            inverse_mode_energy_sq=inertia,
+        ),
+        expected.imag,
+        rtol=1e-12,
+        atol=1e-14,
+    )
+
+
+def test_zero_inertia_complex_rpa_matches_historical_dissipative_path():
+    rng = np.random.default_rng(32)
+    geometry = _two_site_geometry(rng)
+    energy = rng.uniform(-5.0, 5.0, geometry.point_index.size)
+    kwargs = dict(chi0=0.4, gamma0=2.5, j_values={"J1": 0.12, "J2": -0.07})
+    response = heisenberg_rpa_susceptibility(
+        geometry, energy, inverse_mode_energy_sq=0.0, **kwargs
+    )
+    np.testing.assert_allclose(
+        response.imag,
+        heisenberg_rpa_chipp(geometry, energy, **kwargs),
+        rtol=1e-12,
+        atol=1e-14,
+    )
+
+
+def test_conserved_ferromagnetic_response_has_conserved_center_and_static_limit():
+    rho = np.array([0.0, 0.0, 0.25, 1.0])
+    energy = np.array([0.0, 2.0, 2.0, 2.0])
+    response = conserved_ferromagnetic_susceptibility(
+        rho,
+        energy,
+        chi_uniform=3.0,
+        gamma_scale=4.0,
+        damping_power=1.0,
+    )
+    assert response[0] == pytest.approx(3.0 + 0.0j)
+    assert response[1] == pytest.approx(0.0 + 0.0j)
+    assert np.all(response.imag[2:] > 0.0)
+    np.testing.assert_allclose(
+        conserved_ferromagnetic_chipp(
+            rho,
+            -energy,
+            chi_uniform=3.0,
+            gamma_scale=4.0,
+            damping_power=1.0,
+        ),
+        -response.imag,
+        rtol=1e-12,
+        atol=1e-14,
+    )
+
+
+def test_clean_and_diffusive_conserved_rates_have_expected_small_q_scaling():
+    rho = np.array([1.0e-3, 2.0e-3])
+    energy = 1.0e-8
+    clean = conserved_ferromagnetic_susceptibility(
+        rho, energy, chi_uniform=1.0, gamma_scale=2.0, damping_power=1.0
+    )
+    diffusive = conserved_ferromagnetic_susceptibility(
+        rho, energy, chi_uniform=1.0, gamma_scale=2.0, damping_power=2.0
+    )
+    # In the E << Gamma limit, Im(1/chi) = -E/Gamma. Its ratio therefore
+    # directly measures Gamma(2 rho)/Gamma(rho).
+    clean_rate_ratio = clean[0].imag / clean[1].imag
+    diffusive_rate_ratio = diffusive[0].imag / diffusive[1].imag
+    assert clean_rate_ratio == pytest.approx(2.0, rel=2e-5)
+    assert diffusive_rate_ratio == pytest.approx(4.0, rel=2e-5)
+
+
 def test_rpa_chain_matches_closed_form_dispersion():
     H = np.linspace(0.0, 1.0, 21)
     E = np.full(H.shape, 1.3)
@@ -448,22 +546,48 @@ def test_rpa_gradients_match_finite_differences():
     E = rng.uniform(0.3, 5.0, size=geometry.point_index.size)
     chi0, gamma0 = 0.4, 2.5
     j_values = {"J1": 0.12, "J2": -0.07}
+    inertia = 0.03
     _, grads = heisenberg_rpa_chipp_and_gradients(
-        geometry, E, chi0=chi0, gamma0=gamma0, j_values=j_values
+        geometry,
+        E,
+        chi0=chi0,
+        gamma0=gamma0,
+        j_values=j_values,
+        inverse_mode_energy_sq=inertia,
     )
 
-    def evaluate(chi0_, gamma0_, j_):
-        return heisenberg_rpa_chipp(geometry, E, chi0=chi0_, gamma0=gamma0_, j_values=j_)
+    def evaluate(chi0_, gamma0_, inertia_, j_):
+        return heisenberg_rpa_chipp(
+            geometry,
+            E,
+            chi0=chi0_,
+            gamma0=gamma0_,
+            j_values=j_,
+            inverse_mode_energy_sq=inertia_,
+        )
 
     h = 1e-6
     fd = {
-        "chi0": (evaluate(chi0 + h, gamma0, j_values) - evaluate(chi0 - h, gamma0, j_values)) / (2 * h),
-        "gamma0": (evaluate(chi0, gamma0 + h, j_values) - evaluate(chi0, gamma0 - h, j_values)) / (2 * h),
+        "chi0": (
+            evaluate(chi0 + h, gamma0, inertia, j_values)
+            - evaluate(chi0 - h, gamma0, inertia, j_values)
+        ) / (2 * h),
+        "gamma0": (
+            evaluate(chi0, gamma0 + h, inertia, j_values)
+            - evaluate(chi0, gamma0 - h, inertia, j_values)
+        ) / (2 * h),
+        "inverse_mode_energy_sq": (
+            evaluate(chi0, gamma0, inertia + h, j_values)
+            - evaluate(chi0, gamma0, inertia - h, j_values)
+        ) / (2 * h),
     }
     for label in j_values:
         plus = {**j_values, label: j_values[label] + h}
         minus = {**j_values, label: j_values[label] - h}
-        fd[label] = (evaluate(chi0, gamma0, plus) - evaluate(chi0, gamma0, minus)) / (2 * h)
+        fd[label] = (
+            evaluate(chi0, gamma0, inertia, plus)
+            - evaluate(chi0, gamma0, inertia, minus)
+        ) / (2 * h)
 
     for name, reference in fd.items():
         np.testing.assert_allclose(grads[name], reference, rtol=2e-6, atol=1e-9)
