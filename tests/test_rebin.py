@@ -257,11 +257,56 @@ def test_rebin_auto_backend_keeps_tiny_jobs_on_numpy(monkeypatch):
     import nfit.rebin as rebin_module
 
     monkeypatch.setattr(rebin_module, "NUMBA_REBIN_MIN_POINTS", 10)
+    monkeypatch.setattr(rebin_module, "NUMBA_REBIN_WARM_MIN_POINTS", 10)
+    monkeypatch.setattr(rebin_module, "_NUMBA_REBIN_WARM", False)
     tiny = rebin_nd(data=np.ones(9), coords=np.arange(9.0), num_bins=[3])
     large = rebin_nd(data=np.ones(10), coords=np.arange(10.0), num_bins=[3])
 
     assert tiny.resolved_backend == "numpy"
     assert large.resolved_backend == ("numba" if rebin_module._NUMBA_REBIN is not None else "numpy")
+
+
+def test_rebin_auto_backend_lowers_threshold_once_kernel_is_warm(monkeypatch):
+    """A warm kernel has no dispatch cost left to amortize, so small jobs use it."""
+
+    import nfit.rebin as rebin_module
+
+    pytest.importorskip("numba")
+    monkeypatch.setattr(rebin_module, "NUMBA_REBIN_MIN_POINTS", 1_000)
+    monkeypatch.setattr(rebin_module, "NUMBA_REBIN_WARM_MIN_POINTS", 10)
+
+    monkeypatch.setattr(rebin_module, "_NUMBA_REBIN_WARM", False)
+    cold = rebin_nd(data=np.ones(20), coords=np.arange(20.0), num_bins=[3])
+    monkeypatch.setattr(rebin_module, "_NUMBA_REBIN_WARM", True)
+    warm = rebin_nd(data=np.ones(20), coords=np.arange(20.0), num_bins=[3])
+
+    assert cold.resolved_backend == "numpy"
+    assert warm.resolved_backend == "numba"
+    np.testing.assert_allclose(warm.binned_data, cold.binned_data)
+
+
+def test_rebin_dense_workers_are_amortized_against_the_output_grid(monkeypatch):
+    """A small job into a large grid must not spawn a worker per core."""
+
+    import nfit.rebin as rebin_module
+
+    pytest.importorskip("numba")
+    rng = np.random.default_rng(3)
+    points = 2_000
+    coords = rng.random((points, 3))
+    binner = rebin_module.NDRebin(
+        rng.normal(size=points),
+        coords,
+        data_errs=np.ones(points),
+        lower=np.zeros(3),
+        upper=np.ones(3),
+        num_bins=[40] * 3,
+        backend="numba",
+        workers=16,
+    )
+    binner.run()
+    assert binner.resolved_workers == 1
+    assert binner.resolved_parallel_strategy == "serial"
 
 
 def test_fused_backend_does_not_allocate_full_bin_index_array():

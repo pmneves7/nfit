@@ -152,12 +152,16 @@ while a larger target can reduce batching overhead but raises peak memory. The
 best value depends on the dataset size, output grid size, dimensionality, and
 available memory.
 
-`NDRebin` adaptively selects its CPU implementation. Small jobs use the NumPy
-backend to avoid JIT startup overhead. When optional Numba support is installed,
-jobs with at least 500,000 source points use a fused kernel that streams
-each batch directly into the four output accumulators. This avoids both the
-full point-by-dimension bin-index array and the repeated output-grid-sized
-`bincount` temporaries used by the NumPy implementation. Pass
+`NDRebin` adaptively selects its CPU implementation. When optional Numba support
+is installed, jobs above a size threshold use a fused kernel that streams each
+batch directly into the four output accumulators. This avoids both the full
+point-by-dimension bin-index array and the repeated output-grid-sized
+`bincount` temporaries used by the NumPy implementation, and is several times
+faster at every size measured. The only reason to prefer NumPy is the one-time
+cost of loading the cached kernel and specializing it for the argument types, so
+the threshold is 100,000 source points for the first rebin in a process and
+2,000 afterwards; a background warm-up dispatches the kernel during the first
+NumPy rebin so an interactive session reaches the fast path quickly. Pass
 `backend="numpy"` or `backend="numba"` to force a backend for testing and
 benchmarking; requesting unavailable Numba falls back to NumPy. The result's
 `resolved_backend` records the implementation used, and `timings` reports
@@ -169,9 +173,13 @@ point tier is opt-in with `--sizes 100 500000 50000000`.
 
 Large in-memory jobs also use adaptive threaded reduction. Dense reduction gives
 each worker private output accumulators and is selected only when those arrays
-fit within `max_parallel_bytes` (512 MB by default). If dense copies do not fit,
-auto mode uses sparse touched-bin maps only when estimated occupancy is at most
-5% and the maps fit the same budget; otherwise it runs the fused kernel on one
+fit within `max_parallel_bytes` (512 MB by default). Those accumulators are
+allocated once per run and reduced once at the end, and auto mode additionally
+caps the worker count against the number of source contributions per output
+bin, because each worker has to pay for zeroing and reducing its own copy of
+the grid. If dense copies do not fit, auto mode uses sparse touched-bin maps
+only when estimated occupancy is at most 5% and the maps fit the same budget;
+otherwise it runs the fused kernel on one
 worker. With `workers=None`, the shared `NFIT_NUM_THREADS` setting, Linux CPU
 affinity, cgroups, and SLURM allocations set the worker ceiling. Explicit worker
 counts and `parallel_strategy="serial"`, `"dense"`, or `"sparse"` are useful

@@ -199,7 +199,29 @@ def _batched_hermitian_eigh_parallel(matrices):
 
 
 @njit(parallel=True, cache=True, fastmath=False)
-def _rpa_value_kernel_parallel(lam, modes, point_index, energy, chi0, gamma0):
+def _mode_amplitudes_parallel(modes):
+    """Return the uniform sublattice amplitude ``sum_a U_{a nu}(Q)`` per mode.
+
+    Shape ``(n_q, n_sites)``. This depends only on Q, so hoisting it out of the
+    per-point kernels below turns their inner work from ``O(N^2)`` to ``O(N)``
+    per fitted point. The accumulation order over ``a`` matches what those
+    kernels used to do inline, so the results are unchanged bit for bit.
+    """
+
+    n_q = modes.shape[0]
+    n_sites = modes.shape[1]
+    amplitudes = np.empty((n_q, n_sites), dtype=np.complex128)
+    for q in prange(n_q):
+        for nu in range(n_sites):
+            amp = 0.0 + 0.0j
+            for a in range(n_sites):
+                amp += modes[q, a, nu]
+            amplitudes[q, nu] = amp
+    return amplitudes
+
+
+@njit(parallel=True, cache=True, fastmath=False)
+def _rpa_value_kernel_parallel(lam, amplitudes, point_index, energy, chi0, gamma0):
     """Return ``chi''`` per point (uniform-weight RPA mode sum)."""
 
     n_points = energy.shape[0]
@@ -212,9 +234,7 @@ def _rpa_value_kernel_parallel(lam, modes, point_index, energy, chi0, gamma0):
         f = chi0 / (1.0 - 1j * e * inv_gamma)
         phi_x = 0.0 + 0.0j
         for nu in range(n_sites):
-            amp = 0.0 + 0.0j
-            for a in range(n_sites):
-                amp += modes[q, a, nu]
+            amp = amplitudes[q, nu]
             amp_sq = amp.real * amp.real + amp.imag * amp.imag
             denom = 1.0 - f * lam[q, nu]
             phi_x += amp_sq / denom
@@ -248,6 +268,9 @@ def _rpa_value_grad_kernel_parallel(lam, modes, point_index, energy, phases, chi
         phi_x = 0.0 + 0.0j
         z_j_x = 0.0 + 0.0j
         for nu in range(n_sites):
+            # Kept inline here (unlike the value kernel): this loop reads the
+            # same modes[q] rows the resolvent contraction below needs anyway,
+            # so hoisting it costs an extra array read and buys nothing.
             amp = 0.0 + 0.0j
             for a in range(n_sites):
                 amp += modes[q, a, nu]
@@ -286,15 +309,83 @@ def _rpa_value_grad_kernel_parallel(lam, modes, point_index, energy, phases, chi
     return chipp, grad_chi0, grad_gamma0, grad_j
 
 
+@njit(parallel=True, cache=True, fastmath=False)
+def _tensor_unpolarized_chipp_parallel(
+    lam, amplitudes, point_index, energy, q_hat, chi0, gamma0, n_sites
+):
+    """Return the unpolarized tensor-RPA ``chi''`` per point.
+
+    ``amplitudes[q, alpha, nu]`` are the uniform Cartesian mode amplitudes
+    ``w_{alpha nu}(Q)`` of the ``3N``-dimensional interaction matrix. Each point
+    builds its own ``3 x 3`` susceptibility in registers and contracts it with
+    the unpolarized projector ``delta - Qhat Qhat`` immediately, so nothing of
+    size ``(n_points, 3, 3N)`` or ``(n_points, 3, 3)`` is ever materialized.
+    """
+
+    n_points = energy.shape[0]
+    dim = lam.shape[1]
+    chipp = np.empty(n_points, dtype=np.float64)
+    inv_gamma = 1.0 / gamma0
+    for p in prange(n_points):
+        q = point_index[p]
+        e = energy[p]
+        f = chi0 / (1.0 - 1j * e * inv_gamma)
+        chi = np.zeros((3, 3), dtype=np.complex128)
+        for nu in range(dim):
+            weight = f / (1.0 - f * lam[q, nu])
+            for a in range(3):
+                scaled = amplitudes[q, a, nu] * weight
+                for b in range(3):
+                    chi[a, b] += scaled * np.conj(amplitudes[q, b, nu])
+        qx = q_hat[p, 0]
+        qy = q_hat[p, 1]
+        qz = q_hat[p, 2]
+        # Points at Q = 0 carry a zero direction and take the isotropic average.
+        zero_q = (qx * qx + qy * qy + qz * qz) <= 0.0
+        total = 0.0
+        for a in range(3):
+            qa = qx if a == 0 else (qy if a == 1 else qz)
+            for b in range(3):
+                dissipative = (chi[a, b] - np.conj(chi[b, a])) / 2.0j
+                if zero_q:
+                    weight_ab = (2.0 / 3.0) if a == b else 0.0
+                else:
+                    qb = qx if b == 0 else (qy if b == 1 else qz)
+                    weight_ab = (1.0 if a == b else 0.0) - qa * qb
+                total += weight_ab * dissipative.real
+        chipp[p] = total / n_sites
+    return chipp
+
+
 def batched_hermitian_eigh(matrices):
     return _run_parallel_kernel(_batched_hermitian_eigh_parallel, matrices)
 
 
-def rpa_value_kernel(lam, modes, point_index, energy, chi0, gamma0):
+def tensor_unpolarized_chipp_kernel(
+    lam, amplitudes, point_index, energy, q_hat, chi0, gamma0, n_sites
+):
+    return _run_parallel_kernel(
+        _tensor_unpolarized_chipp_parallel,
+        lam,
+        amplitudes,
+        point_index,
+        energy,
+        q_hat,
+        chi0,
+        gamma0,
+        n_sites,
+    )
+
+
+def mode_amplitudes(modes):
+    return _run_parallel_kernel(_mode_amplitudes_parallel, modes)
+
+
+def rpa_value_kernel(lam, amplitudes, point_index, energy, chi0, gamma0):
     return _run_parallel_kernel(
         _rpa_value_kernel_parallel,
         lam,
-        modes,
+        amplitudes,
         point_index,
         energy,
         chi0,

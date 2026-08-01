@@ -38,13 +38,14 @@ from __future__ import annotations
 import copy
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import numpy as np
 
 from .cross_section import (
     MILLIBARN_PER_BARN,
+    bose_denominator,
     cross_section_from_chipp,
     intensity_from_chipp,
     kf_over_ki,
@@ -1199,8 +1200,17 @@ def _spectral_model_observable(
     form_factor_sq: float | np.ndarray,
     polarization: float | np.ndarray,
     legacy: str = "intensity",
+    bose_denominator_values: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Map a model's canonical ``chi''`` to the selected dataset channel."""
+    """Map a model's canonical ``chi''`` to the selected dataset channel.
+
+    ``bose_denominator_values`` optionally supplies the dataset's already
+    evaluated ``1 - exp(-E/kT)``. It depends only on the fitted points, never
+    on the model parameters, so evaluators that call this once per optimizer
+    iteration can hoist it out of the loop (see
+    :meth:`_RpaComponentEvaluator._bose_denominator`). The arithmetic is
+    unchanged either way.
+    """
 
     convention = data.metadata.get("spectral_observable")
     if not isinstance(convention, dict):
@@ -1212,6 +1222,7 @@ def _spectral_model_observable(
             _dataset_temperature(data),
             form_factor_sq=form_factor_sq,
             polarization=polarization,
+            bose_denominator_values=bose_denominator_values,
         )
     # Model kernels return a spin-operator response. Convert it to the
     # dataset's declared response convention exactly once.
@@ -1248,6 +1259,7 @@ def _spectral_model_observable(
         # channel's display convention.
         moment_unit="spin_squared",
         g_factor=g_factor,
+        bose_denominator_values=bose_denominator_values,
     )
     unit = str(convention.get("unit", ""))
     if unit.startswith("mbarn/"):
@@ -2120,6 +2132,56 @@ class _RpaComponentEvaluator:
         # cache holds a reference to the data object and verifies identity on
         # lookup, so the id() key can never alias a freed-then-reused object.
         self._geometry_cache: dict[int, tuple[PointData4D, Any, Any, Any, int]] = {}
+        # Same identity-checked pattern for the dataset's Bose denominator: it
+        # is a function of (E, T) alone, so it is constant across a fit while
+        # being one of the most expensive per-evaluation array operations.
+        self._bose_cache: dict[int, tuple[PointData4D, np.ndarray]] = {}
+        self._intensity_per_chipp_cache: dict[int, tuple[PointData4D, np.ndarray]] = {}
+
+    def _bose_denominator(self, data: PointData4D) -> np.ndarray | None:
+        """Cached ``1 - exp(-E/kT)`` for ``data``, or ``None`` when unusable.
+
+        Returns ``None`` for datasets whose channel convention does not apply
+        the Bose factor, so the caller simply forwards ``None`` and the
+        conversion behaves exactly as before.
+        """
+
+        convention = data.metadata.get("spectral_observable")
+        if isinstance(convention, dict) and (
+            convention.get("fit_representation") == "chi_double_prime"
+        ):
+            return None
+        cached = self._bose_cache.get(id(data))
+        if cached is not None and cached[0] is data:
+            return cached[1]
+        if len(self._bose_cache) > 32:
+            self._bose_cache.clear()
+        values = bose_denominator(data.E, _dataset_temperature(data))
+        self._bose_cache[id(data)] = (data, values)
+        return values
+
+    def _intensity_per_chipp(
+        self, data: PointData4D, form_factor_sq: float | np.ndarray
+    ) -> np.ndarray:
+        """Cached ``d(intensity)/d(chi'')``, the channel map's linear factor."""
+
+        cached = self._intensity_per_chipp_cache.get(id(data))
+        if cached is not None and cached[0] is data:
+            return cached[1]
+        if len(self._intensity_per_chipp_cache) > 32:
+            self._intensity_per_chipp_cache.clear()
+        factor = np.asarray(
+            _spectral_model_observable(
+                data,
+                np.ones(data.size, dtype=float),
+                form_factor_sq=form_factor_sq,
+                polarization=ISOTROPIC_POLARIZATION,
+                bose_denominator_values=self._bose_denominator(data),
+            ),
+            dtype=float,
+        )
+        self._intensity_per_chipp_cache[id(data)] = (data, factor)
+        return factor
 
     def _geometry(self, data: PointData4D) -> tuple[Any, Any, Any, int]:
         cached = self._geometry_cache.get(id(data))
@@ -2140,8 +2202,17 @@ class _RpaComponentEvaluator:
             reciprocal_matrix = _powder_reciprocal_matrix(data, self._lattice)
             directions = _powder_sphere_directions(powder_count)
             q_modulus = np.asarray(q_modulus_inv_angstrom(data), dtype=float)
+            # Powder points sharing a |Q| generate exactly the same sphere of
+            # sampled directions, so collapse |Q| first and orient only the
+            # distinct moduli. A powder S(|Q|, E) map has one |Q| per momentum
+            # bin repeated over every energy bin, so this shrinks the grid the
+            # geometry has to deduplicate by the number of energy bins -- the
+            # sampled directions, the resulting HKL values, and the per-point
+            # mapping below are unchanged.
+            unique_modulus, modulus_inverse = np.unique(q_modulus, return_inverse=True)
+            modulus_inverse = np.asarray(modulus_inverse, dtype=np.intp).ravel()
             q_cartesian = (
-                q_modulus[:, None, None] * directions[None, :, :]
+                unique_modulus[:, None, None] * directions[None, :, :]
             ).reshape(-1, 3)
             hkl = q_cartesian @ np.linalg.inv(reciprocal_matrix).T
             geometry = build_rpa_geometry(
@@ -2150,6 +2221,16 @@ class _RpaComponentEvaluator:
                 hkl[:, 2],
                 self.site_positions,
                 self.orbits,
+            )
+            # Re-expand to one row per (fitted point, orientation), keeping the
+            # orientation-major layout that _powder_average averages over.
+            geometry = replace(
+                geometry,
+                point_index=np.ascontiguousarray(
+                    geometry.point_index.reshape(unique_modulus.size, powder_count)[
+                        modulus_inverse
+                    ].ravel()
+                ),
             )
         else:
             geometry = build_rpa_geometry(
@@ -2817,6 +2898,7 @@ class _RpaComponentEvaluator:
             response,
             form_factor_sq=form_factor_sq,
             polarization=polarization,
+            bose_denominator_values=self._bose_denominator(data),
         )
 
     def _static_chi_grid_and_q0(
@@ -3032,16 +3114,9 @@ class _RpaComponentEvaluator:
         }
         # Intensity is linear in chi''. Compute its derivative directly rather
         # than dividing by chi'', which would be singular at response nodes.
-        ones = np.ones(data.size, dtype=float)
-        d_intensity_d_chipp = np.asarray(
-            _spectral_model_observable(
-                data,
-                ones,
-                form_factor_sq=form_factor_sq,
-                polarization=ISOTROPIC_POLARIZATION,
-            ),
-            dtype=float,
-        )
+        # Nothing in it depends on the fitted parameters, so it is cached for
+        # the lifetime of the dataset instead of rebuilt per Jacobian call.
+        d_intensity_d_chipp = self._intensity_per_chipp(data, form_factor_sq)
         columns = {}
         columns[self.chi0_key] = d_intensity_d_chipp * chipp_grads["chi0"]
         columns[self.gamma0_key] = d_intensity_d_chipp * chipp_grads["gamma0"]

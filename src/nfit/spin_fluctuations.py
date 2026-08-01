@@ -219,12 +219,14 @@ def _use_numba_eigh(n_batch: int, n_sites: int) -> bool:
 # Batched ``eigh`` over the unique-Q grid dominates the RPA evaluation cost.
 # numpy loops over the batch in a single thread, but each small Hermitian
 # decomposition releases the GIL, so chunking across a thread pool can give a
-# near-linear speedup. It is only worth the dispatch overhead when the total
-# work M * N^3 is large enough: for tiny matrices (e.g. N=4 after primitive-cell
-# reduction) the per-chunk cost is so small that threading is a net loss, so we
-# gate on the work estimate rather than the batch count alone (measured
-# crossover is around N=8 at M~1e5).
-_EIGH_THREAD_WORK = 5.0e7
+# near-linear speedup. What decides whether that pays is the *matrix* size, not
+# the total work: for tiny matrices (N=4 after primitive-cell reduction) each
+# LAPACK call is so short that dispatch dominates and threading loses ~1.5x at
+# every batch size, N=8 breaks even, and from N=12 up threading wins (measured
+# 1.4x at N=12, 2.1x at N=16, 4.2x at N=24) already at a few hundred matrices.
+# The batch floor only avoids spinning up the pool for a handful of matrices.
+_EIGH_THREAD_MIN_SITES = 12
+_EIGH_THREAD_MIN_BATCH = 64
 
 # Parallel worker budget for the RPA kernels. ``None`` means auto-detect. Auto
 # uses the number of CPUs the process is actually *allowed* to run on -- on
@@ -307,7 +309,11 @@ def _batched_eigh(matrices: ComplexArray) -> tuple[FloatArray, ComplexArray]:
     workers = _thread_budget()
     batch = matrices.shape[0]
     n_sites = matrices.shape[-1]
-    if workers <= 1 or batch * n_sites**3 < _EIGH_THREAD_WORK:
+    if (
+        workers <= 1
+        or n_sites < _EIGH_THREAD_MIN_SITES
+        or batch < _EIGH_THREAD_MIN_BATCH
+    ):
         return np.linalg.eigh(matrices)
     chunks = np.array_split(matrices, workers * 4, axis=0)
     # Pin the underlying BLAS/LAPACK to one thread per call for the duration of
@@ -594,6 +600,30 @@ class RpaGeometry:
     unique_hkl: FloatArray | None = None
     """``(n_q, 3)`` HKL of each unique Q row (RLU); needed for the tensor path's
     Cartesian Q-hat polarization factor and for the Ewald dipole sum."""
+
+
+def unique_rows_with_inverse(rows: ArrayLike) -> tuple[FloatArray, NDArray[np.intp]]:
+    """Return the lexicographically sorted unique rows and the inverse map.
+
+    Equivalent to ``numpy.unique(rows, axis=0, return_inverse=True)`` -- same
+    row order, same inverse indices -- but several times faster, because it
+    sorts once with :func:`numpy.lexsort` instead of going through NumPy's
+    void-view consolidation. Deduplicating the fitted Q grid is the dominant
+    cost of :func:`build_rpa_geometry` on multi-million-point datasets.
+    """
+
+    contiguous = np.ascontiguousarray(np.asarray(rows, dtype=float))
+    if contiguous.shape[0] == 0:
+        return contiguous.copy(), np.empty(0, dtype=np.intp)
+    order = np.lexsort(contiguous.T[::-1])
+    ordered = contiguous[order]
+    is_new = np.empty(ordered.shape[0], dtype=bool)
+    is_new[0] = True
+    np.any(ordered[1:] != ordered[:-1], axis=1, out=is_new[1:])
+    group = np.cumsum(is_new) - 1
+    inverse = np.empty(order.size, dtype=np.intp)
+    inverse[order] = group
+    return ordered[is_new], inverse
 
 
 def _site_positions(sites: ArrayLike) -> FloatArray:
@@ -958,8 +988,7 @@ def build_rpa_geometry(
             np.asarray(L, dtype=float).ravel(),
         ]
     )
-    unique_hkl, point_index = np.unique(hkl, axis=0, return_inverse=True)
-    point_index = np.asarray(point_index, dtype=np.intp).ravel()
+    unique_hkl, point_index = unique_rows_with_inverse(hkl)
 
     bond_phases: dict[str, ComplexArray] = {}
     for orbit in orbits:
@@ -1087,6 +1116,23 @@ def _rpa_modes(
     return lam, modes
 
 
+def _mode_amplitudes(geometry: RpaGeometry, modes: ComplexArray) -> ComplexArray:
+    """Return ``(n_q, n_sites)`` uniform sublattice amplitudes, memoized.
+
+    ``sum_a U_{a nu}(Q)`` depends only on the eigenvectors, so it is computed
+    once per eigendecomposition rather than once per fitted point. Keyed on the
+    identity of the ``modes`` array, which :func:`_rpa_modes` already caches per
+    exchange-parameter set.
+    """
+
+    cached = geometry.__dict__.get("_mode_amplitude_cache")
+    if cached is not None and cached[0] is modes:
+        return cached[1]
+    amplitudes = _NUMBA_KERNELS.mode_amplitudes(np.ascontiguousarray(modes))
+    geometry.__dict__["_mode_amplitude_cache"] = (modes, amplitudes)
+    return amplitudes
+
+
 def _stacked_phases(geometry: RpaGeometry, labels: Sequence[str]) -> ComplexArray:
     """Return the ``(n_orbits, n_q, N, N)`` phase stack, memoized per geometry."""
 
@@ -1134,10 +1180,9 @@ def heisenberg_rpa_chipp(
 
     backend = _select_rpa_backend(energy.shape[0])
     if backend == "numba":
+        amplitudes = _mode_amplitudes(geometry, modes)
         return np.asarray(
-            _NUMBA_KERNELS.rpa_value_kernel(
-                lam, np.ascontiguousarray(modes), idx, energy, chi0, gamma0
-            ),
+            _NUMBA_KERNELS.rpa_value_kernel(lam, amplitudes, idx, energy, chi0, gamma0),
             dtype=float,
         )
     if backend == "cupy":

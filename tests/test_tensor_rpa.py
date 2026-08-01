@@ -59,6 +59,75 @@ def test_tensor_heisenberg_only_matches_scalar_intensity():
     np.testing.assert_allclose(tensor, 2.0 * scalar, rtol=1e-11, atol=1e-14)
 
 
+def test_tensor_fused_kernel_matches_the_numpy_reference():
+    """The Numba unpolarized kernel reproduces the blocked NumPy path.
+
+    The fused kernel only engages above the automatic point threshold, so this
+    forces the backend rather than building a multi-million-point dataset. The
+    grid deliberately includes ``Q = 0``, which takes the kernel's separate
+    isotropic-average branch.
+    """
+
+    pytest.importorskip("numba")
+    from nfit.spin_fluctuations import rpa_backend, set_rpa_backend
+
+    rng = np.random.default_rng(11)
+    positions = [[0.0, 0.0, 0.0], [0.31, 0.47, 0.11], [0.6, 0.2, 0.8]]
+    orbits = [
+        {"label": "J1", "bonds": [
+            {"site_i": 0, "site_j": 1, "offset": [0, 0, 0]},
+            {"site_i": 1, "site_j": 2, "offset": [0, -1, 0]}]},
+        {"label": "J2", "bonds": [{"site_i": 0, "site_j": 2, "offset": [0, 0, 1]}]},
+    ]
+    hkl = np.vstack([np.zeros((3, 3)), rng.uniform(-2.0, 2.0, size=(120, 3))])
+    geometry = build_rpa_geometry(hkl[:, 0], hkl[:, 1], hkl[:, 2], positions, orbits)
+    structure = build_tensor_structure(geometry, positions, orbits)
+    q_hat = cartesian_qhat_per_point(geometry, np.eye(3))
+    E = rng.uniform(0.3, 5.0, size=geometry.point_index.size)
+    values = {"J1": 0.12, "J2": -0.07}
+    kwargs = dict(chi0=0.4, gamma0=2.5)
+
+    original = rpa_backend()
+    try:
+        set_rpa_backend("numpy")
+        reference = tensor_rpa_unpolarized_chipp(
+            structure, geometry, E, q_hat, param_values=values, **kwargs
+        )
+        set_rpa_backend("numba")
+        fused = tensor_rpa_unpolarized_chipp(
+            structure, geometry, E, q_hat, param_values=values, **kwargs
+        )
+    finally:
+        set_rpa_backend(original)
+
+    assert np.any(np.linalg.norm(q_hat, axis=1) == 0.0)
+    np.testing.assert_allclose(fused, reference, rtol=1e-11, atol=1e-14)
+
+
+def test_tensor_fused_kernel_reports_rpa_instability():
+    """The fused path keeps the stability guard of the NumPy path."""
+
+    pytest.importorskip("numba")
+    from nfit.spin_fluctuations import rpa_backend, set_rpa_backend
+
+    rng = np.random.default_rng(5)
+    positions, orbits, geometry = _two_site_geometry(rng)
+    structure = build_tensor_structure(geometry, positions, orbits)
+    q_hat = cartesian_qhat_per_point(geometry, np.eye(3))
+    E = rng.uniform(0.3, 5.0, size=geometry.point_index.size)
+
+    original = rpa_backend()
+    try:
+        set_rpa_backend("numba")
+        with pytest.raises(ValueError, match="RPA instability"):
+            tensor_rpa_unpolarized_chipp(
+                structure, geometry, E, q_hat,
+                param_values={"J1": 5.0, "J2": 5.0}, chi0=10.0, gamma0=2.5,
+            )
+    finally:
+        set_rpa_backend(original)
+
+
 def test_tensor_q_zero_uses_isotropic_polarization_average():
     geometry = build_rpa_geometry(
         [0.0],

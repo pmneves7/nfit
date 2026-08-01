@@ -35,7 +35,17 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .crystal import cartesian_rotation
-from .spin_fluctuations import RpaGeometry, _batched_eigh, _use_numba_eigh
+from .spin_fluctuations import (
+    RpaGeometry,
+    _batched_eigh,
+    _select_rpa_backend,
+    _use_numba_eigh,
+)
+
+try:  # optional acceleration, mirroring the scalar path
+    from . import _rpa_numba as _NUMBA_KERNELS
+except Exception:  # pragma: no cover - numba not installed
+    _NUMBA_KERNELS = None
 
 FloatArray = NDArray[np.float64]
 ComplexArray = NDArray[np.complex128]
@@ -253,6 +263,52 @@ def _tensor_eigh(matrices: ComplexArray) -> tuple[FloatArray, ComplexArray]:
     return _batched_eigh(matrices)
 
 
+# Target complex elements per point block, matching the scalar path's budget:
+# block * 3N stays near this so the (block, 3, 3N) temporaries hold a few tens
+# of megabytes regardless of dataset size.
+_TENSOR_BLOCK_ELEMENTS = 2.0e6
+
+
+def _tensor_point_block(dim: int, n_points: int) -> int:
+    """Point-block size bounding the ``(block, 3, 3N)`` tensor temporaries."""
+
+    budget = int(_TENSOR_BLOCK_ELEMENTS / max(dim, 1))
+    return max(1, min(n_points, budget))
+
+
+def _tensor_modes(
+    structure: TensorStructure,
+    geometry: RpaGeometry,
+    param_values: Mapping[str, float],
+    *,
+    chi0: float,
+    lambda_shift: float = 0.0,
+) -> tuple[FloatArray, ComplexArray]:
+    """Eigen-factor the tensor ``J(Q)`` and return ``(lam, amplitudes)``.
+
+    ``amplitudes`` is ``(n_q, 3, 3N)``: the uniform Cartesian mode amplitude
+    ``w_{alpha nu}(Q) = sum_a U[(a alpha), nu]``, which is all the per-point
+    kernels need from the eigenvectors. Raises on RPA instability
+    (``1 - lam chi0 <= 0``).
+    """
+
+    exchange = assemble_tensor_exchange(structure, param_values)
+    lam, modes = _tensor_eigh(exchange)  # (n_q, 3N), (n_q, 3N, 3N)
+    if lambda_shift != 0.0:
+        lam = lam - lambda_shift
+    if np.any(1.0 - lam * chi0 <= 0.0):
+        raise ValueError(
+            "RPA instability: 1 - lambda(Q) * chi0 <= 0 "
+            f"(max lambda * chi0 = {float(np.max(lam * chi0)):.6g}); the "
+            "parameters describe a magnetically ordered state"
+        )
+    n_sites = structure.n_sites
+    # Sum over sites within each of the 3 Cartesian rows.
+    # modes shape (n_q, 3N, 3N) = (q, (a, alpha), nu).
+    amplitudes = modes.reshape(geometry.n_q, n_sites, 3, 3 * n_sites).sum(axis=1)
+    return lam, amplitudes
+
+
 def tensor_susceptibility(
     structure: TensorStructure,
     geometry: RpaGeometry,
@@ -273,34 +329,30 @@ def tensor_susceptibility(
     computation untouched.
     """
 
-    exchange = assemble_tensor_exchange(structure, param_values)
-    lam, modes = _tensor_eigh(exchange)  # (n_q, 3N), (n_q, 3N, 3N)
-    if lambda_shift != 0.0:
-        lam = lam - lambda_shift
-    if np.any(1.0 - lam * chi0 <= 0.0):
-        raise ValueError(
-            "RPA instability: 1 - lambda(Q) * chi0 <= 0 "
-            f"(max lambda * chi0 = {float(np.max(lam * chi0)):.6g}); the "
-            "parameters describe a magnetically ordered state"
-        )
-
-    n_sites = structure.n_sites
-    # Uniform Cartesian amplitude of each mode: sum over sites within each of
-    # the 3 Cartesian rows. modes shape (n_q, 3N, 3N) = (q, (a,alpha), nu).
-    amplitudes = modes.reshape(geometry.n_q, n_sites, 3, 3 * n_sites).sum(axis=1)
-    # amplitudes: (n_q, 3, 3N) = w_{alpha nu}(Q)
-
-    idx = geometry.point_index
-    f = chi0 / (1.0 - 1j * energy / gamma0)  # (n_points,)
-    lam_pts = lam[idx]  # (n_points, 3N)
-    denom = 1.0 - f[:, None] * lam_pts  # (n_points, 3N)
-    weight = f[:, None] / denom  # chi0(w)/(1 - chi0(w) lam), (n_points, 3N)
-    amp_pts = amplitudes[idx]  # (n_points, 3, 3N)
-
-    chi = (
-        np.einsum("pan,pn,pbn->pab", amp_pts, weight, np.conj(amp_pts))
-        / n_sites
+    lam, amplitudes = _tensor_modes(
+        structure, geometry, param_values, chi0=chi0, lambda_shift=lambda_shift
     )
+    n_sites = structure.n_sites
+    idx = geometry.point_index
+    n_points = energy.shape[0]
+
+    chi = np.empty((n_points, 3, 3), dtype=complex)
+    # Blocked so the per-point (block, 3, 3N) gathers stay bounded: at a few
+    # million points the unblocked form allocated hundreds of megabytes of
+    # complex temporaries. Every point is independent, so the values are
+    # unchanged.
+    block = _tensor_point_block(3 * n_sites, n_points)
+    for start in range(0, n_points, block):
+        stop = min(start + block, n_points)
+        sel = slice(start, stop)
+        idx_c = idx[sel]
+        f = chi0 / (1.0 - 1j * energy[sel] / gamma0)  # (block,)
+        denom = 1.0 - f[:, None] * lam[idx_c]  # (block, 3N)
+        weight = f[:, None] / denom  # chi0(w)/(1 - chi0(w) lam)
+        amp_c = amplitudes[idx_c]  # (block, 3, 3N)
+        chi[sel] = (
+            np.einsum("pan,pn,pbn->pab", amp_c, weight, np.conj(amp_c)) / n_sites
+        )
     return chi
 
 
@@ -509,7 +561,32 @@ def tensor_rpa_unpolarized_chipp(
 
     ``q_hat`` is the Cartesian unit momentum-transfer direction per fitted
     point. The isotropic limit equals ``2 chi''_scalar`` (continuity lock).
+
+    Large problems use a fused Numba kernel that builds each point's ``3 x 3``
+    susceptibility and contracts it with the projector in one pass, avoiding
+    the ``(n_points, 3, 3N)`` and ``(n_points, 3, 3)`` intermediates of the
+    NumPy path. Both agree to floating-point precision (locked by the test
+    suite); the NumPy path remains the reference and the only path on installs
+    without Numba.
     """
+
+    if _NUMBA_KERNELS is not None and _select_rpa_backend(energy.shape[0]) != "numpy":
+        lam, amplitudes = _tensor_modes(
+            structure, geometry, param_values, chi0=chi0, lambda_shift=lambda_shift
+        )
+        return np.asarray(
+            _NUMBA_KERNELS.tensor_unpolarized_chipp_kernel(
+                lam,
+                np.ascontiguousarray(amplitudes),
+                geometry.point_index,
+                np.ascontiguousarray(energy, dtype=float),
+                np.ascontiguousarray(q_hat, dtype=float),
+                float(chi0),
+                float(gamma0),
+                structure.n_sites,
+            ),
+            dtype=float,
+        )
 
     chi = tensor_susceptibility(
         structure,

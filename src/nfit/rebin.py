@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
@@ -24,7 +25,69 @@ except Exception:  # Numba is optional; NumPy remains the portable fallback.
     _NUMBA_REBIN = None
 
 
-NUMBA_REBIN_MIN_POINTS = 500_000
+NUMBA_REBIN_MIN_POINTS = 100_000
+"""Source points needed before ``backend="auto"`` first reaches for Numba.
+
+The fused kernel bins 6-16x faster than the NumPy path at every size measured,
+so the only reason to prefer NumPy is the one-time cost of loading the cached
+kernel and specializing it for the argument types (~60 ms in a fresh process).
+This threshold covers that first call; once the kernel is resident the cost is
+gone and :data:`NUMBA_REBIN_WARM_MIN_POINTS` applies instead, which is what
+matters for a GUI session or a fit that rebins repeatedly.
+"""
+
+NUMBA_REBIN_WARM_MIN_POINTS = 2_000
+"""Threshold used once the Numba rebin kernel has been dispatched in-process."""
+
+_NUMBA_REBIN_WARM = False
+_NUMBA_WARMUP_LOCK = threading.Lock()
+_NUMBA_WARMUP_STARTED = False
+
+
+def _numba_min_points() -> int:
+    """Points required for automatic Numba selection, given kernel warmth."""
+
+    return NUMBA_REBIN_WARM_MIN_POINTS if _NUMBA_REBIN_WARM else NUMBA_REBIN_MIN_POINTS
+
+
+def _mark_numba_warm() -> None:
+    global _NUMBA_REBIN_WARM
+    _NUMBA_REBIN_WARM = True
+
+
+def _warm_numba_kernel() -> None:
+    """Dispatch the fused kernel once on a trivial input, off the hot path.
+
+    Small rebins would otherwise never reach the fast kernel: they fall below
+    the cold threshold, and nothing else in a plotting or slicing session is
+    large enough to specialize it. One short-lived daemon thread does that
+    while the current (NumPy) rebin runs, so every later rebin -- however
+    small -- takes the 6-16x faster path.
+    """
+
+    global _NUMBA_WARMUP_STARTED
+    if _NUMBA_REBIN is None or _NUMBA_REBIN_WARM:
+        return
+    with _NUMBA_WARMUP_LOCK:
+        if _NUMBA_WARMUP_STARTED:
+            return
+        _NUMBA_WARMUP_STARTED = True
+
+    def warm() -> None:
+        try:
+            for fractional in (True, False):
+                for inverse_variance in (True, False):
+                    _NUMBA_REBIN.accumulate_batch(
+                        np.zeros((1, 1)), np.zeros(1), np.ones(1), np.ones(1),
+                        np.zeros(1), np.ones(1), np.ones(1),
+                        np.ones(1, dtype=np.int64), fractional, inverse_variance,
+                        np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1),
+                    )
+            _mark_numba_warm()
+        except Exception:  # pragma: no cover - warm-up must never break a rebin
+            pass
+
+    threading.Thread(target=warm, name="nfit-rebin-warmup", daemon=True).start()
 
 
 @dataclass(frozen=True)
@@ -173,9 +236,12 @@ class NDRebin:
         list for all source points at once.
     backend:
         CPU implementation: ``"numpy"``, optional fused ``"numba"``, or
-        ``"auto"``. Automatic mode keeps small jobs on NumPy and selects Numba
-        for at least 500,000 source points when it is installed. The selected
-        implementation is exposed as ``resolved_backend`` after preparation.
+        ``"auto"``. Automatic mode selects Numba from
+        :data:`NUMBA_REBIN_MIN_POINTS` source points, dropping to
+        :data:`NUMBA_REBIN_WARM_MIN_POINTS` once the kernel has been dispatched
+        in this process and its one-time specialization cost is spent. The
+        selected implementation is exposed as ``resolved_backend`` after
+        preparation.
 
     Notes
     -----
@@ -353,8 +419,10 @@ class NDRebin:
             return "numpy"
         if self.backend == "numba":
             return "numba" if _NUMBA_REBIN is not None else "numpy"
-        if _NUMBA_REBIN is not None and self.Nvals >= NUMBA_REBIN_MIN_POINTS:
+        if _NUMBA_REBIN is not None and self.Nvals >= _numba_min_points():
             return "numba"
+        if _NUMBA_REBIN is not None and self.Nvals >= NUMBA_REBIN_WARM_MIN_POINTS:
+            _warm_numba_kernel()
         return "numpy"
 
     def _flatten_coords(self) -> None:
@@ -575,6 +643,7 @@ class NDRebin:
             if self.resolved_workers > 1
             else None
         )
+        partials = self._numba_worker_partials(size) if executor is not None else []
         for start, stop in self._batch_ranges(fractional=self.fractional):
             if executor is None:
                 self._accumulate_numba_range(
@@ -582,32 +651,57 @@ class NDRebin:
                     bd_sum, err_sum, norm_sum, ns_sum,
                 )
             else:
-                ranges = _split_range(start, stop, self.resolved_workers)
-                worker = (
-                    self._numba_dense_partial
-                    if self.resolved_parallel_strategy == "dense"
-                    else self._numba_sparse_partial
+                self._accumulate_numba_parallel(
+                    executor, partials, _split_range(start, stop, self.resolved_workers),
+                    lower, upper, step_size, num_bins,
                 )
-                partials = list(
-                    executor.map(
-                        lambda bounds, worker=worker: worker(
-                            bounds[0], bounds[1], lower, upper, step_size, num_bins, size
-                        ),
-                        ranges,
-                    )
-                )
-                for partial in partials:
-                    if self.resolved_parallel_strategy == "dense":
-                        bd_sum += partial[0]
-                        err_sum += partial[1]
-                        norm_sum += partial[2]
-                        ns_sum += partial[3]
-                    else:
-                        self._merge_sparse_partial(partial, bd_sum, err_sum, norm_sum, ns_sum)
             self._emit_progress(stop)
         if executor is not None:
+            self._merge_worker_partials(partials, bd_sum, err_sum, norm_sum, ns_sum)
             executor.shutdown()
         self._store_accumulators(bd_sum, err_sum, norm_sum, ns_sum)
+
+    def _numba_worker_partials(self, size: int) -> list:
+        """Per-worker accumulators, allocated once for the whole run.
+
+        Allocating (and reducing) these per source batch instead dominates the
+        cost of a large multi-batch job: a 4-D 32-bin grid with 16 workers
+        carries 34 MB of accumulators per worker, so re-zeroing and re-reducing
+        them 18 times costs more than the binning itself.
+        """
+
+        assert _NUMBA_REBIN is not None
+        if self.resolved_parallel_strategy == "dense":
+            return [self._empty_accumulators(size) for _ in range(self.resolved_workers)]
+        return [_NUMBA_REBIN.sparse_accumulators() for _ in range(self.resolved_workers)]
+
+    def _accumulate_numba_parallel(
+        self, executor, partials, ranges, lower, upper, step_size, num_bins,
+    ) -> None:
+        """Run one set of point ranges into the persistent worker partials."""
+
+        def accumulate(indexed_bounds) -> None:
+            index, (start, stop) = indexed_bounds
+            if self.resolved_parallel_strategy == "dense":
+                self._accumulate_numba_range(
+                    start, stop, lower, upper, step_size, num_bins, *partials[index]
+                )
+            else:
+                self._accumulate_numba_range_sparse(
+                    start, stop, lower, upper, step_size, num_bins, partials[index]
+                )
+
+        list(executor.map(accumulate, enumerate(ranges)))
+
+    def _merge_worker_partials(self, partials, bd_sum, err_sum, norm_sum, ns_sum) -> None:
+        for partial in partials:
+            if self.resolved_parallel_strategy == "dense":
+                bd_sum += partial[0]
+                err_sum += partial[1]
+                norm_sum += partial[2]
+                ns_sum += partial[3]
+            else:
+                self._merge_sparse_partial(partial, bd_sum, err_sum, norm_sum, ns_sum)
 
     def _parallel_plan(self, output_size: int) -> tuple[int, str]:
         requested = _parallel.num_threads() if self.workers is None else int(self.workers)
@@ -616,15 +710,28 @@ class NDRebin:
             return 1, "serial"
         dense_bytes_per_worker = output_size * 4 * np.dtype(float).itemsize
         memory_workers = self.max_parallel_bytes // max(dense_bytes_per_worker, 1)
+        # Each dense worker costs one zeroed private accumulator plus one pass
+        # to reduce it, both proportional to the output grid, so a worker only
+        # pays for itself once there are enough source contributions to spread
+        # over it. Without this a 20,000-point job into a 24^4 grid spends 5x
+        # longer on 16 empty histograms than it would single-threaded. The
+        # divisor is measured: parallel binning starts winning at roughly five
+        # contributions per output bin and scales out from there, so half the
+        # contributions-per-bin ratio tracks the optimum to within ~30% across
+        # grid sizes while never selecting a losing worker count. The cap never
+        # limits a large job on a many-core node -- there ``requested`` and the
+        # memory budget bind first.
+        contribution_factor = 2 ** (self.Ndims or 1) if self.fractional else 1
+        point_work = (self.Nvals or 0) * contribution_factor
+        amortized_workers = point_work // max(2 * output_size, 1)
         if self.parallel_strategy == "dense":
             workers = min(requested, max(1, memory_workers))
             return (workers, "dense") if workers > 1 else (1, "serial")
         if self.parallel_strategy == "sparse":
             return requested, "sparse"
-        workers = min(requested, max(1, memory_workers))
+        workers = min(requested, max(1, memory_workers), max(1, amortized_workers))
         if workers > 1:
             return workers, "dense"
-        contribution_factor = 2 ** (self.Ndims or 1) if self.fractional else 1
         touched_upper = min(output_size, (self.Nvals or 0) * contribution_factor)
         occupancy_upper = touched_upper / max(output_size, 1)
         sparse_bytes = touched_upper * 160
@@ -645,26 +752,21 @@ class NDRebin:
             lower, upper, step_size, num_bins, self.fractional,
             self._use_inverse_variance_weights(), bd_sum, err_sum, norm_sum, ns_sum,
         )
+        _mark_numba_warm()
 
-    def _numba_dense_partial(self, start, stop, lower, upper, step_size, num_bins, size):
-        partial = self._empty_accumulators(size)
-        self._accumulate_numba_range(
-            start, stop, lower, upper, step_size, num_bins, *partial
-        )
-        return partial
-
-    def _numba_sparse_partial(self, start, stop, lower, upper, step_size, num_bins, size):
+    def _accumulate_numba_range_sparse(
+        self, start, stop, lower, upper, step_size, num_bins, partial
+    ) -> None:
         assert _NUMBA_REBIN is not None
         assert self.coords_flat is not None and self.data_flat is not None
         assert self.errors_flat is not None and self.weights_flat is not None
-        partial = _NUMBA_REBIN.sparse_accumulators()
         _NUMBA_REBIN.accumulate_batch_sparse(
             self.coords_flat[start:stop], self.data_flat[start:stop],
             self.errors_flat[start:stop], self.weights_flat[start:stop],
             lower, upper, step_size, num_bins, self.fractional,
             self._use_inverse_variance_weights(), *partial,
         )
-        return partial
+        _mark_numba_warm()
 
     @staticmethod
     def _merge_sparse_partial(partial, bd_sum, err_sum, norm_sum, ns_sum) -> None:
@@ -900,7 +1002,7 @@ def rebin_nd_stream(
 
     use_numba = bool(
         _NUMBA_REBIN is not None
-        and (backend == "numba" or (backend == "auto" and int(source.n_points) >= NUMBA_REBIN_MIN_POINTS))
+        and (backend == "numba" or (backend == "auto" and int(source.n_points) >= _numba_min_points()))
     )
     ndim = int(source.ndim)
     axes_array = np.eye(ndim) if axes is None else np.asarray(axes, dtype=float)
@@ -929,6 +1031,8 @@ def rebin_nd_stream(
         if use_numba and template.resolved_workers > 1
         else None
     )
+    # Allocated once for the whole stream, not once per source batch.
+    partials = template._numba_worker_partials(size) if executor is not None else []
     processed = 0
     for batch in source.iter_batches():
         data = np.asarray(batch.data, dtype=float).reshape(-1)
@@ -965,30 +1069,15 @@ def rebin_nd_stream(
                     bd_sum, err_sum, norm_sum, ns_sum,
                 )
             else:
-                worker = (
-                    template._numba_dense_partial
-                    if template.resolved_parallel_strategy == "dense"
-                    else template._numba_sparse_partial
+                template._accumulate_numba_parallel(
+                    executor,
+                    partials,
+                    _split_range(0, data.size, template.resolved_workers),
+                    lower_arr,
+                    upper_arr,
+                    step_array,
+                    num_bins_array,
                 )
-                ranges = _split_range(0, data.size, template.resolved_workers)
-                partials = list(executor.map(
-                    lambda bounds, worker=worker, step_array=step_array,
-                    num_bins_array=num_bins_array: worker(
-                        bounds[0], bounds[1], lower_arr, upper_arr,
-                        step_array, num_bins_array, size,
-                    ),
-                    ranges,
-                ))
-                for partial in partials:
-                    if template.resolved_parallel_strategy == "dense":
-                        bd_sum += partial[0]
-                        err_sum += partial[1]
-                        norm_sum += partial[2]
-                        ns_sum += partial[3]
-                    else:
-                        template._merge_sparse_partial(
-                            partial, bd_sum, err_sum, norm_sum, ns_sum
-                        )
         processed += data.size
         if progress_callback is not None:
             progress_callback({
@@ -997,6 +1086,7 @@ def rebin_nd_stream(
                 "message": f"rebinning {processed}/{source.n_points} points",
             })
     if executor is not None:
+        template._merge_worker_partials(partials, bd_sum, err_sum, norm_sum, ns_sum)
         executor.shutdown()
     template.resolved_backend = "numba" if use_numba else "numpy"
     template._store_accumulators(bd_sum, err_sum, norm_sum, ns_sum)

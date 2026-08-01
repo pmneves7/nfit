@@ -193,3 +193,51 @@ def test_converged_count_is_not_the_first_count_under_the_tolerance():
     assert deviations[1] > 2.0e-3    # 14 fails
     assert deviations[2] <= 2.0e-3   # 26 passes
     assert result.converged_count == 26
+
+
+def test_powder_geometry_deduplicates_q_modulus_before_orienting():
+    """Collapsing repeated |Q| must not change the sampled orientations.
+
+    A powder map repeats each |Q| across every energy bin, so the evaluator
+    orients only the distinct moduli and re-expands the point map. That has to
+    reproduce, exactly, what orienting every point separately produces --
+    including the orientation-major ordering the powder average relies on.
+    """
+
+    from nfit.fit_config import (
+        _powder_reciprocal_matrix,
+        _powder_sphere_directions,
+        _RpaComponentEvaluator,
+    )
+    from nfit.fitting import q_modulus_inv_angstrom
+    from nfit.spin_fluctuations import build_rpa_geometry
+
+    component, _unused = _powder_component_and_data()
+    # Repeat each |Q| across several energies, as a real powder map does.
+    q = np.repeat(np.array([0.25, 0.45, 0.7]), 4)
+    energy = np.tile(np.array([0.6, 1.4, 2.2, 3.1]), 3)
+    points = _spin_fluctuation_points(np.ones(q.size), q, energy, temperature=10.0)
+    points.metadata.update(
+        {"data_type": "powder_inelastic", "coordinate_units": "1/angstrom",
+         "powder_q_modulus_axis": True}
+    )
+
+    evaluator = _RpaComponentEvaluator(component)
+    geometry, _form_factor, _tensor, count = evaluator._geometry(points)
+
+    # Reference: orient every fitted point, with no |Q| deduplication.
+    directions = _powder_sphere_directions(count)
+    reciprocal = _powder_reciprocal_matrix(points, evaluator._lattice)
+    modulus = np.asarray(q_modulus_inv_angstrom(points), dtype=float)
+    hkl = (modulus[:, None, None] * directions[None, :, :]).reshape(-1, 3) @ np.linalg.inv(
+        reciprocal
+    ).T
+    reference = build_rpa_geometry(
+        hkl[:, 0], hkl[:, 1], hkl[:, 2], evaluator.site_positions, evaluator.orbits
+    )
+
+    assert geometry.n_q == reference.n_q
+    assert np.array_equal(geometry.unique_hkl, reference.unique_hkl)
+    assert np.array_equal(geometry.point_index, reference.point_index)
+    for label, phases in reference.bond_phases.items():
+        assert np.array_equal(geometry.bond_phases[label], phases)

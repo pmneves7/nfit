@@ -18,7 +18,35 @@ from nfit.spin_fluctuations import (
     paramagnon_spatial_kernel,
     reduce_site_network,
     rpa_exchange_matrix,
+    unique_rows_with_inverse,
 )
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        np.zeros((0, 3)),
+        np.zeros((5, 3)),
+        np.array([[0.0, 0.0, 0.0], [-0.0, 0.0, 0.0], [1.0, -0.0, 2.0], [1.0, 0.0, 2.0]]),
+        np.repeat(np.round(np.linspace(-2.0, 2.0, 37).reshape(-1, 1) * [1.0, 2.0, 3.0], 4), 7, axis=0),
+        np.round(np.random.default_rng(4).uniform(-3.0, 3.0, (500, 3)), 2),
+    ],
+)
+def test_unique_rows_with_inverse_reproduces_numpy_unique(rows):
+    """The fast Q dedup must be indistinguishable from ``np.unique(axis=0)``.
+
+    Row order matters as well as content: the unique index is what every
+    downstream RPA array is stored against.
+    """
+
+    expected_rows, expected_inverse = np.unique(rows, axis=0, return_inverse=True)
+    actual_rows, actual_inverse = unique_rows_with_inverse(rows)
+
+    assert actual_rows.shape == expected_rows.shape
+    assert np.array_equal(actual_rows, expected_rows)
+    assert np.array_equal(actual_inverse, np.asarray(expected_inverse).ravel())
+    if rows.shape[0]:
+        assert np.array_equal(actual_rows[actual_inverse], np.asarray(rows, dtype=float))
 
 
 def _chain_geometry(H, offsets=((1, 0, 0),)):

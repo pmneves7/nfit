@@ -99,6 +99,19 @@ def bose_denominator(
     if np.any(temperature < 0):
         raise ValueError("temperature_K must be nonnegative")
 
+    if temperature.ndim == 0 and temperature > 0.0:
+        # Overwhelmingly the common case (one sample temperature for a whole
+        # dataset). The general path below costs ~10 passes over the points
+        # plus two boolean gathers and a masked scatter; here every point takes
+        # the same branch, so evaluate it directly. Identical arithmetic, so
+        # the result is bit-for-bit what the general path returns.
+        x = np.asarray(E / (KB_MEV_PER_K * temperature), dtype=float)
+        denom = np.asarray(-np.expm1(-x), dtype=float)
+        small = np.abs(x) < eps
+        if np.any(small):
+            denom = np.where(small, x, denom)
+        return denom
+
     E, temperature = np.broadcast_arrays(E, temperature)
     denom = np.empty(E.shape, dtype=float)
 
@@ -128,6 +141,7 @@ def intensity_from_chipp(
     polarization: float | ArrayLike = 1.0,
     background: float | ArrayLike = 0.0,
     include_bose: bool = True,
+    bose_denominator_values: ArrayLike | None = None,
 ) -> FloatArray:
     """Convert chi''(Q,E) to measured neutron intensity.
 
@@ -142,11 +156,22 @@ def intensity_from_chipp(
     ``background`` may be scalars or arrays broadcastable to ``chipp``.
     The kinematic ``k_f/k_i`` factor is normalized on the dataset side when a
     dataset declares that it was not already included in its reduction.
+
+    ``bose_denominator_values`` optionally supplies an already-evaluated
+    :func:`bose_denominator` for the same ``E_meV`` and ``temperature_K``. The
+    factor is fixed by the dataset, so fit loops that call this function once
+    per optimizer iteration can evaluate it once and pass it here; the
+    arithmetic is otherwise unchanged.
     """
 
     signal = np.asarray(chipp, dtype=float)
     if include_bose:
-        signal = signal / bose_denominator(E_meV, temperature_K)
+        denominator = (
+            bose_denominator(E_meV, temperature_K)
+            if bose_denominator_values is None
+            else np.asarray(bose_denominator_values, dtype=float)
+        )
+        signal = signal / denominator
     return (
         float(scale)
         * MAGNETIC_CROSS_SECTION_BARN_PER_MU_B_SQ
@@ -202,6 +227,7 @@ def cross_section_from_chipp(
     include_bose: bool = True,
     moment_unit: str = "mu_B_squared",
     g_factor: float | None = None,
+    bose_denominator_values: ArrayLike | None = None,
 ) -> FloatArray:
     """Return absolute magnetic ``d2sigma/dOmega/dE`` in barn/(sr meV).
 
@@ -209,7 +235,8 @@ def cross_section_from_chipp(
     ``spin^2/meV`` when ``moment_unit="spin_squared"``. The returned cross
     section retains the declared per-ion/formula-unit/cell basis. ``kf_ki`` is
     explicit so data normalized to remove the kinematic factor can leave it at
-    one.
+    one. ``bose_denominator_values`` is forwarded to
+    :func:`intensity_from_chipp`.
     """
 
     return np.asarray(kf_ki, dtype=float) * intensity_from_chipp(
@@ -220,6 +247,7 @@ def cross_section_from_chipp(
         form_factor_sq=form_factor_sq,
         polarization=polarization,
         include_bose=include_bose,
+        bose_denominator_values=bose_denominator_values,
     )
 
 

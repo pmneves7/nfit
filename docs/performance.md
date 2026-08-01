@@ -56,12 +56,21 @@ cost without changing the result:
 
 - masked data are prepared once per fit;
 - datasets with zero fit weight are evaluated only after optimization;
-- phase geometry and form factors are cached per dataset;
+- phase geometry, form factors, the Bose factor, and the channel conversion's
+  linear factor are cached per dataset, so nothing that depends only on the
+  fitted points is recomputed per optimizer iteration;
+- the fitted momentum grid is deduplicated with a single lexicographic sort;
+- powder datasets orient only the distinct $|Q|$ values, so a map with one
+  momentum bin per energy row builds its geometry from a grid smaller by the
+  number of energy bins;
 - centered cells are reduced to translationally distinct magnetic sites when
   the interaction permits it;
 - exchange-independent geometry is reused between value and Jacobian calls;
+- mode weights that depend only on $Q$ are computed once per
+  eigendecomposition rather than once per fitted point;
 - analytic scalar-model derivatives avoid one model evaluation per parameter;
-- gradients stream in bounded point blocks; and
+- gradients and tensor-path susceptibilities stream in bounded point blocks;
+  and
 - GUI views, overlays, and analysis fingerprints use bounded caches.
 
 Primitive-cell reduction is often the largest exact saving because the
@@ -69,8 +78,9 @@ eigendecomposition cost is cubic in $N$. See
 [Heisenberg RPA](heisenberg_rpa.md#primitive-cell-reduction).
 
 For many small matrices, a fused Numba Jacobi eigensolver removes repeated
-LAPACK call overhead. Larger matrices use LAPACK, with batch-level threading
-only when the workload can amortize dispatch.
+LAPACK call overhead. Larger matrices use LAPACK with batch-level threading,
+which pays from roughly $N=12$ upwards; below that the per-call cost is too
+short to amortize dispatch and the batch runs on one thread.
 
 ## Compute backends
 
@@ -87,6 +97,13 @@ The resolvent contractions support:
 Set `NFIT_RPA_BACKEND` or call `set_rpa_backend()` to override it.
 `nfit.available_rpa_backends()` reports what is available. An unavailable
 forced backend falls back to NumPy.
+
+The selection also governs the anisotropic (tensor) evaluator. Above the same
+threshold its unpolarized channel uses a fused Numba kernel that forms each
+point's $3\times3$ susceptibility and contracts it with the polarization
+projector in one pass, instead of materializing per-point mode and tensor
+intermediates. The NumPy path stays the reference and the only path where Numba
+is absent; the two agree to floating-point precision.
 
 ## Tight-binding electronic structure
 
