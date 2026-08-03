@@ -6,7 +6,6 @@ import json
 import math
 import platform
 import re
-import shutil
 import signal
 import subprocess
 import time
@@ -19,7 +18,7 @@ from typing import Any
 
 import numpy as np
 
-from .analysis.artifacts import read_dataset_artifact
+from .analysis.artifacts import read_project_dataset_artifact
 from .analysis.coordinates import signal_semantics
 from .analysis.core import AnalysisEntry, AnalysisOutputRef
 from .analysis.fingerprint import dataset_entry_fingerprint, recipe_hash
@@ -102,6 +101,12 @@ from .pipeline import (
     PlotSourceRef,
 )
 from .plot_recipes import new_plot_entry, plot_script, render_plot
+from .project_archive import (
+    project_artifact_exists,
+    project_artifact_size,
+    read_project_manifest,
+    write_project_manifest,
+)
 from .project_io import (
     FIT_CHANNEL_NAMES,
     NfitProject,
@@ -2696,6 +2701,15 @@ def _ensure_dataset_data_loaded(dataset: DatasetEntry) -> Any:
         return dataset.data
     if dataset.kind == "raw_dgs_nexus":
         return None
+    if dataset.metadata.get("derived_from_analysis"):
+        project_path = dataset.metadata.get("_project_path")
+        artifact_path = dataset.metadata.get("analysis_artifact_path")
+        if project_path and artifact_path:
+            loaded = read_project_dataset_artifact(project_path, artifact_path)
+            loaded = dataset.replace_data(loaded, source_backed=True)
+            dataset.metadata["import_status"] = "loaded"
+            dataset.metadata.pop("import_error", None)
+            return loaded
     if dataset.metadata.get("importer"):
         loaded = _load_registered_importer_dataset(dataset)
         if loaded is not None:
@@ -8496,67 +8510,65 @@ def dataset_entry_from_path(
     return entry
 
 
-def save_project(project: NfitProject, path: str | Path) -> None:
-    """Persist the GUI project as editable JSON."""
+def save_project(
+    project: NfitProject,
+    path: str | Path,
+    *,
+    asset_source: str | Path | None = None,
+) -> None:
+    """Persist project state and analysis artifacts in one nfit archive."""
 
-    Path(path).write_text(
-        json.dumps(_project_to_dict(project), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    target = Path(path)
+    if asset_source is None:
+        asset_source = getattr(project, "_project_path", None)
+    write_project_manifest(
+        target,
+        _project_to_dict(project),
+        asset_source=asset_source,
+        preserve_existing=asset_source is not None,
     )
+    project._project_path = target
+    _bind_project_analysis_sources(project, target, load_data=False)
 
 
-def _copy_analysis_assets_for_save_as(project: NfitProject, old_path: Path, new_path: Path) -> None:
-    old_root = old_path.with_name(old_path.name + "-assets")
-    new_root = new_path.with_name(new_path.name + "-assets")
-    if old_root.exists():
-        shutil.copytree(old_root, new_root, dirs_exist_ok=True)
-    for group in project.data_groups:
-        for analysis in group.analyses:
-            if analysis.result is None:
-                continue
-            for output in analysis.result.outputs:
-                if not output.artifact_path:
-                    continue
-                relative = Path(output.artifact_path)
-                if relative.parts and relative.parts[0] == old_root.name:
-                    output.artifact_path = str(Path(new_root.name, *relative.parts[1:]))
-        for dataset in group.iter_datasets():
-            if not dataset.metadata.get("derived_from_analysis"):
-                continue
-            source = dataset.metadata.get("source_file")
-            if not source:
-                continue
-            source_path = Path(source)
-            if not source_path.is_absolute() and source_path.parts and source_path.parts[0] == old_root.name:
-                relative_source = str(Path(new_root.name, *source_path.parts[1:]))
-                dataset.metadata["source_file"] = relative_source
-                dataset.metadata["analysis_artifact_path"] = relative_source
-            else:
-                try:
-                    relative = source_path.resolve().relative_to(old_root.resolve())
-                except (OSError, ValueError):
-                    continue
-                dataset.metadata["source_file"] = str(new_root / relative)
-                dataset.metadata["analysis_artifact_path"] = str(Path(new_root.name) / relative)
-
-
-def _resolve_project_analysis_sources(project: NfitProject, project_path: Path) -> None:
+def _bind_project_analysis_sources(
+    project: NfitProject,
+    project_path: Path,
+    *,
+    load_data: bool = True,
+) -> None:
     for group in project.data_groups:
         for dataset in group.iter_datasets():
             if not dataset.metadata.get("derived_from_analysis"):
                 continue
-            source = dataset.metadata.get("source_file")
-            if source and not Path(source).is_absolute():
-                dataset.metadata.setdefault("analysis_artifact_path", str(source))
-                dataset.metadata["source_file"] = str(project_path.parent / source)
+            artifact = dataset.metadata.get("analysis_artifact_path") or dataset.metadata.get(
+                "source_file"
+            )
+            if not artifact:
+                continue
+            dataset.metadata["analysis_artifact_path"] = str(artifact)
+            dataset.metadata["source_file"] = str(artifact)
+            dataset.metadata["_project_path"] = str(project_path)
+            if not load_data or dataset.data is not None:
+                continue
+            try:
+                data = read_project_dataset_artifact(project_path, str(artifact))
+            except (KeyError, OSError, TypeError, ValueError):
+                dataset.metadata["import_status"] = "error"
+                dataset.metadata["import_error"] = "analysis artifact is unavailable"
+                continue
+            dataset.replace_data(data, source_backed=True)
+            dataset.metadata["import_status"] = "loaded"
+            dataset.metadata.pop("import_error", None)
 
 
 def load_project(path: str | Path) -> NfitProject:
     """Load a project saved by :func:`save_project`."""
 
     project_path = Path(path)
-    project = _project_from_dict(json.loads(project_path.read_text(encoding="utf-8")))
-    _resolve_project_analysis_sources(project, project_path)
+    project = _project_from_dict(read_project_manifest(project_path))
+    project._project_path = project_path
+    _bind_project_analysis_sources(project, project_path)
     return project
 
 
@@ -10081,11 +10093,10 @@ class NfitProjectExplorer:
         if not path:
             return False
         old_path = self.project_path
-        self.project_path = Path(path)
-        if old_path is not None and old_path != self.project_path:
-            _copy_analysis_assets_for_save_as(self.project, old_path, self.project_path)
+        new_path = Path(path)
         self._stamp_active_fit_path()
-        save_project(self.project, self.project_path)
+        save_project(self.project, new_path, asset_source=old_path)
+        self.project_path = new_path
         self._remember_recent_project(self.project_path)
         self.has_unsaved_changes = False
         self._sync_window_title()
@@ -10114,7 +10125,6 @@ class NfitProjectExplorer:
             return False
         self._close_all_slice_viewers()
         self.project = load_project(path)
-        _resolve_project_analysis_sources(self.project, path)
         self.project_path = path
         self.has_unsaved_changes = False
         self._clear_active_fit_state()
@@ -16917,7 +16927,10 @@ class NfitProjectExplorer:
         data = None
         if self.project_path is not None and output.artifact_path:
             try:
-                data = read_dataset_artifact(self.project_path.parent / output.artifact_path)
+                data = read_project_dataset_artifact(
+                    self.project_path,
+                    output.artifact_path,
+                )
             except (OSError, TypeError, ValueError) as exc:
                 self.details_layout.addWidget(
                     self._details_group_box("Artifact", [f"Could not load output: {exc}"])
@@ -18553,7 +18566,10 @@ class NfitProjectExplorer:
             return "unavailable"
         if self.project_path is not None:
             for output in analysis.result.outputs:
-                if output.artifact_path and not (self.project_path.parent / output.artifact_path).exists():
+                if output.artifact_path and not project_artifact_exists(
+                    self.project_path,
+                    output.artifact_path,
+                ):
                     return "unavailable artifact"
         if current_recipe != analysis.result.recipe_hash or fingerprints != analysis.result.input_fingerprints:
             return "stale"
@@ -25060,6 +25076,10 @@ def _dataset_source_path(dataset: DatasetEntry) -> Path | None:
     source = dataset.metadata.get("source_file")
     if not source:
         return None
+    if dataset.metadata.get("derived_from_analysis") and dataset.metadata.get(
+        "_project_path"
+    ):
+        return Path(dataset.metadata["_project_path"])
     return Path(source)
 
 
@@ -25099,6 +25119,10 @@ def _has_slice_viewer_candidates(group: DataGroup) -> bool:
             return True
         if data_type_container(dataset.data_type) == "point_list":
             return True
+        if dataset.metadata.get("derived_from_analysis") and dataset.metadata.get(
+            "analysis_artifact_path"
+        ):
+            return True
         source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
         if source and Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5", ".npz"}:
             return True
@@ -25113,6 +25137,14 @@ def _dataset_can_load(dataset: DatasetEntry) -> bool:
     source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
     if not source:
         return False
+    if dataset.metadata.get("derived_from_analysis"):
+        project_path = dataset.metadata.get("_project_path")
+        artifact_path = dataset.metadata.get("analysis_artifact_path")
+        return bool(
+            project_path
+            and artifact_path
+            and project_artifact_exists(project_path, artifact_path)
+        )
     if data_type_container(dataset.data_type) == "point_list":
         return True
     return bool(Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5", ".npz"})
@@ -25361,6 +25393,21 @@ def _dataset_source_lines(dataset: DatasetEntry) -> list[str]:
     source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
     if not source:
         return []
+    if dataset.metadata.get("derived_from_analysis"):
+        project_path = dataset.metadata.get("_project_path")
+        artifact_path = dataset.metadata.get("analysis_artifact_path") or source
+        lines = [f"Project artifact: {artifact_path}"]
+        size = (
+            project_artifact_size(project_path, artifact_path)
+            if project_path
+            else None
+        )
+        lines.append(
+            f"Artifact size: {_format_bytes(size)}"
+            if size is not None
+            else "Artifact size: unavailable"
+        )
+        return lines
     lines = [f"File: {source}"]
     path = Path(source)
     if path.exists():

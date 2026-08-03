@@ -9,13 +9,14 @@ from nfit.analysis import (
     analysis_definition,
     default_analysis_parameters,
 )
-from nfit.analysis.artifacts import write_dataset_artifact
+from nfit.analysis.artifacts import dataset_artifact_bytes
 from nfit.analysis.bragg import integrate_bragg_peaks
 from nfit.analysis.fingerprint import dataset_entry_fingerprint, recipe_hash
 from nfit.dataset import PointListData
 from nfit.mdhisto import MDHistoAxis, MDHistoData
 from nfit.pipeline import DataGroup, DatasetEntry, DatasetGroup
-from nfit.project_gui import NfitProject, NfitProjectExplorer
+from nfit.project_archive import replace_analysis_artifacts
+from nfit.project_gui import NfitProject, NfitProjectExplorer, save_project
 
 
 def test_analysis_tree_and_playground_controls_have_tooltips(monkeypatch):
@@ -324,13 +325,18 @@ def test_saved_bragg_result_renders_tables_diagnostics_and_materializes_disabled
         minimum_peak_coverage=0.8,
     )
     project_path = tmp_path / "project.nfit"
-    artifact = tmp_path / "project.nfit-assets" / "analyses" / analysis.id / "peak_table.npz"
-    write_dataset_artifact(table, artifact)
+    project = NfitProject([group])
+    save_project(NfitProject(), project_path)
+    artifact_path = replace_analysis_artifacts(
+        project_path,
+        analysis.id,
+        {"peak_table.npz": dataset_artifact_bytes(table)},
+    )["peak_table.npz"]
     output = AnalysisOutputRef(
         "peak_table",
         "Integrated Bragg peaks",
         "table",
-        artifact_path=str(artifact.relative_to(tmp_path)),
+        artifact_path=artifact_path,
         dataset_id="bragg-table-id",
         metadata={"data_type": "bragg_reflections", "fit_enabled": False},
     )
@@ -343,7 +349,7 @@ def test_saved_bragg_result_renders_tables_diagnostics_and_materializes_disabled
         diagnostics={"generated_peaks": 2, "accepted_peaks": table.metadata["accepted_count"]},
     )
     group.analyses.append(analysis)
-    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer = NfitProjectExplorer(project)
     explorer.project_path = project_path
     explorer._refresh_tree(select_group=group)
     window = explorer.open_data_playground_for_selection()

@@ -13,8 +13,10 @@ instrument or file format.
   possible, then assign broad coordinate roles used by plotting and fitting.
 - **Analysis is non-destructive.** Operations create derived datasets and
   record recipe hashes, input fingerprints, and relative artifact manifests.
-- **Project state is inspectable.** `.nfit` files are JSON documents containing
-  datasets, model sessions, fit results, plots, and analysis provenance.
+- **Project state is portable and inspectable.** A `.nfit` file is a ZIP
+  container whose `project.json` manifest records datasets, model sessions, fit
+  results, plots, and analysis provenance. Array-valued analysis artifacts are
+  stored under `assets/` in the same file.
 - **Dataset identity is unique.** Importing or copying a dataset assigns a new
   ID, even when the source file is the same. Project loading rejects duplicate
   IDs because analysis and background references would otherwise be ambiguous.

@@ -79,7 +79,7 @@ def _decode_float_array(payload: dict[str, Any]) -> np.ndarray:
 def _project_to_dict(project: NfitProject) -> dict[str, Any]:
     return {
         "format": "nfit-project",
-        "version": 3,
+        "version": 4,
         "settings": _json_mapping(project.settings),
         "data_groups": [_data_group_to_dict(group) for group in project.data_groups],
     }
@@ -94,7 +94,7 @@ def _project_from_dict(payload: dict[str, Any]) -> NfitProject:
     if payload.get("format") != "nfit-project":
         raise ValueError("not a nfit project file")
     version = int(payload.get("version", 0))
-    if version != 3:
+    if version != 4:
         raise ValueError(f"unsupported nfit project version {version}")
     project = NfitProject(settings=dict(payload.get("settings", {})))
     for group_payload in payload.get("data_groups", []):
@@ -329,6 +329,7 @@ def _dataset_to_dict(dataset: DatasetEntry) -> dict[str, Any]:
     if dataset.transforms:
         raise TypeError("project JSON save does not yet support dataset transforms")
     serialized_metadata = copy.deepcopy(dataset.metadata)
+    serialized_metadata.pop("_project_path", None)
     if serialized_metadata.get("derived_from_analysis") and serialized_metadata.get(
         "analysis_artifact_path"
     ):

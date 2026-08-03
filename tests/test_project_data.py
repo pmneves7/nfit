@@ -1,4 +1,5 @@
 # ruff: noqa: F401, F403, F405
+from nfit.project_archive import read_project_manifest
 from tests.project_gui_test_support import *
 from tests.project_gui_test_support import (
     _explorer_with_fit_result,
@@ -1391,7 +1392,7 @@ def test_dataset_scale_factor_scales_viewed_data_and_round_trips(monkeypatch, tm
     placeholder.scale_factor_group = "same_run"
     path = tmp_path / "proj.nfit"
     save_project(NfitProject([save_group]), path)
-    payload = json.loads(path.read_text())["data_groups"][0]["datasets"][0]
+    payload = read_project_manifest(path)["data_groups"][0]["datasets"][0]
     assert payload["scale_factor"] == 3.0
     assert payload["scale_factor_vary"] is True
     assert payload["scale_factor_group"] == "same_run"

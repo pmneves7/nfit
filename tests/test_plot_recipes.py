@@ -31,7 +31,7 @@ def test_plot_entries_persist_with_the_project_schema():
     plot = new_plot_entry("Map", dataset.id, {"x_dim": "H", "y_dim": "K"}, plot_type="mdhisto_slice")
     project = NfitProject([DataGroup("workspace", datasets=[dataset], plots=[plot])])
     payload = _project_to_dict(project)
-    assert payload["version"] == 3
+    assert payload["version"] == 4
     restored = _project_from_dict(payload).data_groups[0].plots[0]
     assert restored.id == plot.id
     assert restored.sources[0].dataset_id == dataset.id

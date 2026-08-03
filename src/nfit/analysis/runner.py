@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import shutil
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from .artifacts import analysis_asset_root, output_data, write_dataset_artifact
+from ..project_archive import replace_analysis_artifacts
+from .artifacts import output_data, write_dataset_artifact
 from .core import (
     AnalysisContext,
     AnalysisEntry,
@@ -133,44 +134,35 @@ def execute_to_artifacts(
         analysis.type, inputs, parameters,
         progress_callback=progress_callback, cancel_callback=cancel_callback,
     )
-    root = analysis_asset_root(project_path) / analysis.id
-    staging = root.parent / f".{analysis.id}-{uuid4().hex}.staging"
-    backup = root.parent / f".{analysis.id}-{uuid4().hex}.backup"
-    staging.mkdir(parents=True, exist_ok=False)
     refs: list[AnalysisOutputRef] = []
     existing_dataset_ids = {
         output.key: output.dataset_id
         for output in (analysis.result.outputs if analysis.result is not None else [])
         if output.dataset_id
     }
-    try:
+    with tempfile.TemporaryDirectory(prefix="nfit-analysis-") as temporary:
+        staging = Path(temporary)
+        artifact_payloads: dict[str, Path] = {}
         for key, output in execution.outputs.items():
             if isinstance(output, ScalarOutput):
                 refs.append(AnalysisOutputRef(key, output.label, "scalar", scalar_value=output.value, scalar_uncertainty=output.uncertainty, unit=output.unit, metadata=output.metadata))
                 continue
-            artifact = staging / f"{key}.npz"
-            write_dataset_artifact(output_data(output), artifact)
+            filename = f"{key}.npz"
+            artifact_payloads[filename] = staging / filename
+            write_dataset_artifact(output_data(output), artifact_payloads[filename])
             metadata = dict(output.metadata)
             data_type = getattr(output, "data_type", "")
             if data_type:
                 metadata.setdefault("data_type", data_type)
-            refs.append(AnalysisOutputRef(key, output.label, "table" if output.__class__.__name__ == "TableOutput" else "dataset", artifact_path=artifact.name, dataset_id=existing_dataset_ids.get(key, uuid4().hex), metadata=metadata))
-        if root.exists():
-            root.replace(backup)
-        try:
-            staging.replace(root)
-        except Exception:
-            if backup.exists():
-                backup.replace(root)
-            raise
-        if backup.exists():
-            shutil.rmtree(backup)
-        for ref in refs:
-            if ref.artifact_path:
-                ref.artifact_path = str((Path(project_path).name + "-assets") / Path("analyses") / analysis.id / Path(ref.artifact_path).name)
-    finally:
-        if staging.exists():
-            shutil.rmtree(staging)
+            refs.append(AnalysisOutputRef(key, output.label, "table" if output.__class__.__name__ == "TableOutput" else "dataset", artifact_path=filename, dataset_id=existing_dataset_ids.get(key, uuid4().hex), metadata=metadata))
+        artifact_paths = replace_analysis_artifacts(
+            project_path,
+            analysis.id,
+            artifact_payloads,
+        )
+    for ref in refs:
+        if ref.artifact_path:
+            ref.artifact_path = artifact_paths[ref.artifact_path]
     return AnalysisResultRecord(
         recipe_hash=current_recipe,
         input_fingerprints={item.dataset_id: item.fingerprint for item in inputs},

@@ -68,8 +68,9 @@ The package provides:
 - simultaneous least-squares fitting with resource-aware parallel numerical
   derivatives, explicit uncertainty conventions, optional
   differential-evolution initialization, and `emcee` posterior sampling;
-- project files with fit timelines and provenance, plus editable script export
-  for dataset preparation, analyses, fits, and saved plots;
+- single-file `.nfit` projects with generated analysis artifacts, fit timelines,
+  and provenance, plus editable script export for dataset preparation,
+  analyses, fits, and saved plots;
 - interactive slice, waterfall, and volumetric visualization with independent,
   same-state viewer duplication.
 

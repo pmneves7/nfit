@@ -2,19 +2,17 @@ from __future__ import annotations
 
 import json
 import tempfile
+from io import BytesIO
+from os import PathLike
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import numpy as np
 
 from ..dataset import PointListData
 from ..mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
+from ..project_archive import read_project_artifact
 from .core import DatasetOutput, TableOutput
-
-
-def analysis_asset_root(project_path: str | Path) -> Path:
-    path = Path(project_path)
-    return path.with_name(path.name + "-assets") / "analyses"
 
 
 def write_dataset_artifact(data: MDHistoData | PointListData, destination: str | Path) -> None:
@@ -31,8 +29,29 @@ def write_dataset_artifact(data: MDHistoData | PointListData, destination: str |
         raise
 
 
-def read_dataset_artifact(path: str | Path) -> MDHistoData | PointListData:
-    with np.load(path, allow_pickle=False) as archive:
+def dataset_artifact_bytes(data: MDHistoData | PointListData) -> bytes:
+    """Serialize an analysis dataset for storage inside a project archive."""
+
+    stream = BytesIO()
+    np.savez_compressed(stream, **_payload(data))
+    return stream.getvalue()
+
+
+def read_project_dataset_artifact(
+    project_path: str | Path,
+    artifact_path: str,
+) -> MDHistoData | PointListData:
+    """Read an analysis dataset stored inside an nfit project."""
+
+    return read_dataset_artifact(read_project_artifact(project_path, artifact_path))
+
+
+def read_dataset_artifact(
+    source: str | PathLike[str] | bytes | BinaryIO,
+) -> MDHistoData | PointListData:
+    stream: str | PathLike[str] | BinaryIO
+    stream = BytesIO(source) if isinstance(source, bytes) else source
+    with np.load(stream, allow_pickle=False) as archive:
         kind = str(np.asarray(archive["container"]).item())
         metadata = json.loads(str(np.asarray(archive["metadata_json"]).item()))
         if kind == "point_list":

@@ -12,7 +12,7 @@ from .analysis import (
     default_analysis_parameters,
     prepare_analysis_input,
 )
-from .analysis.artifacts import read_dataset_artifact
+from .analysis.artifacts import read_project_dataset_artifact
 from .analysis.runner import execute_to_artifacts
 from .dataset import PointData4D, PointListData
 from .mdhisto import MDHistoData
@@ -469,9 +469,11 @@ class DataPlaygroundWindow:
     def _artifact_data(self, output: Any) -> PointListData | MDHistoData | None:
         if self.explorer.project_path is None or not output.artifact_path:
             return None
-        path = self.explorer.project_path.parent / output.artifact_path
         try:
-            return read_dataset_artifact(path)
+            return read_project_dataset_artifact(
+                self.explorer.project_path,
+                output.artifact_path,
+            )
         except (OSError, TypeError, ValueError):
             return None
 
@@ -619,6 +621,7 @@ class DataPlaygroundWindow:
             metadata={
                 "source_file": output.artifact_path,
                 "analysis_artifact_path": output.artifact_path,
+                "_project_path": str(self.explorer.project_path),
                 "derived_from_analysis": {
                     "analysis_id": self._selected_analysis().id if self._selected_analysis() else "",
                     "output_key": output.key,
@@ -819,8 +822,10 @@ class DataPlaygroundWindow:
             derived.datasets[:] = [dataset for dataset in derived.datasets if dataset.metadata.get("derived_from_analysis", {}).get("analysis_id") != analysis.id]
             for output in result.outputs:
                 if output.kind == "dataset" and output.artifact_path and output.dataset_id:
-                    path = self.explorer.project_path.parent / output.artifact_path
-                    data = read_dataset_artifact(path)
+                    data = read_project_dataset_artifact(
+                        self.explorer.project_path,
+                        output.artifact_path,
+                    )
                     derived.datasets.append(
                         DatasetEntry(
                             _unique_output_name(output.label, self.group.dataset_names),
@@ -831,6 +836,7 @@ class DataPlaygroundWindow:
                             metadata={
                                 "source_file": output.artifact_path,
                                 "analysis_artifact_path": output.artifact_path,
+                                "_project_path": str(self.explorer.project_path),
                                 "derived_from_analysis": {
                                     "analysis_id": analysis.id,
                                     "output_key": output.key,

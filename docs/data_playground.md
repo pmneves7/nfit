@@ -5,10 +5,10 @@ datasets. Open it from a workspace, dataset, or `Analyses` node. Results appear
 under `Datasets / Derived data`; the saved recipe and provenance remain under
 `Analyses`.
 
-Save the project before running an analysis. Array outputs are stored in
-`<project>.nfit-assets/analyses/<analysis-id>/`, and **Save As** copies this
-asset tree. Editing a recipe or input marks its result stale but does not
-delete it.
+Save the project before running an analysis. Array outputs are stored inside
+the `.nfit` project under `assets/analyses/<analysis-id>/`, so moving or using
+**Save As** on the project keeps its analysis results with it. Editing a recipe
+or input marks its result stale but does not delete it.
 
 Every operation receives the same prepared dataset used for viewing and
 fitting. Dataset and inherited masks, rebinning, attached backgrounds, scale,
