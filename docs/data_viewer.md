@@ -50,13 +50,21 @@ coordinates excluded from the fit while leaving the data masked. This is useful
 for inspecting interpolation or extrapolation, but can be expensive for large
 volumes.
 
+For multidimensional data, the live model channel has the same full shape as
+the prepared dataset. Slice selection, integration ranges, and reductions are
+then applied identically to data and model in the viewer, so changing a viewed
+or integrated axis does not require a new model evaluation. A model failure is
+isolated to its dataset; compatible datasets retain their overlays, and the
+failure text is recorded in the **Current state** metadata.
+
 Two-dimensional comparisons show linked data, fit, and optional residual
 panels. Box cuts through a comparison apply the same weighted reduction to the
 data and model.
 
 After fitting, nfit also attempts display-only model evaluation for disabled
 and zero-weight datasets. Failure of this optional evaluation is recorded but
-does not invalidate the fit.
+does not invalidate the fit or discard successful overlays from other
+datasets.
 
 ## Waterfall plots
 

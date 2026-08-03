@@ -483,6 +483,18 @@ def test_independent_q_groups_parallelize_without_changing_response(
     )
 
 
+def test_inverse_indices_are_grouped_without_repeated_full_array_scans():
+    inverse = np.asarray([2, 0, 1, 2, 0, 1, 1], dtype=np.intp)
+
+    groups = electronic_response_module._group_inverse_indices(inverse)
+
+    assert [group.tolist() for group in groups] == [
+        [1, 4],
+        [2, 5, 6],
+        [0, 3],
+    ]
+
+
 def test_auto_q_interpolation_validates_or_falls_back_to_exact_response():
     model = _chain_model()
     mesh = k_mesh(model, (32,))

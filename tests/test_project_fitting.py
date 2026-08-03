@@ -441,6 +441,38 @@ def test_slice_viewer_datasets_prefer_current_model_over_stored_fit_channels():
     np.testing.assert_allclose(datasets[0].metadata["residual"], dataset.data.signal - 7.0)
 
 
+def test_live_overlay_keeps_successful_datasets_and_records_failures(monkeypatch):
+    project_gui._MODEL_OVERLAY_CACHE.clear()
+    project_gui._MODEL_OVERLAY_ERRORS.clear()
+    group = DataGroup(
+        "Datagroup1",
+        datasets=[
+            DatasetEntry("good", _grid_mdhisto_data(), kind="mdhisto"),
+            DatasetEntry("bad", _grid_mdhisto_data(), kind="mdhisto"),
+        ],
+    )
+    model = create_model_component(group)
+    model.parameters["constant"] = 7.0
+    original = project_gui.evaluate_problem_model
+
+    def fail_one_dataset(problem, name, params, data=None):
+        if name == "bad":
+            raise RuntimeError("deliberate overlay failure")
+        return original(problem, name, params, data=data)
+
+    monkeypatch.setattr(project_gui, "evaluate_problem_model", fail_one_dataset)
+
+    channels = project_gui.current_model_channels(group)
+    current = project_gui.evaluate_current_state_model(group)
+
+    assert set(channels) == {"good"}
+    assert current.metadata["model_evaluation_status"] == "partially failed"
+    assert current.metadata["model_evaluation_datasets"] == ["good"]
+    assert "deliberate overlay failure" in current.metadata[
+        "model_evaluation_errors"
+    ]["bad"]
+
+
 def test_point_fit_overlay_is_only_mapped_to_its_fitted_channel():
     from nfit.plotting import MDHistoSliceViewer
 

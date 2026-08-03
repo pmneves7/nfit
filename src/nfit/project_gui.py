@@ -4653,6 +4653,7 @@ def _fit_limit_warning_text(limit_hits: Any) -> str:
 _MODEL_OVERLAY_CACHE: OrderedDict[int, dict[str, Any]] = OrderedDict()
 _MODEL_OVERLAY_CACHE_LIMIT = 6
 _MODEL_OVERLAY_CACHE_MAX_BYTES = 256 * 1024**2
+_MODEL_OVERLAY_ERRORS: OrderedDict[int, dict[str, str]] = OrderedDict()
 
 
 def _overlay_cache_signature(group: DataGroup) -> str:
@@ -4782,6 +4783,11 @@ def current_model_channels(
     and uncertainty are finite.
     """
 
+    errors: dict[str, str] = {}
+    _MODEL_OVERLAY_ERRORS[id(group)] = errors
+    _MODEL_OVERLAY_ERRORS.move_to_end(id(group))
+    while len(_MODEL_OVERLAY_ERRORS) > _MODEL_OVERLAY_CACHE_LIMIT:
+        _MODEL_OVERLAY_ERRORS.popitem(last=False)
     components = [
         model for model in group.models.values() if isinstance(model, ModelComponentSpec)
     ]
@@ -4812,7 +4818,8 @@ def current_model_channels(
             return {}
         try:
             compiled = compile_fit_problem(components, inputs, description=group.name)
-        except Exception:
+        except Exception as exc:
+            errors["fit problem"] = f"{type(exc).__name__}: {exc}"
             return {}
         subsets = {}
         # Lazy loading during fit-data preparation increments dataset revisions.
@@ -4831,15 +4838,17 @@ def current_model_channels(
         )
     try:
         params = _overlay_current_params(group, compiled)
-        return _fit_channels_from_params(
-            compiled,
-            params,
-            bundles,
-            subset_cache=subsets,
-            evaluate_masked=unmask_model,
-        )
-    except Exception:
+    except Exception as exc:
+        errors["parameters"] = f"{type(exc).__name__}: {exc}"
         return {}
+    return _fit_channels_from_params(
+        compiled,
+        params,
+        bundles,
+        subset_cache=subsets,
+        evaluate_masked=unmask_model,
+        dataset_errors=errors,
+    )
 
 
 def evaluate_current_state_model(
@@ -4855,23 +4864,33 @@ def evaluate_current_state_model(
         source = _last_result_at_level(group.fits) or group.fits[0]
         current = current_state_fit_entry(group, source)
         group.fits.append(current)
+    _MODEL_OVERLAY_ERRORS.pop(id(group), None)
     error = ""
     try:
         channels = current_model_channels(group)
     except Exception as exc:
         channels = {}
         error = str(exc)
+    errors = dict(_MODEL_OVERLAY_ERRORS.get(id(group), {}))
+    if error:
+        errors.setdefault("fit problem", error)
     current.channels = channels
     current.metadata = dict(current.metadata)
     current.metadata["model_evaluation_status"] = (
-        "failed"
-        if error
+        "partially failed"
+        if channels and errors
+        else "failed"
+        if errors
         else "evaluated" if channels else "no compatible model prediction"
     )
     current.metadata["model_evaluation_datasets"] = sorted(channels)
-    if error:
-        current.metadata["model_evaluation_error"] = error
+    if errors:
+        current.metadata["model_evaluation_errors"] = errors
+        current.metadata["model_evaluation_error"] = "; ".join(
+            f"{name}: {message}" for name, message in errors.items()
+        )
     else:
+        current.metadata.pop("model_evaluation_errors", None)
         current.metadata.pop("model_evaluation_error", None)
     _set_fit_current_snapshot(current, group)
     return current
@@ -5533,6 +5552,7 @@ def _fit_channels_from_params(
     subset_cache: dict[Any, tuple[np.ndarray, PointData4D]] | None = None,
     *,
     evaluate_masked: bool = False,
+    dataset_errors: dict[str, str] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Evaluate fit and residual channels for a compiled problem.
 
@@ -5569,10 +5589,21 @@ def _fit_channels_from_params(
                 subset_cache[cache_key] = (keep, subset)
         fit_values = np.full(points.size, np.nan, dtype=float)
         if subset.size:
-            fit_values[keep] = np.asarray(
-                evaluate_problem_model(compiled.problem, name, params, data=subset),
-                dtype=float,
-            )
+            try:
+                fit_values[keep] = np.asarray(
+                    evaluate_problem_model(
+                        compiled.problem,
+                        name,
+                        params,
+                        data=subset,
+                    ),
+                    dtype=float,
+                )
+            except Exception as exc:
+                if dataset_errors is None:
+                    raise
+                dataset_errors[name] = f"{type(exc).__name__}: {exc}"
+                continue
         fit_dataset = next(
             dataset for dataset in compiled.problem.datasets if dataset.name == name
         )
@@ -13040,6 +13071,11 @@ class NfitProjectExplorer:
         self._plot_item_roles.clear()
         self._dataset_group_roles.clear()
         self.tree.blockSignals(True)
+        # Clear the stale accessible/current index before removing every row.
+        # Otherwise Qt's accessibility bridge can query the old timeline row
+        # while QTreeWidget has already resized its model to zero rows.
+        self.tree.clearSelection()
+        self.tree.setCurrentItem(None)
         self.tree.clear()
         item_to_select = None
         for group in self.project.data_groups:

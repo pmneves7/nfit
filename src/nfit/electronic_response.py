@@ -57,6 +57,22 @@ def _q_executor(workers: int) -> ThreadPoolExecutor:
     )
 
 
+def _group_inverse_indices(inverse: np.ndarray) -> list[np.ndarray]:
+    """Return point indices grouped by a dense inverse-index array.
+
+    ``np.unique(..., return_inverse=True)`` numbers groups densely from zero.
+    Sorting once avoids the quadratic repeated ``inverse == group`` scans that
+    are prohibitive for full multidimensional neutron volumes.
+    """
+
+    inverse = np.asarray(inverse, dtype=np.intp)
+    if inverse.size == 0:
+        return []
+    order = np.argsort(inverse, kind="stable")
+    boundaries = np.flatnonzero(np.diff(inverse[order])) + 1
+    return list(np.split(order, boundaries))
+
+
 @dataclass
 class ElectronicResponseCache:
     """Bounded in-memory cache of immutable electronic-response intermediates."""
@@ -1501,10 +1517,7 @@ def _bare_lindhard_direct(
         and q_worker_count > 1
         and q_parallel_work >= _Q_PARALLEL_MIN_WORK
     ):
-        point_groups = [
-            np.flatnonzero(inverse == q_index)
-            for q_index in range(unique_q.shape[0])
-        ]
+        point_groups = _group_inverse_indices(inverse)
         inner_workers = max(1, total_workers // q_worker_count)
 
         def evaluate_q_group(indices: np.ndarray) -> SusceptibilityResult:

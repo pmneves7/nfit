@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from itertools import permutations, product
 
@@ -447,6 +448,60 @@ def test_parameter_trials_reuse_momentum_hamiltonian_components(monkeypatch):
         rtol=2.0e-15,
         atol=2.0e-15,
     )
+
+
+def test_parallel_shifted_hamiltonians_remain_hermitian():
+    translations = np.asarray(
+        [
+            [0, 0, 0],
+            [1, 0, 0],
+            [-1, 0, 0],
+            [0, 1, 0],
+            [0, -1, 0],
+            [0, 0, 1],
+            [0, 0, -1],
+            [1, -1, 0],
+            [-1, 1, 0],
+            [1, 0, -1],
+            [-1, 0, 1],
+            [0, 1, -1],
+            [0, -1, 1],
+        ],
+        dtype=int,
+    )
+    base = np.zeros((len(translations), 4, 4), dtype=np.complex128)
+    base[0] = np.diag([-3.0, -1.0, 1.0, 3.0])
+    hopping = np.zeros_like(base)
+    seed = np.arange(1.0, 17.0).reshape(4, 4) / 16.0
+    for positive, negative in ((1, 2), (3, 4), (5, 6), (7, 8), (9, 10), (11, 12)):
+        hopping[positive] = seed
+        hopping[negative] = seed.T
+    onsite = np.zeros_like(base)
+    onsite[0] = np.eye(4)
+    model = ElectronicModel(
+        direct_lattice=np.eye(3),
+        basis=tuple(BasisState(f"orbital_{index}") for index in range(4)),
+        translations=translations,
+        hamiltonian_blocks=base,
+        interpolation_weights=np.ones(len(translations)),
+        orbital_centers=np.zeros((4, 3)),
+        parameter_values={"hopping": -1000.0, "onsite": 2.0},
+        parameter_blocks={"hopping": hopping, "onsite": onsite},
+    )
+    mesh = np.asarray(
+        list(product((np.arange(12) + 0.5) / 12.0, repeat=3)),
+        dtype=float,
+    )
+    shifts = np.random.default_rng(42).random((96, 3))
+
+    def evaluate(shift):
+        values = model.hamiltonian(mesh + shift)
+        return float(np.max(np.abs(values - values.swapaxes(1, 2).conj())))
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        errors = list(executor.map(evaluate, shifts))
+
+    assert max(errors) < 1.0e-8
 
 
 def test_eigensystem_backends_preserve_reference_values_and_order(monkeypatch):

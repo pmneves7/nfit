@@ -65,9 +65,18 @@ def _fourier_coefficients(
         if cached is not None:
             _FOURIER_COEFFICIENT_CACHE.move_to_end(key)
             return cached
-    coefficients = np.exp(
-        2j * np.pi * wavevectors @ np.asarray(translations, dtype=float).T
+    # This is deliberately a direct contraction rather than ``wavevectors @
+    # translations.T``. Some BLAS builds corrupt concurrent small-inner-
+    # dimension GEMM calls when independent q groups evaluate H(k + q) in
+    # parallel. The contraction has only three products per coefficient, so
+    # NumPy's non-BLAS einsum is inexpensive and safe across worker threads.
+    phases = np.einsum(
+        "kd,rd->kr",
+        wavevectors,
+        np.asarray(translations, dtype=float),
+        optimize=False,
     )
+    coefficients = np.exp(2j * np.pi * phases)
     coefficients *= np.asarray(weights, dtype=float)[None, :]
     coefficients.setflags(write=False)
     with _FOURIER_CACHE_LOCK:
@@ -123,7 +132,9 @@ def _momentum_hamiltonian_components(
         "kr,crij->ckij",
         coefficients,
         real_space,
-        optimize=True,
+        # Keep Hamiltonian assembly independent of BLAS: q-parallel response
+        # workers execute this path concurrently with eigensystem kernels.
+        optimize=False,
     )
     components.setflags(write=False)
     result = (names, components)
@@ -482,7 +493,7 @@ class ElectronicModel:
                 "kr,rij->kij",
                 coefficients,
                 self.resolved_hamiltonian_blocks,
-                optimize=True,
+                optimize=False,
             )
         else:
             names, components = component_result
@@ -490,7 +501,12 @@ class ElectronicModel:
                 [1.0, *(self.parameter_values[name] for name in names)],
                 dtype=float,
             )
-            result = np.tensordot(coefficients, components, axes=(0, 0))
+            result = np.einsum(
+                "c,ckij->kij",
+                coefficients,
+                components,
+                optimize=False,
+            )
         if not np.allclose(result, result.swapaxes(1, 2).conj(), rtol=1e-9, atol=1e-8):
             raise ValueError("interpolated Hamiltonian is not Hermitian")
         return result[0] if single else result

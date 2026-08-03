@@ -196,6 +196,10 @@ periodic permutation of the base eigenvalues and eigenvectors. No shifted
 Hamiltonian is assembled or diagonalized. Whether a wavevector is commensurate
 is decided once per distinct wavevector rather than once per response point,
 which matters because a constant-Q cut repeats one wavevector at every energy.
+Full-volume response evaluation likewise groups all points by distinct
+transferred wavevector with one stable sort, rather than rescanning the entire
+point array for every group. The resulting susceptibility is still returned in
+the original full-volume order for viewer-side binning and integration.
 Off-mesh points remain direct unless
 a positive interpolation tolerance is configured. Validated interpolation
 uses only required periodic-linear stencils, refines through commensurate mesh
@@ -217,8 +221,10 @@ resolved implementation is recorded in susceptibility provenance.
 For sufficiently large calculations with several distinct transferred
 wavevectors, nfit partitions the total `response_workers` allocation across
 the independent q groups and assigns the remaining workers within each group.
-The base mesh eigensystem is shared rather than recomputed. Small jobs and
-single-q energy scans stay on the lower-overhead serial-q path.
+The base mesh eigensystem is shared rather than recomputed. Fourier Hamiltonian
+assembly uses thread-safe direct contractions while those q groups run in
+parallel. Small jobs and single-q energy scans stay on the lower-overhead
+serial-q path.
 
 With explicit `response_backend="cupy"`, Fourier Hamiltonian components,
 eigensystems, occupations, magnetic matrix elements, denominators, and the
