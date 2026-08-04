@@ -322,7 +322,17 @@ def rpa_dress_susceptibility(
     if not np.isfinite(stability_warning) or stability_warning < 0.0:
         raise ValueError("static_warning_margin must be finite and nonnegative")
     values = np.asarray(bare.values_per_meV_cell)
-    matrices = np.asarray(vertex.values_meV)
+    raw_matrices = np.asarray(vertex.values_meV)
+    scalar_isotropic = bool(
+        vertex.kind == "scalar_stoner"
+        and raw_matrices.ndim == 2
+        and bare.operator_labels == CARTESIAN_SPIN_LABELS
+        and isinstance(bare.provenance.get("operator_basis"), Mapping)
+        and bare.provenance["operator_basis"].get("kind") == "cartesian_spin"
+        and "implicit_spin_trace_factor"
+        in bare.provenance["operator_basis"]
+    )
+    matrices = raw_matrices
     if matrices.ndim == 2:
         matrices = np.broadcast_to(matrices, values.shape)
     if matrices.shape != values.shape:
@@ -335,44 +345,73 @@ def rpa_dress_susceptibility(
     size = values.shape[-1]
     per_point_bytes = max(1, 16 * size * size * 4 + 8 * size)
     batch_size = max(1, min(values.shape[0], memory_budget // per_point_bytes))
-    for start in range(0, values.shape[0], batch_size):
-        stop = min(start + batch_size, values.shape[0])
-        denominator = identity[None, ...] - values[start:stop] @ matrices[start:stop]
-        singular_values = np.linalg.svd(denominator, compute_uv=False)
-        minimum_singular_values[start:stop] = singular_values[:, -1]
-        condition_numbers[start:stop] = np.divide(
-            singular_values[:, 0],
-            singular_values[:, -1],
-            out=np.full(stop - start, np.inf, dtype=float),
-            where=singular_values[:, -1] > 0.0,
-        )
-        scale = np.maximum(1.0, singular_values[:, 0])
-        relative_singular_values[start:stop] = singular_values[:, -1] / scale
-        singular = singular_values[:, -1] <= threshold * scale
+    scalar_feedback: np.ndarray | None = None
+    if scalar_isotropic:
+        scalar = values[:, 0, 0]
+        scalar_feedback = scalar * raw_matrices[0, 0]
+        denominator_scalar = 1.0 - scalar_feedback
+        minimum_singular_values[:] = np.abs(denominator_scalar)
+        condition_numbers[:] = 1.0
+        scale = np.maximum(1.0, minimum_singular_values)
+        relative_singular_values[:] = minimum_singular_values / scale
+        singular = minimum_singular_values <= threshold * scale
         if np.any(singular):
-            index = start + int(np.flatnonzero(singular)[0])
+            index = int(np.flatnonzero(singular)[0])
             raise np.linalg.LinAlgError(
                 "RPA denominator is singular within the configured tolerance "
                 f"at response point {index}"
             )
-        dressed[start:stop] = np.linalg.solve(
-            denominator,
-            values[start:stop],
-        )
+        dressed.fill(0.0)
+        dressed_scalar = scalar / denominator_scalar
+        diagonal = np.arange(size)
+        dressed[:, diagonal, diagonal] = dressed_scalar[:, None]
+        batch_size = values.shape[0]
+    else:
+        for start in range(0, values.shape[0], batch_size):
+            stop = min(start + batch_size, values.shape[0])
+            denominator = (
+                identity[None, ...]
+                - values[start:stop] @ matrices[start:stop]
+            )
+            singular_values = np.linalg.svd(denominator, compute_uv=False)
+            minimum_singular_values[start:stop] = singular_values[:, -1]
+            condition_numbers[start:stop] = np.divide(
+                singular_values[:, 0],
+                singular_values[:, -1],
+                out=np.full(stop - start, np.inf, dtype=float),
+                where=singular_values[:, -1] > 0.0,
+            )
+            scale = np.maximum(1.0, singular_values[:, 0])
+            relative_singular_values[start:stop] = (
+                singular_values[:, -1] / scale
+            )
+            singular = singular_values[:, -1] <= threshold * scale
+            if np.any(singular):
+                index = start + int(np.flatnonzero(singular)[0])
+                raise np.linalg.LinAlgError(
+                    "RPA denominator is singular within the configured "
+                    f"tolerance at response point {index}"
+                )
+            dressed[start:stop] = np.linalg.solve(
+                denominator,
+                values[start:stop],
+            )
     minimum_relative_index = int(np.argmin(relative_singular_values))
     static_indices = np.flatnonzero(np.abs(bare.energy_meV) <= 1.0e-14)
-    static_ratios = np.full(values.shape[0], np.nan, dtype=float)
-    for index in static_indices:
-        feedback = values[index] @ matrices[index]
-        hermitian_feedback = 0.5 * (feedback + feedback.conj().T)
-        static_ratios[index] = float(
-            np.max(np.linalg.eigvalsh(hermitian_feedback))
-        )
+    if scalar_feedback is not None:
+        static_ratios = np.real(scalar_feedback[static_indices])
+    else:
+        static_ratios = np.empty(static_indices.size, dtype=float)
+        for local_index, point_index in enumerate(static_indices):
+            feedback = values[point_index] @ matrices[point_index]
+            hermitian_feedback = 0.5 * (feedback + feedback.conj().T)
+            static_ratios[local_index] = float(
+                np.max(np.linalg.eigvalsh(hermitian_feedback))
+            )
     if static_indices.size:
-        sampled_static_index = int(
-            static_indices[np.nanargmax(static_ratios[static_indices])]
-        )
-        sampled_static_ratio = float(static_ratios[sampled_static_index])
+        local_static_index = int(np.nanargmax(static_ratios))
+        sampled_static_index = int(static_indices[local_static_index])
+        sampled_static_ratio = float(static_ratios[local_static_index])
         sampled_static_margin = 1.0 - sampled_static_ratio
     else:
         sampled_static_index = -1
@@ -410,10 +449,16 @@ def rpa_dress_susceptibility(
                 "singular_tolerance": threshold,
                 "batch_size": batch_size,
                 "max_batch_bytes": memory_budget,
-                "minimum_singular_value": minimum_singular_values.tolist(),
-                "condition_number": condition_numbers.tolist(),
-                "relative_minimum_singular_value": (
-                    relative_singular_values.tolist()
+                "solver": (
+                    "scalar_isotropic"
+                    if scalar_isotropic
+                    else "batched_matrix"
+                ),
+                "minimum_singular_value": float(
+                    minimum_singular_values[minimum_relative_index]
+                ),
+                "maximum_condition_number": float(
+                    np.max(condition_numbers)
                 ),
                 "near_pole_tolerance": pole_warning,
                 "near_pole": bool(
@@ -428,7 +473,9 @@ def rpa_dress_susceptibility(
                     "criterion": (
                         "1 - lambda_max(Hermitian part of chi0@Gamma)"
                     ),
-                    "sampled_zero_energy_points": static_indices.tolist(),
+                    "sampled_zero_energy_point_count": int(
+                        static_indices.size
+                    ),
                     "margin": sampled_static_margin,
                     "ratio": sampled_static_ratio,
                     "point_index": sampled_static_index,

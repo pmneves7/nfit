@@ -48,6 +48,10 @@ The implementation records the operator order, interaction matrix, RPA
 multiplication order, smallest relative singular value, condition number, and
 sampled static stability margin. A denominator within `singular_tolerance` of
 a pole raises an error instead of returning an unstable finite number.
+For an implicit-spin isotropic response, nfit evaluates the equivalent scalar
+closed form pointwise and stores extrema and counts rather than per-point
+singular-value arrays; matrix and explicit-spin responses retain the general
+batched solve.
 
 ## Parameters
 

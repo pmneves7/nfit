@@ -1785,6 +1785,19 @@ def _register_builtin_models() -> None:
                     "16",
                 ),
                 _config_field(
+                    "response_q_interpolation_certificates",
+                    {},
+                    (
+                        "Derived per-dataset interpolation certificates. Each "
+                        "record identifies the electronic parameter state, "
+                        "tested meshes, direct validation points, tolerances, "
+                        "and measured errors."
+                    ),
+                    "JSON dictionary keyed by dataset name.",
+                    "dict",
+                    "{}",
+                ),
+                _config_field(
                     "chemical_potential_mode",
                     "source",
                     (

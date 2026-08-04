@@ -121,6 +121,50 @@ def test_scalar_rpa_matches_closed_form_and_records_pole_diagnostic():
     assert dressed.provenance["dressing"]["multiplication_order"] == "I-chi0@Gamma"
 
 
+def test_implicit_cartesian_stoner_uses_compact_scalar_solver():
+    chi0 = np.asarray([0.001 + 0.0002j, 0.002 + 0.0003j])
+    values = np.zeros((2, 3, 3), dtype=np.complex128)
+    diagonal = np.arange(3)
+    values[:, diagonal, diagonal] = chi0[:, None]
+    bare = SusceptibilityResult(
+        q_reduced=[[0.1, 0.0, 0.0], [0.2, 0.0, 0.0]],
+        energy_meV=[0.0, 1.0],
+        values_per_meV_cell=values,
+        operator_labels=("Sx", "Sy", "Sz"),
+        conjugate_indices=(0, 1, 2),
+        model_digest="test",
+        temperature_K=10.0,
+        chemical_potential_meV=0.0,
+        broadening_meV=0.5,
+        provenance={
+            "operator_basis": {
+                "kind": "cartesian_spin",
+                "implicit_spin_trace_factor": 0.5,
+            }
+        },
+    )
+    vertex = scalar_stoner_vertex(
+        ("Sx", "Sy", "Sz"),
+        0.1,
+        energy_unit="eV",
+    )
+
+    dressed = rpa_dress_susceptibility(bare, vertex)
+
+    expected = chi0 / (1.0 - 200.0 * chi0)
+    np.testing.assert_allclose(
+        dressed.values_per_meV_cell[:, diagonal, diagonal],
+        np.repeat(expected[:, None], 3, axis=1),
+    )
+    diagnostics = dressed.provenance["dressing"]
+    assert diagnostics["solver"] == "scalar_isotropic"
+    assert isinstance(diagnostics["minimum_singular_value"], float)
+    assert "condition_number" not in diagnostics
+    assert diagnostics["static_stability"][
+        "sampled_zero_energy_point_count"
+    ] == 1
+
+
 def test_hubbard_hund_vertex_respects_shell_locality_and_rotational_constraints():
     model = build_electronic_model(
         direct_lattice=np.eye(3),
@@ -475,6 +519,8 @@ def test_independent_q_groups_parallelize_without_changing_response(
         "q_workers": 4,
         "inner_workers": 1,
         "unique_q": 4,
+        "q_batch_size": 1,
+        "q_batches": 4,
         "work_estimate": 256,
     }
     np.testing.assert_array_equal(
@@ -526,8 +572,12 @@ def test_auto_q_interpolation_validates_or_falls_back_to_exact_response():
         **settings,
     )
     policy = automatic.provenance["q_evaluation"]
+    certificate = automatic.provenance["q_interpolation_certificate"]
 
     assert policy["resolved_policy"] == "validated_interpolation"
+    assert certificate["status"] == "certified"
+    assert certificate["certificate_digest"]
+    assert certificate["maximum_relative_error"] <= 0.2
     np.testing.assert_allclose(
         automatic.values_per_meV_cell,
         reference.values_per_meV_cell,
@@ -547,12 +597,50 @@ def test_auto_q_interpolation_validates_or_falls_back_to_exact_response():
         **settings,
     )
     assert strict.provenance["q_evaluation"]["resolved_policy"] == "exact_fallback"
+    assert strict.provenance["q_interpolation_certificate"]["status"] == (
+        "exact_fallback"
+    )
     np.testing.assert_allclose(
         strict.values_per_meV_cell,
         reference.values_per_meV_cell,
         rtol=2.0e-14,
         atol=2.0e-14,
     )
+
+
+def test_interpolation_geometry_cache_is_reused_across_model_parameters():
+    model = _chain_model()
+    varied = build_electronic_model(
+        direct_lattice=np.diag([2.0, 8.0, 9.0]),
+        basis=[BasisState("s", site="A", orbital="s")],
+        hoppings={(1, 0, 0): [[-9.9]]},
+        orbital_centers=[[0.25, 0.0, 0.0]],
+        periodic_axes=(0,),
+        energy_unit="meV",
+    )
+    mesh = k_mesh(model, (32,))
+    cache = ElectronicResponseCache(max_bytes=1024**2, max_entries=16)
+    q = np.linspace(0.101, 0.899, 100)
+    Q = np.column_stack((q, np.zeros(100), np.zeros(100)))
+    energy = np.resize(np.linspace(-2.0, 2.0, 5), 100)
+    settings = {
+        "temperature_K": 30.0,
+        "chemical_potential_meV": 0.0,
+        "broadening_meV": 2.0,
+        "q_evaluation": "auto",
+        "q_interpolation_rtol": 1.0,
+        "q_interpolation_atol": 1.0e-8,
+        "q_interpolation_mesh": (8,),
+        "q_validation_points": 8,
+        "transition_max_batch_bytes": 12_000,
+        "cache": cache,
+    }
+
+    first = bare_spin_susceptibility(model, Q, energy, mesh, **settings)
+    second = bare_spin_susceptibility(varied, Q, energy, mesh, **settings)
+
+    assert first.provenance["q_interpolation"]["geometry_cache_hit"] is False
+    assert second.provenance["q_interpolation"]["geometry_cache_hit"] is True
 
 
 def test_response_cache_reuses_completed_bare_susceptibility():
@@ -1433,6 +1521,85 @@ def test_stoner_component_replaces_bare_observable_and_reuses_its_parameters():
     assert prediction.shape == (2,)
     assert np.all(np.isfinite(prediction))
     assert np.all(prediction >= 0.0)
+
+
+def test_lindhard_fit_evaluation_persists_interpolation_certificate():
+    model = _chain_model()
+    tight_binding = ModelComponentSpec(
+        name="bands",
+        type="tight_binding",
+        config={
+            **{
+                field.name: field.default
+                for field in model_definition("tight_binding").config_fields
+            },
+            "model_data": model.to_dict(),
+            "periodic_axes": [0],
+        },
+    )
+    lindhard = ModelComponentSpec(
+        name="bare",
+        type="lindhard",
+        parameters={"broadening": 2.0},
+        config={
+            **{
+                field.name: field.default
+                for field in model_definition("lindhard").config_fields
+            },
+            "electronic_component": "bands",
+            "response_mesh": [32],
+            "response_mesh_shift": [0.0],
+            "response_q_evaluation": "auto",
+            "response_q_interpolation_rtol": 0.2,
+            "response_q_interpolation_atol": 1.0e-8,
+            "response_q_interpolation_mesh": [8],
+            "response_q_validation_points": 2,
+        },
+    )
+    stoner = ModelComponentSpec(
+        name="dressed",
+        type="stoner_rpa",
+        parameters={"I": 0.1},
+        config={
+            **{
+                field.name: field.default
+                for field in model_definition("stoner_rpa").config_fields
+            },
+            "response_component": "bare",
+        },
+    )
+    points = PointData4D(
+        H=np.asarray([0.137, 0.283]),
+        K=np.zeros(2),
+        L=np.zeros(2),
+        E=np.asarray([1.0, 2.0]),
+        intensity=np.zeros(2),
+        sigma=np.ones(2),
+        temperature=30.0,
+    )
+    compiled = compile_fit_problem(
+        [tight_binding, lindhard, stoner],
+        [
+            FitDatasetInput(
+                "scan",
+                points,
+                data_type="single_crystal_inelastic",
+            )
+        ],
+    )
+
+    evaluate_problem_model(
+        compiled.problem,
+        "scan",
+        {"bare.broadening": 2.0, "dressed.I": 0.1},
+    )
+
+    stored = lindhard.config["response_q_interpolation_certificates"]["scan"]
+    assert stored["status"] == "certified"
+    assert stored["certificates"][0]["certificate_digest"]
+    assert stored["certificates"][0]["certified_quantity"] == (
+        "rpa_scalar_stoner"
+    )
 
 
 def test_dressed_response_shares_parameters_across_multiple_datasets():

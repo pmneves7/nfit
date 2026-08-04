@@ -167,6 +167,40 @@ The GUI's **Exact Q evaluation** policy is
 commensurate-only, and forced-interpolation policies remain available as
 advanced script settings.
 
+Validated interpolation is intended for large point clouds and optimizer
+iterations. nfit first evaluates a deterministic subset of the requested
+off-mesh $(\mathbf Q,\hbar\omega)$ points both directly and through a periodic
+orbital-density interpolation. It accepts the approximation only when every
+validation residual satisfies
+
+$$
+|\chi_{\rm interp}-\chi_{\rm direct}|
+\leq a_{\rm tol}+r_{\rm tol}\max_i|\chi_{{\rm direct},i}|.
+$$
+
+The selected interpolation mesh, direct validation coordinates and energies,
+observed errors, electronic-model digest, attempted refinements, and a digest
+of the certificate are stored in
+`response_q_interpolation_certificates` for the current component state and
+dataset. Changing an onsite energy, hopping, self-energy parameter,
+broadening, or interaction causes a new validation during that trial; a
+certificate from another Hamiltonian is never reused. `auto` falls back to an
+exact full calculation when validation fails. `interpolated` instead raises an
+error, which is useful when a fit must not silently take a slower path.
+Scalar Stoner and user-matrix RPA dressings are checked again after the
+nonlinear interaction denominator is applied, so pole enhancement cannot turn
+a certified bare-response error into an uncertified dressed result.
+
+For an implicit-spin orbital model, the fast path evaluates the full
+orbital-density response on the certified periodic mesh, reuses each
+node--energy pair, interpolates in bounded point chunks, and applies the
+extended-zone orbital phases exactly at every requested point. The measured
+points remain available for arbitrary viewer binning and integration; this is
+not a visible-slice approximation. Required tolerances are model and domain
+dependent. If no divisor of the integration mesh passes, increase the
+integration mesh, loosen a scientifically justified tolerance, or use exact
+evaluation.
+
 ### Advanced execution
 
 | Setting | Meaning | Default | Acceptable input example |
@@ -175,6 +209,7 @@ advanced script settings.
 | `response_sampling_max_refinements` | maximum candidate meshes in one certificate | `7` | `8` |
 | `response_sampling_max_mesh_points` | independent full-mesh point budget | `500000` | `1000000` |
 | `response_sampling_certificate` | derived serialized meshes, errors, domain, and provenance | `{}` | normally written by nfit |
+| `response_q_interpolation_certificates` | derived per-dataset validation certificates for the current live parameter state | `{}` | normally written by nfit |
 | `response_symmetry` | full mesh, required certified reduction, or automatic reduction with recorded fallback | `"auto"` | `"auto"`, `"full"`, or `"reduced"` |
 | `response_q_interpolation_atol` | accepted absolute complex-response error; zero disables this criterion | `0.0` | `1e-5` |
 | `response_q_interpolation_mesh` | optional initial commensurate interpolation mesh; empty chooses automatically | `[]` | `[8, 8, 8]` |

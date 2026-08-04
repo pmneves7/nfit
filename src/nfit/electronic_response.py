@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import json
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -45,6 +47,7 @@ FloatArray = NDArray[np.float64]
 ComplexArray = NDArray[np.complex128]
 _NUMBA_TRANSITION_MIN_WORK = 25_000_000
 _Q_PARALLEL_MIN_WORK = 25_000_000
+_INTERPOLATION_GEOMETRY_LOCK = RLock()
 
 
 @lru_cache(maxsize=16)
@@ -71,6 +74,57 @@ def _group_inverse_indices(inverse: np.ndarray) -> list[np.ndarray]:
     order = np.argsort(inverse, kind="stable")
     boundaries = np.flatnonzero(np.diff(inverse[order])) + 1
     return list(np.split(order, boundaries))
+
+
+def _q_eigensystem_batch_size(
+    *,
+    mesh_points: int,
+    basis_size: int,
+    q_workers: int,
+    max_batch_bytes: int,
+) -> int:
+    """Return a bounded number of shifted-q eigensystems per worker task."""
+
+    # One shifted point retains a Hamiltonian while it is diagonalized, its
+    # eigenvectors, and its eigenvalues. Divide the configured response budget
+    # across concurrent q workers so their combined live arrays remain bounded.
+    per_q_bytes = max(
+        1,
+        int(mesh_points)
+        * (32 * int(basis_size) ** 2 + 8 * int(basis_size)),
+    )
+    worker_budget = max(1, int(max_batch_bytes) // max(1, int(q_workers)))
+    # Small Hermitian matrices are fastest in modest leading-dimension batches
+    # on both Apple Accelerate and OpenBLAS. Larger batches increase live memory
+    # and were slower in the representative 4-orbital response benchmark.
+    return max(1, min(4, worker_budget // per_q_bytes))
+
+
+def _split_shifted_eigensystems(
+    values: ElectronicEigensystem,
+    q_values: np.ndarray,
+    mesh_points: int,
+) -> dict[str, ElectronicEigensystem]:
+    """Split one flattened eigensystem batch into digest-keyed q views."""
+
+    result: dict[str, ElectronicEigensystem] = {}
+    for local_index, q_value in enumerate(q_values):
+        start = local_index * mesh_points
+        stop = start + mesh_points
+        result[array_digest(q_value, np.float64)] = ElectronicEigensystem(
+            eigenvalues=values.eigenvalues[start:stop],
+            eigenvectors=(
+                None
+                if values.eigenvectors is None
+                else values.eigenvectors[start:stop]
+            ),
+            provenance={
+                **dict(values.provenance),
+                "q_batch_size": int(q_values.shape[0]),
+                "q_batch_index": int(local_index),
+            },
+        )
+    return result
 
 
 @dataclass
@@ -1322,6 +1376,7 @@ def _bare_lindhard_direct(
     precomputed_base: ElectronicEigensystem | None = None,
     allow_q_parallel: bool = True,
     cache_completed_response: bool = True,
+    precomputed_shifted: Mapping[str, ElectronicEigensystem] | None = None,
 ) -> SusceptibilityResult:
     """Evaluate the causal generalized Lindhard response.
 
@@ -1343,6 +1398,7 @@ def _bare_lindhard_direct(
         raise ValueError("chemical_potential_meV must be finite")
     transferred_q, energy = _point_inputs(q_reduced, energy_meV)
     q = np.mod(transferred_q, 1.0)
+    constant_operators = operator_matrices_by_point is None
     point_operators = (
         np.broadcast_to(
             np.asarray(operators.matrices)[None, ...],
@@ -1385,7 +1441,16 @@ def _bare_lindhard_direct(
         array_digest(weights, np.float64),
         array_digest(transferred_q, np.float64),
         array_digest(energy, np.float64),
-        array_digest(point_operators, np.complex128),
+        (
+            "constant"
+            if constant_operators
+            else array_digest(point_operators, np.complex128)
+        ),
+        (
+            array_digest(operators.matrices, np.complex128)
+            if constant_operators
+            else "point-dependent"
+        ),
         operators.labels,
         operators.conjugate_indices,
         temperature,
@@ -1493,9 +1558,13 @@ def _bare_lindhard_direct(
         (q.shape[0], operators.size, operators.size),
         dtype=np.complex128,
     )
-    operator_keys = np.asarray(
-        [array_digest(value, np.complex128) for value in point_operators],
-        dtype=object,
+    operator_keys = (
+        None
+        if constant_operators
+        else np.asarray(
+            [array_digest(value, np.complex128) for value in point_operators],
+            dtype=object,
+        )
     )
     unique_q, inverse = np.unique(q, axis=0, return_inverse=True)
     total_workers = (
@@ -1519,8 +1588,50 @@ def _bare_lindhard_direct(
     ):
         point_groups = _group_inverse_indices(inverse)
         inner_workers = max(1, total_workers // q_worker_count)
+        q_batch_size = _q_eigensystem_batch_size(
+            mesh_points=k.shape[0],
+            basis_size=model.n_basis,
+            q_workers=q_worker_count,
+            max_batch_bytes=max_batch_bytes,
+        )
+        q_batch_size = min(
+            q_batch_size,
+            max(1, int(np.ceil(len(point_groups) / q_worker_count))),
+        )
+        q_group_batches = [
+            point_groups[start : start + q_batch_size]
+            for start in range(0, len(point_groups), q_batch_size)
+        ]
 
-        def evaluate_q_group(indices: np.ndarray) -> SusceptibilityResult:
+        def evaluate_q_batch(groups: list[np.ndarray]) -> SusceptibilityResult:
+            indices = np.concatenate(groups)
+            batch_q = np.unique(q[indices], axis=0)
+            direct_q = np.asarray(
+                [
+                    value
+                    for value in batch_q
+                    if _commensurate_mesh_permutation(model, mesh, value) is None
+                ],
+                dtype=float,
+            ).reshape(-1, 3)
+            shifted_by_q: dict[str, ElectronicEigensystem] = {}
+            if direct_q.size:
+                coordinates = (
+                    k[None, :, :] + direct_q[:, None, :]
+                ).reshape(-1, 3)
+                shifted_batch = evaluate_eigensystem(
+                    model,
+                    coordinates,
+                    eigenvectors=True,
+                    backend=backend,
+                    workers=inner_workers,
+                    max_batch_bytes=max_batch_bytes,
+                )
+                shifted_by_q = _split_shifted_eigensystems(
+                    shifted_batch,
+                    direct_q,
+                    k.shape[0],
+                )
             return _bare_lindhard_direct(
                 model,
                 transferred_q[indices],
@@ -1530,7 +1641,11 @@ def _bare_lindhard_direct(
                 temperature_K=temperature,
                 chemical_potential_meV=mu,
                 broadening_meV=eta,
-                operator_matrices_by_point=point_operators[indices],
+                operator_matrices_by_point=(
+                    None
+                    if constant_operators
+                    else point_operators[indices]
+                ),
                 backend=backend,
                 workers=inner_workers,
                 max_batch_bytes=max_batch_bytes,
@@ -1541,6 +1656,7 @@ def _bare_lindhard_direct(
                 precomputed_base=base,
                 allow_q_parallel=False,
                 cache_completed_response=False,
+                precomputed_shifted=shifted_by_q,
             )
 
         limiter = (
@@ -1554,19 +1670,20 @@ def _bare_lindhard_direct(
         with limiter:
             q_responses = list(
                 _q_executor(q_worker_count).map(
-                    evaluate_q_group,
-                    point_groups,
+                    evaluate_q_batch,
+                    q_group_batches,
                 )
             )
         combined_values = np.empty(
             (q.shape[0], operators.size, operators.size),
             dtype=np.complex128,
         )
-        for indices, q_response in zip(
-            point_groups,
+        for groups, q_response in zip(
+            q_group_batches,
             q_responses,
             strict=True,
         ):
+            indices = np.concatenate(groups)
             combined_values[indices] = q_response.values_per_meV_cell
         reference_provenance = dict(q_responses[0].provenance)
         transition_backends = {
@@ -1627,6 +1744,8 @@ def _bare_lindhard_direct(
                     "q_workers": q_worker_count,
                     "inner_workers": inner_workers,
                     "unique_q": int(unique_q.shape[0]),
+                    "q_batch_size": int(q_batch_size),
+                    "q_batches": int(len(q_group_batches)),
                     "work_estimate": q_parallel_work,
                 },
                 "cache": _cache_record(
@@ -1646,21 +1765,33 @@ def _bare_lindhard_direct(
     resolved_transition_backends: set[str] = set()
     for q_index, q_value in enumerate(unique_q):
         point_indices = np.flatnonzero(inverse == q_index)
-        operator_groups = [
-            point_indices[operator_keys[point_indices] == key]
-            for key in np.unique(operator_keys[point_indices])
-        ]
+        operator_groups = (
+            [point_indices]
+            if operator_keys is None
+            else [
+                point_indices[operator_keys[point_indices] == key]
+                for key in np.unique(operator_keys[point_indices])
+            ]
+        )
         permutation = _commensurate_mesh_permutation(model, mesh, q_value)
         if permutation is None:
-            shifted = _cached_eigensystem(
-                model,
-                k + q_value[None, :],
-                eigenvectors=True,
-                backend=backend,
-                workers=workers,
-                max_batch_bytes=max_batch_bytes,
-                cache=cache,
+            shifted = (
+                None
+                if precomputed_shifted is None
+                else precomputed_shifted.get(
+                    array_digest(q_value, np.float64)
+                )
             )
+            if shifted is None:
+                shifted = _cached_eigensystem(
+                    model,
+                    k + q_value[None, :],
+                    eigenvectors=True,
+                    backend=backend,
+                    workers=workers,
+                    max_batch_bytes=max_batch_bytes,
+                    cache=cache,
+                )
         else:
             shifted = _permuted_eigensystem(base, permutation, q_value)
             commensurate_q_count += 1
@@ -1972,41 +2103,150 @@ def _periodic_linear_stencils(
     )
 
 
+def _periodic_linear_stencil_indices(
+    model: ElectronicModel,
+    q_reduced: np.ndarray,
+    mesh_shape: Sequence[int],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return vectorized flat node indices and weights for every q point."""
+
+    shape = np.asarray(tuple(int(value) for value in mesh_shape), dtype=np.int64)
+    coordinates = (
+        np.mod(q_reduced[:, model.periodic_axes], 1.0) * shape[None, :]
+    )
+    floors = np.floor(coordinates)
+    lower = floors.astype(np.int64) % shape[None, :]
+    fraction = coordinates - floors
+    fraction = np.where(
+        (fraction <= 1.0e-12) | (1.0 - fraction <= 1.0e-12),
+        0.0,
+        fraction,
+    )
+    corners = np.asarray(
+        list(product((0, 1), repeat=len(model.periodic_axes))),
+        dtype=np.int64,
+    )
+    node_indices = (
+        lower[:, None, :] + corners[None, :, :]
+    ) % shape[None, None, :]
+    axis_weights = np.where(
+        corners[None, :, :] == 0,
+        1.0 - fraction[:, None, :],
+        fraction[:, None, :],
+    )
+    weights = np.prod(axis_weights, axis=2)
+    flat = np.ravel_multi_index(
+        tuple(node_indices[:, :, axis].ravel() for axis in range(shape.size)),
+        tuple(shape),
+    ).reshape(q_reduced.shape[0], corners.shape[0])
+    return flat, weights
+
+
 def _interpolated_lindhard_response(
     model: ElectronicModel,
     transferred_q: np.ndarray,
     energy: np.ndarray,
     mesh: WavevectorSampling,
     operators: ElectronicOperatorBasis,
-    point_operators: np.ndarray,
+    point_operators: np.ndarray | None,
     *,
     q_mesh_shape: Sequence[int],
     direct_kwargs: Mapping[str, Any],
 ) -> SusceptibilityResult:
-    nodes, parents, interpolation_weights = _periodic_linear_stencils(
-        model,
-        transferred_q,
-        q_mesh_shape,
-    )
-    node_response = _bare_lindhard_direct(
-        model,
-        nodes,
-        energy[parents],
-        mesh,
-        operators,
-        operator_matrices_by_point=point_operators[parents],
-        **direct_kwargs,
-    )
     values = np.zeros(
         (transferred_q.shape[0], operators.size, operators.size),
         dtype=np.complex128,
     )
-    np.add.at(
-        values,
-        parents,
-        interpolation_weights[:, None, None]
-        * node_response.values_per_meV_cell,
+    max_stencils = 2 ** len(model.periodic_axes)
+    point_operator_bytes = (
+        0
+        if point_operators is None
+        else 16 * operators.size * model.n_basis * model.n_basis
     )
+    per_point_bytes = max(
+        1,
+        max_stencils
+        * (
+            24
+            + 8
+            + 8
+            + 16 * operators.size * operators.size
+            + point_operator_bytes
+        ),
+    )
+    memory_budget = max(
+        1,
+        int(
+            direct_kwargs.get("transition_max_batch_bytes")
+            or direct_kwargs.get("max_batch_bytes", 256 * 1024**2)
+        ),
+    )
+    point_batch = max(
+        1,
+        min(
+            transferred_q.shape[0],
+            65_536,
+            memory_budget // per_point_bytes,
+        ),
+    )
+    evaluated_stencils = 0
+    unique_nodes: set[tuple[float, ...]] = set()
+    reference_response: SusceptibilityResult | None = None
+    for start in range(0, transferred_q.shape[0], point_batch):
+        stop = min(start + point_batch, transferred_q.shape[0])
+        nodes, parents, interpolation_weights = _periodic_linear_stencils(
+            model,
+            transferred_q[start:stop],
+            q_mesh_shape,
+        )
+        chunk_operators = (
+            None
+            if point_operators is None
+            else point_operators[start:stop][parents]
+        )
+        node_energy = energy[start:stop][parents]
+        response_inverse: np.ndarray | None = None
+        evaluation_nodes = nodes
+        evaluation_energy = node_energy
+        if chunk_operators is None:
+            # Interpolation commonly maps many source points onto the same
+            # commensurate node and energy. Evaluate each pair once, then
+            # scatter it back to the stencil rows. This is essential for a
+            # million-point volume, where the raw stencil can contain several
+            # million duplicate response requests.
+            pairs = np.column_stack((nodes, node_energy))
+            unique_pairs, response_inverse = np.unique(
+                pairs,
+                axis=0,
+                return_inverse=True,
+            )
+            evaluation_nodes = unique_pairs[:, :3]
+            evaluation_energy = unique_pairs[:, 3]
+        node_response = _bare_lindhard_direct(
+            model,
+            evaluation_nodes,
+            evaluation_energy,
+            mesh,
+            operators,
+            operator_matrices_by_point=chunk_operators,
+            cache_completed_response=False,
+            **direct_kwargs,
+        )
+        np.add.at(
+            values[start:stop],
+            parents,
+            interpolation_weights[:, None, None]
+            * (
+                node_response.values_per_meV_cell
+                if response_inverse is None
+                else node_response.values_per_meV_cell[response_inverse]
+            ),
+        )
+        evaluated_stencils += int(nodes.shape[0])
+        unique_nodes.update(map(tuple, np.unique(nodes, axis=0)))
+        reference_response = node_response
+    if reference_response is None:  # pragma: no cover - validated nonempty input
+        raise RuntimeError("interpolated response contains no points")
     return SusceptibilityResult(
         q_reduced=np.mod(transferred_q, 1.0),
         Q_reduced=transferred_q,
@@ -2015,21 +2255,39 @@ def _interpolated_lindhard_response(
         operator_labels=operators.labels,
         conjugate_indices=operators.conjugate_indices,
         model_digest=model.content_digest,
-        temperature_K=node_response.temperature_K,
-        chemical_potential_meV=node_response.chemical_potential_meV,
-        broadening_meV=node_response.broadening_meV,
+        temperature_K=reference_response.temperature_K,
+        chemical_potential_meV=reference_response.chemical_potential_meV,
+        broadening_meV=reference_response.broadening_meV,
         provenance={
-            **dict(node_response.provenance),
+            **dict(reference_response.provenance),
             "approximation": "finite lifetime broadening and q interpolation",
             "q_interpolation": {
                 "method": "periodic_linear",
                 "mesh_shape": list(q_mesh_shape),
                 "requested_points": int(transferred_q.shape[0]),
-                "evaluated_stencil_points": int(nodes.shape[0]),
-                "unique_stencil_q": int(np.unique(nodes, axis=0).shape[0]),
+                "evaluated_stencil_points": evaluated_stencils,
+                "unique_stencil_q": len(unique_nodes),
+                "point_batch_size": int(point_batch),
+                "point_batches": int(
+                    np.ceil(transferred_q.shape[0] / point_batch)
+                ),
             },
         },
     )
+
+
+def _interpolation_certificate(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a digest-bearing immutable-record payload for q interpolation."""
+
+    result = dict(payload)
+    encoded = json.dumps(
+        result,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    result["certificate_digest"] = hashlib.sha256(encoded).hexdigest()
+    return result
 
 
 def bare_lindhard_susceptibility(
@@ -2080,6 +2338,7 @@ def bare_lindhard_susceptibility(
     if int(q_validation_points) < 1:
         raise ValueError("q_validation_points must be positive")
     Q, energy = _point_inputs(q_reduced, energy_meV)
+    constant_operators = operator_matrices_by_point is None
     point_operators = (
         np.broadcast_to(
             np.asarray(operators.matrices)[None, ...],
@@ -2110,6 +2369,9 @@ def bare_lindhard_susceptibility(
         "cache": cache,
         "factorize_ordered_pairs": operator_matrices_by_point is None,
     }
+
+    def selected_operators(indices: np.ndarray) -> np.ndarray | None:
+        return None if constant_operators else point_operators[indices]
     commensurate = _commensurate_point_flags(model, mesh, Q)
     if policy == "commensurate" and not np.all(commensurate):
         first = int(np.flatnonzero(~commensurate)[0])
@@ -2132,7 +2394,9 @@ def bare_lindhard_susceptibility(
             energy,
             mesh,
             operators,
-            operator_matrices_by_point=point_operators,
+            operator_matrices_by_point=(
+                None if constant_operators else point_operators
+            ),
             **direct_kwargs,
         )
     if np.all(commensurate):
@@ -2142,7 +2406,9 @@ def bare_lindhard_susceptibility(
             energy,
             mesh,
             operators,
-            operator_matrices_by_point=point_operators,
+            operator_matrices_by_point=(
+                None if constant_operators else point_operators
+            ),
             **direct_kwargs,
         )
     if (
@@ -2160,7 +2426,9 @@ def bare_lindhard_susceptibility(
             energy,
             mesh,
             operators,
-            operator_matrices_by_point=point_operators,
+            operator_matrices_by_point=(
+                None if constant_operators else point_operators
+            ),
             **direct_kwargs,
         )
 
@@ -2182,41 +2450,60 @@ def bare_lindhard_susceptibility(
         energy[validation_indices],
         mesh,
         operators,
-        operator_matrices_by_point=point_operators[validation_indices],
+        operator_matrices_by_point=selected_operators(validation_indices),
         **direct_kwargs,
     )
     accepted: SusceptibilityResult | None = None
     validation_absolute = np.inf
     validation_relative = np.inf
     selected_shape: tuple[int, ...] | None = None
-    attempted_shapes = []
+    attempts: list[dict[str, Any]] = []
     for candidate in _q_mesh_candidates(mesh.mesh_shape, q_interpolation_mesh):
-        attempted_shapes.append(list(candidate))
-        interpolated = _interpolated_lindhard_response(
+        validation_trial = _interpolated_lindhard_response(
+            model,
+            Q[validation_indices],
+            energy[validation_indices],
+            mesh,
+            operators,
+            selected_operators(validation_indices),
+            q_mesh_shape=candidate,
+            direct_kwargs=direct_kwargs,
+        )
+        trial = validation_trial.values_per_meV_cell
+        reference = validation.values_per_meV_cell
+        difference = np.abs(trial - reference)
+        reference_scale = np.maximum(
+            np.max(np.abs(reference), axis=(1, 2), keepdims=True),
+            max(atol, np.finfo(float).tiny),
+        )
+        validation_absolute = float(np.max(difference))
+        validation_relative = float(np.max(difference / reference_scale))
+        passed = bool(
+            np.all(difference <= atol + rtol * reference_scale)
+        )
+        attempts.append(
+            {
+                "mesh_shape": list(candidate),
+                "maximum_absolute_error": validation_absolute,
+                "maximum_relative_error": validation_relative,
+                "passed": passed,
+            }
+        )
+        if passed:
+            selected_shape = candidate
+            break
+    if selected_shape is not None:
+        accepted = _interpolated_lindhard_response(
             model,
             Q[approximate_indices],
             energy[approximate_indices],
             mesh,
             operators,
-            point_operators[approximate_indices],
-            q_mesh_shape=candidate,
+            selected_operators(approximate_indices),
+            q_mesh_shape=selected_shape,
             direct_kwargs=direct_kwargs,
         )
-        trial = interpolated.values_per_meV_cell[validation_local]
-        reference = validation.values_per_meV_cell
-        difference = np.abs(trial - reference)
-        validation_absolute = float(np.max(difference))
-        validation_relative = float(
-            np.max(
-                difference
-                / np.maximum(np.abs(reference), max(atol, np.finfo(float).tiny))
-            )
-        )
-        if np.all(difference <= atol + rtol * np.abs(reference)):
-            accepted = interpolated
-            selected_shape = candidate
-            break
-    if accepted is None:
+    else:
         if policy == "interpolated":
             raise ValueError(
                 "q interpolation did not satisfy the requested tolerance; "
@@ -2229,7 +2516,9 @@ def bare_lindhard_susceptibility(
             energy[approximate_indices],
             mesh,
             operators,
-            operator_matrices_by_point=point_operators[approximate_indices],
+            operator_matrices_by_point=selected_operators(
+                approximate_indices
+            ),
             **direct_kwargs,
         )
 
@@ -2242,7 +2531,7 @@ def bare_lindhard_susceptibility(
             energy[exact_indices],
             mesh,
             operators,
-            operator_matrices_by_point=point_operators[exact_indices],
+            operator_matrices_by_point=selected_operators(exact_indices),
             **direct_kwargs,
         )
     )
@@ -2254,6 +2543,30 @@ def bare_lindhard_susceptibility(
     if exact is not None:
         values[exact_indices] = exact.values_per_meV_cell
     used_interpolation = selected_shape is not None
+    certificate = _interpolation_certificate(
+        {
+            "schema_version": 1,
+            "status": "certified" if used_interpolation else "exact_fallback",
+            "certified_quantity": "bare_lindhard_operator_tensor",
+            "model_digest": model.content_digest,
+            "integration_mesh_shape": list(mesh.mesh_shape or ()),
+            "selected_interpolation_mesh_shape": (
+                None if selected_shape is None else list(selected_shape)
+            ),
+            "relative_tolerance": rtol,
+            "absolute_tolerance": atol,
+            "validation_method": "deterministic direct-response comparison",
+            "relative_error_normalization": (
+                "maximum direct-response magnitude per validation point"
+            ),
+            "validation_point_count": int(validation_indices.size),
+            "validation_q_reduced": Q[validation_indices].tolist(),
+            "validation_energy_meV": energy[validation_indices].tolist(),
+            "maximum_absolute_error": validation_absolute,
+            "maximum_relative_error": validation_relative,
+            "attempts": attempts,
+        }
+    )
     return SusceptibilityResult(
         q_reduced=np.mod(Q, 1.0),
         Q_reduced=Q,
@@ -2290,13 +2603,16 @@ def bare_lindhard_susceptibility(
                 "selected_mesh_shape": (
                     None if selected_shape is None else list(selected_shape)
                 ),
-                "attempted_mesh_shapes": attempted_shapes,
+                "attempted_mesh_shapes": [
+                    attempt["mesh_shape"] for attempt in attempts
+                ],
                 "relative_tolerance": rtol,
                 "absolute_tolerance": atol,
                 "validation_points": validation_indices.tolist(),
                 "validation_max_absolute_error": validation_absolute,
                 "validation_max_relative_error": validation_relative,
             },
+            "q_interpolation_certificate": certificate,
         },
     )
 
@@ -2342,6 +2658,557 @@ def spin_operator_matrices(
     return basis, matrices, 1.0
 
 
+def _implicit_spin_density_basis(model: ElectronicModel) -> ElectronicOperatorBasis:
+    matrices = np.zeros(
+        (model.n_basis, model.n_basis, model.n_basis),
+        dtype=np.complex128,
+    )
+    indices = np.arange(model.n_basis)
+    matrices[indices, indices, indices] = 1.0
+    return ElectronicOperatorBasis(
+        tuple(f"density_{index}" for index in indices),
+        matrices,
+        metadata={"kind": "orbital_density_interpolation"},
+    )
+
+
+def _without_q_interpolation_kwargs(kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    result = dict(kwargs)
+    for name in (
+        "q_evaluation",
+        "q_interpolation_rtol",
+        "q_interpolation_atol",
+        "q_interpolation_mesh",
+        "q_validation_points",
+    ):
+        result.pop(name, None)
+    return result
+
+
+def _direct_implicit_spin_scalar(
+    model: ElectronicModel,
+    Q: np.ndarray,
+    energy: np.ndarray,
+    mesh: WavevectorSampling,
+    kwargs: Mapping[str, Any],
+) -> tuple[np.ndarray, SusceptibilityResult, float]:
+    basis, matrices, prefactor = spin_operator_matrices(model, Q)
+    response = bare_lindhard_susceptibility(
+        model,
+        Q,
+        energy,
+        mesh,
+        basis,
+        operator_matrices_by_point=matrices,
+        q_evaluation="direct",
+        **_without_q_interpolation_kwargs(kwargs),
+    )
+    return prefactor * response.values_per_meV_cell[:, 0, 0], response, prefactor
+
+
+def _interpolated_implicit_spin_scalar(
+    model: ElectronicModel,
+    Q: np.ndarray,
+    energy: np.ndarray,
+    mesh: WavevectorSampling,
+    *,
+    q_mesh_shape: Sequence[int],
+    kwargs: Mapping[str, Any],
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Interpolate an orbital-density tensor and contract phases by chunk."""
+
+    density_basis = _implicit_spin_density_basis(model)
+    degeneracy = int(model.provenance.get("implicit_spin_degeneracy", 2))
+    if degeneracy != 2:
+        raise ValueError("implicit spin interpolation requires spin degeneracy 2")
+    prefactor = degeneracy / 4.0
+    max_stencils = 2 ** len(model.periodic_axes)
+    operators = density_basis.size
+    per_point_bytes = max(
+        1,
+        max_stencils
+        * (40 + 16 * operators * operators + 16 * operators),
+    )
+    memory_budget = int(
+        kwargs.get("transition_max_batch_bytes")
+        or kwargs.get("max_batch_bytes", 256 * 1024**2)
+    )
+    point_batch = max(
+        1,
+        min(Q.shape[0], 65_536, max(1, memory_budget) // per_point_bytes),
+    )
+    mesh_shape = tuple(int(value) for value in q_mesh_shape)
+    unique_energy, energy_inverse = np.unique(energy, return_inverse=True)
+    node_count = int(np.prod(mesh_shape))
+    lookup_bytes = (
+        node_count
+        * unique_energy.size
+        * operators
+        * operators
+        * 16
+    )
+    use_global_lookup = Q.shape[0] > point_batch and lookup_bytes <= memory_budget
+    cached_geometry: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
+    geometry_cache_hit = False
+    response_cache = kwargs.get("cache")
+    geometry_bytes = Q.shape[0] * (
+        max_stencils * (np.dtype(np.int32).itemsize + np.dtype(float).itemsize)
+        + operators * np.dtype(np.complex128).itemsize
+    )
+    if (
+        use_global_lookup
+        and isinstance(response_cache, ElectronicResponseCache)
+        and geometry_bytes <= response_cache.max_bytes
+    ):
+        centers = np.asarray(model.orbital_centers, dtype=float)
+        geometry_key = (
+            "periodic_linear_orbital_density_geometry",
+            array_digest(Q, np.float64),
+            mesh_shape,
+            tuple(model.periodic_axes),
+            array_digest(centers, np.float64),
+        )
+        with _INTERPOLATION_GEOMETRY_LOCK:
+            cached = response_cache.get(geometry_key)
+            if cached is not None:
+                cached_geometry = cached
+                geometry_cache_hit = True
+            else:
+                flat_geometry = np.empty(
+                    (Q.shape[0], max_stencils),
+                    dtype=np.int32,
+                )
+                weight_geometry = np.empty(
+                    (Q.shape[0], max_stencils),
+                    dtype=float,
+                )
+                phase_geometry = np.empty(
+                    (Q.shape[0], operators),
+                    dtype=np.complex128,
+                )
+                for start in range(0, Q.shape[0], point_batch):
+                    stop = min(start + point_batch, Q.shape[0])
+                    flat, weights = _periodic_linear_stencil_indices(
+                        model,
+                        Q[start:stop],
+                        mesh_shape,
+                    )
+                    flat_geometry[start:stop] = flat
+                    weight_geometry[start:stop] = weights
+                    phase_geometry[start:stop] = np.exp(
+                        2.0j * np.pi * Q[start:stop] @ centers.T
+                    )
+                for item in (
+                    flat_geometry,
+                    weight_geometry,
+                    phase_geometry,
+                ):
+                    item.setflags(write=False)
+                cached_geometry = (
+                    flat_geometry,
+                    weight_geometry,
+                    phase_geometry,
+                )
+                response_cache.put(geometry_key, cached_geometry)
+    response_lookup: np.ndarray | None = None
+    if use_global_lookup:
+        node_indices = np.asarray(
+            list(product(*(range(value) for value in mesh_shape))),
+            dtype=float,
+        )
+        node_coordinates = np.zeros((node_count, 3), dtype=float)
+        for local_axis, axis in enumerate(model.periodic_axes):
+            node_coordinates[:, axis] = (
+                node_indices[:, local_axis] / mesh_shape[local_axis]
+            )
+        evaluation_q = np.repeat(
+            node_coordinates,
+            unique_energy.size,
+            axis=0,
+        )
+        evaluation_energy = np.tile(unique_energy, node_count)
+        lookup_response = bare_lindhard_susceptibility(
+            model,
+            evaluation_q,
+            evaluation_energy,
+            mesh,
+            density_basis,
+            operator_matrices_by_point=None,
+            q_evaluation="direct",
+            **_without_q_interpolation_kwargs(kwargs),
+        )
+        response_lookup = lookup_response.values_per_meV_cell.reshape(
+            node_count,
+            unique_energy.size,
+            operators,
+            operators,
+        )
+    scalar = np.zeros(Q.shape[0], dtype=np.complex128)
+    unique_nodes: set[tuple[float, ...]] = set()
+    unique_node_count = 0
+    evaluated_stencils = 0
+    evaluated_pairs = 0
+    for start in range(0, Q.shape[0], point_batch):
+        stop = min(start + point_batch, Q.shape[0])
+        if response_lookup is not None:
+            if cached_geometry is None:
+                flat_nodes, weights = _periodic_linear_stencil_indices(
+                    model,
+                    Q[start:stop],
+                    q_mesh_shape,
+                )
+                phases = np.exp(
+                    2.0j
+                    * np.pi
+                    * Q[start:stop]
+                    @ np.asarray(model.orbital_centers, dtype=float).T
+                )
+            else:
+                flat_nodes = cached_geometry[0][start:stop]
+                weights = cached_geometry[1][start:stop]
+                phases = cached_geometry[2][start:stop]
+            stencil_response = response_lookup[
+                flat_nodes,
+                energy_inverse[start:stop, None],
+            ]
+            scalar[start:stop] = prefactor * np.einsum(
+                "pa,psab,pb,ps->p",
+                phases,
+                stencil_response,
+                phases.conj(),
+                weights,
+                optimize=True,
+            )
+            evaluated_stencils += int(flat_nodes.size)
+            continue
+        flat_nodes, compact_weights = _periodic_linear_stencil_indices(
+            model,
+            Q[start:stop],
+            q_mesh_shape,
+        )
+        stencil_count = flat_nodes.shape[1]
+        parents = np.repeat(
+            np.arange(stop - start, dtype=np.int64),
+            stencil_count,
+        )
+        weights = compact_weights.ravel()
+        nodes = np.repeat(
+            np.mod(Q[start:stop], 1.0),
+            stencil_count,
+            axis=0,
+        )
+        integer_nodes = np.column_stack(
+            np.unravel_index(flat_nodes.ravel(), mesh_shape)
+        )
+        for local_axis, axis in enumerate(model.periodic_axes):
+            nodes[:, axis] = (
+                integer_nodes[:, local_axis] / mesh_shape[local_axis]
+            )
+        node_energy = energy[start:stop][parents]
+        pairs = np.column_stack((nodes, node_energy))
+        unique_pairs, inverse = np.unique(
+            pairs,
+            axis=0,
+            return_inverse=True,
+        )
+        node_response = bare_lindhard_susceptibility(
+            model,
+            unique_pairs[:, :3],
+            unique_pairs[:, 3],
+            mesh,
+            density_basis,
+            operator_matrices_by_point=None,
+            q_evaluation="direct",
+            **_without_q_interpolation_kwargs(kwargs),
+        )
+        stencil_response = node_response.values_per_meV_cell[inverse]
+        evaluated_pairs += int(unique_pairs.shape[0])
+        phases = np.exp(
+            2.0j
+            * np.pi
+            * Q[start:stop]
+            @ np.asarray(model.orbital_centers, dtype=float).T
+        )
+        stencil_values = prefactor * np.einsum(
+            "sa,sab,sb->s",
+            phases[parents],
+            stencil_response,
+            phases[parents].conj(),
+            optimize=True,
+        )
+        np.add.at(scalar[start:stop], parents, weights * stencil_values)
+        unique_nodes.update(map(tuple, np.unique(nodes, axis=0)))
+        evaluated_stencils += int(nodes.shape[0])
+    if response_lookup is not None:
+        evaluated_pairs = node_count * unique_energy.size
+        unique_node_count = node_count
+    else:
+        unique_node_count = len(unique_nodes)
+    return scalar, {
+        "method": "periodic_linear_orbital_density",
+        "mesh_shape": list(q_mesh_shape),
+        "requested_points": int(Q.shape[0]),
+        "evaluated_stencil_points": evaluated_stencils,
+        "evaluated_unique_node_energy_pairs": evaluated_pairs,
+        "unique_stencil_q": unique_node_count,
+        "point_batch_size": int(point_batch),
+        "point_batches": int(np.ceil(Q.shape[0] / point_batch)),
+        "global_node_energy_lookup": bool(response_lookup is not None),
+        "lookup_bytes": int(lookup_bytes if response_lookup is not None else 0),
+        "geometry_cache_hit": geometry_cache_hit,
+        "geometry_cache_bytes": int(
+            geometry_bytes if cached_geometry is not None else 0
+        ),
+        "extended_zone_phase_contraction": "exact",
+    }
+
+
+def _certified_implicit_spin_interpolation(
+    model: ElectronicModel,
+    Q: np.ndarray,
+    energy: np.ndarray,
+    mesh: WavevectorSampling,
+    kwargs: Mapping[str, Any],
+) -> SusceptibilityResult | None:
+    """Return certified interpolated spin response, or ``None`` for auto fallback."""
+
+    policy = str(kwargs.get("q_evaluation", "auto")).strip().lower()
+    rtol = float(kwargs.get("q_interpolation_rtol") or 0.0)
+    atol = float(kwargs.get("q_interpolation_atol") or 0.0)
+    commensurate = _commensurate_point_flags(model, mesh, Q)
+    approximate_indices = np.flatnonzero(~commensurate)
+    if approximate_indices.size == 0:
+        return None
+    validation_count = min(
+        int(kwargs.get("q_validation_points", 8)),
+        approximate_indices.size,
+    )
+    validation_local = np.unique(
+        np.linspace(
+            0,
+            approximate_indices.size - 1,
+            validation_count,
+            dtype=int,
+        )
+    )
+    validation_indices = approximate_indices[validation_local]
+    reference, reference_response, prefactor = _direct_implicit_spin_scalar(
+        model,
+        Q[validation_indices],
+        energy[validation_indices],
+        mesh,
+        kwargs,
+    )
+    selected_shape: tuple[int, ...] | None = None
+    attempts: list[dict[str, Any]] = []
+    validation_absolute = np.inf
+    validation_relative = np.inf
+    for candidate in _q_mesh_candidates(
+        mesh.mesh_shape or (),
+        kwargs.get("q_interpolation_mesh"),
+    ):
+        trial, _record = _interpolated_implicit_spin_scalar(
+            model,
+            Q[validation_indices],
+            energy[validation_indices],
+            mesh,
+            q_mesh_shape=candidate,
+            kwargs=kwargs,
+        )
+        difference = np.abs(trial - reference)
+        scale = max(
+            float(np.max(np.abs(reference))),
+            atol,
+            np.finfo(float).tiny,
+        )
+        validation_absolute = float(np.max(difference))
+        validation_relative = float(validation_absolute / scale)
+        passed = bool(np.all(difference <= atol + rtol * scale))
+        attempts.append(
+            {
+                "mesh_shape": list(candidate),
+                "maximum_absolute_error": validation_absolute,
+                "maximum_relative_error": validation_relative,
+                "passed": passed,
+            }
+        )
+        if passed:
+            selected_shape = candidate
+            break
+    if selected_shape is None:
+        if policy == "interpolated":
+            raise ValueError(
+                "q interpolation did not satisfy the requested tolerance; "
+                f"maximum absolute error {validation_absolute:g}, maximum "
+                f"relative error {validation_relative:g}"
+            )
+        exact_scalar, exact_response, exact_prefactor = (
+            _direct_implicit_spin_scalar(
+                model,
+                Q,
+                energy,
+                mesh,
+                kwargs,
+            )
+        )
+        exact_tensor = np.zeros(
+            (Q.shape[0], 3, 3),
+            dtype=np.complex128,
+        )
+        exact_tensor[:, 0, 0] = exact_scalar
+        exact_tensor[:, 1, 1] = exact_scalar
+        exact_tensor[:, 2, 2] = exact_scalar
+        fallback_certificate = _interpolation_certificate(
+            {
+                "schema_version": 1,
+                "status": "exact_fallback",
+                "certified_quantity": "bare_cartesian_spin_susceptibility",
+                "model_digest": model.content_digest,
+                "integration_mesh_shape": list(mesh.mesh_shape or ()),
+                "selected_interpolation_mesh_shape": None,
+                "relative_tolerance": rtol,
+                "absolute_tolerance": atol,
+                "validation_method": (
+                    "deterministic direct physical spin-response comparison"
+                ),
+                "validation_point_count": int(validation_indices.size),
+                "validation_q_reduced": Q[validation_indices].tolist(),
+                "validation_energy_meV": energy[validation_indices].tolist(),
+                "maximum_absolute_error": validation_absolute,
+                "maximum_relative_error": validation_relative,
+                "attempts": attempts,
+            }
+        )
+        return SusceptibilityResult(
+            q_reduced=exact_response.q_reduced,
+            Q_reduced=exact_response.Q_reduced,
+            energy_meV=exact_response.energy_meV,
+            values_per_meV_cell=exact_tensor,
+            operator_labels=("Sx", "Sy", "Sz"),
+            conjugate_indices=(0, 1, 2),
+            model_digest=exact_response.model_digest,
+            temperature_K=exact_response.temperature_K,
+            chemical_potential_meV=exact_response.chemical_potential_meV,
+            broadening_meV=exact_response.broadening_meV,
+            provenance={
+                **dict(exact_response.provenance),
+                "q_evaluation": {
+                    "requested_policy": policy,
+                    "resolved_policy": "exact_fallback",
+                    "exact_commensurate_points": int(np.count_nonzero(commensurate)),
+                    "interpolated_points": 0,
+                    "direct_off_mesh_points": int(approximate_indices.size),
+                    "interpolation_method": None,
+                    "selected_mesh_shape": None,
+                    "attempted_mesh_shapes": [
+                        attempt["mesh_shape"] for attempt in attempts
+                    ],
+                    "relative_tolerance": rtol,
+                    "absolute_tolerance": atol,
+                    "validation_points": validation_indices.tolist(),
+                    "validation_max_absolute_error": validation_absolute,
+                    "validation_max_relative_error": validation_relative,
+                },
+                "q_interpolation_certificate": fallback_certificate,
+                "operator_basis": {
+                    "kind": "cartesian_spin",
+                    "implicit_spin_trace_factor": exact_prefactor,
+                },
+            },
+        )
+    approximate, interpolation_record = _interpolated_implicit_spin_scalar(
+        model,
+        Q[approximate_indices],
+        energy[approximate_indices],
+        mesh,
+        q_mesh_shape=selected_shape,
+        kwargs=kwargs,
+    )
+    scalar = np.empty(Q.shape[0], dtype=np.complex128)
+    scalar[approximate_indices] = approximate
+    exact_indices = np.flatnonzero(commensurate)
+    if exact_indices.size:
+        exact, _exact_response, _exact_prefactor = _direct_implicit_spin_scalar(
+            model,
+            Q[exact_indices],
+            energy[exact_indices],
+            mesh,
+            kwargs,
+        )
+        scalar[exact_indices] = exact
+    tensor = np.zeros((Q.shape[0], 3, 3), dtype=np.complex128)
+    tensor[:, 0, 0] = scalar
+    tensor[:, 1, 1] = scalar
+    tensor[:, 2, 2] = scalar
+    certificate = _interpolation_certificate(
+        {
+            "schema_version": 1,
+            "status": "certified",
+            "certified_quantity": "bare_cartesian_spin_susceptibility",
+            "model_digest": model.content_digest,
+            "integration_mesh_shape": list(mesh.mesh_shape or ()),
+            "selected_interpolation_mesh_shape": list(selected_shape),
+            "relative_tolerance": rtol,
+            "absolute_tolerance": atol,
+            "validation_method": (
+                "deterministic direct physical spin-response comparison"
+            ),
+            "relative_error_normalization": (
+                "maximum direct spin-response magnitude over validation points"
+            ),
+            "validation_point_count": int(validation_indices.size),
+            "validation_q_reduced": Q[validation_indices].tolist(),
+            "validation_energy_meV": energy[validation_indices].tolist(),
+            "maximum_absolute_error": validation_absolute,
+            "maximum_relative_error": validation_relative,
+            "attempts": attempts,
+        }
+    )
+    return SusceptibilityResult(
+        q_reduced=np.mod(Q, 1.0),
+        Q_reduced=Q,
+        energy_meV=energy,
+        values_per_meV_cell=tensor,
+        operator_labels=("Sx", "Sy", "Sz"),
+        conjugate_indices=(0, 1, 2),
+        model_digest=model.content_digest,
+        temperature_K=reference_response.temperature_K,
+        chemical_potential_meV=reference_response.chemical_potential_meV,
+        broadening_meV=reference_response.broadening_meV,
+        provenance={
+            **dict(reference_response.provenance),
+            "approximation": (
+                "finite lifetime broadening and validated q interpolation"
+            ),
+            "q_evaluation": {
+                "requested_policy": policy,
+                "resolved_policy": "validated_interpolation",
+                "exact_commensurate_points": int(exact_indices.size),
+                "interpolated_points": int(approximate_indices.size),
+                "direct_off_mesh_points": 0,
+                "interpolation_method": "periodic_linear_orbital_density",
+                "selected_mesh_shape": list(selected_shape),
+                "attempted_mesh_shapes": [
+                    attempt["mesh_shape"] for attempt in attempts
+                ],
+                "relative_tolerance": rtol,
+                "absolute_tolerance": atol,
+                "validation_points": validation_indices.tolist(),
+                "validation_max_absolute_error": validation_absolute,
+                "validation_max_relative_error": validation_relative,
+            },
+            "q_interpolation": interpolation_record,
+            "q_interpolation_certificate": certificate,
+            "operator_basis": {
+                "kind": "cartesian_spin",
+                "implicit_spin_trace_factor": prefactor,
+                "interpolation_basis": "orbital_density",
+                "extended_zone_phase_contraction": "exact",
+            },
+        },
+    )
+
+
 def bare_spin_susceptibility(
     model: ElectronicModel,
     q_reduced: ArrayLike,
@@ -2352,7 +3219,33 @@ def bare_spin_susceptibility(
     """Return the physical Cartesian spin susceptibility per primitive cell."""
 
     Q, energy = _point_inputs(q_reduced, energy_meV)
+    policy = str(kwargs.get("q_evaluation", "auto")).strip().lower()
+    interpolation_tolerance = max(
+        float(kwargs.get("q_interpolation_rtol") or 0.0),
+        float(kwargs.get("q_interpolation_atol") or 0.0),
+    )
+    use_orbital_interpolation = (
+        model.spin_operators is None
+        and policy in {"auto", "interpolated"}
+        and interpolation_tolerance > 0.0
+        and not np.all(_commensurate_point_flags(model, mesh, Q))
+    )
+    if use_orbital_interpolation:
+        interpolated = _certified_implicit_spin_interpolation(
+            model,
+            Q,
+            energy,
+            mesh,
+            kwargs,
+        )
+        if interpolated is not None:
+            return interpolated
     basis, matrices, prefactor = spin_operator_matrices(model, Q)
+    if use_orbital_interpolation:
+        kwargs = dict(kwargs)
+        kwargs["q_evaluation"] = "direct"
+        kwargs["q_interpolation_rtol"] = 0.0
+        kwargs["q_interpolation_atol"] = 0.0
     response = bare_lindhard_susceptibility(
         model,
         Q,

@@ -75,6 +75,20 @@ values, bounds, fit selections, and global, per-dataset, or grouped sharing.
 These controls use the same parameter state as other models, although the
 tight-binding component itself remains calculation-only until an electronic
 response supplies a measured-data observable.
+
+Large Lindhard fits evaluate only valid fit points during optimizer and sampler
+iterations, while full-grid model overlays remain available for on-the-fly
+viewer binning and integration. A positive Q-interpolation tolerance enables
+the certified periodic response path described in
+[Bare Lindhard susceptibility](lindhard.md). Its interpolation geometry is
+shared across changes to hopping, onsite, broadening, and interaction
+parameters, but the direct validation certificate is recomputed for each
+parameter-resolved Hamiltonian. Numerical parameter derivatives use the fit
+control's bounded parallel residual evaluations, so several orbital parameters
+can be perturbed concurrently. The scalar isotropic Stoner path uses its closed
+form pointwise denominator and stores summary pole diagnostics rather than
+per-point diagnostic arrays.
+
 Coefficient edits update this compact builder state lazily: they do not
 reconstruct the model panel or canonical Hamiltonian. Plotting, matrix
 inspection, response evaluation, and script export rebuild the immutable

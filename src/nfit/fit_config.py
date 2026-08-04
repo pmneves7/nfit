@@ -39,6 +39,7 @@ import copy
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from threading import RLock
 from typing import Any
 
 import numpy as np
@@ -273,6 +274,7 @@ def _lindhard_factory(
     )
     from .electronic_response import (
         ElectronicResponseCache,
+        _interpolation_certificate,
         bare_lindhard_susceptibility,
         bare_spin_susceptibility,
         chemical_potential_for_filling,
@@ -328,6 +330,7 @@ def _lindhard_factory(
         max_entries=int(config.get("response_cache_entries", 64)),
     )
     powder_orientations = int(config.get("powder_orientations", 50))
+    certificate_lock = RLock()
     formula_units_per_cell: float | None
     formula_units_error = ""
     formula_mode = str(
@@ -455,8 +458,139 @@ def _lindhard_factory(
         temperature: np.ndarray,
         eta: float,
         params: Mapping[str, float],
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, tuple[dict[str, Any], ...]]:
+        def certify_dressed_response(
+            bare_result: Any,
+            dressed_result: Any,
+            vertex: Any,
+            evaluation_mesh: Any,
+            selected_q: np.ndarray,
+            selected_energy: np.ndarray,
+            common: Mapping[str, Any],
+        ) -> Any:
+            certificate = bare_result.provenance.get(
+                "q_interpolation_certificate"
+            )
+            if (
+                not isinstance(certificate, Mapping)
+                or certificate.get("status") != "certified"
+            ):
+                return dressed_result
+            evaluation = bare_result.provenance.get("q_evaluation", {})
+            validation_indices = np.asarray(
+                evaluation.get("validation_points", ()),
+                dtype=np.intp,
+            )
+            if validation_indices.size == 0:
+                return dressed_result
+            direct_settings = {
+                **dict(common),
+                "q_evaluation": "direct",
+                "q_interpolation_rtol": 0.0,
+                "q_interpolation_atol": 0.0,
+                "q_interpolation_mesh": None,
+            }
+            direct_bare = bare_spin_susceptibility(
+                model,
+                selected_q[validation_indices],
+                selected_energy[validation_indices],
+                evaluation_mesh,
+                **direct_settings,
+            )
+            direct_dressed = rpa_dress_susceptibility(
+                direct_bare,
+                vertex,
+                **dressing_diagnostics,
+            )
+            interpolated_values = dressed_result.values_per_meV_cell[
+                validation_indices
+            ]
+            direct_values = direct_dressed.values_per_meV_cell
+            difference = np.abs(interpolated_values - direct_values)
+            rtol = float(certificate.get("relative_tolerance", 0.0))
+            atol = float(certificate.get("absolute_tolerance", 0.0))
+            scale = max(
+                float(np.max(np.abs(direct_values))),
+                atol,
+                np.finfo(float).tiny,
+            )
+            maximum_absolute = float(np.max(difference))
+            maximum_relative = float(maximum_absolute / scale)
+            passed = bool(np.all(difference <= atol + rtol * scale))
+            updated = {
+                key: copy.deepcopy(value)
+                for key, value in certificate.items()
+                if key != "certificate_digest"
+            }
+            updated.update(
+                {
+                    "certified_quantity": dressed_result.response_kind,
+                    "bare_certificate_digest": certificate.get(
+                        "certificate_digest"
+                    ),
+                    "bare_maximum_absolute_error": certificate.get(
+                        "maximum_absolute_error"
+                    ),
+                    "bare_maximum_relative_error": certificate.get(
+                        "maximum_relative_error"
+                    ),
+                    "maximum_absolute_error": maximum_absolute,
+                    "maximum_relative_error": maximum_relative,
+                    "dressed_validation_passed": passed,
+                }
+            )
+            if passed:
+                dressed_certificate = _interpolation_certificate(updated)
+                return replace(
+                    dressed_result,
+                    provenance={
+                        **dict(dressed_result.provenance),
+                        "q_interpolation_certificate": dressed_certificate,
+                    },
+                )
+            policy = str(common.get("q_evaluation", "auto"))
+            if policy == "interpolated":
+                raise ValueError(
+                    "interaction-dressed q interpolation did not satisfy the "
+                    "requested tolerance; maximum absolute error "
+                    f"{maximum_absolute:g}, maximum relative error "
+                    f"{maximum_relative:g}"
+                )
+            exact_bare = bare_spin_susceptibility(
+                model,
+                selected_q,
+                selected_energy,
+                evaluation_mesh,
+                **direct_settings,
+            )
+            exact_dressed = rpa_dress_susceptibility(
+                exact_bare,
+                vertex,
+                **dressing_diagnostics,
+            )
+            updated.update(
+                {
+                    "status": "exact_fallback",
+                    "dressed_validation_passed": False,
+                }
+            )
+            fallback_certificate = _interpolation_certificate(updated)
+            return replace(
+                exact_dressed,
+                provenance={
+                    **dict(exact_dressed.provenance),
+                    "q_interpolation_certificate": fallback_certificate,
+                    "q_evaluation": {
+                        **dict(evaluation),
+                        "resolved_policy": "exact_fallback",
+                        "interpolated_points": 0,
+                        "direct_off_mesh_points": int(selected_q.shape[0]),
+                    },
+                },
+            )
+
         tensor = np.empty((q_reduced.shape[0], 3, 3), dtype=np.complex128)
+        certificates: list[dict[str, Any]] = []
         for value in np.unique(temperature):
             selected = np.flatnonzero(temperature == value)
             mu = chemical_potential(model, float(value))
@@ -534,13 +668,14 @@ def _lindhard_factory(
                     basis_indices,
                 )
             else:
-                result = bare_spin_susceptibility(
+                bare_result = bare_spin_susceptibility(
                     model,
                     q_reduced[selected],
                     energy[selected],
                     evaluation_mesh,
                     **common,
                 )
+                result = bare_result
                 if dressing_kind == "stoner":
                     vertex = scalar_stoner_vertex(
                         result.operator_labels,
@@ -549,6 +684,15 @@ def _lindhard_factory(
                     )
                     result = rpa_dress_susceptibility(
                         result, vertex, **dressing_diagnostics
+                    )
+                    result = certify_dressed_response(
+                        bare_result,
+                        result,
+                        vertex,
+                        evaluation_mesh,
+                        q_reduced[selected],
+                        energy[selected],
+                        common,
                     )
                 elif dressing_kind == "matrix":
                     matrix = np.asarray(
@@ -564,8 +708,87 @@ def _lindhard_factory(
                     result = rpa_dress_susceptibility(
                         result, vertex, **dressing_diagnostics
                     )
+                    result = certify_dressed_response(
+                        bare_result,
+                        result,
+                        vertex,
+                        evaluation_mesh,
+                        q_reduced[selected],
+                        energy[selected],
+                        common,
+                    )
             tensor[selected] = result.values_per_meV_cell
-        return tensor
+            certificate = result.provenance.get(
+                "q_interpolation_certificate"
+            )
+            if isinstance(certificate, Mapping):
+                certificates.append(
+                    {
+                        **copy.deepcopy(dict(certificate)),
+                        "temperature_K": float(value),
+                    }
+                )
+        return tensor, tuple(certificates)
+
+    def record_interpolation_certificates(
+        data: PointData4D,
+        params: Mapping[str, float],
+        certificates: tuple[dict[str, Any], ...],
+    ) -> None:
+        """Persist certificates only for the component's current live state."""
+
+        current_values = {
+            **{
+                key: float(source.parameters[parameter])
+                for parameter, key in source_parameter_keys.items()
+            },
+            eta_key: float(component.parameters.get("broadening", 1.0)),
+            **{
+                key: float(dressing_component.parameters[name])
+                for name, key in dressing_keys.items()
+            },
+        }
+        if any(
+            key not in params
+            or not np.isclose(
+                float(params[key]),
+                value,
+                rtol=1.0e-13,
+                atol=1.0e-13,
+            )
+            for key, value in current_values.items()
+        ):
+            return
+        dataset_name = str(
+            data.metadata.get("fit_dataset_name", "dataset")
+        )
+        with certificate_lock:
+            stored = component.config.get(
+                "response_q_interpolation_certificates",
+                {},
+            )
+            by_dataset = (
+                copy.deepcopy(dict(stored))
+                if isinstance(stored, Mapping)
+                else {}
+            )
+            if certificates:
+                by_dataset[dataset_name] = {
+                    "status": (
+                        "certified"
+                        if all(
+                            item.get("status") == "certified"
+                            for item in certificates
+                        )
+                        else "exact_fallback"
+                    ),
+                    "certificates": list(certificates),
+                }
+            else:
+                by_dataset.pop(dataset_name, None)
+            component.config[
+                "response_q_interpolation_certificates"
+            ] = by_dataset
 
     def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:
         electronic_model = resolved_model(params)
@@ -587,7 +810,7 @@ def _lindhard_factory(
                     "per-cell override on the Lindhard component"
                 )
             q_reduced = np.zeros((data.size, 3), dtype=float)
-            tensor = response_at_points(
+            tensor, certificates = response_at_points(
                 electronic_model,
                 q_reduced,
                 np.zeros(data.size),
@@ -595,6 +818,7 @@ def _lindhard_factory(
                 eta,
                 params,
             )
+            record_interpolation_certificates(data, params, certificates)
             chi = np.asarray(
                 np.trace(tensor.real, axis1=1, axis2=2) / 3.0,
                 dtype=float,
@@ -622,7 +846,7 @@ def _lindhard_factory(
                 powder_orientations,
             )
             repeated_temperature = np.repeat(temperatures, powder_orientations)
-            tensor = response_at_points(
+            tensor, certificates = response_at_points(
                 electronic_model,
                 q_reduced,
                 repeated_energy,
@@ -630,6 +854,7 @@ def _lindhard_factory(
                 eta,
                 params,
             )
+            record_interpolation_certificates(data, params, certificates)
             from .electronic_response import SusceptibilityResult
 
             shell_response = SusceptibilityResult(
@@ -671,7 +896,7 @@ def _lindhard_factory(
                 if _is_elastic_dataset(data)
                 else np.asarray(data.E)
             )
-            tensor = response_at_points(
+            tensor, certificates = response_at_points(
                 electronic_model,
                 q_reduced,
                 point_energy,
@@ -679,6 +904,7 @@ def _lindhard_factory(
                 eta,
                 params,
             )
+            record_interpolation_certificates(data, params, certificates)
             from .electronic_response import SusceptibilityResult
 
             response = SusceptibilityResult(
@@ -976,6 +1202,11 @@ def _validate_lindhard_component(component: Any) -> None:
         )
     if int(config.get("response_q_validation_points", 8)) < 1:
         raise ValueError("response_q_validation_points must be positive")
+    certificates = config.get("response_q_interpolation_certificates", {})
+    if not isinstance(certificates, Mapping):
+        raise ValueError(
+            "response_q_interpolation_certificates must be a mapping"
+        )
     if str(config.get("chemical_potential_mode", "source")) not in {
         "source",
         "filling",
@@ -4167,9 +4398,14 @@ def compile_fit_problem(
     context_evaluators: dict[str, ModelFunction] = {}
     for dataset in fitted:
         fit_data = dataset.data
-        if dataset.data_type and fit_data.metadata.get("data_type") != dataset.data_type:
+        if (
+            dataset.data_type
+            and fit_data.metadata.get("data_type") != dataset.data_type
+        ) or fit_data.metadata.get("fit_dataset_name") != dataset.name:
             point_metadata = dict(fit_data.metadata)
-            point_metadata["data_type"] = dataset.data_type
+            if dataset.data_type:
+                point_metadata["data_type"] = dataset.data_type
+            point_metadata["fit_dataset_name"] = dataset.name
             fit_data = fit_data.with_updates(metadata=point_metadata)
         components_here = [
             component

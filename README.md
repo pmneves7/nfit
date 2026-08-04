@@ -28,7 +28,8 @@ The package provides:
   independent-Q scheduling, workload-gated fused CPU and end-to-end optional
   GPU contractions, model-digest-aware eigensystem and bare-response reuse,
   exact commensurate-Q permutation,
-  tolerance-certified periodic Q interpolation, certified little-group
+  digest-bearing tolerance-certified periodic Q interpolation with nonlinear
+  RPA revalidation and reusable fit geometry, certified little-group
   reduction, observable-specific automatic DOS and Lindhard mesh certificates,
   backend-equivalence probes, separate
   mesh/broadening convergence plots, and scheduler-neutral response chunks
