@@ -508,6 +508,18 @@ def test_lindhard_editor_selects_a_sibling_electronic_model(monkeypatch):
         QtWidgets.QComboBox,
         "lindhard_formula_units_mode",
     )
+    magnetic_mode = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox,
+        "lindhard_magnetic_normalization_mode",
+    )
+    normalization_status = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLabel,
+        "lindhard_normalization_status",
+    )
+    form_factor = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox,
+        "model_config_choice_ion",
+    )
     assert mesh is not None and mesh.toolTip()
     assert not mesh.isEnabled()
     assert sampling_mode is not None and sampling_mode.currentData() == "automatic"
@@ -522,9 +534,28 @@ def test_lindhard_editor_selects_a_sibling_electronic_model(monkeypatch):
     assert mesh_budget is not None and mesh_budget.toolTip()
     assert q_accuracy is not None and q_accuracy.currentData() == "exact"
     assert formula_mode is not None and formula_mode.currentData() == "auto"
+    assert magnetic_mode is not None and magnetic_mode.currentData() == "auto"
+    assert magnetic_mode.toolTip()
+    assert normalization_status is not None and normalization_status.toolTip()
+    assert form_factor is not None and form_factor.findData("__mixture__") >= 0
     assert selector.findData(source.name) >= 0
     selector.setCurrentIndex(selector.findData(source.name))
     assert response.config["electronic_component"] == source.name
+
+    form_factor = explorer.model_parameter_widget.findChild(
+        QtWidgets.QComboBox,
+        "model_config_choice_ion",
+    )
+    form_factor.setCurrentIndex(form_factor.findData("__mixture__"))
+    mixture = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit,
+        "model_config_form_factor_mixture",
+    )
+    assert mixture is not None and mixture.toolTip()
+    mixture.setText('[{"ion":"V3","weight":0.5},{"ion":"V4","weight":0.5}]')
+    explorer._set_lindhard_form_factor_mixture(mixture.text())
+    assert response.config["form_factor_mode"] == "mixture"
+    assert response.config["form_factor_mixture"][0]["ion"] == "V3"
 
     plot_button = explorer.model_parameter_widget.findChild(
         QtWidgets.QPushButton,

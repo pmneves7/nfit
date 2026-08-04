@@ -65,7 +65,6 @@ from .fitting import (
     _resolve_q_transform,
     parameter_expression_names,
 )
-from .form_factors import magnetic_form_factor
 from .heat_capacity import debye_heat_capacity, low_temperature_heat_capacity
 from .magnetization import curie_weiss_susceptibility
 from .model_registry import MODEL_TYPE_REGISTRY, validate_model_component
@@ -272,6 +271,9 @@ def _lindhard_factory(
         rpa_dress_susceptibility,
         scalar_stoner_vertex,
     )
+    from .electronic_normalization import (
+        resolve_electronic_response_normalization,
+    )
     from .electronic_response import (
         ElectronicResponseCache,
         _interpolation_certificate,
@@ -331,31 +333,7 @@ def _lindhard_factory(
     )
     powder_orientations = int(config.get("powder_orientations", 50))
     certificate_lock = RLock()
-    formula_units_per_cell: float | None
-    formula_units_error = ""
-    formula_mode = str(
-        config.get(
-            "formula_units_mode",
-            "manual",
-        )
-    ).strip().lower()
-    if formula_mode == "auto":
-        try:
-            from .crystal import infer_crystal_formula_units
-
-            formula_units_per_cell = float(
-                infer_crystal_formula_units(
-                    source.config.get("crystal") or {},
-                    model_lattice=base_model.direct_lattice,
-                ).formula_units_per_model_cell
-            )
-        except (ImportError, KeyError, TypeError, ValueError) as exc:
-            formula_units_per_cell = None
-            formula_units_error = str(exc)
-    else:
-        formula_units_per_cell = float(
-            config.get("formula_units_per_cell", 1.0)
-        )
+    normalization_cache: dict[tuple[str, str], Any] = {}
     dressing_config = (
         dressing_component.config
         if dressing_component is not None
@@ -450,6 +428,45 @@ def _lindhard_factory(
             max_batch_bytes=batch_bytes,
             cache=response_cache,
         )
+
+    def response_normalization(
+        _model: Any,
+        data: PointData4D,
+        *,
+        bulk: bool = False,
+    ):
+        convention = data.metadata.get("spectral_observable")
+        if bulk:
+            target_basis = "per_formula_unit"
+            target_label = "f.u."
+        elif isinstance(convention, Mapping):
+            target_basis = str(
+                convention.get("normalization_basis", "per_model_cell")
+            )
+            target_label = str(convention.get("normalization_label", "") or "")
+        else:
+            # Legacy fit points did not declare a normalization basis. Preserve
+            # their historical model-cell ordinate rather than guessing.
+            target_basis = "per_model_cell"
+            target_label = ""
+        key = (target_basis, target_label)
+        with certificate_lock:
+            cached = normalization_cache.get(key)
+            if cached is not None:
+                return cached
+            resolved = resolve_electronic_response_normalization(
+                base_model,
+                config,
+                crystal=(
+                    source.config.get("crystal")
+                    if isinstance(source.config, Mapping)
+                    else None
+                ),
+                target_basis=target_basis,
+                target_label=target_label,
+            )
+            normalization_cache[key] = resolved
+            return resolved
 
     def response_at_points(
         model: Any,
@@ -803,12 +820,6 @@ def _lindhard_factory(
             data.metadata.get("powder_q_modulus_axis")
         )
         if bulk:
-            if formula_units_per_cell is None:
-                raise ValueError(
-                    "automatic formula-unit normalization is unavailable: "
-                    f"{formula_units_error}; select an explicit formula-units-"
-                    "per-cell override on the Lindhard component"
-                )
             q_reduced = np.zeros((data.size, 3), dtype=float)
             tensor, certificates = response_at_points(
                 electronic_model,
@@ -822,7 +833,12 @@ def _lindhard_factory(
             chi = np.asarray(
                 np.trace(tensor.real, axis1=1, axis2=2) / 3.0,
                 dtype=float,
-            ) / float(formula_units_per_cell)
+            )
+            chi = response_normalization(
+                electronic_model,
+                data,
+                bulk=True,
+            ).apply(chi)
             return _scalar_bulk_observable(
                 data,
                 chi,
@@ -925,6 +941,11 @@ def _lindhard_factory(
                 response,
                 electronic_model.reciprocal_lattice,
             )
+
+        contracted = response_normalization(
+            electronic_model,
+            data,
+        ).apply(contracted)
 
         if _is_elastic_dataset(data):
             return _quasistatic_model_observable(
@@ -1272,6 +1293,26 @@ def _validate_lindhard_component(component: Any) -> None:
             raise ValueError(
                 "formula_units_per_cell must be finite and positive"
             )
+    magnetic_mode = str(
+        config.get("magnetic_normalization_mode", "auto")
+    ).strip().lower()
+    if magnetic_mode not in {"auto", "manual"}:
+        raise ValueError("magnetic_normalization_mode must be auto or manual")
+    if magnetic_mode == "manual":
+        magnetic_count = float(
+            config.get("magnetic_centers_per_model_cell", 1.0)
+        )
+        if not np.isfinite(magnetic_count) or magnetic_count <= 0.0:
+            raise ValueError(
+                "magnetic_centers_per_model_cell must be finite and positive"
+            )
+    from .form_factors import (
+        magnetic_form_factor_profile,
+        normalized_form_factor_mode,
+    )
+
+    normalized_form_factor_mode(config)
+    magnetic_form_factor_profile(np.asarray([0.0]), config)
     plot_q = np.asarray(config.get("plot_q_reduced", ()), dtype=float)
     if plot_q.shape != (3,) or np.any(~np.isfinite(plot_q)):
         raise ValueError("plot_q_reduced must contain three finite coordinates")
@@ -1796,22 +1837,17 @@ def _form_factor_from_config(component: Any, data: PointData4D) -> float | np.nd
     """Return the signed magnetic form-factor amplitude for a component."""
 
     config = component.config if isinstance(component.config, dict) else {}
-    ion = str(config.get("ion", "") or "").strip()
-    if ion == "__custom__":
-        ion = ""
-    coefficients = config.get("form_factor_coefficients")
-    if not ion and not coefficients:
+    from .form_factors import (
+        magnetic_form_factor_profile,
+        normalized_form_factor_mode,
+    )
+
+    if normalized_form_factor_mode(config) == "none":
         return 1.0
     from .fitting import q_modulus_inv_angstrom
 
     q = q_modulus_inv_angstrom(data)
-    return magnetic_form_factor(
-        q,
-        ion=ion or None,
-        coefficients=coefficients,
-        j2_coefficients=config.get("form_factor_j2_coefficients"),
-        g_J=float(config.get("form_factor_g_J", 2.0)),
-    )
+    return magnetic_form_factor_profile(q, config)
 
 
 def _powder_sphere_directions(count: int) -> np.ndarray:

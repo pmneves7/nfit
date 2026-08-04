@@ -89,6 +89,14 @@ can be perturbed concurrently. The scalar isotropic Stoner path uses its closed
 form pointwise denominator and stores summary pole diagnostics rather than
 per-point diagnostic arrays.
 
+Lindhard and electronic-RPA kernels are intrinsically normalized per electronic
+model cell. For a dataset declared per formula unit or per magnetic ion, the
+comparison layer uses the Lindhard component's resolved formula-unit or
+represented-site count. The **Experimental coupling** panel displays both
+counts and configures a shared ionic, custom, or coherent effective magnetic
+form-factor amplitude. Form-factor species never select the normalization
+count.
+
 Coefficient edits update this compact builder state lazily: they do not
 reconstruct the model panel or canonical Hamiltonian. Plotting, matrix
 inspection, response evaluation, and script export rebuild the immutable

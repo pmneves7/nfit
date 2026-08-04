@@ -19,7 +19,7 @@ The implemented dependency chain is:
 | electronic structure | `ElectronicModel`, `tight_binding` | lattice, basis, $H(\mathbf R)$, $H(\mathbf k)$, and named one-electron parameters |
 | bare response | `SusceptibilityResult`, `lindhard` | operator matrix elements and the particle--hole bubble |
 | interaction dressing | `InteractionVertex`, RPA components | map $\boldsymbol\chi^0$ to $\boldsymbol\chi$ without changing the source Hamiltonian |
-| experimental projection | fitting and cross-section services | momentum conversion, spin projection, form factor, fluctuation--dissipation convention, bulk conversion, and dataset normalization |
+| experimental projection | fitting, normalization, and cross-section services | momentum conversion, spin projection, shared form-factor profile, fluctuation--dissipation convention, bulk conversion, and explicit model-cell-to-dataset normalization |
 | systematics | dataset-owned transforms | optional resolution, binning, absorption, and related measurement effects |
 
 An electronic-structure component is a parameter-providing dependency, not an

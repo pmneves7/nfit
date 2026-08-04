@@ -45,10 +45,15 @@ References
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from typing import Any
+
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 FloatArray = NDArray[np.float64]
+
+FORM_FACTOR_MODES = ("none", "single_ion", "custom", "mixture")
 
 # <j0> coefficients (A, a, B, b, C, c, D), keyed by ion label "<Element><charge>"
 # (e.g. "Mn2" for Mn2+, "Fe0" for neutral Fe). Source: see module docstring.
@@ -429,3 +434,139 @@ def form_factor_sq(
         g_J=g_J,
     )
     return f * f
+
+
+def normalized_form_factor_mode(config: Mapping[str, Any]) -> str:
+    """Return the explicit or backward-compatible form-factor profile mode.
+
+    Projects written before form-factor profiles used only ``ion`` and
+    ``form_factor_coefficients``. Their effective mode is inferred when the
+    new ``form_factor_mode`` field is absent.
+    """
+
+    if "form_factor_mode" in config:
+        mode = str(config.get("form_factor_mode", "none")).strip().lower()
+    elif config.get("form_factor_coefficients"):
+        mode = "custom"
+    elif str(config.get("ion", "") or "").strip() not in {"", "__custom__"}:
+        mode = "single_ion"
+    else:
+        mode = "none"
+    if mode not in FORM_FACTOR_MODES:
+        choices = ", ".join(FORM_FACTOR_MODES)
+        raise ValueError(f"form_factor_mode must be one of {choices}")
+    return mode
+
+
+def normalize_form_factor_mixture(
+    mixture: Sequence[Mapping[str, Any]] | None,
+) -> tuple[dict[str, Any], ...]:
+    """Validate a coherent normalized mixture of magnetic amplitudes.
+
+    Each term supplies a nonnegative ``weight`` and either a tabulated ``ion``
+    or explicit seven-value ``coefficients``. Optional ``g_J`` and
+    ``j2_coefficients`` select the same dipole approximation as
+    :func:`magnetic_form_factor`. Weights are amplitudes, not intensity
+    fractions, and must sum to one.
+    """
+
+    if mixture is None or isinstance(mixture, (str, bytes)):
+        raise ValueError("form_factor_mixture must be a nonempty list of mappings")
+    terms: list[dict[str, Any]] = []
+    for index, raw in enumerate(mixture):
+        if not isinstance(raw, Mapping):
+            raise ValueError(f"form_factor_mixture term {index + 1} must be a mapping")
+        weight = float(raw.get("weight", np.nan))
+        if not np.isfinite(weight) or weight < 0.0:
+            raise ValueError(
+                f"form_factor_mixture term {index + 1} weight must be finite and nonnegative"
+            )
+        ion = str(raw.get("ion", "") or "").strip()
+        coefficients = _coerce_coefficients(raw.get("coefficients"))
+        if bool(ion) == (coefficients is not None):
+            raise ValueError(
+                f"form_factor_mixture term {index + 1} must provide exactly one "
+                "of ion or coefficients"
+            )
+        g_J = float(raw.get("g_J", 2.0))
+        dipole_j2_weight(g_J)
+        j2 = _coerce_coefficients(raw.get("j2_coefficients"))
+        # Validate table coverage now rather than during a long fit.
+        magnetic_form_factor(
+            np.asarray([0.0]),
+            ion=ion or None,
+            coefficients=coefficients,
+            j2_coefficients=j2,
+            g_J=g_J,
+        )
+        term: dict[str, Any] = {"weight": weight, "g_J": g_J}
+        if ion:
+            term["ion"] = ion
+        else:
+            term["coefficients"] = list(coefficients or ())
+        if j2 is not None:
+            term["j2_coefficients"] = list(j2)
+        terms.append(term)
+    if not terms:
+        raise ValueError("form_factor_mixture must contain at least one term")
+    total = float(sum(term["weight"] for term in terms))
+    if not np.isclose(total, 1.0, rtol=0.0, atol=1.0e-10):
+        raise ValueError(
+            f"form_factor_mixture amplitude weights must sum to one; got {total:g}"
+        )
+    return tuple(terms)
+
+
+def magnetic_form_factor_profile(
+    q_modulus_inv_angstrom: ArrayLike,
+    config: Mapping[str, Any],
+) -> FloatArray:
+    """Evaluate a serialized shared/effective magnetic form-factor profile.
+
+    ``none`` returns one, ``single_ion`` and ``custom`` use the existing
+    dipole implementation, and ``mixture`` forms a coherent weighted sum of
+    amplitudes before squaring. This shared profile is appropriate when every
+    spin-carrying orbital uses the same effective radial magnetization density.
+    """
+
+    q = np.asarray(q_modulus_inv_angstrom, dtype=float)
+    mode = normalized_form_factor_mode(config)
+    if mode == "none":
+        return np.ones_like(q, dtype=float)
+    if mode in {"single_ion", "custom"}:
+        ion = str(config.get("ion", "") or "").strip()
+        if ion == "__custom__":
+            ion = ""
+        coefficients = config.get("form_factor_coefficients")
+        if mode == "single_ion" and not ion:
+            raise ValueError("single_ion form-factor mode requires an ion")
+        if mode == "custom" and not coefficients:
+            raise ValueError("custom form-factor mode requires coefficients")
+        return magnetic_form_factor(
+            q,
+            ion=ion or None,
+            coefficients=coefficients,
+            j2_coefficients=config.get("form_factor_j2_coefficients"),
+            g_J=float(config.get("form_factor_g_J", 2.0)),
+        )
+    terms = normalize_form_factor_mixture(config.get("form_factor_mixture"))
+    amplitude = np.zeros_like(q, dtype=float)
+    for term in terms:
+        amplitude += float(term["weight"]) * magnetic_form_factor(
+            q,
+            ion=term.get("ion"),
+            coefficients=term.get("coefficients"),
+            j2_coefficients=term.get("j2_coefficients"),
+            g_J=float(term.get("g_J", 2.0)),
+        )
+    return amplitude
+
+
+def form_factor_profile_sq(
+    q_modulus_inv_angstrom: ArrayLike,
+    config: Mapping[str, Any],
+) -> FloatArray:
+    """Return ``|f(Q)|^2`` for a serialized shared/effective profile."""
+
+    amplitude = magnetic_form_factor_profile(q_modulus_inv_angstrom, config)
+    return np.asarray(amplitude, dtype=float) ** 2

@@ -190,6 +190,7 @@ D_SPACING_COORDINATE_NAME = "d"
 COORDINATE_RANGE_AXIS_PREFIX = "axis_"
 COORDINATE_RANGE_PARAMETER_NAMES = ("H", "K", "L", "E")
 CUSTOM_FORM_FACTOR_CHOICE = "__custom__"
+EFFECTIVE_FORM_FACTOR_CHOICE = "__mixture__"
 POSTERIOR_DISPLAY_KEY = "posterior_display"
 
 
@@ -19320,7 +19321,14 @@ class NfitProjectExplorer:
                 "filling_per_cell",
                 "formula_units_mode",
                 "formula_units_per_cell",
+                "magnetic_normalization_mode",
+                "magnetic_normalization_species",
+                "magnetic_centers_per_model_cell",
                 "ion",
+                "form_factor_mode",
+                "form_factor_g_J",
+                "form_factor_j2_coefficients",
+                "form_factor_mixture",
                 "bulk_g_factor",
                 "plot_q_reduced",
                 "plot_energy_min_meV",
@@ -21184,9 +21192,17 @@ class NfitProjectExplorer:
         for ion_name in available_ions():
             form_factor.addItem(ion_name, ion_name)
         form_factor.addItem("Custom…", CUSTOM_FORM_FACTOR_CHOICE)
+        form_factor.addItem("Effective mixture…", EFFECTIVE_FORM_FACTOR_CHOICE)
+        from .form_factors import normalized_form_factor_mode
+
+        form_factor_mode = normalized_form_factor_mode(model.config)
         current_ion = str(model.config.get("ion", "") or "")
-        if str(model.config.get("form_factor_coefficients", "") or "").strip():
+        if form_factor_mode == "none":
+            current_ion = ""
+        elif form_factor_mode == "custom":
             current_ion = CUSTOM_FORM_FACTOR_CHOICE
+        elif form_factor_mode == "mixture":
+            current_ion = EFFECTIVE_FORM_FACTOR_CHOICE
         form_factor.setCurrentIndex(max(form_factor.findData(current_ion), 0))
         form_factor.currentIndexChanged.connect(
             lambda _index, combo=form_factor: self._set_model_form_factor_choice(
@@ -21209,13 +21225,69 @@ class NfitProjectExplorer:
             coefficients.setObjectName("model_config_form_factor_coefficients")
             coefficients.setToolTip(coefficient_tooltip)
             coefficients.editingFinished.connect(
-                lambda editor=coefficients: self._set_model_config_setting(
+                lambda editor=coefficients: self._set_lindhard_coupling_text(
                     "form_factor_coefficients", editor.text()
                 )
             )
             coefficient_label = QtWidgets.QLabel("Custom coefficients")
             coefficient_label.setToolTip(coefficient_tooltip)
             experiment_layout.addRow(coefficient_label, coefficients)
+        elif current_ion == EFFECTIVE_FORM_FACTOR_CHOICE:
+            mixture_tooltip = (
+                "JSON list of coherent amplitude terms. Each term has ion and "
+                "weight, with optional g_J; nonnegative weights must sum to one. "
+                "The amplitudes are summed before |f(Q)|² is formed."
+            )
+            mixture = QtWidgets.QLineEdit(
+                _parameter_to_text(model.config.get("form_factor_mixture", []))
+            )
+            mixture.setObjectName("model_config_form_factor_mixture")
+            mixture.setToolTip(mixture_tooltip)
+            mixture.editingFinished.connect(
+                lambda editor=mixture: self._set_lindhard_form_factor_mixture(
+                    editor.text()
+                )
+            )
+            mixture_label = QtWidgets.QLabel("Effective amplitude mixture")
+            mixture_label.setToolTip(mixture_tooltip)
+            experiment_layout.addRow(mixture_label, mixture)
+        if current_ion not in {"", EFFECTIVE_FORM_FACTOR_CHOICE}:
+            dipole_tooltip = (
+                "Landé factor in f=<j0>+(2/g_J-1)<j2>. Use 2 for the "
+                "spin-only <j0> profile."
+            )
+            dipole = QtWidgets.QLineEdit(
+                _parameter_to_text(model.config.get("form_factor_g_J", 2.0))
+            )
+            dipole.setObjectName("model_config_form_factor_g_J")
+            dipole.setToolTip(dipole_tooltip)
+            dipole.editingFinished.connect(
+                lambda editor=dipole: self._set_lindhard_coupling_text(
+                    "form_factor_g_J", editor.text()
+                )
+            )
+            dipole_label = QtWidgets.QLabel("Form-factor g_J")
+            dipole_label.setToolTip(dipole_tooltip)
+            experiment_layout.addRow(dipole_label, dipole)
+            j2_tooltip = (
+                "Optional seven <j2> coefficients overriding the selected ion's "
+                "table. Custom <j0> profiles need these when g_J is not 2."
+            )
+            j2_coefficients = QtWidgets.QLineEdit(
+                _parameter_to_text(
+                    model.config.get("form_factor_j2_coefficients", "")
+                )
+            )
+            j2_coefficients.setObjectName("model_config_form_factor_j2_coefficients")
+            j2_coefficients.setToolTip(j2_tooltip)
+            j2_coefficients.editingFinished.connect(
+                lambda editor=j2_coefficients: self._set_lindhard_coupling_text(
+                    "form_factor_j2_coefficients", editor.text()
+                )
+            )
+            j2_label = QtWidgets.QLabel("Custom <j2> coefficients")
+            j2_label.setToolTip(j2_tooltip)
+            experiment_layout.addRow(j2_label, j2_coefficients)
 
         formula_tooltip = (
             "Automatic mode derives the reduced chemical formula and the number "
@@ -21252,10 +21324,11 @@ class NfitProjectExplorer:
             formula_value.setObjectName("model_config_formula_units_per_cell")
             formula_value.setToolTip(
                 "Explicit formula units represented by the electronic model "
-                "cell, used only for molar q=0 bulk normalization."
+                "cell. This converts model-cell spectral and bulk responses "
+                "when the dataset is normalized per formula unit."
             )
             formula_value.editingFinished.connect(
-                lambda editor=formula_value: self._set_model_config_setting(
+                lambda editor=formula_value: self._set_lindhard_coupling_text(
                     "formula_units_per_cell", editor.text()
                 )
             )
@@ -21299,6 +21372,106 @@ class NfitProjectExplorer:
             status.setToolTip(formula_tooltip)
             experiment_layout.addRow(status)
 
+        magnetic_tooltip = (
+            "Normalization per magnetic ion counts represented tight-binding "
+            "sites independently of the form-factor profile. Automatic mode "
+            "requires one selected species; manual mode supplies the count."
+        )
+        magnetic_mode = QtWidgets.QComboBox()
+        magnetic_mode.setObjectName("lindhard_magnetic_normalization_mode")
+        magnetic_mode.setToolTip(magnetic_tooltip)
+        magnetic_mode.addItem("Automatic from represented sites", "auto")
+        magnetic_mode.addItem("Manual count", "manual")
+        magnetic_mode.setCurrentIndex(
+            max(
+                magnetic_mode.findData(
+                    str(model.config.get("magnetic_normalization_mode", "auto"))
+                ),
+                0,
+            )
+        )
+        magnetic_mode.currentIndexChanged.connect(
+            lambda _index, combo=magnetic_mode: self._set_lindhard_config_values(
+                magnetic_normalization_mode=str(combo.currentData())
+            )
+        )
+        magnetic_label = QtWidgets.QLabel("Magnetic-center count")
+        magnetic_label.setToolTip(magnetic_tooltip)
+        experiment_layout.addRow(magnetic_label, magnetic_mode)
+        if magnetic_mode.currentData() == "manual":
+            magnetic_count = QtWidgets.QLineEdit(
+                _parameter_to_text(
+                    model.config.get("magnetic_centers_per_model_cell", 1.0)
+                )
+            )
+            magnetic_count.setObjectName("lindhard_magnetic_centers_per_model_cell")
+            magnetic_count.setToolTip(
+                "Explicit reference magnetic centers per electronic model cell."
+            )
+            magnetic_count.editingFinished.connect(
+                lambda editor=magnetic_count: self._set_lindhard_coupling_text(
+                    "magnetic_centers_per_model_cell", editor.text()
+                )
+            )
+            experiment_layout.addRow("Centers / model cell", magnetic_count)
+        else:
+            magnetic_species = QtWidgets.QLineEdit(
+                str(model.config.get("magnetic_normalization_species", "") or "")
+            )
+            magnetic_species.setObjectName("lindhard_magnetic_normalization_species")
+            magnetic_species.setPlaceholderText("automatic when unique")
+            magnetic_species.setToolTip(
+                "Optional represented basis species or element, such as V4+ or V. "
+                "This selects a count only; it does not select a form factor."
+            )
+            magnetic_species.editingFinished.connect(
+                lambda editor=magnetic_species: self._set_lindhard_config_values(
+                    magnetic_normalization_species=editor.text().strip()
+                )
+            )
+            experiment_layout.addRow("Reference species", magnetic_species)
+
+        normalization_text = (
+            "The intrinsic Lindhard response is per electronic model cell."
+        )
+        if source is not None:
+            try:
+                from .electronic_normalization import (
+                    resolve_electronic_response_normalization,
+                )
+                from .electronic_structure import electronic_model_from_component
+
+                electronic_model = electronic_model_from_component(source)
+                formula_normalization = resolve_electronic_response_normalization(
+                    electronic_model,
+                    model.config,
+                    crystal=source.config.get("crystal"),
+                    target_basis="per_formula_unit",
+                )
+                magnetic_normalization = resolve_electronic_response_normalization(
+                    electronic_model,
+                    model.config,
+                    crystal=source.config.get("crystal"),
+                    target_basis="per_magnetic_ion",
+                )
+                normalization_text = (
+                    "Electronic model cell: "
+                    f"{formula_normalization.entities_per_model_cell:g} f.u.; "
+                    f"{magnetic_normalization.entities_per_model_cell:g} "
+                    f"{magnetic_normalization.magnetic_reference_species or 'magnetic'} "
+                    "center(s). The dataset basis chooses the divisor."
+                )
+            except (KeyError, TypeError, ValueError):
+                pass
+        normalization_status = QtWidgets.QLabel(normalization_text)
+        normalization_status.setObjectName("lindhard_normalization_status")
+        normalization_status.setWordWrap(True)
+        normalization_status.setToolTip(
+            "Form factors affect Q-dependent neutron amplitude. Formula-unit "
+            "and magnetic-center counts affect only the response normalization."
+        )
+        experiment_layout.addRow(normalization_status)
+
         g_tooltip = (
             "Landé g factor used only when the q=0 spin response is converted "
             "to bulk susceptibility or field-induced moment."
@@ -21309,7 +21482,7 @@ class NfitProjectExplorer:
         g_factor.setObjectName("model_config_bulk_g_factor")
         g_factor.setToolTip(g_tooltip)
         g_factor.editingFinished.connect(
-            lambda editor=g_factor: self._set_model_config_setting(
+            lambda editor=g_factor: self._set_lindhard_coupling_text(
                 "bulk_g_factor", editor.text()
             )
         )
@@ -24612,15 +24785,38 @@ class NfitProjectExplorer:
         ) -> None:
             if model.type != "lindhard":
                 raise ValueError("expected a Lindhard response component")
-            changed = False
-            for name, value in updates.items():
-                if model.config.get(name) != value:
-                    model.config[name] = value
-                    changed = True
-            if not changed:
+            changed_updates = {
+                name: value
+                for name, value in updates.items()
+                if model.config.get(name) != value
+            }
+            if not changed_updates:
                 raise _NoChange()
+            from .electronic_normalization import (
+                LINDHARD_COUPLING_FIELDS,
+                configure_lindhard_experimental_coupling,
+            )
+
+            coupling = {
+                name: value
+                for name, value in changed_updates.items()
+                if name in LINDHARD_COUPLING_FIELDS
+            }
+            ordinary = {
+                name: value
+                for name, value in changed_updates.items()
+                if name not in LINDHARD_COUPLING_FIELDS
+            }
+            if coupling:
+                configure_lindhard_experimental_coupling(model, **coupling)
+            model.config.update(ordinary)
 
         self._mutate_selected_model_quietly(mutate)
+
+    def _set_lindhard_coupling_text(self, name: str, text: str) -> None:
+        """Parse one text control through the public coupling configurator."""
+
+        self._set_lindhard_config_values(**{name: _parse_parameter_text(text)})
 
     def _set_lindhard_q_accuracy(self, accuracy: str) -> None:
         """Select exact or validated automatic Q evaluation as one policy."""
@@ -24790,7 +24986,25 @@ class NfitProjectExplorer:
             return
         choice = str(choice or "")
         changed = False
-        if choice == CUSTOM_FORM_FACTOR_CHOICE:
+        if model.type == "lindhard":
+            mode = {
+                "": "none",
+                CUSTOM_FORM_FACTOR_CHOICE: "custom",
+                EFFECTIVE_FORM_FACTOR_CHOICE: "mixture",
+            }.get(choice, "single_ion")
+            if model.config.get("form_factor_mode") != mode:
+                model.config["form_factor_mode"] = mode
+                changed = True
+        if choice == EFFECTIVE_FORM_FACTOR_CHOICE:
+            if not model.config.get("form_factor_mixture"):
+                prior_ion = str(model.config.get("ion", "") or "").strip()
+                if prior_ion in {"", CUSTOM_FORM_FACTOR_CHOICE}:
+                    prior_ion = "Fe2"
+                model.config["form_factor_mixture"] = [
+                    {"ion": prior_ion, "weight": 1.0}
+                ]
+                changed = True
+        elif choice == CUSTOM_FORM_FACTOR_CHOICE:
             if model.config.get("ion") != CUSTOM_FORM_FACTOR_CHOICE:
                 model.config["ion"] = CUSTOM_FORM_FACTOR_CHOICE
                 changed = True
@@ -24810,6 +25024,18 @@ class NfitProjectExplorer:
                 self._refresh_tree(select_group=group, select_model=model)
         if group is not None:
             self._request_overlay_refresh(group)
+
+    def _set_lindhard_form_factor_mixture(self, text: str) -> None:
+        """Validate and store one coherent shared form-factor mixture."""
+
+        from .form_factors import normalize_form_factor_mixture
+
+        parsed = _parse_parameter_text(text)
+        normalized = [dict(term) for term in normalize_form_factor_mixture(parsed)]
+        self._set_lindhard_config_values(
+            form_factor_mode="mixture",
+            form_factor_mixture=normalized,
+        )
 
     def _set_model_sharing_mode(self, name: str, mode: str) -> None:
         group, _entry, _mask, model, role = self._objects_for_item(self._current_item())

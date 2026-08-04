@@ -17,8 +17,9 @@ The package provides:
   self-consistency convergence controls;
 - a linked bare Lindhard response with complex multiband susceptibility,
   Cartesian spin and neutron projections, fixed-filling support, automatic
-  formula-unit normalization, workflow-focused controls, fitting,
-  model-owned plots, and editable scripts;
+  formula-unit and represented-magnetic-center normalization, shared ionic,
+  custom, or coherent effective magnetic form factors, workflow-focused
+  controls, fitting, model-owned plots, and editable scripts;
 - modular scalar Stoner, user-matrix, and local multiorbital Hubbard--Hund
   RPA interaction dressings with eV input, canonical meV vertices, shared
   electronic-response dependencies, pole diagnostics, fitting, and reports;

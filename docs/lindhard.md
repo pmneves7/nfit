@@ -145,21 +145,68 @@ scripts.
 | `response_q_interpolation_rtol` | accepted relative error for automatic periodic interpolation; zero disables this criterion | `0.0` | `0.01` |
 | `chemical_potential_mode` | use the source chemical potential or solve from filling | `"source"` | `"source"` or `"filling"` |
 | `filling_per_cell` | electron count per electronic model cell in filling mode | `1.0` | `3.0` |
-| `ion` | tabulated magnetic form-factor ion; empty applies none | `""` | `"Fe2"` |
+| `form_factor_mode` | shared radial magnetic profile | `"none"` | `"none"`, `"single_ion"`, `"custom"`, or `"mixture"` |
+| `ion` | tabulated ion used by `single_ion` mode | `""` | `"Fe2"` |
 | `form_factor_coefficients` | custom $\langle j_0\rangle$ coefficients instead of `ion` | `""` | `"0.0263,34.96,0.3668,15.94,0.6188,5.594,-0.0119"` |
 | `form_factor_g_J` | ion Landé factor for the dipole approximation $f=\langle j_0\rangle+(2/g_J-1)\langle j_2\rangle$; the default 2 is spin-only $\langle j_0\rangle$ | `2.0` | `1.1428` |
 | `form_factor_j2_coefficients` | custom $\langle j_2\rangle$ coefficients instead of `ion` | `""` | `"0.157,18.555,0.8484,6.54,0.888,2.037,0.0318"` |
+| `form_factor_mixture` | coherent effective-amplitude terms used by `mixture` mode | `[]` | `[{"ion":"V3","weight":0.5},{"ion":"V4","weight":0.5}]` |
 | `formula_units_mode` | infer formula units in the actual electronic model cell or use an explicit override | `"auto"` | `"auto"` or `"manual"` |
 | `formula_units_per_cell` | formula units in the electronic model cell when manual mode is selected | `1.0` | `2.0` |
+| `magnetic_normalization_mode` | count unique represented tight-binding sites or use a manual magnetic-center count | `"auto"` | `"auto"` or `"manual"` |
+| `magnetic_normalization_species` | represented basis species or element selected for a per-magnetic-ion dataset | `""` | `"V"` or `"V4+"` |
+| `magnetic_centers_per_model_cell` | reference centers per model cell in manual mode | `1.0` | `4.0` |
 | `bulk_g_factor` | Landé factor for bulk conversion | `2.0` | `2.1` |
+
+### Response normalization and magnetic form factor
+
+The normalized Brillouin-zone sum produces an intrinsic susceptibility per
+electronic model cell. The dataset comparison layer then resolves one explicit
+normalization:
+
+$$
+\chi_{\rm target}=\frac{\chi_{\rm model\ cell}}
+{N_{\rm target/model\ cell}}.
+$$
+
+For a per-formula-unit dataset, $N_{\rm target/model\ cell}$ is the number of
+formula units represented by the actual electronic cell. For a
+per-magnetic-ion dataset it is the number of unique selected tight-binding
+sites. Automatic magnetic-center counting succeeds only for one represented
+species, or when `magnetic_normalization_species` selects one unambiguously;
+manual mode supports an effective or deliberately restricted subspace. A
+dataset normalized per unit cell uses the electronic model cell. An unknown
+basis retains the model-cell ordinate without making an absolute claim.
+
+Normalization and form factor are independent. Selecting a V radial profile
+does not select or count V sites. Conversely, normalizing per V does not choose
+a V form factor. The resolved model-cell, formula-unit, and magnetic-center
+counts are shown in **Experimental coupling**.
+
+The shared profile is applied only when converting the intrinsic spin response
+to a neutron observable. `single_ion` and `custom` evaluate the documented
+dipole form. An effective mixture forms the coherent amplitude
+
+$$
+f_{\rm eff}(Q)=\sum_i w_i f_i(Q),\qquad w_i\geq0,\quad\sum_iw_i=1,
+$$
+
+and the cross section uses $|f_{\rm eff}(Q)|^2$; the weights are not intensity
+fractions. This shared profile is exact when all active magnetic orbitals use
+the same effective radial density. Models containing inequivalent radial
+profiles require a future site/manifold-resolved operator projection rather
+than an averaged scalar profile. Older projects containing only `ion` or
+custom coefficients retain their previous profile automatically.
+`configure_lindhard_experimental_coupling` validates and installs the same
+normalization and form-factor configuration atomically in a GUI-free script.
 
 Automatic formula-unit normalization expands the complete crystallographic
 cell, reduces its integer composition, and accounts for any certified
 primitive-cell reduction used by the electronic Hamiltonian. It deliberately
 refuses partial occupancy, mixed occupancy, missing elements, or an
-incompatible model cell. These cases do not affect neutron calculations, but
-a bulk calculation requires a manual override. Older projects without
-`formula_units_mode` retain their stored manual normalization.
+incompatible model cell. A per-formula-unit neutron or bulk comparison then
+requires a manual override. Older projects without `formula_units_mode` retain
+their stored manual normalization.
 
 The GUI's **Exact Q evaluation** policy is
 `response_q_evaluation="auto"` with both interpolation tolerances zero.

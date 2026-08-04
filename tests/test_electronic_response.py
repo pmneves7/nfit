@@ -1286,6 +1286,99 @@ def test_lindhard_bulk_normalization_uses_inferred_model_cell_formula_units():
     )
 
 
+def test_lindhard_spectral_normalization_uses_dataset_formula_unit_basis():
+    model = _chain_model()
+    tight_binding = ModelComponentSpec(
+        name="bands",
+        type="tight_binding",
+        config={
+            **{
+                field.name: field.default
+                for field in model_definition("tight_binding").config_fields
+            },
+            "model_data": model.to_dict(),
+            "periodic_axes": [0],
+            "crystal": {
+                "lattice": {
+                    "a": 2.0,
+                    "b": 8.0,
+                    "c": 9.0,
+                    "alpha": 90.0,
+                    "beta": 90.0,
+                    "gamma": 90.0,
+                },
+                "spacegroup": "P 1",
+                "sites": [
+                    {"label": "A1", "element": "Li", "position": [0.0, 0.0, 0.0]},
+                    {"label": "A2", "element": "Li", "position": [0.5, 0.0, 0.0]},
+                ],
+            },
+        },
+    )
+    defaults = {
+        field.name: field.default
+        for field in model_definition("lindhard").config_fields
+    }
+    automatic = ModelComponentSpec(
+        name="response",
+        type="lindhard",
+        parameters={"broadening": 0.5},
+        config={
+            **defaults,
+            "electronic_component": "bands",
+            "response_mesh": [24],
+            "response_mesh_shift": [0.0],
+        },
+    )
+    manual = replace(
+        automatic,
+        config={
+            **automatic.config,
+            "formula_units_mode": "manual",
+            "formula_units_per_cell": 1.0,
+        },
+    )
+    points = PointData4D(
+        H=np.asarray([0.5]),
+        K=np.zeros(1),
+        L=np.zeros(1),
+        E=np.asarray([1.0]),
+        intensity=np.zeros(1),
+        sigma=np.ones(1),
+        temperature=20.0,
+        metadata={
+            "spectral_observable": {
+                "fit_representation": "chi_double_prime",
+                "normalization_basis": "per_formula_unit",
+                "normalization_label": "",
+                "moment_unit": "spin_squared",
+                "g_factor": 2.0,
+                "kf_ki_state": "removed",
+                "unit": "spin^2/meV/f.u.",
+            }
+        },
+    )
+    dataset = FitDatasetInput(
+        "scan",
+        points,
+        data_type="single_crystal_inelastic",
+    )
+
+    def prediction(response):
+        compiled = compile_fit_problem([tight_binding, response], [dataset])
+        return evaluate_problem_model(
+            compiled.problem,
+            "scan",
+            {spec.name: spec.value for spec in compiled.problem.parameter_specs},
+        )
+
+    np.testing.assert_allclose(
+        prediction(automatic),
+        prediction(manual) / 2.0,
+        rtol=1.0e-12,
+    )
+
+
 def test_fit_compiler_uses_electronic_component_as_dependency_not_observable():
     model = _chain_model()
     tight_binding = ModelComponentSpec(

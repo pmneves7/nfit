@@ -6,10 +6,12 @@ from nfit.form_factors import (
     J2_COEFFICIENTS,
     available_ions,
     dipole_j2_weight,
+    form_factor_profile_sq,
     form_factor_sq,
     magnetic_form_factor,
     magnetic_form_factor_j0,
     magnetic_form_factor_j2,
+    magnetic_form_factor_profile,
 )
 
 
@@ -74,6 +76,52 @@ def test_form_factor_sq_squares_j0():
     q = np.array([0.5, 2.5])
     f = magnetic_form_factor_j0(q, ion="Co2")
     np.testing.assert_allclose(form_factor_sq(q, ion="Co2"), f**2)
+
+
+def test_effective_form_factor_mixture_sums_amplitudes_before_squaring():
+    q = np.asarray([0.0, 2.0, 5.0])
+    config = {
+        "form_factor_mode": "mixture",
+        "form_factor_mixture": [
+            {"ion": "V3", "weight": 0.35},
+            {"ion": "V4", "weight": 0.65},
+        ],
+    }
+    expected = 0.35 * magnetic_form_factor(q, ion="V3") + 0.65 * magnetic_form_factor(
+        q, ion="V4"
+    )
+    np.testing.assert_allclose(magnetic_form_factor_profile(q, config), expected)
+    np.testing.assert_allclose(form_factor_profile_sq(q, config), expected**2)
+
+
+def test_effective_form_factor_mixture_requires_normalized_amplitude_weights():
+    with pytest.raises(ValueError, match="weights must sum to one"):
+        magnetic_form_factor_profile(
+            [1.0],
+            {
+                "form_factor_mode": "mixture",
+                "form_factor_mixture": [
+                    {"ion": "V3", "weight": 0.4},
+                    {"ion": "V4", "weight": 0.4},
+                ],
+            },
+        )
+
+
+def test_form_factor_profile_infers_legacy_single_ion_and_custom_modes():
+    q = np.asarray([0.0, 3.0])
+    np.testing.assert_allclose(
+        magnetic_form_factor_profile(q, {"ion": "V4"}),
+        magnetic_form_factor(q, ion="V4"),
+    )
+    coefficients = J0_COEFFICIENTS["V3"]
+    np.testing.assert_allclose(
+        magnetic_form_factor_profile(
+            q,
+            {"ion": "__custom__", "form_factor_coefficients": coefficients},
+        ),
+        magnetic_form_factor(q, coefficients=coefficients),
+    )
 
 
 def test_unknown_ion_raises_with_suggestions():

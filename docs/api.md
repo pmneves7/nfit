@@ -289,6 +289,9 @@ calculation.
 .. automodule:: nfit.electronic_distributed
    :members:
 
+.. automodule:: nfit.electronic_normalization
+   :members:
+
 .. automodule:: nfit.magnetization
    :members:
 

@@ -551,11 +551,17 @@ terms. `Plot and fit` chooses the primary observable; both remain independently
 selectable with their error bars in the data viewer. Models read the
 primary channel's quantity and unit and evaluate in that representation.
 
-The normalization basis is metadata, not a hidden atom-count conversion.
-Beam-flux and illuminated-sample calibration must already refer to the same
-formula-unit, magnetic-ion, or unit-cell basis selected in the GUI.
-For per-atom data, an optional element or site label changes the displayed
-normalization suffix; it does not multiply or divide the data.
+The data normalization basis is metadata, not a hidden correction to imported
+values. Beam-flux and illuminated-sample calibration must already refer to the
+same formula-unit, magnetic-ion, or unit-cell basis selected in the GUI. A
+microscopic model may nevertheless have a different native basis. In
+particular, a Lindhard calculation is extensive per electronic model cell, so
+nfit explicitly divides the model prediction by the resolved formula units or
+represented reference magnetic centers per model cell before comparing it with
+the declared dataset basis. That model conversion is recorded separately from
+the data calibration and from the magnetic form factor. For other per-atom
+data, an optional element or site label changes the displayed normalization
+suffix; it does not multiply or divide the imported data.
 These definitions and the distinction between correlation functions,
 $\chi''$, cross section, and absolute normalization follow general neutron
 scattering references rather than any material-specific paper

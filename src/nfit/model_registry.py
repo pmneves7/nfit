@@ -1969,15 +1969,95 @@ def _register_builtin_models() -> None:
                     1.0,
                     (
                         "Formula units represented by the electronic model cell "
-                        "when formula_units_mode is manual, used only for molar "
-                        "bulk normalization."
+                        "when formula_units_mode is manual. This converts both "
+                        "spectral and bulk model-cell responses to a per-formula-"
+                        "unit dataset basis."
                     ),
                     "Positive finite number.",
                     "float",
                     "2.0",
                     "f.u./cell",
                 ),
+                _config_field(
+                    "magnetic_normalization_mode",
+                    "auto",
+                    (
+                        "Count represented magnetic centers from unique tight-binding "
+                        "sites, or use an explicit count per electronic model cell."
+                    ),
+                    "Either auto or manual.",
+                    "str",
+                    "auto",
+                ),
+                _config_field(
+                    "magnetic_normalization_species",
+                    "",
+                    (
+                        "Represented tight-binding species used when a dataset is "
+                        "normalized per magnetic ion. Empty selects it automatically "
+                        "only when exactly one species is represented."
+                    ),
+                    "Empty or one represented basis species or element.",
+                    "str",
+                    "V4+",
+                ),
+                _config_field(
+                    "magnetic_centers_per_model_cell",
+                    1.0,
+                    (
+                        "Magnetic reference centers per electronic model cell when "
+                        "magnetic_normalization_mode is manual."
+                    ),
+                    "Positive finite number.",
+                    "float",
+                    "4.0",
+                    "centers/cell",
+                ),
                 *_form_factor_fields("Fe2"),
+                _config_field(
+                    "form_factor_mode",
+                    "none",
+                    (
+                        "Shared magnetic form-factor profile: none, one tabulated "
+                        "ion, custom coefficients, or a coherent effective mixture."
+                    ),
+                    "One of none, single_ion, custom, or mixture.",
+                    "str",
+                    "single_ion",
+                ),
+                _config_field(
+                    "form_factor_g_J",
+                    2.0,
+                    (
+                        "Lande factor for the shared ion/custom dipole profile; "
+                        "2 selects the spin-only <j0> form factor."
+                    ),
+                    "Positive finite number.",
+                    "float",
+                    "1.142857",
+                ),
+                _config_field(
+                    "form_factor_j2_coefficients",
+                    "",
+                    (
+                        "Optional custom <j2> coefficients for the shared ion/custom "
+                        "dipole profile."
+                    ),
+                    "Seven comma-separated numbers or empty.",
+                    "str",
+                    "0.157,18.555,0.8484,6.54,0.888,2.037,0.0318",
+                ),
+                _config_field(
+                    "form_factor_mixture",
+                    [],
+                    (
+                        "Coherent effective-amplitude mixture. Each mapping supplies "
+                        "weight and ion, with optional g_J; weights sum to one."
+                    ),
+                    "Nonempty JSON list of mappings when form_factor_mode is mixture.",
+                    "list",
+                    '[{"ion":"V3","weight":0.5},{"ion":"V4","weight":0.5}]',
+                ),
                 _config_field(
                     "bulk_g_factor",
                     2.0,
