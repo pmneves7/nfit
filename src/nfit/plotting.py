@@ -2112,12 +2112,26 @@ class MDHistoSliceViewer:
                 unit,
                 quantity_type=quantity_type,
             )
-        if self.channel in {"num_events", "combined_mask", "file_mask", "nfit_mask"}:
+        if self.channel in {
+            "num_events",
+            "coverage_mask",
+            "combined_mask",
+            "file_mask",
+            "nfit_mask",
+        }:
             return self.CHANNEL_LABELS.get(self.channel, self.channel)
         if self.channel == "residual":
             return self.CHANNEL_LABELS[self.channel]
         source_channel = "signal" if self.channel in {"signal", "errors", "fit"} else self.channel
         auxiliary = self.data.auxiliary_channels.get(source_channel)
+        if source_channel == "coverage_fraction" and auxiliary is None:
+            # Coverage is a derived viewer channel even for older/native data
+            # that do not persist it as an MDHisto auxiliary channel.
+            return display_channel_label(
+                self.CHANNEL_LABELS[source_channel],
+                "fraction",
+                quantity_type="dimensionless",
+            )
         quantity_type = self.data.channel_quantity_type(source_channel)
         unit = self.data.channel_unit(source_channel)
         label = (

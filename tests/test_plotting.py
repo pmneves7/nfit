@@ -404,6 +404,21 @@ def test_qt_channel_dropdown_switches_displayed_channel_and_export_script():
     assert viewer.current_plot_settings()["coverage_threshold"] == pytest.approx(0.83)
 
 
+def test_qt_slice_viewer_selects_derived_coverage_channels_without_storage():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+
+    viewer.channel_combo.setCurrentText("coverage_fraction")
+    assert viewer.model.channel == "coverage_fraction"
+    assert viewer.colorbar.ax.yaxis.label.get_text() == "Coverage (fraction)"
+
+    viewer.channel_combo.setCurrentText("coverage_mask")
+    assert viewer.model.channel == "coverage_mask"
+    assert viewer.colorbar.ax.yaxis.label.get_text() == "Coverage mask"
+
+
 def test_qt_histogram_tool_recomputes_coverage_over_selected_box():
     pytest.importorskip("PySide6")
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer

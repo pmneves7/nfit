@@ -166,6 +166,29 @@ def test_mdhisto_neutron_channels_use_quantity_symbols_and_units():
     )
 
 
+def test_derived_coverage_channels_have_labels_without_auxiliary_storage():
+    data = _tiny_mdhisto_data()
+
+    coverage = MDHistoSliceViewer(
+        data,
+        x_dim=3,
+        y_dim=2,
+        channel="coverage_fraction",
+    )
+    coverage_mask = MDHistoSliceViewer(
+        data,
+        x_dim=3,
+        y_dim=2,
+        channel="coverage_mask",
+    )
+
+    assert "coverage_fraction" not in data.auxiliary_channels
+    assert coverage._channel_label() == "Coverage (fraction)"
+    assert coverage_mask._channel_label() == "Coverage mask"
+    assert coverage.slice_arrays()["coverage_fraction"].shape == data.shape[2:]
+    assert coverage_mask.slice_arrays()["coverage_mask"].shape == data.shape[2:]
+
+
 def test_plot_mdhisto_line_and_auto_dispatch_for_single_non_singleton_axis():
     data = _tiny_1d_mdhisto_data()
 
