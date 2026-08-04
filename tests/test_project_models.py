@@ -1739,6 +1739,46 @@ def test_request_overlay_refresh_coalesces_without_event_loop(monkeypatch):
     assert not explorer._pending_overlay_groups
 
 
+def test_fit_parameter_checkbox_does_not_recompute_open_viewer(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    group = DataGroup(
+        "Datagroup1",
+        datasets=[DatasetEntry("scan", _tiny_mdhisto_data(1.0))],
+    )
+    model = create_model_component(group)
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    model_item = explorer.tree.topLevelItem(0).child(1).child(0)
+    explorer.tree.setCurrentItem(model_item)
+
+    refreshed = []
+    explorer._slice_viewers[id(group)] = [object()]
+    monkeypatch.setattr(
+        explorer,
+        "refresh_slice_viewer",
+        lambda refreshed_group: refreshed.append(refreshed_group),
+    )
+
+    # Clicking the checkbox moves focus out of the value editor first. Neither
+    # that no-op editingFinished signal nor the fit-only flag change can alter
+    # the current model overlay.
+    value_editor = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit,
+        "model_parameter_value_constant",
+    )
+    fit_check = explorer.model_parameter_widget.findChild(
+        QtWidgets.QCheckBox,
+        "model_parameter_fit_constant",
+    )
+    assert value_editor is not None
+    assert fit_check is not None
+    value_editor.editingFinished.emit()
+    fit_check.click()
+
+    assert model.fit_parameters["constant"] is True
+    assert refreshed == []
+
+
 def test_viewer_view_cache_reuses_and_invalidates():
     project_gui._VIEWER_VIEW_CACHE.clear()
     data = _grid_mdhisto_data()

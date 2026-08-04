@@ -24555,12 +24555,17 @@ class NfitProjectExplorer:
         if role != "model" or model is None:
             return
         value = _parse_parameter_text(text)
-        if model.parameters.get(name) != value:
-            model.parameters[name] = value
-            branch_created = self._record_data_group_state_change(group) if group is not None else False
-            self._mark_dirty()
-            if group is not None and branch_created:
-                self._refresh_tree(select_group=group, select_model=model)
+        if model.parameters.get(name) == value:
+            return
+        model.parameters[name] = value
+        branch_created = self._record_data_group_state_change(group) if group is not None else False
+        self._mark_dirty()
+        if group is not None and branch_created:
+            self._refresh_tree(
+                select_group=group,
+                select_model=model,
+                refresh_viewers=False,
+            )
         if group is not None:
             self._request_overlay_refresh(group)
 
@@ -24859,14 +24864,20 @@ class NfitProjectExplorer:
         if role != "model" or model is None:
             return
         value = bool(checked)
-        if model.fit_parameters.get(name) != value:
-            model.fit_parameters[name] = value
-            branch_created = self._record_data_group_state_change(group) if group is not None else False
-            self._mark_dirty()
-            if group is not None and branch_created:
-                self._refresh_tree(select_group=group, select_model=model)
-        if group is not None:
-            self._request_overlay_refresh(group)
+        if model.fit_parameters.get(name) == value:
+            return
+        model.fit_parameters[name] = value
+        branch_created = self._record_data_group_state_change(group) if group is not None else False
+        self._mark_dirty()
+        if group is not None and branch_created:
+            # Fit selection changes optimizer configuration only. They do not
+            # change the model evaluated at its current parameter values, so
+            # keep an already-rendered data-viewer overlay intact.
+            self._refresh_tree(
+                select_group=group,
+                select_model=model,
+                refresh_viewers=False,
+            )
 
     def _set_model_limit(self, name: str, side: int, text: str) -> None:
         group, _entry, _mask, model, role = self._objects_for_item(self._current_item())
