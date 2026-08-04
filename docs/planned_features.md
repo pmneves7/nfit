@@ -41,6 +41,10 @@ defines the conventions that future extensions must preserve.
 
 Planned electronic-structure extensions include:
 
+- generalized spinor probe and intrinsic operator bases so explicit-spin
+  electronic RPA can use orbital-resolved form factors; implicit-spin bare,
+  Stoner, matrix, and Hubbard--Hund responses and explicit-spin bare responses
+  already support them;
 - nonorthogonal bases with an explicit overlap matrix $S(\mathbf k)$;
 - user-supplied symmetry representations for general numerical or Wannier
   bases;

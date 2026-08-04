@@ -44,6 +44,18 @@ orbital-pair response *before* the same spin trace is applied. The applied
 factor is recorded in the exported vertex provenance as
 `spin_channel_vertex_factor`.
 
+When orbitals have different magnetic form factors, nfit retains the
+form-factor-weighted neutron probe and the unweighted total spin as separate
+operators. RPA dresses the total-spin channel, then projects back to the probe:
+
+$$
+\chi_{ff}=\chi^0_{ff}+\chi^0_{fS}\Gamma
+(1-\chi^0_{SS}\Gamma)^{-1}\chi^0_{Sf}.
+$$
+
+Consequently $f_a(Q)$ appears in the measured numerator and interference
+terms, but never in the Stoner denominator or stability criterion.
+
 The implementation records the operator order, interaction matrix, RPA
 multiplication order, smallest relative singular value, condition number, and
 sampled static stability margin. A denominator within `singular_tolerance` of

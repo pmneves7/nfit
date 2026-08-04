@@ -268,6 +268,7 @@ def _lindhard_factory(
         hubbard_hund_spin_vertex,
         matrix_interaction_vertex,
         project_implicit_spin_response,
+        rpa_dress_implicit_spin_probe_stoner,
         rpa_dress_susceptibility,
         scalar_stoner_vertex,
     )
@@ -280,6 +281,8 @@ def _lindhard_factory(
         bare_lindhard_susceptibility,
         bare_spin_susceptibility,
         chemical_potential_for_filling,
+        has_orbital_magnetic_form_factors,
+        implicit_spin_probe_susceptibility,
         neutron_spin_contraction,
         orbital_pair_operator_basis,
         response_k_mesh,
@@ -484,6 +487,9 @@ def _lindhard_factory(
             selected_q: np.ndarray,
             selected_energy: np.ndarray,
             common: Mapping[str, Any],
+            *,
+            direct_bare_evaluator: Callable[..., Any] = bare_spin_susceptibility,
+            dressing_evaluator: Callable[[Any], Any] | None = None,
         ) -> Any:
             certificate = bare_result.provenance.get(
                 "q_interpolation_certificate"
@@ -507,17 +513,21 @@ def _lindhard_factory(
                 "q_interpolation_atol": 0.0,
                 "q_interpolation_mesh": None,
             }
-            direct_bare = bare_spin_susceptibility(
+            direct_bare = direct_bare_evaluator(
                 model,
                 selected_q[validation_indices],
                 selected_energy[validation_indices],
                 evaluation_mesh,
                 **direct_settings,
             )
-            direct_dressed = rpa_dress_susceptibility(
-                direct_bare,
-                vertex,
-                **dressing_diagnostics,
+            direct_dressed = (
+                dressing_evaluator(direct_bare)
+                if dressing_evaluator is not None
+                else rpa_dress_susceptibility(
+                    direct_bare,
+                    vertex,
+                    **dressing_diagnostics,
+                )
             )
             interpolated_values = dressed_result.values_per_meV_cell[
                 validation_indices
@@ -573,17 +583,21 @@ def _lindhard_factory(
                     f"{maximum_absolute:g}, maximum relative error "
                     f"{maximum_relative:g}"
                 )
-            exact_bare = bare_spin_susceptibility(
+            exact_bare = direct_bare_evaluator(
                 model,
                 selected_q,
                 selected_energy,
                 evaluation_mesh,
                 **direct_settings,
             )
-            exact_dressed = rpa_dress_susceptibility(
-                exact_bare,
-                vertex,
-                **dressing_diagnostics,
+            exact_dressed = (
+                dressing_evaluator(exact_bare)
+                if dressing_evaluator is not None
+                else rpa_dress_susceptibility(
+                    exact_bare,
+                    vertex,
+                    **dressing_diagnostics,
+                )
             )
             updated.update(
                 {
@@ -685,15 +699,86 @@ def _lindhard_factory(
                     basis_indices,
                 )
             else:
-                bare_result = bare_spin_susceptibility(
-                    model,
-                    q_reduced[selected],
-                    energy[selected],
-                    evaluation_mesh,
-                    **common,
-                )
+                profiled_probe = has_orbital_magnetic_form_factors(model)
+                if profiled_probe and model.spin_operators is None:
+                    bare_result = implicit_spin_probe_susceptibility(
+                        model,
+                        q_reduced[selected],
+                        energy[selected],
+                        evaluation_mesh,
+                        **common,
+                    )
+                else:
+                    bare_result = bare_spin_susceptibility(
+                        model,
+                        q_reduced[selected],
+                        energy[selected],
+                        evaluation_mesh,
+                        **common,
+                    )
                 result = bare_result
-                if dressing_kind == "stoner":
+                if profiled_probe and model.spin_operators is not None and dressing_kind != "bare":
+                    raise ValueError(
+                        "orbital form factors with RPA currently require an "
+                        "implicit-spin tight-binding model"
+                    )
+                if profiled_probe and model.spin_operators is None and dressing_kind == "bare":
+                    scalar = bare_result.values_per_meV_cell[:, 0, 0]
+                    isotropic = np.zeros(
+                        (scalar.size, 3, 3), dtype=np.complex128
+                    )
+                    isotropic[:, np.arange(3), np.arange(3)] = scalar[:, None]
+                    result = replace(
+                        bare_result,
+                        values_per_meV_cell=isotropic,
+                        operator_labels=("Sx", "Sy", "Sz"),
+                        conjugate_indices=(0, 1, 2),
+                    )
+                elif profiled_probe and model.spin_operators is None and dressing_kind == "stoner":
+                    interaction = float(params[dressing_keys["I"]])
+                    vertex = matrix_interaction_vertex(
+                        bare_result.operator_labels,
+                        np.asarray(((0.0, 0.0), (0.0, 2.0 * interaction))),
+                        energy_unit="eV",
+                        channel="spin",
+                    )
+
+                    def dress_probe_stoner(
+                        response: Any,
+                        interaction_value: float = interaction,
+                    ) -> Any:
+                        return rpa_dress_implicit_spin_probe_stoner(
+                            response,
+                            interaction_value,
+                            energy_unit="eV",
+                            **dressing_diagnostics,
+                        )
+
+                    dressed_mixed = dress_probe_stoner(bare_result)
+                    dressed_mixed = certify_dressed_response(
+                        bare_result,
+                        dressed_mixed,
+                        vertex,
+                        evaluation_mesh,
+                        q_reduced[selected],
+                        energy[selected],
+                        common,
+                        direct_bare_evaluator=implicit_spin_probe_susceptibility,
+                        dressing_evaluator=dress_probe_stoner,
+                    )
+                    scalar = dressed_mixed.values_per_meV_cell[:, 0, 0]
+                    isotropic = np.zeros(
+                        (scalar.size, 3, 3), dtype=np.complex128
+                    )
+                    isotropic[:, np.arange(3), np.arange(3)] = scalar[:, None]
+                    result = replace(
+                        dressed_mixed,
+                        values_per_meV_cell=isotropic,
+                        operator_labels=("Sx", "Sy", "Sz"),
+                        conjugate_indices=(0, 1, 2),
+                        response_kind="rpa_scalar_stoner_orbital_probe",
+                    )
+                elif dressing_kind == "stoner":
                     vertex = scalar_stoner_vertex(
                         result.operator_labels,
                         float(params[dressing_keys["I"]]),
@@ -710,6 +795,71 @@ def _lindhard_factory(
                         q_reduced[selected],
                         energy[selected],
                         common,
+                    )
+                elif profiled_probe and model.spin_operators is None and dressing_kind == "matrix":
+                    matrix = np.asarray(
+                        dressing_config.get("vertex_matrix", np.eye(3)),
+                        dtype=np.complex128,
+                    )
+                    vertex = matrix_interaction_vertex(
+                        ("Sx", "Sy", "Sz"),
+                        float(params[dressing_keys["scale"]]) * matrix,
+                        energy_unit="eV",
+                        channel=str(dressing_config.get("channel", "spin")),
+                    )
+
+                    def dress_probe_matrix(
+                        response: Any,
+                        interaction_vertex: Any = vertex,
+                    ) -> Any:
+                        gamma = np.asarray(interaction_vertex.values_meV)
+                        mixed = response.values_per_meV_cell
+                        probe = mixed[:, 0, 0]
+                        probe_total = mixed[:, 0, 1]
+                        total_probe = mixed[:, 1, 0]
+                        total = mixed[:, 1, 1]
+                        identity = np.eye(3, dtype=np.complex128)
+                        denominator = (
+                            identity[None, ...] - total[:, None, None] * gamma
+                        )
+                        dressed_vertex = np.linalg.solve(
+                            denominator,
+                            np.broadcast_to(gamma, denominator.shape),
+                        )
+                        isotropic = probe[:, None, None] * identity[None, ...]
+                        isotropic = isotropic + (
+                            probe_total * total_probe
+                        )[:, None, None] * dressed_vertex
+                        return replace(
+                            response,
+                            values_per_meV_cell=isotropic,
+                            operator_labels=("Sx", "Sy", "Sz"),
+                            conjugate_indices=(0, 1, 2),
+                            response_kind="rpa_matrix_orbital_probe",
+                            provenance={
+                                **dict(response.provenance),
+                                "interaction": interaction_vertex.to_dict(),
+                                "dressing": {
+                                    "equation": (
+                                        "chi_PP + chi_PS Gamma "
+                                        "(I-chi_SS Gamma)^-1 chi_SP"
+                                    ),
+                                    "form_factor_outside_denominator": True,
+                                },
+                            },
+                        )
+
+                    result = dress_probe_matrix(bare_result)
+                    result = certify_dressed_response(
+                        bare_result,
+                        result,
+                        vertex,
+                        evaluation_mesh,
+                        q_reduced[selected],
+                        energy[selected],
+                        common,
+                        direct_bare_evaluator=implicit_spin_probe_susceptibility,
+                        dressing_evaluator=dress_probe_matrix,
                     )
                 elif dressing_kind == "matrix":
                     matrix = np.asarray(
@@ -951,13 +1101,13 @@ def _lindhard_factory(
             return _quasistatic_model_observable(
                 data,
                 np.asarray(contracted.real),
-                form_factor_sq=_form_factor_sq_from_config(component, data),
+                form_factor_sq=1.0,
                 polarization=1.0,
             )
         return _spectral_model_observable(
             data,
             np.asarray(contracted.imag),
-            form_factor_sq=_form_factor_sq_from_config(component, data),
+            form_factor_sq=1.0,
             polarization=1.0,
         )
 
@@ -1306,13 +1456,6 @@ def _validate_lindhard_component(component: Any) -> None:
             raise ValueError(
                 "magnetic_centers_per_model_cell must be finite and positive"
             )
-    from .form_factors import (
-        magnetic_form_factor_profile,
-        normalized_form_factor_mode,
-    )
-
-    normalized_form_factor_mode(config)
-    magnetic_form_factor_profile(np.asarray([0.0]), config)
     plot_q = np.asarray(config.get("plot_q_reduced", ()), dtype=float)
     if plot_q.shape != (3,) or np.any(~np.isfinite(plot_q)):
         raise ValueError("plot_q_reduced must contain three finite coordinates")

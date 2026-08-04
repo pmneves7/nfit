@@ -8,7 +8,7 @@ import json
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from itertools import product
 from threading import RLock
@@ -2631,6 +2631,7 @@ def spin_operator_matrices(
     phase = np.exp(
         2.0j * np.pi * q @ np.asarray(model.orbital_centers, dtype=float).T
     )
+    phase *= orbital_form_factor_amplitudes(model, q)
     if model.spin_operators is None:
         degeneracy = int(model.provenance.get("implicit_spin_degeneracy", 2))
         if degeneracy != 2:
@@ -2656,6 +2657,48 @@ def spin_operator_matrices(
         metadata={"kind": "cartesian_spin", "position_phases": True},
     )
     return basis, matrices, 1.0
+
+
+def has_orbital_magnetic_form_factors(model: ElectronicModel) -> bool:
+    """Return whether any electronic basis state owns a radial probe profile."""
+
+    return any(bool(state.metadata.get("magnetic_form_factor")) for state in model.basis)
+
+
+def orbital_form_factor_amplitudes(
+    model: ElectronicModel,
+    q_reduced: ArrayLike,
+) -> FloatArray:
+    """Evaluate the signed radial magnetic amplitude of every basis orbital.
+
+    Profiles are stored on tight-binding basis states. The returned array has
+    shape ``(points, basis)`` and is evaluated from the extended-zone
+    ``|Q|`` in inverse angstrom. An orbital without a profile has amplitude one.
+    """
+
+    from .form_factors import magnetic_form_factor_profile
+
+    q = np.asarray(q_reduced, dtype=float)
+    if q.ndim == 1:
+        q = q[None, :]
+    if q.ndim != 2 or q.shape[1] != 3:
+        raise ValueError("q_reduced must have shape (n, 3)")
+    q_cartesian = q @ np.asarray(model.reciprocal_lattice, dtype=float).T
+    q_modulus = np.linalg.norm(q_cartesian, axis=1)
+    result = np.ones((q.shape[0], model.n_basis), dtype=float)
+    profiles: dict[str, tuple[Mapping[str, Any], list[int]]] = {}
+    for index, state in enumerate(model.basis):
+        profile = state.metadata.get("magnetic_form_factor")
+        if not isinstance(profile, Mapping) or not profile:
+            continue
+        key = json.dumps(dict(profile), sort_keys=True, separators=(",", ":"))
+        if key not in profiles:
+            profiles[key] = (profile, [])
+        profiles[key][1].append(index)
+    for profile, indices in profiles.values():
+        values = magnetic_form_factor_profile(q_modulus, profile)
+        result[:, indices] = np.asarray(values, dtype=float)[:, None]
+    return result
 
 
 def _implicit_spin_density_basis(model: ElectronicModel) -> ElectronicOperatorBasis:
@@ -2706,6 +2749,60 @@ def _direct_implicit_spin_scalar(
     return prefactor * response.values_per_meV_cell[:, 0, 0], response, prefactor
 
 
+def _direct_implicit_spin_probe_matrix(
+    model: ElectronicModel,
+    Q: np.ndarray,
+    energy: np.ndarray,
+    mesh: WavevectorSampling,
+    kwargs: Mapping[str, Any],
+) -> SusceptibilityResult:
+    """Return probe/total-spin correlations for an implicit-spin model."""
+
+    degeneracy = int(model.provenance.get("implicit_spin_degeneracy", 2))
+    if degeneracy != 2:
+        raise ValueError("implicit spin response requires spin degeneracy 2")
+    phase = np.exp(
+        2.0j * np.pi * Q @ np.asarray(model.orbital_centers, dtype=float).T
+    )
+    probe = phase * orbital_form_factor_amplitudes(model, Q)
+    point_matrices = np.zeros(
+        (Q.shape[0], 2, model.n_basis, model.n_basis),
+        dtype=np.complex128,
+    )
+    diagonal = np.arange(model.n_basis)
+    point_matrices[:, 0, diagonal, diagonal] = probe
+    point_matrices[:, 1, diagonal, diagonal] = phase
+    identity = np.eye(model.n_basis, dtype=np.complex128)
+    operators = ElectronicOperatorBasis(
+        ("probe", "total_spin"),
+        np.stack((identity, identity)),
+        metadata={"kind": "implicit_spin_probe_and_total"},
+    )
+    response = bare_lindhard_susceptibility(
+        model,
+        Q,
+        energy,
+        mesh,
+        operators,
+        operator_matrices_by_point=point_matrices,
+        q_evaluation="direct",
+        **_without_q_interpolation_kwargs(kwargs),
+    )
+    return replace(
+        response,
+        values_per_meV_cell=(degeneracy / 4.0)
+        * response.values_per_meV_cell,
+        provenance={
+            **dict(response.provenance),
+            "operator_basis": {
+                "kind": "implicit_spin_probe_and_total",
+                "spin_trace_factor": degeneracy / 4.0,
+                "orbital_form_factors": True,
+            },
+        },
+    )
+
+
 def _interpolated_implicit_spin_scalar(
     model: ElectronicModel,
     Q: np.ndarray,
@@ -2715,7 +2812,7 @@ def _interpolated_implicit_spin_scalar(
     q_mesh_shape: Sequence[int],
     kwargs: Mapping[str, Any],
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    """Interpolate an orbital-density tensor and contract phases by chunk."""
+    """Interpolate orbital density and contract probe/total spin by chunk."""
 
     density_basis = _implicit_spin_density_basis(model)
     degeneracy = int(model.provenance.get("implicit_spin_degeneracy", 2))
@@ -2843,7 +2940,7 @@ def _interpolated_implicit_spin_scalar(
             operators,
             operators,
         )
-    scalar = np.zeros(Q.shape[0], dtype=np.complex128)
+    values = np.zeros((Q.shape[0], 2, 2), dtype=np.complex128)
     unique_nodes: set[tuple[float, ...]] = set()
     unique_node_count = 0
     evaluated_stencils = 0
@@ -2863,19 +2960,33 @@ def _interpolated_implicit_spin_scalar(
                     * Q[start:stop]
                     @ np.asarray(model.orbital_centers, dtype=float).T
                 )
+                phases *= orbital_form_factor_amplitudes(model, Q[start:stop])
             else:
                 flat_nodes = cached_geometry[0][start:stop]
                 weights = cached_geometry[1][start:stop]
-                phases = cached_geometry[2][start:stop]
+                phases = cached_geometry[2][start:stop] * orbital_form_factor_amplitudes(
+                    model, Q[start:stop]
+                )
             stencil_response = response_lookup[
                 flat_nodes,
                 energy_inverse[start:stop, None],
             ]
-            scalar[start:stop] = prefactor * np.einsum(
-                "pa,psab,pb,ps->p",
-                phases,
+            total_phases = (
+                cached_geometry[2][start:stop]
+                if cached_geometry is not None
+                else np.exp(
+                    2.0j
+                    * np.pi
+                    * Q[start:stop]
+                    @ np.asarray(model.orbital_centers, dtype=float).T
+                )
+            )
+            coefficients = np.stack((phases, total_phases), axis=1)
+            values[start:stop] = prefactor * np.einsum(
+                "pua,psab,pvb,ps->puv",
+                coefficients,
                 stencil_response,
-                phases.conj(),
+                coefficients.conj(),
                 weights,
                 optimize=True,
             )
@@ -2923,20 +3034,28 @@ def _interpolated_implicit_spin_scalar(
         )
         stencil_response = node_response.values_per_meV_cell[inverse]
         evaluated_pairs += int(unique_pairs.shape[0])
-        phases = np.exp(
+        total_phases = np.exp(
             2.0j
             * np.pi
             * Q[start:stop]
             @ np.asarray(model.orbital_centers, dtype=float).T
         )
+        probe_phases = total_phases * orbital_form_factor_amplitudes(
+            model, Q[start:stop]
+        )
+        coefficients = np.stack((probe_phases, total_phases), axis=1)
         stencil_values = prefactor * np.einsum(
-            "sa,sab,sb->s",
-            phases[parents],
+            "sua,sab,svb->suv",
+            coefficients[parents],
             stencil_response,
-            phases[parents].conj(),
+            coefficients[parents].conj(),
             optimize=True,
         )
-        np.add.at(scalar[start:stop], parents, weights * stencil_values)
+        np.add.at(
+            values[start:stop],
+            parents,
+            weights[:, None, None] * stencil_values,
+        )
         unique_nodes.update(map(tuple, np.unique(nodes, axis=0)))
         evaluated_stencils += int(nodes.shape[0])
     if response_lookup is not None:
@@ -2944,7 +3063,7 @@ def _interpolated_implicit_spin_scalar(
         unique_node_count = node_count
     else:
         unique_node_count = len(unique_nodes)
-    return scalar, {
+    return values, {
         "method": "periodic_linear_orbital_density",
         "mesh_shape": list(q_mesh_shape),
         "requested_points": int(Q.shape[0]),
@@ -3015,7 +3134,7 @@ def _certified_implicit_spin_interpolation(
             q_mesh_shape=candidate,
             kwargs=kwargs,
         )
-        difference = np.abs(trial - reference)
+        difference = np.abs(trial[:, 0, 0] - reference)
         scale = max(
             float(np.max(np.abs(reference))),
             atol,
@@ -3125,7 +3244,7 @@ def _certified_implicit_spin_interpolation(
         kwargs=kwargs,
     )
     scalar = np.empty(Q.shape[0], dtype=np.complex128)
-    scalar[approximate_indices] = approximate
+    scalar[approximate_indices] = approximate[:, 0, 0]
     exact_indices = np.flatnonzero(commensurate)
     if exact_indices.size:
         exact, _exact_response, _exact_prefactor = _direct_implicit_spin_scalar(
@@ -3205,6 +3324,89 @@ def _certified_implicit_spin_interpolation(
                 "interpolation_basis": "orbital_density",
                 "extended_zone_phase_contraction": "exact",
             },
+        },
+    )
+
+
+def implicit_spin_probe_susceptibility(
+    model: ElectronicModel,
+    q_reduced: ArrayLike,
+    energy_meV: ArrayLike,
+    mesh: WavevectorSampling,
+    **kwargs: Any,
+) -> SusceptibilityResult:
+    """Return form-factor probe, total-spin, and mixed correlations.
+
+    The ordered basis is ``("probe", "total_spin")``. The probe includes each
+    basis orbital's radial magnetic form factor, while ``total_spin`` is the
+    intrinsic operator used by interaction vertices. Keeping both in one
+    response prevents the form factor from entering an RPA denominator.
+    """
+
+    if model.spin_operators is not None:
+        raise ValueError("implicit spin probe response requires a spin-independent model")
+    Q, energy = _point_inputs(q_reduced, energy_meV)
+    policy = str(kwargs.get("q_evaluation", "auto")).strip().lower()
+    tolerance = max(
+        float(kwargs.get("q_interpolation_rtol") or 0.0),
+        float(kwargs.get("q_interpolation_atol") or 0.0),
+    )
+    commensurate = _commensurate_point_flags(model, mesh, Q)
+    use_interpolation = (
+        policy in {"auto", "interpolated"}
+        and tolerance > 0.0
+        and not np.all(commensurate)
+    )
+    if not use_interpolation:
+        return _direct_implicit_spin_probe_matrix(model, Q, energy, mesh, kwargs)
+
+    certified = _certified_implicit_spin_interpolation(
+        model, Q, energy, mesh, kwargs
+    )
+    if certified is None:
+        return _direct_implicit_spin_probe_matrix(model, Q, energy, mesh, kwargs)
+    evaluation = certified.provenance.get("q_evaluation", {})
+    selected_shape = evaluation.get("selected_mesh_shape")
+    if not selected_shape:
+        exact = _direct_implicit_spin_probe_matrix(model, Q, energy, mesh, kwargs)
+        return replace(exact, provenance=dict(certified.provenance))
+
+    approximate_indices = np.flatnonzero(~commensurate)
+    mixed, interpolation_record = _interpolated_implicit_spin_scalar(
+        model,
+        Q[approximate_indices],
+        energy[approximate_indices],
+        mesh,
+        q_mesh_shape=selected_shape,
+        kwargs=kwargs,
+    )
+    values = np.empty((Q.shape[0], 2, 2), dtype=np.complex128)
+    values[approximate_indices] = mixed
+    exact_indices = np.flatnonzero(commensurate)
+    if exact_indices.size:
+        exact = _direct_implicit_spin_probe_matrix(
+            model, Q[exact_indices], energy[exact_indices], mesh, kwargs
+        )
+        values[exact_indices] = exact.values_per_meV_cell
+    return SusceptibilityResult(
+        q_reduced=np.mod(Q, 1.0),
+        Q_reduced=Q,
+        energy_meV=energy,
+        values_per_meV_cell=values,
+        operator_labels=("probe", "total_spin"),
+        conjugate_indices=(0, 1),
+        model_digest=model.content_digest,
+        temperature_K=certified.temperature_K,
+        chemical_potential_meV=certified.chemical_potential_meV,
+        broadening_meV=certified.broadening_meV,
+        provenance={
+            **dict(certified.provenance),
+            "operator_basis": {
+                "kind": "implicit_spin_probe_and_total",
+                "spin_trace_factor": 0.5,
+                "orbital_form_factors": True,
+            },
+            "q_interpolation": interpolation_record,
         },
     )
 

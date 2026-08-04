@@ -496,6 +496,133 @@ def rpa_dress_susceptibility(
     )
 
 
+def rpa_dress_implicit_spin_probe_stoner(
+    bare: SusceptibilityResult,
+    interaction: float,
+    *,
+    energy_unit: str = "eV",
+    singular_tolerance: float = 1.0e-12,
+    near_pole_tolerance: float = 1.0e-3,
+    static_warning_margin: float = 0.05,
+    reject_sampled_static_instability: bool = False,
+    **_unused: Any,
+) -> SusceptibilityResult:
+    """Dress a probe/total-spin response with the rank-one Stoner vertex.
+
+    The probe occupies operator index zero and the intrinsic total spin index
+    one. Only the latter enters the denominator, so orbital form factors cannot
+    shift the Stoner instability. The closed form is linear in point count and
+    avoids a batched 2 by 2 SVD during large fits.
+    """
+
+    if bare.operator_labels != ("probe", "total_spin"):
+        raise ValueError("probe Stoner dressing requires probe/total_spin order")
+    threshold = float(singular_tolerance)
+    pole_warning = float(near_pole_tolerance)
+    warning_margin = float(static_warning_margin)
+    if not np.isfinite(threshold) or threshold <= 0.0:
+        raise ValueError("singular_tolerance must be finite and positive")
+    if not np.isfinite(pole_warning) or pole_warning <= threshold:
+        raise ValueError("near_pole_tolerance must exceed singular_tolerance")
+    if not np.isfinite(warning_margin) or warning_margin < 0.0:
+        raise ValueError("static_warning_margin must be finite and nonnegative")
+    interaction_meV = float(electronic_energy_to_meV(interaction, energy_unit))
+    gamma = CARTESIAN_SPIN_VERTEX_FACTOR * interaction_meV
+    values = np.asarray(bare.values_per_meV_cell)
+    feedback = gamma * values[:, 1, 1]
+    denominator = 1.0 - feedback
+    scale = np.maximum(1.0, np.abs(feedback))
+    relative = np.abs(denominator) / scale
+    if np.any(relative <= threshold):
+        index = int(np.flatnonzero(relative <= threshold)[0])
+        raise np.linalg.LinAlgError(
+            "RPA denominator is singular within the configured tolerance "
+            f"at response point {index}"
+        )
+    dressed = values + (
+        gamma
+        / denominator
+    )[:, None, None] * values[:, :, 1, None] * values[:, None, 1, :]
+    static_indices = np.flatnonzero(np.abs(bare.energy_meV) <= 1.0e-14)
+    if static_indices.size:
+        static_ratios = np.real(feedback[static_indices])
+        local = int(np.nanargmax(static_ratios))
+        static_index = int(static_indices[local])
+        static_ratio = float(static_ratios[local])
+        static_margin = 1.0 - static_ratio
+    else:
+        static_index = -1
+        static_ratio = float("nan")
+        static_margin = float("nan")
+    if (
+        reject_sampled_static_instability
+        and static_indices.size
+        and static_margin <= 0.0
+    ):
+        raise np.linalg.LinAlgError(
+            "sampled static RPA response is at or beyond an instability "
+            f"at response point {static_index}"
+        )
+    minimum_index = int(np.argmin(relative))
+    vertex = InteractionVertex(
+        operator_labels=bare.operator_labels,
+        values_meV=np.asarray(((0.0, 0.0), (0.0, gamma))),
+        channel="spin",
+        kind="scalar_stoner_probe",
+        provenance={
+            "input_energy_unit": energy_unit,
+            "input_interaction": float(interaction),
+            "interaction_meV": interaction_meV,
+            "spin_channel_vertex_factor": CARTESIAN_SPIN_VERTEX_FACTOR,
+            "form_factor_outside_denominator": True,
+        },
+    )
+    return SusceptibilityResult(
+        q_reduced=bare.q_reduced,
+        Q_reduced=bare.Q_reduced,
+        energy_meV=bare.energy_meV,
+        values_per_meV_cell=dressed,
+        operator_labels=bare.operator_labels,
+        conjugate_indices=bare.conjugate_indices,
+        model_digest=bare.model_digest,
+        temperature_K=bare.temperature_K,
+        chemical_potential_meV=bare.chemical_potential_meV,
+        broadening_meV=bare.broadening_meV,
+        response_kind="rpa_scalar_stoner_probe",
+        normalization=bare.normalization,
+        provenance={
+            **dict(bare.provenance),
+            "interaction": vertex.to_dict(),
+            "dressing": {
+                "equation": (
+                    "chi=chi0+chi0[:,S] Gamma "
+                    "(1-chi0[S,S] Gamma)^-1 chi0[S,:]"
+                ),
+                "solver": "rank_one_probe_stoner",
+                "form_factor_outside_denominator": True,
+                "minimum_relative_singular_value": float(relative[minimum_index]),
+                "near_pole_tolerance": pole_warning,
+                "near_pole": bool(relative[minimum_index] <= pole_warning),
+                "near_pole_point_index": minimum_index,
+                "static_stability": {
+                    "sampled_zero_energy_point_count": int(static_indices.size),
+                    "margin": static_margin,
+                    "ratio": static_ratio,
+                    "point_index": static_index,
+                    "warning_margin": warning_margin,
+                    "near_instability": bool(
+                        static_indices.size and static_margin <= warning_margin
+                    ),
+                    "unstable": bool(
+                        static_indices.size and static_margin <= 0.0
+                    ),
+                    "reject_unstable": bool(reject_sampled_static_instability),
+                },
+            },
+        },
+    )
+
+
 def project_implicit_spin_response(
     response: SusceptibilityResult,
     model: ElectronicModel,
@@ -520,6 +647,11 @@ def project_implicit_spin_response(
         * response.Q_reduced
         @ np.asarray(model.orbital_centers, dtype=float)[list(indices)].T
     )
+    from .electronic_response import orbital_form_factor_amplitudes
+
+    phases *= orbital_form_factor_amplitudes(model, response.Q_reduced)[
+        :, list(indices)
+    ]
     coefficients = np.zeros((response.q_reduced.shape[0], size * size), complex)
     for local_index in range(size):
         coefficients[:, local_index * size + local_index] = phases[:, local_index]
@@ -554,6 +686,7 @@ def project_implicit_spin_response(
                 "basis_indices": list(indices),
                 "spin_trace_factor": 0.5,
                 "position_phases": True,
+                "orbital_form_factors": True,
             },
         },
     )

@@ -1186,18 +1186,6 @@ def lindhard_report_sections(
     symmetry = latex_escape(config.get("response_symmetry", "auto"))
     formula_mode = str(config.get("formula_units_mode", "manual"))
     magnetic_mode = str(config.get("magnetic_normalization_mode", "auto"))
-    from .form_factors import normalized_form_factor_mode
-
-    form_factor_mode = normalized_form_factor_mode(config)
-    if form_factor_mode == "single_ion":
-        form_factor_text = str(config.get("ion", "") or "unspecified ion")
-    elif form_factor_mode == "custom":
-        form_factor_text = "custom shared profile"
-    elif form_factor_mode == "mixture":
-        mixture = config.get("form_factor_mixture", [])
-        form_factor_text = "coherent amplitude mixture " + str(mixture)
-    else:
-        form_factor_text = "none"
     sampling_certificate = config.get("response_sampling_certificate", {})
     sampling_status = (
         str(sampling_certificate.get("status", "not run"))
@@ -1264,10 +1252,6 @@ def lindhard_report_sections(
                     "centers/model cell (manual) \\\\"
                 )
             )
-        ),
-        (
-            "Shared magnetic form factor & "
-            f"{latex_escape(form_factor_text)} \\\\"
         ),
         (
             "Powder orientations & "

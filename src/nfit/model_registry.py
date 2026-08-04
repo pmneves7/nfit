@@ -2013,51 +2013,6 @@ def _register_builtin_models() -> None:
                     "4.0",
                     "centers/cell",
                 ),
-                *_form_factor_fields("Fe2"),
-                _config_field(
-                    "form_factor_mode",
-                    "none",
-                    (
-                        "Shared magnetic form-factor profile: none, one tabulated "
-                        "ion, custom coefficients, or a coherent effective mixture."
-                    ),
-                    "One of none, single_ion, custom, or mixture.",
-                    "str",
-                    "single_ion",
-                ),
-                _config_field(
-                    "form_factor_g_J",
-                    2.0,
-                    (
-                        "Lande factor for the shared ion/custom dipole profile; "
-                        "2 selects the spin-only <j0> form factor."
-                    ),
-                    "Positive finite number.",
-                    "float",
-                    "1.142857",
-                ),
-                _config_field(
-                    "form_factor_j2_coefficients",
-                    "",
-                    (
-                        "Optional custom <j2> coefficients for the shared ion/custom "
-                        "dipole profile."
-                    ),
-                    "Seven comma-separated numbers or empty.",
-                    "str",
-                    "0.157,18.555,0.8484,6.54,0.888,2.037,0.0318",
-                ),
-                _config_field(
-                    "form_factor_mixture",
-                    [],
-                    (
-                        "Coherent effective-amplitude mixture. Each mapping supplies "
-                        "weight and ion, with optional g_J; weights sum to one."
-                    ),
-                    "Nonempty JSON list of mappings when form_factor_mode is mixture.",
-                    "list",
-                    '[{"ion":"V3","weight":0.5},{"ion":"V4","weight":0.5}]',
-                ),
                 _config_field(
                     "bulk_g_factor",
                     2.0,

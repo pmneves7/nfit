@@ -55,6 +55,65 @@ FloatArray = NDArray[np.float64]
 
 FORM_FACTOR_MODES = ("none", "single_ion", "custom", "mixture")
 
+
+def canonical_form_factor_profile(profile: Any) -> dict[str, Any]:
+    """Return one validated JSON-ready orbital magnetic form-factor profile.
+
+    A tabulated ion may be abbreviated as ``"V3"``. A mapping uses the same
+    fields accepted by :func:`magnetic_form_factor_profile`. An empty value is
+    the unit-amplitude profile used for an orbital with no radial attenuation.
+    """
+
+    if profile is None or profile == "":
+        return {}
+    if isinstance(profile, str):
+        payload: dict[str, Any] = {
+            "form_factor_mode": "single_ion",
+            "ion": profile.strip(),
+        }
+    elif isinstance(profile, Mapping):
+        payload = {str(key): value for key, value in profile.items()}
+    else:
+        raise ValueError("an orbital form factor must be an ion string or mapping")
+    mode = normalized_form_factor_mode(payload)
+    if mode == "none":
+        return {}
+    magnetic_form_factor_profile(np.asarray([0.0]), payload)
+    result: dict[str, Any] = {"form_factor_mode": mode}
+    if mode in {"single_ion", "custom"}:
+        ion = str(payload.get("ion", "") or "").strip()
+        if ion and ion != "__custom__":
+            result["ion"] = ion
+        coefficients = _coerce_coefficients(payload.get("form_factor_coefficients"))
+        if coefficients is not None:
+            result["form_factor_coefficients"] = list(coefficients)
+        result["form_factor_g_J"] = float(payload.get("form_factor_g_J", 2.0))
+        j2 = _coerce_coefficients(payload.get("form_factor_j2_coefficients"))
+        if j2 is not None:
+            result["form_factor_j2_coefficients"] = list(j2)
+    else:
+        result["form_factor_mixture"] = [
+            dict(term)
+            for term in normalize_form_factor_mixture(
+                payload.get("form_factor_mixture")
+            )
+        ]
+    return result
+
+
+def compact_form_factor_profile(profile: Mapping[str, Any]) -> Any:
+    """Return a concise editable representation of one canonical profile."""
+
+    canonical = canonical_form_factor_profile(profile)
+    if not canonical:
+        return ""
+    if set(canonical) <= {"form_factor_mode", "ion", "form_factor_g_J"} and (
+        canonical.get("form_factor_mode") == "single_ion"
+        and float(canonical.get("form_factor_g_J", 2.0)) == 2.0
+    ):
+        return str(canonical["ion"])
+    return canonical
+
 # <j0> coefficients (A, a, B, b, C, c, D), keyed by ion label "<Element><charge>"
 # (e.g. "Mn2" for Mn2+, "Fe0" for neutral Fe). Source: see module docstring.
 J0_COEFFICIENTS: dict[str, tuple[float, float, float, float, float, float, float]] = {
@@ -521,12 +580,11 @@ def magnetic_form_factor_profile(
     q_modulus_inv_angstrom: ArrayLike,
     config: Mapping[str, Any],
 ) -> FloatArray:
-    """Evaluate a serialized shared/effective magnetic form-factor profile.
+    """Evaluate one serialized magnetic radial-amplitude profile.
 
     ``none`` returns one, ``single_ion`` and ``custom`` use the existing
     dipole implementation, and ``mixture`` forms a coherent weighted sum of
-    amplitudes before squaring. This shared profile is appropriate when every
-    spin-carrying orbital uses the same effective radial magnetization density.
+    amplitudes before squaring.
     """
 
     q = np.asarray(q_modulus_inv_angstrom, dtype=float)

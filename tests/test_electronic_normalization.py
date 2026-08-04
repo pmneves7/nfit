@@ -109,29 +109,21 @@ def test_lindhard_coupling_configuration_is_public_atomic_and_scriptable():
             "formula_units_mode": "manual",
             "formula_units_per_cell": 1.0,
             "magnetic_normalization_mode": "auto",
-            "form_factor_mode": "none",
             "bulk_g_factor": 2.0,
         },
     )
     configure_lindhard_experimental_coupling(
         component,
         formula_units_per_cell=2.0,
-        form_factor_mode="mixture",
-        form_factor_mixture=[
-            {"ion": "V3", "weight": 0.5},
-            {"ion": "V4", "weight": 0.5},
-        ],
+        bulk_g_factor=2.1,
     )
     assert component.config["formula_units_per_cell"] == pytest.approx(2.0)
-    assert component.config["form_factor_mode"] == "mixture"
+    assert component.config["bulk_g_factor"] == pytest.approx(2.1)
 
     before = dict(component.config)
-    with pytest.raises(ValueError, match="weights must sum to one"):
+    with pytest.raises(KeyError, match="unknown Lindhard coupling field"):
         configure_lindhard_experimental_coupling(
             component,
-            form_factor_mixture=[
-                {"ion": "V3", "weight": 0.25},
-                {"ion": "V4", "weight": 0.25},
-            ],
+            form_factor_mode="single_ion",
         )
     assert component.config == before

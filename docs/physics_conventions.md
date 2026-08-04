@@ -345,8 +345,8 @@ $\langle L\rangle=(2-g_J)J$ and $2\langle S\rangle=2(g_J-1)J$, so the orbital
 part weights $\langle j_0\rangle+\langle j_2\rangle$ and the spin part weights
 $\langle j_0\rangle$; their ratio is the coefficient above.
 
-$g_J$ is the **ion's Landé factor**, set by the model component's
-`form_factor_g_J`. It is deliberately separate from the dataset `g_factor`,
+$g_J$ is the **ion's Landé factor**, set in each tight-binding orbital's
+magnetic form-factor profile. It is deliberately separate from the dataset `g_factor`,
 which converts a spin-operator response to a magnetic moment and may be fitted.
 The default $g_J=2$ returns $\langle j_0\rangle$ exactly and never consults the
 $\langle j_2\rangle$ table, so spin-only models are unaffected. The correction

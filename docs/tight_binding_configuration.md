@@ -41,7 +41,7 @@ their orbital endpoints.
 | `model_stale` | `false` | Derived flag indicating that builder edits require one canonical rebuild. It is not a physical option. |
 | `use_primitive_cell` | `true` | Attempt exact folding of a GUI-built conventional-cell model. A failed compatibility certificate records its reason and uses the conventional model. |
 | `crystal` | cubic `P 1` cell with no sites | Editable lattice, space group, sites, and optional CIF provenance. |
-| `orbital_manifolds` | `[]` | Site-attached basis definitions, symmetry choices, and local frames. |
+| `orbital_manifolds` | `[]` | Site-attached basis definitions, symmetry choices, local frames, and per-orbital magnetic form factors. |
 | `onsite_terms` | `[]` | Generated onsite matrices and mirrored parameter state. |
 | `hopping_parameterization` | `"slater_koster"` | Candidate basis: compact two-centre integrals or `"general"` symmetry matrices. |
 | `hopping_cutoff_angstrom` | `0.0` | Largest bond distance examined by the hopping generator; zero generates none. |

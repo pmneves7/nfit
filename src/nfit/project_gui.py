@@ -19324,11 +19324,6 @@ class NfitProjectExplorer:
                 "magnetic_normalization_mode",
                 "magnetic_normalization_species",
                 "magnetic_centers_per_model_cell",
-                "ion",
-                "form_factor_mode",
-                "form_factor_g_J",
-                "form_factor_j2_coefficients",
-                "form_factor_mixture",
                 "bulk_g_factor",
                 "plot_q_reduced",
                 "plot_energy_min_meV",
@@ -21180,115 +21175,6 @@ class NfitProjectExplorer:
         experiment = QtWidgets.QGroupBox("Experimental coupling")
         experiment.setObjectName("lindhard_experiment_group")
         experiment_layout = QtWidgets.QFormLayout(experiment)
-        form_factor_tooltip = (
-            "Magnetic form factor multiplying the neutron response. Choose the "
-            "ion represented by the active spin-carrying orbitals, omit it for "
-            "an unweighted response, or supply custom coefficients."
-        )
-        form_factor = QtWidgets.QComboBox()
-        form_factor.setObjectName("model_config_choice_ion")
-        form_factor.setToolTip(form_factor_tooltip)
-        form_factor.addItem("(none)", "")
-        for ion_name in available_ions():
-            form_factor.addItem(ion_name, ion_name)
-        form_factor.addItem("Custom…", CUSTOM_FORM_FACTOR_CHOICE)
-        form_factor.addItem("Effective mixture…", EFFECTIVE_FORM_FACTOR_CHOICE)
-        from .form_factors import normalized_form_factor_mode
-
-        form_factor_mode = normalized_form_factor_mode(model.config)
-        current_ion = str(model.config.get("ion", "") or "")
-        if form_factor_mode == "none":
-            current_ion = ""
-        elif form_factor_mode == "custom":
-            current_ion = CUSTOM_FORM_FACTOR_CHOICE
-        elif form_factor_mode == "mixture":
-            current_ion = EFFECTIVE_FORM_FACTOR_CHOICE
-        form_factor.setCurrentIndex(max(form_factor.findData(current_ion), 0))
-        form_factor.currentIndexChanged.connect(
-            lambda _index, combo=form_factor: self._set_model_form_factor_choice(
-                str(combo.currentData() or "")
-            )
-        )
-        form_factor_label = QtWidgets.QLabel("Magnetic form factor")
-        form_factor_label.setToolTip(form_factor_tooltip)
-        experiment_layout.addRow(form_factor_label, form_factor)
-        if current_ion == CUSTOM_FORM_FACTOR_CHOICE:
-            coefficient_tooltip = (
-                "Seven coefficients a1,b1,a2,b2,a3,b3,c for "
-                "f(Q)=Σ aᵢ exp[-bᵢ(|Q|/4π)²]+c."
-            )
-            coefficients = QtWidgets.QLineEdit(
-                _parameter_to_text(
-                    model.config.get("form_factor_coefficients", "")
-                )
-            )
-            coefficients.setObjectName("model_config_form_factor_coefficients")
-            coefficients.setToolTip(coefficient_tooltip)
-            coefficients.editingFinished.connect(
-                lambda editor=coefficients: self._set_lindhard_coupling_text(
-                    "form_factor_coefficients", editor.text()
-                )
-            )
-            coefficient_label = QtWidgets.QLabel("Custom coefficients")
-            coefficient_label.setToolTip(coefficient_tooltip)
-            experiment_layout.addRow(coefficient_label, coefficients)
-        elif current_ion == EFFECTIVE_FORM_FACTOR_CHOICE:
-            mixture_tooltip = (
-                "JSON list of coherent amplitude terms. Each term has ion and "
-                "weight, with optional g_J; nonnegative weights must sum to one. "
-                "The amplitudes are summed before |f(Q)|² is formed."
-            )
-            mixture = QtWidgets.QLineEdit(
-                _parameter_to_text(model.config.get("form_factor_mixture", []))
-            )
-            mixture.setObjectName("model_config_form_factor_mixture")
-            mixture.setToolTip(mixture_tooltip)
-            mixture.editingFinished.connect(
-                lambda editor=mixture: self._set_lindhard_form_factor_mixture(
-                    editor.text()
-                )
-            )
-            mixture_label = QtWidgets.QLabel("Effective amplitude mixture")
-            mixture_label.setToolTip(mixture_tooltip)
-            experiment_layout.addRow(mixture_label, mixture)
-        if current_ion not in {"", EFFECTIVE_FORM_FACTOR_CHOICE}:
-            dipole_tooltip = (
-                "Landé factor in f=<j0>+(2/g_J-1)<j2>. Use 2 for the "
-                "spin-only <j0> profile."
-            )
-            dipole = QtWidgets.QLineEdit(
-                _parameter_to_text(model.config.get("form_factor_g_J", 2.0))
-            )
-            dipole.setObjectName("model_config_form_factor_g_J")
-            dipole.setToolTip(dipole_tooltip)
-            dipole.editingFinished.connect(
-                lambda editor=dipole: self._set_lindhard_coupling_text(
-                    "form_factor_g_J", editor.text()
-                )
-            )
-            dipole_label = QtWidgets.QLabel("Form-factor g_J")
-            dipole_label.setToolTip(dipole_tooltip)
-            experiment_layout.addRow(dipole_label, dipole)
-            j2_tooltip = (
-                "Optional seven <j2> coefficients overriding the selected ion's "
-                "table. Custom <j0> profiles need these when g_J is not 2."
-            )
-            j2_coefficients = QtWidgets.QLineEdit(
-                _parameter_to_text(
-                    model.config.get("form_factor_j2_coefficients", "")
-                )
-            )
-            j2_coefficients.setObjectName("model_config_form_factor_j2_coefficients")
-            j2_coefficients.setToolTip(j2_tooltip)
-            j2_coefficients.editingFinished.connect(
-                lambda editor=j2_coefficients: self._set_lindhard_coupling_text(
-                    "form_factor_j2_coefficients", editor.text()
-                )
-            )
-            j2_label = QtWidgets.QLabel("Custom <j2> coefficients")
-            j2_label.setToolTip(j2_tooltip)
-            experiment_layout.addRow(j2_label, j2_coefficients)
-
         formula_tooltip = (
             "Automatic mode derives the reduced chemical formula and the number "
             "of formula units in the actual electronic model cell from a complete "
@@ -21467,8 +21353,8 @@ class NfitProjectExplorer:
         normalization_status.setObjectName("lindhard_normalization_status")
         normalization_status.setWordWrap(True)
         normalization_status.setToolTip(
-            "Form factors affect Q-dependent neutron amplitude. Formula-unit "
-            "and magnetic-center counts affect only the response normalization."
+            "Orbital form factors affect Q-dependent neutron amplitude. Formula-"
+            "unit and magnetic-center counts affect only response normalization."
         )
         experiment_layout.addRow(normalization_status)
 
@@ -21984,6 +21870,7 @@ class NfitProjectExplorer:
             "Manifold",
             "Basis",
             "Orbitals",
+            "Magnetic form factors",
             "Local frame",
             "Degeneracy groups",
             "Correlated shell",
@@ -22036,6 +21923,34 @@ class NfitProjectExplorer:
                 )
             )
             layout.addWidget(orbitals, row, 3)
+            from .form_factors import compact_form_factor_profile
+
+            form_factors = QtWidgets.QLineEdit(
+                _parameter_to_text(
+                    {
+                        orbital: compact_form_factor_profile(profile)
+                        for orbital, profile in manifold.magnetic_form_factors.items()
+                    }
+                )
+            )
+            form_factors.setObjectName(
+                f"tight_binding_manifold_form_factors_{index}"
+            )
+            form_factors.setToolTip(
+                "JSON mapping from orbital label to its magnetic radial profile. "
+                "Use an ion string such as {\"d_xy\": \"V3\"}, or a full "
+                "profile mapping with form_factor_mode and custom/mixture fields. "
+                "An omitted orbital has unit probe amplitude. These amplitudes "
+                "enter before orbital interference is contracted. Electronic "
+                "RPA with orbital-specific profiles currently requires an "
+                "implicit-spin tight-binding model."
+            )
+            form_factors.editingFinished.connect(
+                lambda index=index, editor=form_factors: self._set_tight_binding_manifold_field(
+                    index, "magnetic_form_factors", editor.text()
+                )
+            )
+            layout.addWidget(form_factors, row, 4)
             frame = QtWidgets.QLineEdit(
                 _parameter_to_text(np.asarray(manifold.local_frame).tolist())
             )
@@ -22050,7 +21965,7 @@ class NfitProjectExplorer:
                     index, "local_frame", editor.text()
                 )
             )
-            layout.addWidget(frame, row, 4)
+            layout.addWidget(frame, row, 5)
             degeneracy = QtWidgets.QLineEdit(
                 _parameter_to_text(
                     [list(group) for group in manifold.degeneracy_groups]
@@ -22069,7 +21984,7 @@ class NfitProjectExplorer:
                     index, "degeneracy_groups", editor.text()
                 )
             )
-            layout.addWidget(degeneracy, row, 5)
+            layout.addWidget(degeneracy, row, 6)
             shell = QtWidgets.QLineEdit(manifold.correlated_shell)
             shell.setObjectName(f"tight_binding_manifold_shell_{index}")
             shell.setToolTip(
@@ -22081,7 +21996,7 @@ class NfitProjectExplorer:
                     index, "correlated_shell", editor.text()
                 )
             )
-            layout.addWidget(shell, row, 6)
+            layout.addWidget(shell, row, 7)
             remove = QtWidgets.QPushButton("Remove")
             remove.setObjectName(f"tight_binding_manifold_remove_{index}")
             remove.setToolTip(
@@ -22092,7 +22007,7 @@ class NfitProjectExplorer:
                     label
                 )
             )
-            layout.addWidget(remove, row, 7)
+            layout.addWidget(remove, row, 8)
         status_text = (
             f"{sum(item.dimension for item in manifolds)} orbital(s) in "
             f"{len(manifolds)} manifold(s)."
@@ -24155,6 +24070,10 @@ class NfitProjectExplorer:
                     raise ValueError(
                         "degeneracy_groups must be a JSON list of orbital-label lists"
                     )
+                if field == "magnetic_form_factors" and not isinstance(value, dict):
+                    raise ValueError(
+                        "magnetic_form_factors must be a JSON mapping by orbital label"
+                    )
             if payload.get(field) == value:
                 raise _NoChange()
             payload[field] = value
@@ -24986,15 +24905,6 @@ class NfitProjectExplorer:
             return
         choice = str(choice or "")
         changed = False
-        if model.type == "lindhard":
-            mode = {
-                "": "none",
-                CUSTOM_FORM_FACTOR_CHOICE: "custom",
-                EFFECTIVE_FORM_FACTOR_CHOICE: "mixture",
-            }.get(choice, "single_ion")
-            if model.config.get("form_factor_mode") != mode:
-                model.config["form_factor_mode"] = mode
-                changed = True
         if choice == EFFECTIVE_FORM_FACTOR_CHOICE:
             if not model.config.get("form_factor_mixture"):
                 prior_ion = str(model.config.get("ion", "") or "").strip()
@@ -25024,18 +24934,6 @@ class NfitProjectExplorer:
                 self._refresh_tree(select_group=group, select_model=model)
         if group is not None:
             self._request_overlay_refresh(group)
-
-    def _set_lindhard_form_factor_mixture(self, text: str) -> None:
-        """Validate and store one coherent shared form-factor mixture."""
-
-        from .form_factors import normalize_form_factor_mixture
-
-        parsed = _parse_parameter_text(text)
-        normalized = [dict(term) for term in normalize_form_factor_mixture(parsed)]
-        self._set_lindhard_config_values(
-            form_factor_mode="mixture",
-            form_factor_mixture=normalized,
-        )
 
     def _set_model_sharing_mode(self, name: str, mode: str) -> None:
         group, _entry, _mask, model, role = self._objects_for_item(self._current_item())

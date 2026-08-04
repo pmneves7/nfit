@@ -14,6 +14,7 @@ import json
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, replace
+from types import MappingProxyType
 from typing import Any, Literal
 
 import numpy as np
@@ -123,6 +124,7 @@ class OrbitalManifold:
     preset: str = "custom"
     site_point_group: str = ""
     submanifold_id: str = ""
+    magnetic_form_factors: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         allowed_basis_kinds = {
@@ -175,6 +177,22 @@ class OrbitalManifold:
             if used.intersection(group):
                 raise ValueError("an orbital may occur in at most one degeneracy group")
             used.update(group)
+        from .form_factors import canonical_form_factor_profile
+
+        raw_profiles = self.magnetic_form_factors or {}
+        if not isinstance(raw_profiles, Mapping):
+            raise ValueError("magnetic_form_factors must be a mapping by orbital label")
+        unknown = set(raw_profiles) - known
+        if unknown:
+            raise ValueError(
+                "magnetic_form_factors contains unknown orbital "
+                f"{sorted(unknown)[0]!r}"
+            )
+        profiles = {
+            str(orbital): canonical_form_factor_profile(profile)
+            for orbital, profile in raw_profiles.items()
+        }
+        object.__setattr__(self, "magnetic_form_factors", MappingProxyType(profiles))
 
     @property
     def dimension(self) -> int:
@@ -196,6 +214,7 @@ class OrbitalManifold:
             "preset": self.preset,
             "site_point_group": self.site_point_group,
             "submanifold_id": self.submanifold_id,
+            "magnetic_form_factors": deepcopy(dict(self.magnetic_form_factors)),
         }
         if self.harmonic_transform is not None:
             payload["harmonic_transform"] = _complex_matrix_to_data(
@@ -230,6 +249,7 @@ class OrbitalManifold:
             preset=str(payload.get("preset", "custom")),
             site_point_group=str(payload.get("site_point_group", "")),
             submanifold_id=str(payload.get("submanifold_id", "")),
+            magnetic_form_factors=dict(payload.get("magnetic_form_factors", {})),
         )
 
 
@@ -1885,6 +1905,9 @@ def build_orbital_electronic_model(
                             metadata={
                                 "manifold": manifold.label,
                                 "preset": manifold.preset,
+                                "magnetic_form_factor": deepcopy(
+                                    manifold.magnetic_form_factors.get(orbital, {})
+                                ),
                                 "local_frame_cartesian": (
                                     local_frame_cartesian.tolist()
                                 ),

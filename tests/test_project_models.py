@@ -516,10 +516,6 @@ def test_lindhard_editor_selects_a_sibling_electronic_model(monkeypatch):
         QtWidgets.QLabel,
         "lindhard_normalization_status",
     )
-    form_factor = explorer.model_parameter_widget.findChild(
-        QtWidgets.QComboBox,
-        "model_config_choice_ion",
-    )
     assert mesh is not None and mesh.toolTip()
     assert not mesh.isEnabled()
     assert sampling_mode is not None and sampling_mode.currentData() == "automatic"
@@ -537,25 +533,15 @@ def test_lindhard_editor_selects_a_sibling_electronic_model(monkeypatch):
     assert magnetic_mode is not None and magnetic_mode.currentData() == "auto"
     assert magnetic_mode.toolTip()
     assert normalization_status is not None and normalization_status.toolTip()
-    assert form_factor is not None and form_factor.findData("__mixture__") >= 0
+    assert (
+        explorer.model_parameter_widget.findChild(
+            QtWidgets.QComboBox, "model_config_choice_ion"
+        )
+        is None
+    )
     assert selector.findData(source.name) >= 0
     selector.setCurrentIndex(selector.findData(source.name))
     assert response.config["electronic_component"] == source.name
-
-    form_factor = explorer.model_parameter_widget.findChild(
-        QtWidgets.QComboBox,
-        "model_config_choice_ion",
-    )
-    form_factor.setCurrentIndex(form_factor.findData("__mixture__"))
-    mixture = explorer.model_parameter_widget.findChild(
-        QtWidgets.QLineEdit,
-        "model_config_form_factor_mixture",
-    )
-    assert mixture is not None and mixture.toolTip()
-    mixture.setText('[{"ion":"V3","weight":0.5},{"ion":"V4","weight":0.5}]')
-    explorer._set_lindhard_form_factor_mixture(mixture.text())
-    assert response.config["form_factor_mode"] == "mixture"
-    assert response.config["form_factor_mixture"][0]["ion"] == "V3"
 
     plot_button = explorer.model_parameter_widget.findChild(
         QtWidgets.QPushButton,
@@ -672,6 +658,9 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
     frame = explorer.model_parameter_widget.findChild(
         QtWidgets.QLineEdit, "tight_binding_manifold_frame_0"
     )
+    form_factors = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit, "tight_binding_manifold_form_factors_0"
+    )
     value = explorer.model_parameter_widget.findChild(
         QtWidgets.QLineEdit, "tight_binding_onsite_value_0"
     )
@@ -679,6 +668,7 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
         QtWidgets.QCheckBox, "tight_binding_onsite_fit_0"
     )
     assert frame is not None and "orthonormal" in frame.toolTip()
+    assert form_factors is not None and "orbital interference" in form_factors.toolTip()
     assert value is not None and "many-body" in value.toolTip()
     assert fit is not None and "compatible electronic-response" in fit.toolTip()
     value.setText("0.025")
@@ -876,6 +866,13 @@ def test_tight_binding_orbital_onsite_and_geometry_gui_are_scriptable(monkeypatc
         "show_electronic_matrix_catalog"
         in QtWidgets.QApplication.clipboard().text()
     )
+    orbital = model.config["orbital_manifolds"][0]["orbitals"][0]
+    explorer._set_tight_binding_manifold_field(
+        0, "magnetic_form_factors", f'{{"{orbital}": "V3"}}'
+    )
+    assert model.config["orbital_manifolds"][0]["magnetic_form_factors"][orbital][
+        "ion"
+    ] == "V3"
     explorer.has_unsaved_changes = False
     explorer.window.close()
 

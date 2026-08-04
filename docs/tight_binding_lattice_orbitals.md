@@ -43,6 +43,7 @@ site.
 | `local_frame` | right-handed orthonormal local axes as columns in crystal Cartesian coordinates | `[[1,0,0],[0,1,0],[0,0,1]]` |
 | `spin_basis` | spatial-manifold spin convention before later spin expansion | `"spinless"` |
 | `correlated_shell` | label used to select local Hubbard--Hund subspaces | `"M1_3d"` |
+| `magnetic_form_factors` | mapping from orbital label to a tabulated ion or full radial-profile mapping | `{"d_xy":"V3","d_yz":"V4"}` |
 | `symmetry_mode` | use an analytic symmetry representation or none | `"automatic"` or `"none"` |
 | `harmonic_transform` | orthonormal columns mapping the chosen subspace into the complete $l$ shell | a $5\times2$ matrix for two selected $d$ states |
 | `preset` | convenience recipe that created the record | `"d"` or `"site_symmetry"` |
@@ -86,6 +87,25 @@ allowed splitting.
 Custom and Wannier bases use `symmetry_mode="none"` unless explicit
 representation matrices are available. nfit does not infer transformation
 properties from an arbitrary orbital name.
+
+### Orbital magnetic form factors
+
+Magnetic radial profiles are properties of the basis orbitals, not of a
+Lindhard response. In the GUI, enter a JSON mapping in the manifold's
+**Magnetic form factors** cell. A tabulated spin-only profile can be abbreviated
+as `{"d_xy":"V3"}`. A full value may instead use `form_factor_mode` with
+`single_ion`, `custom`, or `mixture` and the coefficient, $g_J$, or mixture
+fields documented under [physics conventions](physics_conventions.md). An
+omitted orbital has unit probe amplitude.
+
+Profiles are copied to every symmetry-expanded copy of the orbital and to both
+spin states when a spinor basis is constructed. They affect the neutron probe
+operator but do not modify the Hamiltonian, electron filling, density of
+states, formula-unit count, or magnetic-center normalization.
+Bare responses support implicit and explicit spin bases. Stoner, matrix, and
+Hubbard--Hund RPA with orbital-specific profiles currently require an
+implicit-spin normal-state basis; nfit rejects an explicit-spin RPA combination
+rather than putting a probe form factor into its interaction denominator.
 
 ## Onsite Hamiltonian
 

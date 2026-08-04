@@ -70,8 +70,9 @@ directly comparable.
 | `rotationally_invariant` | enforce $U'=U-2J_H$ and $J_{\rm pair}=J_H$ | `true` | `false` |
 
 The dressing replaces the referenced bare observable on its own dataset
-scope. The broadening, mesh, chemical-potential policy, form factor, and
-normalization remain defined once on the referenced Lindhard component.
+scope. The broadening, mesh, chemical-potential policy, and normalization
+remain defined once on the referenced Lindhard component. Orbital form factors
+remain defined once on the referenced tight-binding basis.
 The reported pole and static-margin diagnostics cover evaluated points.
 Because finding the global electronic instability requires a separately
 converged $\mathbf q$ scan, the sampled margin is not described as a full-BZ

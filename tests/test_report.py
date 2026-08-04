@@ -146,7 +146,7 @@ def test_lindhard_report_records_linked_response_configuration():
     assert "1.80" in tex
     assert "96" in tex
     assert "Magnetic-center normalization" in tex
-    assert "Shared magnetic form factor" in tex
+    assert "Shared magnetic form factor" not in tex
     _check_balanced_environments(tex)
 
 

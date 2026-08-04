@@ -35,12 +35,6 @@ LINDHARD_COUPLING_FIELDS = frozenset(
         "magnetic_normalization_mode",
         "magnetic_normalization_species",
         "magnetic_centers_per_model_cell",
-        "form_factor_mode",
-        "ion",
-        "form_factor_coefficients",
-        "form_factor_g_J",
-        "form_factor_j2_coefficients",
-        "form_factor_mixture",
         "bulk_g_factor",
     }
 )
@@ -96,7 +90,7 @@ def configure_lindhard_experimental_coupling(
     component: Any,
     **updates: Any,
 ) -> dict[str, Any]:
-    """Atomically configure normalization and a shared form-factor profile.
+    """Atomically configure electronic-response normalization and bulk coupling.
 
     This GUI-independent operation is the scripting counterpart of the
     Lindhard **Experimental coupling** panel. It returns the installed
@@ -135,9 +129,6 @@ def configure_lindhard_experimental_coupling(
     bulk_g = float(candidate.get("bulk_g_factor", 2.0))
     if not np.isfinite(bulk_g) or bulk_g <= 0.0:
         raise ValueError("bulk_g_factor must be finite and positive")
-    from .form_factors import magnetic_form_factor_profile
-
-    magnetic_form_factor_profile(np.asarray([0.0]), candidate)
     installed = {name: deepcopy(candidate[name]) for name in updates}
     component.config.update(installed)
     return installed

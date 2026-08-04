@@ -44,7 +44,10 @@ from nfit import (
 )
 from nfit.cross_section import KB_MEV_PER_K
 from nfit.dataset import PointData4D
+from nfit.electronic_interactions import rpa_dress_implicit_spin_probe_stoner
+from nfit.electronic_response import implicit_spin_probe_susceptibility
 from nfit.fitting import evaluate_problem_model
+from nfit.form_factors import magnetic_form_factor
 
 
 def _chain_model():
@@ -55,6 +58,84 @@ def _chain_model():
         orbital_centers=[[0.25, 0.0, 0.0]],
         periodic_axes=(0,),
         energy_unit="meV",
+    )
+
+
+def _profiled_chain_model():
+    return build_electronic_model(
+        direct_lattice=np.diag([2.0, 8.0, 9.0]),
+        basis=[
+            BasisState(
+                "s",
+                site="A",
+                orbital="s",
+                metadata={
+                    "magnetic_form_factor": {
+                        "form_factor_mode": "single_ion",
+                        "ion": "V3",
+                        "form_factor_g_J": 2.0,
+                    }
+                },
+            )
+        ],
+        hoppings={(1, 0, 0): [[-10.0]]},
+        orbital_centers=[[0.25, 0.0, 0.0]],
+        periodic_axes=(0,),
+        energy_unit="meV",
+    )
+
+
+def test_orbital_form_factor_weights_probe_but_not_stoner_denominator():
+    unit = _chain_model()
+    profiled = _profiled_chain_model()
+    mesh = k_mesh(unit, (64,))
+    Q = np.asarray([[2.375, 0.0, 0.0]])
+    energy = np.asarray([2.0])
+    settings = {
+        "temperature_K": 30.0,
+        "chemical_potential_meV": 0.0,
+        "broadening_meV": 2.0,
+        "q_evaluation": "direct",
+    }
+    intrinsic = bare_spin_susceptibility(unit, Q, energy, mesh, **settings)
+    mixed = implicit_spin_probe_susceptibility(
+        profiled, Q, energy, mesh, **settings
+    )
+    q_modulus = np.linalg.norm(Q @ profiled.reciprocal_lattice.T, axis=1)
+    amplitude = magnetic_form_factor(q_modulus, ion="V3")
+
+    np.testing.assert_allclose(
+        mixed.values_per_meV_cell[:, 0, 0],
+        amplitude**2 * intrinsic.values_per_meV_cell[:, 0, 0],
+    )
+    np.testing.assert_allclose(
+        mixed.values_per_meV_cell[:, 1, 1],
+        intrinsic.values_per_meV_cell[:, 0, 0],
+    )
+    interaction_eV = 0.1
+    from nfit import matrix_interaction_vertex
+
+    vertex = matrix_interaction_vertex(
+        mixed.operator_labels,
+        ((0.0, 0.0), (0.0, 2.0 * interaction_eV)),
+        energy_unit="eV",
+        channel="spin",
+    )
+    dressed = rpa_dress_susceptibility(mixed, vertex)
+    optimized = rpa_dress_implicit_spin_probe_stoner(
+        mixed, interaction_eV, energy_unit="eV"
+    )
+    intrinsic_value = intrinsic.values_per_meV_cell[:, 0, 0]
+    expected = amplitude**2 * intrinsic_value / (
+        1.0 - 200.0 * intrinsic_value
+    )
+    np.testing.assert_allclose(dressed.values_per_meV_cell[:, 0, 0], expected)
+    np.testing.assert_allclose(
+        optimized.values_per_meV_cell,
+        dressed.values_per_meV_cell,
+    )
+    assert optimized.provenance["dressing"]["solver"] == (
+        "rank_one_probe_stoner"
     )
 
 
@@ -1617,7 +1698,7 @@ def test_stoner_component_replaces_bare_observable_and_reuses_its_parameters():
 
 
 def test_lindhard_fit_evaluation_persists_interpolation_certificate():
-    model = _chain_model()
+    model = _profiled_chain_model()
     tight_binding = ModelComponentSpec(
         name="bands",
         type="tight_binding",
@@ -1691,7 +1772,7 @@ def test_lindhard_fit_evaluation_persists_interpolation_certificate():
     assert stored["status"] == "certified"
     assert stored["certificates"][0]["certificate_digest"]
     assert stored["certificates"][0]["certified_quantity"] == (
-        "rpa_scalar_stoner"
+        "rpa_scalar_stoner_probe"
     )
 
 

@@ -127,7 +127,8 @@ parameters remain on the referenced tight-binding component.
 The GUI separates routine choices from execution overrides. **Response**
 selects the electronic model and occupations, **Sampling** controls the
 integration and experimental-$\mathbf Q$ accuracy, and **Experimental
-coupling** contains form-factor and bulk-normalization choices. Plot-specific
+coupling** contains bulk-normalization choices. Orbital magnetic form factors
+belong to the referenced tight-binding model. Plot-specific
 coordinates and energy grids live in the corresponding viewer. The remaining
 controls are under **Advanced**; they are still serialized and available to
 scripts.
@@ -145,12 +146,6 @@ scripts.
 | `response_q_interpolation_rtol` | accepted relative error for automatic periodic interpolation; zero disables this criterion | `0.0` | `0.01` |
 | `chemical_potential_mode` | use the source chemical potential or solve from filling | `"source"` | `"source"` or `"filling"` |
 | `filling_per_cell` | electron count per electronic model cell in filling mode | `1.0` | `3.0` |
-| `form_factor_mode` | shared radial magnetic profile | `"none"` | `"none"`, `"single_ion"`, `"custom"`, or `"mixture"` |
-| `ion` | tabulated ion used by `single_ion` mode | `""` | `"Fe2"` |
-| `form_factor_coefficients` | custom $\langle j_0\rangle$ coefficients instead of `ion` | `""` | `"0.0263,34.96,0.3668,15.94,0.6188,5.594,-0.0119"` |
-| `form_factor_g_J` | ion Landé factor for the dipole approximation $f=\langle j_0\rangle+(2/g_J-1)\langle j_2\rangle$; the default 2 is spin-only $\langle j_0\rangle$ | `2.0` | `1.1428` |
-| `form_factor_j2_coefficients` | custom $\langle j_2\rangle$ coefficients instead of `ion` | `""` | `"0.157,18.555,0.8484,6.54,0.888,2.037,0.0318"` |
-| `form_factor_mixture` | coherent effective-amplitude terms used by `mixture` mode | `[]` | `[{"ion":"V3","weight":0.5},{"ion":"V4","weight":0.5}]` |
 | `formula_units_mode` | infer formula units in the actual electronic model cell or use an explicit override | `"auto"` | `"auto"` or `"manual"` |
 | `formula_units_per_cell` | formula units in the electronic model cell when manual mode is selected | `1.0` | `2.0` |
 | `magnetic_normalization_mode` | count unique represented tight-binding sites or use a manual magnetic-center count | `"auto"` | `"auto"` or `"manual"` |
@@ -178,27 +173,24 @@ manual mode supports an effective or deliberately restricted subspace. A
 dataset normalized per unit cell uses the electronic model cell. An unknown
 basis retains the model-cell ordinate without making an absolute claim.
 
-Normalization and form factor are independent. Selecting a V radial profile
-does not select or count V sites. Conversely, normalizing per V does not choose
-a V form factor. The resolved model-cell, formula-unit, and magnetic-center
-counts are shown in **Experimental coupling**.
+Normalization and form factors are independent. Selecting a V radial profile
+on a tight-binding orbital does not select or count V sites. Conversely,
+normalizing per V does not choose a V form factor. The resolved model-cell,
+formula-unit, and magnetic-center counts are shown in **Experimental coupling**.
 
-The shared profile is applied only when converting the intrinsic spin response
-to a neutron observable. `single_ion` and `custom` evaluate the documented
-dipole form. An effective mixture forms the coherent amplitude
+Each tight-binding basis orbital may own a radial profile. The neutron probe is
 
 $$
-f_{\rm eff}(Q)=\sum_i w_i f_i(Q),\qquad w_i\geq0,\quad\sum_iw_i=1,
+S^\alpha_f(\mathbf Q)=\sum_a f_a(|\mathbf Q|)
+e^{2\pi i\mathbf Q\cdot\mathbf r_a}S^\alpha_a,
 $$
 
-and the cross section uses $|f_{\rm eff}(Q)|^2$; the weights are not intensity
-fractions. This shared profile is exact when all active magnetic orbitals use
-the same effective radial density. Models containing inequivalent radial
-profiles require a future site/manifold-resolved operator projection rather
-than an averaged scalar profile. Older projects containing only `ion` or
-custom coefficients retain their previous profile automatically.
-`configure_lindhard_experimental_coupling` validates and installs the same
-normalization and form-factor configuration atomically in a GUI-free script.
+so an orbital pair contributes $f_a f_b^*$, including its interference phase.
+The intrinsic total-spin operator, with every $f_a=1$, remains separate for
+Stoner and matrix-RPA denominators. Thus radial attenuation never changes the
+interaction instability criterion. The orbital-density interpolation contracts
+both probe and total-spin correlations by bounded point batches, and the saved
+certificate validates the final form-factor-weighted probe response.
 
 Automatic formula-unit normalization expands the complete crystallographic
 cell, reduces its integer composition, and accounts for any certified

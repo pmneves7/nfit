@@ -40,6 +40,7 @@ from nfit.crystal import bond_stabilizer_symmetries
 from nfit.electronic_builder import (
     _expanded_orbital_sites,
     _mapped_hopping_matrix,
+    build_orbital_electronic_model,
 )
 from nfit.fit_config import component_parameter_names
 
@@ -84,6 +85,52 @@ def _nonclosed_d_manifold():
         harmonic_transform=transform,
         preset="custom_subspace",
     )
+
+
+def test_orbital_manifold_owns_validated_per_orbital_form_factors():
+    manifold = OrbitalManifold(
+        site_label="M1",
+        label="M1_d",
+        basis_kind="custom",
+        orbitals=("d_xy", "d_yz"),
+        symmetry_mode="none",
+        magnetic_form_factors={
+            "d_xy": "V3",
+            "d_yz": {
+                "form_factor_mode": "mixture",
+                "form_factor_mixture": [
+                    {"ion": "V3", "weight": 0.25},
+                    {"ion": "V4", "weight": 0.75},
+                ],
+            },
+        },
+    )
+
+    restored = OrbitalManifold.from_dict(manifold.to_dict())
+
+    assert restored.magnetic_form_factors["d_xy"]["ion"] == "V3"
+    assert (
+        restored.magnetic_form_factors["d_yz"]["form_factor_mixture"][1]["ion"]
+        == "V4"
+    )
+    electronic_model = build_orbital_electronic_model(
+        _crystal(), [restored], []
+    )
+    profiles = {
+        state.orbital: dict(state.metadata["magnetic_form_factor"])
+        for state in electronic_model.basis
+    }
+    assert profiles["d_xy"]["ion"] == "V3"
+    assert profiles["d_yz"]["form_factor_mode"] == "mixture"
+    with pytest.raises(ValueError, match="unknown orbital"):
+        OrbitalManifold(
+            site_label="M1",
+            label="bad",
+            basis_kind="custom",
+            orbitals=("d_xy",),
+            symmetry_mode="none",
+            magnetic_form_factors={"d_yz": "V3"},
+        )
 
 
 def test_spherical_harmonic_representations_are_unitary_and_use_local_frames():

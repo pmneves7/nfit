@@ -266,8 +266,8 @@ def test_lindhard_registry_defaults_to_half_shifted_response_mesh():
     config = default_model_config("lindhard")
 
     assert config["response_mesh_shift"] == [0.5, 0.5, 0.5]
-    assert config["form_factor_mode"] == "none"
-    assert config["form_factor_mixture"] == []
+    assert "form_factor_mode" not in config
+    assert "form_factor_mixture" not in config
     assert config["magnetic_normalization_mode"] == "auto"
 
 

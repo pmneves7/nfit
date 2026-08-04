@@ -69,6 +69,9 @@ symmetry-matrix basis, then uses a distance cutoff to generate suggestions for
 each spatial bond orbit. Slater--Koster is the default for analytic harmonic
 manifolds; use the general basis for custom orbitals or physics beyond the
 two-centre approximation.
+The same manifold row assigns a separate magnetic radial profile to each
+orbital. These profiles are part of the tight-binding basis and are reused by
+every linked Lindhard or electronic-RPA response.
 Each suggestion identifies its source and destination sites and orbitals. Only
 the rows selected and added by the user become active Hamiltonian terms with
 values, bounds, fit selections, and global, per-dataset, or grouped sharing.
@@ -93,9 +96,8 @@ Lindhard and electronic-RPA kernels are intrinsically normalized per electronic
 model cell. For a dataset declared per formula unit or per magnetic ion, the
 comparison layer uses the Lindhard component's resolved formula-unit or
 represented-site count. The **Experimental coupling** panel displays both
-counts and configures a shared ionic, custom, or coherent effective magnetic
-form-factor amplitude. Form-factor species never select the normalization
-count.
+counts. Orbital form factors are configured in the tight-binding **Orbitals**
+section; their ion labels never select the normalization count.
 
 Coefficient edits update this compact builder state lazily: they do not
 reconstruct the model panel or canonical Hamiltonian. Plotting, matrix
