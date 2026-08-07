@@ -1,4 +1,6 @@
 # ruff: noqa: F401, F403, F405
+import copy
+
 from tests.project_gui_test_support import *
 from tests.project_gui_test_support import (
     _explorer_with_fit_result,
@@ -188,6 +190,85 @@ def test_selecting_historic_fit_preserves_saved_current_state_masks(monkeypatch)
         "Current state",
     ]
     assert len(group.datasets[0].masks) == 2
+
+
+def test_open_selects_active_fit_without_overwriting_authoritative_live_state(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    group = DataGroup("Datagroup1")
+    model = create_model_component(group)
+    model.parameters["constant"] = 1.0
+    initial_snapshot = project_gui.snapshot_data_group_state(group)
+    group.fits = [
+        FitTimelineEntry("Initial", kind="initial", snapshot=initial_snapshot)
+    ]
+    group.active_fit_path = [0]
+    model.parameters["constant"] = 2.0
+    path = tmp_path / "live-state.nfit"
+    save_project(NfitProject([group]), path)
+
+    explorer = NfitProjectExplorer()
+    assert explorer.open_project_path(path, remember=False)
+    loaded_group = explorer.project.data_groups[0]
+
+    assert loaded_group.models[model.name].parameters["constant"] == 2.0
+    assert explorer._fit_entry_for_item(explorer.tree.currentItem()).name == "Initial"
+    assert explorer.has_unsaved_changes is False
+
+    # Restoring history remains available as an explicit selection action.
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(2).child(0))
+    assert loaded_group.models[model.name].parameters["constant"] == 1.0
+    assert explorer.has_unsaved_changes is True
+
+
+def test_external_project_edit_reconciles_mutable_and_historical_fit_state(tmp_path):
+    group = DataGroup("Datagroup1")
+    model = create_model_component(group)
+    model.parameters["constant"] = 1.0
+    initial_snapshot = project_gui.snapshot_data_group_state(group)
+    initial = FitTimelineEntry("Initial", kind="initial", snapshot=initial_snapshot)
+    group.fits = [initial]
+    group.active_fit_path = [0]
+
+    model.parameters["constant"] = 2.0
+    issues = project_gui.project_state_issues(NfitProject([group]))
+    assert [issue.code for issue in issues] == ["active_fit_snapshot_differs"]
+    with pytest.raises(project_gui.ProjectStateConsistencyError):
+        project_gui.validate_project_state(NfitProject([group]))
+
+    reconciled = project_gui.reconcile_external_project_edit(group)
+    assert reconciled is initial
+    assert reconciled.snapshot["models"][0]["parameters"]["constant"] == 2.0
+    assert project_gui.project_state_issues(NfitProject([group])) == ()
+
+    result_snapshot = copy.deepcopy(reconciled.snapshot)
+    result = FitTimelineEntry("Fit Result1", kind="result", snapshot=result_snapshot)
+    group.fits.append(result)
+    group.active_fit_path = [1]
+    model.parameters["constant"] = 3.0
+    preserved_result = copy.deepcopy(result.snapshot)
+
+    current = project_gui.reconcile_external_project_edit(group)
+
+    assert current.kind == "current"
+    assert group.active_fit_path == [2]
+    assert result.snapshot == preserved_result
+    assert current.snapshot["models"][0]["parameters"]["constant"] == 3.0
+    assert project_gui.project_state_issues(NfitProject([group])) == ()
+
+    path = tmp_path / "scripted-edit.nfit"
+    save_project(NfitProject([group]), path)
+    with project_gui.edit_project_file(path) as project:
+        project.data_groups[0].models[model.name].parameters["constant"] = 4.0
+    restored = load_project(path)
+    restored_group = restored.data_groups[0]
+    assert restored_group.models[model.name].parameters["constant"] == 4.0
+    assert project_gui.project_state_issues(restored) == ()
 
 
 def test_clear_fit_history_uses_selected_fit_as_new_initial_state(monkeypatch):

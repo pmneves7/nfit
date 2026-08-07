@@ -74,8 +74,13 @@ Ctrl/Command-click and deleted together. Drag and drop reorders compatible
 objects; copy and paste can transfer datasets between workspaces and masks
 between datasets.
 
-The **File** menu provides New, Open, Recent projects, Save, Save As, Close,
-and Quit. Closing a modified project asks before discarding changes.
+The **File** menu provides New, Open, Recent projects, Reload from Disk, Save,
+Save As, Close, and Quit. Closing or reloading a modified project asks before
+discarding changes. While the GUI is running, nfit checks whether another
+process replaced the open project file. It then offers to reload the external
+version, save the in-memory version under another name, or keep the current
+state. An explicit Save never overwrites a detected external change without a
+separate confirmation.
 
 ## Reproducibility
 
@@ -83,6 +88,11 @@ Project files store scientific state rather than screenshots of the GUI. This
 includes dataset sources and conventions, masks, model configuration,
 parameters, constraints, fit settings, fit results, analyses, and saved plot
 recipes.
+
+The live workspace stored in the project manifest is authoritative when a
+project opens. The remembered fit-history path selects its tree entry but does
+not restore that snapshot over the live model. Selecting a historical fit entry
+after opening remains the explicit action that restores it.
 
 Right-click an ordinary source-backed dataset to copy or save readable Python
 that reloads and prepares it without Qt. Analysis and fit targets include their

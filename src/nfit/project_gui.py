@@ -11,6 +11,7 @@ import subprocess
 import time
 from collections import OrderedDict
 from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -396,6 +397,23 @@ def _new_gui_project() -> NfitProject:
     """Return the clean initial project shown by the GUI."""
 
     return NfitProject(data_groups=[DataGroup(name="Workspace1")])
+
+
+def _project_file_signature(path: str | Path | None) -> tuple[int, int, int, int] | None:
+    """Return a cheap identity/content-change signature for a project file."""
+
+    if path is None:
+        return None
+    try:
+        info = Path(path).stat()
+    except OSError:
+        return None
+    return (
+        int(info.st_dev),
+        int(info.st_ino),
+        int(info.st_size),
+        int(info.st_mtime_ns),
+    )
 
 
 def create_data_group(project: NfitProject, name: str | None = None) -> DataGroup:
@@ -8368,6 +8386,162 @@ def _set_fit_current_snapshot(entry: FitTimelineEntry, group: DataGroup) -> None
     entry.created_at = _timestamp_now()
 
 
+@dataclass(frozen=True)
+class ProjectStateIssue:
+    """One inconsistency between live project state and persisted fit history."""
+
+    group_name: str
+    code: str
+    message: str
+    active_fit_path: tuple[int, ...] | None = None
+
+
+class ProjectStateConsistencyError(ValueError):
+    """Raised when live project state and its active fit snapshot disagree."""
+
+
+def project_state_issues(project: NfitProject) -> tuple[ProjectStateIssue, ...]:
+    """Report active fit-history records that disagree with live project state.
+
+    The live workspace is the authoritative state saved in the project. An
+    active fit entry records where subsequent edits should branch, but its
+    snapshot should still reproduce the live workspace at save time. Historical
+    entries that are not active are intentionally excluded.
+    """
+
+    issues: list[ProjectStateIssue] = []
+    for group in project.data_groups:
+        path = group.active_fit_path
+        if path is None:
+            continue
+        entry = _fit_entry_at_path(group.fits, path)
+        normalized_path = tuple(int(index) for index in path)
+        if entry is None:
+            issues.append(
+                ProjectStateIssue(
+                    group_name=group.name,
+                    code="invalid_active_fit_path",
+                    message=(
+                        f"workspace {group.name!r} refers to a missing active "
+                        f"fit entry at {list(path)!r}"
+                    ),
+                    active_fit_path=normalized_path,
+                )
+            )
+            continue
+        if entry.kind == "timeline" or not entry.snapshot:
+            issues.append(
+                ProjectStateIssue(
+                    group_name=group.name,
+                    code="active_fit_snapshot_missing",
+                    message=(
+                        f"workspace {group.name!r} active fit {entry.name!r} "
+                        "does not contain a restorable state snapshot"
+                    ),
+                    active_fit_path=normalized_path,
+                )
+            )
+            continue
+        live = snapshot_data_group_state(group)
+        if entry.snapshot != live:
+            model_difference = entry.snapshot.get("models") != live.get("models")
+            detail = "model state" if model_difference else "workspace state"
+            issues.append(
+                ProjectStateIssue(
+                    group_name=group.name,
+                    code="active_fit_snapshot_differs",
+                    message=(
+                        f"workspace {group.name!r} live {detail} differs from "
+                        f"active fit {entry.name!r}; reconcile external edits "
+                        "before saving"
+                    ),
+                    active_fit_path=normalized_path,
+                )
+            )
+    return tuple(issues)
+
+
+def validate_project_state(project: NfitProject) -> None:
+    """Raise when an active fit snapshot would not reproduce live project state."""
+
+    issues = project_state_issues(project)
+    if issues:
+        raise ProjectStateConsistencyError("; ".join(issue.message for issue in issues))
+
+
+def reconcile_external_project_edit(group: DataGroup) -> FitTimelineEntry:
+    """Record a script-driven workspace edit without rewriting fit results.
+
+    A lone ``Initial`` state and an existing ``Current state`` are mutable.
+    Editing from a historical initial/result state creates a current-state
+    branch, while editing from the latest result creates its adjacent current
+    state. Completed result snapshots remain immutable.
+    """
+
+    ensure_fit_history(group)
+    active = _fit_entry_at_path(group.fits, group.active_fit_path)
+    if active is None and len(group.fits) == 1 and _is_editable_initial_baseline(
+        group, group.fits[0]
+    ):
+        active = group.fits[0]
+
+    if active is not None and active.kind == "initial" and _is_editable_initial_baseline(
+        group, active
+    ):
+        _set_fit_current_snapshot(active, group)
+        group.active_fit_path = _fit_entry_path(group.fits, active)
+        return active
+
+    if active is not None and active.kind == "current":
+        _set_fit_current_snapshot(active, group)
+        group.active_fit_path = _fit_entry_path(group.fits, active)
+        return active
+
+    if active is not None and active.kind == "result":
+        siblings = _fit_siblings(group.fits, active)
+        if siblings is not None and active is _last_result_at_level(siblings):
+            current, _created = _ensure_current_state_after_result(group, active)
+            if current is None:
+                raise RuntimeError("could not create current state after active fit result")
+            _set_fit_current_snapshot(current, group)
+            group.active_fit_path = _fit_entry_path(group.fits, current)
+            return current
+
+    if active is not None and active.kind in {"initial", "result"}:
+        timeline = FitTimelineEntry(
+            name=next_fit_timeline_name(group.fits),
+            kind="timeline",
+            created_at=_timestamp_now(),
+            metadata={
+                "branch_reason": "workspace state edited through the public project API",
+                "branched_from": active.name,
+            },
+        )
+        current = current_state_fit_entry(group, active)
+        timeline.children.append(current)
+        active.children.append(timeline)
+        group.active_fit_path = _fit_entry_path(group.fits, current)
+        return current
+
+    current = _top_level_current_state_entry(group)
+    if current is None:
+        current = current_state_fit_entry(group)
+        group.fits.append(current)
+    else:
+        _set_fit_current_snapshot(current, group)
+    group.active_fit_path = _fit_entry_path(group.fits, current)
+    return current
+
+
+def reconcile_project_external_edits(project: NfitProject) -> dict[str, FitTimelineEntry]:
+    """Reconcile every workspace after editing a project outside the GUI."""
+
+    return {
+        group.name: reconcile_external_project_edit(group)
+        for group in project.data_groups
+    }
+
+
 def _style_enabled_tree_item(item: Any, enabled: bool) -> None:
     from PySide6 import QtGui
 
@@ -8636,6 +8810,38 @@ def load_project(path: str | Path) -> NfitProject:
     project._project_path = project_path
     _bind_project_analysis_sources(project, project_path)
     return project
+
+
+@contextmanager
+def edit_project_file(
+    path: str | Path,
+    *,
+    output_path: str | Path | None = None,
+):
+    """Load, reconcile, validate, and atomically save a scripted project edit.
+
+    The yielded :class:`NfitProject` is an ordinary GUI-independent project
+    object. On successful context exit, live workspace state is recorded in
+    editable fit history (or a new branch), checked for consistency, and saved.
+    Exceptions inside the context leave the source archive unchanged.
+    """
+
+    source = Path(path)
+    target = source if output_path is None else Path(output_path)
+    project = load_project(source)
+    original_states = {
+        id(group): snapshot_data_group_state(group)
+        for group in project.data_groups
+    }
+    yield project
+    for group in project.data_groups:
+        if (
+            id(group) not in original_states
+            or snapshot_data_group_state(group) != original_states[id(group)]
+        ):
+            reconcile_external_project_edit(group)
+    validate_project_state(project)
+    save_project(project, target, asset_source=source)
 
 
 def render_project_plot(
@@ -9497,11 +9703,15 @@ class NfitProjectExplorer:
         self.app = _qt_app()
         self.project = _new_gui_project() if project is None else project
         self.project_path: Path | None = None
+        self._project_disk_signature: tuple[int, int, int, int] | None = None
+        self._ignored_project_disk_signature: tuple[int, int, int, int] | None = None
+        self._external_change_timer = None
         self.has_unsaved_changes = False
         self._allow_window_close = False
         self.window = None
         self.file_menu = None
         self.recent_projects_menu = None
+        self.reload_project_action = None
         self.tree = None
         self.title_label = None
         self.enabled_check = None
@@ -9652,6 +9862,8 @@ class NfitProjectExplorer:
     def run(self) -> int:
         self.show()
         self._interactive = True
+        if self._external_change_timer is not None:
+            self._external_change_timer.start()
         interrupt_timer, previous_interrupt_handler = _install_cli_interrupt_handler(self.app)
         try:
             return int(self.app.exec())
@@ -9659,6 +9871,8 @@ class NfitProjectExplorer:
             self.app.exit(130)
             return 130
         finally:
+            if self._external_change_timer is not None:
+                self._external_change_timer.stop()
             if interrupt_timer is not None:
                 interrupt_timer.stop()
             _restore_cli_interrupt_handler(previous_interrupt_handler)
@@ -10067,6 +10281,8 @@ class NfitProjectExplorer:
         self._close_all_slice_viewers()
         self.project = _new_gui_project()
         self.project_path = None
+        self._project_disk_signature = None
+        self._ignored_project_disk_signature = None
         self.has_unsaved_changes = False
         self._clear_active_fit_state()
         self._refresh_tree()
@@ -10138,12 +10354,171 @@ class NfitProjectExplorer:
             return
         group.active_fit_path = _fit_entry_path(group.fits, self._active_fit_entry(group))
 
+    def _update_project_disk_signature(self) -> None:
+        self._project_disk_signature = _project_file_signature(self.project_path)
+        self._ignored_project_disk_signature = None
+
+    def _project_changed_on_disk(self) -> bool:
+        if self.project_path is None or self._project_disk_signature is None:
+            return False
+        current = _project_file_signature(self.project_path)
+        return current is not None and current != self._project_disk_signature
+
+    def _prompt_external_change_action(self) -> str:
+        """Ask how to handle a project changed by another process."""
+
+        from PySide6 import QtWidgets
+
+        message = QtWidgets.QMessageBox(self.window)
+        message.setIcon(QtWidgets.QMessageBox.Icon.Warning)
+        message.setWindowTitle("Project changed on disk")
+        message.setText(
+            "The current nfit project changed on disk after it was opened."
+        )
+        discard_note = (
+            " Reloading will discard unsaved in-memory changes."
+            if self.has_unsaved_changes
+            else ""
+        )
+        message.setInformativeText(
+            "Reload the external version, save this in-memory state under a "
+            "different name, or keep working without changing either copy."
+            + discard_note
+        )
+        reload_button = message.addButton(
+            "Reload from Disk", QtWidgets.QMessageBox.ButtonRole.AcceptRole
+        )
+        save_as_button = message.addButton(
+            "Save As…", QtWidgets.QMessageBox.ButtonRole.ActionRole
+        )
+        message.addButton(
+            "Keep Current State", QtWidgets.QMessageBox.ButtonRole.RejectRole
+        )
+        message.setDefaultButton(reload_button)
+        message.exec()
+        clicked = message.clickedButton()
+        if clicked is reload_button:
+            return "reload"
+        if clicked is save_as_button:
+            return "save_as"
+        return "keep"
+
+    def _prompt_save_conflict_action(self) -> str:
+        """Ask whether an explicit Save may overwrite an external change."""
+
+        from PySide6 import QtWidgets
+
+        message = QtWidgets.QMessageBox(self.window)
+        message.setIcon(QtWidgets.QMessageBox.Icon.Warning)
+        message.setWindowTitle("Project changed on disk")
+        message.setText(
+            "Saving now would overwrite a project version written by another process."
+        )
+        reload_button = message.addButton(
+            "Reload from Disk", QtWidgets.QMessageBox.ButtonRole.AcceptRole
+        )
+        save_as_button = message.addButton(
+            "Save As…", QtWidgets.QMessageBox.ButtonRole.ActionRole
+        )
+        overwrite_button = message.addButton(
+            "Overwrite", QtWidgets.QMessageBox.ButtonRole.DestructiveRole
+        )
+        cancel_button = message.addButton(QtWidgets.QMessageBox.StandardButton.Cancel)
+        message.setDefaultButton(cancel_button)
+        message.exec()
+        clicked = message.clickedButton()
+        if clicked is reload_button:
+            return "reload"
+        if clicked is save_as_button:
+            return "save_as"
+        if clicked is overwrite_button:
+            return "overwrite"
+        return "cancel"
+
+    def _prompt_reload_unsaved_action(self) -> str:
+        """Ask how to preserve unsaved state before an explicit reload."""
+
+        from PySide6 import QtWidgets
+
+        message = QtWidgets.QMessageBox(self.window)
+        message.setIcon(QtWidgets.QMessageBox.Icon.Warning)
+        message.setWindowTitle("Reload project from disk")
+        message.setText("Reloading will discard unsaved in-memory project changes.")
+        reload_button = message.addButton(
+            "Reload and Discard", QtWidgets.QMessageBox.ButtonRole.DestructiveRole
+        )
+        save_as_button = message.addButton(
+            "Save As…", QtWidgets.QMessageBox.ButtonRole.ActionRole
+        )
+        cancel_button = message.addButton(QtWidgets.QMessageBox.StandardButton.Cancel)
+        message.setDefaultButton(cancel_button)
+        message.exec()
+        clicked = message.clickedButton()
+        if clicked is reload_button:
+            return "reload"
+        if clicked is save_as_button:
+            return "save_as"
+        return "cancel"
+
+    def _load_project_path(self, path: Path, *, remember: bool) -> bool:
+        self._close_all_slice_viewers()
+        self.project = load_project(path)
+        self.project_path = path
+        self.has_unsaved_changes = False
+        self._clear_active_fit_state()
+        if remember:
+            self._remember_recent_project(path)
+        self._refresh_tree()
+        self._restore_active_fit_selection()
+        self._update_project_disk_signature()
+        self._sync_window_title()
+        return True
+
+    def reload_project_from_disk(self) -> bool:
+        """Reload the current archive, confirming before discarding GUI edits."""
+
+        if self.project_path is None or not self.project_path.exists():
+            return False
+        path = self.project_path
+        if self.has_unsaved_changes:
+            action = self._prompt_reload_unsaved_action()
+            if action == "cancel":
+                return False
+            if action == "save_as" and not self.save_as():
+                return False
+        return self._load_project_path(path, remember=True)
+
+    def check_for_external_project_change(self) -> bool:
+        """Prompt once when the open project has been replaced on disk."""
+
+        if not self._project_changed_on_disk():
+            return False
+        current = _project_file_signature(self.project_path)
+        if current == self._ignored_project_disk_signature:
+            return False
+        action = self._prompt_external_change_action()
+        if action == "reload":
+            return self._load_project_path(self.project_path, remember=True)
+        if action == "save_as":
+            return self.save_as()
+        self._ignored_project_disk_signature = current
+        return True
+
     def save(self) -> bool:
         if self.project_path is None:
             return self.save_as()
+        if self._project_changed_on_disk():
+            action = self._prompt_save_conflict_action()
+            if action == "reload":
+                return self._load_project_path(self.project_path, remember=True)
+            if action == "save_as":
+                return self.save_as()
+            if action != "overwrite":
+                return False
         self._stamp_active_fit_path()
         save_project(self.project, self.project_path)
         self.has_unsaved_changes = False
+        self._update_project_disk_signature()
         self._sync_window_title()
         return True
 
@@ -10165,6 +10540,7 @@ class NfitProjectExplorer:
         self.project_path = new_path
         self._remember_recent_project(self.project_path)
         self.has_unsaved_changes = False
+        self._update_project_disk_signature()
         self._sync_window_title()
         return True
 
@@ -10189,17 +10565,7 @@ class NfitProjectExplorer:
             forget_missing_recent_projects()
             self._refresh_recent_projects_menu()
             return False
-        self._close_all_slice_viewers()
-        self.project = load_project(path)
-        self.project_path = path
-        self.has_unsaved_changes = False
-        self._clear_active_fit_state()
-        if remember:
-            self._remember_recent_project(path)
-        self._refresh_tree()
-        self._restore_active_fit_selection()
-        self._sync_window_title()
-        return True
+        return self._load_project_path(path, remember=remember)
 
     def import_dataset_dialog(self) -> None:
         from PySide6 import QtWidgets
@@ -12456,6 +12822,11 @@ class NfitProjectExplorer:
         window_class = _make_project_window_class()
         self.window = window_class(self)
         self.window.setWindowTitle("nfit Project Explorer")
+        self._external_change_timer = QtCore.QTimer(self.window)
+        self._external_change_timer.setInterval(1500)
+        self._external_change_timer.timeout.connect(
+            self.check_for_external_project_change
+        )
 
         toolbar = QtWidgets.QToolBar("Project")
         toolbar.setMovable(False)
@@ -12480,6 +12851,18 @@ class NfitProjectExplorer:
         self.recent_projects_menu.setToolTipsVisible(True)
         self.recent_projects_menu.setToolTip("Open one of the most recently used nfit project files.")
         self.recent_projects_menu.aboutToShow.connect(self._refresh_recent_projects_menu)
+        self.reload_project_action = menu.addAction(
+            "Reload from Disk", self.reload_project_from_disk
+        )
+        self.reload_project_action.setShortcut(
+            QtGui.QKeySequence.StandardKey.Refresh
+        )
+        self.reload_project_action.setToolTip(
+            "Reload the current project file, with a confirmation before discarding unsaved changes."
+        )
+        self.reload_project_action.setStatusTip(
+            "Reload the current project from disk."
+        )
         menu.addSeparator()
         save_action = menu.addAction("Save", self.save)
         save_action.setShortcut(QtGui.QKeySequence.StandardKey.Save)
@@ -18285,14 +18668,23 @@ class NfitProjectExplorer:
         self._active_branch_current = None
 
     def _restore_active_fit_selection(self) -> bool:
-        """Select and re-activate the fit entry persisted with the project."""
+        """Select the persisted fit entry without replacing live project state.
+
+        The project manifest already contains the authoritative live workspace.
+        Fit snapshots are applied only after an explicit user selection, never
+        as a side effect of opening or reloading a project.
+        """
 
         for group in self.project.data_groups:
             entry = _fit_entry_at_path(group.fits, group.active_fit_path)
             if entry is None:
                 continue
             self._set_active_fit_state(group, entry)
-            self._refresh_tree(select_group=group, select_fit=entry)
+            self._restoring_fit_selection = True
+            try:
+                self._refresh_tree(select_group=group, select_fit=entry)
+            finally:
+                self._restoring_fit_selection = False
             return True
         return False
 
@@ -18660,6 +19052,8 @@ class NfitProjectExplorer:
         suffix = "Untitled" if self.project_path is None else str(self.project_path)
         marker = " *" if self.has_unsaved_changes else ""
         self.window.setWindowTitle(f"nfit Project Explorer - {suffix}{marker}")
+        if self.reload_project_action is not None:
+            self.reload_project_action.setEnabled(self.project_path is not None)
 
     def _mark_dirty(self) -> None:
         self.has_unsaved_changes = True

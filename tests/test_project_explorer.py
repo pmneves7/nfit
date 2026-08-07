@@ -48,6 +48,9 @@ def test_project_window_size_prefers_roomy_layout_but_fits_small_screens():
 def test_project_helpers_name_import_and_round_trip(tmp_path):
     assert nfit.create_data_group is create_data_group
     assert nfit.import_dataset_paths is import_dataset_paths
+    assert nfit.edit_project_file is project_gui.edit_project_file
+    assert nfit.project_state_issues is project_gui.project_state_issues
+    assert nfit.validate_project_state is project_gui.validate_project_state
 
     project = NfitProject(
         data_groups=[
@@ -213,6 +216,9 @@ def test_project_explorer_preserves_tree_expansion_and_toolbar_font(monkeypatch,
     assert shortcuts == {
         "New": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.New),
         "Open": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.Open),
+        "Reload from Disk": _standard_shortcut_text(
+            QtGui, QtGui.QKeySequence.StandardKey.Refresh
+        ),
         "Save": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.Save),
         "Save As": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.SaveAs),
         "Close": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.Close),
@@ -1507,6 +1513,74 @@ def test_recent_project_helpers_and_file_menu(monkeypatch, tmp_path):
     assert explorer.project_path == second
     assert [group.name for group in explorer.project.data_groups] == ["Datagroup1"]
     assert recent_project_paths(settings)[0] == second
+    reload_action = next(
+        action for action in explorer.file_menu.actions()
+        if action.text() == "Reload from Disk"
+    )
+    assert reload_action.isEnabled()
+    assert reload_action.toolTip()
+
+
+def test_project_explorer_detects_reloads_and_protects_external_file_changes(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    path = tmp_path / "shared.nfit"
+    save_project(NfitProject([DataGroup("first")]), path)
+    explorer = NfitProjectExplorer()
+    assert explorer.open_project_path(path, remember=False)
+
+    save_project(NfitProject([DataGroup("external")]), path)
+    assert explorer._project_changed_on_disk()
+    monkeypatch.setattr(explorer, "_prompt_external_change_action", lambda: "reload")
+    assert explorer.check_for_external_project_change()
+    assert [group.name for group in explorer.project.data_groups] == ["external"]
+    assert explorer.has_unsaved_changes is False
+    assert not explorer._project_changed_on_disk()
+
+    save_project(NfitProject([DataGroup("ignored")]), path)
+    monkeypatch.setattr(explorer, "_prompt_external_change_action", lambda: "keep")
+    assert explorer.check_for_external_project_change()
+    assert [group.name for group in explorer.project.data_groups] == ["external"]
+    assert not explorer.check_for_external_project_change()
+
+    explorer.project.data_groups[0].name = "local"
+    explorer._mark_dirty()
+    monkeypatch.setattr(explorer, "_prompt_save_conflict_action", lambda: "cancel")
+    assert not explorer.save()
+    assert load_project(path).data_groups[0].name == "ignored"
+
+    monkeypatch.setattr(explorer, "_prompt_save_conflict_action", lambda: "overwrite")
+    assert explorer.save()
+    assert load_project(path).data_groups[0].name == "local"
+    assert explorer.has_unsaved_changes is False
+
+
+def test_reload_from_disk_confirms_before_discarding_unsaved_state(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    path = tmp_path / "reload.nfit"
+    save_project(NfitProject([DataGroup("saved")]), path)
+    explorer = NfitProjectExplorer()
+    assert explorer.open_project_path(path, remember=False)
+    explorer.project.data_groups[0].name = "unsaved"
+    explorer._mark_dirty()
+
+    monkeypatch.setattr(explorer, "_prompt_reload_unsaved_action", lambda: "cancel")
+    assert not explorer.reload_project_from_disk()
+    assert explorer.project.data_groups[0].name == "unsaved"
+
+    monkeypatch.setattr(explorer, "_prompt_reload_unsaved_action", lambda: "reload")
+    assert explorer.reload_project_from_disk()
+    assert explorer.project.data_groups[0].name == "saved"
+    assert explorer.has_unsaved_changes is False
 
 
 def test_recent_projects_ignore_and_purge_pytest_temporary_projects(tmp_path):

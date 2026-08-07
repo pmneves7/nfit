@@ -72,8 +72,9 @@ The package provides:
   derivatives, explicit uncertainty conventions, optional
   differential-evolution initialization, and `emcee` posterior sampling;
 - single-file `.nfit` projects with generated analysis artifacts, fit timelines,
-  and provenance, plus editable script export for dataset preparation,
-  analyses, fits, and saved plots;
+  provenance, safe transactional script editing, and GUI detection of external
+  file changes, plus editable script export for dataset preparation, analyses,
+  fits, and saved plots;
 - interactive slice, waterfall, and volumetric visualization with independent,
   same-state viewer duplication.
 

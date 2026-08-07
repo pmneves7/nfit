@@ -47,6 +47,30 @@ import_dataset_paths(group, ["low_field.nxs", "high_field.nxs"])
 save_project(project, "field_series.nfit")
 ```
 
+For an iterative edit of an existing project, use the transactional project
+editor rather than loading and saving the archive independently:
+
+```python
+from nfit import edit_project_file
+
+with edit_project_file("field_series.nfit") as project:
+    background = project.data_groups[0].models["Background"]
+    background.parameters["constant"] = 1.25
+```
+
+On successful exit, `edit_project_file` reconciles the live workspace with fit
+history, validates that the active snapshot reproduces the live state, and
+atomically saves the archive. A lone **Initial** snapshot and a **Current
+state** snapshot are updated in place. Editing from a completed result creates
+a current state or branch and never rewrites the result. Use
+`project_state_issues(project)` for a non-raising consistency report or
+`validate_project_state(project)` when a mismatch should stop a script.
+
+The GUI treats the serialized live workspace as authoritative on open; a
+remembered fit path selects its tree entry without restoring the historical
+snapshot. It also detects external file replacement and requires an explicit
+reload, Save As, keep, or overwrite decision before either version is lost.
+
 ## Shared registry metadata
 
 Masks, model components, and other registry-backed features declare defaults,

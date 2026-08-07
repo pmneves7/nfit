@@ -201,6 +201,11 @@ The **Fits** tree preserves the scientific state associated with each result.
 Selecting a state restores its datasets, masks, models, parameter settings,
 constraints, weights, and scales.
 
+Opening a project does not count as selecting a historical state. The saved
+live workspace is loaded unchanged, and the remembered fit entry is highlighted
+only for orientation. Select a fit-history node explicitly when you intend to
+replace the live workspace with that snapshot.
+
 Running from the latest state appends a result. Running from an earlier result,
 or enabling **Branch timeline**, creates a nested branch so alternative fits do
 not overwrite one another. Editing the latest result creates a sibling
