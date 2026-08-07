@@ -504,6 +504,10 @@ def test_lindhard_editor_selects_a_sibling_electronic_model(monkeypatch):
         QtWidgets.QLineEdit,
         "model_config_response_sampling_max_mesh_points",
     )
+    dataset_point_budget = explorer.model_parameter_widget.findChild(
+        QtWidgets.QLineEdit,
+        "model_config_response_sampling_points_per_dataset",
+    )
     formula_mode = explorer.model_parameter_widget.findChild(
         QtWidgets.QComboBox,
         "lindhard_formula_units_mode",
@@ -528,6 +532,7 @@ def test_lindhard_editor_selects_a_sibling_electronic_model(monkeypatch):
     assert sampling_symmetry.toolTip()
     assert mesh_shift is not None and mesh_shift.toolTip()
     assert mesh_budget is not None and mesh_budget.toolTip()
+    assert dataset_point_budget is not None and dataset_point_budget.toolTip()
     assert q_accuracy is not None and q_accuracy.currentData() == "exact"
     assert formula_mode is not None and formula_mode.currentData() == "auto"
     assert magnetic_mode is not None and magnetic_mode.currentData() == "auto"

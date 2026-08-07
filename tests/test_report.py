@@ -127,6 +127,15 @@ def test_lindhard_report_records_linked_response_configuration():
                 "response_backend": "numpy",
                 "formula_units_per_cell": 2.0,
                 "powder_orientations": 96,
+                "response_sampling_certificate": {
+                    "status": "certified",
+                    "policy": {"relative_tolerance": 0.01},
+                    "domain": {
+                        "kind": "fit_datasets",
+                        "dataset_count": 2,
+                        "sampled_points": 48,
+                    },
+                },
             },
             "fit_parameters": {"broadening": True},
             "sharing": {},
@@ -146,6 +155,8 @@ def test_lindhard_report_records_linked_response_configuration():
     assert "1.80" in tex
     assert "96" in tex
     assert "Magnetic-center normalization" in tex
+    assert "complete fitted pipeline" in tex
+    assert "2 dataset(s), 48 point(s)" in tex
     assert "Shared magnetic form factor" not in tex
     _check_balanced_environments(tex)
 

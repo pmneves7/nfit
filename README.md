@@ -31,7 +31,8 @@ The package provides:
   exact commensurate-Q permutation,
   digest-bearing tolerance-certified periodic Q interpolation with nonlinear
   RPA revalidation and reusable fit geometry, certified little-group
-  reduction, observable-specific automatic DOS and Lindhard mesh certificates,
+  reduction, observable-specific automatic DOS certificates and dataset-domain
+  complete TB--Lindhard--RPA mesh certificates,
   backend-equivalence probes, separate
   mesh/broadening convergence plots, and scheduler-neutral response chunks
   with editable Slurm launchers;

@@ -541,6 +541,61 @@ def certify_lindhard_component_sampling(
     return certificate
 
 
+def certify_lindhard_pipeline_sampling(
+    component: Any,
+    components: Mapping[str, Any],
+    datasets: Sequence[Any],
+    *,
+    progress_callback: Any | None = None,
+) -> Any:
+    """Certify and store a Lindhard mesh on complete fitted observables.
+
+    Unlike :func:`certify_lindhard_component_sampling`, which certifies an
+    explicit bare-response inspection domain, this project-facing wrapper
+    compiles the selected tight-binding--Lindhard--RPA dependency closure and
+    evaluates deterministic representatives of every applicable fit dataset.
+    """
+
+    from .electronic_pipeline_sampling import (
+        certify_electronic_pipeline_sampling,
+    )
+
+    if getattr(component, "type", None) != "lindhard":
+        raise TypeError("response pipeline sampling requires lindhard")
+    previous = copy.deepcopy(component.config)
+    try:
+        config = component.config
+        certificate = certify_electronic_pipeline_sampling(
+            component,
+            components,
+            datasets,
+            seed_mesh=config.get("response_mesh", [16, 16, 16]),
+            policy=_component_sampling_policy(config, "response"),
+            max_refinements=int(
+                config.get("response_sampling_max_refinements", 7)
+            ),
+            max_mesh_points=int(
+                config.get("response_sampling_max_mesh_points", 500_000)
+            ),
+            max_points_per_dataset=int(
+                config.get("response_sampling_points_per_dataset", 32)
+            ),
+            progress_callback=progress_callback,
+        )
+        component.config["response_sampling_certificate"] = certificate.to_dict()
+        if certificate.certified:
+            component.config["response_mesh"] = list(
+                certificate.chosen_mesh or ()
+            )
+        from .model_registry import validate_model_component
+
+        validate_model_component(component)
+    except Exception:
+        component.config = previous
+        raise
+    return certificate
+
+
 def generalized_paramagnon_energy_scan(
     energy: ArrayLike,
     *,

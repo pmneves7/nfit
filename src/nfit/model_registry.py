@@ -1687,6 +1687,18 @@ def _register_builtin_models() -> None:
                     "1000000",
                 ),
                 _config_field(
+                    "response_sampling_points_per_dataset",
+                    32,
+                    (
+                        "Maximum deterministic representative fit points from "
+                        "each applicable dataset used by complete-pipeline "
+                        "response-mesh certification."
+                    ),
+                    "Positive integer.",
+                    "int",
+                    "48",
+                ),
+                _config_field(
                     "response_sampling_certificate",
                     {},
                     (

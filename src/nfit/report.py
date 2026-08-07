@@ -1199,6 +1199,21 @@ def lindhard_report_sections(
         else {}
     )
     sampling_tolerance = sampling_policy.get("relative_tolerance")
+    sampling_domain = (
+        sampling_certificate.get("domain", {})
+        if isinstance(sampling_certificate, Mapping)
+        else {}
+    )
+    sampling_scope = (
+        (
+            "complete fitted pipeline, "
+            f"{sampling_domain.get('dataset_count', '--')} dataset(s), "
+            f"{sampling_domain.get('sampled_points', '--')} point(s)"
+        )
+        if isinstance(sampling_domain, Mapping)
+        and sampling_domain.get("kind") == "fit_datasets"
+        else "explicit bare-response inspection domain"
+    )
     lines = [
         f"\\section{{Bare Lindhard spin susceptibility ({name})}}",
         (
@@ -1225,6 +1240,7 @@ def lindhard_report_sections(
             "tolerance "
             f"{'--' if sampling_tolerance is None else _fmt(sampling_tolerance)} \\\\"
         ),
+        f"Certificate scope & {latex_escape(sampling_scope)} \\\\",
         (
             "Formula-unit normalization & "
             + (

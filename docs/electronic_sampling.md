@@ -5,9 +5,10 @@ for a broadened density of states (DOS) may be inadequate for a sharp Lindhard
 response, so nfit selects meshes against the calculated observable rather than
 from one universal number of points.
 
-Automatic selection is currently implemented for DOS and the bare Lindhard
-susceptibility. Fermi-surface meshes remain visualization settings because
-surface topology needs a different convergence test.
+Automatic selection is implemented for DOS, explicit-domain bare Lindhard
+inspection, and complete dataset-facing tight-binding--Lindhard--RPA
+pipelines. Fermi-surface meshes remain visualization settings because surface
+topology needs a different convergence test.
 
 ## Accuracy profiles
 
@@ -28,7 +29,10 @@ regime.
 The maximum number of refinements and maximum mesh points are independent
 safety budgets under **Advanced**. Exhausting a budget produces an explicit
 `budget_exhausted` certificate; it does not weaken the selected tolerance or
-silently claim convergence.
+silently claim convergence. A complete-pipeline search stops once the remaining
+candidate meshes cannot possibly supply the required consecutive passes; the
+certificate records that stopping reason instead of spending the final budget
+on a result that cannot change the decision.
 
 ## Mesh search and certificate
 
@@ -96,32 +100,34 @@ deviation when applicable, and symmetry policy in **Density-of-states
 sampling** before starting certification. These settings define the domain and
 evaluation policy claimed by the stored certificate.
 
-## Lindhard certification
+## Electronic-response pipeline certification
 
-Lindhard certification compares the full complex Cartesian spin tensor
-$\chi^0_{\alpha\beta}(\mathbf Q,E)$, not only its imaginary or neutron-projected
-part. The broadening $\eta$, temperature, chemical-potential policy, operators,
-and sampled $(\mathbf Q,E)$ points remain fixed throughout the search.
-Arbitrary certification points are evaluated directly, so interpolation error
-is not confused with integration-mesh error.
+The project-facing Lindhard action certifies the complete observable compiled
+for each applicable fit dataset. nfit follows the selected tight-binding and
+Lindhard dependencies through every enabled consuming RPA component, then
+includes orbital form factors, neutron polarization, powder averaging, bulk
+conversion, and dataset normalization in the compared values. RPA enhancement
+therefore cannot hide behind a certificate on the bare tensor.
 
-The GUI's **Check/refine convergence** action uses the momentum, energy window,
-temperature, and representative energy count shown by the Lindhard convergence
-viewer. Scripts can instead supply the actual experimental points. A
-certificate on representative points supports a declared local claim; it is
-not a proof over the entire Brillouin zone or every fit condition.
+The domain comes from the same masked, rebinned, temperature- and field-aware
+`FitDatasetInput` objects used by fitting. Small datasets are evaluated in
+full. For a larger dataset, nfit deterministically selects up to
+`response_sampling_points_per_dataset` points by farthest-point coverage of
+$H$, $K$, $L$, energy, temperature, and magnetic-field coordinates while
+retaining coordinate extrema. Each dataset is normalized and compared
+separately; every dataset must pass, so a large or high-amplitude dataset
+cannot conceal another dataset's mesh dependence. Selected source indices,
+coordinate ranges, original and valid point counts, and a domain digest are
+stored in the certificate.
 
-New Lindhard components use a finite zone-boundary representative momentum,
-with reduced coordinate `0.5` on each periodic electronic axis. This avoids
-silently selecting the unusually demanding static Pauli limit at
-$\mathbf Q=0$, $E=0$. Choosing that limit explicitly remains supported; the
-sampling panel warns that its narrow $-\partial f/\partial E$ shell may need a
-much denser mesh and is not smoothed by the finite-energy response broadening.
-The same panel exposes the complete scientific certificate domain
-($\mathbf Q$, energy interval and count, and temperature), symmetry and mesh
-shift, accuracy profile, concrete production mesh, and refinement and
-full-mesh point budgets. Backend, memory, and interpolation diagnostics remain
-under **Advanced** because they do not redefine the requested integral.
+At each candidate mesh, arbitrary experimental wavevectors are evaluated
+directly. The broadening $\eta$, powder orientation count, backend, component
+parameters, and all dataset conditions remain fixed. This isolates the
+Brillouin-zone integration mesh from interpolation, angular-quadrature, and
+physical-broadening dependence. The model-owned convergence plot retains its
+explicit representative $\mathbf Q$, energy, and temperature settings as a
+separate inspection diagnostic; those plot settings no longer define the
+project certificate.
 
 Automatic certification stores the accepted mesh in `response_mesh`. Fits then
 use that concrete mesh without adapting it inside the optimizer, preserving a
@@ -151,16 +157,38 @@ if not certificate.certified:
 production_mesh = certificate.chosen_mesh
 ```
 
-For project components,
-`certify_tight_binding_dos_sampling(component)` and
-`certify_lindhard_component_sampling(component, components, ...)` store the
-serialized certificate and update the production mesh only after success.
-The Lindhard wrapper accepts explicit `q_reduced`, `energy_meV`, and
-`temperature_K` arguments for analysis-specific domains. Both wrappers accept
-the same optional `progress_callback`; GUI progress is built on this public
-hook. Copied calculation scripts include the concrete mesh and stored
-certificate.
+For project components, `certify_tight_binding_dos_sampling(component)` stores
+the DOS certificate. `certify_group_lindhard_sampling(group, component)`
+prepares the ordinary fit datasets and stores a complete-pipeline response
+certificate. Lower-level callers with prepared data can use
+`certify_lindhard_pipeline_sampling(component, components, datasets)` or
+`certify_electronic_pipeline_sampling(...)`.
+
+`certify_lindhard_component_sampling(component, components, ...)` remains the
+explicit-domain bare-response API. It accepts `q_reduced`, `energy_meV`, and
+`temperature_K` for an analysis-specific tensor inspection, but does not claim
+convergence of a downstream RPA or experimental observable. All wrappers
+accept an optional `progress_callback`; GUI progress is built on the same
+public hook.
+
+```python
+from nfit import (
+    certify_group_lindhard_sampling,
+    load_project,
+    save_project,
+)
+
+project = load_project("analysis.nfit")
+group = project.data_groups[0]
+lindhard = group.models["Bare response"]
+certificate = certify_group_lindhard_sampling(group, lindhard)
+if not certificate.certified:
+    raise RuntimeError("response mesh was not certified within the budget")
+save_project(project, "analysis.nfit")
+```
 
 Automatic selection does not establish Fermi-surface topology convergence,
-global electronic-RPA stability, or convergence with respect to lifetime
-broadening. Those require separate diagnostics.
+global electronic-RPA stability, powder angular convergence, wavevector-
+interpolation accuracy, or convergence with respect to lifetime broadening.
+Those remain separate diagnostics. Changing $\eta$ changes the physical model
+and is not a substitute for refining the integration mesh.

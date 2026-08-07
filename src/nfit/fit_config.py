@@ -1321,6 +1321,10 @@ def _validate_electronic_sampling_config(
 def _validate_lindhard_component(component: Any) -> None:
     config = component.config if isinstance(component.config, dict) else {}
     _validate_electronic_sampling_config(config, "response")
+    if int(config.get("response_sampling_points_per_dataset", 32)) < 1:
+        raise ValueError(
+            "response_sampling_points_per_dataset must be positive"
+        )
     mesh = tuple(int(value) for value in config.get("response_mesh", ()))
     if len(mesh) not in {1, 2, 3} or any(value < 1 for value in mesh):
         raise ValueError("response_mesh must contain one to three positive sizes")

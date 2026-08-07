@@ -247,6 +247,7 @@ evaluation.
 | `response_mesh_shift` | offsets in mesh steps; the default half shift reduces special-point and Fermi-surface shell artifacts | `[0.5, 0.5, 0.5]` on periodic axes | `[0, 0, 0]` for a Γ-centered mesh |
 | `response_sampling_max_refinements` | maximum candidate meshes in one certificate | `7` | `8` |
 | `response_sampling_max_mesh_points` | independent full-mesh point budget | `500000` | `1000000` |
+| `response_sampling_points_per_dataset` | maximum deterministic fit-domain representatives per applicable dataset | `32` | `48` |
 | `response_sampling_certificate` | derived serialized meshes, errors, domain, and provenance | `{}` | normally written by nfit |
 | `response_q_interpolation_certificates` | derived per-dataset validation certificates for the current live parameter state | `{}` | normally written by nfit |
 | `response_symmetry` | full mesh, required certified reduction, or automatic reduction with recorded fallback | `"auto"` | `"auto"`, `"full"`, or `"reduced"` |
@@ -288,7 +289,7 @@ atomic operation in a script.
 
 | Setting | Meaning | Default | Acceptable input example |
 | --- | --- | --- | --- |
-| `plot_q_reduced` | representative extended-zone $\mathbf Q$ for the model energy scan and default convergence certificate | `[0.5, 0.5, 0.5]` in 3D; new linked components use `0.5` only on periodic axes | `[0.5, 0.5, 0]` |
+| `plot_q_reduced` | representative extended-zone $\mathbf Q$ for model-owned response and convergence plots | `[0.5, 0.5, 0.5]` in 3D; new linked components use `0.5` only on periodic axes | `[0.5, 0.5, 0]` |
 | `plot_energy_min_meV` | lower plotted energy transfer | `-100.0` | `-50.0` |
 | `plot_energy_max_meV` | upper plotted energy transfer | `100.0` | `50.0` |
 | `plot_energy_points` | plotted energy samples | `401` | `501` |
@@ -308,12 +309,17 @@ operators, orbital-pair matrices, incompatible meshes, and generic
 wavevectors fall back to the full mesh. `"reduced"` turns the same fallback
 into an error.
 
-**Check/refine convergence** constructs an anisotropic mesh ladder, compares
-the full complex Cartesian spin tensor on the convergence viewer's declared
-domain, and requires two successive passing refinements. Preview, Standard,
-and High correspond to 5%, 1%, and 0.2% normalized error. A successful search
-stores one concrete `response_mesh`; a budget failure is reported without
-weakening the tolerance. See
+**Check/refine convergence** constructs an anisotropic mesh ladder and compares
+the complete tight-binding--Lindhard--RPA observable on deterministic points
+from every applicable enabled fit dataset. The calculation uses the ordinary
+masked and rebinned fit inputs, dataset temperatures and fields, exact
+experimental-$\mathbf Q$ evaluation, orbital form factors, neutron projection,
+powder averaging, and bulk or spectral normalization. Every dataset must pass
+two successive refinements. Preview, Standard, and High correspond to 5%, 1%,
+and 0.2% normalized error. A successful search stores one concrete
+`response_mesh`; a budget failure is reported without weakening the tolerance.
+The model-owned mesh/broadening plot remains an explicit-domain inspection and
+does not replace this project certificate. See
 [Automatic Brillouin-zone sampling](electronic_sampling.md) for the common
 certificate and the explicit-domain scripting API.
 

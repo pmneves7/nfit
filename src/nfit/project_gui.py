@@ -4141,6 +4141,40 @@ def fit_dataset_inputs(
     return inputs, bundles
 
 
+def certify_group_lindhard_sampling(
+    group: DataGroup,
+    component: ModelComponentSpec,
+    *,
+    progress_callback: Any | None = None,
+) -> Any:
+    """Certify one Lindhard mesh against its complete fitted observables.
+
+    Dataset import, masks, rebinning, temperatures, fields, and normalization
+    follow the same preparation path as an ordinary fit.  The lower-level
+    pipeline certificate then evaluates the selected tight-binding--Lindhard
+    dependency closure and every enabled RPA consumer on deterministic points
+    from each applicable positive-weight dataset.
+    """
+
+    if component.type != "lindhard":
+        raise TypeError("group response sampling requires a Lindhard component")
+    if group.models.get(component.name) is not component:
+        raise ValueError("the selected Lindhard component is not in the data group")
+    inputs, _bundles = fit_dataset_inputs(group, purpose="fit")
+    if not inputs:
+        raise ValueError(
+            "the data group has no enabled positive-weight dataset to certify"
+        )
+    from .model_plots import certify_lindhard_pipeline_sampling
+
+    return certify_lindhard_pipeline_sampling(
+        component,
+        group.models,
+        inputs,
+        progress_callback=progress_callback,
+    )
+
+
 _OPTIMIZER_KWARG_NAMES = (
     "max_nfev",
     "xtol",
@@ -19312,6 +19346,7 @@ class NfitProjectExplorer:
                 "response_sampling_custom_rtol",
                 "response_sampling_max_refinements",
                 "response_sampling_max_mesh_points",
+                "response_sampling_points_per_dataset",
                 "response_sampling_certificate",
                 "response_mesh_shift",
                 "response_symmetry",
@@ -20812,7 +20847,7 @@ class NfitProjectExplorer:
         shift_label.setToolTip(shift_tooltip)
         sampling_layout.addRow(shift_label, shift)
 
-        domain = QtWidgets.QGroupBox("Certification domain")
+        domain = QtWidgets.QGroupBox("Model inspection domain")
         domain.setObjectName("lindhard_certification_domain_group")
         domain_layout = QtWidgets.QFormLayout(domain)
 
@@ -20841,34 +20876,35 @@ class NfitProjectExplorer:
             "plot_q_reduced",
             "Representative Q (r.l.u.)",
             [0.5, 0.5, 0.5],
-            "Transferred wavevector used for the default convergence "
-            "certificate, in the linked electronic model's reciprocal basis.",
+            "Transferred wavevector used by model-owned response and convergence "
+            "plots, in the linked electronic model's reciprocal basis. Project "
+            "mesh certification instead derives its domain from fitted datasets.",
         )
         add_domain_editor(
             "plot_energy_min_meV",
             "Minimum energy (meV)",
             -100.0,
-            "Lower energy transfer included in the representative certificate.",
+            "Lower energy transfer used by model-owned inspection plots.",
         )
         add_domain_editor(
             "plot_energy_max_meV",
             "Maximum energy (meV)",
             100.0,
-            "Upper energy transfer included in the representative certificate.",
+            "Upper energy transfer used by model-owned inspection plots.",
         )
         add_domain_editor(
             "convergence_energy_points",
             "Representative energies",
             9,
-            "Number of uniformly spaced energies used between the displayed "
-            "limits during automatic mesh certification.",
+            "Number of uniformly spaced energies used by the model-owned "
+            "mesh/broadening inspection plot.",
         )
         add_domain_editor(
             "plot_temperature_K",
             "Temperature (K)",
             10.0,
-            "Temperature used for occupations throughout the representative "
-            "mesh certificate.",
+            "Temperature used by model-owned response and convergence plots. "
+            "Project certification uses each fitted dataset's temperature.",
         )
         sampling_layout.addRow(domain)
 
@@ -20889,6 +20925,13 @@ class NfitProjectExplorer:
                 500000,
                 "Largest allowed full-mesh point count. This is a safety budget, "
                 "even when symmetry reduces the actual eigensolves.",
+            ),
+            (
+                "response_sampling_points_per_dataset",
+                "Points per dataset",
+                32,
+                "Maximum deterministic representative fit points evaluated "
+                "from each applicable dataset at every candidate mesh.",
             ),
         ):
             editor = QtWidgets.QLineEdit(
@@ -20967,6 +21010,25 @@ class NfitProjectExplorer:
             tolerance_label.setToolTip(tolerance_tooltip)
             sampling_layout.addRow(tolerance_label, tolerance)
         certificate = model.config.get("response_sampling_certificate", {})
+        pipeline_domain = bool(
+            isinstance(certificate, dict)
+            and certificate.get("domain", {}).get("kind") == "fit_datasets"
+        )
+        pipeline_state_stale = False
+        if pipeline_domain and owner is not None:
+            try:
+                from .electronic_pipeline_sampling import (
+                    electronic_pipeline_state_digest,
+                )
+
+                pipeline_state_stale = (
+                    certificate.get("provenance", {}).get(
+                        "pipeline_state_digest"
+                    )
+                    != electronic_pipeline_state_digest(model, owner.models)
+                )
+            except (TypeError, ValueError):
+                pipeline_state_stale = True
         if sampling_mode == "manual":
             status_text = "Manual mesh: no automatic accuracy claim."
         elif not isinstance(certificate, dict) or not certificate:
@@ -20992,6 +21054,11 @@ class NfitProjectExplorer:
             status_text = (
                 "Certificate is stale because the electronic model changed."
             )
+        elif pipeline_state_stale:
+            status_text = (
+                "Certificate is stale because a TB, Lindhard, or RPA "
+                "component changed."
+            )
         elif not _sampling_float_matches(
             certificate.get("provenance", {}).get("broadening_meV"),
             model.parameters.get("broadening", 5.0),
@@ -21005,57 +21072,65 @@ class NfitProjectExplorer:
             status_text = (
                 "Certificate is stale because the symmetry policy changed."
             )
-        elif not _sampling_float_matches(
+        elif not pipeline_domain and not _sampling_float_matches(
             certificate.get("domain", {}).get("temperature_K"),
             model.config.get("plot_temperature_K", 10.0),
         ):
             status_text = (
                 "Certificate is stale because the certified temperature changed."
             )
-        elif not _sampling_float_matches(
-            certificate.get("domain", {}).get("energy_min_meV"),
-            model.config.get("plot_energy_min_meV", -100.0),
-        ) or not _sampling_float_matches(
-            certificate.get("domain", {}).get("energy_max_meV"),
-            model.config.get("plot_energy_max_meV", 100.0),
+        elif not pipeline_domain and (
+            not _sampling_float_matches(
+                certificate.get("domain", {}).get("energy_min_meV"),
+                model.config.get("plot_energy_min_meV", -100.0),
+            )
+            or not _sampling_float_matches(
+                certificate.get("domain", {}).get("energy_max_meV"),
+                model.config.get("plot_energy_max_meV", 100.0),
+            )
         ):
             status_text = (
                 "Certificate is stale because the certified energy range changed."
             )
-        elif int(certificate.get("domain", {}).get("points", -1)) != int(
+        elif not pipeline_domain and int(
+            certificate.get("domain", {}).get("points", -1)
+        ) != int(
             model.config.get("convergence_energy_points", 9)
         ):
             status_text = (
                 "Certificate is stale because the representative energy count changed."
             )
-        elif not np.allclose(
-            np.asarray(
-                certificate.get("domain", {}).get(
-                    "q_min_reduced",
-                    [np.nan, np.nan, np.nan],
+        elif not pipeline_domain and (
+            not np.allclose(
+                np.asarray(
+                    certificate.get("domain", {}).get(
+                        "q_min_reduced",
+                        [np.nan, np.nan, np.nan],
+                    ),
+                    dtype=float,
                 ),
-                dtype=float,
-            ),
-            np.asarray(
-                model.config.get("plot_q_reduced", [0.5, 0.5, 0.5]),
-                dtype=float,
-            ),
-            rtol=0.0,
-            atol=1.0e-12,
-        ) or not np.allclose(
-            np.asarray(
-                certificate.get("domain", {}).get(
-                    "q_max_reduced",
-                    [np.nan, np.nan, np.nan],
+                np.asarray(
+                    model.config.get("plot_q_reduced", [0.5, 0.5, 0.5]),
+                    dtype=float,
                 ),
-                dtype=float,
-            ),
-            np.asarray(
-                model.config.get("plot_q_reduced", [0.5, 0.5, 0.5]),
-                dtype=float,
-            ),
-            rtol=0.0,
-            atol=1.0e-12,
+                rtol=0.0,
+                atol=1.0e-12,
+            )
+            or not np.allclose(
+                np.asarray(
+                    certificate.get("domain", {}).get(
+                        "q_max_reduced",
+                        [np.nan, np.nan, np.nan],
+                    ),
+                    dtype=float,
+                ),
+                np.asarray(
+                    model.config.get("plot_q_reduced", [0.5, 0.5, 0.5]),
+                    dtype=float,
+                ),
+                rtol=0.0,
+                atol=1.0e-12,
+            )
         ):
             status_text = (
                 "Certificate is stale because the representative Q changed."
@@ -21106,10 +21181,19 @@ class NfitProjectExplorer:
                 "relative_tolerance",
                 "?",
             )
-            status_text = (
-                f"Certified on {certificate.get('domain', {}).get('points', '?')} "
-                f"representative point(s) at tolerance {tolerance}."
-            )
+            if pipeline_domain:
+                status_text = (
+                    "Complete pipeline certified on "
+                    f"{certificate.get('domain', {}).get('sampled_points', '?')} "
+                    "representative point(s) across "
+                    f"{certificate.get('domain', {}).get('dataset_count', '?')} "
+                    f"fit dataset(s) at tolerance {tolerance}."
+                )
+            else:
+                status_text = (
+                    f"Certified on {certificate.get('domain', {}).get('points', '?')} "
+                    f"representative point(s) at tolerance {tolerance}."
+                )
         convergence = QtWidgets.QLabel(status_text)
         convergence.setObjectName("lindhard_convergence_status")
         convergence.setWordWrap(True)
@@ -21142,11 +21226,11 @@ class NfitProjectExplorer:
         )
         if gamma_static:
             warning = QtWidgets.QLabel(
-                "The representative domain includes Q = 0 and E = 0. This "
+                "The model inspection domain includes Q = 0 and E = 0. This "
                 "static Pauli limit samples a very narrow Fermi-surface shell "
                 "and may require much denser meshes than a finite-Q neutron "
-                "response. Choose a representative experimental Q unless the "
-                "uniform static susceptibility is intentional."
+                "response. This warning applies to the model-owned convergence "
+                "plot; project certification uses the fitted datasets."
             )
             warning.setObjectName("lindhard_gamma_static_warning")
             warning.setWordWrap(True)
@@ -21160,9 +21244,10 @@ class NfitProjectExplorer:
         certify.setObjectName("lindhard_certify_sampling")
         certify.setEnabled(sampling_mode == "automatic")
         certify.setToolTip(
-            "Search deterministic physically spaced meshes on the configured "
-            "convergence-viewer Q, energy, and temperature domain. Store a "
-            "concrete mesh only after two successive refinements pass."
+            "Search deterministic physically spaced meshes against the complete "
+            "TB-Lindhard-RPA observable on representative points from every "
+            "applicable fit dataset. Store a concrete mesh only after every "
+            "dataset passes two successive refinements."
         )
         certify.clicked.connect(
             lambda _checked=False, model=model: self._certify_lindhard_sampling(
@@ -24765,7 +24850,6 @@ class NfitProjectExplorer:
 
         from PySide6 import QtWidgets
 
-        from .model_plots import certify_lindhard_component_sampling
         from .qt_sampling_progress import SamplingProgressDialog
 
         result: dict[str, Any] = {}
@@ -24782,9 +24866,9 @@ class NfitProjectExplorer:
                     raise ValueError(
                         "select the Lindhard component before certification"
                     )
-                result["certificate"] = certify_lindhard_component_sampling(
+                result["certificate"] = certify_group_lindhard_sampling(
+                    group,
                     model,
-                    group.models,
                     progress_callback=progress.update,
                 )
 
