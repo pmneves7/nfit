@@ -25,6 +25,16 @@ and **Share fitted scale** can tie those dataset scales during fitting.
 Disabling a group excludes its descendants without changing their individual
 enabled states.
 
+Run-heavy collections are compact in the project explorer. Collections with
+more than twelve direct datasets start collapsed and expose lazy pages of 50
+runs; expand a page to create those individual run nodes for inspection or
+editing. **Expand groups** opens the structural hierarchy but deliberately
+leaves run pages collapsed. The collection details panel shows 20 direct runs
+per page. A parent with child collections lists those immediate children rather
+than flattening every descendant run into one long table. Background containers
+use a coral folder accent so they remain distinct from ordinary, mask, model,
+and fit folders throughout this hierarchy.
+
 ### Point-list data
 
 MPMS magnetization, PPMS heat capacity, and powder diffraction imports retain

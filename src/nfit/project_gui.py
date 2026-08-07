@@ -156,6 +156,9 @@ RECENT_PROJECT_LIMIT = 10
 RECENT_PROJECTS_KEY = "recent_projects"
 PROJECT_WINDOW_TARGET_SIZE = (1560, 1000)
 PROJECT_WINDOW_SCREEN_MARGIN = 48
+TREE_DATASET_COMPACT_THRESHOLD = 12
+TREE_DATASET_PAGE_SIZE = 50
+DETAIL_DATASET_PAGE_SIZE = 20
 DATASET_REBIN_KEY = "rebin"
 DATASET_MASK_APPLICATION_KEY = "mask_application"
 GROUP_COMPOSITE_KEY = "composite"
@@ -8846,6 +8849,21 @@ def _style_active_fit_tree_item(item: Any) -> None:
     item.setToolTip(0, "Active fit state currently applied to the workspace.")
 
 
+_TREE_ICON_COLORS = {
+    "folder": "#5f8fa8",
+    "background_folder": "#d17a5f",
+    "mask_folder": "#a88fc5",
+    "model_folder": "#c7a45b",
+    "fit_folder": "#7cab80",
+    "dataset": "#6d9fc7",
+    "mask": "#a88fc5",
+    "model": "#c7a45b",
+    "fit_result": "#7cab80",
+    "fit_initial": "#7cab80",
+    "fit_current": "#7cab80",
+}
+
+
 _TREE_ICON_CACHE: dict[str, Any] = {}
 
 
@@ -8855,19 +8873,7 @@ def _tree_item_icon(kind: str) -> Any:
     if kind in _TREE_ICON_CACHE:
         return _TREE_ICON_CACHE[kind]
 
-    colors = {
-        "folder": "#5f8fa8",
-        "mask_folder": "#a88fc5",
-        "model_folder": "#c7a45b",
-        "fit_folder": "#7cab80",
-        "dataset": "#6d9fc7",
-        "mask": "#a88fc5",
-        "model": "#c7a45b",
-        "fit_result": "#7cab80",
-        "fit_initial": "#7cab80",
-        "fit_current": "#7cab80",
-    }
-    accent = QtGui.QColor(colors.get(kind, "#9ca3ad"))
+    accent = QtGui.QColor(_TREE_ICON_COLORS.get(kind, "#9ca3ad"))
     line = QtGui.QColor("#c7ccd1")
 
     pixmap = QtGui.QPixmap(16, 16)
@@ -8880,7 +8886,13 @@ def _tree_item_icon(kind: str) -> Any:
     painter.setPen(pen)
     painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
 
-    if kind in {"folder", "mask_folder", "model_folder", "fit_folder"}:
+    if kind in {
+        "folder",
+        "background_folder",
+        "mask_folder",
+        "model_folder",
+        "fit_folder",
+    }:
         fill = QtGui.QColor(accent)
         fill.setAlpha(34)
         painter.setPen(QtGui.QPen(accent, 1.15))
@@ -10110,6 +10122,10 @@ class NfitProjectExplorer:
         self._plot_item_roles: dict[int, PlotEntry] = {}
         self._plot_windows: dict[str, Any] = {}
         self._dataset_group_roles: dict[int, DatasetGroup] = {}
+        self._dataset_page_roles: dict[
+            int,
+            tuple[DataGroup | DatasetGroup, tuple[DatasetEntry, ...], int],
+        ] = {}
         self._expanded_state: dict[tuple[Any, ...], bool] = {}
         self._build()
         self._refresh_tree()
@@ -12826,7 +12842,17 @@ class NfitProjectExplorer:
             self.tree.editItem(item, 0)
 
     def expand_all(self) -> None:
-        self.tree.expandAll()
+        def expand_structure(item: Any) -> None:
+            role = self._objects_for_item(item)[4]
+            if role == "dataset_page":
+                item.setExpanded(False)
+                return
+            item.setExpanded(True)
+            for index in range(item.childCount()):
+                expand_structure(item.child(index))
+
+        for index in range(self.tree.topLevelItemCount()):
+            expand_structure(self.tree.topLevelItem(index))
         self._expanded_state = self._current_expanded_state()
 
     def collapse_all(self) -> None:
@@ -13273,6 +13299,8 @@ class NfitProjectExplorer:
         self.tree.currentItemChanged.connect(lambda _current, _previous: self._sync_details())
         self.tree.itemSelectionChanged.connect(self._prune_tree_selection)
         self.tree.itemChanged.connect(self._tree_item_changed)
+        self.tree.itemExpanded.connect(self._dataset_page_expanded)
+        self.tree.itemCollapsed.connect(self._dataset_page_collapsed)
         toolbar_font = QtGui.QFont(self.tree.font())
         if toolbar_font.pointSize() > 0:
             toolbar_font.setPointSize(toolbar_font.pointSize() + 1)
@@ -13285,9 +13313,11 @@ class NfitProjectExplorer:
 
         tree_expand_row = QtWidgets.QHBoxLayout()
         tree_expand_row.setContentsMargins(8, 0, 8, 0)
-        self.expand_all_button = QtWidgets.QPushButton("Expand all")
+        self.expand_all_button = QtWidgets.QPushButton("Expand groups")
         self.collapse_all_button = QtWidgets.QPushButton("Collapse all")
-        self.expand_all_button.setToolTip("Expand every workspace, folder, dataset, and fit timeline in the tree.")
+        self.expand_all_button.setToolTip(
+            "Expand the project structure while leaving lazy run pages collapsed."
+        )
         self.collapse_all_button.setToolTip("Collapse the tree to the top-level workspaces.")
         self.expand_all_button.clicked.connect(self.expand_all)
         self.collapse_all_button.clicked.connect(self.collapse_all)
@@ -13843,6 +13873,7 @@ class NfitProjectExplorer:
         self._analysis_item_roles.clear()
         self._plot_item_roles.clear()
         self._dataset_group_roles.clear()
+        self._dataset_page_roles.clear()
         self.tree.blockSignals(True)
         # Clear the stale accessible/current index before removing every row.
         # Otherwise Qt's accessibility bridge can query the old timeline row
@@ -13982,58 +14013,61 @@ class NfitProjectExplorer:
         from PySide6 import QtCore, QtWidgets
 
         found = None
-        for dataset in node.datasets:
-            dataset_item = QtWidgets.QTreeWidgetItem([dataset.name])
-            dataset_item.setFlags(dataset_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
-            _set_tree_item_icon(dataset_item, "dataset")
-            self._remember_item(dataset_item, "dataset", group, dataset)
-            _style_enabled_tree_item(dataset_item, dataset.enabled)
-            parent_item.addChild(dataset_item)
-            masks_item = QtWidgets.QTreeWidgetItem(["Masks"])
-            _set_tree_item_icon(masks_item, "mask_folder")
-            _style_enabled_tree_item(masks_item, dataset.enabled)
-            self._remember_item(masks_item, "masks", group, dataset)
-            dataset_item.addChild(masks_item)
-            for mask in dataset.masks:
-                mask_item = QtWidgets.QTreeWidgetItem([mask.name])
-                mask_item.setFlags(mask_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
-                _set_tree_item_icon(mask_item, "mask")
-                self._remember_item(mask_item, "mask", group, dataset, mask)
-                _style_enabled_tree_item(mask_item, mask.enabled)
-                masks_item.addChild(mask_item)
-                if select_mask is mask and found is None:
-                    found = mask_item
-            backgrounds_item = QtWidgets.QTreeWidgetItem(["Backgrounds"])
-            _set_tree_item_icon(backgrounds_item, "folder")
-            _style_enabled_tree_item(backgrounds_item, dataset.enabled)
-            self._remember_item(backgrounds_item, "backgrounds", group, dataset)
-            dataset_item.addChild(backgrounds_item)
-            for background in dataset.backgrounds:
-                background_item = QtWidgets.QTreeWidgetItem([background.name])
-                background_item.setFlags(
-                    background_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable
+        direct_datasets = list(node.datasets)
+        if len(direct_datasets) > TREE_DATASET_COMPACT_THRESHOLD:
+            for start in range(0, len(direct_datasets), TREE_DATASET_PAGE_SIZE):
+                page = tuple(direct_datasets[start : start + TREE_DATASET_PAGE_SIZE])
+                end = start + len(page)
+                page_item = QtWidgets.QTreeWidgetItem(
+                    [_dataset_tree_page_label(page, start=start, total=len(direct_datasets))]
                 )
-                _set_tree_item_icon(background_item, "dataset")
-                self._remember_item(background_item, "background", group, dataset)
-                self._background_item_roles[id(background_item)] = background
-                _style_enabled_tree_item(background_item, background.enabled)
-                backgrounds_item.addChild(background_item)
-                if select_background is background and found is None:
-                    found = background_item
-            if select_dataset is dataset and found is None:
-                found = dataset_item
-            dataset_item.setExpanded(self._expanded_state.get(("dataset", id(dataset)), False))
-            masks_item.setExpanded(self._expanded_state.get(("masks", id(dataset)), False))
-            backgrounds_item.setExpanded(
-                self._expanded_state.get(("backgrounds", id(dataset)), False)
-            )
+                page_item.setToolTip(
+                    0,
+                    f"Runs {start + 1}-{end} of {len(direct_datasets)}. Expand to load only this page into the tree.",
+                )
+                _set_tree_item_icon(page_item, "folder")
+                self._remember_item(page_item, "dataset_page", group)
+                self._dataset_page_roles[id(page_item)] = (node, page, start)
+                parent_item.addChild(page_item)
+                target_on_page = (
+                    select_dataset in page
+                    or any(select_mask in dataset.masks for dataset in page)
+                    or any(select_background in dataset.backgrounds for dataset in page)
+                )
+                page_key = ("dataset_page", id(node), start)
+                if target_on_page or self._expanded_state.get(page_key, False):
+                    page_found = self._populate_dataset_page(
+                        page_item,
+                        select_dataset=select_dataset,
+                        select_mask=select_mask,
+                        select_background=select_background,
+                    )
+                    page_item.setExpanded(True)
+                    if page_found is not None and found is None:
+                        found = page_found
+                else:
+                    placeholder = QtWidgets.QTreeWidgetItem(["Load runs..."])
+                    placeholder.setDisabled(True)
+                    page_item.addChild(placeholder)
+        else:
+            for dataset in direct_datasets:
+                dataset_found = self._add_dataset_tree_item(
+                    parent_item,
+                    group,
+                    dataset,
+                    select_dataset=select_dataset,
+                    select_mask=select_mask,
+                    select_background=select_background,
+                )
+                if dataset_found is not None and found is None:
+                    found = dataset_found
 
         group_backgrounds_item = QtWidgets.QTreeWidgetItem(["Backgrounds"])
         group_backgrounds_item.setToolTip(
             0,
             "Background histograms subtracted after the enabled datasets in this group are combined.",
         )
-        _set_tree_item_icon(group_backgrounds_item, "folder")
+        _set_tree_item_icon(group_backgrounds_item, "background_folder")
         self._remember_item(
             group_backgrounds_item, "group_backgrounds", group, node=node
         )
@@ -14092,42 +14126,158 @@ class NfitProjectExplorer:
                 found = child_found
             if select_dataset_group is subgroup and found is None:
                 found = subgroup_item
-            subgroup_item.setExpanded(self._expanded_state.get(("dataset_group", id(subgroup)), True))
+            default_expanded = len(subgroup.datasets) <= TREE_DATASET_COMPACT_THRESHOLD
+            subgroup_item.setExpanded(
+                self._expanded_state.get(
+                    ("dataset_group", id(subgroup)), default_expanded
+                )
+            )
             gmasks_item.setExpanded(self._expanded_state.get(("group_masks", id(subgroup)), False))
         return found
+
+    def _add_dataset_tree_item(
+        self,
+        parent_item: Any,
+        group: DataGroup,
+        dataset: DatasetEntry,
+        *,
+        select_dataset: DatasetEntry | None = None,
+        select_mask: MaskSpec | None = None,
+        select_background: BackgroundSpec | None = None,
+    ) -> Any | None:
+        """Add one fully interactive dataset item and return a matched child."""
+
+        from PySide6 import QtCore, QtWidgets
+
+        found = None
+        dataset_item = QtWidgets.QTreeWidgetItem([dataset.name])
+        dataset_item.setFlags(dataset_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
+        _set_tree_item_icon(dataset_item, "dataset")
+        self._remember_item(dataset_item, "dataset", group, dataset)
+        _style_enabled_tree_item(dataset_item, dataset.enabled)
+        parent_item.addChild(dataset_item)
+        masks_item = QtWidgets.QTreeWidgetItem(["Masks"])
+        _set_tree_item_icon(masks_item, "mask_folder")
+        _style_enabled_tree_item(masks_item, dataset.enabled)
+        self._remember_item(masks_item, "masks", group, dataset)
+        dataset_item.addChild(masks_item)
+        for mask in dataset.masks:
+            mask_item = QtWidgets.QTreeWidgetItem([mask.name])
+            mask_item.setFlags(mask_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
+            _set_tree_item_icon(mask_item, "mask")
+            self._remember_item(mask_item, "mask", group, dataset, mask)
+            _style_enabled_tree_item(mask_item, mask.enabled)
+            masks_item.addChild(mask_item)
+            if select_mask is mask and found is None:
+                found = mask_item
+        backgrounds_item = QtWidgets.QTreeWidgetItem(["Backgrounds"])
+        _set_tree_item_icon(backgrounds_item, "background_folder")
+        _style_enabled_tree_item(backgrounds_item, dataset.enabled)
+        self._remember_item(backgrounds_item, "backgrounds", group, dataset)
+        dataset_item.addChild(backgrounds_item)
+        for background in dataset.backgrounds:
+            background_item = QtWidgets.QTreeWidgetItem([background.name])
+            background_item.setFlags(
+                background_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable
+            )
+            _set_tree_item_icon(background_item, "dataset")
+            self._remember_item(background_item, "background", group, dataset)
+            self._background_item_roles[id(background_item)] = background
+            _style_enabled_tree_item(background_item, background.enabled)
+            backgrounds_item.addChild(background_item)
+            if select_background is background and found is None:
+                found = background_item
+        if select_dataset is dataset and found is None:
+            found = dataset_item
+        dataset_item.setExpanded(self._expanded_state.get(("dataset", id(dataset)), False))
+        masks_item.setExpanded(self._expanded_state.get(("masks", id(dataset)), False))
+        backgrounds_item.setExpanded(
+            self._expanded_state.get(("backgrounds", id(dataset)), False)
+        )
+        return found
+
+    def _populate_dataset_page(
+        self,
+        page_item: Any,
+        *,
+        select_dataset: DatasetEntry | None = None,
+        select_mask: MaskSpec | None = None,
+        select_background: BackgroundSpec | None = None,
+    ) -> Any | None:
+        """Populate one lazy run page, leaving all other pages unloaded."""
+
+        payload = self._dataset_page_roles.get(id(page_item))
+        if payload is None:
+            return None
+        _node, datasets, _start = payload
+        if page_item.childCount() and self._objects_for_item(page_item.child(0))[4] == "dataset":
+            return None
+        page_item.takeChildren()
+        group = self._objects_for_item(page_item)[0]
+        found = None
+        if group is None:
+            return None
+        for dataset in datasets:
+            dataset_found = self._add_dataset_tree_item(
+                page_item,
+                group,
+                dataset,
+                select_dataset=select_dataset,
+                select_mask=select_mask,
+                select_background=select_background,
+            )
+            if dataset_found is not None and found is None:
+                found = dataset_found
+        return found
+
+    def _dataset_page_expanded(self, item: Any) -> None:
+        payload = self._dataset_page_roles.get(id(item))
+        if payload is None:
+            return
+        node, _datasets, start = payload
+        self._expanded_state[("dataset_page", id(node), start)] = True
+        self._populate_dataset_page(item)
+
+    def _dataset_page_collapsed(self, item: Any) -> None:
+        payload = self._dataset_page_roles.get(id(item))
+        if payload is None:
+            return
+        node, _datasets, start = payload
+        self._expanded_state[("dataset_page", id(node), start)] = False
 
     def _current_expanded_state(self) -> dict[tuple[Any, ...], bool]:
         state: dict[tuple[Any, ...], bool] = {}
         if self.tree is None:
             return state
+
+        def visit(item: Any) -> None:
+            group, dataset, _mask, _model, role = self._objects_for_item(item)
+            node = self._dataset_group_for_item(item)
+            if role == "group" and group is not None:
+                state[("group", id(group))] = item.isExpanded()
+            elif role in {"datasets", "models", "fits", "analyses", "plots"} and group is not None:
+                state[(role, id(group))] = item.isExpanded()
+            elif role == "dataset_group" and node is not None:
+                state[("dataset_group", id(node))] = item.isExpanded()
+            elif role in {"group_masks", "group_backgrounds"} and node is not None:
+                state[(role, id(node))] = item.isExpanded()
+            elif role == "dataset" and dataset is not None:
+                state[("dataset", id(dataset))] = item.isExpanded()
+            elif role in {"masks", "backgrounds"} and dataset is not None:
+                state[(role, id(dataset))] = item.isExpanded()
+            elif role == "dataset_page":
+                payload = self._dataset_page_roles.get(id(item))
+                if payload is not None:
+                    page_node, _datasets, start = payload
+                    state[("dataset_page", id(page_node), start)] = item.isExpanded()
+            fit_entry = self._fit_entry_for_item(item)
+            if fit_entry is not None:
+                state[("fit", id(fit_entry))] = item.isExpanded()
+            for child_index in range(item.childCount()):
+                visit(item.child(child_index))
+
         for index in range(self.tree.topLevelItemCount()):
-            group_item = self.tree.topLevelItem(index)
-            group, _entry, _mask, _model, role = self._objects_for_item(group_item)
-            if role != "group" or group is None:
-                continue
-            state[("group", id(group))] = group_item.isExpanded()
-            for child_index in range(group_item.childCount()):
-                child = group_item.child(child_index)
-                _child_group, _child_entry, _child_mask, _child_model, child_role = self._objects_for_item(child)
-                if child_role in {"datasets", "models"}:
-                    state[(child_role, id(group))] = child.isExpanded()
-                if child_role == "fits":
-                    state[("fits", id(group))] = child.isExpanded()
-                    self._collect_fit_expanded_state(child, state)
-                if child_role == "datasets":
-                    for dataset_index in range(child.childCount()):
-                        dataset_item = child.child(dataset_index)
-                        _group, dataset, _mask, _model, dataset_role = self._objects_for_item(dataset_item)
-                        if dataset_role != "dataset" or dataset is None:
-                            continue
-                        state[("dataset", id(dataset))] = dataset_item.isExpanded()
-                        for mask_parent_index in range(dataset_item.childCount()):
-                            masks_item = dataset_item.child(mask_parent_index)
-                            _group, masks_dataset, _mask, _model, masks_role = self._objects_for_item(masks_item)
-                            if masks_role == "masks" and masks_dataset is not None:
-                                state[("masks", id(masks_dataset))] = masks_item.isExpanded()
-                            elif masks_role == "backgrounds" and masks_dataset is not None:
-                                state[("backgrounds", id(masks_dataset))] = masks_item.isExpanded()
+            visit(self.tree.topLevelItem(index))
         return state
 
     def _collect_fit_expanded_state(self, item: Any, state: dict[tuple[Any, ...], bool]) -> None:
@@ -14395,6 +14545,17 @@ class NfitProjectExplorer:
         elif role == "datasets" and group is not None:
             self.title_label.setText(f"{group.name} / Datasets")
             self._set_dataset_collection_details(group, group)
+        elif role == "dataset_page":
+            payload = self._dataset_page_roles.get(id(self._current_item()))
+            if payload is not None:
+                _node, datasets, start = payload
+                end = start + len(datasets)
+                self.title_label.setText(f"Runs {start + 1}-{end}")
+                self._set_details_text(
+                    f"Lazy run page\n\nRuns {start + 1}-{end}\n"
+                    f"First: {datasets[0].name}\nLast: {datasets[-1].name}\n\n"
+                    "Expand this page to inspect or edit individual runs."
+                )
         elif role == "dataset" and entry is not None:
             self.title_label.setText(entry.name)
             self._set_dataset_details(entry, group)
@@ -16010,24 +16171,121 @@ class NfitProjectExplorer:
         self._mark_dirty()
 
     def _group_dataset_weights_group_box(self, group: DataGroup | _CompositeScope) -> Any:
-        from PySide6 import QtWidgets
+        from PySide6 import QtCore, QtWidgets
 
-        box = QtWidgets.QGroupBox("Datasets")
-        layout = QtWidgets.QGridLayout(box)
+        node = group.node if isinstance(group, _CompositeScope) else group
+        datasets = list(node.datasets)
+        child_groups = list(node.subgroups)
+        showing_children = not datasets and bool(child_groups)
+        box = QtWidgets.QGroupBox(
+            "Child collections" if showing_children else "Datasets"
+        )
+        layout = QtWidgets.QVBoxLayout(box)
         layout.setContentsMargins(10, 8, 10, 8)
-        headers = ["Name", "Type", "Points", "Fit weight", "Scale"]
-        for column, label in enumerate(headers):
-            layout.addWidget(QtWidgets.QLabel(label), 0, column)
-        for row, dataset in enumerate(group.iter_datasets(), start=1):
-            layout.addWidget(QtWidgets.QLabel(dataset.name), row, 0)
-            layout.addWidget(QtWidgets.QLabel(data_type_label(dataset.data_type)), row, 1)
-            layout.addWidget(QtWidgets.QLabel(_format_number(_dataset_data_point_count(dataset))), row, 2)
-            layout.addWidget(QtWidgets.QLabel(_format_number(dataset.fit_weight)), row, 3)
-            layout.addWidget(QtWidgets.QLabel(_format_number(dataset.scale_factor)), row, 4)
+        table = QtWidgets.QTableWidget()
+        table.setObjectName(
+            "group_child_collections_table"
+            if showing_children
+            else "group_datasets_table"
+        )
+        table.setToolTip(
+            "A bounded view of direct datasets, or a hierarchy-preserving view of immediate child collections."
+        )
+        table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setAlternatingRowColors(True)
+        table.verticalHeader().setVisible(False)
+        table.setMinimumHeight(120)
+        table.setMaximumHeight(320)
+        table.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
+
+        if showing_children:
+            table.setColumnCount(5)
+            table.setHorizontalHeaderLabels(
+                ["Name", "Role", "Direct datasets", "Total datasets", "Enabled"]
+            )
+            table.setRowCount(len(child_groups))
+            for row, child in enumerate(child_groups):
+                scope = _composite_scope(_composite_root(group), child)
+                values = (
+                    child.name,
+                    "Live composite" if data_group_composite_enabled(scope) else "Collection",
+                    str(len(child.datasets)),
+                    str(sum(1 for _dataset in child.iter_datasets())),
+                    "Yes" if child.enabled else "No",
+                )
+                for column, value in enumerate(values):
+                    table.setItem(row, column, QtWidgets.QTableWidgetItem(value))
+            note = QtWidgets.QLabel(
+                "Immediate child collections are shown instead of flattening all descendant runs."
+            )
+            note.setWordWrap(True)
+            note.setToolTip(
+                "Select a child collection in the project tree to inspect its runs or composite settings."
+            )
+            layout.addWidget(note)
+        else:
+            table.setColumnCount(5)
+            table.setHorizontalHeaderLabels(
+                ["Name", "Type", "Points", "Fit weight", "Scale"]
+            )
+            controls = QtWidgets.QHBoxLayout()
+            page_label = QtWidgets.QLabel()
+            page_label.setObjectName("group_datasets_page_label")
+            page_combo = QtWidgets.QComboBox()
+            page_combo.setObjectName("group_datasets_page")
+            page_combo.setToolTip(
+                "Choose which small page of direct datasets is shown. The full collection remains active."
+            )
+            page_count = max(math.ceil(len(datasets) / DETAIL_DATASET_PAGE_SIZE), 1)
+            for page in range(page_count):
+                start = page * DETAIL_DATASET_PAGE_SIZE
+                end = min(start + DETAIL_DATASET_PAGE_SIZE, len(datasets))
+                page_combo.addItem(f"{start + 1}-{end}", page)
+
+            def populate(page: int) -> None:
+                start = int(page) * DETAIL_DATASET_PAGE_SIZE
+                visible = datasets[start : start + DETAIL_DATASET_PAGE_SIZE]
+                table.setRowCount(len(visible))
+                for row, dataset in enumerate(visible):
+                    values = (
+                        dataset.name,
+                        data_type_label(dataset.data_type),
+                        _format_number(_dataset_data_point_count(dataset)),
+                        _format_number(dataset.fit_weight),
+                        _format_number(dataset.scale_factor),
+                    )
+                    for column, value in enumerate(values):
+                        table.setItem(row, column, QtWidgets.QTableWidgetItem(value))
+                end = start + len(visible)
+                page_label.setText(
+                    f"Showing {start + 1}-{end} of {len(datasets)} direct datasets"
+                    if datasets
+                    else "No direct datasets"
+                )
+
+            page_combo.currentIndexChanged.connect(populate)
+            populate(0)
+            controls.addWidget(page_label)
+            controls.addStretch(1)
+            if page_count > 1:
+                controls.addWidget(QtWidgets.QLabel("Page"))
+                controls.addWidget(page_combo)
+            layout.addLayout(controls)
+
+        table.horizontalHeader().setStretchLastSection(True)
+        table.horizontalHeader().setDefaultAlignment(
+            QtCore.Qt.AlignmentFlag.AlignLeft
+        )
+        table.resizeColumnsToContents()
+        _tooltip_table_corner_buttons(table, "Select all visible rows on this page.")
+        layout.addWidget(table)
         box.setToolTip(
-            "Datasets in this collection. In composite mode each dataset's signal is multiplied by its scale factor, "
-            "its uncertainty by the absolute scale factor, and its statistical contribution by the fit weight. "
-            "Use a negative scale factor to subtract a dataset from the composite."
+            "Direct datasets or immediate child collections. Run-heavy collections are paginated; "
+            "all datasets still participate in the configured composite."
         )
         return box
 
@@ -26878,6 +27136,23 @@ def _format_number(value: Any) -> str:
         return f"{float(value):.6g}"
     except (TypeError, ValueError):
         return str(value)
+
+
+def _dataset_tree_page_label(
+    datasets: Sequence[DatasetEntry],
+    *,
+    start: int,
+    total: int,
+) -> str:
+    """Return a compact, stable label for one lazy dataset page."""
+
+    end = start + len(datasets)
+    if not datasets:
+        return f"Runs {start + 1}-{end} of {total}"
+    first = datasets[0].name
+    last = datasets[-1].name
+    range_text = first if first == last else f"{first} – {last}"
+    return f"Runs {start + 1}-{end} of {total} ({range_text})"
 
 
 def _format_seconds_per_step(value: float) -> str:

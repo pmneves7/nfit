@@ -281,6 +281,7 @@ def test_project_explorer_tree_hierarchy_fonts(monkeypatch):
     fits_item = workspace_item.child(2)
     dataset_item = datasets_item.child(0)
     masks_item = dataset_item.child(0)
+    backgrounds_item = dataset_item.child(1)
     mask_item = masks_item.child(0)
     model_item = models_item.child(0)
     initial_item = fits_item.child(0)
@@ -295,6 +296,7 @@ def test_project_explorer_tree_hierarchy_fonts(monkeypatch):
     assert fits_item.isExpanded()
     assert not dataset_item.isExpanded()
     assert not masks_item.isExpanded()
+    assert not backgrounds_item.isExpanded()
 
     assert workspace_item.font(0).bold()
     assert workspace_item.font(0).underline()
@@ -304,6 +306,7 @@ def test_project_explorer_tree_hierarchy_fonts(monkeypatch):
     for item in (
         dataset_item,
         masks_item,
+        backgrounds_item,
         mask_item,
         model_item,
         initial_item,
@@ -319,6 +322,7 @@ def test_project_explorer_tree_hierarchy_fonts(monkeypatch):
         fits_item,
         dataset_item,
         masks_item,
+        backgrounds_item,
         mask_item,
         model_item,
         initial_item,
@@ -326,6 +330,84 @@ def test_project_explorer_tree_hierarchy_fonts(monkeypatch):
         current_item,
     ):
         assert not item.icon(0).isNull()
+    assert project_gui._TREE_ICON_COLORS["background_folder"] not in {
+        project_gui._TREE_ICON_COLORS[kind]
+        for kind in ("folder", "mask_folder", "model_folder", "fit_folder")
+    }
+
+
+def test_large_dataset_groups_use_lazy_tree_pages_and_paginated_details(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    datasets = [DatasetEntry(f"run {500000 + index}", None) for index in range(125)]
+    runs = DatasetGroup("Rotation runs", datasets=datasets)
+    parent = DatasetGroup("Temperature", subgroups=[runs])
+    group = DataGroup("Workspace1", subgroups=[parent])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer._refresh_tree(select_dataset_group=runs, refresh_viewers=False)
+
+    runs_item = explorer.tree.currentItem()
+    assert runs_item.text(0) == "Rotation runs"
+    assert not runs_item.isExpanded()
+    pages = [
+        runs_item.child(index)
+        for index in range(runs_item.childCount())
+        if explorer._objects_for_item(runs_item.child(index))[4] == "dataset_page"
+    ]
+    assert len(pages) == 3
+    assert all(not page.isExpanded() and page.childCount() == 1 for page in pages)
+    assert pages[0].child(0).text(0) == "Load runs..."
+    assert pages[0].toolTip(0)
+
+    table = explorer.details_widget.findChild(
+        QtWidgets.QTableWidget, "group_datasets_table"
+    )
+    page_combo = explorer.details_widget.findChild(
+        QtWidgets.QComboBox, "group_datasets_page"
+    )
+    assert table is not None and table.toolTip()
+    assert table.rowCount() == 20
+    assert page_combo is not None and page_combo.toolTip()
+    assert page_combo.count() == 7
+
+    pages[0].setExpanded(True)
+    QtWidgets.QApplication.processEvents()
+    assert pages[0].childCount() == 50
+    assert explorer._objects_for_item(pages[0].child(0))[4] == "dataset"
+    assert pages[0].child(0).text(0) == "run 500000"
+    assert not pages[0].child(0).isExpanded()
+
+    explorer.expand_all()
+    assert runs_item.isExpanded()
+    assert all(not page.isExpanded() for page in pages)
+    assert not pages[0].child(0).isExpanded()
+
+
+def test_parent_dataset_details_show_immediate_children_not_flattened_runs(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    first = DatasetGroup(
+        "34",
+        datasets=[DatasetEntry(f"run {index}", None) for index in range(30)],
+    )
+    second = DatasetGroup(
+        "70",
+        datasets=[DatasetEntry(f"run {index}", None) for index in range(20)],
+    )
+    parent = DatasetGroup("Low temperature", subgroups=[first, second])
+    group = DataGroup("Workspace1", subgroups=[parent])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer._refresh_tree(select_dataset_group=parent, refresh_viewers=False)
+
+    table = explorer.details_widget.findChild(
+        QtWidgets.QTableWidget, "group_child_collections_table"
+    )
+    assert table is not None and table.toolTip()
+    assert table.rowCount() == 2
+    assert [table.item(row, 0).text() for row in range(2)] == ["34", "70"]
+    assert [table.item(row, 3).text() for row in range(2)] == ["30", "20"]
 
 
 def test_project_explorer_opens_and_reloads_independent_group_slice_viewers(monkeypatch):

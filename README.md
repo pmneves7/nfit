@@ -12,7 +12,7 @@ The package provides:
 - powder-cut, MPMS magnetization, PPMS heat-capacity, and tabular imports;
 - masking, coverage-aware symmetry/rebinning and composites, backgrounds, and
   non-destructive analyses, including live hierarchical composites and editable
-  histogram sums or differences;
+  histogram sums or differences, with lazy navigation for run-heavy projects;
 - local, MMP, generalized-paramagnon/damped-mode, conserved-ferromagnetic,
   relaxational or inertial Heisenberg-RPA, and coupled-susceptibility models
   for inelastic, quasistatic elastic, and optional bulk-response comparisons,
