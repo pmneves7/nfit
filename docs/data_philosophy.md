@@ -15,8 +15,9 @@ instrument or file format.
   record recipe hashes, input fingerprints, and relative artifact manifests.
 - **Project state is portable and inspectable.** A `.nfit` file is a ZIP
   container whose `project.json` manifest records datasets, model sessions, fit
-  results, plots, and analysis provenance. Array-valued analysis artifacts are
-  stored under `assets/` in the same file.
+  results, plots, and analysis provenance. Array-valued analysis outputs and
+  explicitly materialized composites are stored under `assets/` in the same
+  file; large composite materializations load lazily.
 - **Dataset identity is unique.** Importing or copying a dataset assigns a new
   ID, even when the source file is the same. Project loading rejects duplicate
   IDs because analysis and background references would otherwise be ambiguous.
@@ -171,6 +172,11 @@ wavelength-dependent detector-efficiency correction and the $k_i/k_f$
 kinematic correction. In SHIVER-compatible imports, vanadium supplies a binary
 detector mask rather than signal weights. nfit masks are applied afterward
 through the ordinary group mask path.
+
+The native MDEvent reducer can accumulate either a projected four-dimensional
+HKLE grid or a radial $|\mathbf Q|,E$ grid. Radial reduction uses each event's
+momentum magnitude and integrates the same detector trajectories through
+powder bins; sample-goniometer rotations do not affect $|\mathbf Q|$.
 
 Detector coverage and event count are distinct. A covered bin with no events
 is a measured zero; a bin without detector coverage is masked. Because an empty

@@ -187,6 +187,13 @@ Rebinning affects both viewing and fitting. It supports:
 - point-group symmetry expansion; and
 - bounded batch sizes for temporary working memory.
 
+An imported MDEvent collection can reduce directly either to a projected
+single-crystal HKLE histogram or to a powder $|\mathbf Q|,E$ histogram. Both
+paths accumulate event weights and use proton charge plus detector-trajectory
+coverage for normalization. The powder path bins radially without first
+allocating a sparse four-dimensional volume, which is the appropriate route
+for a fixed-angle environment/background run.
+
 Masks are applied before binning. Automatic rebinning is used for modest jobs;
 larger jobs remain pending until **Rebin now** or until an operation requires
 current rebinned data. The batch target controls temporary work, not the
@@ -207,12 +214,20 @@ their populated-bin behavior is unchanged.
 
 **Copy settings** and **Paste settings** transfer compatible rebin recipes.
 **Create dataset from rebin** materializes an independent project dataset.
+For a dataset collection, **Create dataset from composite** stores the current
+composite inside the `.nfit` archive. Project-owned materializations load lazily
+when the project is reopened and can serve as a downstream composite input or
+background without keeping the source event files in memory.
 
 A composite combines compatible enabled descendants into one effective
 dataset. Each source signal and uncertainty receive its positive dataset
 calibration scale, then the sources are averaged using their fit weights. Use a
-dataset or group background for subtraction. When a composite is active, its
-constituents are not fitted separately.
+dataset or group background for subtraction. Gridded MDEvent outputs also carry
+their detector-trajectory normalization denominator. Select **Normalization
+denominator** averaging when combining separately reduced angle ranges to
+reproduce numerator/denominator accumulation rather than an arithmetic or
+inverse-variance mean. When a composite is active, its constituents are not
+fitted separately.
 
 ## Masks
 
@@ -232,8 +247,9 @@ pressing **Apply masks now** always resolves pending masks first.
 
 ## Backgrounds
 
-A dataset or composite can subtract one or more powder-inelastic backgrounds.
-Each background has an enabled state, scale, and linear or nearest interpolation.
+A dataset or composite can subtract one or more gridded backgrounds. Each
+background has an enabled state and scale. Powder backgrounds also select
+linear or nearest interpolation.
 
 For a single-crystal target, nfit interpolates the powder background in
 $|Q|$ and energy and propagates independent uncertainties:
@@ -245,6 +261,13 @@ $$
 
 where $a$ is the background scale. Values outside the background domain are
 masked rather than extrapolated.
+
+For a single-crystal background, reduce sample and background independently
+onto identical axes and bins. nfit then subtracts corresponding bins without
+interpolation and uses the same variance equation above. A mismatched shape,
+axis name, unit, or edge is rejected explicitly. This supports environments
+measured over comparable angle ranges; materialize each composite first, then
+attach the background materialization to the sample collection.
 
 A dataset background is applied before that dataset's scale. A group background
 is subtracted once after the group composite is formed. Use **Spherical

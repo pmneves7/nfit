@@ -9,6 +9,87 @@ from .analysis.coordinates import q_modulus_for_spectral
 from .mdhisto import MDHistoData, mdhisto_measured_bins
 
 
+def subtract_aligned_background(
+    data: MDHistoData,
+    background: MDHistoData,
+    *,
+    scale: float = 1.0,
+) -> MDHistoData:
+    """Subtract an independently measured histogram on identical axes."""
+
+    if data.shape != background.shape or len(data.axes) != len(background.axes):
+        raise ValueError("aligned background subtraction requires identical shapes")
+    for data_axis, background_axis in zip(data.axes, background.axes, strict=True):
+        if (
+            data_axis.name != background_axis.name
+            or data_axis.units != background_axis.units
+            or data_axis.values.shape != background_axis.values.shape
+            or not np.allclose(
+                data_axis.values,
+                background_axis.values,
+                rtol=1.0e-10,
+                atol=1.0e-12,
+            )
+        ):
+            raise ValueError(
+                "aligned background subtraction requires identical axis names, units, and bins"
+            )
+    measured = (
+        mdhisto_measured_bins(data)
+        & mdhisto_measured_bins(background)
+        & np.isfinite(data.signal)
+        & np.isfinite(data.errors)
+        & np.isfinite(background.signal)
+        & np.isfinite(background.errors)
+    )
+    factor = float(scale)
+    signal = np.asarray(data.signal, dtype=float) - factor * np.asarray(
+        background.signal, dtype=float
+    )
+    variance = np.square(np.asarray(data.errors, dtype=float)) + factor**2 * np.square(
+        np.asarray(background.errors, dtype=float)
+    )
+    metadata = dict(data.metadata)
+    history = list(metadata.get("background_subtractions", []))
+    history.append(
+        {
+            "scale": factor,
+            "interpolation": "aligned",
+            "source": background.metadata.get("source_file"),
+        }
+    )
+    metadata["background_subtractions"] = history
+    return replace(
+        data,
+        signal=np.where(measured, signal, np.nan),
+        errors=np.where(measured, np.sqrt(np.maximum(variance, 0.0)), np.nan),
+        mask=np.asarray(data.mask, dtype=bool) | ~measured,
+        num_events=np.minimum(data.num_events, background.num_events),
+        metadata=metadata,
+    )
+
+
+def subtract_background(
+    data: MDHistoData,
+    background: MDHistoData,
+    *,
+    scale: float = 1.0,
+    interpolation: str = "linear",
+) -> MDHistoData:
+    """Subtract either a powder background or an exactly aligned histogram."""
+
+    try:
+        _powder_dimensions(background)
+    except ValueError:
+        return subtract_aligned_background(data, background, scale=scale)
+    return subtract_powder_background(
+        data,
+        background,
+        scale=scale,
+        interpolation=interpolation,
+    )
+
+
 def subtract_powder_background(
     data: MDHistoData,
     background: MDHistoData,

@@ -6,6 +6,7 @@ from nfit import (
     NfitProject,
     append_mdevent_file,
     bin_mdevent_group,
+    bin_mdevent_powder_group,
     estimate_mdevent_peak_memory,
     inspect_mdevent_workspace,
     load_detector_normalization,
@@ -154,6 +155,29 @@ def test_native_mdevent_binning_uses_proton_charge_and_vanadium_coverage(tmp_pat
     assert not result.mask.item()
     assert result.metadata["signal_semantics"] == "density"
     assert result.metadata["signal_semantics_source"] == "nfit_mdevent_reduction"
+
+
+def test_native_mdevent_powder_binning_uses_radial_trajectory_normalization(tmp_path):
+    source = tmp_path / "events.nxs"
+    _write_mdevent(source)
+    group = mdevent_dataset_group(source)
+
+    result = bin_mdevent_powder_group(
+        group,
+        lower=[0.0, -1.0],
+        upper=[1.0, 1.0],
+        num_bins=[1, 1],
+    )
+
+    assert result.shape == (1, 1)
+    assert result.axes[0].name == "|Q|"
+    np.testing.assert_allclose(result.signal, [[1.0 / 3.0]])
+    np.testing.assert_allclose(result.errors, [[np.sqrt(2.0) / 6.0]])
+    np.testing.assert_allclose(result.num_events, [[2.0]])
+    assert not result.mask.item()
+    assert result.metadata["signal_semantics_source"] == (
+        "nfit_mdevent_powder_reduction"
+    )
 
 
 def test_native_mdevent_covered_zero_bins_are_finite_measured_zeros(tmp_path):
@@ -314,6 +338,11 @@ def test_mdevent_group_gui_exposes_shared_setup_and_defaults_manual(tmp_path, mo
     config = data_group_composite_config(_composite_scope(root, subgroup))
     assert config["auto_rebin"] is False
     assert len(config["axes"]) == 4
+    coordinate_mode = explorer.details_widget.findChild(
+        QtWidgets.QComboBox, "group_composite_coordinate_mode"
+    )
+    assert coordinate_mode is not None and coordinate_mode.toolTip()
+    assert coordinate_mode.currentData() == "hkle"
     vector = explorer.details_widget.findChild(QtWidgets.QLineEdit, "group_composite_axis_vector_0")
     assert vector is not None and vector.toolTip()
     vector.setText("[1, 1, 0, 0]")
@@ -327,6 +356,11 @@ def test_mdevent_group_gui_exposes_shared_setup_and_defaults_manual(tmp_path, mo
     ei.setValue(12.5)
     assert subgroup.metadata["mdevent"]["incident_energy_override"] == 12.5
     assert config["stale"] is True
+    explorer._set_group_composite_coordinate_mode(
+        _composite_scope(root, subgroup), "powder"
+    )
+    assert config["coordinate_mode"] == "powder"
+    assert [axis["name"] for axis in config["axes"]] == ["|Q|", "DeltaE"]
 
 
 def test_mdevent_rebin_warns_before_estimated_ram_overcommit(tmp_path, monkeypatch):

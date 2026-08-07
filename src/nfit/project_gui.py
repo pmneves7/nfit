@@ -19,12 +19,12 @@ from typing import Any
 
 import numpy as np
 
-from .analysis.artifacts import read_project_dataset_artifact
+from .analysis.artifacts import dataset_artifact_bytes, read_project_dataset_artifact
 from .analysis.coordinates import signal_semantics
 from .analysis.core import AnalysisEntry, AnalysisOutputRef
 from .analysis.fingerprint import dataset_entry_fingerprint, recipe_hash
 from .analysis.registry import analysis_definition, default_analysis_parameters
-from .backgrounds import subtract_powder_background
+from .backgrounds import subtract_background
 from .cache_utils import lru_store as _lru_store
 from .dataset import PointData4D, PointListData
 from .fit_config import (
@@ -64,6 +64,7 @@ from .importers import (
 from .mdevent import (
     assess_mdevent_memory,
     bin_mdevent_group,
+    bin_mdevent_powder_group,
     inspect_mdevent_workspace,
     is_mdevent_file,
     load_mdevent_run_points,
@@ -106,6 +107,7 @@ from .project_archive import (
     project_artifact_exists,
     project_artifact_size,
     read_project_manifest,
+    replace_dataset_artifact,
     write_project_manifest,
 )
 from .project_io import (
@@ -176,6 +178,7 @@ REBIN_SETTINGS_KEYS = (
     "symmetry",
     REBIN_RESOLUTION_MODE_KEY,
     "coordinate_basis_version",
+    "coordinate_mode",
 )
 REBIN_AUTO_MAX_CONTRIBUTIONS = 5_000_000
 REBIN_AUTO_MAX_OUTPUT_BINS = 2_000_000
@@ -2501,7 +2504,11 @@ def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str,
         config["symmetry"] = symmetry_config(SymmetrySpec())
     if config.get(REBIN_RESOLUTION_MODE_KEY) not in {"step", "bins"}:
         config[REBIN_RESOLUTION_MODE_KEY] = "step"
-    if config.get("mean_weighting") not in {"inverse_variance", "uniform"}:
+    if config.get("mean_weighting") not in {
+        "inverse_variance",
+        "uniform",
+        "normalization",
+    }:
         config["mean_weighting"] = "inverse_variance"
     config["minimum_coverage"] = _rebin_minimum_coverage(config)
     try:
@@ -2512,26 +2519,65 @@ def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str,
     mdevent = group.metadata.get("mdevent") if isinstance(group.metadata, dict) else None
     raw_dgs = group.metadata.get("raw_dgs") if isinstance(group.metadata, dict) else None
     event_config = mdevent if isinstance(mdevent, dict) else raw_dgs if isinstance(raw_dgs, dict) else None
+    coordinate_mode = str(config.get("coordinate_mode", "hkle"))
+    if coordinate_mode not in {"hkle", "powder"} or (
+        coordinate_mode == "powder" and not isinstance(mdevent, dict)
+    ):
+        coordinate_mode = "hkle"
+    config["coordinate_mode"] = coordinate_mode
     axes = config.get("axes")
     if isinstance(event_config, dict):
         dimensions = list(event_config.get("dimensions", []))
         hkl_bounds = list(event_config.get("hkl_bounds", []))
-        names = ("H", "K", "L", "DeltaE")
-        default_axes = []
-        for index, name in enumerate(names):
-            source_dim = dimensions[index] if index < len(dimensions) else {}
-            bounds = hkl_bounds[index] if index < len(hkl_bounds) else None
-            lower = float(bounds[0] if bounds is not None else source_dim.get("lower", -5.0 if index < 3 else -50.0))
-            upper = float(bounds[1] if bounds is not None else source_dim.get("upper", 5.0 if index < 3 else 50.0))
-            default_axes.append({
-                "name": name,
-                "variable": ("H", "K", "L", "E")[index],
-                "vector": _identity_vector(index, 4),
-                "lower": lower,
-                "upper": upper,
-                "num_bins": 50 if index == 3 else 20,
-                "step_size": (upper - lower) / (50.0 if index == 3 else 20.0),
-            })
+        if coordinate_mode == "powder":
+            q_limits = []
+            for index in range(3):
+                source_dim = dimensions[index] if index < len(dimensions) else {}
+                q_limits.append(
+                    max(
+                        abs(float(source_dim.get("lower", 0.0))),
+                        abs(float(source_dim.get("upper", 0.0))),
+                    )
+                )
+            q_upper = float(np.linalg.norm(q_limits)) or 5.0
+            energy = dimensions[3] if len(dimensions) > 3 else {}
+            energy_lower = float(energy.get("lower", -50.0))
+            energy_upper = float(energy.get("upper", 50.0))
+            default_axes = [
+                {
+                    "name": "|Q|",
+                    "variable": "Q",
+                    "lower": 0.0,
+                    "upper": q_upper,
+                    "num_bins": 100,
+                    "step_size": q_upper / 100.0,
+                },
+                {
+                    "name": "DeltaE",
+                    "variable": "E",
+                    "lower": energy_lower,
+                    "upper": energy_upper,
+                    "num_bins": 100,
+                    "step_size": (energy_upper - energy_lower) / 100.0,
+                },
+            ]
+        else:
+            names = ("H", "K", "L", "DeltaE")
+            default_axes = []
+            for index, name in enumerate(names):
+                source_dim = dimensions[index] if index < len(dimensions) else {}
+                bounds = hkl_bounds[index] if index < len(hkl_bounds) else None
+                lower = float(bounds[0] if bounds is not None else source_dim.get("lower", -5.0 if index < 3 else -50.0))
+                upper = float(bounds[1] if bounds is not None else source_dim.get("upper", 5.0 if index < 3 else 50.0))
+                default_axes.append({
+                    "name": name,
+                    "variable": ("H", "K", "L", "E")[index],
+                    "vector": _identity_vector(index, 4),
+                    "lower": lower,
+                    "upper": upper,
+                    "num_bins": 50 if index == 3 else 20,
+                    "step_size": (upper - lower) / (50.0 if index == 3 else 20.0),
+                })
     else:
         if not isinstance(axes, list) or not axes:
             reference = _composite_reference_data(group)
@@ -2720,9 +2766,13 @@ def _ensure_dataset_data_loaded(dataset: DatasetEntry) -> Any:
         return dataset.data
     if dataset.kind == "raw_dgs_nexus":
         return None
-    if dataset.metadata.get("derived_from_analysis"):
+    if dataset.metadata.get("derived_from_analysis") or dataset.metadata.get(
+        "project_artifact_path"
+    ):
         project_path = dataset.metadata.get("_project_path")
-        artifact_path = dataset.metadata.get("analysis_artifact_path")
+        artifact_path = dataset.metadata.get("project_artifact_path") or dataset.metadata.get(
+            "analysis_artifact_path"
+        )
         if project_path and artifact_path:
             loaded = read_project_dataset_artifact(project_path, artifact_path)
             loaded = dataset.replace_data(loaded, source_backed=True)
@@ -2821,26 +2871,38 @@ def composite_dataset_data(
             raise ValueError("MDEvent composites must be imported inside a dataset group")
         lower, upper, num_bins = _composite_rebin_bounds(config)
         allow_overcommit = bool(config.pop("_allow_memory_overcommit_once", False))
-        result = bin_mdevent_group(
-            node,
-            lower=lower,
-            upper=upper,
-            num_bins=num_bins,
-            step_size=_composite_rebin_step_sizes(config),
-            datasets=_composite_candidates(group),
-            vectors=[
-                axis.get("vector", _identity_vector(index, 4))
-                for index, axis in enumerate(config.get("axes", []))
-            ],
-            axis_names=[
-                str(axis.get("name", ("H", "K", "L", "DeltaE")[index]))
-                for index, axis in enumerate(config.get("axes", []))
-            ],
-            max_batch_bytes=_rebin_max_batch_bytes(config),
-            enforce_memory_limit=not allow_overcommit,
-            progress_callback=progress_callback,
-            symmetry_operations=_rebin_symmetry_matrices(config, _composite_root(group).lattice_parameters),
-        )
+        if config.get("coordinate_mode") == "powder":
+            result = bin_mdevent_powder_group(
+                node,
+                lower=lower,
+                upper=upper,
+                num_bins=num_bins,
+                step_size=_composite_rebin_step_sizes(config),
+                datasets=_composite_candidates(group),
+                max_batch_bytes=_rebin_max_batch_bytes(config),
+                progress_callback=progress_callback,
+            )
+        else:
+            result = bin_mdevent_group(
+                node,
+                lower=lower,
+                upper=upper,
+                num_bins=num_bins,
+                step_size=_composite_rebin_step_sizes(config),
+                datasets=_composite_candidates(group),
+                vectors=[
+                    axis.get("vector", _identity_vector(index, 4))
+                    for index, axis in enumerate(config.get("axes", []))
+                ],
+                axis_names=[
+                    str(axis.get("name", ("H", "K", "L", "DeltaE")[index]))
+                    for index, axis in enumerate(config.get("axes", []))
+                ],
+                max_batch_bytes=_rebin_max_batch_bytes(config),
+                enforce_memory_limit=not allow_overcommit,
+                progress_callback=progress_callback,
+                symmetry_operations=_rebin_symmetry_matrices(config, _composite_root(group).lattice_parameters),
+            )
     elif kind == "raw_dgs_nexus":
         node = group.node if isinstance(group, _CompositeScope) else group
         if not isinstance(node, DatasetGroup):
@@ -2907,7 +2969,7 @@ def _apply_composite_backgrounds(
     if not backgrounds:
         return data
     if not isinstance(data, MDHistoData):
-        raise TypeError("group powder backgrounds require a gridded composite")
+        raise TypeError("group backgrounds require a gridded composite")
     root = _composite_root(group)
     metadata = dict(data.metadata)
     if root.lattice_parameters and not isinstance(
@@ -2930,9 +2992,9 @@ def _apply_composite_backgrounds(
         )
         if not isinstance(source_data, MDHistoData):
             raise TypeError(
-                f"background {background.name!r} must refer to gridded powder data"
+                f"background {background.name!r} must refer to gridded histogram data"
             )
-        result = subtract_powder_background(
+        result = subtract_background(
             result,
             source_data,
             scale=background.scale,
@@ -3005,6 +3067,63 @@ def composite_dataset_entry(
     )
 
 
+def materialize_composite_dataset(
+    project_path: str | Path,
+    group: DataGroup,
+    node: DataGroup | DatasetGroup | None = None,
+    *,
+    name: str | None = None,
+    progress_callback: Any | None = None,
+) -> DatasetEntry:
+    """Store a current composite as a project-owned, reusable dataset."""
+
+    scope = _composite_scope(group, node)
+    data = composite_dataset_data(scope, progress_callback=progress_callback)
+    if not isinstance(data, MDHistoData):
+        raise TypeError("materialized composites currently require gridded histogram data")
+    source_name = scope.name
+    entry = DatasetEntry(
+        name=_unique_dataset_name(
+            name or f"{source_name} composite", group.dataset_names
+        ),
+        data=data,
+        kind="project_artifact",
+        data_type=(
+            "powder_inelastic" if len(data.axes) == 2 else "single_crystal_inelastic"
+        ),
+        metadata={
+            "materialized_from_composite": {
+                "source_group": source_name,
+                "config": copy.deepcopy(data_group_composite_config(scope)),
+            },
+            "import_status": "loaded",
+        },
+    )
+    artifact_path = replace_dataset_artifact(
+        project_path, entry.id, dataset_artifact_bytes(data)
+    )
+    entry.metadata.update(
+        {
+            "source_file": artifact_path,
+            "project_artifact_path": artifact_path,
+            "_project_path": str(Path(project_path)),
+        }
+    )
+    entry.replace_data(data, source_backed=True)
+    destination = next(
+        (subgroup for subgroup in group.subgroups if subgroup.name == "Materialized data"),
+        None,
+    )
+    if destination is None:
+        # Keep a materialized output from becoming an input to the same
+        # composite on its next refresh. It remains available as a background,
+        # analysis input, or for moving into a downstream collection.
+        destination = DatasetGroup("Materialized data", enabled=False)
+        group.subgroups.append(destination)
+    destination.datasets.append(entry)
+    return entry
+
+
 def _scaled_error_for_weight(dataset: DatasetEntry, errors: np.ndarray) -> np.ndarray:
     return np.asarray(errors, dtype=float) * abs(float(dataset.scale_factor))
 
@@ -3039,6 +3158,7 @@ def _composite_mdhisto_data(
     weight_parts: list[np.ndarray] = []
     coverage_inputs: list[tuple[MDHistoData, np.ndarray]] = []
     first_data: MDHistoData | None = None
+    weighting_mode = _rebin_mean_weighting(config)
     for dataset in _composite_candidates(group):
         data = _source_data_for_group_composite(group, dataset)
         if not isinstance(data, MDHistoData):
@@ -3049,6 +3169,19 @@ def _composite_mdhisto_data(
         coords = np.stack(source_grids, axis=-1)
         coverage_inputs.append((data, coords))
         valid = np.isfinite(data.signal) & np.isfinite(data.errors) & ~np.asarray(data.mask, dtype=bool)
+        normalization_channel = data.auxiliary_channels.get(
+            "normalization_denominator"
+        )
+        if weighting_mode == "normalization":
+            if normalization_channel is None:
+                raise ValueError(
+                    "normalization-weighted compositing requires every input to "
+                    "contain a normalization_denominator channel"
+                )
+            normalization_values = np.asarray(
+                normalization_channel.values, dtype=float
+            )
+            valid &= np.isfinite(normalization_values) & (normalization_values > 0.0)
         if data.num_events is not None:
             valid &= mdhisto_measured_bins(data)
         if not np.any(valid):
@@ -3056,7 +3189,10 @@ def _composite_mdhisto_data(
         scale = float(dataset.scale_factor)
         signal = np.asarray(data.signal[valid], dtype=float) * scale
         errors = _scaled_error_for_weight(dataset, np.asarray(data.errors[valid], dtype=float))
-        weights = _dataset_statistical_weight(dataset, signal.size)
+        if weighting_mode == "normalization":
+            weights = normalization_values[valid] * float(dataset.fit_weight)
+        else:
+            weights = _dataset_statistical_weight(dataset, signal.size)
         coords_parts.append(coords[valid])
         signal_parts.append(signal)
         error_parts.append(errors)
@@ -3077,7 +3213,9 @@ def _composite_mdhisto_data(
         **_rebin_grid_kwargs(config, axes_config),
         fractional=bool(config.get("fractional", True)),
         normalize=True,
-        mean_weighting=_rebin_mean_weighting(config),
+        mean_weighting=(
+            "uniform" if weighting_mode == "normalization" else weighting_mode
+        ),
         max_batch_bytes=_rebin_max_batch_bytes(config),
         progress_callback=progress_callback,
     )
@@ -3129,7 +3267,7 @@ def _composite_mdhisto_data(
             ],
             "fractional": bool(config.get("fractional", True)),
             "normalize": True,
-            "mean_weighting": _rebin_mean_weighting(config),
+            "mean_weighting": weighting_mode,
             "minimum_coverage": _rebin_minimum_coverage(config),
             "max_batch_mb": _rebin_max_batch_mb(config),
             "max_batch_bytes": _rebin_max_batch_bytes(config),
@@ -3148,6 +3286,19 @@ def _composite_mdhisto_data(
     root = _composite_root(group)
     if root.lattice_parameters and "lattice_parameters" not in metadata:
         metadata["lattice_parameters"] = dict(root.lattice_parameters)
+    auxiliary_channels = {
+        "coverage_fraction": MDHistoChannel(
+            coverage,
+            label="Coverage",
+            unit="fraction",
+        )
+    }
+    if weighting_mode == "normalization" and result._normalization is not None:
+        auxiliary_channels["normalization_denominator"] = MDHistoChannel(
+            np.asarray(result._normalization, dtype=float),
+            label="Combined detector-trajectory normalization",
+            unit="arbitrary normalization units",
+        )
     return MDHistoData(
         axes=axes,
         signal=np.asarray(result.binned_data, dtype=float),
@@ -3157,13 +3308,7 @@ def _composite_mdhisto_data(
         coordinate_system=first_data.coordinate_system,
         visual_normalization=first_data.visual_normalization,
         metadata=metadata,
-        auxiliary_channels={
-            "coverage_fraction": MDHistoChannel(
-                coverage,
-                label="Coverage",
-                unit="fraction",
-            )
-        },
+        auxiliary_channels=auxiliary_channels,
     )
 
 
@@ -5940,9 +6085,9 @@ def _apply_dataset_backgrounds(
         )
         if not isinstance(source_data, MDHistoData):
             raise TypeError(
-                f"background {background.name!r} must refer to gridded powder data"
+                f"background {background.name!r} must refer to gridded histogram data"
             )
-        result = subtract_powder_background(
+        result = subtract_background(
             result,
             source_data,
             scale=background.scale,
@@ -6456,7 +6601,11 @@ def _rebin_point_list_data(dataset: DatasetEntry, config: dict[str, Any]) -> Poi
 
 def _rebin_mean_weighting(config: dict[str, Any]) -> str:
     value = config.get("mean_weighting")
-    return str(value) if value in {"inverse_variance", "uniform"} else "inverse_variance"
+    return (
+        str(value)
+        if value in {"inverse_variance", "uniform", "normalization"}
+        else "inverse_variance"
+    )
 
 
 def _rebin_minimum_coverage(config: dict[str, Any]) -> float:
@@ -7590,6 +7739,7 @@ def _mdhisto_with_nfit_masks(
         coordinate_system=data.coordinate_system,
         visual_normalization=data.visual_normalization,
         metadata=metadata,
+        auxiliary_channels=data.auxiliary_channels,
     )
 
 
@@ -8779,17 +8929,32 @@ def _bind_project_analysis_sources(
 ) -> None:
     for group in project.data_groups:
         for dataset in group.iter_datasets():
-            if not dataset.metadata.get("derived_from_analysis"):
+            if not (
+                dataset.metadata.get("derived_from_analysis")
+                or dataset.metadata.get("project_artifact_path")
+            ):
                 continue
-            artifact = dataset.metadata.get("analysis_artifact_path") or dataset.metadata.get(
-                "source_file"
+            artifact = (
+                dataset.metadata.get("project_artifact_path")
+                or dataset.metadata.get("analysis_artifact_path")
+                or dataset.metadata.get("source_file")
             )
             if not artifact:
                 continue
-            dataset.metadata["analysis_artifact_path"] = str(artifact)
+            if dataset.metadata.get("derived_from_analysis"):
+                dataset.metadata["analysis_artifact_path"] = str(artifact)
+            else:
+                dataset.metadata["project_artifact_path"] = str(artifact)
             dataset.metadata["source_file"] = str(artifact)
             dataset.metadata["_project_path"] = str(project_path)
-            if not load_data or dataset.data is not None:
+            # Project-owned composite materializations can be multi-gigabyte.
+            # Keep them lazy on project open; ordinary analysis outputs retain
+            # their historical eager-load behavior for the Analysis Window.
+            if (
+                not load_data
+                or dataset.data is not None
+                or dataset.metadata.get("project_artifact_path")
+            ):
                 continue
             try:
                 data = read_project_dataset_artifact(project_path, str(artifact))
@@ -11015,20 +11180,21 @@ class NfitProjectExplorer:
         candidates = [
             candidate
             for candidate in group.iter_datasets()
-            if candidate is not owner and candidate.data_type == "powder_inelastic"
+            if candidate is not owner
+            and candidate.data_type in {"powder_inelastic", "single_crystal_inelastic"}
         ]
         if not candidates:
             QtWidgets.QMessageBox.information(
                 self.window,
                 "Add background",
-                "This workspace has no powder inelastic dataset. Create an angle-energy background or spherical average first.",
+                "This workspace has no gridded inelastic dataset available as a background.",
             )
             return None
         labels = [candidate.name for candidate in candidates]
         label, accepted = QtWidgets.QInputDialog.getItem(
             self.window,
             "Add background",
-            "Powder background dataset",
+            "Background dataset",
             labels,
             0,
             editable=False,
@@ -11270,6 +11436,59 @@ class NfitProjectExplorer:
         self.refresh_slice_viewer(root)
         self._request_overlay_refresh(root)
         self._sync_details()
+        return True
+
+    def materialize_composite_for_group(
+        self, group: DataGroup | _CompositeScope
+    ) -> bool:
+        """Compute and persist a selected group composite inside the project."""
+
+        from PySide6 import QtWidgets
+
+        if self.project_path is None or not data_group_composite_enabled(group):
+            return False
+        root = _composite_root(group)
+        node = group.node if isinstance(group, _CompositeScope) else root
+        # Commit current configuration before adding an archive asset. Later
+        # project saves preserve that asset atomically.
+        save_project(self.project, self.project_path)
+
+        def task(progress_callback: Any) -> DatasetEntry:
+            return materialize_composite_dataset(
+                self.project_path,
+                root,
+                node,
+                progress_callback=progress_callback,
+            )
+
+        def on_success(entry: DatasetEntry) -> None:
+            self._record_data_group_state_change(root)
+            self._mark_dirty()
+            self._refresh_tree(select_group=root, select_dataset=entry)
+
+        if self._interactive:
+            return self._start_background_task(
+                title="Creating dataset from composite...",
+                failure_title="Create dataset from composite",
+                task=task,
+                on_success=on_success,
+                success_message="Composite dataset was stored in the project.",
+            )
+        progress = self._make_rebin_progress_callback(
+            "Creating dataset from composite..."
+        )
+        try:
+            entry = task(progress)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Create dataset from composite",
+                f"Could not materialize composite dataset:\n{exc}",
+            )
+            return False
+        finally:
+            self._close_rebin_progress(progress)
+        on_success(entry)
         return True
 
     def export_fit_report_for_selection(self) -> bool:
@@ -13676,7 +13895,7 @@ class NfitProjectExplorer:
         group_backgrounds_item = QtWidgets.QTreeWidgetItem(["Backgrounds"])
         group_backgrounds_item.setToolTip(
             0,
-            "Powder backgrounds subtracted after the enabled datasets in this group are combined.",
+            "Background histograms subtracted after the enabled datasets in this group are combined.",
         )
         _set_tree_item_icon(group_backgrounds_item, "folder")
         self._remember_item(
@@ -13689,7 +13908,7 @@ class NfitProjectExplorer:
                 background_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable
             )
             background_item.setToolTip(
-                0, "Powder background applied once to this group's composite."
+                0, "Background histogram applied once to this group's composite."
             )
             _set_tree_item_icon(background_item, "dataset")
             self._remember_item(
@@ -14070,7 +14289,7 @@ class NfitProjectExplorer:
                 self.title_label.setText(f"{owner.name} / Backgrounds")
                 self._set_details_text(
                     f"{len(owner.backgrounds)} background(s)\n\n"
-                    "Enabled powder backgrounds are subtracted once, after this "
+                    "Enabled backgrounds are subtracted once, after this "
                     "group's enabled datasets are combined."
                 )
         elif role == "group_background" and group is not None:
@@ -15093,10 +15312,11 @@ class NfitProjectExplorer:
         from PySide6 import QtWidgets
 
         self._clear_details_panel()
-        box = QtWidgets.QGroupBox("Powder background subtraction")
+        box = QtWidgets.QGroupBox("Background subtraction")
         box.setToolTip(
-            "The selected |Q|-energy dataset is interpolated onto the target grid. "
-            "Its scaled signal is subtracted and its scaled variance is added."
+            "A |Q|-energy source is interpolated onto the target grid. A single-crystal "
+            "source must have identical axes and bins. The scaled signal is subtracted "
+            "and the scaled variance is added."
         )
         layout = QtWidgets.QGridLayout(box)
         enabled = QtWidgets.QCheckBox("Enabled")
@@ -15112,12 +15332,13 @@ class NfitProjectExplorer:
         source_combo = QtWidgets.QComboBox()
         source_combo.setObjectName("background_source_dataset")
         source_combo.setToolTip(
-            "Powder inelastic dataset containing one |Q| axis and one energy-transfer axis."
+            "Powder |Q|-energy data or an identically binned single-crystal histogram."
         )
         candidates = [] if group is None else [
             candidate
             for candidate in group.iter_datasets()
-            if candidate is not owner and candidate.data_type == "powder_inelastic"
+            if candidate is not owner
+            and candidate.data_type in {"powder_inelastic", "single_crystal_inelastic"}
         ]
         for candidate in candidates:
             source_combo.addItem(candidate.name, candidate.id)
@@ -15150,7 +15371,7 @@ class NfitProjectExplorer:
         interpolation.addItem("Linear", "linear")
         interpolation.addItem("Nearest", "nearest")
         interpolation.setToolTip(
-            "Interpolation used to evaluate the powder background at each target |Q| and energy coordinate."
+            "Interpolation used for powder data. Identically binned single-crystal subtraction does not interpolate."
         )
         interpolation.setCurrentIndex(
             max(interpolation.findData(background.interpolation), 0)
@@ -15702,10 +15923,42 @@ class NfitProjectExplorer:
         controls.setVisible(bool(config.get("enabled", False)))
         controls_layout = QtWidgets.QGridLayout(controls)
         controls_layout.setContentsMargins(0, 0, 0, 0)
+        if isinstance(group.metadata.get("mdevent"), dict):
+            coordinate_row = QtWidgets.QHBoxLayout()
+            coordinate_label = QtWidgets.QLabel("Output coordinates")
+            coordinate_combo = QtWidgets.QComboBox()
+            coordinate_combo.setObjectName("group_composite_coordinate_mode")
+            coordinate_combo.addItem("Single crystal (HKLE)", "hkle")
+            coordinate_combo.addItem("Powder (|Q|, DeltaE)", "powder")
+            coordinate_combo.setCurrentIndex(
+                max(coordinate_combo.findData(config.get("coordinate_mode", "hkle")), 0)
+            )
+            coordinate_tooltip = (
+                "Choose a four-dimensional single-crystal HKLE reduction or a direct "
+                "two-dimensional powder |Q|, energy reduction. Both use proton-charge "
+                "and detector-trajectory normalization."
+            )
+            coordinate_label.setToolTip(coordinate_tooltip)
+            coordinate_combo.setToolTip(coordinate_tooltip)
+            coordinate_combo.currentIndexChanged.connect(
+                lambda _index, combo=coordinate_combo: self._set_group_composite_coordinate_mode(
+                    group, str(combo.currentData() or "hkle")
+                )
+            )
+            coordinate_row.addWidget(coordinate_label)
+            coordinate_row.addWidget(coordinate_combo)
+            coordinate_row.addStretch(1)
+            layout.addLayout(coordinate_row)
         axes = config.get("axes", [])
         resolution_mode = _rebin_resolution_mode(config)
         resolution_key = "step_size" if resolution_mode == "step" else "num_bins"
-        show_vectors = isinstance(group.metadata.get("mdevent"), dict) or isinstance(group.metadata.get("raw_dgs"), dict)
+        show_vectors = (
+            config.get("coordinate_mode") != "powder"
+            and (
+                isinstance(group.metadata.get("mdevent"), dict)
+                or isinstance(group.metadata.get("raw_dgs"), dict)
+            )
+        )
         headers = ["Axis"]
         if show_vectors:
             headers.append("Coord axis")
@@ -15787,6 +16040,7 @@ class NfitProjectExplorer:
         )
         mean_combo.addItem("Inverse variance", "inverse_variance")
         mean_combo.addItem("Uniform", "uniform")
+        mean_combo.addItem("Normalization denominator", "normalization")
         mean_combo.setCurrentIndex(max(mean_combo.findData(_rebin_mean_weighting(config)), 0))
         mean_combo.currentIndexChanged.connect(
             lambda _index, combo=mean_combo: self._set_group_composite_mean_weighting(group, str(combo.currentData() or "inverse_variance"))
@@ -15873,6 +16127,17 @@ class NfitProjectExplorer:
         )
         rebin_now_button.clicked.connect(lambda: self.rebin_composite_now(group))
         action_row.addWidget(rebin_now_button)
+        materialize_button = QtWidgets.QPushButton("Create dataset from composite")
+        materialize_button.setObjectName("group_composite_create")
+        materialize_button.setEnabled(can_combine)
+        materialize_button.setToolTip(
+            "Compute this composite and store it inside the nfit project as an independent dataset. "
+            "The materialized result can be used as a background or as an input to a later composite."
+        )
+        materialize_button.clicked.connect(
+            lambda: self.materialize_composite_for_group(group)
+        )
+        action_row.addWidget(materialize_button)
         action_row.addStretch(1)
         controls_layout.addLayout(action_row, len(axes) + 5, 0, 1, len(headers))
         layout.addWidget(controls)
@@ -18211,7 +18476,11 @@ class NfitProjectExplorer:
 
     def _set_group_composite_mean_weighting(self, group: DataGroup | _CompositeScope, value: str) -> None:
         config = data_group_composite_config(group)
-        value = value if value in {"inverse_variance", "uniform"} else "inverse_variance"
+        value = (
+            value
+            if value in {"inverse_variance", "uniform", "normalization"}
+            else "inverse_variance"
+        )
         if _rebin_mean_weighting(config) == value:
             return
         config["mean_weighting"] = value
@@ -18289,6 +18558,23 @@ class NfitProjectExplorer:
                     axis.get("lower", 0.0), axis.get("upper", 0.0), max(int(axis.get("num_bins", 1)), 1)
                 )
         self._mark_dirty()
+
+    def _set_group_composite_coordinate_mode(
+        self, group: DataGroup | _CompositeScope, value: str
+    ) -> None:
+        """Switch an MDEvent composite between HKLE and powder coordinates."""
+
+        mode = "powder" if value == "powder" else "hkle"
+        config = data_group_composite_config(group)
+        if config.get("coordinate_mode") == mode:
+            return
+        config["coordinate_mode"] = mode
+        config.pop("axes", None)
+        data_group_composite_config(group)
+        config["stale"] = True
+        self._record_data_group_state_change(_composite_root(group))
+        self._mark_dirty()
+        self._refresh_tree(select_group=_composite_root(group))
         self._sync_details()
 
     def _set_group_composite_axis_value(self, group: DataGroup | _CompositeScope, index: int, key: str, text: str) -> None:

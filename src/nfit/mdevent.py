@@ -15,7 +15,7 @@ import numpy as np
 
 from . import _parallel
 from .dataset import PointData4D
-from .mdhisto import MDHistoAxis, MDHistoData
+from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
 from .pipeline import DatasetEntry, DatasetGroup
 
 try:
@@ -393,6 +393,8 @@ def bin_mdevent_group(
         axes=axes, signal=signal, errors=errors, mask=mask, num_events=event_count,
         metadata={
             "mdevent": config,
+            "lattice_parameters": dict(config.get("lattice_parameters", {})),
+            "ub_matrix": config.get("ub_matrix"),
             "rebin": {"vectors": basis.tolist()},
             "signal_semantics": "density",
             "signal_semantics_source": "nfit_mdevent_reduction",
@@ -402,7 +404,228 @@ def bin_mdevent_group(
             "event_weight_rms": event_weight_rms,
             "symmetry_operations_hkl": [operation.tolist() for operation in symmetry],
         },
+        auxiliary_channels={
+            "normalization_denominator": MDHistoChannel(
+                normalization,
+                label="Detector-trajectory normalization",
+                unit="arbitrary normalization units",
+            )
+        },
     )
+
+
+def bin_mdevent_powder_group(
+    group: DatasetGroup,
+    *,
+    lower: Iterable[float],
+    upper: Iterable[float],
+    num_bins: Iterable[int],
+    step_size: Iterable[float] | None = None,
+    run_indices: Iterable[int] | None = None,
+    datasets: Iterable[DatasetEntry] | None = None,
+    max_batch_bytes: int = 192 * 1024 * 1024,
+    progress_callback: Any | None = None,
+) -> MDHistoData:
+    """Reduce MDEvents directly onto a powder ``|Q|, DeltaE`` grid.
+
+    The numerator is accumulated from event weights.  The denominator follows
+    the same proton-charge and detector-trajectory normalization as the HKLE
+    reducer, but radial momentum is independent of the sample goniometer.
+    """
+
+    import h5py
+
+    config = group.metadata["mdevent"]
+    selected_runs = list(
+        datasets
+        if datasets is not None
+        else (
+            group.datasets
+            if run_indices is None
+            else (group.datasets[index] for index in run_indices)
+        )
+    )
+    lower_array = np.asarray(tuple(lower), dtype=float)
+    upper_array = np.asarray(tuple(upper), dtype=float)
+    bins_array = np.asarray(tuple(num_bins), dtype=int)
+    if lower_array.shape != (2,) or upper_array.shape != (2,) or bins_array.shape != (2,):
+        raise ValueError("MDEvent powder binning requires |Q| and energy bounds")
+    if lower_array[0] < 0.0:
+        raise ValueError("powder |Q| lower bound must be nonnegative")
+    edges = _requested_edges(lower_array, upper_array, bins_array, step_size)
+    shape = tuple(int(axis_edges.size - 1) for axis_edges in edges)
+    data_sum = np.zeros(shape)
+    variance_sum = np.zeros(shape)
+    event_count = np.zeros(shape)
+    sources = sorted(
+        {str(dataset.metadata["source_file"]) for dataset in selected_runs}
+    )
+    source_sizes: dict[str, int] = {}
+    for source_text in sources:
+        with h5py.File(source_text, "r") as handle:
+            source_sizes[source_text] = int(
+                handle[
+                    f"{config['workspace_path'].strip('/')}/event_data/event_data"
+                ].shape[0]
+            )
+    scan_total = sum(source_sizes.values())
+    processed = 0
+    for source_text in sources:
+        source_runs = [
+            dataset
+            for dataset in selected_runs
+            if str(dataset.metadata["source_file"]) == source_text
+        ]
+        wanted = {
+            int(dataset.metadata["mdevent_experiment_index"]): dataset
+            for dataset in source_runs
+        }
+        with h5py.File(source_text, "r") as handle:
+            values = handle[
+                f"{config['workspace_path'].strip('/')}/event_data/event_data"
+            ]
+            mask_norm = (
+                load_detector_normalization(config["mask_file"])
+                if config.get("mask_file")
+                else None
+            )
+            batch_rows = max(
+                1, min(1_000_000, int(max_batch_bytes) // (9 * 8 * 3))
+            )
+            for start in range(0, values.shape[0], batch_rows):
+                stop = min(start + batch_rows, values.shape[0])
+                block = np.asarray(values[start:stop, :], dtype=float)
+                keep = np.isin(
+                    block[:, EVENT_COLUMNS["experiment_index"]].astype(np.int64),
+                    list(wanted),
+                )
+                if np.any(keep):
+                    chosen = block[keep]
+                    if mask_norm is not None:
+                        detector_values = mask_norm.value_for_ids(
+                            chosen[:, EVENT_COLUMNS["detector_id"]].astype(np.int64)
+                        )
+                        chosen = chosen[detector_values > 0.0]
+                    if chosen.size:
+                        q_modulus = np.linalg.norm(chosen[:, 5:8], axis=1)
+                        coordinates = np.column_stack((q_modulus, chosen[:, 8]))
+                        flat = _flat_bin_indices(coordinates, edges, shape)
+                        valid = flat >= 0
+                        data_sum.ravel()[:] += np.bincount(
+                            flat[valid],
+                            weights=chosen[valid, EVENT_COLUMNS["signal"]],
+                            minlength=data_sum.size,
+                        )
+                        variance_sum.ravel()[:] += np.bincount(
+                            flat[valid],
+                            weights=chosen[valid, EVENT_COLUMNS["error_squared"]],
+                            minlength=data_sum.size,
+                        )
+                        event_count.ravel()[:] += np.bincount(
+                            flat[valid], minlength=data_sum.size
+                        )
+                processed += stop - start
+                if progress_callback is not None:
+                    progress_callback(
+                        {
+                            "stage": "mdevent_scan",
+                            "iteration": processed,
+                            "total": scan_total + 1,
+                            "message": f"reading MDEvents {processed}/{scan_total}",
+                        }
+                    )
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "stage": "mdevent_normalization",
+                "iteration": scan_total,
+                "total": scan_total + 1,
+                "message": "calculating powder detector normalization",
+            }
+        )
+    normalization = _powder_trajectory_normalization(group, selected_runs, edges, shape)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        signal = data_sum / normalization
+        errors = np.sqrt(variance_sum) / normalization
+    covered_zero = (normalization > 0.0) & (event_count == 0.0)
+    total_events = float(np.sum(event_count))
+    event_weight_rms = (
+        float(np.sqrt(np.sum(variance_sum) / total_events))
+        if total_events > 0.0
+        else 1.0
+    )
+    errors[covered_zero] = (
+        FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER
+        * event_weight_rms
+        / normalization[covered_zero]
+    )
+    mask = ~(np.isfinite(signal) & np.isfinite(errors) & (normalization > 0.0))
+    axes = (
+        MDHistoAxis("|Q|", edges[0], "1/angstrom", "momentum", frame="Q modulus"),
+        MDHistoAxis("DeltaE", edges[1], "meV", "energy", frame="General Frame"),
+    )
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "stage": "mdevent_normalization",
+                "iteration": scan_total + 1,
+                "total": scan_total + 1,
+                "message": "MDEvent powder reduction complete",
+            }
+        )
+    return MDHistoData(
+        axes=axes,
+        signal=signal,
+        errors=errors,
+        mask=mask,
+        num_events=event_count,
+        metadata={
+            "mdevent": config,
+            "lattice_parameters": dict(config.get("lattice_parameters", {})),
+            "ub_matrix": config.get("ub_matrix"),
+            "signal_semantics": "density",
+            "signal_semantics_source": "nfit_mdevent_powder_reduction",
+            "normalization_denominator": normalization,
+            "zero_event_bins_are_measured": True,
+            "zero_count_error_model": "feldman_cousins_68_percent_upper_limit_scaled_by_rms_event_weight",
+            "event_weight_rms": event_weight_rms,
+            "powder_reduction": {
+                "coordinates": "|Q|,DeltaE",
+                "normalization": "proton_charge_and_detector_trajectory",
+            },
+        },
+        auxiliary_channels={
+            "normalization_denominator": MDHistoChannel(
+                normalization,
+                label="Detector-trajectory normalization",
+                unit="arbitrary normalization units",
+            )
+        },
+    )
+
+
+def _requested_edges(lower, upper, num_bins, step_size=None):
+    if np.any(~np.isfinite(lower)) or np.any(~np.isfinite(upper)) or np.any(upper <= lower):
+        raise ValueError("binning bounds must be finite and increasing")
+    if np.any(num_bins < 1):
+        raise ValueError("bin counts must be positive")
+    if step_size is None:
+        return [
+            np.linspace(lo, hi, count + 1)
+            for lo, hi, count in zip(lower, upper, num_bins, strict=True)
+        ]
+    steps = np.asarray(tuple(step_size), dtype=float)
+    if steps.shape != lower.shape or np.any(~np.isfinite(steps)) or np.any(steps <= 0.0):
+        raise ValueError("step sizes must be positive and match the requested dimensions")
+    result = []
+    for lo, hi, step in zip(lower, upper, steps, strict=True):
+        axis_edges = np.arange(lo, hi, step)
+        if axis_edges.size == 0 or axis_edges[0] != lo:
+            axis_edges = np.insert(axis_edges, 0, lo)
+        if axis_edges[-1] != hi:
+            axis_edges = np.append(axis_edges, hi)
+        result.append(axis_edges)
+    return result
 
 
 def estimate_mdevent_peak_memory(num_bins, *, max_batch_bytes=192 * 1024 * 1024):
@@ -508,6 +731,72 @@ def _trajectory_normalization(group, datasets, edges, shape, basis_inverse, symm
     return result
 
 
+def _powder_trajectory_normalization(group, datasets, edges, shape):
+    """Accumulate the radial detector-trajectory denominator."""
+
+    import h5py
+
+    config = group.metadata["mdevent"]
+    detector_norm = (
+        load_detector_normalization(config["normalization_file"])
+        if config.get("normalization_file")
+        else None
+    )
+    detector_mask = (
+        load_detector_normalization(config["mask_file"])
+        if config.get("mask_file")
+        else None
+    )
+    result = np.zeros(shape)
+    for source_text in sorted(
+        {str(dataset.metadata["source_file"]) for dataset in datasets}
+    ):
+        source_datasets = [
+            dataset
+            for dataset in datasets
+            if str(dataset.metadata["source_file"]) == source_text
+        ]
+        with h5py.File(source_text, "r") as handle:
+            workspace = handle[config["workspace_path"]]
+            for dataset in source_datasets:
+                index = int(dataset.metadata["mdevent_experiment_index"])
+                experiment = workspace[f"experiment{index}"]
+                detector_ids = np.asarray(
+                    experiment["instrument/physical_detectors/detector_number"][()],
+                    dtype=np.int64,
+                )
+                theta = np.deg2rad(
+                    np.asarray(
+                        experiment["instrument/physical_detectors/polar_angle"][()],
+                        dtype=float,
+                    )
+                )
+                solid = (
+                    np.ones(detector_ids.size)
+                    if detector_norm is None
+                    else detector_norm.value_for_ids(detector_ids)
+                )
+                if detector_mask is not None:
+                    solid[detector_mask.value_for_ids(detector_ids) <= 0.0] = 0.0
+                charge = float(dataset.metadata["proton_charge"])
+                incident_energy = config.get("incident_energy_override") or float(
+                    dataset.metadata["incident_energy"]
+                )
+                energy_bounds = np.asarray(
+                    experiment["logs/processed_histogram_bins/value"][()], dtype=float
+                )
+                for detector_index in np.flatnonzero(solid > 0.0):
+                    _accumulate_powder_detector_trajectory(
+                        result,
+                        edges,
+                        float(theta[detector_index]),
+                        float(incident_energy),
+                        energy_bounds,
+                        charge * float(solid[detector_index]),
+                    )
+    return result
+
+
 def _symmetry_matrices(operations) -> tuple[np.ndarray, ...]:
     if operations is None:
         return (np.eye(3),)
@@ -566,6 +855,52 @@ def _accumulate_detector_trajectory(output, edges, inverse, direction, ei, energ
         flat = _flat_bin_indices(np.asarray([[*hkl, energy]]), edges, output.shape)[0]
         if flat >= 0:
             output.ravel()[flat] += weight * ENERGY_TO_K2 * (second * second - first * first)
+
+
+def _accumulate_powder_detector_trajectory(
+    output, edges, scattering_angle, incident_energy, energy_bounds, weight
+):
+    """Integrate one detector trajectory through radial-Q/energy bins."""
+
+    ki = np.sqrt(max(incident_energy, 0.0) / ENERGY_TO_K2)
+    kf_values = np.sqrt(
+        np.maximum(incident_energy - np.asarray(energy_bounds, dtype=float), 0.0)
+        / ENERGY_TO_K2
+    )
+    low_kf, high_kf = float(np.min(kf_values)), float(np.max(kf_values))
+    cosine = float(np.cos(scattering_angle))
+    sine_squared = max(0.0, 1.0 - cosine * cosine)
+    intersections = [low_kf, high_kf]
+    # q^2 = ki^2 + kf^2 - 2 ki kf cos(theta).  Each radial
+    # boundary can cross a detector trajectory twice.
+    for q_boundary in edges[0]:
+        discriminant = q_boundary * q_boundary - ki * ki * sine_squared
+        if discriminant < 0.0:
+            continue
+        root = np.sqrt(discriminant)
+        intersections.extend((ki * cosine - root, ki * cosine + root))
+    intersections.extend(
+        np.sqrt(np.maximum(incident_energy - edges[1], 0.0) / ENERGY_TO_K2)
+    )
+    points = np.unique(np.clip(np.asarray(intersections), low_kf, high_kf))
+    for first, second in zip(points[:-1], points[1:], strict=True):
+        if second - first <= 1.0e-12:
+            continue
+        middle = 0.5 * (first + second)
+        q_modulus = np.sqrt(
+            max(
+                ki * ki + middle * middle - 2.0 * ki * middle * cosine,
+                0.0,
+            )
+        )
+        energy = incident_energy - ENERGY_TO_K2 * middle * middle
+        flat = _flat_bin_indices(
+            np.asarray([[q_modulus, energy]]), edges, output.shape
+        )[0]
+        if flat >= 0:
+            output.ravel()[flat] += (
+                weight * ENERGY_TO_K2 * (second * second - first * first)
+            )
 
 
 def _flat_bin_indices(coords, edges, shape):

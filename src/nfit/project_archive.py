@@ -11,6 +11,7 @@ from typing import Any
 
 PROJECT_MANIFEST = "project.json"
 ANALYSIS_ASSET_ROOT = PurePosixPath("assets", "analyses")
+DATASET_ASSET_ROOT = PurePosixPath("assets", "datasets")
 ArchiveContent = bytes | Path
 
 
@@ -21,6 +22,16 @@ def analysis_artifact_member(analysis_id: str, filename: str) -> str:
     if not safe_name or safe_name != filename:
         raise ValueError(f"invalid analysis artifact filename {filename!r}")
     return str(ANALYSIS_ASSET_ROOT / analysis_id / safe_name)
+
+
+def dataset_artifact_member(dataset_id: str, filename: str = "data.npz") -> str:
+    """Return the archive member for a project-owned materialized dataset."""
+
+    safe_id = PurePosixPath(dataset_id).name
+    safe_name = PurePosixPath(filename).name
+    if not safe_id or safe_id != dataset_id or not safe_name or safe_name != filename:
+        raise ValueError("invalid project dataset artifact path")
+    return str(DATASET_ASSET_ROOT / safe_id / safe_name)
 
 
 def read_project_manifest(path: str | Path) -> dict[str, Any]:
@@ -109,6 +120,27 @@ def replace_analysis_artifacts(
         filename: analysis_artifact_member(analysis_id, filename)
         for filename in artifacts
     }
+
+
+def replace_dataset_artifact(
+    path: str | Path,
+    dataset_id: str,
+    content: ArchiveContent,
+) -> str:
+    """Atomically store one materialized dataset inside a project archive."""
+
+    target = Path(path)
+    if not target.exists():
+        raise FileNotFoundError(f"save the nfit project before materializing data: {target}")
+    prefix = str(DATASET_ASSET_ROOT / dataset_id) + "/"
+    member = dataset_artifact_member(dataset_id)
+    _rewrite_archive(
+        target,
+        target,
+        {member: content},
+        remove_prefix=prefix,
+    )
+    return member
 
 
 def _rewrite_archive(

@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from nfit.backgrounds import subtract_powder_background
-from nfit.mdhisto import MDHistoAxis, MDHistoData
+from nfit.backgrounds import subtract_background, subtract_powder_background
+from nfit.mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
 from nfit.pipeline import BackgroundSpec, DataGroup, DatasetEntry, DatasetGroup
 from nfit.project_gui import NfitProject, _project_from_dict, _project_to_dict
 
@@ -31,6 +31,42 @@ def test_powder_background_subtraction_propagates_scaled_variance():
     np.testing.assert_allclose(result.signal, [[9.0, 10.0], [11.0, 12.0]])
     np.testing.assert_allclose(result.errors, np.sqrt(2.0))
     assert not np.any(result.mask)
+
+
+def test_aligned_single_crystal_background_requires_matching_grid_and_propagates_variance():
+    axes = (
+        MDHistoAxis("H", np.array([-1.0, 0.0, 1.0]), "r.l.u.", "momentum"),
+        MDHistoAxis("DeltaE", np.array([-1.0, 0.0, 1.0]), "meV", "energy"),
+    )
+    data = MDHistoData(
+        axes,
+        np.full((2, 2), 10.0),
+        np.ones((2, 2)),
+        np.zeros((2, 2), dtype=bool),
+        np.ones((2, 2)),
+    )
+    background = MDHistoData(
+        axes,
+        np.full((2, 2), 4.0),
+        np.full((2, 2), 2.0),
+        np.zeros((2, 2), dtype=bool),
+        np.ones((2, 2)),
+    )
+
+    result = subtract_background(data, background, scale=0.5)
+
+    np.testing.assert_allclose(result.signal, 8.0)
+    np.testing.assert_allclose(result.errors, np.sqrt(2.0))
+    assert result.metadata["background_subtractions"][0]["interpolation"] == "aligned"
+
+    shifted = background.with_updates(
+        axes=(
+            MDHistoAxis("H", np.array([-1.0, 0.1, 1.0]), "r.l.u.", "momentum"),
+            axes[1],
+        )
+    )
+    with pytest.raises(ValueError, match="identical axis"):
+        subtract_background(data, shifted)
 
 
 def test_powder_background_projects_onto_hkle_using_lattice_metadata():
@@ -176,6 +212,44 @@ def test_composite_background_is_excluded_from_inputs_and_subtracted_once():
     np.testing.assert_allclose(result.signal, 9.0)
     np.testing.assert_allclose(result.errors, np.sqrt(1.25))
     assert result.metadata["background_subtractions"][0]["scale"] == 0.5
+
+
+def test_mdhisto_composite_can_weight_by_saved_normalization_denominator():
+    first_data = _powder(np.full((2, 2), 2.0), np.ones((2, 2)))
+    second_data = _powder(np.full((2, 2), 4.0), np.ones((2, 2)))
+    first_data = first_data.with_updates(
+        auxiliary_channels={
+            "normalization_denominator": MDHistoChannel(np.ones((2, 2)))
+        }
+    )
+    second_data = second_data.with_updates(
+        auxiliary_channels={
+            "normalization_denominator": MDHistoChannel(np.full((2, 2), 3.0))
+        }
+    )
+    group = DataGroup(
+        "Workspace",
+        [
+            DatasetEntry("first", first_data, kind="mdhisto"),
+            DatasetEntry("second", second_data, kind="mdhisto"),
+        ],
+    )
+    from nfit import project_gui
+
+    config = project_gui.data_group_composite_config(group)
+    config.update(
+        {
+            "enabled": True,
+            "fractional": False,
+            "mean_weighting": "normalization",
+        }
+    )
+
+    result = project_gui.composite_dataset_data(group)
+
+    np.testing.assert_allclose(result.signal, 3.5)
+    np.testing.assert_allclose(result.errors, np.sqrt(10.0) / 4.0)
+    assert result.metadata["rebin"]["mean_weighting"] == "normalization"
 
 
 def test_project_tree_exposes_background_controls_with_tooltips(monkeypatch):

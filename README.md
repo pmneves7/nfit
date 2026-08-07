@@ -6,7 +6,9 @@ transfer, independently of the originating instrument or file layout.
 
 The package provides:
 
-- native MDHisto, MDEvent, and compatible direct-geometry spectrometer workflows;
+- native MDHisto, single-crystal and direct-powder MDEvent, and compatible
+  direct-geometry spectrometer workflows, with project-owned composite
+  materialization and scaled powder or aligned-histogram background subtraction;
 - powder-cut, MPMS magnetization, PPMS heat-capacity, and tabular imports;
 - masking, coverage-aware symmetry/rebinning and composites, backgrounds, and
   non-destructive analyses;

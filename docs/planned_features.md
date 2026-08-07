@@ -12,9 +12,6 @@ releases. Current behavior is documented in the workflow and API pages.
   resolution API supports identity and Gaussian energy broadening.
 - Add reusable bootstrap and profile-likelihood uncertainty workflows alongside
   covariance estimates and MCMC.
-- Add aligned single-crystal dataset subtraction with uncertainty propagation.
-  Powder-background subtraction and analysis recipes already provide parts of
-  the required infrastructure.
 - Evaluate additional temperature-dependent closures only when their assumptions
   and parameter identifiability can be documented and tested.
 - Extend the magnetic form-factor tables to $5d$ ions (Re, Os, Ir, Pt, W, Ta)

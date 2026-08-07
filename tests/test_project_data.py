@@ -241,6 +241,46 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     assert int(saved["axis_count"]) == 2
 
 
+def test_materialized_composite_round_trips_as_project_owned_dataset(tmp_path):
+    first = DatasetEntry(
+        "first",
+        _tiny_mdhisto_data(2.0),
+        kind="mdhisto",
+        metadata={"source_file": str(tmp_path / "first.npz")},
+    )
+    second = DatasetEntry(
+        "second",
+        _tiny_mdhisto_data(4.0),
+        kind="mdhisto",
+        metadata={"source_file": str(tmp_path / "second.npz")},
+    )
+    group = DataGroup("Workspace", datasets=[first, second])
+    project = NfitProject([group])
+    path = tmp_path / "materialized.nfit"
+    save_project(project, path)
+    config = project_gui.data_group_composite_config(group)
+    config.update({"enabled": True, "fractional": False, "mean_weighting": "uniform"})
+
+    entry = project_gui.materialize_composite_dataset(path, group)
+    save_project(project, path)
+    restored = load_project(path)
+    restored_entry = next(
+        dataset
+        for dataset in restored.data_groups[0].iter_datasets()
+        if dataset.id == entry.id
+    )
+
+    assert restored.data_groups[0].subgroups[-1].name == "Materialized data"
+    assert not restored.data_groups[0].subgroups[-1].enabled
+    assert restored_entry.metadata["project_artifact_path"].startswith(
+        f"assets/datasets/{entry.id}/"
+    )
+    assert restored_entry.data is None
+    restored_data = dataset_for_slice_viewer(restored_entry)
+    assert isinstance(restored_data, MDHistoData)
+    np.testing.assert_allclose(restored_data.signal, 3.0)
+
+
 def test_rebin_settings_copy_and_paste_between_datasets(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
