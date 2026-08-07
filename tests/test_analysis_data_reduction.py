@@ -3,11 +3,39 @@ import numpy as np
 from nfit.analysis.core import AnalysisContext
 from nfit.analysis.data_reduction import (
     angle_energy_background,
+    combine_aligned_histograms,
     separate_bose_elastic,
     spherical_average,
 )
 from nfit.dataset import PointData4D
 from nfit.mdhisto import MDHistoAxis, MDHistoData
+
+
+def test_histogram_arithmetic_propagates_variance_and_masks():
+    axes = (MDHistoAxis("E", np.array([0.0, 1.0, 2.0]), "meV", "energy"),)
+    left = MDHistoData(
+        axes,
+        np.array([10.0, 20.0]),
+        np.array([2.0, 3.0]),
+        np.array([False, False]),
+        np.array([4.0, 4.0]),
+    )
+    right = MDHistoData(
+        axes,
+        np.array([1.0, 2.0]),
+        np.array([4.0, 5.0]),
+        np.array([False, True]),
+        np.array([2.0, 2.0]),
+    )
+
+    result = combine_aligned_histograms(
+        left, right, operation="subtract", right_scale=0.5
+    )
+
+    np.testing.assert_allclose(result.signal[0], 9.5)
+    np.testing.assert_allclose(result.errors[0], np.sqrt(8.0))
+    assert result.mask.tolist() == [False, True]
+    assert result.metadata["histogram_arithmetic"]["right_scale"] == 0.5
 
 
 def _histogram(signal, errors=None):

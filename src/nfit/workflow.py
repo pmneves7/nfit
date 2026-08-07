@@ -487,10 +487,56 @@ def analysis_workflow_script(
 ) -> str:
     """Return an editable script rebuilding and running one analysis."""
 
+    group, analysis = _find_analysis(project, analysis_id)
+    if any(
+        str(source_id).startswith("group-composite:")
+        for source_id in analysis.input_dataset_ids
+    ):
+        project_path = getattr(project, "_project_path", None)
+        if project_path is None:
+            raise WorkflowValidationError(
+                "save the project before exporting a live-composite analysis workflow"
+            )
+        return _project_analysis_workflow_script(
+            Path(project_path), group.name, analysis.id
+        )
+
     return render_workflow_script(
         analysis_workflow_plan(project, analysis_id),
         source_root=source_root,
     )
+
+
+def _project_analysis_workflow_script(
+    project_path: Path,
+    group_name: str,
+    analysis_id: str,
+) -> str:
+    """Render a readable rerun script for a project dependency graph."""
+
+    return f'''"""Rerun an editable nfit analysis with live group-composite inputs."""
+
+from pathlib import Path
+
+from nfit import load_project, run_project_analysis
+
+PROJECT_PATH = Path({str(project_path)!r})
+WORKSPACE_NAME = {group_name!r}
+ANALYSIS_ID = {analysis_id!r}
+
+
+def run():
+    project = load_project(PROJECT_PATH)
+    group = next(item for item in project.data_groups if item.name == WORKSPACE_NAME)
+    analysis = next(item for item in group.analyses if item.id == ANALYSIS_ID)
+    # Edit analysis.parameters or the project recipe before this call if needed.
+    return run_project_analysis(group, analysis)
+
+
+if __name__ == "__main__":
+    result = run()
+    print("Outputs:", ", ".join(result.outputs))
+'''
 
 
 def fit_workflow_script(

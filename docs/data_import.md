@@ -229,6 +229,12 @@ reproduce numerator/denominator accumulation rather than an arithmetic or
 inverse-variance mean. When a composite is active, its constituents are not
 fitted separately.
 
+A parent collection with no direct datasets can combine the live composites of
+its enabled child collections. This is useful for keeping separate angle ranges
+such as `34` and `70` independently configurable while exposing their corrected
+combination as one dataset. Child masks, rebin settings, backgrounds, and scales
+remain visible in the project tree; changing one invalidates the parent result.
+
 ## Masks
 
 File masks and nfit masks remain separate but are combined for fitting. All GUI
@@ -266,8 +272,10 @@ For a single-crystal background, reduce sample and background independently
 onto identical axes and bins. nfit then subtracts corresponding bins without
 interpolation and uses the same variance equation above. A mismatched shape,
 axis name, unit, or edge is rejected explicitly. This supports environments
-measured over comparable angle ranges; materialize each composite first, then
-attach the background materialization to the sample collection.
+measured over comparable angle ranges. A group background can point directly to
+another collection's enabled **live composite**, so sample and background
+recipes remain separately visible and editable without materializing an
+intermediate snapshot.
 
 A dataset background is applied before that dataset's scale. A group background
 is subtracted once after the group composite is formed. Use **Spherical

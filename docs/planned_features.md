@@ -134,8 +134,9 @@ electronic-response implementation.
 ## Reproducible scripting
 
 - Extend the workflow graph to grouped raw direct-geometry and MDEvent
-  reductions, derived-analysis dependencies, workspace composites, group
-  backgrounds, plots, and complete active project state.
+  reductions, portable standalone expansion of live project-composite analysis
+  dependencies, plots, and complete active project state. Composite-backed
+  analysis scripts currently rerun the saved project recipe directly.
 - Add target-specific export from plots, workspaces, and whole
   projects. Each export should contain the dependency closure needed for that
   target, while fit history remains an interactive convenience.

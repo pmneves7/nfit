@@ -159,12 +159,15 @@ def _link_project_backgrounds(project: NfitProject) -> None:
 
 def _link_group_backgrounds(group: DataGroup) -> None:
     by_id = {dataset.id: dataset for dataset in group.iter_datasets()}
+    groups_by_id = {node.id: node for node in group.iter_subgroups()}
     for dataset in by_id.values():
         for background in dataset.backgrounds:
             background.source_entry = by_id.get(background.source_dataset_id)
+            background.source_group = groups_by_id.get(background.source_group_id or "")
     for node in (group, *group.iter_subgroups()):
         for background in node.backgrounds:
             background.source_entry = by_id.get(background.source_dataset_id)
+            background.source_group = groups_by_id.get(background.source_group_id or "")
 
 
 def _validate_unique_dataset_ids(project: NfitProject) -> None:
@@ -228,6 +231,11 @@ def _background_from_dict(payload: dict[str, Any]) -> BackgroundSpec:
     return BackgroundSpec(
         name=str(payload.get("name", "Background")),
         source_dataset_id=str(payload.get("source_dataset_id", "")),
+        source_group_id=(
+            None
+            if payload.get("source_group_id") in (None, "")
+            else str(payload["source_group_id"])
+        ),
         scale=float(payload.get("scale", 1.0)),
         enabled=bool(payload.get("enabled", True)),
         interpolation=str(payload.get("interpolation", "linear")),
@@ -273,11 +281,13 @@ def _dataset_group_from_dict(payload: dict[str, Any]) -> DatasetGroup:
         ],
         resolution=dict(payload.get("resolution", {})),
         metadata=dict(payload.get("metadata", {})),
+        id=str(payload.get("id") or DatasetGroup("").id),
     )
 
 
 def _dataset_group_to_dict(group: DatasetGroup) -> dict[str, Any]:
     return {
+        "id": group.id,
         "name": group.name,
         "datasets": [_dataset_to_dict(dataset) for dataset in group.datasets],
         "subgroups": [_dataset_group_to_dict(sub) for sub in group.subgroups],
@@ -433,6 +443,7 @@ def _background_to_dict(background: BackgroundSpec) -> dict[str, Any]:
     return {
         "name": background.name,
         "source_dataset_id": background.source_dataset_id,
+        "source_group_id": background.source_group_id,
         "scale": float(background.scale),
         "enabled": bool(background.enabled),
         "interpolation": background.interpolation,

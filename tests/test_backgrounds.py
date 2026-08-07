@@ -185,6 +185,99 @@ def test_group_background_specs_round_trip_and_relink_by_dataset_id():
     assert restored_background.source_entry is restored_source
 
 
+def test_group_background_specs_round_trip_and_relink_by_composite_group_id():
+    target = DatasetGroup("Sample")
+    source = DatasetGroup("Powder background")
+    target.backgrounds.append(
+        BackgroundSpec(
+            "Environment",
+            source_group_id=source.id,
+            source_group=source,
+            scale=0.8,
+        )
+    )
+    payload = _project_to_dict(
+        NfitProject(data_groups=[DataGroup("Workspace", subgroups=[target, source])])
+    )
+
+    restored = _project_from_dict(payload)
+    restored_target, restored_source = restored.data_groups[0].subgroups
+    restored_background = restored_target.backgrounds[0]
+
+    assert restored_background.source_dataset_id == ""
+    assert restored_background.source_group_id == restored_source.id
+    assert restored_background.source_group is restored_source
+
+
+def test_parent_composite_recomputes_child_and_live_background_group_recipes():
+    from nfit import project_gui
+
+    sample_data = _powder(np.full((2, 2), 10.0), np.ones((2, 2)))
+    background_data = _powder(np.full((2, 2), 2.0), np.ones((2, 2)))
+    sample = DatasetGroup(
+        "34 sample",
+        datasets=[DatasetEntry("sample", sample_data, kind="mdhisto")],
+    )
+    background = DatasetGroup(
+        "34 powder background",
+        datasets=[DatasetEntry("background", background_data, kind="mdhisto")],
+        enabled=False,
+    )
+    parent = DatasetGroup("Low temperature", subgroups=[sample, background])
+    group = DataGroup("Workspace", subgroups=[parent])
+    for node in (sample, background, parent):
+        config = project_gui.data_group_composite_config(
+            project_gui._composite_scope(group, node)
+        )
+        config.update({"enabled": True, "fractional": False})
+    sample.backgrounds.append(
+        BackgroundSpec(
+            "Powder subtraction",
+            source_group_id=background.id,
+            source_group=background,
+            scale=0.5,
+        )
+    )
+
+    result = project_gui.composite_dataset_data(
+        project_gui._composite_scope(group, parent)
+    )
+    np.testing.assert_allclose(result.signal, 9.0)
+
+    sample.backgrounds[0].scale = 1.5
+    updated = project_gui.composite_dataset_data(
+        project_gui._composite_scope(group, parent)
+    )
+    np.testing.assert_allclose(updated.signal, 7.0)
+
+
+def test_live_group_background_dependency_cycle_is_rejected():
+    from nfit import project_gui
+
+    first = DatasetGroup(
+        "first",
+        datasets=[DatasetEntry("first data", _powder(np.ones((2, 2)), np.ones((2, 2))), kind="mdhisto")],
+    )
+    second = DatasetGroup(
+        "second",
+        datasets=[DatasetEntry("second data", _powder(np.ones((2, 2)), np.ones((2, 2))), kind="mdhisto")],
+    )
+    group = DataGroup("Workspace", subgroups=[first, second])
+    for node in (first, second):
+        project_gui.data_group_composite_config(
+            project_gui._composite_scope(group, node)
+        ).update({"enabled": True, "fractional": False})
+    first.backgrounds.append(
+        BackgroundSpec("second", source_group_id=second.id, source_group=second)
+    )
+    second.backgrounds.append(
+        BackgroundSpec("first", source_group_id=first.id, source_group=first)
+    )
+
+    with pytest.raises(ValueError, match="dependency cycle"):
+        project_gui.composite_dataset_data(project_gui._composite_scope(group, first))
+
+
 def test_composite_background_is_excluded_from_inputs_and_subtracted_once():
     source = DatasetEntry(
         "Powder background",

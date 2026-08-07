@@ -20,6 +20,61 @@ from .core import AnalysisContext
 K_B_MEV_PER_K = 0.08617333262145
 
 
+def combine_aligned_histograms(
+    left: MDHistoData,
+    right: MDHistoData,
+    *,
+    operation: str = "subtract",
+    right_scale: float = 1.0,
+) -> MDHistoData:
+    """Return ``left +/- right_scale * right`` on an identical grid.
+
+    The two inputs are treated as statistically independent. Their source
+    histograms are never modified, so this function can back an editable
+    project analysis recipe.
+    """
+
+    _validate_matching_histograms(left, right)
+    if operation not in {"subtract", "add"}:
+        raise ValueError("operation must be 'subtract' or 'add'")
+    scale = float(right_scale)
+    if not np.isfinite(scale):
+        raise ValueError("right_scale must be finite")
+    sign = -1.0 if operation == "subtract" else 1.0
+    left_signal = np.asarray(left.signal, dtype=float)
+    right_signal = np.asarray(right.signal, dtype=float)
+    left_variance = np.square(np.asarray(left.errors, dtype=float))
+    right_variance = np.square(np.asarray(right.errors, dtype=float))
+    valid = (
+        mdhisto_measured_bins(left)
+        & mdhisto_measured_bins(right)
+        & np.isfinite(left_signal)
+        & np.isfinite(right_signal)
+        & np.isfinite(left_variance)
+        & np.isfinite(right_variance)
+    )
+    signal = left_signal + sign * scale * right_signal
+    variance = left_variance + scale**2 * right_variance
+    metadata = dict(left.metadata)
+    metadata["histogram_arithmetic"] = {
+        "operation": operation,
+        "right_scale": scale,
+        "uncertainty_model": "independent_input_variances",
+    }
+    if left.num_events is not None and right.num_events is not None:
+        num_events = np.minimum(left.num_events, right.num_events)
+    else:
+        num_events = None
+    return left.with_updates(
+        signal=np.where(valid, signal, np.nan),
+        errors=np.where(valid, np.sqrt(np.maximum(variance, 0.0)), np.nan),
+        mask=~valid,
+        num_events=num_events,
+        metadata=metadata,
+        auxiliary_channels={},
+    )
+
+
 def separate_bose_elastic(
     first: MDHistoData,
     second: MDHistoData,

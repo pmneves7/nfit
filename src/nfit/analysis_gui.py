@@ -13,7 +13,11 @@ from .analysis import (
     prepare_analysis_input,
 )
 from .analysis.artifacts import read_project_dataset_artifact
-from .analysis.runner import execute_to_artifacts
+from .analysis.runner import (
+    analysis_source_choices,
+    execute_to_artifacts,
+    prepare_analysis_source,
+)
 from .dataset import PointData4D, PointListData
 from .mdhisto import MDHistoData
 from .pipeline import DatasetEntry, DatasetGroup
@@ -189,9 +193,9 @@ class DataPlaygroundWindow:
         self.secondary_dataset_combo.clear()
         self.secondary_dataset_combo.addItem("No secondary input", None)
         entries = list(group.iter_datasets())
-        for entry in entries:
-            self.dataset_combo.addItem(entry.name, entry.id)
-            self.secondary_dataset_combo.addItem(entry.name, entry.id)
+        for label, source_id in analysis_source_choices(group):
+            self.dataset_combo.addItem(label, source_id)
+            self.secondary_dataset_combo.addItem(label, source_id)
         if dataset in entries:
             self.dataset_combo.setCurrentIndex(entries.index(dataset))
         self.additional_input_ids = [entry.id for entry in entries if entry.kind == "mdevent"]
@@ -721,10 +725,9 @@ class DataPlaygroundWindow:
             if not self.explorer.save_as():
                 return False
         dataset_id = self.dataset_combo.currentData()
-        dataset = next(item for item in self.group.iter_datasets() if item.id == dataset_id)
         try:
-            primary_input = prepare_analysis_input(self.group, dataset)
-        except (OSError, TypeError, ValueError) as exc:
+            primary_input = prepare_analysis_source(self.group, dataset_id)
+        except (KeyError, OSError, TypeError, ValueError) as exc:
             message = (
                 f"Could not prepare the selected dataset for Bragg integration:\n{exc}"
                 if self.operation_combo.currentData() == "bragg_integration"
@@ -739,47 +742,45 @@ class DataPlaygroundWindow:
         parameters = self._parameters()
         if self.operation_combo.currentData() == "bragg_integration" and parameters.get("peak_source") == "table":
             secondary_id = self.secondary_dataset_combo.currentData()
-            secondary = next((item for item in self.group.iter_datasets() if item.id == secondary_id), None)
-            if secondary is None:
+            if secondary_id is None:
                 QtWidgets.QMessageBox.warning(self.window, "Analysis Window", "Select and load a secondary H, K, L peak-table dataset.")
                 return False
-            parameters["peak_table_dataset_id"] = secondary.id
+            parameters["peak_table_dataset_id"] = str(secondary_id)
             try:
-                analysis_inputs.append(prepare_analysis_input(self.group, secondary))
-            except (OSError, TypeError, ValueError) as exc:
+                analysis_inputs.append(prepare_analysis_source(self.group, secondary_id))
+            except (KeyError, OSError, TypeError, ValueError) as exc:
                 QtWidgets.QMessageBox.warning(
                     self.window,
                     "Analysis Window",
                     f"Could not prepare the secondary peak table:\n{exc}",
                 )
                 return False
-        elif self.operation_combo.currentData() == "bose_elastic_separation":
+        elif self.operation_combo.currentData() in {
+            "bose_elastic_separation",
+            "histogram_arithmetic",
+        }:
             secondary_id = self.secondary_dataset_combo.currentData()
-            secondary = next(
-                (item for item in self.group.iter_datasets() if item.id == secondary_id),
-                None,
-            )
-            if secondary is None:
+            if secondary_id is None:
                 QtWidgets.QMessageBox.warning(
                     self.window,
-                    "Bose-Einstein elastic separation",
-                    "Select the second-temperature dataset.",
+                    analysis_definition(self.operation_combo.currentData()).label,
+                    "Select the right-hand input dataset or live composite.",
                 )
                 return False
             try:
-                secondary_input = prepare_analysis_input(self.group, secondary)
-            except (OSError, TypeError, ValueError) as exc:
+                secondary_input = prepare_analysis_source(self.group, secondary_id)
+            except (KeyError, OSError, TypeError, ValueError) as exc:
                 QtWidgets.QMessageBox.warning(
                     self.window,
-                    "Bose-Einstein elastic separation",
-                    f"Could not prepare the second-temperature dataset:\n{exc}",
+                    analysis_definition(self.operation_combo.currentData()).label,
+                    f"Could not prepare the right-hand input:\n{exc}",
                 )
                 return False
             analysis_inputs.append(secondary_input)
         elif self.operation_combo.currentData() == "angle_energy_background":
             selected_ids = list(dict.fromkeys(self.additional_input_ids))
-            if dataset.id not in selected_ids:
-                selected_ids.insert(0, dataset.id)
+            if dataset_id not in selected_ids:
+                selected_ids.insert(0, dataset_id)
             analysis_inputs = []
             for selected_id in selected_ids:
                 selected = next(
@@ -789,7 +790,7 @@ class DataPlaygroundWindow:
                 if selected is None:
                     continue
                 try:
-                    selected_input = prepare_analysis_input(self.group, selected)
+                    selected_input = prepare_analysis_source(self.group, selected.id)
                 except (OSError, TypeError, ValueError) as exc:
                     QtWidgets.QMessageBox.warning(
                         self.window,

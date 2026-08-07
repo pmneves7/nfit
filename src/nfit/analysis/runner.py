@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -22,6 +23,88 @@ from .registry import (
     default_analysis_parameters,
     run_analysis_operation,
 )
+
+COMPOSITE_ANALYSIS_SOURCE_PREFIX = "group-composite:"
+
+
+def composite_analysis_source_id(group, node) -> str:
+    """Return the stable analysis-input reference for a live group composite."""
+
+    suffix = "root" if node is group else node.id
+    return f"{COMPOSITE_ANALYSIS_SOURCE_PREFIX}{suffix}"
+
+
+def analysis_source_choices(group) -> list[tuple[str, str]]:
+    """Return dataset and enabled-composite choices for the Analysis Window."""
+
+    from ..project_gui import _composite_scope, data_group_composite_enabled
+
+    choices = [(dataset.name, dataset.id) for dataset in group.iter_datasets()]
+    for node in (group, *group.iter_subgroups()):
+        scope = _composite_scope(group, node)
+        if data_group_composite_enabled(scope):
+            choices.append(
+                (f"{node.name} [live composite]", composite_analysis_source_id(group, node))
+            )
+    return choices
+
+
+def prepare_analysis_source(group, source_id: str, *, progress_callback=None) -> AnalysisInput:
+    """Prepare either an ordinary dataset or a live group-composite input."""
+
+    if not str(source_id).startswith(COMPOSITE_ANALYSIS_SOURCE_PREFIX):
+        dataset = next(
+            (candidate for candidate in group.iter_datasets() if candidate.id == source_id),
+            None,
+        )
+        if dataset is None:
+            raise KeyError(f"analysis refers to missing dataset ID {source_id}")
+        return prepare_analysis_input(
+            group,
+            dataset,
+            progress_callback=progress_callback,
+        )
+
+    from ..project_gui import (
+        _cached_composite_dataset_data,
+        _composite_cache_signature,
+        _composite_scope,
+        data_group_composite_enabled,
+    )
+
+    suffix = str(source_id)[len(COMPOSITE_ANALYSIS_SOURCE_PREFIX) :]
+    node = group if suffix == "root" else next(
+        (candidate for candidate in group.iter_subgroups() if candidate.id == suffix),
+        None,
+    )
+    if node is None:
+        raise KeyError(f"analysis refers to missing group composite {source_id}")
+    scope = _composite_scope(group, node)
+    if not data_group_composite_enabled(scope):
+        raise ValueError(f"group composite {node.name!r} is disabled")
+    data = _cached_composite_dataset_data(
+        scope,
+        force_rebin=True,
+        progress_callback=progress_callback,
+    )
+    if data is None:
+        raise ValueError(f"could not prepare group composite {node.name!r}")
+    signature = _composite_cache_signature(scope)
+    context = AnalysisContext(
+        group.name,
+        group.lattice_parameters,
+        group.spacegroup,
+        group.metadata.get("crystal"),
+        None,
+        {"source_group": node.name, "source_group_id": suffix},
+    )
+    return AnalysisInput(
+        str(source_id),
+        f"{node.name} composite",
+        data,
+        context,
+        hashlib.sha256(signature.encode("utf-8")).hexdigest(),
+    )
 
 
 def prepare_analysis_input(group, dataset, *, progress_callback=None) -> AnalysisInput:
@@ -68,20 +151,10 @@ def prepare_analysis_inputs(
 ) -> list[AnalysisInput]:
     """Prepare the ordered project datasets selected by an analysis recipe."""
 
-    datasets = {dataset.id: dataset for dataset in group.iter_datasets()}
-    missing = [
-        dataset_id
-        for dataset_id in analysis.input_dataset_ids
-        if dataset_id not in datasets
-    ]
-    if missing:
-        raise KeyError(
-            "analysis refers to missing dataset ID(s): " + ", ".join(missing)
-        )
     return [
-        prepare_analysis_input(
+        prepare_analysis_source(
             group,
-            datasets[dataset_id],
+            dataset_id,
             progress_callback=progress_callback,
         )
         for dataset_id in analysis.input_dataset_ids

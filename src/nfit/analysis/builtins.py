@@ -14,6 +14,7 @@ from .corrections import SpectralConvention
 from .curie_weiss import execute_curie_weiss, validate_curie_weiss
 from .data_reduction import (
     angle_energy_background,
+    combine_aligned_histograms,
     separate_bose_elastic,
     spherical_average,
 )
@@ -137,9 +138,32 @@ def register_builtin_operations() -> None:
         _p("q_bins", 100, "Number of bins in the background |Q| axis."),
         _p("energy_bins", 100, "Number of bins in the background energy axis."),
     )
+    histogram_arithmetic_parameters = (
+        _p(
+            "operation",
+            "subtract",
+            "Subtract the scaled right input from the left input, or add it.",
+            choices=(("subtract", "Left - scaled right"), ("add", "Left + scaled right")),
+        ),
+        _p("right_scale", 1.0, "Multiplier applied to the right input."),
+    )
     register_analysis_operation(AnalysisOperationDefinition("bragg_integration", "Bragg integration", 4, "Integrate crystallographic peaks.", 1, 2, ("MDHistoData", "PointListData"), bragg_parameters, _validate_bragg, _execute_bragg))
     register_analysis_operation(AnalysisOperationDefinition("spectral_integration", "Spectral integration", 1, "Reduce spectra using physical kernels.", 1, 1, ("MDHistoData",), spectral_parameters, _validate_spectral, _execute_spectral))
     register_analysis_operation(AnalysisOperationDefinition("spectral_conversion", "INS absolute conversion", 1, "Convert measured INS intensity to an absolute cross section or dynamic susceptibility.", 1, 1, ("MDHistoData",), conversion_parameters, _validate_conversion, _execute_conversion))
+    register_analysis_operation(
+        AnalysisOperationDefinition(
+            "histogram_arithmetic",
+            "Histogram arithmetic",
+            1,
+            "Create an editable sum or difference of two identically binned histograms.",
+            2,
+            2,
+            ("MDHistoData",),
+            histogram_arithmetic_parameters,
+            _validate_histogram_arithmetic,
+            _execute_histogram_arithmetic,
+        )
+    )
     register_analysis_operation(
         AnalysisOperationDefinition(
             "curie_weiss_fit",
@@ -218,6 +242,41 @@ def _validate_conversion(inputs, parameters):
         raise ValueError("absolute INS conversion requires a known normalization basis")
     if float(parameters["scale"]) <= 0.0:
         raise ValueError("absolute INS scale must be positive")
+
+
+def _validate_histogram_arithmetic(inputs, parameters):
+    operation = str(parameters["operation"])
+    if operation not in {"subtract", "add"}:
+        raise ValueError("operation must be 'subtract' or 'add'")
+    if not np.isfinite(float(parameters["right_scale"])):
+        raise ValueError("right_scale must be finite")
+
+
+def _execute_histogram_arithmetic(inputs, parameters, **callbacks):
+    from .core import DatasetOutput
+
+    result = combine_aligned_histograms(
+        inputs[0].data,
+        inputs[1].data,
+        operation=str(parameters["operation"]),
+        right_scale=float(parameters["right_scale"]),
+    )
+    symbol = "-" if parameters["operation"] == "subtract" else "+"
+    label = f"{inputs[0].dataset_name} {symbol} {float(parameters['right_scale']):g} x {inputs[1].dataset_name}"
+    return AnalysisExecution(
+        {
+            "histogram": DatasetOutput(
+                result,
+                label,
+                "powder_inelastic" if len(result.axes) == 2 else "single_crystal_inelastic",
+            )
+        },
+        diagnostics={
+            "operation": str(parameters["operation"]),
+            "right_scale": float(parameters["right_scale"]),
+            "uncertainty_model": "independent input variances",
+        },
+    )
 
 
 def _validate_bose_separation(inputs, parameters):

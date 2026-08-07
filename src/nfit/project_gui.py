@@ -1268,13 +1268,32 @@ def create_dataset_group(
 def delete_dataset_group(data_group: DataGroup, subgroup: DatasetGroup) -> bool:
     """Remove a nested dataset group (and its contents) from the group tree."""
 
+    removed_group_ids = {subgroup.id, *(node.id for node in subgroup.iter_subgroups())}
+    removed_dataset_ids = {dataset.id for dataset in subgroup.iter_datasets()}
+
     def remove_from(node: Any) -> bool:
         if subgroup in node.subgroups:
             node.subgroups.remove(subgroup)
             return True
         return any(remove_from(child) for child in node.subgroups)
 
-    return remove_from(data_group)
+    removed = remove_from(data_group)
+    if removed:
+        for dataset in data_group.iter_datasets():
+            dataset.backgrounds[:] = [
+                background
+                for background in dataset.backgrounds
+                if background.source_group_id not in removed_group_ids
+                and background.source_dataset_id not in removed_dataset_ids
+            ]
+        for node in (data_group, *data_group.iter_subgroups()):
+            node.backgrounds[:] = [
+                background
+                for background in node.backgrounds
+                if background.source_group_id not in removed_group_ids
+                and background.source_dataset_id not in removed_dataset_ids
+            ]
+    return removed
 
 
 def _dataset_group_parent(data_group: DataGroup, subgroup: DatasetGroup) -> Any:
@@ -2704,8 +2723,10 @@ def _composite_candidates(group: DataGroup) -> list[DatasetEntry]:
 
     def considered_datasets(
         current: DataGroup | DatasetGroup,
+        *,
+        selected_root: bool = False,
     ) -> Iterator[DatasetEntry]:
-        if isinstance(current, DatasetGroup) and not current.enabled:
+        if isinstance(current, DatasetGroup) and not current.enabled and not selected_root:
             return
         yield from current.datasets
         for subgroup in current.subgroups:
@@ -2713,8 +2734,24 @@ def _composite_candidates(group: DataGroup) -> list[DatasetEntry]:
 
     return [
         dataset
-        for dataset in considered_datasets(node)
+        for dataset in considered_datasets(node, selected_root=True)
         if dataset.enabled and dataset.id not in background_ids
+    ]
+
+
+def _hierarchical_composite_scopes(
+    group: DataGroup | _CompositeScope,
+) -> list[_CompositeScope]:
+    """Return direct enabled child composites used by a parent recipe."""
+
+    node = group.node if isinstance(group, _CompositeScope) else group
+    if any(dataset.enabled for dataset in node.datasets):
+        return []
+    root = _composite_root(group)
+    return [
+        _CompositeScope(root, subgroup)
+        for subgroup in node.subgroups
+        if subgroup.enabled and data_group_composite_enabled(_CompositeScope(root, subgroup))
     ]
 
 
@@ -2733,6 +2770,13 @@ def _dataset_composite_kind(dataset: DatasetEntry) -> str:
 
 
 def data_group_composite_status(group: DataGroup) -> tuple[bool, str]:
+    child_scopes = _hierarchical_composite_scopes(group)
+    if child_scopes:
+        for child in child_scopes:
+            ok, message = data_group_composite_status(child)
+            if not ok:
+                return False, f"Child composite {child.name!r} is not ready: {message}"
+        return True, "Ready to combine the enabled child composites."
     datasets = _composite_candidates(group)
     if not datasets:
         return False, "No enabled datasets are available to combine."
@@ -2752,6 +2796,12 @@ def _composite_reference_data(group: DataGroup) -> Any | None:
     ok, _message = data_group_composite_status(group)
     if not ok:
         return None
+    child_scopes = _hierarchical_composite_scopes(group)
+    if child_scopes:
+        try:
+            return _cached_composite_dataset_data(child_scopes[0], force_rebin=True)
+        except Exception:
+            return None
     dataset = _composite_candidates(group)[0]
     try:
         return _source_data_for_group_composite(group, dataset)
@@ -2815,10 +2865,22 @@ def _source_data_for_group_composite(group: DataGroup, dataset: DatasetEntry) ->
     return data
 
 
-def _composite_cache_signature(group: DataGroup) -> str:
+def _composite_cache_signature(
+    group: DataGroup,
+    _trail: frozenset[int] = frozenset(),
+) -> str:
+    cache_key = _composite_cache_key(group)
+    if cache_key in _trail:
+        raise ValueError("composite dependency cycle through a live group background")
+    trail = _trail | {cache_key}
     config = data_group_composite_config(group)
+    child_scopes = _hierarchical_composite_scopes(group)
     payload = [
         json.dumps(config, sort_keys=True, default=str),
+        [
+            [child.name, _composite_cache_signature(child, trail)]
+            for child in child_scopes
+        ],
         [
             [
                 dataset.name,
@@ -2837,12 +2899,21 @@ def _composite_cache_signature(group: DataGroup) -> str:
         [
             [
                 background.source_dataset_id,
+                background.source_group_id,
                 bool(background.enabled),
                 float(background.scale),
                 background.interpolation,
                 (
                     background.source_entry.data_cache_token
                     if background.source_entry is not None
+                    else None
+                ),
+                (
+                    _composite_cache_signature(
+                        _CompositeScope(_composite_root(group), background.source_group),
+                        trail,
+                    )
+                    if background.source_group is not None
                     else None
                 ),
             ]
@@ -2863,7 +2934,34 @@ def composite_dataset_data(
     if not ok:
         raise ValueError(message)
     config = data_group_composite_config(group)
-    kind = _dataset_composite_kind(_composite_candidates(group)[0])
+    child_scopes = _hierarchical_composite_scopes(group)
+    child_entries: list[DatasetEntry] | None = None
+    if child_scopes:
+        child_entries = []
+        for child in child_scopes:
+            child_data = _cached_composite_dataset_data(
+                child,
+                force_rebin=True,
+                progress_callback=progress_callback,
+            )
+            if not isinstance(child_data, MDHistoData):
+                raise TypeError("hierarchical composites currently require gridded child composites")
+            child_entries.append(
+                DatasetEntry(
+                    child.name,
+                    child_data,
+                    kind="mdhisto",
+                    data_type=(
+                        "powder_inelastic"
+                        if len(child_data.axes) == 2
+                        else "single_crystal_inelastic"
+                    ),
+                    metadata={"composite": True, "source_group_id": child.node.id},
+                )
+            )
+        kind = "mdhisto"
+    else:
+        kind = _dataset_composite_kind(_composite_candidates(group)[0])
     result: MDHistoData | PointListData | PointData4D
     if kind == "mdevent":
         node = group.node if isinstance(group, _CompositeScope) else group
@@ -2918,7 +3016,10 @@ def composite_dataset_data(
         )
     elif kind == "mdhisto":
         result = _composite_mdhisto_data(
-            group, config, progress_callback=progress_callback
+            group,
+            config,
+            datasets=child_entries,
+            progress_callback=progress_callback,
         )
     elif kind == "point_list":
         result = _composite_point_list_data(
@@ -2981,15 +3082,22 @@ def _apply_composite_backgrounds(
         if not background.enabled:
             continue
         source = background.source_entry
-        if source is None:
+        source_group = background.source_group
+        if source is None and source_group is None:
             raise ValueError(
-                f"background {background.name!r} refers to a missing dataset"
+                f"background {background.name!r} refers to a missing dataset or group"
             )
-        source_data = _viewer_data_before_scale(
-            source,
-            force_rebin=True,
-            force_masks=True,
-        )
+        if source_group is not None:
+            source_data = _cached_composite_dataset_data(
+                _CompositeScope(root, source_group),
+                force_rebin=True,
+            )
+        else:
+            source_data = _viewer_data_before_scale(
+                source,
+                force_rebin=True,
+                force_masks=True,
+            )
         if not isinstance(source_data, MDHistoData):
             raise TypeError(
                 f"background {background.name!r} must refer to gridded histogram data"
@@ -3039,8 +3147,10 @@ def composite_dataset_entry(
     force_rebin: bool = True,
     progress_callback: Any | None = None,
 ) -> DatasetEntry:
+    child_scopes = _hierarchical_composite_scopes(group)
     datasets = _composite_candidates(group)
     first = datasets[0] if datasets else None
+    config = data_group_composite_config(group)
     return DatasetEntry(
         name=_composite_dataset_name(group),
         data=_cached_composite_dataset_data(
@@ -3048,8 +3158,16 @@ def composite_dataset_entry(
             force_rebin=force_rebin,
             progress_callback=progress_callback,
         ),
-        kind=(first.kind if first is not None else ""),
-        data_type=(first.data_type if first is not None else ""),
+        kind=("mdhisto" if child_scopes else first.kind if first is not None else ""),
+        data_type=(
+            (
+                "powder_inelastic"
+                if len(config.get("axes", [])) == 2
+                else "single_crystal_inelastic"
+            )
+            if child_scopes
+            else first.data_type if first is not None else ""
+        ),
         metadata={"source_group": group.name, "composite": True},
         parameters=(
             {
@@ -3148,6 +3266,7 @@ def _composite_mdhisto_data(
     group: DataGroup,
     config: dict[str, Any],
     *,
+    datasets: list[DatasetEntry] | None = None,
     progress_callback: Any | None = None,
 ) -> MDHistoData:
     lower, upper, num_bins = _composite_rebin_bounds(config)
@@ -3159,8 +3278,12 @@ def _composite_mdhisto_data(
     coverage_inputs: list[tuple[MDHistoData, np.ndarray]] = []
     first_data: MDHistoData | None = None
     weighting_mode = _rebin_mean_weighting(config)
-    for dataset in _composite_candidates(group):
-        data = _source_data_for_group_composite(group, dataset)
+    for dataset in datasets if datasets is not None else _composite_candidates(group):
+        data = (
+            dataset.data
+            if datasets is not None
+            else _source_data_for_group_composite(group, dataset)
+        )
         if not isinstance(data, MDHistoData):
             continue
         if first_data is None:
@@ -11183,14 +11306,25 @@ class NfitProjectExplorer:
             if candidate is not owner
             and candidate.data_type in {"powder_inelastic", "single_crystal_inelastic"}
         ]
-        if not candidates:
+        group_candidates = [
+            node
+            for node in group.iter_subgroups()
+            if node is not owner and data_group_composite_enabled(_composite_scope(group, node))
+        ]
+        if not candidates and not group_candidates:
             QtWidgets.QMessageBox.information(
                 self.window,
                 "Add background",
-                "This workspace has no gridded inelastic dataset available as a background.",
+                "This workspace has no gridded dataset or enabled group composite available as a background.",
             )
             return None
-        labels = [candidate.name for candidate in candidates]
+        choices = [
+            (candidate.name, "dataset", candidate) for candidate in candidates
+        ] + [
+            (f"{candidate.name} [live composite]", "group", candidate)
+            for candidate in group_candidates
+        ]
+        labels = [label for label, _kind, _candidate in choices]
         label, accepted = QtWidgets.QInputDialog.getItem(
             self.window,
             "Add background",
@@ -11201,12 +11335,14 @@ class NfitProjectExplorer:
         )
         if not accepted:
             return None
-        source = candidates[labels.index(label)]
+        _label, source_kind, source = choices[labels.index(label)]
         name = _unique_name(source.name, [item.name for item in owner.backgrounds])
         background = BackgroundSpec(
             name=name,
-            source_dataset_id=source.id,
-            source_entry=source,
+            source_dataset_id=source.id if source_kind == "dataset" else "",
+            source_group_id=source.id if source_kind == "group" else None,
+            source_entry=source if source_kind == "dataset" else None,
+            source_group=source if source_kind == "group" else None,
         )
         owner.backgrounds.append(background)
         self._record_data_group_state_change(group)
@@ -15328,11 +15464,11 @@ class NfitProjectExplorer:
             )
         )
         layout.addWidget(enabled, 0, 0, 1, 2)
-        layout.addWidget(QtWidgets.QLabel("Source dataset"), 1, 0)
+        layout.addWidget(QtWidgets.QLabel("Source"), 1, 0)
         source_combo = QtWidgets.QComboBox()
         source_combo.setObjectName("background_source_dataset")
         source_combo.setToolTip(
-            "Powder |Q|-energy data or an identically binned single-crystal histogram."
+            "Powder |Q|-energy data, an identically binned histogram, or a live group composite."
         )
         candidates = [] if group is None else [
             candidate
@@ -15342,7 +15478,21 @@ class NfitProjectExplorer:
         ]
         for candidate in candidates:
             source_combo.addItem(candidate.name, candidate.id)
-        source_index = source_combo.findData(background.source_dataset_id)
+        if group is not None:
+            for candidate in group.iter_subgroups():
+                if candidate is owner:
+                    continue
+                if data_group_composite_enabled(_composite_scope(group, candidate)):
+                    source_combo.addItem(
+                        f"{candidate.name} [live composite]",
+                        f"group:{candidate.id}",
+                    )
+        selected_source = (
+            f"group:{background.source_group_id}"
+            if background.source_group_id
+            else background.source_dataset_id
+        )
+        source_index = source_combo.findData(selected_source)
         if source_index >= 0:
             source_combo.setCurrentIndex(source_index)
         source_combo.currentIndexChanged.connect(
@@ -15397,6 +15547,20 @@ class NfitProjectExplorer:
     ) -> None:
         if group is None or source_id is None:
             return
+        if str(source_id).startswith("group:"):
+            group_id = str(source_id).split(":", 1)[1]
+            source_group = next(
+                (candidate for candidate in group.iter_subgroups() if candidate.id == group_id),
+                None,
+            )
+            if source_group is None or source_group is owner:
+                return
+            background.source_dataset_id = ""
+            background.source_group_id = source_group.id
+            background.source_entry = None
+            background.source_group = source_group
+            self._background_changed(group, owner)
+            return
         source = next(
             (candidate for candidate in group.iter_datasets() if candidate.id == source_id),
             None,
@@ -15404,7 +15568,9 @@ class NfitProjectExplorer:
         if source is None or source is owner:
             return
         background.source_dataset_id = source.id
+        background.source_group_id = None
         background.source_entry = source
+        background.source_group = None
         self._background_changed(group, owner)
 
     def _update_background(

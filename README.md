@@ -11,7 +11,8 @@ The package provides:
   materialization and scaled powder or aligned-histogram background subtraction;
 - powder-cut, MPMS magnetization, PPMS heat-capacity, and tabular imports;
 - masking, coverage-aware symmetry/rebinning and composites, backgrounds, and
-  non-destructive analyses;
+  non-destructive analyses, including live hierarchical composites and editable
+  histogram sums or differences;
 - local, MMP, generalized-paramagnon/damped-mode, conserved-ferromagnetic,
   relaxational or inertial Heisenberg-RPA, and coupled-susceptibility models
   for inelastic, quasistatic elastic, and optional bulk-response comparisons,

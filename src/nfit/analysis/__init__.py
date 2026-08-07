@@ -40,8 +40,11 @@ from .registry import (
     validate_analysis,
 )
 from .runner import (
+    analysis_source_choices,
+    composite_analysis_source_id,
     prepare_analysis_input,
     prepare_analysis_inputs,
+    prepare_analysis_source,
     run_project_analysis,
 )
 
@@ -67,8 +70,11 @@ __all__ = [
     "measured_mask",
     "physical_axis_vectors",
     "physical_coordinate_arrays",
+    "analysis_source_choices",
+    "composite_analysis_source_id",
     "prepare_analysis_input",
     "prepare_analysis_inputs",
+    "prepare_analysis_source",
     "q_bin_volume",
     "q_modulus_for_spectral",
     "rlu_to_q_matrix",

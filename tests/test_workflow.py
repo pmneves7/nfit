@@ -5,11 +5,13 @@ import json
 import numpy as np
 import pytest
 
+import nfit.project_gui as project_gui
 from nfit import (
     AnalysisEntry,
     BackgroundSpec,
     DataGroup,
     DatasetEntry,
+    DatasetGroup,
     FitTimelineEntry,
     MaskSpec,
     MDHistoAxis,
@@ -23,6 +25,7 @@ from nfit import (
     WorkflowValidationError,
     analysis_workflow_plan,
     analysis_workflow_script,
+    composite_analysis_source_id,
     create_model_component,
     dataset_entry_from_path,
     dataset_for_slice_viewer,
@@ -51,6 +54,41 @@ def _grid(value: float) -> MDHistoData:
         num_events=np.ones_like(signal),
         metadata={},
     )
+
+
+def test_histogram_arithmetic_analysis_accepts_live_group_composites(tmp_path):
+    low = DatasetGroup("Low temperature", datasets=[DatasetEntry("low", _grid(5.0), kind="mdhisto")])
+    high = DatasetGroup("50 K", datasets=[DatasetEntry("high", _grid(2.0), kind="mdhisto")])
+    group = DataGroup("Experiment", subgroups=[low, high])
+    for node in (low, high):
+        config = project_gui.data_group_composite_config(
+            project_gui._composite_scope(group, node)
+        )
+        config.update({"enabled": True, "fractional": False})
+    analysis = AnalysisEntry(
+        "Low minus 50 K",
+        "histogram_arithmetic",
+        [
+            composite_analysis_source_id(group, low),
+            composite_analysis_source_id(group, high),
+        ],
+        {"operation": "subtract", "right_scale": 0.5},
+    )
+    group.analyses.append(analysis)
+    project = NfitProject([group])
+    project._project_path = tmp_path / "experiment.nfit"
+
+    inputs = prepare_analysis_inputs(group, analysis)
+    execution = run_project_analysis(group, analysis)
+
+    assert [item.dataset_name for item in inputs] == [
+        "Low temperature composite",
+        "50 K composite",
+    ]
+    np.testing.assert_allclose(execution.outputs["histogram"].data.signal, _grid(4.0).signal)
+    script = analysis_workflow_script(project, analysis.id)
+    compile(script, "<live-composite-analysis>", "exec")
+    assert "run_project_analysis" in script
 
 
 def test_workflow_plan_round_trips_and_orders_dependencies():

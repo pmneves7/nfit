@@ -13,6 +13,23 @@ or input marks its result stale but does not delete it.
 Every operation receives the same prepared dataset used for viewing and
 fitting. Dataset and inherited masks, rebinning, attached backgrounds, scale,
 and the selected physical channel therefore affect analyses consistently.
+Enabled group composites also appear as inputs, labeled **live composite**.
+
+## Histogram arithmetic
+
+**Histogram arithmetic** creates an editable sum or difference of two
+identically binned histograms. Choose the left and right inputs, select addition
+or subtraction, and set the right-hand scale $a$. Subtraction evaluates
+$I_{\rm left}-aI_{\rm right}$ and propagates statistically independent
+variances as
+
+$$
+\sigma^2=\sigma_{\rm left}^2+a^2\sigma_{\rm right}^2.
+$$
+
+Both source datasets or live composites remain independently viewable. The
+saved Analysis entry retains the two dependencies, operation, and scale; rerun
+it after changing either source recipe to refresh the same derived output.
 
 ## Curie--Weiss fitting
 
@@ -213,7 +230,9 @@ Pure functions such as `integrate_bragg_peaks()` and
 `prepare_analysis_inputs()` constructs the canonical prepared inputs for a
 saved recipe, and `run_project_analysis()` runs it directly. Right-click a
 saved analysis to copy or save a readable script containing its full dataset
-dependency closure.
+dependency closure. For live-composite inputs, that script reloads the saved
+project and reruns the editable project recipe so hierarchical dependencies are
+not flattened into snapshots.
 
 Native raw-TOF reductions use the same recipe, artifact, fingerprint, and
 coverage system. Future analysis directions are listed in

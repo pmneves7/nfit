@@ -34,18 +34,20 @@ class MaskSpec:
 class BackgroundSpec:
     """Serializable scaled background attached to a dataset.
 
-    ``source_dataset_id`` is the stable project reference. ``source_entry`` is
-    relinked at runtime after loading and is deliberately omitted from project
-    serialization.
+    ``source_dataset_id`` or ``source_group_id`` is the stable project
+    reference. Runtime links are restored after loading and deliberately
+    omitted from project serialization.
     """
 
     name: str
-    source_dataset_id: str
+    source_dataset_id: str = ""
     scale: float = 1.0
     enabled: bool = True
     interpolation: str = "linear"
     metadata: dict[str, Any] = field(default_factory=dict)
+    source_group_id: str | None = None
     source_entry: DatasetEntry | None = field(default=None, repr=False, compare=False)
+    source_group: DatasetGroup | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass
@@ -297,6 +299,7 @@ class DatasetGroup:
     backgrounds: list[BackgroundSpec] = field(default_factory=list)
     resolution: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    id: str = field(default_factory=lambda: uuid4().hex)
 
     def iter_datasets(self) -> Iterator[DatasetEntry]:
         """Yield every dataset in this group and its nested subgroups."""
