@@ -15,11 +15,13 @@ from .plotting import (
     plot_mdhisto_fit_comparison,
     plot_mdhisto_line,
     plot_mdhisto_slice,
+    plot_mdhisto_tiled_slices,
     plot_mdhisto_waterfall,
 )
 
 PLOT_TYPE_LABELS = {
     "mdhisto_slice": "MDHisto slice",
+    "mdhisto_tiled_slices": "Tiled 2D slices",
     "mdhisto_line": "MDHisto line",
     "mdhisto_waterfall": "Waterfall",
     "fit_comparison": "Data, fit, and residual",
@@ -127,6 +129,35 @@ def render_plot(
             figsize=tuple(settings.get("figsize", (8.0, 6.5))),
         )
         figure = ax.figure
+    elif plot_type == "mdhisto_tiled_slices":
+        if not isinstance(data, MDHistoData):
+            raise TypeError("tiled-slice plots require one MDHisto dataset")
+        figure = plot_mdhisto_tiled_slices(
+            data,
+            x_dim=settings.get("x_dim", -1),
+            y_dim=settings.get("y_dim", 0),
+            tile_dim=settings.get("tile_dim", 1),
+            channel=settings.get("channel", "signal"),
+            selections=_selections(settings),
+            integrate_checks=_integrate_checks(settings),
+            tile_range=_pair(settings.get("tile_range")),
+            tile_step=float(settings.get("tile_step", 1.0)),
+            coverage_threshold=float(settings.get("coverage_threshold", 0.9)),
+            masked=bool(settings.get("apply_masks", True)),
+            cmap=settings.get("cmap", "viridis"),
+            color_scale=settings.get("color_scale", "linear"),
+            auto_limits=settings.get("auto_limits", "min/max"),
+            autoscale=bool(settings.get("autoscale", True)),
+            manual_vmin=settings.get("manual_vmin"),
+            manual_vmax=settings.get("manual_vmax"),
+            smoothing_sigma_x=float(settings.get("smoothing_x", 0.0)),
+            smoothing_sigma_y=float(settings.get("smoothing_y", 0.0)),
+            xlim=_pair(settings.get("xlim")),
+            ylim=_pair(settings.get("ylim")),
+            font_size=float(settings.get("font_size", 12.0)),
+            axes_linewidth=float(settings.get("axis_linewidth", 1.5)),
+            figsize=tuple(settings.get("figsize", (10.0, 8.0))),
+        )
     elif plot_type == "mdhisto_line":
         if not isinstance(data, MDHistoData):
             raise TypeError("line plots require one MDHisto dataset")

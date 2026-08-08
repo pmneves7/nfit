@@ -25,6 +25,18 @@ class WaterfallTrace:
     waterfall_unit: str = ""
 
 
+@dataclass(frozen=True)
+class TiledSlice:
+    """One prepared 2D panel in a tiled-slice plot."""
+
+    view: dict[str, np.ndarray]
+    values: np.ndarray
+    coordinate: float
+    lower: float
+    upper: float
+    label: str
+
+
 def _edges_from_centers(centers: np.ndarray) -> np.ndarray:
     """Return bin edges bracketing sorted 1D bin centers (for pcolormesh-free plots)."""
 
@@ -250,6 +262,289 @@ def plot_mdhisto_slice(
             _draw_mdhisto_roi_cuts(model, view, roi_extents, ax_xcut, ax_ycut)
             _apply_axes_linewidth((ax_image, ax_colorbar, ax_xcut, ax_ycut), colorbar, axes_linewidth)
 
+    return fig
+
+
+def prepare_mdhisto_tiled_slices(
+    data: MDHistoData,
+    *,
+    x_dim: int | str = -1,
+    y_dim: int | str = 0,
+    tile_dim: int | str = 1,
+    channel: str = "signal",
+    selections: dict[int, tuple[float, float]] | None = None,
+    integrate_checks: dict[int, bool] | None = None,
+    tile_range: tuple[float, float] | None = None,
+    tile_step: float | None = None,
+    coverage_threshold: float = 0.9,
+    masked: bool = True,
+    smoothing_sigma_x: float = 0.0,
+    smoothing_sigma_y: float = 0.0,
+) -> list[TiledSlice]:
+    """Prepare coarse third-axis bins as a sequence of 2D slices.
+
+    The two displayed dimensions remain intact. Each panel integrates the
+    selected bins along ``tile_dim``; any further dimensions use the ordinary
+    slice-viewer point or range selections.
+    """
+
+    if not isinstance(data, MDHistoData):
+        raise TypeError("tiled slices require one MDHistoData object")
+    x_index = _resolve_mdhisto_dim(data, x_dim)
+    y_index = _resolve_mdhisto_dim(data, y_dim)
+    tile_index = _resolve_mdhisto_dim(data, tile_dim)
+    if len({x_index, y_index, tile_index}) != 3:
+        raise ValueError("x_dim, y_dim, and tile_dim must be different")
+    if data.shape[tile_index] <= 1:
+        raise ValueError("tile_dim must contain more than one bin")
+
+    centers = np.asarray(data.axes[tile_index].centers, dtype=float)
+    edges = np.asarray(data.axes[tile_index].values, dtype=float)
+    if edges.size != centers.size + 1:
+        edges = _edges_from_centers(centers)
+    if tile_range is None:
+        low_value, high_value = float(centers[0]), float(centers[-1])
+    else:
+        low_value, high_value = sorted(map(float, tile_range))
+    selected_indices = np.flatnonzero(
+        np.isfinite(centers) & (centers >= low_value) & (centers <= high_value)
+    )
+    if selected_indices.size == 0:
+        raise ValueError("tile_range does not contain any tile-axis bin centers")
+
+    first = int(selected_indices[0])
+    last = int(selected_indices[-1])
+    start = float(edges[first])
+    stop = float(edges[last + 1])
+    width = (
+        default_tiled_slice_step(data, tile_index, (low_value, high_value))
+        if tile_step is None
+        else float(tile_step)
+    )
+    if not np.isfinite(width) or width <= 0.0:
+        raise ValueError("tile_step must be positive")
+    count = max(int(np.ceil((stop - start) / width)), 1)
+    boundaries = start + np.arange(count + 1, dtype=float) * width
+    boundaries[-1] = stop
+
+    base = MDHistoSliceViewer(
+        data,
+        x_dim=x_index,
+        y_dim=y_index,
+        channel=channel,
+        masked=masked,
+        coverage_threshold=coverage_threshold,
+    )
+    if selections:
+        base.selections.update(
+            {int(dim): tuple(value) for dim, value in selections.items()}
+        )
+    if integrate_checks:
+        base.integrate_checks.update(
+            {int(dim): bool(value) for dim, value in integrate_checks.items()}
+        )
+    axis = data.axes[tile_index]
+    axis_name = waterfall_axis_display_name(axis.name)
+    displayed_unit = display_unit(axis.units) if axis.units else ""
+    unit_suffix = f" {displayed_unit}" if displayed_unit else ""
+    slices: list[TiledSlice] = []
+    for index, (low, high) in enumerate(
+        zip(boundaries[:-1], boundaries[1:], strict=True)
+    ):
+        selected = (centers >= low) & (
+            (centers < high) if index < count - 1 else (centers <= high)
+        )
+        selected &= np.arange(centers.size) >= first
+        selected &= np.arange(centers.size) <= last
+        indices = np.flatnonzero(selected)
+        if indices.size == 0:
+            continue
+        panel = MDHistoSliceViewer(
+            data,
+            x_dim=x_index,
+            y_dim=y_index,
+            channel=channel,
+            cmap=base.cmap,
+            color_scale=base.color_scale,
+            auto_limits=base.auto_limits,
+            masked=masked,
+            coverage_threshold=coverage_threshold,
+        )
+        panel.selections.update(dict(base.selections))
+        panel.integrate_checks.update(dict(base.integrate_checks))
+        panel.selections[tile_index] = (
+            float(centers[indices[0]]),
+            float(centers[indices[-1]]),
+        )
+        panel.integrate_checks[tile_index] = True
+        view = smooth_mdhisto_view(
+            panel.slice_arrays(),
+            sigma_x=smoothing_sigma_x,
+            sigma_y=smoothing_sigma_y,
+        )
+        coordinate = float(np.mean(centers[indices]))
+        slices.append(
+            TiledSlice(
+                view=view,
+                values=np.asarray(panel._display_values(view), dtype=float),
+                coordinate=coordinate,
+                lower=float(edges[indices[0]]),
+                upper=float(edges[indices[-1] + 1]),
+                label=f"{axis_name} = {coordinate:.5g}{unit_suffix}",
+            )
+        )
+    return slices
+
+
+def default_tiled_slice_step(
+    data: MDHistoData,
+    tile_dim: int | str,
+    tile_range: tuple[float, float] | None = None,
+) -> float:
+    """Choose a third-axis bin width that produces up to nine panels."""
+
+    index = _resolve_mdhisto_dim(data, tile_dim)
+    centers = np.asarray(data.axes[index].centers, dtype=float)
+    edges = np.asarray(data.axes[index].values, dtype=float)
+    if edges.size != centers.size + 1:
+        edges = _edges_from_centers(centers)
+    if tile_range is None:
+        selected = np.arange(centers.size)
+    else:
+        low, high = sorted(map(float, tile_range))
+        selected = np.flatnonzero((centers >= low) & (centers <= high))
+    if selected.size == 0:
+        return 1.0
+    if selected.size <= 9:
+        widths = np.abs(np.diff(edges))[selected]
+        positive = widths[np.isfinite(widths) & (widths > 0.0)]
+        if positive.size:
+            return float(np.min(positive))
+    span = float(edges[int(selected[-1]) + 1] - edges[int(selected[0])])
+    target = max(min(int(selected.size), 9), 1)
+    return span / target if np.isfinite(span) and span > 0.0 else 1.0
+
+
+def plot_mdhisto_tiled_slices(
+    data: MDHistoData,
+    *,
+    x_dim: int | str = -1,
+    y_dim: int | str = 0,
+    tile_dim: int | str = 1,
+    channel: str = "signal",
+    selections: dict[int, tuple[float, float]] | None = None,
+    integrate_checks: dict[int, bool] | None = None,
+    tile_range: tuple[float, float] | None = None,
+    tile_step: float | None = None,
+    coverage_threshold: float = 0.9,
+    masked: bool = True,
+    cmap: str = "viridis",
+    color_scale: str = "linear",
+    auto_limits: str = "min/max",
+    autoscale: bool = True,
+    manual_vmin: float | None = None,
+    manual_vmax: float | None = None,
+    sigma_n: float = 3.0,
+    iqr_n: float = 1.5,
+    percentile_n: float = 1.0,
+    power_gamma: float = 0.5,
+    smoothing_sigma_x: float = 0.0,
+    smoothing_sigma_y: float = 0.0,
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
+    font_size: float = 10.0,
+    axes_linewidth: float = 1.0,
+    figsize: tuple[float, float] = (10.0, 8.0),
+):
+    """Render a grid of 2D slices with one shared normalization and colorbar."""
+
+    import matplotlib.pyplot as plt
+
+    slices = prepare_mdhisto_tiled_slices(
+        data,
+        x_dim=x_dim,
+        y_dim=y_dim,
+        tile_dim=tile_dim,
+        channel=channel,
+        selections=selections,
+        integrate_checks=integrate_checks,
+        tile_range=tile_range,
+        tile_step=tile_step,
+        coverage_threshold=coverage_threshold,
+        masked=masked,
+        smoothing_sigma_x=smoothing_sigma_x,
+        smoothing_sigma_y=smoothing_sigma_y,
+    )
+    if not slices:
+        raise ValueError("the tiled-slice settings produced no panels")
+    model = MDHistoSliceViewer(
+        data,
+        x_dim=x_dim,
+        y_dim=y_dim,
+        channel=channel,
+        cmap=cmap,
+        color_scale=color_scale,
+        auto_limits=auto_limits,
+        coverage_threshold=coverage_threshold,
+    )
+    model.autoscale = bool(autoscale)
+    model.manual_vmin = manual_vmin
+    model.manual_vmax = manual_vmax
+    model.sigma_n = float(sigma_n)
+    model.iqr_n = float(iqr_n)
+    model.percentile_n = float(percentile_n)
+    model.power_gamma = float(power_gamma)
+    combined = np.concatenate([panel.values.ravel() for panel in slices])
+    norm = model._color_norm(combined)
+    columns = int(np.ceil(np.sqrt(len(slices))))
+    rows = int(np.ceil(len(slices) / columns))
+    with plt.rc_context({"font.size": float(font_size)}):
+        fig = plt.figure(figsize=figsize, constrained_layout=True)
+        grid = fig.add_gridspec(
+            rows,
+            columns + 1,
+            width_ratios=[*[1.0] * columns, 0.055],
+        )
+        axes = []
+        artist = None
+        for index, panel in enumerate(slices):
+            row, column = divmod(index, columns)
+            ax = fig.add_subplot(
+                grid[row, column],
+                sharex=axes[0] if axes else None,
+                sharey=axes[0] if axes else None,
+            )
+            artist = ax.pcolormesh(
+                panel.view["x_edges"],
+                panel.view["y_edges"],
+                panel.values,
+                shading="auto",
+                cmap=model._effective_cmap(),
+                norm=norm,
+            )
+            ax.text(
+                0.97,
+                0.03,
+                panel.label,
+                transform=ax.transAxes,
+                ha="right",
+                va="bottom",
+            )
+            if row == rows - 1 or index + columns >= len(slices):
+                ax.set_xlabel(model._axis_label(model.x_dim))
+            if column == 0:
+                ax.set_ylabel(model._axis_label(model.y_dim))
+            if xlim is not None:
+                ax.set_xlim(*xlim)
+            if ylim is not None:
+                ax.set_ylim(*ylim)
+            axes.append(ax)
+        colorbar_axis = fig.add_subplot(grid[:, -1])
+        colorbar = fig.colorbar(artist, cax=colorbar_axis)
+        colorbar.set_label(model._channel_label())
+        _apply_axes_linewidth((*axes, colorbar_axis), colorbar, axes_linewidth)
+        fig._nfit_tiled_slices = slices
+        fig._nfit_tiled_axes = axes
     return fig
 
 

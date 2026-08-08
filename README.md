@@ -79,8 +79,8 @@ The package provides:
   provenance, safe transactional script editing, and GUI detection of external
   file changes, plus editable script export for dataset preparation, analyses,
   fits, and saved plots;
-- interactive slice, waterfall, and volumetric visualization with independent,
-  same-state viewer duplication.
+- interactive slice, waterfall, tiled 2D-slice, and volumetric visualization
+  with independent, same-state viewer duplication.
 
 See the [documentation](docs/index.md) for workflows, physics conventions,
 model equations, and the Python API.

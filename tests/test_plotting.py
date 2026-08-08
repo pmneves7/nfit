@@ -1127,6 +1127,56 @@ def test_qt_waterfall_mode_exposes_controls_and_exports_script():
     assert viewer.marker_face_color == "outline"
 
 
+def test_qt_tiled_slices_exposes_third_axis_range_step_slider_and_script():
+    pytest.importorskip("PySide6")
+
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_mdhisto_data()
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    viewer.view_mode_combo.setCurrentText("Tiled slices")
+
+    assert viewer._plot_layout_mode == ("tiled", 2)
+    assert not viewer.tiled_group.isHidden()
+    assert viewer.tile_dim_combo.currentText() == "DeltaE"
+    assert viewer.tile_step_auto_check.isChecked()
+    for control in (
+        viewer.tile_dim_combo,
+        viewer.tile_range_low_spin,
+        viewer.tile_range_high_spin,
+        viewer.tile_step_spin,
+        viewer.tile_step_slider,
+        viewer.tile_step_auto_check,
+    ):
+        assert control.toolTip().strip()
+    assert len(viewer._tile_axes) == 2
+    assert len(viewer.figure.axes) == 3
+    assert len(viewer.hidden_controls) == 1
+    assert all(
+        axis.collections[0].norm is viewer._tile_axes[0].collections[0].norm
+        for axis in viewer._tile_axes
+    )
+    assert all(
+        axis.texts[0].get_position() == (0.97, 0.03)
+        for axis in viewer._tile_axes
+    )
+
+    viewer.tile_step_slider.setValue(1000)
+    assert not viewer.tile_step_auto_check.isChecked()
+    assert len(viewer._tile_axes) == 1
+    settings = viewer.current_plot_settings()
+    script = viewer.figure_script()
+    assert settings["view_mode"] == "tiled_slices"
+    assert settings["tile_dim"] == "DeltaE"
+    assert "plot_mdhisto_tiled_slices" in script
+    compile(script, "tiled_slice_figure.py", "exec")
+
+    restored = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    restored.apply_plot_settings(settings)
+    assert restored.view_mode_combo.currentText() == "Tiled slices"
+    assert restored.tile_step == pytest.approx(viewer.tile_step)
+
+
 def test_qt_waterfall_half_max_stays_enabled_when_initial_range_shrinks():
     pytest.importorskip("PySide6")
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer

@@ -12914,6 +12914,7 @@ class NfitProjectExplorer:
         settings = viewer.current_plot_settings()
         plot_type = (
             "mdhisto_waterfall" if settings.get("view_mode") == "waterfall" else
+            "mdhisto_tiled_slices" if settings.get("view_mode") == "tiled_slices" else
             "fit_comparison" if bool(settings.get("show_fit")) else
             "mdhisto_line" if viewer._is_effective_1d() else "mdhisto_slice"
         )

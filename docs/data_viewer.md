@@ -89,6 +89,27 @@ The axis **Reset** buttons and Matplotlib **Home** button use the current trace
 extent. That extent is recomputed when the dataset group, displayed axes, or
 waterfall binning changes.
 
+## Tiled 2D slices
+
+Choose **Visualization > Tiled slices** for gridded data with at least three
+dimensions containing more than one bin. Choose the horizontal and vertical
+dimensions as for a normal map, then choose a distinct **Third dimension** in
+the tiled-slice controls. Any further dimensions retain the ordinary
+point/range integration controls.
+
+**Range low** and **Range high** select the third-axis values included in the
+figure. **Step size** groups adjacent values into panels; its horizontal slider
+spans one native bin through the selected range. **Auto** makes nine panels
+when at least nine third-axis values are available, and otherwise makes one
+panel per available value.
+
+Every panel is labeled at its bottom-right corner with its representative
+third-axis value. All panels share their x and y limits, color normalization,
+and a single colorbar on the far right. The mode intentionally displays data
+only; model and residual panels and histogram box cuts are not shown. Saved
+plot recipes and generated scripts preserve the three dimensions, range, step,
+hidden-axis selections, and color settings.
+
 ## Volumetric mode
 
 Gridded datasets with at least three dimensions can use **Volumetric** mode.

@@ -10,9 +10,10 @@ import numpy as np
 import pytest
 
 from nfit import PointData4D
-from nfit.mdhisto import MDHistoChannel
+from nfit.mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
 from nfit.plotting import (
     MDHistoSliceViewer,
+    default_tiled_slice_step,
     gaussian_smooth_nan,
     gaussian_smooth_uncertainty,
     inverse_variance_weighted_profile,
@@ -24,8 +25,10 @@ from nfit.plotting import (
     plot_mdhisto_fit_line_comparison,
     plot_mdhisto_line,
     plot_mdhisto_slice,
+    plot_mdhisto_tiled_slices,
     plot_mdhisto_waterfall,
     plot_q_cut,
+    prepare_mdhisto_tiled_slices,
     prepare_mdhisto_waterfall,
     residual_mdhisto,
 )
@@ -125,6 +128,68 @@ def test_plot_mdhisto_slice_can_render_non_signal_channel():
     rendered = ax_image.collections[0].get_array()
     np.testing.assert_allclose(rendered, data.num_events[1, 1, :, :])
     assert ax_colorbar.yaxis.label.get_text() == "Multiplicity"
+
+
+def test_prepare_tiled_slices_defaults_to_each_value_when_fewer_than_nine():
+    data = _tiny_mdhisto_data()
+
+    panels = prepare_mdhisto_tiled_slices(
+        data,
+        x_dim=3,
+        y_dim=2,
+        tile_dim=1,
+    )
+
+    assert len(panels) == data.shape[1] == 3
+    assert default_tiled_slice_step(data, 1) == pytest.approx(1.0)
+    assert all(panel.values.shape == data.shape[2:] for panel in panels)
+    np.testing.assert_allclose(panels[0].values, data.signal[1, 0, :, :])
+    assert panels[0].label.startswith("[H,-H,0] = ")
+
+
+def test_prepare_tiled_slices_auto_step_targets_nine_panels():
+    axes = (
+        MDHistoAxis("x", np.arange(3.0), "", "unknown"),
+        MDHistoAxis("y", np.arange(3.0), "", "unknown"),
+        MDHistoAxis("scan", np.arange(13.0), "K", "temperature"),
+    )
+    signal = np.ones((2, 2, 12), dtype=float)
+    data = MDHistoData(
+        axes,
+        signal,
+        np.ones_like(signal),
+        np.zeros_like(signal, dtype=bool),
+        np.ones_like(signal),
+    )
+
+    panels = prepare_mdhisto_tiled_slices(
+        data,
+        x_dim=0,
+        y_dim=1,
+        tile_dim=2,
+    )
+
+    assert len(panels) == 9
+
+
+def test_plot_tiled_slices_uses_one_shared_norm_and_far_right_colorbar():
+    data = _tiny_mdhisto_data()
+
+    figure = plot_mdhisto_tiled_slices(
+        data,
+        x_dim=3,
+        y_dim=2,
+        tile_dim=1,
+        tile_range=(0.5, 2.5),
+    )
+
+    axes = figure._nfit_tiled_axes
+    assert len(axes) == 3
+    assert len(figure.axes) == 4
+    assert all(axis.collections[0].norm is axes[0].collections[0].norm for axis in axes)
+    assert figure.axes[-1].get_position().x0 > max(axis.get_position().x1 for axis in axes)
+    assert all(axis.texts[0].get_position() == (0.97, 0.03) for axis in axes)
+    assert figure.axes[-1].yaxis.label.get_text() == r"$I(\mathbf{Q},E)$ (a.u.)"
 
 
 def test_mdhisto_neutron_channels_use_quantity_symbols_and_units():

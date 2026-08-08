@@ -91,6 +91,40 @@ def test_waterfall_recipe_renders_and_persists_multiple_dataset_sources():
     assert all(text.get_color() == "#000000" for text in figure.axes[0].texts)
 
 
+def test_tiled_slice_recipe_renders_with_one_colorbar():
+    axes = (
+        *_data().axes,
+        MDHistoAxis("Temperature", np.arange(5.0), "K", "temperature"),
+    )
+    signal = np.arange(16.0).reshape(2, 2, 4)
+    data = MDHistoData(
+        axes,
+        signal,
+        np.ones_like(signal),
+        np.zeros_like(signal, dtype=bool),
+        np.ones_like(signal),
+    )
+    entry = new_plot_entry(
+        "Temperature maps",
+        "dataset-id",
+        {
+            "view_mode": "tiled_slices",
+            "x_dim": "H",
+            "y_dim": "K",
+            "tile_dim": "Temperature",
+            "tile_range": (0.5, 3.5),
+            "tile_step": 1.0,
+        },
+        plot_type="mdhisto_tiled_slices",
+    )
+
+    figure = render_plot(entry, data)
+
+    assert len(figure._nfit_tiled_axes) == 4
+    assert len(figure.axes) == 5
+    assert figure.axes[-1].yaxis.label.get_text() == r"$I(\mathbf{Q},E)$ (a.u.)"
+
+
 def test_fit_comparison_recipe_can_render_model_through_data_masks():
     data = _data().mutable_copy()
     data.mask[0, 0] = True

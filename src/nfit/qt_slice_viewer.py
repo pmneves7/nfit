@@ -9,11 +9,14 @@ from .dataset import PointListData
 from .mdhisto import MDHistoData
 from .plotting import (
     MDHistoSliceViewer,
+    TiledSlice,
     WaterfallTrace,
+    default_tiled_slice_step,
     default_waterfall_offset,
     default_waterfall_step,
     draw_waterfall_traces,
     inverse_variance_weighted_profile,
+    prepare_mdhisto_tiled_slices,
     prepare_mdhisto_waterfall,
     smooth_mdhisto_view,
     waterfall_absolute_max,
@@ -250,6 +253,13 @@ class QtMDHistoSliceViewer:
         self.content_stack = None
         self.volume_panel = None
         self.waterfall_group = None
+        self.tiled_group = None
+        self.tile_dim_combo = None
+        self.tile_range_low_spin = None
+        self.tile_range_high_spin = None
+        self.tile_step_spin = None
+        self.tile_step_slider = None
+        self.tile_step_auto_check = None
         self.waterfall_source_label = None
         self.waterfall_step_label = None
         self.waterfall_step_spin = None
@@ -317,6 +327,30 @@ class QtMDHistoSliceViewer:
         self.waterfall_trace_label_font_size = 10.0
         self.waterfall_trace_label_color: str | None = None
         self.waterfall_dataset_names: list[str] | None = None
+        tile_candidates = (
+            [
+                dim
+                for dim, size in enumerate(initial_data.shape)
+                if size > 1 and dim not in (model_x_dim, model_y_dim)
+            ]
+            if isinstance(initial_data, MDHistoData)
+            else []
+        )
+        self.tile_dim: int | None = tile_candidates[0] if tile_candidates else None
+        if self.tile_dim is None:
+            self.tile_range = (0.0, 0.0)
+            self.tile_step = 1.0
+        else:
+            tile_centers = np.asarray(initial_data.axes[self.tile_dim].centers, dtype=float)
+            self.tile_range = (float(tile_centers[0]), float(tile_centers[-1]))
+            self.tile_step = default_tiled_slice_step(
+                initial_data,
+                self.tile_dim,
+                self.tile_range,
+            )
+        self.tile_step_auto = True
+        self._current_tiled_slices: list[TiledSlice] = []
+        self._tile_axes = []
         self._current_waterfall_traces: list[WaterfallTrace] = []
         self._waterfall_default_xlim: tuple[float, float] | None = None
         self._waterfall_default_ylim: tuple[float, float] | None = None
@@ -338,6 +372,10 @@ class QtMDHistoSliceViewer:
         self._dataset_states[0] = _DatasetViewState(
             model=self.model,
             show_fit=self.show_fit,
+            tile_dim=self.tile_dim,
+            tile_range=self.tile_range,
+            tile_step=self.tile_step,
+            tile_step_auto=self.tile_step_auto,
         )
         self._plot_layout_mode: tuple[Any, ...] | None = None
         self._compare_axes = []
@@ -453,7 +491,9 @@ class QtMDHistoSliceViewer:
         ylim = self._export_limits("y") if self.ax_image is not None else None
         view_mode = (
             "volumetric"
-            if self.view_mode_combo.currentIndex() == 2
+            if self.view_mode_combo.currentIndex() == 3
+            else "tiled_slices"
+            if self._tiled_mode_active()
             else "waterfall"
             if self._waterfall_mode_active()
             else "slice"
@@ -511,6 +551,14 @@ class QtMDHistoSliceViewer:
             "waterfall_trace_label_font_size": self.waterfall_trace_label_font_size,
             "waterfall_trace_label_color": self.waterfall_trace_label_color,
             "waterfall_dataset_names": self.waterfall_source_dataset_names(),
+            "tile_dim": (
+                self.data.axes[self.tile_dim].name
+                if self.tile_dim is not None
+                else None
+            ),
+            "tile_range": self.tile_range,
+            "tile_step": self.tile_step,
+            "tile_step_auto": self.tile_step_auto,
             "marker": self.marker,
             "line_style": self.line_style,
             "marker_size": self.marker_size,
@@ -649,6 +697,16 @@ class QtMDHistoSliceViewer:
             if isinstance(dataset_names, (list, tuple))
             else None
         )
+        tile_name = settings.get("tile_dim")
+        if tile_name in names:
+            self.tile_dim = names.index(str(tile_name))
+        tile_range = settings.get("tile_range")
+        if isinstance(tile_range, (list, tuple)) and len(tile_range) == 2:
+            self.tile_range = (float(tile_range[0]), float(tile_range[1]))
+        self.tile_step = float(settings.get("tile_step", self.tile_step))
+        self.tile_step_auto = bool(
+            settings.get("tile_step_auto", self.tile_step_auto)
+        )
         self.marker = str(settings.get("marker", self.marker))
         self.line_style = str(settings.get("line_style", self.line_style))
         self.marker_size = float(settings.get("marker_size", self.marker_size))
@@ -682,7 +740,8 @@ class QtMDHistoSliceViewer:
         )
         mode = {
             "waterfall": 1,
-            "volumetric": 2,
+            "tiled_slices": 2,
+            "volumetric": 3,
         }.get(settings.get("view_mode"), 0)
         if mode == 1:
             self._waterfall_marker_face_color = marker_face_color
@@ -691,6 +750,7 @@ class QtMDHistoSliceViewer:
         if self.view_mode_combo.currentIndex() == mode:
             self.marker_face_color = marker_face_color
         self._sync_waterfall_controls()
+        self._sync_tile_controls()
         self.view_mode_combo.setCurrentIndex(mode)
         self._set_combo_silent(
             self.marker_face_color_combo,
@@ -789,7 +849,13 @@ class QtMDHistoSliceViewer:
         path, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
             self.window,
             "Save figure script",
-            "mdhisto_slice_figure.py",
+            (
+                "mdhisto_tiled_slices_figure.py"
+                if self._tiled_mode_active()
+                else "mdhisto_waterfall_figure.py"
+                if self._waterfall_mode_active()
+                else "mdhisto_slice_figure.py"
+            ),
             "Python scripts (*.py);;Text files (*.txt);;All files (*)",
         )
         if not path:
@@ -799,6 +865,8 @@ class QtMDHistoSliceViewer:
     def figure_script(self) -> str:
         if self._waterfall_mode_active():
             return self._waterfall_figure_script()
+        if self._tiled_mode_active():
+            return self._tiled_figure_script()
         source_file = self.data.metadata.get("source_file") if isinstance(self.data.metadata, dict) else None
         data_line = (
             f"data = load_mantid_mdhisto_nxs({source_file!r}, copy_metadata=False)"
@@ -841,6 +909,58 @@ class QtMDHistoSliceViewer:
                 f"    roi_extents={self._roi_extents!r},",
                 f"    xcut_percent={self.xcut_percent!r},",
                 f"    ycut_percent={self.ycut_percent!r},",
+                ")",
+                "plt.show()",
+                "",
+            ]
+        )
+
+    def _tiled_figure_script(self) -> str:
+        source_file = (
+            self.data.metadata.get("source_file")
+            if isinstance(self.data.metadata, dict)
+            else None
+        )
+        data_line = (
+            f"data = load_mantid_mdhisto_nxs({source_file!r}, copy_metadata=False)"
+            if source_file
+            else "data = ...  # Replace with your MDHistoData object"
+        )
+        return "\n".join(
+            [
+                "import matplotlib.pyplot as plt",
+                "from nfit import load_mantid_mdhisto_nxs, plot_mdhisto_tiled_slices",
+                "",
+                data_line,
+                "fig = plot_mdhisto_tiled_slices(",
+                "    data,",
+                f"    x_dim={self.data.axes[self.model.x_dim].name!r},",
+                f"    y_dim={self.data.axes[self.model.y_dim].name!r},",
+                f"    tile_dim={self.data.axes[self.tile_dim].name!r},",
+                f"    channel={self.model.channel!r},",
+                f"    selections={self._export_selections()!r},",
+                f"    integrate_checks={self._export_integrate_checks()!r},",
+                f"    tile_range={self.tile_range!r},",
+                f"    tile_step={self.tile_step!r},",
+                f"    coverage_threshold={self.coverage_threshold!r},",
+                f"    masked={self.model.masked!r},",
+                f"    cmap={self.model._effective_cmap()!r},",
+                f"    color_scale={self.model.color_scale!r},",
+                f"    auto_limits={self.model.auto_limits!r},",
+                f"    autoscale={self.model.autoscale!r},",
+                f"    manual_vmin={self.model.manual_vmin!r},",
+                f"    manual_vmax={self.model.manual_vmax!r},",
+                f"    sigma_n={self.model.sigma_n!r},",
+                f"    iqr_n={self.model.iqr_n!r},",
+                f"    percentile_n={self.model.percentile_n!r},",
+                f"    power_gamma={self.model.power_gamma!r},",
+                f"    smoothing_sigma_x={self.smoothing_x!r},",
+                f"    smoothing_sigma_y={self.smoothing_y!r},",
+                f"    xlim={self._export_limits('x')!r},",
+                f"    ylim={self._export_limits('y')!r},",
+                f"    font_size={self.font_size!r},",
+                f"    axes_linewidth={self.axis_linewidth!r},",
+                f"    figsize={tuple(self.figure.get_size_inches())!r},",
                 ")",
                 "plt.show()",
                 "",
@@ -1000,12 +1120,13 @@ class QtMDHistoSliceViewer:
         mode_layout.addWidget(QtWidgets.QLabel("Visualization"))
         self.view_mode_combo = QtWidgets.QComboBox()
         self.view_mode_combo.setObjectName("data_viewer_mode_combo")
-        self.view_mode_combo.addItems(["Slice viewer", "Waterfall", "Volumetric"])
+        self.view_mode_combo.addItems(
+            ["Slice viewer", "Waterfall", "Tiled slices", "Volumetric"]
+        )
         self.view_mode_combo.setToolTip(
-            "Switch between standard slices, offset waterfall traces, and volumetric "
-            "volume/isosurface rendering. Waterfall mode accepts one multidimensional "
-            "MDHisto dataset or compatible 1D datasets; volumetric mode requires at least "
-            "three dimensions."
+            "Switch between standard slices, offset waterfall traces, tiled 2D slices, "
+            "and volumetric rendering. Tiled-slice and volumetric modes require at least "
+            "three dimensions with more than one bin."
         )
         self.view_mode_combo.currentIndexChanged.connect(self._set_view_mode)
         mode_layout.addWidget(self.view_mode_combo)
@@ -1227,6 +1348,62 @@ class QtMDHistoSliceViewer:
         axes_layout.setColumnStretch(1, 1)
         axes_layout.setColumnStretch(2, 1)
         controls_layout.addWidget(axes_group)
+
+        tiled_group = QtWidgets.QGroupBox("Tiled slices")
+        self.tiled_group = tiled_group
+        tiled_layout = QtWidgets.QGridLayout(tiled_group)
+        tiled_layout.setHorizontalSpacing(6)
+        tiled_layout.setVerticalSpacing(6)
+        self.tile_dim_combo = QtWidgets.QComboBox()
+        self.tile_dim_combo.setToolTip(
+            "Choose the third dimension whose coarse slices are arranged as panels."
+        )
+        _expanding_combobox(self.tile_dim_combo)
+        self.tile_dim_combo.currentIndexChanged.connect(self._set_tile_dimension)
+        tiled_layout.addWidget(QtWidgets.QLabel("Third dimension"), 0, 0)
+        tiled_layout.addWidget(self.tile_dim_combo, 0, 1, 1, 3)
+
+        self.tile_range_low_spin = _make_float_spinbox()
+        self.tile_range_high_spin = _make_float_spinbox()
+        self.tile_range_low_spin.setToolTip(
+            "Lowest third-axis bin center included in the tiled panels."
+        )
+        self.tile_range_high_spin.setToolTip(
+            "Highest third-axis bin center included in the tiled panels."
+        )
+        self.tile_range_low_spin.valueChanged.connect(self._set_tile_range)
+        self.tile_range_high_spin.valueChanged.connect(self._set_tile_range)
+        tiled_layout.addWidget(QtWidgets.QLabel("Range low"), 1, 0)
+        tiled_layout.addWidget(self.tile_range_low_spin, 1, 1)
+        tiled_layout.addWidget(QtWidgets.QLabel("Range high"), 1, 2)
+        tiled_layout.addWidget(self.tile_range_high_spin, 1, 3)
+
+        self.tile_step_spin = _make_float_spinbox(1.0e-9, 1.0e12)
+        self.tile_step_spin.setDecimals(8)
+        self.tile_step_spin.setToolTip(
+            "Width of each coarse bin along the third dimension. Each bin becomes one 2D panel."
+        )
+        self.tile_step_spin.valueChanged.connect(self._set_tile_step)
+        self.tile_step_auto_check = QtWidgets.QCheckBox("Auto (up to 9)")
+        self.tile_step_auto_check.setChecked(self.tile_step_auto)
+        self.tile_step_auto_check.setToolTip(
+            "Choose a bin width that makes nine panels, or one panel per value when fewer than nine are available."
+        )
+        self.tile_step_auto_check.toggled.connect(self._set_tile_step_auto)
+        tiled_layout.addWidget(QtWidgets.QLabel("Step size"), 2, 0)
+        tiled_layout.addWidget(self.tile_step_spin, 2, 1)
+        tiled_layout.addWidget(self.tile_step_auto_check, 2, 2, 1, 2)
+        self.tile_step_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.tile_step_slider.setRange(0, 1000)
+        self.tile_step_slider.setToolTip(
+            "Adjust the third-axis step from one native bin to the selected range span."
+        )
+        self.tile_step_slider.valueChanged.connect(self._set_tile_step_from_slider)
+        tiled_layout.addWidget(self.tile_step_slider, 3, 0, 1, 4)
+        tiled_layout.setColumnStretch(1, 1)
+        tiled_layout.setColumnStretch(3, 1)
+        controls_layout.addWidget(tiled_group)
+        self._sync_tile_controls(reset_range=True)
 
         self.hidden_group = QtWidgets.QGroupBox("Integrated Axes")
         self.hidden_layout = QtWidgets.QVBoxLayout(self.hidden_group)
@@ -1854,8 +2031,20 @@ class QtMDHistoSliceViewer:
                 if waterfall_available
                 else "Waterfall mode currently requires gridded MDHisto data."
             )
+        tiled_available = (
+            isinstance(self.data, MDHistoData)
+            and sum(size > 1 for size in self.data.shape) >= 3
+        )
+        tiled_item = self.view_mode_combo.model().item(2)
+        if tiled_item is not None:
+            tiled_item.setEnabled(tiled_available)
+            tiled_item.setToolTip(
+                "Tile coarse third-axis bins as 2D slices."
+                if tiled_available
+                else "Tiled slices require at least three non-singleton dimensions."
+            )
         volume_available = supports_volume_view(self.data)
-        volume_item = self.view_mode_combo.model().item(2)
+        volume_item = self.view_mode_combo.model().item(3)
         if volume_item is not None:
             volume_item.setEnabled(volume_available)
             volume_item.setToolTip(
@@ -1865,13 +2054,14 @@ class QtMDHistoSliceViewer:
             )
         if (
             (not waterfall_available and self.view_mode_combo.currentIndex() == 1)
-            or (not volume_available and self.view_mode_combo.currentIndex() == 2)
+            or (not tiled_available and self.view_mode_combo.currentIndex() == 2)
+            or (not volume_available and self.view_mode_combo.currentIndex() == 3)
         ):
             self.view_mode_combo.setCurrentIndex(0)
 
     def _set_view_mode(self, index: int) -> None:
         index = int(index)
-        if index in {0, 1}:
+        if index in {0, 1, 2}:
             previous = self._active_plot_view_mode
             if index != previous:
                 if previous == 1:
@@ -1892,6 +2082,9 @@ class QtMDHistoSliceViewer:
                         else _option_name(_COLOR_OPTIONS, self.marker_face_color)
                     ),
                 )
+            self._sync_tile_controls()
+            if index == 2 or previous == 2:
+                self._rebuild_hidden_axis_controls()
             self.content_stack.setCurrentIndex(0)
             self.update_plot(preserve_view=False)
             return
@@ -1941,7 +2134,9 @@ class QtMDHistoSliceViewer:
         hidden_dims = [
             dim
             for dim, size in enumerate(self.data.shape)
-            if size > 1 and dim not in (self.model.x_dim, self.model.y_dim)
+            if size > 1
+            and dim not in (self.model.x_dim, self.model.y_dim)
+            and not (self._tiled_mode_active() and dim == self.tile_dim)
         ]
         if not hidden_dims:
             self.hidden_layout.addWidget(QtWidgets.QLabel("No hidden axes."))
@@ -2159,6 +2354,7 @@ class QtMDHistoSliceViewer:
             self.model.x_dim = int(dim)
         else:
             self.model.y_dim = int(dim)
+        self._sync_tile_controls()
         self._rebuild_hidden_axis_controls()
         self.update_plot(preserve_view=False)
 
@@ -2213,6 +2409,10 @@ class QtMDHistoSliceViewer:
             cmap_reversed=bool(self.model.cmap_reversed),
             smoothing_x=float(self.smoothing_x),
             smoothing_y=float(self.smoothing_y),
+            tile_dim=self.tile_dim,
+            tile_range=self.tile_range,
+            tile_step=float(self.tile_step),
+            tile_step_auto=bool(self.tile_step_auto),
         )
 
     def _default_dataset_state(self, index: int) -> _DatasetViewState:
@@ -2230,10 +2430,29 @@ class QtMDHistoSliceViewer:
             masked=self._initial_masked,
             coverage_threshold=self.coverage_threshold,
         )
+        tile_candidates = (
+            [
+                dim
+                for dim, size in enumerate(data.shape)
+                if size > 1 and dim not in (model.x_dim, model.y_dim)
+            ]
+            if isinstance(data, MDHistoData)
+            else []
+        )
+        tile_dim = tile_candidates[0] if tile_candidates else None
+        tile_range = (0.0, 0.0)
+        tile_step = 1.0
+        if tile_dim is not None:
+            centers = np.asarray(data.axes[tile_dim].centers, dtype=float)
+            tile_range = (float(centers[0]), float(centers[-1]))
+            tile_step = default_tiled_slice_step(data, tile_dim, tile_range)
         return _DatasetViewState(
             model=model,
             apply_masks=bool(model.masked),
             show_fit=bool(data.metadata.get("viewer_show_fit", False)),
+            tile_dim=tile_dim,
+            tile_range=tile_range,
+            tile_step=tile_step,
         )
 
     def _restore_dataset_state(self, state: _DatasetViewState) -> None:
@@ -2268,6 +2487,10 @@ class QtMDHistoSliceViewer:
             self.residual_percent = int(state.residual_percent)
             self.smoothing_x = float(state.smoothing_x)
             self.smoothing_y = float(state.smoothing_y)
+            self.tile_dim = state.tile_dim
+            self.tile_range = tuple(state.tile_range)
+            self.tile_step = float(state.tile_step)
+            self.tile_step_auto = bool(state.tile_step_auto)
             self.model.masked = bool(state.apply_masks)
             self.model.coverage_threshold = self.coverage_threshold
             self.model.cmap_reversed = bool(state.cmap_reversed)
@@ -2275,6 +2498,7 @@ class QtMDHistoSliceViewer:
             self._current_slice = None
             self._last_plot_dims = None
             self._sync_axis_combos(rebuild=True)
+            self._sync_tile_controls()
             self._sync_view_mode_availability()
             self._sync_channel_combo()
             self._set_combo_silent(self.cmap_combo, self.model.cmap)
@@ -2451,6 +2675,168 @@ class QtMDHistoSliceViewer:
             ),
         )
 
+    def _tile_axis_candidates(self) -> list[int]:
+        if getattr(self.model, "is_point_list", False):
+            return []
+        return [
+            dim
+            for dim, size in enumerate(self.data.shape)
+            if size > 1 and dim not in (self.model.x_dim, self.model.y_dim)
+        ]
+
+    def _sync_tile_controls(self, *, reset_range: bool = False) -> None:
+        if self.tile_dim_combo is None:
+            return
+        candidates = self._tile_axis_candidates()
+        if self.tile_dim not in candidates:
+            self.tile_dim = candidates[0] if candidates else None
+            reset_range = True
+        previous = self.tile_dim_combo.blockSignals(True)
+        try:
+            self.tile_dim_combo.clear()
+            for dim in candidates:
+                self.tile_dim_combo.addItem(self.data.axes[dim].name, dim)
+            if self.tile_dim is not None:
+                index = self.tile_dim_combo.findData(self.tile_dim)
+                self.tile_dim_combo.setCurrentIndex(max(index, 0))
+        finally:
+            self.tile_dim_combo.blockSignals(previous)
+        enabled = self.tile_dim is not None
+        for widget in (
+            self.tile_dim_combo,
+            self.tile_range_low_spin,
+            self.tile_range_high_spin,
+            self.tile_step_spin,
+            self.tile_step_slider,
+            self.tile_step_auto_check,
+        ):
+            if widget is not None:
+                widget.setEnabled(enabled)
+        if not enabled:
+            return
+        centers = np.asarray(self.data.axes[self.tile_dim].centers, dtype=float)
+        minimum = float(np.min(centers))
+        maximum = float(np.max(centers))
+        if reset_range:
+            self.tile_range = (minimum, maximum)
+        else:
+            low, high = sorted(map(float, self.tile_range))
+            self.tile_range = (
+                float(np.clip(low, minimum, maximum)),
+                float(np.clip(high, minimum, maximum)),
+            )
+        for spin in (self.tile_range_low_spin, self.tile_range_high_spin):
+            previous = spin.blockSignals(True)
+            try:
+                spin.setRange(minimum, maximum)
+                spin.setSingleStep(max((maximum - minimum) / 100.0, 1.0e-9))
+            finally:
+                spin.blockSignals(previous)
+        self._set_spin_silent(self.tile_range_low_spin, self.tile_range[0])
+        self._set_spin_silent(self.tile_range_high_spin, self.tile_range[1])
+        if self.tile_step_auto:
+            self.tile_step = default_tiled_slice_step(
+                self.data,
+                self.tile_dim,
+                self.tile_range,
+            )
+        self._set_checkbox_silent(self.tile_step_auto_check, self.tile_step_auto)
+        self._set_spin_silent(self.tile_step_spin, self.tile_step)
+        self._sync_tile_step_slider()
+
+    def _tile_step_limits(self) -> tuple[float, float]:
+        if self.tile_dim is None:
+            return 1.0, 1.0
+        minimum, _full_span = waterfall_step_bounds(self.data, self.tile_dim)
+        centers = np.asarray(self.data.axes[self.tile_dim].centers, dtype=float)
+        edges = np.asarray(self.data.axes[self.tile_dim].values, dtype=float)
+        low, high = sorted(map(float, self.tile_range))
+        selected = np.flatnonzero((centers >= low) & (centers <= high))
+        if selected.size == 0:
+            return minimum, minimum
+        span = float(edges[int(selected[-1]) + 1] - edges[int(selected[0])])
+        return min(minimum, span), max(minimum, span)
+
+    def _sync_tile_step_slider(self) -> None:
+        if self.tile_step_spin is None:
+            return
+        low, high = self._tile_step_limits()
+        self.tile_step = float(np.clip(self.tile_step, low, high))
+        previous = self.tile_step_spin.blockSignals(True)
+        try:
+            self.tile_step_spin.setRange(low, high)
+            self.tile_step_spin.setValue(self.tile_step)
+        finally:
+            self.tile_step_spin.blockSignals(previous)
+        fraction = 0.0 if high <= low else (self.tile_step - low) / (high - low)
+        self._set_slider_silent(
+            self.tile_step_slider,
+            int(round(1000.0 * np.clip(fraction, 0.0, 1.0))),
+        )
+
+    def _set_tile_dimension(self, index: int) -> None:
+        dim = self.tile_dim_combo.itemData(int(index))
+        if dim is None or int(dim) == self.tile_dim:
+            return
+        self.tile_dim = int(dim)
+        self._sync_tile_controls(reset_range=True)
+        self._rebuild_hidden_axis_controls()
+        if self._tiled_mode_active():
+            self.update_plot(preserve_view=False)
+
+    def _set_tile_range(self, _value: float) -> None:
+        if self._restoring_dataset_state or self.tile_dim is None:
+            return
+        low, high = sorted(
+            (
+                float(self.tile_range_low_spin.value()),
+                float(self.tile_range_high_spin.value()),
+            )
+        )
+        self.tile_range = (low, high)
+        if self.tile_step_auto:
+            self.tile_step = default_tiled_slice_step(
+                self.data,
+                self.tile_dim,
+                self.tile_range,
+            )
+        self._sync_tile_controls()
+        if self._tiled_mode_active():
+            self.update_plot(preserve_view=False)
+
+    def _set_tile_step(self, value: float) -> None:
+        if self._restoring_dataset_state:
+            return
+        low, high = self._tile_step_limits()
+        self.tile_step = float(np.clip(value, low, high))
+        if self.tile_step_auto_check.isChecked():
+            self.tile_step_auto = False
+            self._set_checkbox_silent(self.tile_step_auto_check, False)
+        self._sync_tile_step_slider()
+        if self._tiled_mode_active():
+            self.update_plot(preserve_view=False)
+
+    def _set_tile_step_from_slider(self, position: int) -> None:
+        if self._restoring_dataset_state:
+            return
+        low, high = self._tile_step_limits()
+        fraction = float(np.clip(position, 0, 1000)) / 1000.0
+        value = low + fraction * (high - low)
+        self._set_spin_silent(self.tile_step_spin, value)
+        self._set_tile_step(value)
+
+    def _set_tile_step_auto(self, enabled: bool) -> None:
+        self.tile_step_auto = bool(enabled)
+        if self.tile_step_auto and self.tile_dim is not None:
+            self.tile_step = default_tiled_slice_step(
+                self.data,
+                self.tile_dim,
+                self.tile_range,
+            )
+        self._sync_tile_step_slider()
+        if not self._restoring_dataset_state and self._tiled_mode_active():
+            self.update_plot(preserve_view=False)
+
     def _set_rectangle_selector_from_controls(self) -> None:
         if self.rectangle_selector is None:
             return
@@ -2604,7 +2990,12 @@ class QtMDHistoSliceViewer:
     def _fit_panels_active(self) -> bool:
         """Side-by-side pcolor panels are used for 2D data with a fit shown."""
 
-        return bool(self.show_fit and self._has_fit_channel() and not self._is_effective_1d())
+        return bool(
+            not self._tiled_mode_active()
+            and self.show_fit
+            and self._has_fit_channel()
+            and not self._is_effective_1d()
+        )
 
     def _residual_axes_active(self) -> bool:
         """A residual axes below the data is used for 1D data."""
@@ -3007,6 +3398,11 @@ class QtMDHistoSliceViewer:
             axis.xaxis.label.set_fontsize(size)
             axis.yaxis.label.set_fontsize(size)
             axis.tick_params(axis="both", labelsize=size)
+        for axis in self._tile_axes[1:]:
+            axis.title.set_fontsize(size + 1.0)
+            axis.xaxis.label.set_fontsize(size)
+            axis.yaxis.label.set_fontsize(size)
+            axis.tick_params(axis="both", labelsize=size)
         if self.colorbar is not None:
             self.colorbar.ax.yaxis.label.set_fontsize(size)
             self.colorbar.ax.tick_params(labelsize=size)
@@ -3031,6 +3427,10 @@ class QtMDHistoSliceViewer:
                 spine.set_linewidth(width)
             axis.tick_params(axis="both", which="both", direction="in", top=True, right=True, width=width)
         for axis in self._compare_axes:
+            for spine in axis.spines.values():
+                spine.set_linewidth(width)
+            axis.tick_params(axis="both", which="both", direction="in", top=True, right=True, width=width)
+        for axis in self._tile_axes[1:]:
             for spine in axis.spines.values():
                 spine.set_linewidth(width)
             axis.tick_params(axis="both", which="both", direction="in", top=True, right=True, width=width)
@@ -3114,6 +3514,7 @@ class QtMDHistoSliceViewer:
             or self.model._is_boolean_channel()
             or self._is_effective_1d()
             or self._fit_panels_active()
+            or self._tiled_mode_active()
         ):
             return
         self._autoscaling_view = True
@@ -3242,6 +3643,7 @@ class QtMDHistoSliceViewer:
         is_line = self._is_effective_1d()
         is_point = getattr(self.model, "is_point_list", False)
         is_waterfall = self._waterfall_mode_active()
+        is_tiled = self._tiled_mode_active()
         grouped_waterfall = is_waterfall and self._waterfall_uses_1d_group()
         compare_active = self._fit_panels_active()
         if self.axes_group is not None:
@@ -3269,11 +3671,15 @@ class QtMDHistoSliceViewer:
         if self.tools_group is not None:
             # The box tool is used both in the standard 2D layout and in 2D
             # fit compare (where it drives the integrated data+fit cut).
-            self.tools_group.setVisible(not is_line and not is_waterfall)
+            self.tools_group.setVisible(not is_line and not is_waterfall and not is_tiled)
         if self.line_group is not None:
-            self.line_group.setVisible(is_line or compare_active or is_waterfall)
+            self.line_group.setVisible(
+                not is_tiled and (is_line or compare_active or is_waterfall)
+            )
         if self.waterfall_group is not None:
             self.waterfall_group.setVisible(is_waterfall)
+        if self.tiled_group is not None:
+            self.tiled_group.setVisible(is_tiled)
         for widget in (
             self.coverage_threshold_label,
             self.coverage_threshold_spin,
@@ -3310,12 +3716,21 @@ class QtMDHistoSliceViewer:
             )
             self.waterfall_color_range_slider.setVisible(show_color_range)
             self.waterfall_color_range_label.setVisible(show_color_range)
-        if self.show_residual_check is not None:
-            self.show_residual_check.setVisible(not is_waterfall)
+        for widget in (
+            self.show_fit_check,
+            self.unmask_model_check,
+            self.show_residual_check,
+        ):
+            if widget is not None:
+                widget.setVisible(not is_tiled and (widget is not self.show_residual_check or not is_waterfall))
         if self.residual_split_label is not None:
-            self.residual_split_label.setVisible(not is_waterfall and self._residual_axes_active())
+            self.residual_split_label.setVisible(
+                not is_waterfall and not is_tiled and self._residual_axes_active()
+            )
         if self.residual_split_slider is not None:
-            self.residual_split_slider.setVisible(not is_waterfall and self._residual_axes_active())
+            self.residual_split_slider.setVisible(
+                not is_waterfall and not is_tiled and self._residual_axes_active()
+            )
         self._sync_cursor_visibility()
 
     def _suppress_matplotlib_coordinate_status(self) -> None:
@@ -3329,7 +3744,7 @@ class QtMDHistoSliceViewer:
             self.ax_residual_cut,
             self.ax_residual_ycut,
         )
-        for axis in (*axes, *self._compare_axes):
+        for axis in (*axes, *self._compare_axes, *self._tile_axes):
             if axis is not None:
                 axis.format_coord = lambda _x, _y: ""
 
@@ -3402,6 +3817,7 @@ class QtMDHistoSliceViewer:
         self.colorbar = None
         self._compare_axes = []
         self._compare_colorbars = []
+        self._tile_axes = []
         self._plot_layout_mode = ("standard", 1)
         self._create_rectangle_selector()
 
@@ -3424,10 +3840,50 @@ class QtMDHistoSliceViewer:
         self._compare_axes = []
         self._compare_colorbars = []
         self._compare_colorbar_axes = []
+        self._tile_axes = []
         if self.rectangle_selector is not None:
             self.rectangle_selector.set_active(False)
             self.rectangle_selector = None
         self._plot_layout_mode = ("waterfall", 1)
+        self._suppress_matplotlib_coordinate_status()
+
+    def _ensure_tiled_layout(self, panel_count: int) -> None:
+        self.figure.clear()
+        columns = int(np.ceil(np.sqrt(panel_count)))
+        rows = int(np.ceil(panel_count / columns))
+        self.grid = self.figure.add_gridspec(
+            rows,
+            columns + 1,
+            width_ratios=[*[1.0] * columns, 0.055],
+        )
+        self._tile_axes = []
+        for index in range(panel_count):
+            row, column = divmod(index, columns)
+            first = self._tile_axes[0] if self._tile_axes else None
+            self._tile_axes.append(
+                self.figure.add_subplot(
+                    self.grid[row, column],
+                    sharex=first,
+                    sharey=first,
+                )
+            )
+        self.ax_image = self._tile_axes[0]
+        self.ax_colorbar = self.figure.add_subplot(self.grid[:, -1])
+        self.ax_xcut = None
+        self.ax_ycut = None
+        self.ax_residual = None
+        self.ax_fit_cut = None
+        self.ax_residual_cut = None
+        self.ax_residual_ycut = None
+        self.image = None
+        self.colorbar = None
+        self._compare_axes = []
+        self._compare_colorbars = []
+        self._compare_colorbar_axes = []
+        if self.rectangle_selector is not None:
+            self.rectangle_selector.set_active(False)
+            self.rectangle_selector = None
+        self._plot_layout_mode = ("tiled", panel_count)
         self._suppress_matplotlib_coordinate_status()
 
     def _ensure_fit_compare_layout(
@@ -3449,6 +3905,7 @@ class QtMDHistoSliceViewer:
         self.colorbar = None
         self._compare_colorbars = []
         self._compare_colorbar_axes = []
+        self._tile_axes = []
         if with_cuts:
             cut_ratio = self._panel_ratio(self.xcut_percent)
             ycut_ratio = self._panel_ratio(self.ycut_percent)
@@ -3517,6 +3974,7 @@ class QtMDHistoSliceViewer:
         self.colorbar = None
         self._compare_axes = []
         self._compare_colorbars = []
+        self._tile_axes = []
         self._suppress_matplotlib_coordinate_status()
         if self.rectangle_selector is not None:
             self.rectangle_selector.set_active(False)
@@ -3550,6 +4008,14 @@ class QtMDHistoSliceViewer:
         view = self._current_slice
         if self._waterfall_mode_active():
             self._draw_waterfall_view(
+                previous_xlim,
+                previous_ylim,
+                previous_dims,
+                current_dims,
+            )
+            return
+        if self._tiled_mode_active():
+            self._draw_tiled_view(
                 previous_xlim,
                 previous_ylim,
                 previous_dims,
@@ -3600,6 +4066,96 @@ class QtMDHistoSliceViewer:
         self._apply_axis_linewidth()
         self._connect_view_limit_callbacks()
         self._apply_autoscale_to_view()
+        self.canvas.draw_idle()
+
+    def _draw_tiled_view(
+        self,
+        previous_xlim,
+        previous_ylim,
+        previous_dims,
+        current_dims,
+    ) -> None:
+        """Draw coarse third-axis bins as linked 2D panels."""
+
+        if self.tile_dim is None:
+            return
+        if self.tile_step_auto:
+            self.tile_step = default_tiled_slice_step(
+                self.data,
+                self.tile_dim,
+                self.tile_range,
+            )
+        self._sync_tile_step_slider()
+        slices = prepare_mdhisto_tiled_slices(
+            self.data,
+            x_dim=self.model.x_dim,
+            y_dim=self.model.y_dim,
+            tile_dim=self.tile_dim,
+            channel=self.model.channel,
+            selections=self.model.selections,
+            integrate_checks=self.model.integrate_checks,
+            tile_range=self.tile_range,
+            tile_step=self.tile_step,
+            coverage_threshold=self.coverage_threshold,
+            masked=self.model.masked,
+            smoothing_sigma_x=self.smoothing_x,
+            smoothing_sigma_y=self.smoothing_y,
+        )
+        self._current_tiled_slices = slices
+        self._current_slice = slices[0].view
+        combined = np.concatenate([panel.values.ravel() for panel in slices])
+        norm = self.model._color_norm(combined)
+        vmin, vmax = self.model._color_limits(combined)
+        self._ensure_tiled_layout(len(slices))
+        columns = int(np.ceil(np.sqrt(len(slices))))
+        rows = int(np.ceil(len(slices) / columns))
+        artists = []
+        for index, (axis, panel) in enumerate(
+            zip(self._tile_axes, slices, strict=True)
+        ):
+            row, column = divmod(index, columns)
+            artist = axis.pcolormesh(
+                panel.view["x_edges"],
+                panel.view["y_edges"],
+                panel.values,
+                shading="auto",
+                cmap=self.model._effective_cmap(),
+                norm=norm,
+            )
+            axis.text(
+                0.97,
+                0.03,
+                panel.label,
+                transform=axis.transAxes,
+                ha="right",
+                va="bottom",
+                fontsize=self.font_size,
+            )
+            if row == rows - 1 or index + columns >= len(slices):
+                axis.set_xlabel(self.model._axis_label(self.model.x_dim))
+            if column == 0:
+                axis.set_ylabel(self.model._axis_label(self.model.y_dim))
+            artists.append(artist)
+        self.image = artists[0]
+        self.colorbar = self.figure.colorbar(artists[-1], cax=self.ax_colorbar)
+        self.colorbar.set_label(self.model._channel_label())
+        preserve_limits = (
+            previous_xlim is not None
+            and previous_ylim is not None
+            and previous_dims == current_dims
+            and getattr(self, "_last_plot_view_mode", None) == "tiled"
+        )
+        if preserve_limits:
+            self.ax_image.set_xlim(previous_xlim)
+            self.ax_image.set_ylim(previous_ylim)
+        self._sync_control_visibility()
+        self._sync_limit_spinboxes(vmin, vmax)
+        self._last_plot_dims = current_dims
+        self._last_plot_view_mode = "tiled"
+        self._sync_view_limit_controls()
+        self._apply_figure_font_size()
+        self._apply_axis_linewidth()
+        self._connect_view_limit_callbacks()
         self.canvas.draw_idle()
 
     def _draw_waterfall_view(
@@ -4042,6 +4598,9 @@ class QtMDHistoSliceViewer:
 
     def _waterfall_mode_active(self) -> bool:
         return self.view_mode_combo is not None and self.view_mode_combo.currentIndex() == 1
+
+    def _tiled_mode_active(self) -> bool:
+        return self.view_mode_combo is not None and self.view_mode_combo.currentIndex() == 2
 
     def _waterfall_uses_1d_group(self) -> bool:
         return (

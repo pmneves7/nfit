@@ -81,9 +81,14 @@ returns the reduced traces and propagated errors for custom plotting.
 `waterfall_step_bounds` gives the native-bin/full-span bin-width limits and
 `waterfall_absolute_max` gives the data-dependent offset limit. The
 `color_range` and `marker_face="outline"` options reproduce the interactive
-colormap-range and per-trace marker-fill controls. Exported
-scripts from the GUI call the matching slice, line, or waterfall backend and
-include the current display settings.
+colormap-range and per-trace marker-fill controls.
+
+`plot_mdhisto_tiled_slices(data, ...)` renders coarse bins along a third
+dimension as a grid of linked 2D maps with one shared normalization and
+colorbar. `prepare_mdhisto_tiled_slices` returns the panel arrays and labels for
+custom layouts, while `default_tiled_slice_step` chooses up to nine panels.
+Exported scripts from the GUI call the matching slice, line, waterfall, or
+tiled-slice backend and include the current display settings.
 
 Saved workspace plots use `PlotEntry`, `render_plot`, and `render_project_plot`.
 They return Matplotlib figures and never construct Qt widgets, so generated plot

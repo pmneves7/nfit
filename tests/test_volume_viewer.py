@@ -195,9 +195,11 @@ def test_data_viewer_exposes_volumetric_mode_for_nd_histograms(monkeypatch):
     mode = viewer.window.findChild(QtWidgets.QComboBox, "data_viewer_mode_combo")
     assert mode is not None
     assert mode.itemText(1) == "Waterfall"
-    assert mode.itemText(2) == "Volumetric"
+    assert mode.itemText(2) == "Tiled slices"
+    assert mode.itemText(3) == "Volumetric"
     assert mode.model().item(1).isEnabled()
     assert mode.model().item(2).isEnabled()
+    assert mode.model().item(3).isEnabled()
     assert "three dimensions" in mode.toolTip()
     viewer.window.close()
 

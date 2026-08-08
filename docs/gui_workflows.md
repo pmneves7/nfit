@@ -51,7 +51,7 @@ The detailed workflows are divided by task:
 - [Models and fitting](gui_fitting.md) covers model components, constraints,
   fit timelines, optimizers, posterior sampling, diagnostics, and scripts.
 - [Data viewer and saved plots](data_viewer.md) covers cuts, maps, waterfall
-  plots, model overlays, volumetric rendering, and plot export.
+  plots, tiled 2D slices, model overlays, volumetric rendering, and plot export.
 - [Analysis Window](data_playground.md) covers non-fitting operations such as
   Bragg integration, Curie-Weiss fitting, and spectral integrals.
 

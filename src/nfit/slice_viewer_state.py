@@ -45,6 +45,10 @@ class _DatasetViewState:
     cmap_reversed: bool = False
     smoothing_x: float = 0.0
     smoothing_y: float = 0.0
+    tile_dim: int | None = None
+    tile_range: tuple[float, float] = (0.0, 0.0)
+    tile_step: float = 1.0
+    tile_step_auto: bool = True
 
 
 def _coerce_datasets(data: MDHistoData | Sequence[MDHistoData]) -> list[MDHistoData]:
