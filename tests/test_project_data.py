@@ -1293,7 +1293,6 @@ def test_project_explorer_nested_group_bulk_edit_and_tree(monkeypatch):
     datasets_item = explorer.tree.topLevelItem(0).child(0)
     assert [datasets_item.child(i).text(0) for i in range(datasets_item.childCount())] == [
         "d1",
-        "Backgrounds",
         "Group1",
     ]
     subgroup_item = next(
@@ -1302,9 +1301,7 @@ def test_project_explorer_nested_group_bulk_edit_and_tree(monkeypatch):
         if datasets_item.child(index).text(0) == "Group1"
     )
     assert [subgroup_item.child(i).text(0) for i in range(subgroup_item.childCount())] == [
-        "Masks",
         "d2",
-        "Backgrounds",
     ]
 
     # Bulk-set scale on the subgroup overwrites all descendants.
@@ -2144,10 +2141,11 @@ def test_add_mask_and_slice_viewer_from_masks_node(monkeypatch):
     group = DataGroup("Datagroup1", datasets=[dataset])
     explorer = NfitProjectExplorer(NfitProject([group]))
 
-    masks_item = explorer.tree.topLevelItem(0).child(0).child(0).child(0)
-    explorer.tree.setCurrentItem(masks_item)
+    dataset_item = explorer.tree.topLevelItem(0).child(0).child(0)
+    assert dataset_item.childCount() == 0
+    explorer.tree.setCurrentItem(dataset_item)
 
-    action_names = explorer.context_menu_action_names(masks_item)
+    action_names = explorer.context_menu_action_names(dataset_item)
     assert "Add mask" in action_names
     assert "View in data viewer" in action_names
     assert not explorer.add_mask_button.isHidden()

@@ -5,10 +5,11 @@ datasets. Open it from a workspace, dataset, or `Analyses` node. Results appear
 under `Datasets / Derived data`; the saved recipe and provenance remain under
 `Analyses`.
 
-Save the project before running an analysis. Array outputs are stored inside
-the `.nfit` project under `assets/analyses/<analysis-id>/`, so moving or using
-**Save As** on the project keeps its analysis results with it. Editing a recipe
-or input marks its result stale but does not delete it.
+Save the project before running an analysis. Materialized array outputs are
+stored inside the `.nfit` project under `assets/analyses/<analysis-id>/`, so
+moving or using **Save As** on the project keeps its analysis results with it.
+Clone and histogram-arithmetic outputs are instead saved as virtual,
+source-linked recipes and are recomputed from their underlying data when used.
 
 Every operation receives the same prepared dataset used for viewing and
 fitting. Dataset and inherited masks, rebinning, attached backgrounds, scale,
@@ -28,8 +29,29 @@ $$
 $$
 
 Both source datasets or live composites remain independently viewable. The
-saved Analysis entry retains the two dependencies, operation, and scale; rerun
-it after changing either source recipe to refresh the same derived output.
+derived dataset panel begins with editable left source, right source,
+arithmetic operation, and right-hand scale controls. Its output binning and
+symmetry are pushed into both underlying source reductions before the
+arithmetic is evaluated; nfit does not rebin cached source composites. The
+derived dataset owns its masks independently of the source datasets.
+
+## Dataset clones
+
+**Dataset clone** creates a traceable comparison branch from one dataset or
+live composite. The derived output starts disabled with fit weight zero, while
+its source remains independently viewable and usable for fitting. Configure
+masks, rebinning, and reciprocal-space symmetry on the derived dataset without
+changing the source. The source selector appears at the top of the derived
+dataset panel and remains editable after creation.
+
+For a live-composite source, the clone retains the source run membership,
+calibration scales, and background recipe, but owns its masks and output grid.
+nfit applies that grid directly to the underlying event or point data; it does
+not reuse the source composite's bins, symmetry, or fit/display masks. This
+allows, for example, a disabled, fit-weight-zero, fine m-3m-symmetrized and
+unmasked comparison beside a coarser unsymmetrized dataset used for fitting.
+Changing a source or recipe invalidates the derived cache and recomputes it on
+the next view, fit, or explicit rebin.
 
 ## Curie--Weiss fitting
 

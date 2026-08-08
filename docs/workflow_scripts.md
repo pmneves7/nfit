@@ -41,9 +41,13 @@ one prepared-data convention: masks, rebinning, backgrounds, scale, and the
 selected physical channel are applied before the analysis runs.
 
 Grouped raw direct-geometry and MDEvent reductions, analyses that depend on
-derived analysis datasets, workspace composites, group backgrounds, and plots
-are not yet included in the workflow graph. nfit reports these cases explicitly
-instead of producing an incomplete script.
+derived analysis datasets, workspace composites, and group backgrounds are not
+yet expanded into standalone workflow-graph nodes. Saved live-composite
+analyses and source-linked clone or histogram-arithmetic recipes instead export
+a readable project-backed script. That script loads the saved recipe and calls
+`derived_analysis_dataset_data(...)`, which applies the derived output grid to
+the underlying sources. Other unsupported cases are reported explicitly rather
+than producing an incomplete script.
 
 ## Fit workflows
 

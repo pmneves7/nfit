@@ -488,17 +488,30 @@ def analysis_workflow_script(
     """Return an editable script rebuilding and running one analysis."""
 
     group, analysis = _find_analysis(project, analysis_id)
+    virtual_dataset = next(
+        (
+            dataset
+            for dataset in group.iter_datasets()
+            if dataset.metadata.get("derived_from_analysis", {}).get("analysis_id")
+            == analysis.id
+            and isinstance(dataset.metadata.get("derived_recipe"), dict)
+        ),
+        None,
+    )
     if any(
         str(source_id).startswith("group-composite:")
         for source_id in analysis.input_dataset_ids
-    ):
+    ) or virtual_dataset is not None:
         project_path = getattr(project, "_project_path", None)
         if project_path is None:
             raise WorkflowValidationError(
                 "save the project before exporting a live-composite analysis workflow"
             )
         return _project_analysis_workflow_script(
-            Path(project_path), group.name, analysis.id
+            Path(project_path),
+            group.name,
+            analysis.id,
+            virtual_dataset_id=(virtual_dataset.id if virtual_dataset is not None else None),
         )
 
     return render_workflow_script(
@@ -511,8 +524,38 @@ def _project_analysis_workflow_script(
     project_path: Path,
     group_name: str,
     analysis_id: str,
+    *,
+    virtual_dataset_id: str | None = None,
 ) -> str:
     """Render a readable rerun script for a project dependency graph."""
+
+    if virtual_dataset_id is not None:
+        return f'''"""Evaluate an editable, source-linked nfit derived dataset."""
+
+from pathlib import Path
+
+from nfit import derived_analysis_dataset_data, load_project
+
+PROJECT_PATH = Path({str(project_path)!r})
+WORKSPACE_NAME = {group_name!r}
+ANALYSIS_ID = {analysis_id!r}
+DERIVED_DATASET_ID = {virtual_dataset_id!r}
+
+
+def run():
+    project = load_project(PROJECT_PATH)
+    group = next(item for item in project.data_groups if item.name == WORKSPACE_NAME)
+    analysis = next(item for item in group.analyses if item.id == ANALYSIS_ID)
+    dataset = next(item for item in group.iter_datasets() if item.id == DERIVED_DATASET_ID)
+    # Edit analysis.input_dataset_ids, analysis.parameters, or the derived
+    # dataset's rebin configuration before this call if needed.
+    return derived_analysis_dataset_data(dataset)
+
+
+if __name__ == "__main__":
+    data = run()
+    print("Derived shape:", getattr(data, "shape", getattr(data, "size", "unknown")))
+'''
 
     return f'''"""Rerun an editable nfit analysis with live group-composite inputs."""
 

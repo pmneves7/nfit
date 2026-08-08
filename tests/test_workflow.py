@@ -8,6 +8,7 @@ import pytest
 import nfit.project_gui as project_gui
 from nfit import (
     AnalysisEntry,
+    AnalysisOutputRef,
     BackgroundSpec,
     DataGroup,
     DatasetEntry,
@@ -26,11 +27,13 @@ from nfit import (
     analysis_workflow_plan,
     analysis_workflow_script,
     composite_analysis_source_id,
+    create_derived_analysis_dataset,
     create_model_component,
     dataset_entry_from_path,
     dataset_for_slice_viewer,
     dataset_workflow_plan,
     dataset_workflow_script,
+    derived_analysis_dataset_data,
     fit_data_bundle,
     fit_workflow_plan,
     fit_workflow_script,
@@ -38,6 +41,7 @@ from nfit import (
     prepare_analysis_inputs,
     run_project_analysis,
     save_dataset_file,
+    upsert_analysis_output_dataset,
 )
 from nfit.project_gui import effective_dataset_masks
 
@@ -89,6 +93,234 @@ def test_histogram_arithmetic_analysis_accepts_live_group_composites(tmp_path):
     script = analysis_workflow_script(project, analysis.id)
     compile(script, "<live-composite-analysis>", "exec")
     assert "run_project_analysis" in script
+
+
+def test_dataset_clone_tracks_live_composite_and_defaults_to_comparison_only(tmp_path):
+    source = DatasetGroup(
+        "1.8 K",
+        datasets=[DatasetEntry("run", _grid(5.0), kind="mdhisto")],
+    )
+    group = DataGroup("Experiment", subgroups=[source])
+    config = project_gui.data_group_composite_config(
+        project_gui._composite_scope(group, source)
+    )
+    config.update({"enabled": True, "fractional": False})
+    analysis = AnalysisEntry(
+        "1.8 K comparison clone",
+        "dataset_clone",
+        [composite_analysis_source_id(group, source)],
+        {},
+    )
+    group.analyses.append(analysis)
+    project = NfitProject([group])
+    project._project_path = tmp_path / "experiment.nfit"
+
+    execution = run_project_analysis(group, analysis)
+    output = execution.outputs["clone"]
+
+    np.testing.assert_allclose(output.data.signal, _grid(5.0).signal)
+    assert output.metadata["fit_enabled"] is False
+    assert output.metadata["fit_weight"] == 0.0
+    assert output.metadata["clone_source_id"] == composite_analysis_source_id(
+        group, source
+    )
+    script = analysis_workflow_script(project, analysis.id)
+    compile(script, "<live-composite-clone>", "exec")
+
+
+def test_refreshing_analysis_output_preserves_independent_dataset_settings(tmp_path):
+    source = DatasetEntry("source", _grid(1.0))
+    group = DataGroup("Experiment", datasets=[source])
+    analysis = AnalysisEntry("Clone", "dataset_clone", [source.id], {})
+    output = AnalysisOutputRef(
+        "clone",
+        "source clone",
+        "dataset",
+        artifact_path="assets/analyses/a/clone.npz",
+        dataset_id="clone-id",
+        metadata={
+            "data_type": "powder_inelastic",
+            "fit_enabled": False,
+            "fit_weight": 0.0,
+        },
+    )
+
+    clone = upsert_analysis_output_dataset(
+        group,
+        analysis,
+        output,
+        _grid(1.0),
+        project_path=tmp_path / "experiment.nfit",
+    )
+    clone.parameters[project_gui.DATASET_REBIN_KEY] = {"enabled": True}
+    clone.masks.append(MaskSpec("comparison mask"))
+    clone.enabled = True
+    clone.fit_weight = 0.25
+
+    refreshed = upsert_analysis_output_dataset(
+        group,
+        analysis,
+        output,
+        _grid(2.0),
+        project_path=tmp_path / "experiment.nfit",
+    )
+
+    assert refreshed is clone
+    np.testing.assert_allclose(refreshed.data.signal, _grid(2.0).signal)
+    assert refreshed.parameters[project_gui.DATASET_REBIN_KEY] == {"enabled": True}
+    assert [mask.name for mask in refreshed.masks] == ["comparison mask"]
+    assert refreshed.enabled is True
+    assert refreshed.fit_weight == 0.25
+
+
+def test_live_clone_bins_underlying_points_on_its_own_grid(tmp_path):
+    points = PointData4D(
+        H=[0.2, 0.8],
+        K=[0.0, 0.0],
+        L=[0.0, 0.0],
+        E=[0.0, 0.0],
+        intensity=[1.0, 3.0],
+        sigma=[1.0, 1.0],
+    )
+    source = DatasetGroup(
+        "1.8 K",
+        datasets=[
+            DatasetEntry(
+                "run",
+                points,
+                kind="point",
+                data_type="single_crystal_inelastic",
+            )
+        ],
+    )
+    group = DataGroup("Experiment", subgroups=[source])
+    source_config = project_gui.data_group_composite_config(
+        project_gui._composite_scope(group, source)
+    )
+    source_config.update(
+        {
+            "enabled": True,
+            "fractional": False,
+            "resolution_mode": "bins",
+            "mean_weighting": "uniform",
+            "minimum_coverage": 0.0,
+        }
+    )
+    for index, axis in enumerate(source_config["axes"]):
+        axis.update(
+            {
+                "lower": 0.0 if index == 0 else -0.5,
+                "upper": 1.0 if index == 0 else 0.5,
+                "num_bins": 1,
+                "step_size": 1.0,
+            }
+        )
+    coarse = project_gui.composite_dataset_data(
+        project_gui._composite_scope(group, source)
+    )
+    np.testing.assert_allclose(coarse.intensity, [2.0])
+    source.datasets[0].masks.append(
+        MaskSpec("Fit-only exclusion", parameters={"H": [0.0, 0.5]})
+    )
+    masked_source = project_gui.composite_dataset_data(
+        project_gui._composite_scope(group, source)
+    )
+    np.testing.assert_allclose(masked_source.intensity, [3.0])
+
+    analysis = AnalysisEntry(
+        "1.8 K comparison",
+        "dataset_clone",
+        [composite_analysis_source_id(group, source)],
+        {},
+    )
+    output_config = json.loads(json.dumps(source_config))
+    output_config["axes"][0].update({"num_bins": 2, "step_size": 0.5})
+    clone = create_derived_analysis_dataset(
+        group,
+        analysis,
+        rebin_config=output_config,
+    )
+
+    result = derived_analysis_dataset_data(clone)
+
+    assert isinstance(result, PointData4D)
+    np.testing.assert_allclose(result.intensity, [1.0, 3.0])
+    assert clone.data is None
+    assert clone.enabled is False
+    assert clone.fit_weight == 0.0
+    assert clone.metadata["derived_recipe"]["source_stage"] == "underlying_data"
+    project = NfitProject([group])
+    project._project_path = tmp_path / "experiment.nfit"
+    script = analysis_workflow_script(project, analysis.id)
+    compile(script, "<source-linked-clone>", "exec")
+    assert "derived_analysis_dataset_data" in script
+
+
+def test_live_histogram_arithmetic_reduces_both_sources_to_output_grid():
+    axis = MDHistoAxis("H", np.array([0.0, 0.5, 1.0]), "rlu", "momentum")
+
+    def histogram(values):
+        return MDHistoData(
+            (axis,),
+            np.asarray(values, dtype=float),
+            np.ones(2),
+            np.zeros(2, dtype=bool),
+            np.ones(2),
+        )
+
+    left = DatasetGroup(
+        "1.8 K",
+        datasets=[DatasetEntry("cold", histogram([1.0, 3.0]), kind="mdhisto")],
+    )
+    right = DatasetGroup(
+        "50 K",
+        datasets=[DatasetEntry("warm", histogram([0.5, 1.0]), kind="mdhisto")],
+    )
+    group = DataGroup("Experiment", subgroups=[left, right])
+    for source in (left, right):
+        config = project_gui.data_group_composite_config(
+            project_gui._composite_scope(group, source)
+        )
+        config.update(
+            {
+                "enabled": True,
+                "fractional": False,
+                "resolution_mode": "bins",
+                "mean_weighting": "uniform",
+                "minimum_coverage": 0.0,
+            }
+        )
+        config["axes"][0].update(
+            {"lower": 0.0, "upper": 1.0, "num_bins": 1, "step_size": 1.0}
+        )
+    output_config = json.loads(
+        json.dumps(
+            project_gui.data_group_composite_config(
+                project_gui._composite_scope(group, left)
+            )
+        )
+    )
+    output_config["axes"][0].update({"num_bins": 2, "step_size": 0.5})
+    analysis = AnalysisEntry(
+        "Low minus 50 K",
+        "histogram_arithmetic",
+        [
+            composite_analysis_source_id(group, left),
+            composite_analysis_source_id(group, right),
+        ],
+        {"operation": "subtract", "right_scale": 1.0},
+    )
+    derived = create_derived_analysis_dataset(
+        group,
+        analysis,
+        rebin_config=output_config,
+    )
+
+    result = derived_analysis_dataset_data(derived)
+
+    assert isinstance(result, MDHistoData)
+    assert result.shape == (2,)
+    np.testing.assert_allclose(result.signal, [0.5, 2.0])
 
 
 def test_workflow_plan_round_trips_and_orders_dependencies():

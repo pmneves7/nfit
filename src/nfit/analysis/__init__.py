@@ -46,6 +46,7 @@ from .runner import (
     prepare_analysis_inputs,
     prepare_analysis_source,
     run_project_analysis,
+    upsert_analysis_output_dataset,
 )
 
 register_builtin_operations()
@@ -88,5 +89,6 @@ __all__ = [
     "register_analysis_operation",
     "run_analysis_operation",
     "run_project_analysis",
+    "upsert_analysis_output_dataset",
     "validate_analysis",
 ]

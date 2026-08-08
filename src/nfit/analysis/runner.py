@@ -252,3 +252,75 @@ def analysis_is_fresh(analysis: AnalysisEntry, inputs: list[AnalysisInput]) -> b
     parameters = {**default_analysis_parameters(analysis.type), **analysis.parameters}
     expected = recipe_hash(analysis.type, definition.version, parameters, analysis.input_dataset_ids)
     return analysis.result.recipe_hash == expected and analysis.result.input_fingerprints == {item.dataset_id: item.fingerprint for item in inputs}
+
+
+def upsert_analysis_output_dataset(
+    group,
+    analysis: AnalysisEntry,
+    output: AnalysisOutputRef,
+    data,
+    *,
+    project_path: str | Path | None,
+):
+    """Add or refresh a linked derived dataset without resetting user settings.
+
+    A rerun replaces only the immutable numerical payload and provenance owned
+    by the analysis. Dataset-local masks, rebinning, symmetry, enabled state,
+    fit weight, and scale settings remain independently editable.
+    """
+
+    from ..pipeline import DatasetEntry, DatasetGroup
+
+    if not output.dataset_id or not output.artifact_path:
+        raise ValueError("analysis output does not contain a dataset artifact")
+    existing = next(
+        (dataset for dataset in group.iter_datasets() if dataset.id == output.dataset_id),
+        None,
+    )
+    provenance = {
+        "analysis_id": analysis.id,
+        "output_key": output.key,
+        "recipe_hash": analysis.result.recipe_hash if analysis.result is not None else "",
+    }
+    source_metadata = {
+        "source_file": output.artifact_path,
+        "analysis_artifact_path": output.artifact_path,
+        "analysis_output_metadata": dict(output.metadata),
+        "derived_from_analysis": provenance,
+    }
+    if project_path is not None:
+        source_metadata["_project_path"] = str(project_path)
+    data_type = str(output.metadata.get("data_type") or "derived_analysis")
+    if existing is not None:
+        existing.replace_data(data, source_backed=True)
+        existing.kind = "analysis"
+        existing.data_type = data_type
+        existing.metadata.update(source_metadata)
+        return existing
+
+    derived = next(
+        (node for node in group.subgroups if node.name == "Derived data"),
+        None,
+    )
+    if derived is None:
+        derived = DatasetGroup("Derived data")
+        group.subgroups.append(derived)
+    base = str(output.label).strip() or "Derived dataset"
+    name = base
+    index = 2
+    existing_names = set(group.dataset_names)
+    while name in existing_names:
+        name = f"{base} {index}"
+        index += 1
+    entry = DatasetEntry(
+        name,
+        data,
+        kind="analysis",
+        data_type=data_type,
+        enabled=bool(output.metadata.get("fit_enabled", False)),
+        fit_weight=float(output.metadata.get("fit_weight", 0.0)),
+        metadata=source_metadata,
+        id=output.dataset_id,
+    )
+    derived.datasets.append(entry)
+    return entry

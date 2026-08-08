@@ -262,6 +262,7 @@ def test_project_explorer_tree_hierarchy_fonts(monkeypatch):
 
     dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
     create_mask(dataset, "Mask1")
+    dataset.backgrounds.append(project_gui.BackgroundSpec("Background", "source-id"))
     model = create_model_component(DataGroup("unused"))
     group = DataGroup(
         "Workspace1",
@@ -334,6 +335,17 @@ def test_project_explorer_tree_hierarchy_fonts(monkeypatch):
         project_gui._TREE_ICON_COLORS[kind]
         for kind in ("folder", "mask_folder", "model_folder", "fit_folder")
     }
+    specialized_folders = (
+        "background_folder",
+        "mask_folder",
+        "model_folder",
+        "fit_folder",
+        "analysis_folder",
+        "plot_folder",
+    )
+    assert len(
+        {project_gui._TREE_ICON_COLORS[kind] for kind in specialized_folders}
+    ) == len(specialized_folders)
 
 
 def test_large_dataset_groups_use_lazy_tree_pages_and_paginated_details(monkeypatch):

@@ -21,7 +21,11 @@ import numpy as np
 
 from .analysis.artifacts import dataset_artifact_bytes, read_project_dataset_artifact
 from .analysis.coordinates import signal_semantics
-from .analysis.core import AnalysisEntry, AnalysisOutputRef
+from .analysis.core import (
+    AnalysisEntry,
+    AnalysisOutputRef,
+    AnalysisResultRecord,
+)
 from .analysis.fingerprint import dataset_entry_fingerprint, recipe_hash
 from .analysis.registry import analysis_definition, default_analysis_parameters
 from .backgrounds import subtract_background
@@ -163,6 +167,8 @@ DATASET_REBIN_KEY = "rebin"
 DATASET_MASK_APPLICATION_KEY = "mask_application"
 GROUP_COMPOSITE_KEY = "composite"
 GROUP_COMPOSITE_NAME = "Composite"
+DERIVED_RECIPE_KEY = "derived_recipe"
+VIRTUAL_DERIVED_ANALYSIS_TYPES = {"dataset_clone", "histogram_arithmetic"}
 DEFAULT_REBIN_MAX_BATCH_MB = 192
 DEFAULT_MINIMUM_COVERAGE = 0.9
 REBIN_COORDINATE_BASIS_VERSION = 2
@@ -2765,10 +2771,10 @@ def _dataset_composite_kind(dataset: DatasetEntry) -> str:
         return "raw_dgs_nexus"
     if data_type_container(dataset.data_type) == "point_list" or isinstance(dataset.data, PointListData):
         return "point_list"
-    if isinstance(dataset.data, MDHistoData) or data_type_container(dataset.data_type) == "mdhisto":
-        return "mdhisto"
     if isinstance(dataset.data, PointData4D):
         return "point_data_4d"
+    if isinstance(dataset.data, MDHistoData) or data_type_container(dataset.data_type) == "mdhisto":
+        return "mdhisto"
     return type(dataset.data).__name__ if dataset.data is not None else "unknown"
 
 
@@ -2856,15 +2862,24 @@ def _ensure_dataset_data_loaded(dataset: DatasetEntry) -> Any:
     return dataset.data
 
 
-def _source_data_for_group_composite(group: DataGroup, dataset: DatasetEntry) -> Any:
+def _source_data_for_group_composite(
+    group: DataGroup,
+    dataset: DatasetEntry,
+    *,
+    include_source_masks: bool = True,
+) -> Any:
     data = _ensure_dataset_data_loaded(dataset)
     extra_masks = effective_dataset_masks(_composite_root(group), dataset)
     if isinstance(data, PointListData):
-        return prepared_point_list_data(dataset)
+        return prepared_point_list_data(dataset) if include_source_masks else data
     if isinstance(data, MDHistoData):
-        return _mdhisto_with_nfit_masks(dataset, data=data, extra_masks=extra_masks)
+        if include_source_masks:
+            return _mdhisto_with_nfit_masks(dataset, data=data, extra_masks=extra_masks)
+        return _mdhisto_without_nfit_masks(data)
     if isinstance(data, PointData4D):
-        return _point_data_with_nfit_masks(dataset, data, extra_masks=extra_masks)
+        if include_source_masks:
+            return _point_data_with_nfit_masks(dataset, data, extra_masks=extra_masks)
+        return data
     return data
 
 
@@ -2927,25 +2942,37 @@ def _composite_cache_signature(
 
 
 def composite_dataset_data(
-    group: DataGroup,
+    group: DataGroup | _CompositeScope,
     *,
     progress_callback: Any | None = None,
+    config_override: Mapping[str, Any] | None = None,
+    include_source_masks: bool = True,
 ) -> MDHistoData | PointListData | PointData4D:
-    """Build the group's rebinned composite dataset from enabled members."""
+    """Build a composite from underlying sources on the requested output grid.
+
+    ``config_override`` is used by source-linked derived datasets. It changes
+    only the target reduction grid; source membership, calibration scales, and
+    attached background recipes remain owned by the source collection.
+    """
 
     ok, message = data_group_composite_status(group)
     if not ok:
         raise ValueError(message)
-    config = data_group_composite_config(group)
+    config = (
+        copy.deepcopy(dict(config_override))
+        if config_override is not None
+        else data_group_composite_config(group)
+    )
     child_scopes = _hierarchical_composite_scopes(group)
     child_entries: list[DatasetEntry] | None = None
     if child_scopes:
         child_entries = []
         for child in child_scopes:
-            child_data = _cached_composite_dataset_data(
+            child_data = composite_dataset_data(
                 child,
-                force_rebin=True,
                 progress_callback=progress_callback,
+                config_override=config,
+                include_source_masks=include_source_masks,
             )
             if not isinstance(child_data, MDHistoData):
                 raise TypeError("hierarchical composites currently require gridded child composites")
@@ -3023,20 +3050,31 @@ def composite_dataset_data(
             config,
             datasets=child_entries,
             progress_callback=progress_callback,
+            include_source_masks=include_source_masks,
         )
     elif kind == "point_list":
         result = _composite_point_list_data(
-            group, config, progress_callback=progress_callback
+            group,
+            config,
+            progress_callback=progress_callback,
+            include_source_masks=include_source_masks,
         )
     elif kind == "point_data_4d":
         result = _composite_point_data(
-            group, config, progress_callback=progress_callback
+            group,
+            config,
+            progress_callback=progress_callback,
+            include_source_masks=include_source_masks,
         )
     else:
         raise ValueError(f"unsupported composite dataset kind {kind!r}")
     if isinstance(result, MDHistoData):
         result = _apply_mdhisto_coverage_threshold(result, config)
-    return _apply_composite_backgrounds(group, result)
+    return _apply_composite_backgrounds(
+        group,
+        result,
+        progress_callback=progress_callback,
+    )
 
 
 def _apply_mdhisto_coverage_threshold(
@@ -3066,6 +3104,8 @@ def _apply_mdhisto_coverage_threshold(
 def _apply_composite_backgrounds(
     group: DataGroup | _CompositeScope,
     data: MDHistoData | PointListData | PointData4D,
+    *,
+    progress_callback: Any | None = None,
 ) -> MDHistoData | PointListData | PointData4D:
     """Apply backgrounds owned by a composite scope after it is combined."""
 
@@ -3094,6 +3134,7 @@ def _apply_composite_backgrounds(
             source_data = _cached_composite_dataset_data(
                 _CompositeScope(root, source_group),
                 force_rebin=True,
+                progress_callback=progress_callback,
             )
         else:
             source_data = _viewer_data_before_scale(
@@ -3142,6 +3183,273 @@ def _cached_composite_dataset_data(
         _COMPOSITE_DATA_CACHE_MAX_BYTES,
     )
     return result
+
+
+def _derived_analysis_for_dataset(
+    dataset: DatasetEntry,
+) -> tuple[DataGroup, AnalysisEntry] | None:
+    recipe = dataset.metadata.get(DERIVED_RECIPE_KEY)
+    group = getattr(dataset, "_derived_owner_group", None)
+    if not isinstance(recipe, dict) or not isinstance(group, DataGroup):
+        return None
+    analysis_id = str(recipe.get("analysis_id", ""))
+    analysis = next((item for item in group.analyses if item.id == analysis_id), None)
+    return (group, analysis) if analysis is not None else None
+
+
+def _derived_source_scope(
+    group: DataGroup,
+    source_id: str,
+) -> DataGroup | _CompositeScope | None:
+    prefix = "group-composite:"
+    if not str(source_id).startswith(prefix):
+        return None
+    suffix = str(source_id)[len(prefix) :]
+    if suffix == "root":
+        return group
+    node = next(
+        (candidate for candidate in group.iter_subgroups() if candidate.id == suffix),
+        None,
+    )
+    if node is None:
+        raise KeyError(f"derived dataset refers to missing group composite {source_id}")
+    return _CompositeScope(group, node)
+
+
+def _derived_output_config_for_source(
+    group: DataGroup,
+    source_id: str,
+) -> dict[str, Any]:
+    scope = _derived_source_scope(group, source_id)
+    if scope is not None:
+        config = copy.deepcopy(data_group_composite_config(scope))
+    else:
+        source = next(
+            (candidate for candidate in group.iter_datasets() if candidate.id == source_id),
+            None,
+        )
+        if source is None:
+            raise KeyError(f"derived dataset refers to missing dataset ID {source_id}")
+        loaded = _ensure_dataset_data_loaded(source)
+        config = copy.deepcopy(source.parameters.get(DATASET_REBIN_KEY, {}))
+        if not isinstance(config.get("axes"), list) or not config.get("axes"):
+            config["axes"] = _default_rebin_axes(loaded)
+    config["enabled"] = True
+    config["stale"] = True
+    config.setdefault("auto_rebin", False)
+    config.setdefault("fractional", True)
+    config.setdefault("normalize", True)
+    config.setdefault("mean_weighting", "inverse_variance")
+    config.setdefault("minimum_coverage", 0.0)
+    config.setdefault("max_batch_mb", DEFAULT_REBIN_MAX_BATCH_MB)
+    if not isinstance(config.get("symmetry"), dict):
+        config["symmetry"] = symmetry_config(SymmetrySpec())
+    return config
+
+
+def create_derived_analysis_dataset(
+    group: DataGroup,
+    analysis: AnalysisEntry,
+    *,
+    name: str | None = None,
+    rebin_config: Mapping[str, Any] | None = None,
+) -> DatasetEntry:
+    """Create or update a live derived dataset evaluated from source data.
+
+    Clone and histogram-arithmetic recipes own their output grid. The grid is
+    pushed into every source reduction, so raw MDEvent or point data are binned
+    directly rather than rebinning an already-binned input histogram.
+    """
+
+    if analysis.type not in VIRTUAL_DERIVED_ANALYSIS_TYPES:
+        raise ValueError(f"analysis type {analysis.type!r} is not a live derived dataset")
+    expected = 1 if analysis.type == "dataset_clone" else 2
+    if len(analysis.input_dataset_ids) != expected:
+        raise ValueError(f"{analysis.type} requires exactly {expected} source(s)")
+    config = (
+        copy.deepcopy(dict(rebin_config))
+        if rebin_config is not None
+        else _derived_output_config_for_source(group, analysis.input_dataset_ids[0])
+    )
+    config["enabled"] = True
+    analysis.metadata["output_rebin_config"] = copy.deepcopy(config)
+    linked = next(
+        (
+            dataset
+            for dataset in group.iter_datasets()
+            if dataset.metadata.get("derived_from_analysis", {}).get("analysis_id")
+            == analysis.id
+        ),
+        None,
+    )
+    if linked is None:
+        derived = next(
+            (node for node in group.subgroups if node.name == "Derived data"),
+            None,
+        )
+        if derived is None:
+            derived = DatasetGroup("Derived data")
+            group.subgroups.append(derived)
+        if analysis.type == "dataset_clone":
+            default_name = f"{analysis.name} dataset"
+        else:
+            default_name = analysis.name
+        linked = DatasetEntry(
+            _unique_dataset_name(name or default_name, group.dataset_names),
+            None,
+            kind="derived_recipe",
+            data_type=(
+                "powder_inelastic"
+                if len(config.get("axes", [])) == 2
+                else "single_crystal_inelastic"
+            ),
+            metadata={},
+            parameters={DATASET_REBIN_KEY: config},
+            enabled=False,
+            fit_weight=0.0,
+        )
+        derived.datasets.append(linked)
+    else:
+        linked.kind = "derived_recipe"
+        linked.parameters[DATASET_REBIN_KEY] = config
+        linked.replace_data(None, source_backed=False)
+    linked.metadata.pop("source_file", None)
+    linked.metadata.pop("analysis_artifact_path", None)
+    linked.metadata["derived_from_analysis"] = {
+        "analysis_id": analysis.id,
+        "output_key": "clone" if analysis.type == "dataset_clone" else "histogram",
+    }
+    linked.metadata[DERIVED_RECIPE_KEY] = {
+        "analysis_id": analysis.id,
+        "operation": analysis.type,
+        "input_source_ids": list(analysis.input_dataset_ids),
+        "source_stage": "underlying_data",
+    }
+    linked._derived_owner_group = group
+    if analysis not in group.analyses:
+        group.analyses.append(analysis)
+    output_key = "clone" if analysis.type == "dataset_clone" else "histogram"
+    analysis.result = AnalysisResultRecord(
+        recipe_hash=recipe_hash(
+            analysis.type,
+            analysis_definition(analysis.type).version,
+            {**default_analysis_parameters(analysis.type), **analysis.parameters},
+            analysis.input_dataset_ids,
+        ),
+        input_fingerprints={},
+        outputs=[
+            AnalysisOutputRef(
+                output_key,
+                linked.name,
+                "dataset",
+                dataset_id=linked.id,
+                metadata={
+                    "data_type": linked.data_type,
+                    "fit_enabled": False,
+                    "fit_weight": 0.0,
+                    "virtual": True,
+                },
+            )
+        ],
+        status="live",
+        created_at=datetime.now().isoformat(timespec="seconds"),
+        diagnostics={"source_stage": "underlying_data"},
+    )
+    return linked
+
+
+def _derived_source_data(
+    group: DataGroup,
+    source_id: str,
+    config: Mapping[str, Any],
+    *,
+    progress_callback: Any | None = None,
+) -> MDHistoData | PointListData | PointData4D:
+    scope = _derived_source_scope(group, source_id)
+    if scope is not None:
+        return composite_dataset_data(
+            scope,
+            progress_callback=progress_callback,
+            config_override=config,
+            include_source_masks=False,
+        )
+    source = next(
+        (candidate for candidate in group.iter_datasets() if candidate.id == source_id),
+        None,
+    )
+    if source is None:
+        raise KeyError(f"derived dataset refers to missing dataset ID {source_id}")
+    loaded = _ensure_dataset_data_loaded(source)
+    reduction_source = (
+        _mdhisto_without_nfit_masks(loaded)
+        if isinstance(loaded, MDHistoData)
+        else loaded
+    )
+    temporary = source.copy(
+        data=reduction_source,
+        parameters={**copy.deepcopy(source.parameters), DATASET_REBIN_KEY: copy.deepcopy(dict(config))},
+        masks=[],
+    )
+    temporary.parameters[DATASET_REBIN_KEY]["enabled"] = True
+    result = rebinned_dataset_data(
+        temporary,
+        extra_masks=[],
+        progress_callback=progress_callback,
+    )
+    if isinstance(result, MDHistoData) and temporary.backgrounds:
+        result = _apply_dataset_backgrounds(temporary, result)
+    return _apply_dataset_scale(source, result)
+
+
+def derived_analysis_dataset_data(
+    dataset: DatasetEntry,
+    *,
+    progress_callback: Any | None = None,
+) -> MDHistoData | PointListData | PointData4D:
+    """Evaluate one live derived recipe on its underlying source data."""
+
+    resolved = _derived_analysis_for_dataset(dataset)
+    if resolved is None:
+        raise ValueError(f"derived dataset {dataset.name!r} has no live analysis owner")
+    group, analysis = resolved
+    config = copy.deepcopy(dataset_rebin_config(dataset))
+    config["enabled"] = True
+    sources = [
+        _derived_source_data(
+            group,
+            source_id,
+            config,
+            progress_callback=progress_callback,
+        )
+        for source_id in analysis.input_dataset_ids
+    ]
+    if analysis.type == "dataset_clone":
+        result = sources[0]
+    elif analysis.type == "histogram_arithmetic":
+        if not all(isinstance(item, MDHistoData) for item in sources):
+            raise TypeError("histogram arithmetic requires gridded source reductions")
+        from .analysis.data_reduction import combine_aligned_histograms
+
+        result = combine_aligned_histograms(
+            sources[0],
+            sources[1],
+            operation=str(analysis.parameters.get("operation", "subtract")),
+            right_scale=float(analysis.parameters.get("right_scale", 1.0)),
+        )
+    else:
+        raise ValueError(f"unsupported live derived operation {analysis.type!r}")
+    metadata = dict(getattr(result, "metadata", {}) or {})
+    metadata[DERIVED_RECIPE_KEY] = {
+        "analysis_id": analysis.id,
+        "operation": analysis.type,
+        "input_source_ids": list(analysis.input_dataset_ids),
+        "source_stage": "underlying_data",
+    }
+    if isinstance(result, MDHistoData):
+        return result.with_updates(metadata=metadata)
+    if isinstance(result, PointListData):
+        return result.with_updates(metadata=metadata)
+    return result.with_updates(metadata=metadata)
 
 
 def composite_dataset_entry(
@@ -3271,6 +3579,7 @@ def _composite_mdhisto_data(
     *,
     datasets: list[DatasetEntry] | None = None,
     progress_callback: Any | None = None,
+    include_source_masks: bool = True,
 ) -> MDHistoData:
     lower, upper, num_bins = _composite_rebin_bounds(config)
     axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
@@ -3285,7 +3594,11 @@ def _composite_mdhisto_data(
         data = (
             dataset.data
             if datasets is not None
-            else _source_data_for_group_composite(group, dataset)
+            else _source_data_for_group_composite(
+                group,
+                dataset,
+                include_source_masks=include_source_masks,
+            )
         )
         if not isinstance(data, MDHistoData):
             continue
@@ -3443,6 +3756,7 @@ def _composite_point_data(
     config: dict[str, Any],
     *,
     progress_callback: Any | None = None,
+    include_source_masks: bool = True,
 ) -> PointData4D:
     lower, upper, num_bins = _composite_rebin_bounds(config)
     axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
@@ -3451,7 +3765,11 @@ def _composite_point_data(
     error_parts: list[np.ndarray] = []
     weight_parts: list[np.ndarray] = []
     for dataset in _composite_candidates(group):
-        data = _source_data_for_group_composite(group, dataset)
+        data = _source_data_for_group_composite(
+            group,
+            dataset,
+            include_source_masks=include_source_masks,
+        )
         if not isinstance(data, PointData4D):
             continue
         source = data.valid(require_positive_sigma=False)
@@ -3500,9 +3818,17 @@ def _composite_point_list_data(
     config: dict[str, Any],
     *,
     progress_callback: Any | None = None,
+    include_source_masks: bool = True,
 ) -> PointListData:
     datasets = _composite_candidates(group)
-    prepared = [_source_data_for_group_composite(group, dataset) for dataset in datasets]
+    prepared = [
+        _source_data_for_group_composite(
+            group,
+            dataset,
+            include_source_masks=include_source_masks,
+        )
+        for dataset in datasets
+    ]
     point_lists = [data for data in prepared if isinstance(data, PointListData)]
     if not point_lists:
         raise ValueError("no point-list datasets are available to composite")
@@ -6142,8 +6468,39 @@ def _viewer_view_signature(
             ]
             for background in dataset.backgrounds
         ],
+        _derived_recipe_dependency_signature(dataset),
     ]
     return json.dumps(payload, sort_keys=True, default=str)
+
+
+def _derived_recipe_dependency_signature(dataset: DatasetEntry) -> Any:
+    resolved = _derived_analysis_for_dataset(dataset)
+    if resolved is None:
+        return None
+    group, analysis = resolved
+    dependencies = []
+    for source_id in analysis.input_dataset_ids:
+        scope = _derived_source_scope(group, source_id)
+        if scope is not None:
+            dependencies.append([source_id, _composite_cache_signature(scope)])
+            continue
+        source = next(
+            (candidate for candidate in group.iter_datasets() if candidate.id == source_id),
+            None,
+        )
+        dependencies.append(
+            [
+                source_id,
+                None if source is None else source.data_cache_token,
+                None if source is None else float(source.scale_factor),
+                None if source is None else bool(source.enabled),
+            ]
+        )
+    return [
+        analysis.type,
+        json.dumps(analysis.parameters, sort_keys=True, default=str),
+        dependencies,
+    ]
 
 
 def _viewer_data_before_scale(
@@ -6230,6 +6587,19 @@ def _viewer_data_before_scale_uncached(
     force_masks: bool = True,
     progress_callback: Any | None = None,
 ) -> MDHistoData | PointListData | None:
+    if isinstance(dataset.metadata.get(DERIVED_RECIPE_KEY), dict):
+        derived = derived_analysis_dataset_data(
+            dataset,
+            progress_callback=progress_callback,
+        )
+        dataset_rebin_config(dataset)["stale"] = False
+        if isinstance(derived, MDHistoData):
+            return _mdhisto_with_nfit_masks(
+                dataset,
+                data=derived,
+                extra_masks=extra_masks,
+            )
+        return derived
     loaded = _ensure_dataset_data_loaded(dataset)
     if data_type_container(dataset.data_type) == "point_list" or isinstance(
         loaded, PointListData
@@ -8855,6 +9225,8 @@ _TREE_ICON_COLORS = {
     "mask_folder": "#a88fc5",
     "model_folder": "#c7a45b",
     "fit_folder": "#7cab80",
+    "analysis_folder": "#c56f9d",
+    "plot_folder": "#58a6a6",
     "dataset": "#6d9fc7",
     "mask": "#a88fc5",
     "model": "#c7a45b",
@@ -8892,6 +9264,8 @@ def _tree_item_icon(kind: str) -> Any:
         "mask_folder",
         "model_folder",
         "fit_folder",
+        "analysis_folder",
+        "plot_folder",
     }:
         fill = QtGui.QColor(accent)
         fill.setAlpha(34)
@@ -13948,7 +14322,7 @@ class NfitProjectExplorer:
             fits_item.setExpanded(self._expanded_state.get(("fits", id(group)), True))
             analyses_item = QtWidgets.QTreeWidgetItem(["Analyses"])
             _style_tree_hierarchy_item(analyses_item, bold=True)
-            _set_tree_item_icon(analyses_item, "folder")
+            _set_tree_item_icon(analyses_item, "analysis_folder")
             self._remember_item(analyses_item, "analyses", group)
             group_item.addChild(analyses_item)
             for analysis in group.analyses:
@@ -13970,7 +14344,7 @@ class NfitProjectExplorer:
             analyses_item.setExpanded(self._expanded_state.get(("analyses", id(group)), True))
             plots_item = QtWidgets.QTreeWidgetItem(["Plots"])
             _style_tree_hierarchy_item(plots_item, bold=True)
-            _set_tree_item_icon(plots_item, "folder")
+            _set_tree_item_icon(plots_item, "plot_folder")
             self._remember_item(plots_item, "plots", group)
             group_item.addChild(plots_item)
             for plot in group.plots:
@@ -14062,36 +14436,37 @@ class NfitProjectExplorer:
                 if dataset_found is not None and found is None:
                     found = dataset_found
 
-        group_backgrounds_item = QtWidgets.QTreeWidgetItem(["Backgrounds"])
-        group_backgrounds_item.setToolTip(
-            0,
-            "Background histograms subtracted after the enabled datasets in this group are combined.",
-        )
-        _set_tree_item_icon(group_backgrounds_item, "background_folder")
-        self._remember_item(
-            group_backgrounds_item, "group_backgrounds", group, node=node
-        )
-        parent_item.addChild(group_backgrounds_item)
-        for background in node.backgrounds:
-            background_item = QtWidgets.QTreeWidgetItem([background.name])
-            background_item.setFlags(
-                background_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable
+        if node.backgrounds:
+            group_backgrounds_item = QtWidgets.QTreeWidgetItem(["Backgrounds"])
+            group_backgrounds_item.setToolTip(
+                0,
+                "Background histograms subtracted after the enabled datasets in this group are combined.",
             )
-            background_item.setToolTip(
-                0, "Background histogram applied once to this group's composite."
-            )
-            _set_tree_item_icon(background_item, "dataset")
+            _set_tree_item_icon(group_backgrounds_item, "background_folder")
             self._remember_item(
-                background_item, "group_background", group, node=node
+                group_backgrounds_item, "group_backgrounds", group, node=node
             )
-            self._background_item_roles[id(background_item)] = background
-            _style_enabled_tree_item(background_item, background.enabled)
-            group_backgrounds_item.addChild(background_item)
-            if select_background is background and found is None:
-                found = background_item
-        group_backgrounds_item.setExpanded(
-            self._expanded_state.get(("group_backgrounds", id(node)), False)
-        )
+            parent_item.addChild(group_backgrounds_item)
+            for background in node.backgrounds:
+                background_item = QtWidgets.QTreeWidgetItem([background.name])
+                background_item.setFlags(
+                    background_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable
+                )
+                background_item.setToolTip(
+                    0, "Background histogram applied once to this group's composite."
+                )
+                _set_tree_item_icon(background_item, "dataset")
+                self._remember_item(
+                    background_item, "group_background", group, node=node
+                )
+                self._background_item_roles[id(background_item)] = background
+                _style_enabled_tree_item(background_item, background.enabled)
+                group_backgrounds_item.addChild(background_item)
+                if select_background is background and found is None:
+                    found = background_item
+            group_backgrounds_item.setExpanded(
+                self._expanded_state.get(("group_backgrounds", id(node)), False)
+            )
 
         for subgroup in node.subgroups:
             subgroup_item = QtWidgets.QTreeWidgetItem([subgroup.name])
@@ -14100,19 +14475,21 @@ class NfitProjectExplorer:
             self._remember_item(subgroup_item, "dataset_group", group, node=subgroup)
             _style_enabled_tree_item(subgroup_item, subgroup.enabled)
             parent_item.addChild(subgroup_item)
-            gmasks_item = QtWidgets.QTreeWidgetItem(["Masks"])
-            _set_tree_item_icon(gmasks_item, "mask_folder")
-            self._remember_item(gmasks_item, "group_masks", group, node=subgroup)
-            subgroup_item.addChild(gmasks_item)
-            for mask in subgroup.masks:
-                gmask_item = QtWidgets.QTreeWidgetItem([mask.name])
-                gmask_item.setFlags(gmask_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
-                _set_tree_item_icon(gmask_item, "mask")
-                self._remember_item(gmask_item, "group_mask", group, mask=mask, node=subgroup)
-                _style_enabled_tree_item(gmask_item, mask.enabled)
-                gmasks_item.addChild(gmask_item)
-                if select_mask is mask and found is None:
-                    found = gmask_item
+            gmasks_item = None
+            if subgroup.masks:
+                gmasks_item = QtWidgets.QTreeWidgetItem(["Masks"])
+                _set_tree_item_icon(gmasks_item, "mask_folder")
+                self._remember_item(gmasks_item, "group_masks", group, node=subgroup)
+                subgroup_item.addChild(gmasks_item)
+                for mask in subgroup.masks:
+                    gmask_item = QtWidgets.QTreeWidgetItem([mask.name])
+                    gmask_item.setFlags(gmask_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
+                    _set_tree_item_icon(gmask_item, "mask")
+                    self._remember_item(gmask_item, "group_mask", group, mask=mask, node=subgroup)
+                    _style_enabled_tree_item(gmask_item, mask.enabled)
+                    gmasks_item.addChild(gmask_item)
+                    if select_mask is mask and found is None:
+                        found = gmask_item
             child_found = self._render_dataset_node(
                 subgroup_item,
                 group,
@@ -14132,7 +14509,10 @@ class NfitProjectExplorer:
                     ("dataset_group", id(subgroup)), default_expanded
                 )
             )
-            gmasks_item.setExpanded(self._expanded_state.get(("group_masks", id(subgroup)), False))
+            if gmasks_item is not None:
+                gmasks_item.setExpanded(
+                    self._expanded_state.get(("group_masks", id(subgroup)), False)
+                )
         return found
 
     def _add_dataset_tree_item(
@@ -14156,44 +14536,52 @@ class NfitProjectExplorer:
         self._remember_item(dataset_item, "dataset", group, dataset)
         _style_enabled_tree_item(dataset_item, dataset.enabled)
         parent_item.addChild(dataset_item)
-        masks_item = QtWidgets.QTreeWidgetItem(["Masks"])
-        _set_tree_item_icon(masks_item, "mask_folder")
-        _style_enabled_tree_item(masks_item, dataset.enabled)
-        self._remember_item(masks_item, "masks", group, dataset)
-        dataset_item.addChild(masks_item)
-        for mask in dataset.masks:
-            mask_item = QtWidgets.QTreeWidgetItem([mask.name])
-            mask_item.setFlags(mask_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
-            _set_tree_item_icon(mask_item, "mask")
-            self._remember_item(mask_item, "mask", group, dataset, mask)
-            _style_enabled_tree_item(mask_item, mask.enabled)
-            masks_item.addChild(mask_item)
-            if select_mask is mask and found is None:
-                found = mask_item
-        backgrounds_item = QtWidgets.QTreeWidgetItem(["Backgrounds"])
-        _set_tree_item_icon(backgrounds_item, "background_folder")
-        _style_enabled_tree_item(backgrounds_item, dataset.enabled)
-        self._remember_item(backgrounds_item, "backgrounds", group, dataset)
-        dataset_item.addChild(backgrounds_item)
-        for background in dataset.backgrounds:
-            background_item = QtWidgets.QTreeWidgetItem([background.name])
-            background_item.setFlags(
-                background_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable
-            )
-            _set_tree_item_icon(background_item, "dataset")
-            self._remember_item(background_item, "background", group, dataset)
-            self._background_item_roles[id(background_item)] = background
-            _style_enabled_tree_item(background_item, background.enabled)
-            backgrounds_item.addChild(background_item)
-            if select_background is background and found is None:
-                found = background_item
+        masks_item = None
+        if dataset.masks:
+            masks_item = QtWidgets.QTreeWidgetItem(["Masks"])
+            _set_tree_item_icon(masks_item, "mask_folder")
+            _style_enabled_tree_item(masks_item, dataset.enabled)
+            self._remember_item(masks_item, "masks", group, dataset)
+            dataset_item.addChild(masks_item)
+            for mask in dataset.masks:
+                mask_item = QtWidgets.QTreeWidgetItem([mask.name])
+                mask_item.setFlags(mask_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable)
+                _set_tree_item_icon(mask_item, "mask")
+                self._remember_item(mask_item, "mask", group, dataset, mask)
+                _style_enabled_tree_item(mask_item, mask.enabled)
+                masks_item.addChild(mask_item)
+                if select_mask is mask and found is None:
+                    found = mask_item
+        backgrounds_item = None
+        if dataset.backgrounds:
+            backgrounds_item = QtWidgets.QTreeWidgetItem(["Backgrounds"])
+            _set_tree_item_icon(backgrounds_item, "background_folder")
+            _style_enabled_tree_item(backgrounds_item, dataset.enabled)
+            self._remember_item(backgrounds_item, "backgrounds", group, dataset)
+            dataset_item.addChild(backgrounds_item)
+            for background in dataset.backgrounds:
+                background_item = QtWidgets.QTreeWidgetItem([background.name])
+                background_item.setFlags(
+                    background_item.flags() | QtCore.Qt.ItemFlag.ItemIsEditable
+                )
+                _set_tree_item_icon(background_item, "dataset")
+                self._remember_item(background_item, "background", group, dataset)
+                self._background_item_roles[id(background_item)] = background
+                _style_enabled_tree_item(background_item, background.enabled)
+                backgrounds_item.addChild(background_item)
+                if select_background is background and found is None:
+                    found = background_item
         if select_dataset is dataset and found is None:
             found = dataset_item
         dataset_item.setExpanded(self._expanded_state.get(("dataset", id(dataset)), False))
-        masks_item.setExpanded(self._expanded_state.get(("masks", id(dataset)), False))
-        backgrounds_item.setExpanded(
-            self._expanded_state.get(("backgrounds", id(dataset)), False)
-        )
+        if masks_item is not None:
+            masks_item.setExpanded(
+                self._expanded_state.get(("masks", id(dataset)), False)
+            )
+        if backgrounds_item is not None:
+            backgrounds_item.setExpanded(
+                self._expanded_state.get(("backgrounds", id(dataset)), False)
+            )
         return found
 
     def _populate_dataset_page(
@@ -16578,6 +16966,12 @@ class NfitProjectExplorer:
             summary_lines.extend([title, *lines])
         self.details_label.setText("\n".join(summary_lines))
         self._clear_details_panel()
+        if group is not None and isinstance(
+            dataset.metadata.get(DERIVED_RECIPE_KEY), dict
+        ):
+            self.details_layout.addWidget(
+                self._derived_recipe_group_box(dataset, group)
+            )
         if group is not None and dataset.data_type.startswith("single_crystal"):
             self.details_layout.addWidget(self._ub_setup_group_box(group, dataset))
         is_point_list = isinstance(dataset.data, PointListData)
@@ -16601,6 +16995,215 @@ class NfitProjectExplorer:
             else:
                 self.details_layout.addWidget(self._details_group_box(title, lines))
         self.details_layout.addStretch(1)
+
+    def _derived_recipe_source_choices(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup,
+    ) -> list[tuple[str, str]]:
+        """Return source choices that cannot directly contain the output."""
+
+        from .analysis.runner import (
+            COMPOSITE_ANALYSIS_SOURCE_PREFIX,
+            analysis_source_choices,
+        )
+
+        choices: list[tuple[str, str]] = []
+        for label, source_id in analysis_source_choices(group):
+            source_id = str(source_id)
+            if source_id == dataset.id:
+                continue
+            if not source_id.startswith(COMPOSITE_ANALYSIS_SOURCE_PREFIX):
+                source = next(
+                    (
+                        candidate
+                        for candidate in group.iter_datasets()
+                        if candidate.id == source_id
+                    ),
+                    None,
+                )
+                if source is None or isinstance(
+                    source.metadata.get(DERIVED_RECIPE_KEY), dict
+                ):
+                    continue
+            else:
+                suffix = source_id[len(COMPOSITE_ANALYSIS_SOURCE_PREFIX) :]
+                node = group if suffix == "root" else next(
+                    (
+                        candidate
+                        for candidate in group.iter_subgroups()
+                        if candidate.id == suffix
+                    ),
+                    None,
+                )
+                if node is None or any(
+                    candidate is dataset for candidate in node.iter_datasets()
+                ):
+                    continue
+            choices.append((label, source_id))
+        return choices
+
+    def _derived_recipe_group_box(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup,
+    ) -> Any:
+        from PySide6 import QtWidgets
+
+        box = QtWidgets.QGroupBox("Derived recipe")
+        box.setObjectName("derived_recipe_controls")
+        form = QtWidgets.QFormLayout(box)
+        form.setContentsMargins(10, 8, 10, 8)
+        resolved = _derived_analysis_for_dataset(dataset)
+        if resolved is None:
+            label = QtWidgets.QLabel("The linked analysis recipe is missing.")
+            label.setWordWrap(True)
+            form.addRow(label)
+            return box
+        _owner, analysis = resolved
+        choices = self._derived_recipe_source_choices(dataset, group)
+        source_tooltip = (
+            "Choose the original dataset or live composite. The derived output "
+            "grid is applied to its underlying event or point data; cached source "
+            "histogram bins are not reused."
+        )
+        source_labels = (
+            ("Source",)
+            if analysis.type == "dataset_clone"
+            else ("Left source", "Right source")
+        )
+        for source_index, label_text in enumerate(source_labels):
+            combo = QtWidgets.QComboBox()
+            combo.setObjectName(f"derived_recipe_source_{source_index}")
+            combo.setToolTip(source_tooltip)
+            for label, source_id in choices:
+                combo.addItem(label, source_id)
+            current_id = (
+                analysis.input_dataset_ids[source_index]
+                if source_index < len(analysis.input_dataset_ids)
+                else ""
+            )
+            current_index = combo.findData(current_id)
+            if current_index < 0 and current_id:
+                combo.addItem(f"Missing source [{current_id}]", current_id)
+                current_index = combo.count() - 1
+            combo.setCurrentIndex(max(current_index, 0))
+            combo.currentIndexChanged.connect(
+                lambda _index, selector=combo, position=source_index: self._set_derived_recipe_source(
+                    dataset,
+                    group,
+                    position,
+                    str(selector.currentData()),
+                )
+            )
+            form.addRow(label_text, combo)
+
+        if analysis.type == "histogram_arithmetic":
+            operation = QtWidgets.QComboBox()
+            operation.setObjectName("derived_recipe_operation")
+            operation.addItem("Subtract", "subtract")
+            operation.addItem("Add", "add")
+            operation.setCurrentIndex(
+                max(operation.findData(analysis.parameters.get("operation", "subtract")), 0)
+            )
+            operation.setToolTip(
+                "Choose whether the independently reduced right source is subtracted "
+                "from or added to the left source."
+            )
+            operation.currentIndexChanged.connect(
+                lambda _index, selector=operation: self._set_derived_recipe_parameter(
+                    dataset,
+                    group,
+                    "operation",
+                    str(selector.currentData()),
+                )
+            )
+            form.addRow("Operation", operation)
+
+            scale = QtWidgets.QDoubleSpinBox()
+            scale.setObjectName("derived_recipe_right_scale")
+            scale.setRange(-1.0e12, 1.0e12)
+            scale.setDecimals(8)
+            scale.setValue(float(analysis.parameters.get("right_scale", 1.0)))
+            scale.setToolTip(
+                "Multiplier applied to the right source after both sources have "
+                "been reduced from underlying data onto this derived dataset's grid."
+            )
+            scale.editingFinished.connect(
+                lambda editor=scale: self._set_derived_recipe_parameter(
+                    dataset,
+                    group,
+                    "right_scale",
+                    float(editor.value()),
+                )
+            )
+            form.addRow("Right scale", scale)
+
+        stage = QtWidgets.QLabel(
+            "Source stage: underlying data (the output binning and symmetry below "
+            "are applied before the derived operation)."
+        )
+        stage.setObjectName("derived_recipe_source_stage")
+        stage.setWordWrap(True)
+        stage.setToolTip(
+            "This recipe is virtual and source-linked. Viewing, fitting, or explicit "
+            "rebinning recomputes it from the original source data."
+        )
+        form.addRow(stage)
+        return box
+
+    def _set_derived_recipe_source(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup,
+        index: int,
+        source_id: str,
+    ) -> None:
+        resolved = _derived_analysis_for_dataset(dataset)
+        if resolved is None or not source_id:
+            return
+        _owner, analysis = resolved
+        if not 0 <= index < len(analysis.input_dataset_ids):
+            return
+        if analysis.input_dataset_ids[index] == source_id:
+            return
+        analysis.input_dataset_ids[index] = source_id
+        self._after_derived_recipe_changed(dataset, group, analysis)
+
+    def _set_derived_recipe_parameter(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup,
+        key: str,
+        value: Any,
+    ) -> None:
+        resolved = _derived_analysis_for_dataset(dataset)
+        if resolved is None:
+            return
+        _owner, analysis = resolved
+        if analysis.parameters.get(key) == value:
+            return
+        analysis.parameters[key] = value
+        self._after_derived_recipe_changed(dataset, group, analysis)
+
+    def _after_derived_recipe_changed(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup,
+        analysis: AnalysisEntry,
+    ) -> None:
+        config = copy.deepcopy(dataset_rebin_config(dataset))
+        create_derived_analysis_dataset(
+            group,
+            analysis,
+            rebin_config=config,
+        )
+        config = dataset_rebin_config(dataset)
+        config["stale"] = True
+        self._record_data_group_state_change(group)
+        self._mark_dirty()
+        if bool(config.get("auto_rebin", True)):
+            self.refresh_slice_viewer(group)
 
     def _set_dataset_details_preserving_scroll(
         self,
@@ -19179,6 +19782,10 @@ class NfitProjectExplorer:
         )
         config = dataset_rebin_config(dataset)
         config["stale"] = True
+        resolved = _derived_analysis_for_dataset(dataset)
+        if resolved is not None:
+            _owner, analysis = resolved
+            analysis.metadata["output_rebin_config"] = copy.deepcopy(config)
         if group is not None:
             self._record_data_group_state_change(group)
         self._mark_dirty()
@@ -26474,6 +27081,8 @@ def _has_slice_viewer_candidates(group: DataGroup) -> bool:
     for dataset in group.iter_datasets():
         if dataset.kind == "raw_dgs_nexus":
             continue
+        if isinstance(dataset.metadata.get(DERIVED_RECIPE_KEY), dict):
+            return True
         if isinstance(dataset.data, (MDHistoData, PointListData)):
             return True
         if data_type_container(dataset.data_type) == "point_list":
@@ -26510,7 +27119,9 @@ def _dataset_can_load(dataset: DatasetEntry) -> bool:
 
 
 def _dataset_can_rebin(dataset: DatasetEntry) -> bool:
-    return isinstance(dataset.data, (MDHistoData, PointData4D, PointListData))
+    return isinstance(dataset.data, (MDHistoData, PointData4D, PointListData)) or isinstance(
+        dataset.metadata.get(DERIVED_RECIPE_KEY), dict
+    )
 
 
 def _dataset_can_save(dataset: DatasetEntry) -> bool:
@@ -26525,6 +27136,8 @@ def _dataset_data_point_count(dataset: DatasetEntry) -> int:
         return int(data.size)
     if isinstance(data, PointData4D):
         return int(data.size)
+    if isinstance(dataset.metadata.get(DERIVED_RECIPE_KEY), dict):
+        return _dataset_rebin_output_bins(dataset_rebin_config(dataset))
     return 0
 
 

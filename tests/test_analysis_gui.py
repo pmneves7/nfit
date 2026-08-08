@@ -7,6 +7,7 @@ from nfit.analysis import (
     AnalysisOutputRef,
     AnalysisResultRecord,
     analysis_definition,
+    composite_analysis_source_id,
     default_analysis_parameters,
 )
 from nfit.analysis.artifacts import dataset_artifact_bytes
@@ -66,6 +67,82 @@ def test_analysis_window_config_and_output_panels_are_resizable(monkeypatch):
     QtWidgets.QApplication.processEvents()
     assert splitter.sizes()[0] > splitter.sizes()[1]
     playground.window.close()
+
+
+def test_derived_dataset_details_edit_sources_and_arithmetic_at_top(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    axis = MDHistoAxis("H", np.array([0.0, 1.0]), "rlu", "momentum")
+
+    def source_data(value):
+        return MDHistoData(
+            (axis,),
+            np.array([value], dtype=float),
+            np.array([1.0]),
+            np.array([False]),
+            np.array([1.0]),
+        )
+
+    cold = DatasetGroup(
+        "1.8 K",
+        datasets=[DatasetEntry("cold", source_data(2.0), kind="mdhisto")],
+    )
+    warm = DatasetGroup(
+        "50 K",
+        datasets=[DatasetEntry("warm", source_data(1.0), kind="mdhisto")],
+    )
+    group = DataGroup("Workspace1", subgroups=[cold, warm])
+    for source in (cold, warm):
+        config = project_gui.data_group_composite_config(
+            project_gui._composite_scope(group, source)
+        )
+        config.update({"enabled": True, "fractional": False})
+    analysis = AnalysisEntry(
+        "Low minus 50 K",
+        "histogram_arithmetic",
+        [
+            composite_analysis_source_id(group, cold),
+            composite_analysis_source_id(group, warm),
+        ],
+        {"operation": "subtract", "right_scale": 1.0},
+    )
+    derived = project_gui.create_derived_analysis_dataset(group, analysis)
+    explorer = NfitProjectExplorer(NfitProject([group]))
+
+    explorer._set_dataset_details(derived, group)
+
+    first_panel = explorer.details_layout.itemAt(0).widget()
+    assert first_panel.objectName() == "derived_recipe_controls"
+    left = explorer.details_widget.findChild(
+        QtWidgets.QComboBox, "derived_recipe_source_0"
+    )
+    right = explorer.details_widget.findChild(
+        QtWidgets.QComboBox, "derived_recipe_source_1"
+    )
+    operation = explorer.details_widget.findChild(
+        QtWidgets.QComboBox, "derived_recipe_operation"
+    )
+    scale = explorer.details_widget.findChild(
+        QtWidgets.QDoubleSpinBox, "derived_recipe_right_scale"
+    )
+    stage = explorer.details_widget.findChild(
+        QtWidgets.QLabel, "derived_recipe_source_stage"
+    )
+    controls = [left, right, operation, scale, stage]
+    assert all(control is not None and control.toolTip() for control in controls)
+    assert left.currentData() == composite_analysis_source_id(group, cold)
+    assert right.currentData() == composite_analysis_source_id(group, warm)
+
+    left.setCurrentIndex(left.findData(composite_analysis_source_id(group, warm)))
+    operation.setCurrentIndex(operation.findData("add"))
+    scale.setValue(2.5)
+    scale.editingFinished.emit()
+
+    assert analysis.input_dataset_ids[0] == composite_analysis_source_id(group, warm)
+    assert analysis.parameters == {"operation": "add", "right_scale": 2.5}
+    assert derived.metadata["derived_recipe"]["input_source_ids"] == analysis.input_dataset_ids
+    explorer.has_unsaved_changes = False
+    explorer.window.close()
 
 
 def test_analyses_branch_new_analysis_button_opens_fresh_recipe(monkeypatch):
@@ -381,6 +458,7 @@ def test_saved_bragg_result_renders_tables_diagnostics_and_materializes_disabled
     materialized = next(group.iter_subgroups()).datasets[0]
     assert materialized.data_type == "bragg_reflections"
     assert materialized.enabled is False
+    assert materialized.fit_weight == 0.0
 
     analyses_item = explorer.tree.topLevelItem(0).child(3)
     output_item = analyses_item.child(0).child(0)

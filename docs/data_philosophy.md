@@ -13,6 +13,9 @@ instrument or file format.
   possible, then assign broad coordinate roles used by plotting and fitting.
 - **Analysis is non-destructive.** Operations create derived datasets and
   record recipe hashes, input fingerprints, and relative artifact manifests.
+  Clone and histogram-arithmetic datasets remain virtual source-linked recipes
+  so their independent masks, bins, and symmetry can be applied to underlying
+  data without materializing an intermediate source histogram.
 - **Project state is portable and inspectable.** A `.nfit` file is a ZIP
   container whose `project.json` manifest records datasets, model sessions, fit
   results, plots, and analysis provenance. Array-valued analysis outputs and

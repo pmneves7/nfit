@@ -148,6 +148,20 @@ def register_builtin_operations() -> None:
         _p("right_scale", 1.0, "Multiplier applied to the right input."),
     )
     register_analysis_operation(AnalysisOperationDefinition("bragg_integration", "Bragg integration", 4, "Integrate crystallographic peaks.", 1, 2, ("MDHistoData", "PointListData"), bragg_parameters, _validate_bragg, _execute_bragg))
+    register_analysis_operation(
+        AnalysisOperationDefinition(
+            "dataset_clone",
+            "Dataset clone",
+            1,
+            "Create a traceable comparison dataset with independent masks, rebinning, symmetry, and fit controls.",
+            1,
+            1,
+            ("MDHistoData", "PointListData"),
+            (),
+            _validate_dataset_clone,
+            _execute_dataset_clone,
+        )
+    )
     register_analysis_operation(AnalysisOperationDefinition("spectral_integration", "Spectral integration", 1, "Reduce spectra using physical kernels.", 1, 1, ("MDHistoData",), spectral_parameters, _validate_spectral, _execute_spectral))
     register_analysis_operation(AnalysisOperationDefinition("spectral_conversion", "INS absolute conversion", 1, "Convert measured INS intensity to an absolute cross section or dynamic susceptibility.", 1, 1, ("MDHistoData",), conversion_parameters, _validate_conversion, _execute_conversion))
     register_analysis_operation(
@@ -242,6 +256,47 @@ def _validate_conversion(inputs, parameters):
         raise ValueError("absolute INS conversion requires a known normalization basis")
     if float(parameters["scale"]) <= 0.0:
         raise ValueError("absolute INS scale must be positive")
+
+
+def _validate_dataset_clone(inputs, parameters):
+    if parameters:
+        raise ValueError("dataset clone has no operation parameters")
+
+
+def _execute_dataset_clone(inputs, parameters, **callbacks):
+    from .core import DatasetOutput
+
+    source = inputs[0]
+    data = source.data.immutable_copy()
+    if isinstance(data, MDHistoData):
+        data_type = (
+            "powder_inelastic"
+            if len(data.axes) == 2
+            else "single_crystal_inelastic"
+            if len(data.axes) == 4
+            else "derived_analysis"
+        )
+    else:
+        data_type = "derived_analysis"
+    return AnalysisExecution(
+        {
+            "clone": DatasetOutput(
+                data,
+                f"{source.dataset_name} clone",
+                data_type,
+                metadata={
+                    "fit_enabled": False,
+                    "fit_weight": 0.0,
+                    "clone_source_id": source.dataset_id,
+                },
+            )
+        },
+        diagnostics={
+            "source_dataset_id": source.dataset_id,
+            "source_fingerprint": source.fingerprint,
+            "comparison_only_by_default": True,
+        },
+    )
 
 
 def _validate_histogram_arithmetic(inputs, parameters):

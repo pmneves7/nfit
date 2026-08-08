@@ -161,6 +161,8 @@ def _link_group_backgrounds(group: DataGroup) -> None:
     by_id = {dataset.id: dataset for dataset in group.iter_datasets()}
     groups_by_id = {node.id: node for node in group.iter_subgroups()}
     for dataset in by_id.values():
+        if isinstance(dataset.metadata.get("derived_recipe"), dict):
+            dataset._derived_owner_group = group
         for background in dataset.backgrounds:
             background.source_entry = by_id.get(background.source_dataset_id)
             background.source_group = groups_by_id.get(background.source_group_id or "")

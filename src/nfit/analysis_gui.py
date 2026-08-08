@@ -11,6 +11,7 @@ from .analysis import (
     available_analysis_types,
     default_analysis_parameters,
     prepare_analysis_input,
+    upsert_analysis_output_dataset,
 )
 from .analysis.artifacts import read_project_dataset_artifact
 from .analysis.runner import (
@@ -20,7 +21,7 @@ from .analysis.runner import (
 )
 from .dataset import PointData4D, PointListData
 from .mdhisto import MDHistoData
-from .pipeline import DatasetEntry, DatasetGroup
+from .pipeline import DatasetEntry
 from .quantities import display_unit
 
 
@@ -611,29 +612,16 @@ class DataPlaygroundWindow:
         if existing is not None:
             self.explorer._refresh_tree(select_group=self.group, select_dataset=existing)
             return True
-        derived = next((node for node in self.group.subgroups if node.name == "Derived data"), None)
-        if derived is None:
-            derived = DatasetGroup("Derived data")
-            self.group.subgroups.append(derived)
-        data_type = str(output.metadata.get("data_type") or "derived_analysis")
-        entry = DatasetEntry(
-            _unique_output_name(output.label, self.group.dataset_names),
+        analysis = self._selected_analysis()
+        if analysis is None:
+            return False
+        entry = upsert_analysis_output_dataset(
+            self.group,
+            analysis,
+            output,
             self._current_result_data,
-            kind="analysis",
-            data_type=data_type,
-            enabled=bool(output.metadata.get("fit_enabled", False)),
-            metadata={
-                "source_file": output.artifact_path,
-                "analysis_artifact_path": output.artifact_path,
-                "_project_path": str(self.explorer.project_path),
-                "derived_from_analysis": {
-                    "analysis_id": self._selected_analysis().id if self._selected_analysis() else "",
-                    "output_key": output.key,
-                },
-            },
-            id=output.dataset_id,
+            project_path=self.explorer.project_path,
         )
-        derived.datasets.append(entry)
         self.explorer._mark_dirty()
         self.explorer._refresh_tree(select_group=self.group, select_dataset=entry)
         return True
@@ -724,6 +712,11 @@ class DataPlaygroundWindow:
         if self.explorer.project_path is None:
             if not self.explorer.save_as():
                 return False
+        if self.operation_combo.currentData() in {
+            "dataset_clone",
+            "histogram_arithmetic",
+        }:
+            return self._save_live_derived_recipe()
         dataset_id = self.dataset_combo.currentData()
         try:
             primary_input = prepare_analysis_source(self.group, dataset_id)
@@ -816,37 +809,29 @@ class DataPlaygroundWindow:
             analysis.result = result
             if is_new:
                 self.group.analyses.append(analysis)
-            derived = next((node for node in self.group.subgroups if node.name == "Derived data"), None)
-            if derived is None:
-                derived = DatasetGroup("Derived data")
-                self.group.subgroups.append(derived)
-            derived.datasets[:] = [dataset for dataset in derived.datasets if dataset.metadata.get("derived_from_analysis", {}).get("analysis_id") != analysis.id]
+            output_dataset_ids = set()
             for output in result.outputs:
                 if output.kind == "dataset" and output.artifact_path and output.dataset_id:
                     data = read_project_dataset_artifact(
                         self.explorer.project_path,
                         output.artifact_path,
                     )
-                    derived.datasets.append(
-                        DatasetEntry(
-                            _unique_output_name(output.label, self.group.dataset_names),
-                            data,
-                            kind="analysis",
-                            data_type=str(output.metadata.get("data_type") or "derived_analysis"),
-                            enabled=bool(output.metadata.get("fit_enabled", False)),
-                            metadata={
-                                "source_file": output.artifact_path,
-                                "analysis_artifact_path": output.artifact_path,
-                                "_project_path": str(self.explorer.project_path),
-                                "derived_from_analysis": {
-                                    "analysis_id": analysis.id,
-                                    "output_key": output.key,
-                                    "recipe_hash": result.recipe_hash,
-                                },
-                            },
-                            id=output.dataset_id,
-                        )
+                    entry = upsert_analysis_output_dataset(
+                        self.group,
+                        analysis,
+                        output,
+                        data,
+                        project_path=self.explorer.project_path,
                     )
+                    output_dataset_ids.add(entry.id)
+            for node in (self.group, *self.group.iter_subgroups()):
+                node.datasets[:] = [
+                    dataset
+                    for dataset in node.datasets
+                    if dataset.metadata.get("derived_from_analysis", {}).get("analysis_id")
+                    != analysis.id
+                    or dataset.id in output_dataset_ids
+                ]
             from .project_gui import _link_group_backgrounds
 
             _link_group_backgrounds(self.group)
@@ -879,6 +864,79 @@ class DataPlaygroundWindow:
             completion_summary=completion_summary,
             progress_window_title="Analysis progress",
         )
+
+    def _save_live_derived_recipe(self) -> bool:
+        """Save a clone/arithmetic recipe without materializing source bins."""
+
+        from PySide6 import QtWidgets
+
+        if self.group is None:
+            return False
+        operation = str(self.operation_combo.currentData())
+        source_ids = [str(self.dataset_combo.currentData())]
+        if operation == "histogram_arithmetic":
+            secondary_id = self.secondary_dataset_combo.currentData()
+            if secondary_id is None:
+                QtWidgets.QMessageBox.warning(
+                    self.window,
+                    analysis_definition(operation).label,
+                    "Select the right-hand input dataset or live composite.",
+                )
+                return False
+            source_ids.append(str(secondary_id))
+        parameters = self._parameters()
+        analysis = self._selected_analysis()
+        if analysis is None:
+            analysis = AnalysisEntry(
+                self.name_edit.text().strip() or "Derived dataset",
+                operation,
+                source_ids,
+                parameters,
+            )
+        else:
+            analysis.name = self.name_edit.text().strip() or analysis.name
+            analysis.type = operation
+            analysis.input_dataset_ids = source_ids
+            analysis.parameters = parameters
+
+        linked = next(
+            (
+                dataset
+                for dataset in self.group.iter_datasets()
+                if dataset.metadata.get("derived_from_analysis", {}).get("analysis_id")
+                == analysis.id
+            ),
+            None,
+        )
+        existing_config = None
+        if linked is not None:
+            from .project_gui import DATASET_REBIN_KEY
+
+            candidate = linked.parameters.get(DATASET_REBIN_KEY)
+            if isinstance(candidate, dict) and candidate.get("axes"):
+                existing_config = candidate
+
+        from .project_gui import (
+            _link_group_backgrounds,
+            create_derived_analysis_dataset,
+        )
+
+        derived = create_derived_analysis_dataset(
+            self.group,
+            analysis,
+            name=self.name_edit.text().strip() or None,
+            rebin_config=existing_config,
+        )
+        _link_group_backgrounds(self.group)
+        self.explorer._record_data_group_state_change(self.group)
+        self.explorer._mark_dirty()
+        self._refresh_analysis_list(analysis.id)
+        self._render_analysis_result(analysis)
+        self.explorer._refresh_tree(
+            select_group=self.group,
+            select_dataset=derived,
+        )
+        return True
 
     def _primary_analysis_data(self, dataset: DatasetEntry) -> Any | None:
         """Return the same prepared dataset used by analysis execution."""

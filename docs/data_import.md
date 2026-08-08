@@ -31,9 +31,12 @@ runs; expand a page to create those individual run nodes for inspection or
 editing. **Expand groups** opens the structural hierarchy but deliberately
 leaves run pages collapsed. The collection details panel shows 20 direct runs
 per page. A parent with child collections lists those immediate children rather
-than flattening every descendant run into one long table. Background containers
-use a coral folder accent so they remain distinct from ordinary, mask, model,
-and fit folders throughout this hierarchy.
+than flattening every descendant run into one long table. Empty **Masks** and
+**Backgrounds** folders are omitted; select the dataset or collection and use
+the add action to create the first item. Background containers use a coral
+folder accent so they remain distinct from ordinary, mask, model, fit,
+analysis, and plot folders throughout this hierarchy. Analyses and Plots also
+use their own folder colors for quick navigation.
 
 ### Point-list data
 

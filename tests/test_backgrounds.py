@@ -357,7 +357,7 @@ def test_project_tree_exposes_background_controls_with_tooltips(monkeypatch):
     explorer = NfitProjectExplorer(NfitProject([DataGroup("Workspace", [target, source])]))
 
     dataset_item = explorer.tree.topLevelItem(0).child(0).child(0)
-    backgrounds_item = dataset_item.child(1)
+    backgrounds_item = dataset_item.child(0)
     assert backgrounds_item.text(0) == "Backgrounds"
     explorer.tree.setCurrentItem(backgrounds_item.child(0))
     source_combo = explorer.details_widget.findChild(QtWidgets.QComboBox, "background_source_dataset")
