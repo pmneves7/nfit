@@ -13,6 +13,21 @@ from tests.project_gui_test_support import (
 )
 
 
+def test_standard_shortcut_text_accepts_platforms_without_a_binding():
+    class KeySequenceWithoutBindings:
+        class SequenceFormat:
+            PortableText = object()
+
+        @staticmethod
+        def keyBindings(_standard_key):
+            return []
+
+    class QtGuiWithoutBindings:
+        QKeySequence = KeySequenceWithoutBindings
+
+    assert _standard_shortcut_text(QtGuiWithoutBindings, object()) == ""
+
+
 def test_project_explorer_opens_at_screen_aware_initial_size(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtGui = pytest.importorskip("PySide6.QtGui")

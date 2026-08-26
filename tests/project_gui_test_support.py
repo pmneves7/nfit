@@ -82,7 +82,10 @@ def _points_for_dynamic_writeback() -> PointData4D:
 
 
 def _standard_shortcut_text(QtGui, standard_key):
-    return QtGui.QKeySequence.keyBindings(standard_key)[0].toString(
+    bindings = QtGui.QKeySequence.keyBindings(standard_key)
+    if not bindings:
+        return ""
+    return bindings[0].toString(
         QtGui.QKeySequence.SequenceFormat.PortableText
     )
 
