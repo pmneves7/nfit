@@ -156,6 +156,10 @@ def render_plot(
             ylim=_pair(settings.get("ylim")),
             font_size=float(settings.get("font_size", 12.0)),
             axes_linewidth=float(settings.get("axis_linewidth", 1.5)),
+            show_tile_labels=bool(settings.get("show_tile_labels", True)),
+            local_color_scales=bool(
+                settings.get("tile_local_color_scales", False)
+            ),
             figsize=tuple(settings.get("figsize", (10.0, 8.0))),
         )
     elif plot_type == "mdhisto_line":

@@ -198,6 +198,7 @@ class QtMDHistoSliceViewer:
         self.scale_combo = None
         self.limits_combo = None
         self.autoscale_check = None
+        self.tile_local_color_scales_check = None
         self.vmin_spin = None
         self.vmax_spin = None
         self.color_group = None
@@ -228,6 +229,7 @@ class QtMDHistoSliceViewer:
         self.font_size_spin = None
         self.line_width_spin = None
         self.show_binning_title_check = None
+        self.show_tile_labels_check = None
         self.line_group = None
         self.marker_combo = None
         self.line_style_combo = None
@@ -352,8 +354,12 @@ class QtMDHistoSliceViewer:
                 self.tile_range,
             )
         self.tile_step_auto = True
+        self.show_tile_labels = True
+        self.tile_local_color_scales = False
         self._current_tiled_slices: list[TiledSlice] = []
         self._tile_axes = []
+        self._tile_colorbar_axes = []
+        self._tile_colorbars = []
         self._current_waterfall_traces: list[WaterfallTrace] = []
         self._waterfall_default_xlim: tuple[float, float] | None = None
         self._waterfall_default_ylim: tuple[float, float] | None = None
@@ -379,6 +385,8 @@ class QtMDHistoSliceViewer:
             tile_range=self.tile_range,
             tile_step=self.tile_step,
             tile_step_auto=self.tile_step_auto,
+            show_tile_labels=self.show_tile_labels,
+            tile_local_color_scales=self.tile_local_color_scales,
         )
         self._plot_layout_mode: tuple[Any, ...] | None = None
         self._compare_axes = []
@@ -563,6 +571,8 @@ class QtMDHistoSliceViewer:
             "tile_range": self.tile_range,
             "tile_step": self.tile_step,
             "tile_step_auto": self.tile_step_auto,
+            "show_tile_labels": self.show_tile_labels,
+            "tile_local_color_scales": self.tile_local_color_scales,
             "marker": self.marker,
             "line_style": self.line_style,
             "marker_size": self.marker_size,
@@ -715,6 +725,14 @@ class QtMDHistoSliceViewer:
         self.tile_step_auto = bool(
             settings.get("tile_step_auto", self.tile_step_auto)
         )
+        self.show_tile_labels = bool(
+            settings.get("show_tile_labels", self.show_tile_labels)
+        )
+        self.tile_local_color_scales = bool(
+            settings.get(
+                "tile_local_color_scales", self.tile_local_color_scales
+            )
+        )
         self.marker = str(settings.get("marker", self.marker))
         self.line_style = str(settings.get("line_style", self.line_style))
         self.marker_size = float(settings.get("marker_size", self.marker_size))
@@ -759,6 +777,10 @@ class QtMDHistoSliceViewer:
             self.marker_face_color = marker_face_color
         self._sync_waterfall_controls()
         self._sync_tile_controls()
+        self._sync_tiled_color_controls()
+        self._set_checkbox_silent(
+            self.show_tile_labels_check, self.show_tile_labels
+        )
         self.view_mode_combo.setCurrentIndex(mode)
         self._set_combo_silent(
             self.marker_face_color_combo,
@@ -969,6 +991,8 @@ class QtMDHistoSliceViewer:
                 f"    ylim={self._export_limits('y')!r},",
                 f"    font_size={self.font_size!r},",
                 f"    axes_linewidth={self.axis_linewidth!r},",
+                f"    show_tile_labels={self.show_tile_labels!r},",
+                f"    local_color_scales={self.tile_local_color_scales!r},",
                 f"    figsize={tuple(self.figure.get_size_inches())!r},",
                 ")",
                 f"fig.suptitle({self._binning_title_text()!r})",
@@ -1452,6 +1476,21 @@ class QtMDHistoSliceViewer:
         self.autoscale_check.setChecked(self.model.autoscale)
         self.autoscale_check.setToolTip("Automatically recompute color limits when the displayed data or selection changes.")
         self.autoscale_check.toggled.connect(self._set_autoscale)
+        self.tile_local_color_scales_check = QtWidgets.QCheckBox(
+            "Local scale per tiled plot"
+        )
+        self.tile_local_color_scales_check.setObjectName(
+            "tile_local_color_scales"
+        )
+        self.tile_local_color_scales_check.setChecked(
+            self.tile_local_color_scales
+        )
+        self.tile_local_color_scales_check.setToolTip(
+            "Give each tiled slice its own automatic color limits and adjacent colorbar. This option is available only while Autoscale is enabled."
+        )
+        self.tile_local_color_scales_check.toggled.connect(
+            self._set_tile_local_color_scales
+        )
         self.vmin_spin = _make_float_spinbox()
         self.vmax_spin = _make_float_spinbox()
         self.gamma_spin = _make_float_spinbox(1.0e-6, 20.0)
@@ -1480,7 +1519,13 @@ class QtMDHistoSliceViewer:
         color_layout.addWidget(self.limit_n_label, 2, 2)
         color_layout.addWidget(self.limit_n_spin, 2, 3)
         color_layout.addWidget(self.autoscale_check, 3, 1, 1, 3)
-        color_layout.setRowMinimumHeight(4, 6)
+        color_layout.addWidget(
+            self.tile_local_color_scales_check,
+            4,
+            1,
+            1,
+            3,
+        )
         color_layout.addWidget(QtWidgets.QLabel("vmin"), 5, 0)
         color_layout.addWidget(self.vmin_spin, 5, 1)
         color_layout.addWidget(QtWidgets.QLabel("vmax"), 5, 2)
@@ -1967,6 +2012,15 @@ class QtMDHistoSliceViewer:
             "Display the selected or integrated ranges of every non-plotted axis above the figure, including coordinate labels and units."
         )
         self.show_binning_title_check.toggled.connect(self._set_show_binning_title)
+        self.show_tile_labels_check = QtWidgets.QCheckBox(
+            "Show tiled-slice value labels"
+        )
+        self.show_tile_labels_check.setObjectName("show_tile_labels")
+        self.show_tile_labels_check.setChecked(self.show_tile_labels)
+        self.show_tile_labels_check.setToolTip(
+            "Show the third-axis value or interval in a translucent box at the lower-right of each tiled slice."
+        )
+        self.show_tile_labels_check.toggled.connect(self._set_show_tile_labels)
         self.copy_figure_button = QtWidgets.QPushButton("Copy figure")
         self.save_plot_button = QtWidgets.QPushButton("Save plot")
         self.copy_script_button = QtWidgets.QPushButton("Copy script")
@@ -1997,10 +2051,11 @@ class QtMDHistoSliceViewer:
         figure_layout.addWidget(QtWidgets.QLabel("Linewidth"), 0, 2)
         figure_layout.addWidget(self.line_width_spin, 0, 3)
         figure_layout.addWidget(self.show_binning_title_check, 1, 0, 1, 4)
-        figure_layout.addWidget(self.copy_figure_button, 2, 0, 1, 2)
-        figure_layout.addWidget(self.save_plot_button, 2, 2, 1, 2)
-        figure_layout.addWidget(self.copy_script_button, 3, 0, 1, 2)
-        figure_layout.addWidget(self.save_script_button, 3, 2, 1, 2)
+        figure_layout.addWidget(self.show_tile_labels_check, 2, 0, 1, 4)
+        figure_layout.addWidget(self.copy_figure_button, 3, 0, 1, 2)
+        figure_layout.addWidget(self.save_plot_button, 3, 2, 1, 2)
+        figure_layout.addWidget(self.copy_script_button, 4, 0, 1, 2)
+        figure_layout.addWidget(self.save_script_button, 4, 2, 1, 2)
         controls_layout.addWidget(figure_group)
         controls_layout.addStretch(1)
 
@@ -2434,6 +2489,8 @@ class QtMDHistoSliceViewer:
             tile_range=self.tile_range,
             tile_step=float(self.tile_step),
             tile_step_auto=bool(self.tile_step_auto),
+            show_tile_labels=bool(self.show_tile_labels),
+            tile_local_color_scales=bool(self.tile_local_color_scales),
         )
 
     def _default_dataset_state(self, index: int) -> _DatasetViewState:
@@ -2513,6 +2570,10 @@ class QtMDHistoSliceViewer:
             self.tile_range = tuple(state.tile_range)
             self.tile_step = float(state.tile_step)
             self.tile_step_auto = bool(state.tile_step_auto)
+            self.show_tile_labels = bool(state.show_tile_labels)
+            self.tile_local_color_scales = bool(
+                state.tile_local_color_scales and state.model.autoscale
+            )
             self.model.masked = bool(state.apply_masks)
             self.model.coverage_threshold = self.coverage_threshold
             self.model.cmap_reversed = bool(state.cmap_reversed)
@@ -2539,6 +2600,10 @@ class QtMDHistoSliceViewer:
             self._set_checkbox_silent(
                 self.show_binning_title_check, self.show_binning_title
             )
+            self._set_checkbox_silent(
+                self.show_tile_labels_check, self.show_tile_labels
+            )
+            self._sync_tiled_color_controls()
             self._set_spin_silent(self.smoothing_x_spin, self.smoothing_x)
             self._set_spin_silent(self.smoothing_y_spin, self.smoothing_y)
             self._set_combo_silent(self.marker_combo, _option_name(_MARKER_OPTIONS, self.marker))
@@ -2862,6 +2927,28 @@ class QtMDHistoSliceViewer:
         if not self._restoring_dataset_state and self._tiled_mode_active():
             self.update_plot(preserve_view=False)
 
+    def _set_show_tile_labels(self, checked: bool) -> None:
+        self.show_tile_labels = bool(checked)
+        if not self._restoring_dataset_state and self._tiled_mode_active():
+            self.update_plot()
+
+    def _set_tile_local_color_scales(self, checked: bool) -> None:
+        self.tile_local_color_scales = bool(checked and self.model.autoscale)
+        self._sync_tiled_color_controls()
+        if not self._restoring_dataset_state and self._tiled_mode_active():
+            self.update_plot(preserve_view=False)
+
+    def _sync_tiled_color_controls(self) -> None:
+        if self.tile_local_color_scales_check is None:
+            return
+        if not self.model.autoscale:
+            self.tile_local_color_scales = False
+        self._set_checkbox_silent(
+            self.tile_local_color_scales_check,
+            self.tile_local_color_scales,
+        )
+        self.tile_local_color_scales_check.setEnabled(self.model.autoscale)
+
     def _set_rectangle_selector_from_controls(self) -> None:
         if self.rectangle_selector is None:
             return
@@ -3147,6 +3234,7 @@ class QtMDHistoSliceViewer:
         if self._syncing_limits:
             return
         self.model.autoscale = bool(autoscale)
+        self._sync_tiled_color_controls()
         self.update_plot()
 
     def _set_manual_limit(self, which: str, value: float) -> None:
@@ -3478,6 +3566,11 @@ class QtMDHistoSliceViewer:
         if self.colorbar is not None:
             self.colorbar.ax.yaxis.label.set_fontsize(size)
             self.colorbar.ax.tick_params(labelsize=size)
+        for colorbar in self._tile_colorbars:
+            if colorbar is self.colorbar:
+                continue
+            colorbar.ax.yaxis.label.set_fontsize(size)
+            colorbar.ax.tick_params(labelsize=size)
         for colorbar in self._compare_colorbars:
             colorbar.ax.yaxis.label.set_fontsize(size)
             colorbar.ax.tick_params(labelsize=size)
@@ -3513,6 +3606,11 @@ class QtMDHistoSliceViewer:
         if self.colorbar is not None:
             self.colorbar.outline.set_linewidth(width)
             self.colorbar.ax.tick_params(which="both", direction="in", width=width)
+        for colorbar in self._tile_colorbars:
+            if colorbar is self.colorbar:
+                continue
+            colorbar.outline.set_linewidth(width)
+            colorbar.ax.tick_params(which="both", direction="in", width=width)
         for colorbar in self._compare_colorbars:
             colorbar.outline.set_linewidth(width)
             colorbar.ax.tick_params(which="both", direction="in", width=width)
@@ -3538,6 +3636,7 @@ class QtMDHistoSliceViewer:
         finally:
             self._syncing_limits = False
         self.model.autoscale = bool(checked)
+        self._sync_tiled_color_controls()
 
     def _connect_view_limit_callbacks(self) -> None:
         if self.ax_image is None:
@@ -3752,6 +3851,11 @@ class QtMDHistoSliceViewer:
             self.waterfall_group.setVisible(is_waterfall)
         if self.tiled_group is not None:
             self.tiled_group.setVisible(is_tiled)
+        if self.show_tile_labels_check is not None:
+            self.show_tile_labels_check.setVisible(is_tiled)
+        if self.tile_local_color_scales_check is not None:
+            self.tile_local_color_scales_check.setVisible(is_tiled)
+            self._sync_tiled_color_controls()
         for widget in (
             self.coverage_threshold_label,
             self.coverage_threshold_spin,
@@ -3890,6 +3994,8 @@ class QtMDHistoSliceViewer:
         self._compare_axes = []
         self._compare_colorbars = []
         self._tile_axes = []
+        self._tile_colorbar_axes = []
+        self._tile_colorbars = []
         self._plot_layout_mode = ("standard", 1)
         self._create_rectangle_selector()
 
@@ -3913,34 +4019,62 @@ class QtMDHistoSliceViewer:
         self._compare_colorbars = []
         self._compare_colorbar_axes = []
         self._tile_axes = []
+        self._tile_colorbar_axes = []
+        self._tile_colorbars = []
         if self.rectangle_selector is not None:
             self.rectangle_selector.set_active(False)
             self.rectangle_selector = None
         self._plot_layout_mode = ("waterfall", 1)
         self._suppress_matplotlib_coordinate_status()
 
-    def _ensure_tiled_layout(self, panel_count: int) -> None:
+    def _ensure_tiled_layout(
+        self,
+        panel_count: int,
+        *,
+        local_color_scales: bool,
+    ) -> None:
         self.figure.clear()
         columns = int(np.ceil(np.sqrt(panel_count)))
         rows = int(np.ceil(panel_count / columns))
-        self.grid = self.figure.add_gridspec(
-            rows,
-            columns + 1,
-            width_ratios=[*[1.0] * columns, 0.055],
-        )
+        if local_color_scales:
+            self.grid = self.figure.add_gridspec(
+                rows,
+                columns * 2,
+                width_ratios=[
+                    value
+                    for _ in range(columns)
+                    for value in (1.0, 0.055)
+                ],
+            )
+        else:
+            self.grid = self.figure.add_gridspec(
+                rows,
+                columns + 1,
+                width_ratios=[*[1.0] * columns, 0.055],
+            )
         self._tile_axes = []
+        self._tile_colorbar_axes = []
         for index in range(panel_count):
             row, column = divmod(index, columns)
+            plot_column = column * 2 if local_color_scales else column
             first = self._tile_axes[0] if self._tile_axes else None
             self._tile_axes.append(
                 self.figure.add_subplot(
-                    self.grid[row, column],
+                    self.grid[row, plot_column],
                     sharex=first,
                     sharey=first,
                 )
             )
+            if local_color_scales:
+                self._tile_colorbar_axes.append(
+                    self.figure.add_subplot(self.grid[row, plot_column + 1])
+                )
         self.ax_image = self._tile_axes[0]
-        self.ax_colorbar = self.figure.add_subplot(self.grid[:, -1])
+        if local_color_scales:
+            self.ax_colorbar = self._tile_colorbar_axes[0]
+        else:
+            self.ax_colorbar = self.figure.add_subplot(self.grid[:, -1])
+            self._tile_colorbar_axes = [self.ax_colorbar]
         self.ax_xcut = None
         self.ax_ycut = None
         self.ax_residual = None
@@ -3949,13 +4083,18 @@ class QtMDHistoSliceViewer:
         self.ax_residual_ycut = None
         self.image = None
         self.colorbar = None
+        self._tile_colorbars = []
         self._compare_axes = []
         self._compare_colorbars = []
         self._compare_colorbar_axes = []
         if self.rectangle_selector is not None:
             self.rectangle_selector.set_active(False)
             self.rectangle_selector = None
-        self._plot_layout_mode = ("tiled", panel_count)
+        self._plot_layout_mode = (
+            "tiled",
+            panel_count,
+            bool(local_color_scales),
+        )
         self._suppress_matplotlib_coordinate_status()
 
     def _ensure_fit_compare_layout(
@@ -3978,6 +4117,8 @@ class QtMDHistoSliceViewer:
         self._compare_colorbars = []
         self._compare_colorbar_axes = []
         self._tile_axes = []
+        self._tile_colorbar_axes = []
+        self._tile_colorbars = []
         if with_cuts:
             cut_ratio = self._panel_ratio(self.xcut_percent)
             ycut_ratio = self._panel_ratio(self.ycut_percent)
@@ -4047,6 +4188,8 @@ class QtMDHistoSliceViewer:
         self._compare_axes = []
         self._compare_colorbars = []
         self._tile_axes = []
+        self._tile_colorbar_axes = []
+        self._tile_colorbars = []
         self._suppress_matplotlib_coordinate_status()
         if self.rectangle_selector is not None:
             self.rectangle_selector.set_active(False)
@@ -4176,9 +4319,15 @@ class QtMDHistoSliceViewer:
         self._current_tiled_slices = slices
         self._current_slice = slices[0].view
         combined = np.concatenate([panel.values.ravel() for panel in slices])
-        norm = self.model._color_norm(combined)
+        shared_norm = self.model._color_norm(combined)
         vmin, vmax = self.model._color_limits(combined)
-        self._ensure_tiled_layout(len(slices))
+        local_color_scales = bool(
+            self.tile_local_color_scales and self.model.autoscale
+        )
+        self._ensure_tiled_layout(
+            len(slices),
+            local_color_scales=local_color_scales,
+        )
         columns = int(np.ceil(np.sqrt(len(slices))))
         rows = int(np.ceil(len(slices) / columns))
         artists = []
@@ -4186,6 +4335,11 @@ class QtMDHistoSliceViewer:
             zip(self._tile_axes, slices, strict=True)
         ):
             row, column = divmod(index, columns)
+            norm = (
+                self.model._color_norm(panel.values)
+                if local_color_scales
+                else shared_norm
+            )
             artist = axis.pcolormesh(
                 panel.view["x_edges"],
                 panel.view["y_edges"],
@@ -4194,23 +4348,41 @@ class QtMDHistoSliceViewer:
                 cmap=self.model._effective_cmap(),
                 norm=norm,
             )
-            axis.text(
-                0.97,
-                0.03,
-                panel.label,
-                transform=axis.transAxes,
-                ha="right",
-                va="bottom",
-                fontsize=self.font_size,
-            )
+            if self.show_tile_labels:
+                axis.text(
+                    0.97,
+                    0.03,
+                    panel.label,
+                    transform=axis.transAxes,
+                    ha="right",
+                    va="bottom",
+                    fontsize=self.font_size,
+                    bbox={
+                        "boxstyle": "round,pad=0.25",
+                        "facecolor": "white",
+                        "edgecolor": "none",
+                        "alpha": 0.65,
+                    },
+                )
             if row == rows - 1 or index + columns >= len(slices):
                 axis.set_xlabel(self.model._axis_label(self.model.x_dim))
             if column == 0:
                 axis.set_ylabel(self.model._axis_label(self.model.y_dim))
             artists.append(artist)
+            if local_color_scales:
+                colorbar = self.figure.colorbar(
+                    artist,
+                    cax=self._tile_colorbar_axes[index],
+                )
+                colorbar.set_label(self.model._channel_label())
+                self._tile_colorbars.append(colorbar)
         self.image = artists[0]
-        self.colorbar = self.figure.colorbar(artists[-1], cax=self.ax_colorbar)
-        self.colorbar.set_label(self.model._channel_label())
+        if local_color_scales:
+            self.colorbar = self._tile_colorbars[0]
+        else:
+            self.colorbar = self.figure.colorbar(artists[-1], cax=self.ax_colorbar)
+            self.colorbar.set_label(self.model._channel_label())
+            self._tile_colorbars = [self.colorbar]
         preserve_limits = (
             previous_xlim is not None
             and previous_ylim is not None

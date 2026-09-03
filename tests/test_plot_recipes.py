@@ -91,7 +91,7 @@ def test_waterfall_recipe_renders_and_persists_multiple_dataset_sources():
     assert all(text.get_color() == "#000000" for text in figure.axes[0].texts)
 
 
-def test_tiled_slice_recipe_renders_with_one_colorbar():
+def test_tiled_slice_recipe_restores_labels_and_local_colorbars():
     axes = (
         *_data().axes,
         MDHistoAxis("Temperature", np.arange(5.0), "K", "temperature"),
@@ -114,6 +114,8 @@ def test_tiled_slice_recipe_renders_with_one_colorbar():
             "tile_dim": "Temperature",
             "tile_range": (0.5, 3.5),
             "tile_step": 1.0,
+            "show_tile_labels": False,
+            "tile_local_color_scales": True,
         },
         plot_type="mdhisto_tiled_slices",
     )
@@ -121,8 +123,13 @@ def test_tiled_slice_recipe_renders_with_one_colorbar():
     figure = render_plot(entry, data)
 
     assert len(figure._nfit_tiled_axes) == 4
-    assert len(figure.axes) == 5
-    assert figure.axes[-1].yaxis.label.get_text() == r"$I(\mathbf{Q},E)$ (a.u.)"
+    assert len(figure._nfit_tiled_colorbars) == 4
+    assert len(figure.axes) == 8
+    assert all(not axis.texts for axis in figure._nfit_tiled_axes)
+    assert all(
+        colorbar.ax.yaxis.label.get_text() == r"$I(\mathbf{Q},E)$ (a.u.)"
+        for colorbar in figure._nfit_tiled_colorbars
+    )
 
 
 def test_fit_comparison_recipe_can_render_model_through_data_masks():

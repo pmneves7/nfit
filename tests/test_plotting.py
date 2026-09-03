@@ -1163,7 +1163,7 @@ def test_qt_tiled_slices_exposes_third_axis_range_step_slider_and_script():
     viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
     viewer.view_mode_combo.setCurrentText("Tiled slices")
 
-    assert viewer._plot_layout_mode == ("tiled", 2)
+    assert viewer._plot_layout_mode == ("tiled", 2, False)
     assert not viewer.tiled_group.isHidden()
     assert viewer.tile_dim_combo.currentText() == "DeltaE"
     assert viewer.tile_step_auto_check.isChecked()
@@ -1174,6 +1174,8 @@ def test_qt_tiled_slices_exposes_third_axis_range_step_slider_and_script():
         viewer.tile_step_spin,
         viewer.tile_step_slider,
         viewer.tile_step_auto_check,
+        viewer.show_tile_labels_check,
+        viewer.tile_local_color_scales_check,
     ):
         assert control.toolTip().strip()
     assert len(viewer._tile_axes) == 2
@@ -1187,6 +1189,28 @@ def test_qt_tiled_slices_exposes_third_axis_range_step_slider_and_script():
         axis.texts[0].get_position() == (0.97, 0.03)
         for axis in viewer._tile_axes
     )
+    assert all(
+        axis.texts[0].get_bbox_patch().get_alpha() == pytest.approx(0.65)
+        for axis in viewer._tile_axes
+    )
+
+    viewer.show_tile_labels_check.setChecked(False)
+    assert all(not axis.texts for axis in viewer._tile_axes)
+    viewer.show_tile_labels_check.setChecked(True)
+    viewer.tile_local_color_scales_check.setChecked(True)
+    assert viewer._plot_layout_mode == ("tiled", 2, True)
+    assert len(viewer._tile_colorbars) == len(viewer._tile_axes) == 2
+    assert len(viewer.figure.axes) == 4
+    assert (
+        viewer._tile_axes[0].collections[0].norm
+        is not viewer._tile_axes[1].collections[0].norm
+    )
+    viewer.autoscale_check.setChecked(False)
+    assert not viewer.tile_local_color_scales_check.isChecked()
+    assert not viewer.tile_local_color_scales_check.isEnabled()
+    assert viewer._plot_layout_mode == ("tiled", 2, False)
+    viewer.autoscale_check.setChecked(True)
+    viewer.tile_local_color_scales_check.setChecked(True)
 
     viewer.tile_step_slider.setValue(1000)
     assert not viewer.tile_step_auto_check.isChecked()
@@ -1195,13 +1219,19 @@ def test_qt_tiled_slices_exposes_third_axis_range_step_slider_and_script():
     script = viewer.figure_script()
     assert settings["view_mode"] == "tiled_slices"
     assert settings["tile_dim"] == "DeltaE"
+    assert settings["show_tile_labels"] is True
+    assert settings["tile_local_color_scales"] is True
     assert "plot_mdhisto_tiled_slices" in script
+    assert "show_tile_labels=True" in script
+    assert "local_color_scales=True" in script
     compile(script, "tiled_slice_figure.py", "exec")
 
     restored = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
     restored.apply_plot_settings(settings)
     assert restored.view_mode_combo.currentText() == "Tiled slices"
     assert restored.tile_step == pytest.approx(viewer.tile_step)
+    assert restored.show_tile_labels_check.isChecked()
+    assert restored.tile_local_color_scales_check.isChecked()
 
 
 def test_qt_waterfall_half_max_stays_enabled_when_initial_range_shrinks():

@@ -454,9 +454,11 @@ def plot_mdhisto_tiled_slices(
     ylim: tuple[float, float] | None = None,
     font_size: float = 10.0,
     axes_linewidth: float = 1.0,
+    show_tile_labels: bool = True,
+    local_color_scales: bool = False,
     figsize: tuple[float, float] = (10.0, 8.0),
 ):
-    """Render a grid of 2D slices with one shared normalization and colorbar."""
+    """Render a grid of 2D slices with global or per-panel color scales."""
 
     import matplotlib.pyplot as plt
 
@@ -494,26 +496,38 @@ def plot_mdhisto_tiled_slices(
     model.iqr_n = float(iqr_n)
     model.percentile_n = float(percentile_n)
     model.power_gamma = float(power_gamma)
+    if local_color_scales and not model.autoscale:
+        raise ValueError("local_color_scales requires autoscale=True")
     combined = np.concatenate([panel.values.ravel() for panel in slices])
-    norm = model._color_norm(combined)
+    shared_norm = model._color_norm(combined)
     columns = int(np.ceil(np.sqrt(len(slices))))
     rows = int(np.ceil(len(slices) / columns))
     with plt.rc_context({"font.size": float(font_size)}):
         fig = plt.figure(figsize=figsize, constrained_layout=True)
-        grid = fig.add_gridspec(
-            rows,
-            columns + 1,
-            width_ratios=[*[1.0] * columns, 0.055],
-        )
+        if local_color_scales:
+            grid = fig.add_gridspec(
+                rows,
+                columns * 2,
+                width_ratios=[value for _ in range(columns) for value in (1.0, 0.055)],
+            )
+        else:
+            grid = fig.add_gridspec(
+                rows,
+                columns + 1,
+                width_ratios=[*[1.0] * columns, 0.055],
+            )
         axes = []
+        colorbars = []
         artist = None
         for index, panel in enumerate(slices):
             row, column = divmod(index, columns)
+            plot_column = column * 2 if local_color_scales else column
             ax = fig.add_subplot(
-                grid[row, column],
+                grid[row, plot_column],
                 sharex=axes[0] if axes else None,
                 sharey=axes[0] if axes else None,
             )
+            norm = model._color_norm(panel.values) if local_color_scales else shared_norm
             artist = ax.pcolormesh(
                 panel.view["x_edges"],
                 panel.view["y_edges"],
@@ -522,14 +536,21 @@ def plot_mdhisto_tiled_slices(
                 cmap=model._effective_cmap(),
                 norm=norm,
             )
-            ax.text(
-                0.97,
-                0.03,
-                panel.label,
-                transform=ax.transAxes,
-                ha="right",
-                va="bottom",
-            )
+            if show_tile_labels:
+                ax.text(
+                    0.97,
+                    0.03,
+                    panel.label,
+                    transform=ax.transAxes,
+                    ha="right",
+                    va="bottom",
+                    bbox={
+                        "boxstyle": "round,pad=0.25",
+                        "facecolor": "white",
+                        "edgecolor": "none",
+                        "alpha": 0.65,
+                    },
+                )
             if row == rows - 1 or index + columns >= len(slices):
                 ax.set_xlabel(model._axis_label(model.x_dim))
             if column == 0:
@@ -539,12 +560,26 @@ def plot_mdhisto_tiled_slices(
             if ylim is not None:
                 ax.set_ylim(*ylim)
             axes.append(ax)
-        colorbar_axis = fig.add_subplot(grid[:, -1])
-        colorbar = fig.colorbar(artist, cax=colorbar_axis)
-        colorbar.set_label(model._channel_label())
-        _apply_axes_linewidth((*axes, colorbar_axis), colorbar, axes_linewidth)
+            if local_color_scales:
+                colorbar_axis = fig.add_subplot(grid[row, plot_column + 1])
+                colorbar = fig.colorbar(artist, cax=colorbar_axis)
+                colorbar.set_label(model._channel_label())
+                colorbars.append(colorbar)
+        if not local_color_scales:
+            colorbar_axis = fig.add_subplot(grid[:, -1])
+            colorbar = fig.colorbar(artist, cax=colorbar_axis)
+            colorbar.set_label(model._channel_label())
+            colorbars.append(colorbar)
+        _apply_axes_linewidth(
+            (*axes, *(colorbar.ax for colorbar in colorbars)),
+            None,
+            axes_linewidth,
+        )
+        for colorbar in colorbars:
+            colorbar.outline.set_linewidth(float(axes_linewidth))
         fig._nfit_tiled_slices = slices
         fig._nfit_tiled_axes = axes
+        fig._nfit_tiled_colorbars = colorbars
     return fig
 
 

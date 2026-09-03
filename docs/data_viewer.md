@@ -109,12 +109,20 @@ spans one native bin through the selected range. **Auto** makes nine panels
 when at least nine third-axis values are available, and otherwise makes one
 panel per available value.
 
-Every panel is labeled at its bottom-right corner with its representative
-third-axis value. All panels share their x and y limits, color normalization,
-and a single colorbar on the far right. The mode intentionally displays data
-only; model and residual panels and histogram box cuts are not shown. Saved
-plot recipes and generated scripts preserve the three dimensions, range, step,
-hidden-axis selections, and color settings.
+By default, every panel is labeled at its bottom-right corner with its
+representative third-axis value, backed by a translucent box so that it remains
+legible over the data. Clear **Show tiled-slice value labels** in **Figure** to
+hide these annotations.
+
+All panels share their x and y limits. The default global color scale also
+shares one normalization and one colorbar at the far right. With **Autoscale**
+enabled, **Local scale per tiled plot** gives every panel independently computed
+limits and its own adjacent colorbar. Local scales are unavailable with manual
+color limits; turning off **Autoscale** returns the view to the global scale.
+The mode intentionally displays data only; model and residual panels and
+histogram box cuts are not shown. Saved plot recipes and generated scripts
+preserve the three dimensions, range, step, label visibility, hidden-axis
+selections, and global/local color setting.
 
 ## Volumetric mode
 

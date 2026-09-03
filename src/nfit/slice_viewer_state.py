@@ -50,6 +50,8 @@ class _DatasetViewState:
     tile_range: tuple[float, float] = (0.0, 0.0)
     tile_step: float = 1.0
     tile_step_auto: bool = True
+    show_tile_labels: bool = True
+    tile_local_color_scales: bool = False
 
 
 def _coerce_datasets(data: MDHistoData | Sequence[MDHistoData]) -> list[MDHistoData]:

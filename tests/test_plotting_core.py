@@ -189,7 +189,51 @@ def test_plot_tiled_slices_uses_one_shared_norm_and_far_right_colorbar():
     assert all(axis.collections[0].norm is axes[0].collections[0].norm for axis in axes)
     assert figure.axes[-1].get_position().x0 > max(axis.get_position().x1 for axis in axes)
     assert all(axis.texts[0].get_position() == (0.97, 0.03) for axis in axes)
+    assert all(
+        axis.texts[0].get_bbox_patch().get_alpha() == pytest.approx(0.65)
+        for axis in axes
+    )
     assert figure.axes[-1].yaxis.label.get_text() == r"$I(\mathbf{Q},E)$ (a.u.)"
+
+
+def test_plot_tiled_slices_can_hide_labels_and_autoscale_each_panel():
+    data = _tiny_mdhisto_data()
+
+    figure = plot_mdhisto_tiled_slices(
+        data,
+        x_dim=3,
+        y_dim=2,
+        tile_dim=1,
+        tile_range=(0.5, 2.5),
+        show_tile_labels=False,
+        local_color_scales=True,
+    )
+
+    axes = figure._nfit_tiled_axes
+    colorbars = figure._nfit_tiled_colorbars
+    assert len(colorbars) == len(axes) == 3
+    assert len(figure.axes) == 6
+    assert all(not axis.texts for axis in axes)
+    assert all(
+        axis.collections[0].norm is not axes[0].collections[0].norm
+        for axis in axes[1:]
+    )
+    assert all(
+        colorbar.ax.yaxis.label.get_text() == r"$I(\mathbf{Q},E)$ (a.u.)"
+        for colorbar in colorbars
+    )
+
+    with pytest.raises(ValueError, match="requires autoscale=True"):
+        plot_mdhisto_tiled_slices(
+            data,
+            x_dim=3,
+            y_dim=2,
+            tile_dim=1,
+            autoscale=False,
+            manual_vmin=0.0,
+            manual_vmax=1.0,
+            local_color_scales=True,
+        )
 
 
 def test_mdhisto_neutron_channels_use_quantity_symbols_and_units():
