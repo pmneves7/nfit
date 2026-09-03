@@ -17,6 +17,8 @@ external source references.
 datasets or views of the same dataset can remain visible side by side. Use
 **Open new viewer** beside the visualization selector to duplicate the current
 view before adjusting its dataset, axes, ranges, or styling independently.
+The viewer's **Figure** section can place the current hidden-axis binning above
+the plot, including projected-axis labels and units.
 
 ## Launch
 

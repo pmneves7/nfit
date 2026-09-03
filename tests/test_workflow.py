@@ -69,6 +69,8 @@ def test_histogram_arithmetic_analysis_accepts_live_group_composites(tmp_path):
             project_gui._composite_scope(group, node)
         )
         config.update({"enabled": True, "fractional": False})
+        for axis_config in config["axes"]:
+            axis_config.update({"auto_lower": False, "auto_upper": False})
     analysis = AnalysisEntry(
         "Low minus 50 K",
         "histogram_arithmetic",
@@ -105,6 +107,8 @@ def test_dataset_clone_tracks_live_composite_and_defaults_to_comparison_only(tmp
         project_gui._composite_scope(group, source)
     )
     config.update({"enabled": True, "fractional": False})
+    for axis_config in config["axes"]:
+        axis_config.update({"auto_lower": False, "auto_upper": False})
     analysis = AnalysisEntry(
         "1.8 K comparison clone",
         "dataset_clone",
@@ -211,6 +215,8 @@ def test_live_clone_bins_underlying_points_on_its_own_grid(tmp_path):
             {
                 "lower": 0.0 if index == 0 else -0.5,
                 "upper": 1.0 if index == 0 else 0.5,
+                "auto_lower": False,
+                "auto_upper": False,
                 "num_bins": 1,
                 "step_size": 1.0,
             }
@@ -218,14 +224,14 @@ def test_live_clone_bins_underlying_points_on_its_own_grid(tmp_path):
     coarse = project_gui.composite_dataset_data(
         project_gui._composite_scope(group, source)
     )
-    np.testing.assert_allclose(coarse.intensity, [2.0])
+    np.testing.assert_allclose(coarse.signal[~coarse.mask], [2.0])
     source.datasets[0].masks.append(
         MaskSpec("Fit-only exclusion", parameters={"H": [0.0, 0.5]})
     )
     masked_source = project_gui.composite_dataset_data(
         project_gui._composite_scope(group, source)
     )
-    np.testing.assert_allclose(masked_source.intensity, [3.0])
+    np.testing.assert_allclose(masked_source.signal[~masked_source.mask], [3.0])
 
     analysis = AnalysisEntry(
         "1.8 K comparison",
@@ -243,8 +249,8 @@ def test_live_clone_bins_underlying_points_on_its_own_grid(tmp_path):
 
     result = derived_analysis_dataset_data(clone)
 
-    assert isinstance(result, PointData4D)
-    np.testing.assert_allclose(result.intensity, [1.0, 3.0])
+    assert isinstance(result, MDHistoData)
+    np.testing.assert_allclose(result.signal[~result.mask], [1.0, 3.0])
     assert clone.data is None
     assert clone.enabled is False
     assert clone.fit_weight == 0.0
@@ -291,7 +297,14 @@ def test_live_histogram_arithmetic_reduces_both_sources_to_output_grid():
             }
         )
         config["axes"][0].update(
-            {"lower": 0.0, "upper": 1.0, "num_bins": 1, "step_size": 1.0}
+            {
+                "lower": 0.0,
+                "upper": 1.0,
+                "auto_lower": False,
+                "auto_upper": False,
+                "num_bins": 1,
+                "step_size": 1.0,
+            }
         )
     output_config = json.loads(
         json.dumps(

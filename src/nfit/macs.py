@@ -219,7 +219,11 @@ def _spec_analyzer_mask(
         )
         common_angle = _scan_vector(common, count, name="common analyzer angle")
         distance = np.abs(analyzer - common_angle[:, None])
-        best = np.nanmin(distance, axis=1)
+        # Some scans record no analyzer angle for an entire row. Treat that
+        # row as having no alignment evidence instead of emitting an all-NaN
+        # reduction warning while loading an otherwise usable file.
+        finite_distance = np.where(np.isfinite(distance), distance, np.inf)
+        best = np.min(finite_distance, axis=1)
         misset = distance > best[:, None] + float(alignment_tolerance_deg)
         mask &= ~misset
         for channel in np.where(np.any(misset, axis=0))[0]:

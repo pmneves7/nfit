@@ -19,6 +19,12 @@ or integrate a range. Channel labels and units come from the dataset's declared
 physical quantities. **Apply masks** hides the combined file and nfit mask in
 the figure; fitting always excludes masked data.
 
+In **Figure**, enable **Show other-axis binning above plot** to add the current
+non-displayed-axis selections to the title. Projected labels and physical units
+are retained, for example `[K,-K,0]=[0.9,1.1] r.l.u., ΔE=[1,2] meV`. The option
+is preserved independently for each dataset view and included in saved or
+copied figure scripts.
+
 **Minimum coverage** applies independently to viewer reductions. A displayed
 pixel is masked when the measured fraction of its requested hidden-axis
 integration volume is below the cutoff. The same cutoff is recomputed over

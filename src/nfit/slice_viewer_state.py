@@ -24,6 +24,7 @@ class _DatasetViewState:
     ycut_percent: int = 16
     font_size: float = 12.0
     axis_linewidth: float = 1.5
+    show_binning_title: bool = False
     box_tool_has_auto_shown_hist_axes: bool = False
     marker: str = "o"
     line_style: str = "none"

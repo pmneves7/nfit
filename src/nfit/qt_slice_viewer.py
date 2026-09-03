@@ -37,6 +37,7 @@ from .qt_slice_controls import (
     _make_index_slider,  # noqa: F401 - compatibility re-export
     _qt_app,
 )
+from .quantities import display_unit
 from .slice_viewer_state import (
     _axis_components,
     _coerce_dataset_group_keys,
@@ -226,6 +227,7 @@ class QtMDHistoSliceViewer:
         self.roi_y_width_spin = None
         self.font_size_spin = None
         self.line_width_spin = None
+        self.show_binning_title_check = None
         self.line_group = None
         self.marker_combo = None
         self.line_style_combo = None
@@ -285,6 +287,7 @@ class QtMDHistoSliceViewer:
         self.xcut_percent = 20
         self.ycut_percent = 16
         self.font_size = 12.0
+        self.show_binning_title = False
         self.axis_linewidth = 1.5
         self.smoothing_x = 0.0
         self.smoothing_y = 0.0
@@ -521,6 +524,7 @@ class QtMDHistoSliceViewer:
             "ylim": ylim,
             "font_size": self.font_size,
             "axis_linewidth": self.axis_linewidth,
+            "show_binning_title": self.show_binning_title,
             "show_histogram_axes": bool(self.hist_axes_check and self.hist_axes_check.isChecked()),
             "roi_extents": self._roi_extents,
             "xcut_percent": self.xcut_percent,
@@ -606,6 +610,10 @@ class QtMDHistoSliceViewer:
         self._set_spin_silent(self.smoothing_y_spin, self.smoothing_y)
         self._set_font_size(float(settings.get("font_size", self.font_size)))
         self._set_axis_linewidth(float(settings.get("axis_linewidth", self.axis_linewidth)))
+        self._set_show_binning_title(
+            bool(settings.get("show_binning_title", self.show_binning_title)),
+            redraw=False,
+        )
         self._set_show_fit(bool(settings.get("show_fit", self.show_fit)))
         self._set_unmask_model(bool(settings.get("unmask_model", self.unmask_model)))
         self._set_show_residual(bool(settings.get("show_residual", self.show_residual)))
@@ -910,6 +918,7 @@ class QtMDHistoSliceViewer:
                 f"    xcut_percent={self.xcut_percent!r},",
                 f"    ycut_percent={self.ycut_percent!r},",
                 ")",
+                f"fig.suptitle({self._binning_title_text()!r})",
                 "plt.show()",
                 "",
             ]
@@ -962,6 +971,7 @@ class QtMDHistoSliceViewer:
                 f"    axes_linewidth={self.axis_linewidth!r},",
                 f"    figsize={tuple(self.figure.get_size_inches())!r},",
                 ")",
+                f"fig.suptitle({self._binning_title_text()!r})",
                 "plt.show()",
                 "",
             ]
@@ -1047,6 +1057,7 @@ class QtMDHistoSliceViewer:
                 f"    axes_linewidth={self.axis_linewidth!r},",
                 f"    figsize={tuple(self.figure.get_size_inches())!r},",
                 ")",
+                f"ax.figure.suptitle({self._binning_title_text()!r})",
                 "plt.show()",
                 "",
             ]
@@ -1083,6 +1094,7 @@ class QtMDHistoSliceViewer:
                 f"    line.set_color({self.line_color!r})",
                 f"ax.tick_params(axis='both', which='both', direction='in', top=True, right=True, width={self.axis_linewidth!r})",
                 "ax.figure.set_size_inches(8.0, 6.0)",
+                f"ax.figure.suptitle({self._binning_title_text()!r})",
                 f"plt.rcParams.update({{'font.size': {self.font_size!r}}})",
                 "plt.show()",
                 "",
@@ -1948,6 +1960,13 @@ class QtMDHistoSliceViewer:
         self.line_width_spin.setValue(self.axis_linewidth)
         self.line_width_spin.setToolTip("Width of figure axes and frame lines.")
         self.line_width_spin.valueChanged.connect(self._set_axis_linewidth)
+        self.show_binning_title_check = QtWidgets.QCheckBox("Show other-axis binning above plot")
+        self.show_binning_title_check.setObjectName("show_binning_title")
+        self.show_binning_title_check.setChecked(self.show_binning_title)
+        self.show_binning_title_check.setToolTip(
+            "Display the selected or integrated ranges of every non-plotted axis above the figure, including coordinate labels and units."
+        )
+        self.show_binning_title_check.toggled.connect(self._set_show_binning_title)
         self.copy_figure_button = QtWidgets.QPushButton("Copy figure")
         self.save_plot_button = QtWidgets.QPushButton("Save plot")
         self.copy_script_button = QtWidgets.QPushButton("Copy script")
@@ -1977,10 +1996,11 @@ class QtMDHistoSliceViewer:
         figure_layout.addWidget(self.font_size_spin, 0, 1)
         figure_layout.addWidget(QtWidgets.QLabel("Linewidth"), 0, 2)
         figure_layout.addWidget(self.line_width_spin, 0, 3)
-        figure_layout.addWidget(self.copy_figure_button, 1, 0, 1, 2)
-        figure_layout.addWidget(self.save_plot_button, 1, 2, 1, 2)
-        figure_layout.addWidget(self.copy_script_button, 2, 0, 1, 2)
-        figure_layout.addWidget(self.save_script_button, 2, 2, 1, 2)
+        figure_layout.addWidget(self.show_binning_title_check, 1, 0, 1, 4)
+        figure_layout.addWidget(self.copy_figure_button, 2, 0, 1, 2)
+        figure_layout.addWidget(self.save_plot_button, 2, 2, 1, 2)
+        figure_layout.addWidget(self.copy_script_button, 3, 0, 1, 2)
+        figure_layout.addWidget(self.save_script_button, 3, 2, 1, 2)
         controls_layout.addWidget(figure_group)
         controls_layout.addStretch(1)
 
@@ -2388,6 +2408,7 @@ class QtMDHistoSliceViewer:
             ycut_percent=int(self.ycut_percent),
             font_size=float(self.font_size),
             axis_linewidth=float(self.axis_linewidth),
+            show_binning_title=bool(self.show_binning_title),
             box_tool_has_auto_shown_hist_axes=bool(self._box_tool_has_auto_shown_hist_axes),
             marker=str(self.marker),
             line_style=str(self.line_style),
@@ -2465,6 +2486,7 @@ class QtMDHistoSliceViewer:
             self.ycut_percent = int(state.ycut_percent)
             self.font_size = float(state.font_size)
             self.axis_linewidth = float(state.axis_linewidth)
+            self.show_binning_title = bool(state.show_binning_title)
             self.marker = str(state.marker)
             self.line_style = str(state.line_style)
             self.marker_size = float(state.marker_size)
@@ -2514,6 +2536,9 @@ class QtMDHistoSliceViewer:
             self._set_spin_silent(self.limit_n_spin, self._current_limit_n())
             self._set_spin_silent(self.font_size_spin, self.font_size)
             self._set_spin_silent(self.line_width_spin, self.axis_linewidth)
+            self._set_checkbox_silent(
+                self.show_binning_title_check, self.show_binning_title
+            )
             self._set_spin_silent(self.smoothing_x_spin, self.smoothing_x)
             self._set_spin_silent(self.smoothing_y_spin, self.smoothing_y)
             self._set_combo_silent(self.marker_combo, _option_name(_MARKER_OPTIONS, self.marker))
@@ -3368,6 +3393,52 @@ class QtMDHistoSliceViewer:
         self._apply_figure_font_size()
         self.canvas.draw_idle()
 
+    def _set_show_binning_title(self, checked: bool, *, redraw: bool = True) -> None:
+        self.show_binning_title = bool(checked)
+        if self.show_binning_title_check is not None:
+            self._set_checkbox_silent(
+                self.show_binning_title_check, self.show_binning_title
+            )
+        self._apply_binning_title()
+        if redraw and self.canvas is not None:
+            self.canvas.draw_idle()
+
+    def _binning_title_text(self) -> str:
+        if not self.show_binning_title or getattr(self.model, "is_point_list", False):
+            return ""
+        parts = []
+        for dim, axis in enumerate(self.data.axes):
+            if dim in {self.model.x_dim, self.model.y_dim}:
+                continue
+            centers = np.asarray(axis.centers, dtype=float)
+            if centers.size == 0:
+                continue
+            selection = self.model.selections.get(
+                dim, (float(centers[centers.size // 2]),) * 2
+            )
+            low, high = sorted((float(selection[0]), float(selection[1])))
+            name = (
+                "ΔE"
+                if axis.role in {"energy", "energy_transfer"}
+                or str(axis.name).casefold().replace("_", "")
+                in {"deltae", "energy", "energytransfer"}
+                else str(axis.name)
+            )
+            unit = display_unit(axis.units)
+            if unit.casefold() == "rlu":
+                unit = "r.l.u."
+            suffix = f" {unit}" if unit else ""
+            parts.append(f"{name}=[{low:.5g},{high:.5g}]{suffix}")
+        return ", ".join(parts)
+
+    def _apply_binning_title(self) -> None:
+        if self.figure is None:
+            return
+        title = self._binning_title_text()
+        artist = self.figure.suptitle(title)
+        artist.set_visible(bool(title))
+        artist.set_fontsize(float(self.font_size) + 1.0)
+
     def _set_axis_linewidth(self, value: float) -> None:
         self.axis_linewidth = float(value)
         self._apply_axis_linewidth()
@@ -3376,6 +3447,7 @@ class QtMDHistoSliceViewer:
     def _apply_figure_font_size(self) -> None:
         if self.figure is None:
             return
+        self._apply_binning_title()
         size = float(self.font_size)
         for axis in (
             self.ax_image,

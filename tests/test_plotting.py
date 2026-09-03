@@ -3,6 +3,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import os
+from dataclasses import replace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -203,6 +204,32 @@ def test_qt_slice_viewer_interactive_controls_have_tooltips():
             missing.append(f"{type(widget).__name__}:{label}")
 
     assert missing == []
+
+
+def test_qt_slice_viewer_can_title_plot_with_hidden_axis_binning():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_mdhisto_data()
+    data = replace(
+        data,
+        axes=(
+            MDHistoAxis("[H,H,0]", data.axes[0].values, "rlu", "momentum"),
+            MDHistoAxis("[K,K,-2K]", data.axes[1].values, "rlu", "momentum"),
+            MDHistoAxis("[0,0,L]", data.axes[2].values, "rlu", "momentum"),
+            MDHistoAxis("DeltaE", data.axes[3].values, "meV", "energy_transfer"),
+        ),
+    )
+    viewer = QtMDHistoSliceViewer(data, x_dim=0, y_dim=2)
+    viewer.model.selections[1] = (0.9, 1.1)
+    viewer.model.selections[3] = (1.0, 2.0)
+    viewer.show_binning_title_check.setChecked(True)
+
+    expected = "[K,K,-2K]=[0.9,1.1] r.l.u., ΔE=[1,2] meV"
+    assert viewer.figure._suptitle.get_text() == expected
+    assert repr(expected) in viewer.figure_script()
+    assert viewer.current_plot_settings()["show_binning_title"] is True
+    viewer.window.close()
 
 
 def test_qt_slice_viewer_open_new_viewer_duplicates_current_state():

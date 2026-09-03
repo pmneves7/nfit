@@ -363,11 +363,22 @@ def test_mdevent_group_gui_exposes_shared_setup_and_defaults_manual(tmp_path, mo
     )
     assert coordinate_mode is not None and coordinate_mode.toolTip()
     assert coordinate_mode.currentData() == "hkle"
-    vector = explorer.details_widget.findChild(QtWidgets.QLineEdit, "group_composite_axis_vector_0")
-    assert vector is not None and vector.toolTip()
-    vector.setText("[1, 1, 0, 0]")
-    vector.editingFinished.emit()
-    assert config["axes"][0]["vector"] == [1.0, 1.0, 0.0, 0.0]
+    matrix = explorer.details_widget.findChild(
+        QtWidgets.QLineEdit, "group_composite_momentum_matrix"
+    )
+    assert matrix is not None and matrix.toolTip()
+    matrix.setText("[[1, 1, 0], [0, 0, 1], [1, -1, 0]]")
+    matrix.editingFinished.emit()
+    assert [axis["vector"][:3] for axis in config["axes"][:3]] == [
+        [1.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [1.0, -1.0, 0.0],
+    ]
+    assert [axis["name"] for axis in config["axes"][:3]] == [
+        "[H,H,0]",
+        "[0,0,L]",
+        "[K,-K,0]",
+    ]
 
     boxes = explorer.details_widget.findChildren(QtWidgets.QGroupBox)
     titles = [box.title() for box in boxes]

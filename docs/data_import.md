@@ -122,7 +122,9 @@ remains valid.
 Each SPEC and DIFF collection has its own live composite enabled. Importing a
 batch therefore prepares one SPEC composite and one DIFF composite, without
 mixing their different energy semantics. Configure the HKLE output grid on each
-collection and choose **Rebin now**. The same operation is scriptable:
+collection and choose **Rebin now**. The imported lattice and UB matrix are
+promoted to each collection, and its rebinned composite is a gridded dataset
+that opens directly in the data viewer. The same operation is scriptable:
 
 ```python
 from nfit import DataGroup, import_dataset_paths
@@ -229,8 +231,9 @@ zero; it does not make the underlying Poisson interval symmetric.
 
 ## UB matrices
 
-**Crystal orientation > UB setup** edits lattice parameters, orientation
-vectors `u` and `v`, and the full $3\times3$ UB matrix. **Calculate from lattice
+**Crystal orientation** displays the active UB matrix directly. **UB setup**
+edits lattice parameters, orientation vectors `u` and `v`, and the full
+$3\times3$ UB matrix. **Calculate from lattice
 and u/v** places `u` along the incident beam and uses `u` and `v` to define the
 horizontal scattering plane.
 
@@ -275,6 +278,21 @@ Rebinning affects both viewing and fitting. It supports:
 - projected HKLE coordinate bases;
 - point-group symmetry expansion; and
 - bounded batch sizes for temporary working memory.
+
+For four-dimensional single-crystal data, **Momentum coordinates** exposes the
+complete $3\times3$ momentum block. Its rows define the three output directions
+in physical H, K, and L coordinates; energy transfer remains a separate fixed
+coordinate and cannot be mixed into those rows. The rows must form an
+invertible basis. For example, `[[1,1,0], [0,0,1], [1,-1,0]]` produces axes
+labelled `[H,H,0]`, `[0,0,L]`, and `[K,-K,0]`.
+
+Lower and upper limits are blank by default. A blank endpoint is obtained from
+the minimum or maximum projected data coordinate. Uniform edges are placed at
+half-step offsets so the corresponding bin centers lie on integer multiples of
+the step, including zero on the extended grid. Entering a number makes only
+that endpoint explicit. Point-cloud preview resolution adapts to the complete
+composite range, so combining nominally discrete energy scans does not turn
+small within-run energy jitter into an impractically large output volume.
 
 An imported MDEvent collection can reduce directly either to a projected
 single-crystal HKLE histogram or to a powder $|\mathbf Q|,E$ histogram. Both

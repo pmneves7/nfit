@@ -73,6 +73,7 @@ def test_project_rebin_configuration_applies_symmetry_before_binning():
     data = PointData4D([0.5], [0.0], [0.0], [1.0], [7.0], [1.0])
     config = {
         "fractional": False,
+        "resolution_mode": "bins",
         "axes": project_gui._default_rebin_axes(data),
         "symmetry": {"mode": "space_group", "expression": "P -1"},
     }
@@ -80,10 +81,12 @@ def test_project_rebin_configuration_applies_symmetry_before_binning():
     config["axes"][1].update({"lower": -0.5, "upper": 0.5, "num_bins": 1})
     config["axes"][2].update({"lower": -0.5, "upper": 0.5, "num_bins": 1})
     config["axes"][3].update({"lower": 0.0, "upper": 2.0, "num_bins": 1})
+    for axis in config["axes"]:
+        axis.update({"auto_lower": False, "auto_upper": False})
     output = project_gui._rebin_point_data(data, config)
-    valid = output.valid()
-    np.testing.assert_allclose(np.sort(valid.H), [-0.5, 0.5])
-    np.testing.assert_allclose(valid.intensity, [7.0, 7.0])
+    assert isinstance(output, project_gui.MDHistoData)
+    np.testing.assert_allclose(output.axes[0].centers, [-0.5, 0.5])
+    np.testing.assert_allclose(output.signal[:, 0, 0, 0], [7.0, 7.0])
     assert output.metadata["rebin"]["symmetry"]["operation_count"] == 2
 
 

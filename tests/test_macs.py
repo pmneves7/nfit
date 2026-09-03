@@ -8,6 +8,7 @@ from nfit import project_gui
 from nfit.dataset import PointData4D
 from nfit.importers import IMPORTERS, import_with, probe_importers
 from nfit.macs import import_macs_nexus, is_macs_nexus_file
+from nfit.mdhisto import MDHistoData
 from nfit.pipeline import DataGroup
 from nfit.project_gui import (
     GROUP_COMPOSITE_KEY,
@@ -15,12 +16,16 @@ from nfit.project_gui import (
     composite_dataset_data,
     data_group_composite_config,
     import_dataset_paths,
+    load_project,
+    save_project,
 )
 from nfit.project_io import NfitProject
 from nfit.rebin import rebin_nd
 
 
-def _write_macs_nexus(path: Path, *, points: int = 24) -> Path:
+def _write_macs_nexus(
+    path: Path, *, points: int = 24, energy_transfer: float = 1.2
+) -> Path:
     with h5py.File(path, "w") as handle:
         entry = handle.create_group("entry")
         entry.attrs["NX_class"] = "NXentry"
@@ -43,7 +48,7 @@ def _write_macs_nexus(path: Path, *, points: int = 24) -> Path:
         counter = das.create_group("counter")
         counter.create_dataset("liveMonitor", data=np.full(points, 2.0e5))
         ei = das.create_group("ei")
-        ei.create_dataset("energy", data=np.full(points, 4.9))
+        ei.create_dataset("energy", data=np.full(points, 3.7 + energy_transfer))
         ef = das.create_group("ef")
         ef.create_dataset("energy", data=np.full(points, 3.7))
         sample_theta = das.create_group("sampleTheta")
@@ -123,9 +128,14 @@ def test_macs_spec_and_diff_are_distinct_point_streams(tmp_path):
     assert np.all(diff.intensity == 500.0)
 
 
-def test_macs_batch_import_expands_streams_and_prepares_composites(tmp_path):
+def test_macs_batch_import_expands_streams_and_prepares_composites(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     first = _write_macs_nexus(tmp_path / "first.nxs.ng0")
-    second = _write_macs_nexus(tmp_path / "second.nxs.ng0")
+    second = _write_macs_nexus(
+        tmp_path / "second.nxs.ng0", energy_transfer=1.6
+    )
     group = DataGroup("MACS")
 
     entries = import_dataset_paths(
@@ -151,12 +161,38 @@ def test_macs_batch_import_expands_streams_and_prepares_composites(tmp_path):
     assert group.lattice_parameters["a"] == pytest.approx(8.24)
     assert all(entry.metadata["import_options"]["stream"] for entry in entries)
     for node in group.subgroups:
+        np.testing.assert_allclose(
+            node.metadata["ub_matrix"], node.datasets[0].data.metadata["ub_matrix"]
+        )
         scope = project_gui._composite_scope(group, node)
         config = data_group_composite_config(scope)
         assert np.prod([axis["num_bins"] for axis in config["axes"]]) <= 32**4
         composite = composite_dataset_data(scope)
-        assert isinstance(composite, PointData4D)
-        assert composite.valid(require_positive_sigma=False).size > 0
+        assert isinstance(composite, MDHistoData)
+        assert composite.signal.size <= 2_000_000
+        assert np.count_nonzero(~composite.mask) > 0
+        np.testing.assert_allclose(
+            composite.metadata["ub_matrix"], node.metadata["ub_matrix"]
+        )
+
+    project_path = tmp_path / "macs.nfit"
+    save_project(NfitProject([group]), project_path)
+    reloaded = load_project(project_path)
+    lazy_root = reloaded.data_groups[0]
+    assert all(dataset.data is None for dataset in lazy_root.iter_datasets())
+    assert project_gui._has_slice_viewer_candidates(lazy_root)
+
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    explorer = NfitProjectExplorer(reloaded)
+    crystal_box = explorer._ub_setup_group_box(
+        lazy_root, lazy_root.subgroups[0]
+    )
+    ub_display = crystal_box.findChild(QtWidgets.QLabel, "ub_matrix_display")
+    assert ub_display is not None
+    assert "UB matrix" in ub_display.text()
+    assert "not set" not in ub_display.text()
+    assert ub_display.toolTip().strip()
+    explorer.window.close()
 
 
 def test_macs_import_dialog_scientific_controls_have_tooltips(monkeypatch, tmp_path):

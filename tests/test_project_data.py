@@ -210,9 +210,14 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     viewed = dataset_for_slice_viewer(dataset)
 
     assert viewed is not None
-    assert viewed.shape == (3, 1)
+    assert viewed.shape[0] >= 1
+    energy_step = viewed.metadata["rebin"]["step_size"][1]
+    np.testing.assert_allclose(
+        viewed.axes[1].centers / energy_step,
+        np.rint(viewed.axes[1].centers / energy_step),
+    )
     assert viewed.metadata["rebin"]["normalize"] is True
-    assert viewed.metadata["combined_mask_count"] == 0
+    assert viewed.metadata["combined_mask_count"] == int(np.count_nonzero(viewed.mask))
 
     dialog_save_path = tmp_path / "dialog-rebinned.npz"
     monkeypatch.setattr(
@@ -222,7 +227,7 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     )
     assert explorer.save_rebin_for_selection()
     dialog_saved = np.load(dialog_save_path)
-    assert dialog_saved["signal"].shape == (3, 1)
+    assert dialog_saved["signal"].shape == viewed.shape
     assert int(dialog_saved["axis_count"]) == 2
 
     rebinned = explorer.materialize_rebin_for_selection()
@@ -230,14 +235,14 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     assert rebinned is not None
     assert group.dataset_names == ["scan", "scan rebinned"]
     assert isinstance(rebinned.data, MDHistoData)
-    assert rebinned.data.shape == (3, 1)
+    assert rebinned.data.shape == viewed.shape
     assert rebinned.parameters["temperature"] == pytest.approx(12.5)
 
     save_path = tmp_path / "rebinned.npz"
     save_dataset_file(dataset, save_path)
 
     saved = np.load(save_path)
-    assert saved["signal"].shape == (3, 1)
+    assert saved["signal"].shape == viewed.shape
     assert int(saved["axis_count"]) == 2
 
 
@@ -278,7 +283,7 @@ def test_materialized_composite_round_trips_as_project_owned_dataset(tmp_path):
     assert restored_entry.data is None
     restored_data = dataset_for_slice_viewer(restored_entry)
     assert isinstance(restored_data, MDHistoData)
-    np.testing.assert_allclose(restored_data.signal, 3.0)
+    np.testing.assert_allclose(restored_data.signal[~restored_data.mask], 3.0)
 
 
 def test_rebin_settings_copy_and_paste_between_datasets(monkeypatch):
@@ -538,7 +543,8 @@ def test_large_dataset_rebin_defaults_manual_and_defers_refresh(monkeypatch):
     assert dataset_rebin_config(dataset)["stale"] is False
     forced = dataset_for_slice_viewer(dataset)
     assert forced is not None
-    assert forced.shape[0] == 1
+    assert forced.shape[0] >= 1
+    assert np.any(np.isclose(forced.axes[0].centers, 0.0))
 
 
 def test_dataset_rebin_resolution_selector_switches_between_step_and_bins(monkeypatch):
@@ -585,6 +591,7 @@ def test_dataset_rebin_resolution_selector_switches_between_step_and_bins(monkey
     assert config["resolution_mode"] == "step"
     explorer._set_dataset_rebin_axis_value(dataset, group, 0, "step_size", "0.75")
     explorer._set_dataset_rebin_axis_value(dataset, group, 0, "lower", "-0.8")
+    explorer._set_dataset_rebin_axis_value(dataset, group, 0, "upper", "2")
     assert config["axes"][0]["num_bins"] == 4
     assert config["axes"][0]["step_size"] == pytest.approx(0.75)
     rebinned = dataset_for_slice_viewer(dataset)
@@ -615,20 +622,22 @@ def test_data_group_composite_uses_scale_fit_weight_and_rebinning():
     # Averaging weights are fit_weight / sigma^2 = [1, 3] with unit sigma, so
     # the composite is 0.25 * 1 + 0.75 * (-5) and its uncertainty is the
     # weighted-mean propagation sqrt(1 + 9) / 4.
-    np.testing.assert_allclose(composite.signal, [[-3.5]])
-    np.testing.assert_allclose(composite.errors, [[np.sqrt(10.0) / 4.0]])
-    np.testing.assert_allclose(composite.num_events, [[2.0]])
+    np.testing.assert_allclose(composite.signal[~composite.mask], -3.5)
+    np.testing.assert_allclose(composite.errors[~composite.mask], np.sqrt(10.0) / 4.0)
+    np.testing.assert_allclose(composite.num_events[~composite.mask], 2.0)
     assert composite.metadata["rebin"]["weighted_by_fit_weight"] is True
 
     datasets, names = project_gui.slice_viewer_datasets(group)
     assert names == ["Datagroup1 Composite"]
-    np.testing.assert_allclose(datasets[0].signal, [[-3.5]])
+    np.testing.assert_allclose(datasets[0].signal[~datasets[0].mask], -3.5)
 
     constituent_datasets, constituent_names = project_gui.slice_viewer_datasets(
         group, use_composite=False
     )
     assert constituent_names == ["first", "second"]
-    np.testing.assert_allclose(constituent_datasets[1].signal, [[-5.0]])
+    np.testing.assert_allclose(
+        constituent_datasets[1].signal[~constituent_datasets[1].mask], -5.0
+    )
 
     inputs, bundles = project_gui.fit_dataset_inputs(group)
     assert [item.name for item in inputs] == ["Datagroup1 Composite"]
@@ -752,7 +761,7 @@ def test_large_data_group_composite_defaults_manual_and_defers_refresh(monkeypat
     assert config["stale"] is False
     datasets, names = project_gui.slice_viewer_datasets(group, force_rebin=False)
     assert names == ["Datagroup1 Composite"]
-    np.testing.assert_allclose(datasets[0].signal, [[1.5]])
+    np.testing.assert_allclose(datasets[0].signal[~datasets[0].mask], 1.5)
 
 
 def test_composite_controls_live_on_dataset_collections_not_workspace(monkeypatch):
@@ -810,7 +819,7 @@ def test_nested_composite_replaces_only_its_dataset_group_descendants():
 
     assert names == ["root", "Group1 Composite"]
     np.testing.assert_allclose(datasets[0].signal, [[10.0]])
-    np.testing.assert_allclose(datasets[1].signal, [[3.0]])
+    np.testing.assert_allclose(datasets[1].signal[~datasets[1].mask], 3.0)
     inputs, _bundles = project_gui.fit_dataset_inputs(group)
     assert [item.name for item in inputs] == ["root", "Group1 Composite"]
 
@@ -832,7 +841,15 @@ def test_mdhisto_rebin_applies_enabled_masks_before_binning():
     config["enabled"] = True
     config["fractional"] = False
     config["resolution_mode"] = "bins"
-    config["axes"][0].update({"lower": 0.0, "upper": 2.0, "num_bins": 1})
+    config["axes"][0].update(
+        {
+            "lower": 0.0,
+            "upper": 2.0,
+            "auto_lower": False,
+            "auto_upper": False,
+            "num_bins": 1,
+        }
+    )
 
     viewed = dataset_for_slice_viewer(dataset)
 
@@ -879,6 +896,7 @@ def test_mdhisto_composite_masks_output_below_geometric_coverage_cutoff():
     config["axes"][0].update(
         {"lower": 0.0, "upper": 2.0, "num_bins": 1, "step_size": 2.0}
     )
+    config["axes"][0].update({"auto_lower": False, "auto_upper": False})
 
     strict = project_gui.composite_dataset_data(group)
 
@@ -914,16 +932,77 @@ def test_point_data_rebin_applies_enabled_masks_before_binning():
     config["fractional"] = False
     config["resolution_mode"] = "bins"
     for axis in config["axes"]:
-        axis.update({"lower": 0.0, "upper": 1.0, "num_bins": 1})
+        axis.update(
+            {
+                "lower": 0.0,
+                "upper": 1.0,
+                "auto_lower": False,
+                "auto_upper": False,
+                "num_bins": 1,
+            }
+        )
 
     rebinned = project_gui.rebinned_dataset_data(dataset)
 
-    np.testing.assert_allclose(rebinned.intensity, [50.5])
+    assert isinstance(rebinned, MDHistoData)
+    np.testing.assert_allclose(rebinned.signal, [[[[50.5]]]])
 
     mask.enabled = True
     rebinned = project_gui.rebinned_dataset_data(dataset)
 
-    np.testing.assert_allclose(rebinned.intensity, [100.0])
+    np.testing.assert_allclose(rebinned.signal, [[[[100.0]]]])
+
+
+def test_point_data_auto_limits_center_zero_and_momentum_matrix_updates_labels(
+    monkeypatch,
+):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    data = PointData4D(
+        H=[-0.2, 0.8],
+        K=[0.0, 0.4],
+        L=[-0.6, 0.2],
+        E=[0.0, 1.0],
+        intensity=[1.0, 2.0],
+        sigma=[1.0, 1.0],
+    )
+    dataset = DatasetEntry("points", data, data_type="single_crystal_inelastic")
+    group = DataGroup("Data", datasets=[dataset])
+    config = dataset_rebin_config(dataset)
+
+    assert all(axis["auto_lower"] and axis["auto_upper"] for axis in config["axes"])
+    output = project_gui._rebin_point_data(data, config)
+    for axis in output.axes:
+        assert np.any(np.isclose(axis.centers, 0.0))
+
+    project_gui._update_rebin_momentum_matrix(
+        config["axes"],
+        [[1.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, -1.0, 0.0]],
+        data=data,
+    )
+    assert [axis["name"] for axis in config["axes"][:3]] == [
+        "[H,H,0]",
+        "[0,0,L]",
+        "[K,-K,0]",
+    ]
+    with pytest.raises(ValueError, match="rank 2 rather than 3"):
+        project_gui._update_rebin_momentum_matrix(
+            config["axes"],
+            [[1.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 1.0, -2.0]],
+            data=data,
+        )
+
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer._refresh_tree(select_dataset=dataset)
+    lower = explorer.details_widget.findChild(
+        QtWidgets.QLineEdit, "dataset_rebin_axis_lower_0"
+    )
+    matrix = explorer.details_widget.findChild(
+        QtWidgets.QLineEdit, "dataset_rebin_momentum_matrix"
+    )
+    assert lower is not None and lower.text() == "" and lower.placeholderText() == "auto"
+    assert matrix is not None and matrix.toolTip()
+    explorer.window.close()
 
 
 def test_import_dataset_paths_dispatches_by_data_type_and_round_trips(
@@ -1907,6 +1986,8 @@ def test_rebin_axis_vector_projects_new_coordinate():
     # Swap which physical coordinate maps to each output axis.
     config["axes"][0].update({"vector": [0.0, 1.0], "lower": 0.0, "upper": 20.0, "num_bins": 2})
     config["axes"][1].update({"vector": [1.0, 0.0], "lower": 0.0, "upper": 2.0, "num_bins": 2})
+    for axis in config["axes"]:
+        axis.update({"auto_lower": False, "auto_upper": False})
 
     rebinned = project_gui.rebinned_dataset_data(dataset)
 
@@ -1948,7 +2029,14 @@ def test_rebin_defaults_follow_mdhisto_axis_coordinate_vectors():
     config["fractional"] = False
     rebinned = project_gui.rebinned_dataset_data(dataset)
 
-    np.testing.assert_allclose(rebinned.signal, signal)
+    for axis, step in zip(
+        rebinned.axes, rebinned.metadata["rebin"]["step_size"], strict=True
+    ):
+        np.testing.assert_allclose(axis.centers / step, np.rint(axis.centers / step))
+    np.testing.assert_allclose(
+        np.sort(rebinned.signal[np.isfinite(rebinned.signal)]),
+        np.sort(signal.ravel()),
+    )
     assert rebinned.metadata["rebin"]["vectors"] == [
         [0.0, 0.0, 0.0, 1.0],
         [1.0, -1.0, 0.0, 0.0],
@@ -2075,7 +2163,7 @@ def test_rebin_basis_rejects_energy_mixing_and_dependent_axes():
 
     dependent = [dict(axis) for axis in config["axes"]]
     dependent[3]["vector"] = list(dependent[1]["vector"])
-    with pytest.raises(ValueError, match="linearly independent"):
+    with pytest.raises(ValueError, match="invertible basis"):
         project_gui._validate_mdhisto_rebin_basis(dependent, 4)
 
 
