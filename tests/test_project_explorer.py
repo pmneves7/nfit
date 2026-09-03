@@ -747,6 +747,45 @@ def test_project_explorer_numeric_controls_ignore_wheel_and_hide_buttons(monkeyp
     later_spin_box.close()
 
 
+def test_dataset_rebin_panel_edits_one_nonuniform_axis_and_minimum_samples(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    data = PointListData(
+        columns={
+            "Temperature": np.array([2.0, 5.0, 12.0, 30.0]),
+            "Moment": np.ones(4),
+            "Moment error": np.ones(4),
+        },
+        units={"Temperature": "K"},
+        coordinate_names=["Temperature"],
+        channels=[{"label": "Moment", "value": "Moment", "error": "Moment error"}],
+    )
+    dataset = DatasetEntry("field series", data, data_type="magnetization")
+    config = dataset_rebin_config(dataset)
+    config.update({"enabled": True, "auto_rebin": False})
+    explorer = NfitProjectExplorer(
+        NfitProject([DataGroup("Workspace1", datasets=[dataset])])
+    )
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
+
+    edges = explorer.details_widget.findChild(
+        QtWidgets.QLineEdit, "dataset_rebin_axis_edges_0"
+    )
+    samples = explorer.details_widget.findChild(
+        QtWidgets.QLineEdit, "dataset_rebin_minimum_samples"
+    )
+    assert edges is not None and edges.toolTip()
+    assert samples is not None and samples.toolTip()
+    edges.setText("[0, 3, 10, 40]")
+    edges.editingFinished.emit()
+    samples.setText("2")
+    samples.editingFinished.emit()
+
+    assert config["axes"][0]["bin_edges"] == [0.0, 3.0, 10.0, 40.0]
+    assert config["axes"][0]["num_bins"] == 3
+    assert config["minimum_samples"] == 2.0
+
+
 def test_project_explorer_adds_edits_and_copies_masks(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtCore = pytest.importorskip("PySide6.QtCore")

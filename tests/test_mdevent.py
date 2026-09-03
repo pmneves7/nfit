@@ -157,6 +157,26 @@ def test_native_mdevent_binning_uses_proton_charge_and_vanadium_coverage(tmp_pat
     assert result.metadata["signal_semantics_source"] == "nfit_mdevent_reduction"
 
 
+def test_native_mdevent_supports_one_nonuniform_axis_and_minimum_samples(tmp_path):
+    source = tmp_path / "events.nxs"
+    _write_mdevent(source)
+    group = mdevent_dataset_group(source)
+
+    result = bin_mdevent_group(
+        group,
+        lower=[-1, -1, -1, -1],
+        upper=[1, 1, 1, 1],
+        num_bins=[1, 1, 1, 1],
+        bin_edges=[None, None, None, [-1.0, 0.0, 0.25, 1.0]],
+        minimum_samples=3,
+    )
+
+    assert result.shape == (1, 1, 1, 3)
+    np.testing.assert_allclose(result.axes[3].values, [-1.0, 0.0, 0.25, 1.0])
+    assert np.all(result.mask)
+    assert result.metadata["rebin"]["minimum_samples"] == 3.0
+
+
 def test_native_mdevent_powder_binning_uses_radial_trajectory_normalization(tmp_path):
     source = tmp_path / "events.nxs"
     _write_mdevent(source)

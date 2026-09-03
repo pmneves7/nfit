@@ -266,6 +266,8 @@ def bin_mdevent_group(
     *,
     lower: Iterable[float], upper: Iterable[float], num_bins: Iterable[int],
     step_size: Iterable[float] | None = None,
+    bin_edges: Iterable[Iterable[float] | None] | None = None,
+    minimum_samples: float = 0.0,
     run_indices: Iterable[int] | None = None,
     datasets: Iterable[DatasetEntry] | None = None,
     vectors: Iterable[Iterable[float]] | None = None,
@@ -289,20 +291,10 @@ def bin_mdevent_group(
     bins_array = np.asarray(tuple(num_bins), dtype=int)
     if lower_array.shape != (4,) or upper_array.shape != (4,) or bins_array.shape != (4,):
         raise ValueError("MDEvent HKLE binning requires four lower, upper, and bin-count values")
-    if step_size is None:
-        edges = [np.linspace(lo, hi, n + 1) for lo, hi, n in zip(lower_array, upper_array, bins_array, strict=True)]
-    else:
-        step_array = np.asarray(tuple(step_size), dtype=float)
-        if step_array.shape != (4,) or np.any(~np.isfinite(step_array)) or np.any(step_array <= 0.0):
-            raise ValueError("MDEvent HKLE step sizes must contain four positive finite values")
-        edges = []
-        for lo, hi, step in zip(lower_array, upper_array, step_array, strict=True):
-            axis_edges = np.arange(lo, hi, step)
-            if axis_edges.size == 0 or axis_edges[0] != lo:
-                axis_edges = np.insert(axis_edges, 0, lo)
-            if axis_edges[-1] != hi:
-                axis_edges = np.append(axis_edges, hi)
-            edges.append(axis_edges)
+    edges = _requested_edges(
+        lower_array, upper_array, bins_array, step_size, bin_edges=bin_edges
+    )
+    minimum_samples = _validated_minimum_samples(minimum_samples)
     shape = tuple(int(axis_edges.size - 1) for axis_edges in edges)
     if enforce_memory_limit:
         _validate_mdevent_memory(shape, max_batch_bytes=max_batch_bytes)
@@ -381,6 +373,7 @@ def bin_mdevent_group(
         / normalization[covered_zero]
     )
     mask = ~(np.isfinite(signal) & np.isfinite(errors) & (normalization > 0.0))
+    mask |= event_count < minimum_samples
     axes = tuple(
         MDHistoAxis(name, edge, units, kind, frame="HKL" if index < 3 else "General Frame")
         for index, (name, edge, units, kind) in enumerate(zip(
@@ -395,7 +388,11 @@ def bin_mdevent_group(
             "mdevent": config,
             "lattice_parameters": dict(config.get("lattice_parameters", {})),
             "ub_matrix": config.get("ub_matrix"),
-            "rebin": {"vectors": basis.tolist()},
+            "rebin": {
+                "vectors": basis.tolist(),
+                "bin_edges": [edge.tolist() for edge in edges],
+                "minimum_samples": minimum_samples,
+            },
             "signal_semantics": "density",
             "signal_semantics_source": "nfit_mdevent_reduction",
             "normalization_denominator": normalization,
@@ -421,6 +418,8 @@ def bin_mdevent_powder_group(
     upper: Iterable[float],
     num_bins: Iterable[int],
     step_size: Iterable[float] | None = None,
+    bin_edges: Iterable[Iterable[float] | None] | None = None,
+    minimum_samples: float = 0.0,
     run_indices: Iterable[int] | None = None,
     datasets: Iterable[DatasetEntry] | None = None,
     max_batch_bytes: int = 192 * 1024 * 1024,
@@ -452,7 +451,10 @@ def bin_mdevent_powder_group(
         raise ValueError("MDEvent powder binning requires |Q| and energy bounds")
     if lower_array[0] < 0.0:
         raise ValueError("powder |Q| lower bound must be nonnegative")
-    edges = _requested_edges(lower_array, upper_array, bins_array, step_size)
+    edges = _requested_edges(
+        lower_array, upper_array, bins_array, step_size, bin_edges=bin_edges
+    )
+    minimum_samples = _validated_minimum_samples(minimum_samples)
     shape = tuple(int(axis_edges.size - 1) for axis_edges in edges)
     data_sum = np.zeros(shape)
     variance_sum = np.zeros(shape)
@@ -560,6 +562,7 @@ def bin_mdevent_powder_group(
         / normalization[covered_zero]
     )
     mask = ~(np.isfinite(signal) & np.isfinite(errors) & (normalization > 0.0))
+    mask |= event_count < minimum_samples
     axes = (
         MDHistoAxis("|Q|", edges[0], "1/angstrom", "momentum", frame="Q modulus"),
         MDHistoAxis("DeltaE", edges[1], "meV", "energy", frame="General Frame"),
@@ -593,6 +596,10 @@ def bin_mdevent_powder_group(
                 "coordinates": "|Q|,DeltaE",
                 "normalization": "proton_charge_and_detector_trajectory",
             },
+            "rebin": {
+                "bin_edges": [edge.tolist() for edge in edges],
+                "minimum_samples": minimum_samples,
+            },
         },
         auxiliary_channels={
             "normalization_denominator": MDHistoChannel(
@@ -604,26 +611,53 @@ def bin_mdevent_powder_group(
     )
 
 
-def _requested_edges(lower, upper, num_bins, step_size=None):
+def _validated_minimum_samples(value: float) -> float:
+    result = float(value)
+    if not np.isfinite(result) or result < 0.0:
+        raise ValueError("minimum_samples must be finite and nonnegative")
+    return result
+
+
+def _requested_edges(lower, upper, num_bins, step_size=None, *, bin_edges=None):
     if np.any(~np.isfinite(lower)) or np.any(~np.isfinite(upper)) or np.any(upper <= lower):
         raise ValueError("binning bounds must be finite and increasing")
     if np.any(num_bins < 1):
         raise ValueError("bin counts must be positive")
     if step_size is None:
-        return [
+        uniform_edges = [
             np.linspace(lo, hi, count + 1)
             for lo, hi, count in zip(lower, upper, num_bins, strict=True)
         ]
-    steps = np.asarray(tuple(step_size), dtype=float)
-    if steps.shape != lower.shape or np.any(~np.isfinite(steps)) or np.any(steps <= 0.0):
-        raise ValueError("step sizes must be positive and match the requested dimensions")
+    else:
+        steps = np.asarray(tuple(step_size), dtype=float)
+        if steps.shape != lower.shape or np.any(~np.isfinite(steps)) or np.any(steps <= 0.0):
+            raise ValueError("step sizes must be positive and match the requested dimensions")
+        uniform_edges = []
+        for lo, hi, step in zip(lower, upper, steps, strict=True):
+            axis_edges = np.arange(lo, hi, step)
+            if axis_edges.size == 0 or axis_edges[0] != lo:
+                axis_edges = np.insert(axis_edges, 0, lo)
+            if axis_edges[-1] != hi:
+                axis_edges = np.append(axis_edges, hi)
+            uniform_edges.append(axis_edges)
+    if bin_edges is None:
+        return uniform_edges
+    explicit = list(bin_edges)
+    if len(explicit) != lower.size:
+        raise ValueError("bin_edges must contain one entry per requested dimension")
     result = []
-    for lo, hi, step in zip(lower, upper, steps, strict=True):
-        axis_edges = np.arange(lo, hi, step)
-        if axis_edges.size == 0 or axis_edges[0] != lo:
-            axis_edges = np.insert(axis_edges, 0, lo)
-        if axis_edges[-1] != hi:
-            axis_edges = np.append(axis_edges, hi)
+    for fallback, values in zip(uniform_edges, explicit, strict=True):
+        if values is None:
+            result.append(fallback)
+            continue
+        axis_edges = np.asarray(tuple(values), dtype=float)
+        if (
+            axis_edges.ndim != 1
+            or axis_edges.size < 2
+            or np.any(~np.isfinite(axis_edges))
+            or np.any(np.diff(axis_edges) <= 0.0)
+        ):
+            raise ValueError("explicit bin edges must be finite and strictly increasing")
         result.append(axis_edges)
     return result
 

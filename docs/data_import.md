@@ -270,6 +270,8 @@ Rebinning affects both viewing and fitting. It supports:
 - **Step** or **Bins** resolution;
 - inverse-variance or uniform averaging;
 - fractional bin overlap;
+- optional nonuniform edges on any individual output axis;
+- a minimum effective source-sample threshold;
 - projected HKLE coordinate bases;
 - point-group symmetry expansion; and
 - bounded batch sizes for temporary working memory.
@@ -292,6 +294,15 @@ The default is 0.9. Coverage is saved as an independent auxiliary channel, and
 the resulting coverage mask is used consistently for viewing, histogram
 exports, and fitting. Changing the cutoff does not rewrite the source file or
 nfit masks.
+
+**Edges (optional)** accepts a strictly increasing list for one axis, such as
+`[-2, -1, 0, 0.5, 2]`. That axis uses the listed edges while blank axes retain
+the selected uniform **Step** or **Bins** resolution. Mixed grids are useful for
+irregular energy-transfer sampling and for nonuniform temperature or magnetic-
+field series. **Minimum samples** independently masks bins with too few source
+observations; fractional binning counts the summed fractional contribution.
+This statistical threshold complements geometric minimum coverage rather than
+replacing it.
 
 For gridded inputs, nfit propagates native-bin volume and any existing
 fractional coverage through the rebin. A legacy histogram without fractional

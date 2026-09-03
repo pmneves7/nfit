@@ -460,18 +460,19 @@ class PointListData:
         upper: ArrayLike | None = None,
         num_bins: ArrayLike | None = None,
         step_size: ArrayLike | None = None,
+        bin_edges: list[ArrayLike | None] | tuple[ArrayLike | None, ...] | None = None,
         fractional: bool = True,
         normalize: bool = True,
         mean_weighting: str = "inverse_variance",
+        minimum_samples: float = 0.0,
         max_batch_bytes: int = 192 * 1024 * 1024,
         symmetry_operations: list[ArrayLike] | tuple[ArrayLike, ...] | None = None,
     ) -> PointListData:
-        """Bin the points onto a regular grid, returning occupied bin centers.
+        """Bin the points onto a grid, returning eligible bin centers.
 
         Each channel's value and error are binned over the chosen coordinates
-        using :func:`nfit.rebin.rebin_nd`. Only bins that received at least
-        one point are kept, so the result is a smaller point list suitable for
-        reducing the number of fit points.
+        using :func:`nfit.rebin.rebin_nd`. Selected axes may use explicit,
+        nonuniform ``bin_edges``. Bins below ``minimum_samples`` are omitted.
         """
 
         from .rebin import rebin_nd, rebin_nd_symmetry
@@ -501,9 +502,11 @@ class PointListData:
                 upper=upper,
                 num_bins=num_bins,
                 step_size=step_size,
+                bin_edges=bin_edges,
                 fractional=fractional,
                 normalize=normalize,
                 mean_weighting=mean_weighting,
+                minimum_samples=minimum_samples,
                 max_batch_bytes=max_batch_bytes,
             )
             result = (
@@ -525,7 +528,7 @@ class PointListData:
             )
 
         assert n_samples is not None and bin_centers_list is not None
-        occupied = n_samples > 0.0
+        occupied = np.isfinite(binned_channels[0][1]) & (n_samples > 0.0)
         center_grids = np.meshgrid(*bin_centers_list, indexing="ij")
         new_columns: dict[str, FloatArray] = {}
         new_units: dict[str, str] = {}
@@ -550,9 +553,14 @@ class PointListData:
         metadata["rebin"] = {
             "coordinate_names": list(coordinate_names),
             "num_bins": list(n_samples.shape),
+            "bin_edges": [
+                None if edges is None else np.asarray(edges, dtype=float).tolist()
+                for edges in (result.bin_edges or [])
+            ],
             "fractional": bool(fractional),
             "normalize": bool(normalize),
             "mean_weighting": str(mean_weighting),
+            "minimum_samples": float(minimum_samples),
             "max_batch_bytes": int(max_batch_bytes),
         }
         return PointListData(

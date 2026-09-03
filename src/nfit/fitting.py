@@ -1001,19 +1001,20 @@ def rebin_point_data(
     upper: ArrayLike | None = None,
     step_size: ArrayLike | None = None,
     num_bins: ArrayLike | None = None,
+    bin_edges: Sequence[ArrayLike | None] | None = None,
     fractional: bool = True,
     normalize: bool = True,
     mean_weighting: str = "inverse_variance",
+    minimum_samples: float = 0.0,
     max_batch_bytes: int = 192 * 1024 * 1024,
     progress_callback: ProgressCallback | None = None,
     symmetry_operations: Sequence[ArrayLike] | None = None,
 ) -> PointData4D:
-    """Rebin flattened ``(H,K,L,E)`` point data onto a regular 4D grid.
+    """Rebin flattened ``(H,K,L,E)`` point data onto a 4D grid.
 
     Empty bins are retained with ``mask=False`` so later calls to
-    :meth:`PointData4D.valid` drop them. This helper is intentionally simple;
-    more specialized projection/integration workflows can be expressed as
-    custom :class:`FitDataset` transforms.
+    :meth:`PointData4D.valid` drop them. ``bin_edges`` may override selected
+    axes with nonuniform edges by using ``None`` for axes that remain uniform.
     """
 
     source = data.valid(require_positive_sigma=False)
@@ -1027,9 +1028,11 @@ def rebin_point_data(
         upper=upper,
         step_size=step_size,
         num_bins=num_bins,
+        bin_edges=bin_edges,
         fractional=fractional,
         normalize=normalize,
         mean_weighting=mean_weighting,
+        minimum_samples=minimum_samples,
         max_batch_bytes=max_batch_bytes,
         progress_callback=progress_callback,
     )
@@ -1059,9 +1062,14 @@ def rebin_point_data(
         "upper": None if upper is None else np.asarray(upper, dtype=float).tolist(),
         "step_size": np.asarray(result.step_size, dtype=float).tolist(),
         "num_bins": np.asarray(result.num_bins, dtype=int).tolist(),
+        "bin_edges": [
+            None if edges is None else np.asarray(edges, dtype=float).tolist()
+            for edges in (result.bin_edges or [])
+        ],
         "fractional": fractional,
         "normalize": normalize,
         "mean_weighting": str(mean_weighting),
+        "minimum_samples": float(minimum_samples),
         "max_batch_bytes": int(max_batch_bytes),
     }
     if isinstance(source.temperature, np.ndarray):

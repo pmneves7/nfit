@@ -212,6 +212,11 @@ class NDRebin:
     num_bins:
         Optional number of bins for each coordinate dimension. Required when
         ``step_size`` is not supplied.
+    bin_edges:
+        Optional sequence with one entry per dimension. Each entry is either
+        ``None`` (use that axis's uniform ``step_size``/``num_bins`` setting)
+        or a strictly increasing array of explicit bin edges. This permits a
+        mixed grid in which only selected axes are nonuniform.
     fractional:
         If true, distribute each point to neighboring bins using multilinear
         weights. If false, each point contributes to a single bin. Defaults to
@@ -226,6 +231,11 @@ class NDRebin:
         they do not define inverse-variance weights. ``"uniform"`` keeps the
         previous simple mean behavior. Fractional binning multiplies either mean
         weight by the fractional spatial contribution.
+    minimum_samples:
+        Minimum effective source-sample count required for an output bin.
+        Hard binning counts every accepted point as one. Fractional binning
+        sums its spatial contribution weights. The default zero preserves all
+        nonempty bins.
     batch_size:
         Optional maximum number of source points processed in one accumulation
         batch. ``None`` chooses a batch size from ``max_batch_bytes``.
@@ -267,9 +277,11 @@ class NDRebin:
         lower: ArrayLike | None = None,
         step_size: ArrayLike | None = None,
         num_bins: ArrayLike | None = None,
+        bin_edges: Iterable[ArrayLike | None] | None = None,
         fractional: bool = True,
         normalize: bool = True,
         mean_weighting: MeanWeighting = "inverse_variance",
+        minimum_samples: float = 0.0,
         batch_size: int | None = None,
         max_batch_bytes: int = 192 * 1024 * 1024,
         backend: RebinBackend = "auto",
@@ -287,9 +299,11 @@ class NDRebin:
         self.lower = lower
         self.step_size = step_size
         self.num_bins = num_bins
+        self.bin_edges = None if bin_edges is None else list(bin_edges)
         self.fractional = fractional
         self.normalize = normalize
         self.mean_weighting = mean_weighting
+        self.minimum_samples = float(minimum_samples)
         self.batch_size = batch_size
         self.max_batch_bytes = int(max_batch_bytes)
         self.backend = backend
@@ -308,6 +322,7 @@ class NDRebin:
         self.coords_flat: FloatArray | None = None
         self.bins_list: list[FloatArray] | None = None
         self.bin_centers_list: list[FloatArray] | None = None
+        self._explicit_bin_edges: list[FloatArray | None] | None = None
         self.bin_inds: FloatArray | None = None
         self.binned_data: FloatArray | None = None
         self.binned_data_errs: FloatArray | None = None
@@ -404,6 +419,8 @@ class NDRebin:
     def _check_options(self) -> None:
         if self.mean_weighting not in {"inverse_variance", "uniform"}:
             raise ValueError("mean_weighting must be 'inverse_variance' or 'uniform'")
+        if not np.isfinite(self.minimum_samples) or self.minimum_samples < 0.0:
+            raise ValueError("minimum_samples must be finite and nonnegative")
         if self.batch_size is not None and int(self.batch_size) < 1:
             raise ValueError("batch_size must be positive")
         if self.backend not in {"auto", "numpy", "numba"}:
@@ -415,6 +432,12 @@ class NDRebin:
 
     def _resolve_backend(self) -> str:
         assert self.Nvals is not None
+        if self._explicit_bin_edges and any(
+            edges is not None for edges in self._explicit_bin_edges
+        ):
+            # The optional fused kernel uses constant-width index arithmetic.
+            # Explicit-edge grids retain the fully featured NumPy path.
+            return "numpy"
         if self.backend == "numpy":
             return "numpy"
         if self.backend == "numba":
@@ -490,77 +513,83 @@ class NDRebin:
         self.upper = np.maximum(lower_arr, upper_arr)
 
     def _make_bins(self) -> None:
-        if self.step_size is None and self.num_bins is None:
-            raise ValueError("Either step_size or num_bins must be provided")
+        assert self.Ndims is not None
+        assert self.lower is not None
+        assert self.upper is not None
+        explicit = [None] * self.Ndims if self.bin_edges is None else list(self.bin_edges)
+        if len(explicit) != self.Ndims:
+            raise ValueError("bin_edges must contain one entry per coordinate dimension")
+        normalized_edges: list[FloatArray | None] = []
+        for edges in explicit:
+            if edges is None:
+                normalized_edges.append(None)
+                continue
+            array = np.asarray(edges, dtype=float)
+            if array.ndim != 1 or array.size < 2:
+                raise ValueError("each explicit bin_edges entry must be a 1D array with at least two values")
+            if np.any(~np.isfinite(array)) or np.any(np.diff(array) <= 0.0):
+                raise ValueError("explicit bin edges must be finite and strictly increasing")
+            normalized_edges.append(array.copy())
+
+        has_uniform_axis = any(edges is None for edges in normalized_edges)
+        if has_uniform_axis and self.step_size is None and self.num_bins is None:
+            raise ValueError("Either step_size or num_bins must be provided for uniform axes")
+        steps = None if self.step_size is None else list(np.atleast_1d(self.step_size))
+        counts = None if self.num_bins is None else list(np.atleast_1d(self.num_bins))
+        if steps is not None and len(steps) != self.Ndims:
+            raise ValueError("step_size must be a 1D iterable of length Ndims")
+        if counts is not None and len(counts) != self.Ndims:
+            raise ValueError("num_bins must be a 1D iterable of length Ndims")
 
         self.bins_list = []
         self.bin_centers_list = []
-        if self.step_size is None:
-            self._step_size_from_num_bins()
-        else:
-            self._num_bins_from_step_size()
-
-    def _step_size_from_num_bins(self) -> None:
-        assert self.Ndims is not None
-        assert self.bins_list is not None
-        assert self.bin_centers_list is not None
-        assert self.lower is not None
-        assert self.upper is not None
-
-        num_bins = np.atleast_1d(self.num_bins).astype(int, copy=False)
-        if num_bins.size != self.Ndims:
-            raise ValueError("num_bins must be a 1D iterable of length Ndims")
-        if np.any(num_bins < 1):
-            raise ValueError("num_bins values must be positive")
-
-        step_size: list[float] = []
+        resolved_steps: list[float] = []
+        resolved_counts: list[int] = []
         for ind in range(self.Ndims):
-            these_bins = np.linspace(self.lower[ind], self.upper[ind], int(num_bins[ind]) + 1)
-            these_centers = (these_bins[:-1] + these_bins[1:]) / 2.0
-            this_step_size = these_bins[1] - these_bins[0]
-
-            self.bins_list.append(these_bins)
-            self.bin_centers_list.append(these_centers)
-            step_size.append(float(this_step_size))
-
-        self.num_bins = num_bins
-        self.step_size = np.asarray(step_size, dtype=float)
-
-    def _num_bins_from_step_size(self) -> None:
-        assert self.Ndims is not None
-        assert self.bins_list is not None
-        assert self.bin_centers_list is not None
-        assert self.lower is not None
-        assert self.upper is not None
-
-        step_size = np.atleast_1d(self.step_size).astype(float, copy=False)
-        if step_size.size != self.Ndims:
-            raise ValueError("step_size must be a 1D iterable of length Ndims")
-        if np.any(step_size <= 0):
-            raise ValueError("step_size values must be positive")
-
-        num_bins: list[int] = []
-        for ind in range(self.Ndims):
-            if self.lower[ind] == self.upper[ind]:
-                these_bins = np.array([self.lower[ind], self.lower[ind]])
-            elif np.isinf(step_size[ind]):
-                these_bins = np.array([self.lower[ind], self.upper[ind]])
+            if normalized_edges[ind] is not None:
+                these_bins = normalized_edges[ind]
+                assert these_bins is not None
+                self.lower[ind] = these_bins[0]
+                self.upper[ind] = these_bins[-1]
+                resolved_steps.append(np.nan)
+            elif steps is not None:
+                try:
+                    this_step = float(steps[ind])
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("step_size values for uniform axes must be numeric") from exc
+                if this_step <= 0.0 or np.isnan(this_step):
+                    raise ValueError("step_size values for uniform axes must be positive")
+                if self.lower[ind] == self.upper[ind]:
+                    these_bins = np.array([self.lower[ind], self.lower[ind]])
+                elif np.isinf(this_step):
+                    these_bins = np.array([self.lower[ind], self.upper[ind]])
+                else:
+                    these_bins = np.arange(self.lower[ind], self.upper[ind], this_step)
+                    if these_bins.size == 0 or these_bins[0] != self.lower[ind]:
+                        these_bins = np.insert(these_bins, 0, self.lower[ind])
+                    if these_bins[-1] != self.upper[ind]:
+                        these_bins = np.append(these_bins, self.upper[ind])
+                resolved_steps.append(this_step)
             else:
-                these_bins = np.arange(self.lower[ind], self.upper[ind], step_size[ind])
-                if these_bins.size == 0 or these_bins[0] != self.lower[ind]:
-                    these_bins = np.insert(these_bins, 0, self.lower[ind])
-                if these_bins[-1] != self.upper[ind]:
-                    these_bins = np.append(these_bins, self.upper[ind])
-
+                assert counts is not None
+                try:
+                    this_count_float = float(counts[ind])
+                    this_count = int(this_count_float)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("num_bins values for uniform axes must be integers") from exc
+                if this_count < 1 or this_count_float != this_count:
+                    raise ValueError("num_bins values for uniform axes must be positive integers")
+                these_bins = np.linspace(self.lower[ind], self.upper[ind], this_count + 1)
+                resolved_steps.append(float(these_bins[1] - these_bins[0]))
             these_centers = (these_bins[:-1] + these_bins[1:]) / 2.0
-            this_num_bins = int(these_bins.size - 1)
-
             self.bins_list.append(these_bins)
             self.bin_centers_list.append(these_centers)
-            num_bins.append(this_num_bins)
+            resolved_counts.append(int(these_bins.size - 1))
 
-        self.step_size = step_size
-        self.num_bins = np.asarray(num_bins, dtype=int)
+        self._explicit_bin_edges = normalized_edges
+        self.bin_edges = [None if edges is None else edges.copy() for edges in normalized_edges]
+        self.step_size = np.asarray(resolved_steps, dtype=float)
+        self.num_bins = np.asarray(resolved_counts, dtype=int)
 
     def _create_bin_inds(self) -> None:
         assert self.Nvals is not None
@@ -575,6 +604,27 @@ class NDRebin:
         self.bin_inds = np.zeros((self.Nvals, self.Ndims), dtype=float)
 
         for ind in range(self.Ndims):
+            explicit_edges = self._explicit_bin_edges[ind] if self._explicit_bin_edges else None
+            if explicit_edges is not None:
+                coordinates = self.coords_flat[:, ind]
+                if self.fractional:
+                    centers = self.bin_centers_list[ind]
+                    if centers.size == 1:
+                        positions = np.zeros(coordinates.shape, dtype=float)
+                    else:
+                        left = np.searchsorted(centers, coordinates, side="right") - 1
+                        left = np.clip(left, 0, centers.size - 2)
+                        widths = centers[left + 1] - centers[left]
+                        positions = left + (coordinates - centers[left]) / widths
+                        positions = np.clip(positions, 0.0, float(centers.size - 1))
+                    self.bin_inds[:, ind] = positions + 0.5
+                else:
+                    positions = np.searchsorted(explicit_edges, coordinates, side="right") - 1
+                    positions[coordinates == explicit_edges[-1]] = explicit_edges.size - 2
+                    self.bin_inds[:, ind] = positions
+                self.bin_inds[coordinates < explicit_edges[0], ind] = np.nan
+                self.bin_inds[coordinates > explicit_edges[-1], ind] = np.nan
+                continue
             this_min = self.bins_list[ind][0]
             this_step = step_size[ind]
             if np.isinf(this_step):
@@ -961,6 +1011,8 @@ class NDRebin:
                 self.binned_data_errs = np.sqrt(self.binned_data_errs)
 
         mask = self.n_samples == 0
+        if self.minimum_samples > 0.0:
+            mask |= self.n_samples < self.minimum_samples
         if self.normalize:
             mask |= self._normalization == 0
         self.binned_data[mask] = np.nan
@@ -983,9 +1035,11 @@ def rebin_nd_stream(
     lower: ArrayLike | None = None,
     step_size: ArrayLike | None = None,
     num_bins: ArrayLike | None = None,
+    bin_edges: Iterable[ArrayLike | None] | None = None,
     fractional: bool = True,
     normalize: bool = True,
     mean_weighting: MeanWeighting = "inverse_variance",
+    minimum_samples: float = 0.0,
     backend: RebinBackend = "auto",
     workers: int | None = None,
     parallel_strategy: ParallelStrategy = "auto",
@@ -1000,8 +1054,13 @@ def rebin_nd_stream(
     batch at a time. Explicit limits avoid the discovery pass.
     """
 
+    edge_options = None if bin_edges is None else list(bin_edges)
+    has_explicit_edges = bool(
+        edge_options is not None and any(edges is not None for edges in edge_options)
+    )
     use_numba = bool(
         _NUMBA_REBIN is not None
+        and not has_explicit_edges
         and (backend == "numba" or (backend == "auto" and int(source.n_points) >= _numba_min_points()))
     )
     ndim = int(source.ndim)
@@ -1014,7 +1073,9 @@ def rebin_nd_stream(
     template = NDRebin(
         data=np.zeros(1), coords=np.zeros((1, ndim)), data_errs=np.ones(1),
         lower=lower_arr, upper=upper_arr, step_size=step_size, num_bins=num_bins,
+        bin_edges=edge_options,
         fractional=fractional, normalize=normalize, mean_weighting=mean_weighting,
+        minimum_samples=minimum_samples,
         backend="numba" if use_numba else "numpy",
         workers=workers, parallel_strategy=parallel_strategy,
         max_parallel_bytes=max_parallel_bytes,
@@ -1048,8 +1109,9 @@ def rebin_nd_stream(
             partial = rebin_nd(
                 data, projected, data_errs=batch.data_errs, data_weights=batch.data_weights,
                 lower=lower_arr, upper=upper_arr, step_size=template.step_size,
+                bin_edges=template.bin_edges,
                 fractional=fractional, normalize=normalize, mean_weighting=mean_weighting,
-                backend="numpy", workers=1,
+                minimum_samples=0.0, backend="numpy", workers=1,
             )
             bd_sum += partial._bd_sum
             err_sum += partial._err_sum
@@ -1107,9 +1169,11 @@ def rebin_nd_symmetry(
     lower: ArrayLike | None = None,
     step_size: ArrayLike | None = None,
     num_bins: ArrayLike | None = None,
+    bin_edges: Iterable[ArrayLike | None] | None = None,
     fractional: bool = True,
     normalize: bool = True,
     mean_weighting: MeanWeighting = "inverse_variance",
+    minimum_samples: float = 0.0,
     max_batch_bytes: int = 192 * 1024 * 1024,
     backend: RebinBackend = "auto",
     workers: int | None = None,
@@ -1142,9 +1206,11 @@ def rebin_nd_symmetry(
         lower=lower,
         step_size=step_size,
         num_bins=num_bins,
+        bin_edges=bin_edges,
         fractional=fractional,
         normalize=normalize,
         mean_weighting=mean_weighting,
+        minimum_samples=minimum_samples,
         backend=backend,
         workers=workers,
         parallel_strategy=parallel_strategy,

@@ -121,8 +121,12 @@ views, and fit timelines. The GUI is documented in
 
 ## N-dimensional rebinning
 
-Use `rebin_nd` or `NDRebin` to bin point values onto regular N-dimensional
-grids. Fractional binning is enabled by default, so a source point can be
+Use `rebin_nd` or `NDRebin` to bin point values onto N-dimensional grids.
+Each axis can independently use uniform bin counts or step sizes, or explicit
+strictly increasing `bin_edges`. Use `None` for the entries that should remain
+uniform, for example `bin_edges=[None, None, None, energy_edges]` for a
+nonuniform energy axis on an otherwise uniform HKLE grid. Fractional binning
+is enabled by default, so a source point can be
 distributed to neighboring bins according to its geometric overlap; pass
 `fractional=False` for single-bin assignment. With `normalize=True`, each
 output bin is an average of all source points that contribute to that bin. The
@@ -136,6 +140,13 @@ Points with non-finite or non-positive uncertainties are skipped in this mode.
 Optional `data_weights` multiply each point's statistical weight; the GUI uses
 this for workspace composites so dataset fit weights enter as
 `fit_weight / sigma**2`.
+
+Set `minimum_samples` to mask statistically sparse output bins without
+discarding their accumulated sample-count diagnostics. With hard binning this
+is the number of accepted source points. With fractional binning it is the sum
+of the fractional spatial contributions. Explicit-edge grids currently use the
+NumPy implementation because the optional fused Numba kernel assumes constant
+bin widths.
 
 `rebin_nd_symmetry` accepts reciprocal-HKL operation matrices and streams each
 transformed image through the same accumulator. The project GUI resolves

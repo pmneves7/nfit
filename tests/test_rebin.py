@@ -466,3 +466,102 @@ def test_array_rebin_source_preserves_memmap_batches(tmp_path):
 
     assert len(batches) == 6
     assert sum(np.asarray(batch.data).size for batch in batches) == 100
+
+
+def test_rebin_accepts_mixed_uniform_and_nonuniform_axes():
+    result = rebin_nd(
+        data=np.asarray([1.0, 3.0, 5.0, 7.0]),
+        coords=np.asarray([[0.25, 0.25], [0.75, 0.75], [2.25, 1.5], [3.25, 2.5]]),
+        lower=[0.0, 0.0],
+        upper=[4.0, 3.0],
+        num_bins=[2, 99],
+        bin_edges=[None, [0.0, 1.0, 3.0]],
+        fractional=False,
+        mean_weighting="uniform",
+    )
+
+    assert result.resolved_backend == "numpy"
+    np.testing.assert_allclose(result.bins_list[0], [0.0, 2.0, 4.0])
+    np.testing.assert_allclose(result.bins_list[1], [0.0, 1.0, 3.0])
+    np.testing.assert_array_equal(result.num_bins, [2, 2])
+    assert np.isnan(result.step_size[1])
+    np.testing.assert_allclose(
+        result.binned_data,
+        [[2.0, np.nan], [np.nan, 6.0]],
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(result.n_samples, [[2.0, 0.0], [0.0, 2.0]])
+
+
+def test_nonuniform_fractional_binning_interpolates_between_local_centers():
+    result = rebin_nd(
+        data=[8.0],
+        coords=[1.25],
+        bin_edges=[[0.0, 1.0, 3.0]],
+        fractional=True,
+        mean_weighting="uniform",
+    )
+
+    np.testing.assert_allclose(result.bin_centers_list[0], [0.5, 2.0])
+    np.testing.assert_allclose(result.n_samples, [0.5, 0.5])
+    np.testing.assert_allclose(result.binned_data, [8.0, 8.0])
+
+
+def test_minimum_samples_masks_sparse_bins_but_retains_sample_counts():
+    result = rebin_nd(
+        data=[2.0, 4.0, 9.0],
+        coords=[0.1, 0.2, 1.1],
+        bin_edges=[[0.0, 1.0, 2.0]],
+        fractional=False,
+        mean_weighting="uniform",
+        minimum_samples=2.0,
+    )
+
+    np.testing.assert_allclose(result.n_samples, [2.0, 1.0])
+    np.testing.assert_allclose(result.binned_data[0], 3.0)
+    assert np.isnan(result.binned_data[1])
+    assert np.isnan(result.binned_data_errs[1])
+
+
+def test_streaming_mixed_edge_grid_matches_in_memory():
+    coords = np.column_stack(
+        (np.linspace(0.0, 4.0, 41), np.linspace(-2.0, 3.0, 41))
+    )
+    data = np.linspace(1.0, 5.0, 41)
+    kwargs = {
+        "lower": [0.0, -2.0],
+        "upper": [4.0, 3.0],
+        "num_bins": [4, 10],
+        "bin_edges": [None, [-2.0, -1.0, 0.5, 3.0]],
+        "fractional": False,
+        "mean_weighting": "uniform",
+        "minimum_samples": 2.0,
+    }
+    expected = rebin_nd(data, coords, **kwargs)
+    streamed = rebin_nd_stream(
+        ArrayRebinSource(data, coords, batch_size=7),
+        backend="numba",
+        **kwargs,
+    )
+
+    assert streamed.resolved_backend == "numpy"
+    np.testing.assert_allclose(streamed.binned_data, expected.binned_data, equal_nan=True)
+    np.testing.assert_allclose(
+        streamed.binned_data_errs,
+        expected.binned_data_errs,
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(streamed.n_samples, expected.n_samples)
+
+
+@pytest.mark.parametrize(
+    "edges, message",
+    [
+        ([[0.0, 1.0, 1.0]], "strictly increasing"),
+        ([[0.0, np.nan, 1.0]], "finite"),
+        ([[0.0]], "at least two"),
+    ],
+)
+def test_rebin_rejects_invalid_explicit_edges(edges, message):
+    with pytest.raises(ValueError, match=message):
+        rebin_nd(data=[1.0], coords=[0.5], bin_edges=edges)

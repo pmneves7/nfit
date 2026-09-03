@@ -13,7 +13,8 @@ The package provides:
   energy-integrated DIFF streams, monitor normalization, detector masks, and
   batch composites;
 - powder-cut, MPMS magnetization, PPMS heat-capacity, and tabular imports;
-- masking, coverage-aware symmetry/rebinning and composites, backgrounds, and
+- masking, coverage- and sample-aware symmetry/rebinning with independently
+  nonuniform axes, composites, backgrounds, and
   non-destructive analyses, including live hierarchical composites and editable
   source-linked histogram sums, differences, or comparison clones with
   independent raw-data binning, plus lazy navigation for run-heavy projects;

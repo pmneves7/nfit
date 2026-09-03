@@ -142,9 +142,10 @@ The complete project-level semantics are in
 ### Rebinning
 
 `rebin_nd` bins in-memory arrays. `rebin_nd_stream` accepts repeatable batches
-from files or custom providers. Both support explicit bounds, bin counts or
-step sizes, fractional overlap, symmetry expansion, and bounded temporary
-memory.
+from files or custom providers. Both support explicit bounds, per-axis
+nonuniform bin edges mixed with uniform bin counts or step sizes, fractional
+overlap, minimum effective sample counts, symmetry expansion, and bounded
+temporary memory.
 
 Project rebinning applies masks first, then returns a density-valued normalized
 histogram. Composite datasets additionally apply source scales and fit weights.

@@ -172,6 +172,7 @@ DERIVED_RECIPE_KEY = "derived_recipe"
 VIRTUAL_DERIVED_ANALYSIS_TYPES = {"dataset_clone", "histogram_arithmetic"}
 DEFAULT_REBIN_MAX_BATCH_MB = 192
 DEFAULT_MINIMUM_COVERAGE = 0.9
+DEFAULT_MINIMUM_SAMPLES = 0.0
 REBIN_COORDINATE_BASIS_VERSION = 2
 REBIN_RESOLUTION_MODE_KEY = "resolution_mode"
 REBIN_SETTINGS_CLIPBOARD_SCHEMA = "nfit.rebin-settings"
@@ -183,6 +184,7 @@ REBIN_SETTINGS_KEYS = (
     "auto_rebin",
     "mean_weighting",
     "minimum_coverage",
+    "minimum_samples",
     "max_batch_mb",
     "normalize",
     "symmetry",
@@ -2619,6 +2621,7 @@ def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str,
     }:
         config["mean_weighting"] = "inverse_variance"
     config["minimum_coverage"] = _rebin_minimum_coverage(config)
+    config["minimum_samples"] = _rebin_minimum_samples(config)
     try:
         config["max_batch_mb"] = max(int(config.get("max_batch_mb", DEFAULT_REBIN_MAX_BATCH_MB)), 1)
     except (TypeError, ValueError):
@@ -3086,6 +3089,8 @@ def composite_dataset_data(
                 upper=upper,
                 num_bins=num_bins,
                 step_size=_composite_rebin_step_sizes(config),
+                bin_edges=_composite_rebin_bin_edges(config),
+                minimum_samples=_rebin_minimum_samples(config),
                 datasets=_composite_candidates(group),
                 max_batch_bytes=_rebin_max_batch_bytes(config),
                 progress_callback=progress_callback,
@@ -3097,6 +3102,8 @@ def composite_dataset_data(
                 upper=upper,
                 num_bins=num_bins,
                 step_size=_composite_rebin_step_sizes(config),
+                bin_edges=_composite_rebin_bin_edges(config),
+                minimum_samples=_rebin_minimum_samples(config),
                 datasets=_composite_candidates(group),
                 vectors=[
                     axis.get("vector", _identity_vector(index, 4))
@@ -3118,7 +3125,10 @@ def composite_dataset_data(
         lower, upper, num_bins = _composite_rebin_bounds(config)
         result = bin_raw_dgs_group(
             node, lower=lower, upper=upper, num_bins=num_bins,
-            step_size=_composite_rebin_step_sizes(config), datasets=_composite_candidates(group),
+            step_size=_composite_rebin_step_sizes(config),
+            bin_edges=_composite_rebin_bin_edges(config),
+            minimum_samples=_rebin_minimum_samples(config),
+            datasets=_composite_candidates(group),
             vectors=[axis.get("vector", _identity_vector(index, 4)) for index, axis in enumerate(config.get("axes", []))],
             axis_names=[str(axis.get("name", ("H", "K", "L", "DeltaE")[index])) for index, axis in enumerate(config.get("axes", []))],
             max_batch_bytes=_rebin_max_batch_bytes(config), progress_callback=progress_callback,
@@ -3321,6 +3331,7 @@ def _derived_output_config_for_source(
     config.setdefault("normalize", True)
     config.setdefault("mean_weighting", "inverse_variance")
     config.setdefault("minimum_coverage", 0.0)
+    config.setdefault("minimum_samples", DEFAULT_MINIMUM_SAMPLES)
     config.setdefault("max_batch_mb", DEFAULT_REBIN_MAX_BATCH_MB)
     if not isinstance(config.get("symmetry"), dict):
         config["symmetry"] = symmetry_config(SymmetrySpec())
@@ -3735,6 +3746,7 @@ def _composite_mdhisto_data(
         mean_weighting=(
             "uniform" if weighting_mode == "normalization" else weighting_mode
         ),
+        minimum_samples=_rebin_minimum_samples(config),
         max_batch_bytes=_rebin_max_batch_bytes(config),
         progress_callback=progress_callback,
     )
@@ -3780,6 +3792,7 @@ def _composite_mdhisto_data(
             "upper": upper,
             "step_size": np.asarray(result.step_size, dtype=float).tolist(),
             "num_bins": np.asarray(result.num_bins, dtype=int).tolist(),
+            "bin_edges": [np.asarray(edges, dtype=float).tolist() for edges in result.bins_list],
             "vectors": [
                 _rebin_axis_vector(axis_config, index, len(axes_config)).tolist()
                 for index, axis_config in enumerate(axes_config)
@@ -3788,6 +3801,7 @@ def _composite_mdhisto_data(
             "normalize": True,
             "mean_weighting": weighting_mode,
             "minimum_coverage": _rebin_minimum_coverage(config),
+            "minimum_samples": _rebin_minimum_samples(config),
             "max_batch_mb": _rebin_max_batch_mb(config),
             "max_batch_bytes": _rebin_max_batch_bytes(config),
             "weighted_by_fit_weight": True,
@@ -3874,6 +3888,7 @@ def _composite_point_data(
         fractional=bool(config.get("fractional", True)),
         normalize=True,
         mean_weighting=_rebin_mean_weighting(config),
+        minimum_samples=_rebin_minimum_samples(config),
         max_batch_bytes=_rebin_max_batch_bytes(config),
         progress_callback=progress_callback,
     )
@@ -3889,7 +3904,17 @@ def _composite_point_data(
         np.asarray(result.binned_data, dtype=float).ravel(),
         np.asarray(result.binned_data_errs, dtype=float).ravel(),
         mask=mask.ravel(),
-        metadata={"composite": True, "source_group": group.name},
+        metadata={
+            "composite": True,
+            "source_group": group.name,
+            "rebin": {
+                "bin_edges": [
+                    np.asarray(edges, dtype=float).tolist()
+                    for edges in (result.bins_list or [])
+                ],
+                "minimum_samples": _rebin_minimum_samples(config),
+            },
+        },
     )
 
 
@@ -3953,12 +3978,13 @@ def _composite_point_list_data(
         fractional=bool(config.get("fractional", True)),
         normalize=True,
         mean_weighting=_rebin_mean_weighting(config),
+        minimum_samples=_rebin_minimum_samples(config),
         max_batch_bytes=_rebin_max_batch_bytes(config),
         progress_callback=progress_callback,
     )
     if result.binned_data is None or result.binned_data_errs is None or result.n_samples is None or result.bin_centers_list is None:
         raise RuntimeError("composite rebinning did not produce binned data")
-    occupied = result.n_samples > 0.0
+    occupied = np.isfinite(result.binned_data) & (result.n_samples > 0.0)
     center_grids = np.meshgrid(*result.bin_centers_list, indexing="ij")
     value_name = point_lists[0].channel(channel_label)["value"]
     error_name = point_lists[0].channel(channel_label).get("error") or f"{value_name}_error"
@@ -3971,7 +3997,18 @@ def _composite_point_list_data(
         units={**{name: point_lists[0].unit(name) for name in coordinate_names}, value_name: point_lists[0].unit(value_name), error_name: point_lists[0].unit(error_name)},
         coordinate_names=coordinate_names,
         channels=[{"label": channel_label, "value": value_name, "error": error_name}],
-        metadata={"composite": True, "source_group": group.name, "source_datasets": [dataset.name for dataset in datasets]},
+        metadata={
+            "composite": True,
+            "source_group": group.name,
+            "source_datasets": [dataset.name for dataset in datasets],
+            "rebin": {
+                "bin_edges": [
+                    np.asarray(edges, dtype=float).tolist()
+                    for edges in (result.bins_list or [])
+                ],
+                "minimum_samples": _rebin_minimum_samples(config),
+            },
+        },
         quantity_types={
             name: point_lists[0].quantity_type(name)
             for name in columns
@@ -6784,6 +6821,7 @@ def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
     if config.get("mean_weighting") not in {"inverse_variance", "uniform"}:
         config["mean_weighting"] = "inverse_variance"
     config["minimum_coverage"] = _rebin_minimum_coverage(config)
+    config["minimum_samples"] = _rebin_minimum_samples(config)
     config["normalize"] = True
     axes = config.get("axes")
     # Only materialize transformed coordinates when defaults are actually
@@ -7165,6 +7203,7 @@ def _rebin_point_list_data(dataset: DatasetEntry, config: dict[str, Any]) -> Poi
         fractional=bool(config.get("fractional", False)),
         normalize=True,
         mean_weighting=_rebin_mean_weighting(config),
+        minimum_samples=_rebin_minimum_samples(config),
         max_batch_bytes=_rebin_max_batch_bytes(config),
         symmetry_operations=_rebin_symmetry_matrices(config, prepared.metadata.get("lattice_parameters")),
     )
@@ -7192,6 +7231,18 @@ def _rebin_minimum_coverage(config: dict[str, Any]) -> float:
     return float(np.clip(value, 0.0, 1.0))
 
 
+def _rebin_minimum_samples(config: dict[str, Any]) -> float:
+    """Return the minimum effective sample contribution for an output bin."""
+
+    try:
+        value = float(config.get("minimum_samples", DEFAULT_MINIMUM_SAMPLES))
+    except (TypeError, ValueError):
+        return DEFAULT_MINIMUM_SAMPLES
+    if not np.isfinite(value) or value < 0.0:
+        return DEFAULT_MINIMUM_SAMPLES
+    return value
+
+
 def _rebin_max_batch_mb(config: dict[str, Any]) -> int:
     try:
         return max(int(config.get("max_batch_mb", DEFAULT_REBIN_MAX_BATCH_MB)), 1)
@@ -7209,12 +7260,21 @@ def _rebin_resolution_mode(config: dict[str, Any]) -> str:
     return "bins" if config.get(REBIN_RESOLUTION_MODE_KEY) == "bins" else "step"
 
 
-def _rebin_grid_kwargs(config: dict[str, Any], axes_config: list[dict[str, Any]]) -> dict[str, list[float] | list[int]]:
-    """Return the active resolution without converting step-mode edges to equal bins."""
+def _rebin_grid_kwargs(
+    config: dict[str, Any], axes_config: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Return a mixed uniform/explicit-edge grid for the public rebinner."""
 
     if _rebin_resolution_mode(config) == "step":
-        return {"step_size": [float(axis["step_size"]) for axis in axes_config]}
-    return {"num_bins": [int(axis["num_bins"]) for axis in axes_config]}
+        result: dict[str, Any] = {
+            "step_size": [float(axis["step_size"]) for axis in axes_config]
+        }
+    else:
+        result = {"num_bins": [int(axis["num_bins"]) for axis in axes_config]}
+    bin_edges = [axis.get("bin_edges") for axis in axes_config]
+    if any(edges is not None for edges in bin_edges):
+        result["bin_edges"] = bin_edges
+    return result
 
 
 def _composite_rebin_step_sizes(config: dict[str, Any]) -> list[float] | None:
@@ -7226,6 +7286,18 @@ def _composite_rebin_step_sizes(config: dict[str, Any]) -> list[float] | None:
         float(axis["step_size"])
         for axis in (_sanitize_rebin_axis_config(axis) for axis in config.get("axes", []))
     ]
+
+
+def _composite_rebin_bin_edges(
+    config: dict[str, Any],
+) -> list[list[float] | None] | None:
+    """Return per-axis explicit edges, retaining ``None`` for uniform axes."""
+
+    axes = [
+        _sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])
+    ]
+    edges = [axis.get("bin_edges") for axis in axes]
+    return edges if any(values is not None for values in edges) else None
 
 
 def create_rebinned_dataset(
@@ -7588,6 +7660,17 @@ def _num_bins_from_step_size(lower: Any, upper: Any, step_size: float) -> int:
     return max(int(np.ceil(width / float(step_size))), 1)
 
 
+def _normalize_rebin_bin_edges(value: Any) -> list[float]:
+    """Validate one axis's optional explicit, potentially nonuniform edges."""
+
+    edges = np.asarray(value, dtype=float)
+    if edges.ndim != 1 or edges.size < 2:
+        raise ValueError("bin edges must be a one-dimensional list with at least two values")
+    if np.any(~np.isfinite(edges)) or np.any(np.diff(edges) <= 0.0):
+        raise ValueError("bin edges must be finite and strictly increasing")
+    return edges.tolist()
+
+
 def _sanitize_rebin_axis_config(axis_config: dict[str, Any]) -> dict[str, Any]:
     lower = float(axis_config.get("lower", 0.0))
     upper = float(axis_config.get("upper", lower))
@@ -7605,6 +7688,20 @@ def _sanitize_rebin_axis_config(axis_config: dict[str, Any]) -> dict[str, Any]:
         "num_bins": num_bins,
         "step_size": step_size,
     }
+    explicit_edges = axis_config.get("bin_edges")
+    if explicit_edges is not None and not (
+        isinstance(explicit_edges, str) and not explicit_edges.strip()
+    ):
+        edges = _normalize_rebin_bin_edges(explicit_edges)
+        sanitized["bin_edges"] = edges
+        sanitized["lower"] = edges[0]
+        sanitized["upper"] = edges[-1]
+        sanitized["num_bins"] = len(edges) - 1
+        sanitized["step_size"] = _step_size_from_bounds(
+            edges[0], edges[-1], len(edges) - 1
+        )
+    else:
+        sanitized.pop("bin_edges", None)
     vector = axis_config.get("vector")
     if isinstance(vector, (list, tuple, np.ndarray)):
         sanitized["vector"] = [_clean_axis_weight(component) for component in vector]
@@ -8009,6 +8106,7 @@ def _rebin_mdhisto_data(
         fractional=bool(config.get("fractional", False)),
         normalize=True,
         mean_weighting=_rebin_mean_weighting(config),
+        minimum_samples=_rebin_minimum_samples(config),
         max_batch_bytes=_rebin_max_batch_bytes(config),
         progress_callback=progress_callback,
     )
@@ -8056,11 +8154,13 @@ def _rebin_mdhisto_data(
         "upper": upper,
         "step_size": np.asarray(result.step_size, dtype=float).tolist(),
         "num_bins": np.asarray(result.num_bins, dtype=int).tolist(),
+        "bin_edges": [np.asarray(edges, dtype=float).tolist() for edges in result.bins_list],
         "vectors": vectors,
         "fractional": bool(config.get("fractional", False)),
         "normalize": True,
         "mean_weighting": _rebin_mean_weighting(config),
         "minimum_coverage": _rebin_minimum_coverage(config),
+        "minimum_samples": _rebin_minimum_samples(config),
         "max_batch_mb": _rebin_max_batch_mb(config),
         "max_batch_bytes": _rebin_max_batch_bytes(config),
     }
@@ -8106,6 +8206,7 @@ def _rebin_point_data(
         fractional=bool(config.get("fractional", False)),
         normalize=True,
         mean_weighting=_rebin_mean_weighting(config),
+        minimum_samples=_rebin_minimum_samples(config),
         max_batch_bytes=_rebin_max_batch_bytes(config),
         progress_callback=progress_callback,
         symmetry_operations=symmetry,
@@ -16978,9 +17079,11 @@ class NfitProjectExplorer:
         headers = ["Axis"]
         if show_vectors:
             headers.append("Coord axis")
-        headers.extend(["Lower", "Upper", "Resolution"])
-        for column, label in enumerate(headers[:-1]):
-            controls_layout.addWidget(QtWidgets.QLabel(label), 0, column)
+        headers.extend(["Lower", "Upper", "Resolution", "Edges (optional)"])
+        resolution_column = headers.index("Resolution")
+        for column, label in enumerate(headers):
+            if column != resolution_column:
+                controls_layout.addWidget(QtWidgets.QLabel(label), 0, column)
         resolution_mode_combo = QtWidgets.QComboBox()
         resolution_mode_combo.setObjectName("group_composite_resolution_mode")
         resolution_mode_combo.addItem("Step", "step")
@@ -16998,7 +17101,7 @@ class NfitProjectExplorer:
                 group, str(combo.currentData() or "step")
             )
         )
-        controls_layout.addWidget(resolution_mode_combo, 0, len(headers) - 1)
+        controls_layout.addWidget(resolution_mode_combo, 0, resolution_column)
         for row, axis_config in enumerate(axes, start=1):
             axis = _sanitize_rebin_axis_config(axis_config)
             controls_layout.addWidget(QtWidgets.QLabel(str(axis.get("name", f"Axis {row}"))), row, 0)
@@ -17030,6 +17133,22 @@ class NfitProjectExplorer:
                     lambda row=row - 1, key=key, editor=edit: self._set_group_composite_axis_value(group, row, key, editor.text())
                 )
                 controls_layout.addWidget(edit, row, column)
+            edges_edit = QtWidgets.QLineEdit(
+                _parameter_to_text(axis.get("bin_edges", ""))
+            )
+            edges_edit.setObjectName(f"group_composite_axis_edges_{row - 1}")
+            edges_edit.setMinimumWidth(150)
+            edges_edit.setPlaceholderText("uniform")
+            edges_edit.setToolTip(
+                "Optional strictly increasing edge list for only this axis, for example "
+                "[-2, -1, 0, 0.5, 2]. Leave blank to use the uniform Resolution setting."
+            )
+            edges_edit.editingFinished.connect(
+                lambda row=row - 1, editor=edges_edit: self._set_group_composite_axis_edges(
+                    group, row, editor.text()
+                )
+            )
+            controls_layout.addWidget(edges_edit, row, column_offset + 3)
         option_row = QtWidgets.QHBoxLayout()
         fractional_check = QtWidgets.QCheckBox("Fractional binning")
         fractional_check.setObjectName("group_composite_fractional")
@@ -17108,6 +17227,23 @@ class NfitProjectExplorer:
                 group, editor
             )
         )
+        samples_label = QtWidgets.QLabel("Minimum samples")
+        samples_edit = QtWidgets.QLineEdit(
+            _format_number(_rebin_minimum_samples(config))
+        )
+        samples_edit.setObjectName("group_composite_minimum_samples")
+        samples_edit.setMaximumWidth(70)
+        samples_tooltip = (
+            "Mask bins receiving less than this effective number of source samples. "
+            "Fractional binning sums fractional sample contributions."
+        )
+        samples_label.setToolTip(samples_tooltip)
+        samples_edit.setToolTip(samples_tooltip)
+        samples_edit.editingFinished.connect(
+            lambda editor=samples_edit: self._set_group_composite_minimum_samples(
+                group, editor
+            )
+        )
         option_row.addWidget(fractional_check)
         option_row.addWidget(auto_check)
         option_row.addWidget(mean_label)
@@ -17117,6 +17253,9 @@ class NfitProjectExplorer:
         quality_row = QtWidgets.QHBoxLayout()
         quality_row.addWidget(coverage_label)
         quality_row.addWidget(coverage_edit)
+        quality_row.addSpacing(12)
+        quality_row.addWidget(samples_label)
+        quality_row.addWidget(samples_edit)
         quality_row.addSpacing(12)
         quality_row.addWidget(batch_label)
         quality_row.addWidget(batch_spin)
@@ -18587,12 +18726,15 @@ class NfitProjectExplorer:
         headers = ["Axis"]
         if show_vectors:
             headers.append("Coord axis")
-        headers.extend(["Lower", "Upper", "Resolution"])
+        headers.extend(["Lower", "Upper", "Resolution", "Edges (optional)"])
         resolution_mode = _rebin_resolution_mode(config)
         resolution_key = "step_size" if resolution_mode == "step" else "num_bins"
         last_column = len(headers) - 1
         controls_layout.setColumnStretch(last_column, 1)
-        for column, text in enumerate(headers[:-1]):
+        resolution_column = headers.index("Resolution")
+        for column, text in enumerate(headers):
+            if column == resolution_column:
+                continue
             header = QtWidgets.QLabel(text)
             header.setStyleSheet("font-weight: 600")
             controls_layout.addWidget(header, 0, column)
@@ -18613,7 +18755,7 @@ class NfitProjectExplorer:
                 dataset, group, str(combo.currentData() or "step")
             )
         )
-        controls_layout.addWidget(resolution_mode_combo, 0, last_column)
+        controls_layout.addWidget(resolution_mode_combo, 0, resolution_column)
         for row, axis_config in enumerate(config.get("axes", []), start=1):
             axis_config = _sanitize_rebin_axis_config(axis_config)
             axis_label = QtWidgets.QLabel(
@@ -18635,6 +18777,11 @@ class NfitProjectExplorer:
             )
             resolution_edit = QtWidgets.QLineEdit(resolution_text)
             resolution_edit.setObjectName(f"dataset_rebin_resolution_value_{row - 1}")
+            edges_edit = QtWidgets.QLineEdit(
+                _parameter_to_text(axis_config.get("bin_edges", ""))
+            )
+            edges_edit.setObjectName(f"dataset_rebin_axis_edges_{row - 1}")
+            edges_edit.setPlaceholderText("uniform")
             lower_edit.setToolTip("Lower bound of the rebinned axis.")
             upper_edit.setToolTip("Upper bound of the rebinned axis.")
             resolution_edit.setToolTip(
@@ -18642,7 +18789,11 @@ class NfitProjectExplorer:
                 if resolution_key == "step_size"
                 else "Number of bins. Editing it recalculates the displayed step size."
             )
-            for editor in (lower_edit, upper_edit, resolution_edit):
+            edges_edit.setToolTip(
+                "Optional strictly increasing edge list for only this axis, for example "
+                "[-2, -1, 0, 0.5, 2]. Leave blank to use the uniform Resolution setting."
+            )
+            for editor in (lower_edit, upper_edit, resolution_edit, edges_edit):
                 editor.setMinimumWidth(72)
             lower_edit.editingFinished.connect(
                 lambda row=row - 1, editor=lower_edit: self._set_dataset_rebin_axis_value(dataset, group, row, "lower", editor.text())
@@ -18653,6 +18804,11 @@ class NfitProjectExplorer:
             resolution_edit.editingFinished.connect(
                 lambda row=row - 1, key=resolution_key, editor=resolution_edit: self._set_dataset_rebin_axis_value(
                     dataset, group, row, key, editor.text()
+                )
+            )
+            edges_edit.editingFinished.connect(
+                lambda row=row - 1, editor=edges_edit: self._set_dataset_rebin_axis_edges(
+                    dataset, group, row, editor.text()
                 )
             )
             controls_layout.addWidget(axis_label, row, 0)
@@ -18681,6 +18837,7 @@ class NfitProjectExplorer:
             controls_layout.addWidget(lower_edit, row, column)
             controls_layout.addWidget(upper_edit, row, column + 1)
             controls_layout.addWidget(resolution_edit, row, column + 2)
+            controls_layout.addWidget(edges_edit, row, column + 3)
 
         option_row = QtWidgets.QHBoxLayout()
         fractional_check = QtWidgets.QCheckBox("Fractional binning")
@@ -18803,6 +18960,23 @@ class NfitProjectExplorer:
                 dataset, group, editor
             )
         )
+        samples_label = QtWidgets.QLabel("Minimum samples")
+        samples_edit = QtWidgets.QLineEdit(
+            _format_number(_rebin_minimum_samples(config))
+        )
+        samples_edit.setObjectName("dataset_rebin_minimum_samples")
+        samples_edit.setMaximumWidth(70)
+        samples_tooltip = (
+            "Mask bins receiving less than this effective number of source samples. "
+            "Fractional binning sums fractional sample contributions."
+        )
+        samples_label.setToolTip(samples_tooltip)
+        samples_edit.setToolTip(samples_tooltip)
+        samples_edit.editingFinished.connect(
+            lambda editor=samples_edit: self._set_dataset_rebin_minimum_samples(
+                dataset, group, editor
+            )
+        )
         option_row.addWidget(fractional_check)
         option_row.addWidget(auto_check)
         option_row.addWidget(mean_label)
@@ -18812,6 +18986,9 @@ class NfitProjectExplorer:
         quality_row = QtWidgets.QHBoxLayout()
         quality_row.addWidget(coverage_label)
         quality_row.addWidget(coverage_edit)
+        quality_row.addSpacing(12)
+        quality_row.addWidget(samples_label)
+        quality_row.addWidget(samples_edit)
         quality_row.addSpacing(12)
         quality_row.addWidget(batch_label)
         quality_row.addWidget(batch_spin)
@@ -19616,6 +19793,26 @@ class NfitProjectExplorer:
         config["minimum_coverage"] = value
         self._after_dataset_rebin_changed(dataset, group)
 
+    def _set_dataset_rebin_minimum_samples(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup | None,
+        editor: Any,
+    ) -> None:
+        config = dataset_rebin_config(dataset)
+        try:
+            value = float(editor.text())
+        except ValueError:
+            editor.setText(_format_number(_rebin_minimum_samples(config)))
+            return
+        if not np.isfinite(value) or value < 0.0:
+            editor.setText(_format_number(_rebin_minimum_samples(config)))
+            return
+        if np.isclose(_rebin_minimum_samples(config), value):
+            return
+        config["minimum_samples"] = value
+        self._after_dataset_rebin_changed(dataset, group)
+
     def _set_dataset_rebin_max_batch_mb(
         self,
         dataset: DatasetEntry,
@@ -19737,6 +19934,25 @@ class NfitProjectExplorer:
         config["minimum_coverage"] = value
         self._after_group_composite_changed(group)
 
+    def _set_group_composite_minimum_samples(
+        self,
+        group: DataGroup | _CompositeScope,
+        editor: Any,
+    ) -> None:
+        config = data_group_composite_config(group)
+        try:
+            value = float(editor.text())
+        except ValueError:
+            editor.setText(_format_number(_rebin_minimum_samples(config)))
+            return
+        if not np.isfinite(value) or value < 0.0:
+            editor.setText(_format_number(_rebin_minimum_samples(config)))
+            return
+        if np.isclose(_rebin_minimum_samples(config), value):
+            return
+        config["minimum_samples"] = value
+        self._after_group_composite_changed(group)
+
     def _set_group_composite_max_batch_mb(self, group: DataGroup | _CompositeScope, value: int) -> None:
         config = data_group_composite_config(group)
         value = max(int(value), 1)
@@ -19844,6 +20060,31 @@ class NfitProjectExplorer:
         config["normalize"] = True
         self._after_group_composite_changed(group)
 
+    def _set_group_composite_axis_edges(
+        self,
+        group: DataGroup | _CompositeScope,
+        index: int,
+        text: str,
+    ) -> None:
+        config = data_group_composite_config(group)
+        axes = config.get("axes", [])
+        if not (0 <= index < len(axes)):
+            return
+        try:
+            parsed = _parse_parameter_text(text)
+            if parsed == "":
+                axes[index].pop("bin_edges", None)
+            else:
+                axes[index].update(
+                    _sanitize_rebin_axis_config(
+                        {**axes[index], "bin_edges": _normalize_rebin_bin_edges(parsed)}
+                    )
+                )
+        except (TypeError, ValueError):
+            self._sync_details()
+            return
+        self._after_group_composite_changed(group)
+
     def _set_group_composite_axis_vector(self, group: DataGroup | _CompositeScope, index: int, text: str) -> None:
         config = data_group_composite_config(group)
         axes = config.get("axes", [])
@@ -19914,6 +20155,32 @@ class NfitProjectExplorer:
         except ValueError:
             return
         axis.update(_sanitize_rebin_axis_config(axis))
+        self._after_dataset_rebin_changed(dataset, group)
+
+    def _set_dataset_rebin_axis_edges(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup | None,
+        index: int,
+        text: str,
+    ) -> None:
+        config = dataset_rebin_config(dataset)
+        axes = config.get("axes", [])
+        if not (0 <= index < len(axes)):
+            return
+        try:
+            parsed = _parse_parameter_text(text)
+            if parsed == "":
+                axes[index].pop("bin_edges", None)
+            else:
+                axes[index].update(
+                    _sanitize_rebin_axis_config(
+                        {**axes[index], "bin_edges": _normalize_rebin_bin_edges(parsed)}
+                    )
+                )
+        except (TypeError, ValueError):
+            self._set_dataset_details_preserving_scroll(dataset, group)
+            return
         self._after_dataset_rebin_changed(dataset, group)
 
     def _set_dataset_rebin_resolution_mode(
@@ -20025,6 +20292,9 @@ class NfitProjectExplorer:
                     else _format_number(axis["step_size"])
                 ),
                 f"dataset_rebin_axis_vector_{index}": _parameter_to_text(axis.get("vector", [])),
+                f"dataset_rebin_axis_edges_{index}": _parameter_to_text(
+                    axis.get("bin_edges", "")
+                ),
             }
             for object_name, text in values.items():
                 editor = self.details_widget.findChild(QtWidgets.QLineEdit, object_name)

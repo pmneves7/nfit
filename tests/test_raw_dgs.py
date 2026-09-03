@@ -79,6 +79,26 @@ def test_raw_dgs_metadata_and_streamed_hkle_binning(tmp_path):
     assert not result.mask.item()
 
 
+def test_raw_dgs_supports_one_nonuniform_axis_and_minimum_samples(tmp_path):
+    source = tmp_path / "SEQ_42.nxs.h5"
+    _write_raw_dgs(source)
+    group = raw_dgs_dataset_group([source])
+
+    result = bin_raw_dgs_group(
+        group,
+        lower=[-10, -10, -10, -100],
+        upper=[10, 10, 10, 20],
+        num_bins=[1, 1, 1, 1],
+        bin_edges=[None, None, None, [-100.0, -10.0, 0.0, 20.0]],
+        minimum_samples=2,
+    )
+
+    assert result.shape == (1, 1, 1, 3)
+    np.testing.assert_allclose(result.axes[3].values, [-100.0, -10.0, 0.0, 20.0])
+    assert np.all(result.mask)
+    assert result.metadata["rebin"]["minimum_samples"] == 2.0
+
+
 def test_raw_dgs_trajectory_normalization_keeps_each_runs_detector_geometry(monkeypatch, tmp_path):
     first_source = tmp_path / "SEQ_42.nxs.h5"
     second_source = tmp_path / "SEQ_43.nxs.h5"

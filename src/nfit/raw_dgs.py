@@ -26,7 +26,9 @@ from .mdevent import (
     FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER,
     _accumulate_detector_trajectory,
     _flat_bin_indices,
+    _requested_edges,
     _symmetry_matrices,
+    _validated_minimum_samples,
     load_detector_normalization,
 )
 from .mdhisto import MDHistoAxis, MDHistoData
@@ -178,6 +180,8 @@ def bin_raw_dgs_group(
     upper: Iterable[float],
     num_bins: Iterable[int],
     step_size: Iterable[float] | None = None,
+    bin_edges: Iterable[Iterable[float] | None] | None = None,
+    minimum_samples: float = 0.0,
     datasets: Iterable[DatasetEntry] | None = None,
     vectors: Iterable[Iterable[float]] | None = None,
     axis_names: Iterable[str] | None = None,
@@ -203,15 +207,8 @@ def bin_raw_dgs_group(
     )
     if lo.shape != (4,) or hi.shape != (4,) or bins.shape != (4,) or np.any(bins <= 0):
         raise ValueError("raw direct-geometry HKLE binning requires four positive bin counts")
-    if step_size is None:
-        edges = [np.linspace(a, b, n + 1) for a, b, n in zip(lo, hi, bins, strict=True)]
-    else:
-        steps = np.asarray(tuple(step_size), dtype=float)
-        if steps.shape != (4,) or np.any(steps <= 0.0):
-            raise ValueError("raw direct-geometry step sizes must contain four positive values")
-        edges = [
-            np.append(np.arange(a, b, step), b) for a, b, step in zip(lo, hi, steps, strict=True)
-        ]
+    edges = _requested_edges(lo, hi, bins, step_size, bin_edges=bin_edges)
+    minimum_samples = _validated_minimum_samples(minimum_samples)
     shape = tuple(edge.size - 1 for edge in edges)
     basis = (
         np.eye(4) if vectors is None else np.asarray(tuple(tuple(v) for v in vectors), dtype=float)
@@ -387,7 +384,7 @@ def bin_raw_dgs_group(
     rms = float(np.sqrt(variance_sum.sum() / total_events)) if total_events else 1.0
     zeros = covered & (event_count == 0)
     errors[zeros] = FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER * rms / normalization[zeros]
-    mask = ~covered
+    mask = ~covered | (event_count < minimum_samples)
     axes = tuple(
         MDHistoAxis(
             name,
@@ -407,7 +404,11 @@ def bin_raw_dgs_group(
         metadata={
             "raw_dgs": config,
             "raw_dgs_energy_windows_meV": resolved_energy_windows,
-            "rebin": {"vectors": basis.tolist()},
+            "rebin": {
+                "vectors": basis.tolist(),
+                "bin_edges": [edge.tolist() for edge in edges],
+                "minimum_samples": minimum_samples,
+            },
             "signal_semantics": "density",
             "signal_semantics_source": "nfit_raw_tof_reduction",
             "normalization_denominator": normalization,
