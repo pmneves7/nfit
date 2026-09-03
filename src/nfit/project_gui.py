@@ -3175,9 +3175,26 @@ def composite_dataset_data(
         event_axes = [
             _sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])
         ]
+        event_bounds = [
+            (float(axis["lower"]), float(axis["upper"])) for axis in event_axes
+        ]
+        event_symmetry = _rebin_symmetry_matrices(
+            config, _composite_root(group).lattice_parameters
+        )
+        if event_symmetry is not None and len(event_axes) == 4:
+            event_basis = _validate_mdhisto_rebin_basis(event_axes, 4)
+            corner_grids = np.meshgrid(
+                *([lower, upper] for lower, upper in event_bounds), indexing="ij"
+            )
+            output_corners = np.stack(corner_grids, axis=-1).reshape(-1, 4)
+            event_bounds = _symmetry_projected_coordinate_bounds(
+                output_corners @ event_basis,
+                event_symmetry,
+                event_basis,
+            )
         config["axes"] = _resolve_auto_rebin_axes(
             event_axes,
-            [(float(axis["lower"]), float(axis["upper"])) for axis in event_axes],
+            event_bounds,
         )
     result: MDHistoData | PointListData | PointData4D
     if kind == "mdevent":
@@ -7322,19 +7339,34 @@ def _rebin_point_list_data(dataset: DatasetEntry, config: dict[str, Any]) -> Poi
     coordinate_names = [axis.get("name") for axis in axes_config if axis.get("name") in prepared.columns]
     if not coordinate_names:
         coordinate_names = list(prepared.coordinate_names)
-    lower = [axis["lower"] for axis in axes_config[: len(coordinate_names)]] or None
-    upper = [axis["upper"] for axis in axes_config[: len(coordinate_names)]] or None
+    selected_axes = axes_config[: len(coordinate_names)]
+    symmetry = _rebin_symmetry_matrices(
+        config, prepared.metadata.get("lattice_parameters")
+    )
+    coordinates = np.column_stack(
+        [prepared.columns[name] for name in coordinate_names]
+    )
+    data_bounds = (
+        _symmetry_projected_coordinate_bounds(
+            coordinates, symmetry, np.eye(len(coordinate_names))
+        )
+        if symmetry is not None
+        else _finite_coordinate_bounds(coordinates)
+    )
+    selected_axes = _resolve_auto_rebin_axes(selected_axes, data_bounds)
+    lower = [axis["lower"] for axis in selected_axes] or None
+    upper = [axis["upper"] for axis in selected_axes] or None
     result = prepared.rebin_to_histogram(
         coordinate_names,
         lower=lower,
         upper=upper,
-        **_rebin_grid_kwargs(config, axes_config[: len(coordinate_names)]),
+        **_rebin_grid_kwargs(config, selected_axes),
         fractional=bool(config.get("fractional", False)),
         normalize=True,
         mean_weighting=_rebin_mean_weighting(config),
         minimum_samples=_rebin_minimum_samples(config),
         max_batch_bytes=_rebin_max_batch_bytes(config),
-        symmetry_operations=_rebin_symmetry_matrices(config, prepared.metadata.get("lattice_parameters")),
+        symmetry_operations=symmetry,
     )
     metadata = dict(result.metadata)
     symmetry_metadata = _rebin_symmetry_metadata(config, prepared.metadata.get("lattice_parameters"))
@@ -7467,6 +7499,33 @@ def _finite_coordinate_bounds(coordinates: np.ndarray) -> list[tuple[float, floa
         (float(np.min(values[:, index])), float(np.max(values[:, index])))
         for index in range(values.shape[1])
     ]
+
+
+def _symmetry_projected_coordinate_bounds(
+    physical_coordinates: np.ndarray,
+    symmetry: Sequence[np.ndarray],
+    output_basis: np.ndarray,
+) -> list[tuple[float, float]]:
+    """Return output-coordinate bounds over every reciprocal-symmetry image."""
+
+    physical = np.asarray(physical_coordinates, dtype=float)
+    basis = np.asarray(output_basis, dtype=float)
+    ndim = physical.shape[-1]
+    if ndim < 3 or basis.shape != (ndim, ndim):
+        raise ValueError(
+            "symmetry auto limits require HKL as the first three coordinates"
+        )
+    inverse_basis = np.linalg.inv(basis)
+    lower = np.full(ndim, np.inf, dtype=float)
+    upper = np.full(ndim, -np.inf, dtype=float)
+    for operation in symmetry:
+        transform = np.eye(ndim, dtype=float)
+        transform[:3, :3] = np.asarray(operation, dtype=float).T
+        projected = physical @ transform @ inverse_basis
+        operation_bounds = _finite_coordinate_bounds(projected)
+        lower = np.minimum(lower, [bound[0] for bound in operation_bounds])
+        upper = np.maximum(upper, [bound[1] for bound in operation_bounds])
+    return list(zip(lower.tolist(), upper.tolist(), strict=True))
 
 
 def _rebin_grid_kwargs(
@@ -8491,11 +8550,6 @@ def _rebin_mdhisto_data(
             for index, axis_config in enumerate(axes_config)
         ]
     coords = np.stack(projected, axis=-1)
-    axes_config = _resolve_auto_rebin_axes(
-        axes_config, _finite_coordinate_bounds(coords)
-    )
-    lower = [axis["lower"] for axis in axes_config]
-    upper = [axis["upper"] for axis in axes_config]
     symmetry = _rebin_symmetry_matrices(config, data.metadata.get("lattice_parameters"))
     output_axes = None
     if symmetry is not None:
@@ -8506,6 +8560,14 @@ def _rebin_mdhisto_data(
             raise ValueError("rebin symmetry requires reconstructable H, K, L, and energy coordinates")
         coords = np.stack([physical[name] for name in ("H", "K", "L", "E")], axis=-1)
         output_axes = _validate_mdhisto_rebin_basis(axes_config, ndim)
+        data_bounds = _symmetry_projected_coordinate_bounds(
+            coords, symmetry, output_axes
+        )
+    else:
+        data_bounds = _finite_coordinate_bounds(coords)
+    axes_config = _resolve_auto_rebin_axes(axes_config, data_bounds)
+    lower = [axis["lower"] for axis in axes_config]
+    upper = [axis["upper"] for axis in axes_config]
     valid = np.isfinite(data.signal) & np.isfinite(data.errors) & ~data.mask
     if data.num_events is not None:
         valid &= mdhisto_measured_bins(data)
@@ -8649,13 +8711,20 @@ def _point_data_histogram(
     basis = _validate_mdhisto_rebin_basis(axes_config, 4)
     physical_coordinates = np.asarray(coordinates, dtype=float)
     projected_coordinates = physical_coordinates @ np.linalg.inv(basis)
+    metadata = copy.deepcopy(dict(source_metadata or {}))
+    symmetry = _rebin_symmetry_matrices(config, metadata.get("lattice_parameters"))
+    data_bounds = (
+        _symmetry_projected_coordinate_bounds(
+            physical_coordinates, symmetry, basis
+        )
+        if symmetry is not None
+        else _finite_coordinate_bounds(projected_coordinates)
+    )
     axes_config = _resolve_auto_rebin_axes(
-        axes_config, _finite_coordinate_bounds(projected_coordinates)
+        axes_config, data_bounds
     )
     lower = [axis["lower"] for axis in axes_config]
     upper = [axis["upper"] for axis in axes_config]
-    metadata = copy.deepcopy(dict(source_metadata or {}))
-    symmetry = _rebin_symmetry_matrices(config, metadata.get("lattice_parameters"))
     kwargs = dict(
         data_errs=np.asarray(errors, dtype=float),
         data_weights=(
@@ -17726,7 +17795,11 @@ class NfitProjectExplorer:
         for row, axis_config in enumerate(axes, start=header_row + 1):
             axis_index = row - header_row - 1
             axis = _sanitize_rebin_axis_config(axis_config)
-            controls_layout.addWidget(QtWidgets.QLabel(str(axis.get("name", f"Axis {axis_index + 1}"))), row, 0)
+            axis_label = QtWidgets.QLabel(
+                str(axis.get("name", f"Axis {axis_index + 1}"))
+            )
+            axis_label.setObjectName(f"group_composite_axis_label_{axis_index}")
+            controls_layout.addWidget(axis_label, row, 0)
             column_offset = 1
             if show_vectors:
                 variable = str(
@@ -17851,7 +17924,14 @@ class NfitProjectExplorer:
         symmetry_mode.setObjectName("group_composite_symmetry_mode")
         for label, value in (("Space group", "space_group"), ("Point group", "point_group"), ("Operations", "operations"), ("Generators", "generators")):
             symmetry_mode.addItem(label, value)
-        symmetry_mode.setCurrentIndex(max(symmetry_mode.findData(symmetry.mode if symmetry.mode != "none" else "space_group"), 0))
+        displayed_symmetry_mode = (
+            symmetry.mode
+            if symmetry.mode != "none"
+            else str(config.get("symmetry", {}).get("last_mode", "space_group"))
+        )
+        symmetry_mode.setCurrentIndex(
+            max(symmetry_mode.findData(displayed_symmetry_mode), 0)
+        )
         symmetry_mode.setToolTip("Select the notation used by the symmetry expression.")
         symmetry_mode.currentIndexChanged.connect(lambda _index, combo=symmetry_mode: self._set_group_composite_symmetry_mode(group, str(combo.currentData())))
         symmetry_expression = QtWidgets.QLineEdit(symmetry.expression)
@@ -17896,7 +17976,8 @@ class NfitProjectExplorer:
         option_row.addWidget(mean_label)
         option_row.addWidget(mean_combo)
         option_row.addStretch(1)
-        controls_layout.addLayout(option_row, len(axes) + 1, 0, 1, len(headers))
+        footer_row = header_row + len(axes) + 1
+        controls_layout.addLayout(option_row, footer_row, 0, 1, len(headers))
         quality_row = QtWidgets.QHBoxLayout()
         quality_row.addWidget(coverage_label)
         quality_row.addWidget(coverage_edit)
@@ -17907,19 +17988,19 @@ class NfitProjectExplorer:
         quality_row.addWidget(batch_label)
         quality_row.addWidget(batch_spin)
         quality_row.addStretch(1)
-        controls_layout.addLayout(quality_row, len(axes) + 2, 0, 1, len(headers))
+        controls_layout.addLayout(quality_row, footer_row + 1, 0, 1, len(headers))
         symmetry_row = QtWidgets.QHBoxLayout()
         symmetry_row.addWidget(symmetry_check)
         symmetry_row.addWidget(symmetry_mode)
         symmetry_row.addWidget(symmetry_expression, 1)
-        controls_layout.addLayout(symmetry_row, len(axes) + 3, 0, 1, len(headers))
+        controls_layout.addLayout(symmetry_row, footer_row + 2, 0, 1, len(headers))
         status_label = QtWidgets.QLabel(_composite_rebin_status_text(group, config))
         status_label.setObjectName("group_composite_status")
         status_label.setWordWrap(True)
         status_label.setToolTip(
             "Shows whether the cached composite rebin is current. Pending manual rebinning will be forced automatically for fit and viewer operations."
         )
-        controls_layout.addWidget(status_label, len(axes) + 4, 0, 1, len(headers))
+        controls_layout.addWidget(status_label, footer_row + 3, 0, 1, len(headers))
         action_row = QtWidgets.QHBoxLayout()
         rebin_now_button = QtWidgets.QPushButton("Rebin now")
         rebin_now_button.setObjectName("group_composite_rebin_now")
@@ -17941,13 +18022,15 @@ class NfitProjectExplorer:
         )
         action_row.addWidget(materialize_button)
         action_row.addStretch(1)
-        controls_layout.addLayout(action_row, len(axes) + 5, 0, 1, len(headers))
+        controls_layout.addLayout(action_row, footer_row + 4, 0, 1, len(headers))
         layout.addWidget(controls)
         return box
 
     def _set_dataset_details(self, dataset: DatasetEntry, group: DataGroup | None) -> None:
         # Selection must remain a metadata-only operation. File-backed point
         # lists are loaded by the explicit Load action or a viewer/fit job.
+        from PySide6 import QtCore, QtWidgets
+
         sections = dataset_detail_sections(dataset, group=group)
         summary_lines: list[str] = []
         for title, lines in sections:
@@ -17955,36 +18038,113 @@ class NfitProjectExplorer:
                 summary_lines.append("")
             summary_lines.extend([title, *lines])
         self.details_label.setText("\n".join(summary_lines))
+        existing_tabs = self.details_widget.findChild(
+            QtWidgets.QTabWidget, "dataset_details_tabs"
+        )
+        selected_tab = (
+            existing_tabs.tabText(existing_tabs.currentIndex())
+            if existing_tabs is not None and existing_tabs.currentIndex() >= 0
+            else "Overview"
+        )
         self._clear_details_panel()
+
+        tabs = QtWidgets.QTabWidget()
+        tabs.setObjectName("dataset_details_tabs")
+        tabs.setDocumentMode(True)
+        tabs.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding,
+        )
+        tabs.setMinimumHeight(480)
+
+        def add_tab(title: str, object_name: str) -> Any:
+            scroll = QtWidgets.QScrollArea()
+            scroll.setObjectName(object_name)
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(
+                QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            )
+            content = QtWidgets.QWidget()
+            content_layout = QtWidgets.QVBoxLayout(content)
+            content_layout.setContentsMargins(4, 6, 4, 6)
+            content_layout.setSpacing(8)
+            content_layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
+            scroll.setWidget(content)
+            tabs.addTab(scroll, title)
+            return content_layout
+
+        overview_layout = add_tab("Overview", "dataset_details_overview")
+        physics_layout = add_tab("Physics", "dataset_details_physics")
+        processing_layout = add_tab("Binning & channels", "dataset_details_processing")
+        metadata_layout = add_tab("Metadata", "dataset_details_metadata")
+        for button in tabs.tabBar().findChildren(QtWidgets.QToolButton):
+            button.setToolTip("Scroll the dataset detail tabs when space is limited.")
+
+        section_lines = {title: lines for title, lines in sections}
         if group is not None and isinstance(
             dataset.metadata.get(DERIVED_RECIPE_KEY), dict
         ):
-            self.details_layout.addWidget(
+            processing_layout.addWidget(
                 self._derived_recipe_group_box(dataset, group)
             )
+
+        overview_layout.addWidget(
+            self._dataset_type_group_box(
+                dataset, group, section_lines.get("Dataset", [])
+            )
+        )
+        if dataset.data_type != "magnetization":
+            overview_layout.addWidget(self.sample_environment_widget)
+        overview_layout.addWidget(
+            self._details_group_box("Data", section_lines.get("Data", []))
+        )
+        overview_layout.addWidget(
+            self._details_group_box("Source", section_lines.get("Source", []))
+        )
+
         if group is not None and dataset.data_type.startswith("single_crystal"):
-            self.details_layout.addWidget(self._ub_setup_group_box(group, dataset))
+            physics_layout.addWidget(self._ub_setup_group_box(group, dataset))
+        physics_layout.addWidget(
+            self._details_group_box("Crystal", section_lines.get("Crystal", []))
+        )
+        if dataset.data_type in {"single_crystal_inelastic", "powder_inelastic"}:
+            physics_layout.addWidget(
+                self._dataset_spectral_channels_group_box(dataset, group)
+            )
+        physics_layout.addWidget(
+            self._dataset_signal_semantics_group_box(dataset, group)
+        )
+
         is_point_list = isinstance(dataset.data, PointListData)
-        for title, lines in sections:
-            if title == "Axes":
-                self.details_layout.addWidget(self._dataset_axes_group_box(dataset, group, lines))
-                if is_point_list:
-                    self.details_layout.addWidget(self._dataset_point_list_group_box(dataset, group))
-            elif title == "Dataset":
-                self.details_layout.addWidget(self._dataset_type_group_box(dataset, group, lines))
-                # Conditions sit between the Dataset and Axes panels.
-                if dataset.data_type != "magnetization":
-                    self.details_layout.addWidget(self.sample_environment_widget)
-                if dataset.data_type in {"single_crystal_inelastic", "powder_inelastic"}:
-                    self.details_layout.addWidget(
-                        self._dataset_spectral_channels_group_box(dataset, group)
-                    )
-                self.details_layout.addWidget(self._dataset_signal_semantics_group_box(dataset, group))
-            elif title == "Metadata":
-                self.details_layout.addWidget(self._dataset_metadata_group_box(dataset))
-            else:
-                self.details_layout.addWidget(self._details_group_box(title, lines))
-        self.details_layout.addStretch(1)
+        processing_layout.addWidget(
+            self._dataset_axes_group_box(
+                dataset, group, section_lines.get("Axes", [])
+            )
+        )
+        if is_point_list:
+            processing_layout.addWidget(
+                self._dataset_point_list_group_box(dataset, group)
+            )
+        metadata_layout.addWidget(self._dataset_metadata_group_box(dataset))
+
+        for content_layout in (
+            overview_layout,
+            physics_layout,
+            processing_layout,
+            metadata_layout,
+        ):
+            content_layout.addStretch(1)
+        selected_index = next(
+            (
+                index
+                for index in range(tabs.count())
+                if tabs.tabText(index) == selected_tab
+            ),
+            0,
+        )
+        tabs.setCurrentIndex(selected_index)
+        self.details_layout.addWidget(tabs, 1)
 
     def _derived_recipe_source_choices(
         self,
@@ -19601,7 +19761,14 @@ class NfitProjectExplorer:
         symmetry_mode.addItem("Point group", "point_group")
         symmetry_mode.addItem("Operations", "operations")
         symmetry_mode.addItem("Generators", "generators")
-        symmetry_mode.setCurrentIndex(max(symmetry_mode.findData(symmetry.mode if symmetry.mode != "none" else "space_group"), 0))
+        displayed_symmetry_mode = (
+            symmetry.mode
+            if symmetry.mode != "none"
+            else str(config.get("symmetry", {}).get("last_mode", "space_group"))
+        )
+        symmetry_mode.setCurrentIndex(
+            max(symmetry_mode.findData(displayed_symmetry_mode), 0)
+        )
         symmetry_mode.setToolTip(
             "Choose a space group, point group, semicolon-separated Jones-faithful operations, or geometric generators."
         )
@@ -19676,7 +19843,8 @@ class NfitProjectExplorer:
         option_row.addWidget(mean_label)
         option_row.addWidget(mean_combo)
         option_row.addStretch(1)
-        controls_layout.addLayout(option_row, len(config.get("axes", [])) + 1, 0, 1, last_column + 1)
+        footer_row = header_row + len(config.get("axes", [])) + 1
+        controls_layout.addLayout(option_row, footer_row, 0, 1, last_column + 1)
         quality_row = QtWidgets.QHBoxLayout()
         quality_row.addWidget(coverage_label)
         quality_row.addWidget(coverage_edit)
@@ -19687,26 +19855,26 @@ class NfitProjectExplorer:
         quality_row.addWidget(batch_label)
         quality_row.addWidget(batch_spin)
         quality_row.addStretch(1)
-        controls_layout.addLayout(quality_row, len(config.get("axes", [])) + 2, 0, 1, last_column + 1)
+        controls_layout.addLayout(quality_row, footer_row + 1, 0, 1, last_column + 1)
         symmetry_row = QtWidgets.QHBoxLayout()
         symmetry_row.addWidget(symmetry_check)
         symmetry_row.addWidget(symmetry_mode)
         symmetry_row.addWidget(symmetry_expression, 1)
         symmetry_row.addWidget(symmetry_preview)
-        controls_layout.addLayout(symmetry_row, len(config.get("axes", [])) + 3, 0, 1, last_column + 1)
+        controls_layout.addLayout(symmetry_row, footer_row + 2, 0, 1, last_column + 1)
         status_label = QtWidgets.QLabel(_dataset_rebin_status_text(dataset, config))
         status_label.setObjectName("dataset_rebin_status")
         status_label.setWordWrap(True)
         status_label.setToolTip(
             "Shows whether the cached rebinned data is current. Pending manual rebinning will be forced automatically for fit, view, and export operations."
         )
-        controls_layout.addWidget(status_label, len(config.get("axes", [])) + 4, 0, 1, last_column + 1)
+        controls_layout.addWidget(status_label, footer_row + 3, 0, 1, last_column + 1)
         action_row = QtWidgets.QHBoxLayout()
         action_row.addWidget(rebin_now_button)
         action_row.addWidget(create_button)
         action_row.addWidget(save_rebin_button)
         action_row.addStretch(1)
-        controls_layout.addLayout(action_row, len(config.get("axes", [])) + 5, 0, 1, last_column + 1)
+        controls_layout.addLayout(action_row, footer_row + 4, 0, 1, last_column + 1)
         rebin_layout.addWidget(controls)
         layout.addWidget(rebin_box)
         return group_box
@@ -20540,10 +20708,20 @@ class NfitProjectExplorer:
     ) -> None:
         config = dataset_rebin_config(dataset)
         payload = config["symmetry"]
+        modes = {"space_group", "point_group", "operations", "generators"}
         if checked:
-            payload["mode"] = "space_group"
-            payload["expression"] = str(group.spacegroup if group is not None and group.spacegroup else "P 1")
+            previous_mode = str(payload.get("last_mode", "space_group"))
+            payload["mode"] = previous_mode if previous_mode in modes else "space_group"
+            if not str(payload.get("expression", "")).strip():
+                payload["expression"] = str(
+                    group.spacegroup
+                    if group is not None and group.spacegroup
+                    else "P 1"
+                )
         else:
+            current_mode = str(payload.get("mode", "space_group"))
+            if current_mode in modes:
+                payload["last_mode"] = current_mode
             payload["mode"] = "none"
         if group is not None and isinstance(group.lattice_parameters, dict):
             payload["lattice_parameters"] = copy.deepcopy(group.lattice_parameters)
@@ -20554,7 +20732,15 @@ class NfitProjectExplorer:
     ) -> None:
         config = dataset_rebin_config(dataset)
         payload = config["symmetry"]
-        payload["mode"] = mode if mode in {"space_group", "point_group", "operations", "generators"} else "space_group"
+        selected_mode = (
+            mode
+            if mode in {"space_group", "point_group", "operations", "generators"}
+            else "space_group"
+        )
+        if str(payload.get("mode", "none")) == "none":
+            payload["last_mode"] = selected_mode
+        else:
+            payload["mode"] = selected_mode
         if group is not None and isinstance(group.lattice_parameters, dict):
             payload["lattice_parameters"] = copy.deepcopy(group.lattice_parameters)
         self._after_dataset_rebin_changed(dataset, group)
@@ -20660,16 +20846,33 @@ class NfitProjectExplorer:
         config = data_group_composite_config(group)
         payload = config["symmetry"]
         root = _composite_root(group)
-        payload["mode"] = "space_group" if checked else "none"
+        modes = {"space_group", "point_group", "operations", "generators"}
         if checked:
-            payload["expression"] = str(root.spacegroup or "P 1")
+            previous_mode = str(payload.get("last_mode", "space_group"))
+            payload["mode"] = previous_mode if previous_mode in modes else "space_group"
+            if not str(payload.get("expression", "")).strip():
+                payload["expression"] = str(root.spacegroup or "P 1")
+        else:
+            current_mode = str(payload.get("mode", "space_group"))
+            if current_mode in modes:
+                payload["last_mode"] = current_mode
+            payload["mode"] = "none"
         if isinstance(root.lattice_parameters, dict):
             payload["lattice_parameters"] = copy.deepcopy(root.lattice_parameters)
         self._after_group_composite_changed(group)
 
     def _set_group_composite_symmetry_mode(self, group: DataGroup | _CompositeScope, mode: str) -> None:
         config = data_group_composite_config(group)
-        config["symmetry"]["mode"] = mode if mode in {"space_group", "point_group", "operations", "generators"} else "space_group"
+        payload = config["symmetry"]
+        selected_mode = (
+            mode
+            if mode in {"space_group", "point_group", "operations", "generators"}
+            else "space_group"
+        )
+        if str(payload.get("mode", "none")) == "none":
+            payload["last_mode"] = selected_mode
+        else:
+            payload["mode"] = selected_mode
         root = _composite_root(group)
         if isinstance(root.lattice_parameters, dict):
             config["symmetry"]["lattice_parameters"] = copy.deepcopy(root.lattice_parameters)
@@ -21033,7 +21236,7 @@ class NfitProjectExplorer:
         self._mark_dirty()
         if group is not None and bool(config.get("auto_rebin", True)):
             self.refresh_slice_viewer(group)
-        if not self._refresh_dataset_rebin_controls(dataset):
+        if not self._refresh_dataset_rebin_controls(dataset, group):
             self._set_dataset_details_preserving_scroll(
                 dataset,
                 group,
@@ -21041,7 +21244,9 @@ class NfitProjectExplorer:
                 focus_object_name=focus_object_name,
             )
 
-    def _refresh_dataset_rebin_controls(self, dataset: DatasetEntry) -> bool:
+    def _refresh_dataset_rebin_controls(
+        self, dataset: DatasetEntry, group: DataGroup | None
+    ) -> bool:
         """Update rebin controls in place so ordinary edits keep their scroll/focus."""
 
         from PySide6 import QtWidgets
@@ -21092,6 +21297,35 @@ class NfitProjectExplorer:
         status = self.details_widget.findChild(QtWidgets.QLabel, "dataset_rebin_status")
         if status is not None:
             status.setText(_dataset_rebin_status_text(dataset, config))
+        symmetry = symmetry_spec_from_config(config.get("symmetry"))
+        symmetry_mode = self.details_widget.findChild(
+            QtWidgets.QComboBox, "dataset_rebin_symmetry_mode"
+        )
+        if symmetry_mode is not None:
+            displayed_mode = (
+                symmetry.mode
+                if symmetry.mode != "none"
+                else str(config.get("symmetry", {}).get("last_mode", "space_group"))
+            )
+            symmetry_mode.blockSignals(True)
+            try:
+                symmetry_mode.setCurrentIndex(
+                    max(symmetry_mode.findData(displayed_mode), 0)
+                )
+            finally:
+                symmetry_mode.blockSignals(False)
+        symmetry_expression = self.details_widget.findChild(
+            QtWidgets.QLineEdit, "dataset_rebin_symmetry_expression"
+        )
+        if symmetry_expression is not None:
+            symmetry_expression.setText(symmetry.expression)
+        symmetry_preview = self.details_widget.findChild(
+            QtWidgets.QLabel, "dataset_rebin_symmetry_preview"
+        )
+        if symmetry_preview is not None:
+            symmetry_preview.setText(
+                self._dataset_rebin_symmetry_preview(dataset, group)
+            )
         return True
 
     def _after_group_composite_changed(self, group: DataGroup | _CompositeScope) -> None:
@@ -21113,6 +21347,11 @@ class NfitProjectExplorer:
             item = self.details_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                if (
+                    self.sample_environment_widget is not None
+                    and widget.isAncestorOf(self.sample_environment_widget)
+                ):
+                    self.sample_environment_widget.setParent(None)
                 if widget is self.fit_settings_panel or widget is self.sample_environment_widget:
                     widget.setParent(None)
                 else:

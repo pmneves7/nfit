@@ -111,8 +111,17 @@ def test_derived_dataset_details_edit_sources_and_arithmetic_at_top(monkeypatch)
 
     explorer._set_dataset_details(derived, group)
 
-    first_panel = explorer.details_layout.itemAt(0).widget()
-    assert first_panel.objectName() == "derived_recipe_controls"
+    tabs = explorer.details_widget.findChild(
+        QtWidgets.QTabWidget, "dataset_details_tabs"
+    )
+    processing_tab = explorer.details_widget.findChild(
+        QtWidgets.QScrollArea, "dataset_details_processing"
+    )
+    recipe_panel = explorer.details_widget.findChild(
+        QtWidgets.QGroupBox, "derived_recipe_controls"
+    )
+    assert tabs is not None and processing_tab is not None
+    assert recipe_panel is not None and processing_tab.isAncestorOf(recipe_panel)
     left = explorer.details_widget.findChild(
         QtWidgets.QComboBox, "derived_recipe_source_0"
     )

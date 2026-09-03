@@ -247,9 +247,13 @@ for shared orientation and composite HKL conversion.
 
 ## Dataset details and physical conventions
 
-Selecting a dataset shows its axes, source, crystal information, data summary,
-and imported metadata. The **Fit bins** count uses the same prepared view as the
-optimizer, including masks, invalid values, and invalid uncertainties.
+Selecting a dataset organizes its controls into **Overview**, **Physics**,
+**Binning & channels**, and **Metadata** tabs instead of one long settings
+page. The overview contains identity, conditions, data, and source information;
+the physics tab contains crystal orientation and signal conventions; and the
+binning tab contains axes, rebinning, and point-list channels. The **Fit bins**
+count uses the same prepared view as the optimizer, including masks, invalid
+values, and invalid uncertainties.
 
 For inelastic data, **INS representations** records:
 
@@ -290,9 +294,12 @@ Lower and upper limits are blank by default. A blank endpoint is obtained from
 the minimum or maximum projected data coordinate. Uniform edges are placed at
 half-step offsets so the corresponding bin centers lie on integer multiples of
 the step, including zero on the extended grid. Entering a number makes only
-that endpoint explicit. Point-cloud preview resolution adapts to the complete
-composite range, so combining nominally discrete energy scans does not turn
-small within-run energy jitter into an impractically large output volume.
+that endpoint explicit. When symmetry is enabled, automatic endpoints include
+every generated symmetry image; explicit endpoints remain unchanged. Turning
+**Apply symmetry** off and back on preserves both the expression and its
+notation mode. Point-cloud preview resolution adapts to the complete composite
+range, so combining nominally discrete energy scans does not turn small
+within-run energy jitter into an impractically large output volume.
 
 An imported MDEvent collection can reduce directly either to a projected
 single-crystal HKLE histogram or to a powder $|\mathbf Q|,E$ histogram. Both

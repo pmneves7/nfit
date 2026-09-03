@@ -55,7 +55,17 @@ def test_dataset_details_text_summarizes_axes_source_and_metadata(tmp_path, monk
         box.title() for box in explorer.details_widget.findChildren(QtWidgets.QGroupBox)
     ]
 
-    assert panel_titles == [
+    tabs = explorer.details_widget.findChild(
+        QtWidgets.QTabWidget, "dataset_details_tabs"
+    )
+    assert tabs is not None
+    assert [tabs.tabText(index) for index in range(tabs.count())] == [
+        "Overview",
+        "Physics",
+        "Binning & channels",
+        "Metadata",
+    ]
+    assert set(panel_titles) == {
         "Dataset",
         "Conditions",
         "Signal convention",
@@ -65,7 +75,7 @@ def test_dataset_details_text_summarizes_axes_source_and_metadata(tmp_path, monk
         "Data",
         "Source",
         "Metadata",
-    ]
+    }
     assert "Axes\nDimensions: 2" in text
     assert "Crystal\nLattice parameters" in text
     assert "a: 4.17" in text
@@ -687,6 +697,25 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
     assert copy_button is not None and copy_button.toolTip()
     assert paste_button is not None and paste_button.toolTip()
 
+    final_axis_label = explorer.details_widget.findChild(
+        QtWidgets.QLabel, "group_composite_axis_label_1"
+    )
+    fractional_check = explorer.details_widget.findChild(
+        QtWidgets.QCheckBox, "group_composite_fractional"
+    )
+    assert final_axis_label is not None and fractional_check is not None
+    controls_grid = final_axis_label.parentWidget().layout()
+    final_axis_row = controls_grid.getItemPosition(
+        controls_grid.indexOf(final_axis_label)
+    )[0]
+    footer_rows = [
+        controls_grid.getItemPosition(index)[0]
+        for index in range(controls_grid.count())
+        if controls_grid.itemAt(index).layout() is not None
+        and controls_grid.itemAt(index).layout().indexOf(fractional_check) >= 0
+    ]
+    assert footer_rows == [final_axis_row + 1]
+
     checkbox.setChecked(True)
 
     config = project_gui.data_group_composite_config(group)
@@ -1000,8 +1029,80 @@ def test_point_data_auto_limits_center_zero_and_momentum_matrix_updates_labels(
     matrix = explorer.details_widget.findChild(
         QtWidgets.QLineEdit, "dataset_rebin_momentum_matrix"
     )
+    energy_axis_label = explorer.details_widget.findChild(
+        QtWidgets.QLabel, "dataset_rebin_axis_variable_3"
+    )
+    fractional_check = explorer.details_widget.findChild(
+        QtWidgets.QCheckBox, "dataset_rebin_fractional"
+    )
     assert lower is not None and lower.text() == "" and lower.placeholderText() == "auto"
     assert matrix is not None and matrix.toolTip()
+    assert energy_axis_label is not None and fractional_check is not None
+    controls_grid = energy_axis_label.parentWidget().layout()
+    energy_row = controls_grid.getItemPosition(
+        controls_grid.indexOf(energy_axis_label)
+    )[0]
+    footer_rows = [
+        controls_grid.getItemPosition(index)[0]
+        for index in range(controls_grid.count())
+        if controls_grid.itemAt(index).layout() is not None
+        and controls_grid.itemAt(index).layout().indexOf(fractional_check) >= 0
+    ]
+    assert footer_rows == [energy_row + 1]
+    explorer.window.close()
+
+
+def test_rebin_symmetry_toggle_preserves_expression_and_notation(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    dataset = DatasetEntry(
+        "scan",
+        _tiny_mdhisto_data(1.0),
+        kind="mdhisto",
+        data_type="single_crystal_inelastic",
+    )
+    group = DataGroup("Data", datasets=[dataset])
+    dataset_config = dataset_rebin_config(dataset)
+    dataset_config["auto_rebin"] = False
+    dataset_config["symmetry"].update(
+        {"mode": "point_group", "expression": "m-3m"}
+    )
+    composite_config = project_gui.data_group_composite_config(group)
+    composite_config["auto_rebin"] = False
+    composite_config["symmetry"].update(
+        {"mode": "operations", "expression": "x,y,z;-x,-y,-z"}
+    )
+
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer._set_dataset_rebin_symmetry_enabled(dataset, group, False)
+    assert dataset_config["symmetry"]["mode"] == "none"
+    assert dataset_config["symmetry"]["expression"] == "m-3m"
+    assert dataset_config["symmetry"]["last_mode"] == "point_group"
+    explorer._set_dataset_rebin_symmetry_enabled(dataset, group, True)
+    assert dataset_config["symmetry"]["mode"] == "point_group"
+    assert dataset_config["symmetry"]["expression"] == "m-3m"
+
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0))
+    symmetry_check = explorer.details_widget.findChild(
+        QtWidgets.QCheckBox, "group_composite_symmetry_enabled"
+    )
+    assert symmetry_check is not None and symmetry_check.isChecked()
+    explorer._set_group_composite_symmetry_enabled(group, False)
+    assert composite_config["symmetry"]["mode"] == "none"
+    assert composite_config["symmetry"]["expression"] == "x,y,z;-x,-y,-z"
+    symmetry_mode = explorer.details_widget.findChild(
+        QtWidgets.QComboBox, "group_composite_symmetry_mode"
+    )
+    symmetry_expression = explorer.details_widget.findChild(
+        QtWidgets.QLineEdit, "group_composite_symmetry_expression"
+    )
+    assert symmetry_mode.currentData() == "operations"
+    assert symmetry_expression.text() == "x,y,z;-x,-y,-z"
+    explorer._set_group_composite_symmetry_enabled(group, True)
+    assert composite_config["symmetry"]["mode"] == "operations"
+    assert composite_config["symmetry"]["expression"] == "x,y,z;-x,-y,-z"
+    explorer.has_unsaved_changes = False
     explorer.window.close()
 
 

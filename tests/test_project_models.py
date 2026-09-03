@@ -2112,14 +2112,24 @@ def test_sample_environment_panel_hosts_temperature_and_field(monkeypatch):
     explorer = NfitProjectExplorer(NfitProject([group]))
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
 
-    # Panel exists, is titled correctly, and sits between Dataset and Axes.
+    # Conditions remain with the dataset overview; axes live in processing.
     panel = explorer.details_widget.findChild(
         QtWidgets.QGroupBox, "dataset_sample_environment_group"
     )
     assert panel is not None
-    titles = [box.title() for box in explorer.details_widget.findChildren(QtWidgets.QGroupBox)]
-    assert titles.index("Conditions") == titles.index("Dataset") + 1
-    assert titles.index("Conditions") < titles.index("Axes")
+    overview_tab = explorer.details_widget.findChild(
+        QtWidgets.QScrollArea, "dataset_details_overview"
+    )
+    processing_tab = explorer.details_widget.findChild(
+        QtWidgets.QScrollArea, "dataset_details_processing"
+    )
+    axes_panel = next(
+        box
+        for box in explorer.details_widget.findChildren(QtWidgets.QGroupBox)
+        if box.title() == "Axes"
+    )
+    assert overview_tab.isAncestorOf(panel)
+    assert processing_tab.isAncestorOf(axes_panel)
 
     # Temperature control relocated but keeps its objectName + behavior.
     temp = explorer.window.findChild(QtWidgets.QDoubleSpinBox, "dataset_temperature")

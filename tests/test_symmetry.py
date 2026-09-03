@@ -3,6 +3,8 @@ import pytest
 
 from nfit import project_gui
 from nfit.dataset import PointData4D, PointListData
+from nfit.mdhisto import MDHistoAxis, MDHistoData
+from nfit.pipeline import DatasetEntry
 from nfit.rebin import rebin_nd_symmetry
 from nfit.symmetry import SymmetrySpec, resolve_symmetry, transform_hkl
 
@@ -88,6 +90,89 @@ def test_project_rebin_configuration_applies_symmetry_before_binning():
     np.testing.assert_allclose(output.axes[0].centers, [-0.5, 0.5])
     np.testing.assert_allclose(output.signal[:, 0, 0, 0], [7.0, 7.0])
     assert output.metadata["rebin"]["symmetry"]["operation_count"] == 2
+
+
+def test_project_rebin_auto_limits_include_all_symmetry_images():
+    data = PointData4D([0.6], [0.2], [0.0], [1.0], [7.0], [1.0])
+    config = {
+        "fractional": False,
+        "resolution_mode": "step",
+        "axes": project_gui._default_rebin_axes(data),
+        "symmetry": {"mode": "space_group", "expression": "P -1"},
+    }
+    for axis in config["axes"]:
+        axis["step_size"] = 0.2
+        axis["auto_step_size"] = False
+
+    output = project_gui._rebin_point_data(data, config)
+
+    assert output.axes[0].values[0] < -0.6
+    assert output.axes[0].values[-1] > 0.6
+    assert output.axes[1].values[0] < -0.2
+    assert output.axes[1].values[-1] > 0.2
+    assert np.count_nonzero(~output.mask) == 2
+
+
+def test_mdhisto_rebin_auto_limits_include_all_symmetry_images():
+    axes = tuple(
+        MDHistoAxis(name, values, units, kind, metadata={"variable": variable})
+        for name, values, units, kind, variable in (
+            ("H", [0.5, 0.7], "rlu", "momentum", "H"),
+            ("K", [0.1, 0.3], "rlu", "momentum", "K"),
+            ("L", [-0.1, 0.1], "rlu", "momentum", "L"),
+            ("DeltaE", [0.9, 1.1], "meV", "energy_transfer", "E"),
+        )
+    )
+    data = MDHistoData(
+        axes=axes,
+        signal=np.ones((1, 1, 1, 1)),
+        errors=np.ones((1, 1, 1, 1)),
+        mask=np.zeros((1, 1, 1, 1), dtype=bool),
+        num_events=np.ones((1, 1, 1, 1)),
+    )
+    config = {
+        "fractional": False,
+        "minimum_coverage": 0.0,
+        "resolution_mode": "step",
+        "axes": project_gui._default_rebin_axes(data),
+        "symmetry": {"mode": "space_group", "expression": "P -1"},
+    }
+    for axis in config["axes"]:
+        axis["step_size"] = 0.2
+        axis["auto_step_size"] = False
+
+    output = project_gui._rebin_mdhisto_data(data, config)
+
+    assert output.axes[0].values[0] < -0.6
+    assert output.axes[0].values[-1] > 0.6
+    assert output.axes[1].values[0] < -0.2
+    assert output.axes[1].values[-1] > 0.2
+    assert np.count_nonzero(~output.mask) == 2
+
+
+def test_point_list_rebin_auto_limits_include_all_symmetry_images():
+    data = PointListData(
+        {"H": [0.6], "K": [0.2], "L": [0.0], "I": [4.0], "dI": [1.0]},
+        coordinate_names=["H", "K", "L"],
+        channels=[{"label": "Intensity", "value": "I", "error": "dI"}],
+    )
+    dataset = DatasetEntry("points", data)
+    config = project_gui.dataset_rebin_config(dataset)
+    config["symmetry"] = {"mode": "space_group", "expression": "P -1"}
+    config["fractional"] = False
+    for axis in config["axes"]:
+        axis["auto_lower"] = True
+        axis["auto_upper"] = True
+        axis["auto_lower_value"] = axis["lower"]
+        axis["auto_upper_value"] = axis["upper"]
+        axis["step_size"] = 0.2
+        axis["auto_step_size"] = False
+
+    output = project_gui._rebin_point_list_data(dataset, config)
+
+    assert np.min(output.columns["H"]) < 0.0
+    assert np.max(output.columns["H"]) > 0.0
+    assert output.size == 2
 
 
 def test_point_list_rebin_supports_hkl_symmetry():
