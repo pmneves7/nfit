@@ -71,6 +71,80 @@ channels without changing the imported values. Powder Heisenberg models average
 the single-crystal response over momentum directions and require lattice
 parameters for the reciprocal-coordinate conversion.
 
+## NIST NCNR MACS NeXus data
+
+The MACS importer recognizes the instrument from NeXus content rather than the
+filename suffix. Selecting one or many MACS files creates two sibling dataset
+collections:
+
+- **MACS SPEC** contains the fixed-final-energy, energy-analyzed detector
+  stream as HKLE points. Energy transfer is $\Delta E=E_i-E_f$ in meV.
+- **MACS DIFF** contains the unanalysed remainder of the scattered beam. It is
+  not combined with SPEC. Following DAVE, nfit assigns DIFF coordinates using
+  the elastic approximation $E_f=E_i$ and $\Delta E=0$. This is a coordinate
+  approximation, not a claim that DIFF resolved the outgoing energy.
+
+Both streams use the 20 MACS angular offsets
+$2\theta_d=\mathrm{Kidney}-76^\circ+8^\circ d$, where $d=0,\ldots,19$.
+nfit converts $E_i$ and $E_f$ to wavevectors with
+$E=2.0721246 k^2$ (meV for $k$ in inverse angstrom), rotates the resulting
+$\mathbf Q=\mathbf k_i-\mathbf k_f$ by the recorded sample A3 angle, and solves
+for HKL using the lattice and orientation vectors stored in the file. The A3
+offset is an explicit import setting because a correction used during analysis
+may not be stored in the acquisition file. For the supplied LiV2O4 example,
+enter `66.5` degrees to reproduce the shown MSlice orientation.
+
+Counts and Poisson one-sigma uncertainties are multiplied by the stored
+per-stream detector-efficiency corrections and normalized to the chosen monitor
+target; the default is $10^6$ monitor counts. A zero-count point receives the
+uncertainty corresponding to one count so it cannot acquire infinite fit
+weight.
+
+### MACS detector masks
+
+File masks remain part of the immutable imported point mask. SPEC additionally
+uses three analyzer checks:
+
+1. the NeXus `specDetector/roiMask`;
+2. DAVE's per-scan analyzer-angle comparison, with a default one-degree
+   tolerance for analyzer-two-theta files; and
+3. an unresponsive-channel test based on nonzero-count occupancy across at
+   least 20 scan points.
+
+Every rejected analyzer is retained in the arrays but marked ineligible, and
+its 1-based channel number, reason, and measured occupancy are stored in
+metadata. Additional 1-based SPEC channels can be entered manually. These
+analyzer masks do not propagate to DIFF: its independent NeXus ROI mask is used.
+In `Ef3p7_et_1.2_244.nxs.ng0`, SPEC channel 19 is identified as unresponsive
+because only 6.9% of its scan points are nonzero; the corresponding DIFF channel
+remains valid.
+
+Each SPEC and DIFF collection has its own live composite enabled. Importing a
+batch therefore prepares one SPEC composite and one DIFF composite, without
+mixing their different energy semantics. Configure the HKLE output grid on each
+collection and choose **Rebin now**. The same operation is scriptable:
+
+```python
+from nfit import DataGroup, import_dataset_paths
+
+files = ["run244.nxs.ng0", "run245.nxs.ng0"]
+workspace = DataGroup("MACS series")
+options = {
+    path: {"a3_offset_deg": 66.5, "monitor_target": 1_000_000.0}
+    for path in files
+}
+entries = import_dataset_paths(
+    workspace,
+    files,
+    data_type="single_crystal_inelastic",
+    importer_options=options,
+)
+```
+
+The import options, selected stream, geometry constants, normalization, and
+mask provenance are stored with every entry and reproduced by dataset workflow
+scripts.
+
 ## Compatible direct-geometry spectrometer data
 
 This importer supports raw event NeXus files from compatible direct-geometry

@@ -2,9 +2,9 @@
 
 Importers are intentionally decoupled from the container classes: several
 instrument formats may map to the same data type and container, so each importer
-is a small function that reads one format and returns a populated
-:class:`~nfit.dataset.PointListData`. The :data:`IMPORTERS` registry lets the
-GUI offer more than one importer per data type.
+is a small function that reads one format and returns a populated nfit data
+container. The :data:`IMPORTERS` registry lets the GUI probe file contents,
+offer more than one importer per data type, and expand multi-stream acquisitions.
 """
 
 from __future__ import annotations
@@ -18,7 +18,8 @@ from typing import Any
 
 import numpy as np
 
-from .dataset import PointListData
+from .dataset import PointData4D, PointListData
+from .macs import import_macs_nexus, is_macs_nexus_file
 from .mdhisto import MDHistoAxis, MDHistoData
 from .quantities import normalize_unit
 
@@ -628,17 +629,39 @@ def _default_channels(
 
 
 @dataclass(frozen=True)
+class ImporterStream:
+    """One named scientific stream emitted by a multi-stream source file."""
+
+    name: str
+    label: str
+    data_type: str
+
+
+@dataclass(frozen=True)
+class ImporterMatch:
+    """Evidence that a registered importer recognizes a source file."""
+
+    importer_name: str
+    confidence: float
+    reason: str
+
+
+@dataclass(frozen=True)
 class ImporterSpec:
     """One registered importer for a family of data types."""
 
     name: str
     label: str
-    loader: Callable[..., PointListData | MDHistoData]
+    loader: Callable[..., PointData4D | PointListData | MDHistoData]
     data_types: tuple[str, ...]
     extensions: tuple[str, ...] = ()
     options_kind: str | None = None
+    probe: Callable[[str | Path], bool] | None = None
+    streams: tuple[ImporterStream, ...] = ()
 
     def can_read(self, path: str | Path) -> bool:
+        if self.probe is not None:
+            return bool(self.probe(path))
         if not self.extensions:
             return True
         return Path(path).suffix.lower() in self.extensions
@@ -674,6 +697,19 @@ IMPORTERS: dict[str, ImporterSpec] = {
         extensions=(".csv",),
         options_kind="powder_ins_csv",
     ),
+    "macs_nexus": ImporterSpec(
+        name="macs_nexus",
+        label="NIST NCNR MACS NeXus (SPEC + DIFF)",
+        loader=import_macs_nexus,
+        data_types=("single_crystal_inelastic", "single_crystal_energy_integrated"),
+        extensions=(".nxs", ".ng0"),
+        options_kind="macs_nexus",
+        probe=is_macs_nexus_file,
+        streams=(
+            ImporterStream("spec", "SPEC", "single_crystal_inelastic"),
+            ImporterStream("diff", "DIFF", "single_crystal_energy_integrated"),
+        ),
+    ),
 }
 
 
@@ -683,11 +719,39 @@ def importers_for_data_type(data_type: str) -> list[ImporterSpec]:
     return [spec for spec in IMPORTERS.values() if data_type in spec.data_types]
 
 
+def probe_importers(
+    path: str | Path,
+    data_type: str | None = None,
+) -> list[ImporterMatch]:
+    """Return matching importers ranked by content evidence then extension.
+
+    Instrument-specific probes inspect internal metadata and receive high
+    confidence. Extension-only adapters remain available as a compatibility
+    fallback, but do not outrank a positive content probe.
+    """
+
+    source = Path(path)
+    matches: list[ImporterMatch] = []
+    for spec in IMPORTERS.values():
+        if data_type is not None and data_type not in spec.data_types:
+            continue
+        if spec.probe is not None:
+            if spec.can_read(source):
+                matches.append(
+                    ImporterMatch(spec.name, 1.0, "recognized internal instrument metadata")
+                )
+            continue
+        if spec.can_read(source):
+            reason = "compatible filename extension" if spec.extensions else "generic importer"
+            matches.append(ImporterMatch(spec.name, 0.25, reason))
+    return sorted(matches, key=lambda item: item.confidence, reverse=True)
+
+
 def import_with(
     importer_name: str,
     path: str | Path,
     options: dict[str, Any] | None = None,
-) -> PointListData | MDHistoData:
+) -> PointData4D | PointListData | MDHistoData:
     """Run a registered importer by name."""
 
     if importer_name not in IMPORTERS:

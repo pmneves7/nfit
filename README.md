@@ -9,6 +9,9 @@ The package provides:
 - native MDHisto, single-crystal and direct-powder MDEvent, and compatible
   direct-geometry spectrometer workflows, with project-owned composite
   materialization and scaled powder or aligned-histogram background subtraction;
+- NIST NCNR MACS NeXus import with separate energy-analyzed SPEC and
+  energy-integrated DIFF streams, monitor normalization, detector masks, and
+  batch composites;
 - powder-cut, MPMS magnetization, PPMS heat-capacity, and tabular imports;
 - masking, coverage-aware symmetry/rebinning and composites, backgrounds, and
   non-destructive analyses, including live hierarchical composites and editable

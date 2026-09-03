@@ -64,6 +64,7 @@ from .importers import (
     import_with,
     importers_for_data_type,
     inspect_powder_ins_csv,
+    probe_importers,
 )
 from .mdevent import (
     assess_mdevent_memory,
@@ -240,6 +241,10 @@ DATA_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
     "single_crystal_elastic": {
         "label": "Single crystal elastic",
         "container": "mdhisto",
+    },
+    "single_crystal_energy_integrated": {
+        "label": "Single crystal energy-integrated",
+        "container": "point_data_4d",
     },
     "powder_elastic": {
         "label": "Powder elastic",
@@ -464,9 +469,10 @@ def default_importer_for_data_type(
 ) -> str | None:
     """Return the default importer name for a data type, or ``None``."""
 
-    specs = importers_for_data_type(data_type)
     if path is not None:
-        specs = [spec for spec in specs if spec.can_read(path)]
+        matches = probe_importers(path, data_type)
+        return matches[0].importer_name if matches else None
+    specs = importers_for_data_type(data_type)
     return specs[0].name if specs else None
 
 
@@ -488,6 +494,7 @@ def import_dataset_paths(
     """
 
     entries: list[DatasetEntry] = []
+    stream_groups: dict[tuple[str, str], DatasetGroup] = {}
     resolved_type = data_type or DEFAULT_DATA_TYPE
     raw_sources = [Path(path) for path in paths if resolved_type == "single_crystal_inelastic" and is_raw_dgs_nexus_file(path)]
     if raw_sources:
@@ -510,21 +517,94 @@ def import_dataset_paths(
         options = None
         if isinstance(importer_options, dict):
             options = importer_options.get(str(source))
+        chosen = importer_name or default_importer_for_data_type(resolved_type, source)
+        spec = IMPORTERS.get(chosen) if chosen is not None else None
+        if spec is not None and spec.streams and not (
+            isinstance(options, dict) and options.get("stream")
+        ):
+            parent = into if into is not None else group
+            for stream in spec.streams:
+                stream_options = copy.deepcopy(options) if isinstance(options, dict) else {}
+                stream_options["stream"] = stream.name
+                entry = dataset_entry_from_path(
+                    source,
+                    data_type=stream.data_type,
+                    importer_name=spec.name,
+                    importer_options=stream_options,
+                )
+                entry.name = _unique_dataset_name(
+                    f"{entry.name} [{stream.label}]", group.dataset_names
+                )
+                key = (spec.name, stream.name)
+                target_group = stream_groups.get(key)
+                if target_group is None:
+                    base_name = f"MACS {stream.label}" if spec.name == "macs_nexus" else stream.label
+                    target_group = DatasetGroup(
+                        name=_unique_name(
+                            base_name,
+                            {item.name for item in parent.subgroups},
+                        ),
+                        metadata={
+                            "importer": spec.name,
+                            "source_stream": stream.name,
+                            GROUP_COMPOSITE_KEY: {
+                                "enabled": True,
+                                "auto_rebin": True,
+                                "stale": True,
+                                "fractional": False,
+                                "mean_weighting": "uniform",
+                            },
+                        },
+                    )
+                    parent.subgroups.append(target_group)
+                    stream_groups[key] = target_group
+                group.add_dataset(entry, into=target_group)
+                entries.append(entry)
+                _adopt_imported_lattice(group, entry)
+            continue
         entry = dataset_entry_from_path(
             source,
             data_type=data_type,
-            importer_name=importer_name,
+            importer_name=chosen,
             importer_options=options,
         )
         entry.name = _unique_dataset_name(entry.name, group.dataset_names)
         group.add_dataset(entry, into=into)
         entries.append(entry)
+        _adopt_imported_lattice(group, entry)
     for entry in entries:
         if entry.data_type in {"single_crystal_inelastic", "powder_inelastic"}:
             entry.parameters.setdefault(
                 SPECTRAL_CHANNEL_CONFIG_KEY, default_spectral_channel_config()
             )
     return entries
+
+
+def _adopt_imported_lattice(group: DataGroup, entry: DatasetEntry) -> None:
+    """Adopt and validate lattice metadata supplied by a registered importer."""
+
+    if entry.data is None or not isinstance(getattr(entry.data, "metadata", None), dict):
+        return
+    imported = entry.data.metadata.get("lattice_parameters")
+    if not isinstance(imported, dict):
+        return
+    values = {
+        name: float(imported[name])
+        for name in ("a", "b", "c", "alpha", "beta", "gamma")
+        if name in imported
+    }
+    if len(values) != 6:
+        return
+    if group.lattice_parameters is None:
+        group.lattice_parameters = values
+        return
+    if any(
+        not np.isclose(float(group.lattice_parameters.get(name, np.nan)), value)
+        for name, value in values.items()
+    ):
+        raise ValueError(
+            f"{entry.name!r} has lattice parameters that differ from data group {group.name!r}"
+        )
 
 
 def parse_dataset_numors(text: str) -> list[int]:
@@ -690,7 +770,7 @@ def set_dataset_data_type(
 
 def _load_registered_importer_dataset(
     dataset: DatasetEntry,
-) -> PointListData | MDHistoData | None:
+) -> PointData4D | PointListData | MDHistoData | None:
     """Load a dataset through its registered importer and apply import metadata."""
 
     source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
@@ -7457,7 +7537,16 @@ def _default_rebin_axes(data: Any) -> list[dict[str, Any]]:
             finite = finite[np.isfinite(finite)]
             lower = float(np.min(finite)) if finite.size else 0.0
             upper = float(np.max(finite)) if finite.size else 1.0
-            num_bins = max(int(np.unique(finite).size), 1) if finite.size else 1
+            # Point clouds commonly contain a distinct floating-point value at
+            # nearly every observation. Treating every unique value as a grid
+            # coordinate would create an unusably large Cartesian product
+            # (MACS HKLE scans are a representative case). Keep the automatic
+            # preview below the normal two-million-bin safety threshold; users
+            # can then choose instrument-appropriate step sizes explicitly.
+            num_bins = min(max(int(np.unique(finite).size), 1), 32) if finite.size else 1
+            if upper == lower:
+                lower -= 0.5
+                upper += 0.5
             axes.append(
                 {
                     "name": name,
@@ -9372,8 +9461,8 @@ def dataset_entry_from_path(
 ) -> DatasetEntry:
     """Create a dataset entry for a file selected in the GUI.
 
-    Point-list types are loaded immediately; MDHisto/``.nxs`` types are created
-    as lazy placeholders and loaded on first view.
+    Registered importer types are loaded immediately. Other MDHisto/``.nxs``
+    types are created as lazy placeholders and loaded on first view.
     """
 
     source = Path(path)
@@ -11327,7 +11416,121 @@ class NfitProjectExplorer:
         spec = IMPORTERS[importer_name]
         if spec.options_kind == "powder_ins_csv":
             return self._prompt_powder_ins_csv_options(paths)
+        if spec.options_kind == "macs_nexus":
+            return self._prompt_macs_nexus_options(paths)
         return None
+
+    def _prompt_macs_nexus_options(
+        self,
+        paths: list[str | Path],
+    ) -> dict[str, dict[str, Any]] | bool:
+        """Configure a batch of MACS files before expanding SPEC and DIFF."""
+
+        from PySide6 import QtGui, QtWidgets
+
+        dialog = QtWidgets.QDialog(self.window)
+        dialog.setWindowTitle("Import NIST NCNR MACS NeXus")
+        dialog.setMinimumWidth(620)
+        outer = QtWidgets.QVBoxLayout(dialog)
+        explanation = QtWidgets.QLabel(
+            "Each file will be imported as separate SPEC (energy analyzed) and "
+            "DIFF (unanalysed, elastic-coordinate approximation) datasets."
+        )
+        explanation.setWordWrap(True)
+        outer.addWidget(explanation)
+        form = QtWidgets.QFormLayout()
+
+        a3_offset = QtWidgets.QLineEdit()
+        a3_offset.setObjectName("macs_a3_offset")
+        a3_offset.setValidator(QtGui.QDoubleValidator(-360.0, 360.0, 6, dialog))
+        a3_offset.setPlaceholderText("use NeXus sampleState/a3Zero")
+        a3_offset.setToolTip(
+            "Offset added to the recorded sample A3 angle before converting detector "
+            "positions to HKL. Use 66.5° for the orientation shown in the supplied "
+            "DAVE/MSlice setup. Leave blank to use sampleState/a3Zero from the file."
+        )
+        form.addRow("A3 offset (deg)", a3_offset)
+
+        monitor_target = QtWidgets.QDoubleSpinBox()
+        monitor_target.setObjectName("macs_monitor_target")
+        monitor_target.setRange(1.0, 1.0e12)
+        monitor_target.setDecimals(0)
+        monitor_target.setValue(1.0e6)
+        monitor_target.setToolTip(
+            "Normalize counts and Poisson uncertainties to this incident-monitor "
+            "count. DAVE/MSlice commonly uses 1,000,000."
+        )
+        form.addRow("Monitor target", monitor_target)
+
+        efficiency = QtWidgets.QCheckBox("Apply detector efficiency factors")
+        efficiency.setObjectName("macs_apply_efficiency")
+        efficiency.setChecked(True)
+        efficiency.setToolTip(
+            "Multiply each stream by the 20 per-channel correction factors stored "
+            "in its NeXus detectorEfficiency field."
+        )
+        form.addRow("Efficiency", efficiency)
+
+        alignment = QtWidgets.QCheckBox("Mask misset analyzer blades")
+        alignment.setObjectName("macs_mask_alignment")
+        alignment.setChecked(True)
+        alignment.setToolTip(
+            "Apply DAVE's per-scan analyzer-angle test to SPEC only. DIFF is not "
+            "energy analyzed and does not inherit this mask."
+        )
+        form.addRow("Analyzer alignment", alignment)
+
+        tolerance = QtWidgets.QDoubleSpinBox()
+        tolerance.setObjectName("macs_alignment_tolerance")
+        tolerance.setRange(0.0, 10.0)
+        tolerance.setDecimals(3)
+        tolerance.setValue(1.0)
+        tolerance.setToolTip(
+            "Maximum analyzer two-theta deviation beyond the closest blade. DAVE "
+            "uses 1° for files that record analyzer two-theta."
+        )
+        form.addRow("Alignment tolerance (deg)", tolerance)
+
+        dead = QtWidgets.QCheckBox("Detect unresponsive SPEC analyzer channels")
+        dead.setObjectName("macs_detect_dead")
+        dead.setChecked(True)
+        dead.setToolTip(
+            "Mask a SPEC channel when its nonzero-count occupancy is a robust low "
+            "outlier across at least 20 scan points. The decision and occupancy are "
+            "recorded in dataset provenance."
+        )
+        form.addRow("Dead-channel test", dead)
+
+        manual = QtWidgets.QLineEdit()
+        manual.setObjectName("macs_manual_channels")
+        manual.setPlaceholderText("for example: 19")
+        manual.setToolTip(
+            "Optional comma-separated 1-based SPEC analyzer channels to mask. "
+            "These do not mask the corresponding DIFF detectors."
+        )
+        form.addRow("Additional SPEC masks", manual)
+        outer.addLayout(form)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok
+            | QtWidgets.QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        outer.addWidget(buttons)
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return False
+        offset_text = a3_offset.text().strip()
+        shared = {
+            "a3_offset_deg": float(offset_text) if offset_text else None,
+            "monitor_target": float(monitor_target.value()),
+            "apply_detector_efficiency": bool(efficiency.isChecked()),
+            "mask_misaligned_analyzers": bool(alignment.isChecked()),
+            "analyzer_alignment_tolerance_deg": float(tolerance.value()),
+            "detect_dead_analyzers": bool(dead.isChecked()),
+            "masked_analyzer_channels": manual.text().strip(),
+        }
+        return {str(Path(path)): copy.deepcopy(shared) for path in paths}
 
     def _prompt_powder_ins_csv_options(
         self,

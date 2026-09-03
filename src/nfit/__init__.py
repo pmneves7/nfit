@@ -322,7 +322,9 @@ from .heat_capacity import (
 )
 from .importers import (
     IMPORTERS,
+    ImporterMatch,
     ImporterSpec,
+    ImporterStream,
     import_hb2a_powder,
     import_mpms_dat,
     import_powder_ins_csv,
@@ -330,9 +332,11 @@ from .importers import (
     import_with,
     importers_for_data_type,
     inspect_powder_ins_csv,
+    probe_importers,
     read_delimited_text,
     split_name_and_unit,
 )
+from .macs import import_macs_nexus, is_macs_nexus_file
 from .magnetization import curie_weiss_susceptibility
 from .mdevent import (
     DetectorNormalization,
@@ -741,6 +745,8 @@ __all__ = [
     "create_group_mask",
     "DATA_TYPE_DEFINITIONS",
     "ImporterSpec",
+    "ImporterMatch",
+    "ImporterStream",
     "IMPORTERS",
     "available_data_types",
     "data_type_label",
@@ -750,6 +756,9 @@ __all__ = [
     "import_mpms_dat",
     "import_with",
     "importers_for_data_type",
+    "probe_importers",
+    "import_macs_nexus",
+    "is_macs_nexus_file",
     "inspect_powder_ins_csv",
     "QUANTITY_TYPES",
     "convert_quantity",

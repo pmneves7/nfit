@@ -9,6 +9,11 @@ instrument or file format.
 
 - **Importers are adapters.** They translate file metadata and arrays into
   common data containers. Instrument-specific rules stay in the importer.
+- **Detection uses evidence.** Instrument adapters probe internal format and
+  instrument metadata with higher confidence than a filename extension. A
+  multi-stream acquisition may declare named outputs that become separate
+  datasets with shared source provenance; incompatible observables are never
+  silently added together.
 - **Axes retain their source meaning.** Importers preserve names and units when
   possible, then assign broad coordinate roles used by plotting and fitting.
 - **Analysis is non-destructive.** Operations create derived datasets and
@@ -200,6 +205,12 @@ An extension should:
 5. provide the same callable operation to scripts and the GUI;
 6. serialize all scientific choices needed to reproduce the result; and
 7. include validation, tests, tooltips, and user documentation.
+
+Register a content probe when the format has a reliable internal signature.
+Filename extensions are only a compatibility fallback because `.nxs` can hold
+several distinct NeXus application definitions and instrument layouts. Declare
+named streams when one source contains scientifically different measurements;
+each stream must specify its data type and serialize the option that selects it.
 
 Unimplemented directions are listed separately in
 [Planned features](planned_features.md).

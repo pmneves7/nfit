@@ -4,8 +4,8 @@
 
 nfit importers translate source axes, units, masks, intensities, uncertainties,
 and metadata into common containers. Supported paths include Mantid MDHisto,
-file-backed MDEvent and raw direct-geometry events, powder cuts, MPMS, PPMS,
-and general point tables.
+file-backed MDEvent and raw direct-geometry events, NIST NCNR MACS SPEC/DIFF
+streams, powder cuts, MPMS, PPMS, and general point tables.
 
 Mantid `SaveMD` / `MDHistoWorkspace` NeXus files can be loaded with
 `load_mantid_mdhisto_nxs`. The returned `MDHistoData` stores axis metadata plus
@@ -63,6 +63,11 @@ axis selection, hidden-axis integration, channel selection, masks, model
 overlays, smoothing, and script export. Smoothing is visual only and never
 changes source or fitting arrays. See [Data viewer](data_viewer.md)
 for the complete control reference.
+
+`probe_importers(path, data_type)` ranks adapters using internal format evidence
+before extension matches. `import_macs_nexus(path, options)` imports one MACS
+`spec` or `diff` stream as `PointData4D`; `import_dataset_paths` expands a MACS
+batch into separate SPEC and DIFF collections and enables a composite for each.
 
 For data with at least three dimensions, Volumetric mode provides PyVista
 volume and isosurface rendering. It exports `.vtr`, `.vtp`, `.ply`, `.stl`,
@@ -256,6 +261,12 @@ calculation.
    :members:
 
 .. automodule:: nfit.dataset
+   :members:
+
+.. automodule:: nfit.importers
+   :members:
+
+.. automodule:: nfit.macs
    :members:
 
 .. automodule:: nfit.mdhisto
