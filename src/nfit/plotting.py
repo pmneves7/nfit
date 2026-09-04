@@ -564,7 +564,8 @@ def plot_mdhisto_tiled_slices(
             if local_color_scales:
                 colorbar_axis = fig.add_subplot(grid[row, plot_column + 1])
                 colorbar = fig.colorbar(artist, cax=colorbar_axis)
-                colorbar.set_label(model._channel_label())
+                if column == columns - 1:
+                    colorbar.set_label(model._channel_label())
                 colorbars.append(colorbar)
         if not local_color_scales:
             colorbar_axis = fig.add_subplot(grid[:, -1])

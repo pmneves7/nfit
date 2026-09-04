@@ -135,6 +135,8 @@ shares one normalization and one colorbar at the far right. With **Autoscale**
 enabled, **Local scale per tiled plot** gives every panel independently computed
 limits and its own adjacent colorbar. Local scales are unavailable with manual
 color limits; turning off **Autoscale** returns the view to the global scale.
+Only local colorbars in the rightmost grid column carry the channel or
+cross-section label, avoiding repeated labels between neighboring panels.
 The mode intentionally displays data only; model and residual panels and
 histogram box cuts are not shown. Saved plot recipes and generated scripts
 preserve the three dimensions, range, step, label visibility, hidden-axis

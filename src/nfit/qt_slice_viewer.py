@@ -4394,7 +4394,8 @@ class QtMDHistoSliceViewer:
                     artist,
                     cax=self._tile_colorbar_axes[index],
                 )
-                colorbar.set_label(self.model._channel_label())
+                if column == columns - 1:
+                    colorbar.set_label(self.model._channel_label())
                 self._tile_colorbars.append(colorbar)
         self.image = artists[0]
         if local_color_scales:

@@ -126,10 +126,10 @@ def test_tiled_slice_recipe_restores_labels_and_local_colorbars():
     assert len(figure._nfit_tiled_colorbars) == 4
     assert len(figure.axes) == 8
     assert all(not axis.texts for axis in figure._nfit_tiled_axes)
-    assert all(
-        colorbar.ax.yaxis.label.get_text() == r"$I(\mathbf{Q},E)$ (a.u.)"
+    assert [
+        colorbar.ax.yaxis.label.get_text()
         for colorbar in figure._nfit_tiled_colorbars
-    )
+    ] == ["", r"$I(\mathbf{Q},E)$ (a.u.)", "", r"$I(\mathbf{Q},E)$ (a.u.)"]
 
 
 def test_fit_comparison_recipe_can_render_model_through_data_masks():

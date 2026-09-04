@@ -1293,6 +1293,10 @@ def test_qt_tiled_slices_exposes_third_axis_range_step_slider_and_script():
         viewer._tile_axes[0].collections[0].norm
         is not viewer._tile_axes[1].collections[0].norm
     )
+    assert [
+        colorbar.ax.yaxis.label.get_text()
+        for colorbar in viewer._tile_colorbars
+    ] == ["", r"$I(\mathbf{Q},E)$ (a.u.)"]
     viewer.autoscale_check.setChecked(False)
     assert not viewer.tile_local_color_scales_check.isChecked()
     assert not viewer.tile_local_color_scales_check.isEnabled()

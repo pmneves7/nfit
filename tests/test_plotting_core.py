@@ -223,11 +223,11 @@ def test_plot_tiled_slices_can_hide_labels_and_autoscale_each_panel():
         axis.collections[0].norm is not axes[0].collections[0].norm
         for axis in axes[1:]
     )
-    assert all(
-        colorbar.ax.yaxis.label.get_text() == r"$I(\mathbf{Q},E)$ (a.u.)"
-        for colorbar in colorbars
-    )
-
+    assert [colorbar.ax.yaxis.label.get_text() for colorbar in colorbars] == [
+        "",
+        r"$I(\mathbf{Q},E)$ (a.u.)",
+        "",
+    ]
     with pytest.raises(ValueError, match="requires autoscale=True"):
         plot_mdhisto_tiled_slices(
             data,
