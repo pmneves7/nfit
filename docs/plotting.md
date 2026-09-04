@@ -2,10 +2,15 @@
 
 Each workspace's **Plots** branch stores editable figure recipes. A recipe
 contains stable dataset references, displayed axes and channels, integrations,
-styles, limits, smoothing, and figure size. It does not duplicate the data or
-embed a rendered image.
+styles, limits, smoothing, figure size, and a complete rebin-configuration
+snapshot for each source. It does not duplicate the numerical data or embed a
+rendered image. A composite recipe additionally records its workspace or nested
+dataset-group scope and composite rebin configuration.
 
-Use **Save plot** in the data viewer to create or update a recipe. Opening a
+Use **Store plot** beside **Open new viewer** to create or update a recipe.
+Changing the live dataset rebin settings later does not change existing plot
+recipes, so plots from one source may use different coordinate bases, bounds,
+resolutions, symmetry expansions, or weighting settings. Opening a
 saved plot shows a presentation window; **Edit in data viewer** restores its
 interactive controls. Duplicate or rename a recipe before making a variant.
 If a referenced dataset is missing, nfit preserves the recipe and reports the

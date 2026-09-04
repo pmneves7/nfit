@@ -1,4 +1,6 @@
 # ruff: noqa: F401, F403, F405
+import copy
+
 from nfit.project_archive import read_project_manifest
 from tests.project_gui_test_support import *
 from tests.project_gui_test_support import (
@@ -1937,6 +1939,211 @@ def test_project_explorer_saves_grouped_waterfall_sources(monkeypatch):
     ]
     rendered = project_gui.render_project_plot(explorer.project, plot.id)
     assert len(rendered.axes[0]._nfit_waterfall_traces) == 2
+
+
+def test_stored_plots_snapshot_independent_rebin_bases(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+    from nfit.plot_recipes import plot_entry_from_dict, plot_entry_to_dict
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+    from tests.plotting_test_data import tiny_mdhisto_data
+
+    dataset = DatasetEntry("scan", tiny_mdhisto_data())
+    group = DataGroup("Workspace1", datasets=[dataset])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    config = dataset_rebin_config(dataset)
+    config["enabled"] = True
+    config["fractional"] = False
+
+    first_basis = (
+        [1.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [1.0, -1.0, 0.0, 0.0],
+    )
+    second_basis = (
+        [1.0, 1.0, 1.0, 0.0],
+        [1.0, 1.0, -2.0, 0.0],
+        [1.0, -1.0, 0.0, 0.0],
+    )
+    for axis, vector in zip(config["axes"][1:], first_basis, strict=True):
+        axis["vector"] = vector
+
+    viewer = QtMDHistoSliceViewer(dataset.data, dataset_names=[dataset.name])
+    viewer._nfit_dataset_ids = {dataset.name: dataset.id}
+    first_plot = explorer.save_plot_from_viewer(group, viewer)
+
+    for axis, vector in zip(config["axes"][1:], second_basis, strict=True):
+        axis["vector"] = vector
+    viewer._nfit_editing_plot_id = None
+    second_plot = explorer.save_plot_from_viewer(group, viewer)
+
+    key = project_gui.PLOT_SOURCE_REBIN_CONFIGS_KEY
+    assert [axis["vector"] for axis in first_plot.settings[key][dataset.id]["axes"][1:]] == list(first_basis)
+    assert [axis["vector"] for axis in second_plot.settings[key][dataset.id]["axes"][1:]] == list(second_basis)
+    first_views, _ = project_gui._saved_plot_source_views(group, first_plot)
+    second_views, _ = project_gui._saved_plot_source_views(group, second_plot)
+    assert first_views[0].metadata["rebin"]["vectors"][1:] == list(first_basis)
+    assert second_views[0].metadata["rebin"]["vectors"][1:] == list(second_basis)
+    assert explorer._plot_for_item(explorer.tree.currentItem()) is second_plot
+    loaded_plots = [
+        plot_entry_from_dict(json.loads(json.dumps(plot_entry_to_dict(plot))))
+        for plot in (first_plot, second_plot)
+    ]
+    assert [
+        axis["vector"]
+        for axis in loaded_plots[0].settings[key][dataset.id]["axes"][1:]
+    ] == list(first_basis)
+    assert [
+        axis["vector"]
+        for axis in loaded_plots[1].settings[key][dataset.id]["axes"][1:]
+    ] == list(second_basis)
+    plots_item = explorer.tree.topLevelItem(0).child(4)
+    explorer.tree.setCurrentItem(plots_item.child(0))
+    editor = explorer.edit_saved_plot_in_viewer()
+    assert editor.data.metadata["rebin"]["vectors"][1:] == list(first_basis)
+    assert editor._nfit_plot_rebin_configs[dataset.id]["axes"][1]["vector"] == first_basis[0]
+    updated = editor.store_plot()
+    assert updated is first_plot
+    assert [
+        axis["vector"]
+        for axis in updated.settings[key][dataset.id]["axes"][1:]
+    ] == list(first_basis)
+
+
+def test_stored_tiled_composite_plot_keeps_composite_rebin_recipe(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+    from tests.plotting_test_data import tiny_mdhisto_data
+
+    first = DatasetEntry("first", tiny_mdhisto_data(), kind="mdhisto")
+    second = DatasetEntry("second", tiny_mdhisto_data(), kind="mdhisto")
+    group = DataGroup("Workspace1", datasets=[first, second])
+    config = project_gui.data_group_composite_config(group)
+    config.update({"enabled": True, "fractional": False})
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    viewer = explorer.open_slice_viewer(group, use_composite=True)
+    tiled_index = viewer.view_mode_combo.findText("Tiled slices")
+    assert tiled_index >= 0
+    viewer.view_mode_combo.setCurrentIndex(tiled_index)
+
+    plot = viewer.store_plot()
+
+    assert plot is not None
+    assert plot.type == "mdhisto_tiled_slices"
+    assert [source.dataset_id for source in plot.sources] == [first.id, second.id]
+    recipe = plot.settings[project_gui.PLOT_SOURCE_COMPOSITE_KEY]
+    assert recipe["dataset_group_id"] is None
+    assert recipe["name"] == "Workspace1 Composite"
+    saved_axes = copy.deepcopy(recipe["config"]["axes"])
+    saved_views, _ = project_gui._saved_plot_source_views(group, plot)
+    config["axes"][0]["lower"] -= 10.0
+    views, names = project_gui._saved_plot_source_views(group, plot)
+    assert names == ["Workspace1 Composite"]
+    assert recipe["config"]["axes"] == saved_axes
+    for actual, expected in zip(views[0].axes, saved_views[0].axes, strict=True):
+        np.testing.assert_allclose(actual.values, expected.values)
+    assert project_gui.render_project_plot(explorer.project, plot.id) is not None
+    editor = explorer.edit_saved_plot_in_viewer()
+    assert editor.store_plot().settings[project_gui.PLOT_SOURCE_COMPOSITE_KEY][
+        "config"
+    ]["axes"] == saved_axes
+    editor.window.close()
+    viewer.window.close()
+
+
+def test_dataset_group_copy_and_nested_dataset_paste(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    child_dataset = DatasetEntry("child scan", _tiny_mdhisto_data(2.0))
+    source_dataset = DatasetEntry("scan", _tiny_mdhisto_data(1.0))
+    source = DatasetGroup(
+        "Temperature",
+        datasets=[source_dataset],
+        subgroups=[DatasetGroup("Runs", datasets=[child_dataset])],
+    )
+    destination = DatasetGroup("Destination")
+    group = DataGroup("Workspace1", subgroups=[source, destination])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+
+    explorer._refresh_tree(select_dataset_group=source, refresh_viewers=False)
+    assert "Copy" in explorer.context_menu_action_names(explorer.tree.currentItem())
+    explorer.copy_selected()
+    explorer._refresh_tree(select_dataset_group=destination, refresh_viewers=False)
+    destination_item = explorer.tree.currentItem()
+    assert "Paste" in explorer.context_menu_action_names(destination_item)
+    explorer.paste_into_selection()
+
+    copied_group = destination.subgroups[0]
+    assert copied_group.name == "Temperature1"
+    assert copied_group.id != source.id
+    assert copied_group.datasets[0].id != source_dataset.id
+    assert copied_group.subgroups[0].datasets[0].id != child_dataset.id
+
+    explorer._clipboard = ("datasets", [copy.deepcopy(source_dataset)])
+    explorer._refresh_tree(select_dataset_group=destination, refresh_viewers=False)
+    assert explorer._can_paste_into_role("dataset_group", None)
+    explorer.paste_into_selection()
+    assert destination.datasets[-1].name.startswith("scan")
+
+
+def test_dataset_right_click_preserves_batch_selection_and_actions(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtCore = pytest.importorskip("PySide6.QtCore")
+    QtTest = pytest.importorskip("PySide6.QtTest")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    datasets = [
+        DatasetEntry(f"scan {index}", _tiny_mdhisto_data(float(index)))
+        for index in range(1, 4)
+    ]
+    remaining = datasets[2]
+    source = DataGroup("Source", datasets=datasets)
+    target = DataGroup("Target")
+    explorer = NfitProjectExplorer(NfitProject([source, target]))
+    explorer.window.show()
+    source_items = [
+        explorer.tree.topLevelItem(0).child(0).child(index)
+        for index in range(3)
+    ]
+    explorer.tree.setCurrentItem(source_items[1])
+    source_items[0].setSelected(True)
+    source_items[1].setSelected(True)
+    QtWidgets.QApplication.processEvents()
+
+    position = explorer.tree.visualItemRect(source_items[0]).center()
+    QtTest.QTest.mousePress(
+        explorer.tree.viewport(),
+        QtCore.Qt.MouseButton.RightButton,
+        pos=position,
+    )
+    assert set(explorer.tree.selectedItems()) == set(source_items[:2])
+
+    explorer._set_selected_enabled(False)
+    assert [dataset.enabled for dataset in datasets] == [False, False, True]
+
+    source_items = [
+        explorer.tree.topLevelItem(0).child(0).child(index)
+        for index in range(3)
+    ]
+    explorer.tree.setCurrentItem(source_items[1])
+    source_items[0].setSelected(True)
+    source_items[1].setSelected(True)
+    explorer.copy_selected()
+    target_folder = explorer.tree.topLevelItem(1).child(0)
+    explorer.tree.setCurrentItem(target_folder)
+    explorer.paste_into_selection()
+    assert [dataset.name for dataset in target.datasets] == ["scan 1", "scan 2"]
+
+    source_items = [
+        explorer.tree.topLevelItem(0).child(0).child(index)
+        for index in range(3)
+    ]
+    explorer.tree.setCurrentItem(source_items[1])
+    source_items[0].setSelected(True)
+    source_items[1].setSelected(True)
+    explorer.delete_selected()
+    assert source.datasets == [remaining]
 
 
 def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):

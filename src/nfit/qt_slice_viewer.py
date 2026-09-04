@@ -251,6 +251,7 @@ class QtMDHistoSliceViewer:
         self._close_callback = None
         self._child_viewers = []
         self.open_new_viewer_button = None
+        self.store_plot_status_label = None
         self.save_project_shortcut = None
         self._unmask_model_callback = None
         self.view_mode_combo = None
@@ -854,6 +855,20 @@ class QtMDHistoSliceViewer:
         if self.save_plot_button is not None:
             self.save_plot_button.setEnabled(callback is not None)
 
+    def store_plot(self):
+        """Store the current view through the owning project and report it."""
+
+        if self._save_plot_callback is None:
+            return None
+        plot = self._save_plot_callback()
+        if self.store_plot_status_label is not None:
+            if plot is None:
+                self.store_plot_status_label.setText("Plot was not stored")
+            else:
+                name = str(getattr(plot, "name", "plot"))
+                self.store_plot_status_label.setText(f"Stored as {name}")
+        return plot
+
     def set_save_project_callback(self, callback) -> None:
         """Route the standard Save shortcut to the owning project window."""
 
@@ -1174,6 +1189,20 @@ class QtMDHistoSliceViewer:
         )
         self.open_new_viewer_button.clicked.connect(self.open_new_viewer)
         mode_layout.addWidget(self.open_new_viewer_button)
+        self.save_plot_button = QtWidgets.QPushButton("Store plot")
+        self.save_plot_button.setObjectName("data_viewer_store_plot_button")
+        self.save_plot_button.setToolTip(
+            "Store this view as an editable recipe in the workspace Plots section."
+        )
+        self.save_plot_button.setEnabled(False)
+        self.save_plot_button.clicked.connect(self.store_plot)
+        mode_layout.addWidget(self.save_plot_button)
+        self.store_plot_status_label = QtWidgets.QLabel("")
+        self.store_plot_status_label.setObjectName("data_viewer_store_plot_status")
+        self.store_plot_status_label.setToolTip(
+            "Name of the plot recipe most recently stored from this viewer."
+        )
+        mode_layout.addWidget(self.store_plot_status_label)
         mode_layout.addStretch(1)
         main_layout.addWidget(mode_bar)
         self.content_stack = QtWidgets.QStackedWidget()
@@ -2022,28 +2051,19 @@ class QtMDHistoSliceViewer:
         )
         self.show_tile_labels_check.toggled.connect(self._set_show_tile_labels)
         self.copy_figure_button = QtWidgets.QPushButton("Copy figure")
-        self.save_plot_button = QtWidgets.QPushButton("Save plot")
         self.copy_script_button = QtWidgets.QPushButton("Copy script")
         self.save_script_button = QtWidgets.QPushButton("Save script")
         for button in (
             self.copy_figure_button,
-            self.save_plot_button,
             self.copy_script_button,
             self.save_script_button,
         ):
             button.setMinimumWidth(0)
             button.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed)
         self.copy_figure_button.setToolTip("Copy the current figure image to the clipboard.")
-        self.save_plot_button.setToolTip(
-            "Store the current view as an editable plot in this workspace."
-        )
         self.copy_script_button.setToolTip("Copy a Python script that recreates the current viewer plot.")
         self.save_script_button.setToolTip("Save a Python script that recreates the current viewer plot.")
-        self.save_plot_button.setEnabled(False)
         self.copy_figure_button.clicked.connect(self.copy_figure_to_clipboard)
-        self.save_plot_button.clicked.connect(
-            lambda: self._save_plot_callback() if self._save_plot_callback else None
-        )
         self.copy_script_button.clicked.connect(self.copy_script_to_clipboard)
         self.save_script_button.clicked.connect(self.save_script)
         figure_layout.addWidget(QtWidgets.QLabel("Font size"), 0, 0)
@@ -2052,8 +2072,7 @@ class QtMDHistoSliceViewer:
         figure_layout.addWidget(self.line_width_spin, 0, 3)
         figure_layout.addWidget(self.show_binning_title_check, 1, 0, 1, 4)
         figure_layout.addWidget(self.show_tile_labels_check, 2, 0, 1, 4)
-        figure_layout.addWidget(self.copy_figure_button, 3, 0, 1, 2)
-        figure_layout.addWidget(self.save_plot_button, 3, 2, 1, 2)
+        figure_layout.addWidget(self.copy_figure_button, 3, 0, 1, 4)
         figure_layout.addWidget(self.copy_script_button, 4, 0, 1, 2)
         figure_layout.addWidget(self.save_script_button, 4, 2, 1, 2)
         controls_layout.addWidget(figure_group)

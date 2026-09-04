@@ -17,8 +17,17 @@ external source references.
 datasets or views of the same dataset can remain visible side by side. Use
 **Open new viewer** beside the visualization selector to duplicate the current
 view before adjusting its dataset, axes, ranges, or styling independently.
+Use **Store plot** beside it to snapshot the view and its source rebin settings
+as an editable recipe in the workspace's **Plots** branch.
 The viewer's **Figure** section can place the current hidden-axis binning above
 the plot, including projected-axis labels and units.
+
+The project tree supports Shift- and Ctrl/Command-selection of multiple items
+of the same kind. Right-clicking any selected dataset preserves the whole
+selection; **Enable**, **Disable**, **Delete**, and **Copy** apply to the batch,
+and a copied dataset batch can be pasted into another workspace or nested
+dataset group. Dataset groups can also be copied and pasted, including their
+children and group-level configuration.
 
 ## Launch
 

@@ -10,6 +10,8 @@ axes, ranges, visualization mode, styling, and other controls are independent
 in each window. Project changes refresh every open viewer without merging their
 view settings. **Open new viewer**, beside the visualization selector, creates
 an independent viewer initialized from the current dataset and view settings.
+**Store plot**, beside it, saves the current view to the workspace's **Plots**
+branch and reports the stored recipe name in the viewer.
 Closing one viewer does not affect the others.
 
 ## Slices, lines, and maps
@@ -155,8 +157,16 @@ and surface exports use unsmoothed channel values.
 
 ## Saved plots
 
-Each workspace has a **Plots** branch. In the viewer, **Save plot** stores the
-current figure as an editable recipe. A saved plot can be:
+Each workspace has a **Plots** branch. In the viewer, **Store plot** stores the
+current figure as an editable recipe and selects the resulting tree entry. Each
+recipe snapshots the complete rebin configuration of every source dataset,
+including coordinate vectors, bounds, step sizes or bin counts, symmetry,
+fractional weighting, coverage thresholds, and batching choices. Later dataset
+rebin edits therefore do not change an existing plot, and multiple plots can
+use different projected coordinate bases from the same source data. Composite
+views, including tiled slices, retain the composite scope and its complete
+rebin recipe while continuing to reference the underlying datasets. A saved
+plot can be:
 
 - reopened in a presentation window;
 - restored into the data viewer;

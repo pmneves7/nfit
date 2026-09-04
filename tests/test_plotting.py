@@ -286,7 +286,7 @@ def test_qt_slice_viewer_open_new_viewer_duplicates_current_state():
     viewer.window.close()
 
 
-def test_qt_slice_viewer_save_plot_button_uses_project_callback():
+def test_qt_slice_viewer_store_plot_button_uses_project_callback_and_reports_name():
     pytest.importorskip("PySide6")
     from PySide6 import QtWidgets
 
@@ -296,7 +296,7 @@ def test_qt_slice_viewer_save_plot_button_uses_project_callback():
     plot_buttons = [
         button
         for button in viewer.window.findChildren(QtWidgets.QPushButton)
-        if button.text() == "Save plot"
+        if button.text() == "Store plot"
     ]
 
     assert plot_buttons == [viewer.save_plot_button]
@@ -307,11 +307,22 @@ def test_qt_slice_viewer_save_plot_button_uses_project_callback():
     )
 
     calls = []
-    viewer.set_save_plot_callback(lambda: calls.append("saved"))
+    class StoredPlot:
+        name = "scan plot"
+
+    def store():
+        calls.append("saved")
+        return StoredPlot()
+
+    viewer.set_save_plot_callback(store)
     viewer.save_plot_button.click()
 
     assert calls == ["saved"]
-    assert viewer.save_plot_button.parentWidget() is viewer.copy_figure_button.parentWidget()
+    assert viewer.store_plot_status_label.text() == "Stored as scan plot"
+    assert (
+        viewer.save_plot_button.parentWidget()
+        is viewer.open_new_viewer_button.parentWidget()
+    )
 
 
 def test_qt_slice_viewer_standard_save_shortcut_uses_project_callback():

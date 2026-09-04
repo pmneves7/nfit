@@ -164,6 +164,8 @@ TREE_DATASET_COMPACT_THRESHOLD = 12
 TREE_DATASET_PAGE_SIZE = 50
 DETAIL_DATASET_PAGE_SIZE = 20
 DATASET_REBIN_KEY = "rebin"
+PLOT_SOURCE_REBIN_CONFIGS_KEY = "source_rebin_configs"
+PLOT_SOURCE_COMPOSITE_KEY = "source_composite"
 DATASET_MASK_APPLICATION_KEY = "mask_application"
 GROUP_COMPOSITE_KEY = "composite"
 GROUP_COMPOSITE_NAME = "Composite"
@@ -1462,6 +1464,62 @@ def create_dataset_group(
         raise ValueError(f"duplicate dataset group name {subgroup.name!r}")
     parent_node.subgroups.append(subgroup)
     return subgroup
+
+
+def copy_dataset_group_to_parent(
+    data_group: DataGroup,
+    source: DatasetGroup,
+    parent_node: DataGroup | DatasetGroup,
+) -> DatasetGroup:
+    """Deep-copy a dataset-group subtree with fresh group and dataset IDs."""
+
+    used_group_names = {item.name for item in data_group.iter_subgroups()}
+    used_dataset_names = set(data_group.dataset_names)
+    dataset_id_map: dict[str, DatasetEntry] = {}
+    group_id_map: dict[str, DatasetGroup] = {}
+
+    def clone(node: DatasetGroup) -> DatasetGroup:
+        name = _unique_name(node.name, used_group_names)
+        used_group_names.add(name)
+        copied = DatasetGroup(
+            name=name,
+            enabled=bool(node.enabled),
+            masks=copy.deepcopy(node.masks),
+            backgrounds=copy.deepcopy(node.backgrounds),
+            resolution=copy.deepcopy(node.resolution),
+            metadata=copy.deepcopy(node.metadata),
+        )
+        group_id_map[node.id] = copied
+        for dataset in node.datasets:
+            item = copy.deepcopy(dataset).copy()
+            item.name = _unique_name(item.name, used_dataset_names)
+            used_dataset_names.add(item.name)
+            dataset_id_map[dataset.id] = item
+            copied.datasets.append(item)
+        copied.subgroups = [clone(child) for child in node.subgroups]
+        return copied
+
+    result = clone(source)
+    existing_datasets = {item.id: item for item in data_group.iter_datasets()}
+    existing_groups = {item.id: item for item in data_group.iter_subgroups()}
+    for node in (result, *result.iter_subgroups()):
+        owners = [*node.datasets, node]
+        for owner in owners:
+            for background in owner.backgrounds:
+                replacement = dataset_id_map.get(
+                    background.source_dataset_id
+                ) or existing_datasets.get(background.source_dataset_id)
+                if replacement is not None:
+                    background.source_dataset_id = replacement.id
+                background.source_entry = replacement
+                replacement_group = group_id_map.get(
+                    background.source_group_id or ""
+                ) or existing_groups.get(background.source_group_id or "")
+                if replacement_group is not None:
+                    background.source_group_id = replacement_group.id
+                background.source_group = replacement_group
+    parent_node.subgroups.append(result)
+    return result
 
 
 def delete_dataset_group(data_group: DataGroup, subgroup: DatasetGroup) -> bool:
@@ -10370,6 +10428,76 @@ def edit_project_file(
     save_project(project, target, asset_source=source)
 
 
+def _saved_plot_source_views(
+    group: DataGroup,
+    plot: PlotEntry,
+) -> tuple[list[MDHistoData], list[str]]:
+    """Prepare saved-plot sources with their plot-owned rebin snapshots."""
+
+    composite_recipe = plot.settings.get(PLOT_SOURCE_COMPOSITE_KEY)
+    if isinstance(composite_recipe, dict):
+        subgroup_id = composite_recipe.get("dataset_group_id")
+        if subgroup_id is None:
+            scope: DataGroup | _CompositeScope = group
+        else:
+            subgroup = next(
+                (item for item in group.iter_subgroups() if item.id == subgroup_id),
+                None,
+            )
+            if subgroup is None:
+                raise ValueError("saved plot composite dataset group is missing")
+            scope = _composite_scope(group, subgroup)
+        config = composite_recipe.get("config")
+        if not isinstance(config, dict):
+            raise ValueError("saved plot composite configuration is missing")
+        view = composite_dataset_data(scope, config_override=copy.deepcopy(config))
+        if not isinstance(view, MDHistoData):
+            raise TypeError("saved plots currently require MDHisto data")
+        name = str(composite_recipe.get("name") or _composite_dataset_name(scope))
+        return [view], [name]
+
+    entries_by_id = {item.id: item for item in group.iter_datasets()}
+    rebin_configs = plot.settings.get(PLOT_SOURCE_REBIN_CONFIGS_KEY, {})
+    if not isinstance(rebin_configs, dict):
+        rebin_configs = {}
+    model_channels = current_model_channels(
+        group,
+        unmask_model=bool(plot.settings.get("unmask_model", False)),
+    )
+    views: list[MDHistoData] = []
+    names: list[str] = []
+    for source in plot.sources:
+        if not source.dataset_id:
+            continue
+        dataset = entries_by_id.get(source.dataset_id)
+        if dataset is None:
+            raise ValueError("saved plot source dataset is missing")
+        prepared_entry = dataset
+        saved_rebin = rebin_configs.get(dataset.id)
+        if isinstance(saved_rebin, dict):
+            parameters = copy.deepcopy(dataset.parameters)
+            parameters[DATASET_REBIN_KEY] = copy.deepcopy(saved_rebin)
+            prepared_entry = replace(dataset, parameters=parameters)
+        view = dataset_for_slice_viewer(
+            prepared_entry,
+            extra_masks=effective_dataset_masks(group, dataset),
+            force_rebin=True,
+            force_masks=True,
+        )
+        if not isinstance(view, MDHistoData):
+            raise TypeError("saved plots currently require MDHisto data")
+        views.append(
+            attach_fit_channels_to_view(
+                group,
+                dataset.name,
+                view,
+                fallback_payload=model_channels.get(dataset.name),
+            )
+        )
+        names.append(dataset.name)
+    return views, names
+
+
 def render_project_plot(
     project: NfitProject,
     plot_id: str,
@@ -10397,26 +10525,12 @@ def render_project_plot(
             ]
             if not source_ids:
                 raise ValueError("saved plot has no dataset source")
-            entries_by_id = {
-                item.id: item for item in group.iter_datasets()
-            }
-            datasets = [entries_by_id.get(source_id) for source_id in source_ids]
-            if any(dataset is None for dataset in datasets):
-                raise ValueError("saved plot source dataset is missing")
-            views, names = slice_viewer_datasets(
-                group,
-                use_composite=False,
-                unmask_model=bool(plot.settings.get("unmask_model", False)),
+            prepared, _names = _saved_plot_source_views(group, plot)
+            is_composite = isinstance(
+                plot.settings.get(PLOT_SOURCE_COMPOSITE_KEY), dict
             )
-            prepared = [
-                views[names.index(dataset.name)]
-                for dataset in datasets
-                if dataset is not None and dataset.name in names
-            ]
-            if len(prepared) != len(datasets) or not all(
-                isinstance(view, MDHistoData) for view in prepared
-            ):
-                raise TypeError("saved plots currently require MDHisto data")
+            if not prepared or (not is_composite and len(prepared) != len(source_ids)):
+                raise ValueError("saved plot source dataset is missing")
             return render_plot(
                 plot,
                 prepared if plot.type == "mdhisto_waterfall" else prepared[0],
@@ -11317,7 +11431,10 @@ class NfitProjectExplorer:
         self.collapse_all_button = None
         self.create_group_button = None
         self.delete_button = None
-        self._clipboard: tuple[str, DatasetEntry | MaskSpec] | None = None
+        self._clipboard: tuple[
+            str,
+            DatasetEntry | DatasetGroup | MaskSpec | list[DatasetEntry],
+        ] | None = None
         self._analysis_window = None
         self._slice_viewers: dict[int, list[Any]] = {}
         self._auxiliary_windows: dict[int, Any] = {}
@@ -13923,10 +14040,55 @@ class NfitProjectExplorer:
             for source_name in source_names
             if source_name in id_by_name
         ]
+        composite_scope: DataGroup | _CompositeScope | None = None
+        if not dataset_ids and len(source_names) == 1:
+            composite_scope = next(
+                (
+                    scope
+                    for scope in _composite_scopes(group)
+                    if _composite_dataset_name(scope) == source_names[0]
+                ),
+                None,
+            )
+            if composite_scope is not None:
+                dataset_ids = [
+                    dataset.id for dataset in _composite_candidates(composite_scope)
+                ]
         if not dataset_ids:
             return None
         dataset_id = dataset_ids[0]
         settings = viewer.current_plot_settings()
+        if composite_scope is not None:
+            saved_composite = getattr(viewer, "_nfit_plot_composite_recipe", None)
+            if isinstance(saved_composite, dict):
+                settings[PLOT_SOURCE_COMPOSITE_KEY] = copy.deepcopy(saved_composite)
+            else:
+                node = (
+                    composite_scope.node
+                    if isinstance(composite_scope, _CompositeScope)
+                    else None
+                )
+                settings[PLOT_SOURCE_COMPOSITE_KEY] = {
+                    "dataset_group_id": node.id if node is not None else None,
+                    "name": source_names[0],
+                    "config": copy.deepcopy(
+                        data_group_composite_config(composite_scope)
+                    ),
+                }
+        entries_by_id = {item.id: item for item in group.iter_datasets()}
+        viewer_rebin_configs = getattr(viewer, "_nfit_plot_rebin_configs", None)
+        if isinstance(viewer_rebin_configs, dict):
+            settings[PLOT_SOURCE_REBIN_CONFIGS_KEY] = copy.deepcopy(
+                viewer_rebin_configs
+            )
+        else:
+            settings[PLOT_SOURCE_REBIN_CONFIGS_KEY] = {
+                source_id: copy.deepcopy(
+                    dataset_rebin_config(entries_by_id[source_id])
+                )
+                for source_id in dataset_ids
+                if source_id in entries_by_id
+            }
         plot_type = (
             "mdhisto_waterfall" if settings.get("view_mode") == "waterfall" else
             "mdhisto_tiled_slices" if settings.get("view_mode") == "tiled_slices" else
@@ -13954,7 +14116,7 @@ class NfitProjectExplorer:
             ]
             plot = existing
         self._mark_dirty()
-        self._refresh_tree(select_group=group)
+        self._refresh_tree(select_group=group, select_plot=plot)
         return plot
 
     def open_saved_plot_for_selection(self) -> Any | None:
@@ -13974,23 +14136,11 @@ class NfitProjectExplorer:
         source_ids = [
             source.dataset_id for source in plot.sources if source.dataset_id
         ]
-        entries_by_id = {item.id: item for item in group.iter_datasets()}
-        datasets = [entries_by_id.get(source_id) for source_id in source_ids]
-        if not datasets or any(dataset is None for dataset in datasets):
+        if not source_ids:
             return None
-        views, names = slice_viewer_datasets(
-            group,
-            use_composite=False,
-            unmask_model=bool(plot.settings.get("unmask_model", False)),
-        )
-        prepared = [
-            views[names.index(dataset.name)]
-            for dataset in datasets
-            if dataset is not None and dataset.name in names
-        ]
-        if len(prepared) != len(datasets) or not all(
-            isinstance(data, MDHistoData) for data in prepared
-        ):
+        try:
+            prepared, _names = _saved_plot_source_views(group, plot)
+        except (TypeError, ValueError):
             return None
         from .plot_gui import PlotWindow
 
@@ -14007,9 +14157,33 @@ class NfitProjectExplorer:
         dataset = next((item for item in group.iter_datasets() if item.id == plot.sources[0].dataset_id), None)
         if dataset is None:
             return None
-        viewer = self.open_slice_viewer(group, selected_dataset_name=dataset.name, use_composite=False)
+        composite_recipe = plot.settings.get(PLOT_SOURCE_COMPOSITE_KEY)
+        viewer = self.open_slice_viewer(
+            group,
+            selected_dataset_name=(
+                str(composite_recipe.get("name"))
+                if isinstance(composite_recipe, dict)
+                else dataset.name
+            ),
+            use_composite=isinstance(composite_recipe, dict),
+        )
         if viewer is not None:
+            try:
+                prepared, names = _saved_plot_source_views(group, plot)
+            except (TypeError, ValueError):
+                return None
+            viewer.replace_datasets(
+                prepared,
+                dataset_names=names,
+                dataset_group_keys=_waterfall_group_keys(group, names),
+                selected_dataset_name=names[0],
+            )
             viewer._nfit_editing_plot_id = plot.id
+            viewer._nfit_plot_rebin_configs = copy.deepcopy(
+                plot.settings.get(PLOT_SOURCE_REBIN_CONFIGS_KEY, {})
+            )
+            if isinstance(composite_recipe, dict):
+                viewer._nfit_plot_composite_recipe = copy.deepcopy(composite_recipe)
             viewer.apply_plot_settings(plot.settings)
         return viewer
 
@@ -14205,20 +14379,91 @@ class NfitProjectExplorer:
     def copy_selected(self) -> None:
         _group, entry, mask, _model, role = self._objects_for_item(self._current_item())
         if role == "dataset" and entry is not None:
-            self._clipboard = ("dataset", copy.deepcopy(entry))
+            datasets = [
+                self._objects_for_item(item)[1]
+                for item in self._selected_items_for_drag_role("dataset")
+            ]
+            datasets = [item for item in datasets if item is not None]
+            if len(datasets) > 1:
+                self._clipboard = ("datasets", copy.deepcopy(datasets))
+            else:
+                self._clipboard = ("dataset", copy.deepcopy(entry))
         elif role == "mask" and mask is not None:
             self._clipboard = ("mask", copy.deepcopy(mask))
+        elif role == "dataset_group":
+            subgroup = self._dataset_group_for_item(self._current_item())
+            if subgroup is not None:
+                self._clipboard = ("dataset_group", copy.deepcopy(subgroup))
 
     def paste_into_selection(self) -> None:
         if self._clipboard is None:
             return
         group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
         clip_role, payload = self._clipboard
-        if clip_role == "dataset" and isinstance(payload, DatasetEntry) and role in {"group", "datasets"} and group is not None:
-            copied = copy_dataset_to_group(payload, group)
+        if (
+            clip_role == "dataset"
+            and isinstance(payload, DatasetEntry)
+            and role in {"group", "datasets", "dataset_group"}
+            and group is not None
+        ):
+            target = (
+                self._dataset_group_for_item(self._current_item())
+                if role == "dataset_group"
+                else group
+            )
+            if target is None:
+                return
+            copied = copy.deepcopy(payload).copy()
+            copied.name = _unique_name(copied.name, group.dataset_names)
+            target.datasets.append(copied)
             self._record_data_group_state_change(group)
             self._mark_dirty()
             self._refresh_tree(select_group=group, select_dataset=copied)
+        elif (
+            clip_role == "datasets"
+            and isinstance(payload, list)
+            and role in {"group", "datasets", "dataset_group"}
+            and group is not None
+        ):
+            target = (
+                self._dataset_group_for_item(self._current_item())
+                if role == "dataset_group"
+                else group
+            )
+            if target is None:
+                return
+            copied = [
+                copy.deepcopy(item).copy()
+                for item in payload
+                if isinstance(item, DatasetEntry)
+            ]
+            if not copied:
+                return
+            used_names = set(group.dataset_names)
+            for item in copied:
+                item.name = _unique_name(item.name, used_names)
+                used_names.add(item.name)
+                target.datasets.append(item)
+            self._record_data_group_state_change(group)
+            self._mark_dirty()
+            self._refresh_tree(select_group=group, select_dataset=copied[-1])
+        elif (
+            clip_role == "dataset_group"
+            and isinstance(payload, DatasetGroup)
+            and role in {"group", "datasets", "dataset_group"}
+            and group is not None
+        ):
+            parent = (
+                self._dataset_group_for_item(self._current_item())
+                if role == "dataset_group"
+                else group
+            )
+            if parent is None:
+                return
+            copied = copy_dataset_group_to_parent(group, payload, parent)
+            self._record_data_group_state_change(group)
+            self._mark_dirty()
+            self._refresh_tree(select_group=group, select_dataset_group=copied)
         elif clip_role == "mask" and isinstance(payload, MaskSpec) and role in {"dataset", "masks"} and group is not None and entry is not None:
             copied = copy_mask_to_dataset(payload, entry)
             self._mark_mask_datasets_stale([entry])
@@ -15247,6 +15492,7 @@ class NfitProjectExplorer:
         select_background: BackgroundSpec | None = None,
         select_model: ModelComponentSpec | None = None,
         select_fit: FitTimelineEntry | None = None,
+        select_plot: PlotEntry | None = None,
         select_dataset_group: DatasetGroup | None = None,
         edit_group: bool = False,
         edit_mask: bool = False,
@@ -15371,6 +15617,8 @@ class NfitProjectExplorer:
                 self._remember_item(plot_item, "plot", group)
                 self._plot_item_roles[id(plot_item)] = plot
                 plots_item.addChild(plot_item)
+                if select_plot is plot:
+                    item_to_select = plot_item
             plots_item.setExpanded(self._expanded_state.get(("plots", id(group)), True))
             if select_group is group and item_to_select is None:
                 item_to_select = group_item
@@ -16256,42 +16504,70 @@ class NfitProjectExplorer:
         self._sync_details()
 
     def _set_selected_enabled(self, checked: bool) -> None:
-        group, entry, mask, model, role = self._objects_for_item(self._current_item())
-        subgroup = (
-            self._dataset_group_for_item(self._current_item())
-            if role == "dataset_group"
-            else None
-        )
+        current = self._current_item()
+        group, entry, mask, model, role = self._objects_for_item(current)
+        selected = [
+            item
+            for item in self.tree.selectedItems()
+            if self._objects_for_item(item)[4] == role
+        ]
+        if current is not None and current not in selected:
+            selected.append(current)
+        if not selected:
+            return
         changed = False
-        if role == "dataset" and entry is not None:
-            changed = entry.enabled != bool(checked)
-            entry.enabled = bool(checked)
-        elif role == "dataset_group" and subgroup is not None:
-            changed = subgroup.enabled != bool(checked)
-            subgroup.enabled = bool(checked)
-        elif role in {"mask", "group_mask"} and mask is not None:
-            changed = mask.enabled != bool(checked)
-            mask.enabled = bool(checked)
-        elif role == "model" and model is not None:
-            changed = model.enabled != bool(checked)
-            model.enabled = bool(checked)
+        changed_masks: list[tuple[DataGroup | None, DatasetEntry | None, str]] = []
+        affected_groups: list[DataGroup] = []
+        for item in selected:
+            item_group, item_entry, item_mask, item_model, item_role = (
+                self._objects_for_item(item)
+            )
+            subgroup = (
+                self._dataset_group_for_item(item)
+                if item_role == "dataset_group"
+                else None
+            )
+            target = None
+            if item_role == "dataset":
+                target = item_entry
+            elif item_role == "dataset_group":
+                target = subgroup
+            elif item_role in {"mask", "group_mask"}:
+                target = item_mask
+            elif item_role == "model":
+                target = item_model
+            if target is None or target.enabled == bool(checked):
+                continue
+            target.enabled = bool(checked)
+            changed = True
+            if item_group is not None and item_group not in affected_groups:
+                affected_groups.append(item_group)
+            if item_role in {"mask", "group_mask"}:
+                changed_masks.append((item_group, item_entry, item_role))
         if not changed:
             return
-        if group is not None:
-            self._record_data_group_state_change(group)
+        for affected_group in affected_groups:
+            self._record_data_group_state_change(affected_group)
             if role in {"dataset", "dataset_group"} and bool(checked):
-                self._evaluate_model_after_dataset_activation(group)
-        if role in {"mask", "group_mask"}:
-            self._mark_mask_datasets_stale(self._selected_mask_datasets(group, entry, role))
+                self._evaluate_model_after_dataset_activation(affected_group)
+        for item_group, item_entry, item_role in changed_masks:
+            self._mark_mask_datasets_stale(
+                self._selected_mask_datasets(item_group, item_entry, item_role)
+            )
         self._mark_dirty()
         # _refresh_tree refreshes open viewers once after the tree state is
         # rebuilt. Avoid doing the same full-volume refresh twice here.
+        single_selection = len(selected) == 1
         self._refresh_tree(
-            select_group=group,
-            select_dataset=entry,
-            select_mask=mask,
-            select_model=model,
-            select_dataset_group=subgroup,
+            select_group=affected_groups[0] if len(affected_groups) == 1 else group,
+            select_dataset=entry if single_selection else None,
+            select_mask=mask if single_selection else None,
+            select_model=model if single_selection else None,
+            select_dataset_group=(
+                self._dataset_group_for_item(current)
+                if single_selection and role == "dataset_group"
+                else None
+            ),
         )
 
     def _set_selected_dataset_fit_weight(self, value: float) -> None:
@@ -21760,9 +22036,9 @@ class NfitProjectExplorer:
         has_source = bool(entry is not None and _dataset_source_path(entry) is not None)
         enabled_state = _enabled_state_for_role(role, entry, mask, model)
         specs: list[tuple[str, bool]] = []
-        if role in {"dataset", "mask"}:
+        if role in {"dataset", "dataset_group", "mask"}:
             specs.append(("Copy", True))
-        if role in {"group", "datasets", "dataset", "masks"}:
+        if role in {"group", "datasets", "dataset", "dataset_group", "masks"}:
             specs.append(("Paste", can_paste))
         if enabled_state is not None:
             specs.append(("Disable" if enabled_state else "Enable", True))
@@ -21808,11 +22084,17 @@ class NfitProjectExplorer:
         return specs
 
     def _show_context_menu(self, item: Any | None, global_pos: Any) -> None:
-        from PySide6 import QtWidgets
+        from PySide6 import QtCore, QtWidgets
 
         if item is None:
             return
-        self.tree.setCurrentItem(item)
+        if item in self.tree.selectedItems():
+            self.tree.selectionModel().setCurrentIndex(
+                self.tree.indexFromItem(item),
+                QtCore.QItemSelectionModel.SelectionFlag.NoUpdate,
+            )
+        else:
+            self.tree.setCurrentItem(item)
         menu = QtWidgets.QMenu(self.tree)
         menu.setToolTipsVisible(True)
         actions = {
@@ -21843,10 +22125,10 @@ class NfitProjectExplorer:
         tooltips = {
             "Open Analysis Window": "Create, configure, run, and inspect non-fitting dataset analyses.",
             "New analysis": "Open the Analysis Window with a fresh analysis recipe for this workspace.",
-            "Copy": "Copy the selected dataset or mask so it can be pasted elsewhere in the project.",
-            "Paste": "Paste the copied dataset or mask into the selected compatible destination.",
+            "Copy": "Copy the selected dataset batch, dataset group, or mask so it can be pasted elsewhere in the project.",
+            "Paste": "Paste the copied datasets, dataset group, or mask into the selected compatible destination.",
             "Rename": "Rename the selected tree item.",
-            "Delete": "Delete the selected item when that operation is allowed.",
+            "Delete": "Delete all selected compatible items when that operation is allowed.",
             "View in data viewer": "Open or refresh the data viewer for this selection.",
             "Show file location": "Reveal the selected dataset's source file in the operating system file browser.",
             "Change file source": "Point this dataset at a different source file on disk.",
@@ -21875,8 +22157,8 @@ class NfitProjectExplorer:
             "Create covariance plot": "Save this fit's covariance or correlation matrix as an editable plot recipe.",
             "Open plot": "Open this saved plot in the clean presentation window.",
             "Edit in data viewer": "Reopen this saved plot in the data viewer so every viewer control can be adjusted.",
-            "Enable": "Enable this item for viewing and fitting.",
-            "Disable": "Disable this item for viewing and fitting.",
+            "Enable": "Enable all selected compatible items for viewing and fitting.",
+            "Disable": "Disable all selected compatible items for viewing and fitting.",
         }
         for name, enabled in self._context_menu_action_specs(item):
             action = menu.addAction(name)
@@ -21957,7 +22239,13 @@ class NfitProjectExplorer:
             return False
         clip_role, payload = self._clipboard
         if clip_role == "dataset" and isinstance(payload, DatasetEntry):
-            return role in {"group", "datasets"}
+            return role in {"group", "datasets", "dataset_group"}
+        if clip_role == "datasets" and isinstance(payload, list):
+            return role in {"group", "datasets", "dataset_group"} and all(
+                isinstance(item, DatasetEntry) for item in payload
+            )
+        if clip_role == "dataset_group" and isinstance(payload, DatasetGroup):
+            return role in {"group", "datasets", "dataset_group"}
         if clip_role == "mask" and isinstance(payload, MaskSpec):
             return role in {"dataset", "masks"} and entry is not None
         return False
@@ -28524,6 +28812,21 @@ def _make_project_tree_class():
 
         def contextMenuEvent(self, event):
             self.explorer._show_context_menu(self.itemAt(event.pos()), event.globalPos())
+
+        def mousePressEvent(self, event):
+            item = self.itemAt(event.position().toPoint())
+            if (
+                event.button() == QtCore.Qt.MouseButton.RightButton
+                and item is not None
+                and item in self.selectedItems()
+            ):
+                self.selectionModel().setCurrentIndex(
+                    self.indexFromItem(item),
+                    QtCore.QItemSelectionModel.SelectionFlag.NoUpdate,
+                )
+                event.accept()
+                return
+            super().mousePressEvent(event)
 
         def keyPressEvent(self, event):
             if event.key() == QtCore.Qt.Key.Key_Delete:
