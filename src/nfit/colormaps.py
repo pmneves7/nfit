@@ -82,6 +82,8 @@ MATPLOTLIB_DIVERGING_COLORMAPS = (
 
 MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS = (
     "cubehelix",
+    "CMRmap",
+    "gnuplot2",
     "twilight",
     "twilight_shifted",
 )
@@ -102,7 +104,6 @@ MATPLOTLIB_QUALITATIVE_COLORMAPS = (
 )
 
 NFIT_CONTINUOUS_COLORMAPS = (
-    "bluewhitered",
     "young_rdbu",
     "young_ylbkcy",
     "young_quadratic",
@@ -169,6 +170,8 @@ _YOUNG_QUADRATIC = (
 
 def _register_nfit_colormaps() -> None:
     definitions = {
+        # Retain the old name for stored-plot and script compatibility, but do
+        # not expose this exact alias of Matplotlib's bwr in the GUI catalog.
         "bluewhitered": (
             (0.0, 0.0, 1.0),
             (1.0, 1.0, 1.0),

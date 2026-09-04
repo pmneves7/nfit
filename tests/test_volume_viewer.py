@@ -151,8 +151,7 @@ def test_volume_colormaps_append_colorcet_and_render_them():
     assert set(MATPLOTLIB_DIVERGING_COLORMAPS) <= set(COLORMAPS)
     assert set(MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS) <= set(COLORMAPS)
     assert "cet_fire" in COLORMAPS[len(MATPLOTLIB_VOLUME_COLORMAPS) :]
-    assert COLORMAPS[-4:] == (
-        "bluewhitered",
+    assert COLORMAPS[-3:] == (
         "young_rdbu",
         "young_ylbkcy",
         "young_quadratic",
@@ -346,7 +345,8 @@ def test_volume_panel_exposes_independent_channels_curves_and_camera_exports(mon
     assert not cmap.itemIcon(cmap.findText("YlGnBu")).isNull()
     assert not cmap.itemIcon(cmap.findText("RdBu")).isNull()
     assert not cmap.itemIcon(cmap.findText("cet_fire")).isNull()
-    assert not cmap.itemIcon(cmap.findText("bluewhitered")).isNull()
+    assert not cmap.itemIcon(cmap.findText("CMRmap")).isNull()
+    assert not cmap.itemIcon(cmap.findText("gnuplot2")).isNull()
     linked.setChecked(False)
     opacity.setCurrentText("errors")
     assert color.currentText() == "signal"

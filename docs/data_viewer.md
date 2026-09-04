@@ -81,20 +81,22 @@ Matplotlib choices first, followed by the complete standard Matplotlib
 sequential and diverging families, then Colorcet's short named perceptually
 uniform continuous maps. The standard families include the ColorBrewer maps
 used by DAVE/MSlice under `CB-*` names; select **Reverse** to reproduce DAVE's
-default direction. `cubehelix` provides another grayscale-friendly sequential
-choice, while `twilight` and `twilight_shifted` cover periodic phase or angle
-data. Each menu row includes a preview swatch of the actual map.
+default direction. `cubehelix` and `CMRmap` provide grayscale-friendly
+sequential choices, while `gnuplot2` provides a higher-contrast specialized
+ramp and `twilight` and `twilight_shifted` cover periodic phase or angle data.
+Each menu row includes a preview swatch of the actual map.
 The waterfall color menu adds Matplotlib's complete qualitative family and
 Colorcet's named Glasbey categorical palettes after the continuous maps for
 clearly distinguishing many traces. Separator
 rows mark the original Matplotlib, sequential, diverging, specialized,
 Colorcet continuous, nfit, Matplotlib qualitative, and Colorcet categorical
 sections; Colorcet names use the `cet_` prefix.
-The Matplotlib choices include `Spectral` (the ColorBrewer/CB-Spectral map) and
-`turbo`. nfit's
-`bluewhitered` map runs linearly from saturated blue through white to saturated
-red. The `young_rdbu`, `young_ylbkcy`, and `young_quadratic` maps reproduce the
-three control-point sets in `YoungColorMap.m` at its centered 50/50 inflection.
+The Matplotlib choices include `Spectral` (the ColorBrewer/CB-Spectral map),
+`turbo`, and `bwr`; the latter replaces nfit's former identical
+`bluewhitered` menu entry. Existing stored plots and scripts using the old name
+remain compatible. The `young_rdbu`, `young_ylbkcy`, and `young_quadratic` maps
+reproduce the three control-point sets in `YoungColorMap.m` at its centered
+50/50 inflection.
 
 ## Waterfall plots
 

@@ -421,9 +421,13 @@ def test_qt_colormap_menus_group_matplotlib_and_named_colorcet_maps():
     assert "cet_fire" in COLORCET_CONTINUOUS_COLORMAPS
     assert "cet_glasbey" in COLORCET_CATEGORICAL_COLORMAPS
     assert colormaps.get_cmap("cet_fire").name == "cet_fire"
-    bluewhitered = colormaps.get_cmap("bluewhitered")
-    np.testing.assert_allclose(bluewhitered(0.0)[:3], (0.0, 0.0, 1.0))
-    np.testing.assert_allclose(bluewhitered(1.0)[:3], (1.0, 0.0, 0.0))
+    assert "bluewhitered" not in viewer.model.COLORMAPS
+    assert "CMRmap" in viewer.model.COLORMAPS
+    assert "gnuplot2" in viewer.model.COLORMAPS
+    np.testing.assert_allclose(
+        colormaps.get_cmap("bluewhitered")(np.linspace(0.0, 1.0, 256)),
+        colormaps.get_cmap("bwr")(np.linspace(0.0, 1.0, 256)),
+    )
     np.testing.assert_allclose(
         colormaps.get_cmap("young_rdbu")(0.0)[:3],
         np.asarray((5.0, 48.0, 97.0)) / 256.0,
