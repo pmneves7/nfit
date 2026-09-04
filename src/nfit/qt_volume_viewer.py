@@ -6,13 +6,23 @@ from typing import Any
 
 import numpy as np
 
+from .colormaps import (
+    COLORCET_CONTINUOUS_COLORMAPS,
+    MATPLOTLIB_VOLUME_COLORMAPS,
+    NFIT_CONTINUOUS_COLORMAPS,
+    populate_qt_colormap_combo,
+)
 from .dataset import PointListData
 from .mdhisto import MDHistoAxis, MDHistoData, mdhisto_measured_bins
 from .plotting import gaussian_smooth_nan
 from .qt_pyvista import configure_pyvista_interactor
 
 TRANSFER_SAMPLES = 256
-COLORMAPS = ("viridis", "magma", "plasma", "cividis", "turbo", "coolwarm", "grey")
+COLORMAPS = (
+    MATPLOTLIB_VOLUME_COLORMAPS
+    + COLORCET_CONTINUOUS_COLORMAPS
+    + NFIT_CONTINUOUS_COLORMAPS
+)
 RENDER_MODES = ("Volume", "Isosurface")
 
 
@@ -654,7 +664,19 @@ def _make_volume_panel(
             self.link_channels_check.setToolTip("Use the color channel for opacity. Uncheck to select a different opacity channel and range.")
             self.cmap_combo = QtWidgets.QComboBox()
             self.cmap_combo.setObjectName("volume_colormap_combo")
-            self.cmap_combo.addItems([name for name in COLORMAPS if name in colormaps])
+            matplotlib_maps = tuple(
+                name for name in MATPLOTLIB_VOLUME_COLORMAPS if name in colormaps
+            )
+            colorcet_maps = tuple(
+                name for name in COLORCET_CONTINUOUS_COLORMAPS if name in colormaps
+            )
+            nfit_maps = tuple(
+                name for name in NFIT_CONTINUOUS_COLORMAPS if name in colormaps
+            )
+            populate_qt_colormap_combo(
+                self.cmap_combo,
+                (matplotlib_maps, colorcet_maps, nfit_maps),
+            )
             self.cmap_combo.setCurrentText("viridis")
             self.cmap_combo.setToolTip("Colormap used after applying the editable color mapping curve.")
             for widget in (self.color_channel_combo, self.opacity_channel_combo):

@@ -23,6 +23,12 @@ offset, colors, labels, references, error bars, and model-overlay style. For a
 one-dimensional source, compatible sibling datasets provide the individual
 traces. For multidimensional data, coarse stacking bins are inverse-variance
 weighted means with propagated one-sigma uncertainties.
+Image and volume recipes accept Colorcet's short named continuous Matplotlib
+identifiers, such as `cet_fire`. Waterfalls additionally accept the named
+categorical Glasbey palettes, such as `cet_glasbey_dark`. The built-in
+`bluewhitered` diverging map reproduces the linear blue-white-red MATLAB recipe.
+The `young_rdbu`, `young_ylbkcy`, and `young_quadratic` names reproduce the
+corresponding centered `YoungColorMap.m` recipes.
 
 Volumetric recipes retain the three displayed axes, remaining-axis selections,
 camera, transfer functions, opacity, and axis scaling. Masks remain part of the

@@ -4,8 +4,10 @@ import types
 import numpy as np
 import pytest
 
+from nfit.colormaps import MATPLOTLIB_VOLUME_COLORMAPS
 from nfit.mdhisto import MDHistoAxis, MDHistoData
 from nfit.qt_volume_viewer import (
+    COLORMAPS,
     build_rectilinear_volume_grid,
     crop_volume_arrays,
     default_hidden_axis_index,
@@ -123,6 +125,36 @@ def test_independent_opacity_channel_changes_alpha_not_color():
     np.testing.assert_array_equal(rgba_a[:, :3], rgba_b[:, :3])
     np.testing.assert_array_equal(rgba_a[:, 3], [0, 128, 255])
     np.testing.assert_array_equal(rgba_b[:, 3], [255, 128, 0])
+
+
+def test_volume_colormaps_append_colorcet_and_render_them():
+    assert COLORMAPS[: len(MATPLOTLIB_VOLUME_COLORMAPS)] == (
+        "viridis",
+        "magma",
+        "plasma",
+        "cividis",
+        "turbo",
+        "coolwarm",
+        "grey",
+        "Spectral",
+    )
+    assert "cet_fire" in COLORMAPS[len(MATPLOTLIB_VOLUME_COLORMAPS) :]
+    assert COLORMAPS[-4:] == (
+        "bluewhitered",
+        "young_rdbu",
+        "young_ylbkcy",
+        "young_quadratic",
+    )
+    rgba = map_volume_rgba(
+        np.asarray([0.0, 1.0]),
+        np.asarray([1.0, 1.0]),
+        cmap="cet_fire",
+        color_range=(0.0, 1.0),
+        opacity_range=(0.0, 1.0),
+        color_curve=[(0.0, 0.0), (1.0, 1.0)],
+        opacity_curve=[(0.0, 1.0), (1.0, 1.0)],
+    )
+    assert not np.array_equal(rgba[0, :3], rgba[1, :3])
 
 
 def test_transfer_curve_interpolates_piecewise_mapping():
@@ -294,7 +326,13 @@ def test_volume_panel_exposes_independent_channels_curves_and_camera_exports(mon
 
     color = panel.findChild(QtWidgets.QComboBox, "volume_color_channel_combo")
     opacity = panel.findChild(QtWidgets.QComboBox, "volume_opacity_channel_combo")
+    cmap = panel.findChild(QtWidgets.QComboBox, "volume_colormap_combo")
     linked = panel.findChild(QtWidgets.QCheckBox, "volume_link_channels_check")
+    first_separator = len(MATPLOTLIB_VOLUME_COLORMAPS)
+    assert cmap.itemText(first_separator) == ""
+    assert not cmap.model().item(first_separator).isEnabled()
+    assert not cmap.itemIcon(cmap.findText("cet_fire")).isNull()
+    assert not cmap.itemIcon(cmap.findText("bluewhitered")).isNull()
     linked.setChecked(False)
     opacity.setCurrentText("errors")
     assert color.currentText() == "signal"

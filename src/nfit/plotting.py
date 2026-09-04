@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import ArrayLike
 
+from .colormaps import IMAGE_COLORMAPS
 from .dataset import PointData4D, PointListData
 from .mdhisto import MDHistoData, mdhisto_coverage_fraction, mdhisto_measured_bins
 from .quantities import display_axis_label, display_channel_label, display_unit
@@ -1825,7 +1826,7 @@ class MDHistoSliceViewer:
 
     COLOR_SCALES = ("linear", "log", "symmetriclog", "asinh", "power")
     AUTO_LIMITS = ("min/max", "N-sigma", "N IQR", "Nth percentile")
-    COLORMAPS = ("viridis", "magma", "plasma", "cividis", "turbo", "grey")
+    COLORMAPS = IMAGE_COLORMAPS
     CHANNELS = (
         "signal",
         "errors",

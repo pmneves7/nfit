@@ -11,6 +11,13 @@ import matplotlib.colors as mcolors
 import numpy as np
 import pytest
 
+from nfit.colormaps import (
+    COLORCET_CATEGORICAL_COLORMAPS,
+    COLORCET_CONTINUOUS_COLORMAPS,
+    MATPLOTLIB_IMAGE_COLORMAPS,
+    MATPLOTLIB_WATERFALL_COLORMAPS,
+    NFIT_CONTINUOUS_COLORMAPS,
+)
 from nfit.mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
 from nfit.plotting import (
     MDHistoSliceViewer,
@@ -389,6 +396,67 @@ def test_qt_slice_viewer_boolean_channels_use_grey_unit_scale_and_reverse():
 
     assert viewer.model.cmap_reversed is True
     assert viewer.image.cmap.name == "gray_r"
+
+
+def test_qt_colormap_menus_group_matplotlib_and_named_colorcet_maps():
+    pytest.importorskip("PySide6")
+    from matplotlib import colormaps
+
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+
+    assert tuple(viewer.model.COLORMAPS[: len(MATPLOTLIB_IMAGE_COLORMAPS)]) == (
+        MATPLOTLIB_IMAGE_COLORMAPS
+    )
+    assert tuple(viewer.model.COLORMAPS[len(MATPLOTLIB_IMAGE_COLORMAPS) :]) == (
+        COLORCET_CONTINUOUS_COLORMAPS + NFIT_CONTINUOUS_COLORMAPS
+    )
+    assert "cet_fire" in COLORCET_CONTINUOUS_COLORMAPS
+    assert "cet_glasbey" in COLORCET_CATEGORICAL_COLORMAPS
+    assert colormaps.get_cmap("cet_fire").name == "cet_fire"
+    bluewhitered = colormaps.get_cmap("bluewhitered")
+    np.testing.assert_allclose(bluewhitered(0.0)[:3], (0.0, 0.0, 1.0))
+    np.testing.assert_allclose(bluewhitered(1.0)[:3], (1.0, 0.0, 0.0))
+    np.testing.assert_allclose(
+        colormaps.get_cmap("young_rdbu")(0.0)[:3],
+        np.asarray((5.0, 48.0, 97.0)) / 256.0,
+    )
+    np.testing.assert_allclose(
+        colormaps.get_cmap("young_quadratic")(1.0)[:3],
+        np.asarray((255.0, 255.0, 0.0)) / 256.0,
+    )
+
+    image_separator = len(MATPLOTLIB_IMAGE_COLORMAPS)
+    assert viewer.cmap_combo.itemText(image_separator) == ""
+    assert not viewer.cmap_combo.model().item(image_separator).isEnabled()
+    assert viewer.cmap_combo.itemText(image_separator + 1) == (
+        COLORCET_CONTINUOUS_COLORMAPS[0]
+    )
+    fire_index = viewer.cmap_combo.findText("cet_fire")
+    assert fire_index > image_separator
+    assert not viewer.cmap_combo.itemIcon(fire_index).isNull()
+
+    waterfall_separator = len(MATPLOTLIB_WATERFALL_COLORMAPS)
+    nfit_separator = (
+        waterfall_separator + 1 + len(COLORCET_CONTINUOUS_COLORMAPS)
+    )
+    categorical_separator = nfit_separator + 1 + len(NFIT_CONTINUOUS_COLORMAPS)
+    assert viewer.waterfall_cmap_combo.itemText(waterfall_separator) == ""
+    assert viewer.waterfall_cmap_combo.itemText(nfit_separator) == ""
+    assert viewer.waterfall_cmap_combo.itemText(nfit_separator + 1) == (
+        "bluewhitered"
+    )
+    assert viewer.waterfall_cmap_combo.itemText(categorical_separator) == ""
+    assert viewer.waterfall_cmap_combo.itemText(categorical_separator + 1) == (
+        COLORCET_CATEGORICAL_COLORMAPS[0]
+    )
+    assert not viewer.waterfall_cmap_combo.itemIcon(
+        categorical_separator + 1
+    ).isNull()
+
+    viewer.cmap_combo.setCurrentText("cet_fire")
+    assert viewer.image.cmap.name == "cet_fire"
 
 
 def test_slice_viewer_returns_qt_viewer():

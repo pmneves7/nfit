@@ -5,6 +5,13 @@ from typing import Any
 
 import numpy as np
 
+from .colormaps import (
+    IMAGE_COLORMAP_GROUPS,
+    WATERFALL_COLORMAP_GROUPS,
+    WATERFALL_COLORMAPS,
+    WATERFALL_DISCRETE_COLORMAPS,
+    populate_qt_colormap_combo,
+)
 from .dataset import PointListData
 from .mdhisto import MDHistoData
 from .plotting import (
@@ -86,20 +93,8 @@ _COLOR_OPTIONS = {
     "gray": "#7f7f7f",
     "black": "#000000",
 }
-_WATERFALL_COLORMAPS = (
-    "viridis",
-    "plasma",
-    "magma",
-    "inferno",
-    "cividis",
-    "turbo",
-    "tab10",
-    "Dark2",
-    "Set1",
-    "Blues",
-    "Reds",
-)
-_WATERFALL_DISCRETE_COLORMAPS = {"tab10", "Dark2", "Set1"}
+_WATERFALL_COLORMAPS = WATERFALL_COLORMAPS
+_WATERFALL_DISCRETE_COLORMAPS = WATERFALL_DISCRETE_COLORMAPS
 
 
 class QtMDHistoSliceViewer:
@@ -1481,7 +1476,7 @@ class QtMDHistoSliceViewer:
         color_layout.setHorizontalSpacing(6)
         color_layout.setVerticalSpacing(6)
         self.cmap_combo = QtWidgets.QComboBox()
-        self.cmap_combo.addItems(self.model.COLORMAPS)
+        populate_qt_colormap_combo(self.cmap_combo, IMAGE_COLORMAP_GROUPS)
         self.cmap_combo.setToolTip("Choose the colormap used for 2D image data.")
         _compact_combobox(self.cmap_combo)
         self.cmap_combo.setCurrentText(self.model.cmap)
@@ -1852,7 +1847,10 @@ class QtMDHistoSliceViewer:
         waterfall_layout.addWidget(self.waterfall_offset_slider, 5, 0, 1, 4)
 
         self.waterfall_cmap_combo = QtWidgets.QComboBox()
-        self.waterfall_cmap_combo.addItems(_WATERFALL_COLORMAPS)
+        populate_qt_colormap_combo(
+            self.waterfall_cmap_combo,
+            WATERFALL_COLORMAP_GROUPS,
+        )
         self.waterfall_cmap_combo.setCurrentText(self.waterfall_cmap)
         self.waterfall_cmap_combo.setToolTip(
             "Color sequence sampled uniformly across the displayed waterfall traces."
