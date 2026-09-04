@@ -1,4 +1,4 @@
-"""Shared Matplotlib and Colorcet colormap catalogs."""
+"""Shared scientific and custom colormap catalogs."""
 
 from __future__ import annotations
 
@@ -224,6 +224,29 @@ COLORCET_CONTINUOUS_COLORMAPS, COLORCET_CATEGORICAL_COLORMAPS = (
 )
 
 
+def _cmcrameri_sequential_colormaps() -> tuple[str, ...]:
+    """Register full-resolution Scientific Colour Maps via cmcrameri.
+
+    Names follow cmcrameri 1.10's sequential classification, excluding its
+    categorical, cyclic, diverging, and multi-sequential families.
+    """
+
+    try:
+        from cmcrameri import cm
+    except ImportError:  # Allow source checkouts before dependencies install.
+        return ()
+    names = (
+        "batlow", "batlowW", "batlowK", "devon", "lajolla", "bamako",
+        "davos", "bilbao", "nuuk", "oslo", "grayC", "hawaii", "lapaz",
+        "tokyo", "buda", "acton", "turku", "imola", "glasgow", "lipari",
+        "navia",
+    )
+    return tuple(f"cmc.{name}" for name in names if name in cm.cmaps)
+
+
+CMCRAMERI_SEQUENTIAL_COLORMAPS = _cmcrameri_sequential_colormaps()
+
+
 def user_colormap_directory() -> Path:
     """Return the drop-in RGB-table directory (override with NFIT_COLORMAP_DIR)."""
 
@@ -317,6 +340,7 @@ IMAGE_COLORMAPS = (
     + _IMAGE_DIVERGING_COLORMAPS
     + MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS
     + COLORCET_CONTINUOUS_COLORMAPS
+    + CMCRAMERI_SEQUENTIAL_COLORMAPS
     + NFIT_CONTINUOUS_COLORMAPS
     + USER_COLORMAPS
 )
@@ -326,6 +350,7 @@ IMAGE_COLORMAP_GROUPS = (
     _IMAGE_DIVERGING_COLORMAPS,
     MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS,
     COLORCET_CONTINUOUS_COLORMAPS,
+    CMCRAMERI_SEQUENTIAL_COLORMAPS,
     NFIT_CONTINUOUS_COLORMAPS,
     USER_COLORMAPS,
 )
@@ -335,6 +360,7 @@ VOLUME_COLORMAPS = (
     + _VOLUME_DIVERGING_COLORMAPS
     + MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS
     + COLORCET_CONTINUOUS_COLORMAPS
+    + CMCRAMERI_SEQUENTIAL_COLORMAPS
     + NFIT_CONTINUOUS_COLORMAPS
     + USER_COLORMAPS
 )
@@ -344,6 +370,7 @@ VOLUME_COLORMAP_GROUPS = (
     _VOLUME_DIVERGING_COLORMAPS,
     MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS,
     COLORCET_CONTINUOUS_COLORMAPS,
+    CMCRAMERI_SEQUENTIAL_COLORMAPS,
     NFIT_CONTINUOUS_COLORMAPS,
     USER_COLORMAPS,
 )
@@ -353,6 +380,7 @@ WATERFALL_COLORMAPS = (
     + _WATERFALL_DIVERGING_COLORMAPS
     + MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS
     + COLORCET_CONTINUOUS_COLORMAPS
+    + CMCRAMERI_SEQUENTIAL_COLORMAPS
     + NFIT_CONTINUOUS_COLORMAPS
     + _WATERFALL_QUALITATIVE_COLORMAPS
     + COLORCET_CATEGORICAL_COLORMAPS
@@ -364,6 +392,7 @@ WATERFALL_COLORMAP_GROUPS = (
     _WATERFALL_DIVERGING_COLORMAPS,
     MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS,
     COLORCET_CONTINUOUS_COLORMAPS,
+    CMCRAMERI_SEQUENTIAL_COLORMAPS,
     NFIT_CONTINUOUS_COLORMAPS,
     _WATERFALL_QUALITATIVE_COLORMAPS,
     COLORCET_CATEGORICAL_COLORMAPS,

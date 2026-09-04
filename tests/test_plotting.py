@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from nfit.colormaps import (
+    CMCRAMERI_SEQUENTIAL_COLORMAPS,
     COLORCET_CATEGORICAL_COLORMAPS,
     COLORCET_CONTINUOUS_COLORMAPS,
     IMAGE_COLORMAP_GROUPS,
@@ -21,6 +22,7 @@ from nfit.colormaps import (
     MATPLOTLIB_SEQUENTIAL_COLORMAPS,
     MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS,
     WATERFALL_COLORMAP_GROUPS,
+    WATERFALL_DISCRETE_COLORMAPS,
 )
 from nfit.mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
 from nfit.plotting import (
@@ -472,6 +474,39 @@ def test_qt_colormap_menus_group_matplotlib_and_named_colorcet_maps():
 
     viewer.cmap_combo.setCurrentText("cet_fire")
     assert viewer.image.cmap.name == "cet_fire"
+
+
+def test_cmcrameri_maps_preserve_tables_and_tiled_plot_settings():
+    from cmcrameri import cm
+    from matplotlib import colormaps
+
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    # Upstream classification catches omissions and accidental inclusion of
+    # terrain, cyclic or categorical maps when the dependency is updated.
+    assert set(CMCRAMERI_SEQUENTIAL_COLORMAPS) == {
+        f"cmc.{name}" for name in cm._cmap_names_sequential
+    }
+    samples = np.linspace(0, 1, 256)
+    for name in CMCRAMERI_SEQUENTIAL_COLORMAPS:
+        assert name not in WATERFALL_DISCRETE_COLORMAPS
+        np.testing.assert_array_equal(
+            colormaps[name](samples), cm.cmaps[name[4:]](samples)
+        )
+        np.testing.assert_array_equal(
+            colormaps[name + "_r"](samples), colormaps[name](samples)[::-1]
+        )
+    data = _tiny_mdhisto_data()
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    viewer.view_mode_combo.setCurrentText("Tiled slices")
+    viewer.cmap_combo.setCurrentText("cmc.batlow")
+    viewer.cmap_reverse_button.click()
+    assert not viewer.cmap_combo.itemIcon(viewer.cmap_combo.findText("cmc.batlow")).isNull()
+    settings = viewer.current_plot_settings()
+    assert "cmc.batlow_r" in viewer.figure_script()
+    restored = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    restored.apply_plot_settings(settings)
+    assert restored.model._effective_cmap() == "cmc.batlow_r"
 
 
 def test_slice_viewer_returns_qt_viewer():

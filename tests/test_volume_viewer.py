@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from nfit.colormaps import (
+    CMCRAMERI_SEQUENTIAL_COLORMAPS,
     MATPLOTLIB_DIVERGING_COLORMAPS,
     MATPLOTLIB_SEQUENTIAL_COLORMAPS,
     MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS,
@@ -149,6 +150,7 @@ def test_volume_colormaps_append_colorcet_and_render_them():
     )
     assert set(MATPLOTLIB_SEQUENTIAL_COLORMAPS) <= set(COLORMAPS)
     assert set(MATPLOTLIB_DIVERGING_COLORMAPS) <= set(COLORMAPS)
+    assert set(CMCRAMERI_SEQUENTIAL_COLORMAPS) <= set(COLORMAPS)
     assert set(MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS) <= set(COLORMAPS)
     assert "cet_fire" in COLORMAPS[len(MATPLOTLIB_VOLUME_COLORMAPS) :]
     assert COLORMAPS[-3:] == (

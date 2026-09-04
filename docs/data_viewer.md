@@ -79,7 +79,8 @@ datasets.
 Image, tiled-slice, waterfall, and volume colormap menus keep the original
 Matplotlib choices first, followed by the complete standard Matplotlib
 sequential and diverging families, then Colorcet's short named perceptually
-uniform continuous maps. The standard families include the ColorBrewer maps
+uniform continuous maps and cmcrameri's sequential Scientific Colour Maps.
+The standard families include the ColorBrewer maps
 used by DAVE/MSlice under `CB-*` names; select **Reverse** to reproduce DAVE's
 default direction. `cubehelix` and `CMRmap` provide grayscale-friendly
 sequential choices, while `gnuplot2` provides a higher-contrast specialized
@@ -89,7 +90,7 @@ The waterfall color menu adds Matplotlib's complete qualitative family and
 Colorcet's named Glasbey categorical palettes after the continuous maps for
 clearly distinguishing many traces. Separator
 rows mark the original Matplotlib, sequential, diverging, specialized,
-Colorcet continuous, nfit, Matplotlib qualitative, and Colorcet categorical
+Colorcet continuous, cmcrameri sequential, nfit, Matplotlib qualitative, and Colorcet categorical
 sections; Colorcet names use the `cet_` prefix.
 The Matplotlib choices include `Spectral` (the ColorBrewer/CB-Spectral map),
 `turbo`, and `bwr`; the latter replaces nfit's former identical
@@ -97,6 +98,18 @@ The Matplotlib choices include `Spectral` (the ColorBrewer/CB-Spectral map),
 remain compatible. The `young_rdbu`, `young_ylbkcy`, and `young_quadratic` maps
 reproduce the three control-point sets in `YoungColorMap.m` at its centered
 50/50 inflection.
+
+The cmcrameri section contains all 21 sequential maps in cmcrameri 1.10:
+`batlow`, `batlowW`, `batlowK`, `devon`, `lajolla`, `bamako`, `davos`,
+`bilbao`, `nuuk`, `oslo`, `grayC`, `hawaii`, `lapaz`, `tokyo`, `buda`,
+`acton`, `turku`, `imola`, `glasgow`, `lipari`, and `navia`.
+Their menu and script names use the `cmc.` prefix, for example `cmc.batlow`.
+They use the original 256-color tables and support reversal with `_r` in
+scripts or the viewer's reversal control. They also support continuous color
+sampling for waterfall traces. The multi-sequential terrain maps, categorical
+variants, cyclic maps, and diverging maps are separate upstream families and
+are not included in this section. See
+[Scientific Colour Maps](https://www.fabiocrameri.ch/colourmaps/) for their design.
 
 ### Custom colormap files
 
