@@ -545,7 +545,7 @@ def plot_mdhisto_tiled_slices(
                     ha="right",
                     va="bottom",
                     bbox={
-                        "boxstyle": "round,pad=0.25",
+                        "boxstyle": "square,pad=0.25",
                         "facecolor": "white",
                         "edgecolor": "none",
                         "alpha": 0.65,

@@ -110,9 +110,9 @@ when at least nine third-axis values are available, and otherwise makes one
 panel per available value.
 
 By default, every panel is labeled at its bottom-right corner with its
-representative third-axis value, backed by a translucent box so that it remains
-legible over the data. Clear **Show tiled-slice value labels** in **Figure** to
-hide these annotations.
+representative third-axis value, backed by a translucent square-cornered box so
+that it remains legible over the data. Clear **Show tiled-slice value labels**
+in **Figure** to hide these annotations.
 
 All panels share their x and y limits. The default global color scale also
 shares one normalization and one colorbar at the far right. With **Autoscale**

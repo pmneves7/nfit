@@ -4358,7 +4358,7 @@ class QtMDHistoSliceViewer:
                     va="bottom",
                     fontsize=self.font_size,
                     bbox={
-                        "boxstyle": "round,pad=0.25",
+                        "boxstyle": "square,pad=0.25",
                         "facecolor": "white",
                         "edgecolor": "none",
                         "alpha": 0.65,

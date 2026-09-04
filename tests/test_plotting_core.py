@@ -193,6 +193,10 @@ def test_plot_tiled_slices_uses_one_shared_norm_and_far_right_colorbar():
         axis.texts[0].get_bbox_patch().get_alpha() == pytest.approx(0.65)
         for axis in axes
     )
+    assert all(
+        type(axis.texts[0].get_bbox_patch().get_boxstyle()).__name__ == "Square"
+        for axis in axes
+    )
     assert figure.axes[-1].yaxis.label.get_text() == r"$I(\mathbf{Q},E)$ (a.u.)"
 
 

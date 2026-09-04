@@ -1193,6 +1193,10 @@ def test_qt_tiled_slices_exposes_third_axis_range_step_slider_and_script():
         axis.texts[0].get_bbox_patch().get_alpha() == pytest.approx(0.65)
         for axis in viewer._tile_axes
     )
+    assert all(
+        type(axis.texts[0].get_bbox_patch().get_boxstyle()).__name__ == "Square"
+        for axis in viewer._tile_axes
+    )
 
     viewer.show_tile_labels_check.setChecked(False)
     assert all(not axis.texts for axis in viewer._tile_axes)
