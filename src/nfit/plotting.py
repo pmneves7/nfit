@@ -1259,9 +1259,15 @@ def _waterfall_profile_with_weights(
 
 
 def _nanmean_axis0(values: np.ndarray) -> np.ndarray:
+    return _nanmean_axis(values, axis=0)
+
+
+def _nanmean_axis(values: np.ndarray, axis: int) -> np.ndarray:
+    """Average finite values while leaving empty reductions as NaN."""
+
     finite = np.isfinite(values)
-    counts = np.sum(finite, axis=0)
-    totals = np.sum(np.where(finite, values, 0.0), axis=0)
+    counts = np.sum(finite, axis=axis)
+    totals = np.sum(np.where(finite, values, 0.0), axis=axis)
     result = np.full(counts.shape, np.nan, dtype=float)
     np.divide(totals, counts, out=result, where=counts > 0)
     return result
@@ -2268,7 +2274,7 @@ class MDHistoSliceViewer:
         out = values[tuple(index)]
         for axis in sorted(reduce_axes, reverse=True):
             out = (
-                np.nanmean(out, axis=axis)
+                _nanmean_axis(out, axis=axis)
                 if auxiliary is not None
                 else np.nansum(out, axis=axis)
             )

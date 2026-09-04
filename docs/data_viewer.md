@@ -17,7 +17,9 @@ Closing one viewer does not affect the others.
 Choose the displayed axes and use the remaining-axis controls to select one bin
 or integrate a range. Channel labels and units come from the dataset's declared
 physical quantities. **Apply masks** hides the combined file and nfit mask in
-the figure; fitting always excludes masked data.
+the figure; fitting always excludes masked data. When an integrated auxiliary
+channel has no finite contributors, the corresponding displayed pixel remains
+blank rather than producing a numerical value.
 
 In **Figure**, enable **Show other-axis binning above plot** to add the current
 non-displayed-axis selections to the title. Projected labels and physical units

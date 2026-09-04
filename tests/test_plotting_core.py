@@ -3,6 +3,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import os
+import warnings
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -456,6 +457,29 @@ def test_mdhisto_slice_viewer_integrates_hidden_axis_ranges():
     np.testing.assert_allclose(view["signal"], np.sum(data.signal[:, 1, :, :], axis=0))
     np.testing.assert_allclose(view["errors"], np.sqrt(np.sum(data.errors[:, 1, :, :] ** 2, axis=0)))
     np.testing.assert_allclose(view["num_events"], np.sum(data.num_events[:, 1, :, :], axis=0))
+
+
+def test_mdhisto_slice_viewer_silently_retains_empty_auxiliary_reductions():
+    data = _tiny_mdhisto_data()
+    values = np.ones(data.shape, dtype=float)
+    values[:, 1, 2, 3] = np.nan
+    data = data.with_updates(
+        auxiliary_channels={
+            "derived": MDHistoChannel(values, label="Derived", unit="a.u.")
+        }
+    )
+    viewer = MDHistoSliceViewer(data, x_dim=3, y_dim=2, channel="derived")
+    viewer.selections[0] = (0.25, 0.75)
+    viewer.selections[1] = (1.5, 1.5)
+    viewer.integrate_checks[0] = True
+    viewer.integrate_checks[1] = False
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        view = viewer.slice_arrays()
+
+    assert np.isnan(view["derived"][2, 3])
+    np.testing.assert_allclose(view["derived"][~np.isnan(view["derived"])], 1.0)
 
 
 def test_mdhisto_slice_viewer_masks_integrated_bins_below_coverage_threshold():
