@@ -1197,6 +1197,11 @@ def test_qt_tiled_slices_exposes_third_axis_range_step_slider_and_script():
         type(axis.texts[0].get_bbox_patch().get_boxstyle()).__name__ == "Square"
         for axis in viewer._tile_axes
     )
+    viewer.show_binning_title_check.setChecked(True)
+    title = viewer.figure._suptitle.get_text()
+    assert "ΔE" not in title
+    assert "[H,-H,0]" in title
+    assert "ΔE" not in viewer._binning_title_text()
 
     viewer.show_tile_labels_check.setChecked(False)
     assert all(not axis.texts for axis in viewer._tile_axes)

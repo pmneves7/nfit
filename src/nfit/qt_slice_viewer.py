@@ -3495,8 +3495,11 @@ class QtMDHistoSliceViewer:
         if not self.show_binning_title or getattr(self.model, "is_point_list", False):
             return ""
         parts = []
+        displayed_dims = {self.model.x_dim, self.model.y_dim}
+        if self._tiled_mode_active() and self.tile_dim is not None:
+            displayed_dims.add(self.tile_dim)
         for dim, axis in enumerate(self.data.axes):
-            if dim in {self.model.x_dim, self.model.y_dim}:
+            if dim in displayed_dims:
                 continue
             centers = np.asarray(axis.centers, dtype=float)
             if centers.size == 0:
