@@ -413,6 +413,9 @@ def test_qt_colormap_menus_group_matplotlib_and_named_colorcet_maps():
     assert tuple(viewer.model.COLORMAPS) == tuple(
         name for group in IMAGE_COLORMAP_GROUPS for name in group
     )
+    folder_action = viewer.cmap_combo.actions()[0]
+    assert folder_action.text() == "Open custom colormap folder…"
+    assert "restart" in folder_action.toolTip()
     assert set(MATPLOTLIB_SEQUENTIAL_COLORMAPS) <= set(viewer.model.COLORMAPS)
     assert set(MATPLOTLIB_DIVERGING_COLORMAPS) <= set(viewer.model.COLORMAPS)
     assert set(MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS) <= set(
@@ -449,7 +452,7 @@ def test_qt_colormap_menus_group_matplotlib_and_named_colorcet_maps():
     assert not viewer.cmap_combo.itemIcon(fire_index).isNull()
 
     item_index = 0
-    for group_index, group in enumerate(WATERFALL_COLORMAP_GROUPS):
+    for group_index, group in enumerate(group for group in WATERFALL_COLORMAP_GROUPS if group):
         if group_index:
             assert viewer.waterfall_cmap_combo.itemText(item_index) == ""
             assert not viewer.waterfall_cmap_combo.model().item(item_index).isEnabled()

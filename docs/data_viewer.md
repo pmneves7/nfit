@@ -98,6 +98,42 @@ remain compatible. The `young_rdbu`, `young_ylbkcy`, and `young_quadratic` maps
 reproduce the three control-point sets in `YoungColorMap.m` at its centered
 50/50 inflection.
 
+### Custom colormap files
+
+Right-click any Qt colormap selector and choose **Open custom colormap folder…**.
+This opens `~/nfit_colormaps` (or the directory set by `NFIT_COLORMAP_DIR`).
+Drop in a `.csv`, `.txt`, or `.rgb` file and restart nfit. Custom maps appear
+in a final section with preview swatches in slice, tiled-slice, volume, and
+waterfall menus. Malformed files are skipped with a warning in the console.
+
+Use at least two rows of three RGB values, ordered from low to high, separated
+by commas or whitespace. Values may be floats in 0–1 or integers in 0–255;
+lines beginning with `#` are comments. There is no column header. For example:
+
+```text
+# RGB, 0–1
+0.0 0.0 0.3
+0.0 0.6 0.6
+1.0 1.0 0.5
+```
+
+The filename determines the name: `parula.csv` becomes `user_parula`.
+Use letters, digits, underscores, or hyphens; do not end the name with `_r`,
+which is reserved for reversal. Export a Parula table from MATLAB with
+`writematrix(parula(256), 'parula.csv')` and place it in this folder.
+
+Scripts discover the same folder on import. To load an explicit file elsewhere:
+
+```python
+from nfit.colormaps import load_colormap_file
+name = load_colormap_file("/path/to/parula.csv")
+# Pass cmap=name to a plotting function, or cmap=name + "_r" to reverse it.
+```
+
+Saved plots and exported scripts reference the colormap by name. Include the
+RGB file when sharing them with another machine; RGB tables are not embedded
+in project files. Replacing a table changes future renderings of that name.
+
 ## Waterfall plots
 
 Choose **Visualization > Waterfall** to stack one-dimensional traces.

@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+import os
+import re
+import warnings
+from pathlib import Path
+
+import numpy as np
 from matplotlib import colormaps
 from matplotlib.colors import LinearSegmentedColormap, ListedColormap
 
@@ -218,6 +224,63 @@ COLORCET_CONTINUOUS_COLORMAPS, COLORCET_CATEGORICAL_COLORMAPS = (
 )
 
 
+def user_colormap_directory() -> Path:
+    """Return the drop-in RGB-table directory (override with NFIT_COLORMAP_DIR)."""
+
+    return Path(os.environ.get("NFIT_COLORMAP_DIR", str(Path.home() / "nfit_colormaps"))).expanduser()
+
+
+def load_colormap_file(path: str | Path) -> str:
+    """Register a CSV/whitespace RGB table and its reverse; return its user_ name.
+
+    Rows are evenly spaced from low to high. Values must be finite and within
+    0–1, or integer 0–255 if any value exceeds one. Hash comments are allowed.
+    Existing registered names cannot be replaced.
+    """
+
+    path = Path(path)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", path.stem) or path.stem.endswith("_r"):
+        raise ValueError("Use letters, digits, underscores or hyphens; the filename must not end in _r.")
+    lines = path.read_text(encoding="utf-8-sig").replace(",", " ").splitlines()
+    rgb = np.loadtxt(lines, comments="#", ndmin=2)
+    if rgb.shape[0] < 2 or rgb.shape[1] != 3 or not np.all(np.isfinite(rgb)):
+        raise ValueError("Expected at least two rows of three finite RGB values.")
+    if np.any(rgb < 0) or np.any(rgb > 255):
+        raise ValueError("RGB values must lie within 0–1 or 0–255.")
+    if np.max(rgb) > 1:
+        if not np.all(rgb == np.floor(rgb)):
+            raise ValueError("RGB values above one must use integer 0–255 units.")
+        rgb = rgb / 255.0
+    name = f"user_{path.stem}"
+    if name in colormaps or f"{name}_r" in colormaps:
+        raise ValueError(f"Colormap already registered: {name}")
+    cmap = LinearSegmentedColormap.from_list(name, rgb, N=max(256, len(rgb)))
+    colormaps.register(cmap)
+    colormaps.register(cmap.reversed())
+    return name
+
+
+def _load_user_colormaps() -> tuple[str, ...]:
+    names = []
+    directory = user_colormap_directory()
+    try:
+        paths = sorted(directory.iterdir()) if directory.is_dir() else []
+    except OSError as exc:
+        warnings.warn(f"Cannot read colormap folder {directory}: {exc}", stacklevel=2)
+        return ()
+    for path in paths:
+        if not path.is_file() or path.suffix.lower() not in {".csv", ".txt", ".rgb"}:
+            continue
+        try:
+            names.append(load_colormap_file(path))
+        except (OSError, ValueError, UnicodeError) as exc:
+            warnings.warn(f"Skipping colormap {path.name}: {exc}", stacklevel=2)
+    return tuple(names)
+
+
+USER_COLORMAPS = _load_user_colormaps()
+
+
 def _new_colormaps(
     names: tuple[str, ...], existing: tuple[str, ...]
 ) -> tuple[str, ...]:
@@ -255,6 +318,7 @@ IMAGE_COLORMAPS = (
     + MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS
     + COLORCET_CONTINUOUS_COLORMAPS
     + NFIT_CONTINUOUS_COLORMAPS
+    + USER_COLORMAPS
 )
 IMAGE_COLORMAP_GROUPS = (
     MATPLOTLIB_IMAGE_COLORMAPS,
@@ -263,6 +327,7 @@ IMAGE_COLORMAP_GROUPS = (
     MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS,
     COLORCET_CONTINUOUS_COLORMAPS,
     NFIT_CONTINUOUS_COLORMAPS,
+    USER_COLORMAPS,
 )
 VOLUME_COLORMAPS = (
     MATPLOTLIB_VOLUME_COLORMAPS
@@ -271,6 +336,7 @@ VOLUME_COLORMAPS = (
     + MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS
     + COLORCET_CONTINUOUS_COLORMAPS
     + NFIT_CONTINUOUS_COLORMAPS
+    + USER_COLORMAPS
 )
 VOLUME_COLORMAP_GROUPS = (
     MATPLOTLIB_VOLUME_COLORMAPS,
@@ -279,6 +345,7 @@ VOLUME_COLORMAP_GROUPS = (
     MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS,
     COLORCET_CONTINUOUS_COLORMAPS,
     NFIT_CONTINUOUS_COLORMAPS,
+    USER_COLORMAPS,
 )
 WATERFALL_COLORMAPS = (
     MATPLOTLIB_WATERFALL_COLORMAPS
@@ -289,6 +356,7 @@ WATERFALL_COLORMAPS = (
     + NFIT_CONTINUOUS_COLORMAPS
     + _WATERFALL_QUALITATIVE_COLORMAPS
     + COLORCET_CATEGORICAL_COLORMAPS
+    + USER_COLORMAPS
 )
 WATERFALL_COLORMAP_GROUPS = (
     MATPLOTLIB_WATERFALL_COLORMAPS,
@@ -299,6 +367,7 @@ WATERFALL_COLORMAP_GROUPS = (
     NFIT_CONTINUOUS_COLORMAPS,
     _WATERFALL_QUALITATIVE_COLORMAPS,
     COLORCET_CATEGORICAL_COLORMAPS,
+    USER_COLORMAPS,
 )
 WATERFALL_DISCRETE_COLORMAPS = {
     "tab10",
@@ -313,7 +382,22 @@ def populate_qt_colormap_combo(combo, groups: tuple[tuple[str, ...], ...]) -> No
     """Fill a Qt combo with previews and separators between nonempty groups."""
 
     from matplotlib import colormaps
-    from PySide6 import QtCore, QtGui
+    from PySide6 import QtCore, QtGui, QtWidgets
+
+    def open_folder() -> None:
+        directory = user_colormap_directory()
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            if not QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(directory.resolve()))):
+                raise OSError(f"Could not open {directory}")
+        except OSError as exc:
+            QtWidgets.QMessageBox.warning(combo, "Colormap folder", str(exc))
+
+    combo.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.ActionsContextMenu)
+    folder_action = QtGui.QAction("Open custom colormap folder…", combo)
+    folder_action.setToolTip("Add RGB .csv, .txt or .rgb tables, then restart nfit to load them.")
+    folder_action.triggered.connect(open_folder)
+    combo.addAction(folder_action)
 
     preview_width = 96
     preview_height = 14
