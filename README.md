@@ -88,7 +88,8 @@ The package provides:
 - interactive slice, waterfall, tiled 2D-slice, and volumetric visualization
   with independent, same-state viewer duplication and stored plot recipes that
   retain independent source/composite-rebin configurations and provide named,
-  previewed perceptually uniform Colorcet color maps;
+  previewed Matplotlib sequential/diverging and perceptually uniform Colorcet
+  color maps;
 - multi-selection dataset operations and recursive copy/paste for nested
   dataset groups.
 

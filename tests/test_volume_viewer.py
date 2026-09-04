@@ -4,7 +4,13 @@ import types
 import numpy as np
 import pytest
 
-from nfit.colormaps import MATPLOTLIB_VOLUME_COLORMAPS
+from nfit.colormaps import (
+    MATPLOTLIB_DIVERGING_COLORMAPS,
+    MATPLOTLIB_SEQUENTIAL_COLORMAPS,
+    MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS,
+    MATPLOTLIB_VOLUME_COLORMAPS,
+    VOLUME_COLORMAP_GROUPS,
+)
 from nfit.mdhisto import MDHistoAxis, MDHistoData
 from nfit.qt_volume_viewer import (
     COLORMAPS,
@@ -138,6 +144,12 @@ def test_volume_colormaps_append_colorcet_and_render_them():
         "grey",
         "Spectral",
     )
+    assert COLORMAPS == tuple(
+        name for group in VOLUME_COLORMAP_GROUPS for name in group
+    )
+    assert set(MATPLOTLIB_SEQUENTIAL_COLORMAPS) <= set(COLORMAPS)
+    assert set(MATPLOTLIB_DIVERGING_COLORMAPS) <= set(COLORMAPS)
+    assert set(MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS) <= set(COLORMAPS)
     assert "cet_fire" in COLORMAPS[len(MATPLOTLIB_VOLUME_COLORMAPS) :]
     assert COLORMAPS[-4:] == (
         "bluewhitered",
@@ -331,6 +343,8 @@ def test_volume_panel_exposes_independent_channels_curves_and_camera_exports(mon
     first_separator = len(MATPLOTLIB_VOLUME_COLORMAPS)
     assert cmap.itemText(first_separator) == ""
     assert not cmap.model().item(first_separator).isEnabled()
+    assert not cmap.itemIcon(cmap.findText("YlGnBu")).isNull()
+    assert not cmap.itemIcon(cmap.findText("RdBu")).isNull()
     assert not cmap.itemIcon(cmap.findText("cet_fire")).isNull()
     assert not cmap.itemIcon(cmap.findText("bluewhitered")).isNull()
     linked.setChecked(False)

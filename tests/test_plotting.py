@@ -14,9 +14,13 @@ import pytest
 from nfit.colormaps import (
     COLORCET_CATEGORICAL_COLORMAPS,
     COLORCET_CONTINUOUS_COLORMAPS,
+    IMAGE_COLORMAP_GROUPS,
+    MATPLOTLIB_DIVERGING_COLORMAPS,
     MATPLOTLIB_IMAGE_COLORMAPS,
-    MATPLOTLIB_WATERFALL_COLORMAPS,
-    NFIT_CONTINUOUS_COLORMAPS,
+    MATPLOTLIB_QUALITATIVE_COLORMAPS,
+    MATPLOTLIB_SEQUENTIAL_COLORMAPS,
+    MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS,
+    WATERFALL_COLORMAP_GROUPS,
 )
 from nfit.mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
 from nfit.plotting import (
@@ -406,11 +410,13 @@ def test_qt_colormap_menus_group_matplotlib_and_named_colorcet_maps():
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
 
-    assert tuple(viewer.model.COLORMAPS[: len(MATPLOTLIB_IMAGE_COLORMAPS)]) == (
-        MATPLOTLIB_IMAGE_COLORMAPS
+    assert tuple(viewer.model.COLORMAPS) == tuple(
+        name for group in IMAGE_COLORMAP_GROUPS for name in group
     )
-    assert tuple(viewer.model.COLORMAPS[len(MATPLOTLIB_IMAGE_COLORMAPS) :]) == (
-        COLORCET_CONTINUOUS_COLORMAPS + NFIT_CONTINUOUS_COLORMAPS
+    assert set(MATPLOTLIB_SEQUENTIAL_COLORMAPS) <= set(viewer.model.COLORMAPS)
+    assert set(MATPLOTLIB_DIVERGING_COLORMAPS) <= set(viewer.model.COLORMAPS)
+    assert set(MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS) <= set(
+        viewer.model.COLORMAPS
     )
     assert "cet_fire" in COLORCET_CONTINUOUS_COLORMAPS
     assert "cet_glasbey" in COLORCET_CATEGORICAL_COLORMAPS
@@ -430,30 +436,32 @@ def test_qt_colormap_menus_group_matplotlib_and_named_colorcet_maps():
     image_separator = len(MATPLOTLIB_IMAGE_COLORMAPS)
     assert viewer.cmap_combo.itemText(image_separator) == ""
     assert not viewer.cmap_combo.model().item(image_separator).isEnabled()
-    assert viewer.cmap_combo.itemText(image_separator + 1) == (
-        COLORCET_CONTINUOUS_COLORMAPS[0]
-    )
+    assert viewer.cmap_combo.itemText(image_separator + 1) == "Greys"
+    assert not viewer.cmap_combo.itemIcon(
+        viewer.cmap_combo.findText("RdBu")
+    ).isNull()
     fire_index = viewer.cmap_combo.findText("cet_fire")
     assert fire_index > image_separator
     assert not viewer.cmap_combo.itemIcon(fire_index).isNull()
 
-    waterfall_separator = len(MATPLOTLIB_WATERFALL_COLORMAPS)
-    nfit_separator = (
-        waterfall_separator + 1 + len(COLORCET_CONTINUOUS_COLORMAPS)
-    )
-    categorical_separator = nfit_separator + 1 + len(NFIT_CONTINUOUS_COLORMAPS)
-    assert viewer.waterfall_cmap_combo.itemText(waterfall_separator) == ""
-    assert viewer.waterfall_cmap_combo.itemText(nfit_separator) == ""
-    assert viewer.waterfall_cmap_combo.itemText(nfit_separator + 1) == (
-        "bluewhitered"
-    )
-    assert viewer.waterfall_cmap_combo.itemText(categorical_separator) == ""
-    assert viewer.waterfall_cmap_combo.itemText(categorical_separator + 1) == (
+    item_index = 0
+    for group_index, group in enumerate(WATERFALL_COLORMAP_GROUPS):
+        if group_index:
+            assert viewer.waterfall_cmap_combo.itemText(item_index) == ""
+            assert not viewer.waterfall_cmap_combo.model().item(item_index).isEnabled()
+            item_index += 1
+        assert viewer.waterfall_cmap_combo.itemText(item_index) == group[0]
+        item_index += len(group)
+    categorical_index = viewer.waterfall_cmap_combo.findText(
         COLORCET_CATEGORICAL_COLORMAPS[0]
     )
     assert not viewer.waterfall_cmap_combo.itemIcon(
-        categorical_separator + 1
+        categorical_index
     ).isNull()
+    assert set(MATPLOTLIB_QUALITATIVE_COLORMAPS) <= {
+        viewer.waterfall_cmap_combo.itemText(index)
+        for index in range(viewer.waterfall_cmap_combo.count())
+    }
 
     viewer.cmap_combo.setCurrentText("cet_fire")
     assert viewer.image.cmap.name == "cet_fire"
