@@ -2389,6 +2389,47 @@ def test_interactive_dataset_import_stages_work_before_main_thread_attach(monkey
     assert [dataset.name for dataset in group.datasets] == ["scan"]
 
 
+def test_interactive_multistream_import_can_reuse_existing_group(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+    existing = DatasetGroup(
+        "MACS SPEC",
+        datasets=[DatasetEntry("first [SPEC]", _tiny_mdhisto_data(1.0))],
+        metadata={"importer": "macs_nexus", "source_stream": "spec"},
+    )
+    group = DataGroup("sample", subgroups=[existing])
+    explorer = project_gui.NfitProjectExplorer(NfitProject([group]))
+    explorer._interactive = True
+
+    def staged_import(staging, _paths, **_kwargs):
+        entry = DatasetEntry("second [SPEC]", _tiny_mdhisto_data(2.0))
+        staging.subgroups.append(
+            DatasetGroup(
+                "MACS SPEC",
+                datasets=[entry],
+                metadata={"importer": "macs_nexus", "source_stream": "spec"},
+            )
+        )
+        return [entry]
+
+    def run_now(**kwargs):
+        result = kwargs["task"](lambda _event: None)
+        kwargs["on_success"](result)
+        return True
+
+    monkeypatch.setattr(project_gui, "import_dataset_paths", staged_import)
+    monkeypatch.setattr(explorer, "_start_background_task", run_now)
+
+    assert explorer._request_dataset_import(
+        group, ["second.nxs.ng0"], stream_group_mode="reuse"
+    )
+    assert group.subgroups == [existing]
+    assert [dataset.name for dataset in existing.datasets] == [
+        "first [SPEC]",
+        "second [SPEC]",
+    ]
+
+
 def test_raw_dgs_nexus_import_creates_a_file_backed_reduction_group(tmp_path):
     h5py = pytest.importorskip("h5py")
     source = tmp_path / "SEQ_409981.nxs.h5"

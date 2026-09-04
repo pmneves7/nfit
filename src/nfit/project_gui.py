@@ -485,6 +485,7 @@ def import_dataset_paths(
     importer_name: str | None = None,
     importer_options: dict[str, dict[str, Any]] | None = None,
     into: DatasetGroup | None = None,
+    stream_group_mode: str = "reuse",
     progress_callback: Any | None = None,
 ) -> list[DatasetEntry]:
     """Add dataset entries for one or more source files.
@@ -492,8 +493,12 @@ def import_dataset_paths(
     Point-list types are loaded eagerly with their importer; MDHisto/``.nxs``
     types stay as lazy placeholders loaded on first view. ``into`` optionally
     places the datasets inside a nested dataset group instead of the group root.
+    Multi-stream importers reuse compatible groups by default; pass
+    ``stream_group_mode="new"`` to create a fresh group for each stream.
     """
 
+    if stream_group_mode not in {"reuse", "new"}:
+        raise ValueError("stream_group_mode must be 'reuse' or 'new'")
     entries: list[DatasetEntry] = []
     stream_groups: dict[tuple[str, str], DatasetGroup] = {}
     resolved_type = data_type or DEFAULT_DATA_TYPE
@@ -539,25 +544,44 @@ def import_dataset_paths(
                 key = (spec.name, stream.name)
                 target_group = stream_groups.get(key)
                 if target_group is None:
-                    base_name = f"MACS {stream.label}" if spec.name == "macs_nexus" else stream.label
-                    target_group = DatasetGroup(
-                        name=_unique_name(
-                            base_name,
-                            {item.name for item in parent.subgroups},
-                        ),
-                        metadata={
-                            "importer": spec.name,
-                            "source_stream": stream.name,
-                            GROUP_COMPOSITE_KEY: {
-                                "enabled": True,
-                                "auto_rebin": True,
-                                "stale": True,
-                                "fractional": False,
-                                "mean_weighting": "uniform",
+                    target_group = None
+                    if stream_group_mode == "reuse":
+                        target_group = next(
+                            (
+                                candidate
+                                for candidate in parent.subgroups
+                                if _dataset_group_import_stream(candidate)
+                                == (spec.name, stream.name)
+                            ),
+                            None,
+                        )
+                    if target_group is None:
+                        base_name = (
+                            f"MACS {stream.label}"
+                            if spec.name == "macs_nexus"
+                            else stream.label
+                        )
+                        target_group = DatasetGroup(
+                            name=_unique_name(
+                                base_name,
+                                {item.name for item in parent.subgroups},
+                            ),
+                            metadata={
+                                "importer": spec.name,
+                                "source_stream": stream.name,
+                                GROUP_COMPOSITE_KEY: {
+                                    "enabled": True,
+                                    "auto_rebin": True,
+                                    "stale": True,
+                                    "fractional": False,
+                                    "mean_weighting": "uniform",
+                                },
                             },
-                        },
-                    )
-                    parent.subgroups.append(target_group)
+                        )
+                        parent.subgroups.append(target_group)
+                    else:
+                        target_group.metadata.setdefault("importer", spec.name)
+                        target_group.metadata.setdefault("source_stream", stream.name)
                     stream_groups[key] = target_group
                 group.add_dataset(entry, into=target_group)
                 entries.append(entry)
@@ -579,6 +603,37 @@ def import_dataset_paths(
                 SPECTRAL_CHANNEL_CONFIG_KEY, default_spectral_channel_config()
             )
     return entries
+
+
+def _dataset_group_import_stream(group: DatasetGroup) -> tuple[str, str] | None:
+    """Return the common importer/stream identity for a dataset group."""
+
+    importer = str(group.metadata.get("importer", "")).strip()
+    stream = str(group.metadata.get("source_stream", "")).strip().lower()
+    if importer and stream:
+        return importer, stream
+    identities = [
+        (
+            str(dataset.metadata.get("importer", "")).strip(),
+            str(
+                (
+                    dataset.metadata.get("import_options")
+                    if isinstance(dataset.metadata.get("import_options"), dict)
+                    else {}
+                ).get("stream", "")
+            )
+            .strip()
+            .lower(),
+        )
+        for dataset in group.datasets
+    ]
+    if not identities or any(
+        not identity_importer or not identity_stream
+        for identity_importer, identity_stream in identities
+    ):
+        return None
+    unique_identities = set(identities)
+    return next(iter(unique_identities)) if len(unique_identities) == 1 else None
 
 
 def _adopt_imported_lattice(group: DataGroup, entry: DatasetEntry) -> None:
@@ -761,6 +816,7 @@ def set_dataset_source(dataset: DatasetEntry, path: str | Path) -> None:
     source = Path(path)
     dataset.metadata["source_file"] = str(source)
     dataset.metadata["import_status"] = "pending"
+    dataset.metadata.pop("source_point_count", None)
     dataset.kind = source.suffix.lstrip(".").lower()
     dataset.unload_data()
     if dataset.metadata.get("importer"):
@@ -781,6 +837,7 @@ def set_dataset_data_type(
         raise ValueError(f"unknown data type {data_type!r}")
     dataset.data_type = data_type
     dataset.metadata.pop("import_error", None)
+    dataset.metadata.pop("source_point_count", None)
     if data_type in {"single_crystal_inelastic", "powder_inelastic"}:
         dataset.parameters.setdefault(
             SPECTRAL_CHANNEL_CONFIG_KEY, default_spectral_channel_config()
@@ -840,6 +897,7 @@ def _load_registered_importer_dataset(
         options if isinstance(options, dict) else None,
     )
     data = dataset.replace_data(data, source_backed=True)
+    dataset.metadata["source_point_count"] = _loaded_data_point_count(data)
     dataset.metadata["importer"] = importer_name
     dataset.metadata["import_status"] = "loaded"
     imported_parameters = data.metadata.get("dataset_parameters")
@@ -7163,14 +7221,7 @@ def dataset_rebin_enabled(dataset: DatasetEntry) -> bool:
 
 
 def _dataset_rebin_source_points(dataset: DatasetEntry) -> int:
-    data = dataset.data
-    if isinstance(data, MDHistoData):
-        return int(np.asarray(data.signal).size)
-    if isinstance(data, PointData4D):
-        return int(data.size)
-    if isinstance(data, PointListData):
-        return int(data.size)
-    return 0
+    return _dataset_data_point_count(dataset)
 
 
 def _dataset_rebin_output_bins(config: dict[str, Any]) -> int:
@@ -11371,6 +11422,7 @@ class NfitProjectExplorer:
         importer_name: str | None = None,
         importer_options: dict[str, dict[str, Any]] | None = None,
         into: DatasetGroup | None = None,
+        stream_group_mode: str = "reuse",
     ) -> list[DatasetEntry]:
         from PySide6 import QtWidgets
 
@@ -11384,6 +11436,7 @@ class NfitProjectExplorer:
                 importer_name=importer_name,
                 importer_options=importer_options,
                 into=into,
+                stream_group_mode=stream_group_mode,
                 progress_callback=progress,
             )
         except Exception as exc:
@@ -11411,6 +11464,7 @@ class NfitProjectExplorer:
         importer_name: str | None = None,
         importer_options: dict[str, dict[str, Any]] | None = None,
         into: DatasetGroup | None = None,
+        stream_group_mode: str = "reuse",
     ) -> bool:
         """Import from GUI actions without blocking the Qt event loop."""
 
@@ -11423,6 +11477,7 @@ class NfitProjectExplorer:
                     importer_name=importer_name,
                     importer_options=importer_options,
                     into=into,
+                    stream_group_mode=stream_group_mode,
                 )
             )
 
@@ -11434,6 +11489,7 @@ class NfitProjectExplorer:
                 data_type=data_type,
                 importer_name=importer_name,
                 importer_options=importer_options,
+                stream_group_mode="new",
                 progress_callback=progress_callback,
             )
             return staging
@@ -11445,6 +11501,35 @@ class NfitProjectExplorer:
                 group.add_dataset(dataset, into=into)
             existing_groups = {subgroup.name for subgroup in parent.subgroups}
             for subgroup in list(staging.subgroups):
+                target = None
+                identity = _dataset_group_import_stream(subgroup)
+                if stream_group_mode == "reuse" and identity is not None:
+                    target = next(
+                        (
+                            candidate
+                            for candidate in parent.subgroups
+                            if _dataset_group_import_stream(candidate) == identity
+                        ),
+                        None,
+                    )
+                if target is not None:
+                    target.metadata.setdefault("importer", identity[0])
+                    target.metadata.setdefault("source_stream", identity[1])
+                    for dataset in list(subgroup.datasets):
+                        dataset.name = _unique_dataset_name(
+                            dataset.name, group.dataset_names
+                        )
+                        group.add_dataset(dataset, into=target)
+                        _adopt_imported_crystal(group, dataset, target)
+                    target.subgroups.extend(subgroup.subgroups)
+                    target.masks.extend(subgroup.masks)
+                    if GROUP_COMPOSITE_KEY in target.metadata:
+                        data_group_composite_config(target)["stale"] = True
+                    continue
+                for dataset in subgroup.iter_datasets():
+                    dataset.name = _unique_dataset_name(
+                        dataset.name, group.dataset_names
+                    )
                 subgroup.name = _unique_name(subgroup.name, existing_groups)
                 existing_groups.add(subgroup.name)
                 parent.subgroups.append(subgroup)
@@ -12071,6 +12156,9 @@ class NfitProjectExplorer:
         importer_options = self._prompt_importer_options(importer_name, paths)
         if importer_options is False:
             return
+        stream_group_mode = "reuse"
+        if isinstance(importer_options, tuple):
+            importer_options, stream_group_mode = importer_options
         self._request_dataset_import(
             group,
             paths,
@@ -12080,6 +12168,7 @@ class NfitProjectExplorer:
                 importer_options if isinstance(importer_options, dict) else None
             ),
             into=into,
+            stream_group_mode=stream_group_mode,
         )
 
     def _prompt_import_data_type(self) -> tuple[str, str | None] | None:
@@ -12120,7 +12209,7 @@ class NfitProjectExplorer:
         self,
         importer_name: str | None,
         paths: list[str | Path],
-    ) -> dict[str, dict[str, Any]] | bool | None:
+    ) -> tuple[dict[str, dict[str, Any]], str] | dict[str, dict[str, Any]] | bool | None:
         """Collect importer-specific options through a reusable dispatch hook."""
 
         if importer_name is None:
@@ -12135,7 +12224,7 @@ class NfitProjectExplorer:
     def _prompt_macs_nexus_options(
         self,
         paths: list[str | Path],
-    ) -> dict[str, dict[str, Any]] | bool:
+    ) -> tuple[dict[str, dict[str, Any]], str] | bool:
         """Configure a batch of MACS files before expanding SPEC and DIFF."""
 
         from PySide6 import QtGui, QtWidgets
@@ -12151,6 +12240,16 @@ class NfitProjectExplorer:
         explanation.setWordWrap(True)
         outer.addWidget(explanation)
         form = QtWidgets.QFormLayout()
+
+        group_mode = QtWidgets.QComboBox()
+        group_mode.setObjectName("macs_stream_group_mode")
+        group_mode.addItem("Add to compatible existing SPEC/DIFF groups", "reuse")
+        group_mode.addItem("Create new SPEC/DIFF groups", "new")
+        group_mode.setToolTip(
+            "Choose whether this batch joins existing MACS SPEC and DIFF "
+            "collections under the selected parent or starts separate collections."
+        )
+        form.addRow("Dataset groups", group_mode)
 
         a3_offset = QtWidgets.QLineEdit()
         a3_offset.setObjectName("macs_a3_offset")
@@ -12242,7 +12341,8 @@ class NfitProjectExplorer:
             "detect_dead_analyzers": bool(dead.isChecked()),
             "masked_analyzer_channels": manual.text().strip(),
         }
-        return {str(Path(path)): copy.deepcopy(shared) for path in paths}
+        options = {str(Path(path)): copy.deepcopy(shared) for path in paths}
+        return options, str(group_mode.currentData())
 
     def _prompt_powder_ins_csv_options(
         self,
@@ -28635,14 +28735,45 @@ def _dataset_can_save(dataset: DatasetEntry) -> bool:
 
 def _dataset_data_point_count(dataset: DatasetEntry) -> int:
     data = dataset.data
-    if isinstance(data, MDHistoData):
-        return int(np.prod(data.shape))
-    if isinstance(data, PointListData):
-        return int(data.size)
-    if isinstance(data, PointData4D):
-        return int(data.size)
+    if data is not None:
+        count = _loaded_data_point_count(data)
+        if dataset.data_matches_source:
+            dataset.metadata["source_point_count"] = count
+        return count
+    stored_count = dataset.metadata.get("source_point_count")
+    try:
+        count = int(stored_count)
+    except (TypeError, ValueError):
+        count = -1
+    if count >= 0:
+        return count
+    importer = IMPORTERS.get(str(dataset.metadata.get("importer", "")))
+    source = dataset.metadata.get("source_file")
+    if importer is not None and importer.point_counter is not None and source:
+        try:
+            options = dataset.metadata.get("import_options")
+            count = int(
+                importer.point_counter(
+                    source, options if isinstance(options, dict) else None
+                )
+            )
+        except (OSError, TypeError, ValueError):
+            count = -1
+        if count >= 0:
+            dataset.metadata["source_point_count"] = count
+            return count
     if isinstance(dataset.metadata.get(DERIVED_RECIPE_KEY), dict):
         return _dataset_rebin_output_bins(dataset_rebin_config(dataset))
+    return 0
+
+
+def _loaded_data_point_count(data: Any) -> int:
+    """Return the stored-point count for a loaded nfit data container."""
+
+    if isinstance(data, MDHistoData):
+        return int(np.prod(data.shape))
+    if isinstance(data, (PointListData, PointData4D)):
+        return int(data.size)
     return 0
 
 

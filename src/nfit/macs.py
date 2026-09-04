@@ -106,6 +106,31 @@ def is_macs_nexus_file(path: str | Path) -> bool:
         return False
 
 
+def macs_nexus_point_count(
+    path: str | Path,
+    options: dict[str, Any] | None = None,
+) -> int:
+    """Return the number of detector points without loading a MACS run.
+
+    The result includes masked detector channels because nfit's dataset and
+    collection summaries report stored points rather than fit-eligible points.
+    """
+
+    stream = str((options or {}).get("stream", "spec")).strip().lower()
+    if stream not in {"spec", "diff"}:
+        raise ValueError("MACS stream must be 'spec' or 'diff'")
+    with h5py.File(Path(path), "r") as handle:
+        entry = _entry_group(handle)
+        counts = entry.get(f"DAS_logs/{stream}Detector/counts")
+        if not isinstance(counts, h5py.Dataset) or len(counts.shape) != 2:
+            raise ValueError(f"MACS {stream.upper()} counts must be a 2D dataset")
+        if 20 not in counts.shape:
+            raise ValueError(
+                f"MACS {stream.upper()} counts has shape {counts.shape}; expected one dimension of length 20"
+            )
+        return int(np.prod(counts.shape, dtype=np.int64))
+
+
 def _first_value(entry: h5py.Group, *paths: str) -> float:
     value = _dataset(entry, *paths)
     array = np.asarray(value, dtype=float).reshape(-1)

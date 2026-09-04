@@ -121,10 +121,15 @@ remains valid.
 
 Each SPEC and DIFF collection has its own live composite enabled. Importing a
 batch therefore prepares one SPEC composite and one DIFF composite, without
-mixing their different energy semantics. Configure the HKLE output grid on each
-collection and choose **Rebin now**. The imported lattice and UB matrix are
-promoted to each collection, and its rebinned composite is a gridded dataset
-that opens directly in the data viewer. The same operation is scriptable:
+mixing their different energy semantics. The import dialog can either add a
+later batch to compatible existing SPEC and DIFF collections (the default) or
+create separate collections. Source-backed MACS entries retain a lightweight
+detector-point count, so collection summaries and rebin work estimates remain
+correct while the numerical arrays are unloaded. Configure the HKLE output grid
+on each collection and choose **Rebin now**. The imported lattice and UB matrix
+are promoted to each collection, and its rebinned composite is a gridded
+dataset that opens directly in the data viewer. The same operation is
+scriptable:
 
 ```python
 from nfit import DataGroup, import_dataset_paths
@@ -140,6 +145,7 @@ entries = import_dataset_paths(
     files,
     data_type="single_crystal_inelastic",
     importer_options=options,
+    stream_group_mode="reuse",
 )
 ```
 

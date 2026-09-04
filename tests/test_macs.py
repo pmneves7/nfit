@@ -180,6 +180,9 @@ def test_macs_batch_import_expands_streams_and_prepares_composites(
     reloaded = load_project(project_path)
     lazy_root = reloaded.data_groups[0]
     assert all(dataset.data is None for dataset in lazy_root.iter_datasets())
+    assert project_gui._dataset_collection_point_count(
+        lazy_root.subgroups[0]
+    ) == 2 * 24 * 20
     assert project_gui._has_slice_viewer_candidates(lazy_root)
 
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
@@ -195,6 +198,59 @@ def test_macs_batch_import_expands_streams_and_prepares_composites(
     explorer.window.close()
 
 
+def test_separate_macs_imports_reuse_existing_stream_groups(tmp_path):
+    first = _write_macs_nexus(tmp_path / "first.nxs.ng0")
+    second = _write_macs_nexus(tmp_path / "second.nxs.ng0")
+    group = DataGroup("MACS")
+
+    import_dataset_paths(group, [first], data_type="single_crystal_inelastic")
+    for node in group.subgroups:
+        node.metadata.pop("importer")
+        node.metadata.pop("source_stream")
+    import_dataset_paths(group, [second], data_type="single_crystal_inelastic")
+
+    assert [node.name for node in group.subgroups] == ["MACS SPEC", "MACS DIFF"]
+    assert [len(node.datasets) for node in group.subgroups] == [2, 2]
+    assert all(node.metadata["importer"] == "macs_nexus" for node in group.subgroups)
+
+
+def test_separate_macs_import_can_create_new_stream_groups(tmp_path):
+    first = _write_macs_nexus(tmp_path / "first.nxs.ng0")
+    second = _write_macs_nexus(tmp_path / "second.nxs.ng0")
+    group = DataGroup("MACS")
+
+    import_dataset_paths(group, [first], data_type="single_crystal_inelastic")
+    import_dataset_paths(
+        group,
+        [second],
+        data_type="single_crystal_inelastic",
+        stream_group_mode="new",
+    )
+
+    assert [node.name for node in group.subgroups] == [
+        "MACS SPEC",
+        "MACS DIFF",
+        "MACS SPEC1",
+        "MACS DIFF1",
+    ]
+    assert [len(node.datasets) for node in group.subgroups] == [1, 1, 1, 1]
+
+
+def test_legacy_lazy_macs_entry_reports_points_without_loading(tmp_path):
+    source = _write_macs_nexus(tmp_path / "scan.nxs.ng0", points=17)
+    group = DataGroup("MACS")
+    entries = import_dataset_paths(
+        group, [source], data_type="single_crystal_inelastic"
+    )
+    spec = entries[0]
+    spec.metadata.pop("source_point_count", None)
+    spec.unload_data()
+
+    assert project_gui._dataset_data_point_count(spec) == 17 * 20
+    assert spec.data is None
+    assert spec.metadata["source_point_count"] == 17 * 20
+
+
 def test_macs_import_dialog_scientific_controls_have_tooltips(monkeypatch, tmp_path):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6 import QtWidgets
@@ -204,6 +260,7 @@ def test_macs_import_dialog_scientific_controls_have_tooltips(monkeypatch, tmp_p
     def reject_after_inspection(dialog):
         for name in (
             "macs_a3_offset",
+            "macs_stream_group_mode",
             "macs_monitor_target",
             "macs_apply_efficiency",
             "macs_mask_alignment",
@@ -218,10 +275,34 @@ def test_macs_import_dialog_scientific_controls_have_tooltips(monkeypatch, tmp_p
         assert offset is not None
         assert not offset.text()
         assert "a3Zero" in offset.placeholderText()
+        group_mode = dialog.findChild(QtWidgets.QComboBox, "macs_stream_group_mode")
+        assert group_mode is not None
+        assert group_mode.currentData() == "reuse"
         return QtWidgets.QDialog.DialogCode.Rejected
 
     monkeypatch.setattr(QtWidgets.QDialog, "exec", reject_after_inspection)
     assert explorer._prompt_macs_nexus_options([tmp_path / "scan.nxs.ng0"]) is False
+    explorer.window.close()
+
+
+def test_macs_import_dialog_returns_new_group_choice(monkeypatch, tmp_path):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6 import QtWidgets
+
+    explorer = NfitProjectExplorer(NfitProject([DataGroup("MACS")]))
+
+    def choose_new_groups(dialog):
+        group_mode = dialog.findChild(QtWidgets.QComboBox, "macs_stream_group_mode")
+        group_mode.setCurrentIndex(group_mode.findData("new"))
+        return QtWidgets.QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(QtWidgets.QDialog, "exec", choose_new_groups)
+    result = explorer._prompt_macs_nexus_options([tmp_path / "scan.nxs.ng0"])
+
+    assert isinstance(result, tuple)
+    options, mode = result
+    assert mode == "new"
+    assert str(tmp_path / "scan.nxs.ng0") in options
     explorer.window.close()
 
 

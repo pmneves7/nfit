@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 
 from .dataset import PointData4D, PointListData
-from .macs import import_macs_nexus, is_macs_nexus_file
+from .macs import import_macs_nexus, is_macs_nexus_file, macs_nexus_point_count
 from .mdhisto import MDHistoAxis, MDHistoData
 from .quantities import normalize_unit
 
@@ -658,6 +658,7 @@ class ImporterSpec:
     options_kind: str | None = None
     probe: Callable[[str | Path], bool] | None = None
     streams: tuple[ImporterStream, ...] = ()
+    point_counter: Callable[[str | Path, dict[str, Any] | None], int] | None = None
 
     def can_read(self, path: str | Path) -> bool:
         if self.probe is not None:
@@ -705,6 +706,7 @@ IMPORTERS: dict[str, ImporterSpec] = {
         extensions=(".nxs", ".ng0"),
         options_kind="macs_nexus",
         probe=is_macs_nexus_file,
+        point_counter=macs_nexus_point_count,
         streams=(
             ImporterStream("spec", "SPEC", "single_crystal_inelastic"),
             ImporterStream("diff", "DIFF", "single_crystal_energy_integrated"),

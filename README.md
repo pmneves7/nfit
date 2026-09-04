@@ -11,7 +11,8 @@ The package provides:
   materialization and scaled powder or aligned-histogram background subtraction;
 - NIST NCNR MACS NeXus import with separate energy-analyzed SPEC and
   energy-integrated DIFF streams, monitor normalization, detector masks, and
-  viewer-ready batch composites with promoted crystal orientation;
+  viewer-ready batch composites that can join existing compatible collections,
+  with promoted crystal orientation;
 - powder-cut, MPMS magnetization, PPMS heat-capacity, and tabular imports;
 - masking, coverage- and sample-aware symmetry/rebinning with independently
   nonuniform axes, editable momentum-coordinate matrices, automatic
