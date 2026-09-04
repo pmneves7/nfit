@@ -476,7 +476,8 @@ def test_qt_colormap_menus_group_matplotlib_and_named_colorcet_maps():
     assert viewer.image.cmap.name == "cet_fire"
 
 
-def test_cmcrameri_maps_preserve_tables_and_tiled_plot_settings():
+@pytest.mark.parametrize("selected", ["cmc.batlow", "cmo.thermal", "mycarta.Cube1", "carto.SunsetDark"])
+def test_cmcrameri_maps_preserve_tables_and_tiled_plot_settings(selected):
     from cmcrameri import cm
     from matplotlib import colormaps
 
@@ -499,14 +500,14 @@ def test_cmcrameri_maps_preserve_tables_and_tiled_plot_settings():
     data = _tiny_mdhisto_data()
     viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
     viewer.view_mode_combo.setCurrentText("Tiled slices")
-    viewer.cmap_combo.setCurrentText("cmc.batlow")
+    viewer.cmap_combo.setCurrentText(selected)
     viewer.cmap_reverse_button.click()
-    assert not viewer.cmap_combo.itemIcon(viewer.cmap_combo.findText("cmc.batlow")).isNull()
+    assert not viewer.cmap_combo.itemIcon(viewer.cmap_combo.findText(selected)).isNull()
     settings = viewer.current_plot_settings()
-    assert "cmc.batlow_r" in viewer.figure_script()
+    assert selected + "_r" in viewer.figure_script()
     restored = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
     restored.apply_plot_settings(settings)
-    assert restored.model._effective_cmap() == "cmc.batlow_r"
+    assert restored.model._effective_cmap() == selected + "_r"
 
 
 def test_slice_viewer_returns_qt_viewer():

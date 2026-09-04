@@ -79,7 +79,8 @@ datasets.
 Image, tiled-slice, waterfall, and volume colormap menus keep the original
 Matplotlib choices first, followed by the complete standard Matplotlib
 sequential and diverging families, then Colorcet's short named perceptually
-uniform continuous maps and cmcrameri's sequential Scientific Colour Maps.
+uniform continuous maps, cmcrameri's sequential Scientific Colour Maps,
+cmocean sequential maps, and selected Palettable collections.
 The standard families include the ColorBrewer maps
 used by DAVE/MSlice under `CB-*` names; select **Reverse** to reproduce DAVE's
 default direction. `cubehelix` and `CMRmap` provide grayscale-friendly
@@ -90,8 +91,9 @@ The waterfall color menu adds Matplotlib's complete qualitative family and
 Colorcet's named Glasbey categorical palettes after the continuous maps for
 clearly distinguishing many traces. Separator
 rows mark the original Matplotlib, sequential, diverging, specialized,
-Colorcet continuous, cmcrameri sequential, nfit, Matplotlib qualitative, and Colorcet categorical
-sections; Colorcet names use the `cet_` prefix.
+Colorcet continuous, cmcrameri sequential, cmocean sequential, MyCarta,
+CartoColors, nfit, Matplotlib qualitative, and Colorcet categorical sections;
+Colorcet names use the `cet_` prefix.
 The Matplotlib choices include `Spectral` (the ColorBrewer/CB-Spectral map),
 `turbo`, and `bwr`; the latter replaces nfit's former identical
 `bluewhitered` menu entry. Existing stored plots and scripts using the old name
@@ -110,6 +112,20 @@ sampling for waterfall traces. The multi-sequential terrain maps, categorical
 variants, cyclic maps, and diverging maps are separate upstream families and
 are not included in this section. See
 [Scientific Colour Maps](https://www.fabiocrameri.ch/colourmaps/) for their design.
+
+The cmocean section offers 14 sequential maps with the `cmo.` prefix:
+`thermal`, `haline`, `solar`, `ice`, `gray`, `deep`, `dense`, `algae`,
+`matter`, `turbid`, `speed`, `amp`, `tempo`, and `rain`. It uses cmocean's
+original 256-color tables. The oxygen-threshold and terrain maps are omitted
+because their transitions have specialized meanings.
+
+The MyCarta section supplies `mycarta.Cube1`, `mycarta.CubeYF`, and
+`mycarta.LinearL` using all 256 RGB entries provided by Palettable. The
+CartoColors section supplies `carto.SunsetDark`, `carto.BluYl`, and
+`carto.TealGrn`, interpolated from their seven-color palettes. All these maps
+support the same reversal, saved-plot, script, and waterfall sampling controls
+as other continuous maps. Their original directions are preserved; use
+Reverse if you prefer low values dark and high values light.
 
 ### Custom colormap files
 

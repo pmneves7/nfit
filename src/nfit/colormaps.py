@@ -247,6 +247,51 @@ def _cmcrameri_sequential_colormaps() -> tuple[str, ...]:
 CMCRAMERI_SEQUENTIAL_COLORMAPS = _cmcrameri_sequential_colormaps()
 
 
+def _cmocean_sequential_colormaps() -> tuple[str, ...]:
+    """Load sequential intensity ramps, excluding threshold and terrain maps."""
+
+    try:
+        from cmocean import cm
+    except ImportError:
+        return ()
+    names = (
+        "thermal", "haline", "solar", "ice", "gray", "deep", "dense",
+        "algae", "matter", "turbid", "speed", "amp", "tempo", "rain",
+    )
+    return tuple(f"cmo.{name}" for name in names if name in cm.cmapnames)
+
+
+def _palettable_colormaps() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Register full MyCarta tables and selected seven-anchor CartoColors ramps."""
+
+    try:
+        from palettable.cartocolors import sequential
+        from palettable.mycarta import get_map
+    except ImportError:
+        return (), ()
+
+    def register(name, palette):
+        cmap = LinearSegmentedColormap.from_list(name, palette.mpl_colors, N=256)
+        for candidate in (cmap, cmap.reversed()):
+            if candidate.name not in colormaps:
+                colormaps.register(candidate)
+        return name
+
+    mycarta = tuple(
+        register(f"mycarta.{name}", get_map(f"{name}_256"))
+        for name in ("Cube1", "CubeYF", "LinearL")
+    )
+    carto = tuple(
+        register(f"carto.{name}", getattr(sequential, f"{name}_7"))
+        for name in ("SunsetDark", "BluYl", "TealGrn")
+    )
+    return mycarta, carto
+
+
+CMOCEAN_SEQUENTIAL_COLORMAPS = _cmocean_sequential_colormaps()
+MYCARTA_COLORMAPS, CARTOCOLORS_COLORMAPS = _palettable_colormaps()
+
+
 def user_colormap_directory() -> Path:
     """Return the drop-in RGB-table directory (override with NFIT_COLORMAP_DIR)."""
 
@@ -341,6 +386,9 @@ IMAGE_COLORMAPS = (
     + MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS
     + COLORCET_CONTINUOUS_COLORMAPS
     + CMCRAMERI_SEQUENTIAL_COLORMAPS
+    + CMOCEAN_SEQUENTIAL_COLORMAPS
+    + MYCARTA_COLORMAPS
+    + CARTOCOLORS_COLORMAPS
     + NFIT_CONTINUOUS_COLORMAPS
     + USER_COLORMAPS
 )
@@ -351,6 +399,9 @@ IMAGE_COLORMAP_GROUPS = (
     MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS,
     COLORCET_CONTINUOUS_COLORMAPS,
     CMCRAMERI_SEQUENTIAL_COLORMAPS,
+    CMOCEAN_SEQUENTIAL_COLORMAPS,
+    MYCARTA_COLORMAPS,
+    CARTOCOLORS_COLORMAPS,
     NFIT_CONTINUOUS_COLORMAPS,
     USER_COLORMAPS,
 )
@@ -361,6 +412,9 @@ VOLUME_COLORMAPS = (
     + MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS
     + COLORCET_CONTINUOUS_COLORMAPS
     + CMCRAMERI_SEQUENTIAL_COLORMAPS
+    + CMOCEAN_SEQUENTIAL_COLORMAPS
+    + MYCARTA_COLORMAPS
+    + CARTOCOLORS_COLORMAPS
     + NFIT_CONTINUOUS_COLORMAPS
     + USER_COLORMAPS
 )
@@ -371,6 +425,9 @@ VOLUME_COLORMAP_GROUPS = (
     MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS,
     COLORCET_CONTINUOUS_COLORMAPS,
     CMCRAMERI_SEQUENTIAL_COLORMAPS,
+    CMOCEAN_SEQUENTIAL_COLORMAPS,
+    MYCARTA_COLORMAPS,
+    CARTOCOLORS_COLORMAPS,
     NFIT_CONTINUOUS_COLORMAPS,
     USER_COLORMAPS,
 )
@@ -381,6 +438,9 @@ WATERFALL_COLORMAPS = (
     + MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS
     + COLORCET_CONTINUOUS_COLORMAPS
     + CMCRAMERI_SEQUENTIAL_COLORMAPS
+    + CMOCEAN_SEQUENTIAL_COLORMAPS
+    + MYCARTA_COLORMAPS
+    + CARTOCOLORS_COLORMAPS
     + NFIT_CONTINUOUS_COLORMAPS
     + _WATERFALL_QUALITATIVE_COLORMAPS
     + COLORCET_CATEGORICAL_COLORMAPS
@@ -393,6 +453,9 @@ WATERFALL_COLORMAP_GROUPS = (
     MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS,
     COLORCET_CONTINUOUS_COLORMAPS,
     CMCRAMERI_SEQUENTIAL_COLORMAPS,
+    CMOCEAN_SEQUENTIAL_COLORMAPS,
+    MYCARTA_COLORMAPS,
+    CARTOCOLORS_COLORMAPS,
     NFIT_CONTINUOUS_COLORMAPS,
     _WATERFALL_QUALITATIVE_COLORMAPS,
     COLORCET_CATEGORICAL_COLORMAPS,
