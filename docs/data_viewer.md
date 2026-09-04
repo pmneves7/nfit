@@ -129,8 +129,11 @@ Reverse if you prefer low values dark and high values light.
 
 ### Custom colormap files
 
-Right-click any Qt colormap selector and choose **Open custom colormap folder…**.
-This opens `~/nfit_colormaps` (or the directory set by `NFIT_COLORMAP_DIR`).
+In the main window, choose **File → Preferences… → Colormaps → Open folder…**.
+The page also shows the folder path, loaded custom palettes, and file-format
+instructions. Alternatively, right-click any Qt colormap selector and choose
+**Open custom colormap folder…**. Both open `~/nfit_colormaps` (or the directory
+set by `NFIT_COLORMAP_DIR`).
 Drop in a `.csv`, `.txt`, or `.rgb` file and restart nfit. Custom maps appear
 in a final section with preview swatches in slice, tiled-slice, volume, and
 waterfall menus. Malformed files are skipped with a warning in the console.

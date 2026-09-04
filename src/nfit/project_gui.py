@@ -14832,6 +14832,11 @@ class NfitProjectExplorer:
             )
         return False
 
+    def show_preferences(self) -> None:
+        from .preferences_gui import PreferencesDialog
+
+        PreferencesDialog(self.window).exec()
+
     def _build(self) -> None:
         from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -14850,7 +14855,7 @@ class NfitProjectExplorer:
         file_button = QtWidgets.QToolButton()
         file_button.setObjectName("file_menu_button")
         file_button.setText("File")
-        file_button.setToolTip("Open project file operations such as New, Open, Save, Close, and Quit.")
+        file_button.setToolTip("Open project file operations and application Preferences.")
         file_button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
         menu = QtWidgets.QMenu(file_button)
         menu.setToolTipsVisible(True)
@@ -14888,6 +14893,11 @@ class NfitProjectExplorer:
         save_as_action.setShortcut(QtGui.QKeySequence.StandardKey.SaveAs)
         save_as_action.setToolTip("Choose a new file path and save the current project there.")
         save_as_action.setStatusTip("Choose a new file path and save the current project there.")
+        menu.addSeparator()
+        self.preferences_action = menu.addAction("Preferences…", self.show_preferences)
+        self.preferences_action.setObjectName("preferences_action")
+        self.preferences_action.setToolTip("Open application preferences, including the custom colormap folder.")
+        self.preferences_action.setStatusTip(self.preferences_action.toolTip())
         menu.addSeparator()
         close_action = menu.addAction("Close", self.close_project)
         close_action.setShortcut(QtGui.QKeySequence.StandardKey.Close)

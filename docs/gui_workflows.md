@@ -9,6 +9,11 @@ The nfit interface has two main window types:
 Scientific settings are stored in the `.nfit` project and use the same package
 functions available through the Python API.
 
+Open **File → Preferences…** for application-wide preferences. The **Colormaps**
+page shows the shared custom-palette folder, opens it in your file manager, and
+explains the [RGB file format](data_viewer.md#custom-colormap-files). These
+palettes are shared across projects; restart nfit after adding or editing files.
+
 Each `.nfit` project is one portable file containing its JSON manifest and
 generated analysis artifacts. Original imported measurement files remain
 external source references.

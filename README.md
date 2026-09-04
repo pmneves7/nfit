@@ -89,7 +89,8 @@ The package provides:
   with independent, same-state viewer duplication and stored plot recipes that
   retain independent source/composite-rebin configurations and provide named,
   previewed Matplotlib, cmcrameri, Colorcet, cmocean, MyCarta, and CartoColors
-  color maps, plus drop-in custom RGB palette files;
+  color maps, plus drop-in custom RGB palette files accessible through
+  **File → Preferences**;
 - multi-selection dataset operations and recursive copy/paste for nested
   dataset groups.
 

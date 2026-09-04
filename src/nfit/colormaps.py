@@ -470,25 +470,30 @@ WATERFALL_DISCRETE_COLORMAPS = {
 }
 
 
+def open_user_colormap_folder(parent=None) -> None:
+    """Open the shared palette folder from preferences or a viewer menu."""
+
+    from PySide6 import QtCore, QtGui, QtWidgets
+
+    directory = user_colormap_directory()
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        if not QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(directory.resolve()))):
+            raise OSError(f"Could not open {directory}")
+    except OSError as exc:
+        QtWidgets.QMessageBox.warning(parent, "Colormap folder", str(exc))
+
+
 def populate_qt_colormap_combo(combo, groups: tuple[tuple[str, ...], ...]) -> None:
     """Fill a Qt combo with previews and separators between nonempty groups."""
 
     from matplotlib import colormaps
-    from PySide6 import QtCore, QtGui, QtWidgets
-
-    def open_folder() -> None:
-        directory = user_colormap_directory()
-        try:
-            directory.mkdir(parents=True, exist_ok=True)
-            if not QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(directory.resolve()))):
-                raise OSError(f"Could not open {directory}")
-        except OSError as exc:
-            QtWidgets.QMessageBox.warning(combo, "Colormap folder", str(exc))
+    from PySide6 import QtCore, QtGui
 
     combo.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.ActionsContextMenu)
     folder_action = QtGui.QAction("Open custom colormap folder…", combo)
     folder_action.setToolTip("Add RGB .csv, .txt or .rgb tables, then restart nfit to load them.")
-    folder_action.triggered.connect(open_folder)
+    folder_action.triggered.connect(lambda: open_user_colormap_folder(combo))
     combo.addAction(folder_action)
 
     preview_width = 96
