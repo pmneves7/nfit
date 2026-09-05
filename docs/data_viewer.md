@@ -197,8 +197,13 @@ dimensions as for a normal map, then choose a distinct **Third dimension** in
 the tiled-slice controls. Any further dimensions retain the ordinary
 point/range integration controls.
 
-**Range low** and **Range high** select the third-axis values included in the
-figure. **Step size** groups adjacent values into panels; its horizontal slider
+**Range low** and **Range high** specify the first and maximum panel centers.
+**Step size** sets both center spacing and integration-window width. For example,
+`-0.2` to `1.4` with step `0.2` gives nine panels centered on those values,
+with windows from `-0.3` to `-0.1`, `-0.1` to `0.1`, and so on. Windows include
+source-bin centers, with shared boundaries assigned to the later panel; labels
+show the requested center even when coverage is asymmetric. Empty windows are
+omitted. The horizontal slider
 spans one native bin through the selected range. **Auto** makes nine panels
 when at least nine third-axis values are available, and otherwise makes one
 panel per available value.

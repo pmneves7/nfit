@@ -619,13 +619,15 @@ def _validated_minimum_samples(value: float) -> float:
 
 
 def _requested_edges(lower, upper, num_bins, step_size=None, *, bin_edges=None):
-    if np.any(~np.isfinite(lower)) or np.any(~np.isfinite(upper)) or np.any(upper <= lower):
+    from .rebin import _uniform_center_edges
+
+    if np.any(~np.isfinite(lower)) or np.any(~np.isfinite(upper)) or np.any(upper < lower):
         raise ValueError("binning bounds must be finite and increasing")
     if np.any(num_bins < 1):
         raise ValueError("bin counts must be positive")
     if step_size is None:
         uniform_edges = [
-            np.linspace(lo, hi, count + 1)
+            _uniform_center_edges(lo, hi, count=count)
             for lo, hi, count in zip(lower, upper, num_bins, strict=True)
         ]
     else:
@@ -634,12 +636,7 @@ def _requested_edges(lower, upper, num_bins, step_size=None, *, bin_edges=None):
             raise ValueError("step sizes must be positive and match the requested dimensions")
         uniform_edges = []
         for lo, hi, step in zip(lower, upper, steps, strict=True):
-            axis_edges = np.arange(lo, hi, step)
-            if axis_edges.size == 0 or axis_edges[0] != lo:
-                axis_edges = np.insert(axis_edges, 0, lo)
-            if axis_edges[-1] != hi:
-                axis_edges = np.append(axis_edges, hi)
-            uniform_edges.append(axis_edges)
+            uniform_edges.append(_uniform_center_edges(lo, hi, step=step))
     if bin_edges is None:
         return uniform_edges
     explicit = list(bin_edges)

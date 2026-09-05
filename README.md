@@ -16,7 +16,7 @@ The package provides:
 - powder-cut, MPMS magnetization, PPMS heat-capacity, and tabular imports;
 - masking, coverage- and sample-aware symmetry/rebinning with independently
   nonuniform axes, editable momentum-coordinate matrices, automatic
-  zero-centered uniform grids, composites, backgrounds, and
+  zero-aligned uniform grids specified by bin centers, composites, backgrounds, and
   non-destructive analyses, including live hierarchical composites and editable
   source-linked histogram sums, differences, or comparison clones with
   independent raw-data binning, plus lazy navigation for run-heavy projects;

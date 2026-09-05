@@ -384,8 +384,8 @@ def test_rebin_point_data_returns_masked_regular_grid():
 
     rebinned = rebin_point_data(
         data,
-        lower=[0.0, 0.0, 0.0, 0.0],
-        upper=[1.0, 1.0, 1.0, 1.0],
+        lower=[0.25, 0.0, 0.0, 0.0],
+        upper=[0.75, 1.0, 1.0, 1.0],
         num_bins=[2, 1, 1, 1],
     )
 

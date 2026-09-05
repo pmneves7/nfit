@@ -79,7 +79,7 @@ def test_project_rebin_configuration_applies_symmetry_before_binning():
         "axes": project_gui._default_rebin_axes(data),
         "symmetry": {"mode": "space_group", "expression": "P -1"},
     }
-    config["axes"][0].update({"lower": -1.0, "upper": 1.0, "num_bins": 2})
+    config["axes"][0].update({"lower": -0.5, "upper": 0.5, "num_bins": 2})
     config["axes"][1].update({"lower": -0.5, "upper": 0.5, "num_bins": 1})
     config["axes"][2].update({"lower": -0.5, "upper": 0.5, "num_bins": 1})
     config["axes"][3].update({"lower": 0.0, "upper": 2.0, "num_bins": 1})
@@ -184,8 +184,8 @@ def test_point_list_rebin_supports_hkl_symmetry():
     operations = resolve_symmetry(SymmetrySpec("space_group", "P -1"))
     output = data.rebin_to_histogram(
         ["H", "K", "L"],
-        lower=[-1.0, -0.5, -0.5],
-        upper=[1.0, 0.5, 0.5],
+        lower=[-0.5, -0.5, -0.5],
+        upper=[0.5, 0.5, 0.5],
         num_bins=[2, 1, 1],
         fractional=False,
         symmetry_operations=[operation.matrix_hkl for operation in operations],

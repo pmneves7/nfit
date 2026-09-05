@@ -9,8 +9,8 @@ def test_rebin_nd_averages_values_and_propagates_errors():
         data=[1.0, 3.0, 10.0],
         coords=[0.25, 0.75, 1.75],
         data_errs=[1.0, 1.0, 2.0],
-        lower=0.0,
-        upper=2.0,
+        lower=0.5,
+        upper=1.5,
         num_bins=2,
         fractional=False,
     )
@@ -472,8 +472,8 @@ def test_rebin_accepts_mixed_uniform_and_nonuniform_axes():
     result = rebin_nd(
         data=np.asarray([1.0, 3.0, 5.0, 7.0]),
         coords=np.asarray([[0.25, 0.25], [0.75, 0.75], [2.25, 1.5], [3.25, 2.5]]),
-        lower=[0.0, 0.0],
-        upper=[4.0, 3.0],
+        lower=[1.0, 0.0],
+        upper=[3.0, 3.0],
         num_bins=[2, 99],
         bin_edges=[None, [0.0, 1.0, 3.0]],
         fractional=False,

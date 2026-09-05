@@ -44,6 +44,17 @@ _NUMBA_WARMUP_LOCK = threading.Lock()
 _NUMBA_WARMUP_STARTED = False
 
 
+def _uniform_center_edges(lower: float, upper: float, *, step=None, count=None) -> np.ndarray:
+    """Resolve center limits; a one-bin count or infinite step integrates edges."""
+    if step is not None and np.isfinite(step):
+        count = max(int(np.floor((upper - lower) / step + 1.e-10)) + 1, 1)
+    elif step is not None or count == 1:
+        return np.array([lower, upper], dtype=float)
+    else:
+        step = (upper - lower) / (count - 1)
+    return lower + (np.arange(count + 1, dtype=float) - 0.5) * step
+
+
 def _numba_min_points() -> int:
     """Points required for automatic Numba selection, given kernel warmth."""
 
@@ -204,11 +215,14 @@ class NDRebin:
         Optional coordinate axes to project onto before binning. Defaults to the
         identity basis.
     upper, lower:
-        Optional upper and lower limits for each coordinate dimension. Missing,
+        Last and first bin centers for each uniform coordinate grid. Missing,
         NaN, or infinite limits are replaced with the corresponding data limits.
+        A single-bin integration (``num_bins=1`` or infinite step) instead uses
+        these limits as interval edges. Explicit ``bin_edges`` remain edges.
     step_size:
         Optional bin width for each coordinate dimension. Takes precedence over
-        ``num_bins``.
+        ``num_bins``. Centers start at ``lower`` and advance by this width up
+        to ``upper``; a nonintegral span does not create a shortened final bin.
     num_bins:
         Optional number of bins for each coordinate dimension. Required when
         ``step_size`` is not supplied.
@@ -559,16 +573,7 @@ class NDRebin:
                     raise ValueError("step_size values for uniform axes must be numeric") from exc
                 if this_step <= 0.0 or np.isnan(this_step):
                     raise ValueError("step_size values for uniform axes must be positive")
-                if self.lower[ind] == self.upper[ind]:
-                    these_bins = np.array([self.lower[ind], self.lower[ind]])
-                elif np.isinf(this_step):
-                    these_bins = np.array([self.lower[ind], self.upper[ind]])
-                else:
-                    these_bins = np.arange(self.lower[ind], self.upper[ind], this_step)
-                    if these_bins.size == 0 or these_bins[0] != self.lower[ind]:
-                        these_bins = np.insert(these_bins, 0, self.lower[ind])
-                    if these_bins[-1] != self.upper[ind]:
-                        these_bins = np.append(these_bins, self.upper[ind])
+                these_bins = _uniform_center_edges(self.lower[ind], self.upper[ind], step=this_step)
                 resolved_steps.append(this_step)
             else:
                 assert counts is not None
@@ -579,8 +584,9 @@ class NDRebin:
                     raise ValueError("num_bins values for uniform axes must be integers") from exc
                 if this_count < 1 or this_count_float != this_count:
                     raise ValueError("num_bins values for uniform axes must be positive integers")
-                these_bins = np.linspace(self.lower[ind], self.upper[ind], this_count + 1)
+                these_bins = _uniform_center_edges(self.lower[ind], self.upper[ind], count=this_count)
                 resolved_steps.append(float(these_bins[1] - these_bins[0]))
+            self.lower[ind], self.upper[ind] = these_bins[0], these_bins[-1]
             these_centers = (these_bins[:-1] + these_bins[1:]) / 2.0
             self.bins_list.append(these_bins)
             self.bin_centers_list.append(these_centers)
@@ -1081,6 +1087,7 @@ def rebin_nd_stream(
         max_parallel_bytes=max_parallel_bytes,
     )
     template._prepare()
+    lower_arr, upper_arr = template.lower, template.upper
     assert template.num_bins is not None and template.step_size is not None
     size = int(np.prod(template.num_bins))
     bd_sum, err_sum, norm_sum, ns_sum = template._empty_accumulators(size)
@@ -1109,7 +1116,7 @@ def rebin_nd_stream(
             partial = rebin_nd(
                 data, projected, data_errs=batch.data_errs, data_weights=batch.data_weights,
                 lower=lower_arr, upper=upper_arr, step_size=template.step_size,
-                bin_edges=template.bin_edges,
+                bin_edges=template.bins_list,
                 fractional=fractional, normalize=normalize, mean_weighting=mean_weighting,
                 minimum_samples=0.0, backend="numpy", workers=1,
             )

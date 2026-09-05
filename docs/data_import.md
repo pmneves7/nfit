@@ -296,7 +296,16 @@ coordinate and cannot be mixed into those rows. The rows must form an
 invertible basis. For example, `[[1,1,0], [0,0,1], [1,-1,0]]` produces axes
 labelled `[H,H,0]`, `[0,0,L]`, and `[K,-K,0]`.
 
-Lower and upper limits are blank by default. A blank endpoint is obtained from
+**Min center** and **Max center** specify the first and last centers of a uniform
+grid, in the axis units. For example, energy centers `-0.2` to `1.4` with step
+`0.2` produce nine bins with outer edges `-0.3` and `1.5` meV. Step mode keeps
+the exact spacing and stops at the last center at or below the maximum; Bins
+mode places the requested number of centers including both endpoints. A
+one-bin integration in Bins mode instead uses the endpoints as interval edges.
+Explicit nonuniform edge lists and viewer integration ranges also remain edges.
+Saved uniform-grid limits use this same center convention when reopened.
+
+Limits are blank by default. A blank endpoint is obtained from
 the minimum or maximum projected data coordinate. Uniform edges are placed at
 half-step offsets so the corresponding bin centers lie on integer multiples of
 the step, including zero on the extended grid. Entering a number makes only

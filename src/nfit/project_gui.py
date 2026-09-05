@@ -7603,10 +7603,10 @@ def _resolve_auto_rebin_axes(
             target_upper = float(data_upper) if auto_upper else float(axis["upper"])
             width = target_upper - target_lower
             if np.isfinite(width) and width > 0.0:
-                step = width / max(int(axis.get("num_bins", 1)), 1)
+                step = width / max(int(axis.get("num_bins", 1)) - 1, 1)
         if not np.isfinite(step) or step <= 0.0:
             width = float(data_upper) - float(data_lower)
-            step = width / max(int(axis.get("num_bins", 1)), 1)
+            step = width / max(int(axis.get("num_bins", 1)) - 1, 1)
         if not np.isfinite(step) or step <= 0.0:
             step = 1.0
         # Uniform edges at (n + 1/2)*step put an integer multiple of the
@@ -7624,12 +7624,12 @@ def _resolve_auto_rebin_axes(
         if aligned_upper <= aligned_lower:
             aligned_upper = aligned_lower + step
         if auto_lower:
-            axis["lower"] = aligned_lower
+            axis["lower"] = aligned_lower + step / 2
         if auto_upper:
-            axis["upper"] = aligned_upper
+            axis["upper"] = aligned_upper - step / 2
         axis["step_size"] = step
         axis["num_bins"] = max(
-            int(round((float(axis["upper"]) - float(axis["lower"])) / step)), 1
+            int(round((float(axis["upper"]) - float(axis["lower"])) / step)) + 1, 1
         )
         resolved.append(axis)
     return resolved
@@ -7991,8 +7991,9 @@ def _default_rebin_axes(data: Any) -> list[dict[str, Any]]:
         axes: list[dict[str, Any]] = []
         ndim = len(data.axes)
         for index, (axis, size) in enumerate(zip(data.axes, data.shape, strict=True)):
-            lower, upper = _axis_bounds(axis, size)
+            lower, upper = float(axis.centers[0]), float(axis.centers[-1])
             num_bins = max(int(size), 1)
+            native_lower, native_upper = _axis_bounds(axis, size)
             vector = _mdhisto_rebin_axis_vector(axis, index, ndim)
             variable = _mdhisto_rebin_axis_variable(axis, index, ndim)
             axes.append(
@@ -8008,7 +8009,7 @@ def _default_rebin_axes(data: Any) -> list[dict[str, Any]]:
                     "auto_lower_value": lower,
                     "auto_upper_value": upper,
                     "num_bins": num_bins,
-                    "step_size": _step_size_from_bounds(lower, upper, num_bins),
+                    "step_size": (native_upper - native_lower) if size == 1 else _step_size_from_bounds(lower, upper, num_bins),
                 }
             )
         return axes
@@ -8033,9 +8034,6 @@ def _default_rebin_axes(data: Any) -> list[dict[str, Any]]:
             # preview below the normal two-million-bin safety threshold; users
             # can then choose instrument-appropriate step sizes explicitly.
             num_bins = min(max(int(np.unique(finite).size), 1), 32) if finite.size else 1
-            if upper == lower:
-                lower -= 0.5
-                upper += 0.5
             axes.append(
                 {
                     "name": name,
@@ -8076,14 +8074,16 @@ def _axis_bounds(axis: MDHistoAxis, size: int) -> tuple[float, float]:
 def _step_size_from_bounds(lower: float, upper: float, num_bins: int) -> float:
     if num_bins <= 0:
         return 0.0
-    return float((float(upper) - float(lower)) / float(num_bins))
+    if upper == lower:
+        return 1.0
+    return float((float(upper) - float(lower)) / float(max(num_bins - 1, 1)))
 
 
 def _num_bins_from_step_size(lower: Any, upper: Any, step_size: float) -> int:
     width = abs(float(upper) - float(lower))
     if width == 0.0:
         return 1
-    return max(int(np.ceil(width / float(step_size))), 1)
+    return max(int(np.floor(width / float(step_size) + 1.e-10)) + 1, 1)
 
 
 def _normalize_rebin_bin_edges(value: Any) -> list[float]:
@@ -8120,12 +8120,10 @@ def _sanitize_rebin_axis_config(axis_config: dict[str, Any]) -> dict[str, Any]:
     ):
         edges = _normalize_rebin_bin_edges(explicit_edges)
         sanitized["bin_edges"] = edges
-        sanitized["lower"] = edges[0]
-        sanitized["upper"] = edges[-1]
+        sanitized["lower"] = (edges[0] + edges[1]) / 2 if len(edges) > 2 else edges[0]
+        sanitized["upper"] = (edges[-2] + edges[-1]) / 2 if len(edges) > 2 else edges[-1]
         sanitized["num_bins"] = len(edges) - 1
-        sanitized["step_size"] = _step_size_from_bounds(
-            edges[0], edges[-1], len(edges) - 1
-        )
+        sanitized["step_size"] = (edges[-1] - edges[0]) / (len(edges) - 1)
     else:
         sanitized.pop("bin_edges", None)
     vector = axis_config.get("vector")
@@ -8638,6 +8636,8 @@ def _rebin_mdhisto_coverage(
         mean_weighting="uniform",
         max_batch_bytes=_rebin_max_batch_bytes(config),
     )
+    # Reuse the resolved edges, rather than interpreting them as centers again.
+    kwargs["bin_edges"] = bins_list
     coverage_rebin = (
         rebin_nd_symmetry(
             np.ones(data.signal.size, dtype=float),
@@ -18191,7 +18191,7 @@ class NfitProjectExplorer:
         headers = ["Axis"]
         if show_vectors:
             headers.append("Momentum row [H,K,L]")
-        headers.extend(["Lower", "Upper", "Resolution", "Edges (optional)"])
+        headers.extend(["Min center", "Max center", "Resolution", "Edges (optional)"])
         resolution_column = headers.index("Resolution")
         for column, label in enumerate(headers):
             if column != resolution_column:
@@ -18205,7 +18205,7 @@ class NfitProjectExplorer:
         )
         resolution_mode_combo.setToolTip(
             "Choose whether the single Resolution column edits bin step size or bin count. "
-            "In Step mode, changing limits preserves the requested step and may create a shorter final bin. "
+            "In Step mode, centers advance from the lower limit by the requested step, up to the upper limit. "
             "In Bins mode, changing limits preserves the bin count and recalculates the step."
         )
         resolution_mode_combo.currentIndexChanged.connect(
@@ -18264,7 +18264,7 @@ class NfitProjectExplorer:
                 edit.setMinimumWidth(72)
                 if key in {"lower", "upper"}:
                     edit.setToolTip(
-                        f"Optional composite rebin {key} bound. Leave blank to cover the projected data and align uniform bins so zero is a bin center."
+                        f"Optional composite rebin {key} bin center (interval edge for one-bin integration). Leave blank to cover the projected data and align uniform bins so zero is a bin center."
                     )
                 else:
                     edit.setToolTip(
@@ -19982,7 +19982,7 @@ class NfitProjectExplorer:
         headers = ["Axis"]
         if show_vectors:
             headers.append("Momentum row [H,K,L]")
-        headers.extend(["Lower", "Upper", "Resolution", "Edges (optional)"])
+        headers.extend(["Min center", "Max center", "Resolution", "Edges (optional)"])
         resolution_mode = _rebin_resolution_mode(config)
         resolution_key = "step_size" if resolution_mode == "step" else "num_bins"
         last_column = len(headers) - 1
@@ -20003,7 +20003,7 @@ class NfitProjectExplorer:
         )
         resolution_mode_combo.setToolTip(
             "Choose whether the single Resolution column edits bin step size or bin count. "
-            "In Step mode, changing limits preserves the requested step and may create a shorter final bin. "
+            "In Step mode, centers advance from the lower limit by the requested step, up to the upper limit. "
             "In Bins mode, changing limits preserves the bin count and recalculates the step."
         )
         resolution_mode_combo.currentIndexChanged.connect(
@@ -20050,10 +20050,10 @@ class NfitProjectExplorer:
             lower_edit.setPlaceholderText("auto")
             upper_edit.setPlaceholderText("auto")
             lower_edit.setToolTip(
-                "Optional lower bound. Leave blank to cover the projected data and align uniform bins so zero is a bin center."
+                "First bin center (lower edge for one-bin integration). Leave blank to cover the projected data and align uniform bins so zero is a bin center."
             )
             upper_edit.setToolTip(
-                "Optional upper bound. Leave blank to cover the projected data and align uniform bins so zero is a bin center."
+                "Last bin center (upper edge for one-bin integration). Leave blank to cover the projected data and align uniform bins so zero is a bin center."
             )
             resolution_edit.setToolTip(
                 "Approximate bin step size. Editing it recalculates the bin count."

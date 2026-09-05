@@ -211,10 +211,10 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     enable_check.setChecked(True)
     explorer._set_dataset_rebin_axis_value(dataset, group, 0, "num_bins", "1")
     explorer._set_dataset_rebin_axis_value(dataset, group, 1, "num_bins", "1")
-    assert dataset_rebin_config(dataset)["axes"][0]["step_size"] == 2.0
+    assert dataset_rebin_config(dataset)["axes"][0]["step_size"] == 1.0
     explorer._set_dataset_rebin_axis_value(dataset, group, 0, "step_size", "0.75")
     axis_config = dataset_rebin_config(dataset)["axes"][0]
-    assert axis_config["num_bins"] == 3
+    assert axis_config["num_bins"] == 2
     assert axis_config["step_size"] == pytest.approx(0.75)
 
     viewed = dataset_for_slice_viewer(dataset)
@@ -590,7 +590,7 @@ def test_dataset_rebin_resolution_selector_switches_between_step_and_bins(monkey
 
     explorer._set_dataset_rebin_axis_value(dataset, group, 0, "lower", "-1")
     assert config["axes"][0]["num_bins"] == 2
-    assert config["axes"][0]["step_size"] == pytest.approx(1.5)
+    assert config["axes"][0]["step_size"] == pytest.approx(2.5)
 
     mode_combo = explorer.details_widget.findChild(
         QtWidgets.QComboBox, "dataset_rebin_resolution_mode"
@@ -606,7 +606,8 @@ def test_dataset_rebin_resolution_selector_switches_between_step_and_bins(monkey
     assert config["axes"][0]["step_size"] == pytest.approx(0.75)
     rebinned = dataset_for_slice_viewer(dataset)
     assert isinstance(rebinned, MDHistoData)
-    assert rebinned.axes[0].values == pytest.approx([-0.8, -0.05, 0.7, 1.45, 2.0])
+    assert rebinned.axes[0].centers == pytest.approx([-0.8, -0.05, 0.7, 1.45])
+    assert rebinned.axes[0].values == pytest.approx([-1.175, -0.425, 0.325, 1.075, 1.825])
 
 
 def test_data_group_composite_uses_scale_fit_weight_and_rebinning():
@@ -2085,8 +2086,8 @@ def test_rebin_axis_vector_projects_new_coordinate():
     config["enabled"] = True
     config["resolution_mode"] = "bins"
     # Swap which physical coordinate maps to each output axis.
-    config["axes"][0].update({"vector": [0.0, 1.0], "lower": 0.0, "upper": 20.0, "num_bins": 2})
-    config["axes"][1].update({"vector": [1.0, 0.0], "lower": 0.0, "upper": 2.0, "num_bins": 2})
+    config["axes"][0].update({"vector": [0.0, 1.0], "lower": 5.0, "upper": 15.0, "num_bins": 2})
+    config["axes"][1].update({"vector": [1.0, 0.0], "lower": 0.5, "upper": 1.5, "num_bins": 2})
     for axis in config["axes"]:
         axis.update({"auto_lower": False, "auto_upper": False})
 

@@ -1426,10 +1426,10 @@ class QtMDHistoSliceViewer:
         self.tile_range_low_spin = _make_float_spinbox()
         self.tile_range_high_spin = _make_float_spinbox()
         self.tile_range_low_spin.setToolTip(
-            "Lowest third-axis bin center included in the tiled panels."
+            "Center of the first tiled panel. Each panel integrates a step-wide window around its center."
         )
         self.tile_range_high_spin.setToolTip(
-            "Highest third-axis bin center included in the tiled panels."
+            "Maximum tiled-panel center. Centers advance from Range low by Step size."
         )
         self.tile_range_low_spin.valueChanged.connect(self._set_tile_range)
         self.tile_range_high_spin.valueChanged.connect(self._set_tile_range)
@@ -2822,10 +2822,11 @@ class QtMDHistoSliceViewer:
         if not enabled:
             return
         centers = np.asarray(self.data.axes[self.tile_dim].centers, dtype=float)
-        minimum = float(np.min(centers))
-        maximum = float(np.max(centers))
+        axis_values = np.asarray(self.data.axes[self.tile_dim].values, dtype=float)
+        minimum = float(np.min(axis_values))
+        maximum = float(np.max(axis_values))
         if reset_range:
-            self.tile_range = (minimum, maximum)
+            self.tile_range = (float(np.min(centers)), float(np.max(centers)))
         else:
             low, high = sorted(map(float, self.tile_range))
             self.tile_range = (

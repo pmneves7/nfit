@@ -378,8 +378,9 @@ def test_local_macs_hh0_l_slice_matches_dave_hard_grid_arithmetic_binning():
         data.sigma,
         step,
     )
-    lower = [float(np.min(x) - step / 2.0), float(np.min(y) - step / 2.0)]
-    upper = [float(np.max(x) + step / 2.0), float(np.max(y) + step / 2.0)]
+    lower = [float(np.min(x)), float(np.min(y))]
+    # Include DAVE's final (possibly beyond-data) center on the regular grid.
+    upper = [lo + (size - 1) * step for lo, size in zip(lower, occupied.shape, strict=True)]
     actual = rebin_nd(
         data.intensity,
         np.column_stack((x, y)),

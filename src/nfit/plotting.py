@@ -307,16 +307,6 @@ def prepare_mdhisto_tiled_slices(
         low_value, high_value = float(centers[0]), float(centers[-1])
     else:
         low_value, high_value = sorted(map(float, tile_range))
-    selected_indices = np.flatnonzero(
-        np.isfinite(centers) & (centers >= low_value) & (centers <= high_value)
-    )
-    if selected_indices.size == 0:
-        raise ValueError("tile_range does not contain any tile-axis bin centers")
-
-    first = int(selected_indices[0])
-    last = int(selected_indices[-1])
-    start = float(edges[first])
-    stop = float(edges[last + 1])
     width = (
         default_tiled_slice_step(data, tile_index, (low_value, high_value))
         if tile_step is None
@@ -324,9 +314,11 @@ def prepare_mdhisto_tiled_slices(
     )
     if not np.isfinite(width) or width <= 0.0:
         raise ValueError("tile_step must be positive")
-    count = max(int(np.ceil((stop - start) / width)), 1)
-    boundaries = start + np.arange(count + 1, dtype=float) * width
-    boundaries[-1] = stop
+    if not np.isfinite(low_value) or not np.isfinite(high_value):
+        raise ValueError("tile_range must be finite")
+    count = max(int(np.floor((high_value - low_value) / width + 1.e-10)) + 1, 1)
+    coordinates = low_value + np.arange(count, dtype=float) * width
+    boundaries = low_value + (np.arange(count + 1, dtype=float) - 0.5) * width
 
     base = MDHistoSliceViewer(
         data,
@@ -352,11 +344,10 @@ def prepare_mdhisto_tiled_slices(
     for index, (low, high) in enumerate(
         zip(boundaries[:-1], boundaries[1:], strict=True)
     ):
-        selected = (centers >= low) & (
-            (centers < high) if index < count - 1 else (centers <= high)
+        tolerance = max(abs(low), abs(high), width, 1.0) * 1.e-12
+        selected = (centers >= low - tolerance) & (
+            (centers < high - tolerance) if index < count - 1 else (centers <= high + tolerance)
         )
-        selected &= np.arange(centers.size) >= first
-        selected &= np.arange(centers.size) <= last
         indices = np.flatnonzero(selected)
         if indices.size == 0:
             continue
@@ -383,7 +374,9 @@ def prepare_mdhisto_tiled_slices(
             sigma_x=smoothing_sigma_x,
             sigma_y=smoothing_sigma_y,
         )
-        coordinate = float(np.mean(centers[indices]))
+        coordinate = float(coordinates[index])
+        if abs(coordinate) < width * 1.e-10:
+            coordinate = 0.0
         slices.append(
             TiledSlice(
                 view=view,
@@ -421,9 +414,9 @@ def default_tiled_slice_step(
         positive = widths[np.isfinite(widths) & (widths > 0.0)]
         if positive.size:
             return float(np.min(positive))
-    span = float(edges[int(selected[-1]) + 1] - edges[int(selected[0])])
+    span = float(centers[int(selected[-1])] - centers[int(selected[0])])
     target = max(min(int(selected.size), 9), 1)
-    return span / target if np.isfinite(span) and span > 0.0 else 1.0
+    return span / max(target - 1, 1) if np.isfinite(span) and span > 0.0 else 1.0
 
 
 def plot_mdhisto_tiled_slices(
