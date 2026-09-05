@@ -66,3 +66,55 @@ def test_file_menu_opens_preferences(qt_app, monkeypatch):
         assert shown == [explorer.window]
     finally:
         explorer.window.close()
+
+
+def test_performance_preferences_save_and_apply(qt_app, monkeypatch, tmp_path):
+    from nfit.performance import load_performance_settings
+    from nfit.performance_gui import PerformancePage
+
+    monkeypatch.setenv("NFIT_PERFORMANCE_FILE", str(tmp_path / "performance.json"))
+    page = PerformancePage()
+    page.batch.setValue(64)
+    page.workers.setValue(2)
+    assert load_performance_settings()["workers"] == 0
+    page._save()
+    assert load_performance_settings() == {"max_batch_mb": 64, "workers": 2}
+    page.close()
+
+
+def test_rebin_benchmark_apply_changes_only_selected_config(qt_app, monkeypatch):
+    from PySide6 import QtWidgets
+
+    from nfit import DataGroup, DatasetEntry, NfitProject
+    from nfit.performance_gui import BenchmarkDialog
+    from nfit.project_gui import NfitProjectExplorer, dataset_rebin_config
+    from tests.project_gui_test_support import _tiny_mdhisto_data
+
+    first = DatasetEntry("first", _tiny_mdhisto_data(1.0))
+    second = DatasetEntry("second", _tiny_mdhisto_data(2.0))
+    group = DataGroup("group", datasets=[first, second])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    before = dict(dataset_rebin_config(second))
+    changes = []
+    monkeypatch.setattr(explorer, "_after_dataset_rebin_changed", lambda *args: changes.append(args))
+    opened = []
+
+    def execute(dialog):
+        opened.append(dialog.target)
+        dialog.apply({"max_batch_mb": 32, "workers": 1})
+
+    monkeypatch.setattr(BenchmarkDialog, "exec", execute)
+    holder = QtWidgets.QWidget()
+    row = QtWidgets.QHBoxLayout(holder)
+    explorer._add_rebin_performance_controls(row, dataset=first, group=group)
+    button = holder.findChild(QtWidgets.QPushButton, "dataset_rebin_benchmark")
+    assert button.toolTip()
+    assert holder.findChild(QtWidgets.QSpinBox, "dataset_rebin_workers").toolTip()
+    button.click()
+    assert opened == [{"dataset_id": first.id}]
+    assert dataset_rebin_config(first)["max_batch_mb"] == 32
+    assert dataset_rebin_config(first)["workers"] == 1
+    assert dataset_rebin_config(second) == before
+    assert changes == [(first, group)]
+    holder.close()
+    explorer.window.close()

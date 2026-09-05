@@ -95,6 +95,7 @@ from .model_registry import (
     model_plot_definitions,
     model_types_in_category,
 )
+from .performance import initialize_rebin_performance
 from .pipeline import (
     BackgroundSpec,
     DataGroup,
@@ -187,6 +188,7 @@ REBIN_SETTINGS_KEYS = (
     "minimum_coverage",
     "minimum_samples",
     "max_batch_mb",
+    "workers",
     "normalize",
     "symmetry",
     REBIN_RESOLUTION_MODE_KEY,
@@ -2774,6 +2776,7 @@ def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str,
     if not isinstance(config, dict):
         config = {}
         group.metadata[GROUP_COMPOSITE_KEY] = config
+    initialize_rebin_performance(config)
     config.setdefault("enabled", False)
     config.setdefault("fractional", True)
     if not isinstance(config.get("symmetry"), dict):
@@ -3236,6 +3239,24 @@ def _composite_cache_signature(
 
 
 def composite_dataset_data(
+    group: DataGroup | _CompositeScope,
+    *,
+    progress_callback: Any | None = None,
+    config_override: Mapping[str, Any] | None = None,
+    include_source_masks: bool = True,
+) -> MDHistoData | PointListData | PointData4D:
+    """Build a composite using its saved rebin configuration and worker ceiling."""
+    from ._parallel import thread_budget
+
+    config = config_override if config_override is not None else data_group_composite_config(group)
+    with thread_budget(config.get("workers")):
+        return _composite_dataset_data(
+            group, progress_callback=progress_callback, config_override=config_override,
+            include_source_masks=include_source_masks,
+        )
+
+
+def _composite_dataset_data(
     group: DataGroup | _CompositeScope,
     *,
     progress_callback: Any | None = None,
@@ -7042,6 +7063,7 @@ def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
     if not isinstance(config, dict):
         config = {}
         dataset.parameters[DATASET_REBIN_KEY] = config
+    initialize_rebin_performance(config)
     config.setdefault("enabled", False)
     config.setdefault("fractional", True)
     if not isinstance(config.get("symmetry"), dict):
@@ -7391,6 +7413,20 @@ def _should_defer_dataset_rebin(dataset: DatasetEntry, *, force_rebin: bool) -> 
 
 
 def rebinned_dataset_data(
+    dataset: DatasetEntry,
+    *,
+    extra_masks: list[MaskSpec] | None = None,
+    progress_callback: Any | None = None,
+) -> Any:
+    """Return a rebinned copy using the saved configuration and worker ceiling."""
+    from ._parallel import thread_budget
+
+    config = dataset_rebin_config(dataset)
+    with thread_budget(config.get("workers")):
+        return _rebinned_dataset_data(dataset, extra_masks=extra_masks, progress_callback=progress_callback)
+
+
+def _rebinned_dataset_data(
     dataset: DatasetEntry,
     *,
     extra_masks: list[MaskSpec] | None = None,
@@ -18290,10 +18326,10 @@ class NfitProjectExplorer:
         batch_spin = QtWidgets.QSpinBox()
         batch_spin.setObjectName("group_composite_max_batch_mb")
         batch_spin.setRange(1, 1_048_576)
-        batch_spin.setSuffix(" MB")
+        batch_spin.setSuffix(" MiB")
         batch_spin.setValue(_rebin_max_batch_mb(config))
         batch_tooltip = (
-            "Approximate per-batch working-memory target in MB. Smaller batches usually use less temporary memory "
+            "Approximate per-batch working-memory target in MiB. Smaller batches usually use less temporary memory "
             "but require more computational time. This is not a cap on total rebinner memory use. The optimum depends "
             "on dataset size, output grid size, dimensionality, and available memory."
         )
@@ -18373,6 +18409,7 @@ class NfitProjectExplorer:
         quality_row.addSpacing(12)
         quality_row.addWidget(batch_label)
         quality_row.addWidget(batch_spin)
+        self._add_rebin_performance_controls(quality_row, group=group, composite=True)
         quality_row.addStretch(1)
         controls_layout.addLayout(quality_row, footer_row + 1, 0, 1, len(headers))
         symmetry_row = QtWidgets.QHBoxLayout()
@@ -20113,7 +20150,7 @@ class NfitProjectExplorer:
             )
         )
         batch_tooltip = (
-            "Approximate per-batch working-memory target in MB. Smaller batches usually use less temporary memory "
+            "Approximate per-batch working-memory target in MiB. Smaller batches usually use less temporary memory "
             "but require more computational time. This is not a cap on total rebinner memory use; total memory also "
             "depends on dataset size, output grid size, dimensionality, and other arrays. The optimum depends on the "
             "dataset size and available memory."
@@ -20123,7 +20160,7 @@ class NfitProjectExplorer:
         batch_spin = QtWidgets.QSpinBox()
         batch_spin.setObjectName("dataset_rebin_max_batch_mb")
         batch_spin.setRange(1, 1_048_576)
-        batch_spin.setSuffix(" MB")
+        batch_spin.setSuffix(" MiB")
         batch_spin.setValue(_rebin_max_batch_mb(config))
         batch_spin.setToolTip(batch_tooltip)
         batch_spin.setAccelerated(True)
@@ -20240,6 +20277,7 @@ class NfitProjectExplorer:
         quality_row.addSpacing(12)
         quality_row.addWidget(batch_label)
         quality_row.addWidget(batch_spin)
+        self._add_rebin_performance_controls(quality_row, dataset=dataset, group=group)
         quality_row.addStretch(1)
         controls_layout.addLayout(quality_row, footer_row + 1, 0, 1, last_column + 1)
         symmetry_row = QtWidgets.QHBoxLayout()
@@ -20264,6 +20302,42 @@ class NfitProjectExplorer:
         rebin_layout.addWidget(controls)
         layout.addWidget(rebin_box)
         return group_box
+
+    def _add_rebin_performance_controls(self, row, *, dataset=None, group=None, composite=False):
+        from PySide6 import QtWidgets
+
+        from .performance_gui import BenchmarkDialog
+
+        config = data_group_composite_config(group) if composite else dataset_rebin_config(dataset)
+        prefix = "group_composite" if composite else "dataset_rebin"
+
+        def changed(values):
+            config.update(values)
+            if composite:
+                self._after_group_composite_changed(group)
+            else:
+                self._after_dataset_rebin_changed(dataset, group)
+
+        row.addWidget(QtWidgets.QLabel("Workers"))
+        workers = QtWidgets.QSpinBox()
+        workers.setObjectName(prefix + "_workers")
+        workers.setRange(1, 4096)
+        workers.setValue(int(config.get("workers", 1)))
+        workers.setToolTip("Saved worker ceiling for this rebin. The adaptive rebinner may use fewer; other configurations are unchanged.")
+        workers.valueChanged.connect(lambda value: changed({"workers": int(value)}))
+        row.addWidget(workers)
+        benchmark = QtWidgets.QPushButton("Benchmark this rebin…")
+        benchmark.setObjectName(prefix + "_benchmark")
+        benchmark.setToolTip("Benchmark the full current rebin in isolated processes, then optionally apply its recommended batch target and worker ceiling.")
+        if composite:
+            target = dict(group_name=_composite_root(group).name,
+                          node_id=group.node.id if isinstance(group, _CompositeScope) else None)
+        else:
+            target = dict(dataset_id=dataset.id)
+        benchmark.clicked.connect(lambda: BenchmarkDialog(
+            self.window, project=self.project, target=target, apply=changed,
+        ).exec())
+        row.addWidget(benchmark)
 
     def _details_group_box(self, title: str, lines: list[str]) -> Any:
         from PySide6 import QtCore, QtWidgets

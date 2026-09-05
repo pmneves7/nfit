@@ -66,6 +66,9 @@ class PreferencesDialog(QtWidgets.QDialog):
         body.addWidget(loaded)
         body.addStretch()
         self.tabs.addTab(page, "Colormaps")
+        from .performance_gui import PerformancePage
+
+        self.tabs.addTab(PerformancePage(self), "Performance")
         buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)
         buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Close).setToolTip("Close application preferences.")
         buttons.rejected.connect(self.reject)

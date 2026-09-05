@@ -316,7 +316,15 @@ for a fixed-angle environment/background run.
 
 Masks are applied before binning. Automatic rebinning is used for modest jobs;
 larger jobs remain pending until **Rebin now** or until an operation requires
-current rebinned data. The batch target controls temporary work, not the
+current rebinned data. **Workers** sets the saved worker ceiling for this
+configuration; the rebinner can use fewer workers. **Benchmark this rebin…**
+compares batch targets and worker ceilings using isolated runs of the full
+current configuration, without updating live data. Review the timing and process
+peak-memory table before choosing **Apply recommendation**. The same controls
+are available for composites. Defaults for new configurations live in
+**File → Preferences → Performance**; see [benchmark details](performance.md#performance-preferences-and-benchmarks).
+
+The batch target controls temporary work, not the
 persistent output-grid allocation.
 
 **Minimum coverage** masks an output bin when the measured source support

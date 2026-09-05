@@ -29,6 +29,65 @@ disables enforcement.
 Use `benchmarks/benchmark_rebin.py` to measure representative grids on the
 target machine.
 
+## Performance preferences and benchmarks
+
+**File → Preferences → Performance** provides a default rebin batch target in
+MiB (1 MiB = 1,048,576 bytes) and a worker ceiling. **Auto** uses 192 MiB and
+the nfit CPU allocation, respectively. Choose **Save defaults** to persist
+changes. These values are copied into newly initialized dataset/composite rebin
+configurations; existing values, including independent saved-plot recipes, are
+not overwritten. These are rebin defaults, not controls for fitting or
+electronic-response parallelism. The CPU setting is a ceiling, not a promise
+that all workers will be used.
+
+Preferences are machine-local in `~/.config/nfit/performance.json`; set
+`NFIT_PERFORMANCE_FILE` to use another file. The headless equivalents are
+`load_performance_settings()` and `save_performance_settings(max_batch_mb=64,
+workers=4)` in `nfit.performance`. Zero selects Auto. Explicit saved rebin
+values remain part of project and plot configurations and workflow scripts.
+
+Use **Calibrate this machine…** for representative 3-D hard-binning and 4-D
+fractional-binning workloads. Use **Benchmark this rebin…** in dataset or
+composite rebin controls for the full selected configuration, including axes,
+symmetry, masks, and output-grid settings. Both test batch targets of 32, 192,
+and 512 MiB with worker ceilings of 1, 2, 4, and 8, capped by the nfit CPU
+allocation and deduplicated. Calibration does not test every possible workload
+or worker count and cannot establish a universal optimum.
+
+Each candidate runs in a fresh process, warms up once, and reports the median
+of two subsequent runtimes. Peak memory is the **trial process's peak resident
+memory**, including imported libraries, input data, and warmup; it is neither
+the batch target nor the total memory used by nfit and the trial together.
+Compilation and source loading are warmed rather than measured as cold-start
+costs. Real-data trials may need substantial additional memory and time, since
+they run the full rebin rather than a sample. **Cancel** kills the active trial;
+no live dataset, viewer cache, or preference is changed by running a benchmark.
+
+The recommendation prefers fewer workers, then smaller batches, among timings
+within 5% of the fastest. **Apply recommendation** is required: calibration
+updates machine defaults, whereas a real-data benchmark updates only the
+selected rebin configuration. As with other edits, Auto rebin may then refresh
+that configuration's view.
+
+Both dialogs provide **Save benchmark script…**. Real-data exports write an
+adjacent `.nfit` project snapshot using the normal project-save rules; source
+files must remain available, and unsaved replacement data must first be saved
+to a portable dataset file. Existing snapshot files are not overwritten.
+The script contains an editable candidate list and uses the public API without
+constructing Qt widgets:
+
+```python
+from nfit.performance_benchmark import benchmark_rebin
+
+result = benchmark_rebin()  # machine calibration
+# Or: benchmark_rebin(project, dataset_id="saved-dataset-id")
+# Or: benchmark_rebin(project, group_name="Workspace1", node_id="nested-group-id")
+print(result["recommendation"])
+```
+
+`benchmark_rebin` also accepts `candidates`, a `cancel()` predicate, and a
+`progress(row)` callback. It never applies its result automatically.
+
 ## GUI and analysis caches
 
 nfit keeps separate bounded caches for prepared point tables, viewer-ready

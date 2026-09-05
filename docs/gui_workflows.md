@@ -13,6 +13,9 @@ Open **File → Preferences…** for application-wide preferences. The **Colorma
 page shows the shared custom-palette folder, opens it in your file manager, and
 explains the [RGB file format](data_viewer.md#custom-colormap-files). These
 palettes are shared across projects; restart nfit after adding or editing files.
+The **Performance** page stores defaults for new rebin configurations and offers
+machine calibration. Dataset and composite rebin panels also offer **Benchmark
+this rebin…**; see [performance settings and benchmarks](performance.md#performance-preferences-and-benchmarks).
 
 Each `.nfit` project is one portable file containing its JSON manifest and
 generated analysis artifacts. Original imported measurement files remain

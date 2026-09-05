@@ -91,6 +91,8 @@ The package provides:
   previewed Matplotlib, cmcrameri, Colorcet, cmocean, MyCarta, and CartoColors
   color maps, plus drop-in custom RGB palette files accessible through
   **File → Preferences**;
+- machine-local rebin performance defaults, cancellable machine calibration and
+  configuration-specific benchmarks with timing/memory reports and script export;
 - multi-selection dataset operations and recursive copy/paste for nested
   dataset groups.
 
