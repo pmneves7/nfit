@@ -32,7 +32,11 @@ T_{g(i)g(j)}(\mathbf R_g)
 =D_i(g)T_{ij}(\mathbf R)D_j(g)^\dagger ,
 $$
 
-where $D_i$ and $D_j$ act in the endpoint orbital subspaces. The reverse
+$\mathbf R_g$ is the integer source-cell offset of the transformed bond
+relative to the transformed destination cell; $g(i),g(j)$ are its endpoints.
+The hopping matrix $T_{ij}$ is a block of $H(\mathbf R)$ in meV.
+The symmetry matrices are dimensionless, and a dagger means conjugate transpose.
+The matrices $D_i$ and $D_j$ act in the endpoint orbital subspaces. The reverse
 directed bond supplies the Hermitian partner. The resolved model therefore
 satisfies $H(-\mathbf R)=H(\mathbf R)^\dagger$.
 
@@ -65,6 +69,15 @@ V_{l_i l_j\mu}\,
 C_i^\dagger D_i^\dagger P_\mu D_j C_j .
 $$
 
+$l_i,l_j$ are the endpoint orbital angular-momentum quantum numbers,
+$V_{l_il_j\mu}$ an energy in meV, and $\mu$ here labels a bond channel
+$\sigma,\pi,\delta,\phi$, not chemical potential. In complete bond-axis
+complex-harmonic bases the rectangular selector has entries
+$(P_\mu)_{m_i m_j}=\delta_{m_i m_j}$ when $|m_i|$ is the channel's value,
+and zero otherwise. All rotation, projection, and selector matrices are
+dimensionless. The [orbital page](tight_binding_lattice_orbitals.md) fixes
+harmonic phases and normalization.
+
 $P_\mu$ selects equal bond-axis magnetic quantum numbers with
 $|m|=0,1,2,3$, respectively. $D_i$ and $D_j$ rotate the endpoint local frames
 to the bond frame, while $C_i$ and $C_j$ project complete harmonic shells into
@@ -94,7 +107,9 @@ $$
 T_{\rm rep}=\sum_p t_pB_p .
 $$
 
-The matrices are unit-Frobenius normalized, so $t_p$ is an energy scale rather
+$p$ labels independent allowed basis matrices, $t_p$ is the fitted meV
+coefficient, and $B_p$ is dimensionless. The matrices obey
+$\|B_p\|_F=\sqrt{\sum_{ab}|(B_p)_{ab}|^2}=1$ (unit Frobenius norm), so $t_p$ is an energy scale rather
 than a named axial integral. This basis is complete within the implemented
 spin-independent, real, time-reversal-symmetric orbital representation. It is
 more flexible than Slater--Koster but can produce many correlated parameters.

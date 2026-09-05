@@ -48,6 +48,12 @@ the expression for every model call.
 | Fixed ratio, $a/b=2$ | `A.a` | ``2 * `B.b` `` |
 | Positive square, $a=b^2$ | `A.a` | `` `B.b` ** 2 `` |
 
+In these examples $a,b$ are scalar parameter values in their declared units.
+Numeric constants must supply compatible units; addition requires matching
+units and exponential, logarithmic, and trigonometric arguments must be
+dimensionless (angles in radians). The expression evaluator handles numerical
+values and does not perform dimensional analysis for the user.
+
 Expressions support numeric constants, parentheses, `+`, `-`, `*`, `/`, `%`,
 and `**`. The allowed scalar functions are `abs`, `sqrt`, `exp`, `log`, `log10`,
 `sin`, `cos`, and `tan`. Expressions are parsed by nfit's restricted arithmetic
@@ -85,6 +91,13 @@ $$
 \chi^2_\nu = \frac{\chi^2}{N-p},
 $$
 
+Here $\chi^2=\sum_{d,i}r_{di}^2$ is dimensionless weighted squared residual,
+$r_{di}=\sqrt{w_d}(a_dy_{di}-f_{di}(\mathbf p))/(a_d\sigma_{di})$,
+and $\nu=N-p$ denotes degrees of freedom. Dataset $d$ and included point $i$
+index observations $y$, one-sigma errors $\sigma$, predictions $f$, dataset
+weights $w_d$, and positive calibration scales $a_d$. $\mathbf p$ is the
+independent parameter vector. These are the
+[pipeline residuals](modeling_pipeline.md#simultaneous-least-squares),
 where $N$ is the number of included measured points and $p$ is the number of
 independent optimizer variables.
 

@@ -58,6 +58,14 @@ $$
 \frac{\lVert A_f-A_c\rVert_2}{\lVert A_f\rVert_2}.
 $$
 
+$A_c,A_f$ are arrays of the same observable at identical evaluation points,
+computed using the coarser and finer integration meshes. Their entries have
+the observable's units; both $\epsilon$ metrics are dimensionless.
+The maximum runs over all compared entries and
+$\|X\|_2=\sqrt{\sum_j|X_j|^2}$ after flattening the array (including real
+and imaginary information for complex values). This is not a matrix spectral
+norm. A finer-mesh reference is an estimate, not an exact solution.
+
 Small denominators use a fixed numerical floor. DOS certification also records
 the energy-integrated absolute difference divided by the integrated absolute
 fine-mesh DOS. The comparison passes only when every applicable metric is at

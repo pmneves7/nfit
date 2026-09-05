@@ -7,6 +7,12 @@ ferromagnetic wavevector. It is therefore distinct from a local relaxor or an
 MMP antiferromagnetic peak, both of which retain a finite relaxation rate at
 their peak center.
 
+Here $\chi=\chi'+i\chi''$ is one isotropic Cartesian component of the
+response of dimensionless spin, in meV$^{-1}$ per magnetic ion. $\chi'$ is
+reactive and $\chi''$ absorptive; $i^2=-1$ and $E=\hbar\omega$ is transfer
+in meV. Spin matrices, the conjugate energy field, and the Fourier convention
+are defined in [Physics conventions](physics_conventions.md#spin-operators-and-equilibrium-averages).
+
 ## Parameters
 
 | API name | Meaning | Unit |
@@ -28,6 +34,15 @@ $\rho$ is dimensionless. Periodic reciprocal-lattice images and multiple
 domain centers use the same conventions as the generalized-paramagnon model.
 
 ## Complex susceptibility
+
+The base ansatz assumes no spin-relaxing SOC or other process on the relevant
+time scale. Its inverse static response is quadratic in the scaled momentum
+radius, while conservation requires the finite-wavevector decay rate to vanish
+at the center. $\Delta\mathbf q=\mathbf q_{\rm cart}-\mathbf Q_{0,\rm cart}$,
+$\rho=\sqrt{\Delta\mathbf q^TC\Delta\mathbf q}\ge0$, $C$ has units Å$^2$,
+and the triangular $L$ is defined in
+[Generalized paramagnon](generalized_paramagnon.md#spatial-response).
+$\Gamma$ below is a decay energy in meV; its time rate is $\Gamma/\hbar$.
 
 The static Ornstein--Zernike response and momentum-dependent relaxation rate
 are

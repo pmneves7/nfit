@@ -5,18 +5,22 @@ response that resolves the features in the data. Electronic Hamiltonians are
 documented separately under
 [Electronic-structure models](electronic_structure_models.md).
 
-| Model | Main response | Typical use | Calculable data |
-| --- | --- | --- | --- |
-| `local_relaxational` | $\chi=\chi_{\rm loc}/(1-iE/\Gamma)$ | Local or momentum-independent fluctuations | Single-crystal and powder neutron scattering; bulk linear response |
-| `mmp_relaxational` | $\chi=\chi_{\rm pk}/(1+\xi^2q^2-iE/E_{\rm sf})$ | One isotropic peak in a nearly antiferromagnetic metal | Single-crystal neutron scattering; extrapolated bulk linear response |
-| `generalized_paramagnon` | $\chi=(\chi_{\rm pk}/A)/(1-a_EE^2/A-iE/[\Gamma_0A^z])$ | Anisotropic peaks, critical slowing down, and damped propagating modes | Single-crystal and powder neutron scattering; extrapolated bulk linear response |
-| `conserved_ferromagnetic` | $\chi=(\chi_{\rm u}/[1+\rho^2])\Gamma(\rho)/[\Gamma(\rho)-iE]$ | Clean or diffusive long-wavelength fluctuations with a conserved ferromagnetic center | Single-crystal and powder neutron scattering; bulk linear response |
-| `heisenberg_rpa` | $\boldsymbol\chi=[\mathbb 1-\chi_0(E)J(\mathbf Q)]^{-1}\chi_0(E)$ | Relaxational or inertial exchange-paramagnon modes constrained by a crystal and exchange network | Single-crystal and powder neutron scattering; bulk linear response |
-| `coupled_susceptibility` | $\chi_O=(F_A^2\chi_A+F_B^2\chi_B+2F_AF_Bg\chi_A\chi_B)/(1-g^2\chi_A\chi_B)$ | Hybridization of two independently parameterized scalar response sectors | Single-crystal neutron scattering |
-| `lindhard` | $\chi^0=-\sum_{\mathbf k,n,m}(f_{n\mathbf k}-f_{m,\mathbf k+\mathbf q})M_AM_B^*/(E+\epsilon_{n\mathbf k}-\epsilon_{m,\mathbf k+\mathbf q}+i\eta)$ | Bare particle--hole response of a linked tight-binding model | Single-crystal and powder neutron scattering; bulk linear response |
-| `stoner_rpa` | $\boldsymbol\chi=[\mathbb 1-\boldsymbol\chi^0 I]^{-1}\boldsymbol\chi^0$ | Minimal isotropic enhancement of a band response | Single-crystal and powder neutron scattering; bulk linear response |
-| `matrix_rpa` | $\boldsymbol\chi=[\mathbb 1-\boldsymbol\chi^0 g\mathbf V]^{-1}\boldsymbol\chi^0$ | User-supplied anisotropic spin interaction | Single-crystal and powder neutron scattering; bulk linear response |
-| `hubbard_hund_rpa` | $\boldsymbol\chi=[\mathbb 1-\boldsymbol\chi^0\boldsymbol\Gamma_{U,U',J_H,J_{\rm pair}}]^{-1}\boldsymbol\chi^0$ | Local multiorbital correlations on labelled shells | Single-crystal and powder neutron scattering; bulk linear response |
+The table names each model's starting ansatz. Follow its link for equations,
+operator definitions, parameter units, and validity limits; shared spin and
+response conventions are defined in [Physics conventions](physics_conventions.md).
+
+| Model | Starting ansatz | Calculable data |
+| --- | --- | --- |
+| [Local relaxational](local_relaxational.md) | One local variable with exponential relaxation | Single-crystal and powder neutron scattering; bulk linear response |
+| [MMP](mmp_relaxational.md) | Isotropic Ornstein--Zernike peak with relaxational dynamics | Single-crystal neutron scattering; extrapolated bulk linear response |
+| [Generalized paramagnon](generalized_paramagnon.md) | Anisotropic static peak with damping and optional inertia | Single-crystal and powder neutron scattering; extrapolated bulk linear response |
+| [Conserved ferromagnetic](conserved_ferromagnetic.md) | Long-wavelength spin response with vanishing uniform relaxation rate | Single-crystal and powder neutron scattering; bulk linear response |
+| [Heisenberg RPA](heisenberg_rpa.md) | Local propagators coupled by a crystallographic exchange matrix | Single-crystal and powder neutron scattering; bulk response |
+| [Coupled susceptibilities](coupled_susceptibility.md) | Two scalar response sectors with bilinear feedback | Single-crystal neutron scattering |
+| [Lindhard](lindhard.md) | Normalized independent-particle bubble with explicit probe matrix elements | Single-crystal and powder neutron scattering; bulk linear response |
+| [Stoner RPA](stoner_rpa.md) | Spin-channel feedback vertex twice the fitted density interaction | Single-crystal and powder neutron scattering; bulk linear response |
+| [Matrix RPA](matrix_rpa.md) | A fixed Hermitian Cartesian interaction matrix times a fitted energy | Single-crystal and powder neutron scattering; bulk linear response |
+| [Hubbard--Hund RPA](hubbard_hund_rpa.md) | Local orbital-pair vertex, dressed before physical spin projection | Single-crystal and powder neutron scattering; bulk linear response |
 
 ```{toctree}
 :maxdepth: 1
@@ -70,13 +74,7 @@ Bulk comparison is optional. For models constructed near finite-momentum
 peaks, the $\mathbf Q=0$ result is an extrapolation whose failure can itself be
 a useful model diagnostic.
 
-## Units
-
-| Quantity | Unit |
-| --- | --- |
-| $E$, $\Gamma$, $\Gamma_0$, $\Gamma_s$, $E_{\rm sf}$, $E_0$, $J_i$, $g$ | meV |
-| $\chi_{\rm loc}$, $\chi_{\rm pk}$, $\chi_{\rm u}$, $\chi_0$ | meV$^{-1}$ in the model normalization |
-| $\xi$ | Å |
-| $a_E=1/E_0^2$ | meV$^{-2}$ |
-| $H,K,L$ | r.l.u. |
-| $T$ | K |
+Model parameter tables distinguish canonical response energies in meV from
+electronic interaction inputs in eV, and dimensionless Landé factors from
+energy-valued coupling constants. Never transfer a parameter solely by its
+symbol between models.

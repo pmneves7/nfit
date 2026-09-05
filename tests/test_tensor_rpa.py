@@ -403,8 +403,8 @@ def test_zeeman_propagator_is_gyrotropic_and_larmor_resonant():
     np.testing.assert_allclose(field[:, 0, 1], -field[:, 1, 0], atol=1e-14)
     assert np.max(np.abs(field[:, 0, 1])) > 1e-6
 
-    # A decoupled site's transverse chi'' resonates near omega_L (relaxational
-    # peak is at omega_L + Gamma).
+    # A narrow resonance approaches the Larmor energy, with a shift of order
+    # Gamma^2 / omega_L, rather than the old unphysical linear Gamma shift.
     line = np.linspace(0.05, 6.0, 400)
     geometry = build_rpa_geometry(
         np.zeros(400), np.zeros(400), np.zeros(400), [[0.0, 0.0, 0.0]],
@@ -418,4 +418,78 @@ def test_zeeman_propagator_is_gyrotropic_and_larmor_resonant():
     propagator = zeeman_cartesian_propagator(line, b_hat, chi0=0.5, gamma0=gamma, omega_larmor=2.5)
     chi = tensor_zeeman_susceptibility(structure, geometry, line, propagator, param_values={"J1": 0.0})
     peak = line[np.argmax(chi[:, 0, 0].imag)]
-    assert peak == pytest.approx(2.5 + gamma, abs=0.05)
+    assert peak == pytest.approx(2.5, abs=0.05)
+
+
+@pytest.mark.parametrize("larmor", [0.0, 3.0, -3.0])
+def test_zeeman_static_response_is_symmetric_and_has_declared_susceptibilities(larmor):
+    from nfit.tensor_rpa import zeeman_cartesian_propagator
+
+    direction = np.array([1.0, -2.0, 3.0])
+    direction /= np.linalg.norm(direction)
+    chi0, ratio = 0.7, 1.4
+    longitudinal = np.outer(direction, direction)
+    expected = chi0 * (longitudinal + ratio * (np.eye(3) - longitudinal))
+    response = zeeman_cartesian_propagator(
+        np.array([0.0]), direction, chi0=chi0, gamma0=0.3,
+        omega_larmor=larmor, chi_perp_ratio=ratio, gamma_perp_ratio=0.8,
+    )[0]
+
+    # A static susceptibility is an equilibrium Hessian, not a Hall response.
+    np.testing.assert_allclose(response, expected, atol=1e-14)
+
+
+@pytest.mark.parametrize("larmor", [0.0, 3.0, -3.0])
+def test_zeeman_absorption_is_passive_for_every_probe_and_obeys_reality(larmor):
+    from nfit.tensor_rpa import zeeman_cartesian_propagator
+
+    energy = np.array([0.01, 0.2, 1.0, 3.0, 8.0])
+    kwargs = dict(
+        b_hat=np.array([1.0, 2.0, -1.0]), chi0=0.7, gamma0=0.3,
+        omega_larmor=larmor, chi_perp_ratio=1.4, gamma_perp_ratio=0.8,
+    )
+    response = zeeman_cartesian_propagator(energy, **kwargs)
+    absorption = (response - response.conj().swapaxes(-1, -2)) / (2j)
+    # Positive-semidefinite absorption means no polarization extracts energy
+    # from a passive equilibrium spin, including below the Larmor resonance.
+    assert np.min(np.linalg.eigvalsh(absorption)) >= -1e-14
+    np.testing.assert_allclose(
+        zeeman_cartesian_propagator(-energy, **kwargs), response.conj(), atol=1e-14
+    )
+
+
+def test_zeeman_transverse_spectrum_satisfies_static_kramers_kronig_sum_rule():
+    from scipy.integrate import quad
+
+    from nfit.tensor_rpa import zeeman_cartesian_propagator
+
+    chi0, ratio = 0.7, 1.4
+
+    def integrand(energy):
+        response = zeeman_cartesian_propagator(
+            np.array([energy]), np.array([0.0, 0.0, 1.0]),
+            chi0=chi0, gamma0=0.3, omega_larmor=3.0, chi_perp_ratio=ratio,
+        )
+        return 2.0 * response[0, 0, 0].imag / (np.pi * energy)
+
+    static_from_spectrum, _ = quad(integrand, 0.0, np.inf, epsabs=1e-10)
+    assert static_from_spectrum == pytest.approx(chi0 * ratio, rel=1e-9)
+
+
+def test_zeeman_weak_damping_matches_the_spin_half_retarded_commutator():
+    from nfit.tensor_rpa import zeeman_cartesian_propagator
+
+    # H_Z = +E_L S_z for an electron; |down> is the T=0 ground state.
+    # Its exact transverse static response is |<S_z>|/E_L = 1/(2 E_L).
+    larmor = 3.0
+    energy = np.array([-5.0, -1.0, 0.0, 1.0, 5.0])
+    response = zeeman_cartesian_propagator(
+        energy, np.array([0.0, 0.0, 1.0]), chi0=1 / (2 * larmor),
+        gamma0=1e-10, omega_larmor=larmor,
+    )
+    # Spectral commutator from <down|Sx|up>=1/2 and
+    # <down|Sy|up>=i/2, evaluated away from either delta-function pole.
+    expected_xx = larmor / (2 * (larmor**2 - energy**2))
+    expected_xy = -1j * energy / (2 * (larmor**2 - energy**2))
+    np.testing.assert_allclose(response[:, 0, 0], expected_xx, atol=1e-10)
+    np.testing.assert_allclose(response[:, 0, 1], expected_xy, atol=1e-10)

@@ -59,6 +59,14 @@ H(\mathbf k)=
 e^{2\pi i\mathbf k\cdot\mathbf R}.
 $$
 
+Here $a,b$ label orthonormal basis states, $\mathbf R$ is an integer cell
+translation, $\hat H$ is the one-electron Hamiltonian, and all $H$ entries are
+in meV. The reduced coordinates $\mathbf k$ and positive interpolation
+weights $w_{\mathbf R}$ are dimensionless; these real-space interpolation
+weights are not normalized Brillouin-zone integration weights. A dagger is
+conjugate transpose. See [Tight binding](tight_binding.md) for the corresponding
+Bloch basis and normalized eigenvectors.
+
 This is the Wannier gauge. Orbital centers are stored separately and enter
 position-sensitive operators; an adapter using another gauge must transform
 to this convention and record the transformation.
@@ -69,6 +77,10 @@ $$
 H(\mathbf R;\boldsymbol\theta)
 =H_0(\mathbf R)+\sum_p\theta_pP_p(\mathbf R).
 $$
+
+$H_0$ is the fixed Hamiltonian block, $p$ indexes named parameters,
+$\theta_p$ is their coefficient in meV, and $P_p$ is a dimensionless derivative
+matrix, not necessarily a projector.
 
 The resolved-model digest includes scientific values and conventions, so
 cache entries cannot cross parameter states.
@@ -124,6 +136,11 @@ B=2\pi A^{-\mathsf T},\qquad
 \mathbf k_{\rm cart}=B\mathbf k .
 $$
 
+$B$ has reciprocal vectors as columns in Å$^{-1}$, $\mathbf r$ and
+$\mathbf k$ are dimensionless fractional and reduced coordinates, and the
+subscript “cart” denotes the physical Cartesian vector. $A^{-\mathsf T}$ is
+the inverse transpose, with $A$ in Å.
+
 Electronic inputs are converted to meV once at construction or import. A
 unit-neutral adapter must require an explicit energy unit. Rendering may
 convert an energy-resolved ordinate as well as its axis; for example, a DOS
@@ -156,6 +173,19 @@ $$
 M^A_{nm}M^{B*}_{nm}.
 $$
 
+The complete definitions are given with the
+[Lindhard equation](lindhard.md#complex-susceptibility):
+$H(\mathbf k)u_n=\varepsilon_{n\mathbf k}u_n$, $u_n^\dagger u_m=\delta_{nm}$,
+$M^A_{nm}=\sum_{ab}u_{an}^*(\mathbf k)[O_A(\mathbf Q)]_{ab}u_{bm}(\mathbf k+\mathbf q)$,
+and $f_{n\mathbf k}=f(\varepsilon_{n\mathbf k})$ is the Fermi occupation at
+chemical potential $\mu$ and temperature $T$. $A,B$ index operators,
+$a,b$ basis states, $n,m$ bands, and $\sum_{\mathbf k}w_{\mathbf k}=1$.
+$E,\varepsilon,\mu,\eta$ use meV; only the broadening $\eta$ is required
+to be positive, while band and transferred energies may have either sign. For dimensionless
+operators, $\chi^0$ has units meV$^{-1}$ per model cell. In the algebraic
+split above primes denote elementwise real/imaginary parts, as in the API;
+the physical dissipative tensor is $(\chi-\chi^\dagger)/(2i)$.
+
 An `InteractionVertex` declares its ordered basis, complex matrix, canonical
 meV unit, physical channel, multiplication convention, and provenance. The
 implemented RPA convention is
@@ -165,6 +195,11 @@ $$
 =\left[\mathbb1-\boldsymbol\chi^0\boldsymbol\Gamma\right]^{-1}
 \boldsymbol\chi^0.
 $$
+
+$\Gamma$ is the meV interaction matrix in the same ordered operator space,
+$\mathbb1$ its identity, and the product $\chi^0\Gamma$ is dimensionless.
+This is the feedback equation $\chi=\chi^0+\chi^0\Gamma\chi$ solved at each
+momentum and energy.
 
 The vertex belongs to the two-particle response. $U$, $J_H$, or a Stoner
 parameter do not modify $H(\mathbf k)$ unless a separately named electronic

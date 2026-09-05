@@ -16,6 +16,14 @@ paramagnet.
 | `"collinear"` | $2N$ states | explicit up/down labels and spin operators, but no generated spin mixing |
 | `"spinor"` | $2N$ states | SOC or other explicitly constructed spin-mixing terms |
 
+$N$ is the number of spatial orbitals before adding spin. SU(2) denotes
+invariance under arbitrary spin rotations; SOC means spin--orbit coupling.
+The dimensionless Pauli matrices and angular-momentum ladder operators are
+defined in [Physics conventions](physics_conventions.md#spin-operators-and-equilibrium-averages).
+$I_N,I_2$ are orbital and spin identities; $\otimes$ means their tensor product.
+$H_{\rm orb}$ is the spatial Hamiltonian and $P_{p,\rm orb}$ its derivative
+with respect to coefficient $p$, at integer cell translation $\mathbf R$.
+
 For an explicit basis, nfit uses orbital-major order
 
 $$
@@ -51,12 +59,24 @@ Each active `SpinOrbitTerm` adds
 
 $$
 H_{{\rm SOC},m}
-=\lambda_m\sum_{\alpha=x,y,z}L_{m,\alpha}\otimes S_\alpha
+=\lambda_m\sum_{\alpha=x,y,z}L_{m,\alpha}\otimes\frac{\sigma_\alpha}{2}
 $$
 
 to a named orbital manifold $m$. The coefficient $\lambda_m$ is an electronic
 energy: it is normally entered in eV, stored in meV, and can use the same fit,
 bounds, and sharing controls as hopping parameters.
+
+$m$ labels the manifold, not a magnetic quantum number, and $L_{m,\alpha}$
+is its dimensionless orbital angular-momentum matrix in the crystal frame.
+The displayed term is $2n_m\times2n_m$ for $n_m$ spatial states and is embedded
+in the full $2N$ basis. Only the $2\times2$ spin matrix belongs in this tensor
+product; $I_N\otimes\sigma_\alpha/2$ is the full-space observable.
+
+In a complete complex shell $|l,m_l\rangle$, use the ladder construction in
+[Physics conventions](physics_conventions.md#spin-operators-and-equilibrium-averages)
+with $s\to l$ and $m\to m_l$. A selected subspace with orthonormal column
+matrix $C$ uses $L_\alpha^{\rm sub}=C^\dagger L_\alpha C$;
+$P=CC^\dagger$ is the full-shell projector in the shorthand $PL_\alpha P$.
 
 | Field | Meaning | Example |
 | --- | --- | --- |
@@ -100,6 +120,12 @@ H(\mathbf k)
 U_\Theta=I_N\otimes i\sigma_y .
 $$
 
+Time reversal is the antiunitary operator $\Theta=U_\Theta K$, where $K$
+complex-conjugates coefficients in the builder's real-orbital basis and
+$\Theta^2=-I_{2N}$. The formula assumes no extra orbital action of $K$;
+a different imported basis requires its transformed time-reversal matrix.
+$H$ is in meV and $\mathbf k$ is reduced momentum.
+
 `spinor_time_reversal_residual` reports the normalized residual and
 `validate_spinor_time_reversal` applies the threshold. This catches an
 inconsistent spinor construction; it does not support an intentionally
@@ -110,6 +136,13 @@ For a spatial operation $g$, nfit can construct the double-group action
 $$
 D_{\rm spinor}(g)=D_{\rm orbital}(g)\otimes D_{1/2}(g).
 $$
+
+$D_{\rm orbital}(g)$ represents the spatial symmetry operation $g$ on
+orbitals, while $D_{1/2}(g)$ represents its spin rotation on two spin states.
+For a proper rotation of angle $\theta$ about unit axis $\hat{\mathbf n}$,
+$D_{1/2}=\exp[-i\theta\hat{\mathbf n}\cdot\boldsymbol\sigma/2]$.
+These matrices are dimensionless. Improper operations use the corresponding
+proper axial rotation for spin (inversion leaves spin unchanged).
 
 Spin is treated as an axial vector under improper operations.
 

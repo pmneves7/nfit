@@ -6,6 +6,13 @@ electronic scales.
 
 ## Response
 
+This ansatz adds a Sommerfeld expansion for normal-state quasiparticles to
+the leading three-dimensional Debye phonon term. $T$ is temperature in K
+and $C$ molar heat capacity in mJ/(mol K), per mole of formula units.
+As for the [Debye model](debye_heat_capacity.md), the thermodynamic expansion
+is for fixed volume; using it for measured constant-pressure data assumes
+that the difference is negligible in the fitted range.
+
 The molar heat capacity is
 
 $$
@@ -23,6 +30,18 @@ leading Debye phonon contribution.
 | --- | --- | --- |
 | `sommerfeld_gamma` | electronic Sommerfeld coefficient $\gamma$ | mJ/(mol K$^2$) |
 | `debye_beta` | leading phonon coefficient $\beta$ | mJ/(mol K$^4$) |
+
+For a smooth quasiparticle density of states $D_{\rm fu}(\mu)$ counting both
+spins per formula unit per joule, the Sommerfeld approximation gives
+$\gamma=(\pi^2/3)N_Ak_B^2D_{\rm fu}(\mu)$ in J/(mol K$^2$).
+$\mu$ is chemical potential and $k_BT$ must be small compared with the scale
+on which the DOS varies. A DOS per model cell must first be divided by its
+formula-unit count and converted from states/meV to states/J. Multiply the
+resulting $\gamma$ by 1000 for the fitted mJ units. This relation interprets
+the fitted coefficient; the model does not automatically compute it from bands.
+The [Debye ansatz](debye_heat_capacity.md) gives
+$\beta=12\pi^4nR/(5\Theta_D^3)$, with $n$ atoms per formula unit,
+$R=8314.46261815324$ mJ/(mol K), and Debye temperature $\Theta_D$ in K.
 
 Both coefficients are nonnegative.
 

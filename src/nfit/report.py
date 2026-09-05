@@ -576,12 +576,12 @@ def _hamiltonian_display(config: Mapping[str, Any]) -> str:
             "\\mathsf{T}_{ij}\\,\\mathbf{S}_j"
         )
     if _has_section(config, "sia"):
-        terms.append("-\\sum_i \\mathbf{S}_i\\cdot\\mathsf{A}_i\\,\\mathbf{S}_i")
+        terms.append("-\\frac12\\sum_i \\mathbf{S}_i\\cdot\\mathsf{A}_i\\,\\mathbf{S}_i")
     if _has_section(config, "dipole"):
         terms.append("+\\,\\mathcal{H}_{\\mathrm{dip}}")
     if _has_section(config, "zeeman"):
         terms.append(
-            "-\\,g\\mu_B\\,\\mathbf{B}\\cdot\\sum_i \\mathbf{S}_i"
+            "+\\,g\\mu_B\\,\\mathbf{B}\\cdot\\sum_i \\mathbf{S}_i"
         )
     return (
         "\\begin{equation}\n\\mathcal{H} = "
@@ -698,6 +698,9 @@ def _section_sia(model: Mapping[str, Any], goodness: Mapping[str, Any]) -> str:
         "Each magnetic site class carries the symmetry-allowed rank-2 "
         "traceless on-site tensor of its point group, rotated to each "
         "symmetry-equivalent site by the site's generating operation. "
+        "The fitted coefficients define the on-site interaction block "
+        "$\\mathsf{A}_i=\\mathsf{J}_{ii}$, so its Hamiltonian contribution is "
+        "$-\\tfrac12\\mathbf{S}_i\\cdot\\mathsf{A}_i\\mathbf{S}_i$. "
         "Basis matrices are given on the representative site (Cartesian "
         "crystal frame, meV):"
     )
@@ -760,9 +763,13 @@ def _section_zeeman(
     lines.append(
         "In the applied field the local propagator becomes a tensor in the "
         "field frame ($\\hat z = \\hat B$): longitudinal "
-        "$\\chi_\\parallel/(1 - i\\omega/\\Gamma_\\parallel)$ and transverse "
-        "circular $\\chi_\\perp/\\bigl(1 - i(\\omega \\mp \\omega_L)/"
-        "\\Gamma_\\perp\\bigr)$ with Larmor energy $\\omega_L = g\\mu_B B$. "
+        "$\\chi_0/(1 - iE/\\Gamma_0)$ and transverse "
+        "circular $\\chi_\\pm(E)=\\chi_\\perp(\\Gamma_\\perp\\pm iE_L)/"
+        "[\\Gamma_\\perp-i(E\\mp E_L)]$ with Larmor energy $E_L = g\\mu_B B$. "
+        "$E$ and $E_L$ are energies in meV, $B$ is in tesla, "
+        "$\\mu_B=0.05788381$ meV/T, and $g$ is dimensionless. "
+        "$\\chi_\\perp$ is the static transverse spin susceptibility in "
+        "meV$^{-1}$ and $\\Gamma_\\perp$ its relaxation energy in meV. "
         f"Fitted: $g = {_pm(g_value, g_err)}$, "
         f"$\\chi_\\perp/\\chi_0 = {_pm(chi_ratio, chi_err)}$, "
         f"$\\Gamma_\\perp/\\Gamma_0 = {_pm(gamma_ratio, gamma_err)}$."
@@ -807,14 +814,24 @@ def _section_dynamic_response(
         + ":"
     )
     lines.append(
-        "\\begin{equation}\n\\chi(\\mathbf{Q},\\omega) = \\bigl[\\,1 - "
-        "\\chi_0(\\omega)\\,J(\\mathbf{Q})\\,\\bigr]^{-1}\\chi_0(\\omega) .\n"
+        "\\begin{equation}\n\\boldsymbol\\chi(\\mathbf{Q},E) = \\bigl[\\,I_N - "
+        "\\chi_0(E)\\,J(\\mathbf{Q})\\,\\bigr]^{-1}\\chi_0(E)I_N .\n"
         "\\end{equation}"
+    )
+    lines.append(
+        "$E=\\hbar\\omega$ is transferred energy in meV, $\\chi_0$ the static "
+        "local spin susceptibility in meV$^{-1}$, $\\Gamma_0$ a relaxation "
+        "energy in meV, and $a_E$ an inertial coefficient in meV$^{-2}$. "
+        "$N$ counts magnetic sites per cell, $I_N$ is the sublattice identity, "
+        "and $J$ is the meV exchange matrix. This is the zero-field scalar "
+        "feedback ansatz; an enabled Zeeman term replaces the local propagator "
+        "by the tensor defined above."
     )
     lines.append(
         "Diagonalizing the (Hermitian) exchange matrix at each $\\mathbf{Q}$, "
         "$J(\\mathbf{Q})\\,U_\\nu(\\mathbf{Q}) = \\lambda_\\nu(\\mathbf{Q})\\,"
-        "U_\\nu(\\mathbf{Q})$, decouples the response into $N$ modes. With "
+        "U_\\nu(\\mathbf{Q})$, with orthonormal eigenvectors $U_\\nu$ and "
+        "meV eigenvalues $\\lambda_\\nu$, decouples the response into $N$ modes. With "
         "$\\delta_\\nu=1-\\lambda_\\nu\\chi_0$, the measured dissipative "
         "susceptibility is their sum with "
         "neutron structure-factor weights:"
@@ -826,7 +843,7 @@ def _section_dynamic_response(
     )
     lines.append(
         "The static mode susceptibility is $\\chi_0/\\delta_\\nu$. For "
-        "$a_E=0$ its relaxation rate is $\\Gamma_\\nu=\\Gamma_0\\delta_\\nu$; "
+        "$a_E=0$ its relaxation energy is $\\Gamma_\\nu=\\Gamma_0\\delta_\\nu$; "
         "for $a_E>0$ its undamped energy is "
         "$E_\\nu=\\sqrt{\\delta_\\nu/a_E}$. Thus zero inertia is exactly the "
         "relaxational model and positive inertia gives exchange-paramagnon "
@@ -837,12 +854,14 @@ def _section_dynamic_response(
         "already carries the pair phases). The mode softens as the "
         "Stoner-like criterion $\\max_{\\mathbf{Q},\\nu}\\lambda_\\nu(\\mathbf{Q})"
         "\\,\\chi_0 \\to 1$ is approached, at which the RPA denominator "
-        "$1 - \\lambda_\\nu\\chi_0$ vanishes and the system orders."
+        "$1 - \\lambda_\\nu\\chi_0$ vanishes and paramagnetic RPA fails; "
+        "the calculation does not construct an ordered state."
     )
     if _is_tensor_mode(_config(model)):
         lines.append(
             "With the anisotropic terms active the modes carry Cartesian spin "
-            "indices ($3N$ modes with vector amplitudes $w_{\\alpha\\nu}$), so "
+            "indices ($3N$ modes with vector amplitudes "
+            "$w_{\\alpha\\nu}=N^{-1/2}\\sum_a U_{a\\alpha,\\nu}$), so "
             "$\\chi''$ above becomes the $3\\times3$ tensor "
             "$\\chi''_{\\alpha\\beta}(\\mathbf{Q}, E)$ contracted with the "
             "polarization weight in the cross section below."
@@ -896,13 +915,13 @@ _CLOSURE_EQUATIONS = {
     "onsager": (
         "Onsager reaction field (spherical-model closure) "
         "\\cite{berlin1952,brout1967}: the exchange is shifted, "
-        "$J(\\mathbf{Q}) \\to J(\\mathbf{Q}) - \\lambda(T)$, with "
+        "$J(\\mathbf{Q}) \\to J(\\mathbf{Q}) - \\lambda(T)I$, with "
         "$\\lambda(T)$ solved at each temperature so the per-site "
         "fluctuation amplitude satisfies the moment sum rule\n"
         "\\begin{equation}\n\\langle m^2\\rangle = \\frac{1}{\\pi V_{BZ}}"
-        "\\int_{BZ} d\\mathbf{Q} \\int_0^{\\Lambda} d\\omega\\, "
-        "\\coth\\!\\Bigl(\\frac{\\omega}{2k_BT}\\Bigr)\\, "
-        "\\mathrm{Tr}\\,\\chi''(\\mathbf{Q},\\omega) = m^2_{\\mathrm{tot}} .\n"
+        "\\int_{BZ} d^3\\mathbf{Q} \\int_0^{\\Lambda} dE\\, "
+        "\\coth\\!\\Bigl(\\frac{E}{2k_BT}\\Bigr)\\, "
+        "\\mathcal X''(\\mathbf{Q},E) = m^2_{\\mathrm{tot}} .\n"
         "\\end{equation}"
     ),
     "scr": (
@@ -910,8 +929,9 @@ _CLOSURE_EQUATIONS = {
         "the effective local susceptibility obeys\n"
         "\\begin{equation}\n\\chi_{0,\\mathrm{eff}}^{-1}(T) = \\chi_0^{-1} + "
         "u\\,\\langle m^2\\rangle(T),\n\\end{equation}\n"
-        "solved self-consistently; here $\\chi_0$ denotes the bare ($T=0$) "
-        "value and $u$ the mode-coupling constant."
+        "solved self-consistently; here $\\chi_0$ denotes the fitted bare "
+        "reference, not the renormalized zero-temperature value, and $u$ "
+        "is a mode-coupling energy in meV."
     ),
     "tac": (
         "Takahashi total-amplitude conservation (TAC) \\cite{takahashi1986}: "
@@ -944,6 +964,20 @@ def _section_closure(
     lines = ["\\subsection{Self-consistency closure}"]
     cite.cite(*_CLOSURE_CITATIONS[spec.mode])
     lines.append(_CLOSURE_EQUATIONS[spec.mode])
+    lines.append(
+        "The local spectral trace is $\\mathcal X''=N^{-1}\\sum_{a,\\alpha}"
+        "\\chi''_{aa,\\alpha\\alpha}$ in meV$^{-1}$, where $a$ labels the $N$ "
+        "sites per cell and $\\alpha=x,y,z$. For scalar isotropic modes it is "
+        "$3\\,\\mathrm{Tr}_{\\rm site}\\chi''/N$, with no neutron mode weights. "
+        "$V_{BZ}$ is the reciprocal volume of the integration zone; the "
+        "zone measure integrates to one. $T$ is in K, "
+        "$k_B=0.08617333262$ meV/K, and $\\Lambda$ is a positive energy cutoff. "
+        "The amplitude $\\langle m^2\\rangle$ is the integral of "
+        "$\\mathcal X''[1+2n_B(E,T)]/\\pi$ over positive energies and the "
+        "normalized zone, with $n_B=(e^{E/(k_BT)}-1)^{-1}$. Its unit-kernel "
+        "part is zero-point (ZP) and its $2n_B$ part thermal. "
+        "$\\lambda$ is a meV reaction field and $I$ the site/component identity."
+    )
     details = [
         f"energy cutoff $\\Lambda = {_fmt(spec.energy_cutoff_mev)}$\\,meV",
         f"Brillouin-zone grid ${spec.bz_grid}^3$",
@@ -976,7 +1010,7 @@ def _section_closure(
             )
     lines.append(
         "Numerical settings: " + "; ".join(details) + ". Amplitude targets are "
-        "in model units (the convention in which $J\\chi_0$ is dimensionless)."
+        "dimensionless, component-summed spin fluctuations per magnetic site."
     )
     return "\n".join(lines) + "\n"
 
@@ -1021,9 +1055,17 @@ def _section_cross_section(
             + cite.cite("welch2022")
             + ". The microscopic $\\chi''_s$ is not dimensionless MKS "
             "susceptibility: per magnetic ion, "
-            "$\\chi''_{\\rm SI}=\\mu_0(g\\mu_B)^2\\chi''_s/"
+            "$\\chi''_{\\rm SI,ion}=\\mu_0(g\\mu_B)^2\\widetilde\\chi''_s/"
             "(1\\,\\mathrm{meV\\ in\\ joules})$. Thus $\\mu_0$ enters conversion "
             "to SI $M/H$, not as an extra neutron cross-section factor. "
+            "Here $\\widetilde\\chi''_s$ is the numerical ordinate in "
+            "meV$^{-1}$ and $\\chi''_{\\rm SI,ion}$ has units m$^3$ per ion; "
+            "multiplication by the ion number density gives dimensionless "
+            "volume susceptibility. $k_i,k_f$ are incident/final neutron "
+            "wavevector magnitudes, $d\\Omega$ detector solid angle, "
+            "$f$ a dimensionless magnetic amplitude form factor, "
+            "$\\gamma$ the neutron moment in nuclear magnetons, and $r_0$ "
+            "the classical electron radius. "
             + "Any experimental calibration scale belongs to the dataset and is "
             "applied separately from this intrinsic model response"
             + (
@@ -1141,7 +1183,12 @@ def generalized_paramagnon_report_sections(
         ),
         (
             "Here $L$ is a lower-triangular correlation-length factor in "
-            "\\AA, $z$ is the relaxation exponent, and $a_E=1/E_0^2$. "
+            "\\AA, $\\Delta\\mathbf q$ is the Cartesian offset from a peak "
+            "center in inverse \\AA, and $p>0$ the dimensionless spatial power. "
+            "$A$ is dimensionless, $z$ the dimensionless relaxation exponent, "
+            "$\\chi_{\\rm pk}$ the static peak susceptibility in meV$^{-1}$, "
+            "$\\Gamma_0$ its relaxation energy in meV, $E$ transferred energy "
+            "in meV, and $a_E=1/E_0^2$ in meV$^{-2}$. "
             "The fitted inelastic response is $\\chi''=\\operatorname{Im}\\chi$; "
             "elastic datasets use $\\chi'(\\mathbf q,0)=\\chi_{\\rm pk}/A$. "
             "The $a_E=0$ limit is relaxational, while $a_E>0$ is a damped "
@@ -1323,7 +1370,12 @@ def electronic_rpa_report_sections(
             "$\\boldsymbol\\chi=(\\mathbb 1-\\boldsymbol\\chi^0"
             "\\boldsymbol\\Gamma)^{-1}\\boldsymbol\\chi^0$. Interaction "
             "parameters are fitted in eV and converted to canonical meV before "
-            "matrix multiplication."
+            "matrix multiplication. $\\boldsymbol\\chi^0$ and "
+            "$\\boldsymbol\\chi$ are the bare and dressed responses in "
+            "meV$^{-1}$ per electronic cell; $\\boldsymbol\\Gamma$ is the "
+            "meV vertex on their ordered operator space and $\\mathbb1$ "
+            "its identity. This solves the feedback ansatz "
+            "$\\chi=\\chi^0+\\chi^0\\Gamma\\chi$."
         ),
         "\\begin{tabular}{l l}",
         "\\toprule",

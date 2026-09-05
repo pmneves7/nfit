@@ -8,6 +8,12 @@ response functions.
 Use it when a local or isotropic MMP response is too restrictive but a
 microscopic Heisenberg or electronic model is not justified by the data.
 
+Here $\chi=\chi'+i\chi''$ is one isotropic Cartesian component of the
+response of dimensionless spin, in meV$^{-1}$ per magnetic ion. $\chi'$ is
+reactive and $\chi''$ absorptive; $i^2=-1$ and $E=\hbar\omega$ is transfer
+in meV. Spin matrices, the conjugate energy field, and the Fourier convention
+are defined in [Physics conventions](physics_conventions.md#spin-operators-and-equilibrium-averages).
+
 ## Spatial response
 
 For a peak center $\mathbf Q_c$, define the Cartesian momentum offset
@@ -29,6 +35,11 @@ L=
 \xi_{zx}&\xi_{zy}&\xi_z
 \end{pmatrix}.
 $$
+
+$\Delta\mathbf q=\mathbf q_{\rm cart}-\mathbf Q_{c,\rm cart}$ after converting
+both momenta with the reciprocal lattice. $C$ is a correlation metric in Å$^2$,
+$L$ has entries in Å, superscript $T$ means transpose, and $p>0$ is the fixed
+dimensionless spatial exponent (`spatial_power`). Thus $A\ge1$ is dimensionless.
 
 This parameterization keeps $C$ positive semidefinite while its diagonal and
 off-diagonal elements are fitted. The singular values of $L$ are the principal
@@ -52,6 +63,13 @@ $$
 \Gamma(\mathbf q)=\Gamma_0 A(\mathbf q)^z.
 $$
 
+The ansatz takes a static peak and adds damping linear in frequency and,
+optionally, an inertial term quadratic in frequency to its inverse response.
+$\chi_{\rm pk}$ is one-center static amplitude in meV$^{-1}$,
+$\Gamma_0>0$ the center relaxation energy in meV, $z\ge0$ a dimensionless
+relaxation exponent (not automatically a universal critical exponent), and
+$a_E\ge0$ an inverse-square-energy coefficient in meV$^{-2}$.
+
 The full causal response is
 
 $$
@@ -60,7 +78,7 @@ $$
 {1-[a_E/A(\mathbf q)]E^2-iE/[\Gamma_0A(\mathbf q)^z]}.
 $$
 
-Writing $x=1-a_EE^2/A$ and
+Writing the dimensionless real denominator parts $x=1-a_EE^2/A$ and
 $y=E/[\Gamma_0A^z]$, the fitted dissipative part is
 
 $$
@@ -112,7 +130,7 @@ dependence of the neutron intensity.
   $\chi=\chi_{\rm pk}/(1-iE/\Gamma_0)$.
 - MMP response: use $L=\xi\mathbb 1$, $p=2$, $z=1$, one center, and $a_E=0$.
 - Damped propagating mode: use $a_E>0$. At a peak center,
-  $E_0=1/\sqrt{a_E}$ and the equivalent DHO damping coefficient is
+  $E_0=1/\sqrt{a_E}$ and the equivalent damped-harmonic-oscillator (DHO) damping energy is
   $\gamma_{\rm DHO}=E_0^2/\Gamma_0$. The damping ratio is
   $\zeta=\gamma_{\rm DHO}/(2E_0)$.
 

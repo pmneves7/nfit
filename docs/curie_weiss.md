@@ -6,6 +6,25 @@ model and does not predict neutron-scattering intensity.
 
 ## Response
 
+The starting ansatz is Curie response to a molecular field proportional to
+magnetization. Solving $M=(C_v/T)(H+\lambda_{\rm mf}M)$ gives
+$M/H=C_v/(T-C_v\lambda_{\rm mf})$. In rationalized SI, $M,H$ are in A/m,
+$C_v$ is a volume Curie coefficient in K, and $\lambda_{\rm mf}$ is a
+dimensionless molecular-field coefficient. Hence
+$\Theta_{\rm CW}=C_v\lambda_{\rm mf}$. The fitted molar law below uses $C$
+on the dataset's mole basis; it does not fit $\lambda_{\rm mf}$ separately.
+
+For $n_{\rm ion}$ identical rigid moments per formula unit with spin quantum
+number $S$ and Landé factor $g$,
+$C_{\rm SI}=\mu_0N_A n_{\rm ion}(g\mu_B)^2S(S+1)/(3k_B)$
+in m$^3$ K/mol, with SI constants from
+[Physics conventions](physics_conventions.md#constants-coordinates-and-mathematical-notation).
+This interprets $C$ only for that local-moment ansatz. Numerically
+$C_{\rm SI}=4\pi\times10^{-6}C_{\rm CGS}$ for $C_{\rm CGS}$ in cm$^3$ K/mol.
+The inferred effective moment per formula unit is
+$\mu_{\rm eff}=\sqrt{3k_BC_{\rm SI}/(\mu_0N_A)}$;
+per-ion interpretation requires the ion count rather than silently assuming one.
+
 The molar susceptibility is
 
 $$

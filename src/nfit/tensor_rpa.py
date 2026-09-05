@@ -400,8 +400,12 @@ def zeeman_cartesian_propagator(
 
     In the field frame (z = B-hat) the longitudinal response is
     ``chi_par / (1 - i w / Gamma_par)`` and the transverse circular modes are
-    ``chi_perp / (1 - i (w -/+ omega_L) / Gamma_perp)``; the Cartesian tensor
-    has a gyrotropic (antisymmetric) part proportional to ``omega_L``. At
+    ``chi_perp * (Gamma_perp +/- i omega_L) /
+    (Gamma_perp - i (w -/+ omega_L))``. Here ``w`` and ``omega_L`` are
+    transferred and Larmor energies in meV, not angular frequencies.
+    This is relaxation and precession of the departure from the instantaneous
+    field-induced equilibrium spin, so both circular static responses equal
+    ``chi_perp``. The Cartesian tensor has a gyrotropic part at finite energy. At
     ``omega_L -> 0`` with unit ratios it becomes the scalar ``chi0(omega) I3``.
     """
 
@@ -416,10 +420,19 @@ def zeeman_cartesian_propagator(
     x_par = chi0 / (1.0 - 1j * e / gamma0)
     chi_perp = chi_perp_ratio * chi0
     gamma_perp = gamma_perp_ratio * gamma0
-    x_plus = chi_perp / (1.0 - 1j * (e - omega_larmor) / gamma_perp)
-    x_minus = chi_perp / (1.0 - 1j * (e + omega_larmor) / gamma_perp)
+    # The precession term also acts on the field-induced equilibrium spin.
+    # Keeping only shifted denominators loses that driving term and produces
+    # an antisymmetric static response and negative low-energy absorption.
+    x_plus = chi_perp * (gamma_perp + 1j * omega_larmor) / (
+        gamma_perp - 1j * (e - omega_larmor)
+    )
+    x_minus = chi_perp * (gamma_perp - 1j * omega_larmor) / (
+        gamma_perp - 1j * (e + omega_larmor)
+    )
     diag_perp = 0.5 * (x_plus + x_minus)
-    off_perp = 0.5j * (x_plus - x_minus)  # gyrotropic, -> 0 as omega_L -> 0
+    # Electron moments are -g mu_B S, hence H_Z = +E_L S_z. The retarded
+    # xy response then has the -i sign for the positive-energy circular pole.
+    off_perp = -0.5j * (x_plus - x_minus)
 
     x_axis, y_axis = _perpendicular_frame(b_hat)
     z_axis = b_hat

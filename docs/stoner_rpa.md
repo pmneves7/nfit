@@ -7,6 +7,16 @@ instability.
 
 ## Complex susceptibility
 
+RPA means random-phase approximation: the feedback ansatz is
+$\chi=\chi^0+\chi^0\Gamma\chi$. It sums repeated interactions in the response
+while retaining the independent bands and occupation factors of
+[the Lindhard model](lindhard.md#complex-susceptibility).
+$\mathbf Q$ is experimental momentum, $E$ is transfer in meV, and
+$S_\alpha$ is the dimensionless spin defined in
+[Physics conventions](physics_conventions.md#spin-operators-and-equilibrium-averages).
+$\mathbb1$ is the identity on the three Cartesian spin channels; multiplication
+by a scalar vertex below means $\Gamma\mathbb1$.
+
 For the Cartesian bare spin tensor $\boldsymbol\chi^0_s(\mathbf Q,E)$,
 
 $$
@@ -20,18 +30,30 @@ $$
 $I$ is entered in eV and converted to meV before it enters the vertex
 $\Gamma$, which multiplies $\chi^0_s$ in meV$^{-1}$ per primitive electronic
 cell. The dissipative response used for inelastic scattering is
-$\boldsymbol\chi_s''=\operatorname{Im}\boldsymbol\chi_s$. The real static
+$(\boldsymbol\chi_s-\boldsymbol\chi_s^\dagger)/(2i)$; on scalar or diagonal
+channels this equals $\operatorname{Im}\chi_s$. The real static
 limit is used for quasistatic elastic and bulk comparisons.
 
 ### Why the vertex is $2I$
+
+For one local orbital, $n_\sigma=c_\sigma^\dagger c_\sigma$ counts electrons
+of spin $\sigma$, $n=n_\uparrow+n_\downarrow$, and
+$S_z=(n_\uparrow-n_\downarrow)/2$. Fermion creation/annihilation and Pauli
+matrices are defined on the [tight-binding](tight_binding.md#reciprocal-space-hamiltonian-and-bands)
+and [spin](tight_binding_spin.md) pages. The identity
+$n_\uparrow n_\downarrow=n^2/4-S_z^2$ fixes the density-to-spin convention.
 
 $\chi^0_s$ is the susceptibility of the *dimensionless* spin operator
 $S^\alpha$. Since $S_z=(n_\uparrow-n_\downarrow)/2$ carries a factor $1/2$ per
 spin index, an on-site interaction written for the densities,
 $H=I\,n_\uparrow n_\downarrow$, becomes $-I S_z^2$ up to a charge term, so the
 irreducible vertex conjugate to $S^\alpha$ is $2I$. For an implicit-spin model
-nfit's bare response is $\chi^0_s=D_\uparrow(\mu)/2$, where $D_\uparrow$ is the
-per-spin density of states, so the RPA denominator is
+the zero-temperature, zero-width uniform limit is
+$\chi^0_s=D_\uparrow(\mu)/2$, where $D_\uparrow$ is the per-spin density of
+states in states/(meV model cell) and $\mu$ is chemical potential in meV.
+At finite temperature use the Fermi-derivative average defined on the
+[Lindhard page](lindhard.md#degenerate-transitions-and-the-static-limit).
+Thus in this uniform limit the RPA denominator is
 
 $$
 1-2I\chi^0_s=1-I D_\uparrow(\mu),
@@ -52,6 +74,15 @@ $$
 \chi_{ff}=\chi^0_{ff}+\chi^0_{fS}\Gamma
 (1-\chi^0_{SS}\Gamma)^{-1}\chi^0_{Sf}.
 $$
+
+Here $S$ labels the intrinsic total-spin probe and $f$ labels the
+form-factor-weighted spin probe, not the Fermi function. $\chi^0_{fS}$ is
+the bare cross response of those two probes, with the second operator
+adjointed, and $\chi^0_{Sf}$ the reverse cross response.
+All blocks have units meV$^{-1}$ per model cell; for Cartesian tensors,
+$1$ in the inverse means the spin-space identity. Orbital label $a$ indexes
+the dimensionless radial amplitudes $f_a(Q)$ defined on the
+[Lindhard page](lindhard.md#spin-and-neutron-projection).
 
 Consequently $f_a(Q)$ appears in the measured numerator and interference
 terms, but never in the Stoner denominator or stability criterion.
@@ -89,8 +120,9 @@ the dressing applies. The same bare component may still be compared directly
 with other datasets by giving the two components different dataset scopes.
 
 At an evaluated zero-energy point, nfit reports
-$1-\lambda_{\max}$ using the Hermitian part of
-$\boldsymbol\chi^0\boldsymbol\Gamma$. This is a sampled diagnostic, not proof
+$1-\lambda_{\max}$, where $\lambda_{\max}$ is the largest eigenvalue of
+$(X+X^\dagger)/2$ with $X=\boldsymbol\chi^0\boldsymbol\Gamma$ at $E=0$.
+The eigenvalue and margin are dimensionless. This is a sampled diagnostic, not proof
 of stability throughout the Brillouin zone. If rejection is enabled, a sampled
 crossing produces the same kind of large finite fitting penalty used by the
 Heisenberg RPA model. Model energy plots identify near sampled poles or

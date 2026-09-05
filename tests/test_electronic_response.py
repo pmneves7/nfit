@@ -2170,3 +2170,45 @@ def test_repeated_wavevectors_do_not_change_the_response():
         ]
     )
     np.testing.assert_allclose(together, separate, rtol=1.0e-12, atol=1.0e-18)
+
+
+def test_complex_transition_amplitudes_match_two_level_spectral_response():
+    """Check probe conjugation against analytic transitions in a rotated basis."""
+    gap, broadening = 4.0, 0.2
+    pauli = np.array([
+        [[0, 1], [1, 0]], [[0, -1j], [1j, 0]], [[1, 0], [0, -1]],
+    ], dtype=complex)
+    rotation = np.array([[1, 1j], [1j, 1]], dtype=complex) / np.sqrt(2)
+    model = build_electronic_model(
+        direct_lattice=np.eye(3), basis=["a", "b"], periodic_axes=(0,),
+        hoppings={(0, 0, 0): rotation @ np.diag([-gap / 2, gap / 2]) @ rotation.conj().T},
+        energy_unit="meV",
+    )
+    operators = ElectronicOperatorBasis(
+        ("Sx", "Sy", "Sz"), rotation @ (pauli / 2) @ rotation.conj().T,
+    )
+    energy = np.array([-6.0, -1.0, 1.0, 4.0, 6.0])
+    response = bare_lindhard_susceptibility(
+        model, np.zeros((len(energy), 3)), energy, k_mesh(model, [3]), operators,
+        temperature_K=0.0, chemical_potential_meV=0.0, broadening_meV=broadening,
+    )
+    forward = 1.0 / (gap - energy - 1j * broadening)
+    reverse = 1.0 / (gap + energy + 1j * broadening)
+    expected = np.zeros((len(energy), 3, 3), dtype=complex)
+    expected[:, 0, 0] = expected[:, 1, 1] = (forward + reverse) / 4
+    expected[:, 0, 1] = 1j * (forward - reverse) / 4
+    expected[:, 1, 0] = -expected[:, 0, 1]
+    np.testing.assert_allclose(response.values_per_meV_cell, expected, atol=1e-14)
+
+    absorptive = (expected - expected.conj().swapaxes(-1, -2)) / (2j)
+    assert np.max(np.abs(absorptive.imag)) > 0.1
+    # The documented accessor is elementwise imaginary; physical absorption
+    # is the anti-Hermitian part and can have complex off-diagonal entries.
+    np.testing.assert_allclose(response.chi_double_prime, expected.imag, atol=1e-14)
+    q = np.tile([0.3, 0.4, np.sqrt(0.75)], (len(energy), 1))
+    projector = np.eye(3) - q[:, :, None] * q[:, None, :]
+    np.testing.assert_allclose(
+        np.einsum("pab,pab->p", projector, absorptive).real,
+        np.einsum("pab,pab->p", projector, response.chi_double_prime),
+        atol=1e-14,
+    )

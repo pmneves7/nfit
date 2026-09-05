@@ -15,9 +15,15 @@ $$
 \chi_0(E)=\frac{\chi_0}{1-iE/\Gamma_0}.
 $$
 
-$E$ is transferred energy, $\mathbf Q$ is momentum transfer, $\mathbf J$ is
-the exchange matrix, $\chi_0$ is the static local spin susceptibility, and
-$\Gamma_0$ is the local relaxation energy.
+$E$ is transferred energy in meV, $\mathbf Q$ is momentum transfer,
+$\mathbf J$ is the sublattice exchange matrix in meV, $\mathbb1$ is its
+identity, $\chi_0$ is a scalar static local spin susceptibility in meV$^{-1}$,
+and $\Gamma_0>0$ is the local relaxation energy in meV. Multiplication by
+$\chi_0(E)$ on the right means $\chi_0(E)\mathbb1$. The isotropic model has
+$N_s$ sites and an $N_s\times N_s$ matrix per Cartesian component; the tensor
+model uses the $3N_s$ site/component space. The local exponential-relaxation
+ansatz and exchange Hamiltonian are defined on the
+[Heisenberg page](heisenberg_rpa.md#scalar-model).
 
 This is linear response around a fixed local propagator. The fitted
 `chi0`, `gamma0`, and exchange parameters determine the response, but the
@@ -32,29 +38,44 @@ one of these limitations.
 
 ### Total moment
 
-For the convention defined in [Physics conventions](physics_conventions.md),
+Use the dimensionless spin and equilibrium average defined in
+[Physics conventions](physics_conventions.md#spin-operators-and-equilibrium-averages).
+For $N_s$ magnetic sites per cell, the site-diagonal correlation is
 
 $$
-S^{\alpha\beta}(\mathbf Q,E)
-=\frac{1}{\pi}
-\frac{\chi''_{\alpha\beta}(\mathbf Q,E)}
-{1-e^{-E/(k_BT)}}.
+S_{aa}^{\alpha\alpha}(\mathbf q,E)=\frac{1}{2\pi\hbar}
+\sum_{\mathbf R}e^{2\pi i\mathbf q\cdot\mathbf R}
+\int_{-\infty}^{\infty}dt\,e^{-iEt/\hbar}
+\langle S_{0a}^{\alpha}(0)S_{\mathbf R a}^{\alpha}(t)\rangle .
 $$
 
-The Brillouin-zone and all-energy integral is the equal-time local correlation:
+$a=1,\ldots,N_s$ labels a site within a cell, $\mathbf R$ an integer cell
+translation, $0$ the home cell, $\alpha=x,y,z$ a Cartesian component, and
+$\mathbf q$ dimensionless reduced momentum. $E$ is in meV; $\hbar$ and time
+$t$ must use compatible units. This correlation has units meV$^{-1}$.
+The per-site, component-summed total moment obeys
 
 $$
-\sum_\alpha\frac{1}{V_{\rm BZ}}\int_{\rm BZ}d\mathbf Q
-\int_{-\infty}^{\infty}dE\,
-S^{\alpha\alpha}(\mathbf Q,E)
-=\langle\mathbf S_i^2\rangle.
+\frac{1}{N_s}\sum_{a,\alpha}\int_{\rm BZ}d\bar q
+\int_{-\infty}^{\infty}dE\,S_{aa}^{\alpha\alpha}(\mathbf q,E)
+=\frac1{N_s}\sum_a\langle\mathbf S_{0a}^2\rangle,
+\qquad
+d\bar q=\frac{d^d q_{\rm cart}}{V_{\rm BZ}}.
 $$
 
-$V_{\rm BZ}$ is the Brillouin-zone volume, $\alpha$ labels Cartesian spin
-components, and $\mathbf S_i$ is the dimensionless spin operator on site $i$.
-For a rigid spin, the right-hand side is $S(S+1)$. For an itinerant or
-valence-fluctuating system, it is a temperature-dependent fluctuating moment
-rather than a fixed constraint.
+$d$ is the number of periodic dimensions and $V_{\rm BZ}$ is the reciprocal
+volume (area/length for $d=2/1$), so the measure integrates to one. The BZ
+average cancels all nonzero cell translations. For a rigid spin of quantum
+number $S$, the dimensionless local value is $S(S+1)$. For itinerant electrons
+it need not be fixed. The neutron-visible sublattice sum includes off-site
+interference; it cannot replace this site trace in a multi-site cell.
+
+In the paramagnetic state of these closures the mean spin vanishes, and the
+fluctuation--dissipation theorem gives
+$S_{aa}^{\alpha\alpha}=\chi''_{aa,\alpha\alpha}/\{\pi[1-e^{-E/(k_BT)}]\}$.
+In a state with nonzero mean spin, the retarded response describes connected
+fluctuations; recovering the full equal-time moment also requires the static
+mean-spin contribution. $k_B$ is Boltzmann's constant in meV/K and $T$ is K.
 
 Quantitative use requires two choices:
 
@@ -90,7 +111,7 @@ from one additional equation.
 | closure | feedback or conserved quantity | suitable interpretation |
 | --- | --- | --- |
 | none | none | empirical RPA baseline |
-| Onsager / spherical | fixed thermal moment target | fixed-length local moments |
+| Onsager / spherical | fixed integrated moment target | fixed-length local moments |
 | SCR | fluctuation amplitude renormalizes `chi0` | soft itinerant moments |
 | TAC | zero-point plus thermal amplitude is fixed | quantum itinerant moments |
 
@@ -106,6 +127,10 @@ $$
 \mathbf J(\mathbf Q)-\lambda(T)\mathbb 1.
 $$
 
+$\lambda(T)$ is a reaction-field energy in meV, $\mathbb1$ the site/component
+identity, and the integrated quantity is $\langle m^2\rangle$ defined below,
+including zero-point and thermal weight up to the specified cutoff.
+
 nfit solves for $\lambda(T)$ so that the integrated moment equals
 `moment_target` or the fitted `m2_total`. This replaces a strict site-by-site
 constraint with an average one and prevents unlimited accumulation of weight
@@ -116,17 +141,26 @@ in a soft mode [1--4].
 Moriya's SCR treats the moment amplitude as a soft field:
 
 $$
-\chi_0^{-1}(T)=\chi_0^{-1}(0)+u\langle m^2\rangle(T),
+\chi_{0,\rm eff}^{-1}(T)=\chi_{0,\rm bare}^{-1}+u\langle m^2\rangle(T),
 $$
 
 with
 
 $$
 \langle m^2\rangle(T)
-=\frac{1}{V_{\rm BZ}}\int_{\rm BZ}d\mathbf Q\int_0^\Lambda dE\,
+=\int_{\rm BZ}d\bar q\int_0^\Lambda dE\,
 \coth\!\left(\frac{E}{2k_BT}\right)
-\frac{\chi''(\mathbf Q,E)}{\pi}.
+\frac{\mathcal X''(\mathbf q,E)}{\pi},\qquad
+\mathcal X''=\frac1{N_s}\sum_{a,\alpha}\chi''_{aa,\alpha\alpha}.
 $$
+
+$\chi_{0,\rm bare}$ is the fitted reference `chi0`, not the already
+renormalized value at zero temperature; zero-point weight also enters the
+self-consistent solution at $T=0$. $\mathcal X''$ is the local site/component
+trace in meV$^{-1}$, with no neutron polarization, form factor, or mode
+interference weights. For an isotropic scalar sublattice response it is
+$3\operatorname{Tr}_{\rm site}\chi''/N_s$. The hyperbolic factor is
+$\coth x=(e^{2x}+1)/(e^{2x}-1)=1+2n_B(E,T)$ for $x=E/(2k_BT)$.
 
 Here $\langle m^2\rangle$ is the component-summed fluctuating spin amplitude,
 $\Lambda$ is the energy cutoff, and
@@ -143,6 +177,14 @@ $$
 +\langle m^2\rangle_T(T)
 =\text{constant}.
 $$
+
+In the same per-site spin convention,
+$\langle m^2\rangle_{\rm ZP}=\int d\bar q\int_0^\Lambda dE\,\mathcal X''/\pi$
+and $\langle m^2\rangle_T=\int d\bar q\int_0^\Lambda dE\,2n_B(E,T)\mathcal X''/\pi$.
+ZP denotes zero-point and subscript $T$ the thermal contribution. Both can
+depend on temperature through the self-consistent spectrum, even though the
+zero-point kernel has no explicit Bose occupation. Their dimensionless sum
+is the configured `total_amplitude`.
 
 The fitted `total_amplitude` replaces an independently varied `chi0`.
 `gamma0` remains a fitted parameter; nfit does not derive its full temperature
@@ -169,6 +211,10 @@ denominator. It equals `chi0` without a closure and is derived by SCR or TAC.
 every interaction eigenvalue,
 $\lambda_\nu(\mathbf Q)\rightarrow\lambda_\nu(\mathbf Q)-\lambda_{\rm shift}$,
 to enforce the configured moment sum rule. It is zero for the other modes.
+
+$\lambda_\nu(\mathbf Q)$ is interaction eigenvalue $\nu$ in meV, distinct
+from the scalar reaction field. $D_\nu$, $D_{\min}$, and $r_{\max}$ below are
+dimensionless; the extrema run over every sampled momentum and eigenmode.
 
 For each sampled wavevector and mode, define
 
@@ -229,7 +275,12 @@ $$
 C\approx0.0323\ {\rm emu\,meV/mol},
 $$
 
-per mole of magnetic sites. Absolute sample normalization additionally
+per mole of magnetic sites. Here $\chi_{\rm spin}=\chi'(\mathbf0,0)$ is
+one Cartesian component and $C=N_A\mu_{B,\rm CGS}^2/\varepsilon_{\rm meV,erg}$,
+with $\mu_{B,\rm CGS}=9.2740100783\times10^{-21}$ erg/G and
+$\varepsilon_{\rm meV,erg}=1.602176634\times10^{-15}$ erg.
+“emu/mol” is the package's conventional CGS susceptibility shorthand for
+cm$^3$/mol (emu/(Oe mol)), not a molar magnetic moment. Absolute sample normalization additionally
 requires the sample amount and the number of magnetic sites on the chosen
 molar basis.
 

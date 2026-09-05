@@ -4,10 +4,24 @@
 ordering vector. It is useful for nearly antiferromagnetic metals when the data
 do not warrant a full crystal exchange model.
 
+Here $\chi=\chi'+i\chi''$ is one isotropic Cartesian component of the
+response of dimensionless spin, in meV$^{-1}$ per magnetic ion. $\chi'$ is
+reactive and $\chi''$ absorptive; $i^2=-1$ and $E=\hbar\omega$ is transfer
+in meV. Spin matrices, the conjugate energy field, and the Fourier convention
+are defined in [Physics conventions](physics_conventions.md#spin-operators-and-equilibrium-averages).
+
 ## Response
 
-Let $\Delta\mathbf q=\mathbf q-\mathbf Q_0$ in Å$^{-1}$ and
-$A(\mathbf q)=1+\xi^2|\Delta\mathbf q|^2$. The complex response is
+The spatial ansatz is an Ornstein--Zernike peak:
+the inverse static susceptibility grows quadratically with distance from its
+center. Write $\Delta\mathbf q=\mathbf q_{\rm cart}-\mathbf Q_{0,\rm cart}$
+in Å$^{-1}$, where the reciprocal matrix converts the configured r.l.u.
+center to Cartesian coordinates. Let
+$A(\mathbf q)=1+\xi^2|\Delta\mathbf q|^2$, a dimensionless kernel with
+correlation length $\xi$ in Å. The dynamic ansatz adds a term linear in
+$-iE$ to this inverse response, giving relaxation energy
+$\Gamma(\mathbf q)=E_{\rm sf}A(\mathbf q)$ and static amplitude
+$\chi_{\rm pk}/A(\mathbf q)$. The complex response is
 
 $$
 \chi(\mathbf q,E)=
@@ -52,7 +66,7 @@ $\mathbf Q_0$. The measured magnetic neutron intensity is additionally
 modulated by the magnetic form factor. Because $\mathbf Q_0$ is
 specified in reciprocal-lattice units while $\xi$ is in Å, the crystal lattice
 is needed to form the dimensionless product
-$\xi|\mathbf q-\mathbf Q_0|$.
+$\xi|\Delta\mathbf q|$.
 
 ## Calculable data
 
@@ -76,7 +90,7 @@ $$
 \chi_{\rm uniform}
 =\chi'(\mathbf 0,0)
 =\frac{\chi_{\rm pk}}
-{1+\xi^2|\mathbf Q_0|^2}.
+{1+\xi^2|\mathbf Q_{0,\rm cart}|^2}.
 $$
 
 This comparison can expose a failure of the finite-$\mathbf Q$ model. The MMP

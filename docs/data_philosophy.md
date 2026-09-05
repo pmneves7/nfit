@@ -173,6 +173,11 @@ metadata and references to event files. Reduction streams event chunks and
 converts stored `Q_sample` vectors with $(2\pi UB)^{-1}$, avoiding duplicate
 copies of event and instrument data.
 
+Here UB is the sample orientation times the crystallographic reciprocal
+basis without $2\pi$, `Q_sample` has physical Å$^{-1}$ coordinates, and the
+result of $(2\pi UB)^{-1}\mathbf Q_{\rm sample}$ is dimensionless HKL.
+See [UB matrices](data_import.md#ub-matrices) for the convention.
+
 Normalized output is a ratio. Corrected event signal and error-squared form the
 numerator; detector trajectories, proton charge, and energy coverage form the
 denominator. Raw direct-geometry events receive the instrument-defined

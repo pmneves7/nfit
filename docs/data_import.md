@@ -85,9 +85,14 @@ collections:
   approximation, not a claim that DIFF resolved the outgoing energy.
 
 Both streams use the 20 MACS angular offsets
-$2\theta_d=\mathrm{Kidney}-76^\circ+8^\circ d$, where $d=0,\ldots,19$.
+$2\theta_d=\mathrm{Kidney}-76^\circ+8^\circ d$, where $d=0,\ldots,19$
+is the detector index, $2\theta_d$ the scattering angle, and `Kidney` the
+recorded analyzer-bank angle in degrees.
 nfit converts $E_i$ and $E_f$ to wavevectors with
-$E=2.0721246 k^2$ (meV for $k$ in inverse angstrom), rotates the resulting
+$E_{\rm kin}=[\hbar^2/(2m_n)]k^2$ with
+$\hbar^2/(2m_n)\simeq2.0721246$ meV Å$^2$; $m_n$ is neutron rest mass,
+$E_{\rm kin}$ means $E_i$ or $E_f$ rather than energy transfer, and $k$ is
+in Å$^{-1}$. It then rotates the resulting
 $\mathbf Q=\mathbf k_i-\mathbf k_f$ by the recorded sample A3 angle, and solves
 for HKL using the lattice and orientation vectors stored in the file. The A3
 offset is an explicit import setting because a correction used during analysis
@@ -244,7 +249,10 @@ and u/v** places `u` along the incident beam and uses `u` and `v` to define the
 horizontal scattering plane.
 
 UB maps `[h,k,l]` to reciprocal momentum in inverse angstrom, with
-$|\mathbf Q'|=1/d$. **UB from NeXus** reads embedded orientation metadata.
+$\mathbf Q'=UB(H,K,L)^T$ and $|\mathbf Q'|=1/d$ for a reflection of
+plane spacing $d$ in Å. Physical scattering wavevector is
+$\mathbf Q=2\pi\mathbf Q'$; $U$ is the orientation rotation and $B$ here
+is the crystallographic reciprocal basis without $2\pi$. **UB from NeXus** reads embedded orientation metadata.
 **UB from ISAW** and **Save ISAW** use the conventional transposed three-row
 ISAW representation.
 
@@ -411,7 +419,9 @@ $$
 =\sigma_{\rm data}^2+a^2\sigma_{\rm background}^2,
 $$
 
-where $a$ is the background scale. Values outside the background domain are
+where $a$ is the dimensionless fixed background scale and each $\sigma$
+is a one-sigma uncertainty in the signal unit. This assumes independent
+sample/background values and does not propagate uncertainty in $a$. Values outside the background domain are
 masked rather than extrapolated.
 
 For a single-crystal background, reduce sample and background independently

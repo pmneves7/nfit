@@ -546,9 +546,13 @@ def test_full_rpa_report_covers_every_term():
     assert "\\begin{bmatrix}" in tex
     assert "Dzyaloshinskii--Moriya" in tex
     assert "Single-ion anisotropy" in tex
+    assert "-\\frac12\\sum_i \\mathbf{S}_i\\cdot\\mathsf{A}_i" in tex
+    assert "$\\mathsf{A}_i=\\mathsf{J}_{ii}$" in tex
     assert "Dipole--dipole" in tex
     assert "Zeeman term" in tex
-    assert "\\omega_L = g\\mu_B B" in tex
+    assert "+\\,g\\mu_B\\,\\mathbf{B}\\cdot\\sum_i \\mathbf{S}_i" in tex
+    assert "E_L = g\\mu_B B" in tex
+    assert "\\chi_\\perp(\\Gamma_\\perp\\pm iE_L)" in tex
     assert "Dynamic response" in tex
     # chi'' is written out explicitly for the shared relaxational/inertial form.
     assert "\\chi''_{s}(\\mathbf{Q}, E) = \\sum_\\nu" in tex
@@ -591,7 +595,8 @@ def test_scalar_model_uses_isotropic_polarization_branch():
     assert "\\mathcal P[\\chi''_s]=2\\chi''_s" in tex
     assert "\\frac{g}{2}" in tex
     assert "\\pi\\,[1 - e^{-E/k_BT}]" in tex
-    assert "\\mu_0(g\\mu_B)^2\\chi''_s" in tex
+    assert "\\mu_0(g\\mu_B)^2\\widetilde\\chi''_s" in tex
+    assert "m$^3$ per ion" in tex
     assert "Anisotropic exchange" not in tex
     assert "Self-consistency closure" not in tex
     _check_balanced_environments(tex)

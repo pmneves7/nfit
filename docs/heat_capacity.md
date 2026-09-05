@@ -6,7 +6,7 @@ data type. Every exported column and the raw header are retained. `MASS` and
 mass.
 
 Throughout this page, $C(T)$ is molar heat capacity and $T$ is absolute
-temperature.
+temperature in K; molar ordinates use mJ/(mol K) per mole of formula units.
 
 The dataset panel contains a **PPMS source units** selector matching the PPMS
 choices: `uJ/K`, `uJ/(mol K)`, `mJ/(g K)`, `J/(g K)`, `cal/(g K)`,
@@ -26,7 +26,7 @@ mode.
 | Model | Main response | Typical use |
 | --- | --- | --- |
 | `debye_heat_capacity` | Debye phonon integral | Lattice heat capacity over a broad temperature range |
-| `low_temperature_heat_capacity` | $C=\gamma T+\beta T^3$ | Electronic and leading phonon terms at low temperature |
+| `low_temperature_heat_capacity` | Linear electronic plus cubic phonon terms | Electronic and leading phonon terms at low temperature |
 
 Both models calculate either $C$ or $C/T$ according to the selected fit
 channel. Their equations, parameters, calculable data, fitting limitations,
@@ -49,7 +49,12 @@ $$
 \Theta_D=\left(\frac{12\pi^4 nR}{5\beta}\right)^{1/3},
 $$
 
-using the analysis parameter **Atoms / formula unit**. Its diagnostic opens as
+Here $\gamma$ is the electronic coefficient in mJ/(mol K$^2$), $\beta$ the
+phonon coefficient in mJ/(mol K$^4$), $n$ the dimensionless number of atoms
+per formula unit, and $R=N_Ak_B=8314.46261815324$ mJ/(mol K).
+Thus $\Theta_D$ is the Debye temperature in K. This inference requires
+$\beta>0$ and the [low-temperature Debye ansatz](low_temperature_heat_capacity.md).
+The analysis takes $n$ from **Atoms / formula unit**. Its diagnostic opens as
 `C/T` versus `T^2` with the fitted line and fit-window boundaries.
 
 ## Magnetic heat capacity

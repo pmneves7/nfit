@@ -12,7 +12,19 @@ broadening and response-specific settings.
 
 ## Complex susceptibility
 
-For one-particle operators $O_A$, the generalized bare response is
+The starting ansatz is a normal-state gas of independent quasiparticles in the
+fitted static [tight-binding Hamiltonian](tight_binding.md#reciprocal-space-hamiltonian-and-bands).
+Each excitation removes an electron from band $n$ at reduced momentum
+$\mathbf k$ and adds it to band $m$ at $\mathbf k+\mathbf q$.
+The two momenta are dimensionless coordinates of the electronic reciprocal
+basis; $n,m=1,\ldots,N_b$ label all bands of the represented basis.
+$E=\hbar\omega$ is transferred energy, $\epsilon_{n\mathbf k}$ is a band
+energy, and $\eta>0$ is a constant retarded-denominator broadening, all in meV.
+This is a particle--hole energy width, not automatically a one-electron
+lifetime or an instrumental resolution width.
+
+For an ordered set of dimensionless one-particle matrices $O_A$, with $A,B$
+operator labels rather than band indices, the generalized bare response is
 
 $$
 \chi^0_{AB}(\mathbf q,E)=
@@ -22,15 +34,53 @@ $$
 M^A_{nm}M^{B*}_{nm},
 $$
 
-where $w_{\mathbf k}$ are normalized mesh weights, $f$ is the Fermi function,
-$\eta>0$ is the lifetime broadening in meV, and
+The weights obey $w_{\mathbf k}\ge0$ and $\sum_{\mathbf k}w_{\mathbf k}=1$;
+a uniform full mesh of $N_k$ points has $w_{\mathbf k}=1/N_k$. The band sums
+are not averaged. The result is therefore extensive per electronic model cell,
+with units meV$^{-1}$ for dimensionless operators. An implicit-spin orbital
+bubble is calculated for one spin species; physical spin factors are applied
+only at projection, as specified below.
+
+The occupation is
+$f(\epsilon)=[\exp((\epsilon-\mu)/(k_BT))+1]^{-1}$, with chemical potential
+$\mu$ in meV, temperature $T$ in K, and $k_B=0.08617333262$ meV/K.
+At zero temperature, occupations are 1 below $\mu$, 0 above, and 1/2 at $\mu$.
+$\epsilon$ and $\mu$ use the same energy zero. The full transition definition is
 
 $$
-M^A_{nm}=
-\langle n,\mathbf k|O_A|m,\mathbf k+\mathbf q\rangle .
+H(\mathbf k)u_n(\mathbf k)=\epsilon_{n\mathbf k}u_n(\mathbf k),
+\qquad
+\sum_a u_{an}^*(\mathbf k)u_{am}(\mathbf k)=\delta_{nm},
 $$
 
-The corresponding dissipative matrix is the imaginary part
+$$
+\begin{aligned}
+M^A_{nm}(\mathbf k,\mathbf Q)
+&=u_n(\mathbf k)^\dagger O_A(\mathbf Q)u_m(\mathbf k+\mathbf q)\\
+&=\sum_{a,b=1}^{N_b}u_{an}^*(\mathbf k)
+[O_A(\mathbf Q)]_{ab}u_{bm}(\mathbf k+\mathbf q).
+\end{aligned}
+$$
+
+Here $a,b$ index the orthonormal orbital/spin basis, $u_{an}$ is component $a$
+of normalized eigenvector $n$ (the column returned by diagonalization), and
+$[O_A]_{ab}$ has destination row $a$ and source column $b$. The vector is in
+the Wannier gauge of $H(\mathbf k)$; this is a finite-dimensional matrix
+contraction, not an overlap of Bloch states at different momenta with a
+momentum-conserving identity. $O_A(\mathbf Q)$ is the vertex connecting those
+two momentum sectors. Its full experimental transfer $\mathbf Q$ may enter
+site phases and form factors even when band energies use only
+$\mathbf q=\mathbf Q\bmod\mathbf G$.
+The star in $M^{B*}_{nm}$ conjugates the complete matrix element with the same
+$n,m,\mathbf k,\mathbf Q$. Thus the second channel is the adjoint probe
+$O_B^\dagger$. For $O_A=|a\rangle\langle b|$,
+$M^A_{nm}=u_{an}^*(\mathbf k)u_{bm}(\mathbf k+\mathbf q)$ and its conjugate
+operator has label $(b,a)$. Arbitrary eigenvector phases cancel from
+$M^A_{nm}M^{B*}_{nm}$.
+
+The physical dissipative matrix is
+$\boldsymbol\chi^{0\prime\prime}=(\boldsymbol\chi^0-\boldsymbol\chi^{0\dagger})/(2i)$,
+which gives
 
 $$
 \chi^{0\prime\prime}_{AB}=
@@ -39,6 +89,15 @@ $$
 {[E+\epsilon_{n\mathbf k}-\epsilon_{m,\mathbf k+\mathbf q}]^2+\eta^2}
 M^A_{nm}M^{B*}_{nm}.
 $$
+
+A scalar or diagonal entry reduces to its ordinary imaginary part.
+For complex off-diagonal elements, the displayed spectral matrix can itself
+have complex entries and is not `values.imag`. `SusceptibilityResult.chi_prime`
+and `.chi_double_prime` expose elementwise real and imaginary arrays. To form
+the physical absorptive tensor in a script, use
+`(values - values.conj().swapaxes(-1, -2)) / (2j)` on
+`values_per_meV_cell`. The unpolarized real symmetric projector gives the same
+scalar intensity when contracted with the elementwise imaginary array.
 
 This convention gives positive diagonal $\chi^{0\prime\prime}$ for a
 positive-energy absorption process. The response obeys the corresponding
@@ -49,8 +108,10 @@ $\chi^0(-E)=\chi^0(E)^*$.
 ### Degenerate transitions and the static limit
 
 At $E=0$ a transition with
-$\epsilon_{n\mathbf k}=\epsilon_{m,\mathbf k+\mathbf q}$ would give the
-undefined ratio $0/0$, so nfit substitutes the limit explicitly. Two details
+$\epsilon_{n\mathbf k}=\epsilon_{m,\mathbf k+\mathbf q}$ would give an
+undefined ratio $0/0$ in the unbroadened static formula. At finite $\eta$
+the numerator instead vanishes; nfit explicitly replaces that broadened
+value by the thermodynamic static limit. Two details
 matter when interpreting a static response:
 
 - The substitution applies only where $|E|\le10^{-14}$ meV **and**
@@ -58,7 +119,7 @@ matter when interpreting a static response:
   It is the exact degeneracy limit, not a small-denominator regularization.
 - At $T>0$ the limit is $-\partial f/\partial\epsilon=f(1-f)/k_BT$, evaluated
   without $\eta$. At $T=0$ that derivative is a delta function, so nfit uses
-  the Lorentzian $\eta/\pi[(\epsilon-\mu)^2+\eta^2]$ instead; the two branches
+  the Lorentzian $\eta/\{\pi[(\epsilon-\mu)^2+\eta^2]\}$ instead; the two branches
   therefore describe the Fermi window with different widths, and a $T=0$ static
   response depends on $\eta$ where a finite-temperature one does not.
 
@@ -69,9 +130,13 @@ usual small-$\mathbf q$ artefact of a broadened Lindhard function. Approach the
 uniform limit by evaluating exactly at $\mathbf q=0$ rather than at a small
 finite $\mathbf q$, and check the broadening convergence scan.
 
-With an implicit-spin model and the Cartesian spin operators, the exact
-$\mathbf q=0$, $E=0$ response is $\chi^{0}_s=D_\uparrow(\mu)/2$, where
-$D_\uparrow$ is the per-spin density of states; see
+For the unweighted total spin of an implicit-spin model,
+$\chi^{0}_{s,\alpha\alpha}(\mathbf0,0)=D_{\uparrow,T}(\mu)/2$, where
+$D_{\uparrow,T}(\mu)=\sum_{\mathbf k,n}w_{\mathbf k}[-f'(\epsilon_{n\mathbf k})]$
+is the thermally smeared per-spin DOS in states/(meV cell). At $T=0$, the
+implemented derivative uses the Lorentzian of width $\eta$ above. The familiar
+$D_\uparrow(\mu)/2$ means the zero-temperature, converged zero-width limit;
+see
 [Physics conventions](physics_conventions.md#electronic-response-conventions).
 
 `orbital_pair_operator_basis(model)` constructs the complete ordered
@@ -92,6 +157,15 @@ e^{2\pi i\mathbf Q\cdot\mathbf r_a}
 (S_\alpha)_{ab}|a\rangle\langle b|.
 $$
 
+Here $\mathbf r_a$ is fractional orbital center $a$ (also called
+$\boldsymbol\tau_a$ on the tight-binding page), so the phase is dimensionless.
+$S_\alpha$ is the dimensionless electron-spin matrix defined in
+[Spin operators](physics_conventions.md#spin-operators-and-equilibrium-averages).
+For implicit spin,
+$\operatorname{Tr}_{\rm spin}[(\sigma_\alpha/2)(\sigma_\beta/2)]
+=\delta_{\alpha\beta}/2$: the one-spin orbital bubble receives a factor 1/2
+per Cartesian component, not the factor 2 used for total electronic DOS.
+
 The Hamiltonian is evaluated at $\mathbf q=\mathbf Q\bmod\mathbf G$, but the
 operator retains the full $\mathbf Q$. An explicit spinor model supplies its
 spin matrices. A spin-independent model uses the equivalent isotropic
@@ -105,7 +179,12 @@ P_{\alpha\beta}(\mathbf Q)
 =\delta_{\alpha\beta}-\widehat Q_\alpha\widehat Q_\beta .
 $$
 
-At $\mathbf Q=0$, the orientation-independent limit is
+Indices $\alpha,\beta=x,y,z$ refer to the crystal Cartesian frame,
+$\delta_{\alpha\beta}$ is the identity tensor, and
+$\widehat{\mathbf Q}=\mathbf Q_{\rm cart}/|\mathbf Q_{\rm cart}|$ is formed
+from physical inverse-angstrom coordinates, not by normalizing raw HKL.
+
+At $\mathbf Q=0$, nfit uses the angular-average convention
 $P_{\alpha\beta}=\tfrac23\delta_{\alpha\beta}$. The response configuration
 supplies the magnetic form factor; the dataset's declared spectral convention
 then applies the fluctuation--dissipation factor and normalization. Dataset
@@ -185,7 +264,13 @@ S^\alpha_f(\mathbf Q)=\sum_a f_a(|\mathbf Q|)
 e^{2\pi i\mathbf Q\cdot\mathbf r_a}S^\alpha_a,
 $$
 
-so an orbital pair contributes $f_a f_b^*$, including its interference phase.
+$f_a$ is a dimensionless signed radial amplitude evaluated at the physical
+$|\mathbf Q|$ in Å$^{-1}$, and $S_a^\alpha=P_aS_\alpha$ with
+$P_a=|a\rangle\langle a|$ the basis-row selector. For localized physical spin
+blocks this is the local spin contribution; an imported nonlocal effective
+operator uses the declared row-center convention. An omitted profile means
+$f_a=1$.
+Thus an orbital pair contributes $f_a f_b^*$, including its interference phase.
 The intrinsic total-spin operator, with every $f_a=1$, remains separate for
 Stoner and matrix-RPA denominators. Thus radial attenuation never changes the
 interaction instability criterion. The orbital-density interpolation contracts

@@ -23,9 +23,116 @@ Common symbols are:
 | $T$, $k_B$ | absolute temperature and Boltzmann constant |
 | $\omega$, $\hbar$ | angular frequency and reduced Planck constant, with $E=\hbar\omega$ |
 | $g$, $\mu_B$, $\mu_0$ | dimensionless Landé factor, Bohr magneton, and vacuum permeability |
-| $B$, $H$, $M$ | magnetic flux density, magnetic field strength, and magnetization |
+| $B$, $H$, $M$ | magnetic flux density (T), magnetic field strength (A/m), and magnetization (A/m) |
 | $N_A$ | Avogadro constant |
 | $\alpha,\beta$ | Cartesian components $x,y,z$ |
+
+## Constants, coordinates, and mathematical notation
+
+Numerical energies in response equations are in meV. A kelvin is converted
+into energy by $k_B T$, never by setting $k_B=1$ without changing units.
+The following values document the numerical constants used by the package;
+rounded implementation values are not claims of exact metrological values.
+
+| Symbol | Definition and value |
+| --- | --- |
+| $k_B$ | Boltzmann constant, exactly $1.380649\times10^{-23}$ J/K; response kernels use $0.08617333262$ meV/K |
+| $h$, $\hbar=h/(2\pi)$ | Planck constant, exactly $h=6.62607015\times10^{-34}$ J s; $\hbar\simeq0.658211957$ meV ps |
+| $e$ | positive elementary charge, exactly $1.602176634\times10^{-19}$ C; an electron has charge $-e$ |
+| $\mu_B=e\hbar/(2m_e)$ | Bohr magneton; bulk conversion uses $9.2740100783\times10^{-24}$ J/T, and the Zeeman kernel uses $0.05788381$ meV/T; $m_e$ is electron rest mass |
+| $\mu_0$ | vacuum permeability in N/A$^2$; bulk conversion uses the approximation $4\pi\times10^{-7}$ |
+| $N_A$ | entities per mole, exactly $6.02214076\times10^{23}$ mol$^{-1}$ |
+| $R=N_Ak_B$ | molar gas constant, $8.31446261815324$ J/(mol K), or $8314.46261815324$ mJ/(mol K) |
+| $r_0=e^2/(4\pi\epsilon_0m_ec^2)$ | classical electron radius, approximately $2.81794\times10^{-15}$ m; $\epsilon_0$ is vacuum permittivity and $c=299792458$ m/s is the speed of light |
+| $\gamma$ | dimensionless neutron moment in nuclear magnetons, approximately $-1.913$; $\boldsymbol\mu_n=\gamma\mu_N\boldsymbol\sigma$, with $\mu_N=e\hbar/(2m_p)$ and proton rest mass $m_p$ |
+
+One meV is exactly $1.602176634\times10^{-22}$ J, one Å is $10^{-10}$ m,
+one barn is $10^{-28}$ m$^2$, and one mbarn is $10^{-3}$ barn. The cross-section
+kernel uses $(\gamma r_0/2)^2=0.07265$ barn directly. The modern SI fixes
+$h,e,k_B,N_A,c$; $\mu_0$, particle masses, and magnetons remain measured
+quantities. See the [SI defining constants](https://www.nist.gov/pml/special-publication-330/sp-330-section-2)
+and [NIST CODATA tables](https://physics.nist.gov/cuu/Constants/).
+
+Here $i^2=-1$, a star denotes complex conjugation, $X^T$ transpose, and
+$X^\dagger=(X^*)^T$ the Hermitian adjoint. $\mathbb1$ or $I_N$ is the
+identity on the stated $N$-dimensional space, $\operatorname{Tr}X=\sum_aX_{aa}$
+is the trace, and $X\otimes Y$ is the tensor (Kronecker) product with elements
+$(X\otimes Y)_{a\sigma,b\sigma'}=X_{ab}Y_{\sigma\sigma'}$.
+$\delta_{ab}$ is one for equal indices and zero otherwise.
+A ket $|v\rangle$ is a state vector; its bra is $\langle v|=|v\rangle^\dagger$.
+A matrix element $\langle v|O|w\rangle$ is $\sum_{ab}v_a^*O_{ab}w_b$.
+Symbols reused in separate models (for example interaction $g$ and Landé $g$)
+have the local definitions and units stated on those pages.
+
+For direct-lattice columns $A=(\mathbf a_1,\mathbf a_2,\mathbf a_3)$ in Å,
+the reciprocal matrix is $B=2\pi A^{-T}$ in Å$^{-1}$, so
+$\mathbf a_i\cdot\mathbf b_j=2\pi\delta_{ij}$. Fractional position $\mathbf r$
+and reduced momentum $\mathbf q$ are dimensionless:
+$\mathbf r_{\rm cart}=A\mathbf r$ and $\mathbf q_{\rm cart}=B\mathbf q$.
+Thus $\mathbf q_{\rm cart}\cdot\mathbf r_{\rm cart}=2\pi\mathbf q\cdot\mathbf r$.
+Reciprocal-lattice units (r.l.u., HKL) always refer to a declared cell.
+The Brillouin zone (BZ) is one primitive reciprocal cell; $\mathbf G$ denotes
+an integer reciprocal translation in reduced coordinates. The electronic
+$\mathbf q$ is the representative of extended transfer $\mathbf Q$ modulo
+$\mathbf G$. Physical momentum is $\hbar\mathbf Q_{\rm cart}$; the conventional
+scattering label “momentum transfer” usually means its wavevector.
+The instrument UB convention omits $2\pi$: $\mathbf Q_{\rm sample}=2\pi UB(H,K,L)^T$.
+Here $U$ is the sample orientation rotation and the $B$ inside UB is the
+crystallographic reciprocal basis without $2\pi$, unlike the electronic $B$ above.
+
+## Spin operators and equilibrium averages
+
+A dimensionless spin of quantum number $s=0,\tfrac12,1,\ldots$ acts on
+$|s,m\rangle$, with $m=-s,-s+1,\ldots,s$, as
+
+$$
+S_z|s,m\rangle=m|s,m\rangle,\qquad
+S_\pm|s,m\rangle=\sqrt{s(s+1)-m(m\pm1)}\,|s,m\pm1\rangle,
+$$
+
+where $S_\pm=S_x\pm iS_y$, with a zero result outside the allowed $m$ range.
+Consequently $[S_\alpha,S_\beta]=i\sum_\gamma\epsilon_{\alpha\beta\gamma}S_\gamma$
+and $\mathbf S^2=s(s+1)\mathbb1$. Here $[X,Y]=XY-YX$, and the Levi-Civita
+symbol $\epsilon_{xyz}=1$ is antisymmetric and vanishes for repeated indices.
+Physical angular momentum is $\hbar\mathbf S$. The scalar spin-length input
+called $S$ in sum rules is this quantum number $s$, not an operator or a
+structure factor.
+
+For an electron, $s=1/2$ and $S_\alpha=\sigma_\alpha/2$ in the ordered
+$(|\uparrow\rangle,|\downarrow\rangle)$ basis, where
+
+$$
+\sigma_x=\begin{pmatrix}0&1\\1&0\end{pmatrix},\quad
+\sigma_y=\begin{pmatrix}0&-i\\i&0\end{pmatrix},\quad
+\sigma_z=\begin{pmatrix}1&0\\0&-1\end{pmatrix}.
+$$
+
+These are the dimensionless Pauli matrices. An orbital basis of size $N$
+uses $I_N\otimes\sigma_\alpha/2$. Orbital angular momentum $\mathbf L$ obeys
+the same ladder construction with integer $l$, and total angular momentum is
+$\mathbf J=\mathbf L+\mathbf S$, all dimensionless here. A spin-only moment
+is $-g\mu_B\mathbf S$. Within an isolated total-$J$ multiplet the projected
+moment is $-g_J\mu_B\mathbf J$; an effective spin model must declare which
+multiplet or pseudospin it represents. A projected subspace need not retain
+the full angular-momentum algebra.
+
+A thermal average means $\langle O\rangle=\operatorname{Tr}(\rho O)$, with
+$\rho=Z^{-1}\exp[-\hat H/(k_BT)]$ and
+$Z=\operatorname{Tr}\exp[-\hat H/(k_BT)]$ for fixed particle number.
+$\hat H$ is the many-body Hamiltonian in energy units and $Z$ the dimensionless
+partition function. For electrons with fluctuating particle number use
+$\hat H-\mu\hat N$ in the exponential, where $\mu$ is chemical potential and
+$\hat N$ the electron-number operator. Time evolution is
+$O(t)=e^{i\hat Ht/\hbar}Oe^{-i\hat Ht/\hbar}$.
+Connected fluctuations are $\delta O=O-\langle O\rangle$; static ordered
+moments give an additional elastic contribution to unconnected correlations.
+
+Independent electron levels of energy $\varepsilon$ have occupation
+$f(\varepsilon)=[e^{(\varepsilon-\mu)/(k_BT)}+1]^{-1}$.
+At $T=0$, nfit uses $f=1$ below $\mu$, $0$ above, and $1/2$ at equality.
+Bosons of positive excitation energy $E$ have occupation
+$n_B(E,T)=[e^{E/(k_BT)}-1]^{-1}$; $n_B+1$ is the energy-loss population
+factor. $f$ here is unrelated to the magnetic form factor $f(Q)$.
 
 ## Microscopic spin response
 
@@ -33,7 +140,7 @@ Common symbols are:
 
 nfit follows the Fourier-transform convention in Squires, chapter 7,
 Eq. 7.73. For equivalent magnetic ions at equilibrium positions
-$\mathbf R_l$, let $\mathbf S=\hat{\mathbf J}/\hbar$ denote the dimensionless
+$\mathbf R_l$, let $\mathbf S$ denote the dimensionless
 spin operator. The dynamic spin correlation function per magnetic ion is
 
 $$
@@ -76,7 +183,10 @@ hidden inside $S_s^{\alpha\beta}$.
 The dynamic susceptibility describes the response to a weak magnetic
 perturbation. Let $h^\beta(\mathbf Q,E)$ be the energy-like field conjugate to
 $S^\beta(-\mathbf Q)$, so that the perturbing Hamiltonian contains
-$-h^\beta S^\beta$. For a magnetic field, $h$ contains the factor $g\mu_B B$.
+$-h^\beta S^\beta$. For $\boldsymbol\mu=-g\mu_B\mathbf S$, the Zeeman
+energy is $-\boldsymbol\mu\cdot\mathbf B=+g\mu_B\mathbf S\cdot\mathbf B$,
+so this choice of conjugate spin field has $\mathbf h=-g\mu_B\mathbf B$.
+The two minus signs cancel in moment-to-field susceptibility.
 To first order,
 
 $$
@@ -86,7 +196,25 @@ $$
 h^\beta(\mathbf Q,E).
 $$
 
-The retarded susceptibility is causal. Its real part $\chi'_s$ is the
+For example, for Fourier operators
+$S_\alpha(\mathbf Q)=\sum_l e^{-i\mathbf Q\cdot\mathbf R_l}S_{l\alpha}$
+in a periodic system of $N_{\rm ion}$ equivalent ions, the retarded definition is
+
+$$
+\chi_{s,\alpha\beta}(\mathbf Q,E)=\frac{i}{\hbar N_{\rm ion}}
+\int_0^\infty dt\,e^{i(E+i0^+)t/\hbar}
+\langle[S_\alpha(\mathbf Q,t),S_\beta(-\mathbf Q,0)]\rangle.
+$$
+
+The positive infinitesimal $0^+$ has energy units and ensures convergence.
+The perturbation at this wavevector couples to the conjugate Fourier operator;
+$\delta\langle S_\alpha(\mathbf Q)\rangle/N_{\rm ion}$ is the response per ion.
+For a scalar channel this convention produces positive absorption at positive
+$E$ and agrees with the correlation convention above. For a tensor the
+absorptive part means $(\boldsymbol\chi-\boldsymbol\chi^\dagger)/(2i)$,
+not elementwise imaginary parts of complex off-diagonal entries.
+
+The retarded susceptibility is causal. For a scalar component, its real part $\chi'_s$ is the
 in-phase, reactive response, and $\chi'_s(\mathbf Q,0)$ is the static
 susceptibility. Its imaginary part $\chi''_s$ is the out-of-phase,
 dissipative response measured by inelastic scattering; “imaginary” describes
@@ -338,9 +466,22 @@ f(Q)=\langle j_0(Q)\rangle
 \langle j_2\rangle(s)=s^2\left[Ae^{-as^2}+Be^{-bs^2}+Ce^{-cs^2}+D\right].
 $$
 
+The radial integral is
+$\langle j_\ell(Q)\rangle=\int_0^\infty dr\,r^2|R_{\rm ion}(r)|^2j_\ell(Qr)$,
+where $r$ is radius in Å, $R_{\rm ion}$ is a radial orbital normalized by
+$\int r^2|R_{\rm ion}|^2dr=1$, and $j_\ell$ is a spherical Bessel function.
+Specifically $j_0(x)=\sin(x)/x$ and
+$j_2(x)=(3/x^3-1/x)\sin(x)-3\cos(x)/x^2$, with their continuous values at zero.
+Their arguments $x=Qr$ are dimensionless. The coefficients in the $j_2$
+fit are a separate table: its $A,B,C,D$ carry Å$^2$ to cancel $s^2$;
+its $a,b,c$ also carry Å$^2$. They are not the $j_0$ coefficients.
+For an LS-coupled ion with $J>0$ and electron spin factor approximated by 2,
+$g_J=1+[J(J+1)+S(S+1)-L(L+1)]/[2J(J+1)]$;
+$L,S,J$ here are angular-momentum quantum numbers, not matrices.
+
 The leading $s^2$ is part of the tabulation and makes $\langle j_2(0)\rangle=0$.
-Writing the moment as $\boldsymbol\mu=(\langle\mathbf L\rangle+2\langle\mathbf
-S\rangle)\mu_B$ and projecting onto $\mathbf J$ gives
+Writing the electron moment as $\boldsymbol\mu=-\mu_B(\langle\mathbf L\rangle+2\langle\mathbf
+S\rangle)$ and projecting onto $\mathbf J$ gives
 $\langle L\rangle=(2-g_J)J$ and $2\langle S\rangle=2(g_J-1)J$, so the orbital
 part weights $\langle j_0\rangle+\langle j_2\rangle$ and the spin part weights
 $\langle j_0\rangle$; their ratio is the coefficient above.
@@ -582,8 +723,10 @@ single-ion anisotropy, dipole–dipole, or Zeeman terms (see
   keeping the intensity continuous at the isotropic limit.
 - **Dissipative tensor.** The tensor response is
   $\chi''_{\alpha\beta} = (\chi_{\alpha\beta} - \chi^*_{\beta\alpha})/2i$; its
-  antisymmetric (chiral) part is nonzero only when time reversal is broken (a
-  Zeeman field or a DM term).
+  off-diagonal entries can be complex. A Zeeman field breaks time reversal;
+  Dzyaloshinskii--Moriya exchange is itself time-reversal even and may permit
+  momentum-dependent chiral correlations without a field. A real symmetric
+  unpolarized projector does not measure the antisymmetric part.
 - **Polarization metadata.** The per-dataset schema is
   `dataset.parameters["polarization"]` = `{direction, frame, channel}`.
 - **Rank-2 tensors and improper operations.** Spin–spin tensors transform as
@@ -606,7 +749,7 @@ single-ion anisotropy, dipole–dipole, or Zeeman terms (see
   meV·Å³, with physical default $(\mu_0/4\pi)(g\mu_B)^2$; this product has
   dimensions energy times volume.
 - **Sign convention.** The interaction matrix is defined by
-  $H=-\tfrac12\sum_{ij}\mathbf S_i\,\mathbb J\,\mathbf S_j$, so positive
+  $H=-\tfrac12\sum_{ij,\alpha\beta}S_i^\alpha\mathbb J_{ij}^{\alpha\beta}S_j^\beta$, so positive
   couplings favour the ordering where the largest eigenvalue
   $\lambda_{\max}(\mathbf{Q})$ of $\mathbb{J}(\mathbf{Q})$ peaks; the RPA
   instability is at $\lambda_{\max}\chi_0 \to 1$.
@@ -626,13 +769,34 @@ single-ion anisotropy, dipole–dipole, or Zeeman terms (see
   $D_{\mathrm{dip}}$ is the physical point-dipole interaction and favours
   head-to-tail alignment along the shortest lattice direction.
 
+In the tensor Hamiltonians, $i,j$ label sites including their cell translations,
+and $\alpha,\beta=x,y,z$. For dipoles,
+$\mathbf r_{ij}=\mathbf R_j-\mathbf R_i$, $r=|\mathbf r_{ij}|$ in Å,
+$\hat{\mathbf r}=\mathbf r_{ij}/r$, and $\mathbb T$ has units Å$^{-3}$.
+The half factors remove double counting of ordered site pairs.
+An antisymmetric exchange matrix can be specified without sign ambiguity by
+$H_{\rm DM}=\sum_{i<j}\mathbf D_{ij}\cdot(\mathbf S_i\times\mathbf S_j)$;
+with the negative exchange sign above this means
+$\mathbb J_{ij}^{\alpha\beta}=-\sum_\gamma\epsilon_{\gamma\alpha\beta}D_{ij}^\gamma$.
+$\mathbf D_{ji}=-\mathbf D_{ij}$ and $\mathbf D$ has units meV. The GUI's fitted
+tensor coefficients multiply displayed invariant matrices; convert those
+matrices using this equation before assigning a named DM-vector component.
+For an onsite symmetric matrix $\mathbb J_{ii}$, its contribution is
+$-\tfrac14\sum_{\alpha\beta}\mathbb J_{ii}^{\alpha\beta}\{S_i^\alpha,S_i^\beta\}$,
+where $\{X,Y\}=XY+YX$. Thus an anisotropy written as $K(S_i^z)^2$ corresponds
+to $\mathbb J_{ii}^{zz}=-2K$ in this Hamiltonian convention.
+
 ## Electronic-response conventions
 
 - **Cartesian spin response.** `bare_spin_susceptibility` returns the
   susceptibility of the dimensionless spin operator. For an implicit-spin model
   it evaluates the spin trace analytically, giving
-  $\chi^0_{s}(\mathbf 0,0)=D_\uparrow(\mu)/2$ with $D_\uparrow$ the per-spin
-  density of states.
+  $\chi^0_{s,\alpha\alpha}(\mathbf0,0)=D_{\uparrow,T}(\mu)/2$ for intrinsic
+  total spin. $D_{\uparrow,T}$ is the per-spin DOS averaged with $-df/d\varepsilon$,
+  in states/(meV model cell); the zero-temperature implementation uses an
+  $\eta$-broadened derivative. Only the converged zero-temperature, zero-width
+  limit becomes the unsmeared $D_\uparrow(\mu)/2$. See the
+  [Lindhard static limit](lindhard.md#degenerate-transitions-and-the-static-limit).
 - **RPA vertices.** The vertex conjugate to $S^\alpha$ is twice an on-site
   density interaction, so `stoner_rpa` uses $\Gamma=2I$ and its instability is
   the textbook $I D_\uparrow(\mu)=1$. `hubbard_hund_rpa` dresses the

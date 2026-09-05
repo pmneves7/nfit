@@ -5,6 +5,14 @@ model that predicts powder data evaluates the single-crystal response on
 `powder_orientations` deterministic approximately equal-area sphere directions
 and averages them.
 
+The powder ansatz is a uniform distribution of crystallite orientations:
+$I_{\rm powder}(Q,E)=(4\pi)^{-1}\int d\Omega\,I(Q\hat{\mathbf n},E)
+\simeq N_\Omega^{-1}\sum_{j=1}^{N_\Omega}I(Q\hat{\mathbf n}_j,E)$.
+$I$ is the chosen single-crystal observable, $Q$ its momentum magnitude in
+Å$^{-1}$, $E$ transfer in meV, $\hat{\mathbf n}_j$ unit Cartesian directions,
+$d\Omega$ solid angle, and $N_\Omega$ the orientation count. Both sides have
+the same intensity units; the average has no radial shell-volume factor.
+
 That count is a numerical approximation exactly like an integration mesh or a
 lifetime broadening, and it deserves the same treatment: a stated tolerance and
 a certificate rather than a default taken on trust.

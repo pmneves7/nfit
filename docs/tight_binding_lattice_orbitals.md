@@ -11,6 +11,10 @@ Importing a CIF populates the lattice parameters, space group, element labels,
 and representative fractional positions. The same data can be entered
 manually. The serialized `crystal` record contains:
 
+The lattice lengths $a,b,c$ are $|\mathbf a_1|,|\mathbf a_2|,|\mathbf a_3|$;
+$\alpha,\beta,\gamma$ are the angles between $(\mathbf a_2,\mathbf a_3)$,
+$(\mathbf a_1,\mathbf a_3)$, and $(\mathbf a_1,\mathbf a_2)$, respectively.
+
 | Field | Meaning | Example |
 | --- | --- | --- |
 | `lattice` | $a,b,c$ in Å and $\alpha,\beta,\gamma$ in degrees | `{"a":4,"b":4,"c":6,"alpha":90,"beta":90,"gamma":90}` |
@@ -50,6 +54,21 @@ site.
 | `site_point_group` | point group found from the site stabilizer | `"4/mmm"` |
 | `submanifold_id` | stable identifier of a calculated subspace | `"d:4/mmm:8705c5723841"` |
 
+$l=0,1,2,3$ labels the orbital angular-momentum quantum number of the
+$s,p,d,f$ shells. A complex harmonic $Y_l^m(\theta,\varphi)$ is a normalized
+angular eigenfunction of dimensionless $L^2,L_z$, with eigenvalues $l(l+1),m$;
+$\theta,\varphi$ are polar and azimuthal angles in the local frame and
+$\int|Y_l^m|^2d\Omega=1$. nfit uses Condon--Shortley phases and, for $m>0$,
+
+$$
+Y_{lm}^{\cos}=\frac{Y_l^{-m}+(-1)^mY_l^m}{\sqrt2},\qquad
+Y_{lm}^{\sin}=\frac{i[Y_l^{-m}-(-1)^mY_l^m]}{\sqrt2}.
+$$
+
+The $m=0$ function is unchanged. These definitions specify orbital phases,
+not a radial wavefunction or radial integral. Higher-$l$ real bases use order
+$(m0,\cos1,\sin1,\cos2,\sin2,\ldots)$; the named $p,d$ orders follow below.
+
 Always-available presets are a scalar effective orbital and complete $s$,
 $p$, $d$, and $f$ shells. The real-harmonic orders are
 $(p_x,p_y,p_z)$ and
@@ -68,9 +87,14 @@ the site's point-group representation. If $D(g)$ represents stabilizer
 operation $g$ and the columns of $C$ span the selected subspace, nfit requires
 
 $$
-D(g)C\subseteq\operatorname{span}(C)
+(I-CC^\dagger)D(g)C=0,\qquad C^\dagger C=I
 $$
 
+$D(g)$ is the dimensionless unitary matrix of a site symmetry that leaves
+the site fixed modulo translation. $C$ has orthonormal columns in the complete
+shell; $CC^\dagger$ projects onto their span and the left identity acts on
+the full shell. The right identity acts on the selected subspace. This states
+that symmetry never takes a selected vector out of the subspace,
 for every $g$. A non-closed subspace is rejected rather than silently
 projected.
 
@@ -122,6 +146,11 @@ The onsite block is
 $$
 H_{\rm onsite}=\sum_p\epsilon_pP_p .
 $$
+
+$p$ labels independent allowed Hermitian matrices, $P_p$ is dimensionless
+and normalized by $\|P_p\|_F=\sqrt{\operatorname{Tr}(P_p^\dagger P_p)}=1$,
+and $\epsilon_p$ is its fitted energy in meV. Such an invariant is not
+necessarily an idempotent projector. $H_{\rm onsite}$ has units meV.
 
 This includes diagonal crystal-field energies and symmetry-allowed
 same-site hybridization. An onsite energy is a static one-electron coefficient;

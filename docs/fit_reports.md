@@ -59,6 +59,16 @@ from any historical fit result, including after reloading a project.
 6. **Methods** and a bibliography citing only the references relevant to the
    terms actually used.
 
+In the report notation, $J\pm\sigma$ is an exchange energy with one-sigma
+standard error in meV; this $\sigma$ is not a cross section.
+$\chi^2$ and reduced $\chi^2$ are defined under
+[Fit constraints](fit_constraints.md#reduced-chi-squared).
+$\mu_{\rm eff}^2$ is a squared effective magnetic moment; its conversion from
+the dimensionless integrated spin amplitude uses $(g\mu_B)^2$ and the stated
+site/molar normalization. The remaining Hamiltonian and cross-section symbols
+are defined in [Physics conventions](physics_conventions.md) and the linked
+model pages.
+
 The document is a plain `article` and needs only the `amsmath`, `amssymb`,
 `booktabs`, `longtable`, and `geometry` packages — present in any standard
 TeX distribution, including minimal ones.

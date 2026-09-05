@@ -162,7 +162,10 @@ Another value produces a general constant-energy surface. nfit extracts
 crossing points in one dimension, contours in two dimensions, and triangulated
 surfaces in three dimensions. The default physical-spacing mode chooses
 $N_i=\operatorname{round}(|\mathbf b_i|/\Delta k)$, subject to at least two
-points per periodic direction. Consequently, a lower-symmetry reciprocal cell
+points per periodic direction. Here $i$ indexes periodic lattice directions,
+$\mathbf b_i$ is reciprocal-basis column $i$ in Å$^{-1}$, $\Delta k$ is the
+requested spacing in Å$^{-1}$, and $N_i$ is a dimensionless integer grid size.
+Consequently, a lower-symmetry reciprocal cell
 usually produces an anisotropic mesh even though the requested $\Delta k$ is
 one scalar. Explicit-size mode is useful for reproducibility studies that
 require a particular full three-dimensional grid.

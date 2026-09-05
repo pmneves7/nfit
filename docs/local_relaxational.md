@@ -4,7 +4,20 @@
 appropriate when intrinsic momentum dependence is unresolved or when a local
 relaxor is a useful baseline.
 
+Here $\chi=\chi'+i\chi''$ is one isotropic Cartesian component of the
+response of dimensionless spin, in meV$^{-1}$ per magnetic ion. $\chi'$ is
+reactive and $\chi''$ absorptive; $i^2=-1$ and $E=\hbar\omega$ is transfer
+in meV. Spin matrices, the conjugate energy field, and the Fourier convention
+are defined in [Physics conventions](physics_conventions.md#spin-operators-and-equilibrium-averages).
+
 ## Response
+
+The base ansatz is exponential relaxation toward the field-induced
+magnetization: $\tau\,\partial_t s(t)+s(t)=\chi_{\rm loc}h(t)$.
+Here $s(t)=\delta\langle S_\alpha\rangle$ is a dimensionless induced spin
+component, $h$ its weak conjugate field in meV, and $\tau=\hbar/\Gamma>0$
+is relaxation time. Taking $s,h\propto e^{-iEt/\hbar}$ yields the response
+below. Thus $\Gamma$ is an energy width, not a rate in s$^{-1}$.
 
 For transferred energy $E$,
 

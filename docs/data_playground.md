@@ -28,6 +28,10 @@ $$
 \sigma^2=\sigma_{\rm left}^2+a^2\sigma_{\rm right}^2.
 $$
 
+$I$ denotes signal in the common input unit, $a$ the dimensionless right-input
+scale, and each $\sigma$ a one-sigma signal uncertainty. This formula assumes
+independent inputs and fixed $a$; uncertainty in the chosen scale is not included.
+
 Both source datasets or live composites remain independently viewable. The
 derived dataset panel begins with editable left source, right source,
 arithmetic operation, and right-hand scale controls. Its output binning and
@@ -77,7 +81,8 @@ $$
 \sqrt{\frac{3k_BC_{\rm SI}}{\mu_0N_A}},
 $$
 
-where $C_{\rm SI}$ is the Curie constant converted to `m^3 K/mol`, $k_B$ is
+where $\mu_{\rm eff}$ is the effective moment of the object represented by
+one mole of the dataset (formula units or magnetic ions), and $C_{\rm SI}$ is the Curie constant converted to `m^3 K/mol`, $k_B$ is
 the Boltzmann constant, $N_A$ is the Avogadro constant, $\mu_0$ is the vacuum
 permeability, and $\mu_B$ is the Bohr magneton. nfit performs the fit and the
 algebraically equivalent moment calculation in CGS units. The diagnostic can
@@ -161,6 +166,13 @@ $f$ is $n(E,T)+1$ on the neutron-energy-loss side or $n(|E|,T)$ on the
 energy-gain side. Here
 $n(E,T)=[\exp(E/k_BT)-1]^{-1}$ is the Bose occupation.
 
+$\mathbf Q$ is momentum transfer, $E=E_i-E_f$ is in meV, $T_j$ is in K,
+and $k_B=0.08617333262$ meV/K. $f$ and $n$ are dimensionless population
+factors, unrelated to the magnetic form factor. $I_j,I_{\rm elastic},A$ have
+the measured intensity unit. The ansatz assumes the underlying inelastic
+amplitude and elastic background are unchanged between temperatures; all
+explicit temperature dependence is in $f$.
+
 The main result is the inelastic signal at the primary dataset temperature;
 a second result stores $I_{\rm elastic}$. The exactly zero-energy bin is
 assigned to the latter because the Bose factor is singular. Independent input
@@ -207,23 +219,39 @@ derived dataset for a downstream analysis recipe. It requires the measured
 signal scale, temperature, normalization basis, form factor, and polarization
 convention.
 
-For moment susceptibility in `mu_B^2/meV`, the conversion is
+For the physical moment susceptibility $\chi''_{\rm moment}$ in
+$\mu_B^2$/meV on the selected sample basis, the conversion is
 
 $$
 \frac{d^2\sigma}{d\Omega\,dE}
 =\frac{k_f}{k_i}
 \frac{0.07265\ {\rm barn}/\mu_B^2}{\pi}
 |f(Q)|^2P(\mathbf Q)
-\frac{\chi''(\mathbf Q,E)}{1-e^{-E/(k_BT)}}.
+\frac{\chi''_{\rm moment}(\mathbf Q,E)}{1-e^{-E/(k_BT)}}.
 $$
 
 $k_i$ and $k_f$ are the incident and final neutron wavevector magnitudes,
 $f(Q)$ is the magnetic form factor, and $P$ is the polarization factor. For a
-spin response, replace $\chi''$ by $g^2\chi''_s$. The complete convention is
+spin response, substitute $\chi''_{\rm moment}=(g\mu_B)^2\chi''_s$.
+For numerical ordinates stored in `mu_B^2/meV`, the $\mu_B^2$ unit cancels the
+coefficient's inverse moment unit; the numerical spin conversion is $g^2$. The complete convention is
 defined in [Physics conventions](physics_conventions.md). When the stored cross
 section includes $k_f/k_i$, its spectral convention must also provide the fixed
 incident energy for direct geometry or fixed final energy for indirect
 geometry.
+
+$d\Omega$ is detector solid angle and $\sigma$ is scattering cross section;
+$E$ is transferred energy in meV, $T$ temperature in K, and $k_B$ is in meV/K.
+The coefficients give barn/(sr meV) on the same sample basis as the response.
+
+The following reductions integrate positive energies, ideally $0<E<\infty$;
+finite data return a window integral, not an automatically completed sum rule.
+The response must have form-factor and polarization corrections removed and
+its component/trace convention identified. Total moment has spin-squared or
+moment-squared units; static susceptibility retains inverse-energy units.
+A momentum-resolved energy integral does not itself give the local moment:
+that requires the normalized BZ and site/component trace defined in
+[Sum rules](theory_notes.md#total-moment).
 
 Spectral reductions use these energy kernels:
 
@@ -232,6 +260,26 @@ Spectral reductions use these energy kernels:
 | total moment | $\coth[E/(2k_BT)]/\pi$ |
 | quantum Fisher information | $4\tanh[E/(2k_BT)]/\pi$ |
 | static susceptibility | $2/(\pi E)$ |
+
+For a Hermitian dimensionless spin generator $O$ and a thermal density matrix
+$\rho=\sum_r p_r|r\rangle\langle r|$, quantum Fisher information (QFI) is
+
+$$
+F_Q[\rho,O]=2\sum_{r,s:p_r+p_s>0}
+\frac{(p_r-p_s)^2}{p_r+p_s}|\langle r|O|s\rangle|^2.
+$$
+
+$r,s$ label many-body eigenstates and $p_r$ their probabilities; $O$ generates
+$e^{-i\theta O}\rho e^{i\theta O}$ for dimensionless rotation $\theta$.
+For $N$ represented magnetic sites the density is $f_Q=F_Q/N$; the table's
+QFI kernel applies to the susceptibility of that same generator per site.
+The spectral identity and normalization are from
+[Hauke et al.](https://doi.org/10.1038/nphys3700).
+$\tanh x=(e^{2x}-1)/(e^{2x}+1)$, while $\coth x=1/\tanh x$.
+A three-component trace sums three QFIs: dividing by $12S^2=3(4S^2)$
+assumes that trace and per-spin normalization. The API can perform the division
+on any input; a single component, neutron polarization contraction, or
+non-Hermitian Fourier probe does not automatically acquire this interpretation.
 
 Physical results require absolute scale, known normalization, and an explicit
 spectral convention. QFI from moment units requires `g_factor` and divides by

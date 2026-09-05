@@ -22,6 +22,17 @@ below.
 
 ## Scalar model
 
+The exchange ansatz is
+$H_{\rm ex}=-\tfrac12\sum_{ij}J_{ij}\mathbf S_i\cdot\mathbf S_j$,
+where $i,j$ index magnetic sites including lattice translations,
+$\mathbf S_i$ is the dimensionless spin, and $J_{ij}$ is an energy in meV.
+The ordered-pair sum counts each bond twice, hence the half factor; positive
+scalar $J_{ij}$ favors parallel spins. A local causal response is postulated,
+then dressed by the induced exchange field:
+$\boldsymbol\chi=\chi_0(E)\mathbb1+\chi_0(E)J\boldsymbol\chi$.
+This random-phase (molecular-field feedback) approximation fixes the response
+below; it is not a spin-wave expansion about an ordered ground state.
+
 For $N$ magnetic sites in the chosen crystallographic cell,
 
 $$
@@ -31,8 +42,8 @@ $$
 and
 
 $$
-\chi(\mathbf Q,E)=
-\left[\mathbb 1-\chi_0(E)J(\mathbf Q)\right]^{-1}\chi_0(E).
+\boldsymbol\chi(\mathbf Q,E)=
+\left[\mathbb 1-\chi_0(E)J(\mathbf Q)\right]^{-1}\chi_0(E)\mathbb1.
 $$
 
 $\chi_0$ is the static single-site susceptibility in meV$^{-1}$,
@@ -41,8 +52,11 @@ meV$^{-2}$. Setting $a_E=0$ recovers the original relaxational model. For
 $a_E>0$, the bare local natural energy is $E_0=1/\sqrt{a_E}$. Each fitted
 exchange $J_i$ is in meV, so $J_i\chi_0$ is dimensionless. $E$ is transferred energy,
 $\mathbf Q$ is momentum transfer, $N$ is the number of magnetic sites, and
-$\mathbb 1$ is the $N\times N$ identity matrix. The scalar $\chi$ is one
-Cartesian spin-susceptibility component.
+$\mathbb 1$ is the $N\times N$ identity matrix. $\boldsymbol\chi$ is an $N\times N$ sublattice matrix for one Cartesian
+spin component, in meV$^{-1}$. The measured scalar below is
+$\chi=N^{-1}\phi^\dagger\boldsymbol\chi\phi$, where $\phi_a=1$ for every
+site. “Scalar model” means isotropic in spin space; it does not discard
+sublattice indices.
 
 ### Exchange phase convention
 
@@ -206,8 +220,15 @@ $$
 \mathbb J(\mathbf Q)=\sum_p\theta_pP_p(\mathbf Q).
 $$
 
+The composite row/column indices are $(a,\alpha)$ for site $a=1,\ldots,N$
+and Cartesian spin component $\alpha=x,y,z$. The scalar ansatz becomes
+$\boldsymbol\chi=[\chi_0(E)^{-1}I_{3N}-\mathbb J]^{-1}$ at zero field;
+$\mathbb J$ has units meV and $\boldsymbol\chi$ meV$^{-1}$.
+
 $\theta_p$ is the fitted strength of tensor parameter $p$, and
-$P_p(\mathbf Q)$ is its symmetry-generated structure matrix.
+$P_p(\mathbf Q)$ is its symmetry-generated structure matrix. Exchange and onsite coefficients
+have units meV and dimensionless structure matrices; the dipole coefficient
+has units meV Å$^3$ and its structure matrix has units Å$^{-3}$.
 
 Available terms are:
 
@@ -236,17 +257,50 @@ for frames and signs.
 
 ### Zeeman response
 
-In the field frame, the longitudinal response is relaxational. The transverse
-circular responses are centered at the Larmor energy
+Let $\hat{\mathbf b}$ be the Cartesian unit field direction and
+$B\ge0$ its magnitude in tesla. With the electron moment
+$\boldsymbol\mu=-g\mu_B\mathbf S$, the Zeeman Hamiltonian is
+$H_Z=+E_L S_{\hat b}$, with Larmor energy
+$E_L=g\mu_BB$ in meV, dimensionless $g$, and
+$\mu_B=0.05788381$ meV/T. Choose orthonormal transverse axes
+$\hat{\mathbf x},\hat{\mathbf y}$ with
+$\hat{\mathbf x}\times\hat{\mathbf y}=\hat{\mathbf b}$.
+
+The ansatz relaxes and precesses the departure from the instantaneous
+field-induced equilibrium spin. In circular channels, it is
+$\hbar\dot s_\pm=-(\Gamma_\perp\pm iE_L)(s_\pm-\chi_\perp h_\pm)$,
+where $s_\pm$ and $h_\pm$ are coefficients along
+$(\hat{\mathbf x}\pm i\hat{\mathbf y})/\sqrt2$ of the induced spin and its
+conjugate meV field. For time dependence $e^{-iEt/\hbar}$ this gives
 
 $$
-E_L=g\mu_BB,
+\chi_\parallel(E)=\frac{\chi_0}{1-iE/\Gamma_0},\qquad
+\chi_\pm(E)=\chi_\perp
+\frac{\Gamma_\perp\pm iE_L}{\Gamma_\perp-i(E\mp E_L)}.
 $$
 
-where $g$ is dimensionless and
-$\mu_B=0.05788\ {\rm meV/T}$. The parameters `chi_perp_ratio` and
-`gamma_perp_ratio` set transverse-to-longitudinal ratios. A field direction and
-magnitude must be defined in the dataset conditions.
+$\chi_\perp=$ `chi_perp_ratio` $\times\chi_0$ is the static transverse
+susceptibility in meV$^{-1}$ and
+$\Gamma_\perp=$ `gamma_perp_ratio` $\times\Gamma_0$ its relaxation energy
+in meV. The Cartesian block has
+$\chi_{xx}=\chi_{yy}=(\chi_++\chi_-)/2$,
+$\chi_{xy}=-\chi_{yx}=-i(\chi_+-\chi_-)/2$, and
+$\chi_{zz}=\chi_\parallel$. It is rotated into the crystal frame before RPA.
+
+Both transverse static responses equal $\chi_\perp$, and their absorptive
+parts are $\chi_\perp\Gamma_\perp E/[\Gamma_\perp^2+(E\mp E_L)^2]$,
+nonnegative at positive energy. The numerator is essential: shifting only
+the denominator would violate the equilibrium static limit and allow negative
+absorption. The positive circular absorption peaks at
+$\sqrt{E_L^2+\Gamma_\perp^2}$; the full transverse Cartesian response sums
+both circular channels and need not peak at exactly that value.
+At zero field and unit ratios the model returns the local scalar relaxor.
+
+This is a phenomenological precessing relaxor with adjustable static
+susceptibilities, not a calculation of saturation or thermal level populations.
+Finite-field spectra and closures fitted with versions before 0.80.5 should
+be refitted: those versions used shifted relaxors without the equilibrium
+numerator. A field direction and magnitude must be defined in the dataset.
 
 ## Self-consistency closures
 
@@ -339,9 +393,11 @@ $$
 P_o=\frac{\partial J}{\partial J_o}.
 $$
 
-$\phi$ is the uniform sublattice vector for the neutron observable, $J_o$ is
+$\phi=(1,\ldots,1)^T$ is the dimensionless uniform sublattice vector for the neutron observable, $J_o$ is
 the exchange assigned to orbit $o$, and $P_o$ is that orbit's exchange
-structure matrix. The expression remains well defined at degenerate bands and
+structure matrix. $A^{-\dagger}=(A^\dagger)^{-1}$, $x,z$ are dimensionless
+solve vectors, and $P_o$ is dimensionless; the derivative has units meV$^{-2}$.
+The expression remains well defined at degenerate exchange eigenvalues and
 reuses the model factorization. Tensor mode currently uses central differences.
 
 ## Scripting and export

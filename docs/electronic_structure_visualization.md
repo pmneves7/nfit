@@ -95,6 +95,18 @@ curvature and crossings are visually stable.
 
 ## Density of states
 
+For band energies $\varepsilon_{n\mathbf k}$ in meV and normalized mesh
+weights $\sum_{\mathbf k}w_{\mathbf k}=1$, the total density of states is
+$D(\varepsilon)=d_s\sum_{\mathbf k,n}w_{\mathbf k}
+\delta(\varepsilon-\varepsilon_{n\mathbf k})$ in states/(meV model cell).
+$\delta$ is the Dirac distribution with unit integral and inverse-energy units;
+$d_s=2$ for implicit spin and 1 when spin is explicit. Band index $n$ spans the
+represented basis. A Gaussian width $\sigma_E$ replaces $\delta(x)$ by
+$e^{-x^2/(2\sigma_E^2)}/(\sqrt{2\pi}\sigma_E)$, with $x,\sigma_E$ in meV.
+Filling is $n_e=\int D(\varepsilon)f(\varepsilon)d\varepsilon$ electrons per
+model cell, where $f$ is the Fermi occupation at temperature $T$ and chemical
+potential $\mu$, defined in [Lindhard](lindhard.md#complex-susceptibility).
+
 The DOS viewer offers two integrations:
 
 - **Gaussian** replaces each sampled eigenvalue with a normalized Gaussian of
@@ -124,8 +136,12 @@ spin states**. An implicit-spin model is multiplied by its two-fold degeneracy,
 so the total integrates to $2N_{\rm basis}$ states per cell and agrees with the
 electron count from `electron_filling`; a collinear or spinor model already
 carries spin in its basis and uses a degeneracy of one. The applied factor is
-recorded as `provenance["spin_degeneracy"]`, and $D(E_{\rm F})$ can be used
-directly for a Sommerfeld coefficient or a Stoner criterion.
+recorded as `provenance["spin_degeneracy"]`. $E_{\rm F}$ denotes the
+zero-temperature chemical potential. The Sommerfeld relation uses this
+both-spin DOS after converting its energy and formula-unit normalization;
+the scalar Stoner criterion uses $D_\uparrow=D/2$ for a spin-degenerate model,
+not the total $D$. See [Low-temperature heat capacity](low_temperature_heat_capacity.md)
+and [Stoner RPA](stoner_rpa.md#complex-susceptibility).
 
 Plotting in eV converts the ordinate to states per eV per cell. Mesh density
 controls integration accuracy. For Gaussian DOS, broadening also controls
@@ -297,6 +313,12 @@ $$
 P_\alpha A P_\beta
 $$
 
+where $A$ is the inspected matrix and
+$P_\alpha=\sum_{a\in G_\alpha}|a\rangle\langle a|$ selects basis-index group
+$G_\alpha$ (similarly for $\beta$). These $\alpha,\beta$ are subspace labels,
+not Cartesian components, and $P$ is dimensionless. The block has the units of
+$A$; its Frobenius norm is $\sqrt{\sum_{ab}|(P_\alpha A P_\beta)_{ab}|^2}$.
+Blocks are
 grouped by site, manifold, and spin, including block shape, Frobenius norm, and
 largest element. This is the appropriate tool for distinguishing geometric
 pathways from their multiorbital matrix content.

@@ -7,6 +7,14 @@ calculation without changing the electronic Hamiltonian.
 
 ## Complex susceptibility
 
+The starting ansatz is linear interaction feedback,
+$\boldsymbol\chi=\boldsymbol\chi^0+\boldsymbol\chi^0\boldsymbol\Gamma\boldsymbol\chi$,
+with static bands and a static local vertex. $\chi^0$ is the bare Lindhard
+response in meV$^{-1}$ per model cell and $\chi$ the dressed response in the
+same units, evaluated at the same momentum and energy. The identity below
+is $3\times3$, and $S_x,S_y,S_z$ are the dimensionless spin operators defined
+in [Physics conventions](physics_conventions.md#spin-operators-and-equilibrium-averages).
+
 In the ordered $(S_x,S_y,S_z)$ basis,
 
 $$
@@ -17,9 +25,12 @@ $$
 $$
 
 The configured Hermitian matrix $\mathbf V$ is dimensionless and the fitted
-scale $g$ is entered in eV. nfit converts the resulting vertex to canonical
+scale $g$ (`scale`) is entered in eV; this energy-valued $g$ is unrelated
+to the dimensionless Landé factor. nfit converts the resulting vertex to canonical
 meV before combining it with the bare response. The final inelastic response
-is $\boldsymbol\chi_s''=\operatorname{Im}\boldsymbol\chi_s$; quasistatic and
+is the absorptive tensor $(\boldsymbol\chi_s-\boldsymbol\chi_s^\dagger)/(2i)$,
+which equals ordinary $\operatorname{Im}\chi_s$ for scalar or diagonal channels;
+quasistatic and
 bulk calculations use the real zero-energy limit.
 
 For a completely general operator basis, scripts can construct an

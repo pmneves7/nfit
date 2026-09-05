@@ -15,6 +15,14 @@ model.
 
 ## Real-space definition
 
+The ansatz retains a finite orthonormal set of localized orbitals (or Wannier
+states), with $\langle\mathbf R,a|\mathbf R',b\rangle=
+\delta_{\mathbf R\mathbf R'}\delta_{ab}$. A translation-invariant,
+energy-independent one-electron matrix approximates the normal-state bands;
+interactions beyond this fitted static matrix enter only a separate response
+model. Here $\hat H$ is the one-electron Hamiltonian, $a,b=1,\ldots,N_b$
+label the retained basis, and all its matrix elements have units meV.
+
 Let $\lvert\mathbf R,b\rangle$ be basis state $b$ in the cell translated by
 the integer vector $\mathbf R$. nfit defines
 
@@ -53,6 +61,20 @@ of neutron-scattering operators.
 
 ## Reciprocal-space Hamiltonian and bands
 
+With $N_c$ periodic cells, the Bloch basis is
+$|a,\mathbf k\rangle=N_c^{-1/2}\sum_{\mathbf R}
+ e^{2\pi i\mathbf k\cdot\mathbf R}|\mathbf R,a\rangle$.
+The band coefficients obey
+$|n,\mathbf k\rangle=\sum_a u_{an}(\mathbf k)|a,\mathbf k\rangle$ and
+$u_n^\dagger u_m=\delta_{nm}$. For independent electrons the many-body ansatz is
+$\hat H_{\rm el}=\sum_{\mathbf k,ab}c^\dagger_{a\mathbf k}H_{ab}(\mathbf k)c_{b\mathbf k}$.
+$c^\dagger_{a\mathbf k}$ creates an electron in that basis state, $c_{a\mathbf k}$
+annihilates it, and $\{c_{a\mathbf k},c^\dagger_{b\mathbf k'}\}
+=\delta_{ab}\delta_{\mathbf k\mathbf k'}$, with other anticommutators zero.
+For implicit spin an additional identical copy is understood for each of
+$\uparrow,\downarrow$. This defines the independent-particle starting point
+of the linked Lindhard response.
+
 nfit uses the Wannier gauge
 
 $$
@@ -61,8 +83,8 @@ H_{ab}(\mathbf k)=
 \exp(2\pi i\,\mathbf k\cdot\mathbf R),
 $$
 
-where $\mathbf k$ is in dimensionless reduced coordinates and
-$w_{\mathbf R}>0$ is an interpolation weight. Orbital centers do not appear
+where $i^2=-1$, $\mathbf k$ is in dimensionless reduced coordinates and
+$w_{\mathbf R}>0$ is a dimensionless interpolation weight (no unit-sum constraint). Orbital centers do not appear
 again in this Fourier phase. A Wannier90 import applies the reported
 Wigner--Seitz degeneracies while constructing its canonical blocks; those
 imported blocks then use unit interpolation weights.
@@ -74,9 +96,11 @@ H(\mathbf k)\lvert u_{n\mathbf k}\rangle
 =\varepsilon_n(\mathbf k)\lvert u_{n\mathbf k}\rangle .
 $$
 
-The eigenvalues $\varepsilon_n$ are the band energies. If
+The eigenvalues $\varepsilon_n$ are band energies in meV, $n$ is the band
+index, and $|u_{n\mathbf k}\rangle$ is the normalized coefficient column
+in the Bloch basis above. If
 $C_{an}=\langle a\vert u_{n\mathbf k}\rangle$, the projected weight of a
-basis-index group $G$ is
+basis-index group $G$ is the dimensionless fraction
 
 $$
 W_{nG}(\mathbf k)=\sum_{a\in G}|C_{an}(\mathbf k)|^2 .
@@ -94,6 +118,10 @@ $$
 H(\mathbf R;\boldsymbol\theta)
 =H_0(\mathbf R)+\sum_p\theta_pP_p(\mathbf R).
 $$
+
+$H_0$ is the fixed meV block, $p$ labels named coefficients, and
+$P_p=\partial H/\partial\theta_p$ is a derivative matrix; it need not be a
+projection operator.
 
 `parameter_values[p]` is $\theta_p$ and `parameter_blocks[p]` is
 $P_p(\mathbf R)`. The builder uses an energy-valued coefficient in meV and a

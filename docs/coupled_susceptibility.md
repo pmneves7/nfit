@@ -17,6 +17,16 @@ numerical threshold for rejecting a sampled pole of the coupled response.
 
 ## Complex susceptibility
 
+$O_A,O_B$ are dimensionless scalar spin-component operators for the two
+sectors, with compatible normalization and uncoupled susceptibilities
+$\chi_A(\mathbf Q,E),\chi_B(\mathbf Q,E)$ in meV$^{-1}$.
+Their response is to conjugate fields in meV. The bilinear ansatz
+$H_{AB}=-gO_AO_B$ gives induced fields
+$h_A^{\rm eff}=h_A+g\langle O_B\rangle$ and
+$h_B^{\rm eff}=h_B+g\langle O_A\rangle$ in linear response.
+This yields the $2\times2$ inverse matrix in sector order $(A,B)$ below.
+The real energy $g$ is unrelated to the dimensionless Landé factor.
+
 For uncoupled scalar responses $\chi_A$ and $\chi_B$, nfit solves
 
 $$
@@ -36,7 +46,9 @@ $$
 {1-g^2\chi_A\chi_B}.
 $$
 
-$F_A$ and $F_B$ are signed magnetic form-factor amplitudes. Consequently,
+$F_A$ and $F_B$ are real, dimensionless signed magnetic form-factor amplitudes.
+The displayed numerator assumes these real amplitudes, as used by this
+component; complex probe weights would require adjoints and absolute squares. Consequently,
 `coupling=0` reduces to the additive neutron response of the two source
 components, including their separate form factors. The sign of $g$ matters
 through the interference term. The coupling is applied to the causal complex

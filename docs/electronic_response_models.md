@@ -48,11 +48,29 @@ E+\varepsilon_{n\mathbf k}
 M^A_{nm}M^{B*}_{nm}.
 $$
 
-$w_{\mathbf k}$ are normalized integration weights,
-$f$ is the Fermi function, $E$ is neutron energy transfer in meV, and
-$M^A_{nm}$ contains the band eigenvectors and operator matrix. The convention
-gives positive diagonal $\chi^{0\prime\prime}$ for positive-energy
-absorption.
+$\mathbf k$ runs over the electronic integration mesh, with dimensionless
+weights $\sum_{\mathbf k}w_{\mathbf k}=1$; $n,m$ run over every represented
+band. $\mathbf k,\mathbf q$ are reduced reciprocal coordinates. Band energies
+$\varepsilon$, chemical potential $\mu$, transferred energy $E=\hbar\omega$,
+and broadening $\eta$ are in meV. At $T>0$ K,
+$f(\varepsilon)=[\exp((\varepsilon-\mu)/(k_BT))+1]^{-1}$ with
+$k_B=0.08617333262$ meV/K. The dimensionless transition amplitude is explicitly
+
+$$
+M^A_{nm}(\mathbf k,\mathbf Q)
+=\sum_{a,b}u_{an}^*(\mathbf k)[O_A(\mathbf Q)]_{ab}
+u_{bm}(\mathbf k+\mathbf q).
+$$
+
+$u_{an}$ is basis component $a$ of normalized eigenvector $n$ of $H(\mathbf k)$;
+$a,b$ label orbitals including explicit spin when present. $O_A$ is the
+one-particle probe matrix in that same basis, and $A,B$ label probes.
+$M^{B*}_{nm}$ conjugates the whole second amplitude. The result has units
+meV$^{-1}$ per electronic model cell for dimensionless operators.
+[The Lindhard definition](lindhard.md#complex-susceptibility) specifies the
+operator ordering, gauge, zero-temperature occupation, static limit, and
+physical dissipative tensor. An occupied-to-unoccupied transition has positive
+diagonal absorptive weight.
 
 This is a bare bubble of the fitted static bands. The constant $\eta>0$
 represents finite lifetime and numerical broadening but is not a
@@ -92,6 +110,15 @@ $$
 \boldsymbol\chi^0(\mathbf q,E).
 $$
 
+$\boldsymbol\chi^0$ is the bare operator-response matrix, $\boldsymbol\chi$
+the dressed response, $\boldsymbol\Gamma$ the interaction vertex in meV,
+and $\mathbb1$ the identity on the same ordered operator space. This follows
+from the RPA feedback ansatz
+$\boldsymbol\chi=\boldsymbol\chi^0+\boldsymbol\chi^0\boldsymbol\Gamma\boldsymbol\chi$:
+the induced response supplies an additional field linear in that response.
+It sums repeated particle--hole interactions while keeping the source bands
+fixed. The product $\boldsymbol\chi^0\boldsymbol\Gamma$ is dimensionless.
+
 The multiplication order, operator ordering, interaction unit, and physical
 channel are stored with the result. A singular-value threshold detects a trial
 point at or too near an RPA pole.
@@ -99,7 +126,7 @@ point at or too near an RPA pole.
 The available dressings differ only in how
 $\boldsymbol\Gamma$ is constructed:
 
-- scalar Stoner uses one fitted $I$;
+- scalar Stoner uses the spin-channel vertex $2I$ from one fitted density interaction $I$;
 - matrix RPA multiplies a fitted scale by a fixed dimensionless Hermitian
   Cartesian matrix; and
 - Hubbard--Hund builds a local spin-channel vertex on selected
@@ -122,6 +149,10 @@ The spin tensor is contracted with the unpolarized neutron projector
 $$
 \delta_{\alpha\beta}-\hat Q_\alpha\hat Q_\beta.
 $$
+
+Here $\alpha,\beta=x,y,z$, $\delta_{\alpha\beta}$ is the Kronecker delta,
+and $\hat{\mathbf Q}$ is the unit vector of the physical Cartesian momentum.
+The projector is dimensionless; its isotropic one-component contraction is 2.
 
 The selected `ion` or custom coefficients supply $|f(\mathbf Q)|^2$ exactly
 once. For inelastic data, nfit sends the resulting $\chi''$ through the

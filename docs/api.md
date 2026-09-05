@@ -261,6 +261,16 @@ response. For model-owned plotting,
 `generalized_paramagnon_energy_scan_script` share the same GUI-free
 calculation.
 
+The mathematical definitions used by these API docstrings are collected in
+[Physics conventions](physics_conventions.md) (constants, spin, coordinates,
+response and cross-section normalization), [Tight binding](tight_binding.md)
+(Hamiltonian and eigenvectors), [Lindhard](lindhard.md#complex-susceptibility)
+(operator matrix elements and tensor response), and
+[Modeling and fitting pipeline](modeling_pipeline.md#simultaneous-least-squares)
+(residuals and weights). Model-specific ansatzes are linked from
+[Spin-fluctuation models](spin_fluctuation_models.md) and
+[Heat capacity](heat_capacity.md).
+
 ```{eval-rst}
 .. automodule:: nfit.model_registry
    :members:
