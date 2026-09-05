@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nfit"
-version = "0.80.2"
+version = "0.80.3"
 description = "Reduced magnetic-scattering analysis for nearly magnetic metals"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -91,6 +91,9 @@ docs = [
   "sphinx-copybutton>=0.5",
   "furo>=2024.1.29",
 ]
+
+[tool.setuptools.package-data]
+nfit = ["resources/*.png"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

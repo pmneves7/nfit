@@ -139,6 +139,7 @@ from .project_io import (
     _project_to_dict,
     _sharing_from_payload,
 )
+from .qt_branding import configure_application_icon
 from .qt_controls import configure_numeric_spin_boxes
 from .raw_dgs import bin_raw_dgs_group, is_raw_dgs_nexus_file, raw_dgs_dataset_group
 from .rebin import rebin_nd, rebin_nd_symmetry
@@ -29907,6 +29908,7 @@ def _qt_app():
     app = QtWidgets.QApplication.instance()
     if app is None:
         app = QtWidgets.QApplication([])
+    configure_application_icon(app)
     configure_numeric_spin_boxes(app)
     return app
 

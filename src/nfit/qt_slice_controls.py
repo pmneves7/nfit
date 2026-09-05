@@ -5,6 +5,7 @@ from typing import Any
 
 import numpy as np
 
+from .qt_branding import configure_application_icon
 from .qt_controls import configure_numeric_spin_boxes
 
 
@@ -26,6 +27,7 @@ def _qt_app():
     app = QtWidgets.QApplication.instance()
     if app is None:
         app = QtWidgets.QApplication([])
+    configure_application_icon(app)
     configure_numeric_spin_boxes(app)
     return app
 

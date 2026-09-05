@@ -1,5 +1,7 @@
 # nfit
 
+<img src="docs/_static/nfit-logo.svg" alt="nfit logo" width="240">
+
 `nfit` analyzes magnetic neutron-scattering and related bulk measurements.
 It works with physical coordinates such as `H`, `K`, `L`, `|Q|`, and energy
 transfer, independently of the originating instrument or file layout.

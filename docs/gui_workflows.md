@@ -1,5 +1,9 @@
 # GUI workflows
 
+The project explorer and data viewer use the neutron “n” icon in their windows
+and the OS Dock or taskbar. Restart nfit after upgrading to refresh the running
+application icon.
+
 The nfit interface has two main window types:
 
 - the **project explorer**, which owns datasets, masks, models, fits, analyses,
