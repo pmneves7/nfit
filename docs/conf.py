@@ -1,7 +1,7 @@
 project = "nfit"
 author = "Paul M. Neves"
 copyright = "2026, Paul M. Neves"
-release = "0.80.3"
+release = "0.80.4"
 
 extensions = [
     "myst_parser",
@@ -20,6 +20,8 @@ myst_enable_extensions = ["dollarmath", "amsmath"]
 myst_heading_anchors = 4
 
 html_static_path = ["_static"]
-html_logo = "_static/nfit-logo.svg"
+html_theme_options = {
+    "light_logo": "nfit-logo.svg",
+    "dark_logo": "nfit-logo-dark.svg",
+}
 html_favicon = "_static/nfit-icon.png"
-html_css_files = ["branding.css"]

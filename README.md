@@ -6,6 +6,9 @@
 It works with physical coordinates such as `H`, `K`, `L`, `|Q|`, and energy
 transfer, independently of the originating instrument or file layout.
 
+On macOS, a [local app launcher](docs/getting_started.md#macos-local-app-launcher)
+provides double-click startup and a Dock icon using your existing environment.
+
 The package provides:
 
 - native MDHisto, single-crystal and direct-powder MDEvent, and compatible

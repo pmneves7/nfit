@@ -20,5 +20,6 @@ The documentation wordmark is copied to `docs/_static/nfit-logo.svg`. The
 application icon (`src/nfit/resources/nfit-icon.png`, 512 px) and documentation
 favicon (`docs/_static/nfit-icon.png`, 64 px) are transparent square renders of
 `nfit-02.svg`, centered with its aspect ratio preserved. Regenerate these
-derivatives when updating the source designs. The documentation logo uses a
-white backing so its black lettering remains readable in dark mode.
+derivatives when updating the source designs. The dark-mode copy
+(`docs/_static/nfit-logo-dark.svg`) changes only the “fit” paths to white;
+the sphere and black “n” remain unchanged. Both themes use transparent backgrounds.

@@ -202,3 +202,26 @@ python -m twine check dist/*
 python -m pip install dist/nfit-*.whl
 nfit
 ```
+
+## macOS local app launcher
+
+A local `nfit.app` opens the current checkout using the Python environment that
+built it. It does not bundle Python or require rebuilding after ordinary code
+updates. Keep that environment and checkout at their existing paths.
+
+From the repository, with the nfit environment active, run:
+
+```bash
+python tools/macos/build_launcher.py
+```
+
+The builder requires the Apple command-line developer tools and checks that the
+app can load nfit and its Qt icon. It creates `build/nfit.app`; move the app to
+`~/Applications`, then double-click it. In the Dock, right-click its icon and
+choose **Options → Keep in Dock**. Startup output is saved in
+`~/Library/Logs/nfit.log`.
+
+Use `--output /path/to/nfit.app` to choose another destination. The builder
+refuses to overwrite an existing app. Rebuild if the checkout or environment
+moves. This launcher is for local use; it is not a standalone distribution for
+other computers.
