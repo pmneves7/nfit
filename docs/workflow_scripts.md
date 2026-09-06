@@ -64,6 +64,11 @@ and its recorded units. With no explicit centers, exact unique coordinates
 are retained. See [Metadata dimensions](data_import.md#metadata-dimensions)
 for pointwise alignment rules and supported sources.
 
+To rebin temperature, add `binning={"lower": 5, "upper": 50, "step": 5}` to
+the dimension recipe, or `binning={"bin_edges": [0, 15, 25, 55]}` for explicit
+edges. The script captures this optional binning along with the channel and
+nominal-coordinate assignment. Leaving `binning=None` retains discrete values.
+
 ## Analysis workflows
 
 Right-click a saved analysis and use the same copy or save actions. The script

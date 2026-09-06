@@ -982,7 +982,7 @@ class QtMDHistoSliceViewer:
                 f"    selections={self._export_selections()!r},",
                 f"    integrate_checks={self._export_integrate_checks()!r},",
                 f"    tile_range={self.tile_range!r},",
-                f"    tile_step={self.tile_step!r},",
+                f"    tile_step={self._effective_tile_step()!r},",
                 f"    coverage_threshold={self.coverage_threshold!r},",
                 f"    masked={self.model.masked!r},",
                 f"    cmap={self.model._effective_cmap()!r},",
@@ -1444,10 +1444,10 @@ class QtMDHistoSliceViewer:
             "Width of each coarse bin along the third dimension. Each bin becomes one 2D panel."
         )
         self.tile_step_spin.valueChanged.connect(self._set_tile_step)
-        self.tile_step_auto_check = QtWidgets.QCheckBox("Auto (up to 9)")
+        self.tile_step_auto_check = QtWidgets.QCheckBox("Auto")
         self.tile_step_auto_check.setChecked(self.tile_step_auto)
         self.tile_step_auto_check.setToolTip(
-            "Choose a bin width that makes nine panels, or one panel per value when fewer than nine are available."
+            "For metadata dimensions, show one panel per coordinate with its exact value. For other dimensions, choose a width giving up to nine panels."
         )
         self.tile_step_auto_check.toggled.connect(self._set_tile_step_auto)
         tiled_layout.addWidget(QtWidgets.QLabel("Step size"), 2, 0)
@@ -2851,6 +2851,11 @@ class QtMDHistoSliceViewer:
         self._set_checkbox_silent(self.tile_step_auto_check, self.tile_step_auto)
         self._set_spin_silent(self.tile_step_spin, self.tile_step)
         self._sync_tile_step_slider()
+
+    def _effective_tile_step(self) -> float | None:
+        if self.tile_step_auto and self.tile_dim is not None and "metadata_dimension" in self.data.axes[self.tile_dim].metadata:
+            return None
+        return self.tile_step
 
     def _tile_step_limits(self) -> tuple[float, float]:
         if self.tile_dim is None:
@@ -4331,7 +4336,7 @@ class QtMDHistoSliceViewer:
             selections=self.model.selections,
             integrate_checks=self.model.integrate_checks,
             tile_range=self.tile_range,
-            tile_step=self.tile_step,
+            tile_step=self._effective_tile_step(),
             coverage_threshold=self.coverage_threshold,
             masked=self.model.masked,
             smoothing_sigma_x=self.smoothing_x,

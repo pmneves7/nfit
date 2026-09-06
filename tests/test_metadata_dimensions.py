@@ -240,7 +240,8 @@ def test_histogram_sources_keep_a_common_grid_and_missing_regions():
     np.testing.assert_allclose(data.signal, [[1, 3], [2, 4]])
 
 
-def test_project_and_editable_script_round_trip(tmp_path):
+@pytest.mark.parametrize("binning", [None, {"bin_edges": [0, 15, 25]}])
+def test_project_and_editable_script_round_trip(tmp_path, binning):
     g = group([points(5, [1]), points(10, [4])])
     for i, entry in enumerate(g.datasets):
         source = tmp_path / f"source_{i}.npz"
@@ -251,7 +252,7 @@ def test_project_and_editable_script_round_trip(tmp_path):
     node = DatasetGroup("temperatures", datasets=g.datasets, metadata={"composite": config})
     g.datasets = []
     g.subgroups.append(node)
-    nfit.set_metadata_dimensions(node, [temperature(centers=[5, 10, 20])])
+    nfit.set_metadata_dimensions(node, [temperature(centers=[5, 10, 20], binning=binning)])
     project = nfit.NfitProject([g])
     path = tmp_path / "test.nfit"
     nfit.save_project(project, path)
@@ -261,8 +262,9 @@ def test_project_and_editable_script_round_trip(tmp_path):
     namespace = {"__name__": "test_workflow"}
     exec(compile(script, "composite.py", "exec"), namespace)
     data = namespace["run"]()
-    np.testing.assert_allclose(data.signal.ravel(), [1, 4, np.nan], equal_nan=True)
-    np.testing.assert_array_equal(data.axes[-1].centers, [5, 10, 20])
+    expected = [1, 4, np.nan] if binning is None else [2.5, np.nan]
+    np.testing.assert_allclose(data.signal.ravel(), expected, equal_nan=True)
+    np.testing.assert_array_equal(data.axes[-1].centers, [5, 10, 20] if binning is None else [7.5, 20])
 
 
 def test_metadata_panel_and_dialog_controls_have_tooltips(monkeypatch):
@@ -306,3 +308,238 @@ def test_metadata_panel_and_dialog_controls_have_tooltips(monkeypatch):
     assert g.metadata["metadata_dimensions"][0]["name"] == "Temperature"
     panel.close()
     app.processEvents()
+
+
+@pytest.mark.parametrize(
+    "binning",
+    [
+        {"lower": 5, "upper": 25, "step": 10},
+        {"lower": 5, "upper": 25, "num_bins": 3},
+        {"bin_edges": [0, 10, 20, 30]},
+    ],
+)
+def test_metadata_rebin_preserves_source_weights_and_whole_bin_assignment(binning):
+    g = group(
+        [
+            points(5, [1, 1, 1]),
+            points(8, [9]),
+            points(10, [20]),
+            points(30, [30]),
+            points(40, [1000]),
+        ]
+    )
+    nfit.set_metadata_dimensions(g, [temperature(binning=binning)])
+    data = nfit.composite_dataset_data(g)
+    np.testing.assert_array_equal(data.axes[-1].values, [0, 10, 20, 30])
+    np.testing.assert_array_equal(data.axes[-1].centers, [5, 15, 25])
+    # Combine the original samples, not the two run means. Edge 10 goes right;
+    # final edge 30 is included and 40 is discarded, despite fractional HKLE.
+    np.testing.assert_allclose(data.signal.ravel(), [3, 20, 30])
+    np.testing.assert_allclose(data.errors.ravel(), [0.5, 1, 1])
+    np.testing.assert_array_equal(_point_data_from_mdhisto_view(data).temperature, [5, 15, 25])
+
+
+def test_pointwise_rebin_uses_nominal_centers_before_grouping_and_preserves_empty_bins():
+    g = group([points([4.9, 10.1, 20.1], [2, 4, 8])])
+    spec = nfit.MetadataDimension(
+        "T", "temperature", "K", "per_point", [5, 10, 20], binning={"bin_edges": [5, 15, 25, 35]}
+    )
+    nfit.set_metadata_dimensions(g, [spec])
+    data = nfit.composite_dataset_data(g)
+    np.testing.assert_allclose(data.signal.ravel(), [3, 8, np.nan], equal_nan=True)
+    assert data.mask.ravel()[-1]
+    nfit.set_metadata_dimensions(g, [temperature(binning={"lower": 0, "upper": 30, "num_bins": 1})])
+    assert nfit.composite_dataset_data(g).signal.item() == pytest.approx(14 / 3)
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {},
+        {"step": 0, "lower": 0, "upper": 10},
+        {"num_bins": 1.5, "lower": 0, "upper": 10},
+        {"step": 1, "num_bins": 2, "lower": 0, "upper": 10},
+        {"step": 1, "lower": 10, "upper": 0},
+        {"bin_edges": [0, 0]},
+        {"bin_edges": [0, np.nan]},
+    ],
+)
+def test_metadata_binning_rejects_invalid_grids(config):
+    with pytest.raises(ValueError, match="metadata"):
+        temperature(binning=config)
+
+
+def temperature_volume():
+    from nfit.metadata_dimensions import discrete_metadata_axis
+
+    temps = [1.54, 5.24, 10.34, 20.12, 30.06, 39.28]
+    axes = (
+        nfit.MDHistoAxis("H", [-0.5, 0.5, 1.5], "rlu", "h"),
+        nfit.MDHistoAxis("K", [-0.5, 0.5, 1.5], "rlu", "k"),
+        nfit.MDHistoAxis("L", [-0.5, 0.5], "rlu", "l"),
+        nfit.MDHistoAxis("DeltaE", [0.5, 1.5], "meV", "energy_transfer"),
+        discrete_metadata_axis(temperature(), temps),
+    )
+    values = np.broadcast_to(np.arange(1.0, 7.0), (2, 2, 1, 1, 6)).copy()
+    return nfit.MDHistoData(
+        axes, values, np.ones_like(values), np.zeros_like(values, bool), np.ones_like(values)
+    )
+
+
+def test_irregular_metadata_tiles_and_saved_plot_use_each_exact_coordinate():
+    import matplotlib.pyplot as plt
+
+    from nfit.pipeline import PlotEntry
+    from nfit.plot_recipes import render_plot
+    from nfit.plotting import prepare_mdhisto_tiled_slices
+
+    data = temperature_volume()
+    panels = prepare_mdhisto_tiled_slices(data, x_dim=0, y_dim=1, tile_dim=4)
+    np.testing.assert_array_equal([panel.coordinate for panel in panels], data.axes[4].centers)
+    for i, panel in enumerate(panels):
+        np.testing.assert_allclose(panel.values, i + 1)
+    subset = prepare_mdhisto_tiled_slices(data, x_dim=0, y_dim=1, tile_dim=4, tile_range=(6, 31))
+    np.testing.assert_allclose([panel.coordinate for panel in subset], [10.34, 20.12, 30.06])
+    plot = PlotEntry(
+        "temperatures",
+        "mdhisto_tiled_slices",
+        settings={
+            "x_dim": 0,
+            "y_dim": 1,
+            "tile_dim": "Temperature",
+            "tile_step_auto": True,
+            "tile_step": 4,
+        },
+    )
+    figure = render_plot(plot, data)
+    labels = [text.get_text() for ax in figure.axes for text in ax.texts]
+    assert all(any(f"{value:g}" in label for label in labels) for value in data.axes[4].centers)
+    plt.close(figure)
+
+
+@pytest.mark.parametrize("composite", [False, True, "parent"])
+def test_viewer_selects_clicked_collection_and_metadata_axis_supports_slice_and_integration(
+    monkeypatch, composite
+):
+    from PySide6 import QtWidgets
+
+    import nfit.project_gui as gui
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    first = DatasetGroup("other scans", datasets=[DatasetEntry("other", temperature_volume())])
+    target = DatasetGroup(
+        "MACS SPEC", datasets=[DatasetEntry("temperature series", temperature_volume())]
+    )
+    root = DataGroup(
+        "workspace", subgroups=[first, DatasetGroup("temp_dependence", subgroups=[target])]
+    )
+    if composite:
+        owner = root.subgroups[1] if composite == "parent" else target
+        owner.metadata["composite"] = {"enabled": True}
+    target_name = f"{owner.name} {gui.GROUP_COMPOSITE_NAME}" if composite else "temperature series"
+    explorer = nfit.NfitProjectExplorer(nfit.NfitProject([root]))
+    iterator = QtWidgets.QTreeWidgetItemIterator(explorer.tree)
+    while iterator.value():
+        item = iterator.value()
+        if (
+            explorer._dataset_group_for_item(item) is target
+            and explorer._objects_for_item(item)[-1] == "dataset_group"
+        ):
+            explorer.tree.setCurrentItem(item)
+            break
+        iterator += 1
+    # Supply prepared views to focus this test on explorer/viewer selection;
+    # scientific composite binning is exercised above.
+    monkeypatch.setattr(
+        gui,
+        "slice_viewer_datasets",
+        lambda *a, **kw: ([temperature_volume(), temperature_volume()], ["other", target_name]),
+    )
+    viewer = explorer.open_slice_viewer_for_selection()
+    assert viewer.dataset_combo.currentText() == target_name
+    viewer.x_combo.setCurrentIndex(viewer.x_combo.findText("Temperature"))
+    assert viewer.model.x_dim == 4
+    np.testing.assert_array_equal(
+        viewer.model.slice_arrays()["x_centers"], viewer.data.axes[4].centers
+    )
+    viewer.x_combo.setCurrentIndex(viewer.x_combo.findText("H"))
+    viewer.y_combo.setCurrentIndex(viewer.y_combo.findText("K"))
+    controls = viewer.hidden_controls[4]
+    controls.integrate.setChecked(False)
+    controls.value.setValue(10.34)
+    np.testing.assert_allclose(viewer.model.slice_arrays()["signal"], 3)
+    controls.integrate.setChecked(True)
+    controls.low.setValue(5.24)
+    controls.high.setValue(20.12)
+    np.testing.assert_allclose(viewer.model.slice_arrays()["signal"], 2 + 3 + 4)
+    viewer.tile_dim = 4
+    viewer.tile_step_auto = True
+    assert "tile_step=None" in viewer._tiled_figure_script()
+    assert viewer._effective_tile_step() is None
+    viewer.window.close()
+    explorer.window.close()
+
+
+def test_metadata_rebin_gui_rows_follow_energy_and_edit_the_public_recipe(monkeypatch):
+    from PySide6 import QtWidgets
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    g = group([points(5, [1]), points(10, [3])])
+    nfit.set_metadata_dimensions(g, [temperature()])
+    explorer = nfit.NfitProjectExplorer(nfit.NfitProject([g]))
+    monkeypatch.setattr(explorer, "_after_group_composite_changed", lambda group: None)
+    panel = explorer._group_composite_group_box(g)
+    label = panel.findChild(QtWidgets.QLabel, "metadata_rebin_label_0")
+    energy = panel.findChild(QtWidgets.QLabel, "group_composite_axis_label_3")
+    grid = label.parentWidget().layout()
+    assert (
+        grid.getItemPosition(grid.indexOf(label))[0]
+        == grid.getItemPosition(grid.indexOf(energy))[0] + 1
+    )
+    for widget in panel.findChildren(QtWidgets.QWidget):
+        if widget.objectName().startswith("metadata_rebin_"):
+            assert widget.toolTip(), widget.objectName()
+    mode = panel.findChild(QtWidgets.QComboBox, "metadata_rebin_mode_0")
+    mode.setCurrentIndex(mode.findData("step"))
+    assert g.metadata["metadata_dimensions"][0]["binning"]["step"] == 5
+    panel.findChild(QtWidgets.QPushButton, "group_composite_copy_settings").click()
+    destination = group([points(5, [7])])
+    assert explorer._paste_group_composite_settings(destination)
+    assert destination.metadata["metadata_dimensions"] == g.metadata["metadata_dimensions"]
+    mode.setCurrentIndex(mode.findData("discrete"))
+    assert g.metadata["metadata_dimensions"][0]["binning"] is None
+    panel.close()
+    explorer.window.close()
+
+
+def test_temperature_dependent_model_fits_all_metadata_slices_and_emits_5d_overlay():
+    from nfit.cross_section import intensity_from_chipp
+    from nfit.fit_config import ISOTROPIC_POLARIZATION
+    from nfit.pipeline import ModelComponentSpec
+    from nfit.spin_fluctuations import local_relaxational_chipp
+
+    targets = np.array([5.0, 10.0, 20.0, 30.0, 40.0, 50.0])
+    expected = intensity_from_chipp(
+        local_relaxational_chipp(1.0, chi_loc=2.4, gamma=3.1),
+        1.0,
+        targets,
+        polarization=ISOTROPIC_POLARIZATION,
+    )
+    g = group(
+        [points(t, [value], sigma=[0.01]) for t, value in zip(targets, expected, strict=True)]
+    )
+    nfit.set_metadata_dimensions(g, [temperature()])
+    component = ModelComponentSpec(
+        name="loc",
+        type="local_relaxational",
+        parameters={"scale": 1.0, "chi_loc": 1.0, "gamma": 3.1},
+        fit_parameters={"chi_loc": True},
+    )
+    g.models[component.name] = component
+    inputs, _ = nfit.fit_dataset_inputs(g, purpose="fit")
+    np.testing.assert_array_equal(inputs[0].data.temperature, targets)
+    result = nfit.perform_group_fit(g)
+    assert result["goodness"]["status"] == "converged"
+    assert component.parameters["chi_loc"] == pytest.approx(2.4, rel=1e-6)
+    channels = next(iter(result["channels"].values()))
+    assert np.asarray(channels["fit"]).shape == (1, 1, 1, 1, 6)

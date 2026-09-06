@@ -15,6 +15,65 @@ from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
 
 
 @dataclass(frozen=True)
+class MetadataBinning:
+    """Optional histogram grid for a metadata dimension, without interpolation.
+
+    Supply ``bin_edges``, or ``lower``/``upper`` center limits with either
+    ``step`` or ``num_bins``. With one bin the limits are interval edges.
+    Values on an interior edge enter the bin to its right; the last edge is
+    inclusive. Values outside the grid are excluded.
+    """
+
+    lower: float | None = None
+    upper: float | None = None
+    step: float | None = None
+    num_bins: int | None = None
+    bin_edges: Sequence[float] | None = None
+
+    def __post_init__(self):
+        if sum(v is not None for v in (self.step, self.num_bins, self.bin_edges)) != 1:
+            raise ValueError("choose exactly one metadata resolution: step, num_bins, or bin_edges")
+        if self.bin_edges is not None:
+            edges = np.asarray(self.bin_edges, dtype=float)
+            if (
+                edges.ndim != 1
+                or edges.size < 2
+                or not np.all(np.isfinite(edges))
+                or np.any(np.diff(edges) <= 0)
+            ):
+                raise ValueError("metadata bin edges must be finite and strictly increasing")
+            object.__setattr__(self, "bin_edges", tuple(float(v) for v in edges))
+            return
+        if (
+            self.lower is None
+            or self.upper is None
+            or not np.all(np.isfinite([self.lower, self.upper]))
+            or self.upper < self.lower
+        ):
+            raise ValueError("metadata bin limits must be finite and increasing")
+        if self.step is not None and (not np.isfinite(self.step) or self.step <= 0):
+            raise ValueError("metadata step must be finite and positive")
+        if self.num_bins is not None:
+            if (
+                not np.isfinite(self.num_bins)
+                or self.num_bins < 1
+                or int(self.num_bins) != self.num_bins
+            ):
+                raise ValueError("metadata bin count must be a positive integer")
+            if self.upper == self.lower:
+                raise ValueError("metadata bin count requires distinct limits")
+            object.__setattr__(self, "num_bins", int(self.num_bins))
+
+    def edges(self) -> np.ndarray:
+        """Resolve bin edges using the same center conventions as HKLE rebinning."""
+        from .rebin import _uniform_center_edges
+
+        if self.bin_edges is not None:
+            return np.asarray(self.bin_edges, dtype=float)
+        return _uniform_center_edges(self.lower, self.upper, step=self.step, count=self.num_bins)
+
+
+@dataclass(frozen=True)
 class MetadataDimension:
     """One discrete coordinate. ``tolerance`` has the same units as ``centers``.
 
@@ -24,6 +83,7 @@ class MetadataDimension:
     ``sampling`` is ``dataset_mean``, ``dataset_median``, or ``per_point``.
     Explicit centers use nearest assignment within tolerance; ties and values
     outside tolerance raise. Without centers, exact unique values are retained.
+    Optional ``binning`` then groups assigned coordinates into whole bins.
     """
 
     name: str
@@ -32,8 +92,11 @@ class MetadataDimension:
     sampling: str = "dataset_mean"
     centers: Sequence[float] | None = None
     tolerance: float = 0.5
+    binning: MetadataBinning | Mapping[str, Any] | None = None
 
     def __post_init__(self):
+        if self.binning is not None and not isinstance(self.binning, MetadataBinning):
+            object.__setattr__(self, "binning", MetadataBinning(**self.binning))
         if not self.name.strip() or not self.source.strip():
             raise ValueError("dimension name and metadata channel are required")
         if self.sampling not in {"dataset_mean", "dataset_median", "per_point"}:
@@ -55,6 +118,8 @@ class MetadataDimension:
         result = asdict(self)
         if self.centers is not None:
             result["centers"] = list(self.centers)
+        if self.binning is not None and self.binning.bin_edges is not None:
+            result["binning"]["bin_edges"] = list(self.binning.bin_edges)
         return result
 
 
@@ -224,6 +289,11 @@ def metadata_channels(dataset) -> dict[str, str]:
 def discrete_metadata_axis(dimension: MetadataDimension, centers) -> MDHistoAxis:
     """Create display boundaries while retaining the exact physical coordinates."""
     centers = np.asarray(centers, dtype=float)
+    if dimension.binning is not None:
+        return MDHistoAxis(
+            dimension.name, dimension.binning.edges(), dimension.units, "unknown",
+            metadata={"metadata_dimension": dimension.to_dict(), "interpolation": "none"},
+        )
     if centers.size == 1:
         edges = np.array([centers[0] - 0.5, centers[0] + 0.5])
     else:
@@ -245,8 +315,30 @@ def discrete_metadata_axis(dimension: MetadataDimension, centers) -> MDHistoAxis
     )
 
 
+def metadata_dimension_grid(dimension: MetadataDimension, coordinates):
+    """Return output centers and whole-bin assignments for a list of sources."""
+    centers = (
+        np.asarray(dimension.centers)
+        if dimension.centers is not None
+        else np.unique(np.concatenate(coordinates))
+    )
+    assignments = [
+        metadata_dimension_indices(
+            values, centers, dimension.tolerance if dimension.centers is not None else 0
+        )
+        for values in coordinates
+    ]
+    if dimension.binning is None:
+        return centers, assignments
+    edges = dimension.binning.edges()
+    indices = np.searchsorted(edges, centers, side="right") - 1
+    indices[centers == edges[-1]] = len(edges) - 2
+    indices[(centers < edges[0]) | (centers > edges[-1])] = -1
+    return (edges[:-1] + edges[1:]) / 2, [indices[index] for index in assignments]
+
+
 def metadata_temperature_grid(data: MDHistoData) -> np.ndarray | None:
-    """Return broadcastable temperatures in kelvin from a discrete K axis."""
+    """Return broadcastable temperatures in kelvin from a metadata K axis."""
     dimensions = [
         i
         for i, axis in enumerate(data.axes)

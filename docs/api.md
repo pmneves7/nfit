@@ -26,6 +26,10 @@ channel, with optional nominal coordinates and an assignment tolerance in the
 axis units. Use `set_metadata_dimensions(collection, dimensions)` and
 `composite_dataset_data(workspace, node=collection)` to build independent
 condition slices. `metadata_channels(dataset)` lists available paths and units.
+Pass `binning=MetadataBinning(lower=5, upper=50, step=5)` to a dimension to
+rebin it, or use `MetadataBinning(bin_edges=[0, 15, 25, 55])` for nonuniform
+bins. The `binning` argument also accepts a dictionary with the same fields;
+`None` retains discrete coordinates. Binning never interpolates metadata.
 See [Metadata dimensions](data_import.md#metadata-dimensions) and
 [composite scripts](workflow_scripts.md#composite-workflows) for alignment and
 reproduction details.

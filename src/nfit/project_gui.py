@@ -195,6 +195,7 @@ REBIN_SETTINGS_KEYS = (
     REBIN_RESOLUTION_MODE_KEY,
     "coordinate_basis_version",
     "coordinate_mode",
+    "metadata_dimensions",
 )
 REBIN_AUTO_MAX_CONTRIBUTIONS = 5_000_000
 REBIN_AUTO_MAX_OUTPUT_BINS = 2_000_000
@@ -2713,7 +2714,7 @@ def effective_dataset_masks(group: DataGroup, dataset: DatasetEntry) -> list[Mas
     """
 
     def search(node: Any) -> list[MaskSpec] | None:
-        if dataset in getattr(node, "datasets", []):
+        if any(item.id == dataset.id for item in getattr(node, "datasets", [])):
             return list(node.masks)
         for subgroup in getattr(node, "subgroups", []):
             below = search(subgroup)
@@ -3333,7 +3334,7 @@ def _metadata_composite_data(group, config, dimensions, *, include_source_masks,
     from .metadata_dimensions import (
         MetadataDimension,
         metadata_dimension_coordinates,
-        metadata_dimension_indices,
+        metadata_dimension_grid,
         stack_metadata_histograms,
     )
 
@@ -3352,26 +3353,17 @@ def _metadata_composite_data(group, config, dimensions, *, include_source_masks,
                 "metadata dimensions require neutron points or histograms; event logs need an alignment adapter"
             )
         if isinstance(data, MDHistoData) and any(
-            "discrete_centers" in axis.metadata for axis in data.axes
+            "metadata_dimension" in axis.metadata for axis in data.axes
         ):
             raise ValueError("add all metadata dimensions on the original source collection")
         coordinates.append([metadata_dimension_coordinates(dataset, spec) for spec in specs])
         entries.append(dataset.copy(data=data))
-    centers = [
-        np.asarray(spec.centers)
-        if spec.centers is not None
-        else np.unique(np.concatenate([row[i] for row in coordinates]))
+    grids = [
+        metadata_dimension_grid(spec, [row[i] for row in coordinates])
         for i, spec in enumerate(specs)
     ]
-    assignments = [
-        [
-            metadata_dimension_indices(
-                values, center, spec.tolerance if spec.centers is not None else 0
-            )
-            for values, center, spec in zip(row, centers, specs, strict=True)
-        ]
-        for row in coordinates
-    ]
+    centers = [grid[0] for grid in grids]
+    assignments = list(zip(*(grid[1] for grid in grids), strict=True))
     reducer = (
         _composite_point_data
         if isinstance(entries[0].data, PointData4D)
@@ -3402,6 +3394,8 @@ def _metadata_composite_data(group, config, dimensions, *, include_source_masks,
         order = np.argsort(inverse, kind="stable")
         positions = np.split(order, np.cumsum(np.bincount(inverse))[:-1])
         for key, selected in zip(unique, positions, strict=True):
+            if np.any(key < 0):
+                continue
             partitions.setdefault(tuple(int(i) for i in key), []).append((entry, selected))
     slices = {}
     for key, sources in partitions.items():
@@ -4152,7 +4146,7 @@ def _composite_mdhisto_data(
         )
         if not isinstance(data, MDHistoData):
             continue
-        if any("discrete_centers" in axis.metadata for axis in data.axes):
+        if any("metadata_dimension" in axis.metadata for axis in data.axes):
             raise ValueError("Rebin the original collection to preserve its discrete metadata dimensions.")
         if first_data is None:
             first_data = data
@@ -7417,6 +7411,16 @@ def _rebin_config_from_clipboard_text(
     settings = payload.get("settings")
     if not isinstance(settings, dict):
         raise ValueError("The clipboard rebin settings are incomplete.")
+    if settings.get("metadata_dimensions") and "metadata_dimensions" not in target_config:
+        raise ValueError("Metadata rebin settings must be pasted into a source collection's composite panel.")
+    if "metadata_dimensions" in settings:
+        from .metadata_dimensions import MetadataDimension
+
+        try:
+            for recipe in settings["metadata_dimensions"]:
+                MetadataDimension(**recipe)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"Invalid metadata rebin settings: {exc}") from exc
     source_axes = settings.get("axes")
     target_axes = target_config.get("axes")
     if not isinstance(source_axes, list) or not source_axes:
@@ -8888,7 +8892,7 @@ def _rebin_mdhisto_data(
     *,
     progress_callback: Any | None = None,
 ) -> MDHistoData:
-    if any("discrete_centers" in axis.metadata for axis in data.axes):
+    if any("metadata_dimension" in axis.metadata for axis in data.axes):
         raise ValueError("Rebin the original collection to preserve its discrete metadata dimensions.")
     axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
     if len(axes_config) != len(data.axes):
@@ -14228,6 +14232,25 @@ class NfitProjectExplorer:
         # For a mask or the Masks node, entry is the owning dataset.
         selected_name = entry.name if role in {"dataset", "masks", "mask", "backgrounds", "background"} and entry is not None else None
         use_composite = selected_name is None
+        node = self._dataset_group_for_item(self._current_item())
+        if use_composite and isinstance(node, DatasetGroup):
+            ancestor_item = self._current_item().parent()
+            while ancestor_item is not None:
+                ancestor = self._dataset_group_for_item(ancestor_item)
+                if isinstance(ancestor, (DataGroup, DatasetGroup)) and data_group_composite_enabled(_composite_scope(group, ancestor)):
+                    node = ancestor
+                ancestor_item = ancestor_item.parent()
+            # Match the selected collection to the same effective entry traversal
+            # used by the viewer, including a collection's nested composites.
+            def first_name(node):
+                scope = _composite_scope(group, node)
+                if data_group_composite_enabled(scope):
+                    return _composite_dataset_name(scope)
+                if node.datasets:
+                    return node.datasets[0].name
+                return next((name for child in node.subgroups if (name := first_name(child))), None)
+
+            selected_name = first_name(node)
         return self.open_slice_viewer(group, selected_dataset_name=selected_name, use_composite=use_composite)
 
     def open_slice_viewer(
@@ -18334,7 +18357,9 @@ class NfitProjectExplorer:
             "The copied JSON can be pasted into a compatible dataset or dataset-group rebin panel."
         )
         copy_settings_button.clicked.connect(
-            lambda _checked=False: self._copy_rebin_settings(config)
+            lambda _checked=False: self._copy_rebin_settings({
+                **config, "metadata_dimensions": group.metadata.get("metadata_dimensions", [])
+            })
         )
         paste_settings_button = QtWidgets.QPushButton("Paste settings")
         paste_settings_button.setObjectName("group_composite_paste_settings")
@@ -18518,12 +18543,17 @@ class NfitProjectExplorer:
                 )
             )
             controls_layout.addWidget(edges_edit, row, column_offset + 3)
+        from .metadata_dimensions_gui import metadata_rebin_rows
+
+        metadata_rows = metadata_rebin_rows(
+            self, group, controls_layout, header_row + len(axes) + 1
+        )
         option_row = QtWidgets.QHBoxLayout()
         fractional_check = QtWidgets.QCheckBox("Fractional binning")
         fractional_check.setObjectName("group_composite_fractional")
         fractional_check.setChecked(bool(config.get("fractional", True)))
         fractional_check.setToolTip(
-            "Distribute source points fractionally into neighboring composite bins after dataset scale and fit-weight factors are applied."
+            "Distribute source points fractionally into neighboring momentum and energy bins after dataset scale and fit-weight factors are applied. Metadata dimensions always assign whole bins."
         )
         fractional_check.toggled.connect(lambda checked: self._set_group_composite_option(group, "fractional", checked))
         auto_check = QtWidgets.QCheckBox("Automatic rebinning")
@@ -18625,7 +18655,7 @@ class NfitProjectExplorer:
         option_row.addWidget(mean_label)
         option_row.addWidget(mean_combo)
         option_row.addStretch(1)
-        footer_row = header_row + len(axes) + 1
+        footer_row = header_row + len(axes) + metadata_rows + 1
         controls_layout.addLayout(option_row, footer_row, 0, 1, len(headers))
         quality_row = QtWidgets.QHBoxLayout()
         quality_row.addWidget(coverage_label)
@@ -21257,8 +21287,19 @@ class NfitProjectExplorer:
         self,
         group: DataGroup | _CompositeScope,
     ) -> bool:
-        pasted = self._pasted_rebin_config(data_group_composite_config(group))
+        pasted = self._pasted_rebin_config({
+            **data_group_composite_config(group),
+            "metadata_dimensions": group.metadata.get("metadata_dimensions", []),
+        })
         if pasted is None:
+            return False
+        from PySide6 import QtWidgets
+
+        dimensions = pasted.pop("metadata_dimensions")
+        try:
+            set_metadata_dimensions(group, dimensions)
+        except (ValueError, TypeError) as exc:
+            QtWidgets.QMessageBox.warning(self.window, "Paste rebin settings", str(exc))
             return False
         group.metadata[GROUP_COMPOSITE_KEY] = pasted
         self._after_group_composite_changed(group)

@@ -12,6 +12,7 @@ import numpy as np
 from .mdhisto import MDHistoData
 from .pipeline import PlotEntry, PlotSourceRef
 from .plotting import (
+    _resolve_mdhisto_dim,
     plot_mdhisto_fit_comparison,
     plot_mdhisto_line,
     plot_mdhisto_slice,
@@ -141,7 +142,11 @@ def render_plot(
             selections=_selections(settings),
             integrate_checks=_integrate_checks(settings),
             tile_range=_pair(settings.get("tile_range")),
-            tile_step=float(settings.get("tile_step", 1.0)),
+            tile_step=(
+                None if settings.get("tile_step_auto", False)
+                and "metadata_dimension" in data.axes[_resolve_mdhisto_dim(data, settings.get("tile_dim", 1))].metadata
+                else float(settings.get("tile_step", 1.0))
+            ),
             coverage_threshold=float(settings.get("coverage_threshold", 0.9)),
             masked=bool(settings.get("apply_masks", True)),
             cmap=settings.get("cmap", "viridis"),

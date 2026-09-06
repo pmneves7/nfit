@@ -286,7 +286,8 @@ def prepare_mdhisto_tiled_slices(
 
     The two displayed dimensions remain intact. Each panel integrates the
     selected bins along ``tile_dim``; any further dimensions use the ordinary
-    slice-viewer point or range selections.
+    slice-viewer point or range selections. With ``tile_step=None``, metadata
+    axes produce one panel per coordinate, including irregularly spaced values.
     """
 
     if not isinstance(data, MDHistoData):
@@ -316,9 +317,17 @@ def prepare_mdhisto_tiled_slices(
         raise ValueError("tile_step must be positive")
     if not np.isfinite(low_value) or not np.isfinite(high_value):
         raise ValueError("tile_range must be finite")
-    count = max(int(np.floor((high_value - low_value) / width + 1.e-10)) + 1, 1)
-    coordinates = low_value + np.arange(count, dtype=float) * width
-    boundaries = low_value + (np.arange(count + 1, dtype=float) - 0.5) * width
+    exact_coordinates = tile_step is None and "metadata_dimension" in data.axes[tile_index].metadata
+    if exact_coordinates:
+        selected_indices = np.flatnonzero((centers >= low_value) & (centers <= high_value))
+        coordinates = centers[selected_indices]
+        intervals = [(edges[i], edges[i + 1]) for i in selected_indices]
+        count = len(coordinates)
+    else:
+        count = max(int(np.floor((high_value - low_value) / width + 1.e-10)) + 1, 1)
+        coordinates = low_value + np.arange(count, dtype=float) * width
+        boundaries = low_value + (np.arange(count + 1, dtype=float) - 0.5) * width
+        intervals = zip(boundaries[:-1], boundaries[1:], strict=True)
 
     base = MDHistoSliceViewer(
         data,
@@ -341,14 +350,12 @@ def prepare_mdhisto_tiled_slices(
     displayed_unit = display_unit(axis.units) if axis.units else ""
     unit_suffix = f" {displayed_unit}" if displayed_unit else ""
     slices: list[TiledSlice] = []
-    for index, (low, high) in enumerate(
-        zip(boundaries[:-1], boundaries[1:], strict=True)
-    ):
+    for index, (low, high) in enumerate(intervals):
         tolerance = max(abs(low), abs(high), width, 1.0) * 1.e-12
         selected = (centers >= low - tolerance) & (
             (centers < high - tolerance) if index < count - 1 else (centers <= high + tolerance)
         )
-        indices = np.flatnonzero(selected)
+        indices = np.array([selected_indices[index]]) if exact_coordinates else np.flatnonzero(selected)
         if indices.size == 0:
             continue
         panel = MDHistoSliceViewer(
@@ -375,7 +382,7 @@ def prepare_mdhisto_tiled_slices(
             sigma_y=smoothing_sigma_y,
         )
         coordinate = float(coordinates[index])
-        if abs(coordinate) < width * 1.e-10:
+        if not exact_coordinates and abs(coordinate) < width * 1.e-10:
             coordinate = 0.0
         slices.append(
             TiledSlice(

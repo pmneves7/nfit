@@ -1,15 +1,194 @@
-"""Metadata-dimension editor, kept separate from spatial rebin controls."""
+"""Metadata-channel editor and per-dimension composite rebin controls."""
 
 from __future__ import annotations
 
 import numpy as np
 
 from .metadata_dimensions import (
+    MetadataBinning,
     MetadataDimension,
     metadata_channels,
     metadata_dimension_coordinates,
-    metadata_dimension_indices,
+    metadata_dimension_grid,
 )
+
+
+def metadata_rebin_rows(explorer, group, layout, start_row):
+    """Append metadata axes after the physical axes in the composite rebinner."""
+    from PySide6 import QtWidgets
+
+    from .project_gui import (
+        _composite_candidates,
+        _ensure_dataset_data_loaded,
+        set_metadata_dimensions,
+    )
+
+    recipes = list(group.metadata.get("metadata_dimensions", []))
+
+    def add_row(index, recipe):
+        spec = MetadataDimension(**recipe)
+        binning = spec.binning
+        row = start_row + index
+        label = QtWidgets.QLabel(f"{spec.name} ({spec.units})" if spec.units else spec.name)
+        label.setObjectName(f"metadata_rebin_label_{index}")
+        label.setToolTip(
+            f"Metadata channel: {spec.source}. Each source value enters one bin, without interpolation."
+        )
+        layout.addWidget(label, row, 0)
+        lower = QtWidgets.QLineEdit(
+            "" if binning is None or binning.lower is None else str(binning.lower)
+        )
+        upper = QtWidgets.QLineEdit(
+            "" if binning is None or binning.upper is None else str(binning.upper)
+        )
+        mode = QtWidgets.QComboBox()
+        for title, value in (
+            ("Discrete", "discrete"),
+            ("Step", "step"),
+            ("Bins", "bins"),
+            ("Edges", "edges"),
+        ):
+            mode.addItem(title, value)
+        selected_mode = (
+            "discrete"
+            if binning is None
+            else (
+                "edges"
+                if binning.bin_edges is not None
+                else "step"
+                if binning.step is not None
+                else "bins"
+            )
+        )
+        mode.setCurrentIndex(mode.findData(selected_mode))
+        resolution = QtWidgets.QLineEdit(
+            "" if binning is None else str(binning.step or binning.num_bins or "")
+        )
+        edges = QtWidgets.QLineEdit(
+            ", ".join(f"{v:g}" for v in (binning.bin_edges or [])) if binning else ""
+        )
+        for key, widget, tooltip in (
+            (
+                "lower",
+                lower,
+                "First metadata bin center; for one-bin integration this is the lower interval edge.",
+            ),
+            (
+                "upper",
+                upper,
+                "Last metadata bin center; for one-bin integration this is the upper interval edge.",
+            ),
+            (
+                "mode",
+                mode,
+                "Discrete keeps the assigned metadata coordinates. Step, Bins, or Edges combines source measurements into whole bins; fractional binning never mixes metadata coordinates.",
+            ),
+            (
+                "resolution",
+                resolution,
+                "Metadata bin step in axis units, or positive integer bin count. One bin integrates between the limits.",
+            ),
+            (
+                "edges",
+                edges,
+                "Strictly increasing metadata bin edges, separated by commas. Interior edges enter the bin to their right; the final edge is inclusive. Values outside are excluded.",
+            ),
+        ):
+            widget.setObjectName(f"metadata_rebin_{key}_{index}")
+            widget.setToolTip(tooltip)
+        lower.setPlaceholderText("first coordinate")
+        upper.setPlaceholderText("last coordinate")
+        resolution.setPlaceholderText("step / count")
+        edges.setPlaceholderText("bin edges")
+        layout.addWidget(lower, row, 1)
+        layout.addWidget(upper, row, 2)
+        resolution_row = QtWidgets.QHBoxLayout()
+        resolution_row.addWidget(mode)
+        resolution_row.addWidget(resolution)
+        layout.addLayout(resolution_row, row, 3)
+        layout.addWidget(edges, row, 4)
+
+        def enable_fields():
+            uniform = mode.currentData() in {"step", "bins"}
+            for widget in (lower, upper, resolution):
+                widget.setEnabled(uniform)
+            edges.setEnabled(mode.currentData() == "edges")
+
+        def apply():
+            try:
+                selected = mode.currentData()
+                if selected == "discrete":
+                    updated_binning = None
+                elif selected == "edges":
+                    updated_binning = MetadataBinning(
+                        bin_edges=[
+                            float(v) for v in edges.text().strip("[] ").replace(",", " ").split()
+                        ]
+                    )
+                else:
+                    updated_binning = MetadataBinning(
+                        lower=float(lower.text()),
+                        upper=float(upper.text()),
+                        **{
+                            ("step" if selected == "step" else "num_bins"): float(resolution.text())
+                        },
+                    )
+                updated = [dict(item) for item in recipes]
+                updated[index]["binning"] = updated_binning
+                set_metadata_dimensions(group, updated)
+            except (ValueError, TypeError) as exc:
+                QtWidgets.QMessageBox.warning(mode, "Metadata rebinning", str(exc))
+                return
+            explorer._after_group_composite_changed(group)
+
+        def change_mode():
+            enable_fields()
+            try:
+                if mode.currentData() != "discrete":
+                    coordinates = []
+                    for entry in _composite_candidates(group):
+                        _ensure_dataset_data_loaded(entry)
+                        coordinates.append(metadata_dimension_coordinates(entry, spec))
+                    values = (
+                        np.asarray(spec.centers)
+                        if spec.centers is not None
+                        else np.unique(np.concatenate(coordinates))
+                    )
+                    if not lower.text():
+                        lower.setText(str(values[0]))
+                    if not upper.text():
+                        upper.setText(str(values[-1]))
+                    if mode.currentData() == "step":
+                        resolution.setText(
+                            str(float(np.min(np.diff(values))) if len(values) > 1 else 1.0)
+                        )
+                    elif mode.currentData() == "bins":
+                        if lower.text() == upper.text():
+                            lower.setText(str(values[0] - 0.5))
+                            upper.setText(str(values[0] + 0.5))
+                        resolution.setText(str(len(values)))
+                    elif not edges.text():
+                        from dataclasses import replace
+
+                        from .metadata_dimensions import discrete_metadata_axis
+
+                        boundaries = discrete_metadata_axis(
+                            replace(spec, binning=None), values
+                        ).values
+                        edges.setText(", ".join(str(v) for v in boundaries))
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(mode, "Metadata rebinning", str(exc))
+                return
+            apply()
+
+        enable_fields()
+        mode.currentIndexChanged.connect(change_mode)
+        for widget in (lower, upper, resolution, edges):
+            widget.editingFinished.connect(apply)
+
+    for index, recipe in enumerate(recipes):
+        add_row(index, recipe)
+    return len(recipes)
 
 
 def metadata_dimensions_panel(explorer, group):
@@ -160,6 +339,7 @@ def metadata_dimensions_panel(explorer, group):
                 str(sampling.currentData()),
                 [float(value) for value in text.replace(",", " ").split()] if text else None,
                 tolerance.value(),
+                binning=current.get("binning"),
             )
 
         def validate():
@@ -168,17 +348,12 @@ def metadata_dimensions_panel(explorer, group):
             for dataset in candidates:
                 _ensure_dataset_data_loaded(dataset)
                 resolved.append(metadata_dimension_coordinates(dataset, spec))
-            targets = (
-                np.asarray(spec.centers)
-                if spec.centers is not None
-                else np.unique(np.concatenate(resolved))
-            )
+            targets, assignments = metadata_dimension_grid(spec, resolved)
             lines = []
-            for dataset, values in zip(candidates, resolved, strict=True):
-                assigned = metadata_dimension_indices(
-                    values, targets, spec.tolerance if spec.centers is not None else 0
-                )
-                labels = ", ".join(f"{value:g}" for value in np.unique(targets[assigned]))
+            for dataset, values, assigned in zip(candidates, resolved, assignments, strict=True):
+                labels = ", ".join(f"{value:g}" for value in np.unique(targets[assigned[assigned >= 0]]))
+                if np.any(assigned < 0):
+                    labels += " (out-of-range values excluded)"
                 lines.append(f"{dataset.name}: {np.min(values):g} … {np.max(values):g} → {labels}")
             preview.setPlainText("\n".join(lines))
             return spec

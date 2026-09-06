@@ -1,8 +1,10 @@
 # Data viewer and saved plots
 
 Composites can include [discrete metadata dimensions](data_import.md#metadata-dimensions),
-such as temperature in kelvin. Select these as display or waterfall axes, or
-select individual coordinates among the hidden axes. Uneven coordinates retain
+such as temperature in kelvin. Select these as X/Y, waterfall, or tiled-slice
+axes. Hidden-axis controls select one coordinate or integrate a range. In tiled
+slices, **Auto** creates one panel per metadata coordinate, labeled with its
+actual value; manual step sizes can combine neighboring coordinates. Uneven coordinates retain
 their exact values; no data are interpolated between conditions. Stored plot
 recipes preserve their metadata-dimension settings along with the spatial grid.
 
@@ -10,7 +12,9 @@ The data viewer displays point lists and gridded datasets without changing
 their stored values. It supports channel selection, masks, cuts, maps,
 waterfalls, model comparisons, and volumetric rendering.
 
-Every **View in data viewer** action opens a new window. Multiple viewers may
+Every **View in data viewer** action opens a new window. When opened from a
+dataset collection, the initial selection is that collection's
+composite or its first effective descendant dataset. Multiple viewers may
 display the same workspace or different workspaces at once; dataset selection,
 axes, ranges, visualization mode, styling, and other controls are independent
 in each window. Project changes refresh every open viewer without merging their

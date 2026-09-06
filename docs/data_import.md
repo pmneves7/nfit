@@ -287,9 +287,9 @@ containing axes, values, uncertainties, masks, metadata, and dataset conditions.
 ## Metadata dimensions
 
 Select the dataset collection containing a series (for example, **MACS SPEC**)
-and use **Metadata dimensions → Add dimension…**. This section is separate from
-the composite's momentum and energy rebin controls. Enable **Combine enabled
-datasets into one effective dataset** to view the result.
+and use **Metadata dimensions → Add dimension…** to select the channel.
+Added axes appear after DeltaE in the composite rebinner. Enable **Combine
+enabled datasets into one effective dataset** to view the result.
 
 Choose a numeric metadata channel, an axis name, and its units. The channel
 selector lists paths from the first enabled source; the selected channel must
@@ -321,8 +321,22 @@ Multiple metadata dimensions produce a grid of combinations; combinations with
 no measurements remain masked. Temperature coordinates in K are also supplied
 to fitting and paired spectral-channel conversion.
 
-Choose the new dimension as a plot axis, hidden-axis selection, or waterfall
-axis in the data viewer. The stored coordinates remain exact even when their
+Each added rebin row defaults to **Discrete**, retaining the assigned coordinates.
+Select **Step**, **Bins**, or **Edges** to combine them into broader bins. Step and
+bin-count limits are first/last bin centers, as for momentum and energy; a
+one-bin count uses the limits as integration edges. Explicit edges can be
+nonuniform. Interior edges belong to the bin on their right, and the final edge
+is inclusive. Coordinates outside the edges are excluded; empty bins stay masked.
+Nominal-coordinate assignment, when configured, happens before this binning.
+Measurements enter one metadata bin in full, even with fractional spatial
+binning enabled. Weights and uncertainties are combined from the original
+samples, rather than by averaging existing condition slices. Return to
+**Discrete** to recover the original coordinates. **Copy settings** and
+**Paste settings** include metadata recipes when used between composite panels.
+
+Choose the new dimension as a plot axis, hidden-axis selection or integration
+range, waterfall axis, or tiled-slice axis in the data viewer. Automatic tiling
+shows one panel per metadata coordinate. The stored coordinates remain exact even when their
 spacing is uneven. Boundaries around these coordinates are display cells;
 they do not imply interpolation between conditions. Materialized outputs retain
 the axes, but further rebinning must be performed on the original collection.

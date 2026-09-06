@@ -132,6 +132,12 @@ or integration intervals. The originating `MetadataDimension` recipe is kept
 with each axis and with the collection. Composite caches include both the
 dataset content token and resolved metadata-coordinate signatures.
 
+An optional `MetadataBinning` recipe groups assigned coordinates into histogram
+bins using whole-bin assignment. These axes retain `metadata_dimension` and
+`interpolation="none"` metadata, but use physical bin edges and their midpoints
+instead of `discrete_centers`. Source points are partitioned before spatial
+reduction so coarse metadata bins preserve source weights and uncertainties.
+
 Per-point metadata coordinates must already align with the measured payload.
 The MACS adapter records its scan/detector shape so aligned scan columns can be
 broadcast over detector channels. Future event adapters must explicitly align

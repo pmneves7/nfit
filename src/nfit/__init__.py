@@ -358,7 +358,12 @@ from .mdhisto import (
     MDHistoData,
     load_mantid_mdhisto_nxs,
 )
-from .metadata_dimensions import MetadataDimension, metadata_channel_values, metadata_channels
+from .metadata_dimensions import (
+    MetadataBinning,
+    MetadataDimension,
+    metadata_channel_values,
+    metadata_channels,
+)
 from .model_geometry import (
     GeometryFrame,
     GeometryOrbital,
@@ -620,6 +625,7 @@ def __getattr__(name: str):
 
 __all__ = [
     "MetadataDimension",
+    "MetadataBinning",
     "metadata_channel_values",
     "metadata_channels",
     "metadata_dimension_preview",

@@ -157,6 +157,15 @@ Temperature and applied field are properties of each dataset. A
 spin-fluctuation model needs a positive temperature when the
 fluctuation--dissipation relation is used to predict neutron intensity.
 
+A composite with a [temperature metadata dimension](data_import.md#metadata-dimensions)
+in kelvin (K) supplies its temperature coordinate for each fit point, alongside
+the momentum and energy coordinates. Temperature-dependent models and spectral
+conversions use these pointwise temperatures; fit/residual overlays retain the
+full dimensional shape. If temperature is rebinned, models evaluate at the new
+bin centers. The composite remains one effective dataset, so per-dataset
+parameter sharing applies to the composite as a whole. Keep separate datasets
+when each temperature needs independently fitted parameters.
+
 For a temperature series, keep crystal structure and other genuinely common
 parameters global. Use per-dataset or grouped sharing for quantities such as a
 static susceptibility or linewidth when their temperature dependence is to be
