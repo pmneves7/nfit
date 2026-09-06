@@ -125,6 +125,18 @@ If a script replaces source-backed data, save the result as a portable `.npz`
 dataset and re-import it before saving the project. This makes the replacement
 reproducible instead of silently reloading the old source on the next session.
 
+Discrete metadata axes store exact coordinates in
+`MDHistoAxis.metadata["discrete_centers"]`; `axis.centers` returns those values.
+Their `axis.values` boundaries are display cells, not physical interpolation
+or integration intervals. The originating `MetadataDimension` recipe is kept
+with each axis and with the collection. Composite caches include both the
+dataset content token and resolved metadata-coordinate signatures.
+
+Per-point metadata coordinates must already align with the measured payload.
+The MACS adapter records its scan/detector shape so aligned scan columns can be
+broadcast over detector channels. Future event adapters must explicitly align
+sample logs to events before using this coordinate-assignment API.
+
 ## Mask contract
 
 A dataset mask is a `MaskSpec` with:

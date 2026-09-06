@@ -284,6 +284,56 @@ given in [Physics conventions](physics_conventions.md).
 `Save dataset` and `Save rebin to disk` write portable `.npz` archives
 containing axes, values, uncertainties, masks, metadata, and dataset conditions.
 
+## Metadata dimensions
+
+Select the dataset collection containing a series (for example, **MACS SPEC**)
+and use **Metadata dimensions → Add dimension…**. This section is separate from
+the composite's momentum and energy rebin controls. Enable **Combine enabled
+datasets into one effective dataset** to view the result.
+
+Choose a numeric metadata channel, an axis name, and its units. The channel
+selector lists paths from the first enabled source; the selected channel must
+exist in every enabled source. Paths such as `entry/data/temp/average_value`
+or `entry>data>temp>value` read the original NeXus file. `parameters/temperature`
+reads the dataset's configured temperature in kelvin (K), while `temperature`
+reads the loaded point temperatures.
+
+**One value per dataset: mean** or **median** assigns the selected channel's
+summary to every point in that dataset. **One value per measured point** accepts
+scalar values, arrays aligned to the loaded points or histogram cells, and
+MACS scan columns under `entry/data` repeated over their detector channels.
+Timestamped `value` logs are not scan columns. Asynchronous logs require an
+explicit time-alignment adapter; nfit does not interpolate or guess alignment.
+
+Enter **Discrete coordinates**, such as `5, 10, 20, 30, 40, 50`, to use nominal
+temperatures. A reading of 10.24 K maps wholly to 10 K when the **Assignment
+tolerance** is at least 0.24 K. This tolerance is a maximum distance in the
+coordinate's units, not a bin width. Outliers, equal-distance ties, missing
+channels, nonfinite values, and incompatible units produce errors. Units label
+the values and do not convert them. Leave the coordinates blank to retain the
+exact sorted unique values. **Preview assignments** shows every source's
+readings and target coordinates before applying.
+
+Sources assigned to the same coordinate share the existing composite's weights,
+masks, scales, symmetry, and spatial grid. Different metadata coordinates are
+reduced independently, even when fractional momentum/energy binning is enabled.
+Multiple metadata dimensions produce a grid of combinations; combinations with
+no measurements remain masked. Temperature coordinates in K are also supplied
+to fitting and paired spectral-channel conversion.
+
+Choose the new dimension as a plot axis, hidden-axis selection, or waterfall
+axis in the data viewer. The stored coordinates remain exact even when their
+spacing is uneven. Boundaries around these coordinates are display cells;
+they do not imply interpolation between conditions. Materialized outputs retain
+the axes, but further rebinning must be performed on the original collection.
+Configure these dimensions on the collection holding neutron point datasets or
+histograms; stacking already stacked or hierarchical composites and raw event
+time-log alignment are not currently supported.
+
+Save the project and use **Copy composite script** to export an editable recipe.
+The [workflow API](workflow_scripts.md#composite-workflows) uses the same
+implementation without Qt widgets.
+
 ## Rebinning and composites
 
 Rebinning affects both viewing and fitting. It supports:

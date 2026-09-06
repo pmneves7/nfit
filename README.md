@@ -25,6 +25,9 @@ The package provides:
   non-destructive analyses, including live hierarchical composites and editable
   source-linked histogram sums, differences, or comparison clones with
   independent raw-data binning, plus lazy navigation for run-heavy projects;
+- discrete metadata dimensions for temperature or other sample conditions,
+  with selectable channels, nominal coordinates, and independent slices without
+  interpolation;
 - local, MMP, generalized-paramagnon/damped-mode, conserved-ferromagnetic,
   relaxational or inertial Heisenberg-RPA, and coupled-susceptibility models
   for inelastic, quasistatic elastic, and optional bulk-response comparisons,

@@ -32,6 +32,38 @@ paths are resolved from that location. File size and modification time are
 recorded as a lightweight fingerprint; a changed source produces a warning
 rather than silently claiming an exact reproduction.
 
+## Composite workflows
+
+The collection's **Metadata dimensions → Copy composite script** action calls
+`composite_workflow_script(project, group_name, node_id=...)`. Save the project
+first so source membership, imports, masks, scales, and backgrounds are
+available to the script. Its `METADATA_DIMENSIONS` and `REBIN_CONFIG`
+dictionaries capture the current coordinate and grid settings for editing.
+`run()` loads the saved project and returns the composite histogram without
+constructing Qt widgets.
+
+For an already loaded workspace and nested dataset collection:
+
+```python
+from nfit import MetadataDimension, composite_dataset_data, set_metadata_dimensions
+
+set_metadata_dimensions(collection, [MetadataDimension(
+    name="Temperature",
+    source="entry/data/temp/average_value",
+    units="K",
+    sampling="dataset_mean",
+    centers=[5, 10, 20, 30, 40, 50],
+    tolerance=0.5,
+)])
+data = composite_dataset_data(workspace, node=collection)
+```
+
+The tolerance is in kelvin here. `metadata_channels(dataset)` lists available
+numeric channels; `metadata_channel_values(dataset, source)` reads a channel
+and its recorded units. With no explicit centers, exact unique coordinates
+are retained. See [Metadata dimensions](data_import.md#metadata-dimensions)
+for pointwise alignment rules and supported sources.
+
 ## Analysis workflows
 
 Right-click a saved analysis and use the same copy or save actions. The script

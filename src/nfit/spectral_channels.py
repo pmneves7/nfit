@@ -221,7 +221,7 @@ def with_paired_spectral_channels(
     data: MDHistoData,
     config: dict[str, Any],
     *,
-    temperature_K: float | None,
+    temperature_K: float | np.ndarray | None,
 ) -> MDHistoData:
     """Return a view with cross-section and, when possible, ``chi''`` channels.
 
@@ -229,6 +229,8 @@ def with_paired_spectral_channels(
     the magnetic cross-section constant; arbitrary inputs remove or apply only
     the Q-, polarization-, kinematic-, and detailed-balance shapes, leaving the
     unknown global calibration in arbitrary units.
+    Temperatures may be scalar or broadcastable to the histogram, including a
+    discrete temperature coordinate in kelvin.
     """
 
     convention = normalized_spectral_channel_config(config)

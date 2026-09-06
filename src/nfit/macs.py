@@ -488,6 +488,7 @@ def import_macs_nexus(
         metadata = {
             "source_file": str(source),
             "importer": "macs_nexus",
+            "scan_point_shape": [count, 20],
             "instrument": "MACS",
             "facility": _decode(_dataset(entry, "facility", required=False)) or "NCNR",
             "detector_stream": stream.upper(),

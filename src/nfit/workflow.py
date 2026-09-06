@@ -225,6 +225,50 @@ class WorkflowPlan:
         return plan
 
 
+def composite_workflow_script(
+    project: NfitProject, group_name: str, *, node_id: str | None = None
+) -> str:
+    """Export a project-backed composite with editable grid and metadata axes."""
+    from .project_gui import _composite_scope, data_group_composite_config
+
+    path = getattr(project, "_project_path", None)
+    if path is None:
+        raise WorkflowValidationError("Save the project before exporting its composite workflow.")
+    group = next(item for item in project.data_groups if item.name == group_name)
+    node = (
+        next(item for item in group.iter_subgroups() if item.id == node_id)
+        if node_id is not None
+        else group
+    )
+    config = copy.deepcopy(data_group_composite_config(_composite_scope(group, node)))
+    dimensions = copy.deepcopy(node.metadata.get("metadata_dimensions", []))
+    return f'''"""Rebuild a discrete metadata composite from a saved nfit project.
+
+Save source membership, import options, masks, scales, and backgrounds in the
+project before running. Edit the coordinate recipes and spatial grid below.
+"""
+from pathlib import Path
+from nfit import load_project, composite_dataset_data, set_metadata_dimensions
+
+PROJECT_PATH = Path({str(path)!r})
+GROUP_NAME = {group_name!r}
+NODE_ID = {node_id!r}
+METADATA_DIMENSIONS = {pformat(dimensions, sort_dicts=False)}
+REBIN_CONFIG = {pformat(config, sort_dicts=False)}
+
+def run():
+    project = load_project(PROJECT_PATH)
+    group = next(item for item in project.data_groups if item.name == GROUP_NAME)
+    node = next(item for item in group.iter_subgroups() if item.id == NODE_ID) if NODE_ID else None
+    set_metadata_dimensions(node if node is not None else group, METADATA_DIMENSIONS)
+    return composite_dataset_data(group, node=node, config_override=REBIN_CONFIG)
+
+if __name__ == "__main__":
+    data = run()
+    print(data.shape)
+'''
+
+
 def dataset_workflow_plan(project: NfitProject, dataset_id: str) -> WorkflowPlan:
     """Build the dependency graph required to reconstruct one ordinary dataset.
 

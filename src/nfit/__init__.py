@@ -358,6 +358,7 @@ from .mdhisto import (
     MDHistoData,
     load_mantid_mdhisto_nxs,
 )
+from .metadata_dimensions import MetadataDimension, metadata_channel_values, metadata_channels
 from .model_geometry import (
     GeometryFrame,
     GeometryOrbital,
@@ -471,6 +472,7 @@ from .project_gui import (
     available_data_types,
     available_mask_types,
     certify_group_lindhard_sampling,
+    composite_dataset_data,
     copy_dataset_group_to_parent,
     copy_dataset_to_group,
     copy_mask_to_dataset,
@@ -506,6 +508,7 @@ from .project_gui import (
     load_project,
     mask_parameter_tooltip,
     materialize_composite_dataset,
+    metadata_dimension_preview,
     model_crystal_config,
     perform_group_fit,
     project_state_issues,
@@ -521,6 +524,7 @@ from .project_gui import (
     save_project,
     set_dataset_data_type,
     set_dataset_source,
+    set_metadata_dimensions,
     set_model_crystal,
     slice_viewer_datasets,
     snapshot_data_group_state,
@@ -592,6 +596,7 @@ from .workflow import (
     WorkflowValidationError,
     analysis_workflow_plan,
     analysis_workflow_script,
+    composite_workflow_script,
     dataset_workflow_plan,
     dataset_workflow_script,
     fit_workflow_plan,
@@ -614,6 +619,13 @@ def __getattr__(name: str):
     raise AttributeError(f"module 'nfit' has no attribute {name!r}")
 
 __all__ = [
+    "MetadataDimension",
+    "metadata_channel_values",
+    "metadata_channels",
+    "metadata_dimension_preview",
+    "set_metadata_dimensions",
+    "composite_dataset_data",
+    "composite_workflow_script",
     "AnalysisContext",
     "AnalysisEntry",
     "AnalysisExecution",

@@ -133,6 +133,11 @@ electronic-response implementation.
 
 ## Reproducible scripting
 
+- Extend discrete metadata dimensions to raw event streams with explicit
+  timestamp alignment, time-dependent normalization/coverage, and hierarchical
+  stacking. Loaded points and histograms already support aligned pointwise
+  coordinates; asynchronous logs are rejected until an adapter aligns them.
+
 - Extend the workflow graph to grouped raw direct-geometry and MDEvent
   reductions, portable standalone expansion of live project-composite analysis
   dependencies, plots, and complete active project state. Composite-backed

@@ -3193,6 +3193,8 @@ def _composite_cache_signature(
     child_scopes = _hierarchical_composite_scopes(group)
     payload = [
         json.dumps(config, sort_keys=True, default=str),
+        group.metadata.get("metadata_dimensions", []),
+        metadata_dimension_preview(group) if group.metadata.get("metadata_dimensions") else [],
         [
             [child.name, _composite_cache_signature(child, trail)]
             for child in child_scopes
@@ -3242,19 +3244,206 @@ def _composite_cache_signature(
 def composite_dataset_data(
     group: DataGroup | _CompositeScope,
     *,
+    node: DatasetGroup | None = None,
+    metadata_dimensions_override: Sequence[dict[str, Any]] | None = None,
     progress_callback: Any | None = None,
     config_override: Mapping[str, Any] | None = None,
     include_source_masks: bool = True,
 ) -> MDHistoData | PointListData | PointData4D:
-    """Build a composite using its saved rebin configuration and worker ceiling."""
+    """Build a composite using its saved rebin configuration and worker ceiling.
+
+    ``node`` selects a nested collection. Saved plots can pass a coordinate
+    recipe snapshot through ``metadata_dimensions_override``; an empty list
+    explicitly requests no metadata dimensions.
+    """
     from ._parallel import thread_budget
 
+    if node is not None:
+        group = _composite_scope(group, node)
     config = config_override if config_override is not None else data_group_composite_config(group)
     with thread_budget(config.get("workers")):
         return _composite_dataset_data(
             group, progress_callback=progress_callback, config_override=config_override,
             include_source_masks=include_source_masks,
+            metadata_dimensions_override=metadata_dimensions_override,
         )
+
+
+def metadata_dimension_preview(group, dimensions=None) -> list[dict[str, Any]]:
+    """Resolve metadata coordinates for each enabled source without rebinning."""
+    import hashlib
+
+    from .metadata_dimensions import MetadataDimension, metadata_dimension_coordinates
+
+    specs = [
+        MetadataDimension(**item)
+        for item in (
+            group.metadata.get("metadata_dimensions", []) if dimensions is None else dimensions
+        )
+    ]
+    rows = []
+    for dataset in _composite_candidates(group):
+        _ensure_dataset_data_loaded(dataset)
+        for spec in specs:
+            values = metadata_dimension_coordinates(dataset, spec)
+
+            rows.append(
+                {
+                    "dataset": dataset.name,
+                    "dimension": spec.name,
+                    "minimum": float(np.min(values)),
+                    "maximum": float(np.max(values)),
+                    "count": int(values.size),
+                    "signature": hashlib.sha256(values.tobytes()).hexdigest(),
+                }
+            )
+    return rows
+
+
+def set_metadata_dimensions(group, dimensions) -> None:
+    """Save validated discrete-coordinate recipes on a dataset collection.
+
+    Pass MetadataDimension objects or their dictionary representations; an
+    empty list removes the dimensions. Recompute with composite_dataset_data.
+    """
+    from .metadata_dimensions import MetadataDimension
+
+    specs = [
+        item if isinstance(item, MetadataDimension) else MetadataDimension(**item)
+        for item in dimensions
+    ]
+    if len({spec.name.casefold() for spec in specs}) != len(specs):
+        raise ValueError("metadata dimension names must be unique")
+    config = group.metadata.setdefault(GROUP_COMPOSITE_KEY, {})
+    if {spec.name.casefold() for spec in specs} & {
+        str(axis.get("name", "")).casefold() for axis in config.get("axes", [])
+    }:
+        raise ValueError("metadata dimension names must differ from existing axes")
+    if specs:
+        kinds = {_dataset_composite_kind(item) for item in _composite_candidates(group)}
+        if not kinds or not kinds <= {"point_data_4d", "mdhisto"}:
+            raise ValueError(
+                "metadata dimensions currently require loaded neutron points or histograms; raw event logs need an alignment adapter"
+            )
+    group.metadata["metadata_dimensions"] = [spec.to_dict() for spec in specs]
+    config["stale"] = True
+
+
+def _metadata_composite_data(group, config, dimensions, *, include_source_masks, progress_callback):
+    from .metadata_dimensions import (
+        MetadataDimension,
+        metadata_dimension_coordinates,
+        metadata_dimension_indices,
+        stack_metadata_histograms,
+    )
+
+    specs = [MetadataDimension(**item) for item in dimensions]
+    if _hierarchical_composite_scopes(group):
+        raise ValueError(
+            "configure metadata dimensions on the collection containing the source datasets"
+        )
+    entries, coordinates = [], []
+    for dataset in _composite_candidates(group):
+        data = _source_data_for_group_composite(
+            group, dataset, include_source_masks=include_source_masks
+        )
+        if not isinstance(data, (PointData4D, MDHistoData)):
+            raise ValueError(
+                "metadata dimensions require neutron points or histograms; event logs need an alignment adapter"
+            )
+        if isinstance(data, MDHistoData) and any(
+            "discrete_centers" in axis.metadata for axis in data.axes
+        ):
+            raise ValueError("add all metadata dimensions on the original source collection")
+        coordinates.append([metadata_dimension_coordinates(dataset, spec) for spec in specs])
+        entries.append(dataset.copy(data=data))
+    centers = [
+        np.asarray(spec.centers)
+        if spec.centers is not None
+        else np.unique(np.concatenate([row[i] for row in coordinates]))
+        for i, spec in enumerate(specs)
+    ]
+    assignments = [
+        [
+            metadata_dimension_indices(
+                values, center, spec.tolerance if spec.centers is not None else 0
+            )
+            for values, center, spec in zip(row, centers, specs, strict=True)
+        ]
+        for row in coordinates
+    ]
+    reducer = (
+        _composite_point_data
+        if isinstance(entries[0].data, PointData4D)
+        else _composite_mdhisto_data
+    )
+    template = reducer(group, config, datasets=entries, progress_callback=progress_callback)
+    from .mdevent import _available_memory_bytes
+
+    output_bins = math.prod(template.shape) * math.prod(len(center) for center in centers)
+    bytes_per_bin = 33 + sum(
+        8 if channel.errors is None else 16 for channel in template.auxiliary_channels.values()
+    )
+    available = _available_memory_bytes()
+    if available is not None and output_bins * bytes_per_bin * 3 > available * 0.7:
+        raise MemoryError(
+            "The metadata grid exceeds available memory. Use fewer explicit metadata coordinates or a coarser spatial grid."
+        )
+    fixed = copy.deepcopy(config)
+    for axis_config, axis in zip(fixed["axes"], template.axes, strict=True):
+        axis_config.update(
+            bin_edges=axis.values.tolist(), auto_lower=False, auto_upper=False, auto_step_size=False
+        )
+    partitions = {}
+    for entry, indices in zip(entries, assignments, strict=True):
+        size = entry.data.size if isinstance(entry.data, PointData4D) else entry.data.signal.size
+        keys = np.column_stack([np.broadcast_to(index, (size,)) for index in indices])
+        unique, inverse = np.unique(keys, axis=0, return_inverse=True)
+        order = np.argsort(inverse, kind="stable")
+        positions = np.split(order, np.cumsum(np.bincount(inverse))[:-1])
+        for key, selected in zip(unique, positions, strict=True):
+            partitions.setdefault(tuple(int(i) for i in key), []).append((entry, selected))
+    slices = {}
+    for key, sources in partitions.items():
+        selected_entries = []
+        for entry, selected in sources:
+            if isinstance(entry.data, PointData4D):
+                changes = {
+                    name: getattr(entry.data, name)[selected]
+                    for name in ("H", "K", "L", "E", "intensity", "sigma", "mask")
+                }
+                if isinstance(entry.data.temperature, np.ndarray):
+                    changes["temperature"] = entry.data.temperature[selected]
+                if (
+                    isinstance(entry.data.magnetic_field, np.ndarray)
+                    and entry.data.magnetic_field.ndim == 2
+                ):
+                    changes["magnetic_field"] = entry.data.magnetic_field[selected]
+                data = entry.data.with_updates(**changes)
+                usable = np.any(data.valid_mask(require_positive_sigma=False))
+            else:
+                reject = np.ones(entry.data.signal.size, dtype=bool)
+                reject[selected] = False
+                data = entry.data.with_updates(
+                    mask=entry.data.mask | reject.reshape(entry.data.shape)
+                )
+                usable = np.any(
+                    ~data.mask
+                    & np.isfinite(data.signal)
+                    & np.isfinite(data.errors)
+                    & mdhisto_measured_bins(data)
+                )
+            if usable:
+                selected_entries.append(entry.copy(data=data))
+        if not selected_entries:
+            continue
+        data = reducer(group, fixed, datasets=selected_entries, progress_callback=progress_callback)
+        data = _apply_mdhisto_coverage_threshold(data, config)
+        slices[key] = _apply_composite_backgrounds(group, data, progress_callback=progress_callback)
+    # Background subtraction can add channels. Use its result as the schema.
+    if slices:
+        template = next(iter(slices.values()))
+    return stack_metadata_histograms(template, slices, specs, centers)
 
 
 def _composite_dataset_data(
@@ -3263,6 +3452,7 @@ def _composite_dataset_data(
     progress_callback: Any | None = None,
     config_override: Mapping[str, Any] | None = None,
     include_source_masks: bool = True,
+    metadata_dimensions_override: Sequence[dict[str, Any]] | None = None,
 ) -> MDHistoData | PointListData | PointData4D:
     """Build a composite from underlying sources on the requested output grid.
 
@@ -3279,6 +3469,16 @@ def _composite_dataset_data(
         if config_override is not None
         else data_group_composite_config(group)
     )
+    dimensions = (
+        group.metadata.get("metadata_dimensions", [])
+        if metadata_dimensions_override is None
+        else metadata_dimensions_override
+    )
+    if dimensions:
+        return _metadata_composite_data(
+            group, config, dimensions, include_source_masks=include_source_masks,
+            progress_callback=progress_callback,
+        )
     child_scopes = _hierarchical_composite_scopes(group)
     child_entries: list[DatasetEntry] | None = None
     if child_scopes:
@@ -3952,6 +4152,8 @@ def _composite_mdhisto_data(
         )
         if not isinstance(data, MDHistoData):
             continue
+        if any("discrete_centers" in axis.metadata for axis in data.axes):
+            raise ValueError("Rebin the original collection to preserve its discrete metadata dimensions.")
         if first_data is None:
             first_data = data
         source_grids = np.meshgrid(*(axis.centers for axis in data.axes), indexing="ij")
@@ -4124,6 +4326,7 @@ def _composite_point_data(
     group: DataGroup,
     config: dict[str, Any],
     *,
+    datasets: list[DatasetEntry] | None = None,
     progress_callback: Any | None = None,
     include_source_masks: bool = True,
 ) -> MDHistoData:
@@ -4132,8 +4335,8 @@ def _composite_point_data(
     error_parts: list[np.ndarray] = []
     weight_parts: list[np.ndarray] = []
     first_data: PointData4D | None = None
-    for dataset in _composite_candidates(group):
-        data = _source_data_for_group_composite(
+    for dataset in datasets if datasets is not None else _composite_candidates(group):
+        data = dataset.data if datasets is not None else _source_data_for_group_composite(
             group,
             dataset,
             include_source_masks=include_source_masks,
@@ -4424,10 +4627,16 @@ def _apply_spectral_channel_view(
         and isinstance(config, dict)
     ):
         temperature = dataset.parameters.get("temperature", data.metadata.get("temperature"))
+        from .metadata_dimensions import metadata_temperature_grid
+
+        temperatures = metadata_temperature_grid(data)
         return with_paired_spectral_channels(
             data,
             config,
-            temperature_K=None if temperature in (None, "") else float(temperature),
+            temperature_K=(
+                temperatures if temperatures is not None
+                else None if temperature in (None, "") else float(temperature)
+            ),
         )
     return _apply_kinematic_normalization_to_view(dataset, data)
 
@@ -4950,6 +5159,9 @@ def _point_data_from_mdhisto_view(data: MDHistoData) -> PointData4D:
     if "signal_unit" in metadata:
         metadata["unit"] = metadata["signal_unit"]
     temperature = data.metadata.get("temperature")
+    from .metadata_dimensions import metadata_temperature_grid
+
+    temperatures = metadata_temperature_grid(data)
     powder_q = coords.get("q_modulus")
     powder_only = powder_q is not None and not any(
         axis.role in {"h", "k", "l"} for axis in data.axes
@@ -4972,7 +5184,10 @@ def _point_data_from_mdhisto_view(data: MDHistoData) -> PointData4D:
         intensity=np.asarray(data.signal, dtype=float).ravel(),
         sigma=np.asarray(data.errors, dtype=float).ravel(),
         mask=keep.ravel(),
-        temperature=float(temperature) if temperature is not None else None,
+        temperature=(
+            np.broadcast_to(temperatures, data.shape).ravel() if temperatures is not None
+            else float(temperature) if temperature is not None else None
+        ),
         metadata=metadata,
     )
 
@@ -8673,6 +8888,8 @@ def _rebin_mdhisto_data(
     *,
     progress_callback: Any | None = None,
 ) -> MDHistoData:
+    if any("discrete_centers" in axis.metadata for axis in data.axes):
+        raise ValueError("Rebin the original collection to preserve its discrete metadata dimensions.")
     axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
     if len(axes_config) != len(data.axes):
         axes_config = _default_rebin_axes(data)
@@ -9611,6 +9828,8 @@ def _mdhisto_coordinate_grids(data: MDHistoData) -> dict[str, np.ndarray]:
     hkle = np.zeros((*shape, 4), dtype=float)
     hkle_contributions = 0
     for index, (axis, values) in enumerate(zip(data.axes, axis_values, strict=True)):
+        if "metadata_dimension" in axis.metadata:
+            continue
         role = axis.role
         if role == "q_modulus":
             coords["q_modulus"] = values
@@ -10487,7 +10706,10 @@ def _saved_plot_source_views(
         config = composite_recipe.get("config")
         if not isinstance(config, dict):
             raise ValueError("saved plot composite configuration is missing")
-        view = composite_dataset_data(scope, config_override=copy.deepcopy(config))
+        view = composite_dataset_data(
+            scope, config_override=copy.deepcopy(config),
+            metadata_dimensions_override=composite_recipe.get("metadata_dimensions", []),
+        )
         if not isinstance(view, MDHistoData):
             raise TypeError("saved plots currently require MDHisto data")
         name = str(composite_recipe.get("name") or _composite_dataset_name(scope))
@@ -14108,6 +14330,7 @@ class NfitProjectExplorer:
                 settings[PLOT_SOURCE_COMPOSITE_KEY] = {
                     "dataset_group_id": node.id if node is not None else None,
                     "name": source_names[0],
+                    "metadata_dimensions": copy.deepcopy(composite_scope.metadata.get("metadata_dimensions", [])),
                     "config": copy.deepcopy(
                         data_group_composite_config(composite_scope)
                     ),
@@ -17655,6 +17878,9 @@ class NfitProjectExplorer:
         if any(dataset.data_type.startswith("single_crystal") for dataset in node.iter_datasets()):
             self.details_layout.addWidget(self._ub_setup_group_box(root, node))
         scope = _composite_scope(root, node)
+        from .metadata_dimensions_gui import metadata_dimensions_panel
+
+        self.details_layout.addWidget(metadata_dimensions_panel(self, scope))
         self.details_layout.addWidget(self._group_composite_group_box(scope))
         self.details_layout.addWidget(self._group_dataset_weights_group_box(scope))
         self.details_layout.addStretch(1)

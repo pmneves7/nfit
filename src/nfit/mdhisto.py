@@ -102,6 +102,17 @@ class MDHistoAxis:
     def centers(self) -> FloatArray:
         """Return bin centers when ``values`` are bin boundaries."""
 
+        if "discrete_centers" in self.metadata:
+            centers = np.asarray(self.metadata["discrete_centers"], dtype=float)
+            if (
+                centers.shape != (self.values.size - 1,)
+                or not np.all(np.isfinite(centers))
+                or np.any(np.diff(centers) <= 0)
+            ):
+                raise ValueError(
+                    "discrete axis coordinates must be finite, increasing, and match the bins"
+                )
+            return centers.copy()
         if self.values.size < 2:
             return self.values.copy()
         return 0.5 * (self.values[:-1] + self.values[1:])
@@ -110,6 +121,8 @@ class MDHistoAxis:
     def role(self) -> AxisRole:
         """Reduced-data role inferred from axis name, units, and kind."""
 
+        if "metadata_dimension" in self.metadata:
+            return "unknown"
         return infer_axis_role(self.name, units=self.units, kind=self.kind)
 
     def immutable_copy(self) -> MDHistoAxis:

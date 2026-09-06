@@ -1,5 +1,11 @@
 # Data viewer and saved plots
 
+Composites can include [discrete metadata dimensions](data_import.md#metadata-dimensions),
+such as temperature in kelvin. Select these as display or waterfall axes, or
+select individual coordinates among the hidden axes. Uneven coordinates retain
+their exact values; no data are interpolated between conditions. Stored plot
+recipes preserve their metadata-dimension settings along with the spatial grid.
+
 The data viewer displays point lists and gridded datasets without changing
 their stored values. It supports channel selection, masks, cuts, maps,
 waterfalls, model comparisons, and volumetric rendering.

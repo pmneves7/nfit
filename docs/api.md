@@ -21,6 +21,15 @@ When the container belongs to a `DatasetEntry`, finish an edit with
 `dataset.replace_data(...)` so dependent caches and fingerprints are
 invalidated.
 
+`MetadataDimension` defines a discrete axis from a selected numeric metadata
+channel, with optional nominal coordinates and an assignment tolerance in the
+axis units. Use `set_metadata_dimensions(collection, dimensions)` and
+`composite_dataset_data(workspace, node=collection)` to build independent
+condition slices. `metadata_channels(dataset)` lists available paths and units.
+See [Metadata dimensions](data_import.md#metadata-dimensions) and
+[composite scripts](workflow_scripts.md#composite-workflows) for alignment and
+reproduction details.
+
 MDEvent NeXus files are supported without Mantid through `nfit.mdevent`:
 
 - `inspect_mdevent_workspace(path)` reads run and orientation metadata without
