@@ -1336,6 +1336,15 @@ def test_qt_tiled_slices_exposes_third_axis_range_step_slider_and_script():
     viewer.show_tile_labels_check.setChecked(False)
     assert all(not axis.texts for axis in viewer._tile_axes)
     viewer.show_tile_labels_check.setChecked(True)
+    assert viewer.tile_label_decimals_spin.toolTip()
+    for widget in (viewer.tile_label_prefix_edit, viewer.tile_label_unit_edit, viewer.tile_label_si_prefix_combo):
+        assert widget.toolTip()
+    viewer.tile_label_decimals_spin.setValue(0)
+    viewer.tile_label_prefix_edit.setText("T = ")
+    viewer.tile_label_unit_edit.setText("K")
+    viewer.tile_label_si_prefix_combo.setCurrentText("m")
+    assert all(axis.texts[0].get_text().startswith("T = ") for axis in viewer._tile_axes)
+    assert all(axis.texts[0].get_text().endswith(" mK") for axis in viewer._tile_axes)
     viewer.tile_local_color_scales_check.setChecked(True)
     assert viewer._plot_layout_mode == ("tiled", 2, True)
     assert len(viewer._tile_colorbars) == len(viewer._tile_axes) == 2
@@ -1363,6 +1372,12 @@ def test_qt_tiled_slices_exposes_third_axis_range_step_slider_and_script():
     assert settings["view_mode"] == "tiled_slices"
     assert settings["tile_dim"] == "DeltaE"
     assert settings["show_tile_labels"] is True
+    assert settings["tile_label_decimals"] == 0
+    assert settings["tile_label_prefix"] == "T = "
+    assert settings["tile_label_unit"] == "K"
+    assert settings["tile_label_si_prefix"] == "m"
+    assert "tile_label_decimals=0" in script
+    assert "tile_label_prefix='T = '" in script
     assert settings["tile_local_color_scales"] is True
     assert "plot_mdhisto_tiled_slices" in script
     assert "show_tile_labels=True" in script
@@ -1374,6 +1389,10 @@ def test_qt_tiled_slices_exposes_third_axis_range_step_slider_and_script():
     assert restored.view_mode_combo.currentText() == "Tiled slices"
     assert restored.tile_step == pytest.approx(viewer.tile_step)
     assert restored.show_tile_labels_check.isChecked()
+    assert restored.tile_label_decimals_spin.value() == 0
+    assert restored.tile_label_prefix_edit.text() == "T = "
+    assert restored.tile_label_unit_edit.text() == "K"
+    assert restored.tile_label_si_prefix_combo.currentText() == "m"
     assert restored.tile_local_color_scales_check.isChecked()
 
 

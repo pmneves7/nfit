@@ -131,6 +131,13 @@ def test_tiled_slice_recipe_restores_labels_and_local_colorbars():
         for colorbar in figure._nfit_tiled_colorbars
     ] == ["", r"$I(\mathbf{Q},E)$ (a.u.)", "", r"$I(\mathbf{Q},E)$ (a.u.)"]
 
+    entry.settings.update(
+        show_tile_labels=True, tile_label_decimals=0,
+        tile_label_prefix="T = ", tile_label_unit="K", tile_label_si_prefix="m",
+    )
+    labeled = render_plot(entry, data)
+    assert labeled._nfit_tiled_axes[0].texts[0].get_text() == "T = 500 mK"
+
 
 def test_fit_comparison_recipe_can_render_model_through_data_masks():
     data = _data().mutable_copy()

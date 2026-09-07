@@ -228,6 +228,16 @@ representative third-axis value, backed by a translucent square-cornered box so
 that it remains legible over the data. Clear **Show tiled-slice value labels**
 in **Figure** to hide these annotations.
 
+Tiled-slice labels can be customized in **Figure**: **Decimals** selects 0–10
+decimal places (default 1), **Label text** replaces the text before the value,
+and **Unit** replaces its unit string. Use `{axis} = ` and `{unit}` for the
+automatic axis name and unit, or empty text to omit either. **SI prefix**
+rescales only the displayed number and prepends the prefix to the unit: for
+an axis in kelvin, selecting `m` displays millikelvin. Scaling is relative to
+the original axis unit, including any prefix it already contains; changing
+the unit text alone does not convert values. These options do not affect data,
+binning, or integration and are retained in saved plots and exported scripts.
+
 All panels share their x and y limits. The default global color scale also
 shares one normalization and one colorbar at the far right. With **Autoscale**
 enabled, **Local scale per tiled plot** gives every panel independently computed

@@ -173,6 +173,22 @@ def test_prepare_tiled_slices_auto_step_targets_nine_panels():
     assert len(panels) == 9
 
 
+@pytest.mark.parametrize("decimals,prefix,unit,si,expected", [
+    (1, "T = ", "K", "", "T = 0.5 K"),
+    (0, "", "", "", "0"),
+    (1, "", "K", "m", "500.0 mK"),
+    (3, "T = ", "K", "k", "T = 0.001 kK"),
+])
+def test_tiled_slice_label_formatting(decimals, prefix, unit, si, expected):
+    figure = plot_mdhisto_tiled_slices(
+        _tiny_mdhisto_data(), x_dim=3, y_dim=2, tile_dim=1,
+        tile_range=(0.5, 2.5), tile_label_decimals=decimals,
+        tile_label_prefix=prefix, tile_label_unit=unit, tile_label_si_prefix=si,
+    )
+    assert figure._nfit_tiled_axes[0].texts[0].get_text() == expected
+    assert figure._nfit_tiled_slices[0].coordinate == pytest.approx(0.5)
+
+
 def test_plot_tiled_slices_uses_one_shared_norm_and_far_right_colorbar():
     data = _tiny_mdhisto_data()
 

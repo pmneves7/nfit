@@ -165,6 +165,10 @@ def render_plot(
             ylim=_pair(settings.get("ylim")),
             font_size=float(settings.get("font_size", 12.0)),
             axes_linewidth=float(settings.get("axis_linewidth", 1.5)),
+            tile_label_decimals=int(settings.get("tile_label_decimals", 1)),
+            tile_label_prefix=str(settings.get("tile_label_prefix", "{axis} = ")),
+            tile_label_unit=str(settings.get("tile_label_unit", "{unit}")),
+            tile_label_si_prefix=str(settings.get("tile_label_si_prefix", "")),
             show_tile_labels=bool(settings.get("show_tile_labels", True)),
             local_color_scales=bool(
                 settings.get("tile_local_color_scales", False)

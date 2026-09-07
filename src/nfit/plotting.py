@@ -277,6 +277,10 @@ def prepare_mdhisto_tiled_slices(
     integrate_checks: dict[int, bool] | None = None,
     tile_range: tuple[float, float] | None = None,
     tile_step: float | None = None,
+    tile_label_decimals: int = 1,
+    tile_label_prefix: str = "{axis} = ",
+    tile_label_unit: str = "{unit}",
+    tile_label_si_prefix: str = "",
     coverage_threshold: float = 0.9,
     masked: bool = True,
     smoothing_sigma_x: float = 0.0,
@@ -288,6 +292,10 @@ def prepare_mdhisto_tiled_slices(
     selected bins along ``tile_dim``; any further dimensions use the ordinary
     slice-viewer point or range selections. With ``tile_step=None``, metadata
     axes produce one panel per coordinate, including irregularly spaced values.
+    Label options affect presentation only: decimals are fixed decimal places,
+    the prefix replaces `{axis}` with the axis name, and the unit replaces
+    `{unit}` with its original unit. The SI prefix scales values relative to
+    that original unit and is prepended to the label unit.
     """
 
     if not isinstance(data, MDHistoData):
@@ -348,7 +356,14 @@ def prepare_mdhisto_tiled_slices(
     axis = data.axes[tile_index]
     axis_name = waterfall_axis_display_name(axis.name)
     displayed_unit = display_unit(axis.units) if axis.units else ""
-    unit_suffix = f" {displayed_unit}" if displayed_unit else ""
+    si_exponents = {"": 0, "p": -12, "n": -9, "µ": -6, "m": -3, "k": 3, "M": 6, "G": 9, "T": 12}
+    if tile_label_si_prefix not in si_exponents:
+        raise ValueError("unsupported tiled-label SI prefix")
+    if not 0 <= tile_label_decimals <= 10:
+        raise ValueError("tile_label_decimals must be between 0 and 10")
+    label_prefix = tile_label_prefix.replace("{axis}", axis_name)
+    label_unit = tile_label_unit.replace("{unit}", displayed_unit)
+    unit_suffix = f" {tile_label_si_prefix}{label_unit}" if label_unit else ""
     slices: list[TiledSlice] = []
     for index, (low, high) in enumerate(intervals):
         tolerance = max(abs(low), abs(high), width, 1.0) * 1.e-12
@@ -384,6 +399,10 @@ def prepare_mdhisto_tiled_slices(
         coordinate = float(coordinates[index])
         if not exact_coordinates and abs(coordinate) < width * 1.e-10:
             coordinate = 0.0
+        # Adding zero suppresses negative zero after rounding (also on Python 3.10).
+        label_value = round(
+            coordinate / 10.0 ** si_exponents[tile_label_si_prefix], tile_label_decimals
+        ) + 0.0
         slices.append(
             TiledSlice(
                 view=view,
@@ -391,7 +410,11 @@ def prepare_mdhisto_tiled_slices(
                 coordinate=coordinate,
                 lower=float(edges[indices[0]]),
                 upper=float(edges[indices[-1] + 1]),
-                label=f"{axis_name} = {coordinate:.5g}{unit_suffix}",
+                label=(
+                    f"{label_prefix}"
+                    f"{label_value:.{tile_label_decimals}f}"
+                    f"{unit_suffix}"
+                ),
             )
         )
     return slices
@@ -455,6 +478,10 @@ def plot_mdhisto_tiled_slices(
     ylim: tuple[float, float] | None = None,
     font_size: float = 10.0,
     axes_linewidth: float = 1.0,
+    tile_label_decimals: int = 1,
+    tile_label_prefix: str = "{axis} = ",
+    tile_label_unit: str = "{unit}",
+    tile_label_si_prefix: str = "",
     show_tile_labels: bool = True,
     local_color_scales: bool = False,
     figsize: tuple[float, float] = (10.0, 8.0),
@@ -473,6 +500,10 @@ def plot_mdhisto_tiled_slices(
         integrate_checks=integrate_checks,
         tile_range=tile_range,
         tile_step=tile_step,
+        tile_label_decimals=tile_label_decimals,
+        tile_label_prefix=tile_label_prefix,
+        tile_label_unit=tile_label_unit,
+        tile_label_si_prefix=tile_label_si_prefix,
         coverage_threshold=coverage_threshold,
         masked=masked,
         smoothing_sigma_x=smoothing_sigma_x,

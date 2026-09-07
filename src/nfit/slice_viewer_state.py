@@ -50,6 +50,10 @@ class _DatasetViewState:
     tile_range: tuple[float, float] = (0.0, 0.0)
     tile_step: float = 1.0
     tile_step_auto: bool = True
+    tile_label_decimals: int = 1
+    tile_label_prefix: str = "{axis} = "
+    tile_label_unit: str = "{unit}"
+    tile_label_si_prefix: str = ""
     show_tile_labels: bool = True
     tile_local_color_scales: bool = False
 

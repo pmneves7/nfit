@@ -224,6 +224,7 @@ class QtMDHistoSliceViewer:
         self.font_size_spin = None
         self.line_width_spin = None
         self.show_binning_title_check = None
+        self.tile_label_decimals_spin = None
         self.show_tile_labels_check = None
         self.line_group = None
         self.marker_combo = None
@@ -352,6 +353,10 @@ class QtMDHistoSliceViewer:
                 self.tile_range,
             )
         self.tile_step_auto = True
+        self.tile_label_decimals = 1
+        self.tile_label_prefix = "{axis} = "
+        self.tile_label_unit = "{unit}"
+        self.tile_label_si_prefix = ""
         self.show_tile_labels = True
         self.tile_local_color_scales = False
         self._current_tiled_slices: list[TiledSlice] = []
@@ -383,6 +388,10 @@ class QtMDHistoSliceViewer:
             tile_range=self.tile_range,
             tile_step=self.tile_step,
             tile_step_auto=self.tile_step_auto,
+            tile_label_decimals=self.tile_label_decimals,
+            tile_label_prefix=self.tile_label_prefix,
+            tile_label_unit=self.tile_label_unit,
+            tile_label_si_prefix=self.tile_label_si_prefix,
             show_tile_labels=self.show_tile_labels,
             tile_local_color_scales=self.tile_local_color_scales,
         )
@@ -573,6 +582,10 @@ class QtMDHistoSliceViewer:
             "tile_range": self.tile_range,
             "tile_step": self.tile_step,
             "tile_step_auto": self.tile_step_auto,
+            "tile_label_decimals": self.tile_label_decimals,
+            "tile_label_prefix": self.tile_label_prefix,
+            "tile_label_unit": self.tile_label_unit,
+            "tile_label_si_prefix": self.tile_label_si_prefix,
             "show_tile_labels": self.show_tile_labels,
             "tile_local_color_scales": self.tile_local_color_scales,
             "marker": self.marker,
@@ -730,6 +743,12 @@ class QtMDHistoSliceViewer:
         self.tile_step_auto = bool(
             settings.get("tile_step_auto", self.tile_step_auto)
         )
+        self.tile_label_decimals = max(0, min(10, int(settings.get("tile_label_decimals", self.tile_label_decimals))))
+        self._set_spin_silent(self.tile_label_decimals_spin, self.tile_label_decimals)
+        self.tile_label_prefix = str(settings.get("tile_label_prefix", self.tile_label_prefix))
+        self.tile_label_unit = str(settings.get("tile_label_unit", self.tile_label_unit))
+        self.tile_label_si_prefix = str(settings.get("tile_label_si_prefix", self.tile_label_si_prefix))
+        self._sync_tile_label_controls()
         self.show_tile_labels = bool(
             settings.get("show_tile_labels", self.show_tile_labels)
         )
@@ -1027,6 +1046,10 @@ class QtMDHistoSliceViewer:
                 f"    ylim={self._export_limits('y')!r},",
                 f"    font_size={self.font_size!r},",
                 f"    axes_linewidth={self.axis_linewidth!r},",
+                f"    tile_label_decimals={self.tile_label_decimals!r},",
+                f"    tile_label_prefix={self.tile_label_prefix!r},",
+                f"    tile_label_unit={self.tile_label_unit!r},",
+                f"    tile_label_si_prefix={self.tile_label_si_prefix!r},",
                 f"    show_tile_labels={self.show_tile_labels!r},",
                 f"    local_color_scales={self.tile_local_color_scales!r},",
                 f"    figsize={tuple(self.figure.get_size_inches())!r},",
@@ -2083,6 +2106,31 @@ class QtMDHistoSliceViewer:
             "Show the third-axis value or interval in a translucent box at the lower-right of each tiled slice."
         )
         self.show_tile_labels_check.toggled.connect(self._set_show_tile_labels)
+        self.tile_label_decimals_spin = QtWidgets.QSpinBox()
+        self.tile_label_decimals_spin.setRange(0, 10)
+        self.tile_label_decimals_spin.setPrefix("Decimals: ")
+        self.tile_label_decimals_spin.setValue(self.tile_label_decimals)
+        self.tile_label_decimals_spin.setToolTip("Decimal places in tiled-slice value labels: 0 gives 5 K, 1 gives 5.2 K. Only label formatting changes.")
+        self.tile_label_decimals_spin.valueChanged.connect(self._set_tile_label_decimals)
+        self.tile_label_options = QtWidgets.QWidget()
+        label_layout = QtWidgets.QGridLayout(self.tile_label_options)
+        label_layout.setContentsMargins(0, 0, 0, 0)
+        self.tile_label_prefix_edit = QtWidgets.QLineEdit(self.tile_label_prefix)
+        self.tile_label_prefix_edit.setToolTip("Text before the value. Use {axis} for the axis name, T = for a short label, or leave empty for just the value.")
+        self.tile_label_unit_edit = QtWidgets.QLineEdit(self.tile_label_unit)
+        self.tile_label_unit_edit.setToolTip("Unit text after the value. {unit} uses the axis unit; leave empty to hide units. Editing this text does not convert values.")
+        self.tile_label_si_prefix_combo = QtWidgets.QComboBox()
+        self.tile_label_si_prefix_combo.addItems(["", "p", "n", "µ", "m", "k", "M", "G", "T"])
+        self.tile_label_si_prefix_combo.setToolTip("Rescale label values and prepend this SI prefix to the unit. For K, m displays millikelvin. Applied relative to the existing axis unit; does not change data or binning.")
+        self.tile_label_prefix_edit.editingFinished.connect(self._set_tile_label_text)
+        self.tile_label_unit_edit.editingFinished.connect(self._set_tile_label_text)
+        self.tile_label_si_prefix_combo.currentTextChanged.connect(self._set_tile_label_text)
+        label_layout.addWidget(QtWidgets.QLabel("Label text"), 0, 0)
+        label_layout.addWidget(self.tile_label_prefix_edit, 0, 1, 1, 3)
+        label_layout.addWidget(QtWidgets.QLabel("Unit"), 1, 0)
+        label_layout.addWidget(self.tile_label_unit_edit, 1, 1)
+        label_layout.addWidget(QtWidgets.QLabel("SI prefix"), 1, 2)
+        label_layout.addWidget(self.tile_label_si_prefix_combo, 1, 3)
         self.copy_figure_button = QtWidgets.QPushButton("Copy figure")
         self.copy_script_button = QtWidgets.QPushButton("Copy script")
         self.save_script_button = QtWidgets.QPushButton("Save script")
@@ -2104,10 +2152,12 @@ class QtMDHistoSliceViewer:
         figure_layout.addWidget(QtWidgets.QLabel("Linewidth"), 0, 2)
         figure_layout.addWidget(self.line_width_spin, 0, 3)
         figure_layout.addWidget(self.show_binning_title_check, 1, 0, 1, 4)
-        figure_layout.addWidget(self.show_tile_labels_check, 2, 0, 1, 4)
-        figure_layout.addWidget(self.copy_figure_button, 3, 0, 1, 4)
-        figure_layout.addWidget(self.copy_script_button, 4, 0, 1, 2)
-        figure_layout.addWidget(self.save_script_button, 4, 2, 1, 2)
+        figure_layout.addWidget(self.show_tile_labels_check, 2, 0, 1, 2)
+        figure_layout.addWidget(self.tile_label_decimals_spin, 2, 2, 1, 2)
+        figure_layout.addWidget(self.tile_label_options, 3, 0, 1, 4)
+        figure_layout.addWidget(self.copy_figure_button, 4, 0, 1, 4)
+        figure_layout.addWidget(self.copy_script_button, 5, 0, 1, 2)
+        figure_layout.addWidget(self.save_script_button, 5, 2, 1, 2)
         controls_layout.addWidget(figure_group)
         controls_layout.addStretch(1)
 
@@ -2541,7 +2591,11 @@ class QtMDHistoSliceViewer:
             tile_range=self.tile_range,
             tile_step=float(self.tile_step),
             tile_step_auto=bool(self.tile_step_auto),
+            tile_label_decimals=self.tile_label_decimals,
             show_tile_labels=bool(self.show_tile_labels),
+            tile_label_prefix=self.tile_label_prefix,
+            tile_label_unit=self.tile_label_unit,
+            tile_label_si_prefix=self.tile_label_si_prefix,
             tile_local_color_scales=bool(self.tile_local_color_scales),
         )
 
@@ -2622,6 +2676,12 @@ class QtMDHistoSliceViewer:
             self.tile_range = tuple(state.tile_range)
             self.tile_step = float(state.tile_step)
             self.tile_step_auto = bool(state.tile_step_auto)
+            self.tile_label_decimals = state.tile_label_decimals
+            self.tile_label_prefix = state.tile_label_prefix
+            self.tile_label_unit = state.tile_label_unit
+            self.tile_label_si_prefix = state.tile_label_si_prefix
+            self._sync_tile_label_controls()
+            self._set_spin_silent(self.tile_label_decimals_spin, self.tile_label_decimals)
             self.show_tile_labels = bool(state.show_tile_labels)
             self.tile_local_color_scales = bool(
                 state.tile_local_color_scales and state.model.autoscale
@@ -2984,6 +3044,23 @@ class QtMDHistoSliceViewer:
         self._sync_tile_step_slider()
         if not self._restoring_dataset_state and self._tiled_mode_active():
             self.update_plot(preserve_view=False)
+
+    def _set_tile_label_decimals(self, value: int) -> None:
+        self.tile_label_decimals = int(value)
+        if not self._restoring_dataset_state and self._tiled_mode_active():
+            self.update_plot()
+
+    def _sync_tile_label_controls(self) -> None:
+        self.tile_label_prefix_edit.setText(self.tile_label_prefix)
+        self.tile_label_unit_edit.setText(self.tile_label_unit)
+        self._set_combo_silent(self.tile_label_si_prefix_combo, self.tile_label_si_prefix)
+
+    def _set_tile_label_text(self, *_args) -> None:
+        self.tile_label_prefix = self.tile_label_prefix_edit.text()
+        self.tile_label_unit = self.tile_label_unit_edit.text()
+        self.tile_label_si_prefix = self.tile_label_si_prefix_combo.currentText()
+        if not self._restoring_dataset_state and self._tiled_mode_active():
+            self.update_plot()
 
     def _set_show_tile_labels(self, checked: bool) -> None:
         self.show_tile_labels = bool(checked)
@@ -3927,6 +4004,8 @@ class QtMDHistoSliceViewer:
             self.tiled_group.setVisible(is_tiled)
         if self.show_tile_labels_check is not None:
             self.show_tile_labels_check.setVisible(is_tiled)
+            self.tile_label_decimals_spin.setVisible(is_tiled)
+            self.tile_label_options.setVisible(is_tiled)
         if self.tile_local_color_scales_check is not None:
             self.tile_local_color_scales_check.setVisible(is_tiled)
             self._sync_tiled_color_controls()
@@ -4385,6 +4464,10 @@ class QtMDHistoSliceViewer:
             integrate_checks=self.model.integrate_checks,
             tile_range=self.tile_range,
             tile_step=self._effective_tile_step(),
+            tile_label_decimals=self.tile_label_decimals,
+            tile_label_prefix=self.tile_label_prefix,
+            tile_label_unit=self.tile_label_unit,
+            tile_label_si_prefix=self.tile_label_si_prefix,
             coverage_threshold=self.coverage_threshold,
             masked=self.model.masked,
             smoothing_sigma_x=self.smoothing_x,
