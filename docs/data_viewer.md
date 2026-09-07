@@ -8,13 +8,22 @@ actual value; manual step sizes can combine neighboring coordinates. Uneven coor
 their exact values; no data are interpolated between conditions. Stored plot
 recipes preserve their metadata-dimension settings along with the spatial grid.
 
+Zero-valued reference slices remain visible after self-subtraction. If a full
+metadata tile range gains coordinates during a refresh, its limits expand to
+include them. A deliberately restricted range stays restricted.
+Numeric range controls accept values beyond their limits while typing, then
+clamp to the nearest allowed bound on Enter or focus loss. For example, entering
+50 when the maximum is 49.8 selects 49.8. Hidden-axis selections then snap to a
+measured coordinate as usual.
+
 The data viewer displays point lists and gridded datasets without changing
 their stored values. It supports channel selection, masks, cuts, maps,
 waterfalls, model comparisons, and volumetric rendering.
 
 Every **View in data viewer** action opens a new window. When opened from a
 dataset collection, the initial selection is that collection's
-composite or its first effective descendant dataset. Multiple viewers may
+composite or its first effective descendant dataset. Duplicate composite names
+include their collection path to distinguish the series. Multiple viewers may
 display the same workspace or different workspaces at once; dataset selection,
 axes, ranges, visualization mode, styling, and other controls are independent
 in each window. Project changes refresh every open viewer without merging their

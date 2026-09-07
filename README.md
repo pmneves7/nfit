@@ -28,7 +28,8 @@ The package provides:
   independent raw-data binning, plus lazy navigation for run-heavy projects;
 - discrete metadata dimensions for temperature or other sample conditions,
   with selectable channels, nominal coordinates, display and integration axes,
-  exact tiled slices, temperature-aware fitting, and optional whole-bin rebinning;
+  exact tiled slices, visible zero-valued background references, temperature-aware
+  fitting, and optional whole-bin rebinning;
 - local, MMP, generalized-paramagnon/damped-mode, conserved-ferromagnetic,
   relaxational or inertial Heisenberg-RPA, and coupled-susceptibility models
   for inelastic, quasistatic elastic, and optional bulk-response comparisons,

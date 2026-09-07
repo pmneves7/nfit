@@ -54,7 +54,7 @@ def _make_data_viewer_window_class():
 def _make_float_spinbox(low: float = -1.0e12, high: float = 1.0e12):
     from PySide6 import QtWidgets
 
-    spin = QtWidgets.QDoubleSpinBox()
+    spin = _ClampingDoubleSpinBox()
     spin.setRange(low, high)
     spin.setDecimals(6)
     spin.setSingleStep(max((high - low) / 200.0, 0.001) if np.isfinite(high - low) else 0.001)
@@ -97,6 +97,33 @@ def _qt_classes():
 
 
 QtCore, QtGui, QtWidgets = _qt_classes()
+
+
+class _ClampingDoubleSpinBox(QtWidgets.QDoubleSpinBox):
+    """Accept complete numeric text outside the range; clamp on commit."""
+
+    def _number(self, text):
+        text = text.strip()
+        if self.prefix() and text.startswith(self.prefix()):
+            text = text[len(self.prefix()):]
+        if self.suffix() and text.endswith(self.suffix()):
+            text = text[:-len(self.suffix())]
+        value, valid = self.locale().toDouble(text.strip())
+        return value, valid and np.isfinite(value)
+
+    def validate(self, text, position):
+        _value, valid = self._number(text)
+        if valid:
+            return QtGui.QValidator.State.Acceptable, text, position
+        if text.strip() in {"", "+", "-", self.locale().decimalPoint()}:
+            return QtGui.QValidator.State.Intermediate, text, position
+        return super().validate(text, position)
+
+    def valueFromText(self, text):
+        value, valid = self._number(text)
+        if valid:
+            return float(np.clip(value, self.minimum(), self.maximum()))
+        return super().valueFromText(text)
 
 
 class _DualRangeSlider(QtWidgets.QWidget):

@@ -455,6 +455,22 @@ class QtMDHistoSliceViewer:
         for index, name in enumerate(self.dataset_names):
             state = previous_states.get(name)
             if state is not None:
+                tile_dim = state.tile_dim
+                if (
+                    tile_dim is not None
+                    and isinstance(state.model.data, MDHistoData)
+                    and isinstance(self.datasets[index], MDHistoData)
+                    and tile_dim < len(state.model.data.axes)
+                    and tile_dim < len(self.datasets[index].axes)
+                ):
+                    old_axis = state.model.data.axes[tile_dim]
+                    new_axis = self.datasets[index].axes[tile_dim]
+                    if (
+                        "metadata_dimension" in old_axis.metadata
+                        and old_axis.name == new_axis.name
+                        and np.allclose(state.tile_range, [old_axis.centers[0], old_axis.centers[-1]])
+                    ):
+                        state.tile_range = (float(new_axis.centers[0]), float(new_axis.centers[-1]))
                 state.model.data = self.datasets[index]
                 state.model.refresh_metadata_channels()
                 self._dataset_states[index] = state

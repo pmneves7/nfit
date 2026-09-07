@@ -68,12 +68,12 @@ def test_raw_group_background_automatically_follows_sample_grid_and_preserves_so
     if metadata_axes:
         nfit.set_metadata_dimensions(g, [temperature()])
     result = nfit.composite_dataset_data(g)
-    np.testing.assert_allclose(result.signal.ravel(), [9, 19] if metadata_axes else [14])
-    np.testing.assert_allclose(result.errors.ravel()**2, [3.25, 3.25] if metadata_axes else [2.75])
+    np.testing.assert_allclose(result.signal.ravel(), [9, 19, 1] if metadata_axes else [14])
+    np.testing.assert_allclose(result.errors.ravel()**2, [3.25, 3.25, 11.25] if metadata_axes else [2.75])
     assert reference.data is original
     assert reference.parameters["rebin"] == recipe
     if metadata_axes:
-        np.testing.assert_array_equal(result.axes[-1].centers, [5, 10])
+        np.testing.assert_array_equal(result.axes[-1].centers, [5, 10, 50])
     # Overrides used by saved plots and scripts must also control the background.
     config = copy.deepcopy(data_group_composite_config(g))
     config["axes"][0].update(name="H new", bin_edges=[-1, 0.25, 1])
@@ -110,9 +110,10 @@ def test_raw_background_composite_script_round_trip(tmp_path):
     namespace = {"__name__": "test_workflow"}
     exec(compile(script, "background.py", "exec"), namespace)
     output = namespace["run"]()
-    np.testing.assert_allclose(output.signal.ravel(), [0], atol=1e-10)
+    np.testing.assert_allclose(output.signal.ravel(), [0, 0], atol=1e-10)
     # Before combines two identical independent runs; subtraction adds their variances.
-    np.testing.assert_allclose(output.errors, 2 * before.errors[..., None])
+    np.testing.assert_allclose(output.errors[..., 0], 2 * before.errors)
+    np.testing.assert_allclose(output.errors[..., 1], 0)
 
 
 def test_six_temperatures_are_independent_even_with_fractional_binning(tmp_path):
@@ -445,6 +446,109 @@ def temperature_volume():
     return nfit.MDHistoData(
         axes, values, np.ones_like(values), np.zeros_like(values, bool), np.ones_like(values)
     )
+
+
+@pytest.mark.parametrize("restricted", [False, True])
+def test_refresh_expands_full_metadata_tile_range_and_keeps_zero_panel(monkeypatch, restricted):
+    from dataclasses import replace
+
+    from nfit.plotting import prepare_mdhisto_tiled_slices
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    data = temperature_volume()
+    signal = data.signal.copy()
+    signal[..., -1] = 0
+    data = data.with_updates(signal=signal)
+    old_axis = replace(data.axes[-1], values=data.axes[-1].values[:-1], metadata={
+        **data.axes[-1].metadata, "discrete_centers": data.axes[-1].centers[:-1].tolist(),
+    })
+    old = data.with_updates(axes=(*data.axes[:-1], old_axis), signal=data.signal[..., :-1],
+        errors=data.errors[..., :-1], mask=data.mask[..., :-1], num_events=data.num_events[..., :-1])
+    viewer = nfit.QtMDHistoSliceViewer(old, x_dim=0, y_dim=1)
+    viewer.tile_dim = 4
+    viewer.tile_range = (5.24, 20.12) if restricted else (1.54, 30.06)
+    viewer.replace_datasets(data)
+    assert viewer.tile_range == ((5.24, 20.12) if restricted else (1.54, 39.28))
+    panels = prepare_mdhisto_tiled_slices(data, x_dim=0, y_dim=1, tile_dim=4)
+    assert len(panels) == 6
+    np.testing.assert_allclose(panels[-1].values, 0)
+    viewer.window.close()
+
+
+def test_same_named_composites_are_distinguished_by_collection_path():
+    from nfit.project_gui import _composite_dataset_name, _composite_scope
+
+    a, b = DatasetGroup("MACS SPEC"), DatasetGroup("MACS SPEC")
+    root = DataGroup("workspace", subgroups=[DatasetGroup("series1", subgroups=[a]), DatasetGroup("series2", subgroups=[b])])
+    assert _composite_dataset_name(_composite_scope(root, a)) == "series1/MACS SPEC Composite"
+    assert _composite_dataset_name(_composite_scope(root, b)) == "series2/MACS SPEC Composite"
+
+
+def test_reference_slice_is_visible_zero_and_background_toggle_forces_manual_viewer_refresh(monkeypatch):
+    from PySide6 import QtWidgets
+
+    from nfit.pipeline import BackgroundSpec
+    from nfit.project_gui import _cached_composite_dataset_data
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    def fail_dialog(*args):
+        pytest.fail(str(args))
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", fail_dialog)
+    reference = points(50, [2], name="50 K")
+    g = group([points(5, [10]), reference])
+    nfit.set_metadata_dimensions(g, [temperature()])
+    background = BackgroundSpec("reference", reference.id, source_entry=reference)
+    g.backgrounds.append(background)
+    data_group_composite_config(g)["auto_rebin"] = False
+    data = _cached_composite_dataset_data(g, force_rebin=True)
+    np.testing.assert_allclose(data.signal.ravel(), [8, 0])
+    np.testing.assert_allclose(data.errors.ravel(), [np.sqrt(2), 0])
+    assert not data.mask.any()
+    explorer = nfit.NfitProjectExplorer(nfit.NfitProject([g]))
+    monkeypatch.setattr(explorer, "_confirm_save_before_closing_project", lambda: True)
+    viewer = explorer.open_slice_viewer(g)
+    explorer._update_background(g, g, background, enabled=False)
+    np.testing.assert_allclose(viewer.data.signal.ravel(), [10, 2])
+    explorer._update_background(g, g, background, enabled=True)
+    np.testing.assert_allclose(viewer.data.signal.ravel(), [8, 0])
+    assert not viewer.data.mask.any()
+    viewer.window.close()
+    explorer.window.close()
+
+
+@pytest.mark.parametrize("typed,expected", [("50", 49.8), ("-5", 1.5), ("20", 20)])
+@pytest.mark.parametrize("commit", ["enter", "focus"])
+def test_viewer_range_input_accepts_then_clamps_on_commit(monkeypatch, typed, expected, commit):
+    from PySide6 import QtCore, QtTest, QtWidgets
+
+    from nfit.qt_slice_controls import _make_float_spinbox
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    window = QtWidgets.QWidget()
+    layout = QtWidgets.QVBoxLayout(window)
+    spin = _make_float_spinbox(1.5, 49.8)
+    spin.setValue(10)
+    other = QtWidgets.QLineEdit()
+    layout.addWidget(spin)
+    layout.addWidget(other)
+    window.show()
+    spin.setFocus()
+    app.processEvents()
+    spin.selectAll()
+    QtTest.QTest.keyClicks(spin, typed)
+    assert spin.lineEdit().text() == typed
+    assert spin.value() == 10
+    if commit == "enter":
+        QtTest.QTest.keyClick(spin, QtCore.Qt.Key.Key_Return)
+    else:
+        other.setFocus()
+    app.processEvents()
+    assert spin.value() == pytest.approx(expected)
+    assert float(spin.cleanText()) == pytest.approx(expected)
+    window.close()
+    window.deleteLater()
+    QtCore.QCoreApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
 
 
 def test_irregular_metadata_tiles_and_saved_plot_use_each_exact_coordinate():

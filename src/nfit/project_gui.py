@@ -3010,10 +3010,15 @@ def data_group_composite_enabled(group: DataGroup) -> bool:
 
 
 def _composite_dataset_name(group: DataGroup) -> str:
+    if isinstance(group, _CompositeScope):
+        paths = _dataset_group_paths(group.root)
+        if sum(node.name == group.name for _path, node in paths) > 1:
+            path = next((path for path, node in paths if node is group.node), group.name)
+            return f"{path} {GROUP_COMPOSITE_NAME}"
     return f"{group.name} {GROUP_COMPOSITE_NAME}"
 
 
-def _composite_candidates(group: DataGroup) -> list[DatasetEntry]:
+def _composite_candidates(group: DataGroup, *, include_backgrounds: bool = False) -> list[DatasetEntry]:
     node = group.node if isinstance(group, _CompositeScope) else group
     background_ids = {
         background.source_dataset_id
@@ -3035,7 +3040,7 @@ def _composite_candidates(group: DataGroup) -> list[DatasetEntry]:
     return [
         dataset
         for dataset in considered_datasets(node, selected_root=True)
-        if dataset.enabled and dataset.id not in background_ids
+        if dataset.enabled and (include_backgrounds or dataset.id not in background_ids)
     ]
 
 
@@ -3079,7 +3084,7 @@ def data_group_composite_status(group: DataGroup) -> tuple[bool, str]:
             if not ok:
                 return False, f"Child composite {child.name!r} is not ready: {message}"
         return True, "Ready to combine the enabled child composites."
-    datasets = _composite_candidates(group)
+    datasets = _composite_candidates(group, include_backgrounds=bool(group.metadata.get("metadata_dimensions")))
     if not datasets:
         return False, "No enabled datasets are available to combine."
     kinds = {_dataset_composite_kind(dataset) for dataset in datasets}
@@ -3104,7 +3109,7 @@ def _composite_reference_data(group: DataGroup) -> Any | None:
             return _cached_composite_dataset_data(child_scopes[0], force_rebin=True)
         except Exception:
             return None
-    dataset = _composite_candidates(group)[0]
+    dataset = _composite_candidates(group, include_backgrounds=bool(group.metadata.get("metadata_dimensions")))[0]
     try:
         return _source_data_for_group_composite(group, dataset)
     except Exception:
@@ -3212,7 +3217,9 @@ def _composite_cache_signature(
                 _mask_signature(getattr(dataset, "masks", None)),
                 _mask_signature(effective_dataset_masks(_composite_root(group), dataset)),
             ]
-            for dataset in _composite_candidates(group)
+            for dataset in _composite_candidates(
+                group, include_backgrounds=bool(group.metadata.get("metadata_dimensions"))
+            )
         ],
         _mask_signature(getattr(group, "masks", None)),
         [
@@ -3286,7 +3293,7 @@ def metadata_dimension_preview(group, dimensions=None) -> list[dict[str, Any]]:
         )
     ]
     rows = []
-    for dataset in _composite_candidates(group):
+    for dataset in _composite_candidates(group, include_backgrounds=True):
         _ensure_dataset_data_loaded(dataset)
         for spec in specs:
             values = metadata_dimension_coordinates(dataset, spec)
@@ -3324,7 +3331,7 @@ def set_metadata_dimensions(group, dimensions) -> None:
     }:
         raise ValueError("metadata dimension names must differ from existing axes")
     if specs:
-        kinds = {_dataset_composite_kind(item) for item in _composite_candidates(group)}
+        kinds = {_dataset_composite_kind(item) for item in _composite_candidates(group, include_backgrounds=True)}
         if not kinds or not kinds <= {"point_data_4d", "mdhisto"}:
             raise ValueError(
                 "metadata dimensions currently require loaded neutron points or histograms; raw event logs need an alignment adapter"
@@ -3347,7 +3354,8 @@ def _metadata_composite_data(group, config, dimensions, *, include_source_masks,
             "configure metadata dimensions on the collection containing the source datasets"
         )
     entries, coordinates = [], []
-    for dataset in _composite_candidates(group):
+    origins = {}
+    for dataset in _composite_candidates(group, include_backgrounds=True):
         data = _source_data_for_group_composite(
             group, dataset, include_source_masks=include_source_masks
         )
@@ -3360,7 +3368,9 @@ def _metadata_composite_data(group, config, dimensions, *, include_source_masks,
         ):
             raise ValueError("add all metadata dimensions on the original source collection")
         coordinates.append([metadata_dimension_coordinates(dataset, spec) for spec in specs])
-        entries.append(dataset.copy(data=data))
+        prepared_entry = dataset.copy(data=data)
+        entries.append(prepared_entry)
+        origins[prepared_entry.id] = dataset
     grids = [
         metadata_dimension_grid(spec, [row[i] for row in coordinates])
         for i, spec in enumerate(specs)
@@ -3372,7 +3382,10 @@ def _metadata_composite_data(group, config, dimensions, *, include_source_masks,
         if isinstance(entries[0].data, PointData4D)
         else _composite_mdhisto_data
     )
-    template = reducer(group, config, datasets=entries, progress_callback=progress_callback)
+    # Reference slices share the sample grid without expanding its auto limits.
+    sample_ids = {entry.id for entry in _composite_candidates(group)}
+    grid_entries = [entry for entry in entries if origins[entry.id].id in sample_ids] or entries
+    template = reducer(group, config, datasets=grid_entries, progress_callback=progress_callback)
     from .mdevent import _available_memory_bytes
 
     output_bins = math.prod(template.shape) * math.prod(len(center) for center in centers)
@@ -3437,7 +3450,14 @@ def _metadata_composite_data(group, config, dimensions, *, include_source_masks,
         data = reducer(group, fixed, datasets=selected_entries, progress_callback=progress_callback)
         data = _apply_mdhisto_coverage_threshold(data, config)
         slices[key] = _apply_composite_backgrounds(
-            group, data, config=fixed, progress_callback=progress_callback
+            group, data, config=fixed, progress_callback=progress_callback,
+            reference_entry=(
+                origins[sources[0][0].id] if len(sources) == len(selected_entries) == 1
+                and len(sources[0][1]) == (
+                    sources[0][0].data.size if isinstance(sources[0][0].data, PointData4D)
+                    else sources[0][0].data.signal.size
+                ) else None
+            ),
         )
     # Background subtraction can add channels. Use its result as the schema.
     if slices:
@@ -3655,6 +3675,7 @@ def _apply_composite_backgrounds(
     data: MDHistoData | PointListData | PointData4D,
     *,
     config: Mapping[str, Any] | None = None,
+    reference_entry: DatasetEntry | None = None,
     progress_callback: Any | None = None,
 ) -> MDHistoData | PointListData | PointData4D:
     """Apply backgrounds owned by a composite scope after it is combined."""
@@ -3720,12 +3741,27 @@ def _apply_composite_backgrounds(
             raise TypeError(
                 f"background {background.name!r} must refer to gridded histogram data"
             )
+        cancels_self = (
+            reference_entry is not None and source is not None
+            and reference_entry.id == source.id
+            and reference_entry.scale_factor == background.scale
+            and result.shape == source_data.shape
+            and np.allclose(result.signal, background.scale * source_data.signal,
+                            rtol=1e-12, atol=1e-12, equal_nan=True)
+            and np.allclose(result.num_events, source_data.num_events, rtol=1e-12, atol=1e-12)
+        )
         result = subtract_background(
             result,
             source_data,
             scale=background.scale,
             interpolation=background.interpolation,
         )
+        if cancels_self:
+            # Identical observations are fully correlated: Var(X - X) = 0.
+            result = result.with_updates(
+                signal=np.where(result.mask, np.nan, 0.0),
+                errors=np.where(result.mask, np.nan, 0.0),
+            )
     return result
 
 
@@ -4034,7 +4070,7 @@ def composite_dataset_entry(
     progress_callback: Any | None = None,
 ) -> DatasetEntry:
     child_scopes = _hierarchical_composite_scopes(group)
-    datasets = _composite_candidates(group)
+    datasets = _composite_candidates(group, include_backgrounds=bool(group.metadata.get("metadata_dimensions")))
     first = datasets[0] if datasets else None
     config = data_group_composite_config(group)
     return DatasetEntry(
@@ -14607,7 +14643,7 @@ class NfitProjectExplorer:
         for group in pending:
             self.refresh_slice_viewer(group)
 
-    def refresh_slice_viewer(self, group: DataGroup) -> Any | None:
+    def refresh_slice_viewer(self, group: DataGroup, *, force_rebin: bool = False) -> Any | None:
         if id(group) not in self._slice_viewers:
             return None
         viewers = list(self._slice_viewers[id(group)])
@@ -14625,7 +14661,7 @@ class NfitProjectExplorer:
                         group,
                         use_composite=use_composite,
                         unmask_model=unmask_model,
-                        force_rebin=False,
+                        force_rebin=force_rebin,
                         force_masks=False,
                     )
                 datasets, names = prepared[cache_key]
@@ -17791,7 +17827,7 @@ class NfitProjectExplorer:
             if not isinstance(owner, DatasetEntry):
                 data_group_composite_config(_composite_scope(group, owner))["stale"] = True
             self._record_data_group_state_change(group)
-            self.refresh_slice_viewer(group)
+            self.refresh_slice_viewer(group, force_rebin=True)
         self._mark_dirty()
 
     def _set_group_details(self, group: DataGroup) -> None:

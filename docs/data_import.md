@@ -492,8 +492,14 @@ For a group background referencing unrebinned neutron point data, nfit bins the
 reference onto the sample's resolved momentum/energy grid automatically,
 including its coordinate basis, symmetry, averaging mode, and bin edges.
 The source's own rebin settings are preserved. Temperature-series composites
-subtract this reference from each metadata slice; the reference run is excluded
-from the sample composite. After changing the sample grid, the reference follows
+subtract this reference from each metadata slice and retain the enabled reference
+run at its own temperature. An isolated reference subtracted from itself at
+scale 1 remains visible as zero signal and zero uncertainty: the same observations
+cancel exactly. Zero uncertainty excludes that identity check from weighted fitting.
+Without metadata dimensions, references are excluded from the pooled sample mean.
+Disabling the background restores the measured reference signal and immediately
+refreshes open viewers, including in manual rebin mode.
+After changing the sample grid, the reference follows
 it on the next rebin. Check the energy limits when copying settings between series.
 
 For an already gridded or explicitly rebinned single-crystal background, reduce

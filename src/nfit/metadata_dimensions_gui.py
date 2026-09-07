@@ -146,7 +146,7 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
             try:
                 if mode.currentData() != "discrete":
                     coordinates = []
-                    for entry in _composite_candidates(group):
+                    for entry in _composite_candidates(group, include_backgrounds=True):
                         _ensure_dataset_data_loaded(entry)
                         coordinates.append(metadata_dimension_coordinates(entry, spec))
                     values = (
@@ -234,7 +234,7 @@ def metadata_dimensions_panel(explorer, group):
         explorer._after_group_composite_changed(group)
 
     def edit(existing=None):
-        candidates = _composite_candidates(group)
+        candidates = _composite_candidates(group, include_backgrounds=True)
         if not candidates:
             return
         try:
@@ -451,7 +451,7 @@ def metadata_dimensions_panel(explorer, group):
         button.setObjectName(f"metadata_dimensions_{key}")
         button.setToolTip(tooltip)
         if key == "add":
-            candidates = _composite_candidates(group)
+            candidates = _composite_candidates(group, include_backgrounds=True)
             supported = bool(candidates) and all(
                 _dataset_composite_kind(dataset) in {"point_data_4d", "mdhisto"}
                 for dataset in candidates
