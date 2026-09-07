@@ -816,6 +816,33 @@ def delete_dataset(group: DataGroup, dataset: DatasetEntry) -> None:
     parent.datasets.remove(dataset)
 
 
+def set_mask_collection_enabled(
+    owner: DatasetEntry | DataGroup | DatasetGroup,
+    enabled: bool,
+) -> None:
+    """Enable or disable every mask directly owned by a dataset or collection."""
+
+    for mask in owner.masks:
+        mask.enabled = bool(enabled)
+
+
+def set_background_collection(
+    owner: DatasetEntry | DataGroup | DatasetGroup,
+    *,
+    enabled: bool | None = None,
+    scale: float | None = None,
+) -> None:
+    """Bulk configure backgrounds directly owned by a dataset or collection."""
+
+    if scale is not None and not np.isfinite(float(scale)):
+        raise ValueError("background scale must be finite")
+    for background in owner.backgrounds:
+        if enabled is not None:
+            background.enabled = bool(enabled)
+        if scale is not None:
+            background.scale = float(scale)
+
+
 def set_dataset_source(dataset: DatasetEntry, path: str | Path) -> None:
     """Point a dataset entry at a new source file and mark loaded data stale."""
 
@@ -3158,6 +3185,56 @@ def _ensure_dataset_data_loaded(dataset: DatasetEntry) -> Any:
         dataset.metadata["import_status"] = "loaded"
         return loaded
     return dataset.data
+
+
+def _reload_dataset_copy(dataset: DatasetEntry) -> DatasetEntry:
+    if not _dataset_can_reload(dataset):
+        raise ValueError(f"dataset {dataset.name!r} has no reloadable data source")
+    working = copy.copy(dataset)
+    working.metadata = copy.deepcopy(dataset.metadata)
+    working.parameters = copy.deepcopy(dataset.parameters)
+    working.unload_data()
+    if working.kind == "raw_dgs_nexus":
+        loaded = None
+        working.metadata["import_status"] = "pending"
+        working.metadata.pop("import_error", None)
+    else:
+        loaded = _ensure_dataset_data_loaded(working)
+        if loaded is None:
+            raise ValueError(f"dataset {dataset.name!r} could not be loaded from its source")
+    return working
+
+
+def _install_reloaded_dataset(dataset: DatasetEntry, working: DatasetEntry) -> Any:
+    dataset.metadata.clear()
+    dataset.metadata.update(working.metadata)
+    dataset.parameters.clear()
+    dataset.parameters.update(working.parameters)
+    dataset.kind = working.kind
+    return dataset.replace_data(working.data, source_backed=True)
+
+
+def reload_dataset_data(dataset: DatasetEntry) -> Any:
+    """Reload one dataset from its configured source without changing its recipe.
+
+    Loading is performed against an isolated entry so a read failure leaves the
+    currently loaded arrays and import metadata intact. Raw DGS entries remain
+    lazy; replacing their empty payload still advances the data revision so
+    dependent composites are rebuilt from the source file.
+    """
+
+    return _install_reloaded_dataset(dataset, _reload_dataset_copy(dataset))
+
+
+def reload_data_group(group: DataGroup | DatasetGroup) -> list[DatasetEntry]:
+    """Reload every descendant dataset that has a configured data source."""
+
+    reloaded = []
+    for dataset in group.iter_datasets():
+        if _dataset_can_reload(dataset):
+            reload_dataset_data(dataset)
+            reloaded.append(dataset)
+    return reloaded
 
 
 def _source_data_for_group_composite(
@@ -11698,6 +11775,8 @@ class NfitProjectExplorer:
         self.group_fit_weight_edit = None
         self.group_scale_edit = None
         self.group_scale_fit_check = None
+        self.background_bulk_widget = None
+        self.background_bulk_scale_edit = None
         self.details_label = None
         self.details_scroll = None
         self.details_widget = None
@@ -11707,6 +11786,7 @@ class NfitProjectExplorer:
         self.new_analysis_button = None
         self.view_slice_button = None
         self.load_dataset_button = None
+        self.reload_data_button = None
         self.add_mask_button = None
         self.add_background_button = None
         self.add_dataset_group_button = None
@@ -12355,6 +12435,54 @@ class NfitProjectExplorer:
         self._sync_details()
         if group is not None:
             self.refresh_slice_viewer(group)
+        return True
+
+    def reload_data_for_selection(self) -> bool:
+        """Reload the selected dataset or dataset collection from its sources."""
+
+        from PySide6 import QtWidgets
+
+        item = self._current_item()
+        group, entry, _mask, _model, role = self._objects_for_item(item)
+        if group is None or role not in {"group", "datasets", "dataset", "dataset_group"}:
+            return False
+        target = entry if role == "dataset" else (
+            self._dataset_group_for_item(item) if role == "dataset_group" else group
+        )
+        if target is None:
+            return False
+
+        def task(_progress_callback: Any) -> list[DatasetEntry]:
+            if isinstance(target, DatasetEntry):
+                reload_dataset_data(target)
+                return [target]
+            return reload_data_group(target)
+
+        def on_success(reloaded: list[DatasetEntry]) -> None:
+            for scope in _composite_scopes(group):
+                data_group_composite_config(scope)["stale"] = True
+            self._sync_details()
+            self.refresh_slice_viewer(group, force_rebin=True)
+
+        if self._interactive:
+            return self._start_background_task(
+                title="Reloading data...",
+                failure_title="Reload data",
+                task=task,
+                on_success=on_success,
+                success_message="Data reload finished.",
+                completion_summary=lambda items: [f"Reloaded datasets: {len(items)}"],
+            )
+        try:
+            reloaded = task(None)
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Reload data",
+                f"Could not reload data:\n{exc}",
+            )
+            return False
+        on_success(reloaded)
         return True
 
     def _stamp_active_fit_path(self) -> None:
@@ -15385,11 +15513,16 @@ class NfitProjectExplorer:
         title_row.addWidget(self.title_label, 1)
         self.enabled_check = QtWidgets.QCheckBox("Enabled")
         self.enabled_check.setToolTip(
-            "Include or exclude the selected dataset, dataset group, mask, or "
-            "model. Disabling a dataset group omits all descendants from "
-            "fitting without changing their individual enabled states."
+            "Include or exclude the selected dataset, dataset group, mask, or model. "
+            "On a Masks or Backgrounds folder, apply the state to every contained item. "
+            "Disabling a dataset group omits all descendants from fitting without "
+            "changing their individual enabled states."
         )
-        self.enabled_check.toggled.connect(self._set_selected_enabled)
+        self.enabled_check.checkStateChanged.connect(
+            lambda state: self._set_selected_enabled(
+                state == QtCore.Qt.CheckState.Checked
+            )
+        )
         title_row.addWidget(self.enabled_check)
         self.fit_weight_widget = QtWidgets.QWidget()
         fit_weight_layout = QtWidgets.QHBoxLayout(self.fit_weight_widget)
@@ -15477,6 +15610,26 @@ class NfitProjectExplorer:
         self.group_scale_fit_check.toggled.connect(self._set_group_shared_scale)
         group_bulk_layout.addWidget(self.group_scale_fit_check)
         title_row.addWidget(self.group_bulk_widget)
+        self.background_bulk_widget = QtWidgets.QWidget()
+        background_bulk_layout = QtWidgets.QHBoxLayout(self.background_bulk_widget)
+        background_bulk_layout.setContentsMargins(0, 0, 0, 0)
+        background_bulk_layout.setSpacing(6)
+        background_bulk_layout.addWidget(QtWidgets.QLabel("Scale"))
+        self.background_bulk_scale_edit = QtWidgets.QLineEdit()
+        self.background_bulk_scale_edit.setObjectName("background_bulk_scale_edit")
+        self.background_bulk_scale_edit.setPlaceholderText("(mixed)")
+        self.background_bulk_scale_edit.setMaximumWidth(90)
+        self.background_bulk_scale_edit.setToolTip(
+            "Bulk edit the multiplier for every background in this folder. "
+            "Blank means the background scales differ."
+        )
+        self.background_bulk_scale_edit.editingFinished.connect(
+            lambda: self._set_background_bulk_scale(
+                self.background_bulk_scale_edit.text()
+            )
+        )
+        background_bulk_layout.addWidget(self.background_bulk_scale_edit)
+        title_row.addWidget(self.background_bulk_widget)
         self.details_label = QtWidgets.QLabel()
         self.details_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
         self.details_label.setWordWrap(True)
@@ -15499,6 +15652,8 @@ class NfitProjectExplorer:
         self.new_analysis_button = QtWidgets.QPushButton("New analysis")
         self.view_slice_button = QtWidgets.QPushButton("View in data viewer")
         self.load_dataset_button = QtWidgets.QPushButton("Load now")
+        self.reload_data_button = QtWidgets.QPushButton("Reload data")
+        self.reload_data_button.setObjectName("reload_data_button")
         self.add_mask_button = QtWidgets.QPushButton("Add mask")
         self.add_background_button = QtWidgets.QPushButton("Add background")
         self.add_dataset_group_button = QtWidgets.QPushButton("New dataset group")
@@ -15512,6 +15667,10 @@ class NfitProjectExplorer:
             "Open a new, independent data viewer for the selected workspace or dataset."
         )
         self.load_dataset_button.setToolTip("Load this dataset from disk now so its axes, data, and metadata are available.")
+        self.reload_data_button.setToolTip(
+            "Reread the selected dataset, or every dataset in the selected collection, "
+            "from its configured source and refresh dependent views."
+        )
         self.add_mask_button.setToolTip("Create a new mask under the selected dataset or shared mask folder.")
         self.add_background_button.setToolTip(
             "Attach a powder |Q|-energy dataset as a scaled background for the "
@@ -15524,6 +15683,7 @@ class NfitProjectExplorer:
         self.new_analysis_button.clicked.connect(self.new_analysis_for_selection)
         self.view_slice_button.clicked.connect(self.open_slice_viewer_for_selection)
         self.load_dataset_button.clicked.connect(self.load_dataset_for_selection)
+        self.reload_data_button.clicked.connect(self.reload_data_for_selection)
         self.add_mask_button.clicked.connect(self.add_mask_to_selection)
         self.add_background_button.clicked.connect(self.add_background_to_selection)
         self.add_dataset_group_button.clicked.connect(self.add_dataset_group_to_selection)
@@ -15533,6 +15693,7 @@ class NfitProjectExplorer:
         actions_row.addWidget(self.new_analysis_button)
         actions_row.addWidget(self.view_slice_button)
         actions_row.addWidget(self.load_dataset_button)
+        actions_row.addWidget(self.reload_data_button)
         actions_row.addWidget(self.add_mask_button)
         actions_row.addWidget(self.add_background_button)
         actions_row.addWidget(self.add_dataset_group_button)
@@ -16515,6 +16676,21 @@ class NfitProjectExplorer:
         self.load_dataset_button.setVisible(
             role == "dataset" and entry is not None and _dataset_can_load(entry)
         )
+        can_reload_selection = False
+        if role == "dataset" and entry is not None:
+            can_reload_selection = _dataset_can_reload(entry)
+        elif role in {"group", "datasets"} and group is not None:
+            can_reload_selection = any(_dataset_can_reload(item) for item in group.iter_datasets())
+        elif role == "dataset_group":
+            node = self._dataset_group_for_item(self._current_item())
+            can_reload_selection = bool(
+                node is not None
+                and any(_dataset_can_reload(item) for item in node.iter_datasets())
+            )
+        self.reload_data_button.setVisible(
+            role in {"group", "datasets", "dataset", "dataset_group"}
+        )
+        self.reload_data_button.setEnabled(can_reload_selection)
         self.add_mask_button.setVisible(role in {"dataset", "masks", "group_masks", "dataset_group"})
         self.add_background_button.setVisible(
             role in {"datasets", "dataset", "backgrounds", "dataset_group", "group_backgrounds"}
@@ -16735,17 +16911,48 @@ class NfitProjectExplorer:
         mask: MaskSpec | None,
         model: ModelComponentSpec | None,
     ) -> None:
+        from PySide6 import QtCore
+
         has_enabled = role in {
             "dataset",
             "dataset_group",
+            "masks",
             "mask",
+            "backgrounds",
+            "group_masks",
             "group_mask",
+            "group_backgrounds",
             "model",
         }
         self.enabled_check.setVisible(has_enabled)
         self.fit_weight_widget.setVisible(role == "dataset")
         self.enabled_check.blockSignals(True)
         try:
+            collection_states = None
+            if role == "masks" and entry is not None:
+                collection_states = [bool(item.enabled) for item in entry.masks]
+            elif role == "backgrounds" and entry is not None:
+                collection_states = [bool(item.enabled) for item in entry.backgrounds]
+            elif role == "group_masks":
+                node = self._dataset_group_for_item(self._current_item())
+                collection_states = [] if node is None else [
+                    bool(item.enabled) for item in node.masks
+                ]
+            elif role == "group_backgrounds":
+                owner = self._background_owner_for_item(self._current_item())
+                collection_states = [] if owner is None else [
+                    bool(item.enabled) for item in owner.backgrounds
+                ]
+            self.enabled_check.setTristate(collection_states is not None)
+            if collection_states is not None:
+                if collection_states and all(collection_states):
+                    self.enabled_check.setCheckState(QtCore.Qt.CheckState.Checked)
+                elif any(collection_states):
+                    self.enabled_check.setCheckState(
+                        QtCore.Qt.CheckState.PartiallyChecked
+                    )
+                else:
+                    self.enabled_check.setCheckState(QtCore.Qt.CheckState.Unchecked)
             if role == "dataset" and entry is not None:
                 self.enabled_check.setChecked(bool(entry.enabled))
             elif role == "dataset_group":
@@ -16757,7 +16964,7 @@ class NfitProjectExplorer:
                 self.enabled_check.setChecked(bool(mask.enabled))
             elif role == "model" and model is not None:
                 self.enabled_check.setChecked(bool(model.enabled))
-            else:
+            elif collection_states is None:
                 self.enabled_check.setChecked(False)
         finally:
             self.enabled_check.blockSignals(False)
@@ -16782,6 +16989,58 @@ class NfitProjectExplorer:
             self.scale_factor_fit_check.blockSignals(False)
         self._sync_sample_environment_controls(entry, role)
         self._sync_group_bulk_controls(role)
+        self._sync_background_bulk_controls(role)
+
+    def _background_collection_owner(
+        self, role: str
+    ) -> DatasetEntry | DataGroup | DatasetGroup | None:
+        _group, entry, _mask, _model, _item_role = self._objects_for_item(
+            self._current_item()
+        )
+        if role == "backgrounds":
+            return entry
+        if role == "group_backgrounds":
+            return self._background_owner_for_item(self._current_item())
+        return None
+
+    def _sync_background_bulk_controls(self, role: str) -> None:
+        show = role in {"backgrounds", "group_backgrounds"}
+        self.background_bulk_widget.setVisible(show)
+        if not show:
+            return
+        owner = self._background_collection_owner(role)
+        values = set() if owner is None else {
+            float(background.scale) for background in owner.backgrounds
+        }
+        self.background_bulk_scale_edit.blockSignals(True)
+        try:
+            self.background_bulk_scale_edit.setText(
+                _format_number(next(iter(values))) if len(values) == 1 else ""
+            )
+        finally:
+            self.background_bulk_scale_edit.blockSignals(False)
+
+    def _set_background_bulk_scale(self, text: str) -> None:
+        group, _entry, _mask, _model, role = self._objects_for_item(
+            self._current_item()
+        )
+        owner = self._background_collection_owner(role)
+        text = text.strip()
+        if group is None or owner is None or not text:
+            return
+        try:
+            value = float(text)
+        except ValueError:
+            self._sync_background_bulk_controls(role)
+            return
+        if not np.isfinite(value):
+            self._sync_background_bulk_controls(role)
+            return
+        if all(background.scale == value for background in owner.backgrounds):
+            return
+        set_background_collection(owner, scale=value)
+        self._background_changed(group, owner)
+        self._sync_background_bulk_controls(role)
 
     def _group_bulk_datasets(self, role: str) -> list[DatasetEntry]:
         item = self._current_item()
@@ -16903,7 +17162,7 @@ class NfitProjectExplorer:
         if not selected:
             return
         changed = False
-        changed_masks: list[tuple[DataGroup | None, DatasetEntry | None, str]] = []
+        changed_mask_datasets: list[DatasetEntry] = []
         affected_groups: list[DataGroup] = []
         for item in selected:
             item_group, item_entry, item_mask, item_model, item_role = (
@@ -16911,10 +17170,11 @@ class NfitProjectExplorer:
             )
             subgroup = (
                 self._dataset_group_for_item(item)
-                if item_role == "dataset_group"
+                if item_role in {"dataset_group", "group_masks"}
                 else None
             )
             target = None
+            targets = []
             if item_role == "dataset":
                 target = item_entry
             elif item_role == "dataset_group":
@@ -16923,24 +17183,61 @@ class NfitProjectExplorer:
                 target = item_mask
             elif item_role == "model":
                 target = item_model
-            if target is None or target.enabled == bool(checked):
+            if target is not None:
+                targets = [target]
+            elif item_role == "masks" and item_entry is not None:
+                targets = list(item_entry.masks)
+            elif item_role == "backgrounds" and item_entry is not None:
+                targets = list(item_entry.backgrounds)
+            elif item_role == "group_masks" and subgroup is not None:
+                targets = list(subgroup.masks)
+            elif item_role == "group_backgrounds":
+                owner = self._background_owner_for_item(item)
+                targets = [] if owner is None else list(owner.backgrounds)
+            changed_here = any(
+                target.enabled != bool(checked) for target in targets
+            )
+            if not changed_here:
                 continue
-            target.enabled = bool(checked)
+            if item_role == "masks" and item_entry is not None:
+                set_mask_collection_enabled(item_entry, bool(checked))
+            elif item_role == "group_masks" and subgroup is not None:
+                set_mask_collection_enabled(subgroup, bool(checked))
+            elif item_role == "backgrounds" and item_entry is not None:
+                set_background_collection(item_entry, enabled=bool(checked))
+            elif item_role == "group_backgrounds":
+                owner = self._background_owner_for_item(item)
+                if owner is not None:
+                    set_background_collection(owner, enabled=bool(checked))
+            else:
+                for target in targets:
+                    target.enabled = bool(checked)
             changed = True
             if item_group is not None and item_group not in affected_groups:
                 affected_groups.append(item_group)
-            if item_role in {"mask", "group_mask"}:
-                changed_masks.append((item_group, item_entry, item_role))
+            if item_role in {"mask", "group_mask", "masks", "group_masks"}:
+                mask_datasets = (
+                    [item_entry]
+                    if item_role in {"mask", "masks"} and item_entry is not None
+                    else list(subgroup.iter_datasets()) if subgroup is not None else []
+                )
+                known_ids = {id(dataset) for dataset in changed_mask_datasets}
+                changed_mask_datasets.extend(
+                    dataset for dataset in mask_datasets if id(dataset) not in known_ids
+                )
+            if item_role == "group_backgrounds":
+                owner = self._background_owner_for_item(item)
+                if owner is not None and not isinstance(owner, DatasetEntry):
+                    data_group_composite_config(
+                        _composite_scope(item_group, owner)
+                    )["stale"] = True
         if not changed:
             return
         for affected_group in affected_groups:
             self._record_data_group_state_change(affected_group)
             if role in {"dataset", "dataset_group"} and bool(checked):
                 self._evaluate_model_after_dataset_activation(affected_group)
-        for item_group, item_entry, item_role in changed_masks:
-            self._mark_mask_datasets_stale(
-                self._selected_mask_datasets(item_group, item_entry, item_role)
-            )
+        self._mark_mask_datasets_stale(changed_mask_datasets)
         self._mark_dirty()
         # _refresh_tree refreshes open viewers once after the tree state is
         # rebuilt. Avoid doing the same full-volume refresh twice here.
@@ -22505,6 +22802,7 @@ class NfitProjectExplorer:
             output = self._analysis_output_roles.get(id(item)) if role == "analysis_output" else None
             specs.append(("View in data viewer", role != "analysis_output" or bool(output and output.dataset_id)))
         if role == "dataset":
+            specs.append(("Reload data", _dataset_can_reload(entry)))
             specs.append(("Show file location", has_source))
             specs.append(("Change file source", True))
             specs.append(("Copy workflow script", True))
@@ -22514,6 +22812,11 @@ class NfitProjectExplorer:
         if role in {"datasets", "dataset", "backgrounds", "dataset_group", "group_backgrounds"}:
             specs.append(("Add background", True))
         if role in {"group", "datasets", "dataset_group"}:
+            node = self._dataset_group_for_item(item) if role == "dataset_group" else _group
+            specs.append((
+                "Reload data",
+                bool(node is not None and any(_dataset_can_reload(dataset) for dataset in node.iter_datasets())),
+            ))
             specs.append(("Add dataset", True))
             specs.append(("New dataset group", True))
         if role in {"group", "models"}:
@@ -22553,6 +22856,7 @@ class NfitProjectExplorer:
             "Rename": self.rename_selected,
             "Delete": self.delete_selected,
             "View in data viewer": self.open_slice_viewer_for_selection,
+            "Reload data": self.reload_data_for_selection,
             "Show file location": self.show_file_location_for_selection,
             "Change file source": self.change_file_source_for_selection,
             "Copy workflow script": self.copy_workflow_script_for_selection,
@@ -22578,6 +22882,10 @@ class NfitProjectExplorer:
             "Rename": "Rename the selected tree item.",
             "Delete": "Delete all selected compatible items when that operation is allowed.",
             "View in data viewer": "Open or refresh the data viewer for this selection.",
+            "Reload data": (
+                "Reread the selected dataset, or every dataset in the selected "
+                "collection, from its configured source."
+            ),
             "Show file location": "Reveal the selected dataset's source file in the operating system file browser.",
             "Change file source": "Point this dataset at a different source file on disk.",
             "Copy workflow script": (
@@ -29472,6 +29780,29 @@ def _dataset_can_load(dataset: DatasetEntry) -> bool:
     if data_type_container(dataset.data_type) == "point_list":
         return True
     return bool(Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5", ".npz"})
+
+
+def _dataset_can_reload(dataset: DatasetEntry | None) -> bool:
+    if dataset is None or not isinstance(dataset.metadata, dict):
+        return False
+    if dataset.metadata.get("derived_from_analysis"):
+        project_path = dataset.metadata.get("_project_path")
+        artifact_path = dataset.metadata.get("project_artifact_path") or dataset.metadata.get(
+            "analysis_artifact_path"
+        )
+        return bool(
+            project_path
+            and artifact_path
+            and project_artifact_exists(project_path, artifact_path)
+        )
+    source = dataset.metadata.get("source_file")
+    if not source:
+        return False
+    if dataset.kind == "raw_dgs_nexus" or dataset.metadata.get("importer"):
+        return True
+    if data_type_container(dataset.data_type) == "point_list":
+        return True
+    return Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5", ".npz"}
 
 
 def _dataset_can_rebin(dataset: DatasetEntry) -> bool:

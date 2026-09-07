@@ -502,6 +502,18 @@ refreshes open viewers, including in manual rebin mode.
 After changing the sample grid, the reference follows
 it on the next rebin. Check the energy limits when copying settings between series.
 
+Use **Reload data** on a dataset to reread its configured source without changing
+its masks, backgrounds, rebin recipe, or other project settings. On a dataset
+collection, the same action reloads every descendant that has a source. Derived
+composites and open data viewers refresh after the reload. The scripting
+equivalents are ``reload_dataset_data(dataset)`` and ``reload_data_group(group)``.
+
+Select a **Masks** or **Backgrounds** folder to enable or disable every item it
+contains with one checkbox. A Backgrounds folder also provides a shared **Scale**
+editor; a blank value means its background scales differ. The corresponding
+scripting calls are ``set_mask_collection_enabled(owner, enabled)`` and
+``set_background_collection(owner, enabled=..., scale=...)``.
+
 For an already gridded or explicitly rebinned single-crystal background, reduce
 sample and background independently onto identical axes and bins.
 nfit then subtracts corresponding bins without

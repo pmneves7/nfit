@@ -619,6 +619,77 @@ def test_project_explorer_loads_dataset_and_refreshes_details(monkeypatch, tmp_p
     assert "Axes\nDimensions: 2" in explorer.details_label.text()
 
 
+def test_reload_data_helpers_and_collection_button_refresh_sources(monkeypatch, tmp_path):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    paths = [tmp_path / "first.nxs", tmp_path / "second.nxs"]
+    for path in paths:
+        path.write_bytes(b"source")
+    first = DatasetEntry(
+        "first", _tiny_mdhisto_data(1.0), kind="nxs",
+        metadata={"source_file": str(paths[0]), "import_status": "loaded"},
+    )
+    second = DatasetEntry(
+        "second", _tiny_mdhisto_data(2.0), kind="nxs",
+        metadata={"source_file": str(paths[1]), "import_status": "loaded"},
+    )
+    subgroup = DatasetGroup("series", datasets=[first, second])
+    group = DataGroup("workspace", subgroups=[subgroup])
+    values = {paths[0]: 10.0, paths[1]: 20.0}
+    monkeypatch.setattr(
+        project_gui,
+        "load_mantid_mdhisto_nxs",
+        lambda path, copy_metadata=False: _tiny_mdhisto_data(values[path]),
+    )
+
+    original_revision = first.data_revision
+    assert nfit.reload_dataset_data(first) is first.data
+    assert first.data_revision == original_revision + 1
+    np.testing.assert_allclose(first.data.signal, 10.0)
+    assert first.data_matches_source
+
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    subgroup_item = explorer.tree.topLevelItem(0).child(0).child(0)
+    explorer.tree.setCurrentItem(subgroup_item)
+    assert not explorer.reload_data_button.isHidden()
+    assert explorer.reload_data_button.isEnabled()
+    refreshes = []
+    monkeypatch.setattr(
+        explorer,
+        "refresh_slice_viewer",
+        lambda owner, *, force_rebin=False: refreshes.append((owner, force_rebin)),
+    )
+    values[paths[0]] = 30.0
+    values[paths[1]] = 40.0
+
+    assert explorer.reload_data_for_selection()
+    np.testing.assert_allclose(first.data.signal, 30.0)
+    np.testing.assert_allclose(second.data.signal, 40.0)
+    assert refreshes == [(group, True)]
+
+
+def test_reload_dataset_failure_preserves_current_data(monkeypatch, tmp_path):
+    source = tmp_path / "scan.nxs"
+    source.write_bytes(b"source")
+    original = _tiny_mdhisto_data(3.0)
+    dataset = DatasetEntry(
+        "scan", original, kind="nxs",
+        metadata={"source_file": str(source), "import_status": "loaded"},
+    )
+    current = dataset.data
+    monkeypatch.setattr(
+        project_gui,
+        "load_mantid_mdhisto_nxs",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("unreadable")),
+    )
+
+    with pytest.raises(OSError, match="unreadable"):
+        nfit.reload_dataset_data(dataset)
+    assert dataset.data is current
+    assert dataset.metadata["import_status"] == "loaded"
+
+
 def test_project_explorer_refreshes_details_after_slice_viewer_lazy_load(monkeypatch, tmp_path):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")
@@ -1587,6 +1658,7 @@ def test_project_explorer_context_menu_actions_and_source_change(monkeypatch, tm
         "Delete",
         "Open Analysis Window",
         "View in data viewer",
+        "Reload data",
         "Show file location",
         "Change file source",
         "Copy workflow script",
@@ -1649,6 +1721,106 @@ def test_project_explorer_context_menu_actions_and_source_change(monkeypatch, tm
     datasets_item = explorer.tree.topLevelItem(0).child(0)
     assert "Add dataset" in explorer.context_menu_action_names(datasets_item)
     assert model.name in group.models
+
+
+def test_mask_and_background_folders_have_bulk_enabled_and_scale_controls(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtCore = pytest.importorskip("PySide6.QtCore")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    dataset = DatasetEntry("sample", _tiny_mdhisto_data(5.0), kind="mdhisto")
+    first_mask = create_mask(dataset, "Mask1")
+    second_mask = create_mask(dataset, "Mask2")
+    second_mask.enabled = False
+    first_background = project_gui.BackgroundSpec("Background1", "first", scale=1.0)
+    second_background = project_gui.BackgroundSpec(
+        "Background2", "second", scale=2.0, enabled=False
+    )
+    dataset.backgrounds.extend([first_background, second_background])
+    group = DataGroup("workspace", datasets=[dataset])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    monkeypatch.setattr(explorer, "_record_data_group_state_change", lambda _group: False)
+    monkeypatch.setattr(explorer, "refresh_slice_viewer", lambda *args, **kwargs: None)
+
+    dataset_item = explorer.tree.topLevelItem(0).child(0).child(0)
+    masks_item = dataset_item.child(0)
+    explorer.tree.setCurrentItem(masks_item)
+    assert not explorer.enabled_check.isHidden()
+    assert explorer.enabled_check.checkState() == QtCore.Qt.CheckState.PartiallyChecked
+    explorer.enabled_check.setChecked(False)
+    assert not first_mask.enabled
+    assert not second_mask.enabled
+    assert project_gui.dataset_mask_application_config(dataset)["stale"] is True
+
+    dataset_item = explorer.tree.topLevelItem(0).child(0).child(0)
+    backgrounds_item = dataset_item.child(1)
+    explorer.tree.setCurrentItem(backgrounds_item)
+    assert not explorer.enabled_check.isHidden()
+    assert explorer.enabled_check.checkState() == QtCore.Qt.CheckState.PartiallyChecked
+    assert not explorer.background_bulk_widget.isHidden()
+    assert explorer.background_bulk_scale_edit.text() == ""
+    explorer.background_bulk_scale_edit.setText("3.5")
+    explorer._set_background_bulk_scale("3.5")
+    assert [item.scale for item in dataset.backgrounds] == [3.5, 3.5]
+    explorer.enabled_check.setChecked(True)
+    assert all(item.enabled for item in dataset.backgrounds)
+
+    nfit.set_mask_collection_enabled(dataset, True)
+    nfit.set_background_collection(dataset, enabled=False, scale=0.25)
+    assert all(item.enabled for item in dataset.masks)
+    assert not any(item.enabled for item in dataset.backgrounds)
+    assert [item.scale for item in dataset.backgrounds] == [0.25, 0.25]
+
+
+def test_shared_mask_and_background_folders_apply_bulk_controls(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtCore = pytest.importorskip("PySide6.QtCore")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    sample = DatasetEntry("sample", _tiny_mdhisto_data(5.0), kind="mdhisto")
+    first_mask = project_gui.MaskSpec("Mask1", "coordinate_range", enabled=True)
+    second_mask = project_gui.MaskSpec("Mask2", "coordinate_range", enabled=False)
+    first_background = project_gui.BackgroundSpec("Background1", "first", scale=1.0)
+    second_background = project_gui.BackgroundSpec(
+        "Background2", "second", scale=2.0, enabled=False
+    )
+    subgroup = DatasetGroup(
+        "series",
+        datasets=[sample],
+        masks=[first_mask, second_mask],
+        backgrounds=[first_background, second_background],
+    )
+    group = DataGroup("workspace", subgroups=[subgroup])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    monkeypatch.setattr(explorer, "_record_data_group_state_change", lambda _group: False)
+    monkeypatch.setattr(explorer, "refresh_slice_viewer", lambda *args, **kwargs: None)
+
+    subgroup_item = explorer.tree.topLevelItem(0).child(0).child(0)
+    masks_item = next(
+        subgroup_item.child(index)
+        for index in range(subgroup_item.childCount())
+        if explorer._objects_for_item(subgroup_item.child(index))[4] == "group_masks"
+    )
+    explorer.tree.setCurrentItem(masks_item)
+    assert explorer.enabled_check.checkState() == QtCore.Qt.CheckState.PartiallyChecked
+    explorer.enabled_check.setChecked(True)
+    assert all(mask.enabled for mask in subgroup.masks)
+
+    subgroup_item = explorer.tree.topLevelItem(0).child(0).child(0)
+    backgrounds_item = next(
+        subgroup_item.child(index)
+        for index in range(subgroup_item.childCount())
+        if explorer._objects_for_item(subgroup_item.child(index))[4]
+        == "group_backgrounds"
+    )
+    explorer.tree.setCurrentItem(backgrounds_item)
+    explorer._set_background_bulk_scale("4")
+    assert [background.scale for background in subgroup.backgrounds] == [4.0, 4.0]
+    explorer.enabled_check.setChecked(False)
+    assert not any(background.enabled for background in subgroup.backgrounds)
+    assert project_gui.data_group_composite_config(
+        project_gui._composite_scope(group, subgroup)
+    )["stale"] is True
 
 
 def test_recent_project_helpers_and_file_menu(monkeypatch, tmp_path):

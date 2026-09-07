@@ -30,6 +30,10 @@ The package provides:
   with selectable channels, nominal coordinates, display and integration axes,
   exact tiled slices, visible zero-valued background references, temperature-aware
   fitting, and optional whole-bin rebinning;
+- source reload actions for individual datasets and complete dataset collections,
+  with automatic refresh of dependent composites and open viewers;
+- folder-level enable controls for masks and backgrounds, plus a shared scale
+  editor for all backgrounds in a folder;
 - local, MMP, generalized-paramagnon/damped-mode, conserved-ferromagnetic,
   relaxational or inertial Heisenberg-RPA, and coupled-susceptibility models
   for inelastic, quasistatic elastic, and optional bulk-response comparisons,
