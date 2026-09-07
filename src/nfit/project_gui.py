@@ -15197,6 +15197,15 @@ class NfitProjectExplorer:
         file_button.setMenu(menu)
         toolbar.addWidget(file_button)
 
+        help_button = QtWidgets.QToolButton()
+        help_button.setObjectName("help_button")
+        help_button.setText("Help")
+        help_button.setToolTip("Open the nfit wiki home page in your default web browser.")
+        help_button.clicked.connect(
+            lambda: QtGui.QDesktopServices.openUrl(QtCore.QUrl("https://github.com/pmneves7/nfit/wiki"))
+        )
+        toolbar.addWidget(help_button)
+
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         self.window.setCentralWidget(splitter)
 

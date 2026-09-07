@@ -191,6 +191,23 @@ def test_waterfall_group_keys_follow_immediate_dataset_groups():
     ) == ["root", "Group1"]
 
 
+def test_project_explorer_help_opens_wiki(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtGui = pytest.importorskip("PySide6.QtGui")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    opened = []
+    monkeypatch.setattr(QtGui.QDesktopServices, "openUrl", lambda url: opened.append(url.toString()) or True)
+    explorer = NfitProjectExplorer(NfitProject([]))
+    toolbar = explorer.window.findChild(QtWidgets.QToolBar)
+    buttons = [toolbar.widgetForAction(action) for action in toolbar.actions()]
+    assert [button.text() for button in buttons[:2]] == ["File", "Help"]
+    help_button = toolbar.findChild(QtWidgets.QToolButton, "help_button")
+    assert help_button.toolTip()
+    help_button.click()
+    assert opened == ["https://github.com/pmneves7/nfit/wiki"]
+    explorer.window.close()
+
+
 def test_project_explorer_preserves_tree_expansion_and_toolbar_font(monkeypatch, tmp_path):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtGui = pytest.importorskip("PySide6.QtGui")
