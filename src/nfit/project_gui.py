@@ -15119,6 +15119,22 @@ class NfitProjectExplorer:
             )
         return False
 
+    def show_help(self) -> None:
+        """Open the documentation built alongside this source checkout."""
+        from PySide6 import QtCore, QtGui, QtWidgets
+
+        index = Path(__file__).resolve().parents[2] / "docs" / "_build" / "html" / "index.html"
+        if not index.is_file():
+            QtWidgets.QMessageBox.information(
+                self.window,
+                "Documentation not built",
+                f"Local documentation was not found at {index}.\n\n"
+                "Build it from the nfit source directory with:\n"
+                "python -m sphinx -b html docs docs/_build/html",
+            )
+            return
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(index)))
+
     def show_preferences(self) -> None:
         from .preferences_gui import PreferencesDialog
 
@@ -15200,10 +15216,8 @@ class NfitProjectExplorer:
         help_button = QtWidgets.QToolButton()
         help_button.setObjectName("help_button")
         help_button.setText("Help")
-        help_button.setToolTip("Open the nfit wiki home page in your default web browser.")
-        help_button.clicked.connect(
-            lambda: QtGui.QDesktopServices.openUrl(QtCore.QUrl("https://github.com/pmneves7/nfit/wiki"))
-        )
+        help_button.setToolTip("Open the local nfit documentation home page in your default web browser.")
+        help_button.clicked.connect(self.show_help)
         toolbar.addWidget(help_button)
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)

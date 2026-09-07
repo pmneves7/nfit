@@ -191,11 +191,21 @@ def test_waterfall_group_keys_follow_immediate_dataset_groups():
     ) == ["root", "Group1"]
 
 
-def test_project_explorer_help_opens_wiki(monkeypatch):
+@pytest.mark.parametrize("built", [True, False])
+def test_project_explorer_help_opens_local_documentation(monkeypatch, tmp_path, built):
+    import nfit.project_gui as project_gui
+
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtGui = pytest.importorskip("PySide6.QtGui")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
     opened = []
+    messages = []
+    monkeypatch.setattr(project_gui, "__file__", str(tmp_path / "src" / "nfit" / "project_gui.py"))
+    index = tmp_path / "docs" / "_build" / "html" / "index.html"
+    if built:
+        index.parent.mkdir(parents=True)
+        index.write_text("<html>Help</html>")
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information", lambda *args: messages.append(args[2]))
     monkeypatch.setattr(QtGui.QDesktopServices, "openUrl", lambda url: opened.append(url.toString()) or True)
     explorer = NfitProjectExplorer(NfitProject([]))
     toolbar = explorer.window.findChild(QtWidgets.QToolBar)
@@ -204,7 +214,10 @@ def test_project_explorer_help_opens_wiki(monkeypatch):
     help_button = toolbar.findChild(QtWidgets.QToolButton, "help_button")
     assert help_button.toolTip()
     help_button.click()
-    assert opened == ["https://github.com/pmneves7/nfit/wiki"]
+    assert opened == ([index.as_uri()] if built else [])
+    assert len(messages) == (0 if built else 1)
+    if not built:
+        assert "python -m sphinx" in messages[0]
     explorer.window.close()
 
 

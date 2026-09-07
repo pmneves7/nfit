@@ -99,7 +99,7 @@ The package provides:
   actions for stored plots, and provide named,
   previewed Matplotlib, cmcrameri, Colorcet, cmocean, MyCarta, and CartoColors
   color maps, plus drop-in custom RGB palette files accessible through
-  **File → Preferences**, with toolbar **Help** linking to the project wiki;
+  **File → Preferences**, with toolbar **Help** opening the local documentation;
 - machine-local rebin performance defaults, cancellable machine calibration and
   configuration-specific benchmarks with timing/memory reports and script export;
 - multi-selection dataset operations and recursive copy/paste for nested

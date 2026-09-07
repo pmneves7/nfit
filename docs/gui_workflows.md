@@ -13,8 +13,9 @@ The nfit interface has two main window types:
 Scientific settings are stored in the `.nfit` project and use the same package
 functions available through the Python API.
 
-Click **Help** beside **File** in the project explorer toolbar to open the
-[nfit wiki home page](https://github.com/pmneves7/nfit/wiki) in your default web browser.
+Click **Help** beside **File** in the project explorer toolbar to open the local
+documentation home page (`docs/_build/html/index.html`) in your default web
+browser. If it has not been built, Help shows the build command instead.
 
 Open **File → Preferences…** for application-wide preferences. The **Colormaps**
 page shows the shared custom-palette folder, opens it in your file manager, and
