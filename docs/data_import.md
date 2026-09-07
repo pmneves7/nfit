@@ -488,8 +488,17 @@ is a one-sigma uncertainty in the signal unit. This assumes independent
 sample/background values and does not propagate uncertainty in $a$. Values outside the background domain are
 masked rather than extrapolated.
 
-For a single-crystal background, reduce sample and background independently
-onto identical axes and bins. nfit then subtracts corresponding bins without
+For a group background referencing unrebinned neutron point data, nfit bins the
+reference onto the sample's resolved momentum/energy grid automatically,
+including its coordinate basis, symmetry, averaging mode, and bin edges.
+The source's own rebin settings are preserved. Temperature-series composites
+subtract this reference from each metadata slice; the reference run is excluded
+from the sample composite. After changing the sample grid, the reference follows
+it on the next rebin. Check the energy limits when copying settings between series.
+
+For an already gridded or explicitly rebinned single-crystal background, reduce
+sample and background independently onto identical axes and bins.
+nfit then subtracts corresponding bins without
 interpolation and uses the same variance equation above. A mismatched shape,
 axis name, unit, or edge is rejected explicitly. This supports environments
 measured over comparable angle ranges. A group background can point directly to

@@ -54,6 +54,67 @@ def temperature(**kwargs):
     return nfit.MetadataDimension("Temperature", "parameters/temperature", "K", **kwargs)
 
 
+@pytest.mark.parametrize("metadata_axes", [False, True])
+def test_raw_group_background_automatically_follows_sample_grid_and_preserves_source(metadata_axes):
+    from nfit.pipeline import BackgroundSpec, MaskSpec
+
+    reference = points(50, [2, 100], sigma=[3, 1], name="reference")
+    reference.replace_data(reference.data.with_updates(mask=[True, False]))
+    g = group([points(5, [10], name="cold"), points(10, [20], name="warm"), reference])
+    reference.parameters["rebin"] = {"enabled": False}
+    original = reference.data
+    recipe = copy.deepcopy(reference.parameters["rebin"])
+    g.backgrounds.append(BackgroundSpec("50 K", reference.id, scale=0.5, source_entry=reference))
+    if metadata_axes:
+        nfit.set_metadata_dimensions(g, [temperature()])
+    result = nfit.composite_dataset_data(g)
+    np.testing.assert_allclose(result.signal.ravel(), [9, 19] if metadata_axes else [14])
+    np.testing.assert_allclose(result.errors.ravel()**2, [3.25, 3.25] if metadata_axes else [2.75])
+    assert reference.data is original
+    assert reference.parameters["rebin"] == recipe
+    if metadata_axes:
+        np.testing.assert_array_equal(result.axes[-1].centers, [5, 10])
+    # Overrides used by saved plots and scripts must also control the background.
+    config = copy.deepcopy(data_group_composite_config(g))
+    config["axes"][0].update(name="H new", bin_edges=[-1, 0.25, 1])
+    config["fractional"] = False
+    changed = nfit.composite_dataset_data(g, config_override=config)
+    assert changed.shape[0] == 2
+    np.testing.assert_allclose(changed.signal[0].ravel(), result.signal.ravel())
+    assert changed.mask[1].all()
+    signature = _composite_cache_signature(g)
+    reference.masks.append(MaskSpec("cut", type="box", parameters={"H": [0, 1]}))
+    assert _composite_cache_signature(g) != signature
+
+
+def test_raw_background_composite_script_round_trip(tmp_path):
+    from nfit.pipeline import BackgroundSpec
+    from tests.test_macs import _write_macs_nexus
+
+    entries = []
+    for i in range(2):
+        filename = _write_macs_nexus(tmp_path / f"source{i}.nxs", energy_transfer=1.0)
+        entries.append(nfit.dataset_entry_from_path(filename))
+        entries[i].parameters["temperature"] = [5, 50][i]
+        entries[i].parameters["rebin"] = {"enabled": False}
+    g = group(entries)
+    for axis in data_group_composite_config(g)["axes"][:3]:
+        axis["bin_edges"] = [-10, 10]
+    before = nfit.composite_dataset_data(g)
+    g.backgrounds.append(BackgroundSpec("50 K", entries[1].id, source_entry=entries[1]))
+    nfit.set_metadata_dimensions(g, [temperature()])
+    path = tmp_path / "background.nfit"
+    nfit.save_project(nfit.NfitProject([g]), path)
+    restored = nfit.load_project(path)
+    script = nfit.composite_workflow_script(restored, g.name)
+    namespace = {"__name__": "test_workflow"}
+    exec(compile(script, "background.py", "exec"), namespace)
+    output = namespace["run"]()
+    np.testing.assert_allclose(output.signal.ravel(), [0], atol=1e-10)
+    # Before combines two identical independent runs; subtraction adds their variances.
+    np.testing.assert_allclose(output.errors, 2 * before.errors[..., None])
+
+
 def test_six_temperatures_are_independent_even_with_fractional_binning(tmp_path):
     targets = [5, 10, 20, 30, 40, 50]
     entries = [points(t + 0.1, [i + 1], name=str(t)) for i, t in enumerate(targets)]
@@ -413,7 +474,7 @@ def test_irregular_metadata_tiles_and_saved_plot_use_each_exact_coordinate():
     )
     figure = render_plot(plot, data)
     labels = [text.get_text() for ax in figure.axes for text in ax.texts]
-    assert all(any(f"{value:g}" in label for label in labels) for value in data.axes[4].centers)
+    assert all(any(f"{value:.1f}" in label for label in labels) for value in data.axes[4].centers)
     plt.close(figure)
 
 

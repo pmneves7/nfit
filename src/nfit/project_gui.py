@@ -3223,7 +3223,10 @@ def _composite_cache_signature(
                 float(background.scale),
                 background.interpolation,
                 (
-                    background.source_entry.data_cache_token
+                    _viewer_view_signature(
+                        background.source_entry,
+                        effective_dataset_masks(_composite_root(group), background.source_entry),
+                    )
                     if background.source_entry is not None
                     else None
                 ),
@@ -3433,7 +3436,9 @@ def _metadata_composite_data(group, config, dimensions, *, include_source_masks,
             continue
         data = reducer(group, fixed, datasets=selected_entries, progress_callback=progress_callback)
         data = _apply_mdhisto_coverage_threshold(data, config)
-        slices[key] = _apply_composite_backgrounds(group, data, progress_callback=progress_callback)
+        slices[key] = _apply_composite_backgrounds(
+            group, data, config=fixed, progress_callback=progress_callback
+        )
     # Background subtraction can add channels. Use its result as the schema.
     if slices:
         template = next(iter(slices.values()))
@@ -3616,6 +3621,7 @@ def _composite_dataset_data(
     return _apply_composite_backgrounds(
         group,
         result,
+        config=config,
         progress_callback=progress_callback,
     )
 
@@ -3648,6 +3654,7 @@ def _apply_composite_backgrounds(
     group: DataGroup | _CompositeScope,
     data: MDHistoData | PointListData | PointData4D,
     *,
+    config: Mapping[str, Any] | None = None,
     progress_callback: Any | None = None,
 ) -> MDHistoData | PointListData | PointData4D:
     """Apply backgrounds owned by a composite scope after it is combined."""
@@ -3682,9 +3689,33 @@ def _apply_composite_backgrounds(
         else:
             source_data = _viewer_data_before_scale(
                 source,
+                extra_masks=effective_dataset_masks(root, source),
                 force_rebin=True,
                 force_masks=True,
+                progress_callback=progress_callback,
             )
+            if isinstance(source_data, PointData4D):
+                # An unrebinned neutron reference follows the resolved sample
+                # grid. Work on copies so its own viewing recipe stays intact.
+                aligned_config = copy.deepcopy(dict(
+                    data_group_composite_config(group) if config is None else config
+                ))
+                if len(data.axes) != 4 or len(aligned_config.get("axes", [])) != 4:
+                    raise ValueError("point-data group backgrounds require a four-axis HKLE grid")
+                for settings, axis in zip(aligned_config["axes"], data.axes, strict=True):
+                    settings.update(
+                        name=axis.name, units=axis.units, bin_edges=axis.values.tolist(),
+                        auto_lower=False, auto_upper=False, auto_step_size=False,
+                    )
+                source_metadata = dict(source_data.metadata)
+                if root.lattice_parameters:
+                    source_metadata.setdefault("lattice_parameters", dict(root.lattice_parameters))
+                source_data = _rebin_point_data(
+                    source_data.with_updates(metadata=source_metadata), aligned_config,
+                    progress_callback=progress_callback,
+                )
+                if source.backgrounds:
+                    source_data = _apply_dataset_backgrounds(source, source_data)
         if not isinstance(source_data, MDHistoData):
             raise TypeError(
                 f"background {background.name!r} must refer to gridded histogram data"
@@ -17612,7 +17643,8 @@ class NfitProjectExplorer:
         box = QtWidgets.QGroupBox("Background subtraction")
         box.setToolTip(
             "A |Q|-energy source is interpolated onto the target grid. A single-crystal "
-            "source must have identical axes and bins. The scaled signal is subtracted "
+            "histogram must have identical axes and bins. Unrebinned neutron point references "
+            "on a group background follow the group's grid automatically. The scaled signal is subtracted "
             "and the scaled variance is added."
         )
         layout = QtWidgets.QGridLayout(box)
@@ -17629,7 +17661,8 @@ class NfitProjectExplorer:
         source_combo = QtWidgets.QComboBox()
         source_combo.setObjectName("background_source_dataset")
         source_combo.setToolTip(
-            "Powder |Q|-energy data, an identically binned histogram, or a live group composite."
+            "Powder |Q|-energy data, an identically binned histogram, or a live group composite. "
+            "For group backgrounds, unrebinned neutron point data automatically use the sample grid."
         )
         candidates = [] if group is None else [
             candidate
