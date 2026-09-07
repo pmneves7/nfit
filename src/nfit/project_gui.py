@@ -14287,7 +14287,10 @@ class NfitProjectExplorer:
         viewer._nfit_group = group
         viewer._nfit_dataset_ids = {dataset.name: dataset.id for dataset in group.iter_datasets()}
         if hasattr(viewer, "set_save_plot_callback"):
-            viewer.set_save_plot_callback(lambda viewer=viewer, group=group: self.save_plot_from_viewer(group, viewer))
+            viewer.set_save_plot_callback(
+                lambda viewer=viewer, group=group: self.save_plot_from_viewer(group, viewer),
+                new_plot_callback=lambda viewer=viewer, group=group: self.save_plot_from_viewer(group, viewer, as_new=True),
+            )
         if hasattr(viewer, "set_save_project_callback"):
             viewer.set_save_project_callback(self.save)
         if hasattr(viewer, "set_open_new_viewer_callback"):
@@ -14307,7 +14310,7 @@ class NfitProjectExplorer:
         viewer.show()
         return viewer
 
-    def save_plot_from_viewer(self, group: DataGroup, viewer: Any) -> PlotEntry | None:
+    def save_plot_from_viewer(self, group: DataGroup, viewer: Any, *, as_new: bool = False) -> PlotEntry | None:
         """Create or update a workspace plot using the interactive viewer state."""
 
         name = viewer.dataset_combo.currentText() if viewer.dataset_combo is not None else "Plot"
@@ -14378,7 +14381,7 @@ class NfitProjectExplorer:
             "fit_comparison" if bool(settings.get("show_fit")) else
             "mdhisto_line" if viewer._is_effective_1d() else "mdhisto_slice"
         )
-        editing_id = getattr(viewer, "_nfit_editing_plot_id", None)
+        editing_id = None if as_new else getattr(viewer, "_nfit_editing_plot_id", None)
         existing = next((plot for plot in group.plots if plot.id == editing_id), None)
         if existing is None:
             plot = new_plot_entry(
@@ -14468,6 +14471,7 @@ class NfitProjectExplorer:
             if isinstance(composite_recipe, dict):
                 viewer._nfit_plot_composite_recipe = copy.deepcopy(composite_recipe)
             viewer.apply_plot_settings(plot.settings)
+            viewer.set_saved_plot_editing()
         return viewer
 
     def plot_script_for_selection(self) -> str | None:

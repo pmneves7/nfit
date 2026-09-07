@@ -1972,6 +1972,8 @@ def test_stored_plots_snapshot_independent_rebin_bases(monkeypatch):
     viewer = QtMDHistoSliceViewer(dataset.data, dataset_names=[dataset.name])
     viewer._nfit_dataset_ids = {dataset.name: dataset.id}
     first_plot = explorer.save_plot_from_viewer(group, viewer)
+    assert viewer.save_plot_button.text() == "Store plot"
+    assert viewer.save_new_plot_button.isHidden()
 
     for axis, vector in zip(config["axes"][1:], second_basis, strict=True):
         axis["vector"] = vector
@@ -2001,6 +2003,10 @@ def test_stored_plots_snapshot_independent_rebin_bases(monkeypatch):
     plots_item = explorer.tree.topLevelItem(0).child(4)
     explorer.tree.setCurrentItem(plots_item.child(0))
     editor = explorer.edit_saved_plot_in_viewer()
+    assert editor.save_plot_button.text() == "Save plot"
+    assert not editor.save_new_plot_button.isHidden()
+    assert editor.save_new_plot_button.isEnabled()
+    assert editor.save_new_plot_button.toolTip()
     assert editor.data.metadata["rebin"]["vectors"][1:] == list(first_basis)
     assert editor._nfit_plot_rebin_configs[dataset.id]["axes"][1]["vector"] == first_basis[0]
     updated = editor.store_plot()
@@ -2009,6 +2015,31 @@ def test_stored_plots_snapshot_independent_rebin_bases(monkeypatch):
         axis["vector"]
         for axis in updated.settings[key][dataset.id]["axes"][1:]
     ] == list(first_basis)
+    original_settings = copy.deepcopy(first_plot.settings)
+    editor.cmap_combo.setCurrentText("plasma")
+    editor.save_new_plot_button.click()
+    copied = group.plots[-1]
+    assert copied.id != first_plot.id
+    assert copied.name != first_plot.name
+    assert copied.settings["cmap"] == "plasma"
+    assert copied.settings[key] == first_plot.settings[key]
+    assert copied.settings[key] is not first_plot.settings[key]
+    assert first_plot.settings == original_settings
+    assert editor._nfit_editing_plot_id == copied.id
+    count = len(group.plots)
+    editor.cmap_combo.setCurrentText("magma")
+    editor.save_plot_button.click()
+    assert len(group.plots) == count
+    assert copied.settings["cmap"] == "magma"
+    assert first_plot.settings == original_settings
+    fresh = editor.open_new_viewer()
+    assert fresh.save_plot_button.text() == "Store plot"
+    assert fresh.save_new_plot_button.isHidden()
+    fresh.window.close()
+    editor.window.close()
+    viewer.window.close()
+    explorer.has_unsaved_changes = False
+    explorer.window.close()
 
 
 def test_stored_tiled_composite_plot_keeps_composite_rebin_recipe(monkeypatch):

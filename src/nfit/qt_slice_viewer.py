@@ -238,9 +238,11 @@ class QtMDHistoSliceViewer:
         self.errorbar_cap_size_spin = None
         self.copy_figure_button = None
         self.save_plot_button = None
+        self.save_new_plot_button = None
         self.copy_script_button = None
         self.save_script_button = None
         self._save_plot_callback = None
+        self._save_new_plot_callback = None
         self._save_project_callback = None
         self._open_new_viewer_callback = None
         self._close_callback = None
@@ -851,19 +853,35 @@ class QtMDHistoSliceViewer:
 
         self._open_new_viewer_callback = callback
 
-    def set_save_plot_callback(self, callback) -> None:
+    def set_save_plot_callback(self, callback, *, new_plot_callback=None) -> None:
         """Expose project-bound saved-plot creation when a callback is supplied."""
 
         self._save_plot_callback = callback
+        self._save_new_plot_callback = new_plot_callback
         if self.save_plot_button is not None:
             self.save_plot_button.setEnabled(callback is not None)
+        if self.save_new_plot_button is not None:
+            self.save_new_plot_button.setEnabled(new_plot_callback is not None)
+
+    def set_saved_plot_editing(self) -> None:
+        """Expose update/copy actions only for a viewer opened from a recipe."""
+        self.save_plot_button.setText("Save plot")
+        self.save_plot_button.setToolTip("Update the stored plot currently being edited with this view.")
+        self.save_new_plot_button.show()
+
+    def save_new_plot(self):
+        """Save a separate recipe and continue editing that new plot."""
+        return self._store_plot_with_callback(self._save_new_plot_callback)
 
     def store_plot(self):
         """Store the current view through the owning project and report it."""
 
-        if self._save_plot_callback is None:
+        return self._store_plot_with_callback(self._save_plot_callback)
+
+    def _store_plot_with_callback(self, callback):
+        if callback is None:
             return None
-        plot = self._save_plot_callback()
+        plot = callback()
         if self.store_plot_status_label is not None:
             if plot is None:
                 self.store_plot_status_label.setText("Plot was not stored")
@@ -1200,6 +1218,15 @@ class QtMDHistoSliceViewer:
         self.save_plot_button.setEnabled(False)
         self.save_plot_button.clicked.connect(self.store_plot)
         mode_layout.addWidget(self.save_plot_button)
+        self.save_new_plot_button = QtWidgets.QPushButton("Save new plot")
+        self.save_new_plot_button.setObjectName("data_viewer_save_new_plot_button")
+        self.save_new_plot_button.setToolTip(
+            "Create a separate stored plot without changing the original, then continue editing the new plot."
+        )
+        self.save_new_plot_button.setEnabled(False)
+        self.save_new_plot_button.hide()
+        self.save_new_plot_button.clicked.connect(self.save_new_plot)
+        mode_layout.addWidget(self.save_new_plot_button)
         self.store_plot_status_label = QtWidgets.QLabel("")
         self.store_plot_status_label.setObjectName("data_viewer_store_plot_status")
         self.store_plot_status_label.setToolTip(

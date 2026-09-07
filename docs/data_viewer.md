@@ -269,6 +269,13 @@ and surface exports use unsmoothed channel values.
 
 ## Saved plots
 
+When editing a stored plot in the viewer, **Save plot** updates that recipe;
+**Save new plot** creates an independently named copy, preserving the original
+and its rebin settings. The viewer then edits the new copy, so subsequent
+**Save plot** actions update it. Fresh data viewers retain **Store plot** rather
+than these two editing actions. Plot recipes are saved to disk with the project;
+these actions do not export an image file.
+
 Each workspace has a **Plots** branch. In the viewer, **Store plot** stores the
 current figure as an editable recipe and selects the resulting tree entry. Each
 recipe snapshots the complete rebin configuration of every source dataset,
