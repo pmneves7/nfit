@@ -137,6 +137,11 @@ support the same reversal, saved-plot, script, and waterfall sampling controls
 as other continuous maps. Their original directions are preserved; use
 Reverse if you prefer low values dark and high values light.
 
+Stored plots and duplicated viewers restore the color controls to match the
+rendered plot, including the reversed colormap, scale, automatic-limit method
+and its numeric parameters, power exponent, and automatic or manual limits.
+Older recipes without numeric color parameters use the viewer defaults.
+
 ### Custom colormap files
 
 In the main window, choose **File → Preferences… → Colormaps → Open folder…**.

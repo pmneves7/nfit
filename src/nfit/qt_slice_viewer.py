@@ -519,6 +519,10 @@ class QtMDHistoSliceViewer:
             "cmap": self.model._effective_cmap(),
             "color_scale": self.model.color_scale,
             "auto_limits": self.model.auto_limits,
+            "sigma_n": self.model.sigma_n,
+            "iqr_n": self.model.iqr_n,
+            "percentile_n": self.model.percentile_n,
+            "power_gamma": self.model.power_gamma,
             "autoscale": self.model.autoscale,
             "manual_vmin": self.model.manual_vmin,
             "manual_vmax": self.model.manual_vmax,
@@ -607,6 +611,9 @@ class QtMDHistoSliceViewer:
         self.model.cmap_reversed = effective_cmap.endswith("_r")
         self._set_color_scale(str(settings.get("color_scale", self.model.color_scale)))
         self._set_auto_limits(str(settings.get("auto_limits", self.model.auto_limits)))
+        for name in ("sigma_n", "iqr_n", "percentile_n", "power_gamma"):
+            if name in settings:
+                setattr(self.model, name, float(settings[name]))
         self.model.manual_vmin = settings.get("manual_vmin", self.model.manual_vmin)
         self.model.manual_vmax = settings.get("manual_vmax", self.model.manual_vmax)
         self._set_autoscale(bool(settings.get("autoscale", self.model.autoscale)))
@@ -804,6 +811,7 @@ class QtMDHistoSliceViewer:
             self.roi_button,
             bool(settings.get("roi_enabled", self.roi_button.isChecked())),
         )
+        self._sync_color_controls()
         self.update_plot(preserve_view=False)
         if settings.get("xlim") is not None:
             self.ax_image.set_xlim(*settings["xlim"])
@@ -3059,6 +3067,19 @@ class QtMDHistoSliceViewer:
     def _set_cmap(self, cmap: str) -> None:
         self.model.cmap = str(cmap)
         self.update_plot()
+
+    def _sync_color_controls(self) -> None:
+        """Reflect restored model settings without firing user-edit callbacks."""
+        self._set_combo_silent(self.cmap_combo, self.model.cmap)
+        self._set_combo_silent(self.scale_combo, self.model.color_scale)
+        self._set_combo_silent(self.limits_combo, self.model.auto_limits)
+        self._set_checkbox_silent(self.autoscale_check, self.model.autoscale)
+        self._set_spin_silent(self.gamma_spin, self.model.power_gamma)
+        self._set_spin_silent(self.limit_n_spin, self._current_limit_n())
+        self.gamma_label.setVisible(self.model.color_scale == "power")
+        self.gamma_spin.setVisible(self.model.color_scale == "power")
+        self._sync_limit_n_visibility()
+        self._sync_tiled_color_controls()
 
     def _set_plot_smoothing(self, axis_name: str, value: float) -> None:
         if self._restoring_dataset_state:
