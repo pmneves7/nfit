@@ -20,6 +20,20 @@ from nfit.project_archive import replace_analysis_artifacts
 from nfit.project_gui import NfitProject, NfitProjectExplorer, save_project
 
 
+def test_bragg_gui_names_remain_available_from_analysis_gui():
+    from nfit import analysis_bragg_gui, analysis_gui
+
+    assert (
+        analysis_gui.BraggPeakDiagnosticsWidget
+        is analysis_bragg_gui.BraggPeakDiagnosticsWidget
+    )
+    assert analysis_gui.NumericTableItem is analysis_bragg_gui.NumericTableItem
+    assert (
+        analysis_gui._bragg_parameter_group
+        is analysis_bragg_gui._bragg_parameter_group
+    )
+
+
 def test_analysis_tree_and_playground_controls_have_tooltips(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")
