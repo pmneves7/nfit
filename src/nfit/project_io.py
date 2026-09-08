@@ -13,18 +13,28 @@ from .analysis.core import AnalysisEntry, AnalysisOutputRef, AnalysisResultRecor
 from .model_registry import (
     default_model_config,
     default_model_fit_parameters,
-    serialize_model_component,
 )
 from .pipeline import (
-    BackgroundSpec,
     DataGroup,
     DatasetEntry,
     DatasetGroup,
     FitTimelineEntry,
-    MaskSpec,
     ModelComponentSpec,
 )
 from .plot_recipes import plot_entry_from_dict, plot_entry_to_dict
+from .project_history import (
+    _applies_to_from_payload,
+    _background_from_dict,
+    _background_to_dict,
+    _link_project_backgrounds,
+    _mask_from_dict,
+    _mask_to_dict,
+    _model_to_dict,
+    _sharing_from_payload,
+    ensure_fit_history,
+    refresh_current_state_fit_entries,
+)
+from .project_models import reconcile_model_orbit_parameters
 
 FIT_CHANNEL_NAMES = ("fit", "residual")
 
@@ -86,11 +96,6 @@ def _project_to_dict(project: NfitProject) -> dict[str, Any]:
 
 
 def _project_from_dict(payload: dict[str, Any]) -> NfitProject:
-    from .project_gui import (
-        ensure_fit_history,
-        reconcile_model_orbit_parameters,
-    )
-
     if payload.get("format") != "nfit-project":
         raise ValueError("not a nfit project file")
     version = int(payload.get("version", 0))
@@ -152,26 +157,6 @@ def _project_from_dict(payload: dict[str, Any]) -> NfitProject:
     return project
 
 
-def _link_project_backgrounds(project: NfitProject) -> None:
-    for group in project.data_groups:
-        _link_group_backgrounds(group)
-
-
-def _link_group_backgrounds(group: DataGroup) -> None:
-    by_id = {dataset.id: dataset for dataset in group.iter_datasets()}
-    groups_by_id = {node.id: node for node in group.iter_subgroups()}
-    for dataset in by_id.values():
-        if isinstance(dataset.metadata.get("derived_recipe"), dict):
-            dataset._derived_owner_group = group
-        for background in dataset.backgrounds:
-            background.source_entry = by_id.get(background.source_dataset_id)
-            background.source_group = groups_by_id.get(background.source_group_id or "")
-    for node in (group, *group.iter_subgroups()):
-        for background in node.backgrounds:
-            background.source_entry = by_id.get(background.source_dataset_id)
-            background.source_group = groups_by_id.get(background.source_group_id or "")
-
-
 def _validate_unique_dataset_ids(project: NfitProject) -> None:
     seen: dict[str, str] = {}
     duplicates: dict[str, list[str]] = {}
@@ -192,57 +177,6 @@ def _validate_unique_dataset_ids(project: NfitProject) -> None:
             f"{details}. Re-import the affected datasets or repair the project file "
             "so every dataset has a unique ID."
         )
-
-
-def _sharing_from_payload(value: Any) -> dict[str, dict[str, Any]]:
-    if not isinstance(value, dict):
-        return {}
-    sharing: dict[str, dict[str, Any]] = {}
-    for name, entry in value.items():
-        if isinstance(entry, dict):
-            sharing[str(name)] = {
-                "mode": str(entry.get("mode", "global")),
-                "groups": {
-                    str(dataset): str(key) for dataset, key in dict(entry.get("groups", {})).items()
-                },
-            }
-    return sharing
-
-
-def _applies_to_from_payload(value: Any) -> list[str] | None:
-    if value is None:
-        return None
-    if isinstance(value, (list, tuple)):
-        return [str(name) for name in value]
-    return None
-
-
-def _mask_from_dict(mask_payload: dict[str, Any]) -> MaskSpec:
-    return MaskSpec(
-        name=str(mask_payload["name"]),
-        type=str(mask_payload.get("type", "coordinate_range")),
-        parameters=dict(mask_payload.get("parameters", {})),
-        enabled=bool(mask_payload.get("enabled", True)),
-        invert=bool(mask_payload.get("invert", False)),
-        additive=bool(mask_payload.get("additive", False)),
-        metadata=dict(mask_payload.get("metadata", {})),
-    )
-
-
-def _background_from_dict(payload: dict[str, Any]) -> BackgroundSpec:
-    return BackgroundSpec(
-        name=str(payload.get("name", "Background")),
-        source_dataset_id=str(payload.get("source_dataset_id", "")),
-        source_group_id=(
-            None
-            if payload.get("source_group_id") in (None, "")
-            else str(payload["source_group_id"])
-        ),
-        scale=float(payload.get("scale", 1.0)),
-        enabled=bool(payload.get("enabled", True)),
-        interpolation=str(payload.get("interpolation", "linear")),
-        metadata=dict(payload.get("metadata", {})),
-    )
 
 
 def _dataset_from_dict(dataset_payload: dict[str, Any]) -> DatasetEntry:
@@ -302,8 +236,6 @@ def _dataset_group_to_dict(group: DatasetGroup) -> dict[str, Any]:
 
 
 def _data_group_to_dict(group: DataGroup) -> dict[str, Any]:
-    from .project_gui import ensure_fit_history, refresh_current_state_fit_entries
-
     ensure_fit_history(group)
     refresh_current_state_fit_entries(group)
     model_payloads = []
@@ -427,34 +359,6 @@ def _analysis_from_dict(payload: dict[str, Any]) -> AnalysisEntry:
         result=result,
         metadata=metadata,
     )
-
-
-def _mask_to_dict(mask: MaskSpec) -> dict[str, Any]:
-    return {
-        "name": mask.name,
-        "type": mask.type,
-        "parameters": _json_mapping(mask.parameters),
-        "enabled": bool(mask.enabled),
-        "invert": bool(mask.invert),
-        "additive": bool(mask.additive),
-        "metadata": _json_mapping(mask.metadata),
-    }
-
-
-def _background_to_dict(background: BackgroundSpec) -> dict[str, Any]:
-    return {
-        "name": background.name,
-        "source_dataset_id": background.source_dataset_id,
-        "source_group_id": background.source_group_id,
-        "scale": float(background.scale),
-        "enabled": bool(background.enabled),
-        "interpolation": background.interpolation,
-        "metadata": _json_mapping(background.metadata),
-    }
-
-
-def _model_to_dict(model: ModelComponentSpec) -> dict[str, Any]:
-    return serialize_model_component(model, purpose="project")
 
 
 def _fit_entry_to_dict(fit_entry: FitTimelineEntry) -> dict[str, Any]:

@@ -839,7 +839,7 @@ class DataPlaygroundWindow:
                     != analysis.id
                     or dataset.id in output_dataset_ids
                 ]
-            from .project_gui import _link_group_backgrounds
+            from .project_history import _link_group_backgrounds
 
             _link_group_backgrounds(self.group)
             self._render_analysis_result(analysis)
@@ -923,10 +923,8 @@ class DataPlaygroundWindow:
             if isinstance(candidate, dict) and candidate.get("axes"):
                 existing_config = candidate
 
-        from .project_gui import (
-            _link_group_backgrounds,
-            create_derived_analysis_dataset,
-        )
+        from .project_gui import create_derived_analysis_dataset
+        from .project_history import _link_group_backgrounds
 
         derived = create_derived_analysis_dataset(
             self.group,

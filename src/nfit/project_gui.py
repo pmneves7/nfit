@@ -42,6 +42,30 @@ from .fit_config import (
     qualified_parameter_name,
     sharing_mode,
 )
+from .fit_diagnostics_gui import (
+    _compact_diagnostic_labels,  # noqa: F401 - compatibility re-export
+    _corner_histogram_title,  # noqa: F401 - compatibility re-export
+    _covariance_matrix_from_fit_entry,
+    _disable_axis_offset_text,  # noqa: F401 - compatibility re-export
+    _draw_centered_matrix_heatmap,  # noqa: F401 - compatibility re-export
+    _draw_corner_density_panel,  # noqa: F401 - compatibility re-export
+    _draw_corner_histogram_panel,  # noqa: F401 - compatibility re-export
+    _draw_corner_reference_lines,  # noqa: F401 - compatibility re-export
+    _draw_matrix_heatmap,  # noqa: F401 - compatibility re-export
+    _draw_trace_panel,  # noqa: F401 - compatibility re-export
+    _fit_entry_diagnostic_parameter_names,  # noqa: F401 - compatibility re-export
+    _fit_entry_has_diagnostic_plots,
+    _fit_parameter_plot_labels,  # noqa: F401 - compatibility re-export
+    _fit_parameter_summaries,  # noqa: F401 - compatibility re-export
+    _FitDiagnosticsPlotWindow,
+    _mathtext_label,  # noqa: F401 - compatibility re-export
+)
+from .fit_results import (
+    _display_fit_parameters,
+    _posterior_correlation_matrix,  # noqa: F401 - compatibility re-export
+    _posterior_display_options,
+    _sampling_result_from_dict,
+)
 from .fitting import (
     FitCancellationRequested,
     OptimizationConfig,
@@ -60,19 +84,14 @@ from .fitting import (
 from .form_factors import available_ions
 from .importers import (
     IMPORTERS,
-    import_with,
     importers_for_data_type,
     inspect_powder_ins_csv,
-    probe_importers,
 )
 from .mdevent import (
     assess_mdevent_memory,
     bin_mdevent_group,
     bin_mdevent_powder_group,
     inspect_mdevent_workspace,
-    is_mdevent_file,
-    load_mdevent_run_points,
-    mdevent_dataset_group,
 )
 from .mdhisto import (
     MDHistoAxis,
@@ -115,15 +134,56 @@ from .project_archive import (
     replace_dataset_artifact,
     write_project_manifest,
 )
+from .project_history import (
+    _dataset_group_paths,
+    _timestamp_now,
+    ensure_fit_history,
+    refresh_current_state_fit_entries,
+    restore_data_group_state,
+    snapshot_data_group_state,
+)
+from .project_imports import (
+    DATA_TYPE_DEFINITIONS,
+    DEFAULT_DATA_TYPE,
+    GROUP_COMPOSITE_KEY,
+    _adopt_imported_crystal,
+    _dataset_can_load,
+    _dataset_can_reload,
+    _dataset_group_import_stream,
+    _dataset_ub_for_editor,
+    _loaded_data_point_count,
+    available_data_types,
+    data_type_container,
+    data_type_label,
+    default_importer_for_data_type,
+    import_mdevent_dataset_group,  # noqa: F401 - compatibility re-export
+    parse_dataset_numors,
+    set_dataset_data_type,
+    set_dataset_source,
+)
+from .project_imports import (
+    _ensure_dataset_data_loaded as _ensure_dataset_data_loaded_impl,
+)
+from .project_imports import (
+    _reload_dataset_copy as _reload_dataset_copy_impl,
+)
+from .project_imports import (
+    dataset_entry_from_path as _dataset_entry_from_path_impl,
+)
+from .project_imports import (
+    import_dataset_paths as _import_dataset_paths_impl,
+)
+from .project_imports import (
+    reload_data_group as _reload_data_group_impl,
+)
+from .project_imports import (
+    reload_dataset_data as _reload_dataset_data_impl,
+)
 from .project_io import (
     FIT_CHANNEL_NAMES,
     NfitProject,
     _analysis_from_dict,  # noqa: F401 - compatibility re-export
     _analysis_to_dict,  # noqa: F401 - compatibility re-export
-    _applies_to_from_payload,
-    _background_from_dict,
-    _background_to_dict,
-    _decode_float_array,
     _encode_float_array,
     _fit_channel_array,
     _fit_channels_from_dict,  # noqa: F401 - compatibility re-export
@@ -131,21 +191,16 @@ from .project_io import (
     _fit_entry_from_dict,  # noqa: F401 - compatibility re-export
     _fit_entry_to_dict,  # noqa: F401 - compatibility re-export
     _json_mapping,  # noqa: F401 - compatibility re-export
-    _link_group_backgrounds,
-    _mask_from_dict,
-    _mask_to_dict,
-    _model_to_dict,
     _project_from_dict,
     _project_to_dict,
-    _sharing_from_payload,
 )
+from .project_models import reconcile_model_orbit_parameters
 from .qt_branding import configure_application_icon
 from .qt_controls import configure_numeric_spin_boxes
-from .raw_dgs import bin_raw_dgs_group, is_raw_dgs_nexus_file, raw_dgs_dataset_group
+from .raw_dgs import bin_raw_dgs_group
 from .rebin import rebin_nd, rebin_nd_symmetry
 from .spectral_channels import (
     SPECTRAL_CHANNEL_CONFIG_KEY,
-    default_spectral_channel_config,
     normalized_spectral_channel_config,
     with_paired_spectral_channels,
 )
@@ -169,7 +224,6 @@ DATASET_REBIN_KEY = "rebin"
 PLOT_SOURCE_REBIN_CONFIGS_KEY = "source_rebin_configs"
 PLOT_SOURCE_COMPOSITE_KEY = "source_composite"
 DATASET_MASK_APPLICATION_KEY = "mask_application"
-GROUP_COMPOSITE_KEY = "composite"
 GROUP_COMPOSITE_NAME = "Composite"
 DERIVED_RECIPE_KEY = "derived_recipe"
 VIRTUAL_DERIVED_ANALYSIS_TYPES = {"dataset_clone", "histogram_arithmetic"}
@@ -230,56 +284,6 @@ def _screen_aware_project_window_size(
         max(1, int(available_height) - PROJECT_WINDOW_SCREEN_MARGIN),
     )
     return width, height
-
-
-# Data types the GUI can attach to a dataset. ``container`` is "mdhisto" for
-# gridded neutron data loaded from Mantid ``.nxs`` (the existing path) or
-# "point_list" for tabular point data loaded by a registered importer. Types
-# without importers are selectable but fall back to the ``.nxs``/MDHisto loader.
-DATA_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
-    "single_crystal_inelastic": {
-        "label": "Single crystal inelastic",
-        "container": "mdhisto",
-    },
-    "powder_inelastic": {
-        "label": "Powder inelastic",
-        "container": "mdhisto",
-    },
-    "single_crystal_elastic": {
-        "label": "Single crystal elastic",
-        "container": "mdhisto",
-    },
-    "single_crystal_energy_integrated": {
-        "label": "Single crystal energy-integrated",
-        "container": "point_data_4d",
-    },
-    "powder_elastic": {
-        "label": "Powder elastic",
-        "container": "point_list",
-        "wavelength": True,
-    },
-    "powder_elastic_spectrum": {
-        "label": "Powder elastic spectrum",
-        "container": "mdhisto",
-    },
-    "magnetization": {
-        "label": "Magnetization",
-        "container": "point_list",
-        "scale": True,
-        "susceptibility": True,
-    },
-    "heat_capacity": {
-        "label": "Heat capacity",
-        "container": "point_list",
-        "heat_capacity": True,
-    },
-    "bragg_reflections": {
-        "label": "Bragg reflections",
-        "container": "point_list",
-    },
-}
-
-DEFAULT_DATA_TYPE = "single_crystal_inelastic"
 
 
 MASK_TYPE_DEFINITIONS: dict[str, dict[str, Any]] = {
@@ -450,39 +454,6 @@ def create_data_group(project: NfitProject, name: str | None = None) -> DataGrou
     return group
 
 
-def available_data_types() -> list[tuple[str, str]]:
-    """Return ``(type, label)`` pairs for every registered data type."""
-
-    return [(name, definition["label"]) for name, definition in DATA_TYPE_DEFINITIONS.items()]
-
-
-def data_type_label(data_type: str) -> str:
-    """Return the human-readable label for a data type."""
-
-    definition = DATA_TYPE_DEFINITIONS.get(data_type)
-    return definition["label"] if definition else (data_type or "-")
-
-
-def data_type_container(data_type: str) -> str:
-    """Return the container kind ("mdhisto" or "point_list") for a data type."""
-
-    definition = DATA_TYPE_DEFINITIONS.get(data_type, {})
-    return str(definition.get("container", "mdhisto"))
-
-
-def default_importer_for_data_type(
-    data_type: str,
-    path: str | Path | None = None,
-) -> str | None:
-    """Return the default importer name for a data type, or ``None``."""
-
-    if path is not None:
-        matches = probe_importers(path, data_type)
-        return matches[0].importer_name if matches else None
-    specs = importers_for_data_type(data_type)
-    return specs[0].name if specs else None
-
-
 def import_dataset_paths(
     group: DataGroup,
     paths: list[str | Path],
@@ -494,297 +465,19 @@ def import_dataset_paths(
     stream_group_mode: str = "reuse",
     progress_callback: Any | None = None,
 ) -> list[DatasetEntry]:
-    """Add dataset entries for one or more source files.
+    """Import sources through the GUI-independent project import service."""
 
-    Point-list types are loaded eagerly with their importer; MDHisto/``.nxs``
-    types stay as lazy placeholders loaded on first view. ``into`` optionally
-    places the datasets inside a nested dataset group instead of the group root.
-    Multi-stream importers reuse compatible groups by default; pass
-    ``stream_group_mode="new"`` to create a fresh group for each stream.
-    """
-
-    if stream_group_mode not in {"reuse", "new"}:
-        raise ValueError("stream_group_mode must be 'reuse' or 'new'")
-    entries: list[DatasetEntry] = []
-    stream_groups: dict[tuple[str, str], DatasetGroup] = {}
-    resolved_type = data_type or DEFAULT_DATA_TYPE
-    raw_sources = [Path(path) for path in paths if resolved_type == "single_crystal_inelastic" and is_raw_dgs_nexus_file(path)]
-    if raw_sources:
-        companions = [candidate for candidate in raw_sources[0].parent.glob("van*") if candidate.is_file()]
-        normalization = companions[0] if len(companions) == 1 else None
-        subgroup = raw_dgs_dataset_group(raw_sources, normalization_path=normalization, mask_path=normalization, progress_callback=progress_callback)
-        subgroup.name = _unique_name(subgroup.name, {item.name for item in group.iter_subgroups()})
-        (into.subgroups if into is not None else group.subgroups).append(subgroup)
-        entries.extend(subgroup.datasets)
-    for path in paths:
-        source = Path(path)
-        if source in raw_sources:
-            continue
-        if resolved_type == "single_crystal_inelastic" and is_mdevent_file(source):
-            subgroup = import_mdevent_dataset_group(
-                group, source, into=into, progress_callback=progress_callback
-            )
-            entries.extend(subgroup.datasets)
-            continue
-        options = None
-        if isinstance(importer_options, dict):
-            options = importer_options.get(str(source))
-        chosen = importer_name or default_importer_for_data_type(resolved_type, source)
-        spec = IMPORTERS.get(chosen) if chosen is not None else None
-        if spec is not None and spec.streams and not (
-            isinstance(options, dict) and options.get("stream")
-        ):
-            parent = into if into is not None else group
-            for stream in spec.streams:
-                stream_options = copy.deepcopy(options) if isinstance(options, dict) else {}
-                stream_options["stream"] = stream.name
-                entry = dataset_entry_from_path(
-                    source,
-                    data_type=stream.data_type,
-                    importer_name=spec.name,
-                    importer_options=stream_options,
-                )
-                entry.name = _unique_dataset_name(
-                    f"{entry.name} [{stream.label}]", group.dataset_names
-                )
-                key = (spec.name, stream.name)
-                target_group = stream_groups.get(key)
-                if target_group is None:
-                    target_group = None
-                    if stream_group_mode == "reuse":
-                        target_group = next(
-                            (
-                                candidate
-                                for candidate in parent.subgroups
-                                if _dataset_group_import_stream(candidate)
-                                == (spec.name, stream.name)
-                            ),
-                            None,
-                        )
-                    if target_group is None:
-                        base_name = (
-                            f"MACS {stream.label}"
-                            if spec.name == "macs_nexus"
-                            else stream.label
-                        )
-                        target_group = DatasetGroup(
-                            name=_unique_name(
-                                base_name,
-                                {item.name for item in parent.subgroups},
-                            ),
-                            metadata={
-                                "importer": spec.name,
-                                "source_stream": stream.name,
-                                GROUP_COMPOSITE_KEY: {
-                                    "enabled": True,
-                                    "auto_rebin": True,
-                                    "stale": True,
-                                    "fractional": False,
-                                    "mean_weighting": "uniform",
-                                },
-                            },
-                        )
-                        parent.subgroups.append(target_group)
-                    else:
-                        target_group.metadata.setdefault("importer", spec.name)
-                        target_group.metadata.setdefault("source_stream", stream.name)
-                    stream_groups[key] = target_group
-                group.add_dataset(entry, into=target_group)
-                entries.append(entry)
-                _adopt_imported_crystal(group, entry, target_group)
-            continue
-        entry = dataset_entry_from_path(
-            source,
-            data_type=data_type,
-            importer_name=chosen,
-            importer_options=options,
-        )
-        entry.name = _unique_dataset_name(entry.name, group.dataset_names)
-        group.add_dataset(entry, into=into)
-        entries.append(entry)
-        _adopt_imported_crystal(group, entry, into)
-    for entry in entries:
-        if entry.data_type in {"single_crystal_inelastic", "powder_inelastic"}:
-            entry.parameters.setdefault(
-                SPECTRAL_CHANNEL_CONFIG_KEY, default_spectral_channel_config()
-            )
-    return entries
-
-
-def _dataset_group_import_stream(group: DatasetGroup) -> tuple[str, str] | None:
-    """Return the common importer/stream identity for a dataset group."""
-
-    importer = str(group.metadata.get("importer", "")).strip()
-    stream = str(group.metadata.get("source_stream", "")).strip().lower()
-    if importer and stream:
-        return importer, stream
-    identities = [
-        (
-            str(dataset.metadata.get("importer", "")).strip(),
-            str(
-                (
-                    dataset.metadata.get("import_options")
-                    if isinstance(dataset.metadata.get("import_options"), dict)
-                    else {}
-                ).get("stream", "")
-            )
-            .strip()
-            .lower(),
-        )
-        for dataset in group.datasets
-    ]
-    if not identities or any(
-        not identity_importer or not identity_stream
-        for identity_importer, identity_stream in identities
-    ):
-        return None
-    unique_identities = set(identities)
-    return next(iter(unique_identities)) if len(unique_identities) == 1 else None
-
-
-def _adopt_imported_lattice(group: DataGroup, entry: DatasetEntry) -> None:
-    """Adopt and validate lattice metadata supplied by a registered importer."""
-
-    if entry.data is None or not isinstance(getattr(entry.data, "metadata", None), dict):
-        return
-    imported = entry.data.metadata.get("lattice_parameters")
-    if not isinstance(imported, dict):
-        return
-    values = {
-        name: float(imported[name])
-        for name in ("a", "b", "c", "alpha", "beta", "gamma")
-        if name in imported
-    }
-    if len(values) != 6:
-        return
-    if group.lattice_parameters is None:
-        group.lattice_parameters = values
-        return
-    if any(
-        not np.isclose(float(group.lattice_parameters.get(name, np.nan)), value)
-        for name, value in values.items()
-    ):
-        raise ValueError(
-            f"{entry.name!r} has lattice parameters that differ from data group {group.name!r}"
-        )
-
-
-def _adopt_imported_crystal(
-    group: DataGroup,
-    entry: DatasetEntry,
-    target: DatasetGroup | None = None,
-) -> None:
-    """Promote compatible imported crystal metadata to its composite scope."""
-
-    _adopt_imported_lattice(group, entry)
-    metadata = getattr(entry.data, "metadata", None)
-    if target is None or not isinstance(metadata, dict):
-        return
-    keys = (
-        "lattice_parameters",
-        "ub_matrix",
-        "rlu_to_inv_angstrom_matrix",
-        "orientation_u",
-        "orientation_v",
-    )
-    for key in keys:
-        if key not in metadata:
-            continue
-        imported = copy.deepcopy(metadata[key])
-        existing = target.metadata.get(key)
-        if existing is None:
-            target.metadata[key] = imported
-            continue
-        try:
-            matches = np.allclose(
-                np.asarray(existing, dtype=float),
-                np.asarray(imported, dtype=float),
-                rtol=1.0e-10,
-                atol=1.0e-12,
-            )
-        except (TypeError, ValueError):
-            matches = existing == imported
-        if not bool(matches):
-            raise ValueError(
-                f"{entry.name!r} has {key.replace('_', ' ')} that differs from "
-                f"dataset group {target.name!r}"
-            )
-    lattice = target.metadata.get("lattice_parameters")
-    ub = _dataset_ub_for_editor(target.metadata)
-    if isinstance(lattice, dict) and ub is not None:
-        target.metadata["ub_setup"] = {
-            "ub_matrix": ub.tolist(),
-            "lattice_parameters": copy.deepcopy(lattice),
-            "u": copy.deepcopy(target.metadata.get("orientation_u", [1.0, 0.0, 0.0])),
-            "v": copy.deepcopy(target.metadata.get("orientation_v", [0.0, 1.0, 0.0])),
-        }
-
-
-def parse_dataset_numors(text: str) -> list[int]:
-    """Parse comma-separated run numbers and inclusive ``start[:step]:end`` ranges."""
-
-    values: list[int] = []
-    seen: set[int] = set()
-    for raw_piece in str(text).split(","):
-        piece = raw_piece.strip()
-        if not piece:
-            continue
-        parts = [part.strip() for part in piece.split(":")]
-        try:
-            if len(parts) == 1:
-                expanded = [int(parts[0])]
-            elif len(parts) == 2:
-                start, end = (int(part) for part in parts)
-                step = 1 if end >= start else -1
-                expanded = list(range(start, end + step, step))
-            elif len(parts) == 3:
-                start, step, end = (int(part) for part in parts)
-                if step == 0 or (end - start) * step < 0:
-                    raise ValueError
-                expanded = list(range(start, end + (1 if step > 0 else -1), step))
-            else:
-                raise ValueError
-        except ValueError as exc:
-            raise ValueError(
-                f"invalid run range {piece!r}; use 409981:409995, 409981:3:409995, or comma-separated values"
-            ) from exc
-        for value in expanded:
-            if value not in seen:
-                seen.add(value)
-                values.append(value)
-    if not values:
-        raise ValueError("enter at least one run number or range")
-    return values
-
-
-def import_mdevent_dataset_group(
-    group: DataGroup,
-    path: str | Path,
-    *,
-    normalization_path: str | Path | None = None,
-    mask_path: str | Path | None = None,
-    into: DatasetGroup | None = None,
-    progress_callback: Any | None = None,
-) -> DatasetGroup:
-    """Import a Mantid MDEvent file as lightweight run datasets sharing setup."""
-
-    if normalization_path is None and mask_path is None:
-        companions = [candidate for candidate in Path(path).parent.glob("van*") if candidate.is_file()]
-        if len(companions) == 1:
-            normalization_path = companions[0]
-            mask_path = companions[0]
-    subgroup = mdevent_dataset_group(
-        path,
-        normalization_path=normalization_path,
-        mask_path=mask_path,
+    return _import_dataset_paths_impl(
+        group,
+        paths,
+        data_type=data_type,
+        importer_name=importer_name,
+        importer_options=importer_options,
+        into=into,
+        stream_group_mode=stream_group_mode,
         progress_callback=progress_callback,
+        dataset_file_loader=_load_nfit_dataset_file,
     )
-    names = {item.name for item in group.iter_subgroups()}
-    subgroup.name = _unique_name(subgroup.name, names)
-    (into.subgroups if into is not None else group.subgroups).append(subgroup)
-    if group.lattice_parameters is None:
-        group.lattice_parameters = dict(subgroup.metadata["mdevent"]["lattice_parameters"])
-    return subgroup
 
 
 def delete_data_group(project: NfitProject, group: DataGroup) -> None:
@@ -841,129 +534,6 @@ def set_background_collection(
             background.enabled = bool(enabled)
         if scale is not None:
             background.scale = float(scale)
-
-
-def set_dataset_source(dataset: DatasetEntry, path: str | Path) -> None:
-    """Point a dataset entry at a new source file and mark loaded data stale."""
-
-    source = Path(path)
-    dataset.metadata["source_file"] = str(source)
-    dataset.metadata["import_status"] = "pending"
-    dataset.metadata.pop("source_point_count", None)
-    dataset.kind = source.suffix.lstrip(".").lower()
-    dataset.unload_data()
-    if dataset.metadata.get("importer"):
-        _load_registered_importer_dataset(dataset)
-    elif data_type_container(dataset.data_type) == "point_list":
-        _load_point_list_dataset(dataset)
-
-
-def set_dataset_data_type(
-    dataset: DatasetEntry,
-    data_type: str,
-    *,
-    importer_name: str | None = None,
-) -> None:
-    """Change a dataset's data type and reload/reset its data accordingly."""
-
-    if data_type not in DATA_TYPE_DEFINITIONS:
-        raise ValueError(f"unknown data type {data_type!r}")
-    dataset.data_type = data_type
-    dataset.metadata.pop("import_error", None)
-    dataset.metadata.pop("source_point_count", None)
-    if data_type in {"single_crystal_inelastic", "powder_inelastic"}:
-        dataset.parameters.setdefault(
-            SPECTRAL_CHANNEL_CONFIG_KEY, default_spectral_channel_config()
-        )
-    chosen = importer_name or default_importer_for_data_type(
-        data_type, dataset.metadata.get("source_file")
-    )
-    if chosen is not None:
-        dataset.metadata["importer"] = chosen
-        dataset.unload_data()
-        if dataset.metadata.get("source_file"):
-            try:
-                _load_registered_importer_dataset(dataset)
-            except Exception as exc:
-                dataset.unload_data()
-                dataset.metadata["import_status"] = "error"
-                dataset.metadata["import_error"] = str(exc)
-    elif data_type_container(data_type) == "point_list":
-        chosen = default_importer_for_data_type(data_type)
-        if chosen is not None:
-            dataset.metadata["importer"] = chosen
-        dataset.unload_data()
-        if dataset.metadata.get("source_file"):
-            # Reload with the new type's importer, but a mismatched importer must
-            # not crash the type switch; record the error for the details panel.
-            try:
-                _load_point_list_dataset(dataset)
-            except Exception as exc:
-                dataset.unload_data()
-                dataset.metadata["import_status"] = "error"
-                dataset.metadata["import_error"] = str(exc)
-    elif chosen is None:
-        dataset.metadata.pop("importer", None)
-        # Fall back to the lazy MDHisto/.nxs loader on next view.
-        if not isinstance(dataset.data, MDHistoData):
-            dataset.unload_data()
-            dataset.metadata["import_status"] = "pending"
-
-
-def _load_registered_importer_dataset(
-    dataset: DatasetEntry,
-) -> PointData4D | PointListData | MDHistoData | None:
-    """Load a dataset through its registered importer and apply import metadata."""
-
-    source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
-    if not source:
-        return None
-    importer_name = dataset.metadata.get("importer") or default_importer_for_data_type(
-        dataset.data_type, source
-    )
-    if importer_name is None:
-        return None
-    options = dataset.metadata.get("import_options")
-    data = import_with(
-        importer_name,
-        source,
-        options if isinstance(options, dict) else None,
-    )
-    data = dataset.replace_data(data, source_backed=True)
-    dataset.metadata["source_point_count"] = _loaded_data_point_count(data)
-    dataset.metadata["importer"] = importer_name
-    dataset.metadata["import_status"] = "loaded"
-    imported_parameters = data.metadata.get("dataset_parameters")
-    if (
-        isinstance(imported_parameters, dict)
-        and not bool(dataset.metadata.get("import_parameters_applied", False))
-    ):
-        dataset.parameters.update(copy.deepcopy(imported_parameters))
-        dataset.metadata["import_parameters_applied"] = True
-    if dataset.data_type in {"magnetization", "heat_capacity"}:
-        keys = ["sample_mass_mg", "molar_mass_g_mol"]
-        if dataset.data_type == "heat_capacity":
-            keys.append("atoms_per_formula_unit")
-        for key in keys:
-            if key not in dataset.parameters and key in data.metadata:
-                dataset.parameters[key] = float(data.metadata[key])
-    if dataset.data_type == "heat_capacity" and all(
-        float(dataset.parameters.get(key, 0.0) or 0.0) > 0.0
-        for key in ("sample_mass_mg", "molar_mass_g_mol")
-    ):
-        dataset.parameters.setdefault("absolute_units", True)
-    if not dataset.kind:
-        dataset.kind = Path(source).suffix.lstrip(".").lower()
-    return data
-
-
-def _load_point_list_dataset(dataset: DatasetEntry) -> PointListData | None:
-    """Load a point-list dataset from its source file using a registered importer."""
-
-    data = _load_registered_importer_dataset(dataset)
-    if data is not None and not isinstance(data, PointListData):
-        raise TypeError(f"importer for {dataset.data_type!r} did not return point-list data")
-    return data
 
 
 def point_list_config(dataset: DatasetEntry) -> dict[str, Any]:
@@ -1684,21 +1254,6 @@ def create_model_component(
     return model
 
 
-def ensure_fit_history(group: DataGroup) -> list[FitTimelineEntry]:
-    """Ensure a data group has an Initial fit-history state."""
-
-    if not group.fits:
-        group.fits.append(
-            FitTimelineEntry(
-                name="Initial",
-                kind="initial",
-                snapshot=snapshot_data_group_state(group),
-                created_at=_timestamp_now(),
-            )
-        )
-    return group.fits
-
-
 def create_fit_result_entry(
     group: DataGroup,
     parent: FitTimelineEntry,
@@ -1811,155 +1366,6 @@ def current_state_fit_entry(
         optimizer=str(source.optimizer or "least_squares") if source is not None else "least_squares",
         optimizer_config=copy.deepcopy(source.optimizer_config) if source is not None else {},
     )
-
-
-def refresh_current_state_fit_entries(group: DataGroup) -> None:
-    """Refresh the top-level Current state node from live GUI state."""
-
-    snapshot = snapshot_data_group_state(group)
-    for entry in group.fits:
-        if entry.kind == "current":
-            entry.snapshot = copy.deepcopy(snapshot)
-            entry.created_at = _timestamp_now()
-
-
-def _named_group_nodes(group: DataGroup) -> list[tuple[str, Any]]:
-    """Return ``(key, node)`` pairs for the data group ("") and each subgroup by name."""
-
-    nodes: list[tuple[str, Any]] = [("", group)]
-    nodes.extend((subgroup.name, subgroup) for subgroup in group.iter_subgroups())
-    return nodes
-
-
-def _dataset_group_paths(group: DataGroup) -> list[tuple[str, DatasetGroup]]:
-    """Return stable name paths for every nested dataset group."""
-
-    nodes: list[tuple[str, DatasetGroup]] = []
-
-    def visit(node: DatasetGroup, path: tuple[str, ...]) -> None:
-        nodes.append(("/".join(path), node))
-        for subgroup in node.subgroups:
-            visit(subgroup, (*path, subgroup.name))
-
-    for subgroup in group.subgroups:
-        visit(subgroup, (subgroup.name,))
-    return nodes
-
-
-def snapshot_data_group_state(group: DataGroup) -> dict[str, Any]:
-    """Capture serializable dataset mask and model configuration state."""
-
-    return {
-        "datasets": [
-            {
-                "name": dataset.name,
-                "data_type": dataset.data_type,
-                "parameters": copy.deepcopy(dataset.parameters),
-                "enabled": bool(dataset.enabled),
-                "fit_weight": float(dataset.fit_weight),
-                "scale_factor": float(dataset.scale_factor),
-                "scale_factor_vary": bool(dataset.scale_factor_vary),
-                "scale_factor_group": dataset.scale_factor_group,
-                "masks": [_mask_to_dict(mask) for mask in dataset.masks],
-                "backgrounds": [
-                    _background_to_dict(background)
-                    for background in dataset.backgrounds
-                ],
-            }
-            for dataset in group.iter_datasets()
-        ],
-        "group_masks": {
-            node_name: [_mask_to_dict(mask) for mask in node.masks]
-            for node_name, node in _named_group_nodes(group)
-        },
-        "dataset_group_enabled": {
-            path: bool(node.enabled)
-            for path, node in _dataset_group_paths(group)
-        },
-        "group_backgrounds": {
-            node_name: [
-                _background_to_dict(background) for background in node.backgrounds
-            ]
-            for node_name, node in _named_group_nodes(group)
-        },
-        "models": [
-            _model_to_dict(model)
-            for model in group.models.values()
-            if isinstance(model, ModelComponentSpec)
-        ],
-    }
-
-
-def restore_data_group_state(group: DataGroup, snapshot: dict[str, Any]) -> None:
-    """Restore dataset masks and model component settings from a snapshot."""
-
-    datasets_by_name = {dataset.name: dataset for dataset in group.iter_datasets()}
-    for dataset_payload in snapshot.get("datasets", []):
-        dataset = datasets_by_name.get(str(dataset_payload.get("name", "")))
-        if dataset is None:
-            continue
-        dataset.data_type = str(
-            dataset_payload.get("data_type", dataset.data_type)
-        )
-        dataset.parameters = dict(dataset_payload.get("parameters", {}))
-        dataset.enabled = bool(dataset_payload.get("enabled", dataset.enabled))
-        dataset.fit_weight = float(dataset_payload.get("fit_weight", dataset.fit_weight))
-        dataset.scale_factor = float(dataset_payload.get("scale_factor", dataset.scale_factor))
-        dataset.scale_factor_vary = bool(dataset_payload.get("scale_factor_vary", dataset.scale_factor_vary))
-        dataset.scale_factor_group = (
-            None
-            if dataset_payload.get("scale_factor_group") in (None, "")
-            else str(dataset_payload["scale_factor_group"])
-        )
-        dataset.masks = [_mask_from_dict(mask_payload) for mask_payload in dataset_payload.get("masks", [])]
-        dataset.backgrounds = [
-            _background_from_dict(background_payload)
-            for background_payload in dataset_payload.get("backgrounds", [])
-        ]
-    by_id = {dataset.id: dataset for dataset in group.iter_datasets()}
-    for dataset in by_id.values():
-        for background in dataset.backgrounds:
-            background.source_entry = by_id.get(background.source_dataset_id)
-    dataset_group_enabled = snapshot.get("dataset_group_enabled", {})
-    if isinstance(dataset_group_enabled, dict):
-        for path, node in _dataset_group_paths(group):
-            if path in dataset_group_enabled:
-                node.enabled = bool(dataset_group_enabled[path])
-    group_masks = snapshot.get("group_masks", {})
-    if isinstance(group_masks, dict):
-        for node_name, node in _named_group_nodes(group):
-            if node_name in group_masks:
-                node.masks = [_mask_from_dict(mask_payload) for mask_payload in group_masks[node_name]]
-    group_backgrounds = snapshot.get("group_backgrounds", {})
-    if isinstance(group_backgrounds, dict):
-        for node_name, node in _named_group_nodes(group):
-            if node_name in group_backgrounds:
-                node.backgrounds = [
-                    _background_from_dict(background_payload)
-                    for background_payload in group_backgrounds[node_name]
-                ]
-    _link_group_backgrounds(group)
-    for model_payload in snapshot.get("models", []):
-        name = str(model_payload.get("name", ""))
-        existing = group.models.get(name)
-        if not isinstance(existing, ModelComponentSpec):
-            continue
-        existing.type = str(model_payload.get("type", existing.type))
-        existing.parameters = dict(model_payload.get("parameters", {}))
-        existing.config = dict(model_payload.get("config", {}))
-        existing.fit_parameters = {
-            str(key): bool(value)
-            for key, value in dict(model_payload.get("fit_parameters", {})).items()
-        }
-        existing.sharing = _sharing_from_payload(model_payload.get("sharing"))
-        existing.limits = dict(model_payload.get("limits", {}) or {})
-        existing.constraints = [
-            dict(constraint) for constraint in model_payload.get("constraints", []) or []
-        ]
-        existing.applies_to = _applies_to_from_payload(model_payload.get("applies_to"))
-        existing.enabled = bool(model_payload.get("enabled", existing.enabled))
-        existing.metadata = dict(model_payload.get("metadata", {}))
-        reconcile_model_orbit_parameters(existing)
 
 
 def delete_fit_entry(group: DataGroup, fit_entry: FitTimelineEntry) -> bool:
@@ -2343,57 +1749,6 @@ def _refresh_tight_binding_builder(model: ModelComponentSpec) -> None:
     from .electronic_builder import regenerate_tight_binding_onsite_terms
 
     regenerate_tight_binding_onsite_terms(model)
-
-
-# Default starting values for the non-orbit dynamic parameters (all others
-# default to 0.0). Zeeman parameters must be nonzero to have any effect.
-_MODEL_PARAMETER_DEFAULTS = {
-    "g_factor": 2.0,
-    "chi_perp_ratio": 1.0,
-    "gamma_perp_ratio": 1.0,
-    "m2_total": 1.0,
-    "mode_coupling_u": 0.0,
-    "total_amplitude": 1.0,
-}
-
-
-def reconcile_model_orbit_parameters(model: ModelComponentSpec) -> None:
-    """Align a model's fit parameters with its configuration-derived terms.
-
-    Tight binding delegates to its builder-state synchronizer. For Heisenberg
-    RPA this covers exchange orbits plus enabled tensor, dipole, and Zeeman
-    terms. Values of parameters whose names persist are kept; parameters of
-    removed terms are dropped with their fit flags, limits, and sharing.
-    """
-
-    if model.type == "tight_binding":
-        from .electronic_builder import (
-            ensure_tight_binding_onsite_terms,
-            reconcile_tight_binding_parameters,
-        )
-
-        ensure_tight_binding_onsite_terms(model)
-        reconcile_tight_binding_parameters(model)
-        return
-
-    names = list(component_parameter_names(model))
-    keep = set(names)
-    for mapping in (
-        model.parameters,
-        model.fit_parameters,
-        model.limits,
-        model.sharing,
-    ):
-        if isinstance(mapping, dict):
-            for key in [name for name in mapping if name not in keep]:
-                mapping.pop(key)
-    static = set(model_definition(model.type).parameters)
-    for name in names:
-        if name in static:
-            continue
-        model.parameters.setdefault(name, _MODEL_PARAMETER_DEFAULTS.get(name, 0.0))
-        model.fit_parameters.setdefault(name, False)
-        model.sharing.setdefault(name, {"mode": "global", "groups": {}})
 
 
 def set_model_crystal(
@@ -3144,97 +2499,33 @@ def _composite_reference_data(group: DataGroup) -> Any | None:
 
 
 def _ensure_dataset_data_loaded(dataset: DatasetEntry) -> Any:
-    """Return canonical loaded data, using one path for all lazy consumers."""
+    """Load data through the GUI-compatible project import service."""
 
-    if dataset.data is not None:
-        return dataset.data
-    if dataset.kind == "raw_dgs_nexus":
-        return None
-    if dataset.metadata.get("derived_from_analysis") or dataset.metadata.get(
-        "project_artifact_path"
-    ):
-        project_path = dataset.metadata.get("_project_path")
-        artifact_path = dataset.metadata.get("project_artifact_path") or dataset.metadata.get(
-            "analysis_artifact_path"
-        )
-        if project_path and artifact_path:
-            loaded = read_project_dataset_artifact(project_path, artifact_path)
-            loaded = dataset.replace_data(loaded, source_backed=True)
-            dataset.metadata["import_status"] = "loaded"
-            dataset.metadata.pop("import_error", None)
-            return loaded
-    if dataset.metadata.get("importer"):
-        loaded = _load_registered_importer_dataset(dataset)
-        if loaded is not None:
-            return loaded
-    if data_type_container(dataset.data_type) == "point_list":
-        loaded = _load_point_list_dataset(dataset)
-        if loaded is not None:
-            return loaded
-    source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
-    if source and Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5", ".npz"}:
-        if Path(source).suffix.lower() == ".npz":
-            loaded, parameters = _load_nfit_dataset_file(Path(source))
-            dataset.parameters.update(parameters)
-        elif dataset.kind == "mdevent":
-            loaded = load_mdevent_run_points(dataset)
-        else:
-            loaded = load_mantid_mdhisto_nxs(Path(source), copy_metadata=False)
-        loaded = dataset.replace_data(loaded, source_backed=True)
-        dataset.kind = dataset.kind or Path(source).suffix.lstrip(".").lower()
-        dataset.metadata["import_status"] = "loaded"
-        return loaded
-    return dataset.data
+    return _ensure_dataset_data_loaded_impl(
+        dataset,
+        mdhisto_loader=load_mantid_mdhisto_nxs,
+        dataset_file_loader=_load_nfit_dataset_file,
+    )
 
 
 def _reload_dataset_copy(dataset: DatasetEntry) -> DatasetEntry:
-    if not _dataset_can_reload(dataset):
-        raise ValueError(f"dataset {dataset.name!r} has no reloadable data source")
-    working = copy.copy(dataset)
-    working.metadata = copy.deepcopy(dataset.metadata)
-    working.parameters = copy.deepcopy(dataset.parameters)
-    working.unload_data()
-    if working.kind == "raw_dgs_nexus":
-        loaded = None
-        working.metadata["import_status"] = "pending"
-        working.metadata.pop("import_error", None)
-    else:
-        loaded = _ensure_dataset_data_loaded(working)
-        if loaded is None:
-            raise ValueError(f"dataset {dataset.name!r} could not be loaded from its source")
-    return working
-
-
-def _install_reloaded_dataset(dataset: DatasetEntry, working: DatasetEntry) -> Any:
-    dataset.metadata.clear()
-    dataset.metadata.update(working.metadata)
-    dataset.parameters.clear()
-    dataset.parameters.update(working.parameters)
-    dataset.kind = working.kind
-    return dataset.replace_data(working.data, source_backed=True)
+    return _reload_dataset_copy_impl(dataset, data_loader=_ensure_dataset_data_loaded)
 
 
 def reload_dataset_data(dataset: DatasetEntry) -> Any:
-    """Reload one dataset from its configured source without changing its recipe.
+    """Reload one dataset without mutating it when source reading fails."""
 
-    Loading is performed against an isolated entry so a read failure leaves the
-    currently loaded arrays and import metadata intact. Raw DGS entries remain
-    lazy; replacing their empty payload still advances the data revision so
-    dependent composites are rebuilt from the source file.
-    """
-
-    return _install_reloaded_dataset(dataset, _reload_dataset_copy(dataset))
+    return _reload_dataset_data_impl(
+        dataset, data_loader=_ensure_dataset_data_loaded
+    )
 
 
 def reload_data_group(group: DataGroup | DatasetGroup) -> list[DatasetEntry]:
     """Reload every descendant dataset that has a configured data source."""
 
-    reloaded = []
-    for dataset in group.iter_datasets():
-        if _dataset_can_reload(dataset):
-            reload_dataset_data(dataset)
-            reloaded.append(dataset)
-    return reloaded
+    return _reload_data_group_impl(
+        group, data_loader=_ensure_dataset_data_loaded
+    )
 
 
 def _source_data_for_group_composite(
@@ -6405,41 +5696,6 @@ def _sampling_result_to_dict(result: SamplingResult) -> dict[str, Any]:
     return payload
 
 
-def _sampling_result_from_dict(payload: Any) -> SamplingResult | None:
-    if not isinstance(payload, dict):
-        return None
-    try:
-        samples = _decode_float_array(payload["samples"])
-    except Exception:
-        return None
-    log_probability = None
-    if isinstance(payload.get("log_probability"), dict):
-        try:
-            log_probability = _decode_float_array(payload["log_probability"])
-        except Exception:
-            log_probability = None
-    chain = None
-    if isinstance(payload.get("chain"), dict):
-        try:
-            chain = _decode_float_array(payload["chain"])
-        except Exception:
-            chain = None
-    log_probability_chain = None
-    if isinstance(payload.get("log_probability_chain"), dict):
-        try:
-            log_probability_chain = _decode_float_array(payload["log_probability_chain"])
-        except Exception:
-            log_probability_chain = None
-    return SamplingResult(
-        samples=samples,
-        variable_names=[str(name) for name in payload.get("variable_names", [])],
-        log_probability=log_probability,
-        metadata=dict(payload.get("metadata", {})),
-        chain=chain,
-        log_probability_chain=log_probability_chain,
-    )
-
-
 def _autocorrelation_progress_summary(result: SamplingResult | None) -> list[str]:
     """Return readable emcee convergence estimates for the progress log."""
 
@@ -6566,32 +5822,6 @@ def _store_sampling_result_on_fit_entry(fit_entry: FitTimelineEntry, result: Sam
             }
 
 
-def _posterior_display_options(fit_entry: FitTimelineEntry) -> dict[str, Any]:
-    """Return the persisted choice of posterior-derived result values."""
-
-    metadata = fit_entry.metadata if isinstance(fit_entry.metadata, dict) else {}
-    stored = metadata.get(POSTERIOR_DISPLAY_KEY)
-    return dict(stored) if isinstance(stored, dict) else {}
-
-
-def _display_fit_parameters(fit_entry: FitTimelineEntry) -> dict[str, float]:
-    """Return the parameter values selected for the active fit result."""
-
-    goodness = fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
-    params = goodness.get("parameters") if isinstance(goodness.get("parameters"), dict) else {}
-    displayed = {str(name): float(value) for name, value in params.items()}
-    options = _posterior_display_options(fit_entry)
-    best = options.get("best_sample") if options.get("use_best_sample") else None
-    best_params = best.get("parameters") if isinstance(best, dict) else None
-    if isinstance(best_params, dict):
-        for name, value in best_params.items():
-            try:
-                displayed[str(name)] = float(value)
-            except (TypeError, ValueError):
-                continue
-    return displayed
-
-
 def _posterior_interval_errors(
     fit_entry: FitTimelineEntry,
     name: str,
@@ -6613,30 +5843,6 @@ def _posterior_interval_errors(
     if not np.isfinite(lower) or not np.isfinite(upper):
         return None
     return max(0.0, center - lower), max(0.0, upper - center)
-
-
-def _posterior_correlation_matrix(
-    fit_entry: FitTimelineEntry,
-) -> tuple[np.ndarray, list[str]] | None:
-    """Return the finite-sample emcee correlation matrix for display."""
-
-    result = _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples"))
-    if result is None:
-        return None
-    samples = np.asarray(result.samples, dtype=float)
-    names = list(result.variable_names)
-    if samples.ndim != 2 or samples.shape[0] < 2 or samples.shape[1] != len(names):
-        return None
-    finite_rows = np.all(np.isfinite(samples), axis=1)
-    samples = samples[finite_rows]
-    if samples.shape[0] < 2:
-        return None
-    if samples.shape[1] == 1:
-        return np.ones((1, 1), dtype=float), names
-    correlation = np.asarray(np.corrcoef(samples, rowvar=False), dtype=float)
-    if correlation.shape != (len(names), len(names)):
-        return None
-    return correlation, names
 
 
 def _best_posterior_sample(
@@ -10709,10 +9915,6 @@ def _enabled_state_for_role(
     return None
 
 
-def _timestamp_now() -> str:
-    return datetime.now().isoformat(timespec="seconds")
-
-
 def dataset_entry_from_path(
     path: str | Path,
     *,
@@ -10720,43 +9922,15 @@ def dataset_entry_from_path(
     importer_name: str | None = None,
     importer_options: dict[str, Any] | None = None,
 ) -> DatasetEntry:
-    """Create a dataset entry for a file selected in the GUI.
+    """Create a dataset entry for a selected source file."""
 
-    Registered importer types are loaded immediately. Other MDHisto/``.nxs``
-    types are created as lazy placeholders and loaded on first view.
-    """
-
-    source = Path(path)
-    resolved_type = data_type or DEFAULT_DATA_TYPE
-    entry = DatasetEntry(
-        name=_unique_dataset_name(source.stem or source.name, []),
-        data=None,
-        kind=source.suffix.lstrip(".").lower(),
-        data_type=resolved_type,
-        metadata={"source_file": str(source), "import_status": "pending"},
+    return _dataset_entry_from_path_impl(
+        path,
+        data_type=data_type,
+        importer_name=importer_name,
+        importer_options=importer_options,
+        dataset_file_loader=_load_nfit_dataset_file,
     )
-    if resolved_type in {"single_crystal_inelastic", "powder_inelastic"}:
-        entry.parameters[SPECTRAL_CHANNEL_CONFIG_KEY] = default_spectral_channel_config()
-    if importer_name is not None:
-        entry.metadata["importer"] = importer_name
-        if importer_options is not None:
-            entry.metadata["import_options"] = copy.deepcopy(importer_options)
-    if source.suffix.lower() == ".npz":
-        data, parameters = _load_nfit_dataset_file(source)
-        entry.replace_data(data, source_backed=True)
-        entry.parameters.update(parameters)
-        entry.metadata["import_status"] = "loaded"
-        return entry
-    chosen = importer_name or default_importer_for_data_type(resolved_type, source)
-    if chosen is not None:
-        entry.metadata["importer"] = chosen
-        _load_registered_importer_dataset(entry)
-    elif data_type_container(resolved_type) == "point_list":
-        chosen = default_importer_for_data_type(resolved_type)
-        if chosen is not None:
-            entry.metadata["importer"] = chosen
-        _load_point_list_dataset(entry)
-    return entry
 
 
 def save_project(
@@ -11277,519 +10451,6 @@ class _FitProgressDialog:
 
     def close(self) -> None:
         self.dialog.close()
-
-
-class _FitDiagnosticsPlotWindow:
-    """Dedicated Matplotlib window for fit covariance and posterior diagnostics."""
-
-    def __init__(self, fit_entry: FitTimelineEntry, parent: Any) -> None:
-        from PySide6 import QtCore, QtGui, QtWidgets
-
-        self.fit_entry = fit_entry
-        self.window = QtWidgets.QMainWindow(parent.window if hasattr(parent, "window") else parent)
-        self.window.setWindowTitle("Fit diagnostics")
-        self.close_shortcut = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Close, self.window)
-        self.close_shortcut.activated.connect(self.window.close)
-        central = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(central)
-        self.tabs = QtWidgets.QTabWidget()
-        self.tabs.setToolTip("Fit diagnostics from covariance estimates and stored emcee samples.")
-        self.label_table = self._make_label_table()
-        self.plot_label_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
-        self.plot_label_splitter.setObjectName("fit_diagnostics_plot_label_splitter")
-        self.plot_label_splitter.setToolTip(
-            "Drag the divider to allocate space between diagnostic plots and editable parameter labels."
-        )
-        self.plot_label_splitter.setChildrenCollapsible(False)
-        self.plot_label_splitter.addWidget(self.tabs)
-        self.plot_label_splitter.addWidget(self.label_table)
-        self.plot_label_splitter.setStretchFactor(0, 4)
-        self.plot_label_splitter.setStretchFactor(1, 1)
-        self.plot_label_splitter.setSizes([520, 180])
-        layout.addWidget(self.plot_label_splitter, 1)
-        self.window.setCentralWidget(central)
-        self._redraw_plots()
-
-    def _make_label_table(self) -> Any:
-        from PySide6 import QtCore, QtWidgets
-
-        names = _fit_entry_diagnostic_parameter_names(self.fit_entry)
-        labels = _fit_parameter_plot_labels(self.fit_entry, names)
-        table = QtWidgets.QTableWidget(len(names), 2)
-        table.setObjectName("fit_diagnostics_label_table")
-        table.setToolTip(
-            "Edit plot labels for this fit result. Plain text or Matplotlib mathtext/LaTeX-style labels are accepted."
-        )
-        table.setHorizontalHeaderLabels(["Full parameter name", "Plot label"])
-        table.setEditTriggers(
-            QtWidgets.QAbstractItemView.EditTrigger.DoubleClicked
-            | QtWidgets.QAbstractItemView.EditTrigger.EditKeyPressed
-        )
-        table.setAlternatingRowColors(True)
-        table.verticalHeader().setVisible(False)
-        table.horizontalHeader().setStretchLastSection(True)
-        for row, name in enumerate(names):
-            name_item = QtWidgets.QTableWidgetItem(name)
-            name_item.setFlags(name_item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-            label_item = QtWidgets.QTableWidgetItem(labels.get(name, f"p{row + 1}"))
-            name_item.setToolTip(name)
-            label_item.setToolTip("Editable plot label. Use p1-style names, plain text, or mathtext such as $\\Gamma$.")
-            table.setItem(row, 0, name_item)
-            table.setItem(row, 1, label_item)
-        table.itemChanged.connect(self._label_table_changed)
-        table.setMinimumHeight(90)
-        table.resizeColumnsToContents()
-        _tooltip_table_corner_buttons(table, "Select all parameter-label rows.")
-        return table
-
-    def _label_table_changed(self, item: Any) -> None:
-        if item.column() != 1:
-            return
-        labels = dict(self.fit_entry.metadata.get("parameter_labels", {}))
-        full_name_item = self.label_table.item(item.row(), 0)
-        if full_name_item is None:
-            return
-        full_name = full_name_item.text()
-        labels[full_name] = item.text().strip() or _compact_diagnostic_labels([full_name])[0]
-        self.fit_entry.metadata["parameter_labels"] = labels
-        self._redraw_plots()
-
-    def _redraw_plots(self) -> None:
-        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-        from matplotlib.figure import Figure
-
-        active_tab = self.tabs.tabText(self.tabs.currentIndex()) if self.tabs.count() else ""
-        self.tabs.clear()
-
-        covariance = _covariance_matrix_from_fit_entry(self.fit_entry)
-        if covariance is not None:
-            matrix, names, title = covariance
-            labels = _fit_parameter_plot_labels(self.fit_entry, names)
-            cov_fig = Figure(figsize=(max(7, 1.0 * len(names) + 4), max(5, 0.75 * len(names) + 3)))
-            _draw_centered_matrix_heatmap(cov_fig, matrix, names, labels=labels, title=title)
-            self.tabs.addTab(FigureCanvas(cov_fig), title)
-
-        result = _sampling_result_from_dict(self.fit_entry.metadata.get("posterior_samples"))
-        if result is None:
-            self._restore_active_tab(active_tab)
-            return
-
-        samples = np.asarray(result.samples, dtype=float)
-        names = list(result.variable_names)
-        labels = _fit_parameter_plot_labels(self.fit_entry, names)
-        summaries = _fit_parameter_summaries(self.fit_entry)
-
-        trace_fig = Figure(figsize=(8, max(3, 1.4 * max(1, len(names)))))
-        trace_axes = trace_fig.subplots(max(1, len(names)), 1, squeeze=False)
-        for index, name in enumerate(names):
-            ax = trace_axes[index, 0]
-            _draw_trace_panel(
-                ax,
-                result,
-                parameter_index=index,
-                summary=summaries.get(name, {}),
-            )
-            ax.set_ylabel(labels.get(name, f"p{index + 1}"))
-        trace_axes[-1, 0].set_xlabel("MCMC step" if result.chain is not None else "sample")
-        trace_fig.subplots_adjust(left=0.18, right=0.98, bottom=0.1, top=0.95, hspace=0.28)
-        self.tabs.addTab(FigureCanvas(trace_fig), "Trace")
-
-        n = len(names)
-        corner_fig = Figure(figsize=(max(6, 2.45 * max(1, n)), max(6, 2.45 * max(1, n))))
-        axes = corner_fig.subplots(max(1, n), max(1, n), squeeze=False)
-        for row in range(n):
-            for col in range(n):
-                ax = axes[row, col]
-                if row == col:
-                    _draw_corner_histogram_panel(
-                        ax,
-                        samples[:, col],
-                        labels.get(names[col], f"p{col + 1}"),
-                        summaries.get(names[col], {}),
-                    )
-                elif row > col:
-                    _draw_corner_density_panel(ax, samples[:, col], samples[:, row])
-                    _draw_corner_reference_lines(
-                        ax,
-                        summaries.get(names[col], {}),
-                        summaries.get(names[row], {}),
-                    )
-                else:
-                    ax.axis("off")
-                _disable_axis_offset_text(ax)
-                if row == n - 1:
-                    ax.set_xlabel(labels.get(names[col], f"p{col + 1}"))
-                if col == 0 and row > 0:
-                    ax.set_ylabel(labels.get(names[row], f"p{row + 1}"))
-                elif row == col and col == 0:
-                    ax.set_ylabel("Count")
-        corner_fig.subplots_adjust(
-            left=0.18,
-            right=0.98,
-            bottom=0.18,
-            top=0.9,
-            hspace=0.48,
-            wspace=0.48,
-        )
-        self.tabs.addTab(FigureCanvas(corner_fig), "Corner")
-        self._restore_active_tab(active_tab)
-
-    def _restore_active_tab(self, tab_text: str) -> None:
-        if not tab_text:
-            return
-        for index in range(self.tabs.count()):
-            if self.tabs.tabText(index) == tab_text:
-                self.tabs.setCurrentIndex(index)
-                return
-
-    def show(self) -> None:
-        self.window.resize(900, 700)
-        self.window.show()
-
-
-def _draw_matrix_heatmap(
-    ax: Any,
-    matrix: Any,
-    names: list[str],
-    *,
-    labels: dict[str, str] | None = None,
-    title: str,
-    colorbar_ax: Any | None = None,
-) -> None:
-    """Draw a labeled covariance or correlation heatmap."""
-
-    arr = np.asarray(matrix, dtype=float)
-    if arr.size == 0:
-        return
-    plot_labels = labels or {
-        name: label
-        for name, label in zip(
-            names,
-            _compact_diagnostic_labels(names),
-            strict=True,
-        )
-    }
-    finite = arr[np.isfinite(arr)]
-    if title.lower().startswith("correlation"):
-        vmin, vmax = -1.0, 1.0
-        cmap = "coolwarm"
-    elif finite.size:
-        limit = float(np.nanmax(np.abs(finite)))
-        vmin, vmax = (-limit, limit) if limit > 0 else (-1.0, 1.0)
-        cmap = "coolwarm"
-    else:
-        vmin, vmax = -1.0, 1.0
-        cmap = "coolwarm"
-    image = ax.imshow(arr, cmap=cmap, vmin=vmin, vmax=vmax)
-    ax.set_title(title)
-    ax.set_xticks(np.arange(len(names)))
-    ax.set_yticks(np.arange(len(names)))
-    ax.set_xticklabels([plot_labels.get(name, f"p{index + 1}") for index, name in enumerate(names)], rotation=0)
-    ax.set_yticklabels([plot_labels.get(name, f"p{index + 1}") for index, name in enumerate(names)])
-    for row in range(arr.shape[0]):
-        for col in range(arr.shape[1]):
-            value = arr[row, col]
-            if np.isfinite(value):
-                ax.text(col, row, _format_number(value), ha="center", va="center", fontsize=7)
-    if colorbar_ax is None:
-        ax.figure.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
-    else:
-        ax.figure.colorbar(image, cax=colorbar_ax)
-
-
-def _draw_centered_matrix_heatmap(
-    fig: Any,
-    matrix: Any,
-    names: list[str],
-    *,
-    labels: dict[str, str] | None = None,
-    title: str,
-) -> Any:
-    """Draw the covariance/correlation matrix centered in the diagnostics tab."""
-
-    arr = np.asarray(matrix, dtype=float)
-    label_count = max(1, len(names))
-    square_size = min(0.66, max(0.42, 0.10 * label_count + 0.34))
-    colorbar_width = 0.028
-    gap = 0.025
-    total_width = square_size + gap + colorbar_width
-    left = max(0.08, (1.0 - total_width) / 2.0)
-    bottom = max(0.14, (1.0 - square_size) / 2.0)
-    ax = fig.add_axes([left, bottom, square_size, square_size])
-    colorbar_ax = fig.add_axes([left + square_size + gap, bottom, colorbar_width, square_size])
-    _draw_matrix_heatmap(ax, arr, names, labels=labels, title=title, colorbar_ax=colorbar_ax)
-    return ax
-
-
-def _compact_diagnostic_labels(names: list[str]) -> list[str]:
-    return [f"p{index + 1}" for index in range(len(names))]
-
-
-def _draw_trace_panel(
-    ax: Any,
-    result: SamplingResult,
-    *,
-    parameter_index: int,
-    summary: dict[str, float],
-) -> None:
-    """Draw one posterior trace panel, preferring raw walker chains."""
-
-    if result.chain is not None:
-        chain = np.asarray(result.chain, dtype=float)
-        if chain.ndim == 3 and parameter_index < chain.shape[2]:
-            steps = np.arange(chain.shape[0])
-            ax.plot(steps, chain[:, :, parameter_index], linewidth=0.55, alpha=0.75)
-            burn_in = int(result.metadata.get("burn_in", 0) or 0)
-            if 0 < burn_in < chain.shape[0]:
-                ax.axvline(
-                    burn_in,
-                    color="black",
-                    linestyle="--",
-                    linewidth=1.0,
-                    alpha=0.85,
-                )
-                top = ax.get_ylim()[1]
-                ax.annotate(
-                    "burn-in",
-                    xy=(burn_in, top),
-                    xytext=(4, -4),
-                    textcoords="offset points",
-                    ha="left",
-                    va="top",
-                    fontsize=8,
-                    color="black",
-                )
-            if summary.get("best") is not None:
-                ax.axhline(float(summary["best"]), color="red", linewidth=0.9, alpha=0.8)
-            return
-
-    samples = np.asarray(result.samples, dtype=float)
-    if samples.ndim == 2 and parameter_index < samples.shape[1]:
-        ax.plot(samples[:, parameter_index], linewidth=0.7)
-    if summary.get("best") is not None:
-        ax.axhline(float(summary["best"]), color="red", linewidth=0.9, alpha=0.8)
-
-
-def _fit_entry_diagnostic_parameter_names(fit_entry: FitTimelineEntry) -> list[str]:
-    names: list[str] = []
-    covariance = _covariance_matrix_from_fit_entry(fit_entry)
-    if covariance is not None:
-        _matrix, cov_names, _title = covariance
-        names.extend(cov_names)
-    samples = _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples"))
-    if samples is not None:
-        names.extend(samples.variable_names)
-    goodness = fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
-    params = goodness.get("parameters") if isinstance(goodness.get("parameters"), dict) else {}
-    names.extend(str(name) for name in params)
-    return list(dict.fromkeys(names))
-
-
-def _fit_parameter_plot_labels(
-    fit_entry: FitTimelineEntry,
-    names: list[str],
-) -> dict[str, str]:
-    stored = fit_entry.metadata.get("parameter_labels")
-    labels = dict(stored) if isinstance(stored, dict) else {}
-    out: dict[str, str] = {}
-    defaults_changed = False
-    for index, name in enumerate(names):
-        label = str(labels.get(name, "")).strip()
-        if not label:
-            label = f"p{index + 1}"
-            labels[name] = label
-            defaults_changed = True
-        out[name] = label
-    if defaults_changed:
-        fit_entry.metadata["parameter_labels"] = labels
-    return out
-
-
-def _fit_parameter_summaries(fit_entry: FitTimelineEntry) -> dict[str, dict[str, float]]:
-    goodness = fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
-    params = _display_fit_parameters(fit_entry)
-    stderr = goodness.get("stderr") if isinstance(goodness.get("stderr"), dict) else {}
-    posterior = goodness.get("posterior") if isinstance(goodness.get("posterior"), dict) else {}
-    posterior_params = (
-        posterior.get("parameters")
-        if isinstance(posterior.get("parameters"), dict)
-        else {}
-    )
-    use_posterior_errors = bool(_posterior_display_options(fit_entry).get("use_posterior_uncertainties"))
-    names = set(params) | set(stderr) | set(posterior_params)
-    summaries: dict[str, dict[str, float]] = {}
-    for name in names:
-        summary: dict[str, float] = {}
-        if name in params:
-            summary["best"] = float(params[name])
-        if name in stderr:
-            err = float(stderr[name])
-            summary["stderr"] = err
-            if "best" in summary:
-                summary.setdefault("low", summary["best"] - err)
-                summary.setdefault("high", summary["best"] + err)
-        posterior_row = posterior_params.get(name)
-        if use_posterior_errors and isinstance(posterior_row, dict):
-            for source, target in (("median", "median"), ("p16", "low"), ("p84", "high")):
-                if source in posterior_row:
-                    summary[target] = float(posterior_row[source])
-        summaries[str(name)] = summary
-    return summaries
-
-
-def _draw_corner_histogram_panel(
-    ax: Any,
-    values: Any,
-    name: str,
-    summary: dict[str, float],
-) -> None:
-    arr = np.asarray(values, dtype=float)
-    arr = arr[np.isfinite(arr)]
-    ax.hist(arr, bins=40, histtype="step", color="0.1", linewidth=1.1)
-    center = summary.get("best", summary.get("median"))
-    low = summary.get("low")
-    high = summary.get("high")
-    if center is not None:
-        ax.axvline(center, color="red", linewidth=1.0)
-    if low is not None:
-        ax.axvline(low, color="0.25", linestyle="--", linewidth=0.8)
-    if high is not None:
-        ax.axvline(high, color="0.25", linestyle="--", linewidth=0.8)
-    ax.set_title(_corner_histogram_title(name, summary), fontsize=9, pad=8)
-
-
-def _draw_corner_reference_lines(
-    ax: Any,
-    x_summary: dict[str, float],
-    y_summary: dict[str, float],
-) -> None:
-    x_center = x_summary.get("best", x_summary.get("median"))
-    y_center = y_summary.get("best", y_summary.get("median"))
-    if x_center is not None:
-        ax.axvline(x_center, color="red", linewidth=0.8, alpha=0.85)
-    if y_center is not None:
-        ax.axhline(y_center, color="red", linewidth=0.8, alpha=0.85)
-    if x_center is not None and y_center is not None:
-        ax.plot([x_center], [y_center], marker="o", color="red", markersize=3)
-
-
-def _corner_histogram_title(name: str, summary: dict[str, float]) -> str:
-    center = summary.get("best", summary.get("median"))
-    if center is None:
-        return name
-    low = summary.get("low")
-    high = summary.get("high")
-    if low is None or high is None:
-        return rf"${_mathtext_label(name)} = {_format_number(center)}$"
-    plus = high - center
-    minus = center - low
-    return (
-        rf"${_mathtext_label(name)} = {_format_number(center)}"
-        rf"\,\pm^{{+{_format_number(plus)}}}_{{-{_format_number(minus)}}}$"
-    )
-
-
-def _mathtext_label(label: str) -> str:
-    stripped = str(label).strip()
-    if stripped.startswith("$") and stripped.endswith("$") and len(stripped) >= 2:
-        return stripped[1:-1]
-    if re.search(r"[\\{}_^]", stripped):
-        return stripped
-    return stripped.replace(" ", r"\ ")
-
-
-def _disable_axis_offset_text(ax: Any) -> None:
-    for axis in (ax.xaxis, ax.yaxis):
-        formatter = axis.get_major_formatter()
-        if hasattr(formatter, "set_useOffset"):
-            formatter.set_useOffset(False)
-        if hasattr(formatter, "set_scientific"):
-            formatter.set_scientific(False)
-
-
-def _covariance_matrix_from_fit_entry(
-    fit_entry: FitTimelineEntry,
-) -> tuple[np.ndarray, list[str], str] | None:
-    if _posterior_display_options(fit_entry).get("use_posterior_uncertainties"):
-        posterior = _posterior_correlation_matrix(fit_entry)
-        if posterior is not None:
-            matrix, names = posterior
-            return matrix, names, "Posterior correlation"
-    goodness = fit_entry.goodness if isinstance(fit_entry.goodness, dict) else {}
-    covariance = goodness.get("covariance") if isinstance(goodness.get("covariance"), dict) else {}
-    names = [str(name) for name in covariance.get("variables", [])]
-    matrix = covariance.get("matrix")
-    if matrix is not None:
-        arr = np.asarray(matrix, dtype=float)
-        if arr.ndim == 2 and arr.shape[0] == arr.shape[1]:
-            if len(names) != arr.shape[0]:
-                names = [f"p{index}" for index in range(arr.shape[0])]
-            return arr, names, "Covariance"
-    correlation = covariance.get("correlation")
-    if isinstance(correlation, dict) and correlation:
-        names = names or [str(name) for name in correlation]
-        arr = np.asarray(
-            [
-                [float(dict(correlation.get(row_name, {})).get(col_name, np.nan)) for col_name in names]
-                for row_name in names
-            ],
-            dtype=float,
-        )
-        if arr.ndim == 2 and arr.shape[0] == arr.shape[1]:
-            return arr, names, "Correlation"
-    return None
-
-
-def _fit_entry_has_diagnostic_plots(fit_entry: FitTimelineEntry | None) -> bool:
-    if fit_entry is None:
-        return False
-    if _covariance_matrix_from_fit_entry(fit_entry) is not None:
-        return True
-    return _sampling_result_from_dict(fit_entry.metadata.get("posterior_samples")) is not None
-
-
-def _draw_corner_density_panel(ax: Any, x: Any, y: Any) -> None:
-    """Draw a 2D posterior panel with density shading, contours, and samples."""
-
-    x_arr = np.asarray(x, dtype=float)
-    y_arr = np.asarray(y, dtype=float)
-    finite = np.isfinite(x_arr) & np.isfinite(y_arr)
-    x_arr = x_arr[finite]
-    y_arr = y_arr[finite]
-    if x_arr.size == 0 or np.ptp(x_arr) == 0.0 or np.ptp(y_arr) == 0.0:
-        ax.scatter(x_arr, y_arr, s=2, alpha=0.25, color="tab:blue", linewidths=0)
-        return
-
-    counts, x_edges, y_edges = np.histogram2d(x_arr, y_arr, bins=48)
-    counts = counts.T
-    if np.any(counts > 0):
-        positive = counts[counts > 0]
-        image = ax.imshow(
-            counts,
-            origin="lower",
-            extent=[x_edges[0], x_edges[-1], y_edges[0], y_edges[-1]],
-            aspect="auto",
-            cmap="Blues",
-            alpha=0.6,
-            interpolation="nearest",
-        )
-        del image
-        if positive.size >= 4:
-            levels = np.percentile(positive, [50.0, 75.0, 90.0])
-            levels = np.unique(levels[levels > 0])
-            if levels.size:
-                x_centers = 0.5 * (x_edges[:-1] + x_edges[1:])
-                y_centers = 0.5 * (y_edges[:-1] + y_edges[1:])
-                ax.contour(
-                    x_centers,
-                    y_centers,
-                    counts,
-                    levels=levels,
-                    colors="0.15",
-                    linewidths=0.8,
-                    alpha=0.85,
-                )
-    ax.scatter(x_arr, y_arr, s=1.4, alpha=0.12, color="tab:blue", linewidths=0)
 
 
 class NfitProjectExplorer:
@@ -29817,50 +28478,6 @@ def _has_slice_viewer_candidates(group: DataGroup) -> bool:
     return False
 
 
-def _dataset_can_load(dataset: DatasetEntry) -> bool:
-    if dataset.data is not None:
-        return False
-    if dataset.kind == "raw_dgs_nexus":
-        return False
-    source = dataset.metadata.get("source_file") if isinstance(dataset.metadata, dict) else None
-    if not source:
-        return False
-    if dataset.metadata.get("derived_from_analysis"):
-        project_path = dataset.metadata.get("_project_path")
-        artifact_path = dataset.metadata.get("analysis_artifact_path")
-        return bool(
-            project_path
-            and artifact_path
-            and project_artifact_exists(project_path, artifact_path)
-        )
-    if data_type_container(dataset.data_type) == "point_list":
-        return True
-    return bool(Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5", ".npz"})
-
-
-def _dataset_can_reload(dataset: DatasetEntry | None) -> bool:
-    if dataset is None or not isinstance(dataset.metadata, dict):
-        return False
-    if dataset.metadata.get("derived_from_analysis"):
-        project_path = dataset.metadata.get("_project_path")
-        artifact_path = dataset.metadata.get("project_artifact_path") or dataset.metadata.get(
-            "analysis_artifact_path"
-        )
-        return bool(
-            project_path
-            and artifact_path
-            and project_artifact_exists(project_path, artifact_path)
-        )
-    source = dataset.metadata.get("source_file")
-    if not source:
-        return False
-    if dataset.kind == "raw_dgs_nexus" or dataset.metadata.get("importer"):
-        return True
-    if data_type_container(dataset.data_type) == "point_list":
-        return True
-    return Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5", ".npz"}
-
-
 def _dataset_can_rebin(dataset: DatasetEntry) -> bool:
     return isinstance(dataset.data, (MDHistoData, PointData4D, PointListData)) or isinstance(
         dataset.metadata.get(DERIVED_RECIPE_KEY), dict
@@ -29902,16 +28519,6 @@ def _dataset_data_point_count(dataset: DatasetEntry) -> int:
             return count
     if isinstance(dataset.metadata.get(DERIVED_RECIPE_KEY), dict):
         return _dataset_rebin_output_bins(dataset_rebin_config(dataset))
-    return 0
-
-
-def _loaded_data_point_count(data: Any) -> int:
-    """Return the stored-point count for a loaded nfit data container."""
-
-    if isinstance(data, MDHistoData):
-        return int(np.prod(data.shape))
-    if isinstance(data, (PointListData, PointData4D)):
-        return int(data.size)
     return 0
 
 
@@ -30212,27 +28819,6 @@ def _dataset_orientation_matrix(metadata: dict[str, Any]) -> tuple[str, Any | No
             if key in oriented_lattice:
                 return label, oriented_lattice[key]
     return "", None
-
-
-def _dataset_ub_for_editor(metadata: dict[str, Any]) -> np.ndarray | None:
-    """Return UB without 2pi, converting full RLU-to-Q matrices when needed."""
-
-    containers = [metadata]
-    oriented = metadata.get("oriented_lattice")
-    if isinstance(oriented, dict):
-        containers.append(oriented)
-    for container in containers:
-        for key in ("ub_matrix", "orientation_matrix"):
-            if key in container:
-                matrix = np.asarray(container[key], dtype=float)
-                if matrix.shape == (3, 3):
-                    return matrix
-    for container in containers:
-        if "rlu_to_inv_angstrom_matrix" in container:
-            matrix = np.asarray(container["rlu_to_inv_angstrom_matrix"], dtype=float)
-            if matrix.shape == (3, 3):
-                return matrix / (2.0 * np.pi)
-    return None
 
 
 def _matrix_lines(matrix: Any) -> list[str]:
