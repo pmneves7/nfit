@@ -45,6 +45,12 @@ their source columns and header metadata. The dataset panel identifies
 coordinates and measured channels and lets the user correct quantity types and
 units.
 
+Delimited text import recognizes instrument preambles and quoted comma- or
+tab-separated labels. Every data row must have the same number of columns as
+the header. Blank fields and common missing-value markers such as `N/A` and
+`NaN` become missing numeric values; malformed text reports its source line and
+column instead of silently changing the dataset shape.
+
 For MPMS data, sample mass and molar mass seed the absolute normalization.
 Choose whether the plotted and fitted observable is moment or susceptibility
 and declare the input moment and field units. Molar susceptibility is available

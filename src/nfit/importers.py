@@ -14,7 +14,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeAlias
 
 import numpy as np
 
@@ -22,6 +22,11 @@ from .dataset import PointData4D, PointListData
 from .macs import import_macs_nexus, is_macs_nexus_file, macs_nexus_point_count
 from .mdhisto import MDHistoAxis, MDHistoData
 from .quantities import normalize_unit
+
+ImportResult: TypeAlias = PointData4D | PointListData | MDHistoData
+ImporterLoader: TypeAlias = Callable[..., ImportResult]
+ImporterProbe: TypeAlias = Callable[[str | Path], bool]
+ImporterPointCounter: TypeAlias = Callable[[str | Path, dict[str, Any] | None], int]
 
 # ``Name (unit)`` -> ("Name", "unit"). The unit is the last parenthesized group.
 _UNIT_PATTERN = re.compile(r"^(?P<name>.*?)\s*\((?P<unit>[^()]*)\)\s*$")
@@ -41,17 +46,84 @@ def split_name_and_unit(label: str) -> tuple[str, str]:
 
 
 def _detect_delimiter(line: str) -> str:
-    if "," in line:
-        return ","
-    if "\t" in line:
-        return "\t"
+    # Select the candidate that produces the most fields.  Counting delimiter
+    # characters directly is not sufficient because a quoted CSV label may
+    # itself contain a comma.
+    candidates: list[tuple[int, str]] = []
+    for candidate in (",", "\t"):
+        try:
+            cells = next(
+                csv.reader(
+                    [line],
+                    delimiter=candidate,
+                    skipinitialspace=True,
+                    strict=True,
+                )
+            )
+        except csv.Error:
+            continue
+        candidates.append((len(cells), candidate))
+    if candidates:
+        count, candidate = max(candidates, key=lambda item: item[0])
+        if count > 1:
+            return candidate
     return "whitespace"
 
 
 def _split_row(line: str, delimiter: str) -> list[str]:
     if delimiter == "whitespace":
         return line.split()
-    return [cell.strip() for cell in line.split(delimiter)]
+    if delimiter not in {",", "\t"}:
+        raise ValueError("delimiter must be ',', '\\t', or 'whitespace'")
+    try:
+        cells = next(
+            csv.reader(
+                [line],
+                delimiter=delimiter,
+                skipinitialspace=True,
+                strict=True,
+            )
+        )
+    except csv.Error as exc:
+        raise ValueError(f"invalid delimited row: {exc}") from exc
+    return [cell.strip() for cell in cells]
+
+
+_MISSING_NUMERIC_VALUES = frozenset({"", "na", "n/a", "nan", "null", "none", "--", "---"})
+
+
+def _is_comment(line: str, comment_prefixes: tuple[str, ...]) -> bool:
+    stripped = line.strip()
+    return bool(comment_prefixes) and stripped.startswith(comment_prefixes)
+
+
+def _row_is_numeric(cells: list[str]) -> bool:
+    """Return whether a non-empty row contains numbers or missing sentinels."""
+
+    if not cells or not any(cell.strip() for cell in cells):
+        return False
+    for cell in cells:
+        text = cell.strip()
+        if text.lower() in _MISSING_NUMERIC_VALUES:
+            continue
+        try:
+            float(text)
+        except ValueError:
+            return False
+    return True
+
+
+def _parse_numeric_cell(text: str, *, path: Path, line_number: int, column: str) -> float:
+    stripped = text.strip()
+    if stripped.lower() in _MISSING_NUMERIC_VALUES:
+        return float("nan")
+    try:
+        return float(stripped)
+    except ValueError as exc:
+        raise ValueError(
+            f"invalid numeric value {text!r} in {path} at line {line_number}, "
+            f"column {column!r}"
+        ) from exc
 
 
 @dataclass
@@ -95,38 +167,93 @@ def read_delimited_text(
     """
 
     file_path = Path(path)
-    raw_lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    if delimiter not in {None, ",", "\t", "whitespace"}:
+        raise ValueError("delimiter must be ',', '\\t', or 'whitespace'")
+    raw_lines = file_path.read_text(encoding="utf-8-sig", errors="replace").splitlines()
 
     header_lines: list[str] = []
     index = 0
     if data_marker is not None:
+        found_marker = False
         while index < len(raw_lines):
             line = raw_lines[index]
             index += 1
             if line.strip() == data_marker:
+                found_marker = True
                 break
             header_lines.append(line)
+        if not found_marker:
+            raise ValueError(f"data marker {data_marker!r} not found in {file_path}")
     else:
-        # Header = leading lines that are blank, comments, or non-numeric.
-        while index < len(raw_lines):
-            line = raw_lines[index]
-            stripped = line.strip()
-            if not stripped:
-                header_lines.append(line)
-                index += 1
+        # Locate the first numeric row.  For a headerless table it begins the
+        # data; for a headed table the preceding substantive line is the column
+        # header.  This permits arbitrary instrument preambles without treating
+        # their first line as either labels or data.
+        substantive: list[int] = []
+        first_numeric_position: int | None = None
+        for line_number, line in enumerate(raw_lines):
+            if not line.strip() or _is_comment(line, comment_prefixes):
                 continue
-            if stripped.startswith(comment_prefixes):
-                header_lines.append(line)
-                index += 1
+            substantive.append(line_number)
+            probe_delimiter = delimiter or _detect_delimiter(line)
+            try:
+                cells = _split_row(line, probe_delimiter)
+            except ValueError:
                 continue
-            probe_delim = delimiter or _detect_delimiter(line)
-            cells = _split_row(line, probe_delim)
-            if has_header_row or not _all_numeric(cells):
+            if _row_is_numeric(cells):
+                first_numeric_position = len(substantive) - 1
                 break
-            break
+        if not substantive:
+            raise ValueError(f"no tabular data found in {file_path}")
+        if first_numeric_position is None:
+            if not has_header_row:
+                raise ValueError(f"no numeric tabular data found in {file_path}")
+            first_numeric_position = len(substantive) - 1
+        if has_header_row:
+            if first_numeric_position == 0:
+                raise ValueError(f"no column-header row found in {file_path}")
+            header_position = first_numeric_position - 1
+            # If an early data row contains malformed text, it will not have
+            # served as the numeric inference anchor.  Walk back to the first
+            # plausible label row whose following rows retain the same shape;
+            # parsing can then report the malformed cell precisely.
+            for candidate_position in range(first_numeric_position):
+                candidate_index = substantive[candidate_position]
+                candidate_delimiter = delimiter or _detect_delimiter(
+                    raw_lines[candidate_index]
+                )
+                try:
+                    candidate_cells = _split_row(
+                        raw_lines[candidate_index], candidate_delimiter
+                    )
+                    following_cells = [
+                        _split_row(raw_lines[row_index], candidate_delimiter)
+                        for row_index in substantive[
+                            candidate_position + 1 : first_numeric_position + 1
+                        ]
+                    ]
+                except ValueError:
+                    continue
+                if (
+                    len(candidate_cells) >= 2
+                    and not _row_is_numeric(candidate_cells)
+                    and following_cells
+                    and all(
+                        len(cells) == len(candidate_cells) for cells in following_cells
+                    )
+                ):
+                    header_position = candidate_position
+                    break
+            index = substantive[header_position]
+        else:
+            index = substantive[first_numeric_position]
+        header_lines.extend(raw_lines[:index])
 
-    # Find the first non-empty table line to establish the delimiter.
-    while index < len(raw_lines) and not raw_lines[index].strip():
+    # Find the first substantive table line to establish the delimiter.
+    while index < len(raw_lines) and (
+        not raw_lines[index].strip() or _is_comment(raw_lines[index], comment_prefixes)
+    ):
+        header_lines.append(raw_lines[index])
         index += 1
     if index >= len(raw_lines):
         raise ValueError(f"no tabular data found in {file_path}")
@@ -134,57 +261,73 @@ def read_delimited_text(
     resolved_delimiter = delimiter or _detect_delimiter(raw_lines[index])
 
     if has_header_row:
-        labels = _split_row(raw_lines[index], resolved_delimiter)
+        try:
+            labels = _split_row(raw_lines[index], resolved_delimiter)
+        except ValueError as exc:
+            raise ValueError(
+                f"invalid column-header row in {file_path} at line {index + 1}: {exc}"
+            ) from exc
         index += 1
     elif column_names is not None:
         labels = list(column_names)
     else:
         raise ValueError("column_names is required when has_header_row is False")
+    if not labels:
+        raise ValueError(f"no column labels found in {file_path}")
 
     names: list[str] = []
     units: dict[str, str] = {}
-    for label in labels:
+    for position, label in enumerate(labels, start=1):
         name, unit = split_name_and_unit(label)
+        if not name:
+            raise ValueError(
+                f"empty column label in {file_path} at position {position}"
+            )
+        if name in names:
+            raise ValueError(f"duplicate column label {name!r} in {file_path}")
         names.append(name)
         if unit:
             units[name] = unit
 
     columns: dict[str, list[float]] = {name: [] for name in names}
-    for line in raw_lines[index:]:
+    data_row_count = 0
+    for line_number, line in enumerate(raw_lines[index:], start=index + 1):
         stripped = line.strip()
         if not stripped:
             continue
-        if stripped.startswith(comment_prefixes):
+        if _is_comment(line, comment_prefixes):
             header_lines.append(line)
             continue
-        cells = _split_row(line, resolved_delimiter)
+        try:
+            cells = _split_row(line, resolved_delimiter)
+        except ValueError as exc:
+            raise ValueError(f"{exc} in {file_path} at line {line_number}") from exc
+        if len(cells) != len(names):
+            raise ValueError(
+                f"inconsistent row width in {file_path} at line {line_number}: "
+                f"found {len(cells)} columns, expected {len(names)}"
+            )
         for position, name in enumerate(names):
-            text = cells[position] if position < len(cells) else ""
-            columns[name].append(_to_float(text))
+            columns[name].append(
+                _parse_numeric_cell(
+                    cells[position],
+                    path=file_path,
+                    line_number=line_number,
+                    column=name,
+                )
+            )
+        data_row_count += 1
+
+    if data_row_count == 0:
+        raise ValueError(f"no data rows found in {file_path}")
 
     return DelimitedText(columns=columns, units=units, header_lines=header_lines, column_labels=names)
 
 
 def _all_numeric(cells: list[str]) -> bool:
-    values = [cell for cell in cells if cell.strip()]
-    if not values:
-        return False
-    for cell in values:
-        try:
-            float(cell)
-        except ValueError:
-            return False
-    return True
+    """Compatibility wrapper for the historical private helper."""
 
-
-def _to_float(text: str) -> float:
-    text = text.strip()
-    if not text:
-        return float("nan")
-    try:
-        return float(text)
-    except ValueError:
-        return float("nan")
+    return _row_is_numeric(cells)
 
 
 def _mpms_header_metadata(header_lines: list[str]) -> dict[str, Any]:
@@ -353,6 +496,100 @@ def import_hb2a_powder(path: str | Path) -> PointListData:
     )
 
 
+def _read_probe_lines(path: str | Path, *, limit: int = 128) -> list[str]:
+    """Read a bounded text prefix for inexpensive importer detection."""
+
+    lines: list[str] = []
+    with Path(path).open("r", encoding="utf-8-sig", errors="replace") as handle:
+        for _line_number, line in zip(range(limit), handle, strict=False):
+            lines.append(line.rstrip("\r\n"))
+    return lines
+
+
+def _labels_after_marker(path: str | Path, marker: str) -> list[str]:
+    lines = _read_probe_lines(path)
+    try:
+        marker_index = next(
+            index for index, line in enumerate(lines) if line.strip() == marker
+        )
+    except StopIteration:
+        return []
+    for line in lines[marker_index + 1 :]:
+        if not line.strip() or line.lstrip().startswith((";", "#")):
+            continue
+        return [split_name_and_unit(cell)[0] for cell in _split_row(line, ",")]
+    return []
+
+
+def is_mpms_dat_file(path: str | Path) -> bool:
+    """Return whether *path* has the characteristic columns of an MPMS export."""
+
+    try:
+        labels = {label.casefold() for label in _labels_after_marker(path, "[Data]")}
+    except (OSError, UnicodeError, ValueError):
+        return False
+    return (
+        "temperature" in labels
+        and "magnetic field" in labels
+        and any("moment" in label for label in labels)
+    )
+
+
+def is_ppms_heat_capacity_dat_file(path: str | Path) -> bool:
+    """Return whether *path* has PPMS Heat Capacity data columns."""
+
+    try:
+        labels = {label.casefold() for label in _labels_after_marker(path, "[Data]")}
+    except (OSError, UnicodeError, ValueError):
+        return False
+    has_temperature = any("temp" in label for label in labels)
+    has_heat_capacity = any(
+        label in {"samp hc", "sample hc"} or "heat capacity" in label
+        for label in labels
+    )
+    return has_temperature and has_heat_capacity
+
+
+def is_hb2a_powder_file(path: str | Path) -> bool:
+    """Return whether *path* begins with an HB2A-style numeric three-column table."""
+
+    numeric_rows = 0
+    data_started = False
+    try:
+        for line in _read_probe_lines(path):
+            stripped = line.strip()
+            if not stripped or stripped.startswith((";", "#")):
+                continue
+            cells = _split_row(line, "whitespace")
+            if len(cells) == 3 and _row_is_numeric(cells):
+                data_started = True
+                numeric_rows += 1
+                if numeric_rows >= 2:
+                    return True
+                continue
+            if data_started:
+                return False
+    except (OSError, UnicodeError, ValueError):
+        return False
+    return numeric_rows == 1
+
+
+def _read_csv_rows(path: str | Path) -> list[tuple[int, list[str]]]:
+    file_path = Path(path)
+    rows: list[tuple[int, list[str]]] = []
+    try:
+        with file_path.open(
+            "r", encoding="utf-8-sig", errors="replace", newline=""
+        ) as handle:
+            reader = csv.reader(handle, strict=True)
+            for row in reader:
+                if any(cell.strip() for cell in row):
+                    rows.append((reader.line_num, [cell.strip() for cell in row]))
+    except csv.Error as exc:
+        raise ValueError(f"invalid CSV in {file_path}: {exc}") from exc
+    return rows
+
+
 def inspect_powder_ins_csv(path: str | Path) -> dict[str, Any]:
     """Inspect a plot-digitizer CSV without assigning physical conditions.
 
@@ -363,32 +600,75 @@ def inspect_powder_ins_csv(path: str | Path) -> dict[str, Any]:
     """
 
     file_path = Path(path)
-    with file_path.open("r", encoding="utf-8-sig", errors="replace", newline="") as handle:
-        rows = [row for row in csv.reader(handle) if any(cell.strip() for cell in row)]
-    if not rows:
+    numbered_rows = _read_csv_rows(file_path)
+    if not numbered_rows:
         raise ValueError(f"no CSV data found in {file_path}")
+    rows = [row for _line_number, row in numbered_rows]
     first = rows[0][0].strip().lower() if rows[0] else ""
     if first in {"y\\x", "y/x", "y"}:
         if len(rows[0]) < 2 or len(rows) < 2:
             raise ValueError("powder INS matrix CSV requires Q columns and energy rows")
+        for position, cell in enumerate(rows[0][1:], start=2):
+            _float_cell(cell, context=f"matrix Q header column {position}")
+        expected_width = len(rows[0])
+        for line_number, row in numbered_rows[1:]:
+            if len(row) != expected_width:
+                raise ValueError(
+                    f"matrix row {line_number} has {len(row) - 1} values; "
+                    f"expected {expected_width - 1}"
+                )
+            _float_cell(row[0], context=f"matrix row {line_number} energy")
+            for position, cell in enumerate(row[1:], start=2):
+                _float_cell(
+                    cell,
+                    context=f"matrix row {line_number}, column {position}",
+                    allow_missing=True,
+                )
         return {
             "layout": "matrix_q_energy",
             "point_count": (len(rows) - 1) * (len(rows[0]) - 1),
             "q_count": len(rows[0]) - 1,
             "energy_count": len(rows) - 1,
         }
-    if len(rows[0]) < 2:
-        raise ValueError("powder INS cut CSV requires at least x and signal columns")
+    column_count = len(rows[0])
+    if column_count not in {2, 3}:
+        raise ValueError("powder INS cut CSV requires two or three columns")
+    for line_number, row in numbered_rows:
+        if len(row) != column_count:
+            raise ValueError(
+                f"cut row {line_number} has {len(row)} columns; expected {column_count}"
+            )
+        _float_cell(row[0], context=f"cut row {line_number} x")
+        _float_cell(
+            row[1], context=f"cut row {line_number} signal", allow_missing=True
+        )
+        if column_count == 3:
+            _float_cell(
+                row[2], context=f"cut row {line_number} uncertainty", allow_missing=True
+            )
     return {
         "layout": "cut",
         "point_count": len(rows),
-        "column_count": len(rows[0]),
+        "column_count": column_count,
     }
 
 
-def _float_cell(text: str, *, context: str) -> float:
+def is_powder_ins_csv_file(path: str | Path) -> bool:
+    """Return whether *path* is a valid supported powder-INS CSV layout."""
+
     try:
-        return float(text.strip())
+        inspect_powder_ins_csv(path)
+    except (OSError, UnicodeError, ValueError):
+        return False
+    return True
+
+
+def _float_cell(text: str, *, context: str, allow_missing: bool = False) -> float:
+    stripped = text.strip()
+    if allow_missing and stripped.lower() in _MISSING_NUMERIC_VALUES:
+        return float("nan")
+    try:
+        return float(stripped)
     except ValueError as exc:
         raise ValueError(f"invalid numeric value {text!r} in {context}") from exc
 
@@ -413,8 +693,7 @@ def _centers_to_edges(values: np.ndarray) -> np.ndarray:
 
 
 def _powder_ins_matrix(path: Path, default_uncertainty: float) -> MDHistoData:
-    with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as handle:
-        rows = [row for row in csv.reader(handle) if any(cell.strip() for cell in row)]
+    rows = [row for _line_number, row in _read_csv_rows(path)]
     q = np.asarray(
         [_float_cell(cell, context="matrix Q header") for cell in rows[0][1:]],
         dtype=float,
@@ -427,7 +706,16 @@ def _powder_ins_matrix(path: Path, default_uncertainty: float) -> MDHistoData:
                 f"matrix row {row_number} has {len(row) - 1} values; expected {q.size}"
             )
         energy_values.append(_float_cell(row[0], context=f"matrix row {row_number}"))
-        signal_rows.append([_to_float(cell) for cell in row[1:]])
+        signal_rows.append(
+            [
+                _float_cell(
+                    cell,
+                    context=f"matrix row {row_number}",
+                    allow_missing=True,
+                )
+                for cell in row[1:]
+            ]
+        )
     energy = np.asarray(energy_values, dtype=float)
     # CSV rows are E and columns are Q; nfit's canonical powder order is Q, E.
     signal = np.asarray(signal_rows, dtype=float).T
@@ -464,12 +752,18 @@ def _powder_ins_cut(
     cut_type: str,
     fixed_value: float,
 ) -> MDHistoData:
-    with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as handle:
-        rows = [row for row in csv.reader(handle) if any(cell.strip() for cell in row)]
+    numbered_rows = _read_csv_rows(path)
     values = np.asarray(
         [
-            [_float_cell(cell, context=f"cut row {row_number}") for cell in row[:3]]
-            for row_number, row in enumerate(rows, start=1)
+            [
+                _float_cell(
+                    cell,
+                    context=f"cut row {line_number}",
+                    allow_missing=position > 0,
+                )
+                for position, cell in enumerate(row[:3])
+            ]
+            for line_number, row in numbered_rows
         ],
         dtype=float,
     )
@@ -652,17 +946,20 @@ class ImporterSpec:
 
     name: str
     label: str
-    loader: Callable[..., PointData4D | PointListData | MDHistoData]
+    loader: ImporterLoader
     data_types: tuple[str, ...]
     extensions: tuple[str, ...] = ()
     options_kind: str | None = None
-    probe: Callable[[str | Path], bool] | None = None
+    probe: ImporterProbe | None = None
     streams: tuple[ImporterStream, ...] = ()
-    point_counter: Callable[[str | Path, dict[str, Any] | None], int] | None = None
+    point_counter: ImporterPointCounter | None = None
 
     def can_read(self, path: str | Path) -> bool:
         if self.probe is not None:
-            return bool(self.probe(path))
+            try:
+                return bool(self.probe(path))
+            except (OSError, UnicodeError, ValueError, csv.Error):
+                return False
         if not self.extensions:
             return True
         return Path(path).suffix.lower() in self.extensions
@@ -675,6 +972,7 @@ IMPORTERS: dict[str, ImporterSpec] = {
         loader=import_mpms_dat,
         data_types=("magnetization",),
         extensions=(".dat",),
+        probe=is_mpms_dat_file,
     ),
     "hb2a_powder": ImporterSpec(
         name="hb2a_powder",
@@ -682,6 +980,7 @@ IMPORTERS: dict[str, ImporterSpec] = {
         loader=import_hb2a_powder,
         data_types=("powder_elastic",),
         extensions=(".dat", ".txt", ""),
+        probe=is_hb2a_powder_file,
     ),
     "ppms_heat_capacity_dat": ImporterSpec(
         name="ppms_heat_capacity_dat",
@@ -689,6 +988,7 @@ IMPORTERS: dict[str, ImporterSpec] = {
         loader=import_ppms_heat_capacity_dat,
         data_types=("heat_capacity",),
         extensions=(".dat",),
+        probe=is_ppms_heat_capacity_dat_file,
     ),
     "powder_ins_csv": ImporterSpec(
         name="powder_ins_csv",
@@ -697,6 +997,7 @@ IMPORTERS: dict[str, ImporterSpec] = {
         data_types=("powder_inelastic",),
         extensions=(".csv",),
         options_kind="powder_ins_csv",
+        probe=is_powder_ins_csv_file,
     ),
     "macs_nexus": ImporterSpec(
         name="macs_nexus",
@@ -740,7 +1041,7 @@ def probe_importers(
         if spec.probe is not None:
             if spec.can_read(source):
                 matches.append(
-                    ImporterMatch(spec.name, 1.0, "recognized internal instrument metadata")
+                    ImporterMatch(spec.name, 1.0, "recognized source-file contents")
                 )
             continue
         if spec.can_read(source):

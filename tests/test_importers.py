@@ -11,6 +11,11 @@ from nfit.importers import (
     import_with,
     importers_for_data_type,
     inspect_powder_ins_csv,
+    is_hb2a_powder_file,
+    is_mpms_dat_file,
+    is_powder_ins_csv_file,
+    is_ppms_heat_capacity_dat_file,
+    probe_importers,
     read_delimited_text,
     split_name_and_unit,
 )
@@ -31,6 +36,105 @@ def test_read_delimited_text_headerless_whitespace(tmp_path):
     assert parsed.column_labels == ["x", "y", "dy"]
     assert parsed.columns["x"] == [1.0, 1.5]
     assert parsed.columns["dy"] == [0.1, 0.2]
+
+
+def test_read_delimited_text_infers_headerless_preamble(tmp_path):
+    path = tmp_path / "instrument.txt"
+    path.write_text(
+        "Instrument run 42\nOperator: A. Example\n; exported values\n1 2 0.1\n3 4 0.2\n",
+        encoding="utf-8",
+    )
+
+    parsed = read_delimited_text(
+        path,
+        has_header_row=False,
+        column_names=["x", "signal", "error"],
+        delimiter="whitespace",
+    )
+
+    assert parsed.header_lines == [
+        "Instrument run 42",
+        "Operator: A. Example",
+        "; exported values",
+    ]
+    assert parsed.columns["signal"] == [2.0, 4.0]
+
+
+def test_read_delimited_text_infers_column_header_after_preamble(tmp_path):
+    path = tmp_path / "instrument.csv"
+    path.write_text(
+        "Instrument export\nRun 12\nPosition (mm),Counts\n0.0,10\n1.0,20\n",
+        encoding="utf-8",
+    )
+
+    parsed = read_delimited_text(path)
+
+    assert parsed.header_lines == ["Instrument export", "Run 12"]
+    assert parsed.column_labels == ["Position", "Counts"]
+    assert parsed.units == {"Position": "mm"}
+    assert parsed.columns["Counts"] == [10.0, 20.0]
+
+
+@pytest.mark.parametrize("delimiter", [",", "\t"])
+def test_read_delimited_text_honors_quoted_labels(delimiter, tmp_path):
+    path = tmp_path / "quoted.txt"
+    path.write_text(
+        delimiter.join(['"Position, sample (mm)"', "Counts"]) + "\n"
+        + delimiter.join(["1.0", "2.0"])
+        + "\n",
+        encoding="utf-8",
+    )
+
+    parsed = read_delimited_text(path, delimiter=delimiter)
+
+    assert parsed.column_labels == ["Position, sample", "Counts"]
+    assert parsed.units == {"Position, sample": "mm"}
+    assert parsed.columns["Position, sample"] == [1.0]
+
+
+@pytest.mark.parametrize(
+    ("header", "match"),
+    [
+        ("x (mm),x (s)\n1,2\n", "duplicate column label 'x'"),
+        ("x, (s)\n1,2\n", "empty column label"),
+    ],
+)
+def test_read_delimited_text_rejects_invalid_normalized_labels(header, match, tmp_path):
+    path = tmp_path / "labels.csv"
+    path.write_text(header, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=match):
+        read_delimited_text(path)
+
+
+@pytest.mark.parametrize("row", ["1\n", "1,2,3\n"])
+def test_read_delimited_text_rejects_inconsistent_row_width(row, tmp_path):
+    path = tmp_path / "width.csv"
+    path.write_text("x,y\n" + row, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"line 2.*expected 2"):
+        read_delimited_text(path)
+
+
+def test_read_delimited_text_preserves_missing_values_and_rejects_text(tmp_path):
+    path = tmp_path / "missing.csv"
+    path.write_text("x,a,b,c\n1,,N/A,NaN\n", encoding="utf-8")
+    parsed = read_delimited_text(path)
+    assert np.isnan(parsed.columns["a"][0])
+    assert np.isnan(parsed.columns["b"][0])
+    assert np.isnan(parsed.columns["c"][0])
+
+    path.write_text("x,y\n1,not-a-number\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"line 2, column 'y'"):
+        read_delimited_text(path)
+
+
+def test_read_delimited_text_requires_requested_marker(tmp_path):
+    path = tmp_path / "missing-marker.dat"
+    path.write_text("x,y\n1,2\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"data marker '\[Data\]' not found"):
+        read_delimited_text(path, data_marker="[Data]", delimiter=",")
 
 
 def test_import_mpms_dat_retains_all_columns_and_roles(mpms_file):
@@ -109,6 +213,54 @@ def test_importer_registry_lookup(mpms_file, hb2a_file):
     assert IMPORTERS["mpms_dat"].can_read(mpms_file)
     data = import_with("hb2a_powder", hb2a_file)
     assert data.coordinate_names == ["2theta"]
+
+
+def test_text_importer_probes_use_contents_not_only_extensions(
+    mpms_file, hb2a_file, tmp_path
+):
+    heat_capacity = tmp_path / "heat-capacity.dat"
+    heat_capacity.write_text(
+        "[Header]\n[Data]\nSample Temp (K),Samp HC (uJ/K)\n2.0,3.0\n",
+        encoding="utf-8",
+    )
+    powder_ins = tmp_path / "powder.csv"
+    powder_ins.write_text("y\\x,0.5\n2.0,3.0\n", encoding="utf-8")
+    unrelated_dat = tmp_path / "unrelated.dat"
+    unrelated_dat.write_text("name,value\nnot,instrument data\n", encoding="utf-8")
+
+    assert is_mpms_dat_file(mpms_file)
+    assert not is_ppms_heat_capacity_dat_file(mpms_file)
+    assert is_ppms_heat_capacity_dat_file(heat_capacity)
+    assert not is_mpms_dat_file(heat_capacity)
+    assert is_hb2a_powder_file(hb2a_file)
+    assert is_powder_ins_csv_file(powder_ins)
+    assert not is_mpms_dat_file(unrelated_dat)
+    assert not is_ppms_heat_capacity_dat_file(unrelated_dat)
+    assert not is_hb2a_powder_file(unrelated_dat)
+    assert not is_powder_ins_csv_file(unrelated_dat)
+
+    assert [match.importer_name for match in probe_importers(mpms_file)] == ["mpms_dat"]
+    assert [match.importer_name for match in probe_importers(heat_capacity)] == [
+        "ppms_heat_capacity_dat"
+    ]
+
+
+def test_importer_content_probes_are_false_for_missing_file(tmp_path):
+    missing = tmp_path / "missing.dat"
+    assert not is_mpms_dat_file(missing)
+    assert not is_ppms_heat_capacity_dat_file(missing)
+    assert not is_hb2a_powder_file(missing)
+    assert not is_powder_ins_csv_file(missing)
+    assert not IMPORTERS["mpms_dat"].can_read(missing)
+
+
+def test_powder_ins_probe_rejects_malformed_rows(tmp_path):
+    path = tmp_path / "map.csv"
+    path.write_text("y\\x,0.5,1.0\n2.0,3.0\n", encoding="utf-8")
+
+    assert not is_powder_ins_csv_file(path)
+    with pytest.raises(ValueError, match=r"matrix row 2.*expected 2"):
+        inspect_powder_ins_csv(path)
 
 
 def test_import_powder_ins_matrix_sorts_axes_and_masks_nan(tmp_path):
