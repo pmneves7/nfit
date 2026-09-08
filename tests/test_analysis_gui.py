@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+import nfit.project_data as project_data
 import nfit.project_gui as project_gui
 from nfit.analysis import (
     AnalysisEntry,
@@ -347,7 +348,7 @@ def test_bragg_analysis_loads_a_lazy_primary_dataset(monkeypatch):
         entry.replace_data(loaded, source_backed=True)
         return loaded
 
-    monkeypatch.setattr(project_gui, "dataset_for_slice_viewer", load)
+    monkeypatch.setattr(project_data, "dataset_for_slice_viewer", load)
     assert analysis_window._primary_analysis_data(dataset) is loaded
     assert calls == [
         (

@@ -56,9 +56,12 @@ different Python.
 
 - `src/nfit/project_gui.py`: project explorer and GUI workflow coordination.
 - `src/nfit/project_imports.py`: GUI-independent import, source, and reload orchestration.
+- `src/nfit/project_data.py`: GUI-independent dataset preparation, masks, rebinning,
+  composites, derived data, and viewer-ready data.
 - `src/nfit/project_io.py`, `project_history.py`, and `project_models.py`: project
   serialization, fit-history snapshots, and model-state reconciliation.
-- `src/nfit/fit_diagnostics_gui.py`: stored-fit diagnostic plots and controls.
+- `src/nfit/project_import_dialogs.py`, `fit_diagnostics_gui.py`, and
+  `analysis_window_builder.py`: focused Qt presentation helpers.
 - `src/nfit/qt_slice_viewer.py`: interactive data viewer.
 - `src/nfit/fit_config.py`: model-component compilation and parameter mapping.
 - `src/nfit/fitting.py`: optimizer-facing fitting framework.

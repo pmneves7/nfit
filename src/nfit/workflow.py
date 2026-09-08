@@ -229,7 +229,7 @@ def composite_workflow_script(
     project: NfitProject, group_name: str, *, node_id: str | None = None
 ) -> str:
     """Export a project-backed composite with editable grid and metadata axes."""
-    from .project_gui import _composite_scope, data_group_composite_config
+    from .project_data import _composite_scope, data_group_composite_config
 
     path = getattr(project, "_project_path", None)
     if path is None:

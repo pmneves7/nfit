@@ -2,6 +2,7 @@
 import copy
 from types import SimpleNamespace
 
+import nfit.project_data as project_data
 from nfit import electronic_model_from_component
 from tests.project_gui_test_support import *
 from tests.project_gui_test_support import (
@@ -1846,7 +1847,7 @@ def test_viewer_lazy_loads_once_then_reuses_canonical_data(monkeypatch, tmp_path
         calls.append((path, copy_metadata))
         return _grid_mdhisto_data()
 
-    monkeypatch.setattr(project_gui, "load_mantid_mdhisto_nxs", load)
+    monkeypatch.setattr(project_data, "load_mantid_mdhisto_nxs", load)
     first = project_gui._viewer_data_before_scale(dataset)
     second = project_gui._viewer_data_before_scale(dataset)
 
@@ -1877,7 +1878,7 @@ def test_viewer_view_cache_invalidates_when_dataset_data_is_replaced():
 
 def test_viewer_view_cache_uses_lru_eviction_instead_of_clear_all(monkeypatch):
     project_gui._VIEWER_VIEW_CACHE.clear()
-    monkeypatch.setattr(project_gui, "_VIEWER_VIEW_CACHE_LIMIT", 3)
+    monkeypatch.setattr(project_data, "_VIEWER_VIEW_CACHE_LIMIT", 3)
     datasets = [
         DatasetEntry(f"scan-{index}", _grid_mdhisto_data(), kind="mdhisto") for index in range(4)
     ]
@@ -1896,7 +1897,7 @@ def test_viewer_view_cache_uses_lru_eviction_instead_of_clear_all(monkeypatch):
 
 def test_viewer_view_cache_does_not_retain_entry_over_byte_budget(monkeypatch):
     project_gui._VIEWER_VIEW_CACHE.clear()
-    monkeypatch.setattr(project_gui, "_VIEWER_VIEW_CACHE_MAX_BYTES", 1)
+    monkeypatch.setattr(project_data, "_VIEWER_VIEW_CACHE_MAX_BYTES", 1)
     dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
 
     result = project_gui._viewer_data_before_scale(dataset)
@@ -1907,7 +1908,7 @@ def test_viewer_view_cache_does_not_retain_entry_over_byte_budget(monkeypatch):
 
 def test_large_dataset_manual_masks_defer_passive_evaluation_and_force_for_fit(monkeypatch):
     project_gui._VIEWER_VIEW_CACHE.clear()
-    monkeypatch.setattr(project_gui, "MASK_AUTO_MAX_POINTS", 1)
+    monkeypatch.setattr(project_data, "MASK_AUTO_MAX_POINTS", 1)
     data = _grid_mdhisto_data()
     dataset = DatasetEntry("scan", data, kind="mdhisto", data_type="single_crystal_inelastic")
     group = DataGroup("Datagroup1", datasets=[dataset])
@@ -1924,7 +1925,7 @@ def test_large_dataset_manual_masks_defer_passive_evaluation_and_force_for_fit(m
         evaluations.append(spec.name)
         return original(data, spec)
 
-    monkeypatch.setattr(project_gui, "_evaluate_mdhisto_mask", record_evaluation)
+    monkeypatch.setattr(project_data, "_evaluate_mdhisto_mask", record_evaluation)
 
     passive = dataset_for_slice_viewer(dataset, force_rebin=False, force_masks=False)
     assert evaluations == []
@@ -1953,7 +1954,7 @@ def test_large_mask_editor_defaults_manual_and_apply_now_clears_pending(monkeypa
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtCore = pytest.importorskip("PySide6.QtCore")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
-    monkeypatch.setattr(project_gui, "MASK_AUTO_MAX_POINTS", 1)
+    monkeypatch.setattr(project_data, "MASK_AUTO_MAX_POINTS", 1)
     project_gui._VIEWER_VIEW_CACHE.clear()
 
     dataset = DatasetEntry(

@@ -26,6 +26,7 @@ from .analysis_bragg_gui import (
     _bragg_status_text,
     _format_table_value,
 )
+from .analysis_window_builder import build_data_playground_window
 from .dataset import PointData4D, PointListData
 from .mdhisto import MDHistoData
 from .pipeline import DatasetEntry
@@ -36,8 +37,6 @@ class DataPlaygroundWindow:
     """Registry-driven non-fitting analysis workbench for one project explorer."""
 
     def __init__(self, explorer: Any) -> None:
-        from PySide6 import QtCore, QtWidgets
-
         self.explorer = explorer
         self.group = None
         self.parameter_widgets: dict[str, Any] = {}
@@ -45,146 +44,13 @@ class DataPlaygroundWindow:
         self._current_result_data: PointListData | MDHistoData | None = None
         self._current_result_output = None
         self.additional_input_ids: list[str] = []
-        self.window = QtWidgets.QMainWindow(explorer.window)
-        self.window.setWindowTitle("nfit Analysis Window")
-        self.window.resize(900, 650)
-        central = QtWidgets.QWidget()
-        self.window.setCentralWidget(central)
-        layout = QtWidgets.QVBoxLayout(central)
-        analysis_row = QtWidgets.QHBoxLayout()
-        self.analysis_combo = QtWidgets.QComboBox()
-        self.analysis_combo.setToolTip("Select a saved analysis recipe or create a new one.")
-        self.new_button = QtWidgets.QPushButton("New")
-        self.new_button.setToolTip("Start a new analysis recipe.")
-        self.duplicate_button = QtWidgets.QPushButton("Duplicate")
-        self.duplicate_button.setToolTip("Duplicate the selected recipe without its previous result.")
-        self.delete_button = QtWidgets.QPushButton("Delete")
-        self.delete_button.setToolTip("Delete the selected recipe and its linked derived datasets.")
-        analysis_row.addWidget(self.analysis_combo, 1)
-        analysis_row.addWidget(self.new_button)
-        analysis_row.addWidget(self.duplicate_button)
-        analysis_row.addWidget(self.delete_button)
-        layout.addLayout(analysis_row)
-        selectors = QtWidgets.QHBoxLayout()
-        self.dataset_combo = QtWidgets.QComboBox()
-        self.dataset_combo.setToolTip("Dataset used as the primary analysis input.")
-        self.secondary_dataset_combo = QtWidgets.QComboBox()
-        self.secondary_dataset_combo.setToolTip("Optional secondary input, such as an H, K, L peak table.")
-        self.additional_inputs_button = QtWidgets.QPushButton("Select runs...")
-        self.additional_inputs_button.setToolTip(
-            "Choose all MDEvent rotation-angle datasets used by the angle-energy background estimator."
+        build_data_playground_window(
+            self,
+            explorer,
+            available_analysis_types=available_analysis_types,
+            analysis_definition=analysis_definition,
+            diagnostics_factory=BraggPeakDiagnosticsWidget,
         )
-        self.additional_inputs_button.setVisible(False)
-        self.operation_combo = QtWidgets.QComboBox()
-        for key in available_analysis_types():
-            self.operation_combo.addItem(analysis_definition(key).label, key)
-        self.operation_combo.setToolTip("Choose the dataset operation to configure.")
-        self.name_edit = QtWidgets.QLineEdit("Analysis")
-        self.name_edit.setToolTip("Editable name stored with this analysis recipe.")
-        selectors.addWidget(self.dataset_combo, 2)
-        selectors.addWidget(self.secondary_dataset_combo, 2)
-        selectors.addWidget(self.additional_inputs_button, 2)
-        selectors.addWidget(self.operation_combo, 2)
-        selectors.addWidget(self.name_edit, 2)
-        layout.addLayout(selectors)
-        self.parameter_scroll = QtWidgets.QScrollArea()
-        self.parameter_scroll.setWidgetResizable(True)
-        self.parameter_panel = QtWidgets.QWidget()
-        self.parameter_form = QtWidgets.QFormLayout(self.parameter_panel)
-        self.parameter_scroll.setWidget(self.parameter_panel)
-        self.parameter_scroll.setMinimumHeight(240)
-        self.result_tabs = QtWidgets.QTabWidget()
-        self.result_tabs.setToolTip("Inspect analysis outputs, diagnostics, and provenance.")
-        self.results = QtWidgets.QWidget()
-        self.results.setToolTip("Latest analysis summary, output table, and artifact actions.")
-        results_layout = QtWidgets.QVBoxLayout(self.results)
-        results_layout.setContentsMargins(4, 4, 4, 4)
-        self.result_summary = QtWidgets.QLabel("Run an analysis to inspect its outputs.")
-        self.result_summary.setWordWrap(True)
-        self.result_summary.setTextInteractionFlags(
-            self.result_summary.textInteractionFlags()
-            | QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
-        )
-        self.result_table = QtWidgets.QTableWidget()
-        self.result_table.setObjectName("analysis_result_table")
-        self.result_table.setToolTip(
-            "Sortable analysis output. Select a Bragg reflection to update its diagnostic plots."
-        )
-        self.result_table.setSortingEnabled(True)
-        self.result_table.horizontalHeader().setSortIndicatorShown(True)
-        self.result_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
-        self.result_table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
-        result_actions = QtWidgets.QHBoxLayout()
-        self.add_output_button = QtWidgets.QPushButton("Add to datasets")
-        self.add_output_button.setToolTip(
-            "Create a disabled dataset from this analysis artifact. Analysis tables are not added automatically."
-        )
-        self.add_output_button.setEnabled(False)
-        self.add_output_button.clicked.connect(self.add_current_output_to_datasets)
-        self.view_peak_overlay_button = QtWidgets.QPushButton("View input with peaks")
-        self.view_peak_overlay_button.setToolTip(
-            "Open the input dataset in the data viewer with accepted and rejected Bragg reflections marked."
-        )
-        self.view_peak_overlay_button.setEnabled(False)
-        self.view_peak_overlay_button.clicked.connect(self.view_input_with_peaks)
-        self.export_bragg_button = QtWidgets.QPushButton("Export .int")
-        self.export_bragg_button.setToolTip(
-            "Export accepted Bragg reflections as a headerless, space-delimited .int file "
-            "containing H, K, L, I, and dI."
-        )
-        self.export_bragg_button.setEnabled(False)
-        self.export_bragg_button.clicked.connect(self.export_current_bragg_int)
-        result_actions.addWidget(self.add_output_button)
-        result_actions.addWidget(self.view_peak_overlay_button)
-        result_actions.addWidget(self.export_bragg_button)
-        result_actions.addStretch(1)
-        results_layout.addWidget(self.result_summary)
-        results_layout.addWidget(self.result_table, 1)
-        results_layout.addLayout(result_actions)
-        self.diagnostics = QtWidgets.QWidget()
-        self.diagnostics.setToolTip("Numerical quality summary and per-reflection integration diagnostics.")
-        diagnostics_layout = QtWidgets.QVBoxLayout(self.diagnostics)
-        diagnostics_layout.setContentsMargins(4, 4, 4, 4)
-        self.diagnostic_summary = QtWidgets.QTextEdit()
-        self.diagnostic_summary.setReadOnly(True)
-        self.diagnostic_summary.setMaximumHeight(110)
-        self.diagnostic_summary.setToolTip("Generated, accepted, rejected, and quality-threshold summary.")
-        self.bragg_diagnostics = BraggPeakDiagnosticsWidget()
-        diagnostics_layout.addWidget(self.diagnostic_summary)
-        diagnostics_layout.addWidget(self.bragg_diagnostics.widget, 1)
-        self.provenance = QtWidgets.QTextEdit()
-        self.provenance.setReadOnly(True)
-        self.provenance.setToolTip("Recipe hash and input fingerprints for this result.")
-        self.result_tabs.addTab(self.results, "Results")
-        self.result_tabs.addTab(self.diagnostics, "Diagnostics")
-        self.result_tabs.addTab(self.provenance, "Provenance")
-        self.result_tabs.setMinimumHeight(180)
-        self.config_output_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
-        self.config_output_splitter.setObjectName("analysis_config_output_splitter")
-        self.config_output_splitter.setToolTip(
-            "Drag this divider to allocate space between the analysis configuration and its outputs."
-        )
-        self.config_output_splitter.setChildrenCollapsible(False)
-        self.config_output_splitter.addWidget(self.parameter_scroll)
-        self.config_output_splitter.addWidget(self.result_tabs)
-        self.config_output_splitter.setStretchFactor(0, 3)
-        self.config_output_splitter.setStretchFactor(1, 2)
-        self.config_output_splitter.setSizes([390, 250])
-        layout.addWidget(self.config_output_splitter, 1)
-        commands = QtWidgets.QHBoxLayout()
-        commands.addStretch(1)
-        self.run_button = QtWidgets.QPushButton("Run")
-        self.run_button.setToolTip("Run this recipe without modifying the input dataset.")
-        commands.addWidget(self.run_button)
-        layout.addLayout(commands)
-        self.operation_combo.currentIndexChanged.connect(self._operation_changed)
-        self.analysis_combo.currentIndexChanged.connect(self._select_analysis)
-        self.new_button.clicked.connect(self.new_analysis)
-        self.duplicate_button.clicked.connect(self.duplicate_analysis)
-        self.delete_button.clicked.connect(self.delete_analysis)
-        self.run_button.clicked.connect(self.run)
-        self.result_table.itemSelectionChanged.connect(self._result_row_selected)
-        self.additional_inputs_button.clicked.connect(self._choose_additional_inputs)
         self._rebuild_parameters()
 
     def show(self) -> None:

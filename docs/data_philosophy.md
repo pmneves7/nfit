@@ -46,12 +46,15 @@ instrument or file format.
 
 The implementation follows the same boundary. `project_imports` owns importer
 selection, source mutation, lazy loading, reloads, and creation of project
-dataset entries without importing Qt. `project_io`, `project_history`, and
+dataset entries without importing Qt. Its source-handler registry gives project
+artifacts, raw DGS, registered importers, point lists, nfit archives, MDEvent,
+and MDHisto files one loading and availability contract. `project_data` owns
+dataset preparation, masks, rebinning, composites, derived data, and
+viewer-ready representations. `project_io`, `project_history`, and
 `project_models` own serialized project state, fit-history snapshots, and model
 parameter reconciliation. The project explorer keeps compatibility wrappers
-for public APIs and supplies format-specific loader callbacks where needed;
-widgets and plotting windows remain presentation modules rather than owners of
-scientific state.
+for public APIs; widgets and plotting windows remain presentation modules
+rather than owners of scientific state.
 
 For example, the GUI's data-group workflow corresponds to ordinary package
 calls:

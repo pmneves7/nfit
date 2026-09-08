@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Callable, Collection
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
@@ -84,6 +85,34 @@ DatasetFileLoader = Callable[
     [str | Path], tuple[MDHistoData | PointListData, dict[str, Any]]
 ]
 DatasetDataLoader = Callable[[DatasetEntry], Any]
+
+
+@dataclass(frozen=True)
+class _SourceLoadContext:
+    """Injectable loaders used by built-in project source handlers."""
+
+    mdhisto_loader: Callable[..., MDHistoData]
+    dataset_file_loader: DatasetFileLoader | None
+
+
+@dataclass(frozen=True)
+class _SourceFormatHandler:
+    """One declarative source-format strategy used throughout this module."""
+
+    name: str
+    load: Callable[[DatasetEntry, _SourceLoadContext], Any]
+    can_load: Callable[[DatasetEntry], bool | None]
+    can_reload: Callable[[DatasetEntry], bool | None]
+    group_import_mode: Literal["raw_dgs", "mdevent"] | None = None
+    matches_group_import: Callable[[Path, str], bool] | None = None
+    entry_import_priority: int | None = None
+    reload_as_pending: Callable[[DatasetEntry], bool] | None = None
+
+
+_SOURCE_NOT_HANDLED = object()
+_SOURCE_FORMAT_HANDLERS: tuple[_SourceFormatHandler, ...]
+_MDHISTO_SOURCE_SUFFIXES = frozenset({".nxs", ".h5", ".hdf5"})
+_LAZY_SOURCE_SUFFIXES = _MDHISTO_SOURCE_SUFFIXES | {".npz"}
 
 
 def available_data_types() -> list[tuple[str, str]]:
@@ -210,11 +239,16 @@ def import_dataset_paths(
     stream_groups: dict[tuple[str, str], DatasetGroup] = {}
     resolved_type = data_type or DEFAULT_DATA_TYPE
     sources = [Path(path) for path in paths]
+    group_import_handlers = {
+        source: _group_import_handler(source, resolved_type) for source in sources
+    }
     raw_sources = [
         source
         for source in sources
-        if resolved_type == "single_crystal_inelastic"
-        and is_raw_dgs_nexus_file(source)
+        if (
+            group_import_handlers[source] is not None
+            and group_import_handlers[source].group_import_mode == "raw_dgs"
+        )
     ]
     if raw_sources:
         normalization = _single_normalization_companion(raw_sources[0])
@@ -234,7 +268,8 @@ def import_dataset_paths(
     for source in sources:
         if source in raw_sources:
             continue
-        if resolved_type == "single_crystal_inelastic" and is_mdevent_file(source):
+        handler = group_import_handlers[source]
+        if handler is not None and handler.group_import_mode == "mdevent":
             subgroup = import_mdevent_dataset_group(
                 group,
                 source,
@@ -540,10 +575,10 @@ def set_dataset_source(dataset: DatasetEntry, path: str | Path) -> None:
     dataset.metadata.pop("source_point_count", None)
     dataset.kind = source.suffix.lstrip(".").lower()
     dataset.unload_data()
-    if dataset.metadata.get("importer"):
-        _load_registered_importer_dataset(dataset)
-    elif data_type_container(dataset.data_type) == "point_list":
-        _load_point_list_dataset(dataset)
+    _load_dataset_source(
+        dataset,
+        handler_names={"registered_importer", "point_list"},
+    )
 
 
 def set_dataset_data_type(
@@ -572,7 +607,10 @@ def set_dataset_data_type(
         dataset.unload_data()
         if dataset.metadata.get("source_file"):
             try:
-                _load_registered_importer_dataset(dataset)
+                _load_dataset_source(
+                    dataset,
+                    handler_names={"registered_importer"},
+                )
             except Exception as exc:
                 dataset.unload_data()
                 dataset.metadata["import_status"] = "error"
@@ -584,7 +622,10 @@ def set_dataset_data_type(
         dataset.unload_data()
         if dataset.metadata.get("source_file"):
             try:
-                _load_point_list_dataset(dataset)
+                _load_dataset_source(
+                    dataset,
+                    handler_names={"point_list"},
+                )
             except Exception as exc:
                 dataset.unload_data()
                 dataset.metadata["import_status"] = "error"
@@ -657,6 +698,341 @@ def _load_point_list_dataset(dataset: DatasetEntry) -> PointListData | None:
     return data
 
 
+def _dataset_source_path(dataset: DatasetEntry) -> Path | None:
+    if not isinstance(dataset.metadata, dict):
+        return None
+    source = dataset.metadata.get("source_file")
+    return Path(source) if source else None
+
+
+def _group_import_handler(
+    path: Path,
+    data_type: str,
+) -> _SourceFormatHandler | None:
+    for handler in _SOURCE_FORMAT_HANDLERS:
+        if (
+            handler.matches_group_import is not None
+            and handler.matches_group_import(path, data_type)
+        ):
+            return handler
+    return None
+
+
+def _load_dataset_source(
+    dataset: DatasetEntry,
+    *,
+    mdhisto_loader: Callable[..., MDHistoData] | None = None,
+    dataset_file_loader: DatasetFileLoader | None = None,
+    handler_names: Collection[str] | None = None,
+    entry_import: bool = False,
+) -> Any:
+    """Load through the first applicable source handler.
+
+    ``entry_import`` uses the declarative eager-import priorities. This keeps
+    nfit ``.npz`` archives ahead of an explicitly stored importer during entry
+    construction while preserving the established reload dispatch order.
+    """
+
+    context = _SourceLoadContext(
+        mdhisto_loader=mdhisto_loader or load_mantid_mdhisto_nxs,
+        dataset_file_loader=dataset_file_loader,
+    )
+    handlers = list(_SOURCE_FORMAT_HANDLERS)
+    if handler_names is not None:
+        handlers = [handler for handler in handlers if handler.name in handler_names]
+    if entry_import:
+        handlers = sorted(
+            (
+                handler
+                for handler in handlers
+                if handler.entry_import_priority is not None
+            ),
+            key=lambda handler: int(handler.entry_import_priority or 0),
+        )
+    for handler in handlers:
+        loaded = handler.load(dataset, context)
+        if loaded is not _SOURCE_NOT_HANDLED:
+            return loaded
+    return dataset.data
+
+
+def _source_availability(
+    dataset: DatasetEntry,
+    *,
+    operation: Literal["load", "reload"],
+) -> tuple[_SourceFormatHandler | None, bool]:
+    attribute = "can_load" if operation == "load" else "can_reload"
+    for handler in _SOURCE_FORMAT_HANDLERS:
+        verdict = getattr(handler, attribute)(dataset)
+        if verdict is not None:
+            return handler, bool(verdict)
+    return None, False
+
+
+def _artifact_source_load(
+    dataset: DatasetEntry,
+    _context: _SourceLoadContext,
+) -> Any:
+    if dataset.kind == "raw_dgs_nexus":
+        return _SOURCE_NOT_HANDLED
+    if not (
+        dataset.metadata.get("derived_from_analysis")
+        or dataset.metadata.get("project_artifact_path")
+    ):
+        return _SOURCE_NOT_HANDLED
+    project_path = dataset.metadata.get("_project_path")
+    artifact_path = dataset.metadata.get(
+        "project_artifact_path"
+    ) or dataset.metadata.get("analysis_artifact_path")
+    if not project_path or not artifact_path:
+        return _SOURCE_NOT_HANDLED
+    loaded = read_project_dataset_artifact(project_path, artifact_path)
+    loaded = dataset.replace_data(loaded, source_backed=True)
+    dataset.metadata["import_status"] = "loaded"
+    dataset.metadata.pop("import_error", None)
+    return loaded
+
+
+def _artifact_can_load(dataset: DatasetEntry) -> bool | None:
+    if dataset.kind == "raw_dgs_nexus":
+        return None
+    if not dataset.metadata.get("derived_from_analysis"):
+        return None
+    source = _dataset_source_path(dataset)
+    project_path = dataset.metadata.get("_project_path")
+    artifact_path = dataset.metadata.get("analysis_artifact_path")
+    return bool(
+        source
+        and project_path
+        and artifact_path
+        and project_artifact_exists(project_path, artifact_path)
+    )
+
+
+def _artifact_can_reload(dataset: DatasetEntry) -> bool | None:
+    if not dataset.metadata.get("derived_from_analysis"):
+        return None
+    project_path = dataset.metadata.get("_project_path")
+    artifact_path = dataset.metadata.get(
+        "project_artifact_path"
+    ) or dataset.metadata.get("analysis_artifact_path")
+    return bool(
+        project_path
+        and artifact_path
+        and project_artifact_exists(project_path, artifact_path)
+    )
+
+
+def _raw_dgs_source_load(
+    dataset: DatasetEntry,
+    _context: _SourceLoadContext,
+) -> Any:
+    return None if dataset.kind == "raw_dgs_nexus" else _SOURCE_NOT_HANDLED
+
+
+def _raw_dgs_can_load(dataset: DatasetEntry) -> bool | None:
+    return False if dataset.kind == "raw_dgs_nexus" else None
+
+
+def _raw_dgs_can_reload(dataset: DatasetEntry) -> bool | None:
+    if dataset.kind != "raw_dgs_nexus":
+        return None
+    return _dataset_source_path(dataset) is not None
+
+
+def _raw_dgs_import_match(path: Path, data_type: str) -> bool:
+    return data_type == "single_crystal_inelastic" and is_raw_dgs_nexus_file(path)
+
+
+def _raw_dgs_reload_as_pending(dataset: DatasetEntry) -> bool:
+    return dataset.kind == "raw_dgs_nexus"
+
+
+def _registered_importer_source_load(
+    dataset: DatasetEntry,
+    _context: _SourceLoadContext,
+) -> Any:
+    if _dataset_source_path(dataset) is None or not dataset.metadata.get("importer"):
+        return _SOURCE_NOT_HANDLED
+    loaded = _load_registered_importer_dataset(dataset)
+    return loaded if loaded is not None else _SOURCE_NOT_HANDLED
+
+
+def _registered_importer_can_load(dataset: DatasetEntry) -> bool | None:
+    if not dataset.metadata.get("importer"):
+        return None
+    source = _dataset_source_path(dataset)
+    if source is None:
+        return False
+    if data_type_container(dataset.data_type) == "point_list":
+        return True
+    return source.suffix.lower() in _LAZY_SOURCE_SUFFIXES
+
+
+def _registered_importer_can_reload(dataset: DatasetEntry) -> bool | None:
+    if not dataset.metadata.get("importer"):
+        return None
+    return _dataset_source_path(dataset) is not None
+
+
+def _point_list_source_load(
+    dataset: DatasetEntry,
+    _context: _SourceLoadContext,
+) -> Any:
+    if (
+        _dataset_source_path(dataset) is None
+        or data_type_container(dataset.data_type) != "point_list"
+    ):
+        return _SOURCE_NOT_HANDLED
+    loaded = _load_point_list_dataset(dataset)
+    return loaded if loaded is not None else _SOURCE_NOT_HANDLED
+
+
+def _point_list_can_load(dataset: DatasetEntry) -> bool | None:
+    if data_type_container(dataset.data_type) != "point_list":
+        return None
+    return _dataset_source_path(dataset) is not None
+
+
+def _point_list_can_reload(dataset: DatasetEntry) -> bool | None:
+    return _point_list_can_load(dataset)
+
+
+def _npz_source_load(dataset: DatasetEntry, context: _SourceLoadContext) -> Any:
+    source = _dataset_source_path(dataset)
+    if source is None or source.suffix.lower() != ".npz":
+        return _SOURCE_NOT_HANDLED
+    if context.dataset_file_loader is None:
+        raise ValueError("loading an nfit dataset archive requires a file loader")
+    loaded, parameters = context.dataset_file_loader(source)
+    dataset.parameters.update(parameters)
+    loaded = dataset.replace_data(loaded, source_backed=True)
+    dataset.kind = dataset.kind or source.suffix.lstrip(".").lower()
+    dataset.metadata["import_status"] = "loaded"
+    return loaded
+
+
+def _extension_can_load(
+    dataset: DatasetEntry,
+    *,
+    suffixes: Collection[str],
+) -> bool | None:
+    source = _dataset_source_path(dataset)
+    if source is None or source.suffix.lower() not in suffixes:
+        return None
+    return True
+
+
+def _npz_can_load(dataset: DatasetEntry) -> bool | None:
+    return _extension_can_load(dataset, suffixes={".npz"})
+
+
+def _npz_can_reload(dataset: DatasetEntry) -> bool | None:
+    return _npz_can_load(dataset)
+
+
+def _mdevent_source_load(dataset: DatasetEntry, _context: _SourceLoadContext) -> Any:
+    source = _dataset_source_path(dataset)
+    if (
+        dataset.kind != "mdevent"
+        or source is None
+        or source.suffix.lower() not in _LAZY_SOURCE_SUFFIXES
+    ):
+        return _SOURCE_NOT_HANDLED
+    loaded = load_mdevent_run_points(dataset)
+    loaded = dataset.replace_data(loaded, source_backed=True)
+    dataset.kind = dataset.kind or source.suffix.lstrip(".").lower()
+    dataset.metadata["import_status"] = "loaded"
+    return loaded
+
+
+def _mdevent_can_load(dataset: DatasetEntry) -> bool | None:
+    if dataset.kind != "mdevent":
+        return None
+    return _extension_can_load(dataset, suffixes=_LAZY_SOURCE_SUFFIXES)
+
+
+def _mdevent_can_reload(dataset: DatasetEntry) -> bool | None:
+    return _mdevent_can_load(dataset)
+
+
+def _mdevent_import_match(path: Path, data_type: str) -> bool:
+    return data_type == "single_crystal_inelastic" and is_mdevent_file(path)
+
+
+def _mdhisto_source_load(dataset: DatasetEntry, context: _SourceLoadContext) -> Any:
+    source = _dataset_source_path(dataset)
+    if source is None or source.suffix.lower() not in _MDHISTO_SOURCE_SUFFIXES:
+        return _SOURCE_NOT_HANDLED
+    loaded = context.mdhisto_loader(source, copy_metadata=False)
+    loaded = dataset.replace_data(loaded, source_backed=True)
+    dataset.kind = dataset.kind or source.suffix.lstrip(".").lower()
+    dataset.metadata["import_status"] = "loaded"
+    return loaded
+
+
+def _mdhisto_can_load(dataset: DatasetEntry) -> bool | None:
+    return _extension_can_load(dataset, suffixes=_MDHISTO_SOURCE_SUFFIXES)
+
+
+def _mdhisto_can_reload(dataset: DatasetEntry) -> bool | None:
+    return _mdhisto_can_load(dataset)
+
+
+_SOURCE_FORMAT_HANDLERS = (
+    _SourceFormatHandler(
+        "project_artifact",
+        _artifact_source_load,
+        _artifact_can_load,
+        _artifact_can_reload,
+    ),
+    _SourceFormatHandler(
+        "raw_dgs",
+        _raw_dgs_source_load,
+        _raw_dgs_can_load,
+        _raw_dgs_can_reload,
+        group_import_mode="raw_dgs",
+        matches_group_import=_raw_dgs_import_match,
+        reload_as_pending=_raw_dgs_reload_as_pending,
+    ),
+    _SourceFormatHandler(
+        "registered_importer",
+        _registered_importer_source_load,
+        _registered_importer_can_load,
+        _registered_importer_can_reload,
+        entry_import_priority=10,
+    ),
+    _SourceFormatHandler(
+        "point_list",
+        _point_list_source_load,
+        _point_list_can_load,
+        _point_list_can_reload,
+        entry_import_priority=20,
+    ),
+    _SourceFormatHandler(
+        "nfit_npz",
+        _npz_source_load,
+        _npz_can_load,
+        _npz_can_reload,
+        entry_import_priority=0,
+    ),
+    _SourceFormatHandler(
+        "mdevent",
+        _mdevent_source_load,
+        _mdevent_can_load,
+        _mdevent_can_reload,
+        group_import_mode="mdevent",
+        matches_group_import=_mdevent_import_match,
+    ),
+    _SourceFormatHandler(
+        "mdhisto",
+        _mdhisto_source_load,
+        _mdhisto_can_load,
+        _mdhisto_can_reload,
+    ),
+)
+
+
 def dataset_entry_from_path(
     path: str | Path,
     *,
@@ -684,23 +1060,21 @@ def dataset_entry_from_path(
         entry.metadata["importer"] = importer_name
         if importer_options is not None:
             entry.metadata["import_options"] = copy.deepcopy(importer_options)
-    if source.suffix.lower() == ".npz":
-        if dataset_file_loader is None:
-            raise ValueError("loading an nfit dataset archive requires a file loader")
-        data, parameters = dataset_file_loader(source)
-        entry.replace_data(data, source_backed=True)
-        entry.parameters.update(parameters)
-        entry.metadata["import_status"] = "loaded"
-        return entry
-    chosen = importer_name or default_importer_for_data_type(resolved_type, source)
-    if chosen is not None:
-        entry.metadata["importer"] = chosen
-        _load_registered_importer_dataset(entry)
-    elif data_type_container(resolved_type) == "point_list":
-        chosen = default_importer_for_data_type(resolved_type)
+    if source.suffix.lower() != ".npz":
+        chosen = importer_name or default_importer_for_data_type(
+            resolved_type, source
+        )
         if chosen is not None:
             entry.metadata["importer"] = chosen
-        _load_point_list_dataset(entry)
+        elif data_type_container(resolved_type) == "point_list":
+            chosen = default_importer_for_data_type(resolved_type)
+            if chosen is not None:
+                entry.metadata["importer"] = chosen
+    _load_dataset_source(
+        entry,
+        dataset_file_loader=dataset_file_loader,
+        entry_import=True,
+    )
     return entry
 
 
@@ -714,98 +1088,25 @@ def _ensure_dataset_data_loaded(
 
     if dataset.data is not None:
         return dataset.data
-    if dataset.kind == "raw_dgs_nexus":
-        return None
-    if dataset.metadata.get("derived_from_analysis") or dataset.metadata.get(
-        "project_artifact_path"
-    ):
-        project_path = dataset.metadata.get("_project_path")
-        artifact_path = dataset.metadata.get(
-            "project_artifact_path"
-        ) or dataset.metadata.get("analysis_artifact_path")
-        if project_path and artifact_path:
-            loaded = read_project_dataset_artifact(project_path, artifact_path)
-            loaded = dataset.replace_data(loaded, source_backed=True)
-            dataset.metadata["import_status"] = "loaded"
-            dataset.metadata.pop("import_error", None)
-            return loaded
-    if dataset.metadata.get("importer"):
-        loaded = _load_registered_importer_dataset(dataset)
-        if loaded is not None:
-            return loaded
-    if data_type_container(dataset.data_type) == "point_list":
-        loaded = _load_point_list_dataset(dataset)
-        if loaded is not None:
-            return loaded
-    source = (
-        dataset.metadata.get("source_file")
-        if isinstance(dataset.metadata, dict)
-        else None
+    return _load_dataset_source(
+        dataset,
+        mdhisto_loader=mdhisto_loader,
+        dataset_file_loader=dataset_file_loader,
     )
-    if source and Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5", ".npz"}:
-        if Path(source).suffix.lower() == ".npz":
-            if dataset_file_loader is None:
-                raise ValueError(
-                    "loading an nfit dataset archive requires a file loader"
-                )
-            loaded, parameters = dataset_file_loader(Path(source))
-            dataset.parameters.update(parameters)
-        elif dataset.kind == "mdevent":
-            loaded = load_mdevent_run_points(dataset)
-        else:
-            loader = mdhisto_loader or load_mantid_mdhisto_nxs
-            loaded = loader(Path(source), copy_metadata=False)
-        loaded = dataset.replace_data(loaded, source_backed=True)
-        dataset.kind = dataset.kind or Path(source).suffix.lstrip(".").lower()
-        dataset.metadata["import_status"] = "loaded"
-        return loaded
-    return dataset.data
 
 
 def _dataset_can_load(dataset: DatasetEntry) -> bool:
-    if dataset.data is not None or dataset.kind == "raw_dgs_nexus":
+    if dataset.data is not None:
         return False
-    source = (
-        dataset.metadata.get("source_file")
-        if isinstance(dataset.metadata, dict)
-        else None
-    )
-    if not source:
-        return False
-    if dataset.metadata.get("derived_from_analysis"):
-        project_path = dataset.metadata.get("_project_path")
-        artifact_path = dataset.metadata.get("analysis_artifact_path")
-        return bool(
-            project_path
-            and artifact_path
-            and project_artifact_exists(project_path, artifact_path)
-        )
-    if data_type_container(dataset.data_type) == "point_list":
-        return True
-    return Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5", ".npz"}
+    _handler, available = _source_availability(dataset, operation="load")
+    return available
 
 
 def _dataset_can_reload(dataset: DatasetEntry | None) -> bool:
     if dataset is None or not isinstance(dataset.metadata, dict):
         return False
-    if dataset.metadata.get("derived_from_analysis"):
-        project_path = dataset.metadata.get("_project_path")
-        artifact_path = dataset.metadata.get(
-            "project_artifact_path"
-        ) or dataset.metadata.get("analysis_artifact_path")
-        return bool(
-            project_path
-            and artifact_path
-            and project_artifact_exists(project_path, artifact_path)
-        )
-    source = dataset.metadata.get("source_file")
-    if not source:
-        return False
-    if dataset.kind == "raw_dgs_nexus" or dataset.metadata.get("importer"):
-        return True
-    if data_type_container(dataset.data_type) == "point_list":
-        return True
-    return Path(source).suffix.lower() in {".nxs", ".h5", ".hdf5", ".npz"}
+    _handler, available = _source_availability(dataset, operation="reload")
+    return available
 
 
 def _reload_dataset_copy(
@@ -819,7 +1120,11 @@ def _reload_dataset_copy(
     working.metadata = copy.deepcopy(dataset.metadata)
     working.parameters = copy.deepcopy(dataset.parameters)
     working.unload_data()
-    if working.kind == "raw_dgs_nexus":
+    if any(
+        handler.reload_as_pending is not None
+        and handler.reload_as_pending(working)
+        for handler in _SOURCE_FORMAT_HANDLERS
+    ):
         working.metadata["import_status"] = "pending"
         working.metadata.pop("import_error", None)
     else:

@@ -1,4 +1,5 @@
 # ruff: noqa: F401, F403, F405
+import nfit.project_data as project_data
 from nfit.project_archive import read_project_manifest
 from tests.project_gui_test_support import *
 from tests.project_gui_test_support import (
@@ -527,7 +528,7 @@ def test_dataset_rebin_edits_preserve_details_scroll_position(monkeypatch):
 def test_large_dataset_rebin_defaults_manual_and_defers_refresh(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
-    monkeypatch.setattr(project_gui, "REBIN_AUTO_MAX_CONTRIBUTIONS", 1)
+    monkeypatch.setattr(project_data, "REBIN_AUTO_MAX_CONTRIBUTIONS", 1)
     project_gui._VIEWER_VIEW_CACHE.clear()
 
     data = _grid_mdhisto_data()
@@ -789,7 +790,7 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
 def test_large_data_group_composite_defaults_manual_and_defers_refresh(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
-    monkeypatch.setattr(project_gui, "REBIN_AUTO_MAX_CONTRIBUTIONS", 1)
+    monkeypatch.setattr(project_data, "REBIN_AUTO_MAX_CONTRIBUTIONS", 1)
     project_gui._COMPOSITE_DATA_CACHE.clear()
 
     first = DatasetEntry(

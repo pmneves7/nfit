@@ -37,7 +37,7 @@ def composite_analysis_source_id(group, node) -> str:
 def analysis_source_choices(group) -> list[tuple[str, str]]:
     """Return dataset and enabled-composite choices for the Analysis Window."""
 
-    from ..project_gui import _composite_scope, data_group_composite_enabled
+    from ..project_data import _composite_scope, data_group_composite_enabled
 
     choices = [(dataset.name, dataset.id) for dataset in group.iter_datasets()]
     for node in (group, *group.iter_subgroups()):
@@ -65,7 +65,7 @@ def prepare_analysis_source(group, source_id: str, *, progress_callback=None) ->
             progress_callback=progress_callback,
         )
 
-    from ..project_gui import (
+    from ..project_data import (
         _cached_composite_dataset_data,
         _composite_cache_signature,
         _composite_scope,
@@ -115,7 +115,7 @@ def prepare_analysis_input(group, dataset, *, progress_callback=None) -> Analysi
     runner independent of Qt initialization.
     """
 
-    from ..project_gui import dataset_for_slice_viewer, effective_dataset_masks
+    from ..project_data import dataset_for_slice_viewer, effective_dataset_masks
 
     data = dataset_for_slice_viewer(
         dataset,

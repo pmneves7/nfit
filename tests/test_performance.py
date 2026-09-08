@@ -3,6 +3,7 @@ import json
 
 import pytest
 
+import nfit.project_data as project_data
 from nfit.performance import (
     initialize_rebin_performance,
     load_performance_settings,
@@ -146,7 +147,7 @@ def test_composite_and_dataset_use_their_worker_ceilings(monkeypatch):
     project_gui.dataset_rebin_config(entry)["workers"] = 2
     group = project.data_groups[0]
     project_gui.data_group_composite_config(group)["workers"] = 3
-    monkeypatch.setattr(project_gui, "_rebinned_dataset_data", lambda *a, **k: _parallel.num_threads())
-    monkeypatch.setattr(project_gui, "_composite_dataset_data", lambda *a, **k: _parallel.num_threads())
+    monkeypatch.setattr(project_data, "_rebinned_dataset_data", lambda *a, **k: _parallel.num_threads())
+    monkeypatch.setattr(project_data, "_composite_dataset_data", lambda *a, **k: _parallel.num_threads())
     assert project_gui.rebinned_dataset_data(entry) == 2
     assert project_gui.composite_dataset_data(group) == 3
