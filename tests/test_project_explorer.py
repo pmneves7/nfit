@@ -2393,6 +2393,18 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
     assert progress.close_shortcut.key() in QtGui.QKeySequence.keyBindings(
         QtGui.QKeySequence.StandardKey.Close
     )
+    progress.update_progress(
+        {
+            "stage": "rebin",
+            "iteration": 75,
+            "total": 100,
+            "datasets_total": 6,
+            "message": "rebinning 6 datasets: 75/100 point contributions",
+        }
+    )
+    assert progress.progress.value() == 75
+    assert "Datasets 6" in progress.status_label.text()
+    assert "Points 75 of 100" in progress.status_label.text()
     progress.close_shortcut.activated.emit()
     QtWidgets.QApplication.processEvents()
     assert not progress.dialog.isVisible()

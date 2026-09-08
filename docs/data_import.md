@@ -376,6 +376,9 @@ mode places the requested number of centers including both endpoints. A
 one-bin integration in Bins mode instead uses the endpoints as interval edges.
 Explicit nonuniform edge lists and viewer integration ranges also remain edges.
 Saved uniform-grid limits use this same center convention when reopened.
+If an older project contains an obsolete automatic-limit marker beside an
+explicit numeric bound, the numeric bound is shown and used; clearing that
+field explicitly restores automatic endpoint selection.
 
 Limits are blank by default. A blank endpoint is obtained from
 the minimum or maximum projected data coordinate. Uniform edges are placed at
@@ -404,6 +407,11 @@ current configuration, without updating live data. Review the timing and process
 peak-memory table before choosing **Apply recommendation**. The same controls
 are available for composites. Defaults for new configurations live in
 **File → Preferences → Performance**; see [benchmark details](performance.md#performance-preferences-and-benchmarks).
+
+Composite progress reports the number of source datasets and advances by
+processed point contributions across the entire reduction. Symmetry-equivalent
+duplicates still count as examined work, so the progress bar reaches completion
+even when those duplicates are omitted from the histogram.
 
 The batch target controls temporary work, not the
 persistent output-grid allocation.

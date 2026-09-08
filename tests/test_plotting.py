@@ -1592,6 +1592,14 @@ def test_qt_autoscale_limits_and_manual_override():
 
     assert not viewer.autoscale_check.isChecked()
     assert not viewer.model.autoscale
+    assert viewer.image.norm.vmin == pytest.approx(viewer.vmin_spin.value())
+    assert viewer.image.norm.vmax == pytest.approx(viewer.vmax_spin.value())
+
+    viewer.autoscale_check.setChecked(True)
+    viewer.vmax_spin.setValue(500.0)
+    assert not viewer.model.autoscale
+    assert viewer.image.norm.vmax == pytest.approx(500.0)
+    assert viewer.image.norm.vmin == pytest.approx(viewer.vmin_spin.value())
 
     viewer.limits_combo.setCurrentText("N-sigma")
 

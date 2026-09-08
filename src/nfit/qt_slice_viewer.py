@@ -647,7 +647,7 @@ class QtMDHistoSliceViewer:
                 setattr(self.model, name, float(settings[name]))
         self.model.manual_vmin = settings.get("manual_vmin", self.model.manual_vmin)
         self.model.manual_vmax = settings.get("manual_vmax", self.model.manual_vmax)
-        self._set_autoscale(bool(settings.get("autoscale", self.model.autoscale)))
+        self.model.autoscale = bool(settings.get("autoscale", self.model.autoscale))
         self.smoothing_x = float(settings.get("smoothing_x", self.smoothing_x))
         self.smoothing_y = float(settings.get("smoothing_y", self.smoothing_y))
         self._set_spin_silent(self.smoothing_x_spin, self.smoothing_x)
@@ -3397,6 +3397,9 @@ class QtMDHistoSliceViewer:
     def _set_autoscale(self, autoscale: bool) -> None:
         if self._syncing_limits:
             return
+        if not autoscale:
+            self.model.manual_vmin = float(self.vmin_spin.value())
+            self.model.manual_vmax = float(self.vmax_spin.value())
         self.model.autoscale = bool(autoscale)
         self._sync_tiled_color_controls()
         self.update_plot()
@@ -3404,6 +3407,9 @@ class QtMDHistoSliceViewer:
     def _set_manual_limit(self, which: str, value: float) -> None:
         if self._syncing_limits:
             return
+        if self.model.autoscale:
+            self.model.manual_vmin = float(self.vmin_spin.value())
+            self.model.manual_vmax = float(self.vmax_spin.value())
         if which == "vmin":
             self.model.manual_vmin = float(value)
         else:

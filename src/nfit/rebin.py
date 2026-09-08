@@ -103,12 +103,17 @@ def _warm_numba_kernel() -> None:
 
 @dataclass(frozen=True)
 class RebinBatch:
-    """One source chunk for out-of-core rebinning."""
+    """One source chunk for out-of-core rebinning.
+
+    ``progress_count`` may exceed the retained row count when a source examined
+    contributions that it then discarded, such as duplicate symmetry images.
+    """
 
     data: ArrayLike
     coords: ArrayLike
     data_errs: ArrayLike | None = None
     data_weights: ArrayLike | None = None
+    progress_count: int | None = None
 
 
 class ArrayRebinSource:
@@ -171,13 +176,13 @@ class SymmetryRebinSource:
                     duplicate |= np.all(np.isclose(transformed[:, :3], earlier, atol=1e-12, rtol=1e-12), axis=1)
                 previous_hkl.append(transformed[:, :3])
                 keep = ~duplicate
-                if np.any(keep):
-                    yield RebinBatch(
-                        np.asarray(batch.data)[keep],
-                        transformed[keep],
-                        None if batch.data_errs is None else np.asarray(batch.data_errs)[keep],
-                        None if batch.data_weights is None else np.asarray(batch.data_weights)[keep],
-                    )
+                yield RebinBatch(
+                    np.asarray(batch.data)[keep],
+                    transformed[keep],
+                    None if batch.data_errs is None else np.asarray(batch.data_errs)[keep],
+                    None if batch.data_weights is None else np.asarray(batch.data_weights)[keep],
+                    progress_count=int(coordinates.shape[0]),
+                )
 
 
 def _split_range(start: int, stop: int, parts: int) -> list[tuple[int, int]]:
@@ -1107,6 +1112,16 @@ def rebin_nd_stream(
         coords = np.asarray(batch.coords, dtype=float)
         if coords.shape != (data.size, ndim):
             raise ValueError("each streaming coordinate batch must have shape (batch_points, ndim)")
+        progress_count = data.size if batch.progress_count is None else int(batch.progress_count)
+        if data.size == 0:
+            processed += progress_count
+            if progress_callback is not None:
+                progress_callback({
+                    "stage": "rebin", "iteration": processed,
+                    "total": int(source.n_points),
+                    "message": f"rebinning {processed}/{source.n_points} point contributions",
+                })
+            continue
         projected = coords @ axes_inv
         errors = np.zeros(data.size) if batch.data_errs is None else np.asarray(batch.data_errs, dtype=float).reshape(-1)
         weights = np.ones(data.size) if batch.data_weights is None else np.asarray(batch.data_weights, dtype=float).reshape(-1)
@@ -1147,12 +1162,12 @@ def rebin_nd_stream(
                     step_array,
                     num_bins_array,
                 )
-        processed += data.size
+        processed += progress_count
         if progress_callback is not None:
             progress_callback({
                 "stage": "rebin", "iteration": processed,
                 "total": int(source.n_points),
-                "message": f"rebinning {processed}/{source.n_points} points",
+                "message": f"rebinning {processed}/{source.n_points} point contributions",
             })
     if executor is not None:
         template._merge_worker_partials(partials, bd_sum, err_sum, norm_sum, ns_sum)

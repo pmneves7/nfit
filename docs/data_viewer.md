@@ -258,6 +258,10 @@ The mode intentionally displays data only; model and residual panels and
 histogram box cuts are not shown. Saved plot recipes and generated scripts
 preserve the three dimensions, range, step, label visibility, hidden-axis
 selections, and global/local color setting.
+
+For slice and tiled plots, editing either **vmin** or **vmax** turns off
+**Autoscale** and keeps the currently displayed value for the other bound.
+Thus either field can be changed independently and takes effect immediately.
 When the optional other-axis binning title is visible, it summarizes only
 dimensions not represented by the horizontal, vertical, or tiled axes.
 

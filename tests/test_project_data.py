@@ -13,6 +13,23 @@ from tests.project_gui_test_support import (
 )
 
 
+def test_composite_progress_reports_dataset_count_and_global_point_work():
+    events = []
+    report = project_gui._composite_progress_callback(events.append, 6)
+
+    report({"stage": "rebin", "iteration": 75, "total": 100})
+
+    assert events == [
+        {
+            "stage": "rebin",
+            "iteration": 75,
+            "total": 100,
+            "datasets_total": 6,
+            "message": "rebinning 6 datasets: 75/100 point contributions",
+        }
+    ]
+
+
 def test_dataset_details_text_summarizes_axes_source_and_metadata(tmp_path, monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
@@ -668,6 +685,15 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
     second.scale_factor = -1.0
     second.fit_weight = 2.0
     group = DataGroup("Datagroup1", datasets=[first, second])
+    initial = project_gui.data_group_composite_config(group)
+    initial["axes"][1].update(
+        lower=1.3,
+        upper=1.3,
+        auto_lower=True,
+        auto_upper=True,
+        auto_lower_value=0.0,
+        auto_upper_value=2.0,
+    )
     explorer = NfitProjectExplorer(NfitProject([group]))
     explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0))
 
@@ -697,6 +723,15 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
     )
     assert copy_button is not None and copy_button.toolTip()
     assert paste_button is not None and paste_button.toolTip()
+
+    lower_edit = explorer.details_widget.findChild(
+        QtWidgets.QLineEdit, "group_composite_axis_lower_1"
+    )
+    upper_edit = explorer.details_widget.findChild(
+        QtWidgets.QLineEdit, "group_composite_axis_upper_1"
+    )
+    assert lower_edit.text() == upper_edit.text() == "1.3"
+    assert not project_gui._rebin_axis_bound_is_auto(initial["axes"][1], "lower")
 
     final_axis_label = explorer.details_widget.findChild(
         QtWidgets.QLabel, "group_composite_axis_label_1"

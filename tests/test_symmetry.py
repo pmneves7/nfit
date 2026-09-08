@@ -57,6 +57,7 @@ def test_symmetry_rebin_streams_inversion_images():
 
 def test_symmetry_rebin_does_not_duplicate_a_fixed_point():
     operations = resolve_symmetry(SymmetrySpec("space_group", "P -1"))
+    progress = []
     result = rebin_nd_symmetry(
         [5.0],
         [[0.0, 0.0, 0.0]],
@@ -66,9 +67,11 @@ def test_symmetry_rebin_does_not_duplicate_a_fixed_point():
         upper=[0.5, 0.5, 0.5],
         num_bins=[1, 1, 1],
         fractional=False,
+        progress_callback=progress.append,
     )
     np.testing.assert_allclose(result.binned_data, [[[5.0]]])
     np.testing.assert_allclose(result.binned_data_errs, [[[2.0]]])
+    assert progress[-1]["iteration"] == progress[-1]["total"] == 2
 
 
 def test_project_rebin_configuration_applies_symmetry_before_binning():

@@ -3357,6 +3357,31 @@ def composite_dataset_data(
         )
 
 
+def _composite_progress_callback(
+    callback: Any | None,
+    datasets_total: int,
+) -> Any | None:
+    """Annotate composite progress with its source-dataset count."""
+
+    if callback is None:
+        return None
+
+    def report(event: dict[str, Any]) -> None:
+        enriched = dict(event)
+        if enriched.get("stage") == "rebin":
+            enriched["datasets_total"] = int(datasets_total)
+            iteration = enriched.get("iteration")
+            total = enriched.get("total")
+            if iteration is not None and total:
+                enriched["message"] = (
+                    f"rebinning {datasets_total} datasets: "
+                    f"{iteration}/{total} point contributions"
+                )
+        callback(enriched)
+
+    return report
+
+
 def metadata_dimension_preview(group, dimensions=None) -> list[dict[str, Any]]:
     """Resolve metadata coordinates for each enabled source without rebinning."""
     import hashlib
@@ -3560,6 +3585,10 @@ def _composite_dataset_data(
     ok, message = data_group_composite_status(group)
     if not ok:
         raise ValueError(message)
+    progress_callback = _composite_progress_callback(
+        progress_callback,
+        len(_composite_candidates(group)),
+    )
     config = (
         copy.deepcopy(dict(config_override))
         if config_override is not None
@@ -7930,6 +7959,19 @@ def _rebin_resolution_mode(config: dict[str, Any]) -> str:
     return "bins" if config.get(REBIN_RESOLUTION_MODE_KEY) == "bins" else "step"
 
 
+def _rebin_axis_bound_is_auto(axis: Mapping[str, Any], key: str) -> bool:
+    """Return whether a saved bound still matches its last automatic value."""
+
+    if key not in {"lower", "upper"} or not bool(axis.get(f"auto_{key}", False)):
+        return False
+    try:
+        value = float(axis[key])
+        automatic = float(axis.get(f"auto_{key}_value", value))
+    except (KeyError, TypeError, ValueError):
+        return False
+    return bool(np.isclose(value, automatic))
+
+
 def _resolve_auto_rebin_axes(
     axes_config: Sequence[dict[str, Any]],
     data_bounds: Sequence[tuple[float, float]],
@@ -7946,14 +7988,8 @@ def _resolve_auto_rebin_axes(
         if axis.get("bin_edges") is not None:
             resolved.append(axis)
             continue
-        auto_lower = bool(axis.get("auto_lower", False)) and np.isclose(
-            float(axis["lower"]),
-            float(axis.get("auto_lower_value", axis["lower"])),
-        )
-        auto_upper = bool(axis.get("auto_upper", False)) and np.isclose(
-            float(axis["upper"]),
-            float(axis.get("auto_upper_value", axis["upper"])),
-        )
+        auto_lower = _rebin_axis_bound_is_auto(axis, "lower")
+        auto_upper = _rebin_axis_bound_is_auto(axis, "upper")
         if not (auto_lower or auto_upper):
             resolved.append(axis)
             continue
@@ -11114,8 +11150,15 @@ class _FitProgressDialog:
         }.get(stage, stage.replace("_", " ").title())
         self.stage_label.setText(stage_title)
         status_parts: list[str] = []
+        datasets_total = event.get("datasets_total")
+        if datasets_total is not None:
+            status_parts.append(f"Datasets {int(datasets_total)}")
         if iteration is not None:
-            counter = "Reflection" if stage == "bragg_integration" else "Step"
+            counter = (
+                "Reflection" if stage == "bragg_integration"
+                else "Points" if stage == "rebin"
+                else "Step"
+            )
             status_parts.append(f"{counter} {iteration}" + (f" of {total}" if total else ""))
         if event.get("accepted_count") is not None:
             status_parts.append(f"{event['accepted_count']} accepted")
@@ -11132,8 +11175,14 @@ class _FitProgressDialog:
         if isinstance(params, dict) and params:
             self._set_parameters(params)
         log_parts = [stage_title]
+        if datasets_total is not None:
+            log_parts.append(f"{int(datasets_total)} datasets")
         if iteration is not None:
-            counter = "reflection" if stage == "bragg_integration" else "step"
+            counter = (
+                "reflection" if stage == "bragg_integration"
+                else "points" if stage == "rebin"
+                else "step"
+            )
             log_parts.append(f"{counter} {iteration}" + (f"/{total}" if total else ""))
         if message and message != stage:
             log_parts.append(message)
@@ -18898,11 +18947,12 @@ class NfitProjectExplorer:
                 display_value = (
                     ""
                     if key in {"lower", "upper"}
-                    and bool(axis.get(f"auto_{key}", False))
+                    and _rebin_axis_bound_is_auto(axis, key)
                     else _parameter_to_text(axis.get(key))
                 )
                 edit = QtWidgets.QLineEdit(display_value)
                 if key in {"lower", "upper"}:
+                    edit.setObjectName(f"group_composite_axis_{key}_{axis_index}")
                     edit.setPlaceholderText("auto")
                 if key == resolution_key:
                     edit.setObjectName(f"group_composite_resolution_value_{axis_index}")
@@ -20675,12 +20725,12 @@ class NfitProjectExplorer:
             )
             lower_edit = QtWidgets.QLineEdit(
                 ""
-                if bool(axis_config.get("auto_lower", False))
+                if _rebin_axis_bound_is_auto(axis_config, "lower")
                 else _format_number(axis_config["lower"])
             )
             upper_edit = QtWidgets.QLineEdit(
                 ""
-                if bool(axis_config.get("auto_upper", False))
+                if _rebin_axis_bound_is_auto(axis_config, "upper")
                 else _format_number(axis_config["upper"])
             )
             lower_edit.setObjectName(f"dataset_rebin_axis_lower_{axis_index}")
@@ -22050,9 +22100,12 @@ class NfitProjectExplorer:
         axis = dict(axes[index])
         previous_step = float(axis.get("step_size", 0.0) or 0.0)
         if key in {"lower", "upper"} and not text.strip():
-            if bool(axis.get(f"auto_{key}", False)):
+            if _rebin_axis_bound_is_auto(axis, key):
                 return
             axis[f"auto_{key}"] = True
+            automatic = axis.get(f"auto_{key}_value")
+            if automatic is not None and np.isfinite(float(automatic)):
+                axis[key] = float(automatic)
             axes[index] = axis
             self._after_group_composite_changed(group)
             return
@@ -22171,9 +22224,12 @@ class NfitProjectExplorer:
         axis = axes[index]
         previous_step = float(axis.get("step_size", 0.0) or 0.0)
         if key in {"lower", "upper"} and not text.strip():
-            if bool(axis.get(f"auto_{key}", False)):
+            if _rebin_axis_bound_is_auto(axis, key):
                 return
             axis[f"auto_{key}"] = True
+            automatic = axis.get(f"auto_{key}_value")
+            if automatic is not None and np.isfinite(float(automatic)):
+                axis[key] = float(automatic)
             self._after_dataset_rebin_changed(dataset, group)
             return
         try:
@@ -22382,10 +22438,10 @@ class NfitProjectExplorer:
             axis = _sanitize_rebin_axis_config(axis_config)
             values = {
                 f"dataset_rebin_axis_lower_{index}": (
-                    "" if bool(axis.get("auto_lower", False)) else _format_number(axis["lower"])
+                    "" if _rebin_axis_bound_is_auto(axis, "lower") else _format_number(axis["lower"])
                 ),
                 f"dataset_rebin_axis_upper_{index}": (
-                    "" if bool(axis.get("auto_upper", False)) else _format_number(axis["upper"])
+                    "" if _rebin_axis_bound_is_auto(axis, "upper") else _format_number(axis["upper"])
                 ),
                 f"dataset_rebin_resolution_value_{index}": (
                     str(int(axis["num_bins"]))
