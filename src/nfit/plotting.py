@@ -54,6 +54,56 @@ def _edges_from_centers(centers: np.ndarray) -> np.ndarray:
     return edges
 
 
+def default_plot_grid_fill_neighbors(data: MDHistoData) -> int:
+    """Return the display-only empty-cell fill default for a histogram."""
+
+    metadata = data.metadata if isinstance(data.metadata, dict) else {}
+    stream = metadata.get("detector_stream", metadata.get("source_stream", ""))
+    return 2 if (
+        metadata.get("importer") == "macs_nexus"
+        and str(stream).upper() == "SPEC"
+    ) else 0
+
+
+def fill_plot_grid_holes(
+    values: ArrayLike,
+    *,
+    minimum_neighbors: int = 2,
+) -> np.ndarray:
+    """Fill empty 2D display cells from their finite orthogonal neighbors.
+
+    The replacement is simultaneous and plot-only: newly filled cells do not
+    become neighbors for other cells. This matches DAVE's default MACS vertex
+    coloring while leaving the histogram, masks, errors, and numerical cuts
+    unchanged.
+    """
+
+    array = np.asarray(values, dtype=float)
+    if array.ndim != 2:
+        return array.copy()
+    required = int(minimum_neighbors)
+    if required <= 0:
+        return array.copy()
+    if required > 4:
+        raise ValueError("minimum_neighbors cannot exceed four")
+    finite = np.isfinite(array)
+    neighbor_sum = np.zeros(array.shape, dtype=float)
+    neighbor_count = np.zeros(array.shape, dtype=np.uint8)
+    for target, source in (
+        ((slice(1, None), slice(None)), (slice(None, -1), slice(None))),
+        ((slice(None, -1), slice(None)), (slice(1, None), slice(None))),
+        ((slice(None), slice(1, None)), (slice(None), slice(None, -1))),
+        ((slice(None), slice(None, -1)), (slice(None), slice(1, None))),
+    ):
+        source_finite = finite[source]
+        neighbor_sum[target] += np.where(source_finite, array[source], 0.0)
+        neighbor_count[target] += source_finite
+    fill = ~finite & (neighbor_count >= required)
+    result = array.copy()
+    result[fill] = neighbor_sum[fill] / neighbor_count[fill]
+    return result
+
+
 def plot_energy_cut(
     data: PointData4D,
     *,
@@ -171,6 +221,7 @@ def plot_mdhisto_slice(
     power_gamma: float = 0.5,
     smoothing_sigma_x: float = 0.0,
     smoothing_sigma_y: float = 0.0,
+    empty_bin_fill_neighbors: int | None = None,
     xlim: tuple[float, float] | None = None,
     ylim: tuple[float, float] | None = None,
     font_size: float = 10.0,
@@ -186,7 +237,8 @@ def plot_mdhisto_slice(
     This is the scripting-friendly counterpart to ``slice_viewer``. It uses the
     same slicing, integration, masking, and color normalization logic as the
     interactive viewers, but returns a Matplotlib ``Figure`` for notebooks,
-    scripts, and exports.
+    scripts, and exports. ``empty_bin_fill_neighbors=None`` enables DAVE's
+    two-neighbor display fill for MACS SPEC histograms; zero disables it.
     """
 
     import matplotlib.pyplot as plt
@@ -241,13 +293,22 @@ def plot_mdhisto_slice(
             ax_ycut = None
 
         values = model._display_values(view)
+        fill_neighbors = (
+            default_plot_grid_fill_neighbors(data)
+            if empty_bin_fill_neighbors is None
+            else int(empty_bin_fill_neighbors)
+        )
+        plot_values = fill_plot_grid_holes(
+            values,
+            minimum_neighbors=fill_neighbors,
+        )
         image = ax_image.pcolormesh(
             view["x_edges"],
             view["y_edges"],
-            values,
+            plot_values,
             shading="auto",
             cmap=model.cmap,
-            norm=model._color_norm(values),
+            norm=model._color_norm(plot_values),
         )
         ax_image.set_xlabel(model._axis_label(model.x_dim))
         ax_image.set_ylabel(model._axis_label(model.y_dim))
@@ -474,6 +535,7 @@ def plot_mdhisto_tiled_slices(
     power_gamma: float = 0.5,
     smoothing_sigma_x: float = 0.0,
     smoothing_sigma_y: float = 0.0,
+    empty_bin_fill_neighbors: int | None = None,
     xlim: tuple[float, float] | None = None,
     ylim: tuple[float, float] | None = None,
     font_size: float = 10.0,
@@ -486,7 +548,11 @@ def plot_mdhisto_tiled_slices(
     local_color_scales: bool = False,
     figsize: tuple[float, float] = (10.0, 8.0),
 ):
-    """Render a grid of 2D slices with global or per-panel color scales."""
+    """Render a grid of 2D slices with global or per-panel color scales.
+
+    ``empty_bin_fill_neighbors=None`` enables DAVE's two-neighbor display fill
+    for MACS SPEC histograms; zero disables it.
+    """
 
     import matplotlib.pyplot as plt
 
@@ -530,7 +596,19 @@ def plot_mdhisto_tiled_slices(
     model.power_gamma = float(power_gamma)
     if local_color_scales and not model.autoscale:
         raise ValueError("local_color_scales requires autoscale=True")
-    combined = np.concatenate([panel.values.ravel() for panel in slices])
+    fill_neighbors = (
+        default_plot_grid_fill_neighbors(data)
+        if empty_bin_fill_neighbors is None
+        else int(empty_bin_fill_neighbors)
+    )
+    plot_values = [
+        fill_plot_grid_holes(
+            panel.values,
+            minimum_neighbors=fill_neighbors,
+        )
+        for panel in slices
+    ]
+    combined = np.concatenate([values.ravel() for values in plot_values])
     shared_norm = model._color_norm(combined)
     columns = int(np.ceil(np.sqrt(len(slices))))
     rows = int(np.ceil(len(slices) / columns))
@@ -551,7 +629,9 @@ def plot_mdhisto_tiled_slices(
         axes = []
         colorbars = []
         artist = None
-        for index, panel in enumerate(slices):
+        for index, (panel, panel_values) in enumerate(
+            zip(slices, plot_values, strict=True)
+        ):
             row, column = divmod(index, columns)
             plot_column = column * 2 if local_color_scales else column
             ax = fig.add_subplot(
@@ -559,11 +639,11 @@ def plot_mdhisto_tiled_slices(
                 sharex=axes[0] if axes else None,
                 sharey=axes[0] if axes else None,
             )
-            norm = model._color_norm(panel.values) if local_color_scales else shared_norm
+            norm = model._color_norm(panel_values) if local_color_scales else shared_norm
             artist = ax.pcolormesh(
                 panel.view["x_edges"],
                 panel.view["y_edges"],
-                panel.values,
+                panel_values,
                 shading="auto",
                 cmap=model._effective_cmap(),
                 norm=norm,

@@ -10,6 +10,7 @@ from nfit.importers import IMPORTERS, import_with, probe_importers
 from nfit.macs import import_macs_nexus, is_macs_nexus_file
 from nfit.mdhisto import MDHistoData
 from nfit.pipeline import DataGroup
+from nfit.plotting import default_plot_grid_fill_neighbors
 from nfit.project_gui import (
     GROUP_COMPOSITE_KEY,
     NfitProjectExplorer,
@@ -128,6 +129,35 @@ def test_macs_spec_and_diff_are_distinct_point_streams(tmp_path):
     assert np.all(diff.intensity == 500.0)
 
 
+def test_macs_spec_recovers_final_energy_from_aligned_analyzers(tmp_path):
+    source = _write_macs_nexus(tmp_path / "stale_ef.nxs.ng0")
+    with h5py.File(source, "r+") as handle:
+        logs = handle["entry/DAS_logs"]
+        logs["ef/energy"][...] = 3.5
+        logs["ef"].create_dataset("dSpacing", data=np.full(24, 3.35416))
+        logs["anaTwoTheta/primaryNode"][...] = np.nan
+
+    data = import_macs_nexus(source, {"stream": "spec"})
+
+    theta = np.deg2rad(89.0 / 2.0)
+    expected_ef = 81.8042 / (2.0 * 3.35416 * np.sin(theta)) ** 2
+    np.testing.assert_allclose(data.E, 4.9 - expected_ef)
+    assert data.metadata["fixed_final_energy_meV"] == pytest.approx(expected_ef)
+    assert data.metadata["recorded_fixed_final_energy_meV"] == pytest.approx(3.5)
+    assert "DAVE convention" in data.metadata["fixed_final_energy_source"]
+    assert data.metadata["dataset_parameters"]["spectral_channels"][
+        "final_energy_meV"
+    ] == pytest.approx(expected_ef)
+    assert data.metadata["masked_analyzer_channels"] == [19, 20]
+
+    unmasked = import_macs_nexus(
+        source,
+        {"stream": "spec", "mask_misaligned_analyzers": False},
+    )
+    np.testing.assert_allclose(unmasked.E, data.E)
+    assert np.all(unmasked.mask.reshape(24, 20)[:, 19])
+
+
 def test_macs_batch_import_expands_streams_and_prepares_composites(
     tmp_path, monkeypatch
 ):
@@ -171,6 +201,9 @@ def test_macs_batch_import_expands_streams_and_prepares_composites(
         assert isinstance(composite, MDHistoData)
         assert composite.signal.size <= 2_000_000
         assert np.count_nonzero(~composite.mask) > 0
+        assert default_plot_grid_fill_neighbors(composite) == (
+            2 if node.name.startswith("MACS SPEC") else 0
+        )
         np.testing.assert_allclose(
             composite.metadata["ub_matrix"], node.metadata["ub_matrix"]
         )
@@ -310,6 +343,7 @@ REAL_MACS_FILE = Path(
     "/Users/pmneves/Library/CloudStorage/OneDrive-JohnsHopkins/_research/"
     "LiV2O4/2026_08_MACS/data/Ef3p7_et_1.2_244.nxs.ng0"
 )
+REAL_MACS_2MEV_FILE = REAL_MACS_FILE.with_name("Ef5p0_et_2_311.nxs.ng0")
 
 
 @pytest.mark.skipif(not REAL_MACS_FILE.exists(), reason="local MACS validation file is absent")
@@ -331,6 +365,19 @@ def test_local_macs_file_masks_bad_spec_channel_and_matches_recorded_ptai_hkl():
         )
     )
     np.testing.assert_allclose(actual, expected, atol=1.1e-4, rtol=0.0)
+
+
+@pytest.mark.skipif(
+    not REAL_MACS_2MEV_FILE.exists(), reason="local MACS 2 meV validation file is absent"
+)
+def test_local_macs_2mev_file_ignores_stale_common_final_energy_log():
+    data = import_macs_nexus(REAL_MACS_2MEV_FILE, {"stream": "spec"})
+
+    assert np.nanmedian(data.E) == pytest.approx(2.001, abs=5.0e-4)
+    assert data.metadata["fixed_final_energy_meV"] == pytest.approx(4.9991, abs=5.0e-4)
+    assert data.metadata["recorded_fixed_final_energy_meV"] == pytest.approx(
+        4.93386, abs=5.0e-5
+    )
 
 
 def _dave_arithmetic_stepgrid(

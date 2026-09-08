@@ -26,6 +26,37 @@ def test_plot_recipe_renders_and_exports_backend_script(tmp_path):
     compile(script, "generated_plot.py", "exec")
 
 
+def test_slice_recipe_honors_plot_only_empty_bin_fill_setting():
+    axes = (
+        MDHistoAxis("H", np.arange(4.0), "rlu", "momentum"),
+        MDHistoAxis("K", np.arange(4.0), "rlu", "momentum"),
+    )
+    signal = np.array(
+        [[np.nan, 2.0, np.nan], [4.0, np.nan, np.nan], [np.nan, np.nan, 8.0]]
+    )
+    data = MDHistoData(
+        axes,
+        signal,
+        np.ones_like(signal),
+        np.zeros(signal.shape, bool),
+        np.ones_like(signal),
+    )
+    entry = new_plot_entry(
+        "Map",
+        "dataset-id",
+        {"x_dim": "K", "y_dim": "H", "empty_bin_fill_neighbors": 0},
+        plot_type="mdhisto_slice",
+    )
+
+    raw = render_plot(entry, data).axes[0].collections[0].get_array()
+    entry.settings["empty_bin_fill_neighbors"] = 2
+    filled = render_plot(entry, data).axes[0].collections[0].get_array()
+
+    assert np.ma.getmaskarray(raw)[1, 1]
+    assert not np.ma.getmaskarray(filled)[1, 1]
+    assert filled[1, 1] == 3.0
+
+
 def test_plot_entries_persist_with_the_project_schema():
     dataset = DatasetEntry("scan", None, id="dataset-id", metadata={"source_file": "scan.nxs"})
     plot = new_plot_entry("Map", dataset.id, {"x_dim": "H", "y_dim": "K"}, plot_type="mdhisto_slice")

@@ -632,6 +632,25 @@ def test_qt_plot_smoothing_is_axis_specific_and_does_not_modify_dataset_values()
     assert "plotting only" in viewer.smoothing_x_spin.toolTip()
 
 
+def test_qt_macs_plot_fill_changes_only_rendered_grid():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_2d_mdhisto_data_with_singletons()
+    editable = data.mutable_copy()
+    editable.signal[0, 0, 1, 1] = np.nan
+    data = editable.immutable_copy().with_updates(
+        metadata={"importer": "macs_nexus", "detector_stream": "SPEC"}
+    )
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+
+    assert viewer.empty_bin_fill_neighbors == 2
+    assert np.isnan(viewer._current_slice["signal"][1, 1])
+    assert np.isfinite(np.asarray(viewer.image.get_array())[1, 1])
+    assert viewer.current_plot_settings()["empty_bin_fill_neighbors"] == 2
+    assert "empty_bin_fill_neighbors=2" in viewer.figure_script()
+
+
 def test_data_viewer_closes_volume_panel_before_window_children_are_destroyed():
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer

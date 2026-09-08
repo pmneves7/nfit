@@ -15,9 +15,10 @@ The package provides:
   direct-geometry spectrometer workflows, with project-owned composite
   materialization and scaled powder or aligned-histogram background subtraction;
 - NIST NCNR MACS NeXus import with separate energy-analyzed SPEC and
-  energy-integrated DIFF streams, monitor normalization, detector masks, and
-  viewer-ready batch composites that can join existing compatible collections,
-  with promoted crystal orientation;
+  energy-integrated DIFF streams, DAVE-compatible analyzer-energy recovery and
+  sparse-grid display, monitor normalization, detector masks, and viewer-ready
+  batch composites that can join existing compatible collections, with promoted
+  crystal orientation;
 - powder-cut, MPMS magnetization, PPMS heat-capacity, and tabular imports;
 - masking, coverage- and sample-aware symmetry/rebinning with independently
   nonuniform axes, editable momentum-coordinate matrices, automatic

@@ -84,7 +84,13 @@ filename suffix. Selecting one or many MACS files creates two sibling dataset
 collections:
 
 - **MACS SPEC** contains the fixed-final-energy, energy-analyzed detector
-  stream as HKLE points. Energy transfer is $\Delta E=E_i-E_f$ in meV.
+  stream as HKLE points. Energy transfer is $\Delta E=E_i-E_f$ in meV. As in
+  DAVE, $E_f$ is reconstructed from the mean aligned analyzer angle and the
+  analyzer crystal spacing as
+  $E_f=81.8042/[2d_A\sin(A_5)]^2$, where $d_A$ is the analyzer-plane spacing in
+  Å and $A_5$ is the analyzer Bragg angle in degrees. This avoids stale common
+  final-energy logs; the recorded value is retained separately in metadata for
+  inspection.
 - **MACS DIFF** contains the unanalysed remainder of the scattered beam. It is
   not combined with SPEC. Following DAVE, nfit assigns DIFF coordinates using
   the elastic approximation $E_f=E_i$ and $\Delta E=0$. This is a coordinate
