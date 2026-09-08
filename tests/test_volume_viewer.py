@@ -10,6 +10,7 @@ from nfit.colormaps import (
     MATPLOTLIB_SEQUENTIAL_COLORMAPS,
     MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS,
     MATPLOTLIB_VOLUME_COLORMAPS,
+    NFIT_CONTINUOUS_COLORMAPS,
     VOLUME_COLORMAP_GROUPS,
 )
 from nfit.mdhisto import MDHistoAxis, MDHistoData
@@ -153,7 +154,7 @@ def test_volume_colormaps_append_colorcet_and_render_them():
     assert set(CMCRAMERI_SEQUENTIAL_COLORMAPS) <= set(COLORMAPS)
     assert set(MATPLOTLIB_SPECIALIZED_CONTINUOUS_COLORMAPS) <= set(COLORMAPS)
     assert "cet_fire" in COLORMAPS[len(MATPLOTLIB_VOLUME_COLORMAPS) :]
-    assert COLORMAPS[-3:] == (
+    assert NFIT_CONTINUOUS_COLORMAPS == (
         "young_rdbu",
         "young_ylbkcy",
         "young_quadratic",

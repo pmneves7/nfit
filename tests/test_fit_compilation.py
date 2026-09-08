@@ -394,6 +394,60 @@ def test_zero_coupling_component_exactly_replaces_two_additive_sources():
     ) > 1.0e-8
 
 
+def test_compiler_tracks_observable_and_dependency_parameter_scopes_separately():
+    slow = ModelComponentSpec(
+        name="slow",
+        type="local_relaxational",
+        parameters={"chi_loc": 1.5, "gamma": 1.0},
+        sharing={"chi_loc": {"mode": "per_dataset"}},
+        applies_to=["source_only"],
+    )
+    fast = ModelComponentSpec(
+        name="fast",
+        type="local_relaxational",
+        parameters={"chi_loc": 0.7, "gamma": 4.0},
+        applies_to=["source_only"],
+    )
+    dressed = ModelComponentSpec(
+        name="dressed",
+        type="coupled_susceptibility",
+        parameters={"coupling": 0.2},
+        config={"response_a": "slow", "response_b": "fast"},
+        applies_to=["dressed"],
+    )
+    points = _spin_fluctuation_points(
+        np.zeros(3),
+        np.zeros(3),
+        np.ones(3),
+        temperature=5.0,
+    )
+    compiled = compile_fit_problem(
+        [slow, fast, dressed],
+        [
+            FitDatasetInput(
+                name,
+                points,
+                data_type="single_crystal_inelastic",
+            )
+            for name in ("source_only", "dressed", "ignored")
+        ],
+    )
+
+    assert compiled.components_by_dataset == {
+        "source_only": ["slow", "fast"],
+        "dressed": ["dressed"],
+        "ignored": [],
+    }
+    assert compiled.skipped_datasets == ["ignored"]
+    assert {
+        instance.scope: instance.datasets
+        for instance in compiled.instances_for("slow", "chi_loc")
+    } == {
+        "source_only": ("source_only",),
+        "dressed": ("dressed",),
+    }
+
+
 def test_coupled_susceptibility_rejects_nonresponse_dependencies():
     source = _constant_component()
     other = ModelComponentSpec(

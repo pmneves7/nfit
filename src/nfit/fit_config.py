@@ -4338,21 +4338,25 @@ def _tie_keys(component: Any, parameter: str, dataset_names: Sequence[str]) -> d
     return {name: str(groups.get(name, name)) for name in dataset_names}
 
 
-def compile_fit_problem(
+@dataclass
+class _FitCompilationPlan:
+    """Validated component graph and its resolved dataset scopes."""
+
+    dataset_names: list[str]
+    active_components: list[Any]
+    active_by_name: dict[str, Any]
+    observable_applicable: dict[str, list[str]]
+    parameter_applicable: dict[str, list[str]]
+    components_by_dataset: dict[str, list[str]]
+    fitted_datasets: list[FitDatasetInput]
+    skipped_datasets: list[str]
+
+
+def _prepare_fit_compilation(
     components: Sequence[Any],
     datasets: Sequence[FitDatasetInput],
-    *,
-    description: str = "",
-) -> CompiledFitProblem:
-    """Compile model components and prepared datasets into a FitProblem.
-
-    Only enabled components are used. A component applies to a dataset when
-    the dataset is listed in ``applies_to`` (or ``applies_to`` is ``None``)
-    and the model type supports the dataset's data type. Datasets that no
-    component applies to are excluded from the problem and reported in
-    ``skipped_datasets``. Parameters of components that apply to no dataset
-    are not emitted, so the optimizer never sees insensitive parameters.
-    """
+) -> _FitCompilationPlan:
+    """Validate inputs and resolve observable and parameter dataset scopes."""
 
     if not datasets:
         raise ValueError("compile_fit_problem requires at least one dataset")
@@ -4360,33 +4364,102 @@ def compile_fit_problem(
     if len(dataset_names) != len(set(dataset_names)):
         raise ValueError("dataset names must be unique")
 
-    active = [component for component in components if getattr(component, "enabled", True)]
+    active = [
+        component
+        for component in components
+        if getattr(component, "enabled", True)
+    ]
+    _validate_active_components(active)
+    observable_applicable, components_by_dataset = _initial_component_scopes(
+        active,
+        datasets,
+        dataset_names,
+    )
+    active_by_name = {component.name: component for component in active}
+    dependencies = _component_dependencies(active, active_by_name)
+    _validate_dependency_graph(active, dependencies)
+
+    parameter_applicable = {
+        name: list(names) for name, names in observable_applicable.items()
+    }
+    _remove_consumed_observables(
+        active,
+        dependencies,
+        observable_applicable,
+        components_by_dataset,
+    )
+    _propagate_parameter_scopes(
+        active,
+        dependencies,
+        observable_applicable,
+        parameter_applicable,
+        dataset_names,
+    )
+
+    fitted = [
+        dataset
+        for dataset in datasets
+        if components_by_dataset[dataset.name]
+    ]
+    skipped = [
+        name for name in dataset_names if not components_by_dataset[name]
+    ]
+    if not fitted:
+        raise ValueError("no dataset is matched by any enabled model component")
+    return _FitCompilationPlan(
+        dataset_names=dataset_names,
+        active_components=active,
+        active_by_name=active_by_name,
+        observable_applicable=observable_applicable,
+        parameter_applicable=parameter_applicable,
+        components_by_dataset=components_by_dataset,
+        fitted_datasets=fitted,
+        skipped_datasets=skipped,
+    )
+
+
+def _validate_active_components(active: Sequence[Any]) -> None:
     seen: set[str] = set()
     for component in active:
         if component.type not in MODEL_TYPE_REGISTRY:
-            raise ValueError(f"model type {component.type!r} is not registered for fitting")
+            raise ValueError(
+                f"model type {component.type!r} is not registered for fitting"
+            )
         validate_model_component(component)
         if component.name in seen:
             raise ValueError(f"duplicate model component name {component.name!r}")
         seen.add(component.name)
 
+
+def _initial_component_scopes(
+    active: Sequence[Any],
+    datasets: Sequence[FitDatasetInput],
+    dataset_names: Sequence[str],
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     observable_applicable: dict[str, list[str]] = {}
-    components_by_dataset: dict[str, list[str]] = {name: [] for name in dataset_names}
+    components_by_dataset: dict[str, list[str]] = {
+        name: [] for name in dataset_names
+    }
     for component in active:
         names: list[str] = []
         for dataset in datasets:
-            if component.applies_to is not None and dataset.name not in component.applies_to:
+            if (
+                component.applies_to is not None
+                and dataset.name not in component.applies_to
+            ):
                 continue
             if not model_supports_data_type(component.type, dataset.data_type):
                 continue
             names.append(dataset.name)
             components_by_dataset[dataset.name].append(component.name)
         observable_applicable[component.name] = names
+    return observable_applicable, components_by_dataset
 
-    active_by_name = {component.name: component for component in active}
-    applicable = {
-        name: list(names) for name, names in observable_applicable.items()
-    }
+
+def _component_dependencies(
+    active: Sequence[Any],
+    active_by_name: Mapping[str, Any],
+) -> dict[str, tuple[str, ...]]:
     dependencies: dict[str, tuple[str, ...]] = {}
     for component in active:
         definition = MODEL_TYPE_REGISTRY[component.type]
@@ -4409,11 +4482,17 @@ def compile_fit_problem(
                 )
             references.append(referenced_name)
         dependencies[component.name] = tuple(references)
+    return dependencies
 
+
+def _validate_dependency_graph(
+    active: Sequence[Any],
+    dependencies: Mapping[str, Sequence[str]],
+) -> None:
     visiting: set[str] = set()
     visited: set[str] = set()
 
-    def validate_dependency_graph(component_name: str) -> None:
+    def visit(component_name: str) -> None:
         if component_name in visiting:
             raise ValueError(
                 f"model component dependency cycle includes {component_name!r}"
@@ -4422,16 +4501,22 @@ def compile_fit_problem(
             return
         visiting.add(component_name)
         for dependency_name in dependencies[component_name]:
-            validate_dependency_graph(dependency_name)
+            visit(dependency_name)
         visiting.remove(component_name)
         visited.add(component_name)
 
     for component in active:
-        validate_dependency_graph(component.name)
+        visit(component.name)
 
-    # A dressing replaces, rather than adds to, its referenced observable on
-    # the dressing's dataset scope. The referenced component remains an
-    # independently usable observable on any other selected datasets.
+
+def _remove_consumed_observables(
+    active: Sequence[Any],
+    dependencies: Mapping[str, Sequence[str]],
+    observable_applicable: dict[str, list[str]],
+    components_by_dataset: dict[str, list[str]],
+) -> None:
+    """Remove observables replaced by a dressing on the same dataset scope."""
+
     for component in active:
         definition = MODEL_TYPE_REGISTRY[component.type]
         if not definition.consumes_referenced_observables:
@@ -4450,7 +4535,17 @@ def compile_fit_problem(
                     if name != dependency_name
                 ]
 
-    # Propagate each observable's dataset scope back to all parameter providers.
+
+def _propagate_parameter_scopes(
+    active: Sequence[Any],
+    dependencies: Mapping[str, Sequence[str]],
+    observable_applicable: Mapping[str, Sequence[str]],
+    parameter_applicable: dict[str, list[str]],
+    dataset_names: Sequence[str],
+) -> None:
+    """Propagate each observable's scope to all of its parameter providers."""
+
+    dataset_order = {name: index for index, name in enumerate(dataset_names)}
     for component in active:
         dependent_names = set(observable_applicable[component.name])
         stack = list(dependencies[component.name])
@@ -4460,83 +4555,143 @@ def compile_fit_problem(
             if dependency_name in seen_dependencies:
                 continue
             seen_dependencies.add(dependency_name)
-            applicable[dependency_name] = sorted(
-                set(applicable[dependency_name]) | dependent_names,
-                key=dataset_names.index,
+            parameter_applicable[dependency_name] = sorted(
+                set(parameter_applicable[dependency_name]) | dependent_names,
+                key=dataset_order.__getitem__,
             )
             stack.extend(dependencies[dependency_name])
 
-    fitted = [dataset for dataset in datasets if components_by_dataset[dataset.name]]
-    skipped = [name for name in dataset_names if not components_by_dataset[name]]
-    if not fitted:
-        raise ValueError("no dataset is matched by any enabled model component")
 
+def _emit_parameter(
+    spec: ParameterSpec,
+    instance: ParameterInstance,
+    specs: list[ParameterSpec],
+    instances: dict[str, ParameterInstance],
+) -> None:
+    if spec.name in instances:
+        raise ValueError(f"duplicate fit parameter name {spec.name!r}")
+    specs.append(spec)
+    instances[spec.name] = instance
+
+
+def _compile_component_parameters(
+    plan: _FitCompilationPlan,
+) -> tuple[
+    list[ParameterSpec],
+    dict[str, ParameterInstance],
+    dict[str, dict[str, ParameterBinding]],
+]:
     specs: list[ParameterSpec] = []
     instances: dict[str, ParameterInstance] = {}
-    bindings: dict[str, dict[str, ParameterBinding]] = {name: {} for name in dataset_names}
-
-    def emit(spec: ParameterSpec, instance: ParameterInstance) -> None:
-        if spec.name in instances:
-            raise ValueError(f"duplicate fit parameter name {spec.name!r}")
-        specs.append(spec)
-        instances[spec.name] = instance
-
-    for component in active:
-        component_datasets = applicable[component.name]
+    bindings: dict[str, dict[str, ParameterBinding]] = {
+        name: {} for name in plan.dataset_names
+    }
+    for component in plan.active_components:
+        component_datasets = plan.parameter_applicable[component.name]
         if not component_datasets:
             continue
         for parameter in component_parameter_names(component):
-            qualified = qualified_parameter_name(component.name, parameter)
-            value = _parameter_value(component, parameter)
-            vary = bool(component.fit_parameters.get(parameter, False)) and not (
-                parameter_is_derived_by_closure(component, parameter)
+            _compile_component_parameter(
+                component,
+                parameter,
+                component_datasets,
+                specs,
+                instances,
+                bindings,
             )
-            lower, upper = parameter_limits(component, parameter)
-            mode = sharing_mode(component, parameter)
-            if mode == "global":
-                emit(
-                    ParameterSpec(name=qualified, value=value, min=lower, max=upper, vary=vary),
-                    ParameterInstance(
-                        name=qualified,
-                        component=component.name,
-                        parameter=parameter,
-                        scope="global",
-                        datasets=tuple(component_datasets),
-                    ),
-                )
-                continue
-            keys = _tie_keys(component, parameter, component_datasets)
-            for key in dict.fromkeys(keys.values()):
-                name = instanced_parameter_name(component.name, parameter, key)
-                emit(
-                    ParameterSpec(name=name, value=value, min=lower, max=upper, vary=vary),
-                    ParameterInstance(
-                        name=name,
-                        component=component.name,
-                        parameter=parameter,
-                        scope=key,
-                        datasets=tuple(
-                            dataset for dataset, tie in keys.items() if tie == key
-                        ),
-                    ),
-                )
-            for dataset_name, key in keys.items():
-                bindings[dataset_name][qualified] = instanced_parameter_name(
-                    component.name, parameter, key
-                )
+    return specs, instances, bindings
+
+
+def _compile_component_parameter(
+    component: Any,
+    parameter: str,
+    component_datasets: Sequence[str],
+    specs: list[ParameterSpec],
+    instances: dict[str, ParameterInstance],
+    bindings: dict[str, dict[str, ParameterBinding]],
+) -> None:
+    qualified = qualified_parameter_name(component.name, parameter)
+    value = _parameter_value(component, parameter)
+    vary = bool(component.fit_parameters.get(parameter, False)) and not (
+        parameter_is_derived_by_closure(component, parameter)
+    )
+    lower, upper = parameter_limits(component, parameter)
+    mode = sharing_mode(component, parameter)
+    if mode == "global":
+        _emit_parameter(
+            ParameterSpec(
+                name=qualified,
+                value=value,
+                min=lower,
+                max=upper,
+                vary=vary,
+            ),
+            ParameterInstance(
+                name=qualified,
+                component=component.name,
+                parameter=parameter,
+                scope="global",
+                datasets=tuple(component_datasets),
+            ),
+            specs,
+            instances,
+        )
+        return
+
+    keys = _tie_keys(component, parameter, component_datasets)
+    for key in dict.fromkeys(keys.values()):
+        name = instanced_parameter_name(component.name, parameter, key)
+        _emit_parameter(
+            ParameterSpec(
+                name=name,
+                value=value,
+                min=lower,
+                max=upper,
+                vary=vary,
+            ),
+            ParameterInstance(
+                name=name,
+                component=component.name,
+                parameter=parameter,
+                scope=key,
+                datasets=tuple(
+                    dataset
+                    for dataset, tie in keys.items()
+                    if tie == key
+                ),
+            ),
+            specs,
+            instances,
+        )
+    for dataset_name, key in keys.items():
+        bindings[dataset_name][qualified] = instanced_parameter_name(
+            component.name,
+            parameter,
+            key,
+        )
+
+
+def _compile_dataset_scales(
+    fitted_datasets: Sequence[FitDatasetInput],
+    specs: list[ParameterSpec],
+    instances: dict[str, ParameterInstance],
+) -> dict[str, str]:
+    scale_groups: dict[tuple[str, str], list[FitDatasetInput]] = {}
+    for dataset in fitted_datasets:
+        if not dataset.scale_vary:
+            continue
+        key = (
+            ("group", str(dataset.scale_group))
+            if dataset.scale_group
+            else ("dataset", dataset.name)
+        )
+        scale_groups.setdefault(key, []).append(dataset)
 
     scale_parameters: dict[str, str] = {}
-    scale_groups: dict[tuple[str, str], list[FitDatasetInput]] = {}
-    for dataset in fitted:
-        if dataset.scale_vary:
-            key = (
-                ("group", str(dataset.scale_group))
-                if dataset.scale_group
-                else ("dataset", dataset.name)
-            )
-            scale_groups.setdefault(key, []).append(dataset)
     for (kind, key), members in scale_groups.items():
-        values = np.asarray([float(dataset.scale_value) for dataset in members])
+        values = np.asarray(
+            [float(dataset.scale_value) for dataset in members]
+        )
         if not np.all(np.isfinite(values)) or np.any(values <= 0.0):
             raise ValueError("fitted dataset scales must be finite and positive")
         if not np.allclose(values, values[0], rtol=1.0e-12, atol=1.0e-12):
@@ -4548,14 +4703,15 @@ def compile_fit_problem(
         name = dataset_scale_parameter_name(
             f"group:{key}" if kind == "group" else key
         )
-        emit(
+        _emit_parameter(
             ParameterSpec(
                 name=name,
                 value=float(values[0]),
                 min=0.0,
                 vary=True,
                 description=(
-                    f"Shared scale for datasets {', '.join(d.name for d in members)}"
+                    "Shared scale for datasets "
+                    f"{', '.join(dataset.name for dataset in members)}"
                     if len(members) > 1
                     else f"Scale factor for dataset {members[0].name}"
                 ),
@@ -4567,91 +4723,145 @@ def compile_fit_problem(
                 scope=key,
                 datasets=tuple(dataset.name for dataset in members),
             ),
+            specs,
+            instances,
         )
         for dataset in members:
             scale_parameters[dataset.name] = name
+    return scale_parameters
 
-    derived = _compile_constraints(active, applicable, specs, instances)
 
+def _fit_data_with_context(dataset: FitDatasetInput) -> PointData4D:
+    fit_data = dataset.data
+    if (
+        dataset.data_type
+        and fit_data.metadata.get("data_type") != dataset.data_type
+    ) or fit_data.metadata.get("fit_dataset_name") != dataset.name:
+        point_metadata = dict(fit_data.metadata)
+        if dataset.data_type:
+            point_metadata["data_type"] = dataset.data_type
+        point_metadata["fit_dataset_name"] = dataset.name
+        fit_data = fit_data.with_updates(metadata=point_metadata)
+    return fit_data
+
+
+def _component_evaluators(
+    components: Sequence[Any],
+    active_by_name: Mapping[str, Any],
+    context_evaluators: dict[str, ModelFunction],
+) -> list[ModelFunction]:
+    evaluators = []
+    for component in components:
+        definition = MODEL_TYPE_REGISTRY[component.type]
+        if definition.context_factory is None:
+            evaluator = definition.factory(component)
+        else:
+            evaluator = context_evaluators.get(component.name)
+            if evaluator is None:
+                evaluator = definition.context_factory(component, active_by_name)
+                context_evaluators[component.name] = evaluator
+        evaluators.append(evaluator)
+    return evaluators
+
+
+def _component_jacobian(
+    components: Sequence[Any],
+    data_type: str,
+) -> ModelJacobian | None:
+    jacobian_factories = [
+        MODEL_TYPE_REGISTRY[component.type].jacobian_factory
+        for component in components
+    ]
+    if (
+        not components
+        or data_type
+        in {"magnetization", "single_crystal_elastic", "powder_elastic"}
+        or not all(factory is not None for factory in jacobian_factories)
+    ):
+        return None
+    built = [
+        factory(component)
+        for factory, component in zip(
+            jacobian_factories,
+            components,
+            strict=True,
+        )
+    ]
+    if not all(jacobian is not None for jacobian in built):
+        return None
+    return _additive_jacobian(built)
+
+
+def _build_fit_datasets(
+    plan: _FitCompilationPlan,
+    bindings: Mapping[str, Mapping[str, ParameterBinding]],
+    scale_parameters: Mapping[str, str],
+) -> list[FitDataset]:
     fit_datasets: list[FitDataset] = []
     # Context-aware evaluators own expensive immutable setup and bounded
-    # scientific caches. Build one evaluator per observable component for the
-    # whole compiled problem so compatible datasets and dataset groups reuse
-    # the same electronic response context.
+    # scientific caches. One evaluator per observable component lets compatible
+    # datasets and dataset groups reuse the same electronic response context.
     context_evaluators: dict[str, ModelFunction] = {}
-    for dataset in fitted:
-        fit_data = dataset.data
-        if (
-            dataset.data_type
-            and fit_data.metadata.get("data_type") != dataset.data_type
-        ) or fit_data.metadata.get("fit_dataset_name") != dataset.name:
-            point_metadata = dict(fit_data.metadata)
-            if dataset.data_type:
-                point_metadata["data_type"] = dataset.data_type
-            point_metadata["fit_dataset_name"] = dataset.name
-            fit_data = fit_data.with_updates(metadata=point_metadata)
+    for dataset in plan.fitted_datasets:
         components_here = [
             component
-            for component in active
-            if dataset.name in observable_applicable[component.name]
+            for component in plan.active_components
+            if dataset.name in plan.observable_applicable[component.name]
         ]
-        evaluators = []
-        for component in components_here:
-            definition = MODEL_TYPE_REGISTRY[component.type]
-            if definition.context_factory is None:
-                evaluator = definition.factory(component)
-            else:
-                evaluator = context_evaluators.get(component.name)
-                if evaluator is None:
-                    evaluator = definition.context_factory(
-                        component,
-                        active_by_name,
-                    )
-                    context_evaluators[component.name] = evaluator
-            evaluators.append(evaluator)
-        # An analytic Jacobian is available for the dataset only when *every*
-        # component on it provides one; otherwise the optimizer falls back to
-        # finite differences for the whole problem.
-        jacobian_factories = [
-            MODEL_TYPE_REGISTRY[component.type].jacobian_factory
-            for component in components_here
-        ]
-        model_jacobian = None
-        if (
-            components_here
-            and getattr(dataset, "data_type", None)
-            not in {"magnetization", "single_crystal_elastic", "powder_elastic"}
-            and all(factory is not None for factory in jacobian_factories)
-        ):
-            # A registry entry may have a jacobian factory that still declines
-            # (returns None) for a particular component configuration (e.g. a
-            # heisenberg_rpa component with anisotropic tensor terms). Only use
-            # analytic Jacobians when every component actually yields one.
-            built = [
-                factory(component)
-                for factory, component in zip(
-                    jacobian_factories,
-                    components_here,
-                    strict=True,
-                )
-            ]
-            if all(jacobian is not None for jacobian in built):
-                model_jacobian = _additive_jacobian(built)
+        evaluators = _component_evaluators(
+            components_here,
+            plan.active_by_name,
+            context_evaluators,
+        )
         fit_datasets.append(
             FitDataset(
                 name=dataset.name,
-                data=fit_data,
+                data=_fit_data_with_context(dataset),
                 weight=float(dataset.weight),
                 parameter_bindings=dict(bindings[dataset.name]),
                 model=_additive_model(evaluators),
                 data_scale_parameter=scale_parameters.get(dataset.name),
-                model_jacobian=model_jacobian,
+                model_jacobian=_component_jacobian(
+                    components_here,
+                    dataset.data_type,
+                ),
                 metadata=dict(dataset.metadata),
             )
         )
+    return fit_datasets
 
+
+def compile_fit_problem(
+    components: Sequence[Any],
+    datasets: Sequence[FitDatasetInput],
+    *,
+    description: str = "",
+) -> CompiledFitProblem:
+    """Compile model components and prepared datasets into a FitProblem.
+
+    Only enabled components are used. A component applies to a dataset when
+    the dataset is listed in ``applies_to`` (or ``applies_to`` is ``None``)
+    and the model type supports the dataset's data type. Datasets that no
+    component applies to are excluded from the problem and reported in
+    ``skipped_datasets``. Parameters of components that apply to no dataset
+    are not emitted, so the optimizer never sees insensitive parameters.
+    """
+
+    plan = _prepare_fit_compilation(components, datasets)
+    specs, instances, bindings = _compile_component_parameters(plan)
+    scale_parameters = _compile_dataset_scales(
+        plan.fitted_datasets,
+        specs,
+        instances,
+    )
+    derived = _compile_constraints(
+        plan.active_components,
+        plan.parameter_applicable,
+        specs,
+        instances,
+    )
     problem = FitProblem(
-        datasets=fit_datasets,
+        datasets=_build_fit_datasets(plan, bindings, scale_parameters),
         model=None,
         parameter_specs=tuple(specs),
         derived_parameters=tuple(derived),
@@ -4660,10 +4870,9 @@ def compile_fit_problem(
     return CompiledFitProblem(
         problem=problem,
         parameter_instances=instances,
-        components_by_dataset=components_by_dataset,
-        skipped_datasets=skipped,
+        components_by_dataset=plan.components_by_dataset,
+        skipped_datasets=plan.skipped_datasets,
     )
-
 
 def _additive_model(evaluators: Sequence[ModelFunction]) -> ModelFunction:
     def model(data: PointData4D, params: dict[str, float]) -> np.ndarray:

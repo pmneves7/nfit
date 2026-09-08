@@ -85,6 +85,27 @@ def test_builtin_registry_is_the_gui_and_fit_source_of_truth():
     assert not hasattr(nfit, "ModelTypeInfo")
 
 
+def test_builtin_registry_preserves_registration_order():
+    assert tuple(MODEL_TYPE_REGISTRY) == (
+        "constant_background",
+        "linear_background",
+        "local_relaxational",
+        "mmp_relaxational",
+        "generalized_paramagnon",
+        "conserved_ferromagnetic",
+        "heisenberg_rpa",
+        "coupled_susceptibility",
+        "debye_heat_capacity",
+        "low_temperature_heat_capacity",
+        "curie_weiss",
+        "lindhard",
+        "stoner_rpa",
+        "matrix_rpa",
+        "hubbard_hund_rpa",
+        "tight_binding",
+    )
+
+
 def test_generalized_paramagnon_registry_exposes_complete_extension_contract():
     definition = model_definition("generalized_paramagnon")
     assert definition.diagnostics is not None

@@ -763,7 +763,7 @@ def _bulk_response_fields() -> tuple[ModelConfigDefinition, ...]:
     )
 
 
-def _register_builtin_models() -> None:
+def _register_primitive_models() -> None:
     register_model_definition(
         ModelDefinition(
             key="constant_background",
@@ -820,6 +820,9 @@ def _register_builtin_models() -> None:
             documentation="modeling_pipeline.md#compound-models",
         )
     )
+
+
+def _register_spin_fluctuation_models() -> None:
     register_model_definition(
         ModelDefinition(
             key="local_relaxational",
@@ -1473,6 +1476,9 @@ def _register_builtin_models() -> None:
             },
         )
     )
+
+
+def _register_heat_capacity_models() -> None:
     register_model_definition(
         ModelDefinition(
             key="debye_heat_capacity",
@@ -1548,6 +1554,9 @@ def _register_builtin_models() -> None:
             ),
         )
     )
+
+
+def _register_magnetization_models() -> None:
     register_model_definition(
         ModelDefinition(
             key="curie_weiss",
@@ -1581,6 +1590,9 @@ def _register_builtin_models() -> None:
             ),
         )
     )
+
+
+def _register_lindhard_model() -> None:
     register_model_definition(
         ModelDefinition(
             key="lindhard",
@@ -2189,6 +2201,9 @@ def _register_builtin_models() -> None:
             },
         )
     )
+
+
+def _register_electronic_rpa_models() -> None:
     rpa_data_types = (
         "single_crystal_inelastic",
         "powder_inelastic",
@@ -2462,6 +2477,9 @@ def _register_builtin_models() -> None:
             },
         )
     )
+
+
+def _register_tight_binding_model() -> None:
     register_model_definition(
         ModelDefinition(
             key="tight_binding",
@@ -3026,6 +3044,22 @@ def _register_builtin_models() -> None:
             metadata={"component_plot_actions": True},
         )
     )
+
+
+def _register_electronic_structure_models() -> None:
+    _register_lindhard_model()
+    _register_electronic_rpa_models()
+    _register_tight_binding_model()
+
+
+def _register_builtin_models() -> None:
+    """Register built-ins by scientific family in their historical order."""
+
+    _register_primitive_models()
+    _register_spin_fluctuation_models()
+    _register_heat_capacity_models()
+    _register_magnetization_models()
+    _register_electronic_structure_models()
 
 
 _register_builtin_models()
