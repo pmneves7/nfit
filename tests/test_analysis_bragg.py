@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from nfit.analysis.bragg import _elastic_reduce, generate_bragg_peaks, integrate_bragg_peaks
 from nfit.analysis.coordinates import physical_axis_vectors
@@ -59,6 +60,134 @@ def test_shell_background_subtracts_constant_density():
     result = integrate_bragg_peaks(data, [[2.5, 2.5, 2.5]], method="box_sum", box_half_widths=[0.5] * 3, background_mode="shell", background_inner_scale=1.0, background_outer_scale=2.0)
     np.testing.assert_allclose(result.column("I"), 0.0, atol=1e-12)
     np.testing.assert_allclose(result.column("Background"), 7.0)
+
+
+def test_shell_background_can_exclude_neighbor_peak_regions():
+    edges = np.arange(0.0, 7.0)
+    axes = tuple(
+        MDHistoAxis(name, edges, "rlu", "momentum")
+        for name in ("H", "K", "L")
+    )
+    shape = (6, 6, 6)
+    signal = np.ones(shape)
+    signal[3, 2, 2] = 101.0
+    data = MDHistoData(
+        axes,
+        signal,
+        np.ones(shape),
+        np.zeros(shape, bool),
+        np.ones(shape),
+        metadata={
+            "signal_semantics": "density",
+            "lattice_parameters": {
+                "a": 2 * np.pi,
+                "b": 2 * np.pi,
+                "c": 2 * np.pi,
+            },
+        },
+    )
+    peaks = [[2.5, 2.5, 2.5], [3.5, 2.5, 2.5]]
+    common = {
+        "method": "box_sum",
+        "box_half_widths": [0.5] * 3,
+        "background_mode": "shell",
+        "background_inner_scale": 1.0,
+        "background_outer_scale": 2.0,
+        "minimum_peak_coverage": 0.0,
+        "minimum_background_coverage": 0.0,
+    }
+
+    included = integrate_bragg_peaks(
+        data,
+        peaks,
+        exclude_neighbor_regions=False,
+        **common,
+    )
+    excluded = integrate_bragg_peaks(
+        data,
+        peaks,
+        exclude_neighbor_regions=True,
+        **common,
+    )
+
+    assert included.column("Background")[0] > 1.0
+    np.testing.assert_allclose(excluded.column("Background"), 1.0)
+
+
+def test_centroid_mode_recenters_the_integration_region():
+    axes = (
+        MDHistoAxis("H", np.array([-0.5, 0.5, 1.5]), "rlu", "momentum"),
+        MDHistoAxis("K", np.array([-0.5, 0.5]), "rlu", "momentum"),
+        MDHistoAxis("L", np.array([-0.5, 0.5]), "rlu", "momentum"),
+    )
+    signal = np.array([[[1.0]], [[11.0]]])
+    data = MDHistoData(
+        axes,
+        signal,
+        np.ones(signal.shape),
+        np.zeros(signal.shape, bool),
+        np.ones(signal.shape),
+        metadata={
+            "signal_semantics": "density",
+            "lattice_parameters": {
+                "a": 2 * np.pi,
+                "b": 2 * np.pi,
+                "c": 2 * np.pi,
+            },
+        },
+    )
+
+    result = integrate_bragg_peaks(
+        data,
+        [[0.0, 0.0, 0.0]],
+        method="box_sum",
+        box_half_widths=[0.4] * 3,
+        center_mode="centroid",
+        centroid_search_radius=1.1,
+        minimum_peak_coverage=0.0,
+    )
+
+    np.testing.assert_allclose(
+        [result.column("H")[0], result.column("K")[0], result.column("L")[0]],
+        [1.0, 0.0, 0.0],
+    )
+
+
+def test_cancellation_stops_before_integrating_the_next_reflection():
+    edges = np.array([0.0, 1.0])
+    axes = tuple(
+        MDHistoAxis(name, edges, "rlu", "momentum")
+        for name in ("H", "K", "L")
+    )
+    data = MDHistoData(
+        axes,
+        np.ones((1, 1, 1)),
+        np.ones((1, 1, 1)),
+        np.zeros((1, 1, 1), bool),
+        np.ones((1, 1, 1)),
+        metadata={
+            "signal_semantics": "density",
+            "lattice_parameters": {
+                "a": 2 * np.pi,
+                "b": 2 * np.pi,
+                "c": 2 * np.pi,
+            },
+        },
+    )
+    events = []
+
+    with pytest.raises(RuntimeError, match="Bragg integration cancelled"):
+        integrate_bragg_peaks(
+            data,
+            [[0.5, 0.5, 0.5]],
+            method="box_sum",
+            box_half_widths=[0.5] * 3,
+            progress_callback=events.append,
+            cancel_callback=lambda: True,
+        )
+
+    assert len(events) == 1
+    assert events[0]["completed"] == 0
 
 
 def test_ellipsoid_subvoxel_integration_approaches_known_volume():

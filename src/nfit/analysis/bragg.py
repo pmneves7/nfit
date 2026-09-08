@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from itertools import product
 
 import numpy as np
@@ -92,14 +93,202 @@ def integrate_bragg_peaks(
     """Integrate Bragg peaks using Gaussian fitting, boxes, or ellipsoids."""
 
     data = bragg_volume(data, energy_min_meV, energy_max_meV)
-    if data.signal.ndim != 3 or len([axis for axis in data.axes if axis.kind == "momentum"]) != 3:
-        raise ValueError("Bragg box integration requires a three-dimensional momentum histogram")
+    context = _prepare_bragg_integration(
+        data,
+        method=method,
+        box_half_widths=box_half_widths,
+        ellipsoid_semiaxes=ellipsoid_semiaxes,
+        ellipsoid_rotation=ellipsoid_rotation,
+        subvoxel_samples=subvoxel_samples,
+        gaussian_max_nfev=gaussian_max_nfev,
+        background_mode=background_mode,
+        background_inner_scale=background_inner_scale,
+        background_outer_scale=background_outer_scale,
+        minimum_peak_coverage=minimum_peak_coverage,
+        minimum_background_coverage=minimum_background_coverage,
+        minimum_signal_to_noise=minimum_signal_to_noise,
+        maximum_background=maximum_background,
+        exclude_neighbor_regions=exclude_neighbor_regions,
+        center_mode=center_mode,
+        centroid_search_radius=centroid_search_radius,
+        coordinate_frame=coordinate_frame,
+        gaussian_background=gaussian_background,
+    )
+    peak_array = np.asarray(peaks_hkl, dtype=float).reshape(-1, 3)
+    _report_bragg_start(progress_callback, len(peak_array), method)
+
+    rows: list[tuple[float, ...]] = []
+    accepted_count = 0
+    for peak_index, nominal_peak in enumerate(peak_array):
+        if cancel_callback is not None and cancel_callback():
+            raise RuntimeError("Bragg integration cancelled")
+        result = _integrate_bragg_peak(context, nominal_peak, peak_array)
+        rows.append(result.row)
+        accepted_count += int(result.status == 0)
+        _report_bragg_progress(
+            progress_callback,
+            peak_index + 1,
+            len(peak_array),
+            nominal_peak,
+            result.status,
+            result.coverage,
+            result.signal_to_noise,
+            accepted_count,
+        )
+
+    _report_bragg_complete(
+        progress_callback,
+        len(peak_array),
+        accepted_count,
+    )
+    return _build_bragg_result(rows, context)
+
+
+@dataclass(frozen=True)
+class _BraggIntegrationContext:
+    """Validated geometry and options shared by every requested reflection."""
+
+    data: MDHistoData
+    method: str
+    semantics: str
+    vectors: np.ndarray
+    components: tuple[int, ...]
+    direct_axes: bool
+    half_widths: np.ndarray
+    ellipsoid_rotation: np.ndarray
+    subvoxel_samples: int
+    gaussian_max_nfev: int
+    coordinate_frame: str
+    qmatrix: np.ndarray
+    all_edges: tuple[np.ndarray, ...]
+    all_measured: np.ndarray
+    all_qvolume: np.ndarray
+    background_mode: str
+    background_inner_scale: float
+    background_outer_scale: float
+    minimum_peak_coverage: float
+    minimum_background_coverage: float
+    minimum_signal_to_noise: float | None
+    maximum_background: float | None
+    exclude_neighbor_regions: bool
+    center_mode: str
+    centroid_search_radius: float
+    gaussian_background: str
+
+
+@dataclass(frozen=True)
+class _LocalPeakRegion:
+    center: np.ndarray
+    data: MDHistoData
+    edges: tuple[np.ndarray, ...]
+    measured: np.ndarray
+    qvolume: np.ndarray
+
+
+@dataclass(frozen=True)
+class _IntegratedBraggPeak:
+    row: tuple[float, ...]
+    status: int
+    coverage: float
+    signal_to_noise: float
+
+
+def _prepare_bragg_integration(
+    data: MDHistoData,
+    *,
+    method: str,
+    box_half_widths,
+    ellipsoid_semiaxes,
+    ellipsoid_rotation,
+    subvoxel_samples: int,
+    gaussian_max_nfev: int,
+    background_mode: str,
+    background_inner_scale: float,
+    background_outer_scale: float,
+    minimum_peak_coverage: float,
+    minimum_background_coverage: float,
+    minimum_signal_to_noise: float | None,
+    maximum_background: float | None,
+    exclude_neighbor_regions: bool,
+    center_mode: str,
+    centroid_search_radius: float,
+    coordinate_frame: str,
+    gaussian_background: str,
+) -> _BraggIntegrationContext:
+    """Validate integration options and cache dataset-wide geometry."""
+
+    if data.signal.ndim != 3 or len(
+        [axis for axis in data.axes if axis.kind == "momentum"]
+    ) != 3:
+        raise ValueError(
+            "Bragg box integration requires a three-dimensional momentum histogram"
+        )
     semantics = signal_semantics(data)
     if semantics == "unknown":
         raise ValueError("Bragg integration requires signal_semantics metadata")
     vectors = physical_axis_vectors(data)[:, :3]
     if abs(float(np.linalg.det(vectors))) <= 1e-12:
         raise ValueError("momentum axes must be independent linear HKL projections")
+    components, direct_axes = _direct_hkl_axes(vectors)
+    if method not in {"box_sum", "ellipsoid_sum", "gaussian_fit"}:
+        raise ValueError("unknown Bragg integration method")
+    half_widths = np.asarray(
+        box_half_widths if method == "box_sum" else ellipsoid_semiaxes,
+        dtype=float,
+    )
+    if half_widths.shape != (3,) or np.any(half_widths <= 0):
+        raise ValueError("box_half_widths must contain three positive values")
+    if background_mode not in {"none", "shell"}:
+        raise ValueError("background_mode must be 'none' or 'shell'")
+    if background_mode == "shell" and not (
+        1 <= background_inner_scale < background_outer_scale
+    ):
+        raise ValueError("background scales must satisfy 1 <= inner < outer")
+    if center_mode not in {"nominal", "centroid"}:
+        raise ValueError("center_mode must be 'nominal' or 'centroid'")
+    if minimum_signal_to_noise is not None and minimum_signal_to_noise < 0:
+        raise ValueError("minimum_signal_to_noise must be nonnegative or None")
+    if maximum_background is not None and maximum_background < 0:
+        raise ValueError("maximum_background must be nonnegative or None")
+    if coordinate_frame not in {"hkl", "q_angstrom_inverse"}:
+        raise ValueError(
+            "coordinate_frame must be 'hkl' or 'q_angstrom_inverse'"
+        )
+    rotation = np.eye(3) if ellipsoid_rotation is None else ellipsoid_rotation
+    return _BraggIntegrationContext(
+        data=data,
+        method=method,
+        semantics=semantics,
+        vectors=vectors,
+        components=components,
+        direct_axes=direct_axes,
+        half_widths=half_widths,
+        ellipsoid_rotation=rotation,
+        subvoxel_samples=subvoxel_samples,
+        gaussian_max_nfev=gaussian_max_nfev,
+        coordinate_frame=coordinate_frame,
+        qmatrix=rlu_to_q_matrix(data.metadata),
+        all_edges=tuple(
+            bin_edges(axis, size)
+            for axis, size in zip(data.axes, data.shape, strict=True)
+        ),
+        all_measured=measured_mask(data),
+        all_qvolume=q_bin_volume(data),
+        background_mode=background_mode,
+        background_inner_scale=background_inner_scale,
+        background_outer_scale=background_outer_scale,
+        minimum_peak_coverage=minimum_peak_coverage,
+        minimum_background_coverage=minimum_background_coverage,
+        minimum_signal_to_noise=minimum_signal_to_noise,
+        maximum_background=maximum_background,
+        exclude_neighbor_regions=exclude_neighbor_regions,
+        center_mode=center_mode,
+        centroid_search_radius=centroid_search_radius,
+        gaussian_background=gaussian_background,
+    )
+
+
+def _direct_hkl_axes(vectors: np.ndarray) -> tuple[tuple[int, ...], bool]:
     components = []
     direct_axes = True
     for vector in vectors:
@@ -109,345 +298,479 @@ def integrate_bragg_peaks(
             components.append(0)
             continue
         components.append(int(nonzero[0]))
-    direct_axes = direct_axes and sorted(components) == [0, 1, 2]
-    if method not in {"box_sum", "ellipsoid_sum", "gaussian_fit"}:
-        raise ValueError("unknown Bragg integration method")
-    half = np.asarray(box_half_widths if method == "box_sum" else ellipsoid_semiaxes, dtype=float)
-    if half.shape != (3,) or np.any(half <= 0):
-        raise ValueError("box_half_widths must contain three positive values")
-    if background_mode not in {"none", "shell"}:
-        raise ValueError("background_mode must be 'none' or 'shell'")
-    if background_mode == "shell" and not (1 <= background_inner_scale < background_outer_scale):
-        raise ValueError("background scales must satisfy 1 <= inner < outer")
-    if center_mode not in {"nominal", "centroid"}:
-        raise ValueError("center_mode must be 'nominal' or 'centroid'")
-    if minimum_signal_to_noise is not None and minimum_signal_to_noise < 0:
-        raise ValueError("minimum_signal_to_noise must be nonnegative or None")
-    if maximum_background is not None and maximum_background < 0:
-        raise ValueError("maximum_background must be nonnegative or None")
-    if coordinate_frame not in {"hkl", "q_angstrom_inverse"}:
-        raise ValueError("coordinate_frame must be 'hkl' or 'q_angstrom_inverse'")
-    if ellipsoid_rotation is None:
-        ellipsoid_rotation = np.eye(3)
-    qmatrix = rlu_to_q_matrix(data.metadata)
-    all_edges = [bin_edges(axis, size) for axis, size in zip(data.axes, data.shape, strict=True)]
-    all_measured = measured_mask(data)
-    all_qvolume = q_bin_volume(data)
-    rows: list[tuple[float, ...]] = []
-    peak_array = np.asarray(peaks_hkl, dtype=float).reshape(-1, 3)
-    accepted_so_far = 0
-    if progress_callback is not None:
-        progress_callback(
-            {
-                "stage": "bragg_integration",
-                "completed": 0,
-                "total": len(peak_array),
-                "accepted_count": 0,
-                "rejected_count": 0,
-                "message": (
-                    f"Preparing {len(peak_array)} reflections using "
-                    f"{method.replace('_', ' ')}."
-                ),
-            }
-        )
-    for peak_index, nominal_peak in enumerate(peak_array):
-        peak = nominal_peak.copy()
-        if cancel_callback is not None and cancel_callback():
-            raise RuntimeError("Bragg integration cancelled")
-        if center_mode == "centroid":
-            centroid_slices = _region_slices(all_edges, vectors, peak, np.full(3, centroid_search_radius), np.eye(3), 1.0, coordinate_frame, qmatrix, "ellipsoid_sum")
-            centroid_edges = [edge[selection.start:selection.stop + 1] for edge, selection in zip(all_edges, centroid_slices, strict=True)]
-            centroid_data = _slice_mdhisto(data, centroid_slices, all_edges)
-            peak = _centroid_center(centroid_data, centroid_edges, vectors, peak, centroid_search_radius, all_measured[centroid_slices], qmatrix if coordinate_frame != "hkl" else None)
-        extent_scale = 3.0 if method == "gaussian_fit" else (background_outer_scale if background_mode == "shell" else 1.0)
-        slices = _region_slices(all_edges, vectors, peak, half, ellipsoid_rotation, extent_scale, coordinate_frame, qmatrix, method)
-        local = _slice_mdhisto(data, slices, all_edges)
-        edges = [edge[selection.start:selection.stop + 1] for edge, selection in zip(all_edges, slices, strict=True)]
-        measured = all_measured[slices]
-        qvolume = all_qvolume[slices]
-        if method == "gaussian_fit":
-            fit_row = _fit_gaussian(
-                local,
-                edges,
-                vectors,
-                peak,
-                half,
-                measured,
-                qvolume,
-                minimum_peak_coverage,
-                gaussian_max_nfev,
-                coordinate_frame,
-                gaussian_background,
-            )
-            (
-                fitted_h,
-                fitted_k,
-                fitted_l,
-                intensity,
-                sigma,
-                raw,
-                background,
-                signal_to_noise,
-                coverage,
-                background_coverage,
-                fit_status,
-                amplitude,
-                fit_baseline,
-                sigma_1,
-                sigma_2,
-                sigma_3,
-                reduced_chi_squared,
-                fit_window_peak,
-            ) = fit_row
-            status = _bragg_rejection_status(
-                coverage=coverage,
-                background_coverage=background_coverage,
-                signal_to_noise=signal_to_noise,
-                background=background,
-                minimum_peak_coverage=minimum_peak_coverage,
-                minimum_background_coverage=minimum_background_coverage,
-                minimum_signal_to_noise=minimum_signal_to_noise,
-                maximum_background=maximum_background,
-                fit_failed=fit_status != 0.0,
-            )
-            rows.append(
-                (
-                    *nominal_peak,
-                    fitted_h,
-                    fitted_k,
-                    fitted_l,
-                    intensity,
-                    sigma,
-                    raw,
-                    background,
-                    signal_to_noise,
-                    coverage,
-                    background_coverage,
-                    float(status == 0),
-                    float(status),
-                    amplitude,
-                    fit_baseline,
-                    sigma_1,
-                    sigma_2,
-                    sigma_3,
-                    reduced_chi_squared,
-                    fit_window_peak,
-                )
-            )
-            accepted_so_far += int(status == 0)
-            _report_bragg_progress(
-                progress_callback,
-                peak_index + 1,
-                len(peak_array),
-                nominal_peak,
-                status,
-                coverage,
-                signal_to_noise,
-                accepted_so_far,
-            )
-            continue
-        def region_fraction(scale, region_edges=edges, region_peak=peak):
-            if coordinate_frame == "hkl" and direct_axes:
-                if method == "box_sum":
-                    return _box_fraction(region_edges, components, region_peak, half * scale)
-                return _ellipsoid_fraction(
-                    region_edges,
-                    components,
-                    region_peak,
-                    half * scale,
-                    ellipsoid_rotation,
-                    subvoxel_samples,
-                )
-            return _sample_region_fraction(
-                region_edges,
-                vectors,
-                region_peak,
-                half * scale,
-                ellipsoid_rotation,
-                subvoxel_samples,
-                None if coordinate_frame == "hkl" else qmatrix,
-                method,
-            )
-        peak_fraction = region_fraction(1.0)
-        peak_total = _integration_weights(data, peak_fraction, qvolume, semantics)
-        peak_measured = np.where(measured, peak_total, 0.0)
-        peak_volume = float(np.sum(peak_measured))
-        geometric_peak_volume = _expected_region_weight(
-            data,
-            half,
-            method,
-            coordinate_frame,
-            semantics,
-            vectors,
-            qmatrix,
+    return tuple(components), direct_axes and sorted(components) == [0, 1, 2]
+
+
+def _integrate_bragg_peak(
+    context: _BraggIntegrationContext,
+    nominal_peak: np.ndarray,
+    all_peaks: np.ndarray,
+) -> _IntegratedBraggPeak:
+    region = _local_peak_region(context, nominal_peak)
+    if context.method == "gaussian_fit":
+        return _integrate_gaussian_peak(context, nominal_peak, region)
+    return _integrate_summed_peak(context, nominal_peak, region, all_peaks)
+
+
+def _local_peak_region(
+    context: _BraggIntegrationContext,
+    nominal_peak: np.ndarray,
+) -> _LocalPeakRegion:
+    peak = nominal_peak.copy()
+    if context.center_mode == "centroid":
+        centroid_slices = _region_slices(
+            context.all_edges,
+            context.vectors,
+            peak,
+            np.full(3, context.centroid_search_radius),
+            np.eye(3),
             1.0,
+            context.coordinate_frame,
+            context.qmatrix,
+            "ellipsoid_sum",
         )
-        coverage = min(peak_volume / geometric_peak_volume, 1.0) if geometric_peak_volume > 0 else 0.0
-        raw = float(np.sum(local.signal * peak_measured))
-        raw_var = float(np.sum((local.errors * peak_measured) ** 2))
-        background = 0.0
-        background_var = 0.0
-        background_coverage = 1.0
-        if background_mode == "shell":
-            outer = region_fraction(background_outer_scale)
-            inner = region_fraction(background_inner_scale)
-            shell_fraction = np.clip(outer - inner, 0.0, 1.0)
-            shell_before_neighbor_exclusion = shell_fraction.copy()
-            if exclude_neighbor_regions:
-                for neighbor in np.asarray(peaks_hkl, dtype=float).reshape(-1, 3):
-                    if np.allclose(neighbor, peak):
-                        continue
-                    neighbor_fraction = (
-                        (_box_fraction(edges, components, neighbor, half) if method == "box_sum" else _ellipsoid_fraction(edges, components, neighbor, half, ellipsoid_rotation, subvoxel_samples))
-                        if coordinate_frame == "hkl" and direct_axes
-                        else _sample_region_fraction(edges, vectors, neighbor, half, ellipsoid_rotation, subvoxel_samples, None if coordinate_frame == "hkl" else qmatrix, method)
-                    )
-                    shell_fraction *= 1.0 - neighbor_fraction
-            shell_total = _integration_weights(data, shell_fraction, qvolume, semantics)
-            shell_measured = np.where(measured, shell_total, 0.0)
-            shell_volume = float(np.sum(shell_measured))
-            geometric_shell_volume = _expected_region_weight(
-                data,
-                half,
-                method,
-                coordinate_frame,
-                semantics,
-                vectors,
-                qmatrix,
-                background_outer_scale,
-            ) - _expected_region_weight(
-                data,
-                half,
-                method,
-                coordinate_frame,
-                semantics,
-                vectors,
-                qmatrix,
-                background_inner_scale,
-            )
-            excluded_neighbor_weight = float(
-                np.sum(
-                    _integration_weights(
-                        data,
-                        shell_before_neighbor_exclusion - shell_fraction,
-                        qvolume,
-                        semantics,
-                    )
-                )
-            )
-            geometric_shell_volume = max(geometric_shell_volume - excluded_neighbor_weight, 0.0)
-            background_coverage = (
-                min(shell_volume / geometric_shell_volume, 1.0)
-                if geometric_shell_volume > 0
-                else 0.0
-            )
-            if shell_volume > 0:
-                shell_sum = float(np.sum(local.signal * shell_measured))
-                shell_var = float(np.sum((local.errors * shell_measured) ** 2))
-                ratio = peak_volume / shell_volume
-                background = shell_sum * ratio
-                background_var = shell_var * ratio**2
-        intensity = raw - background
-        sigma = np.sqrt(raw_var + background_var)
-        signal_to_noise = intensity / sigma if sigma > 0 else np.nan
-        status = _bragg_rejection_status(
-            coverage=coverage,
-            background_coverage=background_coverage,
-            signal_to_noise=signal_to_noise,
-            background=background,
-            minimum_peak_coverage=minimum_peak_coverage,
-            minimum_background_coverage=minimum_background_coverage,
-            minimum_signal_to_noise=minimum_signal_to_noise,
-            maximum_background=maximum_background,
+        peak = _centroid_center(
+            _slice_mdhisto(context.data, centroid_slices, context.all_edges),
+            _sliced_edges(context.all_edges, centroid_slices),
+            context.vectors,
+            peak,
+            context.centroid_search_radius,
+            context.all_measured[centroid_slices],
+            context.qmatrix if context.coordinate_frame != "hkl" else None,
         )
-        rows.append(
-            (
-                *nominal_peak,
-                *peak,
-                intensity,
-                sigma,
-                raw,
-                background,
-                signal_to_noise,
-                coverage,
-                background_coverage,
-                float(status == 0),
-                float(status),
-                np.nan,
-                np.nan,
-                np.nan,
-                np.nan,
-                np.nan,
-                np.nan,
-            )
+    extent_scale = (
+        3.0
+        if context.method == "gaussian_fit"
+        else (
+            context.background_outer_scale
+            if context.background_mode == "shell"
+            else 1.0
         )
-        accepted_so_far += int(status == 0)
-        _report_bragg_progress(
-            progress_callback,
-            peak_index + 1,
-            len(peak_array),
-            nominal_peak,
-            status,
-            coverage,
-            signal_to_noise,
-            accepted_so_far,
-        )
-    if progress_callback is not None:
-        progress_callback(
-            {
-                "stage": "bragg_integration",
-                "completed": len(peak_array),
-                "total": len(peak_array),
-                "accepted_count": accepted_so_far,
-                "rejected_count": len(peak_array) - accepted_so_far,
-                "message": (
-                    f"Bragg integration complete: {accepted_so_far} accepted, "
-                    f"{len(peak_array) - accepted_so_far} rejected."
-                ),
-            }
-        )
-    raw_name = "FitWindowRaw" if method == "gaussian_fit" else "RawI"
-    background_name = (
-        "FitWindowBackground" if method == "gaussian_fit" else "Background"
     )
+    slices = _region_slices(
+        context.all_edges,
+        context.vectors,
+        peak,
+        context.half_widths,
+        context.ellipsoid_rotation,
+        extent_scale,
+        context.coordinate_frame,
+        context.qmatrix,
+        context.method,
+    )
+    return _LocalPeakRegion(
+        center=peak,
+        data=_slice_mdhisto(context.data, slices, context.all_edges),
+        edges=_sliced_edges(context.all_edges, slices),
+        measured=context.all_measured[slices],
+        qvolume=context.all_qvolume[slices],
+    )
+
+
+def _sliced_edges(
+    edges: tuple[np.ndarray, ...],
+    slices: tuple[slice, ...],
+) -> tuple[np.ndarray, ...]:
+    return tuple(
+        edge[selection.start : selection.stop + 1]
+        for edge, selection in zip(edges, slices, strict=True)
+    )
+
+
+def _integrate_gaussian_peak(
+    context: _BraggIntegrationContext,
+    nominal_peak: np.ndarray,
+    region: _LocalPeakRegion,
+) -> _IntegratedBraggPeak:
+    fit_row = _fit_gaussian(
+        region.data,
+        region.edges,
+        context.vectors,
+        region.center,
+        context.half_widths,
+        region.measured,
+        region.qvolume,
+        context.minimum_peak_coverage,
+        context.gaussian_max_nfev,
+        context.coordinate_frame,
+        context.gaussian_background,
+    )
+    (
+        fitted_h,
+        fitted_k,
+        fitted_l,
+        intensity,
+        sigma,
+        raw,
+        background,
+        signal_to_noise,
+        coverage,
+        background_coverage,
+        fit_status,
+        amplitude,
+        fit_baseline,
+        sigma_1,
+        sigma_2,
+        sigma_3,
+        reduced_chi_squared,
+        fit_window_peak,
+    ) = fit_row
+    status = _peak_rejection_status(
+        context,
+        coverage,
+        background_coverage,
+        signal_to_noise,
+        background,
+        fit_failed=fit_status != 0.0,
+    )
+    return _IntegratedBraggPeak(
+        row=(
+            *nominal_peak,
+            fitted_h,
+            fitted_k,
+            fitted_l,
+            intensity,
+            sigma,
+            raw,
+            background,
+            signal_to_noise,
+            coverage,
+            background_coverage,
+            float(status == 0),
+            float(status),
+            amplitude,
+            fit_baseline,
+            sigma_1,
+            sigma_2,
+            sigma_3,
+            reduced_chi_squared,
+            fit_window_peak,
+        ),
+        status=status,
+        coverage=coverage,
+        signal_to_noise=signal_to_noise,
+    )
+
+
+def _integrate_summed_peak(
+    context: _BraggIntegrationContext,
+    nominal_peak: np.ndarray,
+    region: _LocalPeakRegion,
+    all_peaks: np.ndarray,
+) -> _IntegratedBraggPeak:
+    peak_fraction = _region_fraction(context, region.edges, region.center, 1.0)
+    peak_total = _integration_weights(
+        context.data,
+        peak_fraction,
+        region.qvolume,
+        context.semantics,
+    )
+    peak_measured = np.where(region.measured, peak_total, 0.0)
+    peak_volume = float(np.sum(peak_measured))
+    geometric_peak_volume = _expected_region_weight(
+        context.data,
+        context.half_widths,
+        context.method,
+        context.coordinate_frame,
+        context.semantics,
+        context.vectors,
+        context.qmatrix,
+        1.0,
+    )
+    coverage = (
+        min(peak_volume / geometric_peak_volume, 1.0)
+        if geometric_peak_volume > 0
+        else 0.0
+    )
+    raw = float(np.sum(region.data.signal * peak_measured))
+    raw_var = float(np.sum((region.data.errors * peak_measured) ** 2))
+    background, background_var, background_coverage = _shell_background(
+        context,
+        region,
+        all_peaks,
+        peak_volume,
+    )
+    intensity = raw - background
+    sigma = np.sqrt(raw_var + background_var)
+    signal_to_noise = intensity / sigma if sigma > 0 else np.nan
+    status = _peak_rejection_status(
+        context,
+        coverage,
+        background_coverage,
+        signal_to_noise,
+        background,
+    )
+    return _IntegratedBraggPeak(
+        row=(
+            *nominal_peak,
+            *region.center,
+            intensity,
+            sigma,
+            raw,
+            background,
+            signal_to_noise,
+            coverage,
+            background_coverage,
+            float(status == 0),
+            float(status),
+            np.nan,
+            np.nan,
+            np.nan,
+            np.nan,
+            np.nan,
+            np.nan,
+        ),
+        status=status,
+        coverage=coverage,
+        signal_to_noise=signal_to_noise,
+    )
+
+
+def _region_fraction(
+    context: _BraggIntegrationContext,
+    edges: tuple[np.ndarray, ...],
+    center: np.ndarray,
+    scale: float,
+) -> np.ndarray:
+    half_widths = context.half_widths * scale
+    if context.coordinate_frame == "hkl" and context.direct_axes:
+        if context.method == "box_sum":
+            return _box_fraction(
+                edges, context.components, center, half_widths
+            )
+        return _ellipsoid_fraction(
+            edges,
+            context.components,
+            center,
+            half_widths,
+            context.ellipsoid_rotation,
+            context.subvoxel_samples,
+        )
+    return _sample_region_fraction(
+        edges,
+        context.vectors,
+        center,
+        half_widths,
+        context.ellipsoid_rotation,
+        context.subvoxel_samples,
+        None if context.coordinate_frame == "hkl" else context.qmatrix,
+        context.method,
+    )
+
+
+def _shell_background(
+    context: _BraggIntegrationContext,
+    region: _LocalPeakRegion,
+    all_peaks: np.ndarray,
+    peak_volume: float,
+) -> tuple[float, float, float]:
+    if context.background_mode != "shell":
+        return 0.0, 0.0, 1.0
+    outer = _region_fraction(
+        context, region.edges, region.center, context.background_outer_scale
+    )
+    inner = _region_fraction(
+        context, region.edges, region.center, context.background_inner_scale
+    )
+    shell_fraction = np.clip(outer - inner, 0.0, 1.0)
+    shell_before_neighbor_exclusion = shell_fraction.copy()
+    if context.exclude_neighbor_regions:
+        for neighbor in all_peaks:
+            if np.allclose(neighbor, region.center):
+                continue
+            shell_fraction *= 1.0 - _region_fraction(
+                context, region.edges, neighbor, 1.0
+            )
+    shell_total = _integration_weights(
+        context.data,
+        shell_fraction,
+        region.qvolume,
+        context.semantics,
+    )
+    shell_measured = np.where(region.measured, shell_total, 0.0)
+    shell_volume = float(np.sum(shell_measured))
+    geometric_shell_volume = _expected_region_weight(
+        context.data,
+        context.half_widths,
+        context.method,
+        context.coordinate_frame,
+        context.semantics,
+        context.vectors,
+        context.qmatrix,
+        context.background_outer_scale,
+    ) - _expected_region_weight(
+        context.data,
+        context.half_widths,
+        context.method,
+        context.coordinate_frame,
+        context.semantics,
+        context.vectors,
+        context.qmatrix,
+        context.background_inner_scale,
+    )
+    excluded_neighbor_weight = float(
+        np.sum(
+            _integration_weights(
+                context.data,
+                shell_before_neighbor_exclusion - shell_fraction,
+                region.qvolume,
+                context.semantics,
+            )
+        )
+    )
+    geometric_shell_volume = max(
+        geometric_shell_volume - excluded_neighbor_weight, 0.0
+    )
+    background_coverage = (
+        min(shell_volume / geometric_shell_volume, 1.0)
+        if geometric_shell_volume > 0
+        else 0.0
+    )
+    if shell_volume <= 0:
+        return 0.0, 0.0, background_coverage
+    shell_sum = float(np.sum(region.data.signal * shell_measured))
+    shell_var = float(np.sum((region.data.errors * shell_measured) ** 2))
+    ratio = peak_volume / shell_volume
+    return shell_sum * ratio, shell_var * ratio**2, background_coverage
+
+
+def _peak_rejection_status(
+    context: _BraggIntegrationContext,
+    coverage: float,
+    background_coverage: float,
+    signal_to_noise: float,
+    background: float,
+    *,
+    fit_failed: bool = False,
+) -> int:
+    return _bragg_rejection_status(
+        coverage=coverage,
+        background_coverage=background_coverage,
+        signal_to_noise=signal_to_noise,
+        background=background,
+        minimum_peak_coverage=context.minimum_peak_coverage,
+        minimum_background_coverage=context.minimum_background_coverage,
+        minimum_signal_to_noise=context.minimum_signal_to_noise,
+        maximum_background=context.maximum_background,
+        fit_failed=fit_failed,
+    )
+
+
+def _report_bragg_start(callback, peak_count: int, method: str) -> None:
+    if callback is None:
+        return
+    callback(
+        {
+            "stage": "bragg_integration",
+            "completed": 0,
+            "total": peak_count,
+            "accepted_count": 0,
+            "rejected_count": 0,
+            "message": (
+                f"Preparing {peak_count} reflections using "
+                f"{method.replace('_', ' ')}."
+            ),
+        }
+    )
+
+
+def _report_bragg_complete(
+    callback, peak_count: int, accepted_count: int
+) -> None:
+    if callback is None:
+        return
+    rejected_count = peak_count - accepted_count
+    callback(
+        {
+            "stage": "bragg_integration",
+            "completed": peak_count,
+            "total": peak_count,
+            "accepted_count": accepted_count,
+            "rejected_count": rejected_count,
+            "message": (
+                f"Bragg integration complete: {accepted_count} accepted, "
+                f"{rejected_count} rejected."
+            ),
+        }
+    )
+
+
+def _build_bragg_result(
+    rows: list[tuple[float, ...]],
+    context: _BraggIntegrationContext,
+) -> PointListData:
+    gaussian_fit = context.method == "gaussian_fit"
+    raw_name = "FitWindowRaw" if gaussian_fit else "RawI"
+    background_name = "FitWindowBackground" if gaussian_fit else "Background"
     names = (
         "NominalH", "NominalK", "NominalL", "H", "K", "L", "I", "dI",
         raw_name, background_name, "I/dI", "Coverage", "BackgroundCoverage",
         "Accepted", "Status", "FitAmplitude", "FitBaseline", "FitSigma1",
         "FitSigma2", "FitSigma3", "ReducedChi2",
     )
-    if method == "gaussian_fit":
+    if gaussian_fit:
         names = (*names, "FitWindowPeak")
     values = np.asarray(rows, dtype=float).reshape(-1, len(names))
     columns = {name: values[:, index] for index, name in enumerate(names)}
     accepted_count = int(np.count_nonzero(columns["Accepted"]))
-    metadata = {
+    quantity_types = {
+        "I": "scattering_intensity",
+        "dI": "scattering_intensity",
+        raw_name: "scattering_intensity",
+        background_name: "scattering_intensity",
+    }
+    if gaussian_fit:
+        quantity_types["FitWindowPeak"] = "scattering_intensity"
+    return PointListData(
+        columns,
+        coordinate_names=["H", "K", "L"],
+        channels=[
+            {"label": "Integrated intensity", "value": "I", "error": "dI"},
+            {"label": "Background", "value": background_name, "error": None},
+            {"label": "I/dI", "value": "I/dI", "error": None},
+        ],
+        metadata=_bragg_result_metadata(context, len(rows), accepted_count),
+        quantity_types=quantity_types,
+    )
+
+
+def _bragg_result_metadata(
+    context: _BraggIntegrationContext,
+    peak_count: int,
+    accepted_count: int,
+) -> dict[str, object]:
+    gaussian_fit = context.method == "gaussian_fit"
+    return {
         "analysis_kind": "bragg_peak_integration",
-        "method": method,
-        "coordinate_frame": coordinate_frame,
-        "background_mode": background_mode,
+        "method": context.method,
+        "coordinate_frame": context.coordinate_frame,
+        "background_mode": context.background_mode,
         "intensity_definition": (
             "full_analytic_gaussian_integral"
-            if method == "gaussian_fit"
+            if gaussian_fit
             else "measured_integration_region"
         ),
         "background_definition": (
             "fitted_background_integrated_over_measured_fit_window"
-            if method == "gaussian_fit"
+            if gaussian_fit
             else "local_shell_scaled_to_peak_region"
         ),
         "uncertainty_convention": "supplied_absolute_one_sigma",
-        "integration_half_widths": half.tolist(),
-        "ellipsoid_rotation": np.asarray(ellipsoid_rotation, dtype=float).tolist(),
-        "background_inner_scale": float(background_inner_scale),
-        "background_outer_scale": float(background_outer_scale),
-        "minimum_peak_coverage": float(minimum_peak_coverage),
-        "minimum_background_coverage": float(minimum_background_coverage),
-        "minimum_signal_to_noise": minimum_signal_to_noise,
-        "maximum_background": maximum_background,
-        "peak_count": int(len(rows)),
+        "integration_half_widths": context.half_widths.tolist(),
+        "ellipsoid_rotation": np.asarray(
+            context.ellipsoid_rotation, dtype=float
+        ).tolist(),
+        "background_inner_scale": float(context.background_inner_scale),
+        "background_outer_scale": float(context.background_outer_scale),
+        "minimum_peak_coverage": float(context.minimum_peak_coverage),
+        "minimum_background_coverage": float(
+            context.minimum_background_coverage
+        ),
+        "minimum_signal_to_noise": context.minimum_signal_to_noise,
+        "maximum_background": context.maximum_background,
+        "peak_count": int(peak_count),
         "accepted_count": accepted_count,
-        "rejected_count": int(len(rows) - accepted_count),
+        "rejected_count": int(peak_count - accepted_count),
         "status_bits": {
             "1": "peak coverage below threshold",
             "2": "background coverage below threshold",
@@ -456,28 +779,6 @@ def integrate_bragg_peaks(
             "16": "Gaussian fit failed or had insufficient points",
         },
     }
-    background_column = (
-        "FitWindowBackground" if method == "gaussian_fit" else "Background"
-    )
-    quantity_types = {
-        "I": "scattering_intensity",
-        "dI": "scattering_intensity",
-        raw_name: "scattering_intensity",
-        background_name: "scattering_intensity",
-    }
-    if method == "gaussian_fit":
-        quantity_types["FitWindowPeak"] = "scattering_intensity"
-    return PointListData(
-        columns,
-        coordinate_names=["H", "K", "L"],
-        channels=[
-            {"label": "Integrated intensity", "value": "I", "error": "dI"},
-            {"label": "Background", "value": background_column, "error": None},
-            {"label": "I/dI", "value": "I/dI", "error": None},
-        ],
-        metadata=metadata,
-        quantity_types=quantity_types,
-    )
 
 
 def _report_bragg_progress(
