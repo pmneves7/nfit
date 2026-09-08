@@ -10,7 +10,6 @@ from nfit.importers import IMPORTERS, import_with, probe_importers
 from nfit.macs import import_macs_nexus, is_macs_nexus_file
 from nfit.mdhisto import MDHistoData
 from nfit.pipeline import DataGroup
-from nfit.plotting import default_plot_grid_fill_neighbors
 from nfit.project_gui import (
     GROUP_COMPOSITE_KEY,
     NfitProjectExplorer,
@@ -201,9 +200,6 @@ def test_macs_batch_import_expands_streams_and_prepares_composites(
         assert isinstance(composite, MDHistoData)
         assert composite.signal.size <= 2_000_000
         assert np.count_nonzero(~composite.mask) > 0
-        assert default_plot_grid_fill_neighbors(composite) == (
-            2 if node.name.startswith("MACS SPEC") else 0
-        )
         np.testing.assert_allclose(
             composite.metadata["ub_matrix"], node.metadata["ub_matrix"]
         )

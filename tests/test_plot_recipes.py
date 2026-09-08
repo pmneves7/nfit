@@ -26,7 +26,7 @@ def test_plot_recipe_renders_and_exports_backend_script(tmp_path):
     compile(script, "generated_plot.py", "exec")
 
 
-def test_slice_recipe_honors_plot_only_empty_bin_fill_setting():
+def test_slice_recipe_preserves_empty_bins_from_legacy_fill_recipe():
     axes = (
         MDHistoAxis("H", np.arange(4.0), "rlu", "momentum"),
         MDHistoAxis("K", np.arange(4.0), "rlu", "momentum"),
@@ -48,13 +48,10 @@ def test_slice_recipe_honors_plot_only_empty_bin_fill_setting():
         plot_type="mdhisto_slice",
     )
 
-    raw = render_plot(entry, data).axes[0].collections[0].get_array()
     entry.settings["empty_bin_fill_neighbors"] = 2
-    filled = render_plot(entry, data).axes[0].collections[0].get_array()
+    rendered = render_plot(entry, data).axes[0].collections[0].get_array()
 
-    assert np.ma.getmaskarray(raw)[1, 1]
-    assert not np.ma.getmaskarray(filled)[1, 1]
-    assert filled[1, 1] == 3.0
+    assert np.ma.getmaskarray(rendered)[1, 1]
 
 
 def test_plot_entries_persist_with_the_project_schema():

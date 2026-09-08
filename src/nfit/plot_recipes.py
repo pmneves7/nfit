@@ -161,11 +161,6 @@ def render_plot(
             power_gamma=float(settings.get("power_gamma", 0.5)),
             smoothing_sigma_x=float(settings.get("smoothing_x", 0.0)),
             smoothing_sigma_y=float(settings.get("smoothing_y", 0.0)),
-            empty_bin_fill_neighbors=(
-                int(settings["empty_bin_fill_neighbors"])
-                if "empty_bin_fill_neighbors" in settings
-                else None
-            ),
             xlim=_pair(settings.get("xlim")),
             ylim=_pair(settings.get("ylim")),
             font_size=float(settings.get("font_size", 12.0)),
@@ -235,11 +230,6 @@ def render_plot(
             power_gamma=float(settings.get("power_gamma", 0.5)),
             smoothing_sigma_x=float(settings.get("smoothing_x", 0.0)),
             smoothing_sigma_y=float(settings.get("smoothing_y", 0.0)),
-            empty_bin_fill_neighbors=(
-                int(settings["empty_bin_fill_neighbors"])
-                if "empty_bin_fill_neighbors" in settings
-                else None
-            ),
             xlim=_pair(settings.get("xlim")),
             ylim=_pair(settings.get("ylim")),
             font_size=float(settings.get("font_size", 12.0)),

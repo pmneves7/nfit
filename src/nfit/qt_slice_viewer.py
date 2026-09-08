@@ -18,12 +18,10 @@ from .plotting import (
     MDHistoSliceViewer,
     TiledSlice,
     WaterfallTrace,
-    default_plot_grid_fill_neighbors,
     default_tiled_slice_step,
     default_waterfall_offset,
     default_waterfall_step,
     draw_waterfall_traces,
-    fill_plot_grid_holes,
     inverse_variance_weighted_profile,
     prepare_mdhisto_tiled_slices,
     prepare_mdhisto_waterfall,
@@ -294,7 +292,6 @@ class QtMDHistoSliceViewer:
         self.axis_linewidth = 1.5
         self.smoothing_x = 0.0
         self.smoothing_y = 0.0
-        self.empty_bin_fill_neighbors = default_plot_grid_fill_neighbors(initial_data)
         self.marker = "o"
         self.line_style = "none"
         self.marker_size = 5.0
@@ -397,7 +394,6 @@ class QtMDHistoSliceViewer:
             tile_label_si_prefix=self.tile_label_si_prefix,
             show_tile_labels=self.show_tile_labels,
             tile_local_color_scales=self.tile_local_color_scales,
-            empty_bin_fill_neighbors=self.empty_bin_fill_neighbors,
         )
         self._plot_layout_mode: tuple[Any, ...] | None = None
         self._compare_axes = []
@@ -559,7 +555,6 @@ class QtMDHistoSliceViewer:
             "manual_vmax": self.model.manual_vmax,
             "smoothing_x": self.smoothing_x,
             "smoothing_y": self.smoothing_y,
-            "empty_bin_fill_neighbors": self.empty_bin_fill_neighbors,
             "xlim": xlim,
             "ylim": ylim,
             "font_size": self.font_size,
@@ -655,12 +650,6 @@ class QtMDHistoSliceViewer:
         self.model.autoscale = bool(settings.get("autoscale", self.model.autoscale))
         self.smoothing_x = float(settings.get("smoothing_x", self.smoothing_x))
         self.smoothing_y = float(settings.get("smoothing_y", self.smoothing_y))
-        self.empty_bin_fill_neighbors = int(
-            settings.get(
-                "empty_bin_fill_neighbors",
-                self.empty_bin_fill_neighbors,
-            )
-        )
         self._set_spin_silent(self.smoothing_x_spin, self.smoothing_x)
         self._set_spin_silent(self.smoothing_y_spin, self.smoothing_y)
         self._set_font_size(float(settings.get("font_size", self.font_size)))
@@ -1013,7 +1002,6 @@ class QtMDHistoSliceViewer:
                 f"    power_gamma={self.model.power_gamma!r},",
                 f"    smoothing_sigma_x={self.smoothing_x!r},",
                 f"    smoothing_sigma_y={self.smoothing_y!r},",
-                f"    empty_bin_fill_neighbors={self.empty_bin_fill_neighbors!r},",
                 f"    xlim={self._export_limits('x')!r},",
                 f"    ylim={self._export_limits('y')!r},",
                 f"    font_size={self.font_size!r},",
@@ -1070,7 +1058,6 @@ class QtMDHistoSliceViewer:
                 f"    power_gamma={self.model.power_gamma!r},",
                 f"    smoothing_sigma_x={self.smoothing_x!r},",
                 f"    smoothing_sigma_y={self.smoothing_y!r},",
-                f"    empty_bin_fill_neighbors={self.empty_bin_fill_neighbors!r},",
                 f"    xlim={self._export_limits('x')!r},",
                 f"    ylim={self._export_limits('y')!r},",
                 f"    font_size={self.font_size!r},",
@@ -1627,7 +1614,6 @@ class QtMDHistoSliceViewer:
             cmap_reversed=bool(self.model.cmap_reversed),
             smoothing_x=float(self.smoothing_x),
             smoothing_y=float(self.smoothing_y),
-            empty_bin_fill_neighbors=int(self.empty_bin_fill_neighbors),
             tile_dim=self.tile_dim,
             tile_range=self.tile_range,
             tile_step=float(self.tile_step),
@@ -1675,7 +1661,6 @@ class QtMDHistoSliceViewer:
             model=model,
             apply_masks=bool(model.masked),
             show_fit=bool(data.metadata.get("viewer_show_fit", False)),
-            empty_bin_fill_neighbors=default_plot_grid_fill_neighbors(data),
             tile_dim=tile_dim,
             tile_range=tile_range,
             tile_step=tile_step,
@@ -1714,7 +1699,6 @@ class QtMDHistoSliceViewer:
             self.residual_percent = int(state.residual_percent)
             self.smoothing_x = float(state.smoothing_x)
             self.smoothing_y = float(state.smoothing_y)
-            self.empty_bin_fill_neighbors = int(state.empty_bin_fill_neighbors)
             self.tile_dim = state.tile_dim
             self.tile_range = tuple(state.tile_range)
             self.tile_step = float(state.tile_step)
@@ -3524,14 +3508,7 @@ class QtMDHistoSliceViewer:
         )
         self._current_tiled_slices = slices
         self._current_slice = slices[0].view
-        plot_values = [
-            fill_plot_grid_holes(
-                panel.values,
-                minimum_neighbors=self.empty_bin_fill_neighbors,
-            )
-            for panel in slices
-        ]
-        combined = np.concatenate([values.ravel() for values in plot_values])
+        combined = np.concatenate([panel.values.ravel() for panel in slices])
         shared_norm = self.model._color_norm(combined)
         vmin, vmax = self.model._color_limits(combined)
         local_color_scales = bool(
@@ -3544,19 +3521,19 @@ class QtMDHistoSliceViewer:
         columns = int(np.ceil(np.sqrt(len(slices))))
         rows = int(np.ceil(len(slices) / columns))
         artists = []
-        for index, (axis, panel, panel_values) in enumerate(
-            zip(self._tile_axes, slices, plot_values, strict=True)
+        for index, (axis, panel) in enumerate(
+            zip(self._tile_axes, slices, strict=True)
         ):
             row, column = divmod(index, columns)
             norm = (
-                self.model._color_norm(panel_values)
+                self.model._color_norm(panel.values)
                 if local_color_scales
                 else shared_norm
             )
             artist = axis.pcolormesh(
                 panel.view["x_edges"],
                 panel.view["y_edges"],
-                panel_values,
+                panel.values,
                 shading="auto",
                 cmap=self.model._effective_cmap(),
                 norm=norm,
@@ -4276,15 +4253,11 @@ class QtMDHistoSliceViewer:
         self.canvas.draw_idle()
 
     def _draw_2d_view(self, view: dict[str, np.ndarray], values: np.ndarray) -> None:
-        plot_values = fill_plot_grid_holes(
-            values,
-            minimum_neighbors=self.empty_bin_fill_neighbors,
-        )
-        norm = self.model._color_norm(plot_values)
+        norm = self.model._color_norm(values)
         self.image = self.ax_image.pcolormesh(
             view["x_edges"],
             view["y_edges"],
-            plot_values,
+            values,
             shading="auto",
             cmap=self.model._effective_cmap(),
             norm=norm,

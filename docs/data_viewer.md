@@ -71,14 +71,6 @@ Plot smoothing is specified in displayed-bin widths. It affects only the
 rendered figure and exported figure recipe, not fitting, rebinning, or numerical
 data exports.
 
-MACS SPEC histograms also use DAVE's default plot-only empty-cell treatment:
-an empty cell with at least two finite orthogonal neighbors is colored by their
-mean. The replacement is simultaneous, so filled cells do not propagate into
-larger gaps. Stored histogram values, masks, uncertainties, cursor readouts,
-box cuts, fitting, and numerical exports remain unchanged. Generated slice and
-tiled-slice scripts record this as `empty_bin_fill_neighbors=2`; pass `0` to
-the public plotting functions to show every empty bin.
-
 ## Model and residual channels
 
 **Show model** evaluates the current compatible model or reuses stored

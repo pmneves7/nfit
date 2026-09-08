@@ -14,9 +14,7 @@ from nfit import PointData4D
 from nfit.mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
 from nfit.plotting import (
     MDHistoSliceViewer,
-    default_plot_grid_fill_neighbors,
     default_tiled_slice_step,
-    fill_plot_grid_holes,
     gaussian_smooth_nan,
     gaussian_smooth_uncertainty,
     inverse_variance_weighted_profile,
@@ -74,32 +72,6 @@ def test_gaussian_plot_smoothing_propagates_independent_uncertainties():
 
     assert np.isnan(smoothed[2])
     assert np.all(smoothed[[0, 1, 3, 4]] < 1.0)
-
-
-def test_dave_plot_grid_fill_is_simultaneous_and_requires_two_neighbors():
-    values = np.array(
-        [
-            [np.nan, 2.0, np.nan],
-            [4.0, np.nan, np.nan],
-            [np.nan, np.nan, 8.0],
-        ]
-    )
-
-    filled = fill_plot_grid_holes(values, minimum_neighbors=2)
-
-    assert filled[1, 1] == pytest.approx(3.0)
-    assert np.isnan(filled[1, 2])
-    assert np.isnan(filled[2, 1])
-    assert np.isnan(values[1, 1])
-
-
-def test_macs_spec_histograms_default_to_dave_empty_cell_display_fill():
-    data = _tiny_mdhisto_data().with_updates(
-        metadata={"importer": "macs_nexus", "detector_stream": "SPEC"}
-    )
-
-    assert default_plot_grid_fill_neighbors(data) == 2
-    assert default_plot_grid_fill_neighbors(_tiny_mdhisto_data()) == 0
 
 
 def test_plotting_helpers_return_axes():
