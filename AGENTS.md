@@ -58,9 +58,17 @@ different Python.
 - `src/nfit/project_group_panels.py`, `project_dataset_panels.py`, and
   `project_data_panels.py`: focused dataset/composite detail builders and their
   compatibility dispatch.
+- `src/nfit/project_window_builder.py`, `project_model_editor.py`,
+  `project_lindhard_editor.py`, and `project_tight_binding_editor.py`: project
+  window construction and focused model-editor presentation helpers.
 - `src/nfit/project_imports.py`: GUI-independent import, source, and reload orchestration.
-- `src/nfit/project_data.py`: GUI-independent dataset preparation, composites,
-  derived data, and viewer-ready orchestration.
+- `src/nfit/project_data.py`: GUI-independent dataset preparation facade,
+  derived-data coordination, and viewer-ready orchestration.
+- `src/nfit/project_composites.py`: hierarchical composite planning,
+  materialization, caching, and background alignment.
+- `src/nfit/project_dataset_io.py`, `project_point_lists.py`, `project_masks.py`,
+  and `project_coordinates.py`: dataset archives, point-list preparation,
+  masks, and coordinate projection services.
 - `src/nfit/project_rebinning.py`: numerical grid configuration, symmetry-aware
   rebinning, and histogram construction.
 - `src/nfit/project_view_data.py`: immutable scale, kinematic, spectral-channel,
@@ -69,8 +77,10 @@ different Python.
   serialization, fit-history snapshots, and model-state reconciliation.
 - `src/nfit/project_import_dialogs.py`, `fit_diagnostics_gui.py`, and
   `analysis_window_builder.py`: focused Qt presentation helpers.
-- `src/nfit/qt_slice_viewer.py`: interactive data viewer.
-- `src/nfit/fit_config.py`: model-component compilation and parameter mapping.
+- `src/nfit/qt_slice_viewer.py`, `qt_slice_modes.py`, and `plotting_core.py`:
+  interactive viewer coordination, slice-mode controllers, and plot primitives.
+- `src/nfit/fit_config.py`, `fit_config_electronic.py`, and
+  `fit_config_heisenberg_rpa.py`: model-component compilation and parameter mapping.
 - `src/nfit/fitting.py`: optimizer-facing fitting framework.
 - `src/nfit/cross_section.py`: neutron cross-section and susceptibility
   conversions.

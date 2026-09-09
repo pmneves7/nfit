@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import importlib
 import subprocess
 import sys
 from pathlib import Path
@@ -115,6 +116,36 @@ assert project_data.composite_dataset_data is project_composites.composite_datas
 assert project_data._COMPOSITE_DATA_CACHE is project_composites._COMPOSITE_DATA_CACHE
 """
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+@pytest.mark.parametrize(
+    ("name", "module_name"),
+    (
+        ("BackgroundSpec", "nfit.pipeline"),
+        ("DATA_TYPE_DEFINITIONS", "nfit.project_imports"),
+        ("GROUP_COMPOSITE_KEY", "nfit.project_imports"),
+        ("MDHistoAxis", "nfit.mdhisto"),
+        ("MDHistoChannel", "nfit.mdhisto"),
+        ("dataset_artifact_bytes", "nfit.analysis.artifacts"),
+        ("bin_mdevent_group", "nfit.mdevent"),
+        ("bin_mdevent_powder_group", "nfit.mdevent"),
+        ("bin_raw_dgs_group", "nfit.raw_dgs"),
+        ("mdhisto_coverage_fraction", "nfit.mdhisto"),
+        ("mdhisto_measured_bins", "nfit.mdhisto"),
+        ("rebin_nd", "nfit.rebin"),
+        ("rebin_nd_symmetry", "nfit.rebin"),
+        ("replace_dataset_artifact", "nfit.project_archive"),
+        ("resolve_symmetry", "nfit.symmetry"),
+        ("signal_semantics", "nfit.analysis.coordinates"),
+        ("symmetry_spec_from_config", "nfit.symmetry"),
+        ("with_paired_spectral_channels", "nfit.spectral_channels"),
+    ),
+)
+def test_project_data_preserves_dependency_exports(name: str, module_name: str) -> None:
+    project_data = importlib.import_module("nfit.project_data")
+    source_module = importlib.import_module(module_name)
+
+    assert getattr(project_data, name) is getattr(source_module, name)
 
 
 @pytest.mark.parametrize("module_name", ("project_composites", "project_data"))

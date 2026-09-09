@@ -17,6 +17,9 @@ from typing import Any
 
 import numpy as np
 
+from . import project_rebinning as _project_rebinning
+from .analysis.artifacts import dataset_artifact_bytes  # noqa: F401
+from .analysis.coordinates import signal_semantics  # noqa: F401
 from .analysis.core import AnalysisEntry, AnalysisOutputRef, AnalysisResultRecord
 from .analysis.fingerprint import recipe_hash
 from .analysis.registry import analysis_definition, default_analysis_parameters
@@ -24,9 +27,18 @@ from .backgrounds import subtract_background
 from .cache_utils import lru_store as _lru_store
 from .dataset import PointData4D, PointListData
 from .importers import IMPORTERS
-from .mdhisto import MDHistoData, load_mantid_mdhisto_nxs
+from .mdevent import bin_mdevent_group, bin_mdevent_powder_group  # noqa: F401
+from .mdhisto import (  # noqa: F401
+    MDHistoAxis,
+    MDHistoChannel,
+    MDHistoData,
+    load_mantid_mdhisto_nxs,
+    mdhisto_coverage_fraction,
+    mdhisto_measured_bins,
+)
 from .performance import initialize_rebin_performance
-from .pipeline import DataGroup, DatasetEntry, DatasetGroup, MaskSpec
+from .pipeline import BackgroundSpec, DataGroup, DatasetEntry, DatasetGroup, MaskSpec  # noqa: F401
+from .project_archive import replace_dataset_artifact  # noqa: F401
 from .project_coordinates import (
     COORDINATE_RANGE_AXIS_PREFIX as COORDINATE_RANGE_AXIS_PREFIX,
 )
@@ -109,6 +121,12 @@ from .project_dataset_io import (
     _save_point_list_file as _save_point_list_file,
 )
 from .project_dataset_io import save_dataset_file as save_dataset_file
+from .project_imports import (
+    DATA_TYPE_DEFINITIONS as DATA_TYPE_DEFINITIONS,
+)
+from .project_imports import (
+    GROUP_COMPOSITE_KEY as GROUP_COMPOSITE_KEY,
+)
 from .project_imports import (
     _ensure_dataset_data_loaded as _ensure_dataset_data_loaded_impl,
 )
@@ -269,6 +287,21 @@ from .project_point_lists import (
 )
 from .project_point_lists import (
     prepared_point_list_data as prepared_point_list_data,
+)
+from .project_rebinning import (
+    DEFAULT_MINIMUM_COVERAGE as DEFAULT_MINIMUM_COVERAGE,
+)
+from .project_rebinning import (
+    DEFAULT_MINIMUM_SAMPLES as DEFAULT_MINIMUM_SAMPLES,
+)
+from .project_rebinning import (
+    DEFAULT_REBIN_MAX_BATCH_MB as DEFAULT_REBIN_MAX_BATCH_MB,
+)
+from .project_rebinning import (
+    REBIN_AXIS_MODES as REBIN_AXIS_MODES,
+)
+from .project_rebinning import (
+    REBIN_RESOLUTION_MODE_KEY as REBIN_RESOLUTION_MODE_KEY,
 )
 from .project_rebinning import (
     _axis_bounds as _axis_bounds,
@@ -459,20 +492,25 @@ from .project_view_data import (
 from .project_view_data import (
     _with_viewer_dataset_metadata as _with_viewer_dataset_metadata,
 )
-from .spectral_channels import SPECTRAL_CHANNEL_CONFIG_KEY
-from .symmetry import SymmetrySpec, symmetry_config
+from .raw_dgs import bin_raw_dgs_group  # noqa: F401
+from .rebin import rebin_nd, rebin_nd_symmetry  # noqa: F401
+from .spectral_channels import (  # noqa: F401
+    SPECTRAL_CHANNEL_CONFIG_KEY,
+    with_paired_spectral_channels,
+)
+from .symmetry import (  # noqa: F401
+    SymmetrySpec,
+    resolve_symmetry,
+    symmetry_config,
+    symmetry_spec_from_config,
+)
 
 DATASET_REBIN_KEY = "rebin"
 DATASET_MASK_APPLICATION_KEY = "mask_application"
 GROUP_COMPOSITE_NAME = "Composite"
 DERIVED_RECIPE_KEY = "derived_recipe"
 VIRTUAL_DERIVED_ANALYSIS_TYPES = {"dataset_clone", "histogram_arithmetic"}
-DEFAULT_REBIN_MAX_BATCH_MB = 192
-DEFAULT_MINIMUM_COVERAGE = 0.9
-DEFAULT_MINIMUM_SAMPLES = 0.0
 REBIN_COORDINATE_BASIS_VERSION = 2
-REBIN_RESOLUTION_MODE_KEY = "resolution_mode"
-REBIN_AXIS_MODES = frozenset({"discrete", "step", "bins", "edges", "tolerance"})
 REBIN_SETTINGS_CLIPBOARD_SCHEMA = "nfit.rebin-settings"
 REBIN_SETTINGS_CLIPBOARD_VERSION = 1
 REBIN_SETTINGS_KEYS = (
@@ -493,6 +531,8 @@ REBIN_SETTINGS_KEYS = (
 REBIN_AUTO_MAX_CONTRIBUTIONS = 5_000_000
 REBIN_AUTO_MAX_OUTPUT_BINS = 2_000_000
 MASK_AUTO_MAX_POINTS = 5_000_000
+
+_project_rebinning.configure_rebinning_compatibility(globals())
 
 # Loading, rebinning, and masking full datasets is reused across passive GUI
 # refreshes and script/API calls. Signatures are content based; scale factors

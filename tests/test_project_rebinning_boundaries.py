@@ -116,3 +116,18 @@ def test_mixed_axis_grid_configuration_matches_facade_contract() -> None:
         "bin_edges": [None, [0.0, 0.5, 2.0], [5.0, 15.0, 25.0]],
     }
     assert project_data._rebin_fractional_axes(config, axes) == [True, True, False]
+
+
+@pytest.mark.parametrize("service", (project_data, project_rebinning))
+def test_rebin_service_uses_live_facade_defaults(monkeypatch, service) -> None:
+    monkeypatch.setattr(project_data, "DEFAULT_REBIN_MAX_BATCH_MB", 37)
+    monkeypatch.setattr(project_data, "DEFAULT_MINIMUM_COVERAGE", 0.25)
+    monkeypatch.setattr(project_data, "DEFAULT_MINIMUM_SAMPLES", 2.5)
+    monkeypatch.setattr(project_data, "REBIN_RESOLUTION_MODE_KEY", "legacy_mode")
+    monkeypatch.setattr(project_data, "REBIN_AXIS_MODES", frozenset({"legacy"}))
+
+    assert service._rebin_max_batch_mb({}) == 37
+    assert service._rebin_minimum_coverage({}) == 0.25
+    assert service._rebin_minimum_samples({}) == 2.5
+    assert service._rebin_resolution_mode({"legacy_mode": "bins"}) == "bins"
+    assert service._rebin_axis_mode({}, {"mode": "legacy"}) == "legacy"

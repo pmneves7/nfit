@@ -39,6 +39,21 @@ DEFAULT_MINIMUM_SAMPLES = 0.0
 REBIN_RESOLUTION_MODE_KEY = "resolution_mode"
 REBIN_AXIS_MODES = frozenset({"discrete", "step", "bins", "edges", "tolerance"})
 
+_COMPATIBILITY_NAMESPACE: Mapping[str, Any] | None = None
+
+
+def configure_rebinning_compatibility(namespace: Mapping[str, Any] | None) -> None:
+    """Use live facade constants while preserving standalone service imports."""
+
+    global _COMPATIBILITY_NAMESPACE
+    _COMPATIBILITY_NAMESPACE = namespace
+
+
+def _compatibility_value(name: str, default: Any) -> Any:
+    if _COMPATIBILITY_NAMESPACE is None:
+        return default
+    return _COMPATIBILITY_NAMESPACE.get(name, default)
+
 
 def _parameter_to_text(value: Any) -> str:
     if value == "":
@@ -107,13 +122,17 @@ def _rebin_axis_mode(config: Mapping[str, Any], axis: Mapping[str, Any]) -> str:
     """Return one axis's grid/assignment mode, including legacy migration."""
 
     mode = str(axis.get("mode", "")).casefold()
-    if mode in REBIN_AXIS_MODES:
+    axis_modes = _compatibility_value("REBIN_AXIS_MODES", REBIN_AXIS_MODES)
+    if mode in axis_modes:
         return mode
     if axis.get("bin_edges") is not None:
         return "edges"
     if axis.get("fractional") is False:
         return "discrete"
-    return "bins" if config.get(REBIN_RESOLUTION_MODE_KEY) == "bins" else "step"
+    resolution_key = _compatibility_value(
+        "REBIN_RESOLUTION_MODE_KEY", REBIN_RESOLUTION_MODE_KEY
+    )
+    return "bins" if config.get(resolution_key) == "bins" else "step"
 
 
 def _migrate_rebin_axis_modes(config: dict[str, Any]) -> None:
@@ -139,30 +158,33 @@ def _rebin_fractional_axes(
 
 
 def _rebin_minimum_coverage(config: dict[str, Any]) -> float:
+    default = _compatibility_value("DEFAULT_MINIMUM_COVERAGE", DEFAULT_MINIMUM_COVERAGE)
     try:
-        value = float(config.get("minimum_coverage", DEFAULT_MINIMUM_COVERAGE))
+        value = float(config.get("minimum_coverage", default))
     except (TypeError, ValueError):
-        return DEFAULT_MINIMUM_COVERAGE
+        return float(default)
     return float(np.clip(value, 0.0, 1.0))
 
 
 def _rebin_minimum_samples(config: dict[str, Any]) -> float:
     """Return the minimum effective sample contribution for an output bin."""
 
+    default = _compatibility_value("DEFAULT_MINIMUM_SAMPLES", DEFAULT_MINIMUM_SAMPLES)
     try:
-        value = float(config.get("minimum_samples", DEFAULT_MINIMUM_SAMPLES))
+        value = float(config.get("minimum_samples", default))
     except (TypeError, ValueError):
-        return DEFAULT_MINIMUM_SAMPLES
+        return float(default)
     if not np.isfinite(value) or value < 0.0:
-        return DEFAULT_MINIMUM_SAMPLES
+        return float(default)
     return value
 
 
 def _rebin_max_batch_mb(config: dict[str, Any]) -> int:
+    default = _compatibility_value("DEFAULT_REBIN_MAX_BATCH_MB", DEFAULT_REBIN_MAX_BATCH_MB)
     try:
-        return max(int(config.get("max_batch_mb", DEFAULT_REBIN_MAX_BATCH_MB)), 1)
+        return max(int(config.get("max_batch_mb", default)), 1)
     except (TypeError, ValueError):
-        return DEFAULT_REBIN_MAX_BATCH_MB
+        return int(default)
 
 
 def _rebin_max_batch_bytes(config: dict[str, Any]) -> int:
@@ -172,7 +194,10 @@ def _rebin_max_batch_bytes(config: dict[str, Any]) -> int:
 def _rebin_resolution_mode(config: dict[str, Any]) -> str:
     """Return the active resolution control mode for a rebin panel."""
 
-    return "bins" if config.get(REBIN_RESOLUTION_MODE_KEY) == "bins" else "step"
+    resolution_key = _compatibility_value(
+        "REBIN_RESOLUTION_MODE_KEY", REBIN_RESOLUTION_MODE_KEY
+    )
+    return "bins" if config.get(resolution_key) == "bins" else "step"
 
 
 def _rebin_axis_bound_is_auto(axis: Mapping[str, Any], key: str) -> bool:
@@ -602,7 +627,8 @@ def _sanitize_rebin_axis_config(axis_config: dict[str, Any]) -> dict[str, Any]:
     }
     mode = str(axis_config.get("mode", "")).casefold()
     if mode:
-        sanitized["mode"] = mode if mode in REBIN_AXIS_MODES else "step"
+        axis_modes = _compatibility_value("REBIN_AXIS_MODES", REBIN_AXIS_MODES)
+        sanitized["mode"] = mode if mode in axis_modes else "step"
     if "tolerance" in axis_config or mode == "tolerance":
         try:
             tolerance = float(axis_config.get("tolerance", step_size))
