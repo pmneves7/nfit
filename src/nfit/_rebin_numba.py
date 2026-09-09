@@ -26,7 +26,7 @@ def accumulate_batch(
     upper,
     step_size,
     num_bins,
-    fractional,
+    fractional_axes,
     inverse_variance,
     bd_sum,
     err_sum,
@@ -41,7 +41,11 @@ def accumulate_batch(
     partial_weights = np.empty(n_dims, dtype=np.float64)
     edge_valid = np.empty(n_dims, dtype=np.bool_)
     contribution_indices = np.empty(n_dims, dtype=np.int64)
-    offset_count = 1 << n_dims if fractional else 1
+    fractional_count = 0
+    for dim in range(n_dims):
+        if fractional_axes[dim]:
+            fractional_count += 1
+    offset_count = 1 << fractional_count
 
     for point in range(n_points):
         point_valid = True
@@ -56,7 +60,7 @@ def accumulate_batch(
                 position = float(num_bins[dim] - 1)
             else:
                 position = (coordinate - lower[dim]) / step_size[dim]
-            positions[dim] = position - 0.5 if fractional else position
+            positions[dim] = position - 0.5 if fractional_axes[dim] else position
         if not point_valid:
             continue
 
@@ -72,32 +76,35 @@ def accumulate_batch(
             error = errors[point]
             point_mean_weight = statistical_weight
 
-        if fractional:
-            for dim in range(n_dims):
+        for dim in range(n_dims):
+            if fractional_axes[dim]:
                 position = positions[dim]
                 floor_position = np.floor(position)
                 base_indices[dim] = int(floor_position)
                 partial_weights[dim] = 1.0 - (position - floor_position)
                 edge_valid[dim] = position >= 0.0 and position <= num_bins[dim] - 1
-        else:
-            for dim in range(n_dims):
+            else:
                 base_indices[dim] = int(positions[dim])
 
         for offset_bits in range(offset_count):
             spatial_weight = 1.0
             contribution_valid = True
             flat_index = 0
+            fractional_index = 0
             for dim in range(n_dims):
-                if fractional and ((offset_bits >> dim) & 1):
-                    if not edge_valid[dim]:
-                        contribution_valid = False
-                        break
-                    spatial_weight *= 1.0 - partial_weights[dim]
-                    index = base_indices[dim] + 1
-                elif fractional:
-                    if edge_valid[dim]:
-                        spatial_weight *= partial_weights[dim]
-                    index = base_indices[dim]
+                if fractional_axes[dim]:
+                    use_upper = (offset_bits >> fractional_index) & 1
+                    fractional_index += 1
+                    if use_upper:
+                        if not edge_valid[dim]:
+                            contribution_valid = False
+                            break
+                        spatial_weight *= 1.0 - partial_weights[dim]
+                        index = base_indices[dim] + 1
+                    else:
+                        if edge_valid[dim]:
+                            spatial_weight *= partial_weights[dim]
+                        index = base_indices[dim]
                 else:
                     index = base_indices[dim]
                 if index < 0:
@@ -129,7 +136,7 @@ def accumulate_batch(
 @njit(cache=True, fastmath=False, nogil=True)
 def accumulate_batch_sparse(
     coords, data, errors, statistical_weights, lower, upper, step_size,
-    num_bins, fractional, inverse_variance, bd_sum, err_sum, norm_sum, ns_sum,
+    num_bins, fractional_axes, inverse_variance, bd_sum, err_sum, norm_sum, ns_sum,
 ):
     """Sparse counterpart of :func:`accumulate_batch`, keyed by touched bins."""
 
@@ -139,7 +146,11 @@ def accumulate_batch_sparse(
     partial_weights = np.empty(n_dims, dtype=np.float64)
     edge_valid = np.empty(n_dims, dtype=np.bool_)
     contribution_indices = np.empty(n_dims, dtype=np.int64)
-    offset_count = 1 << n_dims if fractional else 1
+    fractional_count = 0
+    for dim in range(n_dims):
+        if fractional_axes[dim]:
+            fractional_count += 1
+    offset_count = 1 << fractional_count
     for point in range(n_points):
         point_valid = True
         for dim in range(n_dims):
@@ -153,7 +164,7 @@ def accumulate_batch_sparse(
                 position = float(num_bins[dim] - 1)
             else:
                 position = (coordinate - lower[dim]) / step_size[dim]
-            positions[dim] = position - 0.5 if fractional else position
+            positions[dim] = position - 0.5 if fractional_axes[dim] else position
         if not point_valid:
             continue
         statistical_weight = statistical_weights[point]
@@ -168,7 +179,7 @@ def accumulate_batch_sparse(
             error = errors[point]
             point_mean_weight = statistical_weight
         for dim in range(n_dims):
-            if fractional:
+            if fractional_axes[dim]:
                 position = positions[dim]
                 floor_position = np.floor(position)
                 base_indices[dim] = int(floor_position)
@@ -180,17 +191,21 @@ def accumulate_batch_sparse(
             spatial_weight = 1.0
             contribution_valid = True
             flat_index = 0
+            fractional_index = 0
             for dim in range(n_dims):
-                if fractional and ((offset_bits >> dim) & 1):
-                    if not edge_valid[dim]:
-                        contribution_valid = False
-                        break
-                    spatial_weight *= 1.0 - partial_weights[dim]
-                    index = base_indices[dim] + 1
-                elif fractional:
-                    if edge_valid[dim]:
-                        spatial_weight *= partial_weights[dim]
-                    index = base_indices[dim]
+                if fractional_axes[dim]:
+                    use_upper = (offset_bits >> fractional_index) & 1
+                    fractional_index += 1
+                    if use_upper:
+                        if not edge_valid[dim]:
+                            contribution_valid = False
+                            break
+                        spatial_weight *= 1.0 - partial_weights[dim]
+                        index = base_indices[dim] + 1
+                    else:
+                        if edge_valid[dim]:
+                            spatial_weight *= partial_weights[dim]
+                        index = base_indices[dim]
                 else:
                     index = base_indices[dim]
                 if index < 0:

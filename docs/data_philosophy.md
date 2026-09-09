@@ -145,9 +145,10 @@ with each axis and with the collection. Composite caches include both the
 dataset content token and resolved metadata-coordinate signatures.
 
 An optional `MetadataBinning` recipe groups assigned coordinates into histogram
-bins using whole-bin assignment. These axes retain `metadata_dimension` and
-`interpolation="none"` metadata, but use physical bin edges and their midpoints
-instead of `discrete_centers`. Source points are partitioned before spatial
+bins by step, count, explicit edges, or proximity tolerance. Tolerance-derived
+centers and all metadata modes retain whole-bin assignment without interpolation.
+These axes retain `metadata_dimension` and `interpolation="none"` metadata;
+tolerance grids also retain their derived physical centers. Source points are partitioned before spatial
 reduction so coarse metadata bins preserve source weights and uncertainties.
 
 Per-point metadata coordinates must already align with the measured payload.

@@ -47,6 +47,7 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
             ("Step", "step"),
             ("Bins", "bins"),
             ("Edges", "edges"),
+            ("Tolerance", "tolerance"),
         ):
             mode.addItem(title, value)
         selected_mode = (
@@ -58,11 +59,15 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
                 else "step"
                 if binning.step is not None
                 else "bins"
+                if binning.num_bins is not None
+                else "tolerance"
             )
         )
         mode.setCurrentIndex(mode.findData(selected_mode))
         resolution = QtWidgets.QLineEdit(
-            "" if binning is None else str(binning.step or binning.num_bins or "")
+            ""
+            if binning is None
+            else str(binning.step or binning.num_bins or binning.tolerance or "")
         )
         edges = QtWidgets.QLineEdit(
             ", ".join(f"{v:g}" for v in (binning.bin_edges or [])) if binning else ""
@@ -81,12 +86,12 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
             (
                 "mode",
                 mode,
-                "Discrete keeps the assigned metadata coordinates. Step, Bins, or Edges combines source measurements into whole bins; fractional binning never mixes metadata coordinates.",
+                "Discrete keeps exact assigned coordinates. Step, Bins, Edges, and Tolerance combine source measurements into whole bins; fractional binning never mixes metadata coordinates.",
             ),
             (
                 "resolution",
                 resolution,
-                "Metadata bin step in axis units, or positive integer bin count. One bin integrates between the limits.",
+                "Metadata bin step, positive integer bin count, or clustering tolerance in axis units. One bin integrates between the limits.",
             ),
             (
                 "edges",
@@ -102,16 +107,16 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
         edges.setPlaceholderText("bin edges")
         layout.addWidget(lower, row, 1)
         layout.addWidget(upper, row, 2)
-        resolution_row = QtWidgets.QHBoxLayout()
-        resolution_row.addWidget(mode)
-        resolution_row.addWidget(resolution)
-        layout.addLayout(resolution_row, row, 3)
+        layout.addWidget(resolution, row, 3)
         layout.addWidget(edges, row, 4)
+        layout.addWidget(mode, row, 5)
 
         def enable_fields():
-            uniform = mode.currentData() in {"step", "bins"}
-            for widget in (lower, upper, resolution):
-                widget.setEnabled(uniform)
+            selected = mode.currentData()
+            uniform = selected in {"step", "bins"}
+            lower.setEnabled(uniform)
+            upper.setEnabled(uniform)
+            resolution.setEnabled(uniform or selected == "tolerance")
             edges.setEnabled(mode.currentData() == "edges")
 
         def apply():
@@ -119,6 +124,10 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
                 selected = mode.currentData()
                 if selected == "discrete":
                     updated_binning = None
+                elif selected == "tolerance":
+                    updated_binning = MetadataBinning(
+                        tolerance=float(resolution.text())
+                    )
                 elif selected == "edges":
                     updated_binning = MetadataBinning(
                         bin_edges=[
@@ -167,6 +176,10 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
                             lower.setText(str(values[0] - 0.5))
                             upper.setText(str(values[0] + 0.5))
                         resolution.setText(str(len(values)))
+                    elif mode.currentData() == "tolerance":
+                        resolution.setText(
+                            str(float(np.min(np.diff(values))) / 3 if len(values) > 1 else 0.1)
+                        )
                     elif not edges.text():
                         from dataclasses import replace
 

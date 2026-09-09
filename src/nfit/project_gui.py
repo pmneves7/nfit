@@ -298,6 +298,7 @@ _rebinned_dataset_data = _project_data._rebinned_dataset_data
 _with_rebinned_mask_metadata = _project_data._with_rebinned_mask_metadata
 _rebin_point_list_data = _project_data._rebin_point_list_data
 _rebin_mean_weighting = _project_data._rebin_mean_weighting
+_rebin_axis_mode = _project_data._rebin_axis_mode
 _rebin_minimum_coverage = _project_data._rebin_minimum_coverage
 _rebin_minimum_samples = _project_data._rebin_minimum_samples
 _rebin_max_batch_mb = _project_data._rebin_max_batch_mb
@@ -486,12 +487,12 @@ DEFAULT_MINIMUM_COVERAGE = 0.9
 DEFAULT_MINIMUM_SAMPLES = 0.0
 REBIN_COORDINATE_BASIS_VERSION = 2
 REBIN_RESOLUTION_MODE_KEY = "resolution_mode"
+REBIN_AXIS_MODES = _project_data.REBIN_AXIS_MODES
 REBIN_SETTINGS_CLIPBOARD_SCHEMA = "nfit.rebin-settings"
 REBIN_SETTINGS_CLIPBOARD_VERSION = 1
 REBIN_SETTINGS_KEYS = (
     "enabled",
     "axes",
-    "fractional",
     "auto_rebin",
     "mean_weighting",
     "minimum_coverage",
@@ -500,7 +501,6 @@ REBIN_SETTINGS_KEYS = (
     "workers",
     "normalize",
     "symmetry",
-    REBIN_RESOLUTION_MODE_KEY,
     "coordinate_basis_version",
     "coordinate_mode",
     "metadata_dimensions",
@@ -5124,6 +5124,13 @@ class _FitProgressDialog:
             "initialization": "Initialization: differential evolution",
             "bragg_integration": "Bragg integration",
             "rebin": "Rebinning data",
+            "rebin_prepare": "Preparing rebin",
+            "rebin_sources": "Preparing source data",
+            "rebin_ready": "Rebin grid ready",
+            "rebin_coverage": "Calculating coverage",
+            "rebin_output": "Building rebinned dataset",
+            "rebin_finalize": "Finalizing rebin",
+            "rebin_complete": "Rebin complete",
             "least_squares": "Least-squares fit",
             "emcee": "Posterior sampling: emcee",
         }.get(stage, stage.replace("_", " ").title())
@@ -5132,6 +5139,14 @@ class _FitProgressDialog:
         datasets_total = event.get("datasets_total")
         if datasets_total is not None:
             status_parts.append(f"Datasets {int(datasets_total)}")
+        if event.get("output_bins") is not None:
+            status_parts.append(f"Bins {int(event['output_bins']):,}")
+        if event.get("workers") is not None:
+            status_parts.append(f"CPUs {int(event['workers'])}")
+        if event.get("estimated_working_bytes") is not None:
+            status_parts.append(
+                f"Memory ~{int(event['estimated_working_bytes']) / 1024**2:.1f} MiB"
+            )
         if iteration is not None:
             counter = (
                 "Reflection" if stage == "bragg_integration"
@@ -5156,6 +5171,14 @@ class _FitProgressDialog:
         log_parts = [stage_title]
         if datasets_total is not None:
             log_parts.append(f"{int(datasets_total)} datasets")
+        if event.get("output_bins") is not None:
+            log_parts.append(f"{int(event['output_bins']):,} bins")
+        if event.get("workers") is not None:
+            log_parts.append(f"{int(event['workers'])} CPUs")
+        if event.get("estimated_working_bytes") is not None:
+            log_parts.append(
+                f"~{int(event['estimated_working_bytes']) / 1024**2:.1f} MiB"
+            )
         if iteration is not None:
             counter = (
                 "reflection" if stage == "bragg_integration"
@@ -6539,6 +6562,7 @@ class NfitProjectExplorer:
 
             return self._start_background_task(
                 title="Rebinning dataset...",
+                progress_window_title="Rebin progress",
                 failure_title="Rebin now",
                 task=task,
                 on_success=on_success,
@@ -6611,6 +6635,7 @@ class NfitProjectExplorer:
 
             return self._start_background_task(
                 title="Rebinning composite dataset...",
+                progress_window_title="Rebin progress",
                 failure_title="Rebin composite",
                 task=task,
                 on_success=on_success,
@@ -7026,8 +7051,7 @@ class NfitProjectExplorer:
         if progress is None:
             progress = _FitProgressDialog(self)
             self._fit_progress_dialog = progress
-        if progress_window_title is not None:
-            progress.dialog.setWindowTitle(progress_window_title)
+        progress.dialog.setWindowTitle(progress_window_title or "Fit progress")
         progress.reset(title)
         progress.show()
 
@@ -7931,7 +7955,20 @@ class NfitProjectExplorer:
                 dialog.setValue(min(iteration, total))
                 percentage = 100.0 * min(iteration, total) / total
                 message = str(event.get("message") or title)
-                dialog.setLabelText(f"{message} ({percentage:.1f}%)")
+                details = []
+                output_bins = int(event.get("output_bins") or 0)
+                if output_bins:
+                    details.append(f"{output_bins:,} output bins")
+                workers = int(event.get("workers") or 0)
+                if workers:
+                    details.append(f"{workers} CPU{'s' if workers != 1 else ''}")
+                working_bytes = int(event.get("estimated_working_bytes") or 0)
+                if working_bytes:
+                    details.append(
+                        f"~{working_bytes / 1024**2:.1f} MiB working memory"
+                    )
+                suffix = f"\n{' · '.join(details)}" if details else ""
+                dialog.setLabelText(f"{message} ({percentage:.1f}%){suffix}")
             else:
                 dialog.setRange(0, 0)
                 dialog.setLabelText(str(event.get("message") or title))
@@ -11890,8 +11927,6 @@ class NfitProjectExplorer:
             coordinate_row.addStretch(1)
             layout.addLayout(coordinate_row)
         axes = config.get("axes", [])
-        resolution_mode = _rebin_resolution_mode(config)
-        resolution_key = "step_size" if resolution_mode == "step" else "num_bins"
         show_momentum_matrix = (
             config.get("coordinate_mode") != "powder"
             and len(axes) == 4
@@ -11917,38 +11952,28 @@ class NfitProjectExplorer:
                 )
             )
             controls_layout.addWidget(matrix_label, 0, 0)
-            controls_layout.addWidget(matrix_edit, 0, 1, 1, 4)
+            controls_layout.addWidget(matrix_edit, 0, 1, 1, 5)
             header_row = 1
         show_vectors = False
         headers = ["Axis"]
         if show_vectors:
             headers.append("Momentum row [H,K,L]")
-        headers.extend(["Min center", "Max center", "Resolution", "Edges (optional)"])
-        resolution_column = headers.index("Resolution")
+        headers.extend(
+            ["Min center", "Max center", "Value", "Edges", "Mode"]
+        )
         for column, label in enumerate(headers):
-            if column != resolution_column:
-                controls_layout.addWidget(QtWidgets.QLabel(label), header_row, column)
-        resolution_mode_combo = QtWidgets.QComboBox()
-        resolution_mode_combo.setObjectName("group_composite_resolution_mode")
-        resolution_mode_combo.addItem("Step", "step")
-        resolution_mode_combo.addItem("Bins", "bins")
-        resolution_mode_combo.setCurrentIndex(
-            max(resolution_mode_combo.findData(resolution_mode), 0)
-        )
-        resolution_mode_combo.setToolTip(
-            "Choose whether the single Resolution column edits bin step size or bin count. "
-            "In Step mode, centers advance from the lower limit by the requested step, up to the upper limit. "
-            "In Bins mode, changing limits preserves the bin count and recalculates the step."
-        )
-        resolution_mode_combo.currentIndexChanged.connect(
-            lambda _index, combo=resolution_mode_combo: self._set_group_composite_resolution_mode(
-                group, str(combo.currentData() or "step")
-            )
-        )
-        controls_layout.addWidget(resolution_mode_combo, header_row, resolution_column)
+            controls_layout.addWidget(QtWidgets.QLabel(label), header_row, column)
         for row, axis_config in enumerate(axes, start=header_row + 1):
             axis_index = row - header_row - 1
             axis = _sanitize_rebin_axis_config(axis_config)
+            axis_mode = _rebin_axis_mode(config, axis)
+            resolution_key = (
+                "num_bins"
+                if axis_mode == "bins"
+                else "tolerance"
+                if axis_mode == "tolerance"
+                else "step_size"
+            )
             axis_label = QtWidgets.QLabel(
                 str(axis.get("name", f"Axis {axis_index + 1}"))
             )
@@ -11984,6 +12009,9 @@ class NfitProjectExplorer:
             for column, key in enumerate(("lower", "upper", resolution_key), start=column_offset):
                 display_value = (
                     ""
+                    if key == "step_size" and axis_mode in {"discrete", "edges"}
+                    else
+                    ""
                     if key in {"lower", "upper"}
                     and _rebin_axis_bound_is_auto(axis, key)
                     else _parameter_to_text(axis.get(key))
@@ -11992,8 +12020,10 @@ class NfitProjectExplorer:
                 if key in {"lower", "upper"}:
                     edit.setObjectName(f"group_composite_axis_{key}_{axis_index}")
                     edit.setPlaceholderText("auto")
+                    edit.setEnabled(axis_mode in {"step", "bins"})
                 if key == resolution_key:
                     edit.setObjectName(f"group_composite_resolution_value_{axis_index}")
+                    edit.setEnabled(axis_mode not in {"discrete", "edges"})
                 edit.setMinimumWidth(72)
                 if key in {"lower", "upper"}:
                     edit.setToolTip(
@@ -12001,7 +12031,7 @@ class NfitProjectExplorer:
                     )
                 else:
                     edit.setToolTip(
-                        f"Composite rebin {('step size' if key == 'step_size' else 'bin count')} for this axis. "
+                        f"Composite rebin {('bin count' if key == 'num_bins' else 'clustering tolerance' if key == 'tolerance' else 'step size')} for this axis. "
                         "These bounds and bins are applied after all enabled datasets are scaled, weighted, and collected."
                     )
                 edit.editingFinished.connect(
@@ -12014,6 +12044,7 @@ class NfitProjectExplorer:
             edges_edit.setObjectName(f"group_composite_axis_edges_{axis_index}")
             edges_edit.setMinimumWidth(150)
             edges_edit.setPlaceholderText("uniform")
+            edges_edit.setEnabled(axis_mode == "edges")
             edges_edit.setToolTip(
                 "Optional strictly increasing edge list for only this axis, for example "
                 "[-2, -1, 0, 0.5, 2]. Leave blank to use the uniform Resolution setting."
@@ -12024,19 +12055,34 @@ class NfitProjectExplorer:
                 )
             )
             controls_layout.addWidget(edges_edit, row, column_offset + 3)
+            mode_combo = QtWidgets.QComboBox()
+            mode_combo.setObjectName(f"group_composite_axis_mode_{axis_index}")
+            for title, value in (
+                ("Discrete", "discrete"),
+                ("Step", "step"),
+                ("Bins", "bins"),
+                ("Edges", "edges"),
+                ("Tolerance", "tolerance"),
+            ):
+                mode_combo.addItem(title, value)
+            mode_combo.setCurrentIndex(max(mode_combo.findData(axis_mode), 0))
+            mode_combo.setToolTip(
+                "Step, Bins, and Edges distribute points fractionally. Discrete keeps exact "
+                "coordinate values. Tolerance clusters nearby values into automatically determined "
+                "bins. Discrete and Tolerance assign every point wholly to one bin."
+            )
+            mode_combo.currentIndexChanged.connect(
+                lambda _index, index=axis_index, combo=mode_combo: self._set_group_composite_axis_mode(
+                    group, index, str(combo.currentData() or "step")
+                )
+            )
+            controls_layout.addWidget(mode_combo, row, column_offset + 4)
         from .metadata_dimensions_gui import metadata_rebin_rows
 
         metadata_rows = metadata_rebin_rows(
             self, group, controls_layout, header_row + len(axes) + 1
         )
         option_row = QtWidgets.QHBoxLayout()
-        fractional_check = QtWidgets.QCheckBox("Fractional binning")
-        fractional_check.setObjectName("group_composite_fractional")
-        fractional_check.setChecked(bool(config.get("fractional", True)))
-        fractional_check.setToolTip(
-            "Distribute source points fractionally into neighboring momentum and energy bins after dataset scale and fit-weight factors are applied. Metadata dimensions always assign whole bins."
-        )
-        fractional_check.toggled.connect(lambda checked: self._set_group_composite_option(group, "fractional", checked))
         auto_check = QtWidgets.QCheckBox("Automatic rebinning")
         auto_check.setObjectName("group_composite_auto")
         auto_check.setChecked(bool(config.get("auto_rebin", True)))
@@ -12050,15 +12096,13 @@ class NfitProjectExplorer:
         mean_combo = QtWidgets.QComboBox()
         mean_combo.setObjectName("group_composite_mean_weighting")
         mean_combo.setToolTip(
-            "Choose the composite averaging mode. Inverse variance uses fit_weight/sigma^2 after dataset scale factors are applied; "
-            "uniform keeps a simple weighted geometric mean."
+            "Choose the composite averaging mode. A physical normalization denominator, when present, always contributes to the data weight. Inverse variance additionally uses 1/sigma^2; uniform does not. Dataset scale and fit-weight factors are also applied."
         )
         mean_combo.addItem("Inverse variance", "inverse_variance")
         mean_combo.addItem("Uniform", "uniform")
-        mean_combo.addItem("Normalization denominator", "normalization")
         mean_combo.setCurrentIndex(max(mean_combo.findData(_rebin_mean_weighting(config)), 0))
         mean_combo.currentIndexChanged.connect(
-            lambda _index, combo=mean_combo: self._set_group_composite_mean_weighting(group, str(combo.currentData() or "inverse_variance"))
+            lambda _index, combo=mean_combo: self._set_group_composite_mean_weighting(group, str(combo.currentData() or "uniform"))
         )
         batch_label = QtWidgets.QLabel("Batch target")
         batch_spin = QtWidgets.QSpinBox()
@@ -12131,7 +12175,6 @@ class NfitProjectExplorer:
                 group, editor
             )
         )
-        option_row.addWidget(fractional_check)
         option_row.addWidget(auto_check)
         option_row.addWidget(mean_label)
         option_row.addWidget(mean_combo)
@@ -13714,45 +13757,32 @@ class NfitProjectExplorer:
                 )
             )
             controls_layout.addWidget(matrix_label, 0, 0)
-            controls_layout.addWidget(matrix_edit, 0, 1, 1, 4)
+            controls_layout.addWidget(matrix_edit, 0, 1, 1, 5)
             header_row = 1
         show_vectors = False
         headers = ["Axis"]
         if show_vectors:
             headers.append("Momentum row [H,K,L]")
-        headers.extend(["Min center", "Max center", "Resolution", "Edges (optional)"])
-        resolution_mode = _rebin_resolution_mode(config)
-        resolution_key = "step_size" if resolution_mode == "step" else "num_bins"
+        headers.extend(
+            ["Min center", "Max center", "Value", "Edges", "Mode"]
+        )
         last_column = len(headers) - 1
         controls_layout.setColumnStretch(last_column, 1)
-        resolution_column = headers.index("Resolution")
         for column, text in enumerate(headers):
-            if column == resolution_column:
-                continue
             header = QtWidgets.QLabel(text)
             header.setStyleSheet("font-weight: 600")
             controls_layout.addWidget(header, header_row, column)
-        resolution_mode_combo = QtWidgets.QComboBox()
-        resolution_mode_combo.setObjectName("dataset_rebin_resolution_mode")
-        resolution_mode_combo.addItem("Step", "step")
-        resolution_mode_combo.addItem("Bins", "bins")
-        resolution_mode_combo.setCurrentIndex(
-            max(resolution_mode_combo.findData(resolution_mode), 0)
-        )
-        resolution_mode_combo.setToolTip(
-            "Choose whether the single Resolution column edits bin step size or bin count. "
-            "In Step mode, centers advance from the lower limit by the requested step, up to the upper limit. "
-            "In Bins mode, changing limits preserves the bin count and recalculates the step."
-        )
-        resolution_mode_combo.currentIndexChanged.connect(
-            lambda _index, combo=resolution_mode_combo: self._set_dataset_rebin_resolution_mode(
-                dataset, group, str(combo.currentData() or "step")
-            )
-        )
-        controls_layout.addWidget(resolution_mode_combo, header_row, resolution_column)
         for row, axis_config in enumerate(config.get("axes", []), start=header_row + 1):
             axis_index = row - header_row - 1
             axis_config = _sanitize_rebin_axis_config(axis_config)
+            axis_mode = _rebin_axis_mode(config, axis_config)
+            resolution_key = (
+                "num_bins"
+                if axis_mode == "bins"
+                else "tolerance"
+                if axis_mode == "tolerance"
+                else "step_size"
+            )
             axis_label = QtWidgets.QLabel(
                 str(axis_config.get("name", f"Axis {axis_index + 1}"))
             )
@@ -13774,9 +13804,12 @@ class NfitProjectExplorer:
             lower_edit.setObjectName(f"dataset_rebin_axis_lower_{axis_index}")
             upper_edit.setObjectName(f"dataset_rebin_axis_upper_{axis_index}")
             resolution_text = (
+                ""
+                if axis_mode in {"discrete", "edges"}
+                else
                 str(int(axis_config["num_bins"]))
                 if resolution_key == "num_bins"
-                else _format_number(axis_config["step_size"])
+                else _format_number(axis_config[resolution_key])
             )
             resolution_edit = QtWidgets.QLineEdit(resolution_text)
             resolution_edit.setObjectName(f"dataset_rebin_resolution_value_{axis_index}")
@@ -13787,6 +13820,10 @@ class NfitProjectExplorer:
             edges_edit.setPlaceholderText("uniform")
             lower_edit.setPlaceholderText("auto")
             upper_edit.setPlaceholderText("auto")
+            lower_edit.setEnabled(axis_mode in {"step", "bins"})
+            upper_edit.setEnabled(axis_mode in {"step", "bins"})
+            resolution_edit.setEnabled(axis_mode not in {"discrete", "edges"})
+            edges_edit.setEnabled(axis_mode == "edges")
             lower_edit.setToolTip(
                 "First bin center (lower edge for one-bin integration). Leave blank to cover the projected data and align uniform bins so zero is a bin center."
             )
@@ -13797,6 +13834,8 @@ class NfitProjectExplorer:
                 "Approximate bin step size. Editing it recalculates the bin count."
                 if resolution_key == "step_size"
                 else "Number of bins. Editing it recalculates the displayed step size."
+                if resolution_key == "num_bins"
+                else "Maximum distance from a point to its automatically determined bin center."
             )
             edges_edit.setToolTip(
                 "Optional strictly increasing edge list for only this axis, for example "
@@ -13853,13 +13892,30 @@ class NfitProjectExplorer:
             controls_layout.addWidget(upper_edit, row, column + 1)
             controls_layout.addWidget(resolution_edit, row, column + 2)
             controls_layout.addWidget(edges_edit, row, column + 3)
+            mode_combo = QtWidgets.QComboBox()
+            mode_combo.setObjectName(f"dataset_rebin_axis_mode_{axis_index}")
+            for title, value in (
+                ("Discrete", "discrete"),
+                ("Step", "step"),
+                ("Bins", "bins"),
+                ("Edges", "edges"),
+                ("Tolerance", "tolerance"),
+            ):
+                mode_combo.addItem(title, value)
+            mode_combo.setCurrentIndex(max(mode_combo.findData(axis_mode), 0))
+            mode_combo.setToolTip(
+                "Step, Bins, and Edges distribute points fractionally. Discrete keeps exact "
+                "coordinate values. Tolerance clusters nearby values into automatically determined "
+                "bins. Discrete and Tolerance assign every point wholly to one bin."
+            )
+            mode_combo.currentIndexChanged.connect(
+                lambda _index, index=axis_index, combo=mode_combo: self._set_dataset_rebin_axis_mode(
+                    dataset, group, index, str(combo.currentData() or "step")
+                )
+            )
+            controls_layout.addWidget(mode_combo, row, column + 4)
 
         option_row = QtWidgets.QHBoxLayout()
-        fractional_check = QtWidgets.QCheckBox("Fractional binning")
-        fractional_check.setObjectName("dataset_rebin_fractional")
-        fractional_check.setChecked(bool(config.get("fractional", False)))
-        fractional_check.setToolTip("Allow partial source bins to contribute fractionally when rebinning.")
-        fractional_check.toggled.connect(lambda checked: self._set_dataset_rebin_option(dataset, group, "fractional", checked))
         auto_check = QtWidgets.QCheckBox("Automatic rebinning")
         auto_check.setObjectName("dataset_rebin_auto")
         auto_check.setChecked(bool(config.get("auto_rebin", True)))
@@ -13874,7 +13930,7 @@ class NfitProjectExplorer:
         mean_combo.setObjectName("dataset_rebin_mean_weighting")
         mean_combo.setToolTip(
             "Choose how multiple source points in a rebinned bin are averaged. "
-            "Inverse variance uses 1/sigma^2 weights; uniform keeps the simple mean."
+            "A physical normalization denominator, when present, always contributes to the data weight. Inverse variance additionally uses 1/sigma^2; uniform does not."
         )
         mean_combo.addItem("Inverse variance", "inverse_variance")
         mean_combo.addItem("Uniform", "uniform")
@@ -13884,7 +13940,7 @@ class NfitProjectExplorer:
             lambda _index, combo=mean_combo: self._set_dataset_rebin_mean_weighting(
                 dataset,
                 group,
-                str(combo.currentData() or "inverse_variance"),
+                str(combo.currentData() or "uniform"),
             )
         )
         batch_tooltip = (
@@ -13999,7 +14055,6 @@ class NfitProjectExplorer:
                 dataset, group, editor
             )
         )
-        option_row.addWidget(fractional_check)
         option_row.addWidget(auto_check)
         option_row.addWidget(mean_label)
         option_row.addWidget(mean_combo)
@@ -14837,7 +14892,7 @@ class NfitProjectExplorer:
         value: str,
     ) -> None:
         config = dataset_rebin_config(dataset)
-        value = value if value in {"inverse_variance", "uniform"} else "inverse_variance"
+        value = value if value in {"inverse_variance", "uniform"} else "uniform"
         if _rebin_mean_weighting(config) == value:
             return
         config["mean_weighting"] = value
@@ -14995,8 +15050,8 @@ class NfitProjectExplorer:
         config = data_group_composite_config(group)
         value = (
             value
-            if value in {"inverse_variance", "uniform", "normalization"}
-            else "inverse_variance"
+            if value in {"inverse_variance", "uniform"}
+            else "uniform"
         )
         if _rebin_mean_weighting(config) == value:
             return
@@ -15166,7 +15221,7 @@ class NfitProjectExplorer:
             step = float(axis.get("step_size", 0.0))
             if step > 0.0:
                 axis["num_bins"] = _num_bins_from_step_size(axis.get("lower", 0.0), axis.get("upper", 0.0), step)
-        elif key in {"lower", "upper"} and _rebin_resolution_mode(config) == "step":
+        elif key in {"lower", "upper"} and _rebin_axis_mode(config, axis) == "step":
             if previous_step > 0.0 and np.isfinite(previous_step):
                 axis["num_bins"] = _num_bins_from_step_size(
                     axis.get("lower", 0.0), axis.get("upper", 0.0), previous_step
@@ -15203,6 +15258,27 @@ class NfitProjectExplorer:
         except (TypeError, ValueError):
             self._sync_details()
             return
+        self._after_group_composite_changed(group)
+
+    def _set_group_composite_axis_mode(
+        self,
+        group: DataGroup | _CompositeScope,
+        index: int,
+        value: str,
+    ) -> None:
+        config = data_group_composite_config(group)
+        axes = config.get("axes", [])
+        if not (0 <= index < len(axes)):
+            return
+        mode = value if value in REBIN_AXIS_MODES else "step"
+        if _rebin_axis_mode(config, axes[index]) == mode:
+            return
+        axes[index]["mode"] = mode
+        axes[index].pop("fractional", None)
+        if mode == "tolerance":
+            axes[index].setdefault(
+                "tolerance", max(float(axes[index].get("step_size", 0.1)), 1e-12)
+            )
         self._after_group_composite_changed(group)
 
     def _set_group_composite_axis_vector(self, group: DataGroup | _CompositeScope, index: int, text: str) -> None:
@@ -15298,7 +15374,7 @@ class NfitProjectExplorer:
                         axis[f"auto_{key}"] = False
                     if (
                         key in {"lower", "upper"}
-                        and _rebin_resolution_mode(config) == "step"
+                        and _rebin_axis_mode(config, axis) == "step"
                         and previous_step > 0.0
                         and np.isfinite(previous_step)
                     ):
@@ -15339,6 +15415,29 @@ class NfitProjectExplorer:
             self._set_dataset_details_preserving_scroll(dataset, group)
             return
         self._after_dataset_rebin_changed(dataset, group)
+
+    def _set_dataset_rebin_axis_mode(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup | None,
+        index: int,
+        value: str,
+    ) -> None:
+        config = dataset_rebin_config(dataset)
+        axes = config.get("axes", [])
+        if not (0 <= index < len(axes)):
+            return
+        mode = value if value in REBIN_AXIS_MODES else "step"
+        if _rebin_axis_mode(config, axes[index]) == mode:
+            return
+        axes[index]["mode"] = mode
+        axes[index].pop("fractional", None)
+        if mode == "tolerance":
+            axes[index].setdefault(
+                "tolerance", max(float(axes[index].get("step_size", 0.1)), 1e-12)
+            )
+        self._after_dataset_rebin_changed(dataset, group)
+        self._set_dataset_details_preserving_scroll(dataset, group)
 
     def _set_dataset_rebin_resolution_mode(
         self,
@@ -15471,9 +15570,16 @@ class NfitProjectExplorer:
             return False
         config = dataset_rebin_config(dataset)
         controls.setVisible(bool(config.get("enabled", False)))
-        resolution_key = "step_size" if _rebin_resolution_mode(config) == "step" else "num_bins"
         for index, axis_config in enumerate(config.get("axes", [])):
             axis = _sanitize_rebin_axis_config(axis_config)
+            axis_mode = _rebin_axis_mode(config, axis)
+            resolution_key = (
+                "num_bins"
+                if axis_mode == "bins"
+                else "tolerance"
+                if axis_mode == "tolerance"
+                else "step_size"
+            )
             values = {
                 f"dataset_rebin_axis_lower_{index}": (
                     "" if _rebin_axis_bound_is_auto(axis, "lower") else _format_number(axis["lower"])
@@ -15482,9 +15588,12 @@ class NfitProjectExplorer:
                     "" if _rebin_axis_bound_is_auto(axis, "upper") else _format_number(axis["upper"])
                 ),
                 f"dataset_rebin_resolution_value_{index}": (
+                    ""
+                    if axis_mode in {"discrete", "edges"}
+                    else
                     str(int(axis["num_bins"]))
                     if resolution_key == "num_bins"
-                    else _format_number(axis["step_size"])
+                    else _format_number(axis[resolution_key])
                 ),
                 f"dataset_rebin_axis_vector_{index}": _momentum_rebin_vector_text(
                     axis, index

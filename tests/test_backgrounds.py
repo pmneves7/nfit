@@ -307,7 +307,7 @@ def test_composite_background_is_excluded_from_inputs_and_subtracted_once():
     assert result.metadata["background_subtractions"][0]["scale"] == 0.5
 
 
-def test_mdhisto_composite_can_weight_by_saved_normalization_denominator():
+def test_mdhisto_composite_automatically_uses_saved_normalization_denominator():
     first_data = _powder(np.full((2, 2), 2.0), np.ones((2, 2)))
     second_data = _powder(np.full((2, 2), 4.0), np.ones((2, 2)))
     first_data = first_data.with_updates(
@@ -334,7 +334,7 @@ def test_mdhisto_composite_can_weight_by_saved_normalization_denominator():
         {
             "enabled": True,
             "fractional": False,
-            "mean_weighting": "normalization",
+            "mean_weighting": "uniform",
         }
     )
 
@@ -342,7 +342,45 @@ def test_mdhisto_composite_can_weight_by_saved_normalization_denominator():
 
     np.testing.assert_allclose(result.signal, 3.5)
     np.testing.assert_allclose(result.errors, np.sqrt(10.0) / 4.0)
-    assert result.metadata["rebin"]["mean_weighting"] == "normalization"
+    assert result.metadata["rebin"]["mean_weighting"] == "uniform"
+    assert result.metadata["rebin"]["weighted_by_normalization_denominator"] is True
+
+
+def test_mdhisto_inverse_variance_also_uses_normalization_denominator():
+    first_data = _powder(np.full((2, 2), 2.0), np.ones((2, 2)))
+    second_data = _powder(np.full((2, 2), 4.0), np.full((2, 2), 2.0))
+    first_data = first_data.with_updates(
+        auxiliary_channels={
+            "normalization_denominator": MDHistoChannel(np.ones((2, 2)))
+        }
+    )
+    second_data = second_data.with_updates(
+        auxiliary_channels={
+            "normalization_denominator": MDHistoChannel(np.full((2, 2), 3.0))
+        }
+    )
+    group = DataGroup(
+        "Workspace",
+        [
+            DatasetEntry("first", first_data, kind="mdhisto"),
+            DatasetEntry("second", second_data, kind="mdhisto"),
+        ],
+    )
+    from nfit import project_gui
+
+    config = project_gui.data_group_composite_config(group)
+    config.update(
+        {
+            "enabled": True,
+            "fractional": False,
+            "mean_weighting": "inverse_variance",
+        }
+    )
+
+    result = project_gui.composite_dataset_data(group)
+
+    np.testing.assert_allclose(result.signal, 20.0 / 7.0)
+    np.testing.assert_allclose(result.errors, np.sqrt(13.0) / 3.5)
 
 
 def test_project_tree_exposes_background_controls_with_tooltips(monkeypatch):

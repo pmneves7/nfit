@@ -37,6 +37,9 @@ class PointData4D:
     metadata
         Free-form metadata. Use this for units, sample, scan, and normalization
         notes; do not hide physics assumptions in code.
+    normalization_denominator
+        Optional positive effective exposure for each point. Rebinning uses it
+        as ``data_weights`` for both uniform and inverse-variance means.
     """
 
     H: ArrayLike
@@ -49,6 +52,7 @@ class PointData4D:
     temperature: float | ArrayLike | None = None
     magnetic_field: ArrayLike | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    normalization_denominator: ArrayLike | None = None
     _mutable: InitVar[bool] = False
     _arrays_mutable: bool = field(default=False, init=False, repr=False, compare=False)
 
@@ -110,6 +114,18 @@ class PointData4D:
                     f"{field_vector.shape}"
                 )
             object.__setattr__(self, "magnetic_field", field_vector)
+        if self.normalization_denominator is not None:
+            denominator = _as_float_1d(
+                "normalization_denominator",
+                self.normalization_denominator,
+                mutable=_mutable,
+            )
+            if denominator.shape != shape:
+                raise ValueError(
+                    "normalization_denominator shape "
+                    f"{denominator.shape} does not match H shape {shape}"
+                )
+            object.__setattr__(self, "normalization_denominator", denominator)
         object.__setattr__(self, "metadata", dict(self.metadata))
         object.__setattr__(self, "_arrays_mutable", bool(_mutable))
 
@@ -135,6 +151,9 @@ class PointData4D:
         mask &= np.isfinite(self.sigma)
         if require_positive_sigma:
             mask &= self.sigma > 0.0
+        if self.normalization_denominator is not None:
+            mask &= np.isfinite(self.normalization_denominator)
+            mask &= self.normalization_denominator > 0.0
         if isinstance(self.temperature, np.ndarray):
             mask &= np.isfinite(self.temperature)
         if isinstance(self.magnetic_field, np.ndarray) and self.magnetic_field.ndim == 2:
@@ -167,6 +186,11 @@ class PointData4D:
             temperature=temp,
             magnetic_field=field,
             metadata=dict(self.metadata),
+            normalization_denominator=(
+                None
+                if self.normalization_denominator is None
+                else self.normalization_denominator[mask]
+            ),
         )
 
     def coordinates(self) -> tuple[FloatArray, FloatArray, FloatArray, FloatArray]:
@@ -188,6 +212,7 @@ class PointData4D:
             temperature=self.temperature,
             magnetic_field=self.magnetic_field,
             metadata=copy.deepcopy(self.metadata),
+            normalization_denominator=self.normalization_denominator,
             _mutable=True,
         )
 
@@ -204,6 +229,7 @@ class PointData4D:
             self.mask,
             self.temperature,
             self.magnetic_field,
+            self.normalization_denominator,
         )
         if not self._arrays_mutable and not any(
             isinstance(array, np.ndarray) and array.flags.writeable
@@ -226,6 +252,7 @@ class PointData4D:
             "temperature": self.temperature,
             "magnetic_field": self.magnetic_field,
             "metadata": self.metadata,
+            "normalization_denominator": self.normalization_denominator,
         }
         unknown = set(changes) - set(values)
         if unknown:
@@ -246,6 +273,7 @@ def from_arrays(
     temperature: float | ArrayLike | None = None,
     magnetic_field: ArrayLike | None = None,
     metadata: dict[str, Any] | None = None,
+    normalization_denominator: ArrayLike | None = None,
 ) -> PointData4D:
     """Construct :class:`PointData4D` from array-like inputs."""
 
@@ -260,6 +288,7 @@ def from_arrays(
         temperature=temperature,
         magnetic_field=magnetic_field,
         metadata={} if metadata is None else dict(metadata),
+        normalization_denominator=normalization_denominator,
     )
 
 
@@ -462,8 +491,9 @@ class PointListData:
         step_size: ArrayLike | None = None,
         bin_edges: list[ArrayLike | None] | tuple[ArrayLike | None, ...] | None = None,
         fractional: bool = True,
+        fractional_axes: list[bool] | tuple[bool, ...] | None = None,
         normalize: bool = True,
-        mean_weighting: str = "inverse_variance",
+        mean_weighting: str = "uniform",
         minimum_samples: float = 0.0,
         max_batch_bytes: int = 192 * 1024 * 1024,
         symmetry_operations: list[ArrayLike] | tuple[ArrayLike, ...] | None = None,
@@ -504,6 +534,7 @@ class PointListData:
                 step_size=step_size,
                 bin_edges=bin_edges,
                 fractional=fractional,
+                fractional_axes=fractional_axes,
                 normalize=normalize,
                 mean_weighting=mean_weighting,
                 minimum_samples=minimum_samples,
@@ -558,6 +589,11 @@ class PointListData:
                 for edges in (result.bin_edges or [])
             ],
             "fractional": bool(fractional),
+            "fractional_axes": (
+                [bool(value) for value in fractional_axes]
+                if fractional_axes is not None
+                else [bool(fractional)] * len(coordinate_names)
+            ),
             "normalize": bool(normalize),
             "mean_weighting": str(mean_weighting),
             "minimum_samples": float(minimum_samples),

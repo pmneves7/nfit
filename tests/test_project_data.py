@@ -1,5 +1,6 @@
 # ruff: noqa: F401, F403, F405
 import nfit.project_data as project_data
+from nfit.mdhisto import MDHistoChannel
 from nfit.project_archive import read_project_manifest
 from tests.project_gui_test_support import *
 from tests.project_gui_test_support import (
@@ -176,7 +177,7 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     config = dataset_rebin_config(dataset)
     assert config["axes"][0]["num_bins"] == 2
     assert config["axes"][1]["num_bins"] == 2
-    assert config["fractional"] is True
+    assert [axis["mode"] for axis in config["axes"]] == ["step", "step"]
     assert config["max_batch_mb"] == 192
     assert config["auto_rebin"] is True
     assert config["minimum_coverage"] == pytest.approx(0.9)
@@ -194,14 +195,14 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
         "Scalar variable"
         in rebin_panel.findChild(QtWidgets.QLabel, "dataset_rebin_axis_variable_0").toolTip()
     )
-    assert rebin_panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_fractional").isChecked()
+    assert rebin_panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_fractional") is None
     auto_check = rebin_panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_auto")
     assert auto_check is not None
     assert auto_check.isChecked()
     assert rebin_panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_fit_enabled") is None
     mean_combo = rebin_panel.findChild(QtWidgets.QComboBox, "dataset_rebin_mean_weighting")
     assert mean_combo is not None
-    assert mean_combo.currentData() == "inverse_variance"
+    assert mean_combo.currentData() == "uniform"
     coverage_edit = rebin_panel.findChild(
         QtWidgets.QLineEdit, "dataset_rebin_minimum_coverage"
     )
@@ -292,7 +293,9 @@ def test_materialized_composite_round_trips_as_project_owned_dataset(tmp_path):
     path = tmp_path / "materialized.nfit"
     save_project(project, path)
     config = project_gui.data_group_composite_config(group)
-    config.update({"enabled": True, "fractional": False, "mean_weighting": "uniform"})
+    config.update({"enabled": True, "mean_weighting": "uniform"})
+    for axis in config["axes"]:
+        axis["mode"] = "discrete"
 
     entry = project_gui.materialize_composite_dataset(path, group)
     save_project(project, path)
@@ -324,11 +327,9 @@ def test_rebin_settings_copy_and_paste_between_datasets(monkeypatch):
     source_config.update(
         {
             "enabled": True,
-            "fractional": False,
             "auto_rebin": False,
             "mean_weighting": "uniform",
             "max_batch_mb": 64,
-            "resolution_mode": "bins",
             "stale": False,
         }
     )
@@ -368,12 +369,9 @@ def test_rebin_settings_copy_and_paste_between_datasets(monkeypatch):
     assert explorer.details_widget.findChild(
         QtWidgets.QCheckBox, "dataset_rebin_enabled"
     ).isChecked()
-    assert (
-        explorer.details_widget.findChild(
-            QtWidgets.QComboBox, "dataset_rebin_resolution_mode"
-        ).currentData()
-        == "bins"
-    )
+    assert explorer.details_widget.findChild(
+        QtWidgets.QComboBox, "dataset_rebin_axis_mode_0"
+    ).currentData() == source_config["axes"][0]["mode"]
 
 
 def test_rebin_settings_paste_rejects_incompatible_axis_count():
@@ -575,7 +573,7 @@ def test_large_dataset_rebin_defaults_manual_and_defers_refresh(monkeypatch):
     assert np.any(np.isclose(forced.axes[0].centers, 0.0))
 
 
-def test_dataset_rebin_resolution_selector_switches_between_step_and_bins(monkeypatch):
+def test_dataset_rebin_axis_mode_switches_between_step_bins_and_tolerance(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtCore = pytest.importorskip("PySide6.QtCore")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
@@ -589,7 +587,7 @@ def test_dataset_rebin_resolution_selector_switches_between_step_and_bins(monkey
     config["enabled"] = True
 
     mode_combo = explorer.details_widget.findChild(
-        QtWidgets.QComboBox, "dataset_rebin_resolution_mode"
+        QtWidgets.QComboBox, "dataset_rebin_axis_mode_0"
     )
     value_edit = explorer.details_widget.findChild(
         QtWidgets.QLineEdit, "dataset_rebin_resolution_value_0"
@@ -600,7 +598,7 @@ def test_dataset_rebin_resolution_selector_switches_between_step_and_bins(monkey
     mode_combo.setCurrentIndex(mode_combo.findData("bins"))
     QtWidgets.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
     QtWidgets.QApplication.processEvents()
-    assert config["resolution_mode"] == "bins"
+    assert config["axes"][0]["mode"] == "bins"
     value_edit = explorer.details_widget.findChild(
         QtWidgets.QLineEdit, "dataset_rebin_resolution_value_0"
     )
@@ -611,12 +609,12 @@ def test_dataset_rebin_resolution_selector_switches_between_step_and_bins(monkey
     assert config["axes"][0]["step_size"] == pytest.approx(2.5)
 
     mode_combo = explorer.details_widget.findChild(
-        QtWidgets.QComboBox, "dataset_rebin_resolution_mode"
+        QtWidgets.QComboBox, "dataset_rebin_axis_mode_0"
     )
     mode_combo.setCurrentIndex(mode_combo.findData("step"))
     QtWidgets.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
     QtWidgets.QApplication.processEvents()
-    assert config["resolution_mode"] == "step"
+    assert config["axes"][0]["mode"] == "step"
     explorer._set_dataset_rebin_axis_value(dataset, group, 0, "step_size", "0.75")
     explorer._set_dataset_rebin_axis_value(dataset, group, 0, "lower", "-0.8")
     explorer._set_dataset_rebin_axis_value(dataset, group, 0, "upper", "2")
@@ -643,7 +641,8 @@ def test_data_group_composite_uses_scale_fit_weight_and_rebinning():
     group = DataGroup("Datagroup1", datasets=[first, second])
     config = project_gui.data_group_composite_config(group)
     config["enabled"] = True
-    config["fractional"] = False
+    for axis in config["axes"]:
+        axis["mode"] = "discrete"
 
     composite = project_gui.composite_dataset_data(group)
 
@@ -671,6 +670,123 @@ def test_data_group_composite_uses_scale_fit_weight_and_rebinning():
     inputs, bundles = project_gui.fit_dataset_inputs(group)
     assert [item.name for item in inputs] == ["Datagroup1 Composite"]
     assert list(bundles) == ["Datagroup1 Composite"]
+
+
+def test_point_data_rebin_automatically_uses_normalization_denominator():
+    data = PointData4D(
+        H=[0.0, 0.0],
+        K=[0.0, 0.0],
+        L=[0.0, 0.0],
+        E=[0.0, 0.0],
+        intensity=[0.0, 10.0],
+        sigma=[1.0, 1.0],
+        normalization_denominator=[1.0, 3.0],
+    )
+    dataset = DatasetEntry("points", data, data_type="single_crystal_inelastic")
+    config = dataset_rebin_config(dataset)
+    config.update(
+        {
+            "enabled": True,
+            "mean_weighting": "uniform",
+            "minimum_coverage": 0.0,
+        }
+    )
+    for axis in config["axes"]:
+        axis.update(
+            lower=-0.5,
+            upper=0.5,
+            auto_lower=False,
+            auto_upper=False,
+            num_bins=1,
+            mode="bins",
+        )
+
+    rebinned = project_gui.rebinned_dataset_data(dataset)
+
+    np.testing.assert_allclose(rebinned.signal[~rebinned.mask], [7.5])
+    np.testing.assert_allclose(rebinned.errors[~rebinned.mask], [np.sqrt(10.0) / 4.0])
+    assert rebinned.metadata["rebin"][
+        "weighted_by_normalization_denominator"
+    ] is True
+
+
+def test_mdhisto_rebin_automatically_uses_normalization_denominator():
+    data = MDHistoData(
+        axes=(
+            MDHistoAxis("|Q|", [0.5, 1.5, 2.5], "1/angstrom", "momentum"),
+            MDHistoAxis("DeltaE", [-1.5, -0.5, 0.5], "meV", "energy"),
+        ),
+        signal=np.asarray([[0.0, 10.0], [0.0, 10.0]]),
+        errors=np.ones((2, 2)),
+        mask=np.zeros((2, 2), dtype=bool),
+        num_events=np.ones((2, 2)),
+        auxiliary_channels={
+            "normalization_denominator": MDHistoChannel(
+                np.asarray([[1.0, 3.0], [1.0, 3.0]])
+            )
+        },
+    )
+    dataset = DatasetEntry("histogram", data, data_type="powder_inelastic")
+    config = dataset_rebin_config(dataset)
+    config.update(
+        {
+            "enabled": True,
+            "mean_weighting": "uniform",
+            "minimum_coverage": 0.0,
+        }
+    )
+    for axis, lower, upper in zip(
+        config["axes"], (0.5, -1.5), (2.5, 0.5), strict=True
+    ):
+        axis.update(
+            lower=lower,
+            upper=upper,
+            auto_lower=False,
+            auto_upper=False,
+            num_bins=1,
+            mode="bins",
+        )
+
+    rebinned = project_gui.rebinned_dataset_data(dataset)
+
+    np.testing.assert_allclose(rebinned.signal[~rebinned.mask], [7.5])
+    np.testing.assert_allclose(rebinned.errors[~rebinned.mask], [np.sqrt(20.0) / 8.0])
+    assert rebinned.metadata["rebin"][
+        "weighted_by_normalization_denominator"
+    ] is True
+    np.testing.assert_allclose(
+        rebinned.auxiliary_channels["normalization_denominator"].values,
+        [[8.0]],
+    )
+
+
+def test_point_data_tolerance_axis_derives_nominal_energy_bins_without_leakage():
+    energies = np.asarray(
+        [-0.402, -0.398, -0.003, 0.004, 0.398, 0.403, 1.198, 1.203, 2.0, 2.8, 3.6]
+    )
+    data = PointData4D(
+        H=np.zeros(energies.size),
+        K=np.zeros(energies.size),
+        L=np.zeros(energies.size),
+        E=energies,
+        intensity=np.arange(energies.size, dtype=float),
+        sigma=np.ones(energies.size),
+    )
+    dataset = DatasetEntry("points", data, data_type="single_crystal_inelastic")
+    config = dataset_rebin_config(dataset)
+    config.update(enabled=True, minimum_coverage=0.0)
+    for axis in config["axes"][:3]:
+        axis["mode"] = "discrete"
+    config["axes"][3].update(mode="tolerance", tolerance=0.1)
+
+    rebinned = project_gui.rebinned_dataset_data(dataset)
+
+    np.testing.assert_allclose(
+        rebinned.axes[3].centers,
+        [-0.4, 0.0005, 0.4005, 1.2005, 2.0, 2.8, 3.6],
+    )
+    assert rebinned.shape == (1, 1, 1, 7)
+    assert rebinned.metadata["rebin"]["fractional_axes"] == [False] * 4
 
 
 def test_data_group_composite_controls_show_summary_and_update_config(monkeypatch):
@@ -737,10 +853,7 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
     final_axis_label = explorer.details_widget.findChild(
         QtWidgets.QLabel, "group_composite_axis_label_1"
     )
-    fractional_check = explorer.details_widget.findChild(
-        QtWidgets.QCheckBox, "group_composite_fractional"
-    )
-    assert final_axis_label is not None and fractional_check is not None
+    assert final_axis_label is not None
     controls_grid = final_axis_label.parentWidget().layout()
     final_axis_row = controls_grid.getItemPosition(
         controls_grid.indexOf(final_axis_label)
@@ -749,7 +862,7 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
         controls_grid.getItemPosition(index)[0]
         for index in range(controls_grid.count())
         if controls_grid.itemAt(index).layout() is not None
-        and controls_grid.itemAt(index).layout().indexOf(fractional_check) >= 0
+        and controls_grid.itemAt(index).layout().indexOf(auto_check) >= 0
     ]
     assert footer_rows == [final_axis_row + 1]
 
@@ -757,7 +870,7 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
 
     config = project_gui.data_group_composite_config(group)
     assert config["enabled"] is True
-    assert config["mean_weighting"] == "inverse_variance"
+    assert config["mean_weighting"] == "uniform"
     coverage_edit = explorer.details_widget.findChild(
         QtWidgets.QLineEdit, "group_composite_minimum_coverage"
     )
@@ -767,11 +880,11 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
     coverage_edit.editingFinished.emit()
     assert config["minimum_coverage"] == pytest.approx(0.85)
     resolution_mode = explorer.details_widget.findChild(
-        QtWidgets.QComboBox, "group_composite_resolution_mode"
+        QtWidgets.QComboBox, "group_composite_axis_mode_0"
     )
     assert resolution_mode is not None and resolution_mode.currentData() == "step"
     resolution_mode.setCurrentIndex(resolution_mode.findData("bins"))
-    assert config["resolution_mode"] == "bins"
+    assert config["axes"][0]["mode"] == "bins"
     copy_button = explorer.details_widget.findChild(
         QtWidgets.QPushButton, "group_composite_copy_settings"
     )
@@ -785,6 +898,13 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
     pasted = project_gui.data_group_composite_config(group)
     assert pasted["axes"][0]["lower"] == copied_lower
     assert pasted["stale"] is True
+    assignment = explorer.details_widget.findChild(
+        QtWidgets.QComboBox, "group_composite_axis_mode_1"
+    )
+    assert assignment is not None and assignment.currentData() == "step"
+    assert "Discrete" in assignment.toolTip()
+    assignment.setCurrentIndex(assignment.findData("discrete"))
+    assert project_gui.data_group_composite_config(group)["axes"][1]["mode"] == "discrete"
 
 
 def test_large_data_group_composite_defaults_manual_and_defers_refresh(monkeypatch):
@@ -905,7 +1025,8 @@ def test_mdhisto_rebin_applies_enabled_masks_before_binning():
     mask.enabled = False
     config = dataset_rebin_config(dataset)
     config["enabled"] = True
-    config["fractional"] = False
+    for axis in config["axes"]:
+        axis["mode"] = "discrete"
     config["resolution_mode"] = "bins"
     config["axes"][0].update(
         {
@@ -914,6 +1035,7 @@ def test_mdhisto_rebin_applies_enabled_masks_before_binning():
             "auto_lower": False,
             "auto_upper": False,
             "num_bins": 1,
+            "mode": "bins",
         }
     )
 
@@ -957,10 +1079,9 @@ def test_mdhisto_composite_masks_output_below_geometric_coverage_cutoff():
     )
     config = project_gui.data_group_composite_config(group)
     config["enabled"] = True
-    config["fractional"] = False
     config["resolution_mode"] = "bins"
     config["axes"][0].update(
-        {"lower": 0.0, "upper": 2.0, "num_bins": 1, "step_size": 2.0}
+        {"lower": 0.0, "upper": 2.0, "num_bins": 1, "step_size": 2.0, "mode": "bins"}
     )
     config["axes"][0].update({"auto_lower": False, "auto_upper": False})
 
@@ -995,8 +1116,6 @@ def test_point_data_rebin_applies_enabled_masks_before_binning():
     mask.enabled = False
     config = dataset_rebin_config(dataset)
     config["enabled"] = True
-    config["fractional"] = False
-    config["resolution_mode"] = "bins"
     for axis in config["axes"]:
         axis.update(
             {
@@ -1005,6 +1124,7 @@ def test_point_data_rebin_applies_enabled_masks_before_binning():
                 "auto_lower": False,
                 "auto_upper": False,
                 "num_bins": 1,
+                "mode": "bins",
             }
         )
 
@@ -1069,23 +1189,17 @@ def test_point_data_auto_limits_center_zero_and_momentum_matrix_updates_labels(
     energy_axis_label = explorer.details_widget.findChild(
         QtWidgets.QLabel, "dataset_rebin_axis_variable_3"
     )
-    fractional_check = explorer.details_widget.findChild(
-        QtWidgets.QCheckBox, "dataset_rebin_fractional"
-    )
     assert lower is not None and lower.text() == "" and lower.placeholderText() == "auto"
     assert matrix is not None and matrix.toolTip()
-    assert energy_axis_label is not None and fractional_check is not None
-    controls_grid = energy_axis_label.parentWidget().layout()
-    energy_row = controls_grid.getItemPosition(
-        controls_grid.indexOf(energy_axis_label)
-    )[0]
-    footer_rows = [
-        controls_grid.getItemPosition(index)[0]
-        for index in range(controls_grid.count())
-        if controls_grid.itemAt(index).layout() is not None
-        and controls_grid.itemAt(index).layout().indexOf(fractional_check) >= 0
-    ]
-    assert footer_rows == [energy_row + 1]
+    assert energy_axis_label is not None
+    assignment = explorer.details_widget.findChild(
+        QtWidgets.QComboBox, "dataset_rebin_axis_mode_3"
+    )
+    assert assignment is not None and assignment.currentData() == "step"
+    assert "Discrete" in assignment.toolTip()
+    assignment.setCurrentIndex(assignment.findData("tolerance"))
+    assert dataset_rebin_config(dataset)["axes"][3]["mode"] == "tolerance"
+    explorer.has_unsaved_changes = False
     explorer.window.close()
 
 
@@ -1917,7 +2031,7 @@ def test_powder_wavelength_to_q_and_point_rebin(hb2a_file):
     rebin = dataset_rebin_config(dataset)
     assert rebin["axes"][0]["name"] == "q"
     rebin["enabled"] = True
-    rebin["resolution_mode"] = "bins"
+    rebin["axes"][0]["mode"] = "bins"
     rebin["axes"][0]["num_bins"] = 100
     viewed = dataset_for_slice_viewer(dataset)
     assert isinstance(viewed, PointListData)
@@ -2120,7 +2234,8 @@ def test_rebin_axis_vector_projects_new_coordinate():
     dataset = DatasetEntry("scan", data)
     config = dataset_rebin_config(dataset)
     config["enabled"] = True
-    config["resolution_mode"] = "bins"
+    for axis in config["axes"]:
+        axis["mode"] = "bins"
     # Swap which physical coordinate maps to each output axis.
     config["axes"][0].update({"vector": [0.0, 1.0], "lower": 5.0, "upper": 15.0, "num_bins": 2})
     config["axes"][1].update({"vector": [1.0, 0.0], "lower": 0.5, "upper": 1.5, "num_bins": 2})
@@ -2164,7 +2279,8 @@ def test_rebin_defaults_follow_mdhisto_axis_coordinate_vectors():
     ]
 
     config["enabled"] = True
-    config["fractional"] = False
+    for axis in config["axes"]:
+        axis["mode"] = "discrete"
     rebinned = project_gui.rebinned_dataset_data(dataset)
 
     for axis, step in zip(
@@ -2262,7 +2378,8 @@ def test_rebin_basis_change_regenerates_names_and_keeps_full_data_extent():
         assert axis["num_bins"] >= 1
 
     config["enabled"] = True
-    config["fractional"] = False
+    for axis in config["axes"]:
+        axis["mode"] = "discrete"
     rebinned = project_gui.rebinned_dataset_data(dataset)
     assert [axis.name for axis in rebinned.axes] == [
         "DeltaE",

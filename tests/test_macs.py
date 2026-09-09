@@ -118,6 +118,10 @@ def test_macs_spec_and_diff_are_distinct_point_streams(tmp_path):
     assert spec.metadata["monitor_target"] == 1.0e6
     np.testing.assert_allclose(spec.intensity[:18], 45.0)
     np.testing.assert_allclose(spec.sigma[:18], 15.0)
+    np.testing.assert_allclose(spec.normalization_denominator, 0.2)
+    np.testing.assert_allclose(
+        spec.intensity[:18] * spec.normalization_denominator[:18], 9.0
+    )
     assert spec.temperature == pytest.approx(np.full(spec.size, 1.5))
 
     # Channel 19 is unresponsive and channel 20 is misset; neither condition is
@@ -126,6 +130,24 @@ def test_macs_spec_and_diff_are_distinct_point_streams(tmp_path):
     assert not np.any(spec.mask.reshape(24, 20)[:, 18:])
     assert np.all(diff.mask)
     assert np.all(diff.intensity == 500.0)
+
+
+def test_macs_normalization_denominator_tracks_monitor_and_efficiency(tmp_path):
+    source = _write_macs_nexus(tmp_path / "weighted.nxs.ng0")
+    with h5py.File(source, "r+") as handle:
+        logs = handle["entry/DAS_logs"]
+        logs["counter/liveMonitor"][0] = 1.0e5
+        logs["specDetector/detectorEfficiency"][0] = 2.0
+
+    data = import_macs_nexus(source, {"stream": "spec"})
+    intensity = data.intensity.reshape(-1, 20)
+    sigma = data.sigma.reshape(-1, 20)
+    denominator = data.normalization_denominator.reshape(-1, 20)
+
+    assert denominator[0, 0] == pytest.approx(0.05)
+    assert denominator[1, 0] == pytest.approx(0.1)
+    assert intensity[0, 0] * denominator[0, 0] == pytest.approx(9.0)
+    assert sigma[0, 0] * denominator[0, 0] == pytest.approx(3.0)
 
 
 def test_macs_spec_recovers_final_energy_from_aligned_analyzers(tmp_path):

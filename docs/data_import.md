@@ -115,7 +115,11 @@ Counts and Poisson one-sigma uncertainties are multiplied by the stored
 per-stream detector-efficiency corrections and normalized to the chosen monitor
 target; the default is $10^6$ monitor counts. A zero-count point receives the
 uncertainty corresponding to one count so it cannot acquire infinite fit
-weight.
+weight. Each point also retains the effective normalization denominator
+$D=M/(T c)$, where $M$ is its live monitor count, $T$ is the selected monitor
+target, and $c$ is the multiplicative detector-efficiency correction. The
+central nfit rebinner always includes $D$ in the data weight. Uniform averaging
+therefore uses $D$, while inverse-variance averaging uses $D/\sigma^2$.
 
 ### MACS detector masks
 
@@ -326,6 +330,12 @@ the values and do not convert them. Leave the coordinates blank to retain the
 exact sorted unique values. **Preview assignments** shows every source's
 readings and target coordinates before applying.
 
+The metadata rebin row uses the same per-axis Mode vocabulary. **Discrete**
+retains the assigned values; Step, Bins, and Edges group them into whole bins.
+**Tolerance** derives a compact set of bin centers from nearby assigned values.
+This rebin tolerance is distinct from the metadata recipe's assignment
+tolerance: it controls clustering after the source channel has been assigned.
+
 Sources assigned to the same coordinate share the existing composite's weights,
 masks, scales, symmetry, and spatial grid. Different metadata coordinates are
 reduced independently, even when fractional momentum/energy binning is enabled.
@@ -364,14 +374,25 @@ implementation without Qt widgets.
 
 Rebinning affects both viewing and fitting. It supports:
 
-- **Step** or **Bins** resolution;
+- per-axis **Discrete**, **Step**, **Bins**, **Edges**, or **Tolerance** modes;
 - inverse-variance or uniform averaging;
-- fractional bin overlap;
-- optional nonuniform edges on any individual output axis;
+- fractional bin overlap for Step, Bins, and Edges;
+- exact or tolerance-clustered whole-bin assignment;
 - a minimum effective source-sample threshold;
 - projected HKLE coordinate bases;
 - point-group symmetry expansion; and
 - bounded batch sizes for temporary working memory.
+
+Every physical axis has its own **Mode** selector; there is no global
+fractional-binning switch. Step, Bins, and Edges use fractional contributions
+and are the default for physical axes. **Discrete** derives exact coordinate
+centers and assigns each point wholly to one center. **Tolerance** clusters
+nearby recorded coordinates, derives one center per cluster, and also assigns
+each point wholly to one bin. For nominal MACS energy scans, setting DeltaE to
+Tolerance with `0.1` meV separates scans near -0.4, 0, 0.4, 1.2, 2.0, 2.8,
+and 3.6 meV without creating the unmeasured intervening slices. Metadata axes
+default to Discrete and always use whole-bin assignment. Empty bins remain
+masked.
 
 For four-dimensional single-crystal data, **Momentum coordinates** exposes the
 complete $3\times3$ momentum block. Its rows define the three output directions
@@ -459,13 +480,14 @@ background without keeping the source event files in memory.
 
 A composite combines compatible enabled descendants into one effective
 dataset. Each source signal and uncertainty receive its positive dataset
-calibration scale, then the sources are averaged using their fit weights. Use a
-dataset or group background for subtraction. Gridded MDEvent outputs also carry
-their detector-trajectory normalization denominator. Select **Normalization
-denominator** averaging when combining separately reduced angle ranges to
-reproduce numerator/denominator accumulation rather than an arithmetic or
-inverse-variance mean. When a composite is active, its constituents are not
-fitted separately.
+calibration scale, then the sources are averaged using their fit weights and any
+physical normalization denominator carried by the data. **Uniform** omits an
+additional uncertainty factor; **Inverse variance** additionally applies
+$1/\sigma^2$. Gridded MDEvent outputs carry their detector-trajectory
+normalization denominator, and MACS points carry their monitor- and
+detector-efficiency-based denominator. Use a dataset or group background for
+subtraction. When a composite is active, its constituents are not fitted
+separately.
 
 A parent collection with no direct datasets can combine the live composites of
 its enabled child collections. This is useful for keeping separate angle ranges

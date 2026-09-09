@@ -91,7 +91,8 @@ def _warm_numba_kernel() -> None:
                     _NUMBA_REBIN.accumulate_batch(
                         np.zeros((1, 1)), np.zeros(1), np.ones(1), np.ones(1),
                         np.zeros(1), np.ones(1), np.ones(1),
-                        np.ones(1, dtype=np.int64), fractional, inverse_variance,
+                        np.ones(1, dtype=np.int64),
+                        np.asarray([fractional], dtype=bool), inverse_variance,
                         np.zeros(1), np.zeros(1), np.zeros(1), np.zeros(1),
                     )
             _mark_numba_warm()
@@ -240,6 +241,10 @@ class NDRebin:
         If true, distribute each point to neighboring bins using multilinear
         weights. If false, each point contributes to a single bin. Defaults to
         true.
+    fractional_axes:
+        Optional boolean flag for each coordinate dimension. Values override
+        ``fractional`` axis by axis, permitting mixed reductions such as
+        fractional momentum coordinates with discrete energy assignment.
     normalize:
         If true, return averages. If false, return sums, which is useful for
         integrations.
@@ -248,11 +253,11 @@ class NDRebin:
         uses ``1 / data_errs**2`` weights when uncertainties are available;
         points with non-positive or non-finite uncertainties are skipped because
         they do not define inverse-variance weights. ``"uniform"`` keeps the
-        previous simple mean behavior. Fractional binning multiplies either mean
+        default exposure-weighted mean behavior. Fractional binning multiplies either mean
         weight by the fractional spatial contribution.
     minimum_samples:
         Minimum effective source-sample count required for an output bin.
-        Hard binning counts every accepted point as one. Fractional binning
+        Discrete binning counts every accepted point as one. Fractional binning
         sums its spatial contribution weights. The default zero preserves all
         nonempty bins.
     batch_size:
@@ -298,8 +303,9 @@ class NDRebin:
         num_bins: ArrayLike | None = None,
         bin_edges: Iterable[ArrayLike | None] | None = None,
         fractional: bool = True,
+        fractional_axes: Iterable[bool] | None = None,
         normalize: bool = True,
-        mean_weighting: MeanWeighting = "inverse_variance",
+        mean_weighting: MeanWeighting = "uniform",
         minimum_samples: float = 0.0,
         batch_size: int | None = None,
         max_batch_bytes: int = 192 * 1024 * 1024,
@@ -320,6 +326,9 @@ class NDRebin:
         self.num_bins = num_bins
         self.bin_edges = None if bin_edges is None else list(bin_edges)
         self.fractional = fractional
+        self.fractional_axes = (
+            None if fractional_axes is None else list(fractional_axes)
+        )
         self.normalize = normalize
         self.mean_weighting = mean_weighting
         self.minimum_samples = float(minimum_samples)
@@ -342,6 +351,7 @@ class NDRebin:
         self.bins_list: list[FloatArray] | None = None
         self.bin_centers_list: list[FloatArray] | None = None
         self._explicit_bin_edges: list[FloatArray | None] | None = None
+        self._fractional_axes: NDArray[np.bool_] | None = None
         self.bin_inds: FloatArray | None = None
         self.binned_data: FloatArray | None = None
         self.binned_data_errs: FloatArray | None = None
@@ -360,19 +370,58 @@ class NDRebin:
         """Bin the data into the defined grid."""
 
         started = time.perf_counter()
+        if self.progress_callback is not None:
+            self.progress_callback(
+                {
+                    "stage": "rebin_prepare",
+                    "iteration": 0,
+                    "total": 0,
+                    "message": "validating inputs and preparing the output grid",
+                }
+            )
         if not self._prepared:
             self._prepare()
         prepared = time.perf_counter()
+        if self.progress_callback is not None:
+            self.progress_callback(
+                {
+                    "stage": "rebin_ready",
+                    "iteration": 0,
+                    "total": int(self.Nvals or 0),
+                    "message": "output grid prepared; starting accumulation",
+                    **self._progress_details(),
+                }
+            )
 
         if self.resolved_backend == "numba":
             self._calculate_numba_bins()
-        elif self.fractional:
+        elif self._uses_fractional_binning():
             self._calculate_fractional_bins()
         else:
             self._calculate_bins()
         accumulated = time.perf_counter()
+        if self.progress_callback is not None:
+            self.progress_callback(
+                {
+                    "stage": "rebin_finalize",
+                    "iteration": int(self.Nvals or 0),
+                    "total": int(self.Nvals or 0),
+                    "message": "propagating uncertainties and finalizing output bins",
+                    **self._progress_details(),
+                }
+            )
         self._norm_data()
         finished = time.perf_counter()
+        if self.progress_callback is not None:
+            self.progress_callback(
+                {
+                    "stage": "rebin_complete",
+                    "iteration": int(self.Nvals or 0),
+                    "total": int(self.Nvals or 0),
+                    "message": "rebin complete",
+                    **self._progress_details(),
+                }
+            )
         self.timings = {
             "prepare": prepared - started,
             "accumulate": accumulated - prepared,
@@ -436,6 +485,25 @@ class NDRebin:
             raise ValueError("data_weights must have the same shape as data")
 
     def _check_options(self) -> None:
+        assert self.Ndims is not None
+        if not isinstance(self.fractional, (bool, np.bool_)):
+            raise ValueError("fractional must be boolean")
+        if self.fractional_axes is None:
+            self._fractional_axes = np.full(
+                self.Ndims, bool(self.fractional), dtype=bool
+            )
+        else:
+            axes = np.asarray(self.fractional_axes)
+            if axes.ndim != 1 or axes.size != self.Ndims:
+                raise ValueError(
+                    "fractional_axes must contain one boolean per coordinate dimension"
+                )
+            if any(
+                not isinstance(value, (bool, np.bool_))
+                for value in self.fractional_axes
+            ):
+                raise ValueError("fractional_axes values must be boolean")
+            self._fractional_axes = axes.astype(bool)
         if self.mean_weighting not in {"inverse_variance", "uniform"}:
             raise ValueError("mean_weighting must be 'inverse_variance' or 'uniform'")
         if not np.isfinite(self.minimum_samples) or self.minimum_samples < 0.0:
@@ -609,6 +677,7 @@ class NDRebin:
         assert self.bins_list is not None
         assert self.step_size is not None
         assert self.num_bins is not None
+        assert self._fractional_axes is not None
 
         step_size = np.asarray(self.step_size, dtype=float)
         num_bins = np.asarray(self.num_bins, dtype=int)
@@ -618,7 +687,7 @@ class NDRebin:
             explicit_edges = self._explicit_bin_edges[ind] if self._explicit_bin_edges else None
             if explicit_edges is not None:
                 coordinates = self.coords_flat[:, ind]
-                if self.fractional:
+                if self._fractional_axes[ind]:
                     centers = self.bin_centers_list[ind]
                     if centers.size == 1:
                         positions = np.zeros(coordinates.shape, dtype=float)
@@ -705,7 +774,9 @@ class NDRebin:
             else None
         )
         partials = self._numba_worker_partials(size) if executor is not None else []
-        for start, stop in self._batch_ranges(fractional=self.fractional):
+        for start, stop in self._batch_ranges(
+            fractional=self._uses_fractional_binning()
+        ):
             if executor is None:
                 self._accumulate_numba_range(
                     start, stop, lower, upper, step_size, num_bins,
@@ -782,7 +853,7 @@ class NDRebin:
         # grid sizes while never selecting a losing worker count. The cap never
         # limits a large job on a many-core node -- there ``requested`` and the
         # memory budget bind first.
-        contribution_factor = 2 ** (self.Ndims or 1) if self.fractional else 1
+        contribution_factor = self._fractional_contribution_factor()
         point_work = (self.Nvals or 0) * contribution_factor
         amortized_workers = point_work // max(2 * output_size, 1)
         if self.parallel_strategy == "dense":
@@ -810,7 +881,7 @@ class NDRebin:
         _NUMBA_REBIN.accumulate_batch(
             self.coords_flat[start:stop], self.data_flat[start:stop],
             self.errors_flat[start:stop], self.weights_flat[start:stop],
-            lower, upper, step_size, num_bins, self.fractional,
+            lower, upper, step_size, num_bins, self._fractional_axes,
             self._use_inverse_variance_weights(), bd_sum, err_sum, norm_sum, ns_sum,
         )
         _mark_numba_warm()
@@ -824,7 +895,7 @@ class NDRebin:
         _NUMBA_REBIN.accumulate_batch_sparse(
             self.coords_flat[start:stop], self.data_flat[start:stop],
             self.errors_flat[start:stop], self.weights_flat[start:stop],
-            lower, upper, step_size, num_bins, self.fractional,
+            lower, upper, step_size, num_bins, self._fractional_axes,
             self._use_inverse_variance_weights(), *partial,
         )
         _mark_numba_warm()
@@ -839,20 +910,28 @@ class NDRebin:
         assert self.Ndims is not None
         assert self.bin_inds is not None
         assert self.num_bins is not None
+        assert self._fractional_axes is not None
 
         num_bins = np.asarray(self.num_bins, dtype=int)
         size = int(np.prod(num_bins))
         bd_sum, err_sum, norm_sum, ns_sum = self._empty_accumulators(size)
 
         for start, stop in self._batch_ranges(fractional=True):
-            valid_inds = self.bin_inds[start:stop] - 0.5
+            valid_inds = self.bin_inds[start:stop].copy()
+            valid_inds[:, self._fractional_axes] -= 0.5
+            valid_inds[:, ~self._fractional_axes] = np.floor(
+                valid_inds[:, ~self._fractional_axes]
+            )
             valid = ~np.isnan(valid_inds).any(axis=1)
             if not np.any(valid):
                 self._emit_progress(stop)
                 continue
             valid_inds = valid_inds[valid]
             point_indices = np.arange(start, stop, dtype=int)[valid]
-            partial_weights = 1.0 - np.mod(valid_inds, 1)
+            partial_weights = np.ones(valid_inds.shape, dtype=float)
+            partial_weights[:, self._fractional_axes] = (
+                1.0 - np.mod(valid_inds[:, self._fractional_axes], 1)
+            )
             edge_masks = [
                 ~np.logical_or(
                     valid_inds[:, ind] < 0,
@@ -861,11 +940,19 @@ class NDRebin:
                 for ind in range(self.Ndims)
             ]
 
-            for offsets in product((0, 1), repeat=self.Ndims):
+            fractional_dimensions = np.flatnonzero(self._fractional_axes)
+            for fractional_offsets in product(
+                (0, 1), repeat=fractional_dimensions.size
+            ):
+                offsets = np.zeros(self.Ndims, dtype=int)
+                offsets[fractional_dimensions] = fractional_offsets
                 contribution_valid = np.ones(valid_inds.shape[0], dtype=bool)
                 spatial_weights = np.ones(valid_inds.shape[0], dtype=float)
                 contribution_inds = np.empty(valid_inds.shape, dtype=int)
                 for ind, offset in enumerate(offsets):
+                    if not self._fractional_axes[ind]:
+                        contribution_inds[:, ind] = valid_inds[:, ind].astype(int)
+                        continue
                     edge_mask = edge_masks[ind]
                     if offset:
                         contribution_valid &= edge_mask
@@ -917,9 +1004,21 @@ class NDRebin:
             return min(int(self.batch_size), self.Nvals)
         if self.max_batch_bytes <= 0:
             return self.Nvals
-        contribution_factor = 2 ** self.Ndims if fractional else 1
+        contribution_factor = (
+            self._fractional_contribution_factor() if fractional else 1
+        )
         bytes_per_point = 8 * max(8, self.Ndims * (6 + contribution_factor))
         return max(1, min(self.Nvals, int(self.max_batch_bytes // bytes_per_point)))
+
+    def _uses_fractional_binning(self) -> bool:
+        return bool(
+            self._fractional_axes is not None and np.any(self._fractional_axes)
+        )
+
+    def _fractional_contribution_factor(self) -> int:
+        if self._fractional_axes is None:
+            return 2 ** (self.Ndims or 1) if bool(self.fractional) else 1
+        return 2 ** int(np.count_nonzero(self._fractional_axes))
 
     def _emit_progress(self, processed: int) -> None:
         if self.progress_callback is None:
@@ -931,8 +1030,33 @@ class NDRebin:
                 "iteration": int(min(processed, self.Nvals)),
                 "total": int(self.Nvals),
                 "message": f"rebinning {min(processed, self.Nvals)}/{self.Nvals} points",
+                **self._progress_details(),
             }
         )
+
+    def _progress_details(self) -> dict[str, int | str]:
+        """Return resolved resource/grid details for progress consumers."""
+
+        output_bins = (
+            int(np.prod(self.num_bins)) if self.num_bins is not None else 0
+        )
+        batch_points = (
+            self._resolved_batch_size(fractional=self._uses_fractional_binning())
+            if self.Nvals
+            else 0
+        )
+        batch_bytes = min(
+            int(self.max_batch_bytes),
+            int(batch_points * 8 * max(8, (self.Ndims or 1) * (6 + self._fractional_contribution_factor()))),
+        )
+        accumulator_bytes = output_bins * 8 * 4
+        workers = max(int(self.resolved_workers), 1)
+        return {
+            "output_bins": output_bins,
+            "estimated_working_bytes": accumulator_bytes * workers + batch_bytes,
+            "workers": workers,
+            "backend": str(self.resolved_backend),
+        }
 
     def _store_accumulators(
         self,
@@ -1048,8 +1172,9 @@ def rebin_nd_stream(
     num_bins: ArrayLike | None = None,
     bin_edges: Iterable[ArrayLike | None] | None = None,
     fractional: bool = True,
+    fractional_axes: Iterable[bool] | None = None,
     normalize: bool = True,
-    mean_weighting: MeanWeighting = "inverse_variance",
+    mean_weighting: MeanWeighting = "uniform",
     minimum_samples: float = 0.0,
     backend: RebinBackend = "auto",
     workers: int | None = None,
@@ -1081,11 +1206,21 @@ def rebin_nd_stream(
     axes_inv = np.linalg.inv(axes_array)
     lower_arr, upper_arr = _stream_limits(source, lower, upper, axes_inv)
 
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "stage": "rebin_prepare",
+                "iteration": 0,
+                "total": 0,
+                "message": "validating inputs and preparing the output grid",
+            }
+        )
     template = NDRebin(
         data=np.zeros(1), coords=np.zeros((1, ndim)), data_errs=np.ones(1),
         lower=lower_arr, upper=upper_arr, step_size=step_size, num_bins=num_bins,
         bin_edges=edge_options,
-        fractional=fractional, normalize=normalize, mean_weighting=mean_weighting,
+        fractional=fractional, fractional_axes=fractional_axes,
+        normalize=normalize, mean_weighting=mean_weighting,
         minimum_samples=minimum_samples,
         backend="numba" if use_numba else "numpy",
         workers=workers, parallel_strategy=parallel_strategy,
@@ -1099,6 +1234,16 @@ def rebin_nd_stream(
     template.Nvals = int(source.n_points)
     if use_numba:
         template.resolved_workers, template.resolved_parallel_strategy = template._parallel_plan(size)
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "stage": "rebin_ready",
+                "iteration": 0,
+                "total": int(source.n_points),
+                "message": "output grid prepared; starting accumulation",
+                **template._progress_details(),
+            }
+        )
     executor = (
         ThreadPoolExecutor(max_workers=template.resolved_workers, thread_name_prefix="nfit-rebin-stream")
         if use_numba and template.resolved_workers > 1
@@ -1120,6 +1265,7 @@ def rebin_nd_stream(
                     "stage": "rebin", "iteration": processed,
                     "total": int(source.n_points),
                     "message": f"rebinning {processed}/{source.n_points} point contributions",
+                    **template._progress_details(),
                 })
             continue
         projected = coords @ axes_inv
@@ -1132,7 +1278,8 @@ def rebin_nd_stream(
                 data, projected, data_errs=batch.data_errs, data_weights=batch.data_weights,
                 lower=lower_arr, upper=upper_arr, step_size=template.step_size,
                 bin_edges=template.bins_list,
-                fractional=fractional, normalize=normalize, mean_weighting=mean_weighting,
+                fractional=fractional, fractional_axes=fractional_axes,
+                normalize=normalize, mean_weighting=mean_weighting,
                 minimum_samples=0.0, backend="numpy", workers=1,
             )
             bd_sum += partial._bd_sum
@@ -1168,14 +1315,35 @@ def rebin_nd_stream(
                 "stage": "rebin", "iteration": processed,
                 "total": int(source.n_points),
                 "message": f"rebinning {processed}/{source.n_points} point contributions",
+                **template._progress_details(),
             })
     if executor is not None:
         template._merge_worker_partials(partials, bd_sum, err_sum, norm_sum, ns_sum)
         executor.shutdown()
     template.resolved_backend = "numba" if use_numba else "numpy"
     template._store_accumulators(bd_sum, err_sum, norm_sum, ns_sum)
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "stage": "rebin_finalize",
+                "iteration": int(source.n_points),
+                "total": int(source.n_points),
+                "message": "propagating uncertainties and finalizing output bins",
+                **template._progress_details(),
+            }
+        )
     template._norm_data()
     template.bin_inds = None
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "stage": "rebin_complete",
+                "iteration": int(source.n_points),
+                "total": int(source.n_points),
+                "message": "rebin complete",
+                **template._progress_details(),
+            }
+        )
     return template
 
 
@@ -1193,8 +1361,9 @@ def rebin_nd_symmetry(
     num_bins: ArrayLike | None = None,
     bin_edges: Iterable[ArrayLike | None] | None = None,
     fractional: bool = True,
+    fractional_axes: Iterable[bool] | None = None,
     normalize: bool = True,
-    mean_weighting: MeanWeighting = "inverse_variance",
+    mean_weighting: MeanWeighting = "uniform",
     minimum_samples: float = 0.0,
     max_batch_bytes: int = 192 * 1024 * 1024,
     backend: RebinBackend = "auto",
@@ -1230,6 +1399,7 @@ def rebin_nd_symmetry(
         num_bins=num_bins,
         bin_edges=bin_edges,
         fractional=fractional,
+        fractional_axes=fractional_axes,
         normalize=normalize,
         mean_weighting=mean_weighting,
         minimum_samples=minimum_samples,

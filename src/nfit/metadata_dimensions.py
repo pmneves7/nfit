@@ -19,7 +19,8 @@ class MetadataBinning:
     """Optional histogram grid for a metadata dimension, without interpolation.
 
     Supply ``bin_edges``, or ``lower``/``upper`` center limits with either
-    ``step`` or ``num_bins``. With one bin the limits are interval edges.
+    ``step`` or ``num_bins``. ``tolerance`` derives centers from nearby values.
+    With one bin the limits are interval edges.
     Values on an interior edge enter the bin to its right; the last edge is
     inclusive. Values outside the grid are excluded.
     """
@@ -29,10 +30,20 @@ class MetadataBinning:
     step: float | None = None
     num_bins: int | None = None
     bin_edges: Sequence[float] | None = None
+    tolerance: float | None = None
 
     def __post_init__(self):
-        if sum(v is not None for v in (self.step, self.num_bins, self.bin_edges)) != 1:
-            raise ValueError("choose exactly one metadata resolution: step, num_bins, or bin_edges")
+        if sum(
+            v is not None
+            for v in (self.step, self.num_bins, self.bin_edges, self.tolerance)
+        ) != 1:
+            raise ValueError(
+                "choose exactly one metadata resolution: step, num_bins, bin_edges, or tolerance"
+            )
+        if self.tolerance is not None:
+            if not np.isfinite(self.tolerance) or self.tolerance <= 0.0:
+                raise ValueError("metadata clustering tolerance must be finite and positive")
+            return
         if self.bin_edges is not None:
             edges = np.asarray(self.bin_edges, dtype=float)
             if (
@@ -64,10 +75,14 @@ class MetadataBinning:
                 raise ValueError("metadata bin count requires distinct limits")
             object.__setattr__(self, "num_bins", int(self.num_bins))
 
-    def edges(self) -> np.ndarray:
+    def edges(self, centers: Sequence[float] | None = None) -> np.ndarray:
         """Resolve bin edges using the same center conventions as HKLE rebinning."""
         from .rebin import _uniform_center_edges
 
+        if self.tolerance is not None:
+            if centers is None:
+                raise ValueError("tolerance bin edges require resolved centers")
+            return _discrete_center_edges(centers, self.tolerance)
         if self.bin_edges is not None:
             return np.asarray(self.bin_edges, dtype=float)
         return _uniform_center_edges(self.lower, self.upper, step=self.step, count=self.num_bins)
@@ -291,8 +306,16 @@ def discrete_metadata_axis(dimension: MetadataDimension, centers) -> MDHistoAxis
     centers = np.asarray(centers, dtype=float)
     if dimension.binning is not None:
         return MDHistoAxis(
-            dimension.name, dimension.binning.edges(), dimension.units, "unknown",
-            metadata={"metadata_dimension": dimension.to_dict(), "interpolation": "none"},
+            dimension.name, dimension.binning.edges(centers), dimension.units, "unknown",
+            metadata={
+                "metadata_dimension": dimension.to_dict(),
+                "interpolation": "none",
+                **(
+                    {"discrete_centers": np.asarray(centers, dtype=float).tolist()}
+                    if dimension.binning.tolerance is not None
+                    else {}
+                ),
+            },
         )
     if centers.size == 1:
         edges = np.array([centers[0] - 0.5, centers[0] + 0.5])
@@ -330,11 +353,52 @@ def metadata_dimension_grid(dimension: MetadataDimension, coordinates):
     ]
     if dimension.binning is None:
         return centers, assignments
+    if dimension.binning.tolerance is not None:
+        clustered = _cluster_centers(centers, dimension.binning.tolerance)
+        center_assignments = metadata_dimension_indices(
+            centers, clustered, dimension.binning.tolerance
+        )
+        return clustered, [center_assignments[index] for index in assignments]
     edges = dimension.binning.edges()
     indices = np.searchsorted(edges, centers, side="right") - 1
     indices[centers == edges[-1]] = len(edges) - 2
     indices[(centers < edges[0]) | (centers > edges[-1])] = -1
     return (edges[:-1] + edges[1:]) / 2, [indices[index] for index in assignments]
+
+
+def _cluster_centers(values, tolerance: float) -> np.ndarray:
+    """Return mean centers whose members all lie within ``tolerance``."""
+
+    ordered = np.sort(np.unique(np.asarray(values, dtype=float)))
+    centers: list[float] = []
+    start = 0
+    running_sum = float(ordered[0])
+    count = 1
+    for stop in range(1, ordered.size):
+        candidate_sum = running_sum + float(ordered[stop])
+        candidate_count = count + 1
+        mean = candidate_sum / candidate_count
+        if max(mean - ordered[start], ordered[stop] - mean) <= tolerance + 1e-12:
+            running_sum = candidate_sum
+            count = candidate_count
+            continue
+        centers.append(running_sum / count)
+        start = stop
+        running_sum = float(ordered[stop])
+        count = 1
+    centers.append(running_sum / count)
+    return np.asarray(centers, dtype=float)
+
+
+def _discrete_center_edges(centers, half_width: float = 0.5) -> np.ndarray:
+    values = np.asarray(centers, dtype=float)
+    if values.size == 1:
+        return np.asarray([values[0] - half_width, values[0] + half_width])
+    return np.r_[
+        values[0] - (values[1] - values[0]) / 2,
+        (values[:-1] + values[1:]) / 2,
+        values[-1] + (values[-1] - values[-2]) / 2,
+    ]
 
 
 def metadata_temperature_grid(data: MDHistoData) -> np.ndarray | None:

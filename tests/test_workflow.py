@@ -204,8 +204,6 @@ def test_live_clone_bins_underlying_points_on_its_own_grid(tmp_path):
     source_config.update(
         {
             "enabled": True,
-            "fractional": False,
-            "resolution_mode": "bins",
             "mean_weighting": "uniform",
             "minimum_coverage": 0.0,
         }
@@ -219,6 +217,7 @@ def test_live_clone_bins_underlying_points_on_its_own_grid(tmp_path):
                 "auto_upper": False,
                 "num_bins": 1,
                 "step_size": 1.0,
+                "mode": "bins",
             }
         )
     coarse = project_gui.composite_dataset_data(
@@ -240,7 +239,9 @@ def test_live_clone_bins_underlying_points_on_its_own_grid(tmp_path):
         {},
     )
     output_config = json.loads(json.dumps(source_config))
-    output_config["axes"][0].update({"num_bins": 2, "step_size": 0.5})
+    output_config["axes"][0].update(
+        {"num_bins": 2, "step_size": 0.5, "mode": "discrete"}
+    )
     clone = create_derived_analysis_dataset(
         group,
         analysis,
@@ -290,8 +291,6 @@ def test_live_histogram_arithmetic_reduces_both_sources_to_output_grid():
         config.update(
             {
                 "enabled": True,
-                "fractional": False,
-                "resolution_mode": "bins",
                 "mean_weighting": "uniform",
                 "minimum_coverage": 0.0,
             }
@@ -304,6 +303,7 @@ def test_live_histogram_arithmetic_reduces_both_sources_to_output_grid():
                 "auto_upper": False,
                 "num_bins": 1,
                 "step_size": 1.0,
+                "mode": "bins",
             }
         )
     output_config = json.loads(
@@ -313,7 +313,9 @@ def test_live_histogram_arithmetic_reduces_both_sources_to_output_grid():
             )
         )
     )
-    output_config["axes"][0].update({"num_bins": 2, "step_size": 0.5})
+    output_config["axes"][0].update(
+        {"num_bins": 2, "step_size": 0.5, "mode": "discrete"}
+    )
     analysis = AnalysisEntry(
         "Low minus 50 K",
         "histogram_arithmetic",

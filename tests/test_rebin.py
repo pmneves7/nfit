@@ -21,7 +21,7 @@ def test_rebin_nd_averages_values_and_propagates_errors():
     np.testing.assert_allclose(result.bin_centers_list[0], [0.5, 1.5])
 
 
-def test_rebin_nd_defaults_to_inverse_variance_weighted_mean():
+def test_rebin_nd_defaults_to_uniform_weighted_mean():
     result = rebin_nd(
         data=[0.0, 10.0],
         coords=[0.25, 0.75],
@@ -31,8 +31,8 @@ def test_rebin_nd_defaults_to_inverse_variance_weighted_mean():
         num_bins=1,
     )
 
-    np.testing.assert_allclose(result.binned_data, [1.0])
-    np.testing.assert_allclose(result.binned_data_errs, [1.0 / np.sqrt(1.0 + 1.0 / 9.0)])
+    np.testing.assert_allclose(result.binned_data, [5.0])
+    np.testing.assert_allclose(result.binned_data_errs, [np.sqrt(10.0) / 2.0])
     np.testing.assert_allclose(result.n_samples, [2.0])
 
 
@@ -118,6 +118,50 @@ def test_fractional_rebin_distributes_between_neighboring_bins():
     np.testing.assert_allclose(result.n_samples, [0.5, 0.5])
 
 
+@pytest.mark.parametrize("backend", ["numpy", "numba"])
+def test_fractional_axes_can_keep_one_dimension_discrete(backend):
+    result = rebin_nd(
+        data=[10.0],
+        coords=[[0.5, 0.6]],
+        data_errs=[2.0],
+        lower=[0.0, 0.0],
+        upper=[1.0, 1.0],
+        step_size=[1.0, 1.0],
+        fractional=True,
+        fractional_axes=[True, False],
+        mean_weighting="uniform",
+        backend=backend,
+    )
+
+    np.testing.assert_allclose(
+        result.n_samples,
+        [[0.0, 0.5], [0.0, 0.5]],
+    )
+    np.testing.assert_allclose(result.binned_data[:, 1], [10.0, 10.0])
+    assert np.all(np.isnan(result.binned_data[:, 0]))
+
+
+def test_fractional_axes_are_validated():
+    with pytest.raises(ValueError, match="one boolean per coordinate dimension"):
+        rebin_nd(
+            data=[1.0],
+            coords=[[0.0, 0.0]],
+            lower=[0.0, 0.0],
+            upper=[1.0, 1.0],
+            num_bins=[2, 2],
+            fractional_axes=[True],
+        )
+    with pytest.raises(ValueError, match="values must be boolean"):
+        rebin_nd(
+            data=[1.0],
+            coords=[[0.0, 0.0]],
+            lower=[0.0, 0.0],
+            upper=[1.0, 1.0],
+            num_bins=[2, 2],
+            fractional_axes=[True, 0],
+        )
+
+
 def test_fractional_rebin_batching_matches_full_accumulation():
     coords = np.array(
         [
@@ -159,9 +203,21 @@ def test_rebin_reports_batch_progress():
     )
 
     assert result.binned_data is not None
-    assert [event["iteration"] for event in events] == [2, 4, 6]
-    assert [event["total"] for event in events] == [6, 6, 6]
-    assert all(event["stage"] == "rebin" for event in events)
+    accumulation = [event for event in events if event["stage"] == "rebin"]
+    assert [event["iteration"] for event in accumulation] == [2, 4, 6]
+    assert [event["total"] for event in accumulation] == [6, 6, 6]
+    assert [event["stage"] for event in events] == [
+        "rebin_prepare",
+        "rebin_ready",
+        "rebin",
+        "rebin",
+        "rebin",
+        "rebin_finalize",
+        "rebin_complete",
+    ]
+    assert events[1]["output_bins"] == 3
+    assert events[1]["workers"] == 1
+    assert events[1]["estimated_working_bytes"] > 0
 
 
 def test_rebin_accepts_last_axis_coordinate_dimension():

@@ -43,6 +43,7 @@ def group(entries):
     for i, axis in enumerate(config["axes"]):
         axis.update(
             bin_edges=[-0.5, 0.5] if i < 3 else [0.5, 1.5],
+            mode="edges",
             auto_lower=False,
             auto_upper=False,
             auto_step_size=False,
@@ -76,12 +77,13 @@ def test_raw_group_background_automatically_follows_sample_grid_and_preserves_so
         np.testing.assert_array_equal(result.axes[-1].centers, [5, 10, 50])
     # Overrides used by saved plots and scripts must also control the background.
     config = copy.deepcopy(data_group_composite_config(g))
-    config["axes"][0].update(name="H new", bin_edges=[-1, 0.25, 1])
-    config["fractional"] = False
+    config["axes"][0].update(
+        name="H new", bin_edges=[-1, 0.25, 1], mode="edges"
+    )
     changed = nfit.composite_dataset_data(g, config_override=config)
     assert changed.shape[0] == 2
     np.testing.assert_allclose(changed.signal[0].ravel(), result.signal.ravel())
-    assert changed.mask[1].all()
+    np.testing.assert_allclose(changed.signal[1].ravel(), result.signal.ravel())
     signature = _composite_cache_signature(g)
     reference.masks.append(MaskSpec("cut", type="box", parameters={"H": [0, 1]}))
     assert _composite_cache_signature(g) != signature
@@ -401,6 +403,30 @@ def test_metadata_rebin_preserves_source_weights_and_whole_bin_assignment(binnin
     np.testing.assert_array_equal(_point_data_from_mdhisto_view(data).temperature, [5, 15, 25])
 
 
+def test_metadata_tolerance_mode_clusters_nearby_values_without_interpolation():
+    g = group(
+        [
+            points(-0.398, [1]),
+            points(0.003, [2]),
+            points(0.398, [3]),
+            points(0.403, [5]),
+            points(1.199, [4]),
+            points(2.001, [6]),
+            points(2.799, [7]),
+            points(3.602, [8]),
+        ]
+    )
+    nfit.set_metadata_dimensions(g, [temperature(binning={"tolerance": 0.1})])
+
+    data = nfit.composite_dataset_data(g)
+
+    np.testing.assert_allclose(
+        data.axes[-1].centers,
+        [-0.398, 0.003, 0.4005, 1.199, 2.001, 2.799, 3.602],
+    )
+    np.testing.assert_allclose(data.signal.ravel(), [1, 2, 4, 4, 6, 7, 8])
+
+
 def test_pointwise_rebin_uses_nominal_centers_before_grouping_and_preserves_empty_bins():
     g = group([points([4.9, 10.1, 20.1], [2, 4, 8])])
     spec = nfit.MetadataDimension(
@@ -424,6 +450,7 @@ def test_pointwise_rebin_uses_nominal_centers_before_grouping_and_preserves_empt
         {"step": 1, "lower": 10, "upper": 0},
         {"bin_edges": [0, 0]},
         {"bin_edges": [0, np.nan]},
+        {"tolerance": 0},
     ],
 )
 def test_metadata_binning_rejects_invalid_grids(config):
@@ -673,6 +700,8 @@ def test_metadata_rebin_gui_rows_follow_energy_and_edit_the_public_recipe(monkey
     assert destination.metadata["metadata_dimensions"] == g.metadata["metadata_dimensions"]
     mode.setCurrentIndex(mode.findData("discrete"))
     assert g.metadata["metadata_dimensions"][0]["binning"] is None
+    mode.setCurrentIndex(mode.findData("tolerance"))
+    assert g.metadata["metadata_dimensions"][0]["binning"]["tolerance"] > 0
     panel.close()
     explorer.window.close()
 

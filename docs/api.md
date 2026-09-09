@@ -28,7 +28,8 @@ axis units. Use `set_metadata_dimensions(collection, dimensions)` and
 condition slices. `metadata_channels(dataset)` lists available paths and units.
 Pass `binning=MetadataBinning(lower=5, upper=50, step=5)` to a dimension to
 rebin it, or use `MetadataBinning(bin_edges=[0, 15, 25, 55])` for nonuniform
-bins. The `binning` argument also accepts a dictionary with the same fields;
+bins. `MetadataBinning(tolerance=0.1)` clusters nearby assigned coordinates
+into automatically determined whole bins. The `binning` argument also accepts a dictionary with the same fields;
 `None` retains discrete coordinates. Binning never interpolates metadata.
 See [Metadata dimensions](data_import.md#metadata-dimensions) and
 [composite scripts](workflow_scripts.md#composite-workflows) for alignment and
@@ -139,23 +140,27 @@ Each axis can independently use uniform bin counts or step sizes, or explicit
 strictly increasing `bin_edges`. Use `None` for the entries that should remain
 uniform, for example `bin_edges=[None, None, None, energy_edges]` for a
 nonuniform energy axis on an otherwise uniform HKLE grid. Fractional binning
-is enabled by default, so a source point can be
-distributed to neighboring bins according to its geometric overlap; pass
-`fractional=False` for single-bin assignment. With `normalize=True`, each
+is enabled by default, so a source point can be distributed to neighboring bins
+according to its geometric overlap; pass `fractional=False` for discrete
+single-bin assignment. Pass `fractional_axes=[True, True, True, False]` to
+retain fractional momentum binning while assigning energy transfer discretely.
+With `normalize=True`, each
 output bin is an average of all source points that contribute to that bin. The
-default averaging mode is
-`mean_weighting="inverse_variance"`: when `data_errs` are supplied, each source
-point receives a `1 / sigma**2` weight, and fractional binning multiplies that
-statistical weight by the point's fractional spatial contribution. The reported
+default averaging mode is `mean_weighting="uniform"`. It is a simple mean when
+no `data_weights` are supplied and otherwise uses those physical weights.
+Select `mean_weighting="inverse_variance"` to additionally give each source
+point a `1 / sigma**2` weight. Fractional binning multiplies either statistical
+weight by the point's fractional spatial contribution. The reported
 bin error follows the accumulated inverse-variance weight, reducing to
 `1 / sqrt(sum(1 / sigma**2))` for non-fractional inverse-variance averages.
 Points with non-finite or non-positive uncertainties are skipped in this mode.
-Optional `data_weights` multiply each point's statistical weight; the GUI uses
-this for workspace composites so dataset fit weights enter as
-`fit_weight / sigma**2`.
+Optional `data_weights` multiply each point's statistical weight in both modes.
+Thus inverse variance uses `data_weights / sigma**2`, while uniform averaging
+uses `data_weights`. The project pipeline supplies physical normalization
+denominators automatically when present, in addition to dataset fit weights.
 
 Set `minimum_samples` to mask statistically sparse output bins without
-discarding their accumulated sample-count diagnostics. With hard binning this
+discarding their accumulated sample-count diagnostics. With discrete binning this
 is the number of accepted source points. With fractional binning it is the sum
 of the fractional spatial contributions. Explicit-edge grids currently use the
 NumPy implementation because the optional fused Numba kernel assumes constant
@@ -168,10 +173,9 @@ syntax through `SymmetrySpec` and `resolve_symmetry`. A space group contributes
 only its point-group rotations: translations are not applied to reciprocal-space
 coordinates, and energy transfer remains unchanged.
 
-Set `mean_weighting="uniform"` to keep the legacy simple mean behavior. In that
-mode, each point has equal statistical weight and fractional binning contributes
-only the spatial fraction. If `normalize=False`, rebinning returns weighted sums
-instead of means and `mean_weighting` is ignored.
+Uniform weighting omits the additional `1 / sigma**2` factor. If
+`normalize=False`, rebinning returns weighted sums instead of means and
+`mean_weighting` is ignored.
 
 Fractional binning is accumulated in batches. Earlier implementations expanded
 every point into its full list of neighboring-bin contributions at once, which

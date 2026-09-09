@@ -106,6 +106,7 @@ def test_project_rebin_auto_limits_include_all_symmetry_images():
     for axis in config["axes"]:
         axis["step_size"] = 0.2
         axis["auto_step_size"] = False
+        axis["mode"] = "discrete"
 
     output = project_gui._rebin_point_data(data, config)
 
@@ -143,6 +144,7 @@ def test_mdhisto_rebin_auto_limits_include_all_symmetry_images():
     for axis in config["axes"]:
         axis["step_size"] = 0.2
         axis["auto_step_size"] = False
+        axis["mode"] = "discrete"
 
     output = project_gui._rebin_mdhisto_data(data, config)
 
@@ -170,6 +172,7 @@ def test_point_list_rebin_auto_limits_include_all_symmetry_images():
         axis["auto_upper_value"] = axis["upper"]
         axis["step_size"] = 0.2
         axis["auto_step_size"] = False
+        axis["mode"] = "discrete"
 
     output = project_gui._rebin_point_list_data(dataset, config)
 

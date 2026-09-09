@@ -20,14 +20,15 @@ The package provides:
   batch composites that can join existing compatible collections, with promoted
   crystal orientation;
 - powder-cut, MPMS magnetization, PPMS heat-capacity, and tabular imports;
-- masking, coverage- and sample-aware symmetry/rebinning with independently
-  nonuniform axes, editable momentum-coordinate matrices, automatic
+- masking, coverage- and sample-aware symmetry/rebinning with per-axis
+  Discrete, Step, Bins, Edges, or tolerance-clustered modes, editable
+  momentum-coordinate matrices, automatic
   zero-aligned uniform grids specified by bin centers, composites, backgrounds
   with automatic grid matching for unrebinned neutron references, and
   non-destructive analyses, including live hierarchical composites and editable
   source-linked histogram sums, differences, or comparison clones with
   independent raw-data binning, plus lazy navigation for run-heavy projects;
-- discrete metadata dimensions for temperature or other sample conditions,
+- discrete or tolerance-clustered metadata dimensions for temperature or other sample conditions,
   with selectable channels, nominal coordinates, display and integration axes,
   exact tiled slices, visible zero-valued background references, temperature-aware
   fitting, and optional whole-bin rebinning;

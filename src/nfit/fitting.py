@@ -1003,8 +1003,9 @@ def rebin_point_data(
     num_bins: ArrayLike | None = None,
     bin_edges: Sequence[ArrayLike | None] | None = None,
     fractional: bool = True,
+    fractional_axes: Sequence[bool] | None = None,
     normalize: bool = True,
-    mean_weighting: str = "inverse_variance",
+    mean_weighting: str = "uniform",
     minimum_samples: float = 0.0,
     max_batch_bytes: int = 192 * 1024 * 1024,
     progress_callback: ProgressCallback | None = None,
@@ -1024,12 +1025,14 @@ def rebin_point_data(
     coords = np.column_stack(source.coordinates())
     kwargs = dict(
         data_errs=source.sigma,
+        data_weights=source.normalization_denominator,
         lower=lower,
         upper=upper,
         step_size=step_size,
         num_bins=num_bins,
         bin_edges=bin_edges,
         fractional=fractional,
+        fractional_axes=fractional_axes,
         normalize=normalize,
         mean_weighting=mean_weighting,
         minimum_samples=minimum_samples,
@@ -1067,10 +1070,18 @@ def rebin_point_data(
             for edges in (result.bin_edges or [])
         ],
         "fractional": fractional,
+        "fractional_axes": (
+            [bool(value) for value in fractional_axes]
+            if fractional_axes is not None
+            else [bool(fractional)] * 4
+        ),
         "normalize": normalize,
         "mean_weighting": str(mean_weighting),
         "minimum_samples": float(minimum_samples),
         "max_batch_bytes": int(max_batch_bytes),
+        "weighted_by_normalization_denominator": (
+            source.normalization_denominator is not None
+        ),
     }
     if isinstance(source.temperature, np.ndarray):
         metadata["temperature_note"] = "pointwise temperature was dropped during rebinning"
@@ -1930,6 +1941,11 @@ def _copy_point_data(data: PointData4D, *, mask: ArrayLike) -> PointData4D:
         temperature=temperature,
         magnetic_field=None if data.magnetic_field is None else np.array(data.magnetic_field),
         metadata=dict(data.metadata),
+        normalization_denominator=(
+            None
+            if data.normalization_denominator is None
+            else np.array(data.normalization_denominator)
+        ),
     )
 
 

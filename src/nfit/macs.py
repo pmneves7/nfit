@@ -503,6 +503,11 @@ def import_macs_nexus(
         scale[valid_monitor] = target / monitor[valid_monitor]
         intensity = counts * efficiency[None, :] * scale[:, None]
         sigma = np.sqrt(np.maximum(counts, 1.0)) * efficiency[None, :] * scale[:, None]
+        normalization_denominator = np.full(counts.shape, np.nan, dtype=float)
+        normalization_denominator[valid_monitor] = (
+            monitor[valid_monitor, None]
+            / (target * efficiency[None, :])
+        )
 
         if stream == "spec":
             point_mask, analyzer_reasons, analyzer_two_theta, aligned_analyzers = (
@@ -609,6 +614,10 @@ def import_macs_nexus(
             "a3_offset_source": a3_offset_source,
             "monitor_target": target,
             "detector_efficiency_applied": bool(settings["apply_detector_efficiency"]),
+            "normalization_denominator_semantics": (
+                "live monitor divided by monitor target and multiplicative "
+                "detector-efficiency correction"
+            ),
             "masked_analyzer_channels": selected,
             "analyzer_mask_reasons": analyzer_reasons,
             "import_options": dict(settings),
@@ -646,4 +655,5 @@ def import_macs_nexus(
         mask=point_mask.ravel(),
         temperature=temp_points,
         metadata=metadata,
+        normalization_denominator=normalization_denominator.ravel(),
     )
