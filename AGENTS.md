@@ -71,6 +71,8 @@ different Python.
   masks, and coordinate projection services.
 - `src/nfit/project_rebinning.py`: numerical grid configuration, symmetry-aware
   rebinning, and histogram construction.
+- `src/nfit/project_rebin_panels.py`: shared Qt controls for dataset and
+  composite rebin settings, metadata dimensions, and bin summaries.
 - `src/nfit/project_view_data.py`: immutable scale, kinematic, spectral-channel,
   and metadata transformations for viewer-ready datasets.
 - `src/nfit/project_io.py`, `project_history.py`, and `project_models.py`: project
@@ -94,6 +96,31 @@ different Python.
 
 Keep this map structural rather than exhaustive. Update it only when subsystem
 ownership or documentation entry points move.
+
+## Maintainability boundaries
+
+- Put new behavior in the focused module that owns the relevant domain. Keep
+  `project_gui.py`, `project_data.py`, `qt_slice_viewer.py`, `fit_config.py`,
+  and `model_registry.py` as coordinators or compatibility facades rather than
+  growing new self-contained subsystems inside them.
+- Keep dependencies one-way: GUI modules may call GUI-independent services, but
+  services must not import GUI coordinators or Qt. Focused services must not
+  reverse-import their facade; pass narrow callbacks, protocols, or context
+  objects when orchestration is required.
+- Maintain one authoritative definition for constants, registries, caches, and
+  domain rules. Compatibility modules may re-export those objects explicitly,
+  but must not duplicate their values or implementations.
+- Treat public import paths, saved-project schemas, scripting APIs, subclass
+  hooks, and documented extension points as compatibility contracts. Preserve
+  them during extraction or provide an explicit migration/deprecation path.
+- Extract reusable builders, editors, panels, or numerical services when a new
+  feature would add a second responsibility to an existing module. Prefer a
+  small cohesive module over adding another large conditional branch to a
+  coordinator.
+- Add or extend architecture tests whenever module ownership changes. Tests
+  should enforce GUI independence, import direction, facade identity where
+  compatibility matters, and behavior equivalence across GUI and scripting
+  entry points.
 
 ## Data-container changes
 
