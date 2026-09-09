@@ -259,6 +259,11 @@ histogram box cuts are not shown. Saved plot recipes and generated scripts
 preserve the three dimensions, range, step, label visibility, hidden-axis
 selections, and global/local color setting.
 
+Hovering over any panel updates the coordinate inspector with that panel's
+horizontal and vertical bin centers, tiled-axis coordinate, intensity,
+uncertainty, and coverage. Colorbars and unused grid space do not change the
+readout.
+
 For slice and tiled plots, editing either **vmin** or **vmax** turns off
 **Autoscale** and keeps the currently displayed value for the other bound.
 Thus either field can be changed independently and takes effect immediately.
