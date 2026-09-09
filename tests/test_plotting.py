@@ -1353,6 +1353,7 @@ def test_qt_tiled_slices_exposes_third_axis_range_step_slider_and_script():
 
     viewer.show_tile_labels_check.setChecked(False)
     assert all(not axis.texts for axis in viewer._tile_axes)
+
     viewer.show_tile_labels_check.setChecked(True)
     assert viewer.tile_label_decimals_spin.toolTip()
     for widget in (viewer.tile_label_prefix_edit, viewer.tile_label_unit_edit, viewer.tile_label_si_prefix_combo):
@@ -1412,6 +1413,48 @@ def test_qt_tiled_slices_exposes_third_axis_range_step_slider_and_script():
     assert restored.tile_label_unit_edit.text() == "K"
     assert restored.tile_label_si_prefix_combo.currentText() == "m"
     assert restored.tile_local_color_scales_check.isChecked()
+
+
+def test_qt_tiled_cursor_readout_uses_each_panels_values_and_coordinate():
+    pytest.importorskip("PySide6")
+    from types import SimpleNamespace
+
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+    viewer.view_mode_combo.setCurrentText("Tiled slices")
+    assert len(viewer._tile_axes) == len(viewer._current_tiled_slices) == 2
+
+    readouts = []
+    for axis, panel in zip(
+        viewer._tile_axes,
+        viewer._current_tiled_slices,
+        strict=True,
+    ):
+        event = SimpleNamespace(
+            inaxes=axis,
+            xdata=float(panel.view["x_centers"][2]),
+            ydata=float(panel.view["y_centers"][3]),
+        )
+        viewer._on_motion(event)
+        readouts.append(
+            (
+                viewer.cursor_hkle_label.text(),
+                viewer.cursor_intensity_label.text(),
+            )
+        )
+
+    assert readouts == [
+        (
+            "(H, K, L, E) = (1.5, -1.5, 0.75, 0.25)",
+            "Signal = 37 ± 1; coverage = 100.0%",
+        ),
+        (
+            "(H, K, L, E) = (1.5, -1.5, 0.75, 0.75)",
+            "Signal = 97 ± 1; coverage = 100.0%",
+        ),
+    ]
+    assert all(axis.format_coord(1.0, 2.0) == "" for axis in viewer._tile_axes)
 
 
 def test_qt_waterfall_half_max_stays_enabled_when_initial_range_shrinks():

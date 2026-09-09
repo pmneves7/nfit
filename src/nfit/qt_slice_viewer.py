@@ -3654,9 +3654,35 @@ class QtMDHistoSliceViewer:
         return x_coverage, y_coverage
 
     def _on_motion(self, event) -> None:
-        if self._current_slice is None or event.inaxes != self.ax_image:
+        if self._current_slice is None:
             return
         if event.xdata is None or event.ydata is None:
+            return
+        if self._tiled_mode_active():
+            tile_index = next(
+                (
+                    index
+                    for index, axis in enumerate(self._tile_axes)
+                    if event.inaxes is axis
+                ),
+                None,
+            )
+            if tile_index is None or tile_index >= len(self._current_tiled_slices):
+                return
+            panel = self._current_tiled_slices[tile_index]
+            coordinate_overrides = (
+                {self.tile_dim: panel.coordinate}
+                if self.tile_dim is not None
+                else None
+            )
+            self._on_2d_motion(
+                event,
+                panel.view,
+                values=panel.values,
+                coordinate_overrides=coordinate_overrides,
+            )
+            return
+        if event.inaxes != self.ax_image:
             return
         if self._waterfall_mode_active():
             self._on_waterfall_motion(event)
@@ -3664,15 +3690,32 @@ class QtMDHistoSliceViewer:
         if self._is_effective_1d():
             self._on_line_motion(event)
             return
-        view = self._current_slice
+        self._on_2d_motion(event, self._current_slice)
+
+    def _on_2d_motion(
+        self,
+        event,
+        view: dict[str, np.ndarray],
+        *,
+        values: np.ndarray | None = None,
+        coordinate_overrides: dict[int, float] | None = None,
+    ) -> None:
         x_idx = int(np.searchsorted(view["x_edges"], event.xdata, side="right") - 1)
         y_idx = int(np.searchsorted(view["y_edges"], event.ydata, side="right") - 1)
         if not (0 <= x_idx < view["signal"].shape[1] and 0 <= y_idx < view["signal"].shape[0]):
             return
-        values = self.model._display_values(view)
-        coords = self._cursor_hkle(x_idx, y_idx)
+        display_values = (
+            self.model._display_values(view)
+            if values is None
+            else np.asarray(values, dtype=float)
+        )
+        coords = self._cursor_hkle(
+            x_idx,
+            y_idx,
+            coordinate_overrides=coordinate_overrides,
+        )
         value_text, error_text = _format_value_with_uncertainty(
-            float(values[y_idx, x_idx]),
+            float(display_values[y_idx, x_idx]),
             float(view["errors"][y_idx, x_idx]),
         )
         self.cursor_xy_label.setText(
@@ -3786,15 +3829,24 @@ class QtMDHistoSliceViewer:
             return None
         return float(np.linalg.norm(q_vector))
 
-    def _cursor_hkle(self, x_idx: int, y_idx: int) -> dict[str, float]:
+    def _cursor_hkle(
+        self,
+        x_idx: int,
+        y_idx: int,
+        *,
+        coordinate_overrides: dict[int, float] | None = None,
+    ) -> dict[str, float]:
         hkle = np.zeros(4, dtype=float)
         has_energy = False
         hidden = self.model._normalized_selections()
+        overrides = coordinate_overrides or {}
         for dim, _axis in enumerate(self.data.axes):
             if dim == self.model.x_dim:
                 value = self.data.axes[dim].centers[x_idx]
             elif dim == self.model.y_dim:
                 value = self.data.axes[dim].centers[y_idx]
+            elif dim in overrides:
+                value = overrides[dim]
             else:
                 selection = hidden.get(dim)
                 if isinstance(selection, tuple):
