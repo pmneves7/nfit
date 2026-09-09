@@ -2,7 +2,22 @@ from collections import OrderedDict
 
 import numpy as np
 
-from nfit.cache_utils import array_payload_nbytes, lru_store
+import nfit.cache_utils as cache_utils
+from nfit.cache_utils import (
+    array_payload_nbytes,
+    lru_store,
+    scientific_cache_budget_bytes,
+)
+
+
+def test_scientific_cache_budget_is_bounded_and_memory_aware(monkeypatch):
+    monkeypatch.setattr(
+        cache_utils,
+        "_total_physical_memory_bytes",
+        lambda: 16 * 1024**3,
+    )
+
+    assert scientific_cache_budget_bytes() == 1024**3
 
 
 def test_array_payload_nbytes_counts_shared_arrays_once():

@@ -2490,6 +2490,16 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
     assert not single_dialog._nfit_current_label.isVisible()
     assert "23,301,675/123,690,949" in single_dialog._nfit_label.text()
     assert "elapsed " in single_dialog._nfit_label.text()
+    single_rebin(
+        {
+            "stage": "mdevent_events",
+            "iteration": 2_968_582_776,
+            "total": 5_937_165_552,
+            "message": "binning symmetry-expanded MDEvent contributions",
+        }
+    )
+    assert single_dialog._nfit_detail_progress.maximum() == 10_000
+    assert single_dialog._nfit_detail_progress.value() == 5_000
     explorer._close_rebin_progress(single_rebin)
 
     diagnostics = project_gui._FitDiagnosticsPlotWindow(FitTimelineEntry("Fit Result1"), explorer)

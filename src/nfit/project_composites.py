@@ -20,7 +20,12 @@ import numpy as np
 
 from .analysis.artifacts import dataset_artifact_bytes
 from .backgrounds import subtract_background
-from .cache_utils import lru_store as _lru_store
+from .cache_utils import (
+    lru_store as _lru_store,
+)
+from .cache_utils import (
+    scientific_cache_budget_bytes,
+)
 from .dataset import PointData4D, PointListData
 from .mdevent import bin_mdevent_group, bin_mdevent_powder_group
 from .mdhisto import (
@@ -163,7 +168,12 @@ effective_dataset_masks = _backend_function("effective_dataset_masks")
 
 _COMPOSITE_DATA_CACHE: OrderedDict[Any, tuple[str, Any]] = OrderedDict()
 _COMPOSITE_DATA_CACHE_LIMIT = 64
-_COMPOSITE_DATA_CACHE_MAX_BYTES = 256 * 1024**2
+# Large four-dimensional event reductions commonly retain about 0.5 GiB per
+# result.  A 256 MiB budget therefore discarded every such entry immediately,
+# forcing source composites to be recomputed for downstream derived datasets in
+# the same viewer request.  Scale the capacity to the host while retaining a
+# conservative cap; this does not allocate memory in advance.
+_COMPOSITE_DATA_CACHE_MAX_BYTES = scientific_cache_budget_bytes()
 
 
 @dataclass(frozen=True)

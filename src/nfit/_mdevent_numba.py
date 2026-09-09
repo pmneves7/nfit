@@ -45,11 +45,44 @@ def trajectory_normalization(
         qout0 = inverse[0, 0] * direction0 + inverse[0, 1] * direction1 + inverse[0, 2] * direction2
         qout1 = inverse[1, 0] * direction0 + inverse[1, 1] * direction1 + inverse[1, 2] * direction2
         qout2 = inverse[2, 0] * direction0 + inverse[2, 1] * direction1 + inverse[2, 2] * direction2
+        # Clip the detector trajectory to the requested four-dimensional box
+        # before finding internal bin crossings.  Thin transverse slices reject
+        # most run/detector/symmetry combinations here and avoid scanning every
+        # grid boundary for trajectories that cannot contribute.
+        clipped_low = low_kf
+        clipped_high = high_kf
+        outside = False
+        for dim in range(3):
+            edges = edge0 if dim == 0 else (edge1 if dim == 1 else edge2)
+            qin = qin0 if dim == 0 else (qin1 if dim == 1 else qin2)
+            qout = qout0 if dim == 0 else (qout1 if dim == 1 else qout2)
+            if abs(qout) <= 1e-14:
+                if qin < edges[0] or qin > edges[-1]:
+                    outside = True
+                    break
+                continue
+            crossing0 = (qin - edges[0]) / qout
+            crossing1 = (qin - edges[-1]) / qout
+            axis_low = min(crossing0, crossing1)
+            axis_high = max(crossing0, crossing1)
+            clipped_low = max(clipped_low, axis_low)
+            clipped_high = min(clipped_high, axis_high)
+            if clipped_high - clipped_low <= 1e-12:
+                outside = True
+                break
+        if outside:
+            continue
+        energy_kf0 = np.sqrt(max(ei - edge3[-1], 0.0) / ENERGY_TO_K2)
+        energy_kf1 = np.sqrt(max(ei - edge3[0], 0.0) / ENERGY_TO_K2)
+        clipped_low = max(clipped_low, min(energy_kf0, energy_kf1))
+        clipped_high = min(clipped_high, max(energy_kf0, energy_kf1))
+        if clipped_high - clipped_low <= 1e-12:
+            continue
         thread = get_thread_id()
         intersections = scratch[thread]
         count = 2
-        intersections[0] = low_kf
-        intersections[1] = high_kf
+        intersections[0] = clipped_low
+        intersections[1] = clipped_high
         for dim in range(3):
             edges = edge0 if dim == 0 else (edge1 if dim == 1 else edge2)
             qin = qin0 if dim == 0 else (qin1 if dim == 1 else qin2)
@@ -57,12 +90,12 @@ def trajectory_normalization(
             if abs(qout) > 1e-14:
                 for boundary in edges:
                     value = (qin - boundary) / qout
-                    if low_kf < value < high_kf:
+                    if clipped_low < value < clipped_high:
                         intersections[count] = value
                         count += 1
         for boundary in edge3:
             value = np.sqrt(max(ei - boundary, 0.0) / ENERGY_TO_K2)
-            if low_kf < value < high_kf:
+            if clipped_low < value < clipped_high:
                 intersections[count] = value
                 count += 1
         # The intersection count is modest; insertion sort avoids another array.

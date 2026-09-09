@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
@@ -9,6 +10,41 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import ArrayLike
+
+
+def scientific_cache_budget_bytes(
+    *,
+    minimum: int = 768 * 1024**2,
+    maximum: int = 4 * 1024**3,
+    memory_fraction: float = 1.0 / 16.0,
+) -> int:
+    """Return a memory-aware budget for cached scientific array payloads.
+
+    The floor is large enough to retain one typical four-dimensional reduction,
+    while the cap prevents high-memory workstations from growing an unbounded
+    process cache.  This is a capacity limit, not an allocation: small projects
+    retain only the arrays they actually produce.
+    """
+
+    total_memory = _total_physical_memory_bytes()
+    if total_memory is None:
+        return int(minimum)
+    proportional = int(total_memory * float(memory_fraction))
+    return min(max(proportional, int(minimum)), int(maximum))
+
+
+def _total_physical_memory_bytes() -> int | None:
+    try:
+        import psutil
+
+        return int(psutil.virtual_memory().total)
+    except (ImportError, AttributeError):
+        try:
+            return int(
+                os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")
+            )
+        except (AttributeError, OSError, ValueError):
+            return None
 
 
 def readonly_array(value: ArrayLike, dtype: Any) -> np.ndarray:

@@ -323,7 +323,24 @@ def bin_mdevent_group(
         with h5py.File(source_text, "r") as handle:
             source_sizes[source_text] = int(handle[f"{config['workspace_path'].strip('/')}/event_data/event_data"].shape[0])
     scan_total = sum(source_sizes.values())
+    contribution_total = scan_total * len(symmetry)
     processed = 0
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "stage": "mdevent_events",
+                "iteration": 0,
+                "total": contribution_total,
+                "message": (
+                    f"binning {scan_total:,} MDEvents across {len(symmetry):,} symmetry operations"
+                    if len(symmetry) > 1
+                    else f"binning {scan_total:,} MDEvents"
+                ),
+            }
+        )
+    data_sum_flat = data_sum.ravel()
+    variance_sum_flat = variance_sum.ravel()
+    event_count_flat = event_count.ravel()
     for source_text in sources:
         source = Path(source_text)
         source_runs = [dataset for dataset in selected_runs if str(dataset.metadata["source_file"]) == source_text]
@@ -348,17 +365,42 @@ def bin_mdevent_group(
                             coords = np.column_stack((transformed_hkl, chosen[:, 8])) @ basis_inverse
                             flat = _flat_bin_indices(coords, edges, shape)
                             valid = flat >= 0
-                            data_sum.ravel()[:] += np.bincount(flat[valid], weights=chosen[valid, 0], minlength=data_sum.size)
-                            variance_sum.ravel()[:] += np.bincount(flat[valid], weights=chosen[valid, 1], minlength=data_sum.size)
-                            event_count.ravel()[:] += np.bincount(flat[valid], minlength=data_sum.size)
-                processed += stop - start
+                            np.add.at(data_sum_flat, flat[valid], chosen[valid, 0])
+                            np.add.at(variance_sum_flat, flat[valid], chosen[valid, 1])
+                            np.add.at(event_count_flat, flat[valid], 1.0)
+                processed += (stop - start) * len(symmetry)
                 if progress_callback is not None:
-                    progress_callback({"stage": "mdevent_scan", "iteration": processed, "total": scan_total + 1, "message": f"reading MDEvents {processed:,}/{scan_total:,}"})
+                    progress_callback(
+                        {
+                            "stage": "mdevent_events",
+                            "iteration": processed,
+                            "total": contribution_total,
+                            "message": (
+                                f"binned {processed:,}/{contribution_total:,} "
+                                "symmetry-expanded MDEvent contributions"
+                                if len(symmetry) > 1
+                                else f"binned {processed:,}/{contribution_total:,} MDEvents"
+                            ),
+                        }
+                    )
+    normalization = _trajectory_normalization(
+        group,
+        selected_runs,
+        edges,
+        shape,
+        basis_inverse,
+        symmetry,
+        progress_callback=progress_callback,
+    )
     if progress_callback is not None:
-        progress_callback({"stage": "mdevent_normalization", "iteration": scan_total, "total": scan_total + 1, "message": "calculating detector normalization"})
-    normalization = _trajectory_normalization(group, selected_runs, edges, shape, basis_inverse, symmetry)
-    if progress_callback is not None:
-        progress_callback({"stage": "mdevent_normalization", "iteration": scan_total + 1, "total": scan_total + 1, "message": "MDEvent reduction complete"})
+        progress_callback(
+            {
+                "stage": "mdevent_finalize",
+                "iteration": 1,
+                "total": 3,
+                "message": "normalizing MDEvent signal and uncertainties",
+            }
+        )
     with np.errstate(divide="ignore", invalid="ignore"):
         signal = data_sum / normalization
         errors = np.sqrt(variance_sum) / normalization
@@ -372,6 +414,15 @@ def bin_mdevent_group(
         * event_weight_rms
         / normalization[covered_zero]
     )
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "stage": "mdevent_finalize",
+                "iteration": 2,
+                "total": 3,
+                "message": "building MDEvent masks and output channels",
+            }
+        )
     mask = ~(np.isfinite(signal) & np.isfinite(errors) & (normalization > 0.0))
     mask |= event_count < minimum_samples
     axes = tuple(
@@ -382,7 +433,7 @@ def bin_mdevent_group(
             ("momentum", "momentum", "momentum", "energy"), strict=True,
         ))
     )
-    return MDHistoData(
+    result = MDHistoData(
         axes=axes, signal=signal, errors=errors, mask=mask, num_events=event_count,
         metadata={
             "mdevent": config,
@@ -409,6 +460,16 @@ def bin_mdevent_group(
             )
         },
     )
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "stage": "mdevent_finalize",
+                "iteration": 3,
+                "total": 3,
+                "message": "MDEvent reduction complete",
+            }
+        )
+    return result
 
 
 def bin_mdevent_powder_group(
@@ -697,7 +758,30 @@ def _available_memory_bytes():
             return None
 
 
-def _trajectory_normalization(group, datasets, edges, shape, basis_inverse, symmetry_operations=None):
+def _trajectory_worker_count(output_size: int) -> int:
+    """Resolve the saved CPU ceiling against trajectory-buffer memory."""
+
+    output_bytes = max(int(output_size) * 8, 1)
+    available_memory = _available_memory_bytes()
+    partial_budget = (
+        512 * 1024**2
+        if available_memory is None
+        else min(4 * 1024**3, max(available_memory // 4, output_bytes))
+    )
+    memory_workers = max(1, partial_budget // output_bytes)
+    return min(_parallel.num_threads(), memory_workers)
+
+
+def _trajectory_normalization(
+    group,
+    datasets,
+    edges,
+    shape,
+    basis_inverse,
+    symmetry_operations=None,
+    *,
+    progress_callback=None,
+):
     import h5py
 
     config = group.metadata["mdevent"]
@@ -706,7 +790,20 @@ def _trajectory_normalization(group, datasets, edges, shape, basis_inverse, symm
     result = np.zeros(shape)
     symmetry = _symmetry_matrices(symmetry_operations)
     run_payloads = []
-    detector_payload = None
+    detector_payloads = []
+    datasets = list(datasets)
+    dataset_total = len(datasets)
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "stage": "mdevent_normalization_setup",
+                "iteration": 0,
+                "total": dataset_total,
+                "message": f"preparing detector trajectories for {dataset_total:,} runs",
+            }
+        )
+    prepared = 0
+    report_stride = max(dataset_total // 100, 1)
     for source_text in sorted({str(dataset.metadata["source_file"]) for dataset in datasets}):
         source_datasets = [dataset for dataset in datasets if str(dataset.metadata["source_file"]) == source_text]
         with h5py.File(source_text, "r") as handle:
@@ -727,38 +824,161 @@ def _trajectory_normalization(group, datasets, edges, shape, basis_inverse, symm
                 ub = np.asarray(config["ub_matrix"], dtype=float)
                 canonical_inverse = np.linalg.inv(gonio @ (2.0 * np.pi * ub))
                 inverses = [basis_inverse[:3, :3].T @ operation @ canonical_inverse for operation in symmetry]
-                if detector_payload is None:
-                    detector_payload = (theta, phi, solid)
-                run_payloads.extend((inverse, ei, original_bounds, charge) for inverse in inverses)
-                if _MDEVENT_NUMBA is not None and len(symmetry) == 1:
-                    continue
-                for det_index in np.flatnonzero(solid > 0.0):
-                    direction = np.array([
-                        np.sin(theta[det_index]) * np.cos(phi[det_index]),
-                        np.sin(theta[det_index]) * np.sin(phi[det_index]),
-                        np.cos(theta[det_index]),
-                    ])
-                    for inverse in inverses:
-                        _accumulate_detector_trajectory(
-                            result, edges, inverse, direction, ei, original_bounds,
-                            charge * solid[det_index],
+                current_detector_payload = (detector_ids, theta, phi, solid)
+                geometry_index = next(
+                    (
+                        payload_index
+                        for payload_index, payload in enumerate(detector_payloads)
+                        if all(
+                            first.shape == current.shape
+                            and np.array_equal(first, current)
+                            for first, current in zip(
+                                payload,
+                                current_detector_payload,
+                                strict=True,
+                            )
                         )
-    if _MDEVENT_NUMBA is not None and detector_payload is not None and run_payloads and len(symmetry) == 1:
+                    ),
+                    None,
+                )
+                if geometry_index is None:
+                    geometry_index = len(detector_payloads)
+                    detector_payloads.append(current_detector_payload)
+                run_payloads.extend(
+                    (inverse, ei, original_bounds, charge, geometry_index)
+                    for inverse in inverses
+                )
+                prepared += 1
+                if progress_callback is not None and (
+                    prepared == dataset_total or prepared % report_stride == 0
+                ):
+                    progress_callback(
+                        {
+                            "stage": "mdevent_normalization_setup",
+                            "iteration": prepared,
+                            "total": dataset_total,
+                            "message": (
+                                f"prepared detector trajectories for "
+                                f"{prepared:,}/{dataset_total:,} runs"
+                            ),
+                        }
+                    )
+    if (
+        _MDEVENT_NUMBA is not None
+        and detector_payloads
+        and run_payloads
+    ):
         output_size = int(np.prod(shape))
-        memory_workers = max(1, (512 * 1024 * 1024) // max(output_size * 8, 1))
-        workers = min(_parallel.num_threads(), memory_workers)
-        theta, phi, solid = detector_payload
-        flat = _MDEVENT_NUMBA.run_trajectory_normalization(
-            theta, phi, solid,
-            np.asarray([payload[0] for payload in run_payloads]),
-            np.asarray([payload[1] for payload in run_payloads]),
-            np.asarray([payload[2] for payload in run_payloads]),
-            np.asarray([payload[3] for payload in run_payloads]),
-            *[np.asarray(edge, dtype=float) for edge in edges],
-            np.asarray(shape, dtype=np.int64),
-            workers=workers,
+        workers = _trajectory_worker_count(output_size)
+        grouped_payloads = [
+            [payload for payload in run_payloads if payload[4] == geometry_index]
+            for geometry_index in range(len(detector_payloads))
+        ]
+        task_total = sum(
+            len(payloads) * int(detector_payloads[index][1].size)
+            for index, payloads in enumerate(grouped_payloads)
         )
-        result = np.asarray(flat, dtype=float).reshape(shape)
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "stage": "mdevent_normalization",
+                    "iteration": 0,
+                    "total": task_total,
+                    "message": (
+                        f"integrating {task_total:,} detector trajectories "
+                        f"with {workers:,} CPU{'s' if workers != 1 else ''}"
+                    ),
+                    "workers": workers,
+                    "output_bins": output_size,
+                }
+            )
+        completed = 0
+        for geometry_index, payloads in enumerate(grouped_payloads):
+            _, theta, phi, solid = detector_payloads[geometry_index]
+            detector_count = int(theta.size)
+            payload_batch = max(1, 32_000_000 // max(detector_count, 1))
+            for start in range(0, len(payloads), payload_batch):
+                batch = payloads[start : start + payload_batch]
+                flat = _MDEVENT_NUMBA.run_trajectory_normalization(
+                    theta,
+                    phi,
+                    solid,
+                    np.asarray([payload[0] for payload in batch]),
+                    np.asarray([payload[1] for payload in batch]),
+                    np.asarray([payload[2] for payload in batch]),
+                    np.asarray([payload[3] for payload in batch]),
+                    *[np.asarray(edge, dtype=float) for edge in edges],
+                    np.asarray(shape, dtype=np.int64),
+                    workers=workers,
+                )
+                result += np.asarray(flat, dtype=float).reshape(shape)
+                completed += len(batch) * detector_count
+                if progress_callback is not None:
+                    progress_callback(
+                        {
+                            "stage": "mdevent_normalization",
+                            "iteration": completed,
+                            "total": task_total,
+                            "message": (
+                                f"integrated {completed:,}/{task_total:,} "
+                                "detector trajectories"
+                            ),
+                            "workers": workers,
+                            "output_bins": output_size,
+                        }
+                    )
+        return result
+    task_total = len(run_payloads)
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "stage": "mdevent_normalization",
+                "iteration": 0,
+                "total": task_total,
+                "message": f"integrating detector trajectories for {task_total:,} run transforms",
+                "workers": 1,
+                "output_bins": int(np.prod(shape)),
+            }
+        )
+    report_stride = max(task_total // 100, 1)
+    for payload_index, (inverse, ei, original_bounds, charge, geometry_index) in enumerate(
+        run_payloads,
+        start=1,
+    ):
+        _, theta, phi, solid = detector_payloads[geometry_index]
+        direction = np.column_stack(
+            (
+                np.sin(theta) * np.cos(phi),
+                np.sin(theta) * np.sin(phi),
+                np.cos(theta),
+            )
+        )
+        for detector_index in np.flatnonzero(solid > 0.0):
+            _accumulate_detector_trajectory(
+                result,
+                edges,
+                inverse,
+                direction[detector_index],
+                ei,
+                original_bounds,
+                charge * solid[detector_index],
+            )
+        if progress_callback is not None and (
+            payload_index == task_total or payload_index % report_stride == 0
+        ):
+            progress_callback(
+                {
+                    "stage": "mdevent_normalization",
+                    "iteration": payload_index,
+                    "total": task_total,
+                    "message": (
+                        f"integrated detector trajectories for "
+                        f"{payload_index:,}/{task_total:,} run transforms"
+                    ),
+                    "workers": 1,
+                    "output_bins": int(np.prod(shape)),
+                }
+            )
     return result
 
 

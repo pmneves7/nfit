@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+import nfit.mdevent as mdevent
 from nfit import (
     DataGroup,
     NfitProject,
@@ -264,8 +265,82 @@ def test_native_mdevent_accepts_custom_hkl_basis_without_changing_totals(tmp_pat
 
     assert result.num_events.item() == 2.0
     assert [axis.name for axis in result.axes] == ["[H,H,0]", "L", "[K,-K,0]", "DeltaE"]
-    assert progress[0]["stage"] == "mdevent_scan"
+    assert progress[0]["stage"] == "mdevent_events"
+    assert "mdevent_normalization_setup" in {event["stage"] for event in progress}
+    assert "mdevent_normalization" in {event["stage"] for event in progress}
+    assert progress[-1]["stage"] == "mdevent_finalize"
     assert progress[-1]["iteration"] == progress[-1]["total"]
+
+
+def test_symmetry_trajectory_numba_matches_python_fallback(monkeypatch, tmp_path):
+    if mdevent._MDEVENT_NUMBA is None:
+        pytest.skip("Numba MDEvent normalization is unavailable")
+    source = tmp_path / "events.nxs"
+    _write_mdevent(source)
+    h5py = pytest.importorskip("h5py")
+    with h5py.File(source, "r+") as handle:
+        # Exercise geometry grouping as well as multiple symmetry operations.
+        handle[
+            "MDEventWorkspace/experiment1/instrument/physical_detectors/polar_angle"
+        ][...] = [35.0]
+    group = mdevent_dataset_group(source)
+    operations = [np.eye(3), np.diag([1.0, 1.0, -1.0])]
+    progress = []
+
+    monkeypatch.setattr(mdevent._parallel, "num_threads", lambda: 1)
+    compiled_single_worker = bin_mdevent_group(
+        group,
+        lower=[-2, -2, -2, -1],
+        upper=[2, 2, 2, 1],
+        num_bins=[2, 2, 2, 2],
+        symmetry_operations=operations,
+        progress_callback=progress.append,
+    )
+    monkeypatch.setattr(mdevent._parallel, "num_threads", lambda: 2)
+    compiled = bin_mdevent_group(
+        group,
+        lower=[-2, -2, -2, -1],
+        upper=[2, 2, 2, 1],
+        num_bins=[2, 2, 2, 2],
+        symmetry_operations=operations,
+    )
+    monkeypatch.setattr(mdevent, "_MDEVENT_NUMBA", None)
+    fallback = bin_mdevent_group(
+        group,
+        lower=[-2, -2, -2, -1],
+        upper=[2, 2, 2, 1],
+        num_bins=[2, 2, 2, 2],
+        symmetry_operations=operations,
+    )
+
+    np.testing.assert_allclose(compiled.signal, fallback.signal, equal_nan=True)
+    np.testing.assert_allclose(compiled.errors, fallback.errors, equal_nan=True)
+    np.testing.assert_allclose(
+        compiled.metadata["normalization_denominator"],
+        fallback.metadata["normalization_denominator"],
+    )
+    np.testing.assert_array_equal(compiled.mask, fallback.mask)
+    np.testing.assert_allclose(
+        compiled.metadata["normalization_denominator"],
+        compiled_single_worker.metadata["normalization_denominator"],
+    )
+    event_updates = [
+        event for event in progress if event["stage"] == "mdevent_events"
+    ]
+    assert event_updates[0]["total"] == 4
+    assert event_updates[-1]["iteration"] == 4
+
+
+def test_trajectory_workers_honor_cpu_ceiling_and_available_memory(monkeypatch):
+    monkeypatch.setattr(mdevent._parallel, "num_threads", lambda: 16)
+    monkeypatch.setattr(
+        mdevent,
+        "_available_memory_bytes",
+        lambda: 2 * 1024**3,
+    )
+
+    assert mdevent._trajectory_worker_count(1024) == 16
+    assert mdevent._trajectory_worker_count(16_000_000) == 4
 
 
 def test_mdevent_memory_estimate_scales_with_output_grid_and_preflight_blocks(monkeypatch, tmp_path):

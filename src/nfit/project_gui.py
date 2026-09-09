@@ -5827,8 +5827,17 @@ class _RebinProgressDialog:
         if working_bytes:
             details.append(f"~{working_bytes / 1024**2:.1f} MiB working memory")
         if total:
-            self.detail_bar.setRange(0, total)
-            self.detail_bar.setValue(self._detail_completed)
+            if total <= 2_000_000_000:
+                self.detail_bar.setRange(0, total)
+                self.detail_bar.setValue(self._detail_completed)
+            else:
+                # QProgressBar uses signed C++ integers.  Preserve smooth
+                # progress for symmetry-expanded event counts beyond that
+                # range by displaying a fixed-resolution fraction.
+                self.detail_bar.setRange(0, 10_000)
+                self.detail_bar.setValue(
+                    round(10_000 * self._detail_completed / total)
+                )
             percentage = 100.0 * self._detail_completed / total
             suffix = f"\n{' · '.join(details)}" if details else ""
             self._detail_base_text = f"{message} ({percentage:.1f}%){suffix}"
@@ -5850,7 +5859,11 @@ class _RebinProgressDialog:
         self._detail_base_text = message
         if self._detail_total > 0:
             self._detail_completed = self._detail_total
-            self.detail_bar.setValue(self._detail_total)
+            self.detail_bar.setValue(
+                self._detail_total
+                if self._detail_total <= 2_000_000_000
+                else 10_000
+            )
         self._refresh_labels()
 
     def fail(self, message: str) -> None:
@@ -5986,6 +5999,13 @@ class _FitProgressDialog:
             "rebin_ui": "Refreshing viewers and controls",
             "rebin_finalize": "Finalizing rebin",
             "rebin_complete": "Rebin complete",
+            "mdevent_events": "Binning MDEvents",
+            "mdevent_normalization_setup": "Preparing detector normalization",
+            "mdevent_normalization": "Integrating detector normalization",
+            "mdevent_finalize": "Finalizing MDEvent reduction",
+            "derived_source": "Preparing derived-dataset sources",
+            "derived_operation": "Evaluating derived dataset",
+            "viewer_prepare": "Opening data viewer",
             "least_squares": "Least-squares fit",
             "emcee": "Posterior sampling: emcee",
         }.get(stage, stage.replace("_", " ").title())
@@ -8561,44 +8581,85 @@ class NfitProjectExplorer:
                 "Data viewer",
                 f"Could not load datasets for the data viewer:\n{exc}",
             )
+            self._close_rebin_progress(progress)
             return None
+        if not datasets:
+            self._close_rebin_progress(progress)
+            return None
+        try:
+            if progress is not None:
+                progress(
+                    {
+                        "stage": "viewer_prepare",
+                        "iteration": 0,
+                        "total": 3,
+                        "message": "updating project controls before opening the data viewer",
+                    }
+                )
+            self._sync_details()
+            if progress is not None:
+                progress(
+                    {
+                        "stage": "viewer_prepare",
+                        "iteration": 1,
+                        "total": 3,
+                        "message": "constructing data viewer controls and initial slice",
+                    }
+                )
+            viewer = self._create_slice_viewer(group, datasets, names)
+            viewer._nfit_use_composite = bool(use_composite)
+            viewer._nfit_group = group
+            viewer._nfit_dataset_ids = {
+                dataset.name: dataset.id for dataset in group.iter_datasets()
+            }
+            if hasattr(viewer, "set_save_plot_callback"):
+                viewer.set_save_plot_callback(
+                    lambda viewer=viewer, group=group: self.save_plot_from_viewer(group, viewer),
+                    new_plot_callback=lambda viewer=viewer, group=group: self.save_plot_from_viewer(group, viewer, as_new=True),
+                )
+            if hasattr(viewer, "set_save_project_callback"):
+                viewer.set_save_project_callback(self.save)
+            if hasattr(viewer, "set_open_new_viewer_callback"):
+                viewer.set_open_new_viewer_callback(
+                    lambda selected_name, group=group, use_composite=use_composite: self.open_slice_viewer(
+                        group,
+                        selected_dataset_name=selected_name,
+                        use_composite=use_composite,
+                    )
+                )
+            if hasattr(viewer, "set_unmask_model_callback"):
+                viewer.set_unmask_model_callback(
+                    lambda _enabled, group=group: self._request_overlay_refresh(group)
+                )
+            if selected_dataset_name in getattr(viewer, "source_dataset_names", names):
+                if hasattr(viewer, "_set_dataset_selection"):
+                    viewer._set_dataset_selection(
+                        viewer._source_dataset_options().index(selected_dataset_name)
+                    )
+                else:
+                    viewer.dataset_combo.setCurrentIndex(names.index(selected_dataset_name))
+            if progress is not None:
+                progress(
+                    {
+                        "stage": "viewer_prepare",
+                        "iteration": 2,
+                        "total": 3,
+                        "message": "rendering the initial data-viewer plot",
+                    }
+                )
+            viewer.show()
+            if progress is not None:
+                progress(
+                    {
+                        "stage": "viewer_prepare",
+                        "iteration": 3,
+                        "total": 3,
+                        "message": "data viewer ready",
+                    }
+                )
+            return viewer
         finally:
             self._close_rebin_progress(progress)
-        self._sync_details()
-        if not datasets:
-            return None
-        viewer = self._create_slice_viewer(group, datasets, names)
-        viewer._nfit_use_composite = bool(use_composite)
-        viewer._nfit_group = group
-        viewer._nfit_dataset_ids = {dataset.name: dataset.id for dataset in group.iter_datasets()}
-        if hasattr(viewer, "set_save_plot_callback"):
-            viewer.set_save_plot_callback(
-                lambda viewer=viewer, group=group: self.save_plot_from_viewer(group, viewer),
-                new_plot_callback=lambda viewer=viewer, group=group: self.save_plot_from_viewer(group, viewer, as_new=True),
-            )
-        if hasattr(viewer, "set_save_project_callback"):
-            viewer.set_save_project_callback(self.save)
-        if hasattr(viewer, "set_open_new_viewer_callback"):
-            viewer.set_open_new_viewer_callback(
-                lambda selected_name, group=group, use_composite=use_composite: self.open_slice_viewer(
-                    group,
-                    selected_dataset_name=selected_name,
-                    use_composite=use_composite,
-                )
-            )
-        if hasattr(viewer, "set_unmask_model_callback"):
-            viewer.set_unmask_model_callback(
-                lambda _enabled, group=group: self._request_overlay_refresh(group)
-            )
-        if selected_dataset_name in getattr(viewer, "source_dataset_names", names):
-            if hasattr(viewer, "_set_dataset_selection"):
-                viewer._set_dataset_selection(
-                    viewer._source_dataset_options().index(selected_dataset_name)
-                )
-            else:
-                viewer.dataset_combo.setCurrentIndex(names.index(selected_dataset_name))
-        viewer.show()
-        return viewer
 
     def save_plot_from_viewer(self, group: DataGroup, viewer: Any, *, as_new: bool = False) -> PlotEntry | None:
         """Create or update a workspace plot using the interactive viewer state."""

@@ -477,6 +477,13 @@ memory. Symmetry-equivalent duplicates still count as examined work, so detailed
 progress reaches completion even when those duplicates are omitted from the
 histogram.
 
+Native MDEvent reductions report event accumulation, detector-trajectory setup,
+detector-normalization integration, output finalization, derived-data
+evaluation, and viewer preparation as separate stages. Event counters include
+symmetry-expanded contributions rather than only source rows. Consequently a
+completed event counter does not conceal a subsequent normalization pass, and
+the status continues to advance while a large viewer is being constructed.
+
 The batch target controls temporary work, not the
 persistent output-grid allocation.
 

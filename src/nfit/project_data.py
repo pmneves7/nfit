@@ -25,7 +25,12 @@ from .analysis.core import AnalysisEntry, AnalysisOutputRef, AnalysisResultRecor
 from .analysis.fingerprint import recipe_hash
 from .analysis.registry import analysis_definition, default_analysis_parameters
 from .backgrounds import subtract_background
-from .cache_utils import lru_store as _lru_store
+from .cache_utils import (
+    lru_store as _lru_store,
+)
+from .cache_utils import (
+    scientific_cache_budget_bytes,
+)
 from .dataset import PointData4D, PointListData
 from .importers import IMPORTERS
 from .mdevent import bin_mdevent_group, bin_mdevent_powder_group  # noqa: F401
@@ -545,7 +550,10 @@ _project_rebinning.configure_rebinning_compatibility(globals())
 # are deliberately applied after the cached preparation step.
 _VIEWER_VIEW_CACHE: OrderedDict[str, tuple[str, Any]] = OrderedDict()
 _VIEWER_VIEW_CACHE_LIMIT = 8
-_VIEWER_VIEW_CACHE_MAX_BYTES = 256 * 1024**2
+# Keep practical four-dimensional views resident without imposing a fixed
+# multi-gigabyte allowance on smaller-memory hosts.  The former 256 MiB limit
+# could not retain even one 13-million-bin HYSPEC reduction.
+_VIEWER_VIEW_CACHE_MAX_BYTES = scientific_cache_budget_bytes()
 
 
 def effective_dataset_masks(group: DataGroup, dataset: DatasetEntry) -> list[MaskSpec]:
@@ -823,15 +831,38 @@ def derived_analysis_dataset_data(
     group, analysis = resolved
     config = copy.deepcopy(dataset_rebin_config(dataset))
     config["enabled"] = True
-    sources = [
-        _derived_source_data(
-            group,
-            source_id,
-            config,
-            progress_callback=progress_callback,
+    sources = []
+    source_total = len(analysis.input_dataset_ids)
+    for source_index, source_id in enumerate(analysis.input_dataset_ids, start=1):
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "stage": "derived_source",
+                    "iteration": source_index - 1,
+                    "total": source_total,
+                    "message": (
+                        f"preparing source {source_index:,}/{source_total:,} "
+                        f"for {analysis.name}"
+                    ),
+                }
+            )
+        sources.append(
+            _derived_source_data(
+                group,
+                source_id,
+                config,
+                progress_callback=progress_callback,
+            )
         )
-        for source_id in analysis.input_dataset_ids
-    ]
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "stage": "derived_operation",
+                "iteration": 0,
+                "total": 1,
+                "message": f"evaluating derived dataset {analysis.name}",
+            }
+        )
     if analysis.type == "dataset_clone":
         result = sources[0]
     elif analysis.type == "histogram_arithmetic":
@@ -854,6 +885,15 @@ def derived_analysis_dataset_data(
         "input_source_ids": list(analysis.input_dataset_ids),
         "source_stage": "underlying_data",
     }
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "stage": "derived_operation",
+                "iteration": 1,
+                "total": 1,
+                "message": f"derived dataset {analysis.name} is ready",
+            }
+        )
     if isinstance(result, MDHistoData):
         return result.with_updates(metadata=metadata)
     if isinstance(result, PointListData):

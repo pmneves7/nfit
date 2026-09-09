@@ -11,6 +11,7 @@ from nfit.performance import (
 )
 from nfit.performance_benchmark import (
     BenchmarkCancelled,
+    benchmark_candidates,
     benchmark_rebin,
     export_benchmark_script,
     rebin_benchmark_target,
@@ -58,6 +59,15 @@ def test_recommendation_prefers_resources_within_tolerance():
             dict(seconds=1.04, workers=2, max_batch_mb=32),
             dict(seconds=1.2, workers=1, max_batch_mb=32)]
     assert recommend_performance(rows) == {"max_batch_mb": 32, "workers": 2}
+
+
+def test_benchmark_candidates_include_the_machine_worker_ceiling(monkeypatch):
+    from nfit import _parallel
+
+    monkeypatch.setattr(_parallel, "num_threads", lambda: 24)
+
+    workers = {candidate["workers"] for candidate in benchmark_candidates()}
+    assert workers == {1, 4, 8, 24}
 
 
 def _project():

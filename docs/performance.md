@@ -102,14 +102,34 @@ Cache entries are process-local and evicted by least-recent use. Each GUI data
 cache has both an entry-count limit and an estimated numerical-array memory
 budget; an entry larger than its cache budget is used but not retained. The
 budgets count distinct NumPy array payloads, not small Python-object overhead.
-The prepared-table cache defaults to 128 MiB; viewer, composite, and model
-overlay caches each default to 256 MiB.
+The prepared-table cache defaults to 128 MiB and the model-overlay cache to
+256 MiB. Viewer and composite cache capacities use one sixteenth of physical
+memory, bounded between 768 MiB and 4 GiB. This capacity is not allocated in
+advance: small projects retain only the arrays they produce. The adaptive
+budget can retain a practical four-dimensional reduction that exceeded the old
+256 MiB limit, avoiding immediate eviction and duplicate work while preparing
+derived datasets or reopening a viewer.
 Caches also have defensive entry-count limits. The composite cache accepts up
 to 64 entries within its memory budget so projects with several dataset-group
 composites do not repeatedly evict and rebuild one another while reopening a
 viewer.
 Caches are performance aids, not stored scientific state: recomputation after
 eviction produces the same result.
+
+Single-crystal MDEvent detector normalization groups runs with identical
+detector geometry and evaluates all requested symmetry operations in the
+compiled trajectory kernel. Each trajectory is clipped to the requested HKLE
+box before internal bin boundaries are examined. These optimizations change
+neither the event histogram nor the integrated normalization denominator; the
+Python reference path is retained for numerical-equivalence testing. The saved
+per-rebin **Workers** value is a ceiling: nfit uses it on a workstation or
+cluster node but automatically lowers the normalization worker count when the
+thread-private output accumulators would exceed one quarter of currently
+available memory (with a 4 GiB cap). **Benchmark this rebin…** measures the
+complete saved configuration on the current machine; its exported script can
+test a custom candidate list when a cluster node warrants a broader sweep. The
+default benchmark sweep includes the machine's full detected CPU allowance in
+addition to conservative smaller ceilings.
 
 Process caches normally disappear when nfit exits. For projects whose raw data
 are expensive to load or rebin, enable **File → Cache binnings** before saving.

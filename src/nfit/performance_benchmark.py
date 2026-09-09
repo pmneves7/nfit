@@ -26,7 +26,8 @@ def benchmark_candidates() -> list[dict[str, int]]:
     """A bounded sweep of batch-memory targets and worker ceilings."""
     from ._parallel import num_threads
 
-    workers = sorted({1, min(2, num_threads()), min(4, num_threads()), min(8, num_threads())})
+    available = num_threads()
+    workers = sorted({1, min(4, available), min(8, available), available})
     return [{"max_batch_mb": mb, "workers": n} for mb in (32, 192, 512) for n in workers]
 
 
