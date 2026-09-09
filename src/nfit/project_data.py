@@ -1598,16 +1598,17 @@ def _apply_composite_backgrounds(
                 progress_callback=progress_callback,
             )
         else:
-            source_data = _viewer_data_before_scale(
+            # A raw point-data background belongs on the composite's resolved
+            # output grid.  Do not honor the background dataset's private
+            # viewer-rebin recipe here: that recipe may describe an older or
+            # otherwise unrelated grid and aligned subtraction would then fail.
+            source_data = _source_data_for_group_composite(
+                group,
                 source,
-                extra_masks=effective_dataset_masks(root, source),
-                force_rebin=True,
-                force_masks=True,
-                progress_callback=progress_callback,
             )
             if isinstance(source_data, PointData4D):
-                # An unrebinned neutron reference follows the resolved sample
-                # grid. Work on copies so its own viewing recipe stays intact.
+                # The neutron reference follows the resolved sample grid. Work
+                # on copies so its own viewing recipe stays intact.
                 aligned_config = copy.deepcopy(dict(
                     data_group_composite_config(group) if config is None else config
                 ))
@@ -1616,6 +1617,7 @@ def _apply_composite_backgrounds(
                 for settings, axis in zip(aligned_config["axes"], data.axes, strict=True):
                     settings.update(
                         name=axis.name, units=axis.units, bin_edges=axis.values.tolist(),
+                        mode="edges",
                         auto_lower=False, auto_upper=False, auto_step_size=False,
                     )
                 source_metadata = dict(source_data.metadata)

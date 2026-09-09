@@ -56,13 +56,29 @@ def temperature(**kwargs):
 
 
 @pytest.mark.parametrize("metadata_axes", [False, True])
-def test_raw_group_background_automatically_follows_sample_grid_and_preserves_source(metadata_axes):
+@pytest.mark.parametrize("source_rebinned", [False, True])
+def test_raw_group_background_automatically_follows_sample_grid_and_preserves_source(
+    metadata_axes, source_rebinned
+):
     from nfit.pipeline import BackgroundSpec, MaskSpec
 
     reference = points(50, [2, 100], sigma=[3, 1], name="reference")
     reference.replace_data(reference.data.with_updates(mask=[True, False]))
     g = group([points(5, [10], name="cold"), points(10, [20], name="warm"), reference])
-    reference.parameters["rebin"] = {"enabled": False}
+    if source_rebinned:
+        source_config = nfit.dataset_rebin_config(reference)
+        source_config["enabled"] = True
+        source_edges = ([-1, 0, 1], [-0.5, 0.5], [-0.5, 0.5], [0.5, 1.5])
+        for axis, bin_edges in zip(source_config["axes"], source_edges, strict=True):
+            axis.update(
+                mode="edges",
+                bin_edges=bin_edges,
+                auto_lower=False,
+                auto_upper=False,
+                auto_step_size=False,
+            )
+    else:
+        reference.parameters["rebin"] = {"enabled": False}
     original = reference.data
     recipe = copy.deepcopy(reference.parameters["rebin"])
     g.backgrounds.append(BackgroundSpec("50 K", reference.id, scale=0.5, source_entry=reference))

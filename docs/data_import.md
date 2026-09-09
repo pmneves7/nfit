@@ -530,10 +530,11 @@ is a one-sigma uncertainty in the signal unit. This assumes independent
 sample/background values and does not propagate uncertainty in $a$. Values outside the background domain are
 masked rather than extrapolated.
 
-For a group background referencing unrebinned neutron point data, nfit bins the
+For a group background referencing raw neutron point data, nfit bins the
 reference onto the sample's resolved momentum/energy grid automatically,
 including its coordinate basis, symmetry, averaging mode, and bin edges.
-The source's own rebin settings are preserved. Temperature-series composites
+The source's own viewer-rebin settings are preserved but do not override the
+group background's required alignment. Temperature-series composites
 subtract this reference from each metadata slice and retain the enabled reference
 run at its own temperature. An isolated reference subtracted from itself at
 scale 1 remains visible as zero signal and zero uncertainty: the same observations
