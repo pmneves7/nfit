@@ -915,7 +915,8 @@ def _composite_progress_callback(
             total = enriched.get("total")
             if enriched.get("stage") == "rebin" and iteration is not None and total:
                 enriched["message"] = (
-                    f"rebinning {datasets_total} datasets: {iteration}/{total} point contributions"
+                    f"rebinning {datasets_total:,} datasets: "
+                    f"{int(iteration):,}/{int(total):,} point contributions"
                 )
         callback(enriched)
 
@@ -939,9 +940,9 @@ def _report_source_dataset_progress(
             "datasets_completed": int(completed),
             "datasets_total": int(total),
             "message": (
-                f"prepared source dataset {completed}/{total}: {dataset_name}"
+                f"prepared source dataset {completed:,}/{total:,}: {dataset_name}"
                 if completed
-                else f"preparing {total} source datasets"
+                else f"preparing {total:,} source datasets"
             ),
         }
     )

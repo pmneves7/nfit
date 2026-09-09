@@ -466,15 +466,16 @@ peak-memory table before choosing **Apply recommendation**. The same controls
 are available for composites. Defaults for new configurations live in
 **File → Preferences → Performance**; see [benchmark details](performance.md#performance-preferences-and-benchmarks).
 
-When opening a viewer that prepares several datasets or dataset-group
-composites, rebin progress uses two levels. Above the upper bar, the dialog
-reports the completed and total viewer entries, percentage complete, and the
-current dataset or dataset group. Below that bar, it reports the current entry's
-point-contribution progress and resource estimate; the lower bar visualizes that
-detailed progress. A direct
-dataset or dataset-group rebin uses only the detailed lower bar. Symmetry-
-equivalent duplicates still count as examined work, so detailed progress reaches
-completion even when those duplicates are omitted from the histogram.
+All rebin workflows use the same compact progress dialog. When a task prepares
+several datasets or dataset-group composites, it uses two levels: the upper bar
+reports completed viewer entries and the lower bar reports progress within the
+named current entry. A one-entry task hides the redundant upper status and bar.
+Both levels show elapsed time and, once their progress is determinate, estimated
+time remaining. Large integer counters use grouped thousands, and resource
+details below the lower status report output bins, CPUs, and estimated working
+memory. Symmetry-equivalent duplicates still count as examined work, so detailed
+progress reaches completion even when those duplicates are omitted from the
+histogram.
 
 The batch target controls temporary work, not the
 persistent output-grid allocation.

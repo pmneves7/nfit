@@ -797,7 +797,7 @@ def _report_bragg_progress(
         return
     peak_text = ", ".join(f"{value:.4g}" for value in peak_hkl)
     outcome = "accepted" if status == 0 else "rejected"
-    details = [f"Reflection {completed}/{total}: ({peak_text}) {outcome}"]
+    details = [f"Reflection {completed:,}/{total:,}: ({peak_text}) {outcome}"]
     if np.isfinite(coverage):
         details.append(f"coverage {coverage:.0%}")
     if np.isfinite(signal_to_noise):

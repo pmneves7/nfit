@@ -94,7 +94,8 @@ Rebin controls use separate settings, metadata-dimension, and bin-information
 tabs where applicable. The bin-information tab expands to show resolved centers
 and edges. Rebin progress distinguishes numerical output construction from the
 subsequent viewer and control refresh, so a slow plot redraw is not reported as
-continued bin accumulation.
+continued bin accumulation. Its common compact dialog shows one timed progress
+level for a single entry and separate timed overall/detail levels for batch jobs.
 
 ## Project organization
 

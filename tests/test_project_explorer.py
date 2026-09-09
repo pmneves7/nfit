@@ -2440,13 +2440,19 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
     assert batch_bar.maximum() == 8
     assert batch_bar.value() == 2
     assert detail_bar.value() == 75
-    assert rebin_dialog._nfit_batch_label.text() == (
+    assert rebin_dialog._nfit_batch_label.text().startswith(
         "Rebinning 8 dataset groups: 2/8 dataset groups binned (25.0%)"
     )
+    assert "elapsed " in rebin_dialog._nfit_batch_label.text()
+    assert "remaining ~" in rebin_dialog._nfit_batch_label.text()
     assert rebin_dialog._nfit_current_label.text() == (
         "Current dataset group: MACS SPEC 5meV 2K"
     )
-    assert rebin_dialog._nfit_label.text() == "rebinning 7 datasets (75.0%)"
+    assert rebin_dialog._nfit_label.text().startswith(
+        "rebinning 7 datasets (75.0%)"
+    )
+    assert "elapsed " in rebin_dialog._nfit_label.text()
+    assert "remaining ~" in rebin_dialog._nfit_label.text()
     progress_layout = rebin_dialog.layout()
     assert progress_layout.indexOf(rebin_dialog._nfit_batch_label) < progress_layout.indexOf(
         batch_bar
@@ -2459,6 +2465,32 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
     )
     assert rebin_dialog.minimumWidth() == rebin_dialog.maximumWidth() == 680
     explorer._close_rebin_progress(rebin)
+
+    single_rebin = explorer._make_rebin_progress_callback("Rebinning dataset...")
+    single_dialog = single_rebin._nfit_progress_dialog
+    single_rebin(
+        {
+            "stage": "rebin_batch",
+            "batch_total": 1,
+            "batch_completed": 0,
+            "batch_name": "large source",
+            "batch_kind": "dataset",
+        }
+    )
+    single_rebin(
+        {
+            "stage": "mdevent_scan",
+            "iteration": 23_301_675,
+            "total": 123_690_949,
+            "message": "reading MDEvents 23,301,675/123,690,949",
+        }
+    )
+    assert not single_dialog._nfit_batch_progress.isVisible()
+    assert not single_dialog._nfit_batch_label.isVisible()
+    assert not single_dialog._nfit_current_label.isVisible()
+    assert "23,301,675/123,690,949" in single_dialog._nfit_label.text()
+    assert "elapsed " in single_dialog._nfit_label.text()
+    explorer._close_rebin_progress(single_rebin)
 
     diagnostics = project_gui._FitDiagnosticsPlotWindow(FitTimelineEntry("Fit Result1"), explorer)
     diagnostics.show()

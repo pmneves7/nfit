@@ -87,9 +87,9 @@ class SamplingProgressDialog:
         row = int(progress.iteration) - 1
         if self.table.rowCount() <= row:
             self.table.setRowCount(row + 1)
-        mesh = " × ".join(str(value) for value in progress.mesh)
+        mesh = " × ".join(f"{value:,}" for value in progress.mesh)
         values = [
-            f"{progress.iteration}/{progress.candidate_count}",
+            f"{progress.iteration:,}/{progress.candidate_count:,}",
             mesh,
             "—",
             "—",
@@ -113,13 +113,13 @@ class SamplingProgressDialog:
             self.table.setItem(row, column, QtWidgets.QTableWidgetItem(value))
         if progress.phase == "started":
             self.status.setText(
-                f"Iteration {progress.iteration} of at most "
-                f"{progress.candidate_count}: evaluating {mesh}…"
+                f"Iteration {progress.iteration:,} of at most "
+                f"{progress.candidate_count:,}: evaluating {mesh}…"
             )
         else:
             self.status.setText(
                 f"Completed {mesh} in {progress.elapsed_seconds:.2f} s; "
-                f"{progress.consecutive_passes}/{progress.required_passes} "
+                f"{progress.consecutive_passes:,}/{progress.required_passes:,} "
                 "successive refinements currently pass."
             )
         self.table.scrollToBottom()

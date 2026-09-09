@@ -103,15 +103,15 @@ class BenchmarkDialog(QtWidgets.QDialog):
         self.table.insertRow(row)
         for column, key in enumerate(("max_batch_mb", "workers", "seconds", "peak_mib")):
             value = result[key]
-            text = f"{value:.3f}" if isinstance(value, float) else str(value)
+            text = f"{value:.3f}" if isinstance(value, float) else f"{int(value):,}"
             self.table.setItem(row, column, QtWidgets.QTableWidgetItem(text))
 
     def _outcome(self, result):
         if isinstance(result, dict):
             self.result = result
             recommendation = result["recommendation"]
-            self.status.setText(f"Recommended: {recommendation['max_batch_mb']} MiB, "
-                                f"up to {recommendation['workers']} workers. "
+            self.status.setText(f"Recommended: {int(recommendation['max_batch_mb']):,} MiB, "
+                                f"up to {int(recommendation['workers']):,} workers. "
                                 "Prefers fewer resources within 5% of the fastest result. Not yet applied.")
         else:
             self.status.setText(result)

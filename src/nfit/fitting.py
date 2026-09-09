@@ -1548,7 +1548,7 @@ def sample_problem_parameters(
                                 name: float(value)
                                 for name, value in zip(names, mean, strict=True)
                             },
-                            "message": f"emcee step {iteration}/{n_steps}",
+                            "message": f"emcee step {iteration:,}/{n_steps:,}",
                         }
                     )
                 except Exception as exc:
@@ -1632,7 +1632,7 @@ def initialize_problem_differential_evolution(
                     "parameters": {name: float(params[name]) for name in names},
                     "cost": objective(np.asarray(xk, dtype=float)),
                     "convergence": None if convergence is None else float(convergence),
-                    "message": f"differential evolution generation {iteration}",
+                    "message": f"differential evolution generation {iteration:,}",
                 }
             )
         return False

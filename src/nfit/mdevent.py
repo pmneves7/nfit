@@ -114,7 +114,7 @@ def inspect_mdevent_workspace(
             if progress_callback is not None:
                 progress_callback({
                     "stage": "mdevent_import", "iteration": index, "total": len(names),
-                    "message": f"reading MDEvent run metadata {index}/{len(names)}",
+                    "message": f"reading MDEvent run metadata {index:,}/{len(names):,}",
                 })
         runs = tuple(runs_list)
         lattice_group = workspace[f"experiment{runs[0].experiment_index}/sample/oriented_lattice"]
@@ -353,7 +353,7 @@ def bin_mdevent_group(
                             event_count.ravel()[:] += np.bincount(flat[valid], minlength=data_sum.size)
                 processed += stop - start
                 if progress_callback is not None:
-                    progress_callback({"stage": "mdevent_scan", "iteration": processed, "total": scan_total + 1, "message": f"reading MDEvents {processed}/{scan_total}"})
+                    progress_callback({"stage": "mdevent_scan", "iteration": processed, "total": scan_total + 1, "message": f"reading MDEvents {processed:,}/{scan_total:,}"})
     if progress_callback is not None:
         progress_callback({"stage": "mdevent_normalization", "iteration": scan_total, "total": scan_total + 1, "message": "calculating detector normalization"})
     normalization = _trajectory_normalization(group, selected_runs, edges, shape, basis_inverse, symmetry)
@@ -533,7 +533,7 @@ def bin_mdevent_powder_group(
                             "stage": "mdevent_scan",
                             "iteration": processed,
                             "total": scan_total + 1,
-                            "message": f"reading MDEvents {processed}/{scan_total}",
+                            "message": f"reading MDEvents {processed:,}/{scan_total:,}",
                         }
                     )
     if progress_callback is not None:

@@ -423,7 +423,7 @@ def _execute_angle_background(inputs, parameters, **callbacks):
                 "stage": "angle_energy_background",
                 "iteration": 0,
                 "total": len(inputs),
-                "message": f"estimating background from {len(inputs)} rotation angles",
+                "message": f"estimating background from {len(inputs):,} rotation angles",
             }
         )
     output = angle_energy_background(

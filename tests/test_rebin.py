@@ -220,6 +220,21 @@ def test_rebin_reports_batch_progress():
     assert events[1]["estimated_working_bytes"] > 0
 
 
+def test_rebin_progress_groups_large_integer_counts():
+    events = []
+    rebin_nd(
+        data=np.ones(1_001),
+        coords=np.arange(1_001, dtype=float),
+        num_bins=[10],
+        batch_size=1_001,
+        fractional=False,
+        progress_callback=events.append,
+    )
+
+    accumulation = [event for event in events if event["stage"] == "rebin"]
+    assert accumulation[-1]["message"] == "rebinning 1,001/1,001 points"
+
+
 def test_rebin_accepts_last_axis_coordinate_dimension():
     x = np.array([0.25, 0.75])
     y = np.array([0.25, 0.75])

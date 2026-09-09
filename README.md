@@ -24,7 +24,7 @@ The package provides:
   Discrete, Step, Bins, Edges, or tolerance-clustered modes, editable
   fractional/discrete point assignment, expandable bin-grid information,
   multiple named fit or visualization binnings per dataset and composite,
-  dataset- and point-level rebin progress,
+  unified timed dataset- and point-level rebin progress,
   momentum-coordinate matrices, automatic
   zero-aligned uniform grids specified by bin centers, composites, backgrounds
   with automatic grid matching for unrebinned neutron references, and

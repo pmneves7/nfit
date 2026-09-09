@@ -5631,6 +5631,237 @@ def forget_missing_recent_projects(settings: Any | None = None) -> list[Path]:
     return recent
 
 
+def _format_progress_duration(seconds: float) -> str:
+    """Return a compact, stable duration for progress displays."""
+
+    total_seconds = max(int(seconds), 0)
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds_value = divmod(remainder, 60)
+    if hours:
+        return f"{hours:d}h {minutes:02d}m {seconds_value:02d}s"
+    if minutes:
+        return f"{minutes:d}m {seconds_value:02d}s"
+    return f"{seconds_value:d}s"
+
+
+def _progress_timer_text(started_at: float, completed: int, total: int) -> str:
+    """Return elapsed and, when meaningful, estimated remaining time."""
+
+    elapsed = max(time.monotonic() - started_at, 0.0)
+    parts = [f"elapsed {_format_progress_duration(elapsed)}"]
+    if total > 0 and completed > 0:
+        remaining = elapsed * max(total - completed, 0) / completed
+        parts.append(f"remaining ~{_format_progress_duration(remaining)}")
+    return " · ".join(parts)
+
+
+class _RebinProgressDialog:
+    """Compact one- or two-level progress window for every rebin workflow."""
+
+    def __init__(self, parent: Any, title: str, *, aggregate: bool = False) -> None:
+        from PySide6 import QtCore, QtWidgets
+
+        self._title = title
+        self._batch_name = ""
+        self._batch_kind = ""
+        self._batch_started_at = time.monotonic()
+        self._detail_started_at = self._batch_started_at
+        self._batch_completed = 0
+        self._batch_total = 0
+        self._detail_completed = 0
+        self._detail_total = 0
+        self._batch_base_text = title
+        self._detail_base_text = title
+        self._detail_start_key: tuple[str, int] | None = None
+
+        owner = parent.window if hasattr(parent, "window") else parent
+        self.dialog = QtWidgets.QDialog(owner)
+        self.dialog.setObjectName("rebin_progress_dialog")
+        self.dialog.setWindowTitle("Rebin progress")
+        self.dialog.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
+        self.dialog.setFixedWidth(680)
+        layout = QtWidgets.QVBoxLayout(self.dialog)
+
+        self.batch_label = QtWidgets.QLabel("")
+        self.batch_label.setObjectName("rebin_batch_status_label")
+        self.batch_label.setWordWrap(True)
+        self.batch_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.batch_label)
+        self.current_label = QtWidgets.QLabel("")
+        self.current_label.setObjectName("rebin_current_item_label")
+        self.current_label.setWordWrap(True)
+        self.current_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.current_label)
+        self.batch_bar = QtWidgets.QProgressBar()
+        self.batch_bar.setObjectName("rebin_batch_progress")
+        self.batch_bar.setTextVisible(False)
+        self.batch_bar.setToolTip(
+            "Completed datasets or dataset groups across this complete rebin task."
+        )
+        layout.addWidget(self.batch_bar)
+
+        self.detail_label = QtWidgets.QLabel(title)
+        self.detail_label.setObjectName("rebin_progress_label")
+        self.detail_label.setWordWrap(True)
+        self.detail_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.detail_label)
+        self.detail_bar = QtWidgets.QProgressBar()
+        self.detail_bar.setObjectName("rebin_detail_progress")
+        self.detail_bar.setTextVisible(False)
+        self.detail_bar.setToolTip(
+            "Progress within the current dataset or dataset group."
+        )
+        self.detail_bar.setRange(0, 0)
+        layout.addWidget(self.detail_bar)
+
+        # Compatibility attributes used by GUI tests and downstream extensions.
+        self.dialog._nfit_label = self.detail_label
+        self.dialog._nfit_batch_label = self.batch_label
+        self.dialog._nfit_current_label = self.current_label
+        self.dialog._nfit_batch_progress = self.batch_bar
+        self.dialog._nfit_detail_progress = self.detail_bar
+
+        self._set_batch_visible(False)
+        self._timer = QtCore.QTimer(self.dialog)
+        self._timer.setInterval(1000)
+        self._timer.timeout.connect(self._refresh_labels)
+        self._timer.start()
+
+    def _set_batch_visible(self, visible: bool) -> None:
+        self.batch_label.setVisible(visible)
+        self.current_label.setVisible(visible)
+        self.batch_bar.setVisible(visible)
+
+    def _refresh_labels(self) -> None:
+        if self._batch_total > 1:
+            timer = _progress_timer_text(
+                self._batch_started_at, self._batch_completed, self._batch_total
+            )
+            self.batch_label.setText(f"{self._batch_base_text} · {timer}")
+        detail_timer = _progress_timer_text(
+            self._detail_started_at, self._detail_completed, self._detail_total
+        )
+        self.detail_label.setText(f"{self._detail_base_text} · {detail_timer}")
+
+    def reset(self, title: str | None = None) -> None:
+        from PySide6 import QtWidgets
+
+        if title is not None:
+            self._title = title
+        now = time.monotonic()
+        self._batch_started_at = now
+        self._detail_started_at = now
+        self._batch_completed = self._batch_total = 0
+        self._detail_completed = self._detail_total = 0
+        self._batch_name = self._batch_kind = ""
+        self._batch_base_text = self._title
+        self._detail_base_text = self._title
+        self._detail_start_key = None
+        self._set_batch_visible(False)
+        self.detail_bar.setRange(0, 0)
+        self._refresh_labels()
+        QtWidgets.QApplication.processEvents()
+
+    def show(self) -> None:
+        from PySide6 import QtWidgets
+
+        self.dialog.show()
+        self.dialog.raise_()
+        self.dialog.activateWindow()
+        QtWidgets.QApplication.processEvents()
+
+    def update_progress(self, event: dict[str, Any]) -> None:
+        from PySide6 import QtWidgets
+
+        if event.get("batch_name") is not None:
+            self._batch_name = str(event["batch_name"])
+            self._batch_kind = str(event.get("batch_kind") or "item")
+            if not bool(event.get("batch_item_complete")):
+                start_key = (
+                    self._batch_name,
+                    int(event.get("batch_completed") or 0),
+                )
+                if start_key != self._detail_start_key:
+                    self._detail_start_key = start_key
+                    self._detail_started_at = time.monotonic()
+
+        batch_total = max(int(event.get("batch_total") or 0), 0)
+        batch_completed = min(
+            max(int(event.get("batch_completed") or 0), 0), batch_total
+        )
+        if batch_total:
+            self._batch_total = batch_total
+            self._batch_completed = batch_completed
+            multi_item = batch_total > 1
+            self._set_batch_visible(multi_item)
+            if multi_item:
+                self.batch_bar.setRange(0, batch_total)
+                self.batch_bar.setValue(batch_completed)
+                percentage = 100.0 * batch_completed / batch_total
+                item_kind = self._batch_kind or "dataset group"
+                plural_kind = item_kind if batch_total == 1 else f"{item_kind}s"
+                self._batch_base_text = (
+                    f"Rebinning {batch_total:,} {plural_kind}: "
+                    f"{batch_completed:,}/{batch_total:,} {plural_kind} binned "
+                    f"({percentage:.1f}%)"
+                )
+                self.current_label.setText(
+                    f"Current {self._batch_kind}: {self._batch_name}"
+                    if self._batch_name
+                    else ""
+                )
+
+        total = max(int(event.get("total") or 0), 0)
+        iteration = max(int(event.get("iteration") or 0), 0)
+        self._detail_total = total
+        self._detail_completed = min(iteration, total) if total else 0
+        message = str(event.get("message") or self._title)
+        details = []
+        output_bins = int(event.get("output_bins") or 0)
+        if output_bins:
+            details.append(f"{output_bins:,} output bins")
+        workers = int(event.get("workers") or 0)
+        if workers:
+            details.append(f"{workers:,} CPU{'s' if workers != 1 else ''}")
+        working_bytes = int(event.get("estimated_working_bytes") or 0)
+        if working_bytes:
+            details.append(f"~{working_bytes / 1024**2:.1f} MiB working memory")
+        if total:
+            self.detail_bar.setRange(0, total)
+            self.detail_bar.setValue(self._detail_completed)
+            percentage = 100.0 * self._detail_completed / total
+            suffix = f"\n{' · '.join(details)}" if details else ""
+            self._detail_base_text = f"{message} ({percentage:.1f}%){suffix}"
+        else:
+            if event.get("stage") == "rebin_batch":
+                if event.get("batch_item_complete"):
+                    self.detail_bar.setRange(0, 1)
+                    self.detail_bar.setValue(1)
+                else:
+                    self.detail_bar.setRange(0, 0)
+            self._detail_base_text = message
+        self._refresh_labels()
+        QtWidgets.QApplication.processEvents()
+
+    def set_cancel_callback(self, _callback: Any | None) -> None:
+        """Match the fit progress interface; compact rebin dialogs are not cancellable."""
+
+    def finish(self, message: str, **_kwargs: Any) -> None:
+        self._detail_base_text = message
+        if self._detail_total > 0:
+            self._detail_completed = self._detail_total
+            self.detail_bar.setValue(self._detail_total)
+        self._refresh_labels()
+
+    def fail(self, message: str) -> None:
+        self._detail_base_text = f"Rebin failed: {message}"
+        self._refresh_labels()
+
+    def close(self) -> None:
+        self._timer.stop()
+        self.dialog.close()
+
+
 class _FitProgressDialog:
     """Small live progress window for fits, analyses, and samplers."""
 
@@ -5766,14 +5997,14 @@ class _FitProgressDialog:
             datasets_total_value = max(int(datasets_total), 0)
             if datasets_completed is not None:
                 status_parts.append(
-                    f"Datasets {int(datasets_completed)} of {datasets_total_value}"
+                    f"Datasets {int(datasets_completed):,} of {datasets_total_value:,}"
                 )
             else:
-                status_parts.append(f"Datasets {datasets_total_value}")
+                status_parts.append(f"Datasets {datasets_total_value:,}")
         if event.get("output_bins") is not None:
             status_parts.append(f"Bins {int(event['output_bins']):,}")
         if event.get("workers") is not None:
-            status_parts.append(f"CPUs {int(event['workers'])}")
+            status_parts.append(f"CPUs {int(event['workers']):,}")
         if event.get("estimated_working_bytes") is not None:
             status_parts.append(
                 f"Memory ~{int(event['estimated_working_bytes']) / 1024**2:.1f} MiB"
@@ -5784,11 +6015,15 @@ class _FitProgressDialog:
                 else "Points" if stage == "rebin"
                 else "Step"
             )
-            status_parts.append(f"{counter} {iteration}" + (f" of {total}" if total else ""))
+            iteration_value = int(iteration)
+            status_parts.append(
+                f"{counter} {iteration_value:,}"
+                + (f" of {int(total):,}" if total else "")
+            )
         if event.get("accepted_count") is not None:
-            status_parts.append(f"{event['accepted_count']} accepted")
+            status_parts.append(f"{int(event['accepted_count']):,} accepted")
         if event.get("rejected_count") is not None:
-            status_parts.append(f"{event['rejected_count']} rejected")
+            status_parts.append(f"{int(event['rejected_count']):,} rejected")
         if event.get("cost") is not None:
             status_parts.append(f"cost {_format_number(float(event['cost']))}")
         if event.get("convergence") is not None:
@@ -5802,14 +6037,14 @@ class _FitProgressDialog:
         log_parts = [stage_title]
         if datasets_total is not None:
             log_parts.append(
-                f"datasets {int(datasets_completed)}/{int(datasets_total)}"
+                f"datasets {int(datasets_completed):,}/{int(datasets_total):,}"
                 if datasets_completed is not None
-                else f"{int(datasets_total)} datasets"
+                else f"{int(datasets_total):,} datasets"
             )
         if event.get("output_bins") is not None:
             log_parts.append(f"{int(event['output_bins']):,} bins")
         if event.get("workers") is not None:
-            log_parts.append(f"{int(event['workers'])} CPUs")
+            log_parts.append(f"{int(event['workers']):,} CPUs")
         if event.get("estimated_working_bytes") is not None:
             log_parts.append(
                 f"~{int(event['estimated_working_bytes']) / 1024**2:.1f} MiB"
@@ -5820,13 +6055,17 @@ class _FitProgressDialog:
                 else "points" if stage == "rebin"
                 else "step"
             )
-            log_parts.append(f"{counter} {iteration}" + (f"/{total}" if total else ""))
+            iteration_value = int(iteration)
+            log_parts.append(
+                f"{counter} {iteration_value:,}"
+                + (f"/{int(total):,}" if total else "")
+            )
         if message and message != stage:
             log_parts.append(message)
         if event.get("accepted_count") is not None:
-            log_parts.append(f"{event['accepted_count']} accepted")
+            log_parts.append(f"{int(event['accepted_count']):,} accepted")
         if event.get("rejected_count") is not None:
-            log_parts.append(f"{event['rejected_count']} rejected")
+            log_parts.append(f"{int(event['rejected_count']):,} rejected")
         if event.get("cost") is not None:
             log_parts.append(f"cost {_format_number(float(event['cost']))}")
         if event.get("seconds_per_step") is not None:
@@ -6648,7 +6887,7 @@ class NfitProjectExplorer:
                 task=task,
                 on_success=on_success,
                 success_message="Data reload finished.",
-                completion_summary=lambda items: [f"Reloaded datasets: {len(items)}"],
+                completion_summary=lambda items: [f"Reloaded datasets: {len(items):,}"],
             )
         try:
             reloaded = task(None)
@@ -7429,6 +7668,7 @@ class NfitProjectExplorer:
         if self._interactive:
             return self._start_background_task(
                 title="Creating dataset from composite...",
+                progress_window_title="Rebin progress",
                 failure_title="Create dataset from composite",
                 task=task,
                 on_success=on_success,
@@ -7782,11 +8022,15 @@ class NfitProjectExplorer:
                 finally:
                     worker_thread.quit()
 
-        progress = self._fit_progress_dialog
-        if progress is None:
-            progress = _FitProgressDialog(self)
-            self._fit_progress_dialog = progress
-        progress.dialog.setWindowTitle(progress_window_title or "Fit progress")
+        is_rebin_progress = progress_window_title == "Rebin progress"
+        if is_rebin_progress:
+            progress = _RebinProgressDialog(self, title)
+        else:
+            progress = self._fit_progress_dialog
+            if progress is None:
+                progress = _FitProgressDialog(self)
+                self._fit_progress_dialog = progress
+            progress.dialog.setWindowTitle(progress_window_title or "Fit progress")
         progress.reset(title)
         progress.show()
 
@@ -8717,115 +8961,24 @@ class NfitProjectExplorer:
         aggregate: bool = False,
     ) -> Any | None:
         try:
-            from PySide6 import QtCore, QtWidgets
-        except Exception:
+            progress = _RebinProgressDialog(self, title, aggregate=aggregate)
+        except ImportError:
             return None
-        dialog = QtWidgets.QDialog(self.window)
-        dialog.setObjectName("rebin_progress_dialog")
-        dialog.setWindowTitle("Rebin progress")
-        dialog.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
-        dialog.setFixedWidth(680)
-        layout = QtWidgets.QVBoxLayout(dialog)
-        batch_label = QtWidgets.QLabel(title if aggregate else "")
-        batch_label.setObjectName("rebin_batch_status_label")
-        batch_label.setWordWrap(True)
-        batch_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        batch_label.setVisible(aggregate)
-        layout.addWidget(batch_label)
-        current_label = QtWidgets.QLabel("")
-        current_label.setObjectName("rebin_current_item_label")
-        current_label.setWordWrap(True)
-        current_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        current_label.setVisible(aggregate)
-        layout.addWidget(current_label)
-        batch_bar = QtWidgets.QProgressBar()
-        batch_bar.setObjectName("rebin_batch_progress")
-        batch_bar.setFormat("Datasets/groups %v of %m")
-        batch_bar.setToolTip(
-            "Completed datasets or dataset groups across this complete viewer preparation."
-        )
-        batch_bar.setVisible(aggregate)
-        layout.addWidget(batch_bar)
-        detail_label = QtWidgets.QLabel(title)
-        detail_label.setObjectName("rebin_progress_label")
-        detail_label.setWordWrap(True)
-        detail_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(detail_label)
-        detail_bar = QtWidgets.QProgressBar()
-        detail_bar.setObjectName("rebin_detail_progress")
-        detail_bar.setToolTip("Progress within the dataset or dataset group named above.")
-        detail_bar.setRange(0, 100)
-        layout.addWidget(detail_bar)
-        dialog._nfit_label = detail_label
-        dialog._nfit_batch_label = batch_label
-        dialog._nfit_current_label = current_label
-        dialog._nfit_batch_progress = batch_bar
-        dialog._nfit_detail_progress = detail_bar
-        dialog.show()
-
-        batch_name = ""
-        batch_kind = ""
+        progress.show()
 
         def callback(event: dict[str, Any]) -> None:
-            nonlocal batch_name, batch_kind
-            if event.get("batch_name") is not None:
-                batch_name = str(event["batch_name"])
-                batch_kind = str(event.get("batch_kind") or "item")
-            batch_total = int(event.get("batch_total") or 0)
-            batch_completed = int(event.get("batch_completed") or 0)
-            if aggregate and batch_total > 0:
-                completed = min(max(batch_completed, 0), batch_total)
-                batch_bar.setRange(0, batch_total)
-                batch_bar.setValue(completed)
-                percentage = 100.0 * completed / batch_total
-                item_kind = batch_kind or "dataset group"
-                plural_kind = item_kind if batch_total == 1 else f"{item_kind}s"
-                batch_label.setText(
-                    f"Rebinning {batch_total} {plural_kind}: "
-                    f"{completed}/{batch_total} {plural_kind} binned "
-                    f"({percentage:.1f}%)"
-                )
-            if aggregate:
-                current_label.setText(
-                    f"Current {batch_kind}: {batch_name}"
-                    if batch_name
-                    else ""
-                )
-            total = int(event.get("total") or 0)
-            iteration = int(event.get("iteration") or 0)
-            if total > 0:
-                detail_bar.setRange(0, total)
-                detail_bar.setValue(min(iteration, total))
-                percentage = 100.0 * min(iteration, total) / total
-                message = str(event.get("message") or title)
-                details = []
-                output_bins = int(event.get("output_bins") or 0)
-                if output_bins:
-                    details.append(f"{output_bins:,} output bins")
-                workers = int(event.get("workers") or 0)
-                if workers:
-                    details.append(f"{workers} CPU{'s' if workers != 1 else ''}")
-                working_bytes = int(event.get("estimated_working_bytes") or 0)
-                if working_bytes:
-                    details.append(
-                        f"~{working_bytes / 1024**2:.1f} MiB working memory"
-                    )
-                suffix = f"\n{' · '.join(details)}" if details else ""
-                detail_label.setText(f"{message} ({percentage:.1f}%){suffix}")
-            else:
-                if event.get("stage") == "rebin_batch":
-                    if event.get("batch_item_complete"):
-                        detail_bar.setRange(0, 1)
-                        detail_bar.setValue(1)
-                    else:
-                        detail_bar.setRange(0, 0)
-                detail_label.setText(str(event.get("message") or title))
-            QtWidgets.QApplication.processEvents()
+            progress.update_progress(event)
 
+        dialog = progress.dialog
         callback._nfit_progress_dialog = dialog
+        callback._nfit_progress_controller = progress
         return callback
 
     def _close_rebin_progress(self, callback: Any | None) -> None:
+        controller = getattr(callback, "_nfit_progress_controller", None)
+        if controller is not None:
+            controller.close()
+            return
         dialog = getattr(callback, "_nfit_progress_dialog", None)
         if dialog is not None:
             dialog.close()

@@ -1029,7 +1029,7 @@ class NDRebin:
                 "stage": "rebin",
                 "iteration": int(min(processed, self.Nvals)),
                 "total": int(self.Nvals),
-                "message": f"rebinning {min(processed, self.Nvals)}/{self.Nvals} points",
+                "message": f"rebinning {min(processed, self.Nvals):,}/{self.Nvals:,} points",
                 **self._progress_details(),
             }
         )
@@ -1264,7 +1264,7 @@ def rebin_nd_stream(
                 progress_callback({
                     "stage": "rebin", "iteration": processed,
                     "total": int(source.n_points),
-                    "message": f"rebinning {processed}/{source.n_points} point contributions",
+                    "message": f"rebinning {processed:,}/{source.n_points:,} point contributions",
                     **template._progress_details(),
                 })
             continue
@@ -1314,7 +1314,7 @@ def rebin_nd_stream(
             progress_callback({
                 "stage": "rebin", "iteration": processed,
                 "total": int(source.n_points),
-                "message": f"rebinning {processed}/{source.n_points} point contributions",
+                "message": f"rebinning {processed:,}/{source.n_points:,} point contributions",
                 **template._progress_details(),
             })
     if executor is not None:

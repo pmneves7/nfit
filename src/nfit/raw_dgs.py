@@ -165,7 +165,7 @@ def raw_dgs_dataset_group(
                     "stage": "raw_dgs_import",
                     "iteration": index,
                     "total": len(infos),
-                    "message": f"reading raw run metadata {index}/{len(infos)}",
+                    "message": f"reading raw run metadata {index:,}/{len(infos):,}",
                 }
             )
     return DatasetGroup(
@@ -362,7 +362,7 @@ def bin_raw_dgs_group(
                                 "stage": "raw_dgs_events",
                                 "iteration": processed,
                                 "total": total,
-                                "message": f"reducing raw events {processed}/{total}",
+                                "message": f"reducing raw events {processed:,}/{total:,}",
                             }
                         )
     normalization = _trajectory_normalization(
