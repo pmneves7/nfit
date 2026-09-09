@@ -22,6 +22,7 @@ The package provides:
 - powder-cut, MPMS magnetization, PPMS heat-capacity, and tabular imports;
 - masking, coverage- and sample-aware symmetry/rebinning with per-axis
   Discrete, Step, Bins, Edges, or tolerance-clustered modes, editable
+  fractional/discrete point assignment, expandable bin-grid information,
   momentum-coordinate matrices, automatic
   zero-aligned uniform grids specified by bin centers, composites, backgrounds
   with automatic grid matching for unrebinned neutron references, and

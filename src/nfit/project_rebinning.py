@@ -119,7 +119,7 @@ def _rebin_mean_weighting(config: dict[str, Any]) -> str:
 
 
 def _rebin_axis_mode(config: Mapping[str, Any], axis: Mapping[str, Any]) -> str:
-    """Return one axis's grid/assignment mode, including legacy migration."""
+    """Return one axis's grid-construction mode, including legacy migration."""
 
     mode = str(axis.get("mode", "")).casefold()
     axis_modes = _compatibility_value("REBIN_AXIS_MODES", REBIN_AXIS_MODES)
@@ -127,12 +127,24 @@ def _rebin_axis_mode(config: Mapping[str, Any], axis: Mapping[str, Any]) -> str:
         return mode
     if axis.get("bin_edges") is not None:
         return "edges"
-    if axis.get("fractional") is False:
-        return "discrete"
     resolution_key = _compatibility_value(
         "REBIN_RESOLUTION_MODE_KEY", REBIN_RESOLUTION_MODE_KEY
     )
     return "bins" if config.get(resolution_key) == "bins" else "step"
+
+
+def _rebin_axis_fractional(
+    config: Mapping[str, Any], axis: Mapping[str, Any]
+) -> bool:
+    """Return whether a physical axis distributes points between adjacent bins."""
+
+    if _rebin_axis_mode(config, axis) in {"discrete", "tolerance"}:
+        return False
+    value = axis.get("fractional")
+    if isinstance(value, bool):
+        return value
+    legacy = config.get("fractional")
+    return bool(legacy) if isinstance(legacy, bool) else True
 
 
 def _migrate_rebin_axis_modes(config: dict[str, Any]) -> None:
@@ -145,16 +157,16 @@ def _migrate_rebin_axis_modes(config: dict[str, Any]) -> None:
         if not isinstance(axis, dict):
             continue
         axis["mode"] = _rebin_axis_mode(config, axis)
-        axis.pop("fractional", None)
+        axis["fractional"] = _rebin_axis_fractional(config, axis)
     config.pop("fractional", None)
 
 
 def _rebin_fractional_axes(
     config: Mapping[str, Any], axes_config: Sequence[Mapping[str, Any]]
 ) -> list[bool]:
-    """Return assignment behavior implied by each axis's mode."""
+    """Return the independently configured assignment behavior for each axis."""
 
-    return [_rebin_axis_mode(config, axis) in {"step", "bins", "edges"} for axis in axes_config]
+    return [_rebin_axis_fractional(config, axis) for axis in axes_config]
 
 
 def _rebin_minimum_coverage(config: dict[str, Any]) -> float:

@@ -1,7 +1,7 @@
 project = "nfit"
 author = "Paul M. Neves"
 copyright = "2026, Paul M. Neves"
-release = "0.83.15"
+release = "0.83.16"
 
 extensions = [
     "myst_parser",

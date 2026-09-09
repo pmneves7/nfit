@@ -103,6 +103,7 @@ _BACKEND_NAMES = (
     "_migrate_rebin_axis_modes",
     "_point_data_histogram",
     "_rebin_axis_mode",
+    "_rebin_axis_fractional",
     "_rebin_axis_vector",
     "_rebin_fractional_axes",
     "_rebin_grid_kwargs",
@@ -136,6 +137,7 @@ _mdhisto_without_nfit_masks = _backend_function("_mdhisto_without_nfit_masks")
 _migrate_rebin_axis_modes = _backend_function("_migrate_rebin_axis_modes")
 _point_data_histogram = _backend_function("_point_data_histogram")
 _rebin_axis_mode = _backend_function("_rebin_axis_mode")
+_rebin_axis_fractional = _backend_function("_rebin_axis_fractional")
 _rebin_axis_vector = _backend_function("_rebin_axis_vector")
 _rebin_fractional_axes = _backend_function("_rebin_fractional_axes")
 _rebin_grid_kwargs = _backend_function("_rebin_grid_kwargs")
@@ -1289,6 +1291,17 @@ def _cached_composite_dataset_data(
         _COMPOSITE_DATA_CACHE_MAX_BYTES,
     )
     return result
+
+
+def _peek_cached_composite_dataset_data(
+    group: DataGroup | _CompositeScope,
+) -> MDHistoData | PointListData | PointData4D | None:
+    """Return a current cached composite without starting any computation."""
+
+    cached = _COMPOSITE_DATA_CACHE.get(_composite_cache_key(group))
+    if cached is None or cached[0] != _composite_cache_signature(group):
+        return None
+    return cached[1]
 
 
 def composite_dataset_entry(

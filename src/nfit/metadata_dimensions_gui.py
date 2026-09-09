@@ -110,6 +110,15 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
         layout.addWidget(resolution, row, 3)
         layout.addWidget(edges, row, 4)
         layout.addWidget(mode, row, 5)
+        assignment = QtWidgets.QComboBox()
+        assignment.setObjectName(f"metadata_rebin_assignment_{index}")
+        assignment.addItem("Discrete", False)
+        assignment.setEnabled(False)
+        assignment.setToolTip(
+            "Metadata coordinates always use discrete assignment and never interpolate "
+            "between sample-condition bins."
+        )
+        layout.addWidget(assignment, row, 6)
 
         def enable_fields():
             selected = mode.currentData()
@@ -204,7 +213,7 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
     return len(recipes)
 
 
-def metadata_dimensions_panel(explorer, group):
+def metadata_dimensions_panel(explorer, group, *, embedded: bool = False):
     from PySide6 import QtCore, QtWidgets
 
     from .project_data import (
@@ -215,7 +224,7 @@ def metadata_dimensions_panel(explorer, group):
         set_metadata_dimensions,
     )
 
-    box = QtWidgets.QGroupBox("Metadata dimensions")
+    box = QtWidgets.QWidget() if embedded else QtWidgets.QGroupBox("Metadata dimensions")
     box.setToolTip(
         "Add discrete sample-condition axes to this collection's composite, independently of momentum and energy binning."
     )

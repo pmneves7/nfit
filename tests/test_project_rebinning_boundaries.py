@@ -118,6 +118,22 @@ def test_mixed_axis_grid_configuration_matches_facade_contract() -> None:
     assert project_data._rebin_fractional_axes(config, axes) == [True, True, False]
 
 
+def test_grid_mode_and_assignment_are_independent_and_legacy_flags_migrate() -> None:
+    config = {
+        "resolution_mode": "step",
+        "axes": [
+            {"step_size": 1.0, "fractional": False},
+            {"mode": "bins", "fractional": True},
+            {"mode": "tolerance", "tolerance": 0.1, "fractional": True},
+        ],
+    }
+
+    project_data._migrate_rebin_axis_modes(config)
+
+    assert [axis["mode"] for axis in config["axes"]] == ["step", "bins", "tolerance"]
+    assert project_data._rebin_fractional_axes(config, config["axes"]) == [False, True, False]
+
+
 @pytest.mark.parametrize("service", (project_data, project_rebinning))
 def test_rebin_service_uses_live_facade_defaults(monkeypatch, service) -> None:
     monkeypatch.setattr(project_data, "DEFAULT_REBIN_MAX_BATCH_MB", 37)

@@ -82,6 +82,12 @@ The detailed workflows are divided by task:
 - [Analysis Window](data_playground.md) covers non-fitting operations such as
   Bragg integration, Curie-Weiss fitting, and spectral integrals.
 
+Rebin controls use separate settings, metadata-dimension, and bin-information
+tabs where applicable. The bin-information tab expands to show resolved centers
+and edges. Rebin progress distinguishes numerical output construction from the
+subsequent viewer and control refresh, so a slow plot redraw is not reported as
+continued bin accumulation.
+
 ## Project organization
 
 A project contains one or more workspaces. Each workspace owns:

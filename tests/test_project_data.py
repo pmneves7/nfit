@@ -196,6 +196,19 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
         in rebin_panel.findChild(QtWidgets.QLabel, "dataset_rebin_axis_variable_0").toolTip()
     )
     assert rebin_panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_fractional") is None
+    tabs = rebin_panel.findChild(QtWidgets.QTabWidget, "dataset_rebin_controls")
+    assert tabs is not None
+    assert [tabs.tabText(index) for index in range(tabs.count())] == [
+        "Rebin settings",
+        "Bin information",
+    ]
+    assignment = rebin_panel.findChild(
+        QtWidgets.QComboBox, "dataset_rebin_axis_assignment_0"
+    )
+    assert assignment is not None and assignment.currentData() is True
+    assert assignment.toolTip()
+    bin_tree = rebin_panel.findChild(QtWidgets.QTreeWidget, "dataset_rebin_bin_tree")
+    assert bin_tree is not None and bin_tree.topLevelItemCount() == 2
     auto_check = rebin_panel.findChild(QtWidgets.QCheckBox, "dataset_rebin_auto")
     assert auto_check is not None
     assert auto_check.isChecked()
@@ -571,6 +584,13 @@ def test_large_dataset_rebin_defaults_manual_and_defers_refresh(monkeypatch):
     assert forced is not None
     assert forced.shape[0] >= 1
     assert np.any(np.isclose(forced.axes[0].centers, 0.0))
+    explorer._set_dataset_details(dataset, group)
+    bin_summary = explorer.details_widget.findChild(
+        QtWidgets.QLabel, "dataset_rebin_bin_shape"
+    )
+    assert bin_summary is not None
+    assert "Resolved cached grid" in bin_summary.text()
+    assert str(forced.shape) in bin_summary.text()
 
 
 def test_dataset_rebin_axis_mode_switches_between_step_bins_and_tolerance(monkeypatch):
@@ -593,6 +613,13 @@ def test_dataset_rebin_axis_mode_switches_between_step_bins_and_tolerance(monkey
         QtWidgets.QLineEdit, "dataset_rebin_resolution_value_0"
     )
     assert mode_combo is not None and mode_combo.currentData() == "step"
+    assignment_combo = explorer.details_widget.findChild(
+        QtWidgets.QComboBox, "dataset_rebin_axis_assignment_0"
+    )
+    assert assignment_combo is not None and assignment_combo.currentData() is True
+    assignment_combo.setCurrentIndex(assignment_combo.findData(False))
+    assert config["axes"][0]["mode"] == "step"
+    assert config["axes"][0]["fractional"] is False
     assert value_edit is not None and float(value_edit.text()) == pytest.approx(1.0)
 
     mode_combo.setCurrentIndex(mode_combo.findData("bins"))
@@ -603,6 +630,23 @@ def test_dataset_rebin_axis_mode_switches_between_step_bins_and_tolerance(monkey
         QtWidgets.QLineEdit, "dataset_rebin_resolution_value_0"
     )
     assert value_edit is not None and value_edit.text() == "2"
+
+    mode_combo = explorer.details_widget.findChild(
+        QtWidgets.QComboBox, "dataset_rebin_axis_mode_0"
+    )
+    mode_combo.setCurrentIndex(mode_combo.findData("tolerance"))
+    QtWidgets.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+    QtWidgets.QApplication.processEvents()
+    assignment_combo = explorer.details_widget.findChild(
+        QtWidgets.QComboBox, "dataset_rebin_axis_assignment_0"
+    )
+    assert assignment_combo.currentData() is False
+    assert not assignment_combo.isEnabled()
+
+    mode_combo = explorer.details_widget.findChild(
+        QtWidgets.QComboBox, "dataset_rebin_axis_mode_0"
+    )
+    mode_combo.setCurrentIndex(mode_combo.findData("bins"))
 
     explorer._set_dataset_rebin_axis_value(dataset, group, 0, "lower", "-1")
     assert config["axes"][0]["num_bins"] == 2
@@ -827,6 +871,16 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
     auto_check = explorer.details_widget.findChild(QtWidgets.QCheckBox, "group_composite_auto")
     assert auto_check is not None
     assert auto_check.isChecked()
+    tabs = explorer.details_widget.findChild(QtWidgets.QTabWidget, "group_composite_tabs")
+    assert tabs is not None
+    assert [tabs.tabText(index) for index in range(tabs.count())] == [
+        "Rebin settings",
+        "Metadata dimensions",
+        "Bin information",
+    ]
+    assert explorer.details_widget.findChild(
+        QtWidgets.QTreeWidget, "group_composite_bin_tree"
+    ) is not None
     rebin_now_button = explorer.details_widget.findChild(
         QtWidgets.QPushButton, "group_composite_rebin_now"
     )
@@ -899,12 +953,13 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
     assert pasted["axes"][0]["lower"] == copied_lower
     assert pasted["stale"] is True
     assignment = explorer.details_widget.findChild(
-        QtWidgets.QComboBox, "group_composite_axis_mode_1"
+        QtWidgets.QComboBox, "group_composite_axis_assignment_1"
     )
-    assert assignment is not None and assignment.currentData() == "step"
-    assert "Discrete" in assignment.toolTip()
-    assignment.setCurrentIndex(assignment.findData("discrete"))
-    assert project_gui.data_group_composite_config(group)["axes"][1]["mode"] == "discrete"
+    assert assignment is not None and assignment.currentData() is True
+    assignment.setCurrentIndex(assignment.findData(False))
+    updated_axis = project_gui.data_group_composite_config(group)["axes"][1]
+    assert updated_axis["mode"] == "step"
+    assert updated_axis["fractional"] is False
 
 
 def test_large_data_group_composite_defaults_manual_and_defers_refresh(monkeypatch):
@@ -948,6 +1003,30 @@ def test_large_data_group_composite_defaults_manual_and_defers_refresh(monkeypat
     datasets, names = project_gui.slice_viewer_datasets(group, force_rebin=False)
     assert names == ["Datagroup1 Composite"]
     np.testing.assert_allclose(datasets[0].signal[~datasets[0].mask], 1.5)
+
+
+def test_crossing_rebin_size_threshold_disables_auto_until_user_reenables(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    config = dataset_rebin_config(dataset)
+    config.update(enabled=True, auto_rebin=True, stale=False)
+    config.pop("auto_rebin_user_override", None)
+    monkeypatch.setattr(project_data, "REBIN_AUTO_MAX_CONTRIBUTIONS", 1)
+    monkeypatch.setattr(explorer, "refresh_slice_viewer", lambda _group: None)
+
+    explorer._after_dataset_rebin_changed(dataset, group)
+
+    assert config["auto_rebin"] is False
+    explorer._set_dataset_rebin_auto(dataset, group, True)
+    assert config["auto_rebin"] is True
+    assert config["auto_rebin_user_override"] is True
+
+    explorer._after_dataset_rebin_changed(dataset, group)
+    assert config["auto_rebin"] is True
 
 
 def test_composite_controls_live_on_dataset_collections_not_workspace(monkeypatch):

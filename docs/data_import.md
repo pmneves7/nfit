@@ -376,23 +376,24 @@ Rebinning affects both viewing and fitting. It supports:
 
 - per-axis **Discrete**, **Step**, **Bins**, **Edges**, or **Tolerance** modes;
 - inverse-variance or uniform averaging;
-- fractional bin overlap for Step, Bins, and Edges;
+- independently selectable fractional or discrete assignment on Step, Bins, and Edges grids;
 - exact or tolerance-clustered whole-bin assignment;
 - a minimum effective source-sample threshold;
 - projected HKLE coordinate bases;
 - point-group symmetry expansion; and
 - bounded batch sizes for temporary working memory.
 
-Every physical axis has its own **Mode** selector; there is no global
-fractional-binning switch. Step, Bins, and Edges use fractional contributions
-and are the default for physical axes. **Discrete** derives exact coordinate
-centers and assigns each point wholly to one center. **Tolerance** clusters
-nearby recorded coordinates, derives one center per cluster, and also assigns
-each point wholly to one bin. For nominal MACS energy scans, setting DeltaE to
-Tolerance with `0.1` meV separates scans near -0.4, 0, 0.4, 1.2, 2.0, 2.8,
-and 3.6 meV without creating the unmeasured intervening slices. Metadata axes
-default to Discrete and always use whole-bin assignment. Empty bins remain
-masked.
+Every physical axis has two independent selectors. **Grid** constructs the bin
+coordinates with Discrete, Step, Bins, Edges, or Tolerance. **Mode** controls
+whether a point contributes fractionally to neighboring bins or wholly to one
+bin. Fractional is the default for physical Step, Bins, and Edges grids;
+Discrete and Tolerance grids require discrete assignment and disable the second
+selector. **Discrete** derives exact coordinate centers. **Tolerance** clusters
+nearby recorded coordinates and derives one center per cluster. For nominal
+MACS energy scans, setting DeltaE to Tolerance with `0.1` meV separates scans
+near -0.4, 0, 0.4, 1.2, 2.0, 2.8, and 3.6 meV without creating unmeasured
+intervening slices. Metadata axes always use discrete assignment. Empty bins
+remain masked.
 
 For four-dimensional single-crystal data, **Momentum coordinates** exposes the
 complete $3\times3$ momentum block. Its rows define the three output directions
@@ -431,8 +432,15 @@ coverage for normalization. The powder path bins radially without first
 allocating a sparse four-dimensional volume, which is the appropriate route
 for a fixed-angle environment/background run.
 
-Masks are applied before binning. Automatic rebinning is used for modest jobs;
-larger jobs remain pending until **Rebin now** or until an operation requires
+Masks are applied before binning. The rebin panel separates **Rebin settings**,
+**Metadata dimensions** (for composites), and expandable **Bin information**.
+The information tab reports each axis's count, limits, centers, edges, grid
+mode, assignment mode, total bins, and numeric payload estimate; after a current
+rebin it uses the exact cached grid.
+
+Automatic rebinning turns off when an edit raises the estimate above 5,000,000
+point contributions or 2,000,000 output bins. It may be manually re-enabled;
+otherwise the job remains pending until **Rebin now** or an operation requires
 current rebinned data. **Workers** sets the saved worker ceiling for this
 configuration; the rebinner can use fewer workers. **Benchmark this rebin…**
 compares batch targets and worker ceilings using isolated runs of the full

@@ -234,6 +234,7 @@ _dataset_collection_point_count = _project_data._dataset_collection_point_count
 _composite_output_bins = _project_data._composite_output_bins
 _composite_estimated_contributions = _project_data._composite_estimated_contributions
 _composite_rebin_is_large = _project_data._composite_rebin_is_large
+_peek_cached_composite_dataset_data = _project_data._peek_cached_composite_dataset_data
 _composite_rebin_status_text = _project_data._composite_rebin_status_text
 _composite_auto_enabled = _project_data._composite_auto_enabled
 _composite_rebin_is_stale = _project_data._composite_rebin_is_stale
@@ -293,6 +294,7 @@ _dataset_mask_is_large = _project_data._dataset_mask_is_large
 _dataset_mask_auto_enabled = _project_data._dataset_mask_auto_enabled
 _dataset_mask_is_stale = _project_data._dataset_mask_is_stale
 _should_defer_dataset_masks = _project_data._should_defer_dataset_masks
+_peek_cached_dataset_view = _project_data._peek_cached_dataset_view
 _dataset_mask_status_text = _project_data._dataset_mask_status_text
 dataset_rebin_enabled = _project_data.dataset_rebin_enabled
 _dataset_rebin_source_points = _project_data._dataset_rebin_source_points
@@ -314,6 +316,7 @@ _with_rebinned_mask_metadata = _project_data._with_rebinned_mask_metadata
 _rebin_point_list_data = _project_data._rebin_point_list_data
 _rebin_mean_weighting = _project_data._rebin_mean_weighting
 _rebin_axis_mode = _project_data._rebin_axis_mode
+_rebin_axis_fractional = _project_data._rebin_axis_fractional
 _rebin_minimum_coverage = _project_data._rebin_minimum_coverage
 _rebin_minimum_samples = _project_data._rebin_minimum_samples
 _rebin_max_batch_mb = _project_data._rebin_max_batch_mb
@@ -5077,6 +5080,7 @@ class _FitProgressDialog:
             "rebin_ready": "Rebin grid ready",
             "rebin_coverage": "Calculating coverage",
             "rebin_output": "Building rebinned dataset",
+            "rebin_ui": "Refreshing viewers and controls",
             "rebin_finalize": "Finalizing rebin",
             "rebin_complete": "Rebin complete",
             "least_squares": "Least-squares fit",
@@ -6515,6 +6519,10 @@ class NfitProjectExplorer:
                 task=task,
                 on_success=on_success,
                 success_message="Dataset rebin finished.",
+                finishing_progress_event={
+                    "stage": "rebin_ui",
+                    "message": "refreshing data viewers and bin information",
+                },
             )
         progress = self._make_rebin_progress_callback(
             "Rebinning dataset..."
@@ -6588,6 +6596,10 @@ class NfitProjectExplorer:
                 task=task,
                 on_success=on_success,
                 success_message="Composite rebin finished.",
+                finishing_progress_event={
+                    "stage": "rebin_ui",
+                    "message": "refreshing data viewers and bin information",
+                },
             )
         progress = self._make_rebin_progress_callback("Rebinning composite dataset...")
         progress({"stage": "prepare", "iteration": 0, "total": 0, "message": "preparing composite rebin"})
@@ -6917,6 +6929,7 @@ class NfitProjectExplorer:
         close_on_success: bool = True,
         completion_summary: Any | None = None,
         progress_window_title: str | None = None,
+        finishing_progress_event: dict[str, Any] | None = None,
     ) -> bool:
         from PySide6 import QtCore, QtWidgets
 
@@ -6969,6 +6982,8 @@ class NfitProjectExplorer:
 
             @QtCore.Slot(object)
             def handle_success(self, result: Any) -> None:
+                if finishing_progress_event is not None:
+                    progress.update_progress(finishing_progress_event)
                 should_finish = on_success(result)
                 if should_finish is not False:
                     lines = completion_summary(result) if completion_summary is not None else None
@@ -10680,9 +10695,6 @@ class NfitProjectExplorer:
         if any(dataset.data_type.startswith("single_crystal") for dataset in node.iter_datasets()):
             self.details_layout.addWidget(self._ub_setup_group_box(root, node))
         scope = _composite_scope(root, node)
-        from .metadata_dimensions_gui import metadata_dimensions_panel
-
-        self.details_layout.addWidget(metadata_dimensions_panel(self, scope))
         self.details_layout.addWidget(self._group_composite_group_box(scope))
         self.details_layout.addWidget(self._group_dataset_weights_group_box(scope))
         self.details_layout.addStretch(1)
@@ -12421,6 +12433,7 @@ class NfitProjectExplorer:
         if bool(config.get("auto_rebin", True)) == bool(checked):
             return
         config["auto_rebin"] = bool(checked)
+        config["auto_rebin_user_override"] = bool(checked)
         if checked and config.get("stale") and group is not None:
             self._after_dataset_rebin_changed(dataset, group)
             return
@@ -12583,6 +12596,7 @@ class NfitProjectExplorer:
         if bool(config.get("auto_rebin", True)) == bool(checked):
             return
         config["auto_rebin"] = bool(checked)
+        config["auto_rebin_user_override"] = bool(checked)
         if checked and config.get("stale"):
             self._after_group_composite_changed(group)
             return
@@ -12818,11 +12832,31 @@ class NfitProjectExplorer:
         if _rebin_axis_mode(config, axes[index]) == mode:
             return
         axes[index]["mode"] = mode
-        axes[index].pop("fractional", None)
+        if mode in {"discrete", "tolerance"}:
+            axes[index]["fractional"] = False
         if mode == "tolerance":
             axes[index].setdefault(
                 "tolerance", max(float(axes[index].get("step_size", 0.1)), 1e-12)
             )
+        self._after_group_composite_changed(group)
+
+    def _set_group_composite_axis_fractional(
+        self,
+        group: DataGroup | _CompositeScope,
+        index: int,
+        fractional: bool,
+    ) -> None:
+        config = data_group_composite_config(group)
+        axes = config.get("axes", [])
+        if not (0 <= index < len(axes)):
+            return
+        value = bool(fractional) and _rebin_axis_mode(config, axes[index]) not in {
+            "discrete",
+            "tolerance",
+        }
+        if _rebin_axis_fractional(config, axes[index]) == value:
+            return
+        axes[index]["fractional"] = value
         self._after_group_composite_changed(group)
 
     def _set_group_composite_axis_vector(self, group: DataGroup | _CompositeScope, index: int, text: str) -> None:
@@ -12975,13 +13009,34 @@ class NfitProjectExplorer:
         if _rebin_axis_mode(config, axes[index]) == mode:
             return
         axes[index]["mode"] = mode
-        axes[index].pop("fractional", None)
+        if mode in {"discrete", "tolerance"}:
+            axes[index]["fractional"] = False
         if mode == "tolerance":
             axes[index].setdefault(
                 "tolerance", max(float(axes[index].get("step_size", 0.1)), 1e-12)
             )
         self._after_dataset_rebin_changed(dataset, group)
         self._set_dataset_details_preserving_scroll(dataset, group)
+
+    def _set_dataset_rebin_axis_fractional(
+        self,
+        dataset: DatasetEntry,
+        group: DataGroup | None,
+        index: int,
+        fractional: bool,
+    ) -> None:
+        config = dataset_rebin_config(dataset)
+        axes = config.get("axes", [])
+        if not (0 <= index < len(axes)):
+            return
+        value = bool(fractional) and _rebin_axis_mode(config, axes[index]) not in {
+            "discrete",
+            "tolerance",
+        }
+        if _rebin_axis_fractional(config, axes[index]) == value:
+            return
+        axes[index]["fractional"] = value
+        self._after_dataset_rebin_changed(dataset, group)
 
     def _set_dataset_rebin_resolution_mode(
         self,
@@ -13085,6 +13140,12 @@ class NfitProjectExplorer:
         )
         config = dataset_rebin_config(dataset)
         config["stale"] = True
+        if (
+            bool(config.get("auto_rebin", True))
+            and not bool(config.get("auto_rebin_user_override", False))
+            and _dataset_rebin_is_large(dataset, config)
+        ):
+            config["auto_rebin"] = False
         resolved = _derived_analysis_for_dataset(dataset)
         if resolved is not None:
             _owner, analysis = resolved
@@ -13114,9 +13175,46 @@ class NfitProjectExplorer:
             return False
         config = dataset_rebin_config(dataset)
         controls.setVisible(bool(config.get("enabled", False)))
+        auto_check = self.details_widget.findChild(
+            QtWidgets.QCheckBox, "dataset_rebin_auto"
+        )
+        if auto_check is not None:
+            auto_check.blockSignals(True)
+            try:
+                auto_check.setChecked(bool(config.get("auto_rebin", True)))
+            finally:
+                auto_check.blockSignals(False)
         for index, axis_config in enumerate(config.get("axes", [])):
             axis = _sanitize_rebin_axis_config(axis_config)
             axis_mode = _rebin_axis_mode(config, axis)
+            mode_combo = self.details_widget.findChild(
+                QtWidgets.QComboBox, f"dataset_rebin_axis_mode_{index}"
+            )
+            if mode_combo is not None:
+                mode_combo.blockSignals(True)
+                try:
+                    mode_combo.setCurrentIndex(max(mode_combo.findData(axis_mode), 0))
+                finally:
+                    mode_combo.blockSignals(False)
+            assignment_combo = self.details_widget.findChild(
+                QtWidgets.QComboBox, f"dataset_rebin_axis_assignment_{index}"
+            )
+            if assignment_combo is not None:
+                assignment_combo.blockSignals(True)
+                try:
+                    assignment_combo.setCurrentIndex(
+                        max(
+                            assignment_combo.findData(
+                                _rebin_axis_fractional(config, axis)
+                            ),
+                            0,
+                        )
+                    )
+                    assignment_combo.setEnabled(
+                        axis_mode not in {"discrete", "tolerance"}
+                    )
+                finally:
+                    assignment_combo.blockSignals(False)
             resolution_key = (
                 "num_bins"
                 if axis_mode == "bins"
@@ -13194,11 +13292,50 @@ class NfitProjectExplorer:
             symmetry_preview.setText(
                 self._dataset_rebin_symmetry_preview(dataset, group)
             )
+        if isinstance(controls, QtWidgets.QTabWidget):
+            from .project_rebin_panels import rebin_bin_information_widget
+
+            info_index = next(
+                (
+                    index
+                    for index in range(controls.count())
+                    if controls.tabText(index) == "Bin information"
+                ),
+                -1,
+            )
+            if info_index >= 0:
+                selected = controls.currentIndex()
+                old_widget = controls.widget(info_index)
+                controls.removeTab(info_index)
+                old_widget.deleteLater()
+                controls.insertTab(
+                    info_index,
+                    rebin_bin_information_widget(
+                        config,
+                        data=_peek_cached_dataset_view(
+                            dataset,
+                            extra_masks=(
+                                effective_dataset_masks(group, dataset)
+                                if group is not None
+                                else None
+                            ),
+                        ),
+                        object_prefix="dataset_rebin",
+                    ),
+                    "Bin information",
+                )
+                controls.setCurrentIndex(selected)
         return True
 
     def _after_group_composite_changed(self, group: DataGroup | _CompositeScope) -> None:
         config = data_group_composite_config(group)
         config["stale"] = True
+        if (
+            bool(config.get("auto_rebin", True))
+            and not bool(config.get("auto_rebin_user_override", False))
+            and _composite_rebin_is_large(group, config)
+        ):
+            config["auto_rebin"] = False
         root = _composite_root(group)
         self._record_data_group_state_change(root)
         self._mark_dirty()

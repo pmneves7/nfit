@@ -30,8 +30,10 @@ _momentum_rebin_matrix: Any = None
 _momentum_rebin_vector_text: Any = None
 _parameter_to_text: Any = None
 _parse_parameter_text: Any = None
+_peek_cached_dataset_view: Any = None
 _rebin_axis_bound_is_auto: Any = None
 _rebin_axis_mode: Any = None
+_rebin_axis_fractional: Any = None
 _rebin_max_batch_mb: Any = None
 _rebin_mean_weighting: Any = None
 _rebin_minimum_coverage: Any = None
@@ -45,6 +47,7 @@ np: Any = None
 point_list_config: Any = None
 signal_semantics: Any = None
 symmetry_spec_from_config: Any = None
+effective_dataset_masks: Any = None
 
 
 def _dataset_point_list_group_box(self, dataset: DatasetEntry, group: DataGroup | None) -> Any:
@@ -536,6 +539,8 @@ def _dataset_axes_group_box(
 ) -> Any:
     from PySide6 import QtCore, QtWidgets
 
+    from .project_rebin_panels import add_rebin_assignment_items, add_rebin_mode_items
+
     group_box = QtWidgets.QGroupBox("Axes")
     layout = QtWidgets.QVBoxLayout(group_box)
     layout.setContentsMargins(10, 8, 10, 8)
@@ -583,10 +588,15 @@ def _dataset_axes_group_box(
     settings_row.addWidget(paste_settings_button)
     rebin_layout.addLayout(settings_row)
 
-    controls = QtWidgets.QWidget()
+    controls = QtWidgets.QTabWidget()
     controls.setObjectName("dataset_rebin_controls")
+    controls.setToolTip(
+        "Switch between rebin settings and an expandable summary of the output grid."
+    )
     controls.setVisible(bool(config.get("enabled", False)))
-    controls_layout = QtWidgets.QGridLayout(controls)
+    settings_tab = QtWidgets.QWidget()
+    settings_tab.setObjectName("dataset_rebin_settings_tab")
+    controls_layout = QtWidgets.QGridLayout(settings_tab)
     controls_layout.setContentsMargins(0, 0, 0, 0)
     show_momentum_matrix = len(config.get("axes", [])) == 4 and (
         isinstance(dataset.data, (MDHistoData, PointData4D))
@@ -612,14 +622,14 @@ def _dataset_axes_group_box(
             )
         )
         controls_layout.addWidget(matrix_label, 0, 0)
-        controls_layout.addWidget(matrix_edit, 0, 1, 1, 5)
+        controls_layout.addWidget(matrix_edit, 0, 1, 1, 6)
         header_row = 1
     show_vectors = False
     headers = ["Axis"]
     if show_vectors:
         headers.append("Momentum row [H,K,L]")
     headers.extend(
-        ["Min center", "Max center", "Value", "Edges", "Mode"]
+        ["Min center", "Max center", "Value", "Edges", "Grid", "Mode"]
     )
     last_column = len(headers) - 1
     controls_layout.setColumnStretch(last_column, 1)
@@ -749,19 +759,11 @@ def _dataset_axes_group_box(
         controls_layout.addWidget(edges_edit, row, column + 3)
         mode_combo = QtWidgets.QComboBox()
         mode_combo.setObjectName(f"dataset_rebin_axis_mode_{axis_index}")
-        for title, value in (
-            ("Discrete", "discrete"),
-            ("Step", "step"),
-            ("Bins", "bins"),
-            ("Edges", "edges"),
-            ("Tolerance", "tolerance"),
-        ):
-            mode_combo.addItem(title, value)
+        add_rebin_mode_items(mode_combo)
         mode_combo.setCurrentIndex(max(mode_combo.findData(axis_mode), 0))
         mode_combo.setToolTip(
-            "Step, Bins, and Edges distribute points fractionally. Discrete keeps exact "
-            "coordinate values. Tolerance clusters nearby values into automatically determined "
-            "bins. Discrete and Tolerance assign every point wholly to one bin."
+            "Choose how this axis's bin centers or edges are constructed. Point assignment is "
+            "controlled separately; Discrete and Tolerance grids require discrete assignment."
         )
         mode_combo.currentIndexChanged.connect(
             lambda _index, index=axis_index, combo=mode_combo: self._set_dataset_rebin_axis_mode(
@@ -769,14 +771,32 @@ def _dataset_axes_group_box(
             )
         )
         controls_layout.addWidget(mode_combo, row, column + 4)
+        assignment_combo = QtWidgets.QComboBox()
+        assignment_combo.setObjectName(f"dataset_rebin_axis_assignment_{axis_index}")
+        add_rebin_assignment_items(assignment_combo)
+        assignment_combo.setCurrentIndex(
+            max(assignment_combo.findData(_rebin_axis_fractional(config, axis_config)), 0)
+        )
+        assignment_combo.setEnabled(axis_mode not in {"discrete", "tolerance"})
+        assignment_combo.setToolTip(
+            "Fractional distributes a point between neighboring bins on this axis. Discrete "
+            "assigns it wholly to one bin. Tolerance always uses discrete assignment."
+        )
+        assignment_combo.currentIndexChanged.connect(
+            lambda _index, index=axis_index, combo=assignment_combo: self._set_dataset_rebin_axis_fractional(
+                dataset, group, index, bool(combo.currentData())
+            )
+        )
+        controls_layout.addWidget(assignment_combo, row, column + 5)
 
     option_row = QtWidgets.QHBoxLayout()
     auto_check = QtWidgets.QCheckBox("Automatic rebinning")
     auto_check.setObjectName("dataset_rebin_auto")
     auto_check.setChecked(bool(config.get("auto_rebin", True)))
     auto_check.setToolTip(
-        "Automatically recompute the rebinned data when rebin settings change. For large datasets this defaults off, "
-        "so edits are marked pending until Rebin now is pressed or an operation such as fitting, opening the data viewer, "
+        "Automatically recompute the rebinned data when rebin settings change. It turns off when an edit exceeds "
+        "5,000,000 estimated point contributions or 2,000,000 output bins, and can then be manually re-enabled. "
+        "With automatic rebinning off, edits are marked pending until Rebin now is pressed or an operation such as fitting, opening the data viewer, "
         "or saving a rebinned dataset requires an up-to-date rebin."
     )
     auto_check.toggled.connect(lambda checked: self._set_dataset_rebin_auto(dataset, group, checked))
@@ -947,6 +967,22 @@ def _dataset_axes_group_box(
     action_row.addWidget(save_rebin_button)
     action_row.addStretch(1)
     controls_layout.addLayout(action_row, footer_row + 4, 0, 1, last_column + 1)
+    controls.addTab(settings_tab, "Rebin settings")
+    from .project_rebin_panels import rebin_bin_information_widget
+
+    controls.addTab(
+        rebin_bin_information_widget(
+            config,
+            data=_peek_cached_dataset_view(
+                dataset,
+                extra_masks=(effective_dataset_masks(group, dataset) if group is not None else None),
+            ),
+            object_prefix="dataset_rebin",
+        ),
+        "Bin information",
+    )
+    for button in controls.findChildren(QtWidgets.QToolButton):
+        button.setToolTip("Scroll rebin tabs when the tab bar is too narrow.")
     rebin_layout.addWidget(controls)
     layout.addWidget(rebin_box)
     return group_box

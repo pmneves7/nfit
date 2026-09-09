@@ -382,6 +382,9 @@ from .project_rebinning import (
     _rebin_axis_bound_is_auto as _rebin_axis_bound_is_auto,
 )
 from .project_rebinning import (
+    _rebin_axis_fractional as _rebin_axis_fractional,
+)
+from .project_rebinning import (
     _rebin_axis_mode as _rebin_axis_mode,
 )
 from .project_rebinning import (
@@ -1001,6 +1004,19 @@ def _viewer_data_before_scale(
         )
         dataset_mask_application_config(dataset)["stale"] = False
     return result
+
+
+def _peek_cached_dataset_view(
+    dataset: DatasetEntry,
+    *,
+    extra_masks: list[MaskSpec] | None = None,
+) -> MDHistoData | PointListData | None:
+    """Return a current cached viewer payload without starting any computation."""
+
+    cached = _VIEWER_VIEW_CACHE.get(dataset.id)
+    if cached is None or cached[0] != _viewer_view_signature(dataset, extra_masks):
+        return None
+    return cached[1]
 
 
 def _apply_dataset_backgrounds(
@@ -1629,6 +1645,7 @@ _composite_dataset_data = _project_composites._composite_dataset_data
 _apply_mdhisto_coverage_threshold = _project_composites._apply_mdhisto_coverage_threshold
 _apply_composite_backgrounds = _project_composites._apply_composite_backgrounds
 _cached_composite_dataset_data = _project_composites._cached_composite_dataset_data
+_peek_cached_composite_dataset_data = _project_composites._peek_cached_composite_dataset_data
 composite_dataset_entry = _project_composites.composite_dataset_entry
 materialize_composite_dataset = _project_composites.materialize_composite_dataset
 _scaled_error_for_weight = _project_composites._scaled_error_for_weight
