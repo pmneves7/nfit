@@ -9,6 +9,7 @@ import pytest
 
 PACKAGE_ROOT = Path(__file__).parents[1] / "src" / "nfit"
 GUI_INDEPENDENT_MODULES = (
+    PACKAGE_ROOT / "project_composites.py",
     PACKAGE_ROOT / "project_data.py",
     PACKAGE_ROOT / "project_history.py",
     PACKAGE_ROOT / "project_imports.py",
@@ -51,6 +52,25 @@ def test_project_services_do_not_import_project_gui(path: Path) -> None:
     assert _imports_project_gui(path) == []
 
 
+def test_composite_service_does_not_import_project_data_facade() -> None:
+    tree = ast.parse(
+        (PACKAGE_ROOT / "project_composites.py").read_text(encoding="utf-8")
+    )
+    imported_modules = {
+        node.module or ""
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+    }
+    imported_modules.update(
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    )
+    assert "project_data" not in imported_modules
+    assert "nfit.project_data" not in imported_modules
+
+
 @pytest.mark.parametrize("path", PROJECT_GUI_CLIENT_MODULES, ids=lambda path: path.stem)
 def test_project_gui_clients_use_focused_services(path: Path) -> None:
     assert _imports_project_gui(path) == []
@@ -78,7 +98,7 @@ import nfit
 
 assert "nfit.project_gui" not in sys.modules
 assert nfit.NfitProject.__module__ == "nfit.project_io"
-assert nfit.composite_dataset_data.__module__ == "nfit.project_data"
+assert nfit.composite_dataset_data.__module__ == "nfit.project_composites"
 assert "save_project" in dir(nfit)
 save_project = nfit.save_project
 assert "nfit.project_gui" in sys.modules
@@ -87,10 +107,19 @@ assert save_project is sys.modules["nfit.project_gui"].save_project
     subprocess.run([sys.executable, "-c", code], check=True)
 
 
-def test_project_data_service_does_not_import_qt() -> None:
-    tree = ast.parse(
-        (PACKAGE_ROOT / "project_data.py").read_text(encoding="utf-8")
-    )
+def test_composite_service_and_facade_import_cleanly_in_a_fresh_process() -> None:
+    code = """
+from nfit import project_composites, project_data
+
+assert project_data.composite_dataset_data is project_composites.composite_dataset_data
+assert project_data._COMPOSITE_DATA_CACHE is project_composites._COMPOSITE_DATA_CACHE
+"""
+    subprocess.run([sys.executable, "-c", code], check=True)
+
+
+@pytest.mark.parametrize("module_name", ("project_composites", "project_data"))
+def test_project_data_services_do_not_import_qt(module_name: str) -> None:
+    tree = ast.parse((PACKAGE_ROOT / f"{module_name}.py").read_text(encoding="utf-8"))
     imported_modules = {
         alias.name
         for node in ast.walk(tree)
