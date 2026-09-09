@@ -30,6 +30,7 @@ from numpy.typing import ArrayLike, NDArray
 
 from .cache_utils import array_digest, lru_store, readonly_array
 from .electronic_backends import ElectronicBackend, evaluate_eigensystem
+from .electronic_resolvers import resolve_structure_first_model
 
 FloatArray = NDArray[np.float64]
 ComplexArray = NDArray[np.complex128]
@@ -2915,9 +2916,7 @@ def electronic_model_from_component(
             payload, dict
         ) or not payload:
             if config.get("orbital_manifolds"):
-                from .electronic_builder import resolve_tight_binding_builder
-
-                model = resolve_tight_binding_builder(component)
+                model = resolve_structure_first_model(component)
                 config = component.config
             else:
                 raise ValueError(

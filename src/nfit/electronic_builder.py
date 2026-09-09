@@ -45,6 +45,13 @@ from .electronic_structure import (
     normalize_electronic_energy_unit,
     reduce_electronic_model_to_primitive,
 )
+from .electronic_symmetry import (
+    OrbitalSymmetryError,
+    spherical_harmonic_representation,
+)
+from .electronic_symmetry import (
+    manifold_symmetry_representation as _manifold_symmetry_representation,
+)
 from .harmonics import real_harmonic_names, real_harmonic_transform
 
 FloatArray = NDArray[np.float64]
@@ -58,10 +65,6 @@ ORBITAL_PRESETS = (
     "f",
     "custom",
 )
-
-class OrbitalSymmetryError(ValueError):
-    """Raised when a requested orbital subspace is not closed under symmetry."""
-
 
 def _complex_matrix_to_data(values: ArrayLike) -> list[list[list[float]]]:
     array = np.asarray(values, dtype=np.complex128)
@@ -599,58 +602,6 @@ def orbital_manifold_preset(
     raise AssertionError("unreachable orbital preset")
 
 
-def _sphere_points(count: int) -> FloatArray:
-    indices = np.arange(count, dtype=float) + 0.5
-    z = 1.0 - 2.0 * indices / count
-    phi = np.pi * (1.0 + np.sqrt(5.0)) * indices
-    radius = np.sqrt(np.maximum(0.0, 1.0 - z * z))
-    return np.column_stack((radius * np.cos(phi), radius * np.sin(phi), z))
-
-
-def _complex_harmonic_values(l: int, points: FloatArray) -> ComplexArray:
-    from scipy import special
-
-    z = np.clip(points[:, 2], -1.0, 1.0)
-    polar = np.arccos(z)
-    azimuth = np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * np.pi)
-    columns = []
-    for m in range(-l, l + 1):
-        if hasattr(special, "sph_harm_y"):
-            columns.append(special.sph_harm_y(l, m, polar, azimuth))
-        else:  # scipy < 1.15
-            columns.append(special.sph_harm(m, l, azimuth, polar))
-    return np.column_stack(columns)
-
-
-def spherical_harmonic_representation(
-    l: int,
-    rotation: ArrayLike,
-    *,
-    basis_kind: Literal["real_harmonic", "complex_harmonic"] = "real_harmonic",
-) -> ComplexArray:
-    """Return the active O(3) representation in nfit's harmonic convention."""
-
-    operation = np.asarray(rotation, dtype=float)
-    if operation.shape != (3, 3) or not np.allclose(
-        operation.T @ operation, np.eye(3), atol=1e-8
-    ):
-        raise ValueError("rotation must be an orthogonal 3x3 matrix")
-    points = _sphere_points(max(32, 6 * (2 * int(l) + 1)))
-    values = _complex_harmonic_values(int(l), points)
-    transformed = _complex_harmonic_values(int(l), points @ operation)
-    if basis_kind == "real_harmonic":
-        transform = real_harmonic_transform(int(l))
-        values = values @ transform
-        transformed = transformed @ transform
-    representation = np.linalg.lstsq(values, transformed, rcond=None)[0]
-    left, _singular, right = np.linalg.svd(representation)
-    representation = left @ right
-    representation[np.abs(representation) < 1e-12] = 0.0
-    if basis_kind == "real_harmonic":
-        representation = np.real_if_close(representation, tol=1000)
-    return np.asarray(representation, dtype=np.complex128)
-
-
 def manifold_symmetry_representation(
     manifold: OrbitalManifold | Mapping[str, Any],
     rotation_cartesian: ArrayLike,
@@ -664,31 +615,11 @@ def manifold_symmetry_representation(
         if isinstance(manifold, OrbitalManifold)
         else OrbitalManifold.from_dict(manifold)
     )
-    if item.symmetry_mode != "automatic":
-        raise OrbitalSymmetryError(
-            f"manifold {item.label!r} has no automatic symmetry representation"
-        )
-    if item.basis_kind == "effective_scalar":
-        return np.ones((1, 1), dtype=np.complex128)
-    frame = _frame(item.local_frame)
-    rotation = np.asarray(rotation_cartesian, dtype=float)
-    local_rotation = frame.T @ rotation @ frame
-    full = spherical_harmonic_representation(
-        int(item.l), local_rotation, basis_kind=item.basis_kind
+    return _manifold_symmetry_representation(
+        item,
+        rotation_cartesian,
+        closure_tolerance=closure_tolerance,
     )
-    transform = np.asarray(item.harmonic_transform, dtype=np.complex128)
-    image = full @ transform
-    projected = transform @ (transform.conj().T @ image)
-    residual = float(np.linalg.norm(image - projected))
-    if residual > closure_tolerance * max(1.0, float(np.linalg.norm(image))):
-        raise OrbitalSymmetryError(
-            f"orbital manifold {item.label!r} is not closed under the site "
-            f"symmetry (closure residual {residual:.3g}); add the missing "
-            "orbitals or set symmetry_mode='none'"
-        )
-    result = transform.conj().T @ image
-    left, _singular, right = np.linalg.svd(result)
-    return left @ right
 
 
 def site_point_group_symbol(

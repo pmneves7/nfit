@@ -9,6 +9,7 @@ from typing import Any, Literal
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from .electronic_resolvers import resolve_manifold_symmetry_representation
 from .electronic_structure import BasisState, ElectronicModel
 from .harmonics import complex_harmonic_angular_momentum, real_harmonic_transform
 
@@ -487,9 +488,10 @@ def spinor_manifold_representation(
 ) -> ComplexArray:
     """Return the double-group action ``D_orbital tensor D_1/2``."""
 
-    from .electronic_builder import manifold_symmetry_representation
-
-    orbital = manifold_symmetry_representation(manifold, rotation_cartesian)
+    orbital = resolve_manifold_symmetry_representation(
+        manifold,
+        rotation_cartesian,
+    )
     return np.kron(
         orbital,
         spinor_rotation_representation(rotation_cartesian),
