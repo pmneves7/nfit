@@ -3,6 +3,7 @@ import copy
 from types import SimpleNamespace
 
 import nfit.project_data as project_data
+import nfit.project_masks as project_masks
 from nfit import electronic_model_from_component
 from tests.project_gui_test_support import *
 from tests.project_gui_test_support import (
@@ -1925,7 +1926,7 @@ def test_large_dataset_manual_masks_defer_passive_evaluation_and_force_for_fit(m
         evaluations.append(spec.name)
         return original(data, spec)
 
-    monkeypatch.setattr(project_data, "_evaluate_mdhisto_mask", record_evaluation)
+    monkeypatch.setattr(project_masks, "_evaluate_mdhisto_mask", record_evaluation)
 
     passive = dataset_for_slice_viewer(dataset, force_rebin=False, force_masks=False)
     assert evaluations == []

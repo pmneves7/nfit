@@ -7,7 +7,6 @@ workflow export, and analysis execution.  It intentionally has no Qt imports;
 
 from __future__ import annotations
 
-import ast
 import copy
 import json
 import math
@@ -41,6 +40,63 @@ from .mdhisto import (
 from .performance import initialize_rebin_performance
 from .pipeline import BackgroundSpec, DataGroup, DatasetEntry, DatasetGroup, MaskSpec
 from .project_archive import replace_dataset_artifact
+from .project_coordinates import (
+    COORDINATE_RANGE_AXIS_PREFIX as COORDINATE_RANGE_AXIS_PREFIX,
+)
+from .project_coordinates import (
+    COORDINATE_RANGE_PARAMETER_NAMES as COORDINATE_RANGE_PARAMETER_NAMES,
+)
+from .project_coordinates import (
+    _axis_projection_vector as _axis_projection_vector,
+)
+from .project_coordinates import (
+    _clean_axis_weight as _clean_axis_weight,
+)
+from .project_coordinates import (
+    _coordinate_axis_vector as _coordinate_axis_vector,
+)
+from .project_coordinates import (
+    _coordinate_range_axis_specs as _coordinate_range_axis_specs,
+)
+from .project_coordinates import (
+    _identity_vector as _identity_vector,
+)
+from .project_coordinates import (
+    _is_vector_length as _is_vector_length,
+)
+from .project_coordinates import (
+    _mdhisto_axis_coordinate_vector as _mdhisto_axis_coordinate_vector,
+)
+from .project_coordinates import (
+    _mdhisto_coordinate_grids as _mdhisto_coordinate_grids,
+)
+from .project_coordinates import (
+    _mdhisto_coordinate_range_axis_grids as _mdhisto_coordinate_range_axis_grids,
+)
+from .project_coordinates import (
+    _mdhisto_coordinate_range_axis_specs as _mdhisto_coordinate_range_axis_specs,
+)
+from .project_coordinates import (
+    _mdhisto_rebin_axis_vector as _mdhisto_rebin_axis_vector,
+)
+from .project_coordinates import (
+    _mdhisto_rebin_source_axis_vectors as _mdhisto_rebin_source_axis_vectors,
+)
+from .project_coordinates import (
+    _parse_parameter_text as _parse_parameter_text,
+)
+from .project_coordinates import (
+    _project_hkl_vector as _project_hkl_vector,
+)
+from .project_coordinates import (
+    _project_hkle_vector as _project_hkle_vector,
+)
+from .project_coordinates import (
+    _projection_piece_value as _projection_piece_value,
+)
+from .project_coordinates import (
+    _resolve_projected_axis_grid as _resolve_projected_axis_grid,
+)
 from .project_dataset_io import (
     _json_safe_value as _json_safe_value,
 )
@@ -85,6 +141,108 @@ from .project_imports import (
 )
 from .project_imports import (
     reload_dataset_data as _reload_dataset_data_impl,
+)
+from .project_masks import (
+    _coordinate_centers as _coordinate_centers,
+)
+from .project_masks import (
+    _evaluate_mdhisto_mask as _evaluate_mdhisto_mask,
+)
+from .project_masks import (
+    _evaluate_point_data_mask as _evaluate_point_data_mask,
+)
+from .project_masks import (
+    _exclusion_parameter_range as _exclusion_parameter_range,
+)
+from .project_masks import (
+    _mask_axis_names as _mask_axis_names,
+)
+from .project_masks import (
+    _matrix_includes_2pi as _matrix_includes_2pi,
+)
+from .project_masks import (
+    _mdhisto_box_mask as _mdhisto_box_mask,
+)
+from .project_masks import (
+    _mdhisto_coordinate_range_mask as _mdhisto_coordinate_range_mask,
+)
+from .project_masks import (
+    _mdhisto_ellipsoid_mask as _mdhisto_ellipsoid_mask,
+)
+from .project_masks import (
+    _mdhisto_energy_q_range_mask as _mdhisto_energy_q_range_mask,
+)
+from .project_masks import (
+    _mdhisto_phonon_cone_mask as _mdhisto_phonon_cone_mask,
+)
+from .project_masks import (
+    _mdhisto_projected_region_inputs as _mdhisto_projected_region_inputs,
+)
+from .project_masks import (
+    _mdhisto_q_matrix as _mdhisto_q_matrix,
+)
+from .project_masks import (
+    _mdhisto_q_modulus_grid as _mdhisto_q_modulus_grid,
+)
+from .project_masks import (
+    _mdhisto_with_nfit_masks as _mdhisto_with_nfit_masks,
+)
+from .project_masks import (
+    _metadata_coordinate_units_are_inv_angstrom_for_mdhisto as _metadata_coordinate_units_are_inv_angstrom_for_mdhisto,
+)
+from .project_masks import (
+    _nfit_mask_for_mdhisto as _nfit_mask_for_mdhisto,
+)
+from .project_masks import (
+    _nfit_mask_for_point_data as _nfit_mask_for_point_data,
+)
+from .project_masks import (
+    _parameter_float as _parameter_float,
+)
+from .project_masks import (
+    _parameter_float_sequence as _parameter_float_sequence,
+)
+from .project_masks import (
+    _parameter_range as _parameter_range,
+)
+from .project_masks import (
+    _point_data_box_mask as _point_data_box_mask,
+)
+from .project_masks import (
+    _point_data_coordinate_range_mask as _point_data_coordinate_range_mask,
+)
+from .project_masks import (
+    _point_data_coordinate_values as _point_data_coordinate_values,
+)
+from .project_masks import (
+    _point_data_ellipsoid_mask as _point_data_ellipsoid_mask,
+)
+from .project_masks import (
+    _point_data_energy_q_range_mask as _point_data_energy_q_range_mask,
+)
+from .project_masks import (
+    _point_data_phonon_cone_mask as _point_data_phonon_cone_mask,
+)
+from .project_masks import (
+    _point_data_projected_region_inputs as _point_data_projected_region_inputs,
+)
+from .project_masks import (
+    _point_data_q_modulus as _point_data_q_modulus,
+)
+from .project_masks import (
+    _point_data_q_vectors as _point_data_q_vectors,
+)
+from .project_masks import (
+    _point_data_with_nfit_masks as _point_data_with_nfit_masks,
+)
+from .project_masks import (
+    _range_is_unrestricted as _range_is_unrestricted,
+)
+from .project_masks import (
+    _range_tolerance as _range_tolerance,
+)
+from .project_masks import (
+    _values_in_range as _values_in_range,
 )
 from .project_point_lists import (
     _PREPARED_POINT_LIST_CACHE as _PREPARED_POINT_LIST_CACHE,
@@ -155,8 +313,6 @@ REBIN_SETTINGS_KEYS = (
 REBIN_AUTO_MAX_CONTRIBUTIONS = 5_000_000
 REBIN_AUTO_MAX_OUTPUT_BINS = 2_000_000
 MASK_AUTO_MAX_POINTS = 5_000_000
-COORDINATE_RANGE_AXIS_PREFIX = "axis_"
-COORDINATE_RANGE_PARAMETER_NAMES = ("H", "K", "L", "E")
 KINEMATIC_KF_KI_INCLUDED_KEY = "kf_ki_included"
 
 # Loading, rebinning, and masking full datasets is reused across passive GUI
@@ -177,18 +333,6 @@ def _parameter_to_text(value: Any) -> str:
         return value
     return json.dumps(value)
 
-
-def _parse_parameter_text(text: str) -> Any:
-    stripped = text.strip()
-    if stripped == "":
-        return ""
-    try:
-        return json.loads(stripped)
-    except json.JSONDecodeError:
-        try:
-            return ast.literal_eval(stripped)
-        except (SyntaxError, ValueError):
-            return stripped
 
 def effective_dataset_masks(group: DataGroup, dataset: DatasetEntry) -> list[MaskSpec]:
     """Return masks inherited from the ancestor group chain of ``dataset``.
@@ -3945,35 +4089,6 @@ def _update_mdhisto_rebin_basis(
     axes_config[:] = candidate
 
 
-def _mdhisto_rebin_axis_vector(axis: MDHistoAxis, index: int, ndim: int) -> list[float]:
-    """Return a default rebin vector that follows the displayed MDHisto axis."""
-
-    if ndim == 4:
-        role = axis.role
-        role_vectors = {
-            "h": [1.0, 0.0, 0.0, 0.0],
-            "k": [0.0, 1.0, 0.0, 0.0],
-            "l": [0.0, 0.0, 1.0, 0.0],
-            "energy": [0.0, 0.0, 0.0, 1.0],
-            "energy_transfer": [0.0, 0.0, 0.0, 1.0],
-        }
-        if role in role_vectors:
-            return role_vectors[role]
-        projection = _axis_projection_vector(axis.name)
-        if projection is not None:
-            return [_clean_axis_weight(value) for value in [*projection.tolist(), 0.0]]
-    return _identity_vector(index, ndim)
-
-
-def _mdhisto_rebin_source_axis_vectors(data: MDHistoData) -> list[np.ndarray | None]:
-    vectors: list[np.ndarray | None] = []
-    if len(data.axes) != 4:
-        return [None for _axis in data.axes]
-    for axis in data.axes:
-        vectors.append(np.asarray(_mdhisto_rebin_axis_vector(axis, len(vectors), len(data.axes)), dtype=float))
-    return vectors
-
-
 def _mdhisto_rebin_component(
     data: MDHistoData,
     source_grids: list[np.ndarray],
@@ -4564,767 +4679,6 @@ def _point_data_histogram(
             )
         },
     )
-
-
-def _point_data_with_nfit_masks(
-    dataset: DatasetEntry,
-    data: PointData4D,
-    *,
-    extra_masks: list[MaskSpec] | None = None,
-) -> PointData4D:
-    reject = ~np.asarray(data.mask, dtype=bool)
-    nfit_mask = _nfit_mask_for_point_data(dataset, data, extra_masks=extra_masks)
-    combined_reject = reject | nfit_mask
-    if not np.any(combined_reject) and np.all(np.asarray(data.mask, dtype=bool)):
-        return data
-    metadata = dict(data.metadata)
-    metadata["nfit_mask_count"] = int(np.count_nonzero(nfit_mask))
-    metadata["combined_mask_count"] = int(np.count_nonzero(combined_reject))
-    temperature = data.temperature.copy() if isinstance(data.temperature, np.ndarray) else data.temperature
-    return PointData4D(
-        H=data.H.copy(),
-        K=data.K.copy(),
-        L=data.L.copy(),
-        E=data.E.copy(),
-        intensity=data.intensity.copy(),
-        sigma=data.sigma.copy(),
-        mask=~combined_reject,
-        temperature=temperature,
-        magnetic_field=None if data.magnetic_field is None else np.array(data.magnetic_field),
-        metadata=metadata,
-        normalization_denominator=(
-            None
-            if data.normalization_denominator is None
-            else np.array(data.normalization_denominator)
-        ),
-    )
-
-
-def _nfit_mask_for_point_data(
-    dataset: DatasetEntry,
-    data: PointData4D,
-    *,
-    extra_masks: list[MaskSpec] | None = None,
-) -> np.ndarray:
-    combined = np.zeros(data.size, dtype=bool)
-    for mask in [*(extra_masks or []), *dataset.masks]:
-        if not mask.enabled:
-            continue
-        mask_values = _evaluate_point_data_mask(data, mask)
-        if mask.invert:
-            mask_values = ~mask_values
-        if mask.additive:
-            combined &= ~mask_values
-        else:
-            combined |= mask_values
-    return combined
-
-
-def _evaluate_point_data_mask(data: PointData4D, mask: MaskSpec) -> np.ndarray:
-    if mask.type == "coordinate_range":
-        return _point_data_coordinate_range_mask(data, mask.parameters)
-    if mask.type == "energy_q_range":
-        return _point_data_energy_q_range_mask(data, mask.parameters)
-    if mask.type == "phonon_cone":
-        return _point_data_phonon_cone_mask(data, mask.parameters)
-    if mask.type == "box":
-        return _point_data_box_mask(data, mask.parameters)
-    if mask.type == "ellipsoid":
-        return _point_data_ellipsoid_mask(data, mask.parameters)
-    return np.zeros(data.size, dtype=bool)
-
-
-def _point_data_coordinate_range_mask(data: PointData4D, parameters: dict[str, Any]) -> np.ndarray:
-    reject = np.ones(data.size, dtype=bool)
-    active = False
-    coords = _point_data_coordinate_values(data)
-    for name in COORDINATE_RANGE_PARAMETER_NAMES:
-        bounds = _exclusion_parameter_range(parameters.get(name))
-        if bounds is None or name not in coords:
-            continue
-        active = True
-        reject &= _values_in_range(coords[name], bounds)
-    return reject if active else np.zeros(data.size, dtype=bool)
-
-
-def _point_data_energy_q_range_mask(data: PointData4D, parameters: dict[str, Any]) -> np.ndarray:
-    reject = np.ones(data.size, dtype=bool)
-    energy = _exclusion_parameter_range(parameters.get("energy"))
-    q_modulus = _exclusion_parameter_range(parameters.get("q_modulus"))
-    if energy is None and q_modulus is None:
-        return np.zeros(data.size, dtype=bool)
-    if energy is not None:
-        reject &= _values_in_range(np.asarray(data.E, dtype=float), energy)
-    if q_modulus is not None:
-        reject &= _values_in_range(_point_data_q_modulus(data), q_modulus)
-    return reject
-
-
-def _point_data_box_mask(data: PointData4D, parameters: dict[str, Any]) -> np.ndarray:
-    resolved = _point_data_projected_region_inputs(data, parameters, extent_key="width")
-    if resolved is None:
-        return np.zeros(data.size, dtype=bool)
-    values, center, width = resolved
-    half_widths = [0.5 * value for value in width]
-    if any(half_width <= 0.0 for half_width in half_widths):
-        return np.zeros(data.size, dtype=bool)
-    reject = np.ones(data.size, dtype=bool)
-    for value, coordinate, half_width in zip(values, center, half_widths, strict=True):
-        reject &= np.abs(value - coordinate) <= half_width
-    return reject
-
-
-def _point_data_ellipsoid_mask(data: PointData4D, parameters: dict[str, Any]) -> np.ndarray:
-    resolved = _point_data_projected_region_inputs(data, parameters, extent_key="radii")
-    if resolved is None:
-        return np.zeros(data.size, dtype=bool)
-    values, center, radii = resolved
-    if any(radius <= 0.0 for radius in radii):
-        return np.zeros(data.size, dtype=bool)
-    scaled_square = np.zeros(data.size, dtype=float)
-    for value, coordinate, radius in zip(values, center, radii, strict=True):
-        scaled = (value - coordinate) / radius
-        scaled_square = scaled_square + scaled * scaled
-    return scaled_square <= 1.0
-
-
-def _point_data_projected_region_inputs(
-    data: PointData4D,
-    parameters: dict[str, Any],
-    *,
-    extent_key: str,
-) -> tuple[list[np.ndarray], list[float], list[float]] | None:
-    axes = _mask_axis_names(parameters)
-    if not axes:
-        return None
-    center = _parameter_float_sequence(parameters.get("center"))
-    extent = _parameter_float_sequence(parameters.get(extent_key))
-    if center is None or extent is None:
-        return None
-    if not len(axes) == len(center) == len(extent):
-        return None
-    coords = _point_data_coordinate_values(data)
-    values: list[np.ndarray] = []
-    for name in axes:
-        value = _resolve_projected_axis_grid(name, coords)
-        if value is None:
-            return None
-        values.append(value)
-    return values, center, extent
-
-
-def _point_data_phonon_cone_mask(data: PointData4D, parameters: dict[str, Any]) -> np.ndarray:
-    slope = _parameter_float(parameters.get("slope"))
-    if slope is None or slope <= 0.0:
-        return np.zeros(data.size, dtype=bool)
-    centers = _coordinate_centers(parameters.get("center"), 3)
-    if centers is None:
-        return np.zeros(data.size, dtype=bool)
-    radius = max(_parameter_float(parameters.get("radius")) or 0.0, 0.0)
-    q_vectors = _point_data_q_vectors(data)
-    cone_radius = np.abs(np.asarray(data.E, dtype=float)) / slope + radius
-    masked = np.zeros(data.size, dtype=bool)
-    matrix = _mdhisto_q_matrix(data.metadata)
-    centers_q = centers if _metadata_coordinate_units_are_inv_angstrom_for_mdhisto(data.metadata) else centers @ matrix.T
-    for center_q in centers_q:
-        masked |= np.linalg.norm(q_vectors - center_q, axis=-1) <= cone_radius
-    return masked
-
-
-def _point_data_coordinate_values(data: PointData4D) -> dict[str, np.ndarray]:
-    return {
-        "H": np.asarray(data.H, dtype=float),
-        "K": np.asarray(data.K, dtype=float),
-        "L": np.asarray(data.L, dtype=float),
-        "E": np.asarray(data.E, dtype=float),
-    }
-
-
-def _point_data_q_vectors(data: PointData4D) -> np.ndarray:
-    hkl = np.column_stack([data.H, data.K, data.L])
-    if _metadata_coordinate_units_are_inv_angstrom_for_mdhisto(data.metadata):
-        return hkl
-    return hkl @ _mdhisto_q_matrix(data.metadata).T
-
-
-def _point_data_q_modulus(data: PointData4D) -> np.ndarray:
-    return np.linalg.norm(_point_data_q_vectors(data), axis=1)
-
-
-def _mdhisto_with_nfit_masks(
-    dataset: DatasetEntry,
-    *,
-    data: MDHistoData | None = None,
-    extra_masks: list[MaskSpec] | None = None,
-) -> MDHistoData:
-    data = dataset.data if data is None else data
-    if not isinstance(data, MDHistoData):
-        raise TypeError("dataset does not contain MDHistoData")
-    file_mask = np.asarray(data.mask, dtype=bool)
-    nfit_mask = _nfit_mask_for_mdhisto(dataset, data, extra_masks=extra_masks)
-    combined_mask = file_mask | nfit_mask
-    metadata = dict(data.metadata)
-    metadata["file_mask"] = file_mask.copy()
-    metadata["nfit_mask"] = nfit_mask.copy()
-    metadata["nfit_mask_count"] = int(np.count_nonzero(nfit_mask))
-    metadata["file_mask_count"] = int(np.count_nonzero(file_mask))
-    metadata["combined_mask_count"] = int(np.count_nonzero(combined_mask))
-    return MDHistoData(
-        axes=data.axes,
-        signal=data.signal,
-        errors=data.errors,
-        mask=combined_mask,
-        num_events=data.num_events,
-        coordinate_system=data.coordinate_system,
-        visual_normalization=data.visual_normalization,
-        metadata=metadata,
-        auxiliary_channels=data.auxiliary_channels,
-    )
-
-
-def _nfit_mask_for_mdhisto(
-    dataset: DatasetEntry,
-    data: MDHistoData,
-    *,
-    extra_masks: list[MaskSpec] | None = None,
-) -> np.ndarray:
-    combined = np.zeros(data.shape, dtype=bool)
-    # Ancestor group masks apply first, then the dataset's own masks.
-    for mask in [*(extra_masks or []), *dataset.masks]:
-        if not mask.enabled:
-            continue
-        mask_values = _evaluate_mdhisto_mask(data, mask)
-        if mask.invert:
-            mask_values = ~mask_values
-        if mask.additive:
-            combined &= ~mask_values
-        else:
-            combined |= mask_values
-    return combined
-
-
-def _evaluate_mdhisto_mask(data: MDHistoData, mask: MaskSpec) -> np.ndarray:
-    if mask.type == "coordinate_range":
-        return _mdhisto_coordinate_range_mask(data, mask.parameters)
-    if mask.type == "energy_q_range":
-        return _mdhisto_energy_q_range_mask(data, mask.parameters)
-    if mask.type == "phonon_cone":
-        return _mdhisto_phonon_cone_mask(data, mask.parameters)
-    if mask.type == "box":
-        return _mdhisto_box_mask(data, mask.parameters)
-    if mask.type == "ellipsoid":
-        return _mdhisto_ellipsoid_mask(data, mask.parameters)
-    return np.zeros(data.shape, dtype=bool)
-
-
-def _mdhisto_box_mask(data: MDHistoData, parameters: dict[str, Any]) -> np.ndarray:
-    """Mask a projected box, mirroring :func:`nfit.fitting.mask_out_box`.
-
-    ``axes`` names the projected coordinates, ``center`` locates the box, and
-    ``width`` gives the full extent along each axis. A point is masked when it
-    falls inside the box along every listed axis; the zero-width default (see
-    MASK_TYPE_DEFINITIONS) therefore masks nothing.
-    """
-
-    resolved = _mdhisto_projected_region_inputs(data, parameters, extent_key="width")
-    if resolved is None:
-        return np.zeros(data.shape, dtype=bool)
-    grids, center, width = resolved
-    half_widths = [0.5 * value for value in width]
-    if any(half_width <= 0.0 for half_width in half_widths):
-        return np.zeros(data.shape, dtype=bool)
-    reject = np.ones(data.shape, dtype=bool)
-    for grid, coordinate, half_width in zip(grids, center, half_widths, strict=True):
-        reject &= np.abs(grid - coordinate) <= half_width
-    return reject
-
-
-def _mdhisto_ellipsoid_mask(data: MDHistoData, parameters: dict[str, Any]) -> np.ndarray:
-    """Mask a projected ellipsoid, mirroring :func:`nfit.fitting.mask_out_ellipsoid`.
-
-    ``axes`` names the projected coordinates, ``center`` locates the ellipsoid,
-    and ``radii`` gives the radius along each axis. The zero-radius default
-    masks nothing.
-    """
-
-    resolved = _mdhisto_projected_region_inputs(data, parameters, extent_key="radii")
-    if resolved is None:
-        return np.zeros(data.shape, dtype=bool)
-    grids, center, radii = resolved
-    if any(radius <= 0.0 for radius in radii):
-        return np.zeros(data.shape, dtype=bool)
-    scaled_square = np.zeros(data.shape, dtype=float)
-    for grid, coordinate, radius in zip(grids, center, radii, strict=True):
-        scaled = (grid - coordinate) / radius
-        scaled_square = scaled_square + scaled * scaled
-    return scaled_square <= 1.0
-
-
-def _mdhisto_projected_region_inputs(
-    data: MDHistoData,
-    parameters: dict[str, Any],
-    *,
-    extent_key: str,
-) -> tuple[list[np.ndarray], list[float], list[float]] | None:
-    """Resolve the projected axis grids, center, and extent for box/ellipsoid masks.
-
-    Returns ``None`` when the parameters are incomplete, mismatched in length,
-    or name coordinates that cannot be projected onto the dataset axes, so the
-    caller can fall back to masking nothing.
-    """
-
-    axes = _mask_axis_names(parameters)
-    if not axes:
-        return None
-    center = _parameter_float_sequence(parameters.get("center"))
-    extent = _parameter_float_sequence(parameters.get(extent_key))
-    if center is None or extent is None:
-        return None
-    if not len(axes) == len(center) == len(extent):
-        return None
-    # Range-axis grids supply projected/leftover axis names, but the true
-    # reciprocal coordinates (H/K/L/E) must win when a name refers to them.
-    coords = _mdhisto_coordinate_range_axis_grids(data, parameters)
-    coords.update(_mdhisto_coordinate_grids(data))
-    grids: list[np.ndarray] = []
-    for name in axes:
-        grid = _resolve_projected_axis_grid(name, coords)
-        if grid is None:
-            return None
-        grids.append(grid)
-    return grids, center, extent
-
-
-def _mask_axis_names(parameters: dict[str, Any]) -> list[Any]:
-    axes = parameters.get("axes")
-    if isinstance(axes, str):
-        axes = _parse_parameter_text(axes)
-    if not isinstance(axes, (list, tuple)):
-        return []
-    return list(axes)
-
-
-def _parameter_float_sequence(value: Any) -> list[float] | None:
-    if isinstance(value, str):
-        value = _parse_parameter_text(value)
-    if not isinstance(value, (list, tuple, np.ndarray)):
-        return None
-    result: list[float] = []
-    for item in value:
-        number = _parameter_float(item)
-        if number is None:
-            return None
-        result.append(number)
-    return result
-
-
-def _resolve_projected_axis_grid(name: Any, coords: dict[str, np.ndarray]) -> np.ndarray | None:
-    """Resolve a projected axis name (or vector) to a coordinate grid."""
-
-    if isinstance(name, str):
-        key = name.strip()
-        if key in coords:
-            return coords[key]
-        if key.upper() in coords:
-            return coords[key.upper()]
-        projection = _axis_projection_vector(key)
-        if projection is not None:
-            return _project_hkl_vector(projection, coords)
-        parsed = _parse_parameter_text(key)
-        if isinstance(parsed, (list, tuple)):
-            return _project_hkle_vector(parsed, coords)
-        return None
-    if isinstance(name, (list, tuple, np.ndarray)):
-        return _project_hkle_vector(name, coords)
-    return None
-
-
-def _project_hkl_vector(vector: np.ndarray, coords: dict[str, np.ndarray]) -> np.ndarray | None:
-    if not {"H", "K", "L"}.issubset(coords):
-        return None
-    hkl = np.stack([coords["H"], coords["K"], coords["L"]], axis=-1)
-    return hkl @ np.asarray(vector, dtype=float)
-
-
-def _project_hkle_vector(vector: Any, coords: dict[str, np.ndarray]) -> np.ndarray | None:
-    try:
-        weights = np.asarray(vector, dtype=float)
-    except (TypeError, ValueError):
-        return None
-    if not np.all(np.isfinite(weights)):
-        return None
-    if weights.shape == (3,):
-        return _project_hkl_vector(weights, coords)
-    if weights.shape == (4,) and {"H", "K", "L", "E"}.issubset(coords):
-        hkle = np.stack([coords["H"], coords["K"], coords["L"], coords["E"]], axis=-1)
-        return hkle @ weights
-    return None
-
-
-def _mdhisto_phonon_cone_mask(data: MDHistoData, parameters: dict[str, Any]) -> np.ndarray:
-    slope = _parameter_float(parameters.get("slope"))
-    if slope is None or slope <= 0.0:
-        # A non-positive slope leaves the starter mask inert (see MASK_TYPE_DEFINITIONS).
-        return np.zeros(data.shape, dtype=bool)
-    centers = _coordinate_centers(parameters.get("center"), 3)
-    if centers is None:
-        return np.zeros(data.shape, dtype=bool)
-    coords = _mdhisto_coordinate_grids(data)
-    if not {"H", "K", "L", "E"}.issubset(coords):
-        return np.zeros(data.shape, dtype=bool)
-    radius = _parameter_float(parameters.get("radius")) or 0.0
-    radius = max(radius, 0.0)
-
-    hkl = np.stack([coords["H"], coords["K"], coords["L"]], axis=-1)
-    if _metadata_coordinate_units_are_inv_angstrom_for_mdhisto(data.metadata):
-        q_vectors = hkl
-        centers_q = centers
-    else:
-        matrix = _mdhisto_q_matrix(data.metadata)
-        q_vectors = np.einsum("ij,...j->...i", matrix, hkl)
-        centers_q = centers @ matrix.T
-
-    cone_radius = np.abs(coords["E"]) / slope + radius
-    masked = np.zeros(data.shape, dtype=bool)
-    for center_q in centers_q:
-        masked |= np.linalg.norm(q_vectors - center_q, axis=-1) <= cone_radius
-    return masked
-
-
-def _coordinate_centers(value: Any, ndim: int) -> np.ndarray | None:
-    """Parse one coordinate vector or a nonempty list of coordinate vectors."""
-
-    if isinstance(value, str):
-        value = _parse_parameter_text(value)
-    try:
-        centers = np.asarray(value, dtype=float)
-    except (TypeError, ValueError):
-        return None
-    if centers.shape == (ndim,):
-        centers = centers.reshape(1, ndim)
-    if centers.ndim != 2 or centers.shape[0] == 0 or centers.shape[1] != ndim:
-        return None
-    return centers if np.all(np.isfinite(centers)) else None
-
-
-def _parameter_float(value: Any) -> float | None:
-    if isinstance(value, str):
-        value = _parse_parameter_text(value)
-    if value in (None, ""):
-        return None
-    try:
-        result = float(value)
-    except (TypeError, ValueError):
-        return None
-    return result if np.isfinite(result) else None
-
-
-def _mdhisto_coordinate_range_mask(data: MDHistoData, parameters: dict[str, Any]) -> np.ndarray:
-    reject = np.ones(data.shape, dtype=bool)
-    active = False
-    coords = _mdhisto_coordinate_grids(data)
-    coords.update(_mdhisto_coordinate_range_axis_grids(data, parameters))
-    for name in COORDINATE_RANGE_PARAMETER_NAMES:
-        bounds = _exclusion_parameter_range(parameters.get(name))
-        if bounds is None or name not in coords:
-            continue
-        active = True
-        reject &= _values_in_range(coords[name], bounds)
-    return reject if active else np.zeros(data.shape, dtype=bool)
-
-
-def _mdhisto_energy_q_range_mask(data: MDHistoData, parameters: dict[str, Any]) -> np.ndarray:
-    reject = np.ones(data.shape, dtype=bool)
-    energy = _exclusion_parameter_range(parameters.get("energy"))
-    q_modulus = _exclusion_parameter_range(parameters.get("q_modulus"))
-    coords = _mdhisto_coordinate_grids(data)
-    if energy is None and q_modulus is None:
-        return np.zeros(data.shape, dtype=bool)
-    if energy is not None:
-        if "E" not in coords:
-            if not _range_is_unrestricted(energy):
-                return np.zeros(data.shape, dtype=bool)
-        else:
-            reject &= _values_in_range(coords["E"], energy)
-    if q_modulus is not None:
-        q_values = coords.get("q_modulus")
-        if q_values is None:
-            q_values = _mdhisto_q_modulus_grid(data, coords)
-        reject &= _values_in_range(q_values, q_modulus)
-    return reject
-
-
-def _parameter_range(value: Any) -> tuple[float | None, float | None] | None:
-    if value in (None, ""):
-        return None
-    if isinstance(value, str):
-        value = _parse_parameter_text(value)
-        if value in (None, ""):
-            return None
-    if not isinstance(value, (list, tuple)) or len(value) != 2:
-        return None
-    lower = None if value[0] in (None, "") else float(value[0])
-    upper = None if value[1] in (None, "") else float(value[1])
-    return lower, upper
-
-
-def _exclusion_parameter_range(value: Any) -> tuple[float | None, float | None] | None:
-    """Return an active exclusion interval; [0, 0] is the neutral GUI default."""
-
-    bounds = _parameter_range(value)
-    if bounds is None:
-        return None
-    if bounds[0] == 0.0 and bounds[1] == 0.0:
-        return None
-    return bounds
-
-
-def _values_in_range(values: np.ndarray, bounds: tuple[float | None, float | None]) -> np.ndarray:
-    lower, upper = bounds
-    selected = np.ones(values.shape, dtype=bool)
-    if lower is not None:
-        selected &= values >= lower - _range_tolerance(lower)
-    if upper is not None:
-        selected &= values <= upper + _range_tolerance(upper)
-    return selected
-
-
-def _range_is_unrestricted(bounds: tuple[float | None, float | None]) -> bool:
-    lower, upper = bounds
-    return lower is None and upper is None
-
-
-def _range_tolerance(value: float) -> float:
-    return max(1.0, abs(float(value))) * 1.0e-12
-
-
-def _mdhisto_coordinate_range_axis_grids(
-    data: MDHistoData,
-    parameters: dict[str, Any],
-) -> dict[str, np.ndarray]:
-    specs = _coordinate_range_axis_specs(data)
-    if not specs:
-        return {}
-    axis_values = np.meshgrid(*(axis.centers for axis in data.axes), indexing="ij")
-    source_vectors = _mdhisto_rebin_source_axis_vectors(data)
-    coords: dict[str, np.ndarray] = {}
-    for index, spec in enumerate(specs):
-        key = f"{COORDINATE_RANGE_AXIS_PREFIX}{index}"
-        vector = _coordinate_axis_vector(parameters.get(key), len(data.axes))
-        if vector is None:
-            vector = np.asarray(spec["vector"], dtype=float)
-        matched_grid = next(
-            (
-                axis_grid
-                for source_vector, axis_grid in zip(source_vectors, axis_values, strict=True)
-                if source_vector is not None and np.allclose(vector, source_vector)
-            ),
-            None,
-        )
-        if matched_grid is not None:
-            coords[str(spec["name"])] = np.asarray(matched_grid, dtype=float)
-            continue
-        values = np.zeros(data.shape, dtype=float)
-        for axis_weight, axis_grid in zip(vector, axis_values, strict=True):
-            if axis_weight:
-                values = values + float(axis_weight) * axis_grid
-        coords[str(spec["name"])] = values
-    return coords
-
-
-def _coordinate_range_axis_specs(data: Any) -> list[dict[str, Any]]:
-    if isinstance(data, MDHistoData):
-        return _mdhisto_coordinate_range_axis_specs(data)
-    if isinstance(data, PointData4D):
-        names = ["H", "K", "L", "E"]
-        return [
-            {"name": name, "vector": _identity_vector(index, len(names))}
-            for index, name in enumerate(names)
-        ]
-    return []
-
-
-def _mdhisto_coordinate_range_axis_specs(data: MDHistoData) -> list[dict[str, Any]]:
-    ndim = len(data.axes)
-    role_names = {"h": "H", "k": "K", "l": "L", "energy_transfer": "E"}
-    assigned = {
-        role_names[axis.role]
-        for axis in data.axes
-        if axis.role in role_names
-    }
-    remaining_names = iter(name for name in COORDINATE_RANGE_PARAMETER_NAMES if name not in assigned)
-    specs = []
-    for index, axis in enumerate(data.axes):
-        name = role_names.get(axis.role)
-        if name is None:
-            name = next(remaining_names, str(axis.name or f"Axis {index}"))
-        specs.append(
-            {
-                "name": name,
-                "vector": _mdhisto_rebin_axis_vector(axis, index, ndim),
-            }
-        )
-    return specs
-
-
-def _identity_vector(index: int, ndim: int) -> list[float]:
-    return [1.0 if axis_index == index else 0.0 for axis_index in range(ndim)]
-
-
-def _clean_axis_weight(value: Any) -> float:
-    """Round a coordinate-axis weight to drop floating-point noise (e.g. 0.5000000000000001 -> 0.5)."""
-
-    rounded = round(float(value), 10)
-    return rounded + 0.0
-
-
-def _coordinate_axis_vector(value: Any, ndim: int) -> np.ndarray | None:
-    if isinstance(value, str):
-        value = _parse_parameter_text(value)
-    if not _is_vector_length(value, ndim):
-        return None
-    try:
-        vector = np.asarray(value, dtype=float)
-    except (TypeError, ValueError):
-        return None
-    if not np.all(np.isfinite(vector)):
-        return None
-    return vector
-
-
-def _is_vector_length(value: Any, length: int) -> bool:
-    if isinstance(value, str):
-        value = _parse_parameter_text(value)
-    return isinstance(value, (list, tuple, np.ndarray)) and len(value) == length
-
-
-def _mdhisto_coordinate_grids(data: MDHistoData) -> dict[str, np.ndarray]:
-    """Return physical HKLE grids, reconstructing them from any rebinned basis."""
-
-    shape = data.shape
-    axis_values = np.meshgrid(*(axis.centers for axis in data.axes), indexing="ij")
-    coords: dict[str, np.ndarray] = {}
-    hkle = np.zeros((*shape, 4), dtype=float)
-    hkle_contributions = 0
-    for index, (axis, values) in enumerate(zip(data.axes, axis_values, strict=True)):
-        if "metadata_dimension" in axis.metadata:
-            continue
-        role = axis.role
-        if role == "q_modulus":
-            coords["q_modulus"] = values
-            continue
-        vector = _mdhisto_axis_coordinate_vector(data, index)
-        if vector is None:
-            vector = {
-                "h": np.array([1.0, 0.0, 0.0, 0.0]),
-                "k": np.array([0.0, 1.0, 0.0, 0.0]),
-                "l": np.array([0.0, 0.0, 1.0, 0.0]),
-                "energy_transfer": np.array([0.0, 0.0, 0.0, 1.0]),
-            }.get(role)
-        if vector is not None:
-            hkle += values[..., np.newaxis] * vector
-            hkle_contributions += 1
-    if hkle_contributions:
-        coords.update({"H": hkle[..., 0], "K": hkle[..., 1], "L": hkle[..., 2]})
-        if len(data.axes) >= 4 or np.any(hkle[..., 3] != 0.0):
-            coords["E"] = hkle[..., 3]
-    return coords
-
-
-def _mdhisto_axis_coordinate_vector(data: MDHistoData, index: int) -> np.ndarray | None:
-    """Return an output-axis vector in physical HKLE coordinates when known."""
-
-    rebin = data.metadata.get("rebin") if isinstance(data.metadata, dict) else None
-    vectors = rebin.get("vectors") if isinstance(rebin, dict) else None
-    if isinstance(vectors, (list, tuple)) and 0 <= index < len(vectors):
-        try:
-            vector = np.asarray(vectors[index], dtype=float).reshape(-1)
-        except (TypeError, ValueError):
-            vector = np.asarray([], dtype=float)
-        if vector.size in {3, 4} and np.all(np.isfinite(vector)):
-            return np.pad(vector, (0, 4 - vector.size))
-    projection = _axis_projection_vector(data.axes[index].name)
-    if projection is not None:
-        return np.pad(projection, (0, 1))
-    return None
-
-
-def _axis_projection_vector(name: str) -> np.ndarray | None:
-    match = re.search(r"\[([^\]]+)\]", str(name))
-    if match is None:
-        return None
-    pieces = [piece.strip() for piece in match.group(1).split(",")]
-    if len(pieces) != 3:
-        return None
-    return np.asarray([_projection_piece_value(piece) for piece in pieces], dtype=float)
-
-
-def _projection_piece_value(piece: str) -> float:
-    cleaned = piece.replace(" ", "")
-    if cleaned in {"", "0"}:
-        return 0.0
-    if cleaned in {"H", "K", "L"}:
-        return 1.0
-    if cleaned in {"-H", "-K", "-L"}:
-        return -1.0
-    cleaned = re.sub(r"[HKL]", "", cleaned)
-    if cleaned in {"", "+"}:
-        return 1.0
-    if cleaned == "-":
-        return -1.0
-    return float(cleaned)
-
-
-def _mdhisto_q_modulus_grid(data: MDHistoData, coords: dict[str, np.ndarray]) -> np.ndarray:
-    if not {"H", "K", "L"}.issubset(coords):
-        raise ValueError("|Q| masks require H, K, and L coordinates")
-    hkl = np.stack([coords["H"], coords["K"], coords["L"]], axis=-1)
-    if _metadata_coordinate_units_are_inv_angstrom_for_mdhisto(data.metadata):
-        q_vectors = hkl
-    else:
-        matrix = _mdhisto_q_matrix(data.metadata)
-        q_vectors = np.einsum("ij,...j->...i", matrix, hkl)
-    return np.linalg.norm(q_vectors, axis=-1)
-
-
-def _metadata_coordinate_units_are_inv_angstrom_for_mdhisto(metadata: dict[str, Any]) -> bool:
-    candidates = [metadata.get("coordinate_units"), metadata.get("momentum_units"), metadata.get("q_units")]
-    return any("angstrom" in str(value).lower() and "rlu" not in str(value).lower() for value in candidates if value)
-
-
-def _mdhisto_q_matrix(metadata: dict[str, Any]) -> np.ndarray:
-    for key in ("rlu_to_inv_angstrom_matrix", "ub_matrix", "orientation_matrix"):
-        if key in metadata:
-            matrix = np.asarray(metadata[key], dtype=float)
-            return matrix if key == "rlu_to_inv_angstrom_matrix" or _matrix_includes_2pi(metadata, key) else 2.0 * np.pi * matrix
-    oriented_lattice = metadata.get("oriented_lattice")
-    if isinstance(oriented_lattice, dict):
-        for key in ("rlu_to_inv_angstrom_matrix", "ub_matrix", "orientation_matrix"):
-            if key in oriented_lattice:
-                matrix = np.asarray(oriented_lattice[key], dtype=float)
-                return matrix if key == "rlu_to_inv_angstrom_matrix" or _matrix_includes_2pi(oriented_lattice, key) else 2.0 * np.pi * matrix
-    lattice = metadata.get("lattice_parameters")
-    if isinstance(lattice, dict):
-        from .fitting import reciprocal_basis_from_lattice_parameters
-
-        return reciprocal_basis_from_lattice_parameters(
-            a=float(lattice["a"]),
-            b=float(lattice["b"]),
-            c=float(lattice["c"]),
-            alpha=float(lattice.get("alpha", 90.0)),
-            beta=float(lattice.get("beta", 90.0)),
-            gamma=float(lattice.get("gamma", 90.0)),
-            include_2pi=bool(lattice.get("include_2pi", True)),
-        )
-    raise ValueError("|Q| masks require inverse-angstrom coordinates or an attached lattice/UB matrix")
-
-
-def _matrix_includes_2pi(metadata: dict[str, Any], key: str) -> bool:
-    for flag_key in (f"{key}_includes_2pi", "q_matrix_includes_2pi", "include_2pi", "includes_2pi"):
-        if flag_key in metadata:
-            return bool(metadata[flag_key])
-    lattice = metadata.get("lattice_parameters")
-    return bool(isinstance(lattice, dict) and lattice.get("include_2pi"))
 
 
 def _dataset_data_point_count(dataset: DatasetEntry) -> int:
