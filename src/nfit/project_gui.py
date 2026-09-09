@@ -4983,7 +4983,18 @@ class _FitProgressDialog:
         self.stage_label.setWordWrap(True)
         self.status_label = QtWidgets.QLabel("No fit is running.")
         self.status_label.setWordWrap(True)
+        self.dataset_progress = QtWidgets.QProgressBar()
+        self.dataset_progress.setObjectName("rebin_dataset_progress")
+        self.dataset_progress.setToolTip(
+            "Completed source datasets across the complete composite rebin."
+        )
+        self.dataset_progress.setFormat("Datasets %v of %m")
+        self.dataset_progress.setVisible(False)
         self.progress = QtWidgets.QProgressBar()
+        self.progress.setObjectName("fit_stage_progress")
+        self.progress.setToolTip(
+            "Progress within the current stage, such as processed point contributions."
+        )
         self.progress.setRange(0, 0)
         self.parameter_table = QtWidgets.QTableWidget(0, 2)
         self.parameter_table.setObjectName("fit_progress_parameter_table")
@@ -5024,6 +5035,7 @@ class _FitProgressDialog:
         self._cancel_callback: Any | None = None
         layout.addWidget(self.stage_label)
         layout.addWidget(self.status_label)
+        layout.addWidget(self.dataset_progress)
         layout.addWidget(self.progress)
         layout.addWidget(self.panel_splitter, 1)
         button_row = QtWidgets.QHBoxLayout()
@@ -5037,6 +5049,9 @@ class _FitProgressDialog:
         self.stage_label.setText(title)
         self.status_label.setStyleSheet("")
         self.status_label.setText("Preparing data and fit problem.")
+        self.dataset_progress.setRange(0, 1)
+        self.dataset_progress.setValue(0)
+        self.dataset_progress.setVisible(False)
         self.progress.setRange(0, 0)
         self.parameter_table.setRowCount(0)
         self.log.clear()
@@ -5089,8 +5104,20 @@ class _FitProgressDialog:
         self.stage_label.setText(stage_title)
         status_parts: list[str] = []
         datasets_total = event.get("datasets_total")
+        datasets_completed = event.get("datasets_completed")
         if datasets_total is not None:
-            status_parts.append(f"Datasets {int(datasets_total)}")
+            datasets_total_value = max(int(datasets_total), 0)
+            self.dataset_progress.setVisible(True)
+            self.dataset_progress.setRange(0, max(datasets_total_value, 1))
+            if datasets_completed is not None:
+                self.dataset_progress.setValue(
+                    min(max(int(datasets_completed), 0), datasets_total_value)
+                )
+                status_parts.append(
+                    f"Datasets {int(datasets_completed)} of {datasets_total_value}"
+                )
+            else:
+                status_parts.append(f"Datasets {datasets_total_value}")
         if event.get("output_bins") is not None:
             status_parts.append(f"Bins {int(event['output_bins']):,}")
         if event.get("workers") is not None:
@@ -5122,7 +5149,11 @@ class _FitProgressDialog:
             self._set_parameters(params)
         log_parts = [stage_title]
         if datasets_total is not None:
-            log_parts.append(f"{int(datasets_total)} datasets")
+            log_parts.append(
+                f"datasets {int(datasets_completed)}/{int(datasets_total)}"
+                if datasets_completed is not None
+                else f"{int(datasets_total)} datasets"
+            )
         if event.get("output_bins") is not None:
             log_parts.append(f"{int(event['output_bins']):,} bins")
         if event.get("workers") is not None:

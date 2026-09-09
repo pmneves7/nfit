@@ -27,9 +27,34 @@ def test_composite_progress_reports_dataset_count_and_global_point_work():
             "iteration": 75,
             "total": 100,
             "datasets_total": 6,
+            "datasets_completed": 0,
             "message": "rebinning 6 datasets: 75/100 point contributions",
         }
     ]
+
+
+def test_composite_progress_counts_prepared_source_datasets():
+    events = []
+    group = DataGroup(
+        "Datagroup1",
+        datasets=[
+            DatasetEntry("first", _tiny_mdhisto_data(1.0), kind="mdhisto"),
+            DatasetEntry("second", _tiny_mdhisto_data(2.0), kind="mdhisto"),
+        ],
+    )
+    config = project_gui.data_group_composite_config(group)
+    config.update(enabled=True, minimum_coverage=0.0)
+
+    project_gui.composite_dataset_data(group, progress_callback=events.append)
+
+    source_events = [
+        event
+        for event in events
+        if event.get("stage") == "rebin_sources"
+        and event.get("datasets_completed") is not None
+    ]
+    assert [event["datasets_completed"] for event in source_events] == [0, 1, 2]
+    assert all(event["datasets_total"] == 2 for event in source_events)
 
 
 def test_dataset_details_text_summarizes_axes_source_and_metadata(tmp_path, monkeypatch):

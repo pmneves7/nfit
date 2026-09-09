@@ -5,6 +5,10 @@ from typing import Any
 
 import numpy as np
 
+from .application_preferences import (
+    default_continuous_colormap,
+    default_waterfall_colormap,
+)
 from .colormaps import (
     IMAGE_COLORMAP_GROUPS,  # noqa: F401 - compatibility re-export
     WATERFALL_COLORMAP_GROUPS,  # noqa: F401 - compatibility re-export
@@ -110,13 +114,14 @@ class QtMDHistoSliceViewer:
         x_dim: int | str = -1,
         y_dim: int | str = 0,
         channel: str = "signal",
-        cmap: str = "viridis",
+        cmap: str | None = None,
         color_scale: str = "linear",
         auto_limits: str = "min/max",
         integrate: bool = False,
         masked: bool = True,
     ) -> None:
         self.app = _qt_app()
+        cmap = default_continuous_colormap() if cmap is None else cmap
         self.datasets = _coerce_datasets(data)
         self.dataset_names = _coerce_dataset_names(self.datasets, dataset_names)
         self.dataset_group_keys = _coerce_dataset_group_keys(
@@ -318,7 +323,7 @@ class QtMDHistoSliceViewer:
         self.waterfall_step_auto = True
         self.waterfall_offset = 1.0
         self.waterfall_offset_auto = True
-        self.waterfall_cmap = "viridis"
+        self.waterfall_cmap = default_waterfall_colormap()
         self.waterfall_color_min = 0.0
         self.waterfall_color_max = 1.0
         self.waterfall_reverse_colors = False

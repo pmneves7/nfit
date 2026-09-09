@@ -2399,12 +2399,18 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
             "iteration": 75,
             "total": 100,
             "datasets_total": 6,
+            "datasets_completed": 4,
             "message": "rebinning 6 datasets: 75/100 point contributions",
         }
     )
     assert progress.progress.value() == 75
-    assert "Datasets 6" in progress.status_label.text()
+    assert progress.dataset_progress.isVisible()
+    assert progress.dataset_progress.maximum() == 6
+    assert progress.dataset_progress.value() == 4
+    assert "Datasets 4 of 6" in progress.status_label.text()
     assert "Points 75 of 100" in progress.status_label.text()
+    progress.reset()
+    assert not progress.dataset_progress.isVisible()
     progress.close_shortcut.activated.emit()
     QtWidgets.QApplication.processEvents()
     assert not progress.dialog.isVisible()

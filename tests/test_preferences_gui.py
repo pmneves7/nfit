@@ -9,15 +9,23 @@ def qt_app(monkeypatch):
 
 
 def test_preferences_colormap_folder_and_controls(qt_app, monkeypatch, tmp_path):
-    from PySide6 import QtGui, QtWidgets
+    from PySide6 import QtCore, QtGui, QtWidgets
 
+    from nfit.application_preferences import (
+        default_continuous_colormap,
+        default_waterfall_colormap,
+    )
     from nfit.preferences_gui import PreferencesDialog
 
     directory = tmp_path / "palettes"
     monkeypatch.setenv("NFIT_COLORMAP_DIR", str(directory))
     opened = []
     monkeypatch.setattr(QtGui.QDesktopServices, "openUrl", lambda url: opened.append(url) or True)
-    dialog = PreferencesDialog()
+    settings = QtCore.QSettings(
+        str(tmp_path / "preferences.ini"),
+        QtCore.QSettings.Format.IniFormat,
+    )
+    dialog = PreferencesDialog(settings=settings)
     try:
         assert dialog.tabs.tabText(0) == "Colormaps"
         assert dialog.folder_path.text() == str(directory)
@@ -29,12 +37,35 @@ def test_preferences_colormap_folder_and_controls(qt_app, monkeypatch, tmp_path)
         for control in dialog.findChildren(QtWidgets.QPushButton):
             assert control.toolTip()
         assert dialog.folder_path.toolTip()
+        assert dialog.continuous_colormap.toolTip()
+        assert dialog.waterfall_colormap.toolTip()
+        dialog.continuous_colormap.setCurrentText("plasma")
+        dialog.waterfall_colormap.setCurrentText("magma")
+        settings.sync()
+        assert default_continuous_colormap(settings) == "plasma"
+        assert default_waterfall_colormap(settings) == "magma"
         labels = "\n".join(label.text() for label in dialog.findChildren(QtWidgets.QLabel))
         assert "Restart nfit" in labels
         assert "NFIT_COLORMAP_DIR" in labels
         assert "parula(256)" in labels
     finally:
         dialog.close()
+
+
+def test_viewer_uses_local_colormap_defaults_for_new_plots(qt_app, monkeypatch):
+    import nfit.qt_slice_viewer as viewer_module
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+    from tests.plotting_test_data import tiny_mdhisto_data
+
+    monkeypatch.setattr(viewer_module, "default_continuous_colormap", lambda: "plasma")
+    monkeypatch.setattr(viewer_module, "default_waterfall_colormap", lambda: "magma")
+
+    viewer = QtMDHistoSliceViewer(tiny_mdhisto_data())
+    try:
+        assert viewer.model.cmap == "plasma"
+        assert viewer.waterfall_cmap == "magma"
+    finally:
+        viewer.window.close()
 
 
 def test_preferences_folder_open_failure(qt_app, monkeypatch, tmp_path):

@@ -2803,7 +2803,7 @@ class MDHistoSliceViewer:
 
 
 def gaussian_smooth_nan(values: np.ndarray, sigma: float | Sequence[float]) -> np.ndarray:
-    """Gaussian-smooth finite plotting values without filling masked holes."""
+    """Gaussian-smooth plotting values, filling gaps from finite neighbors."""
 
     from scipy.ndimage import gaussian_filter
 
@@ -2826,7 +2826,7 @@ def gaussian_smooth_nan(values: np.ndarray, sigma: float | Sequence[float]) -> n
     )
     with np.errstate(divide="ignore", invalid="ignore"):
         smoothed = numerator / denominator
-    return np.where(finite & (denominator > np.finfo(float).eps), smoothed, np.nan)
+    return np.where(denominator > np.finfo(float).eps, smoothed, np.nan)
 
 
 def gaussian_smooth_uncertainty(
@@ -2865,11 +2865,7 @@ def gaussian_smooth_uncertainty(
         )
     with np.errstate(divide="ignore", invalid="ignore"):
         uncertainty = np.sqrt(propagated_variance) / denominator
-    return np.where(
-        finite & (denominator > np.finfo(float).eps),
-        uncertainty,
-        np.nan,
-    )
+    return np.where(denominator > np.finfo(float).eps, uncertainty, np.nan)
 
 
 def smooth_mdhisto_view(
@@ -2906,13 +2902,13 @@ def smooth_mdhisto_view(
             smoothed = gaussian_smooth_uncertainty(array, sigma)
         else:
             smoothed = gaussian_smooth_nan(array, sigma)
-        coverage_mask = np.asarray(
-            view.get("coverage_mask", np.zeros(reference.shape, dtype=bool)),
-            dtype=bool,
-        )
-        result[name] = (
-            np.where(coverage_mask, np.nan, smoothed)
-            if coverage_mask.shape == smoothed.shape
-            else smoothed
-        )
+        explicit_mask = np.zeros(reference.shape, dtype=bool)
+        for mask_name in ("file_mask", "nfit_mask"):
+            candidate = np.asarray(
+                view.get(mask_name, explicit_mask),
+                dtype=bool,
+            )
+            if candidate.shape == reference.shape:
+                explicit_mask |= candidate
+        result[name] = np.where(explicit_mask, np.nan, smoothed)
     return result

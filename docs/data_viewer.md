@@ -69,7 +69,9 @@ Masked bins and invalid uncertainties are excluded.
 
 Plot smoothing is specified in displayed-bin widths. It affects only the
 rendered figure and exported figure recipe, not fitting, rebinning, or numerical
-data exports.
+data exports. Gaussian smoothing uses the nearby finite display pixels to fill
+adjacent empty bins; explicit file and nfit masks remain blank. The stored
+histogram, its masks, and its uncertainties are never changed.
 
 ## Model and residual channels
 
@@ -106,6 +108,10 @@ default direction. `cubehelix` and `CMRmap` provide grayscale-friendly
 sequential choices, while `gnuplot2` provides a higher-contrast specialized
 ramp and `twilight` and `twilight_shifted` cover periodic phase or angle data.
 Each menu row includes a preview swatch of the actual map.
+Choose installation-local defaults for newly opened continuous image plots and
+waterfall trace sequences under **File → Preferences… → Colormaps**. These
+defaults apply across projects on the current computer and are not written to
+`.nfit` files. A saved plot's explicit colormap still takes precedence.
 The waterfall color menu adds Matplotlib's complete qualitative family and
 Colorcet's named Glasbey categorical palettes after the continuous maps for
 clearly distinguishing many traces. Separator

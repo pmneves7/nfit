@@ -32,6 +32,7 @@ from nfit.plotting import (
     prepare_mdhisto_tiled_slices,
     prepare_mdhisto_waterfall,
     residual_mdhisto,
+    smooth_mdhisto_view,
 )
 from tests.plotting_test_data import (
     tiny_1d_mdhisto_data as _tiny_1d_mdhisto_data,
@@ -57,11 +58,12 @@ def test_inverse_variance_weighted_profile_returns_propagated_error():
     np.testing.assert_allclose(uncertainty, [1.0 / np.sqrt(2.0), np.sqrt(2.0)])
 
 
-def test_gaussian_plot_smoothing_preserves_masked_bins():
+def test_gaussian_plot_smoothing_fills_adjacent_empty_bins():
     values = np.asarray([0.0, np.nan, 10.0, 0.0])
     smoothed = gaussian_smooth_nan(values, 1.0)
 
-    assert np.isnan(smoothed[1])
+    assert np.isfinite(smoothed[1])
+    assert 0.0 < smoothed[1] < 10.0
     assert smoothed[0] > 0.0
     assert smoothed[2] < 10.0
 
@@ -70,8 +72,46 @@ def test_gaussian_plot_smoothing_propagates_independent_uncertainties():
     errors = np.array([1.0, 1.0, np.nan, 1.0, 1.0])
     smoothed = gaussian_smooth_uncertainty(errors, 1.0)
 
-    assert np.isnan(smoothed[2])
-    assert np.all(smoothed[[0, 1, 3, 4]] < 1.0)
+    assert np.isfinite(smoothed[2])
+    assert np.all(smoothed < 1.0)
+
+
+def test_smooth_mdhisto_view_fills_only_the_display_copy():
+    signal = np.asarray([[1.0, np.nan, 3.0]])
+    errors = np.asarray([[0.5, np.nan, 0.5]])
+    coverage_mask = np.asarray([[False, True, False]])
+    view = {
+        "signal": signal,
+        "errors": errors,
+        "coverage_mask": coverage_mask,
+        "combined_mask": coverage_mask.copy(),
+        "file_mask": np.zeros_like(coverage_mask),
+        "nfit_mask": np.zeros_like(coverage_mask),
+    }
+
+    smoothed = smooth_mdhisto_view(view, sigma_x=1.0)
+
+    assert np.isfinite(smoothed["signal"][0, 1])
+    assert np.isfinite(smoothed["errors"][0, 1])
+    assert np.isnan(view["signal"][0, 1])
+    assert np.isnan(view["errors"][0, 1])
+    np.testing.assert_array_equal(smoothed["coverage_mask"], coverage_mask)
+    np.testing.assert_array_equal(smoothed["combined_mask"], coverage_mask)
+
+
+def test_smooth_mdhisto_view_does_not_blur_across_explicit_masks():
+    explicit_mask = np.asarray([[False, True, False]])
+    view = {
+        "signal": np.asarray([[1.0, np.nan, 3.0]]),
+        "errors": np.asarray([[0.5, np.nan, 0.5]]),
+        "file_mask": explicit_mask,
+        "nfit_mask": np.zeros_like(explicit_mask),
+    }
+
+    smoothed = smooth_mdhisto_view(view, sigma_x=1.0)
+
+    assert np.isnan(smoothed["signal"][0, 1])
+    assert np.isnan(smoothed["errors"][0, 1])
 
 
 def test_plotting_helpers_return_axes():

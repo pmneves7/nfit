@@ -727,10 +727,19 @@ def _composite_progress_callback(
     if callback is None:
         return None
 
+    datasets_completed = 0
+
     def report(event: dict[str, Any]) -> None:
+        nonlocal datasets_completed
         enriched = dict(event)
         if str(enriched.get("stage", "")).startswith("rebin"):
             enriched["datasets_total"] = int(datasets_total)
+            if enriched.get("datasets_completed") is not None:
+                datasets_completed = max(
+                    datasets_completed,
+                    min(int(enriched["datasets_completed"]), int(datasets_total)),
+                )
+            enriched["datasets_completed"] = datasets_completed
             iteration = enriched.get("iteration")
             total = enriched.get("total")
             if enriched.get("stage") == "rebin" and iteration is not None and total:
@@ -740,6 +749,31 @@ def _composite_progress_callback(
         callback(enriched)
 
     return report
+
+
+def _report_source_dataset_progress(
+    progress_callback: Any | None,
+    *,
+    completed: int,
+    total: int,
+    dataset_name: str,
+) -> None:
+    """Report completion of source preparation before global point binning."""
+
+    if progress_callback is None:
+        return
+    progress_callback(
+        {
+            "stage": "rebin_sources",
+            "datasets_completed": int(completed),
+            "datasets_total": int(total),
+            "message": (
+                f"prepared source dataset {completed}/{total}: {dataset_name}"
+                if completed
+                else f"preparing {total} source datasets"
+            ),
+        }
+    )
 
 
 def metadata_dimension_preview(group, dimensions=None) -> list[dict[str, Any]]:
@@ -820,9 +854,22 @@ def _metadata_composite_data(group, config, dimensions, *, include_source_masks,
         )
     entries, coordinates = [], []
     origins = {}
-    for dataset in _composite_candidates(group, include_backgrounds=True):
+    source_datasets = _composite_candidates(group, include_backgrounds=True)
+    _report_source_dataset_progress(
+        progress_callback,
+        completed=0,
+        total=len(source_datasets),
+        dataset_name="",
+    )
+    for dataset_index, dataset in enumerate(source_datasets):
         data = _source_data_for_group_composite(
             group, dataset, include_source_masks=include_source_masks
+        )
+        _report_source_dataset_progress(
+            progress_callback,
+            completed=dataset_index + 1,
+            total=len(source_datasets),
+            dataset_name=dataset.name,
         )
         if not isinstance(data, (PointData4D, MDHistoData)):
             raise ValueError(
@@ -955,10 +1002,6 @@ def _composite_dataset_data(
     ok, message = data_group_composite_status(group)
     if not ok:
         raise ValueError(message)
-    progress_callback = _composite_progress_callback(
-        progress_callback,
-        len(_composite_candidates(group)),
-    )
     config = (
         copy.deepcopy(dict(config_override))
         if config_override is not None
@@ -968,6 +1011,10 @@ def _composite_dataset_data(
         group.metadata.get("metadata_dimensions", [])
         if metadata_dimensions_override is None
         else metadata_dimensions_override
+    )
+    progress_callback = _composite_progress_callback(
+        progress_callback,
+        len(_composite_candidates(group, include_backgrounds=bool(dimensions))),
     )
     if dimensions:
         return _metadata_composite_data(
@@ -1442,7 +1489,9 @@ def _composite_mdhisto_data(
     first_data: MDHistoData | None = None
     weighting_mode = _rebin_mean_weighting(config)
     normalization_weighted = False
-    for dataset in datasets if datasets is not None else _composite_candidates(group):
+    source_datasets = datasets if datasets is not None else _composite_candidates(group)
+    report_sources = datasets is None
+    for dataset_index, dataset in enumerate(source_datasets):
         data = (
             dataset.data
             if datasets is not None
@@ -1452,6 +1501,13 @@ def _composite_mdhisto_data(
                 include_source_masks=include_source_masks,
             )
         )
+        if report_sources:
+            _report_source_dataset_progress(
+                progress_callback,
+                completed=dataset_index + 1,
+                total=len(source_datasets),
+                dataset_name=dataset.name,
+            )
         if not isinstance(data, MDHistoData):
             continue
         if any("metadata_dimension" in axis.metadata for axis in data.axes):
@@ -1655,7 +1711,16 @@ def _composite_point_data(
     weight_parts: list[np.ndarray] = []
     first_data: PointData4D | None = None
     normalization_weighted = False
-    for dataset in datasets if datasets is not None else _composite_candidates(group):
+    source_datasets = datasets if datasets is not None else _composite_candidates(group)
+    report_sources = datasets is None
+    if report_sources:
+        _report_source_dataset_progress(
+            progress_callback,
+            completed=0,
+            total=len(source_datasets),
+            dataset_name="",
+        )
+    for dataset_index, dataset in enumerate(source_datasets):
         data = (
             dataset.data
             if datasets is not None
@@ -1665,6 +1730,13 @@ def _composite_point_data(
                 include_source_masks=include_source_masks,
             )
         )
+        if report_sources:
+            _report_source_dataset_progress(
+                progress_callback,
+                completed=dataset_index + 1,
+                total=len(source_datasets),
+                dataset_name=dataset.name,
+            )
         if not isinstance(data, PointData4D):
             continue
         if first_data is None:
@@ -1712,14 +1784,27 @@ def _composite_point_list_data(
     include_source_masks: bool = True,
 ) -> PointListData:
     datasets = _composite_candidates(group)
-    prepared = [
-        _source_data_for_group_composite(
-            group,
-            dataset,
-            include_source_masks=include_source_masks,
+    _report_source_dataset_progress(
+        progress_callback,
+        completed=0,
+        total=len(datasets),
+        dataset_name="",
+    )
+    prepared = []
+    for dataset_index, dataset in enumerate(datasets):
+        prepared.append(
+            _source_data_for_group_composite(
+                group,
+                dataset,
+                include_source_masks=include_source_masks,
+            )
         )
-        for dataset in datasets
-    ]
+        _report_source_dataset_progress(
+            progress_callback,
+            completed=dataset_index + 1,
+            total=len(datasets),
+            dataset_name=dataset.name,
+        )
     point_lists = [data for data in prepared if isinstance(data, PointListData)]
     if not point_lists:
         raise ValueError("no point-list datasets are available to composite")

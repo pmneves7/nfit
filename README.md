@@ -23,6 +23,7 @@ The package provides:
 - masking, coverage- and sample-aware symmetry/rebinning with per-axis
   Discrete, Step, Bins, Edges, or tolerance-clustered modes, editable
   fractional/discrete point assignment, expandable bin-grid information,
+  dataset- and point-level rebin progress,
   momentum-coordinate matrices, automatic
   zero-aligned uniform grids specified by bin centers, composites, backgrounds
   with automatic grid matching for unrebinned neutron references, and
@@ -109,7 +110,9 @@ The package provides:
   actions for stored plots, and provide named,
   previewed Matplotlib, cmcrameri, Colorcet, cmocean, MyCarta, and CartoColors
   color maps, plus drop-in custom RGB palette files accessible through
-  **File → Preferences**, with toolbar **Help** opening the local documentation;
+  **File → Preferences**, installation-local continuous and waterfall colormap
+  defaults, and display-only Gaussian interpolation into adjacent empty bins,
+  with toolbar **Help** opening the local documentation;
 - machine-local rebin performance defaults, cancellable machine calibration and
   configuration-specific benchmarks with timing/memory reports and script export;
 - multi-selection dataset operations and recursive copy/paste for nested

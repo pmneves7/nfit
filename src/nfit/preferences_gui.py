@@ -6,14 +6,29 @@ import os
 
 from PySide6 import QtCore, QtWidgets
 
-from .colormaps import USER_COLORMAPS, open_user_colormap_folder, user_colormap_directory
+from .application_preferences import (
+    application_settings,
+    default_continuous_colormap,
+    default_waterfall_colormap,
+    set_default_continuous_colormap,
+    set_default_waterfall_colormap,
+)
+from .colormaps import (
+    IMAGE_COLORMAP_GROUPS,
+    USER_COLORMAPS,
+    WATERFALL_COLORMAP_GROUPS,
+    open_user_colormap_folder,
+    populate_qt_colormap_combo,
+    user_colormap_directory,
+)
 
 
 class PreferencesDialog(QtWidgets.QDialog):
     """Application-wide preferences; the initial page manages custom palettes."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, settings: QtCore.QSettings | None = None):
         super().__init__(parent)
+        self.settings = application_settings() if settings is None else settings
         self.setObjectName("preferences_dialog")
         self.setWindowTitle("nfit Preferences")
         self.resize(620, 400)
@@ -29,6 +44,40 @@ class PreferencesDialog(QtWidgets.QDialog):
         )
         description.setWordWrap(True)
         body.addWidget(description)
+
+        defaults = QtWidgets.QFormLayout()
+        self.continuous_colormap = QtWidgets.QComboBox()
+        self.continuous_colormap.setObjectName("preferences_continuous_colormap")
+        self.continuous_colormap.setToolTip(
+            "Default colormap for newly opened image, slice, tiled-slice, and volume plots."
+        )
+        populate_qt_colormap_combo(self.continuous_colormap, IMAGE_COLORMAP_GROUPS)
+        self.continuous_colormap.setCurrentText(
+            default_continuous_colormap(self.settings)
+        )
+        defaults.addRow("Continuous plots", self.continuous_colormap)
+
+        self.waterfall_colormap = QtWidgets.QComboBox()
+        self.waterfall_colormap.setObjectName("preferences_waterfall_colormap")
+        self.waterfall_colormap.setToolTip(
+            "Default colormap for trace sequences in newly opened waterfall plots."
+        )
+        populate_qt_colormap_combo(self.waterfall_colormap, WATERFALL_COLORMAP_GROUPS)
+        self.waterfall_colormap.setCurrentText(default_waterfall_colormap(self.settings))
+        defaults.addRow("Waterfall plots", self.waterfall_colormap)
+        body.addLayout(defaults)
+        local_note = QtWidgets.QLabel(
+            "These defaults are stored for this local nfit installation and are not saved in projects."
+        )
+        local_note.setWordWrap(True)
+        body.addWidget(local_note)
+        self.continuous_colormap.currentTextChanged.connect(
+            lambda name: set_default_continuous_colormap(name, self.settings)
+        )
+        self.waterfall_colormap.currentTextChanged.connect(
+            lambda name: set_default_waterfall_colormap(name, self.settings)
+        )
+
         body.addWidget(QtWidgets.QLabel("Custom colormap folder"))
         row = QtWidgets.QHBoxLayout()
         self.folder_path = QtWidgets.QLineEdit(str(user_colormap_directory()))

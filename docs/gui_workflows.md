@@ -18,8 +18,10 @@ documentation home page (`docs/_build/html/index.html`) in your default web
 browser. If it has not been built, Help shows the build command instead.
 
 Open **File → Preferences…** for application-wide preferences. The **Colormaps**
-page shows the shared custom-palette folder, opens it in your file manager, and
-explains the [RGB file format](data_viewer.md#custom-colormap-files). These
+page sets the defaults for newly opened continuous and waterfall plots, shows
+the shared custom-palette folder, opens it in your file manager, and explains
+the [RGB file format](data_viewer.md#custom-colormap-files). Preferences are
+local to this nfit installation and are never stored in a project. Custom
 palettes are shared across projects; restart nfit after adding or editing files.
 The **Performance** page stores defaults for new rebin configurations and offers
 machine calibration. Dataset and composite rebin panels also offer **Benchmark

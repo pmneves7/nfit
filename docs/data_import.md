@@ -449,10 +449,12 @@ peak-memory table before choosing **Apply recommendation**. The same controls
 are available for composites. Defaults for new configurations live in
 **File → Preferences → Performance**; see [benchmark details](performance.md#performance-preferences-and-benchmarks).
 
-Composite progress reports the number of source datasets and advances by
-processed point contributions across the entire reduction. Symmetry-equivalent
-duplicates still count as examined work, so the progress bar reaches completion
-even when those duplicates are omitted from the histogram.
+Composite progress uses two levels. The upper bar counts source datasets after
+each has been loaded, masked, normalized, and prepared; this makes the initial
+uncached pass visible. The lower bar advances through processed point
+contributions across the entire reduction. Symmetry-equivalent duplicates still
+count as examined work, so the lower bar reaches completion even when those
+duplicates are omitted from the histogram.
 
 The batch target controls temporary work, not the
 persistent output-grid allocation.
