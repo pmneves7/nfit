@@ -55,6 +55,9 @@ different Python.
 ## Project map
 
 - `src/nfit/project_gui.py`: project explorer and GUI workflow coordination.
+- `src/nfit/project_group_panels.py`, `project_dataset_panels.py`, and
+  `project_data_panels.py`: focused dataset/composite detail builders and their
+  compatibility dispatch.
 - `src/nfit/project_imports.py`: GUI-independent import, source, and reload orchestration.
 - `src/nfit/project_data.py`: GUI-independent dataset preparation, composites,
   derived data, and viewer-ready orchestration.
