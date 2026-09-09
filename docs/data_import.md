@@ -398,6 +398,9 @@ enabled configurations have zero fit weight: they are not prepared during
 optimizer or sampler iterations, but nfit evaluates the fitted model on them
 once afterward for plotting. A dataset and a collection each have their own
 independent list of named configurations.
+Viewer aliases for named binnings preserve live analysis ownership, so
+source-linked clone and histogram-arithmetic datasets remain evaluable after a
+project is reopened.
 
 Every physical axis has two independent selectors. **Grid** constructs the bin
 coordinates with Discrete, Step, Bins, Edges, or Tolerance. **Mode** controls

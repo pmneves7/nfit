@@ -2173,6 +2173,12 @@ def _entries_with_visualization_binnings(
             continue
         fit_item = binnings[0]
         fit_entry = dataset.copy(name=source_name)
+        owner = getattr(dataset, "_derived_owner_group", None)
+        if owner is not None:
+            # DatasetEntry.copy intentionally copies only serializable fields.
+            # Preserve this process-local link on temporary viewer aliases so
+            # a live derived recipe can still resolve its owning analysis.
+            fit_entry._derived_owner_group = owner
         fit_entry.id = dataset.id
         fit_entry.enabled = _dataset_is_effectively_enabled(group, dataset)
         fit_entry.metadata = {
@@ -2200,6 +2206,8 @@ def _entries_with_visualization_binnings(
                 parameters = copy.deepcopy(dataset.parameters)
                 parameters[DATASET_REBIN_KEY] = config
                 auxiliary = dataset.copy(name=view_name, parameters=parameters)
+                if owner is not None:
+                    auxiliary._derived_owner_group = owner
             auxiliary.id = f"{dataset.id}:{item['id']}"
             auxiliary.fit_weight = 0.0
             auxiliary.scale_factor_vary = False
@@ -11938,11 +11946,6 @@ class NfitProjectExplorer:
             "Edit the unit cell, orientation vectors, and UB matrix for this single-crystal scope. "
             "UB maps column [h,k,l] to Q' in inverse angstrom with beam +x and vertical +z."
         )
-        if isinstance(target, DatasetGroup):
-            reference = next(iter(target.iter_datasets()), None)
-            if reference is not None and _dataset_ub_for_editor(target.metadata) is None:
-                _ensure_dataset_data_loaded(reference)
-                _adopt_imported_crystal(root, reference, target)
         if isinstance(target, DatasetEntry):
             orientation_metadata = _merged_dataset_metadata(target)
         else:

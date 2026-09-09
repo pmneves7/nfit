@@ -1,5 +1,8 @@
 # ruff: noqa: F401, F403, F405
+import copy
+
 import nfit.project_data as project_data
+from nfit.analysis.core import AnalysisEntry
 from nfit.mdhisto import MDHistoChannel
 from nfit.project_archive import read_project_manifest
 from tests.project_gui_test_support import *
@@ -13,6 +16,61 @@ from tests.project_gui_test_support import (
     _tiny_mdhisto_data,
     _tree_items_with_children,
 )
+
+
+def test_saved_hierarchical_composite_grid_does_not_materialize_reference(
+    monkeypatch,
+):
+    from nfit import project_composites
+
+    leaf = DatasetGroup(
+        "Leaf",
+        datasets=[DatasetEntry("scan", _tiny_mdhisto_data(1.0), kind="mdhisto")],
+    )
+    parent = DatasetGroup("Parent", subgroups=[leaf])
+    root = DataGroup("Workspace1", subgroups=[parent])
+    leaf_config = project_gui.data_group_composite_config(
+        project_gui._composite_scope(root, leaf)
+    )
+    leaf_config["enabled"] = True
+    parent.metadata[project_gui.GROUP_COMPOSITE_KEY] = {
+        "enabled": True,
+        "axes": copy.deepcopy(leaf_config["axes"]),
+    }
+    monkeypatch.setattr(
+        project_composites,
+        "_composite_reference_data",
+        lambda _scope: pytest.fail("saved axes must not materialize a reference"),
+    )
+
+    config = project_gui.data_group_composite_config(
+        project_gui._composite_scope(root, parent)
+    )
+
+    assert config["axes"] == parent.metadata[project_gui.GROUP_COMPOSITE_KEY]["axes"]
+
+    explorer = NfitProjectExplorer(NfitProject([root]))
+    monkeypatch.setattr(
+        project_gui,
+        "_ensure_dataset_data_loaded",
+        lambda _dataset: pytest.fail("selection must not load source data"),
+    )
+    explorer._set_dataset_collection_details(root, parent)
+
+
+def test_live_derived_dataset_keeps_owner_in_viewer_binning_aliases():
+    source = DatasetEntry("source", _grid_mdhisto_data(), kind="mdhisto")
+    group = DataGroup("Workspace1", datasets=[source])
+    analysis = AnalysisEntry("comparison", "dataset_clone", [source.id], {})
+    derived = project_gui.create_derived_analysis_dataset(group, analysis)
+
+    datasets, names = project_gui.slice_viewer_datasets(
+        group,
+        use_composite=False,
+    )
+
+    assert derived.name in names
+    assert len(datasets) == 2
 
 
 def test_composite_progress_reports_dataset_count_and_global_point_work():

@@ -491,8 +491,19 @@ def data_group_composite_config(
                     }
                 )
     else:
-        reference = _composite_reference_data(group)
-        default_axes = _default_rebin_axes(reference) if reference is not None else []
+        # A saved grid is already sufficient to construct and display the
+        # composite settings.  Resolving a hierarchical reference here can
+        # force a complete child rebin merely because the collection was
+        # selected in the project tree.  Load a reference only when a new or
+        # legacy configuration genuinely needs default axes.
+        reference = (
+            _composite_reference_data(group)
+            if not isinstance(axes, list) or not axes
+            else None
+        )
+        default_axes = (
+            _default_rebin_axes(reference) if reference is not None else []
+        )
     if not isinstance(axes, list) or not axes:
         # A composite can be restored before its reference data is loaded.
         # Do not create an empty placeholder that would prevent defaults from
