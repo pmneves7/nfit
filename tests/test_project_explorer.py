@@ -2440,7 +2440,23 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
     assert batch_bar.maximum() == 8
     assert batch_bar.value() == 2
     assert detail_bar.value() == 75
-    assert "Current dataset group: MACS SPEC 5meV 2K" in rebin_dialog._nfit_label.text()
+    assert rebin_dialog._nfit_batch_label.text() == (
+        "Rebinning 8 dataset groups: 2/8 dataset groups binned (25.0%)"
+    )
+    assert rebin_dialog._nfit_current_label.text() == (
+        "Current dataset group: MACS SPEC 5meV 2K"
+    )
+    assert rebin_dialog._nfit_label.text() == "rebinning 7 datasets (75.0%)"
+    progress_layout = rebin_dialog.layout()
+    assert progress_layout.indexOf(rebin_dialog._nfit_batch_label) < progress_layout.indexOf(
+        batch_bar
+    )
+    assert progress_layout.indexOf(rebin_dialog._nfit_current_label) < progress_layout.indexOf(
+        batch_bar
+    )
+    assert progress_layout.indexOf(rebin_dialog._nfit_label) > progress_layout.indexOf(
+        batch_bar
+    )
     assert rebin_dialog.minimumWidth() == rebin_dialog.maximumWidth() == 680
     explorer._close_rebin_progress(rebin)
 

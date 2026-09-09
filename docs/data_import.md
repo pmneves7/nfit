@@ -456,9 +456,11 @@ are available for composites. Defaults for new configurations live in
 **File → Preferences → Performance**; see [benchmark details](performance.md#performance-preferences-and-benchmarks).
 
 When opening a viewer that prepares several datasets or dataset-group
-composites, rebin progress uses two levels. The upper bar counts completed
-viewer entries and names the current dataset or dataset group. The lower bar
-advances through the current entry's processed point contributions. A direct
+composites, rebin progress uses two levels. Above the upper bar, the dialog
+reports the completed and total viewer entries, percentage complete, and the
+current dataset or dataset group. Below that bar, it reports the current entry's
+point-contribution progress and resource estimate; the lower bar visualizes that
+detailed progress. A direct
 dataset or dataset-group rebin uses only the detailed lower bar. Symmetry-
 equivalent duplicates still count as examined work, so detailed progress reaches
 completion even when those duplicates are omitted from the histogram.

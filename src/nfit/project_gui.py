@@ -8351,11 +8351,18 @@ class NfitProjectExplorer:
         dialog.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
         dialog.setFixedWidth(680)
         layout = QtWidgets.QVBoxLayout(dialog)
-        label = QtWidgets.QLabel(title)
-        label.setObjectName("rebin_progress_label")
-        label.setWordWrap(True)
-        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(label)
+        batch_label = QtWidgets.QLabel(title if aggregate else "")
+        batch_label.setObjectName("rebin_batch_status_label")
+        batch_label.setWordWrap(True)
+        batch_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        batch_label.setVisible(aggregate)
+        layout.addWidget(batch_label)
+        current_label = QtWidgets.QLabel("")
+        current_label.setObjectName("rebin_current_item_label")
+        current_label.setWordWrap(True)
+        current_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        current_label.setVisible(aggregate)
+        layout.addWidget(current_label)
         batch_bar = QtWidgets.QProgressBar()
         batch_bar.setObjectName("rebin_batch_progress")
         batch_bar.setFormat("Datasets/groups %v of %m")
@@ -8364,12 +8371,19 @@ class NfitProjectExplorer:
         )
         batch_bar.setVisible(aggregate)
         layout.addWidget(batch_bar)
+        detail_label = QtWidgets.QLabel(title)
+        detail_label.setObjectName("rebin_progress_label")
+        detail_label.setWordWrap(True)
+        detail_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(detail_label)
         detail_bar = QtWidgets.QProgressBar()
         detail_bar.setObjectName("rebin_detail_progress")
         detail_bar.setToolTip("Progress within the dataset or dataset group named above.")
         detail_bar.setRange(0, 100)
         layout.addWidget(detail_bar)
-        dialog._nfit_label = label
+        dialog._nfit_label = detail_label
+        dialog._nfit_batch_label = batch_label
+        dialog._nfit_current_label = current_label
         dialog._nfit_batch_progress = batch_bar
         dialog._nfit_detail_progress = detail_bar
         dialog.show()
@@ -8385,8 +8399,23 @@ class NfitProjectExplorer:
             batch_total = int(event.get("batch_total") or 0)
             batch_completed = int(event.get("batch_completed") or 0)
             if aggregate and batch_total > 0:
+                completed = min(max(batch_completed, 0), batch_total)
                 batch_bar.setRange(0, batch_total)
-                batch_bar.setValue(min(max(batch_completed, 0), batch_total))
+                batch_bar.setValue(completed)
+                percentage = 100.0 * completed / batch_total
+                item_kind = batch_kind or "dataset group"
+                plural_kind = item_kind if batch_total == 1 else f"{item_kind}s"
+                batch_label.setText(
+                    f"Rebinning {batch_total} {plural_kind}: "
+                    f"{completed}/{batch_total} {plural_kind} binned "
+                    f"({percentage:.1f}%)"
+                )
+            if aggregate:
+                current_label.setText(
+                    f"Current {batch_kind}: {batch_name}"
+                    if batch_name
+                    else ""
+                )
             total = int(event.get("total") or 0)
             iteration = int(event.get("iteration") or 0)
             if total > 0:
@@ -8407,12 +8436,7 @@ class NfitProjectExplorer:
                         f"~{working_bytes / 1024**2:.1f} MiB working memory"
                     )
                 suffix = f"\n{' · '.join(details)}" if details else ""
-                current = (
-                    f"Current {batch_kind}: {batch_name}\n"
-                    if aggregate and batch_name
-                    else ""
-                )
-                label.setText(f"{current}{message} ({percentage:.1f}%){suffix}")
+                detail_label.setText(f"{message} ({percentage:.1f}%){suffix}")
             else:
                 if event.get("stage") == "rebin_batch":
                     if event.get("batch_item_complete"):
@@ -8420,12 +8444,7 @@ class NfitProjectExplorer:
                         detail_bar.setValue(1)
                     else:
                         detail_bar.setRange(0, 0)
-                current = (
-                    f"Current {batch_kind}: {batch_name}\n"
-                    if aggregate and batch_name
-                    else ""
-                )
-                label.setText(f"{current}{str(event.get('message') or title)}")
+                detail_label.setText(str(event.get("message") or title))
             QtWidgets.QApplication.processEvents()
 
         callback._nfit_progress_dialog = dialog
