@@ -467,78 +467,32 @@ from .powder import (
     is_powder_dataset,
     powder_convergence_scan,
 )
-from .project_gui import (
-    DATA_TYPE_DEFINITIONS,
-    MASK_TYPE_DEFINITIONS,
-    NfitProject,
-    ProjectStateConsistencyError,
-    ProjectStateIssue,
-    attach_fit_channels_to_view,
-    available_data_types,
-    available_mask_types,
-    certify_group_lindhard_sampling,
+from .project_data import (
     composite_dataset_data,
-    copy_dataset_group_to_parent,
-    copy_dataset_to_group,
-    copy_mask_to_dataset,
-    create_data_group,
-    create_dataset_group,
     create_derived_analysis_dataset,
-    create_fit_result_entry,
-    create_group_mask,
-    create_mask,
-    create_model_component,
     create_rebinned_dataset,
-    data_type_label,
-    dataset_details_text,
-    dataset_entry_from_path,
-    dataset_for_slice_viewer,
     dataset_rebin_config,
     dataset_rebin_enabled,
-    default_mask_parameters,
-    delete_data_group,
-    delete_dataset,
-    delete_mask,
-    delete_model_component,
     derived_analysis_dataset_data,
-    edit_project_file,
-    ensure_fit_history,
-    evaluate_current_state_model,
-    fit_data_bundle,
-    fit_dataset_inputs,
-    forget_missing_recent_projects,
-    import_cif_into_model,
-    import_dataset_paths,
-    latest_fit_channels,
-    load_project,
-    mask_parameter_tooltip,
     materialize_composite_dataset,
     metadata_dimension_preview,
-    model_crystal_config,
-    perform_group_fit,
-    project_state_issues,
     rebinned_dataset_data,
-    recent_project_paths,
-    reconcile_external_project_edit,
-    reconcile_project_external_edits,
-    reload_data_group,
-    reload_dataset_data,
-    remember_recent_project,
-    render_project_plot,
-    restore_data_group_state,
-    run_group_fit,
     save_dataset_file,
-    save_project,
-    set_background_collection,
+    set_metadata_dimensions,
+)
+from .project_history import (
+    ensure_fit_history,
+    restore_data_group_state,
+    snapshot_data_group_state,
+)
+from .project_imports import (
+    DATA_TYPE_DEFINITIONS,
+    available_data_types,
+    data_type_label,
     set_dataset_data_type,
     set_dataset_source,
-    set_mask_collection_enabled,
-    set_metadata_dimensions,
-    set_model_crystal,
-    slice_viewer_datasets,
-    snapshot_data_group_state,
-    validate_project_state,
 )
+from .project_io import NfitProject
 from .quantities import (
     QUANTITY_TYPES,
     convert_quantity,
@@ -613,9 +567,64 @@ from .workflow import (
     render_workflow_script,
 )
 
+_PROJECT_GUI_EXPORTS = frozenset(
+    {
+        "MASK_TYPE_DEFINITIONS",
+        "ProjectStateConsistencyError",
+        "ProjectStateIssue",
+        "attach_fit_channels_to_view",
+        "available_mask_types",
+        "certify_group_lindhard_sampling",
+        "copy_dataset_group_to_parent",
+        "copy_dataset_to_group",
+        "copy_mask_to_dataset",
+        "create_data_group",
+        "create_dataset_group",
+        "create_fit_result_entry",
+        "create_group_mask",
+        "create_mask",
+        "create_model_component",
+        "dataset_details_text",
+        "dataset_entry_from_path",
+        "dataset_for_slice_viewer",
+        "default_mask_parameters",
+        "delete_data_group",
+        "delete_dataset",
+        "delete_mask",
+        "delete_model_component",
+        "edit_project_file",
+        "evaluate_current_state_model",
+        "fit_data_bundle",
+        "fit_dataset_inputs",
+        "forget_missing_recent_projects",
+        "import_cif_into_model",
+        "import_dataset_paths",
+        "latest_fit_channels",
+        "load_project",
+        "mask_parameter_tooltip",
+        "model_crystal_config",
+        "perform_group_fit",
+        "project_state_issues",
+        "recent_project_paths",
+        "reconcile_external_project_edit",
+        "reconcile_project_external_edits",
+        "reload_data_group",
+        "reload_dataset_data",
+        "remember_recent_project",
+        "render_project_plot",
+        "run_group_fit",
+        "save_project",
+        "set_background_collection",
+        "set_mask_collection_enabled",
+        "set_model_crystal",
+        "slice_viewer_datasets",
+        "validate_project_state",
+    }
+)
+
 
 def __getattr__(name: str):
-    """Lazily import optional GUI bindings when a Qt GUI is requested."""
+    """Lazily import optional GUI bindings and GUI-owned compatibility APIs."""
 
     if name == "QtMDHistoSliceViewer":
         from .qt_slice_viewer import QtMDHistoSliceViewer
@@ -625,7 +634,23 @@ def __getattr__(name: str):
         from .project_gui import NfitProjectExplorer
 
         return NfitProjectExplorer
+    if name in _PROJECT_GUI_EXPORTS:
+        from . import project_gui
+
+        value = getattr(project_gui, name)
+        globals()[name] = value
+        return value
     raise AttributeError(f"module 'nfit' has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    """Include lazily provided compatibility names in module introspection."""
+
+    return sorted(
+        set(globals())
+        | _PROJECT_GUI_EXPORTS
+        | {"NfitProjectExplorer", "QtMDHistoSliceViewer"}
+    )
 
 __all__ = [
     "MetadataDimension",

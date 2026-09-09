@@ -30,6 +30,7 @@ from .analysis_window_builder import build_data_playground_window
 from .dataset import PointData4D, PointListData
 from .mdhisto import MDHistoData
 from .pipeline import DatasetEntry
+from .project_data import DATASET_REBIN_KEY, create_derived_analysis_dataset
 from .quantities import display_unit
 
 
@@ -783,13 +784,10 @@ class DataPlaygroundWindow:
         )
         existing_config = None
         if linked is not None:
-            from .project_gui import DATASET_REBIN_KEY
-
             candidate = linked.parameters.get(DATASET_REBIN_KEY)
             if isinstance(candidate, dict) and candidate.get("axes"):
                 existing_config = candidate
 
-        from .project_gui import create_derived_analysis_dataset
         from .project_history import _link_group_backgrounds
 
         derived = create_derived_analysis_dataset(

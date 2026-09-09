@@ -32,7 +32,7 @@ def benchmark_candidates() -> list[dict[str, int]]:
 
 def rebin_benchmark_target(project, *, dataset_id=None, group_name=None, node_id=None):
     """Resolve a dataset or composite and its editable rebin configuration."""
-    from .project_gui import _CompositeScope, data_group_composite_config, dataset_rebin_config
+    from .project_data import _CompositeScope, data_group_composite_config, dataset_rebin_config
 
     for group in project.data_groups:
         if dataset_id is not None:
@@ -120,15 +120,23 @@ def export_benchmark_script(path, project=None, **target) -> None:
     The adjacent .nfit snapshot retains all scientific settings; original source
     files must remain available. Existing sidecars are not overwritten.
     """
-    from .project_gui import save_project
-
     path = Path(path)
     preamble = "project = None\n"
     if project is not None:
         archive = path.with_suffix(".nfit")
         if archive.exists():
             raise FileExistsError(f"Choose a new script name; snapshot already exists: {archive}")
-        save_project(copy.deepcopy(project), archive)
+        from .project_archive import write_project_manifest
+        from .project_io import _project_to_dict
+
+        snapshot = copy.deepcopy(project)
+        asset_source = getattr(snapshot, "_project_path", None)
+        write_project_manifest(
+            archive,
+            _project_to_dict(snapshot),
+            asset_source=asset_source,
+            preserve_existing=asset_source is not None,
+        )
         preamble = f"from nfit import load_project\nproject = load_project(Path(__file__).with_name({archive.name!r}))\n"
     path.write_text(
         '"""Edit the candidate list or project rebin settings before running."""\n'
@@ -159,7 +167,7 @@ def _trial(snapshot, output, mb, workers):
                          num_bins=[24] * dim, fractional=fractional,
                          max_batch_bytes=mb * 1024**2, workers=workers)
     else:
-        from .project_gui import (
+        from .project_data import (
             _viewer_data_before_scale_uncached,
             composite_dataset_data,
             effective_dataset_masks,

@@ -17,7 +17,7 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
     """Append metadata axes after the physical axes in the composite rebinner."""
     from PySide6 import QtWidgets
 
-    from .project_gui import (
+    from .project_data import (
         _composite_candidates,
         _ensure_dataset_data_loaded,
         set_metadata_dimensions,
@@ -207,7 +207,7 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
 def metadata_dimensions_panel(explorer, group):
     from PySide6 import QtCore, QtWidgets
 
-    from .project_gui import (
+    from .project_data import (
         _composite_candidates,
         _composite_root,
         _dataset_composite_kind,
