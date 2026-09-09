@@ -263,10 +263,11 @@ def test_project_explorer_preserves_tree_expansion_and_toolbar_font(monkeypatch,
     assert shortcuts == {
         "New": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.New),
         "Open": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.Open),
-        "Reload from Disk": _standard_shortcut_text(
-            QtGui, QtGui.QKeySequence.StandardKey.Refresh
-        ),
-        "Save": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.Save),
+            "Reload from Disk": _standard_shortcut_text(
+                QtGui, QtGui.QKeySequence.StandardKey.Refresh
+            ),
+            "Cache binnings": "",
+            "Save": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.Save),
         "Save As": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.SaveAs),
         "Preferences…": "",
         "Close": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.Close),
@@ -2404,16 +2405,44 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
         }
     )
     assert progress.progress.value() == 75
-    assert progress.dataset_progress.isVisible()
-    assert progress.dataset_progress.maximum() == 6
-    assert progress.dataset_progress.value() == 4
     assert "Datasets 4 of 6" in progress.status_label.text()
     assert "Points 75 of 100" in progress.status_label.text()
     progress.reset()
-    assert not progress.dataset_progress.isVisible()
     progress.close_shortcut.activated.emit()
     QtWidgets.QApplication.processEvents()
     assert not progress.dialog.isVisible()
+
+    rebin = explorer._make_rebin_progress_callback(
+        "Rebinning datasets...",
+        aggregate=True,
+    )
+    rebin_dialog = rebin._nfit_progress_dialog
+    batch_bar = rebin_dialog._nfit_batch_progress
+    detail_bar = rebin_dialog._nfit_detail_progress
+    rebin(
+        {
+            "stage": "rebin_batch",
+            "batch_total": 8,
+            "batch_completed": 2,
+            "batch_name": "MACS SPEC 5meV 2K",
+            "batch_kind": "dataset group",
+        }
+    )
+    rebin(
+        {
+            "stage": "rebin",
+            "iteration": 75,
+            "total": 100,
+            "message": "rebinning 7 datasets",
+        }
+    )
+    assert batch_bar.isVisible()
+    assert batch_bar.maximum() == 8
+    assert batch_bar.value() == 2
+    assert detail_bar.value() == 75
+    assert "Current dataset group: MACS SPEC 5meV 2K" in rebin_dialog._nfit_label.text()
+    assert rebin_dialog.minimumWidth() == rebin_dialog.maximumWidth() == 680
+    explorer._close_rebin_progress(rebin)
 
     diagnostics = project_gui._FitDiagnosticsPlotWindow(FitTimelineEntry("Fit Result1"), explorer)
     diagnostics.show()
@@ -2424,6 +2453,27 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
     diagnostics.close_shortcut.activated.emit()
     QtWidgets.QApplication.processEvents()
     assert not diagnostics.window.isVisible()
+
+
+def test_cache_binnings_file_action_is_project_specific(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+
+    explorer = NfitProjectExplorer(NfitProject([DataGroup("Workspace1")]))
+    try:
+        action = explorer.cache_binnings_action
+        assert action.isCheckable()
+        assert not action.isChecked()
+        assert action.toolTip()
+        texts = [item.text() for item in explorer.file_menu.actions()]
+        assert texts.index("Cache binnings") < texts.index("Save")
+
+        action.trigger()
+        assert explorer.project.settings[project_gui.PROJECT_CACHE_BINNINGS_KEY] is True
+        assert explorer.has_unsaved_changes
+    finally:
+        explorer.has_unsaved_changes = False
+        explorer.window.close()
 
 
 def test_cli_interrupt_handler_maps_sigint_to_qt_exit(monkeypatch):

@@ -711,6 +711,7 @@ def test_qt_dataset_dropdown_keeps_plot_configs_independent():
     data_b = data_b.with_updates(signal=data_b.signal + 1000.0)
 
     viewer = QtMDHistoSliceViewer([data_a, data_b], dataset_names=["first", "second"], x_dim=3, y_dim=2)
+    default_cmap = viewer._initial_cmap
 
     viewer.channel_combo.setCurrentText("errors")
     viewer.cmap_combo.setCurrentText("magma")
@@ -723,7 +724,7 @@ def test_qt_dataset_dropdown_keeps_plot_configs_independent():
     viewer.dataset_combo.setCurrentIndex(1)
 
     assert viewer.model.channel == "signal"
-    assert viewer.model.cmap == "viridis"
+    assert viewer.model.cmap == default_cmap
     assert viewer.model.autoscale
     assert viewer.font_size == pytest.approx(12.0)
     assert viewer.x_combo.currentText() == "[H,H,0]"

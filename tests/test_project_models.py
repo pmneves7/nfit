@@ -2009,7 +2009,7 @@ def test_apply_masks_switches_to_rebin_progress_when_rebinning(monkeypatch):
     events = []
     closed = []
 
-    def make_progress(title):
+    def make_progress(title, **_kwargs):
         titles.append(title)
 
         def callback(event):

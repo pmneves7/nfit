@@ -118,9 +118,10 @@ def test_project_window_builder_constructs_and_connects_project_actions(monkeypa
 
     action_callbacks = {
         "New": "new_project",
-        "Open": "open_project",
-        "Reload from Disk": "reload_project_from_disk",
-        "Save": "save",
+            "Open": "open_project",
+            "Reload from Disk": "reload_project_from_disk",
+            "Cache binnings": "_set_cache_binnings_enabled",
+            "Save": "save",
         "Save As": "save_as",
         "Preferences…": "show_preferences",
         "Close": "close_project",

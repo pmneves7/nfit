@@ -160,7 +160,7 @@ _viewer_view_signature = _backend_function("_viewer_view_signature")
 effective_dataset_masks = _backend_function("effective_dataset_masks")
 
 _COMPOSITE_DATA_CACHE: OrderedDict[int, tuple[str, Any]] = OrderedDict()
-_COMPOSITE_DATA_CACHE_LIMIT = 4
+_COMPOSITE_DATA_CACHE_LIMIT = 64
 _COMPOSITE_DATA_CACHE_MAX_BYTES = 256 * 1024**2
 
 

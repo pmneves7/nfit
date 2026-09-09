@@ -25,7 +25,9 @@ instrument or file format.
   container whose `project.json` manifest records datasets, model sessions, fit
   results, plots, and analysis provenance. Array-valued analysis outputs and
   explicitly materialized composites are stored under `assets/` in the same
-  file; large composite materializations load lazily.
+  file; large composite materializations load lazily. Projects may also opt to
+  embed current, derived rebin caches under `assets/binnings/`; these caches are
+  validated against the live dataset and recipe signatures before reuse.
 - **Dataset identity is unique.** Importing or copying a dataset assigns a new
   ID, even when the source file is the same. Project loading rejects duplicate
   IDs because analysis and background references would otherwise be ambiguous.

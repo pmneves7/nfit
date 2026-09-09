@@ -8,6 +8,7 @@ import platform
 import re
 import signal
 import subprocess
+import tempfile
 import time
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
@@ -23,7 +24,10 @@ from . import project_data_panels as _project_data_panels
 from . import project_lindhard_editor as _project_lindhard_editor
 from . import project_model_editor as _project_model_editor
 from . import project_tight_binding_editor as _project_tight_binding_editor
-from .analysis.artifacts import read_project_dataset_artifact
+from .analysis.artifacts import (
+    read_project_dataset_artifact,
+    write_dataset_artifact,
+)
 from .analysis.coordinates import signal_semantics  # noqa: F401 - panel helper injection
 from .analysis.core import (
     AnalysisEntry,
@@ -123,6 +127,7 @@ from .pipeline import (
 )
 from .plot_recipes import new_plot_entry, plot_script, render_plot
 from .project_archive import (
+    binning_artifact_member,
     project_artifact_exists,
     project_artifact_size,
     read_project_manifest,
@@ -429,6 +434,9 @@ _COMPOSITE_DATA_CACHE = _project_data._COMPOSITE_DATA_CACHE
 _COMPOSITE_DATA_CACHE_LIMIT = _project_data._COMPOSITE_DATA_CACHE_LIMIT
 _COMPOSITE_DATA_CACHE_MAX_BYTES = _project_data._COMPOSITE_DATA_CACHE_MAX_BYTES
 
+PROJECT_CACHE_BINNINGS_KEY = "cache_binnings"
+PROJECT_BINNING_CACHE_ENTRIES_KEY = "binning_cache_entries"
+
 
 def _ensure_dataset_data_loaded(dataset: DatasetEntry) -> Any:
     """Load data while preserving the project GUI's injectable loader seam."""
@@ -475,7 +483,8 @@ def dataset_for_slice_viewer(
 ) -> MDHistoData | PointListData | PointData4D | None:
     """Prepare viewer data while preserving legacy loader injection."""
 
-    _ensure_dataset_data_loaded(dataset)
+    if _peek_cached_dataset_view(dataset, extra_masks=extra_masks) is None:
+        _ensure_dataset_data_loaded(dataset)
     return _project_data.dataset_for_slice_viewer(
         dataset,
         extra_masks=extra_masks,
@@ -1882,6 +1891,7 @@ def _effective_dataset_entries(
     force_masks: bool,
     progress_callback: Any | None,
     include_disabled_groups: bool = True,
+    batch_progress: dict[str, int] | None = None,
 ):
     if (
         isinstance(node, DatasetGroup)
@@ -1891,15 +1901,44 @@ def _effective_dataset_entries(
         return
     scope = _composite_scope(group, node)
     if use_composite and data_group_composite_enabled(scope):
+        _report_effective_dataset_batch(
+            progress_callback,
+            batch_progress,
+            name=node.name,
+            kind="dataset group",
+            completed=False,
+        )
         yield composite_dataset_entry(
             scope,
             force_rebin=force_rebin,
             progress_callback=progress_callback,
         )
+        _report_effective_dataset_batch(
+            progress_callback,
+            batch_progress,
+            name=node.name,
+            kind="dataset group",
+            completed=True,
+        )
         return
     if isinstance(node, DatasetGroup) and isinstance(node.metadata.get("mdevent"), dict):
         return
-    yield from node.datasets
+    for dataset in node.datasets:
+        _report_effective_dataset_batch(
+            progress_callback,
+            batch_progress,
+            name=dataset.name,
+            kind="dataset",
+            completed=False,
+        )
+        yield dataset
+        _report_effective_dataset_batch(
+            progress_callback,
+            batch_progress,
+            name=dataset.name,
+            kind="dataset",
+            completed=True,
+        )
     for subgroup in node.subgroups:
         yield from _effective_dataset_entries(
             group,
@@ -1909,7 +1948,70 @@ def _effective_dataset_entries(
             force_masks=force_masks,
             progress_callback=progress_callback,
             include_disabled_groups=include_disabled_groups,
+            batch_progress=batch_progress,
         )
+
+
+def _effective_dataset_entry_count(
+    group: DataGroup,
+    node: DataGroup | DatasetGroup,
+    *,
+    use_composite: bool,
+    include_disabled_groups: bool = True,
+) -> int:
+    """Count effective viewer entries without preparing their data."""
+
+    if (
+        isinstance(node, DatasetGroup)
+        and not node.enabled
+        and not include_disabled_groups
+    ):
+        return 0
+    scope = _composite_scope(group, node)
+    if use_composite and data_group_composite_enabled(scope):
+        return 1
+    if isinstance(node, DatasetGroup) and isinstance(node.metadata.get("mdevent"), dict):
+        return 0
+    return len(node.datasets) + sum(
+        _effective_dataset_entry_count(
+            group,
+            subgroup,
+            use_composite=use_composite,
+            include_disabled_groups=include_disabled_groups,
+        )
+        for subgroup in node.subgroups
+    )
+
+
+def _report_effective_dataset_batch(
+    progress_callback: Any | None,
+    batch_progress: dict[str, int] | None,
+    *,
+    name: str,
+    kind: str,
+    completed: bool,
+) -> None:
+    """Report the outer viewer item around its detailed rebin events."""
+
+    if progress_callback is None or batch_progress is None:
+        return
+    if completed:
+        batch_progress["completed"] += 1
+    progress_callback(
+        {
+            "stage": "rebin_batch",
+            "batch_total": batch_progress["total"],
+            "batch_completed": batch_progress["completed"],
+            "batch_name": name,
+            "batch_kind": kind,
+            "batch_item_complete": completed,
+            "message": (
+                f"finished {kind} {name}"
+                if completed
+                else f"preparing {kind} {name}"
+            ),
+        }
+    )
 
 
 def _composite_scopes(group: DataGroup):
@@ -1936,6 +2038,18 @@ def slice_viewer_datasets(
         force_masks=force_masks,
         unmask_model=unmask_model,
     )
+    batch_progress = (
+        {
+            "total": _effective_dataset_entry_count(
+                group,
+                group,
+                use_composite=use_composite,
+            ),
+            "completed": 0,
+        }
+        if progress_callback is not None
+        else None
+    )
     entries = _effective_dataset_entries(
         group,
         group,
@@ -1943,6 +2057,7 @@ def slice_viewer_datasets(
         force_rebin=force_rebin,
         force_masks=force_masks,
         progress_callback=progress_callback,
+        batch_progress=batch_progress,
     )
     for dataset in entries:
         is_composite = bool(dataset.metadata.get("composite"))
@@ -4689,23 +4804,243 @@ def dataset_entry_from_path(
     )
 
 
+def project_cache_binnings_enabled(project: NfitProject) -> bool:
+    """Return whether this project embeds current rebin caches when saved."""
+
+    return bool(project.settings.get(PROJECT_CACHE_BINNINGS_KEY, False))
+
+
+def _project_binning_targets(project: NfitProject) -> list[tuple[str, str, DataGroup, Any]]:
+    """Return configured dataset and composite binnings in project order."""
+
+    targets: list[tuple[str, str, DataGroup, Any]] = []
+    for group in project.data_groups:
+        for dataset in group.iter_datasets():
+            if dataset_rebin_enabled(dataset):
+                targets.append(("dataset", dataset.name, group, dataset))
+        for scope in _composite_scopes(group):
+            if data_group_composite_enabled(scope):
+                targets.append(("dataset group", scope.name, group, scope))
+    return targets
+
+
+def _project_binning_is_current(kind: str, group: DataGroup, target: Any) -> bool:
+    if kind == "dataset":
+        return (
+            _peek_cached_dataset_view(
+                target,
+                extra_masks=effective_dataset_masks(group, target),
+            )
+            is not None
+        )
+    return _peek_cached_composite_dataset_data(target) is not None
+
+
+def project_binnings_need_refresh(project: NfitProject) -> bool:
+    """Return whether any configured binning lacks a current process cache."""
+
+    return any(
+        not _project_binning_is_current(kind, group, target)
+        for kind, _name, group, target in _project_binning_targets(project)
+    )
+
+
+def prepare_project_binning_cache(
+    project: NfitProject,
+    *,
+    progress_callback: Any | None = None,
+) -> int:
+    """Recompute only stale/missing configured binnings and return their count."""
+
+    stale = [
+        target
+        for target in _project_binning_targets(project)
+        if not _project_binning_is_current(target[0], target[2], target[3])
+    ]
+    state = {"total": len(stale), "completed": 0}
+    for kind, name, group, target in stale:
+        _report_effective_dataset_batch(
+            progress_callback,
+            state,
+            name=name,
+            kind=kind,
+            completed=False,
+        )
+        if kind == "dataset":
+            dataset_for_slice_viewer(
+                target,
+                extra_masks=effective_dataset_masks(group, target),
+                force_rebin=True,
+                force_masks=True,
+                progress_callback=progress_callback,
+            )
+        else:
+            _cached_composite_dataset_data(
+                target,
+                force_rebin=True,
+                progress_callback=progress_callback,
+            )
+        _report_effective_dataset_batch(
+            progress_callback,
+            state,
+            name=name,
+            kind=kind,
+            completed=True,
+        )
+    return len(stale)
+
+
+def _project_binning_artifacts(
+    project: NfitProject,
+    directory: Path,
+) -> tuple[dict[str, Path], list[dict[str, Any]]]:
+    """Write current signature-matching rebin caches to temporary artifacts."""
+
+    artifacts: dict[str, Path] = {}
+    entries: list[dict[str, Any]] = []
+    for group_index, group in enumerate(project.data_groups):
+        for dataset in group.iter_datasets():
+            if not dataset_rebin_enabled(dataset):
+                continue
+            data = _peek_cached_dataset_view(
+                dataset,
+                extra_masks=effective_dataset_masks(group, dataset),
+            )
+            if not isinstance(data, (MDHistoData, PointListData)):
+                continue
+            cache_id = f"dataset-{dataset.id}"
+            member = binning_artifact_member(cache_id)
+            artifact_path = directory / f"{cache_id}.npz"
+            write_dataset_artifact(data, artifact_path)
+            artifacts[member] = artifact_path
+            entries.append(
+                {
+                    "type": "dataset",
+                    "group_index": group_index,
+                    "dataset_id": dataset.id,
+                    "member": member,
+                }
+            )
+        for scope in _composite_scopes(group):
+            if not data_group_composite_enabled(scope):
+                continue
+            data = _peek_cached_composite_dataset_data(scope)
+            if not isinstance(data, (MDHistoData, PointListData)):
+                continue
+            node_id = scope.node.id if isinstance(scope, _CompositeScope) else None
+            cache_id = (
+                f"composite-{node_id}"
+                if node_id is not None
+                else f"composite-root-{group_index}"
+            )
+            member = binning_artifact_member(cache_id)
+            artifact_path = directory / f"{cache_id}.npz"
+            write_dataset_artifact(data, artifact_path)
+            artifacts[member] = artifact_path
+            entries.append(
+                {
+                    "type": "composite",
+                    "group_index": group_index,
+                    "node_id": node_id,
+                    "member": member,
+                }
+            )
+    return artifacts, entries
+
+
+def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
+    """Restore embedded binnings into the process-local caches."""
+
+    if not project_cache_binnings_enabled(project):
+        return
+    entries = project.settings.get(PROJECT_BINNING_CACHE_ENTRIES_KEY, [])
+    if not isinstance(entries, list):
+        return
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            group = project.data_groups[int(entry["group_index"])]
+            data = read_project_dataset_artifact(path, str(entry["member"]))
+            if entry.get("type") == "dataset":
+                dataset = next(
+                    item
+                    for item in group.iter_datasets()
+                    if item.id == str(entry["dataset_id"])
+                )
+                signature = _viewer_view_signature(
+                    dataset,
+                    effective_dataset_masks(group, dataset),
+                )
+                _lru_store(
+                    _VIEWER_VIEW_CACHE,
+                    dataset.id,
+                    (signature, data),
+                    _VIEWER_VIEW_CACHE_LIMIT,
+                    _VIEWER_VIEW_CACHE_MAX_BYTES,
+                )
+            elif entry.get("type") == "composite":
+                node_id = entry.get("node_id")
+                scope = (
+                    group
+                    if node_id is None
+                    else _composite_scope(
+                        group,
+                        next(
+                            node
+                            for node in group.iter_subgroups()
+                            if node.id == str(node_id)
+                        ),
+                    )
+                )
+                signature = _composite_cache_signature(scope)
+                _lru_store(
+                    _COMPOSITE_DATA_CACHE,
+                    _composite_cache_key(scope),
+                    (signature, data),
+                    _COMPOSITE_DATA_CACHE_LIMIT,
+                    _COMPOSITE_DATA_CACHE_MAX_BYTES,
+                )
+        except (IndexError, KeyError, OSError, StopIteration, TypeError, ValueError):
+            continue
+
+
 def save_project(
     project: NfitProject,
     path: str | Path,
     *,
     asset_source: str | Path | None = None,
+    progress_callback: Any | None = None,
 ) -> None:
     """Persist project state and analysis artifacts in one nfit archive."""
 
     target = Path(path)
     if asset_source is None:
         asset_source = getattr(project, "_project_path", None)
-    write_project_manifest(
-        target,
-        _project_to_dict(project),
-        asset_source=asset_source,
-        preserve_existing=asset_source is not None,
-    )
+    if project_cache_binnings_enabled(project):
+        prepare_project_binning_cache(
+            project,
+            progress_callback=progress_callback,
+        )
+        with tempfile.TemporaryDirectory(prefix="nfit-binning-cache-") as temporary:
+            artifacts, entries = _project_binning_artifacts(project, Path(temporary))
+            project.settings[PROJECT_BINNING_CACHE_ENTRIES_KEY] = entries
+            write_project_manifest(
+                target,
+                _project_to_dict(project),
+                asset_source=asset_source,
+                preserve_existing=asset_source is not None,
+                binning_artifacts=artifacts,
+            )
+    else:
+        project.settings.pop(PROJECT_BINNING_CACHE_ENTRIES_KEY, None)
+        write_project_manifest(
+            target,
+            _project_to_dict(project),
+            asset_source=asset_source,
+            preserve_existing=asset_source is not None,
+            binning_artifacts={},
+        )
     project._project_path = target
     _bind_project_analysis_sources(project, target, load_data=False)
 
@@ -4763,6 +5098,7 @@ def load_project(path: str | Path) -> NfitProject:
     project = _project_from_dict(read_project_manifest(project_path))
     project._project_path = project_path
     _bind_project_analysis_sources(project, project_path)
+    _restore_project_binning_cache(project, project_path)
     return project
 
 
@@ -4983,13 +5319,6 @@ class _FitProgressDialog:
         self.stage_label.setWordWrap(True)
         self.status_label = QtWidgets.QLabel("No fit is running.")
         self.status_label.setWordWrap(True)
-        self.dataset_progress = QtWidgets.QProgressBar()
-        self.dataset_progress.setObjectName("rebin_dataset_progress")
-        self.dataset_progress.setToolTip(
-            "Completed source datasets across the complete composite rebin."
-        )
-        self.dataset_progress.setFormat("Datasets %v of %m")
-        self.dataset_progress.setVisible(False)
         self.progress = QtWidgets.QProgressBar()
         self.progress.setObjectName("fit_stage_progress")
         self.progress.setToolTip(
@@ -5035,7 +5364,6 @@ class _FitProgressDialog:
         self._cancel_callback: Any | None = None
         layout.addWidget(self.stage_label)
         layout.addWidget(self.status_label)
-        layout.addWidget(self.dataset_progress)
         layout.addWidget(self.progress)
         layout.addWidget(self.panel_splitter, 1)
         button_row = QtWidgets.QHBoxLayout()
@@ -5049,9 +5377,6 @@ class _FitProgressDialog:
         self.stage_label.setText(title)
         self.status_label.setStyleSheet("")
         self.status_label.setText("Preparing data and fit problem.")
-        self.dataset_progress.setRange(0, 1)
-        self.dataset_progress.setValue(0)
-        self.dataset_progress.setVisible(False)
         self.progress.setRange(0, 0)
         self.parameter_table.setRowCount(0)
         self.log.clear()
@@ -5107,12 +5432,7 @@ class _FitProgressDialog:
         datasets_completed = event.get("datasets_completed")
         if datasets_total is not None:
             datasets_total_value = max(int(datasets_total), 0)
-            self.dataset_progress.setVisible(True)
-            self.dataset_progress.setRange(0, max(datasets_total_value, 1))
             if datasets_completed is not None:
-                self.dataset_progress.setValue(
-                    min(max(int(datasets_completed), 0), datasets_total_value)
-                )
                 status_parts.append(
                     f"Datasets {int(datasets_completed)} of {datasets_total_value}"
                 )
@@ -5280,6 +5600,7 @@ class NfitProjectExplorer:
         self.file_menu = None
         self.recent_projects_menu = None
         self.reload_project_action = None
+        self.cache_binnings_action = None
         self.tree = None
         self.title_label = None
         self.enabled_check = None
@@ -5897,6 +6218,7 @@ class NfitProjectExplorer:
         self._ignored_project_disk_signature = None
         self.has_unsaved_changes = False
         self._clear_active_fit_state()
+        self._sync_cache_binnings_action()
         self._refresh_tree()
         self._sync_window_title()
         return True
@@ -6126,6 +6448,7 @@ class NfitProjectExplorer:
         self.project_path = path
         self.has_unsaved_changes = False
         self._clear_active_fit_state()
+        self._sync_cache_binnings_action()
         if remember:
             self._remember_recent_project(path)
         self._refresh_tree()
@@ -6133,6 +6456,27 @@ class NfitProjectExplorer:
         self._update_project_disk_signature()
         self._sync_window_title()
         return True
+
+    def _set_cache_binnings_enabled(self, enabled: bool) -> None:
+        """Set the project-specific persisted-binning preference."""
+
+        value = bool(enabled)
+        if project_cache_binnings_enabled(self.project) == value:
+            return
+        self.project.settings[PROJECT_CACHE_BINNINGS_KEY] = value
+        if not value:
+            self.project.settings.pop(PROJECT_BINNING_CACHE_ENTRIES_KEY, None)
+        self._mark_dirty()
+
+    def _sync_cache_binnings_action(self) -> None:
+        action = self.cache_binnings_action
+        if action is None:
+            return
+        action.blockSignals(True)
+        try:
+            action.setChecked(project_cache_binnings_enabled(self.project))
+        finally:
+            action.blockSignals(False)
 
     def reload_project_from_disk(self) -> bool:
         """Reload the current archive, confirming before discarding GUI edits."""
@@ -6176,7 +6520,23 @@ class NfitProjectExplorer:
             if action != "overwrite":
                 return False
         self._stamp_active_fit_path()
-        save_project(self.project, self.project_path)
+        progress = (
+            self._make_rebin_progress_callback(
+                "Updating cached binnings...",
+                aggregate=True,
+            )
+            if project_cache_binnings_enabled(self.project)
+            and project_binnings_need_refresh(self.project)
+            else None
+        )
+        try:
+            save_project(
+                self.project,
+                self.project_path,
+                progress_callback=progress,
+            )
+        finally:
+            self._close_rebin_progress(progress)
         self.has_unsaved_changes = False
         self._update_project_disk_signature()
         self._sync_window_title()
@@ -6196,7 +6556,24 @@ class NfitProjectExplorer:
         old_path = self.project_path
         new_path = Path(path)
         self._stamp_active_fit_path()
-        save_project(self.project, new_path, asset_source=old_path)
+        progress = (
+            self._make_rebin_progress_callback(
+                "Updating cached binnings...",
+                aggregate=True,
+            )
+            if project_cache_binnings_enabled(self.project)
+            and project_binnings_need_refresh(self.project)
+            else None
+        )
+        try:
+            save_project(
+                self.project,
+                new_path,
+                asset_source=old_path,
+                progress_callback=progress,
+            )
+        finally:
+            self._close_rebin_progress(progress)
         self.project_path = new_path
         self._remember_recent_project(self.project_path)
         self.has_unsaved_changes = False
@@ -7919,34 +8296,78 @@ class NfitProjectExplorer:
             and _composite_rebin_is_large(scope, data_group_composite_config(scope))
             for scope in _composite_scopes(group)
         ):
-            return self._make_rebin_progress_callback("Rebinning composite dataset...")
+            return self._make_rebin_progress_callback(
+                "Rebinning composite datasets...",
+                aggregate=True,
+            )
         if not any(
             dataset_rebin_enabled(dataset)
             and _dataset_rebin_is_large(dataset, dataset_rebin_config(dataset))
             for dataset in group.iter_datasets()
         ):
             return None
-        return self._make_rebin_progress_callback("Rebinning dataset...")
+        return self._make_rebin_progress_callback(
+            "Rebinning datasets...",
+            aggregate=True,
+        )
 
-    def _make_rebin_progress_callback(self, title: str) -> Any | None:
+    def _make_rebin_progress_callback(
+        self,
+        title: str,
+        *,
+        aggregate: bool = False,
+    ) -> Any | None:
         try:
             from PySide6 import QtCore, QtWidgets
         except Exception:
             return None
-        dialog = QtWidgets.QProgressDialog(title, None, 0, 100, self.window)
+        dialog = QtWidgets.QDialog(self.window)
+        dialog.setObjectName("rebin_progress_dialog")
         dialog.setWindowTitle("Rebin progress")
         dialog.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
-        dialog.setMinimumDuration(0)
-        dialog.setAutoClose(False)
-        dialog.setAutoReset(False)
+        dialog.setFixedWidth(680)
+        layout = QtWidgets.QVBoxLayout(dialog)
+        label = QtWidgets.QLabel(title)
+        label.setObjectName("rebin_progress_label")
+        label.setWordWrap(True)
+        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(label)
+        batch_bar = QtWidgets.QProgressBar()
+        batch_bar.setObjectName("rebin_batch_progress")
+        batch_bar.setFormat("Datasets/groups %v of %m")
+        batch_bar.setToolTip(
+            "Completed datasets or dataset groups across this complete viewer preparation."
+        )
+        batch_bar.setVisible(aggregate)
+        layout.addWidget(batch_bar)
+        detail_bar = QtWidgets.QProgressBar()
+        detail_bar.setObjectName("rebin_detail_progress")
+        detail_bar.setToolTip("Progress within the dataset or dataset group named above.")
+        detail_bar.setRange(0, 100)
+        layout.addWidget(detail_bar)
+        dialog._nfit_label = label
+        dialog._nfit_batch_progress = batch_bar
+        dialog._nfit_detail_progress = detail_bar
         dialog.show()
 
+        batch_name = ""
+        batch_kind = ""
+
         def callback(event: dict[str, Any]) -> None:
+            nonlocal batch_name, batch_kind
+            if event.get("batch_name") is not None:
+                batch_name = str(event["batch_name"])
+                batch_kind = str(event.get("batch_kind") or "item")
+            batch_total = int(event.get("batch_total") or 0)
+            batch_completed = int(event.get("batch_completed") or 0)
+            if aggregate and batch_total > 0:
+                batch_bar.setRange(0, batch_total)
+                batch_bar.setValue(min(max(batch_completed, 0), batch_total))
             total = int(event.get("total") or 0)
             iteration = int(event.get("iteration") or 0)
             if total > 0:
-                dialog.setMaximum(total)
-                dialog.setValue(min(iteration, total))
+                detail_bar.setRange(0, total)
+                detail_bar.setValue(min(iteration, total))
                 percentage = 100.0 * min(iteration, total) / total
                 message = str(event.get("message") or title)
                 details = []
@@ -7962,10 +8383,25 @@ class NfitProjectExplorer:
                         f"~{working_bytes / 1024**2:.1f} MiB working memory"
                     )
                 suffix = f"\n{' · '.join(details)}" if details else ""
-                dialog.setLabelText(f"{message} ({percentage:.1f}%){suffix}")
+                current = (
+                    f"Current {batch_kind}: {batch_name}\n"
+                    if aggregate and batch_name
+                    else ""
+                )
+                label.setText(f"{current}{message} ({percentage:.1f}%){suffix}")
             else:
-                dialog.setRange(0, 0)
-                dialog.setLabelText(str(event.get("message") or title))
+                if event.get("stage") == "rebin_batch":
+                    if event.get("batch_item_complete"):
+                        detail_bar.setRange(0, 1)
+                        detail_bar.setValue(1)
+                    else:
+                        detail_bar.setRange(0, 0)
+                current = (
+                    f"Current {batch_kind}: {batch_name}\n"
+                    if aggregate and batch_name
+                    else ""
+                )
+                label.setText(f"{current}{str(event.get('message') or title)}")
             QtWidgets.QApplication.processEvents()
 
         callback._nfit_progress_dialog = dialog

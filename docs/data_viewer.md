@@ -69,9 +69,10 @@ Masked bins and invalid uncertainties are excluded.
 
 Plot smoothing is specified in displayed-bin widths. It affects only the
 rendered figure and exported figure recipe, not fitting, rebinning, or numerical
-data exports. Gaussian smoothing uses the nearby finite display pixels to fill
-adjacent empty bins; explicit file and nfit masks remain blank. The stored
-histogram, its masks, and its uncertainties are never changed.
+data exports. Gaussian smoothing uses nearby finite display pixels to fill
+adjacent NaN pixels, including pixels hidden by a mask. Mask channels still show
+the unchanged masks, and the stored histogram, masks, and uncertainties are
+never changed.
 
 ## Model and residual channels
 

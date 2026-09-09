@@ -99,7 +99,7 @@ def test_smooth_mdhisto_view_fills_only_the_display_copy():
     np.testing.assert_array_equal(smoothed["combined_mask"], coverage_mask)
 
 
-def test_smooth_mdhisto_view_does_not_blur_across_explicit_masks():
+def test_smooth_mdhisto_view_can_fill_explicitly_masked_display_pixels():
     explicit_mask = np.asarray([[False, True, False]])
     view = {
         "signal": np.asarray([[1.0, np.nan, 3.0]]),
@@ -110,8 +110,8 @@ def test_smooth_mdhisto_view_does_not_blur_across_explicit_masks():
 
     smoothed = smooth_mdhisto_view(view, sigma_x=1.0)
 
-    assert np.isnan(smoothed["signal"][0, 1])
-    assert np.isnan(smoothed["errors"][0, 1])
+    assert np.isfinite(smoothed["signal"][0, 1])
+    assert np.isfinite(smoothed["errors"][0, 1])
 
 
 def test_plotting_helpers_return_axes():

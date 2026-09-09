@@ -2902,13 +2902,5 @@ def smooth_mdhisto_view(
             smoothed = gaussian_smooth_uncertainty(array, sigma)
         else:
             smoothed = gaussian_smooth_nan(array, sigma)
-        explicit_mask = np.zeros(reference.shape, dtype=bool)
-        for mask_name in ("file_mask", "nfit_mask"):
-            candidate = np.asarray(
-                view.get(mask_name, explicit_mask),
-                dtype=bool,
-            )
-            if candidate.shape == reference.shape:
-                explicit_mask |= candidate
-        result[name] = np.where(explicit_mask, np.nan, smoothed)
+        result[name] = smoothed
     return result

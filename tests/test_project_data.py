@@ -57,6 +57,133 @@ def test_composite_progress_counts_prepared_source_datasets():
     assert all(event["datasets_total"] == 2 for event in source_events)
 
 
+def test_viewer_batch_progress_and_cache_cover_more_than_four_composites():
+    project_gui._COMPOSITE_DATA_CACHE.clear()
+    subgroups = []
+    for index in range(6):
+        subgroup = DatasetGroup(
+            f"Group {index + 1}",
+            datasets=[
+                DatasetEntry(
+                    f"scan {index + 1}",
+                    _tiny_mdhisto_data(float(index + 1)),
+                    kind="mdhisto",
+                )
+            ],
+        )
+        config = project_gui.data_group_composite_config(
+            project_gui._composite_scope(DataGroup("temporary"), subgroup)
+        )
+        config.update(enabled=True, minimum_coverage=0.0)
+        subgroups.append(subgroup)
+    group = DataGroup("Workspace1", subgroups=subgroups)
+
+    first_events = []
+    _datasets, names = project_gui.slice_viewer_datasets(
+        group,
+        progress_callback=first_events.append,
+    )
+    assert len(names) == 6
+    batch_events = [
+        event for event in first_events if event.get("stage") == "rebin_batch"
+    ]
+    assert [event["batch_completed"] for event in batch_events] == [
+        0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6
+    ]
+    assert [event["batch_name"] for event in batch_events[::2]] == [
+        f"Group {index}" for index in range(1, 7)
+    ]
+    assert all(event["batch_total"] == 6 for event in batch_events)
+    assert len(project_gui._COMPOSITE_DATA_CACHE) == 6
+
+    second_events = []
+    project_gui.slice_viewer_datasets(group, progress_callback=second_events.append)
+    assert not any(
+        event.get("stage") == "rebin_sources" for event in second_events
+    )
+    assert len(
+        [event for event in second_events if event.get("stage") == "rebin_batch"]
+    ) == 12
+
+
+def test_project_can_embed_and_restore_current_composite_binning(tmp_path, monkeypatch):
+    import zipfile
+
+    project_gui._COMPOSITE_DATA_CACHE.clear()
+    source = tmp_path / "large-source.nxs"
+    source.write_bytes(b"source placeholder")
+    dataset = DatasetEntry(
+        "scan",
+        _tiny_mdhisto_data(4.0),
+        kind="mdhisto",
+        metadata={"source_file": str(source)},
+    )
+    group = DataGroup("Workspace1", datasets=[dataset])
+    dataset_config = project_gui.dataset_rebin_config(dataset)
+    dataset_config.update(enabled=True, minimum_coverage=0.0)
+    config = project_gui.data_group_composite_config(group)
+    config.update(enabled=True, minimum_coverage=0.0)
+    project = NfitProject(
+        [group],
+        settings={project_gui.PROJECT_CACHE_BINNINGS_KEY: True},
+    )
+    cached_dataset = project_gui.dataset_for_slice_viewer(dataset)
+    cached, _names = project_gui.slice_viewer_datasets(group)
+    path = tmp_path / "cached.nfit"
+
+    assert not project_gui.project_binnings_need_refresh(project)
+    save_events = []
+    save_project(project, path, progress_callback=save_events.append)
+    assert save_events == []
+
+    config["minimum_coverage"] = 0.25
+    assert project_gui.project_binnings_need_refresh(project)
+    refresh_events = []
+    save_project(project, path, progress_callback=refresh_events.append)
+    assert any(
+        event.get("stage") == "rebin_batch" for event in refresh_events
+    )
+    assert not project_gui.project_binnings_need_refresh(project)
+
+    manifest = read_project_manifest(path)
+    entries = manifest["settings"][project_gui.PROJECT_BINNING_CACHE_ENTRIES_KEY]
+    assert len(entries) == 2
+    with zipfile.ZipFile(path) as archive:
+        assert entries[0]["member"] in archive.namelist()
+
+    project_gui._COMPOSITE_DATA_CACHE.clear()
+    restored = load_project(path)
+    restored_group = restored.data_groups[0]
+    restored_dataset = next(restored_group.iter_datasets())
+
+    def ensure_without_raw_source(entry):
+        if entry is restored_dataset:
+            pytest.fail("restored binning should avoid the raw source")
+        return entry.data
+
+    monkeypatch.setattr(
+        project_gui,
+        "_ensure_dataset_data_loaded",
+        ensure_without_raw_source,
+    )
+    restored_dataset_view = project_gui.dataset_for_slice_viewer(restored_dataset)
+    np.testing.assert_allclose(
+        restored_dataset_view.signal,
+        cached_dataset.signal,
+        equal_nan=True,
+    )
+    views, names = project_gui.slice_viewer_datasets(restored_group)
+    assert names == ["Workspace1 Composite"]
+    np.testing.assert_allclose(views[0].signal, cached[0].signal, equal_nan=True)
+
+    restored.settings[project_gui.PROJECT_CACHE_BINNINGS_KEY] = False
+    save_project(restored, path)
+    manifest = read_project_manifest(path)
+    assert project_gui.PROJECT_BINNING_CACHE_ENTRIES_KEY not in manifest["settings"]
+    with zipfile.ZipFile(path) as archive:
+        assert not any(name.startswith("assets/binnings/") for name in archive.namelist())
+
+
 def test_dataset_details_text_summarizes_axes_source_and_metadata(tmp_path, monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")

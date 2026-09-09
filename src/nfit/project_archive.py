@@ -12,6 +12,7 @@ from typing import Any
 PROJECT_MANIFEST = "project.json"
 ANALYSIS_ASSET_ROOT = PurePosixPath("assets", "analyses")
 DATASET_ASSET_ROOT = PurePosixPath("assets", "datasets")
+BINNING_ASSET_ROOT = PurePosixPath("assets", "binnings")
 ArchiveContent = bytes | Path
 
 
@@ -32,6 +33,16 @@ def dataset_artifact_member(dataset_id: str, filename: str = "data.npz") -> str:
     if not safe_id or safe_id != dataset_id or not safe_name or safe_name != filename:
         raise ValueError("invalid project dataset artifact path")
     return str(DATASET_ASSET_ROOT / safe_id / safe_name)
+
+
+def binning_artifact_member(cache_id: str, filename: str = "data.npz") -> str:
+    """Return the archive member for one optional persisted rebin cache."""
+
+    safe_id = PurePosixPath(cache_id).name
+    safe_name = PurePosixPath(filename).name
+    if not safe_id or safe_id != cache_id or not safe_name or safe_name != filename:
+        raise ValueError("invalid project binning artifact path")
+    return str(BINNING_ASSET_ROOT / safe_id / safe_name)
 
 
 def read_project_manifest(path: str | Path) -> dict[str, Any]:
@@ -82,6 +93,7 @@ def write_project_manifest(
     *,
     asset_source: str | Path | None = None,
     preserve_existing: bool = True,
+    binning_artifacts: Mapping[str, ArchiveContent] | None = None,
 ) -> None:
     """Atomically save a manifest while preserving internal project assets."""
 
@@ -93,10 +105,17 @@ def write_project_manifest(
     )
     manifest = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
     replacements = {PROJECT_MANIFEST: manifest}
+    if binning_artifacts is not None:
+        replacements.update(binning_artifacts)
     _rewrite_archive(
         target,
         source if source is not None and source.exists() else None,
         replacements,
+        remove_prefix=(
+            str(BINNING_ASSET_ROOT) + "/"
+            if binning_artifacts is not None
+            else None
+        ),
     )
 
 

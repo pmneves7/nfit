@@ -104,8 +104,19 @@ budget; an entry larger than its cache budget is used but not retained. The
 budgets count distinct NumPy array payloads, not small Python-object overhead.
 The prepared-table cache defaults to 128 MiB; viewer, composite, and model
 overlay caches each default to 256 MiB.
+Caches also have defensive entry-count limits. The composite cache accepts up
+to 64 entries within its memory budget so projects with several dataset-group
+composites do not repeatedly evict and rebuild one another while reopening a
+viewer.
 Caches are performance aids, not stored scientific state: recomputation after
 eviction produces the same result.
+
+Process caches normally disappear when nfit exits. For projects whose raw data
+are expensive to load or rebin, enable **File → Cache binnings** before saving.
+The project then embeds current dataset and composite binnings and restores them
+on the next open. Saving does not recompute current entries; it updates only
+missing or signature-stale binnings. This project-specific option defaults off
+so ordinary project files remain small.
 
 ## Heisenberg RPA
 

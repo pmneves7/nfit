@@ -114,6 +114,23 @@ def _build_window_shell(
         "Reload the current project from disk."
     )
     menu.addSeparator()
+    self.cache_binnings_action = menu.addAction("Cache binnings")
+    self.cache_binnings_action.setObjectName("cache_binnings_action")
+    self.cache_binnings_action.setCheckable(True)
+    self.cache_binnings_action.setChecked(
+        bool(self.project.settings.get("cache_binnings", False))
+    )
+    self.cache_binnings_action.setToolTip(
+        "Update stale binnings and embed rebinned datasets and composites in this project when saving."
+    )
+    self.cache_binnings_action.setStatusTip(
+        self.cache_binnings_action.toolTip()
+    )
+    self.cache_binnings_action.triggered.connect(
+        lambda: self._set_cache_binnings_enabled(
+            self.cache_binnings_action.isChecked()
+        )
+    )
     save_action = menu.addAction("Save", self.save)
     save_action.setShortcut(QtGui.QKeySequence.StandardKey.Save)
     save_action.setToolTip("Save the current project to its existing project file.")

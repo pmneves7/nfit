@@ -449,12 +449,13 @@ peak-memory table before choosing **Apply recommendation**. The same controls
 are available for composites. Defaults for new configurations live in
 **File → Preferences → Performance**; see [benchmark details](performance.md#performance-preferences-and-benchmarks).
 
-Composite progress uses two levels. The upper bar counts source datasets after
-each has been loaded, masked, normalized, and prepared; this makes the initial
-uncached pass visible. The lower bar advances through processed point
-contributions across the entire reduction. Symmetry-equivalent duplicates still
-count as examined work, so the lower bar reaches completion even when those
-duplicates are omitted from the histogram.
+When opening a viewer that prepares several datasets or dataset-group
+composites, rebin progress uses two levels. The upper bar counts completed
+viewer entries and names the current dataset or dataset group. The lower bar
+advances through the current entry's processed point contributions. A direct
+dataset or dataset-group rebin uses only the detailed lower bar. Symmetry-
+equivalent duplicates still count as examined work, so detailed progress reaches
+completion even when those duplicates are omitted from the histogram.
 
 The batch target controls temporary work, not the
 persistent output-grid allocation.

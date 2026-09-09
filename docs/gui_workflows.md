@@ -31,6 +31,12 @@ Each `.nfit` project is one portable file containing its JSON manifest and
 generated analysis artifacts. Original imported measurement files remain
 external source references.
 
+Enable **File → Cache binnings** to make the current project embed its rebinned
+datasets and dataset-group composites when saved. Saving checks every configured
+binning, reuses those whose signatures are current, and recomputes only missing
+or stale entries. New projects default to leaving this option off. Unlike
+application preferences, this checkbox is stored in the `.nfit` project.
+
 **View in data viewer** opens a new, independent window each time, so several
 datasets or views of the same dataset can remain visible side by side. Use
 **Open new viewer** beside the visualization selector to duplicate the current
