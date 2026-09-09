@@ -26,6 +26,8 @@ sharing:
 
 Dataset fit weights control statistical influence. A zero-weight dataset is
 excluded from optimization but evaluated once afterward for visualization.
+Named visualization binnings use this same post-fit path automatically; only
+the named binning marked **Use for fitting** is included in fit iterations.
 Disabling a dataset or dataset group has the same fitting behavior: its model
 is not evaluated during optimizer or sampler iterations, it contributes no
 chi-squared, and it is omitted from fit reports. nfit evaluates it once after a

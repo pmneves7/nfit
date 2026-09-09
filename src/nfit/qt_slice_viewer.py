@@ -124,6 +124,14 @@ class QtMDHistoSliceViewer:
         cmap = default_continuous_colormap() if cmap is None else cmap
         self.datasets = _coerce_datasets(data)
         self.dataset_names = _coerce_dataset_names(self.datasets, dataset_names)
+        self.source_dataset_names = [
+            str(getattr(item, "metadata", {}).get("source_dataset_name", name))
+            for item, name in zip(self.datasets, self.dataset_names, strict=True)
+        ]
+        self.binning_names = [
+            str(getattr(item, "metadata", {}).get("binning_name", "Default"))
+            for item in self.datasets
+        ]
         self.dataset_group_keys = _coerce_dataset_group_keys(
             self.datasets,
             dataset_group_keys,
@@ -164,6 +172,7 @@ class QtMDHistoSliceViewer:
         self.colorbar = None
         self.rectangle_selector = None
         self.dataset_combo = None
+        self.binning_combo = None
         self.axes_group = None
         self.show_fit_check = None
         self.unmask_model_check = None
@@ -429,6 +438,7 @@ class QtMDHistoSliceViewer:
         dataset_names: Sequence[str] | None = None,
         dataset_group_keys: Sequence[str] | None = None,
         selected_dataset_name: str | None = None,
+        selected_binning_name: str | None = None,
     ) -> None:
         """Update displayed datasets in place while preserving viewer state."""
 
@@ -446,6 +456,14 @@ class QtMDHistoSliceViewer:
         )
         self.datasets = _coerce_datasets(data)
         self.dataset_names = _coerce_dataset_names(self.datasets, dataset_names)
+        self.source_dataset_names = [
+            str(getattr(item, "metadata", {}).get("source_dataset_name", name))
+            for item, name in zip(self.datasets, self.dataset_names, strict=True)
+        ]
+        self.binning_names = [
+            str(getattr(item, "metadata", {}).get("binning_name", "Default"))
+            for item in self.datasets
+        ]
         self.dataset_group_keys = _coerce_dataset_group_keys(
             self.datasets,
             dataset_group_keys,
@@ -454,7 +472,22 @@ class QtMDHistoSliceViewer:
             self.content_stack.setCurrentIndex(0)
             self.view_mode_combo.setCurrentIndex(0)
             self._close_volume_panel()
-        if current_name in self.dataset_names:
+        if selected_dataset_name is not None:
+            candidates = [
+                index
+                for index, source in enumerate(self.source_dataset_names)
+                if source == selected_dataset_name
+            ]
+            preferred = next(
+                (
+                    index
+                    for index in candidates
+                    if self.binning_names[index] == selected_binning_name
+                ),
+                candidates[0] if candidates else None,
+            )
+            new_index = preferred if preferred is not None else min(self.dataset_index, len(self.datasets) - 1)
+        elif current_name in self.dataset_names:
             new_index = self.dataset_names.index(current_name)
         else:
             new_index = min(self.dataset_index, len(self.datasets) - 1)
@@ -486,8 +519,49 @@ class QtMDHistoSliceViewer:
             state = self._default_dataset_state(new_index)
             self._dataset_states[new_index] = state
         self.dataset_index = new_index
-        self._set_combo_items_silent(self.dataset_combo, self.dataset_names, self.dataset_names[new_index])
+        self._sync_dataset_binning_combos()
         self._restore_dataset_state(state)
+
+    def _source_dataset_options(self) -> list[str]:
+        return list(dict.fromkeys(self.source_dataset_names))
+
+    def _sync_dataset_binning_combos(self) -> None:
+        if self.dataset_combo is None or self.binning_combo is None:
+            return
+        source = self.source_dataset_names[self.dataset_index]
+        options = self._source_dataset_options()
+        self._set_combo_items_silent(self.dataset_combo, options, source)
+        indices = [
+            index for index, value in enumerate(self.source_dataset_names) if value == source
+        ]
+        names = [self.binning_names[index] for index in indices]
+        self._set_combo_items_silent(
+            self.binning_combo, names, self.binning_names[self.dataset_index]
+        )
+        self.binning_combo.setEnabled(len(indices) > 1)
+
+    def _set_dataset_selection(self, index: int) -> None:
+        options = self._source_dataset_options()
+        if not (0 <= int(index) < len(options)):
+            return
+        source = options[int(index)]
+        candidates = [
+            candidate
+            for candidate, value in enumerate(self.source_dataset_names)
+            if value == source
+        ]
+        if candidates:
+            self._set_dataset_index(candidates[0])
+
+    def _set_binning_selection(self, index: int) -> None:
+        source = self.source_dataset_names[self.dataset_index]
+        candidates = [
+            candidate
+            for candidate, value in enumerate(self.source_dataset_names)
+            if value == source
+        ]
+        if 0 <= int(index) < len(candidates):
+            self._set_dataset_index(candidates[int(index)])
 
     def set_bragg_peak_overlay(self, peaks: Any | None, *, dataset_name: str | None = None) -> None:
         """Overlay accepted and rejected Bragg reflections on 2D momentum views."""
@@ -539,12 +613,13 @@ class QtMDHistoSliceViewer:
             if self._waterfall_mode_active()
             else "slice"
         )
-        dataset_name = self.dataset_combo.currentText()
+        dataset_name = self.source_dataset_names[self.dataset_index]
         if view_mode == "volumetric" and self.volume_panel is not None:
             dataset_name = self.volume_panel.dataset_combo.currentText()
         return {
             "view_mode": view_mode,
             "dataset_name": dataset_name,
+            "binning_name": self.binning_names[self.dataset_index],
             "x_dim": self.data.axes[self.model.x_dim].name,
             "y_dim": self.data.axes[self.model.y_dim].name,
             "channel": self.model.channel,
@@ -631,8 +706,18 @@ class QtMDHistoSliceViewer:
         """Restore a saved plot recipe into the interactive controls."""
 
         dataset_name = settings.get("dataset_name")
-        if dataset_name in self.dataset_names:
-            self.dataset_combo.setCurrentIndex(self.dataset_names.index(dataset_name))
+        binning_name = settings.get("binning_name")
+        selected = next(
+            (
+                index
+                for index, source in enumerate(self.source_dataset_names)
+                if source == dataset_name
+                and (binning_name is None or self.binning_names[index] == binning_name)
+            ),
+            None,
+        )
+        if selected is not None:
+            self._set_dataset_index(selected)
         x_name = settings.get("x_dim")
         y_name = settings.get("y_dim")
         names = [axis.name for axis in self.data.axes]
@@ -1595,6 +1680,7 @@ class QtMDHistoSliceViewer:
             self._dataset_states[index] = state
         self.dataset_index = index
         self._restore_dataset_state(state)
+        self._sync_dataset_binning_combos()
 
     def _capture_dataset_state(self) -> _DatasetViewState:
         xlim = None

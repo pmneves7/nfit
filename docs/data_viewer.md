@@ -33,6 +33,13 @@ an independent viewer initialized from the current dataset and view settings.
 branch and reports the stored recipe name in the viewer.
 Closing one viewer does not affect the others.
 
+The controls are ordered **Dataset**, **Binning**, then **Channel**. Dataset
+selects the source dataset or composite; Binning selects one of its enabled
+named grids without duplicating that source in the Dataset menu. Only the
+configuration marked **Use for fitting** contributes during optimization.
+Visualization configurations can use different axes, limits, or resolutions,
+and receive model and residual channels from the final fitted parameters.
+
 ## Slices, lines, and maps
 
 Choose the displayed axes and use the remaining-axis controls to select one bin

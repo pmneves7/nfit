@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 from datetime import datetime
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 
@@ -509,6 +510,8 @@ from .symmetry import (  # noqa: F401
 )
 
 DATASET_REBIN_KEY = "rebin"
+DATASET_REBIN_BINNINGS_KEY = "rebin_binnings"
+FIT_BINNING_ID = "fit"
 DATASET_MASK_APPLICATION_KEY = "mask_application"
 GROUP_COMPOSITE_NAME = "Composite"
 DERIVED_RECIPE_KEY = "derived_recipe"
@@ -865,6 +868,8 @@ def dataset_for_slice_viewer(
     force_rebin: bool = True,
     force_masks: bool = True,
     progress_callback: Any | None = None,
+    rebin_config: dict[str, Any] | None = None,
+    cache_id: str | None = None,
 ) -> MDHistoData | PointListData | PointData4D | None:
     """Return a viewer-ready dataset, loading from source metadata if needed.
 
@@ -878,6 +883,8 @@ def dataset_for_slice_viewer(
         force_rebin=force_rebin,
         force_masks=force_masks,
         progress_callback=progress_callback,
+        rebin_config=rebin_config,
+        cache_id=cache_id,
     )
     if result is None:
         return None
@@ -899,10 +906,15 @@ def _mask_signature(masks: list[MaskSpec] | None) -> list[Any]:
     ]
 
 
-def _viewer_view_signature(dataset: DatasetEntry, extra_masks: list[MaskSpec] | None) -> str:
+def _viewer_view_signature(
+    dataset: DatasetEntry,
+    extra_masks: list[MaskSpec] | None,
+    rebin_config: dict[str, Any] | None = None,
+) -> str:
+    config = rebin_config if rebin_config is not None else dataset_rebin_config(dataset)
     rebin = (
-        json.dumps(dataset_rebin_config(dataset), sort_keys=True, default=str)
-        if dataset_rebin_enabled(dataset)
+        json.dumps(config, sort_keys=True, default=str)
+        if bool(config.get("enabled"))
         else None
     )
     payload = [
@@ -968,9 +980,12 @@ def _viewer_data_before_scale(
     force_rebin: bool = True,
     force_masks: bool = True,
     progress_callback: Any | None = None,
+    rebin_config: dict[str, Any] | None = None,
+    cache_id: str | None = None,
 ) -> MDHistoData | PointListData | None:
-    key = dataset.id
-    signature = _viewer_view_signature(dataset, extra_masks)
+    config = rebin_config if rebin_config is not None else dataset_rebin_config(dataset)
+    key = dataset.id if cache_id is None else f"{dataset.id}:{cache_id}"
+    signature = _viewer_view_signature(dataset, extra_masks, config)
     deferred_masks = _should_defer_dataset_masks(dataset, force_masks=force_masks)
     cached = _VIEWER_VIEW_CACHE.get(key)
     if cached is not None and cached[0] == signature:
@@ -980,7 +995,7 @@ def _viewer_data_before_scale(
         return cached[1]
     if cached is not None and deferred_masks:
         return cached[1]
-    if cached is not None and _should_defer_dataset_rebin(dataset, force_rebin=force_rebin):
+    if cached is not None and _should_defer_rebin_config(config, force_rebin=force_rebin):
         return cached[1]
     result = _viewer_data_before_scale_uncached(
         dataset,
@@ -988,13 +1003,14 @@ def _viewer_data_before_scale(
         force_rebin=force_rebin,
         force_masks=force_masks,
         progress_callback=progress_callback,
+        rebin_config=config,
     )
     if isinstance(result, MDHistoData) and dataset.backgrounds:
         result = _apply_dataset_backgrounds(dataset, result)
     if result is not None and not deferred_masks:
         # Recompute the signature: the uncached path may have lazily loaded the
         # data and incremented the dataset revision.
-        signature = _viewer_view_signature(dataset, extra_masks)
+        signature = _viewer_view_signature(dataset, extra_masks, config)
         _lru_store(
             _VIEWER_VIEW_CACHE,
             key,
@@ -1010,11 +1026,15 @@ def _peek_cached_dataset_view(
     dataset: DatasetEntry,
     *,
     extra_masks: list[MaskSpec] | None = None,
+    rebin_config: dict[str, Any] | None = None,
+    cache_id: str | None = None,
 ) -> MDHistoData | PointListData | None:
     """Return a current cached viewer payload without starting any computation."""
 
-    cached = _VIEWER_VIEW_CACHE.get(dataset.id)
-    if cached is None or cached[0] != _viewer_view_signature(dataset, extra_masks):
+    config = rebin_config if rebin_config is not None else dataset_rebin_config(dataset)
+    key = dataset.id if cache_id is None else f"{dataset.id}:{cache_id}"
+    cached = _VIEWER_VIEW_CACHE.get(key)
+    if cached is None or cached[0] != _viewer_view_signature(dataset, extra_masks, config):
         return None
     return cached[1]
 
@@ -1053,13 +1073,15 @@ def _viewer_data_before_scale_uncached(
     force_rebin: bool = True,
     force_masks: bool = True,
     progress_callback: Any | None = None,
+    rebin_config: dict[str, Any] | None = None,
 ) -> MDHistoData | PointListData | None:
+    config = rebin_config if rebin_config is not None else dataset_rebin_config(dataset)
     if isinstance(dataset.metadata.get(DERIVED_RECIPE_KEY), dict):
         derived = derived_analysis_dataset_data(
             dataset,
             progress_callback=progress_callback,
         )
-        dataset_rebin_config(dataset)["stale"] = False
+        config["stale"] = False
         if isinstance(derived, MDHistoData):
             return _mdhisto_with_nfit_masks(
                 dataset,
@@ -1071,37 +1093,197 @@ def _viewer_data_before_scale_uncached(
     if data_type_container(dataset.data_type) == "point_list" or isinstance(loaded, PointListData):
         if not isinstance(loaded, PointListData):
             return None
-        if dataset_rebin_enabled(dataset):
-            if _should_defer_dataset_rebin(dataset, force_rebin=force_rebin):
+        if bool(config.get("enabled")):
+            if _should_defer_rebin_config(config, force_rebin=force_rebin):
                 return prepared_point_list_data(dataset)
-            return rebinned_dataset_data(dataset, progress_callback=progress_callback)
+            return rebinned_dataset_data(
+                dataset, progress_callback=progress_callback, config_override=config
+            )
         return prepared_point_list_data(dataset)
     if isinstance(loaded, MDHistoData):
         if _should_defer_dataset_masks(dataset, force_masks=force_masks):
             return _mdhisto_without_nfit_masks(loaded)
-        if dataset_rebin_enabled(dataset):
-            if _should_defer_dataset_rebin(dataset, force_rebin=force_rebin):
+        if bool(config.get("enabled")):
+            if _should_defer_rebin_config(config, force_rebin=force_rebin):
                 return _mdhisto_with_nfit_masks(dataset, data=loaded, extra_masks=extra_masks)
             return rebinned_dataset_data(
-                dataset, extra_masks=extra_masks, progress_callback=progress_callback
+                dataset,
+                extra_masks=extra_masks,
+                progress_callback=progress_callback,
+                config_override=config,
             )
         return _mdhisto_with_nfit_masks(dataset, data=loaded, extra_masks=extra_masks)
     if isinstance(loaded, PointData4D):
-        if dataset_rebin_enabled(dataset):
+        if bool(config.get("enabled")):
             return rebinned_dataset_data(
-                dataset, extra_masks=extra_masks, progress_callback=progress_callback
+                dataset,
+                extra_masks=extra_masks,
+                progress_callback=progress_callback,
+                config_override=config,
             )
         return _point_data_with_nfit_masks(dataset, loaded, extra_masks=extra_masks)
     return None
 
 
-def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
-    """Return a dataset rebin configuration, creating default axis settings if needed."""
+def _dataset_rebin_registry(dataset: DatasetEntry) -> dict[str, Any]:
+    registry = dataset.parameters.get(DATASET_REBIN_BINNINGS_KEY)
+    if not isinstance(registry, dict):
+        registry = {"fit_name": "Default", "items": []}
+        dataset.parameters[DATASET_REBIN_BINNINGS_KEY] = registry
+    registry.setdefault("fit_name", "Default")
+    if not isinstance(registry.get("items"), list):
+        registry["items"] = []
+    return registry
 
-    config = dataset.parameters.get(DATASET_REBIN_KEY)
-    if not isinstance(config, dict):
-        config = {}
-        dataset.parameters[DATASET_REBIN_KEY] = config
+
+def dataset_rebin_binnings(dataset: DatasetEntry) -> list[dict[str, Any]]:
+    """Return all named dataset binnings, with the fit binning first."""
+
+    fit = dataset_rebin_config(dataset)
+    registry = _dataset_rebin_registry(dataset)
+    fit_id = str(fit.setdefault("_binning_id", FIT_BINNING_ID))
+    result = [
+        {
+            "id": fit_id,
+            "name": str(registry.get("fit_name") or "Default"),
+            "fit": True,
+            "config": fit,
+        }
+    ]
+    seen = {fit_id}
+    sanitized = []
+    for item in registry["items"]:
+        if not isinstance(item, dict) or not isinstance(item.get("config"), dict):
+            continue
+        binning_id = str(item.get("id") or uuid4().hex)
+        if binning_id in seen:
+            binning_id = uuid4().hex
+        seen.add(binning_id)
+        name = str(item.get("name") or f"Binning {len(result) + 1}")
+        config = dataset_rebin_config(dataset, config_override=item["config"])
+        config["_binning_id"] = binning_id
+        sanitized_item = {"id": binning_id, "name": name, "config": config}
+        sanitized.append(sanitized_item)
+        result.append({**sanitized_item, "fit": False})
+    registry["items"] = sanitized
+    return result
+
+
+def dataset_rebin_config_by_id(dataset: DatasetEntry, binning_id: str) -> dict[str, Any]:
+    """Return one named dataset binning by stable identifier."""
+
+    for item in dataset_rebin_binnings(dataset):
+        if item["id"] == str(binning_id):
+            return item["config"]
+    raise KeyError(f"unknown dataset binning ID {binning_id!r}")
+
+
+def add_dataset_rebin_binning(
+    dataset: DatasetEntry,
+    *,
+    name: str | None = None,
+    duplicate_from: str | None = None,
+) -> str:
+    """Add a named visualization binning and return its identifier."""
+
+    binnings = dataset_rebin_binnings(dataset)
+    source = (
+        dataset_rebin_config_by_id(dataset, duplicate_from)
+        if duplicate_from is not None
+        else binnings[0]["config"]
+    )
+    existing = {str(item["name"]).casefold() for item in binnings}
+    base = str(name or "New binning").strip() or "New binning"
+    candidate = base
+    suffix = 2
+    while candidate.casefold() in existing:
+        candidate = f"{base} {suffix}"
+        suffix += 1
+    binning_id = uuid4().hex
+    config = copy.deepcopy(source)
+    config["_binning_id"] = binning_id
+    config["stale"] = True
+    _dataset_rebin_registry(dataset)["items"].append(
+        {"id": binning_id, "name": candidate, "config": config}
+    )
+    return binning_id
+
+
+def rename_dataset_rebin_binning(
+    dataset: DatasetEntry, binning_id: str, name: str
+) -> None:
+    """Rename one dataset binning while requiring unique non-empty names."""
+
+    cleaned = str(name).strip()
+    if not cleaned:
+        raise ValueError("binning name cannot be empty")
+    binnings = dataset_rebin_binnings(dataset)
+    if any(
+        item["id"] != str(binning_id)
+        and str(item["name"]).casefold() == cleaned.casefold()
+        for item in binnings
+    ):
+        raise ValueError(f"binning name {cleaned!r} is already in use")
+    registry = _dataset_rebin_registry(dataset)
+    if binnings[0]["id"] == str(binning_id):
+        registry["fit_name"] = cleaned
+        return
+    for item in registry["items"]:
+        if item["id"] == str(binning_id):
+            item["name"] = cleaned
+            return
+    raise KeyError(f"unknown dataset binning ID {binning_id!r}")
+
+
+def remove_dataset_rebin_binning(dataset: DatasetEntry, binning_id: str) -> None:
+    """Remove a visualization binning; the fit binning cannot be removed."""
+
+    binnings = dataset_rebin_binnings(dataset)
+    if binnings[0]["id"] == str(binning_id):
+        raise ValueError("the fit binning cannot be removed")
+    registry = _dataset_rebin_registry(dataset)
+    before = len(registry["items"])
+    registry["items"] = [
+        item for item in registry["items"] if item["id"] != str(binning_id)
+    ]
+    if len(registry["items"]) == before:
+        raise KeyError(f"unknown dataset binning ID {binning_id!r}")
+
+
+def make_dataset_fit_binning(dataset: DatasetEntry, binning_id: str) -> None:
+    """Designate one named binning as the dataset's canonical fit binning."""
+
+    binnings = dataset_rebin_binnings(dataset)
+    current = binnings[0]
+    chosen = next((item for item in binnings if item["id"] == str(binning_id)), None)
+    if chosen is None:
+        raise KeyError(f"unknown dataset binning ID {binning_id!r}")
+    if chosen["fit"]:
+        return
+    registry = _dataset_rebin_registry(dataset)
+    selected_item = next(item for item in registry["items"] if item["id"] == chosen["id"])
+    old_config = copy.deepcopy(current["config"])
+    old_name = str(current["name"])
+    new_config = copy.deepcopy(selected_item["config"])
+    dataset.parameters[DATASET_REBIN_KEY] = new_config
+    registry["fit_name"] = str(selected_item["name"])
+    selected_item.update(id=current["id"], name=old_name, config=old_config)
+
+
+def dataset_rebin_config(
+    dataset: DatasetEntry,
+    *,
+    config_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return and normalize a dataset rebin configuration."""
+
+    config = config_override
+    if config is None:
+        config = dataset.parameters.get(DATASET_REBIN_KEY)
+        if not isinstance(config, dict):
+            config = {}
+            dataset.parameters[DATASET_REBIN_KEY] = config
+    config.setdefault("_binning_id", FIT_BINNING_ID)
     initialize_rebin_performance(config)
     config.setdefault("enabled", False)
     if not isinstance(config.get("symmetry"), dict):
@@ -1411,11 +1593,15 @@ def _dataset_rebin_is_stale(dataset: DatasetEntry) -> bool:
 
 
 def _should_defer_dataset_rebin(dataset: DatasetEntry, *, force_rebin: bool) -> bool:
+    return _should_defer_rebin_config(dataset_rebin_config(dataset), force_rebin=force_rebin)
+
+
+def _should_defer_rebin_config(config: Mapping[str, Any], *, force_rebin: bool) -> bool:
     return bool(
-        dataset_rebin_enabled(dataset)
+        config.get("enabled")
         and not force_rebin
-        and _dataset_rebin_is_stale(dataset)
-        and not _dataset_rebin_auto_enabled(dataset)
+        and config.get("stale", False)
+        and not config.get("auto_rebin", True)
     )
 
 
@@ -1424,14 +1610,18 @@ def rebinned_dataset_data(
     *,
     extra_masks: list[MaskSpec] | None = None,
     progress_callback: Any | None = None,
+    config_override: dict[str, Any] | None = None,
 ) -> Any:
     """Return a rebinned copy using the saved configuration and worker ceiling."""
     from ._parallel import thread_budget
 
-    config = dataset_rebin_config(dataset)
+    config = dataset_rebin_config(dataset, config_override=config_override)
     with thread_budget(config.get("workers")):
         return _rebinned_dataset_data(
-            dataset, extra_masks=extra_masks, progress_callback=progress_callback
+            dataset,
+            extra_masks=extra_masks,
+            progress_callback=progress_callback,
+            config_override=config,
         )
 
 
@@ -1440,10 +1630,11 @@ def _rebinned_dataset_data(
     *,
     extra_masks: list[MaskSpec] | None = None,
     progress_callback: Any | None = None,
+    config_override: dict[str, Any] | None = None,
 ) -> Any:
     """Return a rebinned copy of a supported dataset according to its configuration."""
 
-    config = dataset_rebin_config(dataset)
+    config = dataset_rebin_config(dataset, config_override=config_override)
     if isinstance(dataset.data, PointListData):
         result = _rebin_point_list_data(dataset, config)
         config["stale"] = False
@@ -1542,6 +1733,7 @@ def create_rebinned_dataset(
     *,
     name: str | None = None,
     progress_callback: Any | None = None,
+    config_override: dict[str, Any] | None = None,
 ) -> DatasetEntry:
     """Materialize a dataset's rebinned view as an independent dataset."""
 
@@ -1549,6 +1741,7 @@ def create_rebinned_dataset(
         dataset,
         extra_masks=effective_dataset_masks(group, dataset),
         progress_callback=progress_callback,
+        config_override=config_override,
     )
     parameters = {}
     for key in (
@@ -1567,6 +1760,7 @@ def create_rebinned_dataset(
             **copy.deepcopy(dataset.metadata),
             "source_dataset": dataset.name,
             "rebin_materialized": True,
+            "binning_id": (config_override or {}).get("_binning_id", FIT_BINNING_ID),
         },
         parameters=parameters,
         masks=copy.deepcopy(dataset.masks),
@@ -1617,7 +1811,14 @@ _CompositeScope = _project_composites._CompositeScope
 _composite_scope = _project_composites._composite_scope
 _composite_root = _project_composites._composite_root
 _composite_cache_key = _project_composites._composite_cache_key
+GROUP_COMPOSITE_BINNINGS_KEY = _project_composites.GROUP_COMPOSITE_BINNINGS_KEY
 data_group_composite_config = _project_composites.data_group_composite_config
+data_group_composite_binnings = _project_composites.data_group_composite_binnings
+data_group_composite_config_by_id = _project_composites.data_group_composite_config_by_id
+add_data_group_composite_binning = _project_composites.add_data_group_composite_binning
+rename_data_group_composite_binning = _project_composites.rename_data_group_composite_binning
+remove_data_group_composite_binning = _project_composites.remove_data_group_composite_binning
+make_data_group_fit_binning = _project_composites.make_data_group_fit_binning
 _composite_source_points = _project_composites._composite_source_points
 _dataset_collection_point_count = _project_composites._dataset_collection_point_count
 _composite_output_bins = _project_composites._composite_output_bins

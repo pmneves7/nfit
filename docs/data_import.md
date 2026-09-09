@@ -379,6 +379,7 @@ implementation without Qt widgets.
 
 Rebinning affects both viewing and fitting. It supports:
 
+- multiple named rebin configurations for each dataset or dataset collection;
 - per-axis **Discrete**, **Step**, **Bins**, **Edges**, or **Tolerance** modes;
 - inverse-variance or uniform averaging;
 - independently selectable fractional or discrete assignment on Step, Bins, and Edges grids;
@@ -387,6 +388,16 @@ Rebinning affects both viewing and fitting. It supports:
 - projected HKLE coordinate bases;
 - point-group symmetry expansion; and
 - bounded batch sizes for temporary working memory.
+
+The **Binning** selector above the settings chooses which named configuration
+is being edited. **Add…** creates a visualization configuration from the fit
+configuration, while **Duplicate** copies the selected configuration. Rename or
+remove visualization configurations as needed, and select **Use for fitting**
+to designate a different configuration as the sole fit rebin. The remaining
+enabled configurations have zero fit weight: they are not prepared during
+optimizer or sampler iterations, but nfit evaluates the fitted model on them
+once afterward for plotting. A dataset and a collection each have their own
+independent list of named configurations.
 
 Every physical axis has two independent selectors. **Grid** constructs the bin
 coordinates with Discrete, Step, Bins, Edges, or Tolerance. **Mode** controls
@@ -490,7 +501,8 @@ coverage falls back to covered/uncovered native bins. Point collections that
 do not define source-cell geometry cannot provide sub-bin geometric coverage;
 their populated-bin behavior is unchanged.
 
-**Copy settings** and **Paste settings** transfer compatible rebin recipes.
+**Copy settings** and **Paste settings** transfer the selected compatible rebin
+recipe.
 **Create dataset from rebin** materializes an independent project dataset.
 For a dataset collection, **Create dataset from composite** stores the current
 composite inside the `.nfit` archive. Project-owned materializations load lazily

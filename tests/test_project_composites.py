@@ -116,3 +116,37 @@ def test_composite_policy_reads_live_project_data_constants(monkeypatch) -> None
     config = project_composites.data_group_composite_config(group)
 
     assert config["auto_rebin"] is False
+
+
+def test_named_composite_binnings_are_independent_and_have_one_fit_configuration() -> None:
+    group = DataGroup(
+        "combined",
+        datasets=[DatasetEntry("scan", _histogram([1.0, 2.0]), kind="mdhisto")],
+    )
+    fit = project_composites.data_group_composite_config(group)
+    fit["axes"][0]["step_size"] = 1.0
+    auxiliary_id = project_composites.add_data_group_composite_binning(
+        group,
+        name="Presentation",
+        duplicate_from=fit["_binning_id"],
+    )
+    auxiliary = project_composites.data_group_composite_config_by_id(
+        group, auxiliary_id
+    )
+    auxiliary["axes"][0]["step_size"] = 0.25
+
+    project_composites.make_data_group_fit_binning(group, auxiliary_id)
+    binnings = project_composites.data_group_composite_binnings(group)
+
+    assert [(item["name"], item["fit"]) for item in binnings] == [
+        ("Presentation", True),
+        ("Default", False),
+    ]
+    assert binnings[0]["config"]["axes"][0]["step_size"] == 0.25
+    assert binnings[1]["config"]["axes"][0]["step_size"] == 1.0
+    project_composites.rename_data_group_composite_binning(
+        group, binnings[1]["id"], "Original"
+    )
+    assert [
+        item["name"] for item in project_composites.data_group_composite_binnings(group)
+    ] == ["Presentation", "Original"]

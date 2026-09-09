@@ -14,6 +14,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 
@@ -54,6 +55,8 @@ DEFAULT_REBIN_MAX_BATCH_MB = 192
 REBIN_AUTO_MAX_CONTRIBUTIONS = 5_000_000
 REBIN_AUTO_MAX_OUTPUT_BINS = 2_000_000
 REBIN_RESOLUTION_MODE_KEY = "resolution_mode"
+GROUP_COMPOSITE_BINNINGS_KEY = "composite_binnings"
+FIT_BINNING_ID = "fit"
 
 _BACKEND_NAMESPACE: Mapping[str, Any] | None = None
 
@@ -158,7 +161,7 @@ _validate_mdhisto_rebin_basis = _backend_function("_validate_mdhisto_rebin_basis
 _viewer_view_signature = _backend_function("_viewer_view_signature")
 effective_dataset_masks = _backend_function("effective_dataset_masks")
 
-_COMPOSITE_DATA_CACHE: OrderedDict[int, tuple[str, Any]] = OrderedDict()
+_COMPOSITE_DATA_CACHE: OrderedDict[Any, tuple[str, Any]] = OrderedDict()
 _COMPOSITE_DATA_CACHE_LIMIT = 64
 _COMPOSITE_DATA_CACHE_MAX_BYTES = 256 * 1024**2
 
@@ -205,17 +208,165 @@ def _composite_root(group: DataGroup | _CompositeScope) -> DataGroup:
     return group.root if isinstance(group, _CompositeScope) else group
 
 
-def _composite_cache_key(group: DataGroup | _CompositeScope) -> int:
-    return id(group.node) if isinstance(group, _CompositeScope) else id(group)
+def _composite_cache_key(
+    group: DataGroup | _CompositeScope, binning_id: str | None = None
+) -> Any:
+    owner_id = id(group.node) if isinstance(group, _CompositeScope) else id(group)
+    return owner_id if binning_id is None else (owner_id, str(binning_id))
 
 
-def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str, Any]:
-    """Return the group-level composite dataset configuration."""
+def _composite_rebin_registry(group: DataGroup | _CompositeScope) -> dict[str, Any]:
+    registry = group.metadata.get(GROUP_COMPOSITE_BINNINGS_KEY)
+    if not isinstance(registry, dict):
+        registry = {"fit_name": "Default", "items": []}
+        group.metadata[GROUP_COMPOSITE_BINNINGS_KEY] = registry
+    registry.setdefault("fit_name", "Default")
+    if not isinstance(registry.get("items"), list):
+        registry["items"] = []
+    return registry
 
-    config = group.metadata.get(GROUP_COMPOSITE_KEY)
-    if not isinstance(config, dict):
-        config = {}
-        group.metadata[GROUP_COMPOSITE_KEY] = config
+
+def data_group_composite_binnings(
+    group: DataGroup | _CompositeScope,
+) -> list[dict[str, Any]]:
+    """Return all named composite binnings, with the fit binning first."""
+
+    fit = data_group_composite_config(group)
+    registry = _composite_rebin_registry(group)
+    fit_id = str(fit.setdefault("_binning_id", FIT_BINNING_ID))
+    result = [{
+        "id": fit_id,
+        "name": str(registry.get("fit_name") or "Default"),
+        "fit": True,
+        "config": fit,
+    }]
+    seen = {fit_id}
+    sanitized = []
+    for item in registry["items"]:
+        if not isinstance(item, dict) or not isinstance(item.get("config"), dict):
+            continue
+        binning_id = str(item.get("id") or uuid4().hex)
+        if binning_id in seen:
+            binning_id = uuid4().hex
+        seen.add(binning_id)
+        name = str(item.get("name") or f"Binning {len(result) + 1}")
+        config = data_group_composite_config(group, config_override=item["config"])
+        config["_binning_id"] = binning_id
+        sanitized_item = {"id": binning_id, "name": name, "config": config}
+        sanitized.append(sanitized_item)
+        result.append({**sanitized_item, "fit": False})
+    registry["items"] = sanitized
+    return result
+
+
+def data_group_composite_config_by_id(
+    group: DataGroup | _CompositeScope, binning_id: str
+) -> dict[str, Any]:
+    for item in data_group_composite_binnings(group):
+        if item["id"] == str(binning_id):
+            return item["config"]
+    raise KeyError(f"unknown composite binning ID {binning_id!r}")
+
+
+def add_data_group_composite_binning(
+    group: DataGroup | _CompositeScope,
+    *,
+    name: str | None = None,
+    duplicate_from: str | None = None,
+) -> str:
+    binnings = data_group_composite_binnings(group)
+    source = (
+        data_group_composite_config_by_id(group, duplicate_from)
+        if duplicate_from is not None
+        else binnings[0]["config"]
+    )
+    existing = {str(item["name"]).casefold() for item in binnings}
+    base = str(name or "New binning").strip() or "New binning"
+    candidate = base
+    suffix = 2
+    while candidate.casefold() in existing:
+        candidate = f"{base} {suffix}"
+        suffix += 1
+    binning_id = uuid4().hex
+    config = copy.deepcopy(source)
+    config["_binning_id"] = binning_id
+    config["stale"] = True
+    _composite_rebin_registry(group)["items"].append(
+        {"id": binning_id, "name": candidate, "config": config}
+    )
+    return binning_id
+
+
+def rename_data_group_composite_binning(
+    group: DataGroup | _CompositeScope, binning_id: str, name: str
+) -> None:
+    cleaned = str(name).strip()
+    if not cleaned:
+        raise ValueError("binning name cannot be empty")
+    binnings = data_group_composite_binnings(group)
+    if any(
+        item["id"] != str(binning_id)
+        and str(item["name"]).casefold() == cleaned.casefold()
+        for item in binnings
+    ):
+        raise ValueError(f"binning name {cleaned!r} is already in use")
+    registry = _composite_rebin_registry(group)
+    if binnings[0]["id"] == str(binning_id):
+        registry["fit_name"] = cleaned
+        return
+    for item in registry["items"]:
+        if item["id"] == str(binning_id):
+            item["name"] = cleaned
+            return
+    raise KeyError(f"unknown composite binning ID {binning_id!r}")
+
+
+def remove_data_group_composite_binning(
+    group: DataGroup | _CompositeScope, binning_id: str
+) -> None:
+    binnings = data_group_composite_binnings(group)
+    if binnings[0]["id"] == str(binning_id):
+        raise ValueError("the fit binning cannot be removed")
+    registry = _composite_rebin_registry(group)
+    before = len(registry["items"])
+    registry["items"] = [item for item in registry["items"] if item["id"] != str(binning_id)]
+    if len(registry["items"]) == before:
+        raise KeyError(f"unknown composite binning ID {binning_id!r}")
+
+
+def make_data_group_fit_binning(
+    group: DataGroup | _CompositeScope, binning_id: str
+) -> None:
+    binnings = data_group_composite_binnings(group)
+    current = binnings[0]
+    chosen = next((item for item in binnings if item["id"] == str(binning_id)), None)
+    if chosen is None:
+        raise KeyError(f"unknown composite binning ID {binning_id!r}")
+    if chosen["fit"]:
+        return
+    registry = _composite_rebin_registry(group)
+    selected_item = next(item for item in registry["items"] if item["id"] == chosen["id"])
+    old_config = copy.deepcopy(current["config"])
+    old_name = str(current["name"])
+    group.metadata[GROUP_COMPOSITE_KEY] = copy.deepcopy(selected_item["config"])
+    registry["fit_name"] = str(selected_item["name"])
+    selected_item.update(id=current["id"], name=old_name, config=old_config)
+
+
+def data_group_composite_config(
+    group: DataGroup | _CompositeScope,
+    *,
+    config_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return and normalize one group-level composite configuration."""
+
+    config = config_override
+    if config is None:
+        config = group.metadata.get(GROUP_COMPOSITE_KEY)
+        if not isinstance(config, dict):
+            config = {}
+            group.metadata[GROUP_COMPOSITE_KEY] = config
+    config.setdefault("_binning_id", FIT_BINNING_ID)
     initialize_rebin_performance(config)
     config.setdefault("enabled", False)
     if not isinstance(config.get("symmetry"), dict):
@@ -638,13 +789,20 @@ def _source_data_for_group_composite(
 
 def _composite_cache_signature(
     group: DataGroup,
-    _trail: frozenset[int] = frozenset(),
+    _trail: frozenset[Any] = frozenset(),
+    *,
+    config_override: Mapping[str, Any] | None = None,
+    binning_id: str | None = None,
 ) -> str:
-    cache_key = _composite_cache_key(group)
+    cache_key = _composite_cache_key(group, binning_id)
     if cache_key in _trail:
         raise ValueError("composite dependency cycle through a live group background")
     trail = _trail | {cache_key}
-    config = data_group_composite_config(group)
+    config = (
+        data_group_composite_config(group)
+        if config_override is None
+        else data_group_composite_config(group, config_override=dict(config_override))
+    )
     child_scopes = _hierarchical_composite_scopes(group)
     payload = [
         json.dumps(config, sort_keys=True, default=str),
@@ -1326,21 +1484,40 @@ def _cached_composite_dataset_data(
     *,
     force_rebin: bool = True,
     progress_callback: Any | None = None,
+    config_override: dict[str, Any] | None = None,
+    binning_id: str | None = None,
 ) -> MDHistoData | PointListData | PointData4D | None:
-    signature = _composite_cache_signature(group)
-    cache_key = _composite_cache_key(group)
+    signature = _composite_cache_signature(
+        group, config_override=config_override, binning_id=binning_id
+    )
+    cache_key = _composite_cache_key(group, binning_id)
     cached = _COMPOSITE_DATA_CACHE.get(cache_key)
     if cached is not None and cached[0] == signature:
         _COMPOSITE_DATA_CACHE.move_to_end(cache_key)
         return cached[1]
-    if cached is not None and _should_defer_composite_rebin(group, force_rebin=force_rebin):
+    config = (
+        data_group_composite_config(group)
+        if config_override is None
+        else data_group_composite_config(group, config_override=config_override)
+    )
+    deferred = bool(
+        config.get("stale", False)
+        and not force_rebin
+        and not config.get("auto_rebin", True)
+    )
+    if cached is not None and deferred:
         return cached[1]
-    if _should_defer_composite_rebin(group, force_rebin=force_rebin):
+    if deferred:
         return None
-    result = composite_dataset_data(group, progress_callback=progress_callback)
-    config = data_group_composite_config(group)
+    result = composite_dataset_data(
+        group,
+        progress_callback=progress_callback,
+        config_override=config,
+    )
     config["stale"] = False
-    signature = _composite_cache_signature(group)
+    signature = _composite_cache_signature(
+        group, config_override=config, binning_id=binning_id
+    )
     _lru_store(
         _COMPOSITE_DATA_CACHE,
         cache_key,
@@ -1353,11 +1530,16 @@ def _cached_composite_dataset_data(
 
 def _peek_cached_composite_dataset_data(
     group: DataGroup | _CompositeScope,
+    *,
+    config_override: dict[str, Any] | None = None,
+    binning_id: str | None = None,
 ) -> MDHistoData | PointListData | PointData4D | None:
     """Return a current cached composite without starting any computation."""
 
-    cached = _COMPOSITE_DATA_CACHE.get(_composite_cache_key(group))
-    if cached is None or cached[0] != _composite_cache_signature(group):
+    cached = _COMPOSITE_DATA_CACHE.get(_composite_cache_key(group, binning_id))
+    if cached is None or cached[0] != _composite_cache_signature(
+        group, config_override=config_override, binning_id=binning_id
+    ):
         return None
     return cached[1]
 
@@ -1389,7 +1571,13 @@ def composite_dataset_entry(
             if first is not None
             else ""
         ),
-        metadata={"source_group": group.name, "composite": True},
+        metadata={
+            "source_group": group.name,
+            "composite": True,
+            "composite_scope_id": (
+                group.node.id if isinstance(group, _CompositeScope) else None
+            ),
+        },
         parameters=(
             {
                 SPECTRAL_CHANNEL_CONFIG_KEY: copy.deepcopy(
@@ -1412,11 +1600,16 @@ def materialize_composite_dataset(
     *,
     name: str | None = None,
     progress_callback: Any | None = None,
+    config_override: dict[str, Any] | None = None,
 ) -> DatasetEntry:
     """Store a current composite as a project-owned, reusable dataset."""
 
     scope = _composite_scope(group, node)
-    data = composite_dataset_data(scope, progress_callback=progress_callback)
+    data = composite_dataset_data(
+        scope,
+        progress_callback=progress_callback,
+        config_override=config_override,
+    )
     if not isinstance(data, MDHistoData):
         raise TypeError("materialized composites currently require gridded histogram data")
     source_name = scope.name
@@ -1428,7 +1621,11 @@ def materialize_composite_dataset(
         metadata={
             "materialized_from_composite": {
                 "source_group": source_name,
-                "config": copy.deepcopy(data_group_composite_config(scope)),
+                "config": copy.deepcopy(
+                    config_override
+                    if config_override is not None
+                    else data_group_composite_config(scope)
+                ),
             },
             "import_status": "loaded",
         },

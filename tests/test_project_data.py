@@ -238,6 +238,92 @@ def test_persisted_binning_restore_primes_dependencies_before_caching(tmp_path, 
     assert project_gui.project_binnings_need_refresh(incompatible)
 
 
+def test_project_cache_persists_every_named_dataset_binning(tmp_path):
+    source = tmp_path / "source.nxs"
+    source.write_bytes(b"source placeholder")
+    dataset = DatasetEntry(
+        "scan",
+        _grid_mdhisto_data(),
+        kind="mdhisto",
+        metadata={"source_file": str(source)},
+    )
+    fit = project_data.dataset_rebin_config(dataset)
+    fit.update(enabled=True, minimum_coverage=0.0)
+    auxiliary_id = project_data.add_dataset_rebin_binning(dataset, name="Overview")
+    auxiliary = project_data.dataset_rebin_config_by_id(dataset, auxiliary_id)
+    auxiliary.update(enabled=True, minimum_coverage=0.0)
+    auxiliary["axes"][0].update(mode="bins", num_bins=1)
+    project = NfitProject(
+        [DataGroup("Workspace1", datasets=[dataset])],
+        settings={project_gui.PROJECT_CACHE_BINNINGS_KEY: True},
+    )
+    path = tmp_path / "all-binnings.nfit"
+
+    save_project(project, path)
+    manifest = read_project_manifest(path)
+    entries = manifest["settings"][project_gui.PROJECT_BINNING_CACHE_ENTRIES_KEY]
+
+    assert {entry["binning_id"] for entry in entries} == {
+        fit["_binning_id"],
+        auxiliary_id,
+    }
+    project_gui._VIEWER_VIEW_CACHE.clear()
+    restored = load_project(path)
+    restored_dataset = next(restored.data_groups[0].iter_datasets())
+    restored_binnings = project_data.dataset_rebin_binnings(restored_dataset)
+    assert [(item["name"], item["fit"]) for item in restored_binnings] == [
+        ("Default", True),
+        ("Overview", False),
+    ]
+    assert all(
+        project_gui._peek_cached_dataset_view(
+            restored_dataset,
+            rebin_config=item["config"],
+            cache_id=(None if item["fit"] else item["id"]),
+        )
+        is not None
+        for item in restored_binnings
+    )
+
+
+def test_project_cache_persists_every_named_composite_binning(tmp_path):
+    source = tmp_path / "source.nxs"
+    source.write_bytes(b"source placeholder")
+    group = DataGroup(
+        "Workspace1",
+        datasets=[
+            DatasetEntry(
+                "scan",
+                _tiny_mdhisto_data(3.0),
+                kind="mdhisto",
+                metadata={"source_file": str(source)},
+            )
+        ],
+    )
+    fit = project_gui._fit_data_group_composite_config(group)
+    fit.update(enabled=True, minimum_coverage=0.0)
+    auxiliary_id = project_data.add_data_group_composite_binning(
+        group, name="Coarse overview"
+    )
+    auxiliary = project_data.data_group_composite_config_by_id(group, auxiliary_id)
+    auxiliary.update(enabled=True, minimum_coverage=0.0)
+    project = NfitProject(
+        [group], settings={project_gui.PROJECT_CACHE_BINNINGS_KEY: True}
+    )
+    path = tmp_path / "composite-binnings.nfit"
+
+    save_project(project, path)
+    entries = read_project_manifest(path)["settings"][
+        project_gui.PROJECT_BINNING_CACHE_ENTRIES_KEY
+    ]
+
+    assert {entry["binning_id"] for entry in entries} == {
+        fit["_binning_id"],
+        auxiliary_id,
+    }
+    assert {entry["type"] for entry in entries} == {"composite"}
+
+
 def test_dataset_details_text_summarizes_axes_source_and_metadata(tmp_path, monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     QtWidgets = pytest.importorskip("PySide6.QtWidgets")
@@ -455,6 +541,7 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     assert axis_config["num_bins"] == 2
     assert axis_config["step_size"] == pytest.approx(0.75)
 
+
     viewed = dataset_for_slice_viewer(dataset)
 
     assert viewed is not None
@@ -492,6 +579,133 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     saved = np.load(save_path)
     assert saved["signal"].shape == viewed.shape
     assert int(saved["axis_count"]) == 2
+
+
+def test_named_dataset_binnings_are_independent_and_one_is_designated_for_fitting():
+    dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
+    fit_config = project_data.dataset_rebin_config(dataset)
+    fit_config["axes"][0]["step_size"] = 0.5
+
+    auxiliary_id = project_data.add_dataset_rebin_binning(
+        dataset,
+        name="Fine HK",
+        duplicate_from=fit_config["_binning_id"],
+    )
+    auxiliary = project_data.dataset_rebin_config_by_id(dataset, auxiliary_id)
+    auxiliary["axes"][0]["step_size"] = 0.1
+
+    assert fit_config["axes"][0]["step_size"] == pytest.approx(0.5)
+    assert [item["name"] for item in project_data.dataset_rebin_binnings(dataset)] == [
+        "Default",
+        "Fine HK",
+    ]
+    assert [item["fit"] for item in project_data.dataset_rebin_binnings(dataset)] == [
+        True,
+        False,
+    ]
+
+    project_data.make_dataset_fit_binning(dataset, auxiliary_id)
+    binnings = project_data.dataset_rebin_binnings(dataset)
+    assert [(item["name"], item["fit"]) for item in binnings] == [
+        ("Fine HK", True),
+        ("Default", False),
+    ]
+    assert binnings[0]["config"]["axes"][0]["step_size"] == pytest.approx(0.1)
+    with pytest.raises(ValueError, match="fit binning cannot be removed"):
+        project_data.remove_dataset_rebin_binning(dataset, auxiliary_id)
+
+
+def test_dataset_rebin_panel_selects_and_edits_named_binning(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    fit = project_data.dataset_rebin_config(dataset)
+    auxiliary_id = project_data.add_dataset_rebin_binning(dataset, name="Wide view")
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0).child(0))
+
+    combo = explorer.details_widget.findChild(
+        QtWidgets.QComboBox, "dataset_rebin_binning"
+    )
+    assert combo is not None and combo.toolTip()
+    assert [combo.itemText(index) for index in range(combo.count())] == [
+        "Default (fit)",
+        "Wide view",
+    ]
+    explorer._select_dataset_binning(dataset, auxiliary_id)
+    project_gui.dataset_rebin_config(dataset)["axes"][0]["step_size"] = 0.125
+
+    assert fit["axes"][0]["step_size"] != pytest.approx(0.125)
+    assert project_data.dataset_rebin_config_by_id(dataset, auxiliary_id)["axes"][0][
+        "step_size"
+    ] == pytest.approx(0.125)
+    assert explorer.details_widget.findChild(
+        QtWidgets.QCheckBox, "dataset_rebin_fit_binning"
+    ).toolTip()
+    explorer.window.close()
+
+
+def test_named_visualization_binning_is_zero_weight_and_viewer_selectable(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    fit = project_data.dataset_rebin_config(dataset)
+    fit.update(enabled=True, minimum_coverage=0.0)
+    auxiliary_id = project_data.add_dataset_rebin_binning(dataset, name="Overview")
+    auxiliary = project_data.dataset_rebin_config_by_id(dataset, auxiliary_id)
+    auxiliary.update(enabled=True, minimum_coverage=0.0)
+    auxiliary["axes"][0].update(mode="bins", num_bins=1)
+
+    fit_inputs, _fit_bundles = project_gui.fit_dataset_inputs(group, purpose="fit")
+    view_inputs, _view_bundles = project_gui.fit_dataset_inputs(
+        group, purpose="visualization"
+    )
+    datasets, names = project_gui.slice_viewer_datasets(group)
+
+    assert [(item.name, item.weight) for item in fit_inputs] == [("scan", 1.0)]
+    assert [(item.name, item.weight) for item in view_inputs] == [
+        ("scan · Overview", 0.0)
+    ]
+    component = ModelComponentSpec(
+        "background",
+        "constant_background",
+        applies_to=["scan"],
+        parameters={"constant": 1.0},
+        fit_parameters={"constant": True},
+        sharing={"constant": {"mode": "per_dataset"}},
+        metadata={"fitted_values": {"constant": {"scan": 7.5}}},
+    )
+    group.models[component.name] = component
+    overlay_components = project_gui._components_with_binning_aliases(
+        [component], view_inputs
+    )
+    compiled = project_gui.compile_fit_problem(overlay_components, view_inputs)
+    overlay_params = project_gui._overlay_current_params(group, compiled)
+    assert next(
+        value
+        for name, value in overlay_params.items()
+        if name.startswith("background.constant")
+    ) == pytest.approx(7.5)
+    assert names == ["scan", "scan · Overview"]
+    assert [item.metadata["binning_name"] for item in datasets] == [
+        "Default",
+        "Overview",
+    ]
+
+    viewer = QtMDHistoSliceViewer(datasets, dataset_names=names)
+    assert viewer.dataset_combo.count() == 1
+    assert viewer.dataset_combo.currentText() == "scan"
+    assert [
+        viewer.binning_combo.itemText(index)
+        for index in range(viewer.binning_combo.count())
+    ] == ["Default", "Overview"]
+    viewer.binning_combo.setCurrentIndex(1)
+    assert viewer.dataset_index == 1
+    viewer.window.close()
 
 
 def test_materialized_composite_round_trips_as_project_owned_dataset(tmp_path):
@@ -1084,6 +1298,22 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
         "Metadata dimensions",
         "Bin information",
     ]
+    binning_combo = explorer.details_widget.findChild(
+        QtWidgets.QComboBox, "group_composite_binning"
+    )
+    assert binning_combo is not None and binning_combo.currentText() == "Default (fit)"
+    for object_name in (
+        "group_composite_add_binning",
+        "group_composite_duplicate_binning",
+        "group_composite_rename_binning",
+        "group_composite_remove_binning",
+    ):
+        button = explorer.details_widget.findChild(QtWidgets.QPushButton, object_name)
+        assert button is not None and button.toolTip()
+    fit_binning = explorer.details_widget.findChild(
+        QtWidgets.QCheckBox, "group_composite_fit_binning"
+    )
+    assert fit_binning is not None and fit_binning.isChecked() and fit_binning.toolTip()
     assert explorer.details_widget.findChild(
         QtWidgets.QTreeWidget, "group_composite_bin_tree"
     ) is not None

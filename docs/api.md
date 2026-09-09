@@ -136,6 +136,15 @@ projects, workspaces, datasets, dataset groups, masks, models, rebinned dataset
 views, and fit timelines. The GUI is documented in
 [GUI workflows](gui_workflows.md).
 
+Named project binnings are also scriptable. Use
+`dataset_rebin_binnings(dataset)` or
+`data_group_composite_binnings(collection)` to inspect the ordered list; the
+first item is the sole fit configuration. The corresponding `add_*`,
+`rename_*`, `remove_*`, `*_config_by_id`, and `make_*_fit_binning` functions
+create and manage visualization configurations using stable IDs. All named
+configurations are ordinary project state and are included when project binning
+caching is enabled.
+
 ## N-dimensional rebinning
 
 Use `rebin_nd` or `NDRebin` to bin point values onto N-dimensional grids.

@@ -43,6 +43,7 @@ available_data_types: Any = None
 available_ions: Any = None
 data_group_composite_config: Any = None
 dataset_rebin_config: Any = None
+dataset_rebin_binnings: Any = None
 np: Any = None
 point_list_config: Any = None
 signal_semantics: Any = None
@@ -557,11 +558,63 @@ def _dataset_axes_group_box(
     rebin_layout = QtWidgets.QVBoxLayout(rebin_box)
     rebin_layout.setContentsMargins(10, 8, 10, 8)
 
-    config = dataset_rebin_config(dataset)
+    selected_binning = self._selected_dataset_binning(dataset)
+    config = selected_binning["config"]
+    binning_row = QtWidgets.QHBoxLayout()
+    binning_row.addWidget(QtWidgets.QLabel("Binning"))
+    binning_combo = QtWidgets.QComboBox()
+    binning_combo.setObjectName("dataset_rebin_binning")
+    for item in dataset_rebin_binnings(dataset):
+        binning_combo.addItem(
+            f"{item['name']}{' (fit)' if item['fit'] else ''}", item["id"]
+        )
+    binning_combo.setCurrentIndex(max(binning_combo.findData(selected_binning["id"]), 0))
+    binning_combo.setToolTip("Choose the named binning configuration edited below.")
+    binning_combo.currentIndexChanged.connect(
+        lambda _index, combo=binning_combo: self._select_dataset_binning(
+            dataset, str(combo.currentData())
+        )
+    )
+    add_binning = QtWidgets.QPushButton("Add…")
+    add_binning.setObjectName("dataset_rebin_add_binning")
+    add_binning.setToolTip("Create a visualization binning from the fit binning.")
+    add_binning.clicked.connect(lambda: self._add_dataset_binning(dataset, duplicate=False))
+    duplicate_binning = QtWidgets.QPushButton("Duplicate")
+    duplicate_binning.setObjectName("dataset_rebin_duplicate_binning")
+    duplicate_binning.setToolTip("Duplicate the selected binning.")
+    duplicate_binning.clicked.connect(lambda: self._add_dataset_binning(dataset, duplicate=True))
+    rename_binning = QtWidgets.QPushButton("Rename…")
+    rename_binning.setObjectName("dataset_rebin_rename_binning")
+    rename_binning.setToolTip("Rename the selected binning.")
+    rename_binning.clicked.connect(lambda: self._rename_dataset_binning(dataset))
+    remove_binning = QtWidgets.QPushButton("Remove")
+    remove_binning.setObjectName("dataset_rebin_remove_binning")
+    remove_binning.setEnabled(not selected_binning["fit"])
+    remove_binning.setToolTip("Remove the selected visualization binning and its cache.")
+    remove_binning.clicked.connect(lambda: self._remove_dataset_binning(dataset))
+    fit_binning = QtWidgets.QCheckBox("Use for fitting")
+    fit_binning.setObjectName("dataset_rebin_fit_binning")
+    fit_binning.setChecked(bool(selected_binning["fit"]))
+    fit_binning.setEnabled(not selected_binning["fit"])
+    fit_binning.setToolTip("Make this the sole binning used during fit iterations.")
+    fit_binning.toggled.connect(
+        lambda checked: checked and self._make_dataset_fit_binning(dataset)
+    )
+    binning_row.addWidget(binning_combo, 1)
+    binning_row.addWidget(add_binning)
+    binning_row.addWidget(duplicate_binning)
+    binning_row.addWidget(rename_binning)
+    binning_row.addWidget(remove_binning)
+    binning_row.addWidget(fit_binning)
+    rebin_layout.addLayout(binning_row)
     enable_check = QtWidgets.QCheckBox("Use rebinned data")
     enable_check.setObjectName("dataset_rebin_enabled")
     enable_check.setChecked(bool(config.get("enabled", False)))
-    enable_check.setToolTip("Use the rebinned version of this dataset for viewing and fitting.")
+    enable_check.setToolTip(
+        "Use this named rebin for viewing and fitting."
+        if selected_binning["fit"]
+        else "Make this visualization-only rebin available in the data viewer."
+    )
     enable_check.toggled.connect(lambda checked: self._set_dataset_rebin_enabled(dataset, group, checked))
     settings_row = QtWidgets.QHBoxLayout()
     settings_row.addWidget(enable_check)

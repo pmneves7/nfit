@@ -571,9 +571,12 @@ class WaterfallController(_ViewerController):
         current_dim = next(index for index, size in enumerate(self.data.shape) if size > 1)
         current_axis = self.data.axes[current_dim]
         current_group_key = self.dataset_group_keys[self.dataset_index]
+        current_binning = self._viewer.binning_names[self.dataset_index]
         indices = []
         for index, dataset in enumerate(self.datasets):
             if self.dataset_group_keys[index] != current_group_key:
+                continue
+            if self._viewer.binning_names[index] != current_binning:
                 continue
             if not isinstance(dataset, MDHistoData):
                 continue
@@ -604,7 +607,7 @@ class WaterfallController(_ViewerController):
         if not self._waterfall_mode_active() or not self._viewer._waterfall_uses_1d_group():
             return [self.dataset_names[self.dataset_index]]
         return [
-            self.dataset_names[index]
+            self._viewer.source_dataset_names[index]
             for index in self._viewer._waterfall_1d_source_indices()
         ]
 

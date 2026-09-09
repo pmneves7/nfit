@@ -28,6 +28,7 @@ _rebin_minimum_samples: Any = None
 _sanitize_rebin_axis_config: Any = None
 _tooltip_table_corner_buttons: Any = None
 data_group_composite_config: Any = None
+data_group_composite_binnings: Any = None
 data_group_composite_enabled: Any = None
 data_group_composite_status: Any = None
 data_type_label: Any = None
@@ -171,16 +172,69 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     )
     layout = QtWidgets.QVBoxLayout(box)
     layout.setContentsMargins(10, 8, 10, 8)
-    config = data_group_composite_config(group)
+    selected_binning = self._selected_composite_binning(group)
+    config = selected_binning["config"]
+    binning_row = QtWidgets.QHBoxLayout()
+    binning_row.addWidget(QtWidgets.QLabel("Binning"))
+    binning_combo = QtWidgets.QComboBox()
+    binning_combo.setObjectName("group_composite_binning")
+    for item in data_group_composite_binnings(group):
+        binning_combo.addItem(
+            f"{item['name']}{' (fit)' if item['fit'] else ''}", item["id"]
+        )
+    binning_combo.setCurrentIndex(max(binning_combo.findData(selected_binning["id"]), 0))
+    binning_combo.setToolTip("Choose the named composite binning edited below.")
+    binning_combo.currentIndexChanged.connect(
+        lambda _index, combo=binning_combo: self._select_composite_binning(
+            group, str(combo.currentData())
+        )
+    )
+    add_binning = QtWidgets.QPushButton("Add…")
+    add_binning.setObjectName("group_composite_add_binning")
+    add_binning.setToolTip("Create a visualization binning from the fit binning.")
+    add_binning.clicked.connect(lambda: self._add_composite_binning(group, duplicate=False))
+    duplicate_binning = QtWidgets.QPushButton("Duplicate")
+    duplicate_binning.setObjectName("group_composite_duplicate_binning")
+    duplicate_binning.setToolTip("Duplicate the selected composite binning.")
+    duplicate_binning.clicked.connect(lambda: self._add_composite_binning(group, duplicate=True))
+    rename_binning = QtWidgets.QPushButton("Rename…")
+    rename_binning.setObjectName("group_composite_rename_binning")
+    rename_binning.setToolTip("Rename the selected composite binning.")
+    rename_binning.clicked.connect(lambda: self._rename_composite_binning(group))
+    remove_binning = QtWidgets.QPushButton("Remove")
+    remove_binning.setObjectName("group_composite_remove_binning")
+    remove_binning.setEnabled(not selected_binning["fit"])
+    remove_binning.setToolTip("Remove the selected visualization binning and its cache.")
+    remove_binning.clicked.connect(lambda: self._remove_composite_binning(group))
+    fit_binning = QtWidgets.QCheckBox("Use for fitting")
+    fit_binning.setObjectName("group_composite_fit_binning")
+    fit_binning.setChecked(bool(selected_binning["fit"]))
+    fit_binning.setEnabled(not selected_binning["fit"])
+    fit_binning.setToolTip("Make this the sole composite binning used during fit iterations.")
+    fit_binning.toggled.connect(
+        lambda checked: checked and self._make_composite_fit_binning(group)
+    )
+    binning_row.addWidget(binning_combo, 1)
+    binning_row.addWidget(add_binning)
+    binning_row.addWidget(duplicate_binning)
+    binning_row.addWidget(rename_binning)
+    binning_row.addWidget(remove_binning)
+    binning_row.addWidget(fit_binning)
+    layout.addLayout(binning_row)
     can_combine, message = data_group_composite_status(group)
     enable_check = QtWidgets.QCheckBox("Combine enabled datasets into one effective dataset")
     enable_check.setObjectName("group_composite_enabled")
     enable_check.setChecked(bool(config.get("enabled", False)))
     enable_check.setEnabled(can_combine)
     enable_check.setToolTip(
-        "When checked, this dataset collection plots and fits as one rebinned composite dataset. "
-        "The fitter receives the composite instead of this collection's constituent datasets. "
-        "All enabled datasets must have the same data kind. Negative dataset scale factors subtract data."
+        (
+            "When checked, this collection plots and fits as one rebinned composite. "
+            "The fitter receives it instead of the constituent datasets. "
+            if selected_binning["fit"]
+            else "Make this visualization-only composite rebin available in the data viewer. "
+        )
+        + "All enabled datasets must have the same data kind. "
+        "Negative dataset scale factors subtract data."
     )
     enable_check.toggled.connect(lambda checked: self._set_group_composite_enabled(group, checked))
     settings_row = QtWidgets.QHBoxLayout()

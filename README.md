@@ -23,6 +23,7 @@ The package provides:
 - masking, coverage- and sample-aware symmetry/rebinning with per-axis
   Discrete, Step, Bins, Edges, or tolerance-clustered modes, editable
   fractional/discrete point assignment, expandable bin-grid information,
+  multiple named fit or visualization binnings per dataset and composite,
   dataset- and point-level rebin progress,
   momentum-coordinate matrices, automatic
   zero-aligned uniform grids specified by bin centers, composites, backgrounds

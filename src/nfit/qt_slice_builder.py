@@ -204,12 +204,21 @@ def _build_dataset_controls(viewer: Any, controls_layout: Any) -> None:
     dataset_layout.setHorizontalSpacing(6)
     dataset_layout.setVerticalSpacing(6)
     viewer.dataset_combo = QtWidgets.QComboBox()
-    viewer.dataset_combo.addItems(viewer.dataset_names)
+    viewer.dataset_combo.addItems(viewer._source_dataset_options())
     viewer.dataset_combo.setToolTip("Choose which loaded dataset is displayed in the viewer.")
     _expanding_combobox(viewer.dataset_combo)
-    viewer.dataset_combo.currentIndexChanged.connect(viewer._set_dataset_index)
+    viewer.dataset_combo.currentIndexChanged.connect(viewer._set_dataset_selection)
     dataset_layout.addWidget(QtWidgets.QLabel("Dataset"), 0, 0)
     dataset_layout.addWidget(viewer.dataset_combo, 0, 1)
+    viewer.binning_combo = QtWidgets.QComboBox()
+    viewer.binning_combo.setObjectName("viewer_binning_combo")
+    viewer.binning_combo.setToolTip(
+        "Choose a named binning of the selected dataset. Only the binning marked for fitting participates in optimization."
+    )
+    viewer.binning_combo.currentIndexChanged.connect(viewer._set_binning_selection)
+    dataset_layout.addWidget(QtWidgets.QLabel("Binning"), 1, 0)
+    dataset_layout.addWidget(viewer.binning_combo, 1, 1)
+    viewer._sync_dataset_binning_combos()
     viewer.channel_combo = QtWidgets.QComboBox()
     viewer.channel_combo.addItems(viewer.model.CHANNELS)
     viewer.channel_combo.setToolTip(
@@ -225,9 +234,9 @@ def _build_dataset_controls(viewer: Any, controls_layout: Any) -> None:
         "Show data after applying file masks and nfit masks. Uncheck to inspect masked-out data."
     )
     viewer.apply_masks_check.toggled.connect(viewer._set_apply_masks)
-    dataset_layout.addWidget(QtWidgets.QLabel("Channel"), 1, 0)
-    dataset_layout.addWidget(viewer.channel_combo, 1, 1)
-    dataset_layout.addWidget(viewer.apply_masks_check, 1, 2)
+    dataset_layout.addWidget(QtWidgets.QLabel("Channel"), 2, 0)
+    dataset_layout.addWidget(viewer.channel_combo, 2, 1)
+    dataset_layout.addWidget(viewer.apply_masks_check, 2, 2)
     viewer.show_fit_check = QtWidgets.QCheckBox("Show model")
     viewer.show_fit_check.setToolTip(
         "Show the current model beside the data (2D) or as a line under the data (1D). "
@@ -246,9 +255,9 @@ def _build_dataset_controls(viewer: Any, controls_layout: Any) -> None:
         "Also show the normalized residual: a third panel (2D) or axes below the data (1D)."
     )
     viewer.show_residual_check.toggled.connect(viewer._set_show_residual)
-    dataset_layout.addWidget(viewer.show_fit_check, 2, 1)
-    dataset_layout.addWidget(viewer.show_residual_check, 2, 2)
-    dataset_layout.addWidget(viewer.unmask_model_check, 3, 1)
+    dataset_layout.addWidget(viewer.show_fit_check, 3, 1)
+    dataset_layout.addWidget(viewer.show_residual_check, 3, 2)
+    dataset_layout.addWidget(viewer.unmask_model_check, 4, 1)
     coverage_label = QtWidgets.QLabel("Coverage")
     viewer.coverage_threshold_label = coverage_label
     viewer.coverage_threshold_spin = _make_float_spinbox(0.0, 1.0)
@@ -264,8 +273,8 @@ def _build_dataset_controls(viewer: Any, controls_layout: Any) -> None:
     coverage_label.setToolTip(coverage_tooltip)
     viewer.coverage_threshold_spin.setToolTip(coverage_tooltip)
     viewer.coverage_threshold_spin.valueChanged.connect(viewer._set_coverage_threshold)
-    dataset_layout.addWidget(coverage_label, 4, 0)
-    dataset_layout.addWidget(viewer.coverage_threshold_spin, 4, 1)
+    dataset_layout.addWidget(coverage_label, 5, 0)
+    dataset_layout.addWidget(viewer.coverage_threshold_spin, 5, 1)
     viewer.residual_split_label = QtWidgets.QLabel()
     viewer.residual_split_slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
     viewer.residual_split_slider.setMinimumWidth(80)
@@ -277,8 +286,8 @@ def _build_dataset_controls(viewer: Any, controls_layout: Any) -> None:
         "Vertical position of the separator between the data and residual axes."
     )
     viewer.residual_split_slider.valueChanged.connect(viewer._set_residual_percent)
-    dataset_layout.addWidget(viewer.residual_split_label, 5, 0)
-    dataset_layout.addWidget(viewer.residual_split_slider, 5, 1, 1, 2)
+    dataset_layout.addWidget(viewer.residual_split_label, 6, 0)
+    dataset_layout.addWidget(viewer.residual_split_slider, 6, 1, 1, 2)
     dataset_layout.setColumnStretch(1, 1)
     controls_layout.addWidget(dataset_group)
 

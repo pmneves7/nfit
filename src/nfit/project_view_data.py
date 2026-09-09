@@ -52,6 +52,14 @@ def _with_viewer_dataset_metadata(
     metadata = dict(getattr(data, "metadata", {}) or {})
     metadata["nfit_data_type"] = dataset.data_type
     metadata["nfit_dataset_kind"] = dataset.kind
+    for key in (
+        "binning_id",
+        "binning_name",
+        "source_dataset_name",
+        "visualization_binning",
+    ):
+        if key in dataset.metadata:
+            metadata[key] = dataset.metadata[key]
     if isinstance(data, MDHistoData):
         return replace(data, metadata=metadata)
     if isinstance(data, PointListData):

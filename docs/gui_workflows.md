@@ -33,7 +33,7 @@ external source references.
 
 Enable **File → Cache binnings** to make the current project embed its rebinned
 datasets and dataset-group composites when saved. Saving checks every configured
-binning, reuses those whose signatures are current, and recomputes only missing
+named binning, reuses those whose signatures are current, and recomputes only missing
 or stale entries. New projects default to leaving this option off. Unlike
 application preferences, this checkbox is stored in the `.nfit` project.
 
