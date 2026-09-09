@@ -281,6 +281,12 @@ dimensions not represented by the horizontal, vertical, or tiled axes.
 Gridded datasets with at least three dimensions can use **Volumetric** mode.
 Point-list data must first be rebinned.
 
+Before PyVista is initialized, nfit warns when the initial three-dimensional
+volume exceeds 2,000,000 bins. The count covers only the three axes that will
+be rendered; remaining dimensions begin as selected slices. Choose **Proceed**
+to render anyway or **Cancel** to remain in the current viewer mode. A coarser
+rebin or narrower axis range reduces rendering work.
+
 Select three distinct displayed axes. Remaining dimensions use the same bin or
 range integration controls as the slice viewer. Axis limits crop by bin center;
 **Equal data units** preserves physical axis ratios, while **Custom** enables

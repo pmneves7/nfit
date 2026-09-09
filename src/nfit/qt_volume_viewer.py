@@ -14,6 +14,7 @@ from .qt_slice_controls import _IntegratedAxisSlider
 from .qt_volume_controls import build_volume_panel_ui
 
 TRANSFER_SAMPLES = 256
+VOLUME_WARNING_BIN_THRESHOLD = 2_000_000
 COLORMAPS = VOLUME_COLORMAPS
 RENDER_MODES = ("Volume", "Isosurface")
 
@@ -48,6 +49,60 @@ def default_volume_axes(data: MDHistoData) -> tuple[int, int, int]:
         return tuple(non_singleton[-3:])
     singleton = [dim for dim in range(data.signal.ndim) if dim not in non_singleton]
     return tuple((non_singleton + singleton)[:3])
+
+
+def volume_render_bin_count(
+    data: MDHistoData,
+    axes: Sequence[int] | None = None,
+) -> int:
+    """Return the number of cells in the selected three-dimensional volume."""
+
+    selected_axes = default_volume_axes(data) if axes is None else tuple(map(int, axes))
+    if len(selected_axes) != 3 or len(set(selected_axes)) != 3:
+        raise ValueError("volume bin counting requires three distinct axes")
+    if any(not 0 <= dim < data.signal.ndim for dim in selected_axes):
+        raise ValueError("volume axis is outside the dataset dimensions")
+    return int(np.prod([data.shape[dim] for dim in selected_axes], dtype=np.int64))
+
+
+def confirm_large_volume_view(
+    parent,
+    data: MDHistoData,
+    dataset_name: str,
+    *,
+    threshold: int = VOLUME_WARNING_BIN_THRESHOLD,
+) -> bool:
+    """Ask before opening a volume whose initial three-axis grid is very large."""
+
+    bin_count = volume_render_bin_count(data)
+    if bin_count <= int(threshold):
+        return True
+
+    from PySide6 import QtWidgets
+
+    message = QtWidgets.QMessageBox(parent)
+    message.setIcon(QtWidgets.QMessageBox.Icon.Warning)
+    message.setWindowTitle("Large volumetric plot")
+    message.setText(
+        f'The initial 3D volume for "{dataset_name}" contains '
+        f"{bin_count:,} bins, which may be very slow or make the application "
+        "unresponsive. Are you sure you want to open it?"
+    )
+    message.setInformativeText(
+        "A coarser rebin or narrower three-axis range will render more quickly."
+    )
+    proceed = message.addButton(
+        "Proceed",
+        QtWidgets.QMessageBox.ButtonRole.AcceptRole,
+    )
+    cancel = message.addButton(
+        "Cancel",
+        QtWidgets.QMessageBox.ButtonRole.RejectRole,
+    )
+    message.setDefaultButton(cancel)
+    message.setEscapeButton(cancel)
+    message.exec()
+    return message.clickedButton() is proceed
 
 
 def default_hidden_axis_index(

@@ -1,5 +1,6 @@
 import sys
 import types
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -17,6 +18,7 @@ from nfit.mdhisto import MDHistoAxis, MDHistoData
 from nfit.qt_volume_viewer import (
     COLORMAPS,
     build_rectilinear_volume_grid,
+    confirm_large_volume_view,
     crop_volume_arrays,
     default_hidden_axis_index,
     default_volume_axes,
@@ -27,6 +29,7 @@ from nfit.qt_volume_viewer import (
     sample_transfer_curve,
     supports_volume_view,
     volume_channel_names,
+    volume_render_bin_count,
 )
 
 
@@ -69,6 +72,84 @@ def test_volume_support_and_default_axes_require_three_grid_dimensions():
         axes=source.axes[:2],
     )
     assert not supports_volume_view(two_dimensional)
+
+
+def test_volume_render_bin_count_uses_only_the_three_rendered_axes():
+    data = _volume_data((7, 11, 13, 17))
+
+    assert default_volume_axes(data) == (1, 2, 3)
+    assert volume_render_bin_count(data) == 11 * 13 * 17
+    assert volume_render_bin_count(data, axes=(0, 1, 2)) == 7 * 11 * 13
+    assert confirm_large_volume_view(
+        None,
+        data,
+        "test rebin",
+        threshold=11 * 13 * 17,
+    )
+
+
+def test_cancel_large_volumetric_plot_before_pyvista_panel_is_created(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+    import nfit.qt_volume_viewer as volume_viewer
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _volume_data()
+    confirmations = []
+
+    def reject(_parent, candidate, name):
+        confirmations.append((candidate, name))
+        return False
+
+    monkeypatch.setattr(volume_viewer, "confirm_large_volume_view", reject)
+    monkeypatch.setattr(
+        volume_viewer,
+        "QtVolumeViewerPanel",
+        lambda *_args, **_kwargs: pytest.fail("PyVista panel was created"),
+    )
+    viewer = QtMDHistoSliceViewer(data, dataset_names=["large rebin"])
+
+    viewer.view_mode_combo.setCurrentText("Volumetric")
+
+    assert confirmations == [(data, "large rebin")]
+    assert viewer.view_mode_combo.currentText() == "Slice viewer"
+    assert viewer.content_stack.currentIndex() == 0
+    assert viewer.volume_panel is None
+
+
+def test_large_volume_confirmation_shows_count_and_defaults_to_cancel(monkeypatch):
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    proceed = object()
+    cancel = object()
+    message = MagicMock()
+    message.addButton.side_effect = [proceed, cancel]
+    message.clickedButton.return_value = cancel
+    factory = MagicMock(return_value=message)
+    factory.Icon = types.SimpleNamespace(Warning="warning")
+    factory.ButtonRole = types.SimpleNamespace(
+        AcceptRole="accept",
+        RejectRole="reject",
+    )
+    monkeypatch.setattr(QtWidgets, "QMessageBox", factory)
+
+    accepted = confirm_large_volume_view(
+        None,
+        _volume_data(),
+        "test rebin",
+        threshold=1,
+    )
+
+    assert not accepted
+    message.setWindowTitle.assert_called_once_with("Large volumetric plot")
+    text = message.setText.call_args.args[0]
+    assert "60 bins" in text
+    assert "slow" in text
+    assert [call.args[0] for call in message.addButton.call_args_list] == [
+        "Proceed",
+        "Cancel",
+    ]
+    message.setDefaultButton.assert_called_once_with(cancel)
+    message.setEscapeButton.assert_called_once_with(cancel)
 
 
 def test_default_hidden_axis_uses_nearest_measured_bin():

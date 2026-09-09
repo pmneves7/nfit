@@ -104,7 +104,8 @@ The package provides:
   file changes, plus editable script export for dataset preparation, analyses,
   fits, and saved plots;
 - interactive slice, waterfall, tiled 2D-slice, and volumetric visualization
-  with per-panel tiled cursor inspection, customizable tiled-slice labels,
+  with large-volume safeguards, per-panel tiled cursor inspection,
+  customizable tiled-slice labels,
   independent, same-state viewer duplication and stored plot recipes that
   retain independent source/composite-rebin configurations, separate save/update
   actions for stored plots, and provide named,

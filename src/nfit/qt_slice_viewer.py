@@ -1299,7 +1299,11 @@ class QtMDHistoSliceViewer:
             self.content_stack.setCurrentIndex(0)
             self.update_plot(preserve_view=False)
             return
-        from .qt_volume_viewer import QtVolumeViewerPanel, supports_volume_view
+        from .qt_volume_viewer import (
+            QtVolumeViewerPanel,
+            confirm_large_volume_view,
+            supports_volume_view,
+        )
 
         if not supports_volume_view(self.data):
             self.view_mode_combo.setCurrentIndex(0)
@@ -1314,6 +1318,17 @@ class QtMDHistoSliceViewer:
                 (index for index, (_dataset, _name, original) in enumerate(supported) if original == self.dataset_index),
                 0,
             )
+            selected_dataset, selected_name, _original_index = supported[selected]
+            if not confirm_large_volume_view(
+                self.window,
+                selected_dataset,
+                selected_name,
+            ):
+                blocked = self.view_mode_combo.blockSignals(True)
+                self.view_mode_combo.setCurrentIndex(self._active_plot_view_mode)
+                self.view_mode_combo.blockSignals(blocked)
+                self.content_stack.setCurrentIndex(0)
+                return
             self.volume_panel = QtVolumeViewerPanel(
                 [item[0] for item in supported],
                 dataset_names=[item[1] for item in supported],
