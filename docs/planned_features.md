@@ -133,7 +133,7 @@ electronic-response implementation.
 
 ## Reproducible scripting
 
-- Extend discrete metadata dimensions to raw event streams with explicit
+- Extend metadata dimensions to raw event streams with explicit
   timestamp alignment, time-dependent normalization/coverage, and hierarchical
   stacking. Loaded points and histograms already support aligned pointwise
   coordinates; asynchronous logs are rejected until an adapter aligns them.

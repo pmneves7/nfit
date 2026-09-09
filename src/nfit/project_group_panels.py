@@ -159,6 +159,7 @@ def _group_dataset_weights_group_box(self, group: DataGroup | _CompositeScope) -
 def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     from PySide6 import QtWidgets
 
+    from .metadata_dimensions_gui import metadata_dimensions_panel, metadata_rebin_rows
     from .project_rebin_panels import add_rebin_assignment_items, add_rebin_mode_items
 
     box = QtWidgets.QGroupBox("Composite dataset")
@@ -410,6 +411,12 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
             )
         )
         controls_layout.addWidget(assignment_combo, row, column_offset + 5)
+    metadata_axis_count = metadata_rebin_rows(
+        self,
+        group,
+        controls_layout,
+        header_row + len(axes) + 1,
+    )
     option_row = QtWidgets.QHBoxLayout()
     auto_check = QtWidgets.QCheckBox("Automatic rebinning")
     auto_check.setObjectName("group_composite_auto")
@@ -508,7 +515,7 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     option_row.addWidget(mean_label)
     option_row.addWidget(mean_combo)
     option_row.addStretch(1)
-    footer_row = header_row + len(axes) + 1
+    footer_row = header_row + len(axes) + metadata_axis_count + 1
     controls_layout.addLayout(option_row, footer_row, 0, 1, len(headers))
     quality_row = QtWidgets.QHBoxLayout()
     quality_row.addWidget(coverage_label)
@@ -558,29 +565,30 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     controls_layout.addLayout(action_row, footer_row + 4, 0, 1, len(headers))
     controls.addTab(settings_tab, "Rebin settings")
 
-    from .metadata_dimensions_gui import metadata_dimensions_panel, metadata_rebin_rows
-
     metadata_tab = QtWidgets.QWidget()
     metadata_tab.setObjectName("group_composite_metadata_tab")
     metadata_layout = QtWidgets.QVBoxLayout(metadata_tab)
     metadata_layout.addWidget(metadata_dimensions_panel(self, group, embedded=True))
-    metadata_controls = QtWidgets.QWidget()
-    metadata_grid = QtWidgets.QGridLayout(metadata_controls)
-    metadata_grid.setContentsMargins(0, 0, 0, 0)
-    for column, title in enumerate(
-        ("Axis", "Min center", "Max center", "Value", "Edges", "Grid", "Mode")
-    ):
-        metadata_grid.addWidget(QtWidgets.QLabel(title), 0, column)
-    metadata_rebin_rows(self, group, metadata_grid, 1)
-    metadata_layout.addWidget(metadata_controls)
     metadata_layout.addStretch(1)
     controls.addTab(metadata_tab, "Metadata dimensions")
 
+    from .metadata_dimensions import MetadataDimension, metadata_rebin_axis_config
     from .project_rebin_panels import rebin_bin_information_widget
+
+    bin_information_config = {
+        **config,
+        "axes": [
+            *config.get("axes", []),
+            *(
+                metadata_rebin_axis_config(MetadataDimension(**recipe))
+                for recipe in group.metadata.get("metadata_dimensions", [])
+            ),
+        ],
+    }
 
     controls.addTab(
         rebin_bin_information_widget(
-            config,
+            bin_information_config,
             data=_peek_cached_composite_dataset_data(group),
             object_prefix="group_composite",
         ),

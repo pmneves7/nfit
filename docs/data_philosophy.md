@@ -27,7 +27,8 @@ instrument or file format.
   explicitly materialized composites are stored under `assets/` in the same
   file; large composite materializations load lazily. Projects may also opt to
   embed current, derived rebin caches under `assets/binnings/`; these caches are
-  validated against the live dataset and recipe signatures before reuse.
+  validated against the numerical cache format and live dataset/recipe
+  signatures before reuse.
 - **Dataset identity is unique.** Importing or copying a dataset assigns a new
   ID, even when the source file is the same. Project loading rejects duplicate
   IDs because analysis and background references would otherwise be ambiguous.
@@ -147,11 +148,13 @@ with each axis and with the collection. Composite caches include both the
 dataset content token and resolved metadata-coordinate signatures.
 
 An optional `MetadataBinning` recipe groups assigned coordinates into histogram
-bins by step, count, explicit edges, or proximity tolerance. Tolerance-derived
-centers and all metadata modes retain whole-bin assignment without interpolation.
-These axes retain `metadata_dimension` and `interpolation="none"` metadata;
-tolerance grids also retain their derived physical centers. Source points are partitioned before spatial
-reduction so coarse metadata bins preserve source weights and uncertainties.
+bins by step, count, explicit edges, or proximity tolerance. Discrete and
+tolerance grids use whole-bin assignment; step, count, and edge grids may use
+either discrete or fractional assignment. These axes retain
+`metadata_dimension` and `interpolation="none"` metadata. Physical and metadata
+coordinates enter one central N-dimensional accumulation, preserving original
+sample weights and propagated uncertainties without first averaging condition
+slices.
 
 Per-point metadata coordinates must already align with the measured payload.
 The MACS adapter records its scan/detector shape so aligned scan columns can be

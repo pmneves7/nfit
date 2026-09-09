@@ -32,7 +32,7 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
         label = QtWidgets.QLabel(f"{spec.name} ({spec.units})" if spec.units else spec.name)
         label.setObjectName(f"metadata_rebin_label_{index}")
         label.setToolTip(
-            f"Metadata channel: {spec.source}. Each source value enters one bin, without interpolation."
+            f"Metadata channel: {spec.source}. Its values enter the same N-dimensional rebin as the physical coordinates."
         )
         layout.addWidget(label, row, 0)
         lower = QtWidgets.QLineEdit(
@@ -112,11 +112,20 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
         layout.addWidget(mode, row, 5)
         assignment = QtWidgets.QComboBox()
         assignment.setObjectName(f"metadata_rebin_assignment_{index}")
+        assignment.addItem("Fractional", True)
         assignment.addItem("Discrete", False)
-        assignment.setEnabled(False)
+        assignment.setCurrentIndex(
+            max(
+                assignment.findData(
+                    False if binning is None else bool(binning.fractional)
+                ),
+                0,
+            )
+        )
         assignment.setToolTip(
-            "Metadata coordinates always use discrete assignment and never interpolate "
-            "between sample-condition bins."
+            "Fractional distributes a metadata coordinate between neighboring bins. "
+            "Discrete assigns it wholly to one bin. Discrete and Tolerance grids require "
+            "discrete assignment."
         )
         layout.addWidget(assignment, row, 6)
 
@@ -127,6 +136,7 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
             upper.setEnabled(uniform)
             resolution.setEnabled(uniform or selected == "tolerance")
             edges.setEnabled(mode.currentData() == "edges")
+            assignment.setEnabled(selected not in {"discrete", "tolerance"})
 
         def apply():
             try:
@@ -135,13 +145,15 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
                     updated_binning = None
                 elif selected == "tolerance":
                     updated_binning = MetadataBinning(
-                        tolerance=float(resolution.text())
+                        tolerance=float(resolution.text()),
+                        fractional=False,
                     )
                 elif selected == "edges":
                     updated_binning = MetadataBinning(
                         bin_edges=[
                             float(v) for v in edges.text().strip("[] ").replace(",", " ").split()
-                        ]
+                        ],
+                        fractional=bool(assignment.currentData()),
                     )
                 else:
                     updated_binning = MetadataBinning(
@@ -150,6 +162,7 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
                         **{
                             ("step" if selected == "step" else "num_bins"): float(resolution.text())
                         },
+                        fractional=bool(assignment.currentData()),
                     )
                 updated = [dict(item) for item in recipes]
                 updated[index]["binning"] = updated_binning
@@ -205,6 +218,7 @@ def metadata_rebin_rows(explorer, group, layout, start_row):
 
         enable_fields()
         mode.currentIndexChanged.connect(change_mode)
+        assignment.currentIndexChanged.connect(apply)
         for widget in (lower, upper, resolution, edges):
             widget.editingFinished.connect(apply)
 
@@ -226,11 +240,11 @@ def metadata_dimensions_panel(explorer, group, *, embedded: bool = False):
 
     box = QtWidgets.QWidget() if embedded else QtWidgets.QGroupBox("Metadata dimensions")
     box.setToolTip(
-        "Add discrete sample-condition axes to this collection's composite, independently of momentum and energy binning."
+        "Add aligned sample-condition coordinates to this collection's central composite rebin."
     )
     layout = QtWidgets.QVBoxLayout(box)
     explanation = QtWidgets.QLabel(
-        "Keep each metadata coordinate as an independent slice. Enable the composite below to plot the added dimensions."
+        "Choose aligned metadata coordinates for the composite. Configure their grids and assignment modes under Rebin settings."
     )
     explanation.setWordWrap(True)
     layout.addWidget(explanation)

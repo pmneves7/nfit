@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import copy
 import json
-import math
 from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -421,18 +420,32 @@ def _composite_output_bins(config: dict[str, Any]) -> int:
 
 
 def _composite_estimated_contributions(group: DataGroup, config: dict[str, Any]) -> int:
-    axes = config.get("axes", []) or []
+    axes = _composite_rebin_axes(group, config)
     multiplier = 2 ** sum(_rebin_fractional_axes(config, axes))
     return int(_composite_source_points(group) * multiplier)
 
 
+def _composite_rebin_axes(group: DataGroup, config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return physical and metadata axes participating in one composite rebin."""
+
+    from .metadata_dimensions import MetadataDimension, metadata_rebin_axis_config
+
+    axes = [dict(axis) for axis in config.get("axes", []) if isinstance(axis, dict)]
+    axes.extend(
+        metadata_rebin_axis_config(MetadataDimension(**recipe))
+        for recipe in group.metadata.get("metadata_dimensions", [])
+    )
+    return axes
+
+
 def _composite_rebin_is_large(group: DataGroup, config: dict[str, Any]) -> bool:
+    effective = {**config, "axes": _composite_rebin_axes(group, config)}
     return (
         _composite_estimated_contributions(group, config)
         > _backend_value(
             "REBIN_AUTO_MAX_CONTRIBUTIONS", REBIN_AUTO_MAX_CONTRIBUTIONS
         )
-        or _composite_output_bins(config)
+        or _composite_output_bins(effective)
         > _backend_value("REBIN_AUTO_MAX_OUTPUT_BINS", REBIN_AUTO_MAX_OUTPUT_BINS)
     )
 
@@ -842,9 +855,7 @@ def set_metadata_dimensions(group, dimensions) -> None:
 def _metadata_composite_data(group, config, dimensions, *, include_source_masks, progress_callback):
     from .metadata_dimensions import (
         MetadataDimension,
-        metadata_dimension_coordinates,
-        metadata_dimension_grid,
-        stack_metadata_histograms,
+        metadata_rebin_axis_config,
     )
 
     specs = [MetadataDimension(**item) for item in dimensions]
@@ -852,8 +863,7 @@ def _metadata_composite_data(group, config, dimensions, *, include_source_masks,
         raise ValueError(
             "configure metadata dimensions on the collection containing the source datasets"
         )
-    entries, coordinates = [], []
-    origins = {}
+    entries = []
     source_datasets = _composite_candidates(group, include_backgrounds=True)
     _report_source_dataset_progress(
         progress_callback,
@@ -879,109 +889,31 @@ def _metadata_composite_data(group, config, dimensions, *, include_source_masks,
             "metadata_dimension" in axis.metadata for axis in data.axes
         ):
             raise ValueError("add all metadata dimensions on the original source collection")
-        coordinates.append([metadata_dimension_coordinates(dataset, spec) for spec in specs])
         prepared_entry = dataset.copy(data=data)
         entries.append(prepared_entry)
-        origins[prepared_entry.id] = dataset
-    grids = [
-        metadata_dimension_grid(spec, [row[i] for row in coordinates])
-        for i, spec in enumerate(specs)
-    ]
-    centers = [grid[0] for grid in grids]
-    assignments = list(zip(*(grid[1] for grid in grids), strict=True))
     reducer = (
         _composite_point_data
         if isinstance(entries[0].data, PointData4D)
         else _composite_mdhisto_data
     )
-    # Reference slices share the sample grid without expanding its auto limits.
-    sample_ids = {entry.id for entry in _composite_candidates(group)}
-    grid_entries = [entry for entry in entries if origins[entry.id].id in sample_ids] or entries
-    template = reducer(group, config, datasets=grid_entries, progress_callback=progress_callback)
-    from .mdevent import _available_memory_bytes
-
-    output_bins = math.prod(template.shape) * math.prod(len(center) for center in centers)
-    bytes_per_bin = 33 + sum(
-        8 if channel.errors is None else 16 for channel in template.auxiliary_channels.values()
+    unified_config = copy.deepcopy(config)
+    unified_config["axes"] = [
+        *unified_config.get("axes", []),
+        *(metadata_rebin_axis_config(spec) for spec in specs),
+    ]
+    data = reducer(
+        group,
+        unified_config,
+        datasets=entries,
+        metadata_dimensions=specs,
+        progress_callback=progress_callback,
     )
-    available = _available_memory_bytes()
-    if available is not None and output_bins * bytes_per_bin * 3 > available * 0.7:
-        raise MemoryError(
-            "The metadata grid exceeds available memory. Use fewer explicit metadata coordinates or a coarser spatial grid."
-        )
-    fixed = copy.deepcopy(config)
-    for axis_config, axis in zip(fixed["axes"], template.axes, strict=True):
-        axis_config.update(
-            bin_edges=axis.values.tolist(), auto_lower=False, auto_upper=False, auto_step_size=False
-        )
-    partitions = {}
-    for entry, indices in zip(entries, assignments, strict=True):
-        size = entry.data.size if isinstance(entry.data, PointData4D) else entry.data.signal.size
-        keys = np.column_stack([np.broadcast_to(index, (size,)) for index in indices])
-        unique, inverse = np.unique(keys, axis=0, return_inverse=True)
-        order = np.argsort(inverse, kind="stable")
-        positions = np.split(order, np.cumsum(np.bincount(inverse))[:-1])
-        for key, selected in zip(unique, positions, strict=True):
-            if np.any(key < 0):
-                continue
-            partitions.setdefault(tuple(int(i) for i in key), []).append((entry, selected))
-    slices = {}
-    for key, sources in partitions.items():
-        selected_entries = []
-        for entry, selected in sources:
-            if isinstance(entry.data, PointData4D):
-                changes = {
-                    name: getattr(entry.data, name)[selected]
-                    for name in ("H", "K", "L", "E", "intensity", "sigma", "mask")
-                }
-                if isinstance(entry.data.temperature, np.ndarray):
-                    changes["temperature"] = entry.data.temperature[selected]
-                if (
-                    isinstance(entry.data.magnetic_field, np.ndarray)
-                    and entry.data.magnetic_field.ndim == 2
-                ):
-                    changes["magnetic_field"] = entry.data.magnetic_field[selected]
-                data = entry.data.with_updates(**changes)
-                usable = np.any(data.valid_mask(require_positive_sigma=False))
-            else:
-                reject = np.ones(entry.data.signal.size, dtype=bool)
-                reject[selected] = False
-                data = entry.data.with_updates(
-                    mask=entry.data.mask | reject.reshape(entry.data.shape)
-                )
-                usable = np.any(
-                    ~data.mask
-                    & np.isfinite(data.signal)
-                    & np.isfinite(data.errors)
-                    & mdhisto_measured_bins(data)
-                )
-            if usable:
-                selected_entries.append(entry.copy(data=data))
-        if not selected_entries:
-            continue
-        data = reducer(group, fixed, datasets=selected_entries, progress_callback=progress_callback)
-        data = _apply_mdhisto_coverage_threshold(data, config)
-        slices[key] = _apply_composite_backgrounds(
-            group,
-            data,
-            config=fixed,
-            progress_callback=progress_callback,
-            reference_entry=(
-                origins[sources[0][0].id]
-                if len(sources) == len(selected_entries) == 1
-                and len(sources[0][1])
-                == (
-                    sources[0][0].data.size
-                    if isinstance(sources[0][0].data, PointData4D)
-                    else sources[0][0].data.signal.size
-                )
-                else None
-            ),
-        )
-    # Background subtraction can add channels. Use its result as the schema.
-    if slices:
-        template = next(iter(slices.values()))
-    return stack_metadata_histograms(template, slices, specs, centers)
+    return _apply_composite_backgrounds(
+        group,
+        data,
+        config=unified_config,
+        progress_callback=progress_callback,
+    )
 
 
 def _composite_dataset_data(
@@ -1208,6 +1140,62 @@ def _apply_mdhisto_coverage_threshold(
     )
 
 
+def _broadcast_background_over_metadata(
+    background: MDHistoData,
+    target: MDHistoData,
+) -> MDHistoData:
+    """Broadcast a physical background across target metadata coordinates."""
+
+    extra = len(target.axes) - len(background.axes)
+    if extra <= 0:
+        return background
+    if not all(
+        "metadata_dimension" in axis.metadata for axis in target.axes[-extra:]
+    ):
+        return background
+    shape = background.shape + (1,) * extra
+    target_shape = target.shape
+    return background.with_updates(
+        axes=target.axes,
+        signal=np.broadcast_to(background.signal.reshape(shape), target_shape),
+        errors=np.broadcast_to(background.errors.reshape(shape), target_shape),
+        mask=np.broadcast_to(background.mask.reshape(shape), target_shape),
+        num_events=np.broadcast_to(background.num_events.reshape(shape), target_shape),
+        auxiliary_channels={},
+    )
+
+
+def _metadata_reference_slice(
+    data: MDHistoData,
+    source: DatasetEntry,
+) -> tuple[Any, ...] | None:
+    """Locate a scalar metadata source in an augmented output grid."""
+
+    from .metadata_dimensions import MetadataDimension, assigned_metadata_coordinates
+
+    indices: list[int] = []
+    first_metadata = len(data.axes)
+    for index, axis in enumerate(data.axes):
+        recipe = axis.metadata.get("metadata_dimension")
+        if recipe is None:
+            continue
+        first_metadata = min(first_metadata, index)
+        values = assigned_metadata_coordinates(source, MetadataDimension(**recipe))
+        if values.size == 0 or not np.allclose(values, values[0], rtol=0.0, atol=1e-12):
+            return None
+        value = float(values[0])
+        edges = np.asarray(axis.values, dtype=float)
+        bin_index = int(np.searchsorted(edges, value, side="right") - 1)
+        if value == edges[-1]:
+            bin_index = len(edges) - 2
+        if bin_index < 0 or bin_index >= len(edges) - 1:
+            return None
+        indices.append(bin_index)
+    if not indices:
+        return None
+    return (slice(None),) * first_metadata + tuple(indices)
+
+
 def _apply_composite_backgrounds(
     group: DataGroup | _CompositeScope,
     data: MDHistoData | PointListData | PointData4D,
@@ -1256,9 +1244,12 @@ def _apply_composite_backgrounds(
                 aligned_config = copy.deepcopy(
                     dict(data_group_composite_config(group) if config is None else config)
                 )
-                if len(data.axes) != 4 or len(aligned_config.get("axes", [])) != 4:
-                    raise ValueError("point-data group backgrounds require a four-axis HKLE grid")
-                for settings, axis in zip(aligned_config["axes"], data.axes, strict=True):
+                if len(data.axes) < 4 or len(aligned_config.get("axes", [])) < 4:
+                    raise ValueError("point-data group backgrounds require four HKLE axes")
+                aligned_config["axes"] = aligned_config["axes"][:4]
+                for settings, axis in zip(
+                    aligned_config["axes"], data.axes[:4], strict=True
+                ):
                     settings.update(
                         name=axis.name,
                         units=axis.units,
@@ -1280,6 +1271,8 @@ def _apply_composite_backgrounds(
                     source_data = _apply_dataset_backgrounds(source, source_data)
         if not isinstance(source_data, MDHistoData):
             raise TypeError(f"background {background.name!r} must refer to gridded histogram data")
+        source_data = _broadcast_background_over_metadata(source_data, result)
+        before_subtraction = result
         cancels_self = (
             reference_entry is not None
             and source is not None
@@ -1307,6 +1300,24 @@ def _apply_composite_backgrounds(
                 signal=np.where(result.mask, np.nan, 0.0),
                 errors=np.where(result.mask, np.nan, 0.0),
             )
+        elif (
+            source is not None
+            and source.scale_factor == background.scale
+            and (selection := _metadata_reference_slice(result, source)) is not None
+        ):
+            measured = ~np.asarray(result.mask[selection], dtype=bool)
+            correlated = measured & np.isclose(
+                before_subtraction.signal[selection],
+                background.scale * source_data.signal[selection],
+                rtol=1e-12,
+                atol=1e-12,
+                equal_nan=False,
+            )
+            signal = np.array(result.signal, copy=True)
+            errors = np.array(result.errors, copy=True)
+            signal[selection] = np.where(correlated, 0.0, signal[selection])
+            errors[selection] = np.where(correlated, 0.0, errors[selection])
+            result = result.with_updates(signal=signal, errors=errors)
     return result
 
 
@@ -1470,9 +1481,12 @@ def _composite_mdhisto_data(
     config: dict[str, Any],
     *,
     datasets: list[DatasetEntry] | None = None,
+    metadata_dimensions: Sequence[Any] | None = None,
     progress_callback: Any | None = None,
     include_source_masks: bool = True,
 ) -> MDHistoData:
+    from .metadata_dimensions import assigned_metadata_coordinates
+
     if progress_callback is not None:
         progress_callback(
             {
@@ -1518,6 +1532,16 @@ def _composite_mdhisto_data(
             first_data = data
         source_grids = np.meshgrid(*(axis.centers for axis in data.axes), indexing="ij")
         coords = np.stack(source_grids, axis=-1)
+        if metadata_dimensions:
+            metadata_grids = []
+            for dimension in metadata_dimensions:
+                values = assigned_metadata_coordinates(dataset, dimension)
+                values = np.broadcast_to(values, (data.signal.size,)).reshape(data.shape)
+                metadata_grids.append(np.asarray(values, dtype=float))
+            coords = np.concatenate(
+                (coords, np.stack(metadata_grids, axis=-1)),
+                axis=-1,
+            )
         coverage_inputs.append((data, coords))
         valid = (
             np.isfinite(data.signal) & np.isfinite(data.errors) & ~np.asarray(data.mask, dtype=bool)
@@ -1548,7 +1572,10 @@ def _composite_mdhisto_data(
     signal_all = np.concatenate(signal_parts)
     errors_all = np.concatenate(error_parts)
     weights_all = np.concatenate(weight_parts)
-    output_basis = _validate_mdhisto_rebin_basis(axes_config, 4) if len(axes_config) == 4 else None
+    output_basis = None
+    if len(axes_config) >= 4 and coords_all.shape[1] == len(axes_config):
+        output_basis = np.eye(len(axes_config), dtype=float)
+        output_basis[:4, :4] = _validate_mdhisto_rebin_basis(axes_config[:4], 4)
     limit_coordinates = (
         coords_all @ np.linalg.inv(output_basis) if output_basis is not None else coords_all
     )
@@ -1582,6 +1609,21 @@ def _composite_mdhisto_data(
         or result.bins_list is None
     ):
         raise RuntimeError("composite rebinning did not produce binned data")
+    source_axes = list(first_data.axes)
+    if metadata_dimensions:
+        source_axes.extend(
+            MDHistoAxis(
+                dimension.name,
+                [-0.5, 0.5],
+                dimension.units,
+                "unknown",
+                metadata={
+                    "metadata_dimension": dimension.to_dict(),
+                    "interpolation": "none",
+                },
+            )
+            for dimension in metadata_dimensions
+        )
     axes = tuple(
         MDHistoAxis(
             name=str(axis_config.get("name") or source_axis.name),
@@ -1604,7 +1646,7 @@ def _composite_mdhisto_data(
             },
         )
         for source_axis, axis_config, bins in zip(
-            first_data.axes, axes_config, result.bins_list, strict=True
+            source_axes, axes_config, result.bins_list, strict=True
         )
     )
     mask = ~np.isfinite(result.binned_data) | ~np.isfinite(result.binned_data_errs)
@@ -1624,6 +1666,7 @@ def _composite_mdhisto_data(
                 config,
                 axes_config,
                 result.bins_list,
+                output_axes=output_basis,
             )
             for source, source_coords in coverage_inputs
         ]
@@ -1634,6 +1677,15 @@ def _composite_mdhisto_data(
         "composite": True,
         "source_group": group.name,
         "source_datasets": [dataset.name for dataset in _composite_candidates(group)],
+        **(
+            {
+                "metadata_dimensions": [
+                    dimension.to_dict() for dimension in metadata_dimensions
+                ]
+            }
+            if metadata_dimensions
+            else {}
+        ),
         "signal_semantics": "density",
         "signal_semantics_source": "nfit_normalized_rebin",
         "coverage_mask_count": int(np.count_nonzero(coverage_mask)),
@@ -1643,10 +1695,14 @@ def _composite_mdhisto_data(
             "step_size": np.asarray(result.step_size, dtype=float).tolist(),
             "num_bins": np.asarray(result.num_bins, dtype=int).tolist(),
             "bin_edges": [np.asarray(edges, dtype=float).tolist() for edges in result.bins_list],
-            "vectors": [
-                _rebin_axis_vector(axis_config, index, len(axes_config)).tolist()
-                for index, axis_config in enumerate(axes_config)
-            ],
+            "vectors": (
+                output_basis.tolist()
+                if output_basis is not None
+                else [
+                    _rebin_axis_vector(axis_config, index, len(axes_config)).tolist()
+                    for index, axis_config in enumerate(axes_config)
+                ]
+            ),
             "fractional_axes": _rebin_fractional_axes(config, axes_config),
             "axis_modes": [_rebin_axis_mode(config, axis) for axis in axes_config],
             "normalize": True,
@@ -1702,9 +1758,12 @@ def _composite_point_data(
     config: dict[str, Any],
     *,
     datasets: list[DatasetEntry] | None = None,
+    metadata_dimensions: Sequence[Any] | None = None,
     progress_callback: Any | None = None,
     include_source_masks: bool = True,
 ) -> MDHistoData:
+    from .metadata_dimensions import assigned_metadata_coordinates
+
     coords_parts: list[np.ndarray] = []
     signal_parts: list[np.ndarray] = []
     error_parts: list[np.ndarray] = []
@@ -1744,7 +1803,16 @@ def _composite_point_data(
         source = data.valid(require_positive_sigma=False)
         if source.size == 0:
             continue
-        coords_parts.append(np.column_stack(source.coordinates()))
+        coordinates = np.column_stack(source.coordinates())
+        if metadata_dimensions:
+            valid = data.valid_mask(require_positive_sigma=False)
+            metadata_columns = []
+            for dimension in metadata_dimensions:
+                values = assigned_metadata_coordinates(dataset, dimension)
+                values = np.broadcast_to(values, (data.size,))
+                metadata_columns.append(np.asarray(values, dtype=float)[valid])
+            coordinates = np.column_stack((coordinates, *metadata_columns))
+        coords_parts.append(coordinates)
         scale = float(dataset.scale_factor)
         signal = np.asarray(source.intensity, dtype=float) * scale
         signal_parts.append(signal)
@@ -1771,6 +1839,15 @@ def _composite_point_data(
             "source_datasets": [dataset.name for dataset in _composite_candidates(group)],
             "weighted_by_fit_weight": True,
             "weighted_by_normalization_denominator": normalization_weighted,
+            **(
+                {
+                    "metadata_dimensions": [
+                        dimension.to_dict() for dimension in metadata_dimensions
+                    ]
+                }
+                if metadata_dimensions
+                else {}
+            ),
         },
         progress_callback=progress_callback,
     )

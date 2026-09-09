@@ -443,6 +443,42 @@ def test_metadata_tolerance_mode_clusters_nearby_values_without_interpolation():
     np.testing.assert_allclose(data.signal.ravel(), [1, 2, 4, 4, 6, 7, 8])
 
 
+def test_metadata_fractional_mode_uses_the_central_nd_rebinner(monkeypatch):
+    import nfit.project_rebinning as project_rebinning
+
+    g = group([points([0.0, 0.5, 1.0], [0.0, 10.0, 20.0])])
+    nfit.set_metadata_dimensions(
+        g,
+        [
+            nfit.MetadataDimension(
+                "Temperature",
+                "temperature",
+                "K",
+                "per_point",
+                binning={
+                    "lower": 0.0,
+                    "upper": 1.0,
+                    "step": 1.0,
+                    "fractional": True,
+                },
+            )
+        ],
+    )
+    calls = []
+    original = project_rebinning.rebin_nd
+
+    def recording_rebin(*args, **kwargs):
+        calls.append(np.asarray(args[1]).shape[1])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(project_rebinning, "rebin_nd", recording_rebin)
+    data = nfit.composite_dataset_data(g)
+
+    assert calls == [5]
+    np.testing.assert_allclose(data.signal.ravel(), [10 / 3, 50 / 3])
+    assert data.metadata["rebin"]["fractional_axes"] == [True] * 5
+
+
 def test_pointwise_rebin_uses_nominal_centers_before_grouping_and_preserves_empty_bins():
     g = group([points([4.9, 10.1, 20.1], [2, 4, 8])])
     spec = nfit.MetadataDimension(
@@ -704,12 +740,20 @@ def test_metadata_rebin_gui_rows_follow_energy_and_edit_the_public_recipe(monkey
         grid.getItemPosition(grid.indexOf(label))[0]
         == grid.getItemPosition(grid.indexOf(energy))[0] + 1
     )
+    tabs = panel.findChild(QtWidgets.QTabWidget, "group_composite_tabs")
+    assert tabs.indexOf(label.parentWidget()) == 0
     for widget in panel.findChildren(QtWidgets.QWidget):
         if widget.objectName().startswith("metadata_rebin_"):
             assert widget.toolTip(), widget.objectName()
     mode = panel.findChild(QtWidgets.QComboBox, "metadata_rebin_mode_0")
     mode.setCurrentIndex(mode.findData("step"))
     assert g.metadata["metadata_dimensions"][0]["binning"]["step"] == 5
+    assignment = panel.findChild(
+        QtWidgets.QComboBox, "metadata_rebin_assignment_0"
+    )
+    assert assignment.isEnabled()
+    assignment.setCurrentIndex(assignment.findData(True))
+    assert g.metadata["metadata_dimensions"][0]["binning"]["fractional"] is True
     panel.findChild(QtWidgets.QPushButton, "group_composite_copy_settings").click()
     destination = group([points(5, [7])])
     assert explorer._paste_group_composite_settings(destination)

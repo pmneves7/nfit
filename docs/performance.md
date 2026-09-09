@@ -116,7 +116,9 @@ are expensive to load or rebin, enable **File → Cache binnings** before saving
 The project then embeds current dataset and composite binnings and restores them
 on the next open. Saving does not recompute current entries; it updates only
 missing or signature-stale binnings. This project-specific option defaults off
-so ordinary project files remain small.
+so ordinary project files remain small. Embedded caches carry a format version;
+nfit discards caches produced by an older numerical pipeline and recomputes them
+from their source data instead of treating potentially changed reductions as current.
 
 ## Heisenberg RPA
 

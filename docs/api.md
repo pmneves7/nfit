@@ -21,16 +21,19 @@ When the container belongs to a `DatasetEntry`, finish an edit with
 `dataset.replace_data(...)` so dependent caches and fingerprints are
 invalidated.
 
-`MetadataDimension` defines a discrete axis from a selected numeric metadata
+`MetadataDimension` defines an axis from a selected numeric metadata
 channel, with optional nominal coordinates and an assignment tolerance in the
 axis units. Use `set_metadata_dimensions(collection, dimensions)` and
-`composite_dataset_data(workspace, node=collection)` to build independent
-condition slices. `metadata_channels(dataset)` lists available paths and units.
+`composite_dataset_data(workspace, node=collection)` to include it in the
+central N-dimensional rebin. `metadata_channels(dataset)` lists available paths and units.
 Pass `binning=MetadataBinning(lower=5, upper=50, step=5)` to a dimension to
 rebin it, or use `MetadataBinning(bin_edges=[0, 15, 25, 55])` for nonuniform
 bins. `MetadataBinning(tolerance=0.1)` clusters nearby assigned coordinates
-into automatically determined whole bins. The `binning` argument also accepts a dictionary with the same fields;
-`None` retains discrete coordinates. Binning never interpolates metadata.
+into automatically determined whole bins. Step, count, and edge grids default
+to discrete assignment; pass `fractional=True` to distribute source values
+between adjacent metadata bins with ordinary rebin weighting and uncertainty
+propagation. The `binning` argument also accepts a dictionary with the same
+fields; `None` retains discrete coordinates.
 See [Metadata dimensions](data_import.md#metadata-dimensions) and
 [composite scripts](workflow_scripts.md#composite-workflows) for alignment and
 reproduction details.

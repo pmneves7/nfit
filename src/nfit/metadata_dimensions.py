@@ -1,4 +1,4 @@
-"""Discrete coordinates derived from sample metadata, without interpolation."""
+"""Rebin coordinates derived from aligned sample metadata."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from .mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
 
 @dataclass(frozen=True)
 class MetadataBinning:
-    """Optional histogram grid for a metadata dimension, without interpolation.
+    """Optional histogram grid and assignment mode for a metadata dimension.
 
     Supply ``bin_edges``, or ``lower``/``upper`` center limits with either
     ``step`` or ``num_bins``. ``tolerance`` derives centers from nearby values.
@@ -31,8 +31,11 @@ class MetadataBinning:
     num_bins: int | None = None
     bin_edges: Sequence[float] | None = None
     tolerance: float | None = None
+    fractional: bool = False
 
     def __post_init__(self):
+        if not isinstance(self.fractional, (bool, np.bool_)):
+            raise ValueError("metadata fractional assignment must be true or false")
         if sum(
             v is not None
             for v in (self.step, self.num_bins, self.bin_edges, self.tolerance)
@@ -90,7 +93,7 @@ class MetadataBinning:
 
 @dataclass(frozen=True)
 class MetadataDimension:
-    """One discrete coordinate. ``tolerance`` has the same units as ``centers``.
+    """One metadata coordinate. ``tolerance`` has the same units as ``centers``.
 
     ``source`` is a ``metadata/...`` or ``parameters/...`` path, ``temperature``
     (the loaded point temperatures), or an HDF5 path such as
@@ -236,6 +239,86 @@ def metadata_dimension_coordinates(dataset, dimension: MetadataDimension) -> np.
     raise ValueError(
         f"{dataset.name}: {values.shape} channel values are not aligned with {size} points"
     )
+
+
+def assigned_metadata_coordinates(dataset, dimension: MetadataDimension) -> np.ndarray:
+    """Return measured coordinates after optional nominal-center assignment."""
+
+    values = metadata_dimension_coordinates(dataset, dimension)
+    if dimension.centers is None:
+        return values
+    centers = np.asarray(dimension.centers, dtype=float)
+    indices = metadata_dimension_indices(values, centers, dimension.tolerance)
+    return centers[indices]
+
+
+def metadata_rebin_axis_config(dimension: MetadataDimension) -> dict[str, Any]:
+    """Translate one metadata recipe into the common per-axis rebin schema."""
+
+    config: dict[str, Any] = {
+        "name": dimension.name,
+        "variable": dimension.name,
+        "units": dimension.units,
+        "lower": 0.0,
+        "upper": 0.0,
+        "num_bins": 1,
+        "step_size": 1.0,
+        "mode": "discrete",
+        "fractional": False,
+        "auto_lower": False,
+        "auto_upper": False,
+        "auto_step_size": False,
+        "metadata_dimension": dimension.to_dict(),
+    }
+    if dimension.centers is not None:
+        config["candidate_centers"] = list(dimension.centers)
+        config.update(
+            lower=float(dimension.centers[0]),
+            upper=float(dimension.centers[-1]),
+            num_bins=len(dimension.centers),
+            step_size=(
+                float(np.median(np.diff(dimension.centers)))
+                if len(dimension.centers) > 1
+                else 1.0
+            ),
+        )
+    binning = dimension.binning
+    if binning is None:
+        return config
+    config["fractional"] = bool(binning.fractional)
+    if binning.tolerance is not None:
+        config.update(mode="tolerance", tolerance=float(binning.tolerance))
+    elif binning.bin_edges is not None:
+        edges = list(binning.bin_edges)
+        config.update(
+            mode="edges",
+            bin_edges=edges,
+            lower=float(edges[0]),
+            upper=float(edges[-1]),
+            num_bins=len(edges) - 1,
+            step_size=float((edges[-1] - edges[0]) / (len(edges) - 1)),
+        )
+    else:
+        config.update(
+            mode="step" if binning.step is not None else "bins",
+            lower=float(binning.lower),
+            upper=float(binning.upper),
+            step_size=(
+                float(binning.step)
+                if binning.step is not None
+                else float((binning.upper - binning.lower) / max(binning.num_bins - 1, 1))
+            ),
+            num_bins=(
+                int(binning.num_bins)
+                if binning.num_bins is not None
+                else max(
+                    int(np.floor((binning.upper - binning.lower) / binning.step + 1e-10))
+                    + 1,
+                    1,
+                )
+            ),
+        )
+    return config
 
 
 def metadata_dimension_indices(values, centers, tolerance: float) -> np.ndarray:

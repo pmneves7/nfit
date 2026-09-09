@@ -436,6 +436,7 @@ _COMPOSITE_DATA_CACHE_MAX_BYTES = _project_data._COMPOSITE_DATA_CACHE_MAX_BYTES
 
 PROJECT_CACHE_BINNINGS_KEY = "cache_binnings"
 PROJECT_BINNING_CACHE_ENTRIES_KEY = "binning_cache_entries"
+PROJECT_BINNING_CACHE_FORMAT_VERSION = 2
 
 
 def _ensure_dataset_data_loaded(dataset: DatasetEntry) -> Any:
@@ -4916,6 +4917,7 @@ def _project_binning_artifacts(
             entries.append(
                 {
                     "type": "dataset",
+                    "format_version": PROJECT_BINNING_CACHE_FORMAT_VERSION,
                     "group_index": group_index,
                     "dataset_id": dataset.id,
                     "member": member,
@@ -4940,6 +4942,7 @@ def _project_binning_artifacts(
             entries.append(
                 {
                     "type": "composite",
+                    "format_version": PROJECT_BINNING_CACHE_FORMAT_VERSION,
                     "group_index": group_index,
                     "node_id": node_id,
                     "member": member,
@@ -4956,10 +4959,13 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
     entries = project.settings.get(PROJECT_BINNING_CACHE_ENTRIES_KEY, [])
     if not isinstance(entries, list):
         return
+    resolved: list[tuple[str, Any, Any]] = []
     for entry in entries:
         if not isinstance(entry, dict):
             continue
         try:
+            if int(entry.get("format_version", 0)) != PROJECT_BINNING_CACHE_FORMAT_VERSION:
+                continue
             group = project.data_groups[int(entry["group_index"])]
             data = read_project_dataset_artifact(path, str(entry["member"]))
             if entry.get("type") == "dataset":
@@ -4968,17 +4974,7 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
                     for item in group.iter_datasets()
                     if item.id == str(entry["dataset_id"])
                 )
-                signature = _viewer_view_signature(
-                    dataset,
-                    effective_dataset_masks(group, dataset),
-                )
-                _lru_store(
-                    _VIEWER_VIEW_CACHE,
-                    dataset.id,
-                    (signature, data),
-                    _VIEWER_VIEW_CACHE_LIMIT,
-                    _VIEWER_VIEW_CACHE_MAX_BYTES,
-                )
+                resolved.append(("dataset", (group, dataset), data))
             elif entry.get("type") == "composite":
                 node_id = entry.get("node_id")
                 scope = (
@@ -4993,16 +4989,44 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
                         ),
                     )
                 )
-                signature = _composite_cache_signature(scope)
-                _lru_store(
-                    _COMPOSITE_DATA_CACHE,
-                    _composite_cache_key(scope),
-                    (signature, data),
-                    _COMPOSITE_DATA_CACHE_LIMIT,
-                    _COMPOSITE_DATA_CACHE_MAX_BYTES,
-                )
+                resolved.append(("composite", scope, data))
         except (IndexError, KeyError, OSError, StopIteration, TypeError, ValueError):
             continue
+
+    # Signature construction may lazily load a metadata channel or background
+    # source and thereby advance a dataset's content token. Prime every
+    # dependency before capturing the signatures installed in the caches; a
+    # one-pass restore can otherwise invalidate entries restored earlier in
+    # archive order.
+    for kind, target, _data in resolved:
+        if kind == "dataset":
+            group, dataset = target
+            _viewer_view_signature(dataset, effective_dataset_masks(group, dataset))
+        else:
+            _composite_cache_signature(target)
+    for kind, target, data in resolved:
+        if kind == "dataset":
+            group, dataset = target
+            signature = _viewer_view_signature(
+                dataset,
+                effective_dataset_masks(group, dataset),
+            )
+            _lru_store(
+                _VIEWER_VIEW_CACHE,
+                dataset.id,
+                (signature, data),
+                _VIEWER_VIEW_CACHE_LIMIT,
+                _VIEWER_VIEW_CACHE_MAX_BYTES,
+            )
+        else:
+            signature = _composite_cache_signature(target)
+            _lru_store(
+                _COMPOSITE_DATA_CACHE,
+                _composite_cache_key(target),
+                (signature, data),
+                _COMPOSITE_DATA_CACHE_LIMIT,
+                _COMPOSITE_DATA_CACHE_MAX_BYTES,
+            )
 
 
 def save_project(

@@ -9,6 +9,8 @@ import numpy as np
 
 from .mdhisto import MDHistoData
 from .project_rebinning import (
+    _cluster_coordinate_centers,
+    _coordinate_center_edges,
     _rebin_axis_fractional,
     _rebin_axis_mode,
     _sanitize_rebin_axis_config,
@@ -85,8 +87,9 @@ def rebin_bin_information_widget(
     size.setWordWrap(True)
     size.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
     size.setToolTip(
-        "Rebin caches live in memory. The project stores the recipe; an on-disk array is "
-        "created only by creating or saving a rebinned dataset. Compressed file size varies."
+        "Rebin caches live in memory. A project also embeds them when File > Cache binnings "
+        "is enabled; otherwise an on-disk array is created only by materializing a rebinned "
+        "dataset. Compressed file size varies."
     )
     layout.addWidget(size)
 
@@ -155,12 +158,10 @@ def _axis_information(
                 (
                     axis.name,
                     mode,
-                    False
-                    if "metadata_dimension" in axis.metadata
+                    bool(assignments[index])
+                    if index < len(assignments)
                     else _rebin_axis_fractional(config, configured[index])
                     if index < len(configured)
-                    else bool(assignments[index])
-                    if index < len(assignments)
                     else False,
                     int(data.shape[index]),
                     np.asarray(axis.centers, dtype=float),
@@ -177,6 +178,20 @@ def _axis_information(
         centers = None
         if axis.get("resolved_centers") is not None:
             centers = np.asarray(axis["resolved_centers"], dtype=float)
+        elif axis.get("candidate_centers") is not None and mode in {
+            "discrete",
+            "tolerance",
+        }:
+            centers = _cluster_coordinate_centers(
+                axis["candidate_centers"],
+                0.0 if mode == "discrete" else float(axis["tolerance"]),
+            )
+            edges = _coordinate_center_edges(
+                centers,
+                singleton_half_width=(
+                    float(axis["tolerance"]) if mode == "tolerance" else 0.5
+                ),
+            )
         elif edges is not None:
             centers = (edges[:-1] + edges[1:]) / 2.0
         count = int(

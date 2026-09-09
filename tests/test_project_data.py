@@ -148,6 +148,9 @@ def test_project_can_embed_and_restore_current_composite_binning(tmp_path, monke
     manifest = read_project_manifest(path)
     entries = manifest["settings"][project_gui.PROJECT_BINNING_CACHE_ENTRIES_KEY]
     assert len(entries) == 2
+    assert {
+        entry["format_version"] for entry in entries
+    } == {project_gui.PROJECT_BINNING_CACHE_FORMAT_VERSION}
     with zipfile.ZipFile(path) as archive:
         assert entries[0]["member"] in archive.namelist()
 
@@ -182,6 +185,57 @@ def test_project_can_embed_and_restore_current_composite_binning(tmp_path, monke
     assert project_gui.PROJECT_BINNING_CACHE_ENTRIES_KEY not in manifest["settings"]
     with zipfile.ZipFile(path) as archive:
         assert not any(name.startswith("assets/binnings/") for name in archive.namelist())
+
+
+def test_persisted_binning_restore_primes_dependencies_before_caching(tmp_path, monkeypatch):
+    source = tmp_path / "source.npz"
+    source.write_bytes(b"source placeholder")
+    dataset = DatasetEntry(
+        "scan",
+        _tiny_mdhisto_data(2.0),
+        kind="mdhisto",
+        metadata={"source_file": str(source)},
+    )
+    dataset.replace_data(dataset.data, source_backed=True)
+    group = DataGroup("Workspace1", datasets=[dataset])
+    project_gui.dataset_rebin_config(dataset).update(enabled=True, minimum_coverage=0.0)
+    project_gui.data_group_composite_config(group).update(
+        enabled=True,
+        minimum_coverage=0.0,
+    )
+    project = NfitProject(
+        [group],
+        settings={project_gui.PROJECT_CACHE_BINNINGS_KEY: True},
+    )
+    path = tmp_path / "cached.nfit"
+    save_project(project, path)
+
+    restored = project_gui._project_from_dict(read_project_manifest(path))
+    restored_dataset = next(restored.data_groups[0].iter_datasets())
+    original_signature = project_gui._composite_cache_signature
+    mutated = False
+
+    def mutating_signature(scope):
+        nonlocal mutated
+        if not mutated:
+            restored_dataset.replace_data(restored_dataset.data)
+            mutated = True
+        return original_signature(scope)
+
+    monkeypatch.setattr(project_gui, "_composite_cache_signature", mutating_signature)
+    project_gui._VIEWER_VIEW_CACHE.clear()
+    project_gui._COMPOSITE_DATA_CACHE.clear()
+    project_gui._restore_project_binning_cache(restored, path)
+
+    assert not project_gui.project_binnings_need_refresh(restored)
+
+    incompatible = project_gui._project_from_dict(read_project_manifest(path))
+    for entry in incompatible.settings[project_gui.PROJECT_BINNING_CACHE_ENTRIES_KEY]:
+        entry["format_version"] = project_gui.PROJECT_BINNING_CACHE_FORMAT_VERSION - 1
+    project_gui._VIEWER_VIEW_CACHE.clear()
+    project_gui._COMPOSITE_DATA_CACHE.clear()
+    project_gui._restore_project_binning_cache(incompatible, path)
+    assert project_gui.project_binnings_need_refresh(incompatible)
 
 
 def test_dataset_details_text_summarizes_axes_source_and_metadata(tmp_path, monkeypatch):

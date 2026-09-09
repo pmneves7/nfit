@@ -353,7 +353,8 @@ def _resolve_data_driven_rebin_axes(
             resolved.append(axis)
             continue
         tolerance = 0.0 if mode == "discrete" else float(axis["tolerance"])
-        centers = _cluster_coordinate_centers(values[:, index], tolerance)
+        candidates = axis.get("candidate_centers", values[:, index])
+        centers = _cluster_coordinate_centers(candidates, tolerance)
         edges = _coordinate_center_edges(
             centers,
             singleton_half_width=tolerance if tolerance > 0.0 else 0.5,
@@ -1071,6 +1072,8 @@ def _rebin_mdhisto_coverage(
 ) -> np.ndarray:
     """Map measured native-bin hypervolume into requested output bins."""
 
+    coordinate_ndim = int(np.asarray(coords).shape[-1])
+    source_ndim = data.signal.ndim
     source_coverage = mdhisto_coverage_fraction(data)
     usable = (
         np.isfinite(data.signal)
@@ -1082,22 +1085,23 @@ def _rebin_mdhisto_coverage(
     source_volume = _mdhisto_cell_volumes(data)
     vectors = np.asarray(
         [
-            _rebin_axis_vector(axis_config, index, data.signal.ndim)
-            for index, axis_config in enumerate(axes_config)
+            _rebin_axis_vector(axis_config, index, source_ndim)
+            for index, axis_config in enumerate(axes_config[:source_ndim])
         ],
         dtype=float,
     )
     mapping = (
-        _mdhisto_rebin_basis_transform(data, list(axes_config))
-        if data.signal.ndim == 4
+        _mdhisto_rebin_basis_transform(data, list(axes_config[:source_ndim]))
+        if source_ndim == 4
         else vectors.T
     )
     if mapping.shape == (data.signal.ndim, data.signal.ndim):
         source_volume = source_volume * abs(float(np.linalg.det(mapping)))
     if (
         symmetry is None
-        and mapping.shape == (data.signal.ndim, data.signal.ndim)
-        and np.allclose(mapping, np.eye(data.signal.ndim))
+        and coordinate_ndim == source_ndim
+        and mapping.shape == (source_ndim, source_ndim)
+        and np.allclose(mapping, np.eye(source_ndim))
     ):
         covered_volume = source_coverage
         for dim, (axis, size, output_edges) in enumerate(
@@ -1135,6 +1139,7 @@ def _rebin_mdhisto_coverage(
         # assignment. Cloud-in-cell deposition avoids assigning an entire
         # rotated native voxel to whichever output bin contains its center.
         fractional=True,
+        fractional_axes=[True] * source_ndim + [False] * (coordinate_ndim - source_ndim),
         normalize=False,
         mean_weighting="uniform",
         max_batch_bytes=_rebin_max_batch_bytes(config),
@@ -1144,7 +1149,7 @@ def _rebin_mdhisto_coverage(
     coverage_rebin = (
         rebin_nd_symmetry(
             np.ones(data.signal.size, dtype=float),
-            np.asarray(coords, dtype=float).reshape(-1, data.signal.ndim),
+            np.asarray(coords, dtype=float).reshape(-1, coordinate_ndim),
             symmetry,
             axes=output_axes,
             **kwargs,
@@ -1152,13 +1157,18 @@ def _rebin_mdhisto_coverage(
         if symmetry is not None
         else rebin_nd(
             np.ones(data.signal.size, dtype=float),
-            np.asarray(coords, dtype=float).reshape(-1, data.signal.ndim),
+            np.asarray(coords, dtype=float).reshape(-1, coordinate_ndim),
+            axes=output_axes,
             **kwargs,
         )
     )
     if coverage_rebin.binned_data is None:
         raise RuntimeError("coverage rebinning did not produce binned data")
-    output_volume = _output_bin_volumes(bins_list)
+    spatial_volume = _output_bin_volumes(bins_list[:source_ndim])
+    output_volume = np.broadcast_to(
+        spatial_volume.reshape(spatial_volume.shape + (1,) * (coordinate_ndim - source_ndim)),
+        tuple(len(values) - 1 for values in bins_list),
+    )
     coverage = np.zeros(output_volume.shape, dtype=float)
     np.divide(
         np.asarray(coverage_rebin.binned_data, dtype=float),
@@ -1421,7 +1431,7 @@ def _point_data_histogram(
     metadata_updates: Mapping[str, Any] | None = None,
     progress_callback: Any | None = None,
 ) -> MDHistoData:
-    """Bin physical HKLE point coordinates into a viewer-ready histogram."""
+    """Bin physical HKLE plus optional metadata coordinates into a histogram."""
 
     if progress_callback is not None:
         progress_callback(
@@ -1432,12 +1442,16 @@ def _point_data_histogram(
         )
 
     axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
-    if len(axes_config) != 4:
-        raise ValueError("HKLE point-data rebinning requires four output axes")
-    for index, axis_config in enumerate(axes_config):
-        axis_config.setdefault("variable", ("H", "K", "L", "E")[index])
-    basis = _validate_mdhisto_rebin_basis(axes_config, 4)
     physical_coordinates = np.asarray(coordinates, dtype=float)
+    if physical_coordinates.ndim != 2 or physical_coordinates.shape[1] < 4:
+        raise ValueError("point-data rebinning requires HKLE coordinate columns")
+    if len(axes_config) != physical_coordinates.shape[1]:
+        raise ValueError("point-data rebin axes must match the coordinate columns")
+    for index, axis_config in enumerate(axes_config[:4]):
+        axis_config.setdefault("variable", ("H", "K", "L", "E")[index])
+    physical_basis = _validate_mdhisto_rebin_basis(axes_config[:4], 4)
+    basis = np.eye(physical_coordinates.shape[1], dtype=float)
+    basis[:4, :4] = physical_basis
     projected_coordinates = physical_coordinates @ np.linalg.inv(basis)
     metadata = copy.deepcopy(dict(source_metadata or {}))
     symmetry = _rebin_symmetry_matrices(config, metadata.get("lattice_parameters"))
@@ -1540,13 +1554,42 @@ def _point_data_histogram(
     return MDHistoData(
         axes=tuple(
             MDHistoAxis(
-                name=str(axis_config.get("name") or ("H", "K", "L", "DeltaE")[index]),
+                name=str(
+                    axis_config.get("name")
+                    or (("H", "K", "L", "DeltaE")[index] if index < 4 else f"Axis {index + 1}")
+                ),
                 values=np.asarray(edges, dtype=float),
-                units=str(axis_config.get("units") or ("rlu" if index < 3 else "meV")),
-                kind="momentum" if index < 3 else "energy_transfer",
+                units=str(
+                    axis_config.get("units")
+                    or ("rlu" if index < 3 else "meV" if index == 3 else "")
+                ),
+                kind=(
+                    "momentum"
+                    if index < 3
+                    else "energy_transfer"
+                    if index == 3
+                    else "unknown"
+                ),
                 frame="HKL" if index < 3 else "General Frame",
                 metadata={
-                    "variable": str(axis_config.get("variable", ("H", "K", "L", "E")[index])),
+                    "variable": str(
+                        axis_config.get(
+                            "variable",
+                            ("H", "K", "L", "E")[index]
+                            if index < 4
+                            else axis_config.get("name", f"Axis {index + 1}"),
+                        )
+                    ),
+                    **(
+                        {
+                            "metadata_dimension": copy.deepcopy(
+                                axis_config["metadata_dimension"]
+                            ),
+                            "interpolation": "none",
+                        }
+                        if axis_config.get("metadata_dimension") is not None
+                        else {}
+                    ),
                     **(
                         {"discrete_centers": axis_config["resolved_centers"]}
                         if axis_config.get("resolved_centers") is not None

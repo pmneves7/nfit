@@ -30,10 +30,10 @@ The package provides:
   non-destructive analyses, including live hierarchical composites and editable
   source-linked histogram sums, differences, or comparison clones with
   independent raw-data binning, plus lazy navigation for run-heavy projects;
-- discrete or tolerance-clustered metadata dimensions for temperature or other sample conditions,
+- metadata dimensions for temperature or other sample conditions, accumulated with physical coordinates in the central N-dimensional rebinner,
   with selectable channels, nominal coordinates, display and integration axes,
   exact tiled slices, visible zero-valued background references, temperature-aware
-  fitting, and optional whole-bin rebinning;
+  fitting, and per-axis discrete or fractional rebinning;
 - source reload actions for individual datasets and complete dataset collections,
   with automatic refresh of dependent composites and open viewers;
 - folder-level enable controls for masks and backgrounds, plus a shared scale

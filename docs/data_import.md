@@ -330,15 +330,17 @@ the values and do not convert them. Leave the coordinates blank to retain the
 exact sorted unique values. **Preview assignments** shows every source's
 readings and target coordinates before applying.
 
-The metadata rebin row uses the same per-axis Mode vocabulary. **Discrete**
-retains the assigned values; Step, Bins, and Edges group them into whole bins.
-**Tolerance** derives a compact set of bin centers from nearby assigned values.
+Metadata-axis rows appear with the physical axes under **Rebin settings** and
+use the same two selectors. **Discrete** retains the assigned values; Step,
+Bins, and Edges construct ordinary grids. **Tolerance** derives a compact set
+of bin centers from nearby assigned values.
 This rebin tolerance is distinct from the metadata recipe's assignment
 tolerance: it controls clustering after the source channel has been assigned.
 
 Sources assigned to the same coordinate share the existing composite's weights,
-masks, scales, symmetry, and spatial grid. Different metadata coordinates are
-reduced independently, even when fractional momentum/energy binning is enabled.
+physical normalization, masks, scales, symmetry, and spatial grid. Physical and
+metadata coordinates are passed together to one N-dimensional central rebin;
+metadata values are not first reduced into independent condition slices.
 Multiple metadata dimensions produce a grid of combinations; combinations with
 no measurements remain masked. Temperature coordinates in K are also supplied
 to fitting and paired spectral-channel conversion.
@@ -350,9 +352,12 @@ one-bin count uses the limits as integration edges. Explicit edges can be
 nonuniform. Interior edges belong to the bin on their right, and the final edge
 is inclusive. Coordinates outside the edges are excluded; empty bins stay masked.
 Nominal-coordinate assignment, when configured, happens before this binning.
-Measurements enter one metadata bin in full, even with fractional spatial
-binning enabled. Weights and uncertainties are combined from the original
-samples, rather than by averaging existing condition slices. Return to
+Metadata assignment defaults to **Discrete**. For Step, Bins, and Edges grids,
+it can instead be changed to **Fractional**, distributing a measurement between
+adjacent metadata bins with the same weighting and uncertainty propagation used
+for physical axes. Discrete and Tolerance grids require discrete assignment.
+Weights and uncertainties are combined directly from the original samples,
+rather than by averaging existing condition slices. Return to
 **Discrete** to recover the original coordinates. **Copy settings** and
 **Paste settings** include metadata recipes when used between composite panels.
 
@@ -392,8 +397,8 @@ selector. **Discrete** derives exact coordinate centers. **Tolerance** clusters
 nearby recorded coordinates and derives one center per cluster. For nominal
 MACS energy scans, setting DeltaE to Tolerance with `0.1` meV separates scans
 near -0.4, 0, 0.4, 1.2, 2.0, 2.8, and 3.6 meV without creating unmeasured
-intervening slices. Metadata axes always use discrete assignment. Empty bins
-remain masked.
+intervening slices. Metadata axes default to discrete assignment but offer the
+same fractional choice for Step, Bins, and Edges grids. Empty bins remain masked.
 
 For four-dimensional single-crystal data, **Momentum coordinates** exposes the
 complete $3\times3$ momentum block. Its rows define the three output directions
@@ -433,7 +438,8 @@ allocating a sparse four-dimensional volume, which is the appropriate route
 for a fixed-angle environment/background run.
 
 Masks are applied before binning. The rebin panel separates **Rebin settings**,
-**Metadata dimensions** (for composites), and expandable **Bin information**.
+including physical and metadata-axis rows, **Metadata dimensions** for defining
+metadata sources and nominal assignments, and expandable **Bin information**.
 The information tab reports each axis's count, limits, centers, edges, grid
 mode, assignment mode, total bins, and numeric payload estimate; after a current
 rebin it uses the exact cached grid.
