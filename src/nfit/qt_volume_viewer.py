@@ -9,7 +9,8 @@ import numpy as np
 from .colormaps import VOLUME_COLORMAPS
 from .dataset import PointListData
 from .mdhisto import MDHistoAxis, MDHistoData, mdhisto_measured_bins
-from .plotting import gaussian_smooth_nan
+from .plotting_core import gaussian_smooth_nan
+from .qt_slice_controls import _IntegratedAxisSlider
 from .qt_volume_controls import build_volume_panel_ui
 
 TRANSFER_SAMPLES = 256
@@ -597,8 +598,6 @@ def _make_volume_panel(
         def _rebuild_hidden_controls(self):
             # Reuse the slice viewer's range widget so hidden-axis selection has
             # identical handles and drag behavior in both visualization modes.
-            from .qt_slice_viewer import _IntegratedAxisSlider
-
             while self.hidden_layout.count():
                 item = self.hidden_layout.takeAt(0)
                 if item.widget() is not None:

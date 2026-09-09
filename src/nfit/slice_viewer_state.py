@@ -8,7 +8,7 @@ import numpy as np
 
 from .dataset import PointListData
 from .mdhisto import MDHistoData
-from .plotting import MDHistoSliceViewer
+from .plotting_core import MDHistoSliceViewer
 
 
 @dataclass
