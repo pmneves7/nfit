@@ -56,8 +56,12 @@ different Python.
 
 - `src/nfit/project_gui.py`: project explorer and GUI workflow coordination.
 - `src/nfit/project_imports.py`: GUI-independent import, source, and reload orchestration.
-- `src/nfit/project_data.py`: GUI-independent dataset preparation, masks, rebinning,
-  composites, derived data, and viewer-ready data.
+- `src/nfit/project_data.py`: GUI-independent dataset preparation, composites,
+  derived data, and viewer-ready orchestration.
+- `src/nfit/project_rebinning.py`: numerical grid configuration, symmetry-aware
+  rebinning, and histogram construction.
+- `src/nfit/project_view_data.py`: immutable scale, kinematic, spectral-channel,
+  and metadata transformations for viewer-ready datasets.
 - `src/nfit/project_io.py`, `project_history.py`, and `project_models.py`: project
   serialization, fit-history snapshots, and model-state reconciliation.
 - `src/nfit/project_import_dialogs.py`, `fit_diagnostics_gui.py`, and

@@ -10,7 +10,6 @@ from __future__ import annotations
 import copy
 import json
 import math
-import re
 from collections import OrderedDict
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -286,10 +285,199 @@ from .project_point_lists import (
 from .project_point_lists import (
     prepared_point_list_data as prepared_point_list_data,
 )
+from .project_rebinning import (
+    _axis_bounds as _axis_bounds,
+)
+from .project_rebinning import (
+    _axis_mode_coordinates_with_symmetry as _axis_mode_coordinates_with_symmetry,
+)
+from .project_rebinning import (
+    _cluster_coordinate_centers as _cluster_coordinate_centers,
+)
+from .project_rebinning import (
+    _composite_rebin_bin_edges as _composite_rebin_bin_edges,
+)
+from .project_rebinning import (
+    _composite_rebin_step_sizes as _composite_rebin_step_sizes,
+)
+from .project_rebinning import (
+    _coordinate_center_edges as _coordinate_center_edges,
+)
+from .project_rebinning import (
+    _default_rebin_axes as _default_rebin_axes,
+)
+from .project_rebinning import (
+    _finite_coordinate_bounds as _finite_coordinate_bounds,
+)
+from .project_rebinning import (
+    _mdhisto_axis_edges as _mdhisto_axis_edges,
+)
+from .project_rebinning import (
+    _mdhisto_cell_volumes as _mdhisto_cell_volumes,
+)
+from .project_rebinning import (
+    _mdhisto_rebin_axis_variable as _mdhisto_rebin_axis_variable,
+)
+from .project_rebinning import (
+    _mdhisto_rebin_basis_bounds as _mdhisto_rebin_basis_bounds,
+)
+from .project_rebinning import (
+    _mdhisto_rebin_basis_transform as _mdhisto_rebin_basis_transform,
+)
+from .project_rebinning import (
+    _mdhisto_rebin_component as _mdhisto_rebin_component,
+)
+from .project_rebinning import (
+    _migrate_rebin_axis_modes as _migrate_rebin_axis_modes,
+)
+from .project_rebinning import (
+    _momentum_coordinate_variables as _momentum_coordinate_variables,
+)
+from .project_rebinning import (
+    _momentum_rebin_axis_indices as _momentum_rebin_axis_indices,
+)
+from .project_rebinning import (
+    _momentum_rebin_matrix as _momentum_rebin_matrix,
+)
+from .project_rebinning import (
+    _momentum_rebin_vector_text as _momentum_rebin_vector_text,
+)
+from .project_rebinning import (
+    _normalize_rebin_bin_edges as _normalize_rebin_bin_edges,
+)
+from .project_rebinning import (
+    _num_bins_from_step_size as _num_bins_from_step_size,
+)
+from .project_rebinning import (
+    _output_bin_volumes as _output_bin_volumes,
+)
+from .project_rebinning import (
+    _parameter_to_text as _parameter_to_text,
+)
+from .project_rebinning import (
+    _point_data_histogram as _point_data_histogram,
+)
+from .project_rebinning import (
+    _point_data_rebin_basis_bounds as _point_data_rebin_basis_bounds,
+)
+from .project_rebinning import (
+    _rebin_axis_bound_is_auto as _rebin_axis_bound_is_auto,
+)
+from .project_rebinning import (
+    _rebin_axis_mode as _rebin_axis_mode,
+)
+from .project_rebinning import (
+    _rebin_axis_name as _rebin_axis_name,
+)
+from .project_rebinning import (
+    _rebin_axis_vector as _rebin_axis_vector,
+)
+from .project_rebinning import (
+    _rebin_config_basis_bounds as _rebin_config_basis_bounds,
+)
+from .project_rebinning import (
+    _rebin_fractional_axes as _rebin_fractional_axes,
+)
+from .project_rebinning import (
+    _rebin_grid_kwargs as _rebin_grid_kwargs,
+)
+from .project_rebinning import (
+    _rebin_max_batch_bytes as _rebin_max_batch_bytes,
+)
+from .project_rebinning import (
+    _rebin_max_batch_mb as _rebin_max_batch_mb,
+)
+from .project_rebinning import (
+    _rebin_mdhisto_coverage as _rebin_mdhisto_coverage,
+)
+from .project_rebinning import (
+    _rebin_mdhisto_data as _rebin_mdhisto_data,
+)
+from .project_rebinning import (
+    _rebin_mean_weighting as _rebin_mean_weighting,
+)
+from .project_rebinning import (
+    _rebin_minimum_coverage as _rebin_minimum_coverage,
+)
+from .project_rebinning import (
+    _rebin_minimum_samples as _rebin_minimum_samples,
+)
+from .project_rebinning import (
+    _rebin_point_data as _rebin_point_data,
+)
+from .project_rebinning import (
+    _rebin_resolution_mode as _rebin_resolution_mode,
+)
+from .project_rebinning import (
+    _rebin_symmetry_count as _rebin_symmetry_count,
+)
+from .project_rebinning import (
+    _rebin_symmetry_matrices as _rebin_symmetry_matrices,
+)
+from .project_rebinning import (
+    _rebin_symmetry_metadata as _rebin_symmetry_metadata,
+)
+from .project_rebinning import (
+    _rebin_symmetry_operations as _rebin_symmetry_operations,
+)
+from .project_rebinning import (
+    _resolve_auto_rebin_axes as _resolve_auto_rebin_axes,
+)
+from .project_rebinning import (
+    _resolve_data_driven_rebin_axes as _resolve_data_driven_rebin_axes,
+)
+from .project_rebinning import (
+    _sanitize_rebin_axis_config as _sanitize_rebin_axis_config,
+)
+from .project_rebinning import (
+    _step_size_from_bounds as _step_size_from_bounds,
+)
+from .project_rebinning import (
+    _symmetry_projected_coordinate_bounds as _symmetry_projected_coordinate_bounds,
+)
+from .project_rebinning import (
+    _update_mdhisto_rebin_basis as _update_mdhisto_rebin_basis,
+)
+from .project_rebinning import (
+    _update_rebin_momentum_basis as _update_rebin_momentum_basis,
+)
+from .project_rebinning import (
+    _update_rebin_momentum_matrix as _update_rebin_momentum_matrix,
+)
+from .project_rebinning import (
+    _validate_mdhisto_rebin_basis as _validate_mdhisto_rebin_basis,
+)
+from .project_view_data import (
+    KINEMATIC_KF_KI_INCLUDED_KEY as KINEMATIC_KF_KI_INCLUDED_KEY,
+)
+from .project_view_data import (
+    _apply_dataset_scale as _apply_dataset_scale,
+)
+from .project_view_data import (
+    _apply_kinematic_normalization_to_points as _apply_kinematic_normalization_to_points,
+)
+from .project_view_data import (
+    _apply_kinematic_normalization_to_view as _apply_kinematic_normalization_to_view,
+)
+from .project_view_data import (
+    _apply_spectral_channel_view as _apply_spectral_channel_view,
+)
+from .project_view_data import (
+    _kinematic_energy_metadata as _kinematic_energy_metadata,
+)
+from .project_view_data import (
+    _kinematic_kf_ki_factor as _kinematic_kf_ki_factor,
+)
+from .project_view_data import (
+    _mdhisto_without_nfit_masks as _mdhisto_without_nfit_masks,
+)
+from .project_view_data import (
+    _with_viewer_dataset_metadata as _with_viewer_dataset_metadata,
+)
 from .raw_dgs import bin_raw_dgs_group
-from .rebin import rebin_nd, rebin_nd_symmetry
-from .spectral_channels import SPECTRAL_CHANNEL_CONFIG_KEY, with_paired_spectral_channels
-from .symmetry import SymmetrySpec, resolve_symmetry, symmetry_config, symmetry_spec_from_config
+from .rebin import rebin_nd
+from .spectral_channels import SPECTRAL_CHANNEL_CONFIG_KEY
+from .symmetry import SymmetrySpec, symmetry_config
 
 DATASET_REBIN_KEY = "rebin"
 DATASET_MASK_APPLICATION_KEY = "mask_application"
@@ -305,15 +493,23 @@ REBIN_AXIS_MODES = frozenset({"discrete", "step", "bins", "edges", "tolerance"})
 REBIN_SETTINGS_CLIPBOARD_SCHEMA = "nfit.rebin-settings"
 REBIN_SETTINGS_CLIPBOARD_VERSION = 1
 REBIN_SETTINGS_KEYS = (
-    "enabled", "axes", "auto_rebin", "mean_weighting",
-    "minimum_coverage", "minimum_samples", "max_batch_mb", "workers",
-    "normalize", "symmetry",
-    "coordinate_basis_version", "coordinate_mode", "metadata_dimensions",
+    "enabled",
+    "axes",
+    "auto_rebin",
+    "mean_weighting",
+    "minimum_coverage",
+    "minimum_samples",
+    "max_batch_mb",
+    "workers",
+    "normalize",
+    "symmetry",
+    "coordinate_basis_version",
+    "coordinate_mode",
+    "metadata_dimensions",
 )
 REBIN_AUTO_MAX_CONTRIBUTIONS = 5_000_000
 REBIN_AUTO_MAX_OUTPUT_BINS = 2_000_000
 MASK_AUTO_MAX_POINTS = 5_000_000
-KINEMATIC_KF_KI_INCLUDED_KEY = "kf_ki_included"
 
 # Loading, rebinning, and masking full datasets is reused across passive GUI
 # refreshes and script/API calls. Signatures are content based; scale factors
@@ -324,14 +520,6 @@ _VIEWER_VIEW_CACHE_MAX_BYTES = 256 * 1024**2
 _COMPOSITE_DATA_CACHE: OrderedDict[int, tuple[str, Any]] = OrderedDict()
 _COMPOSITE_DATA_CACHE_LIMIT = 4
 _COMPOSITE_DATA_CACHE_MAX_BYTES = 256 * 1024**2
-
-
-def _parameter_to_text(value: Any) -> str:
-    if value == "":
-        return ""
-    if isinstance(value, str):
-        return value
-    return json.dumps(value)
 
 
 def effective_dataset_masks(group: DataGroup, dataset: DatasetEntry) -> list[MaskSpec]:
@@ -426,7 +614,9 @@ def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str,
     config["normalize"] = True
     mdevent = group.metadata.get("mdevent") if isinstance(group.metadata, dict) else None
     raw_dgs = group.metadata.get("raw_dgs") if isinstance(group.metadata, dict) else None
-    event_config = mdevent if isinstance(mdevent, dict) else raw_dgs if isinstance(raw_dgs, dict) else None
+    event_config = (
+        mdevent if isinstance(mdevent, dict) else raw_dgs if isinstance(raw_dgs, dict) else None
+    )
     coordinate_mode = str(config.get("coordinate_mode", "hkle"))
     if coordinate_mode not in {"hkle", "powder"} or (
         coordinate_mode == "powder" and not isinstance(mdevent, dict)
@@ -483,21 +673,31 @@ def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str,
             for index, name in enumerate(names):
                 source_dim = dimensions[index] if index < len(dimensions) else {}
                 bounds = hkl_bounds[index] if index < len(hkl_bounds) else None
-                lower = float(bounds[0] if bounds is not None else source_dim.get("lower", -5.0 if index < 3 else -50.0))
-                upper = float(bounds[1] if bounds is not None else source_dim.get("upper", 5.0 if index < 3 else 50.0))
-                default_axes.append({
-                    "name": name,
-                    "variable": ("H", "K", "L", "E")[index],
-                    "vector": _identity_vector(index, 4),
-                    "lower": lower,
-                    "upper": upper,
-                    "auto_lower": True,
-                    "auto_upper": True,
-                    "auto_lower_value": lower,
-                    "auto_upper_value": upper,
-                    "num_bins": 50 if index == 3 else 20,
-                    "step_size": (upper - lower) / (50.0 if index == 3 else 20.0),
-                })
+                lower = float(
+                    bounds[0]
+                    if bounds is not None
+                    else source_dim.get("lower", -5.0 if index < 3 else -50.0)
+                )
+                upper = float(
+                    bounds[1]
+                    if bounds is not None
+                    else source_dim.get("upper", 5.0 if index < 3 else 50.0)
+                )
+                default_axes.append(
+                    {
+                        "name": name,
+                        "variable": ("H", "K", "L", "E")[index],
+                        "vector": _identity_vector(index, 4),
+                        "lower": lower,
+                        "upper": upper,
+                        "auto_lower": True,
+                        "auto_upper": True,
+                        "auto_lower_value": lower,
+                        "auto_upper_value": upper,
+                        "num_bins": 50 if index == 3 else 20,
+                        "step_size": (upper - lower) / (50.0 if index == 3 else 20.0),
+                    }
+                )
     else:
         reference = _composite_reference_data(group)
         default_axes = _default_rebin_axes(reference) if reference is not None else []
@@ -518,9 +718,7 @@ def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str,
                     if auto_key not in axis_config:
                         axis_config[auto_key] = bool(
                             key in axis_config
-                            and np.isclose(
-                                float(axis_config[key]), float(default_axis[key])
-                            )
+                            and np.isclose(float(axis_config[key]), float(default_axis[key]))
                         )
                     if bool(axis_config.get(auto_key, False)):
                         axis_config.setdefault(f"{auto_key}_value", axis_config.get(key))
@@ -538,9 +736,7 @@ def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str,
                 if bool(default_axis.get("auto_step_size", False)) and bool(
                     axis_config.get("auto_step_size", False)
                 ):
-                    axis_config.setdefault(
-                        "auto_step_size_value", axis_config.get("step_size")
-                    )
+                    axis_config.setdefault("auto_step_size_value", axis_config.get("step_size"))
                 for key, value in default_axis.items():
                     axis_config.setdefault(key, value)
                 sanitized_axes.append(_sanitize_rebin_axis_config(axis_config))
@@ -551,7 +747,11 @@ def data_group_composite_config(group: DataGroup | _CompositeScope) -> dict[str,
     if "auto_rebin" not in config:
         # File-backed MDEvent composites require a complete source scan even
         # when only a few selected events contribute to the current view.
-        config["auto_rebin"] = False if isinstance(event_config, dict) else not _composite_rebin_is_large(group, config)
+        config["auto_rebin"] = (
+            False
+            if isinstance(event_config, dict)
+            else not _composite_rebin_is_large(group, config)
+        )
     _migrate_rebin_axis_modes(config)
     config.setdefault("stale", False)
     return config
@@ -645,7 +845,9 @@ def _composite_dataset_name(group: DataGroup) -> str:
     return f"{group.name} {GROUP_COMPOSITE_NAME}"
 
 
-def _composite_candidates(group: DataGroup, *, include_backgrounds: bool = False) -> list[DatasetEntry]:
+def _composite_candidates(
+    group: DataGroup, *, include_backgrounds: bool = False
+) -> list[DatasetEntry]:
     node = group.node if isinstance(group, _CompositeScope) else group
     background_ids = {
         background.source_dataset_id
@@ -694,7 +896,9 @@ def _dataset_composite_kind(dataset: DatasetEntry) -> str:
         return "raw_dgs_nexus"
     if dataset.metadata.get("importer") == "macs_nexus":
         return "point_data_4d"
-    if data_type_container(dataset.data_type) == "point_list" or isinstance(dataset.data, PointListData):
+    if data_type_container(dataset.data_type) == "point_list" or isinstance(
+        dataset.data, PointListData
+    ):
         return "point_list"
     if isinstance(dataset.data, PointData4D):
         return "point_data_4d"
@@ -711,17 +915,28 @@ def data_group_composite_status(group: DataGroup) -> tuple[bool, str]:
             if not ok:
                 return False, f"Child composite {child.name!r} is not ready: {message}"
         return True, "Ready to combine the enabled child composites."
-    datasets = _composite_candidates(group, include_backgrounds=bool(group.metadata.get("metadata_dimensions")))
+    datasets = _composite_candidates(
+        group, include_backgrounds=bool(group.metadata.get("metadata_dimensions"))
+    )
     if not datasets:
         return False, "No enabled datasets are available to combine."
     kinds = {_dataset_composite_kind(dataset) for dataset in datasets}
     if len(kinds) != 1:
-        return False, "Composite datasets require all enabled datasets to hold the same kind of data."
+        return (
+            False,
+            "Composite datasets require all enabled datasets to hold the same kind of data.",
+        )
     if next(iter(kinds)) == "raw_dgs_nexus":
         node = group.node if isinstance(group, _CompositeScope) else group
         if not isinstance(node, DatasetGroup):
             return False, "Select the raw TOF dataset group to configure its HKLE composite."
-    if next(iter(kinds)) not in {"mdhisto", "point_list", "point_data_4d", "mdevent", "raw_dgs_nexus"}:
+    if next(iter(kinds)) not in {
+        "mdhisto",
+        "point_list",
+        "point_data_4d",
+        "mdevent",
+        "raw_dgs_nexus",
+    }:
         return False, "This dataset kind cannot be composited yet."
     return True, "Ready to combine enabled datasets into one rebinned composite."
 
@@ -736,7 +951,9 @@ def _composite_reference_data(group: DataGroup) -> Any | None:
             return _cached_composite_dataset_data(child_scopes[0], force_rebin=True)
         except Exception:
             return None
-    dataset = _composite_candidates(group, include_backgrounds=bool(group.metadata.get("metadata_dimensions")))[0]
+    dataset = _composite_candidates(
+        group, include_backgrounds=bool(group.metadata.get("metadata_dimensions"))
+    )[0]
     try:
         return _source_data_for_group_composite(group, dataset)
     except Exception:
@@ -760,17 +977,13 @@ def _reload_dataset_copy(dataset: DatasetEntry) -> DatasetEntry:
 def reload_dataset_data(dataset: DatasetEntry) -> Any:
     """Reload one dataset without mutating it when source reading fails."""
 
-    return _reload_dataset_data_impl(
-        dataset, data_loader=_ensure_dataset_data_loaded
-    )
+    return _reload_dataset_data_impl(dataset, data_loader=_ensure_dataset_data_loaded)
 
 
 def reload_data_group(group: DataGroup | DatasetGroup) -> list[DatasetEntry]:
     """Reload every descendant dataset that has a configured data source."""
 
-    return _reload_data_group_impl(
-        group, data_loader=_ensure_dataset_data_loaded
-    )
+    return _reload_data_group_impl(group, data_loader=_ensure_dataset_data_loaded)
 
 
 def _source_data_for_group_composite(
@@ -814,10 +1027,7 @@ def _composite_cache_signature(
         json.dumps(config, sort_keys=True, default=str),
         group.metadata.get("metadata_dimensions", []),
         metadata_dimension_preview(group) if group.metadata.get("metadata_dimensions") else [],
-        [
-            [child.name, _composite_cache_signature(child, trail)]
-            for child in child_scopes
-        ],
+        [[child.name, _composite_cache_signature(child, trail)] for child in child_scopes],
         [
             [
                 dataset.name,
@@ -887,7 +1097,9 @@ def composite_dataset_data(
     config = config_override if config_override is not None else data_group_composite_config(group)
     with thread_budget(config.get("workers")):
         return _composite_dataset_data(
-            group, progress_callback=progress_callback, config_override=config_override,
+            group,
+            progress_callback=progress_callback,
+            config_override=config_override,
             include_source_masks=include_source_masks,
             metadata_dimensions_override=metadata_dimensions_override,
         )
@@ -910,8 +1122,7 @@ def _composite_progress_callback(
             total = enriched.get("total")
             if enriched.get("stage") == "rebin" and iteration is not None and total:
                 enriched["message"] = (
-                    f"rebinning {datasets_total} datasets: "
-                    f"{iteration}/{total} point contributions"
+                    f"rebinning {datasets_total} datasets: {iteration}/{total} point contributions"
                 )
         callback(enriched)
 
@@ -969,7 +1180,10 @@ def set_metadata_dimensions(group, dimensions) -> None:
     }:
         raise ValueError("metadata dimension names must differ from existing axes")
     if specs:
-        kinds = {_dataset_composite_kind(item) for item in _composite_candidates(group, include_backgrounds=True)}
+        kinds = {
+            _dataset_composite_kind(item)
+            for item in _composite_candidates(group, include_backgrounds=True)
+        }
         if not kinds or not kinds <= {"point_data_4d", "mdhisto"}:
             raise ValueError(
                 "metadata dimensions currently require loaded neutron points or histograms; raw event logs need an alignment adapter"
@@ -1088,13 +1302,20 @@ def _metadata_composite_data(group, config, dimensions, *, include_source_masks,
         data = reducer(group, fixed, datasets=selected_entries, progress_callback=progress_callback)
         data = _apply_mdhisto_coverage_threshold(data, config)
         slices[key] = _apply_composite_backgrounds(
-            group, data, config=fixed, progress_callback=progress_callback,
+            group,
+            data,
+            config=fixed,
+            progress_callback=progress_callback,
             reference_entry=(
-                origins[sources[0][0].id] if len(sources) == len(selected_entries) == 1
-                and len(sources[0][1]) == (
-                    sources[0][0].data.size if isinstance(sources[0][0].data, PointData4D)
+                origins[sources[0][0].id]
+                if len(sources) == len(selected_entries) == 1
+                and len(sources[0][1])
+                == (
+                    sources[0][0].data.size
+                    if isinstance(sources[0][0].data, PointData4D)
                     else sources[0][0].data.signal.size
-                ) else None
+                )
+                else None
             ),
         )
     # Background subtraction can add channels. Use its result as the schema.
@@ -1137,7 +1358,10 @@ def _composite_dataset_data(
     )
     if dimensions:
         return _metadata_composite_data(
-            group, config, dimensions, include_source_masks=include_source_masks,
+            group,
+            config,
+            dimensions,
+            include_source_masks=include_source_masks,
             progress_callback=progress_callback,
         )
     child_scopes = _hierarchical_composite_scopes(group)
@@ -1152,7 +1376,9 @@ def _composite_dataset_data(
                 include_source_masks=include_source_masks,
             )
             if not isinstance(child_data, MDHistoData):
-                raise TypeError("hierarchical composites currently require gridded child composites")
+                raise TypeError(
+                    "hierarchical composites currently require gridded child composites"
+                )
             child_entries.append(
                 DatasetEntry(
                     child.name,
@@ -1171,15 +1397,9 @@ def _composite_dataset_data(
         kind = _dataset_composite_kind(_composite_candidates(group)[0])
     if kind in {"mdevent", "raw_dgs_nexus"}:
         config = copy.deepcopy(config)
-        event_axes = [
-            _sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])
-        ]
-        event_bounds = [
-            (float(axis["lower"]), float(axis["upper"])) for axis in event_axes
-        ]
-        event_symmetry = _rebin_symmetry_matrices(
-            config, _composite_root(group).lattice_parameters
-        )
+        event_axes = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
+        event_bounds = [(float(axis["lower"]), float(axis["upper"])) for axis in event_axes]
+        event_symmetry = _rebin_symmetry_matrices(config, _composite_root(group).lattice_parameters)
         if event_symmetry is not None and len(event_axes) == 4:
             event_basis = _validate_mdhisto_rebin_basis(event_axes, 4)
             corner_grids = np.meshgrid(
@@ -1236,23 +1456,39 @@ def _composite_dataset_data(
                 max_batch_bytes=_rebin_max_batch_bytes(config),
                 enforce_memory_limit=not allow_overcommit,
                 progress_callback=progress_callback,
-                symmetry_operations=_rebin_symmetry_matrices(config, _composite_root(group).lattice_parameters),
+                symmetry_operations=_rebin_symmetry_matrices(
+                    config, _composite_root(group).lattice_parameters
+                ),
             )
     elif kind == "raw_dgs_nexus":
         node = group.node if isinstance(group, _CompositeScope) else group
         if not isinstance(node, DatasetGroup):
-            raise ValueError("raw direct-geometry composites must be imported inside a dataset group")
+            raise ValueError(
+                "raw direct-geometry composites must be imported inside a dataset group"
+            )
         lower, upper, num_bins = _composite_rebin_bounds(config)
         result = bin_raw_dgs_group(
-            node, lower=lower, upper=upper, num_bins=num_bins,
+            node,
+            lower=lower,
+            upper=upper,
+            num_bins=num_bins,
             step_size=_composite_rebin_step_sizes(config),
             bin_edges=_composite_rebin_bin_edges(config),
             minimum_samples=_rebin_minimum_samples(config),
             datasets=_composite_candidates(group),
-            vectors=[axis.get("vector", _identity_vector(index, 4)) for index, axis in enumerate(config.get("axes", []))],
-            axis_names=[str(axis.get("name", ("H", "K", "L", "DeltaE")[index])) for index, axis in enumerate(config.get("axes", []))],
-            max_batch_bytes=_rebin_max_batch_bytes(config), progress_callback=progress_callback,
-            symmetry_operations=_rebin_symmetry_matrices(config, _composite_root(group).lattice_parameters),
+            vectors=[
+                axis.get("vector", _identity_vector(index, 4))
+                for index, axis in enumerate(config.get("axes", []))
+            ],
+            axis_names=[
+                str(axis.get("name", ("H", "K", "L", "DeltaE")[index]))
+                for index, axis in enumerate(config.get("axes", []))
+            ],
+            max_batch_bytes=_rebin_max_batch_bytes(config),
+            progress_callback=progress_callback,
+            symmetry_operations=_rebin_symmetry_matrices(
+                config, _composite_root(group).lattice_parameters
+            ),
         )
     elif kind == "mdhisto":
         result = _composite_mdhisto_data(
@@ -1329,9 +1565,7 @@ def _apply_composite_backgrounds(
         raise TypeError("group backgrounds require a gridded composite")
     root = _composite_root(group)
     metadata = dict(data.metadata)
-    if root.lattice_parameters and not isinstance(
-        metadata.get("lattice_parameters"), dict
-    ):
+    if root.lattice_parameters and not isinstance(metadata.get("lattice_parameters"), dict):
         metadata["lattice_parameters"] = dict(root.lattice_parameters)
     result = replace(data, metadata=metadata)
     for background in backgrounds:
@@ -1340,9 +1574,7 @@ def _apply_composite_backgrounds(
         source = background.source_entry
         source_group = background.source_group
         if source is None and source_group is None:
-            raise ValueError(
-                f"background {background.name!r} refers to a missing dataset or group"
-            )
+            raise ValueError(f"background {background.name!r} refers to a missing dataset or group")
         if source_group is not None:
             source_data = _cached_composite_dataset_data(
                 _CompositeScope(root, source_group),
@@ -1361,37 +1593,46 @@ def _apply_composite_backgrounds(
             if isinstance(source_data, PointData4D):
                 # The neutron reference follows the resolved sample grid. Work
                 # on copies so its own viewing recipe stays intact.
-                aligned_config = copy.deepcopy(dict(
-                    data_group_composite_config(group) if config is None else config
-                ))
+                aligned_config = copy.deepcopy(
+                    dict(data_group_composite_config(group) if config is None else config)
+                )
                 if len(data.axes) != 4 or len(aligned_config.get("axes", [])) != 4:
                     raise ValueError("point-data group backgrounds require a four-axis HKLE grid")
                 for settings, axis in zip(aligned_config["axes"], data.axes, strict=True):
                     settings.update(
-                        name=axis.name, units=axis.units, bin_edges=axis.values.tolist(),
+                        name=axis.name,
+                        units=axis.units,
+                        bin_edges=axis.values.tolist(),
                         mode="edges",
-                        auto_lower=False, auto_upper=False, auto_step_size=False,
+                        auto_lower=False,
+                        auto_upper=False,
+                        auto_step_size=False,
                     )
                 source_metadata = dict(source_data.metadata)
                 if root.lattice_parameters:
                     source_metadata.setdefault("lattice_parameters", dict(root.lattice_parameters))
                 source_data = _rebin_point_data(
-                    source_data.with_updates(metadata=source_metadata), aligned_config,
+                    source_data.with_updates(metadata=source_metadata),
+                    aligned_config,
                     progress_callback=progress_callback,
                 )
                 if source.backgrounds:
                     source_data = _apply_dataset_backgrounds(source, source_data)
         if not isinstance(source_data, MDHistoData):
-            raise TypeError(
-                f"background {background.name!r} must refer to gridded histogram data"
-            )
+            raise TypeError(f"background {background.name!r} must refer to gridded histogram data")
         cancels_self = (
-            reference_entry is not None and source is not None
+            reference_entry is not None
+            and source is not None
             and reference_entry.id == source.id
             and reference_entry.scale_factor == background.scale
             and result.shape == source_data.shape
-            and np.allclose(result.signal, background.scale * source_data.signal,
-                            rtol=1e-12, atol=1e-12, equal_nan=True)
+            and np.allclose(
+                result.signal,
+                background.scale * source_data.signal,
+                rtol=1e-12,
+                atol=1e-12,
+                equal_nan=True,
+            )
             and np.allclose(result.num_events, source_data.num_events, rtol=1e-12, atol=1e-12)
         )
         result = subtract_background(
@@ -1531,8 +1772,7 @@ def create_derived_analysis_dataset(
         (
             dataset
             for dataset in group.iter_datasets()
-            if dataset.metadata.get("derived_from_analysis", {}).get("analysis_id")
-            == analysis.id
+            if dataset.metadata.get("derived_from_analysis", {}).get("analysis_id") == analysis.id
         ),
         None,
     )
@@ -1635,13 +1875,14 @@ def _derived_source_data(
         raise KeyError(f"derived dataset refers to missing dataset ID {source_id}")
     loaded = _ensure_dataset_data_loaded(source)
     reduction_source = (
-        _mdhisto_without_nfit_masks(loaded)
-        if isinstance(loaded, MDHistoData)
-        else loaded
+        _mdhisto_without_nfit_masks(loaded) if isinstance(loaded, MDHistoData) else loaded
     )
     temporary = source.copy(
         data=reduction_source,
-        parameters={**copy.deepcopy(source.parameters), DATASET_REBIN_KEY: copy.deepcopy(dict(config))},
+        parameters={
+            **copy.deepcopy(source.parameters),
+            DATASET_REBIN_KEY: copy.deepcopy(dict(config)),
+        },
         masks=[],
     )
     temporary.parameters[DATASET_REBIN_KEY]["enabled"] = True
@@ -1713,7 +1954,9 @@ def composite_dataset_entry(
     progress_callback: Any | None = None,
 ) -> DatasetEntry:
     child_scopes = _hierarchical_composite_scopes(group)
-    datasets = _composite_candidates(group, include_backgrounds=bool(group.metadata.get("metadata_dimensions")))
+    datasets = _composite_candidates(
+        group, include_backgrounds=bool(group.metadata.get("metadata_dimensions"))
+    )
     first = datasets[0] if datasets else None
     config = data_group_composite_config(group)
     return DatasetEntry(
@@ -1725,13 +1968,11 @@ def composite_dataset_entry(
         ),
         kind=("mdhisto" if child_scopes else first.kind if first is not None else ""),
         data_type=(
-            (
-                "powder_inelastic"
-                if len(config.get("axes", [])) == 2
-                else "single_crystal_inelastic"
-            )
+            ("powder_inelastic" if len(config.get("axes", [])) == 2 else "single_crystal_inelastic")
             if child_scopes
-            else first.data_type if first is not None else ""
+            else first.data_type
+            if first is not None
+            else ""
         ),
         metadata={"source_group": group.name, "composite": True},
         parameters=(
@@ -1740,8 +1981,7 @@ def composite_dataset_entry(
                     first.parameters[SPECTRAL_CHANNEL_CONFIG_KEY]
                 )
             }
-            if first is not None
-            and SPECTRAL_CHANNEL_CONFIG_KEY in first.parameters
+            if first is not None and SPECTRAL_CHANNEL_CONFIG_KEY in first.parameters
             else {}
         ),
         enabled=True,
@@ -1766,14 +2006,10 @@ def materialize_composite_dataset(
         raise TypeError("materialized composites currently require gridded histogram data")
     source_name = scope.name
     entry = DatasetEntry(
-        name=_unique_dataset_name(
-            name or f"{source_name} composite", group.dataset_names
-        ),
+        name=_unique_dataset_name(name or f"{source_name} composite", group.dataset_names),
         data=data,
         kind="project_artifact",
-        data_type=(
-            "powder_inelastic" if len(data.axes) == 2 else "single_crystal_inelastic"
-        ),
+        data_type=("powder_inelastic" if len(data.axes) == 2 else "single_crystal_inelastic"),
         metadata={
             "materialized_from_composite": {
                 "source_group": source_name,
@@ -1782,9 +2018,7 @@ def materialize_composite_dataset(
             "import_status": "loaded",
         },
     )
-    artifact_path = replace_dataset_artifact(
-        project_path, entry.id, dataset_artifact_bytes(data)
-    )
+    artifact_path = replace_dataset_artifact(project_path, entry.id, dataset_artifact_bytes(data))
     entry.metadata.update(
         {
             "source_file": artifact_path,
@@ -1864,21 +2098,21 @@ def _composite_mdhisto_data(
         if not isinstance(data, MDHistoData):
             continue
         if any("metadata_dimension" in axis.metadata for axis in data.axes):
-            raise ValueError("Rebin the original collection to preserve its discrete metadata dimensions.")
+            raise ValueError(
+                "Rebin the original collection to preserve its discrete metadata dimensions."
+            )
         if first_data is None:
             first_data = data
         source_grids = np.meshgrid(*(axis.centers for axis in data.axes), indexing="ij")
         coords = np.stack(source_grids, axis=-1)
         coverage_inputs.append((data, coords))
-        valid = np.isfinite(data.signal) & np.isfinite(data.errors) & ~np.asarray(data.mask, dtype=bool)
-        normalization_channel = data.auxiliary_channels.get(
-            "normalization_denominator"
+        valid = (
+            np.isfinite(data.signal) & np.isfinite(data.errors) & ~np.asarray(data.mask, dtype=bool)
         )
+        normalization_channel = data.auxiliary_channels.get("normalization_denominator")
         if normalization_channel is not None:
             normalization_weighted = True
-            normalization_values = np.asarray(
-                normalization_channel.values, dtype=float
-            )
+            normalization_values = np.asarray(normalization_channel.values, dtype=float)
             valid &= np.isfinite(normalization_values) & (normalization_values > 0.0)
         if data.num_events is not None:
             valid &= mdhisto_measured_bins(data)
@@ -1901,22 +2135,14 @@ def _composite_mdhisto_data(
     signal_all = np.concatenate(signal_parts)
     errors_all = np.concatenate(error_parts)
     weights_all = np.concatenate(weight_parts)
-    output_basis = (
-        _validate_mdhisto_rebin_basis(axes_config, 4)
-        if len(axes_config) == 4
-        else None
-    )
+    output_basis = _validate_mdhisto_rebin_basis(axes_config, 4) if len(axes_config) == 4 else None
     limit_coordinates = (
-        coords_all @ np.linalg.inv(output_basis)
-        if output_basis is not None
-        else coords_all
+        coords_all @ np.linalg.inv(output_basis) if output_basis is not None else coords_all
     )
     axes_config = _resolve_auto_rebin_axes(
         axes_config, _finite_coordinate_bounds(limit_coordinates)
     )
-    axes_config = _resolve_data_driven_rebin_axes(
-        config, axes_config, limit_coordinates
-    )
+    axes_config = _resolve_data_driven_rebin_axes(config, axes_config, limit_coordinates)
     lower = [axis["lower"] for axis in axes_config]
     upper = [axis["upper"] for axis in axes_config]
     result = rebin_nd(
@@ -1936,13 +2162,22 @@ def _composite_mdhisto_data(
         max_batch_bytes=_rebin_max_batch_bytes(config),
         progress_callback=progress_callback,
     )
-    if result.binned_data is None or result.binned_data_errs is None or result.n_samples is None or result.bins_list is None:
+    if (
+        result.binned_data is None
+        or result.binned_data_errs is None
+        or result.n_samples is None
+        or result.bins_list is None
+    ):
         raise RuntimeError("composite rebinning did not produce binned data")
     axes = tuple(
         MDHistoAxis(
             name=str(axis_config.get("name") or source_axis.name),
             values=np.asarray(bins, dtype=float),
-            units=str(axis_config.get("units") if axis_config.get("units") is not None else source_axis.units),
+            units=str(
+                axis_config.get("units")
+                if axis_config.get("units") is not None
+                else source_axis.units
+            ),
             kind=source_axis.kind,
             frame=source_axis.frame,
             path=source_axis.path,
@@ -1955,7 +2190,9 @@ def _composite_mdhisto_data(
                 ),
             },
         )
-        for source_axis, axis_config, bins in zip(first_data.axes, axes_config, result.bins_list, strict=True)
+        for source_axis, axis_config, bins in zip(
+            first_data.axes, axes_config, result.bins_list, strict=True
+        )
     )
     mask = ~np.isfinite(result.binned_data) | ~np.isfinite(result.binned_data_errs)
     mask |= result.n_samples <= 0.0
@@ -2028,11 +2265,7 @@ def _composite_mdhisto_data(
             unit="fraction",
         )
     }
-    if (
-        normalization_weighted
-        and weighting_mode == "uniform"
-        and result._normalization is not None
-    ):
+    if normalization_weighted and weighting_mode == "uniform" and result._normalization is not None:
         auxiliary_channels["normalization_denominator"] = MDHistoChannel(
             np.asarray(result._normalization, dtype=float),
             label="Combined detector-trajectory normalization",
@@ -2066,10 +2299,14 @@ def _composite_point_data(
     first_data: PointData4D | None = None
     normalization_weighted = False
     for dataset in datasets if datasets is not None else _composite_candidates(group):
-        data = dataset.data if datasets is not None else _source_data_for_group_composite(
-            group,
-            dataset,
-            include_source_masks=include_source_masks,
+        data = (
+            dataset.data
+            if datasets is not None
+            else _source_data_for_group_composite(
+                group,
+                dataset,
+                include_source_masks=include_source_masks,
+            )
         )
         if not isinstance(data, PointData4D):
             continue
@@ -2102,9 +2339,7 @@ def _composite_point_data(
         metadata_updates={
             "composite": True,
             "source_group": group.name,
-            "source_datasets": [
-                dataset.name for dataset in _composite_candidates(group)
-            ],
+            "source_datasets": [dataset.name for dataset in _composite_candidates(group)],
             "weighted_by_fit_weight": True,
             "weighted_by_normalization_denominator": normalization_weighted,
         },
@@ -2136,8 +2371,13 @@ def _composite_point_list_data(
     if not coordinate_names or channel_label is None:
         raise ValueError("point-list composites require coordinates and at least one channel")
     for data in point_lists[1:]:
-        if list(data.coordinate_names) != coordinate_names or channel_label not in data.channel_labels:
-            raise ValueError("point-list composites require matching coordinates and channel labels")
+        if (
+            list(data.coordinate_names) != coordinate_names
+            or channel_label not in data.channel_labels
+        ):
+            raise ValueError(
+                "point-list composites require matching coordinates and channel labels"
+            )
     lower, upper, num_bins = _composite_rebin_bounds(config)
     axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
     coords_parts: list[np.ndarray] = []
@@ -2157,17 +2397,15 @@ def _composite_point_list_data(
         scale = float(dataset.scale_factor)
         coords_parts.append(coords[valid])
         signal_parts.append(values[valid] * scale)
-        error_parts.append(_scaled_error_for_weight(dataset, np.asarray(errors[valid], dtype=float)))
+        error_parts.append(
+            _scaled_error_for_weight(dataset, np.asarray(errors[valid], dtype=float))
+        )
         weight_parts.append(_dataset_statistical_weight(dataset, int(np.count_nonzero(valid))))
     if not signal_parts:
         raise ValueError("no valid point-list rows remain before compositing")
     coordinates_all = np.concatenate(coords_parts, axis=0)
-    axes_config = _resolve_auto_rebin_axes(
-        axes_config, _finite_coordinate_bounds(coordinates_all)
-    )
-    axes_config = _resolve_data_driven_rebin_axes(
-        config, axes_config, coordinates_all
-    )
+    axes_config = _resolve_auto_rebin_axes(axes_config, _finite_coordinate_bounds(coordinates_all))
+    axes_config = _resolve_data_driven_rebin_axes(config, axes_config, coordinates_all)
     lower = [axis["lower"] for axis in axes_config]
     upper = [axis["upper"] for axis in axes_config]
     result = rebin_nd(
@@ -2186,27 +2424,36 @@ def _composite_point_list_data(
         max_batch_bytes=_rebin_max_batch_bytes(config),
         progress_callback=progress_callback,
     )
-    if result.binned_data is None or result.binned_data_errs is None or result.n_samples is None or result.bin_centers_list is None:
+    if (
+        result.binned_data is None
+        or result.binned_data_errs is None
+        or result.n_samples is None
+        or result.bin_centers_list is None
+    ):
         raise RuntimeError("composite rebinning did not produce binned data")
     occupied = np.isfinite(result.binned_data) & (result.n_samples > 0.0)
     center_grids = np.meshgrid(
         *(
             np.asarray(axis.get("resolved_centers", centers), dtype=float)
-            for axis, centers in zip(
-                axes_config, result.bin_centers_list, strict=True
-            )
+            for axis, centers in zip(axes_config, result.bin_centers_list, strict=True)
         ),
         indexing="ij",
     )
     value_name = point_lists[0].channel(channel_label)["value"]
     error_name = point_lists[0].channel(channel_label).get("error") or f"{value_name}_error"
-    columns = {name: grid[occupied] for name, grid in zip(coordinate_names, center_grids, strict=True)}
+    columns = {
+        name: grid[occupied] for name, grid in zip(coordinate_names, center_grids, strict=True)
+    }
     columns[value_name] = np.asarray(result.binned_data, dtype=float)[occupied]
     columns[error_name] = np.asarray(result.binned_data_errs, dtype=float)[occupied]
     columns["n_samples"] = np.asarray(result.n_samples, dtype=float)[occupied]
     return PointListData(
         columns=columns,
-        units={**{name: point_lists[0].unit(name) for name in coordinate_names}, value_name: point_lists[0].unit(value_name), error_name: point_lists[0].unit(error_name)},
+        units={
+            **{name: point_lists[0].unit(name) for name in coordinate_names},
+            value_name: point_lists[0].unit(value_name),
+            error_name: point_lists[0].unit(error_name),
+        },
         coordinate_names=coordinate_names,
         channels=[{"label": channel_label, "value": value_name, "error": error_name}],
         metadata={
@@ -2215,8 +2462,7 @@ def _composite_point_list_data(
             "source_datasets": [dataset.name for dataset in datasets],
             "rebin": {
                 "bin_edges": [
-                    np.asarray(edges, dtype=float).tolist()
-                    for edges in (result.bins_list or [])
+                    np.asarray(edges, dtype=float).tolist() for edges in (result.bins_list or [])
                 ],
                 "fractional_axes": _rebin_fractional_axes(config, axes_config),
                 "axis_modes": [_rebin_axis_mode(config, axis) for axis in axes_config],
@@ -2259,182 +2505,20 @@ def dataset_for_slice_viewer(
     return _with_viewer_dataset_metadata(dataset, prepared)
 
 
-def _apply_spectral_channel_view(
-    dataset: DatasetEntry,
-    data: MDHistoData | PointListData | PointData4D,
-) -> MDHistoData | PointListData | PointData4D:
-    """Apply paired INS channels, falling back to the legacy kinematic path."""
-
-    config = dataset.parameters.get(SPECTRAL_CHANNEL_CONFIG_KEY)
-    if (
-        isinstance(data, MDHistoData)
-        and dataset.data_type in {"single_crystal_inelastic", "powder_inelastic"}
-        and isinstance(config, dict)
-    ):
-        temperature = dataset.parameters.get("temperature", data.metadata.get("temperature"))
-        from .metadata_dimensions import metadata_temperature_grid
-
-        temperatures = metadata_temperature_grid(data)
-        return with_paired_spectral_channels(
-            data,
-            config,
-            temperature_K=(
-                temperatures if temperatures is not None
-                else None if temperature in (None, "") else float(temperature)
-            ),
-        )
-    return _apply_kinematic_normalization_to_view(dataset, data)
-
-
-def _with_viewer_dataset_metadata(
-    dataset: DatasetEntry,
-    data: MDHistoData | PointListData | PointData4D,
-) -> MDHistoData | PointListData | PointData4D:
-    metadata = dict(getattr(data, "metadata", {}) or {})
-    metadata["nfit_data_type"] = dataset.data_type
-    metadata["nfit_dataset_kind"] = dataset.kind
-    if isinstance(data, MDHistoData):
-        return replace(data, metadata=metadata)
-    if isinstance(data, PointListData):
-        return PointListData(
-            columns={name: np.array(values, dtype=float) for name, values in data.columns.items()},
-            units=dict(data.units),
-            coordinate_names=list(data.coordinate_names),
-            channels=[dict(channel) for channel in data.channels],
-            metadata=metadata,
-            quantity_types=dict(data.quantity_types),
-        )
-    if isinstance(data, PointData4D):
-        return data.with_updates(metadata=metadata)
-    return data
-
-
-def _kinematic_energy_metadata(
-    dataset: DatasetEntry,
-    data_metadata: dict[str, Any] | None = None,
-) -> tuple[float | None, float | None]:
-    """Find scalar incident/final energies recorded on a dataset or its data."""
-
-    sources = (dataset.parameters, dataset.metadata, data_metadata or {})
-
-    def value_for(names: tuple[str, ...]) -> float | None:
-        for source in sources:
-            if not isinstance(source, dict):
-                continue
-            for name in names:
-                try:
-                    value = float(source[name])
-                except (KeyError, TypeError, ValueError):
-                    continue
-                if np.isfinite(value) and value > 0.0:
-                    return value
-        return None
-
-    return (
-        value_for(("incident_energy", "incident_energy_meV", "Ei", "ei")),
-        value_for(("final_energy", "final_energy_meV", "Ef", "ef")),
-    )
-
-
-def _kinematic_kf_ki_factor(
-    energy_transfer_meV: Any,
-    *,
-    incident_energy_meV: float | None,
-    final_energy_meV: float | None,
-) -> np.ndarray | None:
-    """Return ``k_f/k_i`` for ``E = E_i - E_f``, if one energy is known."""
-
-    if incident_energy_meV is None and final_energy_meV is None:
-        return None
-    energy = np.asarray(energy_transfer_meV, dtype=float)
-    if incident_energy_meV is not None:
-        ratio_sq = (float(incident_energy_meV) - energy) / float(incident_energy_meV)
-    else:
-        ratio_sq = float(final_energy_meV) / (float(final_energy_meV) + energy)
-    factor = np.full(energy.shape, np.nan, dtype=float)
-    np.sqrt(ratio_sq, out=factor, where=np.isfinite(ratio_sq) & (ratio_sq >= 0.0))
-    return factor
-
-
-def _apply_kinematic_normalization_to_view(
-    dataset: DatasetEntry,
-    data: MDHistoData | PointListData | PointData4D,
-) -> MDHistoData | PointListData | PointData4D:
-    """Normalize binned data to the cross-section ``k_f/k_i`` convention."""
-
-    if bool(dataset.parameters.get(KINEMATIC_KF_KI_INCLUDED_KEY, True)):
-        return data
-    if isinstance(data, PointData4D):
-        return _apply_kinematic_normalization_to_points(dataset, data)
-    if not isinstance(data, MDHistoData):
-        return data
-    energy_dim = next(
-        (index for index, axis in enumerate(data.axes) if axis.kind == "energy"),
-        None,
-    )
-    if energy_dim is None:
-        return data
-    incident, final = _kinematic_energy_metadata(dataset, data.metadata)
-    factor_1d = _kinematic_kf_ki_factor(
-        data.axes[energy_dim].centers,
-        incident_energy_meV=incident,
-        final_energy_meV=final,
-    )
-    if factor_1d is None:
-        return data
-    shape = [1] * data.signal.ndim
-    shape[energy_dim] = factor_1d.size
-    factor = factor_1d.reshape(shape)
-    metadata = dict(data.metadata)
-    metadata["nfit_kinematic_kf_ki_normalized"] = True
-    metadata["nfit_kinematic_kf_ki_source"] = "Ei" if incident is not None else "Ef"
-    return replace(
-        data,
-        signal=np.asarray(data.signal, dtype=float) * factor,
-        errors=np.asarray(data.errors, dtype=float) * np.abs(factor),
-        metadata=metadata,
-    )
-
-
-def _apply_kinematic_normalization_to_points(
-    dataset: DatasetEntry,
-    points: PointData4D,
-) -> PointData4D:
-    """Return fit points in the selected kinematic convention."""
-
-    if bool(dataset.parameters.get(KINEMATIC_KF_KI_INCLUDED_KEY, True)):
-        return points
-    if points.metadata.get("nfit_kinematic_kf_ki_normalized"):
-        return points
-    incident, final = _kinematic_energy_metadata(dataset, points.metadata)
-    factor = _kinematic_kf_ki_factor(
-        points.E,
-        incident_energy_meV=incident,
-        final_energy_meV=final,
-    )
-    if factor is None:
-        return points
-    metadata = dict(points.metadata)
-    metadata["nfit_kinematic_kf_ki_normalized"] = True
-    metadata["nfit_kinematic_kf_ki_source"] = "Ei" if incident is not None else "Ef"
-    return points.with_updates(
-        intensity=np.asarray(points.intensity, dtype=float) * factor,
-        sigma=np.asarray(points.sigma, dtype=float) * np.abs(factor),
-        metadata=metadata,
-    )
-
-
 def _mask_signature(masks: list[MaskSpec] | None) -> list[Any]:
     return [
-        [m.type, bool(m.enabled), bool(m.invert), bool(m.additive),
-         json.dumps(m.parameters, sort_keys=True, default=str)]
+        [
+            m.type,
+            bool(m.enabled),
+            bool(m.invert),
+            bool(m.additive),
+            json.dumps(m.parameters, sort_keys=True, default=str),
+        ]
         for m in (masks or [])
     ]
 
 
-def _viewer_view_signature(
-    dataset: DatasetEntry, extra_masks: list[MaskSpec] | None
-) -> str:
+def _viewer_view_signature(dataset: DatasetEntry, extra_masks: list[MaskSpec] | None) -> str:
     rebin = (
         json.dumps(dataset_rebin_config(dataset), sort_keys=True, default=str)
         if dataset_rebin_enabled(dataset)
@@ -2551,18 +2635,14 @@ def _apply_dataset_backgrounds(
             continue
         source = background.source_entry
         if source is None:
-            raise ValueError(
-                f"background {background.name!r} refers to a missing dataset"
-            )
+            raise ValueError(f"background {background.name!r} refers to a missing dataset")
         source_data = _viewer_data_before_scale_uncached(
             source,
             force_rebin=True,
             force_masks=True,
         )
         if not isinstance(source_data, MDHistoData):
-            raise TypeError(
-                f"background {background.name!r} must refer to gridded histogram data"
-            )
+            raise TypeError(f"background {background.name!r} must refer to gridded histogram data")
         result = subtract_background(
             result,
             source_data,
@@ -2594,9 +2674,7 @@ def _viewer_data_before_scale_uncached(
             )
         return derived
     loaded = _ensure_dataset_data_loaded(dataset)
-    if data_type_container(dataset.data_type) == "point_list" or isinstance(
-        loaded, PointListData
-    ):
+    if data_type_container(dataset.data_type) == "point_list" or isinstance(loaded, PointListData):
         if not isinstance(loaded, PointListData):
             return None
         if dataset_rebin_enabled(dataset):
@@ -2610,7 +2688,9 @@ def _viewer_data_before_scale_uncached(
         if dataset_rebin_enabled(dataset):
             if _should_defer_dataset_rebin(dataset, force_rebin=force_rebin):
                 return _mdhisto_with_nfit_masks(dataset, data=loaded, extra_masks=extra_masks)
-            return rebinned_dataset_data(dataset, extra_masks=extra_masks, progress_callback=progress_callback)
+            return rebinned_dataset_data(
+                dataset, extra_masks=extra_masks, progress_callback=progress_callback
+            )
         return _mdhisto_with_nfit_masks(dataset, data=loaded, extra_masks=extra_masks)
     if isinstance(loaded, PointData4D):
         if dataset_rebin_enabled(dataset):
@@ -2619,62 +2699,6 @@ def _viewer_data_before_scale_uncached(
             )
         return _point_data_with_nfit_masks(dataset, loaded, extra_masks=extra_masks)
     return None
-
-
-def _mdhisto_without_nfit_masks(data: MDHistoData) -> MDHistoData:
-    """Return a cheap file-mask-only view while manual nfit masks are pending."""
-
-    file_mask = np.asarray(data.mask, dtype=bool)
-    metadata = dict(data.metadata)
-    metadata["file_mask"] = file_mask
-    metadata["nfit_mask"] = np.zeros(0, dtype=bool)
-    metadata["file_mask_count"] = int(np.count_nonzero(file_mask))
-    metadata["nfit_mask_count"] = 0
-    metadata["combined_mask_count"] = metadata["file_mask_count"]
-    metadata["mask_application_pending"] = True
-    return replace(data, mask=file_mask, metadata=metadata)
-
-
-def _apply_dataset_scale(
-    dataset: DatasetEntry,
-    data: MDHistoData | PointListData | PointData4D,
-) -> MDHistoData | PointListData | PointData4D:
-    """Multiply a dataset's signal and errors by its scale factor (both channels)."""
-
-    scale = float(getattr(dataset, "scale_factor", 1.0) or 1.0)
-    if scale == 1.0:
-        return data
-    if isinstance(data, MDHistoData):
-        from dataclasses import replace
-
-        return replace(
-            data,
-            signal=np.asarray(data.signal, dtype=float) * scale,
-            errors=np.asarray(data.errors, dtype=float) * abs(scale),
-        )
-    if isinstance(data, PointListData):
-        columns = {name: np.array(values, dtype=float) for name, values in data.columns.items()}
-        for channel in data.channels:
-            value_name = channel.get("value")
-            error_name = channel.get("error")
-            if value_name in columns:
-                columns[value_name] = columns[value_name] * scale
-            if error_name in columns:
-                columns[error_name] = columns[error_name] * abs(scale)
-        return PointListData(
-            columns=columns,
-            units=dict(data.units),
-            coordinate_names=list(data.coordinate_names),
-            channels=[dict(channel) for channel in data.channels],
-            metadata=dict(data.metadata),
-            quantity_types=dict(data.quantity_types),
-        )
-    if isinstance(data, PointData4D):
-        return data.with_updates(
-            intensity=np.asarray(data.intensity, dtype=float) * scale,
-            sigma=np.asarray(data.sigma, dtype=float) * abs(scale),
-        )
-    return data
 
 
 def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
@@ -2728,9 +2752,7 @@ def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
                     if auto_key not in axis_config:
                         axis_config[auto_key] = bool(
                             key in axis_config
-                            and np.isclose(
-                                float(axis_config[key]), float(default_axis[key])
-                            )
+                            and np.isclose(float(axis_config[key]), float(default_axis[key]))
                         )
                     if bool(axis_config.get(auto_key, False)):
                         axis_config.setdefault(f"{auto_key}_value", axis_config.get(key))
@@ -2748,9 +2770,7 @@ def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
                 if bool(default_axis.get("auto_step_size", False)) and bool(
                     axis_config.get("auto_step_size", False)
                 ):
-                    axis_config.setdefault(
-                        "auto_step_size_value", axis_config.get("step_size")
-                    )
+                    axis_config.setdefault("auto_step_size_value", axis_config.get("step_size"))
                 for key, value in default_axis.items():
                     axis_config.setdefault(key, value)
                 if isinstance(dataset.data, MDHistoData) and "vector" in axis_config:
@@ -2789,11 +2809,7 @@ def dataset_rebin_config(dataset: DatasetEntry) -> dict[str, Any]:
 def _rebin_settings_clipboard_text(config: dict[str, Any]) -> str:
     """Serialize user-editable rebin settings for the system clipboard."""
 
-    settings = {
-        key: copy.deepcopy(config[key])
-        for key in REBIN_SETTINGS_KEYS
-        if key in config
-    }
+    settings = {key: copy.deepcopy(config[key]) for key in REBIN_SETTINGS_KEYS if key in config}
     return json.dumps(
         {
             "schema": REBIN_SETTINGS_CLIPBOARD_SCHEMA,
@@ -2823,7 +2839,9 @@ def _rebin_config_from_clipboard_text(
     if not isinstance(settings, dict):
         raise ValueError("The clipboard rebin settings are incomplete.")
     if settings.get("metadata_dimensions") and "metadata_dimensions" not in target_config:
-        raise ValueError("Metadata rebin settings must be pasted into a source collection's composite panel.")
+        raise ValueError(
+            "Metadata rebin settings must be pasted into a source collection's composite panel."
+        )
     if "metadata_dimensions" in settings:
         from .metadata_dimensions import MetadataDimension
 
@@ -2951,57 +2969,21 @@ def _dataset_rebin_estimated_contributions(dataset: DatasetEntry, config: dict[s
     source_points = _dataset_rebin_source_points(dataset)
     axes = config.get("axes", []) or [{}]
     multiplier = 2 ** sum(_rebin_fractional_axes(config, axes))
-    return int(source_points * multiplier * _rebin_symmetry_count(config, _dataset_lattice_parameters(dataset)))
+    return int(
+        source_points
+        * multiplier
+        * _rebin_symmetry_count(config, _dataset_lattice_parameters(dataset))
+    )
 
 
 def _dataset_lattice_parameters(dataset: DatasetEntry) -> dict[str, Any] | None:
     data = dataset.data
     metadata = getattr(data, "metadata", None)
-    return metadata.get("lattice_parameters") if isinstance(metadata, dict) and isinstance(metadata.get("lattice_parameters"), dict) else None
-
-
-def _rebin_symmetry_operations(
-    config: dict[str, Any],
-    lattice_parameters: dict[str, Any] | None = None,
-) -> tuple:
-    payload = config.get("symmetry")
-    spec = symmetry_spec_from_config(payload)
-    stored_lattice = payload.get("lattice_parameters") if isinstance(payload, dict) else None
-    lattice = lattice_parameters if lattice_parameters is not None else stored_lattice
-    return resolve_symmetry(spec, lattice_parameters=lattice)
-
-
-def _rebin_symmetry_count(config: dict[str, Any], lattice_parameters: dict[str, Any] | None = None) -> int:
-    try:
-        return len(_rebin_symmetry_operations(config, lattice_parameters))
-    except (ImportError, ValueError):
-        return 1
-
-
-def _rebin_symmetry_matrices(
-    config: dict[str, Any], lattice_parameters: dict[str, Any] | None = None
-) -> tuple[np.ndarray, ...] | None:
-    operations = _rebin_symmetry_operations(config, lattice_parameters)
-    if len(operations) == 1 and np.allclose(operations[0].matrix_hkl, np.eye(3)):
-        return None
-    return tuple(np.asarray(operation.matrix_hkl, dtype=float) for operation in operations)
-
-
-def _rebin_symmetry_metadata(
-    config: dict[str, Any], lattice_parameters: dict[str, Any] | None = None
-) -> dict[str, Any] | None:
-    spec = symmetry_spec_from_config(config.get("symmetry"))
-    if not spec.enabled:
-        return None
-    operations = _rebin_symmetry_operations(config, lattice_parameters)
-    return {
-        "mode": spec.mode,
-        "expression": spec.expression,
-        "operation_count": len(operations),
-        "operations_hkl": [np.asarray(operation.matrix_hkl, dtype=float).tolist() for operation in operations],
-        "labels": [operation.label for operation in operations],
-        "energy_unchanged": True,
-    }
+    return (
+        metadata.get("lattice_parameters")
+        if isinstance(metadata, dict) and isinstance(metadata.get("lattice_parameters"), dict)
+        else None
+    )
 
 
 def _dataset_rebin_is_large(dataset: DatasetEntry, config: dict[str, Any]) -> bool:
@@ -3054,7 +3036,9 @@ def rebinned_dataset_data(
 
     config = dataset_rebin_config(dataset)
     with thread_budget(config.get("workers")):
-        return _rebinned_dataset_data(dataset, extra_masks=extra_masks, progress_callback=progress_callback)
+        return _rebinned_dataset_data(
+            dataset, extra_masks=extra_masks, progress_callback=progress_callback
+        )
 
 
 def _rebinned_dataset_data(
@@ -3112,20 +3096,16 @@ def _rebin_point_list_data(dataset: DatasetEntry, config: dict[str, Any]) -> Poi
 
     prepared = prepared_point_list_data(dataset)
     axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
-    coordinate_names = [axis.get("name") for axis in axes_config if axis.get("name") in prepared.columns]
+    coordinate_names = [
+        axis.get("name") for axis in axes_config if axis.get("name") in prepared.columns
+    ]
     if not coordinate_names:
         coordinate_names = list(prepared.coordinate_names)
     selected_axes = axes_config[: len(coordinate_names)]
-    symmetry = _rebin_symmetry_matrices(
-        config, prepared.metadata.get("lattice_parameters")
-    )
-    coordinates = np.column_stack(
-        [prepared.columns[name] for name in coordinate_names]
-    )
+    symmetry = _rebin_symmetry_matrices(config, prepared.metadata.get("lattice_parameters"))
+    coordinates = np.column_stack([prepared.columns[name] for name in coordinate_names])
     data_bounds = (
-        _symmetry_projected_coordinate_bounds(
-            coordinates, symmetry, np.eye(len(coordinate_names))
-        )
+        _symmetry_projected_coordinate_bounds(coordinates, symmetry, np.eye(len(coordinate_names)))
         if symmetry is not None
         else _finite_coordinate_bounds(coordinates)
     )
@@ -3137,9 +3117,7 @@ def _rebin_point_list_data(dataset: DatasetEntry, config: dict[str, Any]) -> Poi
         symmetry=symmetry,
         output_basis=np.eye(len(coordinate_names)),
     )
-    selected_axes = _resolve_data_driven_rebin_axes(
-        config, selected_axes, mode_coordinates
-    )
+    selected_axes = _resolve_data_driven_rebin_axes(config, selected_axes, mode_coordinates)
     lower = [axis["lower"] for axis in selected_axes] or None
     upper = [axis["upper"] for axis in selected_axes] or None
     result = prepared.rebin_to_histogram(
@@ -3156,389 +3134,12 @@ def _rebin_point_list_data(dataset: DatasetEntry, config: dict[str, Any]) -> Poi
         symmetry_operations=symmetry,
     )
     metadata = dict(result.metadata)
-    symmetry_metadata = _rebin_symmetry_metadata(config, prepared.metadata.get("lattice_parameters"))
+    symmetry_metadata = _rebin_symmetry_metadata(
+        config, prepared.metadata.get("lattice_parameters")
+    )
     if symmetry_metadata is not None:
         metadata.setdefault("rebin", {})["symmetry"] = symmetry_metadata
     return result.with_updates(metadata=metadata)
-
-
-def _rebin_mean_weighting(config: dict[str, Any]) -> str:
-    value = config.get("mean_weighting")
-    if value == "normalization":
-        return "uniform"
-    return str(value) if value in {"inverse_variance", "uniform"} else "uniform"
-
-
-def _rebin_axis_mode(
-    config: Mapping[str, Any], axis: Mapping[str, Any]
-) -> str:
-    """Return one axis's grid/assignment mode, including legacy migration."""
-
-    mode = str(axis.get("mode", "")).casefold()
-    if mode in REBIN_AXIS_MODES:
-        return mode
-    if axis.get("bin_edges") is not None:
-        return "edges"
-    if axis.get("fractional") is False:
-        return "discrete"
-    return "bins" if config.get(REBIN_RESOLUTION_MODE_KEY) == "bins" else "step"
-
-
-def _migrate_rebin_axis_modes(config: dict[str, Any]) -> None:
-    """Persist the per-axis mode representation used by current projects."""
-
-    axes = config.get("axes")
-    if not isinstance(axes, list):
-        return
-    for axis in axes:
-        if not isinstance(axis, dict):
-            continue
-        axis["mode"] = _rebin_axis_mode(config, axis)
-        axis.pop("fractional", None)
-    config.pop("fractional", None)
-
-
-def _rebin_fractional_axes(
-    config: Mapping[str, Any], axes_config: Sequence[Mapping[str, Any]]
-) -> list[bool]:
-    """Return assignment behavior implied by each axis's mode."""
-
-    return [
-        _rebin_axis_mode(config, axis) in {"step", "bins", "edges"}
-        for axis in axes_config
-    ]
-
-
-def _rebin_minimum_coverage(config: dict[str, Any]) -> float:
-    try:
-        value = float(config.get("minimum_coverage", DEFAULT_MINIMUM_COVERAGE))
-    except (TypeError, ValueError):
-        return DEFAULT_MINIMUM_COVERAGE
-    return float(np.clip(value, 0.0, 1.0))
-
-
-def _rebin_minimum_samples(config: dict[str, Any]) -> float:
-    """Return the minimum effective sample contribution for an output bin."""
-
-    try:
-        value = float(config.get("minimum_samples", DEFAULT_MINIMUM_SAMPLES))
-    except (TypeError, ValueError):
-        return DEFAULT_MINIMUM_SAMPLES
-    if not np.isfinite(value) or value < 0.0:
-        return DEFAULT_MINIMUM_SAMPLES
-    return value
-
-
-def _rebin_max_batch_mb(config: dict[str, Any]) -> int:
-    try:
-        return max(int(config.get("max_batch_mb", DEFAULT_REBIN_MAX_BATCH_MB)), 1)
-    except (TypeError, ValueError):
-        return DEFAULT_REBIN_MAX_BATCH_MB
-
-
-def _rebin_max_batch_bytes(config: dict[str, Any]) -> int:
-    return _rebin_max_batch_mb(config) * 1024 * 1024
-
-
-def _rebin_resolution_mode(config: dict[str, Any]) -> str:
-    """Return the active resolution control mode for a rebin panel."""
-
-    return "bins" if config.get(REBIN_RESOLUTION_MODE_KEY) == "bins" else "step"
-
-
-def _rebin_axis_bound_is_auto(axis: Mapping[str, Any], key: str) -> bool:
-    """Return whether a saved bound still matches its last automatic value."""
-
-    if key not in {"lower", "upper"} or not bool(axis.get(f"auto_{key}", False)):
-        return False
-    try:
-        value = float(axis[key])
-        automatic = float(axis.get(f"auto_{key}_value", value))
-    except (KeyError, TypeError, ValueError):
-        return False
-    return bool(np.isclose(value, automatic))
-
-
-def _resolve_auto_rebin_axes(
-    axes_config: Sequence[dict[str, Any]],
-    data_bounds: Sequence[tuple[float, float]],
-) -> list[dict[str, Any]]:
-    """Resolve blank limits and align uniform bins so zero is a bin center."""
-
-    if len(axes_config) != len(data_bounds):
-        raise ValueError("automatic rebin bounds must match the coordinate dimensions")
-    resolved: list[dict[str, Any]] = []
-    for axis_config, (data_lower, data_upper) in zip(
-        axes_config, data_bounds, strict=True
-    ):
-        axis = _sanitize_rebin_axis_config(dict(axis_config))
-        if axis.get("bin_edges") is not None:
-            resolved.append(axis)
-            continue
-        auto_lower = _rebin_axis_bound_is_auto(axis, "lower")
-        auto_upper = _rebin_axis_bound_is_auto(axis, "upper")
-        if not (auto_lower or auto_upper):
-            resolved.append(axis)
-            continue
-        step = float(axis.get("step_size", 0.0) or 0.0)
-        auto_step = bool(axis.get("auto_step_size", False)) and np.isclose(
-            step,
-            float(axis.get("auto_step_size_value", step)),
-        )
-        if auto_step:
-            target_lower = float(data_lower) if auto_lower else float(axis["lower"])
-            target_upper = float(data_upper) if auto_upper else float(axis["upper"])
-            width = target_upper - target_lower
-            if np.isfinite(width) and width > 0.0:
-                step = width / max(int(axis.get("num_bins", 1)) - 1, 1)
-        if not np.isfinite(step) or step <= 0.0:
-            width = float(data_upper) - float(data_lower)
-            step = width / max(int(axis.get("num_bins", 1)) - 1, 1)
-        if not np.isfinite(step) or step <= 0.0:
-            step = 1.0
-        # Uniform edges at (n + 1/2)*step put an integer multiple of the
-        # step, including zero, at every bin center.
-        # Choose half-step edges strictly outside the finite data interval.
-        # The resulting centers are integer multiples of ``step``. Strict
-        # containment also keeps samples exactly on half-step boundaries from
-        # collapsing into the same final bin.
-        aligned_lower = (
-            math.ceil(float(data_lower) / step - 0.5) - 0.5
-        ) * step
-        aligned_upper = (
-            math.floor(float(data_upper) / step - 0.5) + 1.5
-        ) * step
-        if aligned_upper <= aligned_lower:
-            aligned_upper = aligned_lower + step
-        if auto_lower:
-            axis["lower"] = aligned_lower + step / 2
-        if auto_upper:
-            axis["upper"] = aligned_upper - step / 2
-        axis["step_size"] = step
-        axis["num_bins"] = max(
-            int(round((float(axis["upper"]) - float(axis["lower"])) / step)) + 1, 1
-        )
-        resolved.append(axis)
-    return resolved
-
-
-def _cluster_coordinate_centers(values: Any, tolerance: float) -> np.ndarray:
-    """Cluster finite coordinates while keeping every member within tolerance."""
-
-    finite = np.sort(np.asarray(values, dtype=float).reshape(-1))
-    finite = finite[np.isfinite(finite)]
-    if finite.size == 0:
-        raise ValueError("cannot determine discrete bins without finite coordinates")
-    if tolerance < 0.0 or not np.isfinite(tolerance):
-        raise ValueError("axis tolerance must be finite and nonnegative")
-    if tolerance == 0.0:
-        return np.unique(finite)
-    centers: list[float] = []
-    start = 0
-    running_sum = float(finite[0])
-    count = 1
-    for stop in range(1, finite.size):
-        candidate_sum = running_sum + float(finite[stop])
-        candidate_count = count + 1
-        candidate_mean = candidate_sum / candidate_count
-        if max(
-            candidate_mean - float(finite[start]),
-            float(finite[stop]) - candidate_mean,
-        ) <= tolerance + 1e-12:
-            running_sum = candidate_sum
-            count = candidate_count
-            continue
-        centers.append(running_sum / count)
-        start = stop
-        running_sum = float(finite[stop])
-        count = 1
-    centers.append(running_sum / count)
-    return np.asarray(centers, dtype=float)
-
-
-def _coordinate_center_edges(
-    centers: Any, *, singleton_half_width: float = 0.5
-) -> np.ndarray:
-    """Build nearest-center boundaries for an ordered set of centers."""
-
-    values = np.asarray(centers, dtype=float)
-    if values.ndim != 1 or values.size == 0 or np.any(np.diff(values) <= 0.0):
-        raise ValueError("discrete bin centers must be finite and strictly increasing")
-    if values.size == 1:
-        half_width = max(float(singleton_half_width), np.finfo(float).eps)
-        return np.asarray([values[0] - half_width, values[0] + half_width])
-    midpoints = (values[:-1] + values[1:]) / 2.0
-    return np.r_[
-        values[0] - (values[1] - values[0]) / 2.0,
-        midpoints,
-        values[-1] + (values[-1] - values[-2]) / 2.0,
-    ]
-
-
-def _resolve_data_driven_rebin_axes(
-    config: Mapping[str, Any],
-    axes_config: Sequence[dict[str, Any]],
-    coordinates: np.ndarray,
-) -> list[dict[str, Any]]:
-    """Resolve Discrete/Tolerance axes from the projected source coordinates."""
-
-    values = np.asarray(coordinates, dtype=float).reshape(-1, len(axes_config))
-    resolved: list[dict[str, Any]] = []
-    for index, axis_config in enumerate(axes_config):
-        axis = _sanitize_rebin_axis_config(dict(axis_config))
-        mode = _rebin_axis_mode(config, axis)
-        axis["mode"] = mode
-        if mode not in {"discrete", "tolerance"}:
-            resolved.append(axis)
-            continue
-        tolerance = 0.0 if mode == "discrete" else float(axis["tolerance"])
-        centers = _cluster_coordinate_centers(values[:, index], tolerance)
-        edges = _coordinate_center_edges(
-            centers,
-            singleton_half_width=tolerance if tolerance > 0.0 else 0.5,
-        )
-        axis.update(
-            {
-                "bin_edges": edges.tolist(),
-                "resolved_centers": centers.tolist(),
-                "lower": float(centers[0]),
-                "upper": float(centers[-1]),
-                "num_bins": int(centers.size),
-                "step_size": (
-                    float(np.median(np.diff(centers)))
-                    if centers.size > 1
-                    else max(2.0 * tolerance, 1.0)
-                ),
-            }
-        )
-        resolved.append(axis)
-    return resolved
-
-
-def _axis_mode_coordinates_with_symmetry(
-    config: Mapping[str, Any],
-    projected_coordinates: np.ndarray,
-    *,
-    physical_coordinates: np.ndarray | None = None,
-    symmetry: Sequence[np.ndarray] | None = None,
-    output_basis: np.ndarray | None = None,
-) -> np.ndarray:
-    """Return all projected coordinates needed to derive dynamic axis grids."""
-
-    axes = config.get("axes", [])
-    if not any(
-        isinstance(axis, Mapping)
-        and _rebin_axis_mode(config, axis) in {"discrete", "tolerance"}
-        for axis in axes
-    ):
-        return np.asarray(projected_coordinates, dtype=float)
-    if symmetry is None:
-        return np.asarray(projected_coordinates, dtype=float)
-    if physical_coordinates is None or output_basis is None:
-        raise ValueError("dynamic axis modes require projected symmetry coordinates")
-    physical = np.asarray(physical_coordinates, dtype=float)
-    inverse_basis = np.linalg.inv(np.asarray(output_basis, dtype=float))
-    ndim = physical.shape[-1]
-    projected = []
-    for operation in symmetry:
-        transform = np.eye(ndim, dtype=float)
-        transform[:3, :3] = np.asarray(operation, dtype=float).T
-        projected.append(physical @ transform @ inverse_basis)
-    return np.concatenate(projected, axis=0)
-
-
-def _finite_coordinate_bounds(coordinates: np.ndarray) -> list[tuple[float, float]]:
-    values = np.asarray(coordinates, dtype=float).reshape(-1, coordinates.shape[-1])
-    values = values[np.all(np.isfinite(values), axis=1)]
-    if values.size == 0:
-        raise ValueError("cannot determine automatic limits without finite coordinates")
-    return [
-        (float(np.min(values[:, index])), float(np.max(values[:, index])))
-        for index in range(values.shape[1])
-    ]
-
-
-def _symmetry_projected_coordinate_bounds(
-    physical_coordinates: np.ndarray,
-    symmetry: Sequence[np.ndarray],
-    output_basis: np.ndarray,
-) -> list[tuple[float, float]]:
-    """Return output-coordinate bounds over every reciprocal-symmetry image."""
-
-    physical = np.asarray(physical_coordinates, dtype=float)
-    basis = np.asarray(output_basis, dtype=float)
-    ndim = physical.shape[-1]
-    if ndim < 3 or basis.shape != (ndim, ndim):
-        raise ValueError(
-            "symmetry auto limits require HKL as the first three coordinates"
-        )
-    inverse_basis = np.linalg.inv(basis)
-    lower = np.full(ndim, np.inf, dtype=float)
-    upper = np.full(ndim, -np.inf, dtype=float)
-    for operation in symmetry:
-        transform = np.eye(ndim, dtype=float)
-        transform[:3, :3] = np.asarray(operation, dtype=float).T
-        projected = physical @ transform @ inverse_basis
-        operation_bounds = _finite_coordinate_bounds(projected)
-        lower = np.minimum(lower, [bound[0] for bound in operation_bounds])
-        upper = np.maximum(upper, [bound[1] for bound in operation_bounds])
-    return list(zip(lower.tolist(), upper.tolist(), strict=True))
-
-
-def _rebin_grid_kwargs(
-    config: dict[str, Any], axes_config: list[dict[str, Any]]
-) -> dict[str, Any]:
-    """Return a mixed uniform/explicit-edge grid for the public rebinner."""
-
-    from .rebin import _uniform_center_edges
-
-    # Step axes retain constant-width indexing. Bins axes are materialized as
-    # explicit edges so the one-bin lower/upper interval convention and exact
-    # requested count remain valid when modes are mixed across dimensions.
-    result: dict[str, Any] = {
-        "step_size": [
-            float(axis["step_size"])
-            for axis in axes_config
-        ]
-    }
-    bin_edges = [
-        (
-            _uniform_center_edges(
-                axis["lower"], axis["upper"], count=int(axis["num_bins"])
-            ).tolist()
-            if _rebin_axis_mode(config, axis) == "bins"
-            else axis.get("bin_edges")
-            if _rebin_axis_mode(config, axis) in {"edges", "discrete", "tolerance"}
-            else None
-        )
-        for axis in axes_config
-    ]
-    if any(edges is not None for edges in bin_edges):
-        result["bin_edges"] = bin_edges
-    return result
-
-
-def _composite_rebin_step_sizes(config: dict[str, Any]) -> list[float] | None:
-    """Return composite step sizes only when the composite is in Step mode."""
-
-    if _rebin_resolution_mode(config) != "step":
-        return None
-    return [
-        float(axis["step_size"])
-        for axis in (_sanitize_rebin_axis_config(axis) for axis in config.get("axes", []))
-    ]
-
-
-def _composite_rebin_bin_edges(
-    config: dict[str, Any],
-) -> list[list[float] | None] | None:
-    """Return per-axis explicit edges, retaining ``None`` for uniform axes."""
-
-    axes = [
-        _sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])
-    ]
-    edges = [axis.get("bin_edges") for axis in axes]
-    return edges if any(values is not None for values in edges) else None
 
 
 def create_rebinned_dataset(
@@ -3581,1106 +3182,6 @@ def create_rebinned_dataset(
     return new_entry
 
 
-def _default_rebin_axes(data: Any) -> list[dict[str, Any]]:
-    if isinstance(data, PointListData):
-        axes = []
-        coordinate_names = list(data.coordinate_names) or list(data.column_names)[:1]
-        for name in coordinate_names:
-            values = np.asarray(data.column(name), dtype=float)
-            finite = values[np.isfinite(values)]
-            lower = float(np.min(finite)) if finite.size else 0.0
-            upper = float(np.max(finite)) if finite.size else 1.0
-            num_bins = max(int(np.unique(finite).size), 1) if finite.size else 1
-            num_bins = min(num_bins, 200)
-            axes.append(
-                {
-                    "name": name,
-                    "units": data.unit(name),
-                    "lower": lower,
-                    "upper": upper,
-                    "num_bins": num_bins,
-                    "step_size": _step_size_from_bounds(lower, upper, num_bins),
-                }
-            )
-        return axes
-    if isinstance(data, MDHistoData):
-        axes: list[dict[str, Any]] = []
-        ndim = len(data.axes)
-        for index, (axis, size) in enumerate(zip(data.axes, data.shape, strict=True)):
-            lower, upper = float(axis.centers[0]), float(axis.centers[-1])
-            num_bins = max(int(size), 1)
-            native_lower, native_upper = _axis_bounds(axis, size)
-            vector = _mdhisto_rebin_axis_vector(axis, index, ndim)
-            variable = _mdhisto_rebin_axis_variable(axis, index, ndim)
-            axes.append(
-                {
-                    "name": _rebin_axis_name(variable, vector),
-                    "variable": variable,
-                    "units": axis.units,
-                    "vector": vector,
-                    "lower": lower,
-                    "upper": upper,
-                    "auto_lower": True,
-                    "auto_upper": True,
-                    "auto_lower_value": lower,
-                    "auto_upper_value": upper,
-                    "num_bins": num_bins,
-                    "step_size": (native_upper - native_lower) if size == 1 else _step_size_from_bounds(lower, upper, num_bins),
-                }
-            )
-        return axes
-    if isinstance(data, PointData4D):
-        axes = []
-        for index, (name, units, values) in enumerate(
-            (
-                ("H", "rlu", data.H),
-                ("K", "rlu", data.K),
-                ("L", "rlu", data.L),
-                ("E", "meV", data.E),
-            )
-        ):
-            finite = np.asarray(values, dtype=float)
-            finite = finite[np.isfinite(finite)]
-            lower = float(np.min(finite)) if finite.size else 0.0
-            upper = float(np.max(finite)) if finite.size else 1.0
-            # Point clouds commonly contain a distinct floating-point value at
-            # nearly every observation. Treating every unique value as a grid
-            # coordinate would create an unusably large Cartesian product
-            # (MACS HKLE scans are a representative case). Keep the automatic
-            # preview below the normal two-million-bin safety threshold; users
-            # can then choose instrument-appropriate step sizes explicitly.
-            num_bins = min(max(int(np.unique(finite).size), 1), 32) if finite.size else 1
-            axes.append(
-                {
-                    "name": name,
-                    "variable": name,
-                    "units": units,
-                    "vector": _identity_vector(index, 4),
-                    "lower": lower,
-                    "upper": upper,
-                    "auto_lower": True,
-                    "auto_upper": True,
-                    "auto_lower_value": lower,
-                    "auto_upper_value": upper,
-                    "num_bins": num_bins,
-                    "step_size": _step_size_from_bounds(lower, upper, num_bins),
-                    "auto_step_size": True,
-                    "auto_step_size_value": _step_size_from_bounds(
-                        lower, upper, num_bins
-                    ),
-                }
-            )
-        return axes
-    return []
-
-
-def _axis_bounds(axis: MDHistoAxis, size: int) -> tuple[float, float]:
-    values = np.asarray(axis.values, dtype=float)
-    if values.size == size + 1:
-        return float(values[0]), float(values[-1])
-    centers = axis.centers
-    if centers.size == 0:
-        return 0.0, 1.0
-    if centers.size == 1:
-        return float(centers[0] - 0.5), float(centers[0] + 0.5)
-    step = float(np.nanmedian(np.diff(centers)))
-    return float(centers[0] - 0.5 * step), float(centers[-1] + 0.5 * step)
-
-
-def _step_size_from_bounds(lower: float, upper: float, num_bins: int) -> float:
-    if num_bins <= 0:
-        return 0.0
-    if upper == lower:
-        return 1.0
-    return float((float(upper) - float(lower)) / float(max(num_bins - 1, 1)))
-
-
-def _num_bins_from_step_size(lower: Any, upper: Any, step_size: float) -> int:
-    width = abs(float(upper) - float(lower))
-    if width == 0.0:
-        return 1
-    return max(int(np.floor(width / float(step_size) + 1.e-10)) + 1, 1)
-
-
-def _normalize_rebin_bin_edges(value: Any) -> list[float]:
-    """Validate one axis's optional explicit, potentially nonuniform edges."""
-
-    edges = np.asarray(value, dtype=float)
-    if edges.ndim != 1 or edges.size < 2:
-        raise ValueError("bin edges must be a one-dimensional list with at least two values")
-    if np.any(~np.isfinite(edges)) or np.any(np.diff(edges) <= 0.0):
-        raise ValueError("bin edges must be finite and strictly increasing")
-    return edges.tolist()
-
-
-def _sanitize_rebin_axis_config(axis_config: dict[str, Any]) -> dict[str, Any]:
-    lower = float(axis_config.get("lower", 0.0))
-    upper = float(axis_config.get("upper", lower))
-    num_bins = max(int(axis_config.get("num_bins", 1)), 1)
-    try:
-        step_size = float(axis_config.get("step_size"))
-    except (TypeError, ValueError):
-        step_size = 0.0
-    if not np.isfinite(step_size) or step_size <= 0.0:
-        step_size = _step_size_from_bounds(lower, upper, num_bins)
-    sanitized = {
-        **axis_config,
-        "lower": lower,
-        "upper": upper,
-        "num_bins": num_bins,
-        "step_size": step_size,
-    }
-    mode = str(axis_config.get("mode", "")).casefold()
-    if mode:
-        sanitized["mode"] = mode if mode in REBIN_AXIS_MODES else "step"
-    if "tolerance" in axis_config or mode == "tolerance":
-        try:
-            tolerance = float(axis_config.get("tolerance", step_size))
-        except (TypeError, ValueError):
-            tolerance = step_size
-        sanitized["tolerance"] = (
-            tolerance if np.isfinite(tolerance) and tolerance > 0.0 else step_size
-        )
-    explicit_edges = axis_config.get("bin_edges")
-    if explicit_edges is not None and not (
-        isinstance(explicit_edges, str) and not explicit_edges.strip()
-    ):
-        edges = _normalize_rebin_bin_edges(explicit_edges)
-        sanitized["bin_edges"] = edges
-        sanitized["lower"] = (edges[0] + edges[1]) / 2 if len(edges) > 2 else edges[0]
-        sanitized["upper"] = (edges[-2] + edges[-1]) / 2 if len(edges) > 2 else edges[-1]
-        sanitized["num_bins"] = len(edges) - 1
-        sanitized["step_size"] = (edges[-1] - edges[0]) / (len(edges) - 1)
-    else:
-        sanitized.pop("bin_edges", None)
-    vector = axis_config.get("vector")
-    if isinstance(vector, (list, tuple, np.ndarray)):
-        sanitized["vector"] = [_clean_axis_weight(component) for component in vector]
-    return sanitized
-
-
-def _rebin_axis_vector(axis_config: dict[str, Any], index: int, ndim: int) -> np.ndarray:
-    """Return the projection vector for a rebin output axis, falling back to identity."""
-
-    vector = axis_config.get("vector")
-    if isinstance(vector, (list, tuple, np.ndarray)) and len(vector) == ndim:
-        candidate = np.asarray(vector, dtype=float)
-        if np.all(np.isfinite(candidate)):
-            return candidate
-    return np.asarray(_identity_vector(index if 0 <= index < ndim else 0, ndim), dtype=float)
-
-
-def _mdhisto_rebin_axis_variable(axis: MDHistoAxis, index: int, ndim: int) -> str:
-    """Return the scalar variable used to parameterize one rebin axis row."""
-
-    role_variables = {
-        "h": "H",
-        "k": "K",
-        "l": "L",
-        "energy": "E",
-        "energy_transfer": "E",
-    }
-    if axis.role in role_variables:
-        return role_variables[axis.role]
-    if str(axis.name).casefold().replace("_", "") in {
-        "deltae",
-        "energy",
-        "energytransfer",
-    }:
-        return "E"
-    symbols = re.findall(r"[HKL]", str(axis.name).upper())
-    if symbols:
-        return symbols[0]
-    if ndim == 4 and 0 <= index < 4:
-        return ("H", "K", "L", "E")[index]
-    return str(axis.name or f"Axis {index + 1}")
-
-
-def _rebin_axis_name(variable: str, vector: Any) -> str:
-    """Generate the plotted axis name from its variable and HKLE direction."""
-
-    values = np.asarray(vector, dtype=float).reshape(-1)
-    if values.size == 4 and str(variable).upper() == "E":
-        coefficient = _clean_axis_weight(values[3])
-        if coefficient == 1.0:
-            return "DeltaE"
-        return f"{coefficient:g}DeltaE"
-    if values.size == 4:
-        symbol = str(variable).upper()
-        terms = []
-        for value in values[:3]:
-            coefficient = _clean_axis_weight(value)
-            if coefficient == 0.0:
-                terms.append("0")
-            elif coefficient == 1.0:
-                terms.append(symbol)
-            elif coefficient == -1.0:
-                terms.append(f"-{symbol}")
-            else:
-                terms.append(f"{coefficient:g}{symbol}")
-        return f"[{','.join(terms)}]"
-    return str(variable)
-
-
-def _validate_mdhisto_rebin_basis(axes_config: list[dict[str, Any]], ndim: int) -> np.ndarray:
-    """Validate and return the output basis represented by rebin axis rows."""
-
-    basis = np.vstack(
-        [_rebin_axis_vector(axis_config, index, ndim) for index, axis_config in enumerate(axes_config)]
-    )
-    if basis.shape != (ndim, ndim) or not np.all(np.isfinite(basis)):
-        raise ValueError("coordinate axes must form a finite square basis")
-    if ndim == 4:
-        for index, (axis_config, vector) in enumerate(zip(axes_config, basis, strict=True)):
-            variable = str(
-                axis_config.get("variable", ("H", "K", "L", "E")[index])
-            ).upper()
-            if variable == "E":
-                if np.any(vector[:3] != 0.0) or vector[3] == 0.0:
-                    raise ValueError(
-                        f"axis row {index + 1} is the energy variable and must contain only a nonzero E component"
-                    )
-            elif vector[3] != 0.0:
-                raise ValueError(
-                    f"axis row {index + 1} is a momentum variable; momentum and energy components cannot be mixed"
-                )
-    if np.linalg.matrix_rank(basis) != ndim:
-        rank = int(np.linalg.matrix_rank(basis))
-        raise ValueError(
-            "coordinate axis vectors must form an invertible basis; "
-            f"this matrix has rank {rank} rather than {ndim}"
-        )
-    return basis
-
-
-def _momentum_rebin_vector_text(axis_config: dict[str, Any], index: int) -> str:
-    """Format one GUI momentum-basis row without exposing the energy column."""
-
-    return _parameter_to_text(_rebin_axis_vector(axis_config, index, 4)[:3].tolist())
-
-
-def _momentum_rebin_axis_indices(axes_config: Sequence[dict[str, Any]]) -> list[int]:
-    return [
-        index
-        for index, axis in enumerate(axes_config)
-        if str(axis.get("variable", ("H", "K", "L", "E")[index])).upper()
-        != "E"
-    ]
-
-
-def _momentum_rebin_matrix(axes_config: Sequence[dict[str, Any]]) -> list[list[float]]:
-    indices = _momentum_rebin_axis_indices(axes_config)
-    if len(axes_config) != 4 or len(indices) != 3:
-        raise ValueError("HKLE rebinning requires three momentum coordinates and one energy coordinate")
-    return [
-        _rebin_axis_vector(axes_config[index], index, 4)[:3].tolist()
-        for index in indices
-    ]
-
-
-def _momentum_coordinate_variables(matrix: np.ndarray) -> list[str]:
-    """Choose concise H/K/L scalar labels for momentum-matrix rows."""
-
-    symbols = ["H", "K", "L"]
-    variables: list[str | None] = [None, None, None]
-    used: set[str] = set()
-    for row, values in enumerate(matrix):
-        nonzero = np.flatnonzero(~np.isclose(values, 0.0))
-        if nonzero.size != 1:
-            continue
-        symbol = symbols[int(nonzero[0])]
-        if symbol not in used:
-            variables[row] = symbol
-            used.add(symbol)
-    remaining = iter(symbol for symbol in symbols if symbol not in used)
-    return [value if value is not None else next(remaining) for value in variables]
-
-
-def _rebin_config_basis_bounds(
-    axes_config: list[dict[str, Any]],
-    candidate_basis: np.ndarray,
-) -> list[tuple[float, float]]:
-    """Transform the configured output box into a replacement coordinate basis."""
-
-    current_basis = _validate_mdhisto_rebin_basis(axes_config, 4)
-    endpoints = [
-        (float(axis["lower"]), float(axis["upper"])) for axis in axes_config
-    ]
-    projected_corners = np.asarray(
-        [
-            [endpoints[index][bit] for index, bit in enumerate(bits)]
-            for bits in np.ndindex(*(2 for _ in endpoints))
-        ],
-        dtype=float,
-    )
-    physical_corners = projected_corners @ current_basis
-    new_coordinates = physical_corners @ np.linalg.inv(candidate_basis)
-    return [
-        (float(np.min(new_coordinates[:, index])), float(np.max(new_coordinates[:, index])))
-        for index in range(4)
-    ]
-
-
-def _point_data_rebin_basis_bounds(
-    data: PointData4D,
-    axes_config: list[dict[str, Any]],
-) -> list[tuple[float, float]]:
-    """Return exact finite point-cloud bounds in the requested output basis."""
-
-    basis = _validate_mdhisto_rebin_basis(axes_config, 4)
-    coordinates = np.column_stack(data.coordinates())
-    coordinates = coordinates[np.all(np.isfinite(coordinates), axis=1)]
-    if coordinates.size == 0:
-        raise ValueError("point dataset has no finite HKLE coordinates")
-    projected = coordinates @ np.linalg.inv(basis)
-    bounds: list[tuple[float, float]] = []
-    for index in range(4):
-        lower = float(np.min(projected[:, index]))
-        upper = float(np.max(projected[:, index]))
-        if lower == upper:
-            lower -= 0.5
-            upper += 0.5
-        bounds.append((lower, upper))
-    return bounds
-
-
-def _update_rebin_momentum_basis(
-    axes_config: list[dict[str, Any]],
-    index: int,
-    momentum_vector: Sequence[float],
-    *,
-    data: MDHistoData | PointData4D | None = None,
-) -> None:
-    """Apply one row of the user-facing 3x3 momentum coordinate block."""
-
-    if len(axes_config) != 4 or not (0 <= index < 4):
-        raise ValueError("momentum-coordinate editing requires four HKLE axes")
-    variable = str(
-        axes_config[index].get("variable", ("H", "K", "L", "E")[index])
-    ).upper()
-    if variable == "E":
-        raise ValueError("the energy coordinate is fixed and is not part of the 3x3 momentum block")
-    vector = np.asarray(momentum_vector, dtype=float).reshape(-1)
-    if vector.size != 3 or not np.all(np.isfinite(vector)):
-        raise ValueError("a momentum coordinate row must contain three finite H, K, and L values")
-    matrix = _momentum_rebin_matrix(axes_config)
-    matrix[_momentum_rebin_axis_indices(axes_config).index(index)] = vector.tolist()
-    _update_rebin_momentum_matrix(axes_config, matrix, data=data)
-
-
-def _update_rebin_momentum_matrix(
-    axes_config: list[dict[str, Any]],
-    momentum_matrix: Sequence[Sequence[float]],
-    *,
-    data: MDHistoData | PointData4D | None = None,
-) -> None:
-    """Replace the complete 3x3 momentum block atomically."""
-
-    matrix = np.asarray(momentum_matrix, dtype=float)
-    if matrix.shape != (3, 3) or not np.all(np.isfinite(matrix)):
-        raise ValueError("the momentum-coordinate matrix must be a finite 3x3 array")
-    rank = int(np.linalg.matrix_rank(matrix))
-    if rank != 3:
-        raise ValueError(
-            "the momentum-coordinate matrix must be invertible; "
-            f"this matrix has rank {rank} rather than 3"
-        )
-    candidate = [dict(axis) for axis in axes_config]
-    indices = _momentum_rebin_axis_indices(candidate)
-    if len(candidate) != 4 or len(indices) != 3:
-        raise ValueError("HKLE rebinning requires three momentum coordinates and one energy coordinate")
-    for axis_index, axis in enumerate(candidate):
-        axis.setdefault("variable", ("H", "K", "L", "E")[axis_index])
-    variables = _momentum_coordinate_variables(matrix)
-    for row, axis_index in enumerate(indices):
-        candidate[axis_index]["variable"] = variables[row]
-        candidate[axis_index]["vector"] = [
-            *[_clean_axis_weight(component) for component in matrix[row]],
-            0.0,
-        ]
-    basis = _validate_mdhisto_rebin_basis(candidate, 4)
-    if isinstance(data, MDHistoData):
-        bounds = _mdhisto_rebin_basis_bounds(data, candidate)
-    elif isinstance(data, PointData4D):
-        bounds = _point_data_rebin_basis_bounds(data, candidate)
-    else:
-        bounds = _rebin_config_basis_bounds(axes_config, basis)
-    for axis_config, (lower, upper) in zip(candidate, bounds, strict=True):
-        previous_step = float(axis_config.get("step_size", 0.0) or 0.0)
-        axis_config.pop("bin_edges", None)
-        axis_config["lower"] = lower
-        axis_config["upper"] = upper
-        if bool(axis_config.get("auto_lower", False)):
-            axis_config["auto_lower_value"] = lower
-        if bool(axis_config.get("auto_upper", False)):
-            axis_config["auto_upper_value"] = upper
-        if previous_step > 0.0 and np.isfinite(previous_step):
-            axis_config["num_bins"] = _num_bins_from_step_size(
-                lower, upper, previous_step
-            )
-        axis_config["name"] = _rebin_axis_name(
-            str(axis_config.get("variable", "")), axis_config.get("vector", [])
-        )
-        axis_config.update(_sanitize_rebin_axis_config(axis_config))
-    axes_config[:] = candidate
-
-
-def _mdhisto_rebin_basis_transform(
-    data: MDHistoData,
-    axes_config: list[dict[str, Any]],
-) -> np.ndarray:
-    """Map source bin coordinates into coordinates of the requested basis."""
-
-    ndim = len(data.axes)
-    output_basis = _validate_mdhisto_rebin_basis(axes_config, ndim)
-    source_vectors = _mdhisto_rebin_source_axis_vectors(data)
-    if any(vector is None for vector in source_vectors):
-        raise ValueError("source axes do not define a complete coordinate basis")
-    source_basis = np.vstack(source_vectors)
-    if source_basis.shape != (ndim, ndim) or np.linalg.matrix_rank(source_basis) != ndim:
-        raise ValueError("source coordinate axes must be linearly independent")
-    return source_basis @ np.linalg.inv(output_basis)
-
-
-def _mdhisto_rebin_basis_bounds(
-    data: MDHistoData,
-    axes_config: list[dict[str, Any]],
-) -> list[tuple[float, float]]:
-    """Return a bounding box containing the full source grid in a new basis."""
-
-    transform = _mdhisto_rebin_basis_transform(data, axes_config)
-    source_bounds = [_axis_bounds(axis, size) for axis, size in zip(data.axes, data.shape, strict=True)]
-    bounds = []
-    for output_index in range(transform.shape[1]):
-        lower = 0.0
-        upper = 0.0
-        for (source_lower, source_upper), coefficient in zip(
-            source_bounds, transform[:, output_index], strict=True
-        ):
-            endpoints = (coefficient * source_lower, coefficient * source_upper)
-            lower += min(endpoints)
-            upper += max(endpoints)
-        bounds.append((float(lower), float(upper)))
-    return bounds
-
-
-def _update_mdhisto_rebin_basis(
-    data: MDHistoData,
-    axes_config: list[dict[str, Any]],
-    index: int,
-    vector: list[float],
-) -> None:
-    """Apply one basis edit, regenerating names and full-data output bounds."""
-
-    candidate = [dict(axis) for axis in axes_config]
-    candidate[index]["vector"] = list(vector)
-    _validate_mdhisto_rebin_basis(candidate, len(data.axes))
-    bounds = _mdhisto_rebin_basis_bounds(data, candidate)
-    for axis_config, (lower, upper) in zip(candidate, bounds, strict=True):
-        previous_step = float(axis_config.get("step_size", 0.0) or 0.0)
-        axis_config["lower"] = lower
-        axis_config["upper"] = upper
-        if previous_step > 0.0 and np.isfinite(previous_step):
-            axis_config["num_bins"] = _num_bins_from_step_size(lower, upper, previous_step)
-        axis_config["name"] = _rebin_axis_name(
-            str(axis_config.get("variable", "")), axis_config.get("vector", [])
-        )
-        axis_config.update(_sanitize_rebin_axis_config(axis_config))
-    axes_config[:] = candidate
-
-
-def _mdhisto_rebin_component(
-    data: MDHistoData,
-    source_grids: list[np.ndarray],
-    axis_config: dict[str, Any],
-    index: int,
-) -> np.ndarray:
-    ndim = len(data.axes)
-    vector = _rebin_axis_vector(axis_config, index, ndim)
-    component = np.zeros(data.shape, dtype=float)
-    if vector.size == 4:
-        source_vectors = _mdhisto_rebin_source_axis_vectors(data)
-        for source_vector, grid in zip(source_vectors, source_grids, strict=True):
-            if source_vector is not None and np.allclose(vector, source_vector):
-                return np.asarray(grid, dtype=float)
-        coords = _mdhisto_coordinate_grids(data)
-        if all(name in coords for name in ("H", "K", "L", "E")):
-            for weight, name in zip(vector, ("H", "K", "L", "E"), strict=True):
-                if weight:
-                    component = component + float(weight) * coords[name]
-            return component
-    for weight, grid in zip(vector, source_grids, strict=True):
-        if weight:
-            component = component + float(weight) * grid
-    return component
-
-
-def _mdhisto_axis_edges(axis: MDHistoAxis, size: int) -> np.ndarray:
-    values = np.asarray(axis.values, dtype=float)
-    if values.size == size + 1:
-        return values
-    if values.size == size:
-        if size == 1:
-            return np.asarray([values[0] - 0.5, values[0] + 0.5])
-        edges = np.empty(size + 1, dtype=float)
-        edges[1:-1] = 0.5 * (values[:-1] + values[1:])
-        edges[0] = values[0] - 0.5 * (values[1] - values[0])
-        edges[-1] = values[-1] + 0.5 * (values[-1] - values[-2])
-        return edges
-    raise ValueError(f"axis {axis.name!r} does not define {size} bins")
-
-
-def _mdhisto_cell_volumes(data: MDHistoData) -> np.ndarray:
-    """Return native hypervolumes represented by MDHisto bin centers."""
-
-    volume = np.ones(data.shape, dtype=float)
-    for dim, (axis, size) in enumerate(zip(data.axes, data.shape, strict=True)):
-        edges = _mdhisto_axis_edges(axis, size)
-        widths = np.diff(edges)
-        shape = [1] * data.signal.ndim
-        shape[dim] = size
-        volume *= widths.reshape(shape)
-    return np.abs(volume)
-
-
-def _output_bin_volumes(bins_list: Sequence[np.ndarray]) -> np.ndarray:
-    shape = tuple(len(values) - 1 for values in bins_list)
-    volume = np.ones(shape, dtype=float)
-    for dim, values in enumerate(bins_list):
-        widths = np.abs(np.diff(np.asarray(values, dtype=float)))
-        reshape = [1] * len(shape)
-        reshape[dim] = widths.size
-        volume *= widths.reshape(reshape)
-    return volume
-
-
-def _rebin_mdhisto_coverage(
-    data: MDHistoData,
-    coords: np.ndarray,
-    config: dict[str, Any],
-    axes_config: Sequence[dict[str, Any]],
-    bins_list: Sequence[np.ndarray],
-    *,
-    symmetry: Sequence[np.ndarray] | None = None,
-    output_axes: np.ndarray | None = None,
-) -> np.ndarray:
-    """Map measured native-bin hypervolume into requested output bins."""
-
-    source_coverage = mdhisto_coverage_fraction(data)
-    usable = (
-        np.isfinite(data.signal)
-        & np.isfinite(data.errors)
-        & ~np.asarray(data.mask, dtype=bool)
-        & mdhisto_measured_bins(data)
-    )
-    source_coverage = np.where(usable, source_coverage, 0.0)
-    source_volume = _mdhisto_cell_volumes(data)
-    vectors = np.asarray(
-        [
-            _rebin_axis_vector(axis_config, index, data.signal.ndim)
-            for index, axis_config in enumerate(axes_config)
-        ],
-        dtype=float,
-    )
-    mapping = (
-        _mdhisto_rebin_basis_transform(data, list(axes_config))
-        if data.signal.ndim == 4
-        else vectors.T
-    )
-    if mapping.shape == (data.signal.ndim, data.signal.ndim):
-        source_volume = source_volume * abs(float(np.linalg.det(mapping)))
-    if (
-        symmetry is None
-        and mapping.shape == (data.signal.ndim, data.signal.ndim)
-        and np.allclose(mapping, np.eye(data.signal.ndim))
-    ):
-        covered_volume = source_coverage
-        for dim, (axis, size, output_edges) in enumerate(
-            zip(data.axes, data.shape, bins_list, strict=True)
-        ):
-            source_edges = _mdhisto_axis_edges(axis, size)
-            output_edges = np.asarray(output_edges, dtype=float)
-            overlap = np.maximum(
-                0.0,
-                np.minimum(output_edges[1:, None], source_edges[None, 1:])
-                - np.maximum(output_edges[:-1, None], source_edges[None, :-1]),
-            )
-            covered_volume = np.tensordot(
-                overlap,
-                covered_volume,
-                axes=(1, dim),
-            )
-            covered_volume = np.moveaxis(covered_volume, 0, dim)
-        output_volume = _output_bin_volumes(bins_list)
-        coverage = np.zeros(output_volume.shape, dtype=float)
-        np.divide(
-            covered_volume,
-            output_volume,
-            out=coverage,
-            where=output_volume > 0.0,
-        )
-        return np.clip(coverage, 0.0, 1.0)
-    weights = (source_volume * source_coverage).ravel()
-    kwargs = dict(
-        data_weights=weights,
-        lower=[float(np.asarray(values)[0]) for values in bins_list],
-        upper=[float(np.asarray(values)[-1]) for values in bins_list],
-        **_rebin_grid_kwargs(config, list(axes_config)),
-        # Coverage is geometric even when the signal reducer uses nearest-bin
-        # assignment. Cloud-in-cell deposition avoids assigning an entire
-        # rotated native voxel to whichever output bin contains its center.
-        fractional=True,
-        normalize=False,
-        mean_weighting="uniform",
-        max_batch_bytes=_rebin_max_batch_bytes(config),
-    )
-    # Reuse the resolved edges, rather than interpreting them as centers again.
-    kwargs["bin_edges"] = bins_list
-    coverage_rebin = (
-        rebin_nd_symmetry(
-            np.ones(data.signal.size, dtype=float),
-            np.asarray(coords, dtype=float).reshape(-1, data.signal.ndim),
-            symmetry,
-            axes=output_axes,
-            **kwargs,
-        )
-        if symmetry is not None
-        else rebin_nd(
-            np.ones(data.signal.size, dtype=float),
-            np.asarray(coords, dtype=float).reshape(-1, data.signal.ndim),
-            **kwargs,
-        )
-    )
-    if coverage_rebin.binned_data is None:
-        raise RuntimeError("coverage rebinning did not produce binned data")
-    output_volume = _output_bin_volumes(bins_list)
-    coverage = np.zeros(output_volume.shape, dtype=float)
-    np.divide(
-        np.asarray(coverage_rebin.binned_data, dtype=float),
-        output_volume,
-        out=coverage,
-        where=output_volume > 0.0,
-    )
-    return np.clip(coverage, 0.0, 1.0)
-
-
-def _rebin_mdhisto_data(
-    data: MDHistoData,
-    config: dict[str, Any],
-    *,
-    progress_callback: Any | None = None,
-) -> MDHistoData:
-    if progress_callback is not None:
-        progress_callback(
-            {
-                "stage": "rebin_sources",
-                "message": "projecting source coordinates and applying masks",
-            }
-        )
-    if any("metadata_dimension" in axis.metadata for axis in data.axes):
-        raise ValueError("Rebin the original collection to preserve its discrete metadata dimensions.")
-    axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
-    if len(axes_config) != len(data.axes):
-        axes_config = _default_rebin_axes(data)
-
-    ndim = len(data.axes)
-    source_grids = np.meshgrid(*(axis.centers for axis in data.axes), indexing="ij")
-    if ndim == 4:
-        transform = _mdhisto_rebin_basis_transform(data, axes_config)
-        projected = []
-        for output_index in range(ndim):
-            component = np.zeros(data.shape, dtype=float)
-            for source_grid, coefficient in zip(
-                source_grids, transform[:, output_index], strict=True
-            ):
-                if coefficient:
-                    component = component + float(coefficient) * source_grid
-            projected.append(component)
-    else:
-        projected = [
-            _mdhisto_rebin_component(data, list(source_grids), axis_config, index)
-            for index, axis_config in enumerate(axes_config)
-        ]
-    coords = np.stack(projected, axis=-1)
-    symmetry = _rebin_symmetry_matrices(config, data.metadata.get("lattice_parameters"))
-    output_axes = None
-    if symmetry is not None:
-        if ndim != 4:
-            raise ValueError("rebin symmetry requires a four-dimensional HKLE dataset")
-        physical = _mdhisto_coordinate_grids(data)
-        if not all(name in physical for name in ("H", "K", "L", "E")):
-            raise ValueError("rebin symmetry requires reconstructable H, K, L, and energy coordinates")
-        coords = np.stack([physical[name] for name in ("H", "K", "L", "E")], axis=-1)
-        output_axes = _validate_mdhisto_rebin_basis(axes_config, ndim)
-        data_bounds = _symmetry_projected_coordinate_bounds(
-            coords, symmetry, output_axes
-        )
-    else:
-        data_bounds = _finite_coordinate_bounds(coords)
-    axes_config = _resolve_auto_rebin_axes(axes_config, data_bounds)
-    valid = np.isfinite(data.signal) & np.isfinite(data.errors) & ~data.mask
-    normalization_channel = data.auxiliary_channels.get(
-        "normalization_denominator"
-    )
-    normalization_values = None
-    if normalization_channel is not None:
-        normalization_values = np.asarray(normalization_channel.values, dtype=float)
-        valid &= np.isfinite(normalization_values) & (normalization_values > 0.0)
-    if data.num_events is not None:
-        valid &= mdhisto_measured_bins(data)
-    signal = data.signal[valid]
-    errors = data.errors[valid]
-    coords_valid = coords[valid]
-    if signal.size == 0:
-        raise ValueError("no valid data points remain before rebinning")
-    projected_valid = (
-        coords_valid @ np.linalg.inv(output_axes)
-        if output_axes is not None
-        else coords_valid
-    )
-    mode_coordinates = _axis_mode_coordinates_with_symmetry(
-        config,
-        projected_valid,
-        physical_coordinates=coords_valid if symmetry is not None else None,
-        symmetry=symmetry,
-        output_basis=output_axes,
-    )
-    axes_config = _resolve_data_driven_rebin_axes(
-        config, axes_config, mode_coordinates
-    )
-    lower = [axis["lower"] for axis in axes_config]
-    upper = [axis["upper"] for axis in axes_config]
-    kwargs = dict(
-        data_errs=errors,
-        data_weights=(
-            None
-            if normalization_values is None
-            else normalization_values[valid]
-        ),
-        lower=lower,
-        upper=upper,
-        **_rebin_grid_kwargs(config, axes_config),
-        fractional=bool(config.get("fractional", False)),
-        fractional_axes=_rebin_fractional_axes(config, axes_config),
-        normalize=True,
-        mean_weighting=_rebin_mean_weighting(config),
-        minimum_samples=_rebin_minimum_samples(config),
-        max_batch_bytes=_rebin_max_batch_bytes(config),
-        progress_callback=progress_callback,
-    )
-    result = (
-        rebin_nd_symmetry(signal, coords_valid, symmetry, axes=output_axes, **kwargs)
-        if symmetry is not None
-        else rebin_nd(signal, coords_valid, **kwargs)
-    )
-    if result.binned_data is None or result.binned_data_errs is None or result.n_samples is None:
-        raise RuntimeError("rebinning did not produce binned data")
-    if result.bins_list is None:
-        raise RuntimeError("rebinning did not produce bins")
-    vectors = [_rebin_axis_vector(axis_config, index, ndim).tolist() for index, axis_config in enumerate(axes_config)]
-    rebinned_axes = tuple(
-        MDHistoAxis(
-            name=str(axis_config.get("name") or source_axis.name),
-            values=np.asarray(bins, dtype=float),
-            units=str(axis_config.get("units") if axis_config.get("units") is not None else source_axis.units),
-            kind=source_axis.kind,
-            frame=source_axis.frame,
-            path=source_axis.path,
-            metadata={
-                **dict(source_axis.metadata),
-                "variable": str(axis_config.get("variable", "")),
-                **(
-                    {"discrete_centers": axis_config["resolved_centers"]}
-                    if axis_config.get("resolved_centers") is not None
-                    else {}
-                ),
-            },
-        )
-        for source_axis, axis_config, bins in zip(data.axes, axes_config, result.bins_list, strict=True)
-    )
-    mask = ~np.isfinite(result.binned_data) | ~np.isfinite(result.binned_data_errs)
-    mask |= result.n_samples <= 0.0
-    if progress_callback is not None:
-        progress_callback(
-            {
-                "stage": "rebin_coverage",
-                "message": "calculating geometric coverage for output bins",
-            }
-        )
-    coverage = _rebin_mdhisto_coverage(
-        data,
-        coords,
-        config,
-        axes_config,
-        result.bins_list,
-        symmetry=symmetry,
-        output_axes=output_axes,
-    )
-    coverage_mask = coverage < _rebin_minimum_coverage(config)
-    mask |= coverage_mask
-    metadata = dict(data.metadata)
-    metadata["signal_semantics"] = "density"
-    metadata["signal_semantics_source"] = "nfit_normalized_rebin"
-    metadata["coverage_mask_count"] = int(np.count_nonzero(coverage_mask))
-    metadata["rebin"] = {
-        "lower": lower,
-        "upper": upper,
-        "step_size": np.asarray(result.step_size, dtype=float).tolist(),
-        "num_bins": np.asarray(result.num_bins, dtype=int).tolist(),
-        "bin_edges": [np.asarray(edges, dtype=float).tolist() for edges in result.bins_list],
-        "vectors": vectors,
-        "fractional_axes": _rebin_fractional_axes(config, axes_config),
-        "axis_modes": [_rebin_axis_mode(config, axis) for axis in axes_config],
-        "normalize": True,
-        "mean_weighting": _rebin_mean_weighting(config),
-        "minimum_coverage": _rebin_minimum_coverage(config),
-        "minimum_samples": _rebin_minimum_samples(config),
-        "max_batch_mb": _rebin_max_batch_mb(config),
-        "max_batch_bytes": _rebin_max_batch_bytes(config),
-        "weighted_by_normalization_denominator": normalization_values is not None,
-    }
-    symmetry_metadata = _rebin_symmetry_metadata(config, data.metadata.get("lattice_parameters"))
-    if symmetry_metadata is not None:
-        metadata["rebin"]["symmetry"] = symmetry_metadata
-    auxiliary_channels = {
-        "coverage_fraction": MDHistoChannel(
-            coverage,
-            label="Coverage",
-            unit="fraction",
-        )
-    }
-    if (
-        normalization_values is not None
-        and _rebin_mean_weighting(config) == "uniform"
-        and result._normalization is not None
-    ):
-        auxiliary_channels["normalization_denominator"] = MDHistoChannel(
-            np.asarray(result._normalization, dtype=float),
-            label="Combined detector-trajectory normalization",
-            unit="arbitrary normalization units",
-        )
-    return MDHistoData(
-        axes=rebinned_axes,
-        signal=np.asarray(result.binned_data, dtype=float),
-        errors=np.asarray(result.binned_data_errs, dtype=float),
-        mask=np.asarray(mask, dtype=bool),
-        num_events=np.asarray(result.n_samples, dtype=float),
-        coordinate_system=data.coordinate_system,
-        visual_normalization=data.visual_normalization,
-        metadata=metadata,
-        auxiliary_channels=auxiliary_channels,
-    )
-
-
-def _rebin_point_data(
-    data: PointData4D,
-    config: dict[str, Any],
-    *,
-    progress_callback: Any | None = None,
-) -> MDHistoData:
-    source = data.valid(require_positive_sigma=False)
-    if source.size == 0:
-        raise ValueError("no valid data points remain before rebinning")
-    normalization_weighted = source.normalization_denominator is not None
-    return _point_data_histogram(
-        np.column_stack(source.coordinates()),
-        np.asarray(source.intensity, dtype=float),
-        np.asarray(source.sigma, dtype=float),
-        config,
-        data_weights=(
-            None
-            if source.normalization_denominator is None
-            else np.asarray(source.normalization_denominator, dtype=float)
-        ),
-        source_metadata=data.metadata,
-        coordinate_system=data.metadata.get("coordinate_system"),
-        visual_normalization=data.metadata.get("visual_normalization"),
-        metadata_updates={
-            "weighted_by_normalization_denominator": normalization_weighted,
-        },
-        progress_callback=progress_callback,
-    )
-
-
-def _point_data_histogram(
-    coordinates: np.ndarray,
-    signal: np.ndarray,
-    errors: np.ndarray,
-    config: dict[str, Any],
-    *,
-    data_weights: np.ndarray | None = None,
-    source_metadata: Mapping[str, Any] | None = None,
-    coordinate_system: int | None = None,
-    visual_normalization: int | None = None,
-    metadata_updates: Mapping[str, Any] | None = None,
-    progress_callback: Any | None = None,
-) -> MDHistoData:
-    """Bin physical HKLE point coordinates into a viewer-ready histogram."""
-
-    if progress_callback is not None:
-        progress_callback(
-            {
-                "stage": "rebin_sources",
-                "message": "projecting point coordinates and resolving per-axis grids",
-            }
-        )
-
-    axes_config = [_sanitize_rebin_axis_config(axis) for axis in config.get("axes", [])]
-    if len(axes_config) != 4:
-        raise ValueError("HKLE point-data rebinning requires four output axes")
-    for index, axis_config in enumerate(axes_config):
-        axis_config.setdefault("variable", ("H", "K", "L", "E")[index])
-    basis = _validate_mdhisto_rebin_basis(axes_config, 4)
-    physical_coordinates = np.asarray(coordinates, dtype=float)
-    projected_coordinates = physical_coordinates @ np.linalg.inv(basis)
-    metadata = copy.deepcopy(dict(source_metadata or {}))
-    symmetry = _rebin_symmetry_matrices(config, metadata.get("lattice_parameters"))
-    data_bounds = (
-        _symmetry_projected_coordinate_bounds(
-            physical_coordinates, symmetry, basis
-        )
-        if symmetry is not None
-        else _finite_coordinate_bounds(projected_coordinates)
-    )
-    axes_config = _resolve_auto_rebin_axes(
-        axes_config, data_bounds
-    )
-    mode_coordinates = _axis_mode_coordinates_with_symmetry(
-        config,
-        projected_coordinates,
-        physical_coordinates=physical_coordinates,
-        symmetry=symmetry,
-        output_basis=basis,
-    )
-    axes_config = _resolve_data_driven_rebin_axes(
-        config, axes_config, mode_coordinates
-    )
-    lower = [axis["lower"] for axis in axes_config]
-    upper = [axis["upper"] for axis in axes_config]
-    kwargs = dict(
-        data_errs=np.asarray(errors, dtype=float),
-        data_weights=(
-            None if data_weights is None else np.asarray(data_weights, dtype=float)
-        ),
-        axes=basis,
-        lower=lower,
-        upper=upper,
-        **_rebin_grid_kwargs(config, axes_config),
-        fractional=bool(config.get("fractional", False)),
-        fractional_axes=_rebin_fractional_axes(config, axes_config),
-        normalize=True,
-        mean_weighting=_rebin_mean_weighting(config),
-        minimum_samples=_rebin_minimum_samples(config),
-        max_batch_bytes=_rebin_max_batch_bytes(config),
-        progress_callback=progress_callback,
-    )
-    result = (
-        rebin_nd_symmetry(
-            np.asarray(signal, dtype=float),
-            physical_coordinates,
-            symmetry,
-            **kwargs,
-        )
-        if symmetry is not None
-        else rebin_nd(
-            np.asarray(signal, dtype=float),
-            physical_coordinates,
-            **kwargs,
-        )
-    )
-    if (
-        result.binned_data is None
-        or result.binned_data_errs is None
-        or result.n_samples is None
-        or result.bins_list is None
-    ):
-        raise RuntimeError("point-data rebinning did not produce binned data")
-    mask = (
-        ~np.isfinite(result.binned_data)
-        | ~np.isfinite(result.binned_data_errs)
-        | (result.n_samples <= 0.0)
-    )
-    coverage = np.asarray(result.n_samples > 0.0, dtype=float)
-    coverage_mask = coverage < _rebin_minimum_coverage(config)
-    mask |= coverage_mask
-    metadata.update(copy.deepcopy(dict(metadata_updates or {})))
-    metadata["signal_semantics"] = "density"
-    metadata["signal_semantics_source"] = "nfit_normalized_rebin"
-    metadata["coverage_mask_count"] = int(np.count_nonzero(coverage_mask))
-    metadata["rebin"] = {
-        "lower": lower,
-        "upper": upper,
-        "step_size": np.asarray(result.step_size, dtype=float).tolist(),
-        "num_bins": np.asarray(result.num_bins, dtype=int).tolist(),
-        "bin_edges": [
-            np.asarray(edges, dtype=float).tolist() for edges in result.bins_list
-        ],
-        "vectors": basis.tolist(),
-        "fractional_axes": _rebin_fractional_axes(config, axes_config),
-        "axis_modes": [_rebin_axis_mode(config, axis) for axis in axes_config],
-        "normalize": True,
-        "mean_weighting": _rebin_mean_weighting(config),
-        "minimum_coverage": _rebin_minimum_coverage(config),
-        "minimum_samples": _rebin_minimum_samples(config),
-        "max_batch_mb": _rebin_max_batch_mb(config),
-        "max_batch_bytes": _rebin_max_batch_bytes(config),
-    }
-    for key in (
-        "weighted_by_fit_weight",
-        "weighted_by_normalization_denominator",
-    ):
-        if key in metadata:
-            metadata["rebin"][key] = bool(metadata[key])
-    symmetry_metadata = _rebin_symmetry_metadata(config, metadata.get("lattice_parameters"))
-    if symmetry_metadata is not None:
-        metadata["rebin"]["symmetry"] = symmetry_metadata
-    if progress_callback is not None:
-        progress_callback(
-            {
-                "stage": "rebin_output",
-                "message": "building the rebinned dataset and output channels",
-            }
-        )
-    return MDHistoData(
-        axes=tuple(
-            MDHistoAxis(
-                name=str(axis_config.get("name") or ("H", "K", "L", "DeltaE")[index]),
-                values=np.asarray(edges, dtype=float),
-                units=str(axis_config.get("units") or ("rlu" if index < 3 else "meV")),
-                kind="momentum" if index < 3 else "energy_transfer",
-                frame="HKL" if index < 3 else "General Frame",
-                metadata={
-                    "variable": str(
-                        axis_config.get("variable", ("H", "K", "L", "E")[index])
-                    ),
-                    **(
-                        {"discrete_centers": axis_config["resolved_centers"]}
-                        if axis_config.get("resolved_centers") is not None
-                        else {}
-                    ),
-                },
-            )
-            for index, (axis_config, edges) in enumerate(
-                zip(axes_config, result.bins_list, strict=True)
-            )
-        ),
-        signal=np.asarray(result.binned_data, dtype=float),
-        errors=np.asarray(result.binned_data_errs, dtype=float),
-        mask=np.asarray(mask, dtype=bool),
-        num_events=np.asarray(result.n_samples, dtype=float),
-        coordinate_system=coordinate_system,
-        visual_normalization=visual_normalization,
-        metadata=metadata,
-        auxiliary_channels={
-            "coverage_fraction": MDHistoChannel(
-                coverage,
-                label="Coverage",
-                unit="fraction",
-            )
-        },
-    )
-
-
 def _dataset_data_point_count(dataset: DatasetEntry) -> int:
     data = dataset.data
     if data is not None:
@@ -4701,9 +3202,7 @@ def _dataset_data_point_count(dataset: DatasetEntry) -> int:
         try:
             options = dataset.metadata.get("import_options")
             count = int(
-                importer.point_counter(
-                    source, options if isinstance(options, dict) else None
-                )
+                importer.point_counter(source, options if isinstance(options, dict) else None)
             )
         except (OSError, TypeError, ValueError):
             count = -1
