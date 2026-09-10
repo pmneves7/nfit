@@ -17,6 +17,7 @@ from .colormaps import (
     populate_qt_colormap_combo,  # noqa: F401 - compatibility re-export
 )
 from .dataset import PointListData
+from .file_dialogs import get_save_file_name
 from .mdhisto import MDHistoData
 from .plotting_core import (
     MDHistoSliceViewer,
@@ -1037,9 +1038,8 @@ class QtMDHistoSliceViewer:
     def save_script(self) -> None:
         from pathlib import Path
 
-        from PySide6 import QtWidgets
 
-        path, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
+        path, _selected_filter = get_save_file_name(
             self.window,
             "Save figure script",
             (

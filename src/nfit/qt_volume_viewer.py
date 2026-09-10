@@ -8,6 +8,7 @@ import numpy as np
 
 from .colormaps import VOLUME_COLORMAPS
 from .dataset import PointListData
+from .file_dialogs import get_save_file_name
 from .mdhisto import MDHistoAxis, MDHistoData, mdhisto_measured_bins
 from .plotting_core import gaussian_smooth_nan
 from .qt_slice_controls import _IntegratedAxisSlider
@@ -985,7 +986,7 @@ def _make_volume_panel(
             if self.current_grid is None:
                 return
             if self.render_combo.currentText() == "Isosurface":
-                path, selected = QtWidgets.QFileDialog.getSaveFileName(
+                path, selected = get_save_file_name(
                     self, "Export 3D isosurface", "nfit_isosurface.vtp",
                     "VTK PolyData (*.vtp);;Polygon mesh (*.ply);;STL mesh (*.stl);;glTF scene (*.gltf)",
                 )
@@ -1009,7 +1010,7 @@ def _make_volume_panel(
                 elif self.current_surface is not None:
                     self.current_surface.save(str(path))
             else:
-                path, _selected = QtWidgets.QFileDialog.getSaveFileName(
+                path, _selected = get_save_file_name(
                     self, "Export 3D volume", "nfit_volume.vtr", "VTK rectilinear grid (*.vtr)"
                 )
                 if path:
@@ -1028,14 +1029,14 @@ def _make_volume_panel(
             self.plotter.render()
 
         def export_still(self):
-            path, _selected = QtWidgets.QFileDialog.getSaveFileName(
+            path, _selected = get_save_file_name(
                 self, "Export current 3D view", "nfit_3d_view.png", "PNG image (*.png)"
             )
             if path:
                 self.plotter.screenshot(str(path))
 
         def export_rotation_movie(self):
-            path, _selected = QtWidgets.QFileDialog.getSaveFileName(
+            path, _selected = get_save_file_name(
                 self, "Export 3D rotation movie", "nfit_3d_rotation.mp4", "MP4 movie (*.mp4)"
             )
             if not path:

@@ -5,11 +5,35 @@ import os
 from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
+from pathlib import Path
 from types import FunctionType
 from typing import Any
 
 import numpy as np
 from numpy.typing import ArrayLike
+
+
+def dataset_content_signature(dataset: Any) -> tuple[Any, ...]:
+    """Return a stable identity for source-backed or replacement dataset data.
+
+    Loading an unchanged source file advances the process-local data revision.
+    Persisted rebin caches must survive that transition, while edited data must
+    still invalidate every dependent cache.
+    """
+
+    metadata = getattr(dataset, "metadata", None)
+    source = metadata.get("source_file") if isinstance(metadata, Mapping) else None
+    if source and (
+        getattr(dataset, "data", None) is None
+        or bool(getattr(dataset, "data_matches_source", False))
+    ):
+        path = Path(str(source)).expanduser()
+        try:
+            stat = path.stat()
+            return "source", str(path), int(stat.st_size), int(stat.st_mtime_ns)
+        except OSError:
+            return "source-missing", str(path)
+    return "memory", *tuple(dataset.data_cache_token)
 
 
 def scientific_cache_budget_bytes(

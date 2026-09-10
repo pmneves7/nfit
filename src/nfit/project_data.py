@@ -26,10 +26,11 @@ from .analysis.fingerprint import recipe_hash
 from .analysis.registry import analysis_definition, default_analysis_parameters
 from .backgrounds import subtract_background
 from .cache_utils import (
-    lru_store as _lru_store,
+    dataset_content_signature,
+    scientific_cache_budget_bytes,
 )
 from .cache_utils import (
-    scientific_cache_budget_bytes,
+    lru_store as _lru_store,
 )
 from .dataset import PointData4D, PointListData
 from .importers import IMPORTERS
@@ -959,7 +960,7 @@ def _viewer_view_signature(
         else None
     )
     payload = [
-        dataset.data_cache_token,
+        dataset_content_signature(dataset),
         dataset.data_type,
         dataset.kind,
         rebin,
@@ -972,7 +973,7 @@ def _viewer_view_signature(
                 float(background.scale),
                 background.interpolation,
                 (
-                    background.source_entry.data_cache_token
+                    dataset_content_signature(background.source_entry)
                     if background.source_entry is not None
                     else None
                 ),
@@ -1002,7 +1003,7 @@ def _derived_recipe_dependency_signature(dataset: DatasetEntry) -> Any:
         dependencies.append(
             [
                 source_id,
-                None if source is None else source.data_cache_token,
+                None if source is None else dataset_content_signature(source),
                 None if source is None else float(source.scale_factor),
                 None if source is None else bool(source.enabled),
             ]

@@ -24,7 +24,7 @@ The package provides:
   Discrete, Step, Bins, Edges, or tolerance-clustered modes, editable
   fractional/discrete point assignment, expandable bin-grid information,
   multiple named fit or visualization binnings per dataset and composite,
-  unified timed dataset- and point-level rebin progress with stage-resolved
+  unified timed, cancellable dataset- and point-level rebin progress with stage-resolved
   native MDEvent reduction,
   momentum-coordinate matrices, automatic
   zero-aligned uniform grids specified by bin centers, composites, backgrounds
@@ -105,8 +105,9 @@ The package provides:
   disk overflow for binnings that exceed the memory cache, generated
   analysis artifacts, fit timelines,
   provenance, safe transactional script editing, and GUI detection of external
-  file changes, plus editable script export for dataset preparation, analyses,
-  fits, and saved plots;
+  file changes, installation-local remembered file-dialog locations, plus
+  editable script export for dataset preparation, analyses, fits, and saved
+  plots;
 - interactive slice, waterfall, tiled 2D-slice, and volumetric visualization
   with large-volume safeguards, per-panel tiled cursor inspection,
   customizable tiled-slice labels,

@@ -11,6 +11,7 @@ from typing import Any
 import numpy as np
 
 from .brillouin_zone import BrillouinZoneScene, BrillouinZoneViewOptions
+from .file_dialogs import get_save_file_name
 from .qt_pyvista import configure_pyvista_interactor, show_then_render
 from .qt_viewer_shell import create_viewer_shell
 
@@ -671,7 +672,7 @@ def show_brillouin_zone_scene(
         QtWidgets.QApplication.clipboard().setImage(qimage)
 
     def save_figure() -> None:
-        path, _selected = QtWidgets.QFileDialog.getSaveFileName(
+        path, _selected = get_save_file_name(
             window,
             "Save Brillouin-zone figure",
             "nfit_brillouin_zone.png",

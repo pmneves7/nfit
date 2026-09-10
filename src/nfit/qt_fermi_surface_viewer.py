@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 
 from .electronic_structure import FermiSurfaceResult
+from .file_dialogs import get_save_file_name
 from .qt_electronic_viewer import (
     populate_electronic_calculation_settings,
     refresh_electronic_calculation_settings,
@@ -324,7 +325,7 @@ def show_fermi_surface_result(
         QtWidgets.QApplication.clipboard().setImage(qimage)
 
     def save_figure() -> None:
-        path, _selected = QtWidgets.QFileDialog.getSaveFileName(
+        path, _selected = get_save_file_name(
             window,
             "Save Fermi-surface figure",
             "nfit_fermi_surface.png",

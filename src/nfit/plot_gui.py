@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+from .file_dialogs import get_save_file_name
 from .plot_recipes import plot_script, render_plot
 
 
@@ -118,9 +119,8 @@ class PlotWindow:
         QtWidgets.QApplication.clipboard().setPixmap(self.canvas.grab())
 
     def save_figure(self):
-        from PySide6 import QtWidgets
 
-        path, _filter = QtWidgets.QFileDialog.getSaveFileName(
+        path, _filter = get_save_file_name(
             self.window, "Save figure", f"{self.entry.name}.png", "Images (*.png *.pdf *.svg)"
         )
         if path:
@@ -135,9 +135,8 @@ class PlotWindow:
         QtWidgets.QApplication.clipboard().setText(self.script())
 
     def save_script(self):
-        from PySide6 import QtWidgets
 
-        path, _filter = QtWidgets.QFileDialog.getSaveFileName(
+        path, _filter = get_save_file_name(
             self.window, "Save generating script", f"{self.entry.name}.py", "Python scripts (*.py)"
         )
         if path:

@@ -37,6 +37,12 @@ from .analysis.fingerprint import dataset_entry_fingerprint, recipe_hash
 from .analysis.registry import analysis_definition, default_analysis_parameters
 from .cache_utils import lru_store as _lru_store
 from .dataset import PointData4D, PointListData
+from .file_dialogs import (
+    get_open_file_name,
+    get_open_file_names,
+    get_save_file_name,
+    set_active_project_path,
+)
 from .fit_config import (
     SHARING_MODES,
     CompiledFitProblem,
@@ -475,7 +481,7 @@ _COMPOSITE_DATA_CACHE_MAX_BYTES = _project_data._COMPOSITE_DATA_CACHE_MAX_BYTES
 
 PROJECT_CACHE_BINNINGS_KEY = "cache_binnings"
 PROJECT_BINNING_CACHE_ENTRIES_KEY = "binning_cache_entries"
-PROJECT_BINNING_CACHE_FORMAT_VERSION = 4
+PROJECT_BINNING_CACHE_FORMAT_VERSION = 5
 
 
 def _ensure_dataset_data_loaded(dataset: DatasetEntry) -> Any:
@@ -3061,7 +3067,7 @@ class UBSetupDialog:
 
     def _load_isaw(self):
         from PySide6 import QtWidgets
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self.dialog, "Load ISAW UB", "", "ISAW matrix (*.mat);;All files (*)")
+        path, _ = get_open_file_name(self.dialog, "Load ISAW UB", "", "ISAW matrix (*.mat);;All files (*)")
         if not path:
             return
         try:
@@ -3074,7 +3080,7 @@ class UBSetupDialog:
 
     def _load_nexus(self):
         from PySide6 import QtWidgets
-        path, _ = QtWidgets.QFileDialog.getOpenFileName(self.dialog, "Load UB from NeXus", "", "NeXus/HDF5 (*.nxs *.h5 *.hdf5);;All files (*)")
+        path, _ = get_open_file_name(self.dialog, "Load UB from NeXus", "", "NeXus/HDF5 (*.nxs *.h5 *.hdf5);;All files (*)")
         if not path:
             return
         try:
@@ -3100,7 +3106,7 @@ class UBSetupDialog:
 
     def _save_isaw(self):
         from PySide6 import QtWidgets
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(self.dialog, "Save ISAW UB", "UB.mat", "ISAW matrix (*.mat)")
+        path, _ = get_save_file_name(self.dialog, "Save ISAW UB", "UB.mat", "ISAW matrix (*.mat)")
         if path:
             try:
                 write_isaw_ub(path, self._matrix(), self._lattice())
@@ -5679,6 +5685,10 @@ def _progress_timer_text(started_at: float, completed: int, total: int) -> str:
     return " · ".join(parts)
 
 
+class RebinCancellationRequested(RuntimeError):
+    """Raised cooperatively when the user cancels a rebin operation."""
+
+
 class _RebinProgressDialog:
     """Compact one- or two-level progress window for every rebin workflow."""
 
@@ -5697,6 +5707,8 @@ class _RebinProgressDialog:
         self._batch_base_text = title
         self._detail_base_text = title
         self._detail_start_key: tuple[str, int] | None = None
+        self._cancel_requested = False
+        self._cancel_callback = None
 
         owner = parent.window if hasattr(parent, "window") else parent
         self.dialog = QtWidgets.QDialog(owner)
@@ -5737,6 +5749,15 @@ class _RebinProgressDialog:
         )
         self.detail_bar.setRange(0, 0)
         layout.addWidget(self.detail_bar)
+        self.cancel_button = QtWidgets.QPushButton("Cancel")
+        self.cancel_button.setObjectName("rebin_cancel_button")
+        self.cancel_button.setToolTip(
+            "Stop the rebin at the next processing checkpoint."
+        )
+        self.cancel_button.clicked.connect(self._request_cancel)
+        layout.addWidget(
+            self.cancel_button, alignment=QtCore.Qt.AlignmentFlag.AlignRight
+        )
 
         # Compatibility attributes used by GUI tests and downstream extensions.
         self.dialog._nfit_label = self.detail_label
@@ -5781,6 +5802,9 @@ class _RebinProgressDialog:
         self._batch_base_text = self._title
         self._detail_base_text = self._title
         self._detail_start_key = None
+        self._cancel_requested = False
+        self.cancel_button.setEnabled(True)
+        self.cancel_button.setText("Cancel")
         self._set_batch_visible(False)
         self.detail_bar.setRange(0, 0)
         self._refresh_labels()
@@ -5876,8 +5900,25 @@ class _RebinProgressDialog:
         self._refresh_labels()
         QtWidgets.QApplication.processEvents()
 
-    def set_cancel_callback(self, _callback: Any | None) -> None:
-        """Match the fit progress interface; compact rebin dialogs are not cancellable."""
+    @property
+    def cancel_requested(self) -> bool:
+        return self._cancel_requested
+
+    def _request_cancel(self) -> None:
+        if self._cancel_requested:
+            return
+        self._cancel_requested = True
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.setText("Cancelling…")
+        self._detail_base_text = "Cancelling rebin at the next processing checkpoint"
+        self._refresh_labels()
+        if self._cancel_callback is not None:
+            self._cancel_callback()
+
+    def set_cancel_callback(self, callback: Any | None) -> None:
+        """Forward cancellation to a worker when the rebin runs off-thread."""
+
+        self._cancel_callback = callback
 
     def finish(self, message: str, **_kwargs: Any) -> None:
         self._detail_base_text = message
@@ -5889,10 +5930,12 @@ class _RebinProgressDialog:
                 else 10_000
             )
         self._refresh_labels()
+        self.cancel_button.setEnabled(False)
 
     def fail(self, message: str) -> None:
         self._detail_base_text = f"Rebin failed: {message}"
         self._refresh_labels()
+        self.cancel_button.setEnabled(False)
 
     def close(self) -> None:
         self._timer.stop()
@@ -6205,7 +6248,11 @@ class NfitProjectExplorer:
     def __init__(self, project: NfitProject | None = None) -> None:
         self.app = _qt_app()
         self.project = _new_gui_project() if project is None else project
-        self.project_path: Path | None = None
+        stored_path = getattr(self.project, "_project_path", None)
+        self.project_path: Path | None = (
+            None if stored_path is None else Path(stored_path)
+        )
+        set_active_project_path(self.project_path)
         self._project_disk_signature: tuple[int, int, int, int] | None = None
         self._ignored_project_disk_signature: tuple[int, int, int, int] | None = None
         self._external_change_timer = None
@@ -6425,6 +6472,8 @@ class NfitProjectExplorer:
                 stream_group_mode=stream_group_mode,
                 progress_callback=progress,
             )
+        except RebinCancellationRequested:
+            return []
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
                 self.window,
@@ -6564,9 +6613,8 @@ class NfitProjectExplorer:
         self._mark_dirty()
 
     def _add_dataset_import_files(self, group: DataGroup) -> None:
-        from PySide6 import QtWidgets
 
-        paths, _selected_filter = QtWidgets.QFileDialog.getOpenFileNames(
+        paths, _selected_filter = get_open_file_names(
             self.window, "Add datasets", "", "Data files (*);;All files (*)"
         )
         if paths:
@@ -6831,6 +6879,7 @@ class NfitProjectExplorer:
         self._close_all_slice_viewers()
         self.project = _new_gui_project()
         self.project_path = None
+        set_active_project_path(None)
         self._project_disk_signature = None
         self._ignored_project_disk_signature = None
         self.has_unsaved_changes = False
@@ -7063,6 +7112,7 @@ class NfitProjectExplorer:
         self._close_all_slice_viewers()
         self.project = load_project(path)
         self.project_path = path
+        set_active_project_path(path)
         self.has_unsaved_changes = False
         self._clear_active_fit_state()
         self._sync_cache_binnings_action()
@@ -7152,6 +7202,8 @@ class NfitProjectExplorer:
                 self.project_path,
                 progress_callback=progress,
             )
+        except RebinCancellationRequested:
+            return False
         finally:
             self._close_rebin_progress(progress)
         self.has_unsaved_changes = False
@@ -7160,9 +7212,8 @@ class NfitProjectExplorer:
         return True
 
     def save_as(self) -> bool:
-        from PySide6 import QtWidgets
 
-        path, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
+        path, _selected_filter = get_save_file_name(
             self.window,
             "Save nfit project",
             "nfit_project.nfit",
@@ -7189,9 +7240,12 @@ class NfitProjectExplorer:
                 asset_source=old_path,
                 progress_callback=progress,
             )
+        except RebinCancellationRequested:
+            return False
         finally:
             self._close_rebin_progress(progress)
         self.project_path = new_path
+        set_active_project_path(new_path)
         self._remember_recent_project(self.project_path)
         self.has_unsaved_changes = False
         self._update_project_disk_signature()
@@ -7199,9 +7253,8 @@ class NfitProjectExplorer:
         return True
 
     def open_project(self) -> bool:
-        from PySide6 import QtWidgets
 
-        path, _selected_filter = QtWidgets.QFileDialog.getOpenFileName(
+        path, _selected_filter = get_open_file_name(
             self.window,
             "Open nfit project",
             "",
@@ -7222,12 +7275,11 @@ class NfitProjectExplorer:
         return self._load_project_path(path, remember=remember)
 
     def import_dataset_dialog(self) -> None:
-        from PySide6 import QtWidgets
 
         group, into = self._selected_import_target()
         if group is None:
             return
-        paths, _selected_filter = QtWidgets.QFileDialog.getOpenFileNames(
+        paths, _selected_filter = get_open_file_names(
             self.window,
             "Import datasets",
             "",
@@ -7462,6 +7514,8 @@ class NfitProjectExplorer:
                 progress_callback=progress,
                 config_override=config,
             )
+        except RebinCancellationRequested:
+            return None
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
                 self.window,
@@ -7482,7 +7536,7 @@ class NfitProjectExplorer:
         group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
         if role != "dataset" or group is None or entry is None:
             return False
-        path, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
+        path, _selected_filter = get_save_file_name(
             self.window,
             "Save rebinned dataset",
             f"{entry.name} rebinned.npz",
@@ -7509,6 +7563,8 @@ class NfitProjectExplorer:
                 masks=copy.deepcopy(entry.masks),
             )
             save_dataset_file(rebinned_entry, path, use_view=False)
+        except RebinCancellationRequested:
+            return False
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
                 self.window,
@@ -7576,6 +7632,8 @@ class NfitProjectExplorer:
                 rebin_config=config,
                 cache_id=cache_id,
             )
+        except RebinCancellationRequested:
+            return False
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
                 self.window,
@@ -7659,6 +7717,8 @@ class NfitProjectExplorer:
                 config_override=(None if selected["fit"] else config),
                 binning_id=cache_id,
             )
+        except RebinCancellationRequested:
+            return False
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
                 self.window,
@@ -7723,6 +7783,8 @@ class NfitProjectExplorer:
         )
         try:
             entry = task(progress)
+        except RebinCancellationRequested:
+            return False
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
                 self.window,
@@ -7748,7 +7810,7 @@ class NfitProjectExplorer:
             return False
         group_name = group.name if group is not None else "project"
         default_name = f"{group_name}_{fit_entry.name}".replace(" ", "_")
-        path, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
+        path, _selected_filter = get_save_file_name(
             self.window,
             "Export fit report",
             f"{default_name}.pdf",
@@ -7821,7 +7883,7 @@ class NfitProjectExplorer:
         _group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
         if role != "dataset" or entry is None:
             return False
-        path, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
+        path, _selected_filter = get_save_file_name(
             self.window,
             "Save dataset",
             f"{entry.name}.npz",
@@ -7906,7 +7968,7 @@ class NfitProjectExplorer:
             return False
         label, script = payload
         stem = re.sub(r"\W+", "_", label).strip("_") or "workflow"
-        path, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
+        path, _selected_filter = get_save_file_name(
             self.window,
             "Save workflow script",
             f"{stem}_workflow.py",
@@ -8002,6 +8064,7 @@ class NfitProjectExplorer:
             progress = QtCore.Signal(dict)
             finished = QtCore.Signal(object)
             cancelled = QtCore.Signal(object)
+            aborted = QtCore.Signal()
             failed = QtCore.Signal(str)
 
             def __init__(self) -> None:
@@ -8021,6 +8084,8 @@ class NfitProjectExplorer:
                     self.finished.emit(task(progress_callback))
                 except SamplingCancelled as exc:
                     self.cancelled.emit(exc.result)
+                except FitCancellationRequested:
+                    self.aborted.emit()
                 except Exception as exc:
                     self.failed.emit(str(exc))
 
@@ -8065,6 +8130,12 @@ class NfitProjectExplorer:
                     QtWidgets.QMessageBox.warning(self._parent_window, failure_title, message)
                 finally:
                     worker_thread.quit()
+
+            @QtCore.Slot()
+            def handle_aborted(self) -> None:
+                progress.finish("Operation cancelled.")
+                progress.close()
+                worker_thread.quit()
 
         is_rebin_progress = progress_window_title == "Rebin progress"
         if is_rebin_progress:
@@ -8114,9 +8185,11 @@ class NfitProjectExplorer:
 
         worker.finished.connect(handler.handle_success)
         worker.cancelled.connect(handler.handle_cancelled)
+        worker.aborted.connect(handler.handle_aborted)
         worker.failed.connect(handler.handle_failure)
         worker.finished.connect(worker.deleteLater)
         worker.cancelled.connect(worker.deleteLater)
+        worker.aborted.connect(worker.deleteLater)
         worker.failed.connect(worker.deleteLater)
         worker_thread.finished.connect(cleanup)
         worker_thread.finished.connect(worker_thread.deleteLater)
@@ -8599,6 +8672,9 @@ class NfitProjectExplorer:
                 force_rebin=True,
                 progress_callback=progress,
             )
+        except RebinCancellationRequested:
+            self._close_rebin_progress(progress)
+            return None
         except Exception as exc:
             QtWidgets.QMessageBox.warning(
                 self.window,
@@ -8914,7 +8990,7 @@ class NfitProjectExplorer:
             return False
         plot = self._plot_for_item(self._current_item())
         stem = plot.name.replace(" ", "_") if plot is not None else "plot"
-        path, _selected_filter = QtWidgets.QFileDialog.getSaveFileName(
+        path, _selected_filter = get_save_file_name(
             self.window,
             "Save plot script",
             f"{stem}.py",
@@ -9053,6 +9129,8 @@ class NfitProjectExplorer:
 
         def callback(event: dict[str, Any]) -> None:
             progress.update_progress(event)
+            if progress.cancel_requested:
+                raise RebinCancellationRequested("Rebin cancelled by user.")
 
         dialog = progress.dialog
         callback._nfit_progress_dialog = dialog
@@ -9199,14 +9277,13 @@ class NfitProjectExplorer:
         return _show_file_location(source)
 
     def change_file_source_for_selection(self) -> bool:
-        from PySide6 import QtWidgets
 
         group, entry, _mask, _model, role = self._objects_for_item(self._current_item())
         if role != "dataset" or entry is None:
             return False
         current = _dataset_source_path(entry)
         start_dir = str(current.parent) if current is not None else ""
-        path, _selected_filter = QtWidgets.QFileDialog.getOpenFileName(
+        path, _selected_filter = get_open_file_name(
             self.window,
             "Change dataset source",
             start_dir,
@@ -15521,6 +15598,8 @@ class NfitProjectExplorer:
                         force_masks=True,
                         progress_callback=rebin_progress,
                     )
+                except RebinCancellationRequested:
+                    return False
                 finally:
                     self._close_rebin_progress(rebin_progress)
                     if dataset_rebin_enabled(dataset) and index < len(affected):
@@ -15980,7 +16059,7 @@ class NfitProjectExplorer:
 
         from .electronic_structure import import_wannier90
 
-        path, _selected_filter = QtWidgets.QFileDialog.getOpenFileName(
+        path, _selected_filter = get_open_file_name(
             self.window,
             "Import Wannier90 Hamiltonian",
             "",
@@ -17751,12 +17830,11 @@ class NfitProjectExplorer:
         self._mutate_selected_model(mutate)
 
     def _import_cif_into_selected_model(self) -> None:
-        from PySide6 import QtWidgets
 
         group, model = self._selected_model_and_group()
         if model is None:
             return
-        path, _selected = QtWidgets.QFileDialog.getOpenFileName(
+        path, _selected = get_open_file_name(
             self.window, "Import CIF", "", "CIF files (*.cif);;All files (*)"
         )
         if not path:

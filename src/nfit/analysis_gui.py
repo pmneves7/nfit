@@ -28,6 +28,7 @@ from .analysis_bragg_gui import (
 )
 from .analysis_window_builder import build_data_playground_window
 from .dataset import PointData4D, PointListData
+from .file_dialogs import get_save_file_name
 from .mdhisto import MDHistoData
 from .pipeline import DatasetEntry
 from .project_data import DATASET_REBIN_KEY, create_derived_analysis_dataset
@@ -520,7 +521,7 @@ class DataPlaygroundWindow:
             return False
         analysis = self._selected_analysis()
         suggested_name = f"{analysis.name if analysis is not None else 'integrated_bragg_peaks'}.int"
-        filename, _ = QtWidgets.QFileDialog.getSaveFileName(
+        filename, _ = get_save_file_name(
             self.window,
             "Export integrated Bragg peaks",
             suggested_name,

@@ -6,6 +6,7 @@ import threading
 
 from PySide6 import QtCore, QtWidgets
 
+from .file_dialogs import get_save_file_name
 from .performance import load_performance_settings, save_performance_settings
 from .performance_benchmark import BenchmarkCancelled, benchmark_rebin, export_benchmark_script
 
@@ -148,7 +149,7 @@ class BenchmarkDialog(QtWidgets.QDialog):
         self.accept()
 
     def _export(self):
-        path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save benchmark script", "rebin_benchmark.py", "Python (*.py)")
+        path, _ = get_save_file_name(self, "Save benchmark script", "rebin_benchmark.py", "Python (*.py)")
         if path:
             try:
                 export_benchmark_script(path, self.project, **self.target)

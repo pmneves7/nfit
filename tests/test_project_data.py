@@ -420,6 +420,58 @@ def test_project_cache_persists_every_named_dataset_binning(tmp_path):
     )
 
 
+def test_cache_survives_source_load_and_refreshes_only_changed_named_binning(tmp_path):
+    source = tmp_path / "source.nxs"
+    source.write_bytes(b"source placeholder")
+    dataset = DatasetEntry(
+        "scan",
+        _tiny_mdhisto_data(3.0),
+        kind="mdhisto",
+        metadata={"source_file": str(source)},
+    )
+    fit = project_data.dataset_rebin_config(dataset)
+    fit.update(enabled=True, minimum_coverage=0.0)
+    auxiliary_id = project_data.add_dataset_rebin_binning(dataset, name="Overview")
+    auxiliary = project_data.dataset_rebin_config_by_id(dataset, auxiliary_id)
+    auxiliary.update(enabled=True, minimum_coverage=0.0)
+    group = DataGroup("Workspace1", datasets=[dataset])
+    project = NfitProject(
+        [group], settings={project_gui.PROJECT_CACHE_BINNINGS_KEY: True}
+    )
+    assert project_gui.prepare_project_binning_cache(project) == 2
+
+    dataset.replace_data(dataset.data, source_backed=True)
+    assert not project_gui.project_binnings_need_refresh(project)
+
+    auxiliary["minimum_coverage"] = 0.5
+    assert project_gui._project_binning_is_current(
+        "dataset", group, dataset, fit["_binning_id"], fit
+    )
+    assert not project_gui._project_binning_is_current(
+        "dataset", group, dataset, auxiliary_id, auxiliary
+    )
+    assert project_gui.prepare_project_binning_cache(project) == 1
+    assert not project_gui.project_binnings_need_refresh(project)
+
+    dataset.replace_data(dataset.data)
+    assert project_gui.project_binnings_need_refresh(project)
+
+
+def test_rebin_progress_cancel_is_cooperative():
+    from PySide6 import QtWidgets
+
+    application = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    explorer = NfitProjectExplorer(NfitProject([DataGroup("Workspace1")]))
+    callback = explorer._make_rebin_progress_callback("Rebinning test...")
+    controller = callback._nfit_progress_controller
+    assert controller.cancel_button.toolTip()
+    controller.cancel_button.click()
+    with pytest.raises(project_gui.RebinCancellationRequested):
+        callback({"stage": "rebin", "iteration": 1, "total": 10})
+    explorer._close_rebin_progress(callback)
+    application.processEvents()
+
+
 def test_project_cache_persists_every_named_composite_binning(tmp_path):
     source = tmp_path / "source.nxs"
     source.write_bytes(b"source placeholder")
@@ -456,6 +508,16 @@ def test_project_cache_persists_every_named_composite_binning(tmp_path):
         auxiliary_id,
     }
     assert {entry["type"] for entry in entries} == {"composite"}
+
+    auxiliary["minimum_coverage"] = 0.5
+    assert project_gui._project_binning_is_current(
+        "composite", group, group, fit["_binning_id"], fit
+    )
+    assert not project_gui._project_binning_is_current(
+        "composite", group, group, auxiliary_id, auxiliary
+    )
+    assert project_gui.prepare_project_binning_cache(project) == 1
+    assert not project_gui.project_binnings_need_refresh(project)
 
 
 def test_dataset_details_text_summarizes_axes_source_and_metadata(tmp_path, monkeypatch):

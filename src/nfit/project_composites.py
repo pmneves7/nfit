@@ -22,10 +22,11 @@ import numpy as np
 from .analysis.artifacts import dataset_artifact_bytes
 from .backgrounds import subtract_background
 from .cache_utils import (
-    lru_store as _lru_store,
+    dataset_content_signature,
+    scientific_cache_budget_bytes,
 )
 from .cache_utils import (
-    scientific_cache_budget_bytes,
+    lru_store as _lru_store,
 )
 from .dataset import PointData4D, PointListData
 from .mdevent import bin_mdevent_group, bin_mdevent_powder_group
@@ -856,7 +857,7 @@ def _composite_cache_signature(
         [
             [
                 dataset.name,
-                dataset.data_cache_token,
+                dataset_content_signature(dataset),
                 dataset.data_type,
                 dataset.kind,
                 bool(dataset.enabled),

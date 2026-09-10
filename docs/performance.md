@@ -144,6 +144,11 @@ missing or signature-stale binnings. This project-specific option defaults off
 so ordinary project files remain small. Embedded caches carry a format version;
 nfit discards caches produced by an older numerical pipeline and recomputes them
 from their source data instead of treating potentially changed reductions as current.
+Source-backed cache signatures use the source path, size, and modification time,
+so lazily loading an unchanged source after opening a project does not invalidate
+its restored binning. Editing one named binning invalidates only that result;
+other fit or visualization binnings remain available when their own inputs and
+settings are unchanged.
 
 ## Heisenberg RPA
 

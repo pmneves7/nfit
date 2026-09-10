@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from typing import Any
 
+from .file_dialogs import get_save_file_name
 from .model_plots import ElectronicPlotStyle, apply_electronic_plot_style
 from .qt_viewer_shell import create_viewer_shell
 
@@ -801,7 +802,7 @@ def show_electronic_figure(
 
     def save_figure() -> None:
         stem = viewer_key.replace("_", "-")
-        path, _selected = QtWidgets.QFileDialog.getSaveFileName(
+        path, _selected = get_save_file_name(
             window,
             f"Save {title.lower()} figure",
             f"nfit_{stem}.png",

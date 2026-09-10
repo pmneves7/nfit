@@ -36,6 +36,9 @@ datasets and dataset-group composites when saved. Saving checks every configured
 named binning, reuses those whose signatures are current, and recomputes only missing
 or stale entries. New projects default to leaving this option off. Unlike
 application preferences, this checkbox is stored in the `.nfit` project.
+Loading an unchanged raw source on demand preserves a restored cache. Changing
+one named binning recomputes only that binning while other current binnings
+remain reusable.
 
 **View in data viewer** opens a new, independent window each time, so several
 datasets or views of the same dataset can remain visible side by side. Use
@@ -96,6 +99,8 @@ and edges. Rebin progress distinguishes numerical output construction from the
 subsequent viewer and control refresh, so a slow plot redraw is not reported as
 continued bin accumulation. Its common compact dialog shows one timed progress
 level for a single entry and separate timed overall/detail levels for batch jobs.
+Use **Cancel** to stop a rebin cooperatively at the next processing checkpoint;
+already completed binnings remain available.
 Selecting a collection with a complete saved grid is metadata-only: it neither
 loads a raw source nor materializes a child composite merely to display the
 settings panel. Explicit data, rebin, and UB actions perform any required source
@@ -127,6 +132,11 @@ process replaced the open project file. It then offers to reload the external
 version, save the in-memory version under another name, or keep the current
 state. An explicit Save never overwrites a detected external change without a
 separate confirmation.
+
+File choosers remember their last successfully selected directory for the local
+nfit installation. Before a directory has been remembered, they start beside
+the open project; an unsaved project falls back to the operating system's
+Documents directory and then the user's home directory.
 
 ## Reproducibility
 
