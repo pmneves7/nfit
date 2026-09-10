@@ -473,19 +473,27 @@ def _build_color_controls(viewer: Any, controls_layout: Any) -> None:
     viewer.vmax_spin = _make_float_spinbox()
     viewer.gamma_spin = _make_float_spinbox(1.0e-6, 20.0)
     viewer.gamma_spin.setValue(viewer.model.power_gamma)
+    viewer.alpha_spin = _make_float_spinbox(-20.0, 20.0)
+    viewer.alpha_spin.setSingleStep(0.1)
+    viewer.alpha_spin.setValue(viewer.model.color_alpha)
     viewer.limit_n_spin = _make_float_spinbox(0.0, 50.0)
     viewer.limit_n_spin.setValue(viewer._current_limit_n())
     viewer.vmin_spin.setToolTip("Manual lower color limit when autoscale is off.")
     viewer.vmax_spin.setToolTip("Manual upper color limit when autoscale is off.")
     viewer.gamma_spin.setToolTip("Exponent used by power color scaling.")
+    viewer.alpha_spin.setToolTip(
+        "Exponentially shift colors within the fixed color range. Zero leaves the colormap unchanged; limits and colorbar ticks do not move."
+    )
     viewer.limit_n_spin.setToolTip(
         "Width parameter used by the selected automatic color-limit rule."
     )
     viewer.vmin_spin.valueChanged.connect(lambda value: viewer._set_manual_limit("vmin", value))
     viewer.vmax_spin.valueChanged.connect(lambda value: viewer._set_manual_limit("vmax", value))
     viewer.gamma_spin.valueChanged.connect(viewer._set_power_gamma)
+    viewer.alpha_spin.valueChanged.connect(viewer._set_color_alpha)
     viewer.limit_n_spin.valueChanged.connect(viewer._set_limit_n)
     viewer.gamma_label = QtWidgets.QLabel("gamma")
+    viewer.alpha_label = QtWidgets.QLabel("Alpha")
     viewer.limit_n_label = QtWidgets.QLabel("N")
     color_layout.addWidget(QtWidgets.QLabel("Colormap"), 0, 0)
     color_layout.addWidget(viewer.cmap_combo, 0, 1)
@@ -494,22 +502,24 @@ def _build_color_controls(viewer: Any, controls_layout: Any) -> None:
     color_layout.addWidget(viewer.scale_combo, 1, 1)
     color_layout.addWidget(viewer.gamma_label, 1, 2)
     color_layout.addWidget(viewer.gamma_spin, 1, 3)
-    color_layout.addWidget(QtWidgets.QLabel("Auto limits"), 2, 0)
-    color_layout.addWidget(viewer.limits_combo, 2, 1)
-    color_layout.addWidget(viewer.limit_n_label, 2, 2)
-    color_layout.addWidget(viewer.limit_n_spin, 2, 3)
-    color_layout.addWidget(viewer.autoscale_check, 3, 1, 1, 3)
+    color_layout.addWidget(viewer.alpha_label, 2, 0)
+    color_layout.addWidget(viewer.alpha_spin, 2, 1, 1, 3)
+    color_layout.addWidget(QtWidgets.QLabel("Auto limits"), 3, 0)
+    color_layout.addWidget(viewer.limits_combo, 3, 1)
+    color_layout.addWidget(viewer.limit_n_label, 3, 2)
+    color_layout.addWidget(viewer.limit_n_spin, 3, 3)
+    color_layout.addWidget(viewer.autoscale_check, 4, 1, 1, 3)
     color_layout.addWidget(
         viewer.tile_local_color_scales_check,
-        4,
+        5,
         1,
         1,
         3,
     )
-    color_layout.addWidget(QtWidgets.QLabel("vmin"), 5, 0)
-    color_layout.addWidget(viewer.vmin_spin, 5, 1)
-    color_layout.addWidget(QtWidgets.QLabel("vmax"), 5, 2)
-    color_layout.addWidget(viewer.vmax_spin, 5, 3)
+    color_layout.addWidget(QtWidgets.QLabel("vmin"), 6, 0)
+    color_layout.addWidget(viewer.vmin_spin, 6, 1)
+    color_layout.addWidget(QtWidgets.QLabel("vmax"), 6, 2)
+    color_layout.addWidget(viewer.vmax_spin, 6, 3)
     viewer.gamma_label.setVisible(viewer.model.color_scale == "power")
     viewer.gamma_spin.setVisible(viewer.model.color_scale == "power")
     viewer._sync_limit_n_visibility()

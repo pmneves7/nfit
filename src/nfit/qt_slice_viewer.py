@@ -23,10 +23,12 @@ from .plotting_core import (
     MDHistoSliceViewer,
     TiledSlice,
     WaterfallTrace,
+    _draw_box_sum_annotation,
     default_tiled_slice_step,
     default_waterfall_offset,  # noqa: F401 - compatibility re-export
     default_waterfall_step,  # noqa: F401 - compatibility re-export
     draw_waterfall_traces,  # noqa: F401 - compatibility re-export
+    integrated_box_sum,
     inverse_variance_weighted_profile,
     prepare_mdhisto_tiled_slices,  # noqa: F401 - compatibility re-export
     prepare_mdhisto_waterfall,  # noqa: F401 - compatibility re-export
@@ -117,6 +119,7 @@ class QtMDHistoSliceViewer:
         channel: str = "signal",
         cmap: str | None = None,
         color_scale: str = "linear",
+        color_alpha: float = 0.0,
         auto_limits: str = "min/max",
         integrate: bool = False,
         masked: bool = True,
@@ -143,6 +146,7 @@ class QtMDHistoSliceViewer:
         self._initial_channel = channel
         self._initial_cmap = cmap
         self._initial_color_scale = color_scale
+        self._initial_color_alpha = float(color_alpha)
         self._initial_auto_limits = auto_limits
         self._initial_integrate = integrate
         self._initial_masked = masked
@@ -155,6 +159,7 @@ class QtMDHistoSliceViewer:
             channel=channel,
             cmap=cmap,
             color_scale=color_scale,
+            color_alpha=color_alpha,
             auto_limits=auto_limits,
             integrate=integrate,
             masked=masked,
@@ -220,6 +225,8 @@ class QtMDHistoSliceViewer:
         self.smoothing_fill_nans_check = None
         self.gamma_label = None
         self.gamma_spin = None
+        self.alpha_label = None
+        self.alpha_spin = None
         self.limit_n_label = None
         self.limit_n_spin = None
         self.cursor_xy_label = None
@@ -227,6 +234,7 @@ class QtMDHistoSliceViewer:
         self.cursor_q_label = None
         self.cursor_intensity_label = None
         self.roi_button = None
+        self.roi_sum_text = None
         self.tools_group = None
         self.show_box_check = None
         self.hist_axes_check = None
@@ -635,6 +643,7 @@ class QtMDHistoSliceViewer:
             "iqr_n": self.model.iqr_n,
             "percentile_n": self.model.percentile_n,
             "power_gamma": self.model.power_gamma,
+            "color_alpha": self.model.color_alpha,
             "autoscale": self.model.autoscale,
             "manual_vmin": self.model.manual_vmin,
             "manual_vmax": self.model.manual_vmax,
@@ -738,7 +747,13 @@ class QtMDHistoSliceViewer:
         self.model.cmap_reversed = effective_cmap.endswith("_r")
         self._set_color_scale(str(settings.get("color_scale", self.model.color_scale)))
         self._set_auto_limits(str(settings.get("auto_limits", self.model.auto_limits)))
-        for name in ("sigma_n", "iqr_n", "percentile_n", "power_gamma"):
+        for name in (
+            "sigma_n",
+            "iqr_n",
+            "percentile_n",
+            "power_gamma",
+            "color_alpha",
+        ):
             if name in settings:
                 setattr(self.model, name, float(settings[name]))
         self.model.manual_vmin = settings.get("manual_vmin", self.model.manual_vmin)
@@ -1101,6 +1116,7 @@ class QtMDHistoSliceViewer:
                 f"    iqr_n={self.model.iqr_n!r},",
                 f"    percentile_n={self.model.percentile_n!r},",
                 f"    power_gamma={self.model.power_gamma!r},",
+                f"    color_alpha={self.model.color_alpha!r},",
                 f"    smoothing_sigma_x={self.smoothing_x!r},",
                 f"    smoothing_sigma_y={self.smoothing_y!r},",
                 f"    smoothing_fill_nans={self.smoothing_fill_nans!r},",
@@ -1158,6 +1174,7 @@ class QtMDHistoSliceViewer:
                 f"    iqr_n={self.model.iqr_n!r},",
                 f"    percentile_n={self.model.percentile_n!r},",
                 f"    power_gamma={self.model.power_gamma!r},",
+                f"    color_alpha={self.model.color_alpha!r},",
                 f"    smoothing_sigma_x={self.smoothing_x!r},",
                 f"    smoothing_sigma_y={self.smoothing_y!r},",
                 f"    smoothing_fill_nans={self.smoothing_fill_nans!r},",
@@ -1758,6 +1775,7 @@ class QtMDHistoSliceViewer:
             channel=self._initial_channel,
             cmap=self._initial_cmap,
             color_scale=self._initial_color_scale,
+            color_alpha=self._initial_color_alpha,
             auto_limits=self._initial_auto_limits,
             integrate=self._initial_integrate,
             masked=self._initial_masked,
@@ -1856,6 +1874,7 @@ class QtMDHistoSliceViewer:
                 self.coverage_threshold,
             )
             self._set_spin_silent(self.gamma_spin, self.model.power_gamma)
+            self._set_spin_silent(self.alpha_spin, self.model.color_alpha)
             self._set_spin_silent(self.limit_n_spin, self._current_limit_n())
             self._set_spin_silent(self.font_size_spin, self.font_size)
             self._set_spin_silent(self.line_width_spin, self.axis_linewidth)
@@ -2259,6 +2278,7 @@ class QtMDHistoSliceViewer:
                 channel=self._initial_channel,
                 cmap=self._initial_cmap,
                 color_scale=self._initial_color_scale,
+                color_alpha=self._initial_color_alpha,
                 auto_limits=self._initial_auto_limits,
                 integrate=self._initial_integrate,
                 masked=self._initial_masked,
@@ -2332,6 +2352,7 @@ class QtMDHistoSliceViewer:
         self._set_combo_silent(self.limits_combo, self.model.auto_limits)
         self._set_checkbox_silent(self.autoscale_check, self.model.autoscale)
         self._set_spin_silent(self.gamma_spin, self.model.power_gamma)
+        self._set_spin_silent(self.alpha_spin, self.model.color_alpha)
         self._set_spin_silent(self.limit_n_spin, self._current_limit_n())
         self.gamma_label.setVisible(self.model.color_scale == "power")
         self.gamma_spin.setVisible(self.model.color_scale == "power")
@@ -2565,6 +2586,10 @@ class QtMDHistoSliceViewer:
         self.model.power_gamma = max(float(gamma), 1.0e-12)
         if self.model.color_scale == "power":
             self.update_plot()
+
+    def _set_color_alpha(self, alpha: float) -> None:
+        self.model.color_alpha = float(np.clip(alpha, -20.0, 20.0))
+        self.update_plot()
 
     def _set_limit_n(self, value: float) -> None:
         if self.model.auto_limits == "N-sigma":
@@ -3370,6 +3395,7 @@ class QtMDHistoSliceViewer:
         self._ensure_standard_plot_layout()
         for axis in (self.ax_image, self.ax_xcut, self.ax_ycut):
             axis.clear()
+        self.roi_sum_text = None
         values = self.model._display_values(view)
         vmin, vmax = self.model._color_limits(values)
         if self._is_effective_1d():
@@ -3397,9 +3423,21 @@ class QtMDHistoSliceViewer:
         self._last_plot_view_mode = "slice"
         self._sync_view_limit_controls()
         if self._roi_extents is None or previous_dims != current_dims:
-            self._set_roi_extents(self._default_roi_extents(), update_cuts=False, draw=False)
+            self._set_roi_extents(
+                self._default_roi_extents(),
+                update_cuts=bool(
+                    self.hist_axes_check and self.hist_axes_check.isChecked()
+                ),
+                draw=False,
+            )
         else:
-            self._set_roi_extents(self._roi_extents, update_cuts=False, draw=False)
+            self._set_roi_extents(
+                self._roi_extents,
+                update_cuts=bool(
+                    self.hist_axes_check and self.hist_axes_check.isChecked()
+                ),
+                draw=False,
+            )
         self._apply_histogram_axes_layout(draw=False)
         self._apply_figure_font_size()
         self._apply_axis_linewidth()
@@ -3555,10 +3593,13 @@ class QtMDHistoSliceViewer:
                 self.hist_axes_check.setChecked(True)
         if not visible:
             self.roi_button.setChecked(False)
+            self._clear_roi_sum_annotation()
         if self.rectangle_selector is not None:
             self.rectangle_selector.set_visible(bool(visible))
             self.rectangle_selector.set_active(bool(visible) and self.roi_button.isChecked())
             self._set_rectangle_selector_style(active=bool(visible) and self.roi_button.isChecked())
+        if visible and self._roi_extents is not None:
+            self._update_histogram_cuts_from_extents(self._roi_extents)
         self.canvas.draw_idle()
 
     def _set_rectangle_selector_style(self, *, active: bool) -> None:
@@ -3579,6 +3620,10 @@ class QtMDHistoSliceViewer:
 
     def _set_histogram_axes_visible(self, visible: bool) -> None:
         self._sync_histogram_panel_controls()
+        if not visible:
+            self._clear_roi_sum_annotation()
+        elif self._roi_extents is not None:
+            self._update_histogram_cuts_from_extents(self._roi_extents)
         if self._fit_panels_active():
             # Toggling the cut axes changes the fit-compare layout, so rebuild.
             self.update_plot()
@@ -3734,10 +3779,16 @@ class QtMDHistoSliceViewer:
         y_mask = (view["y_centers"] >= y0) & (view["y_centers"] <= y1)
         self.ax_xcut.clear()
         self.ax_ycut.clear()
+        self._clear_roi_sum_annotation()
         if np.any(x_mask) and np.any(y_mask):
             z = self.model._display_values(view)
             errors = np.asarray(view["errors"], dtype=float)
             selected = np.ix_(y_mask, x_mask)
+            self._show_roi_sum_annotation(
+                z[selected],
+                errors[selected],
+                extents,
+            )
             x_cut, x_error = inverse_variance_weighted_profile(
                 z[selected], errors[selected], axis=0
             )
@@ -3764,6 +3815,38 @@ class QtMDHistoSliceViewer:
         self.ax_ycut.set_xlabel("Weighted mean")
         self.ax_ycut.set_ylabel(self.model._axis_label(self.model.y_dim))
         self._apply_histogram_axes_layout(draw=False)
+
+    def _clear_roi_sum_annotation(self) -> None:
+        annotation = self.roi_sum_text
+        self.roi_sum_text = None
+        if annotation is None or annotation.axes is None:
+            return
+        try:
+            annotation.remove()
+        except ValueError:
+            pass
+
+    def _show_roi_sum_annotation(
+        self,
+        values: np.ndarray,
+        errors: np.ndarray,
+        extents: tuple[float, float, float, float],
+    ) -> None:
+        if (
+            self.ax_image is None
+            or self.show_box_check is None
+            or not self.show_box_check.isChecked()
+            or self.hist_axes_check is None
+            or not self.hist_axes_check.isChecked()
+        ):
+            return
+        total, uncertainty, _count = integrated_box_sum(values, errors)
+        self.roi_sum_text = _draw_box_sum_annotation(
+            self.ax_image,
+            extents,
+            total,
+            uncertainty,
+        )
 
     def _histogram_cut_coverage(
         self,

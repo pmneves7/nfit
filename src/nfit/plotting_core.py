@@ -38,6 +38,41 @@ class TiledSlice:
     label: str
 
 
+def exponential_colormap(cmap, alpha: float = 0.0, *, samples: int = 512):
+    """Return ``cmap`` with exponentially warped color coordinates.
+
+    The mapping is ``expm1(alpha * x) / expm1(alpha)`` for normalized
+    coordinates ``x`` in ``[0, 1]``.  It preserves both endpoints, and because
+    it changes the colormap rather than the data normalization, color limits
+    and colorbar tick locations remain unchanged.  ``alpha=0`` returns the
+    original colormap.
+    """
+
+    from matplotlib import colormaps
+    from matplotlib.colors import ListedColormap
+
+    alpha = float(alpha)
+    if not np.isfinite(alpha):
+        raise ValueError("color alpha must be finite")
+    if abs(alpha) > 20.0:
+        raise ValueError("color alpha must be between -20 and 20")
+    base = colormaps.get_cmap(cmap)
+    if abs(alpha) <= np.finfo(float).eps:
+        return base
+    sample_count = max(int(samples), 2)
+    coordinates = np.linspace(0.0, 1.0, sample_count)
+    warped = np.expm1(alpha * coordinates) / np.expm1(alpha)
+    result = ListedColormap(
+        base(warped),
+        name=f"{base.name}_alpha_{alpha:g}",
+    )
+    return result.with_extremes(
+        bad=base.get_bad(),
+        under=base.get_under(),
+        over=base.get_over(),
+    )
+
+
 def _edges_from_centers(centers: np.ndarray) -> np.ndarray:
     """Return bin edges bracketing sorted 1D bin centers (for pcolormesh-free plots)."""
 
@@ -169,6 +204,7 @@ def plot_mdhisto_slice(
     iqr_n: float = 1.5,
     percentile_n: float = 1.0,
     power_gamma: float = 0.5,
+    color_alpha: float = 0.0,
     smoothing_sigma_x: float = 0.0,
     smoothing_sigma_y: float = 0.0,
     smoothing_fill_nans: bool = True,
@@ -213,6 +249,7 @@ def plot_mdhisto_slice(
     model.iqr_n = float(iqr_n)
     model.percentile_n = float(percentile_n)
     model.power_gamma = float(power_gamma)
+    model.color_alpha = float(color_alpha)
 
     view = smooth_mdhisto_view(
         model.slice_arrays(),
@@ -248,7 +285,7 @@ def plot_mdhisto_slice(
             view["y_edges"],
             values,
             shading="auto",
-            cmap=model.cmap,
+            cmap=model._display_cmap(),
             norm=model._color_norm(values),
         )
         ax_image.set_xlabel(model._axis_label(model.x_dim))
@@ -262,7 +299,14 @@ def plot_mdhisto_slice(
         _apply_axes_linewidth((ax_image, ax_colorbar, ax_xcut, ax_ycut), colorbar, axes_linewidth)
 
         if show_histogram_axes and roi_extents is not None and ax_xcut is not None and ax_ycut is not None:
-            _draw_mdhisto_roi_cuts(model, view, roi_extents, ax_xcut, ax_ycut)
+            _draw_mdhisto_roi_cuts(
+                model,
+                view,
+                roi_extents,
+                ax_xcut,
+                ax_ycut,
+                ax_image=ax_image,
+            )
             _apply_axes_linewidth((ax_image, ax_colorbar, ax_xcut, ax_ycut), colorbar, axes_linewidth)
 
     return fig
@@ -476,6 +520,7 @@ def plot_mdhisto_tiled_slices(
     iqr_n: float = 1.5,
     percentile_n: float = 1.0,
     power_gamma: float = 0.5,
+    color_alpha: float = 0.0,
     smoothing_sigma_x: float = 0.0,
     smoothing_sigma_y: float = 0.0,
     smoothing_fill_nans: bool = True,
@@ -534,6 +579,7 @@ def plot_mdhisto_tiled_slices(
     model.iqr_n = float(iqr_n)
     model.percentile_n = float(percentile_n)
     model.power_gamma = float(power_gamma)
+    model.color_alpha = float(color_alpha)
     if local_color_scales and not model.autoscale:
         raise ValueError("local_color_scales requires autoscale=True")
     combined = np.concatenate([panel.values.ravel() for panel in slices])
@@ -571,7 +617,7 @@ def plot_mdhisto_tiled_slices(
                 panel.view["y_edges"],
                 panel.values,
                 shading="auto",
-                cmap=model._effective_cmap(),
+                cmap=model._display_cmap(),
                 norm=norm,
             )
             if show_tile_labels:
@@ -1751,12 +1797,68 @@ def inverse_variance_weighted_profile(
     return mean, uncertainty
 
 
+def integrated_box_sum(
+    values: np.ndarray,
+    errors: np.ndarray,
+) -> tuple[float, float, int]:
+    """Sum valid values and propagate independent one-sigma uncertainties."""
+
+    values = np.asarray(values, dtype=float)
+    errors = np.asarray(errors, dtype=float)
+    if values.shape != errors.shape:
+        raise ValueError("values and errors must have the same shape")
+    valid = np.isfinite(values) & np.isfinite(errors) & (errors >= 0.0)
+    count = int(np.count_nonzero(valid))
+    if count == 0:
+        return np.nan, np.nan, 0
+    total = float(np.sum(values[valid], dtype=float))
+    uncertainty = float(np.sqrt(np.sum(np.square(errors[valid]), dtype=float)))
+    return total, uncertainty, count
+
+
+def _format_box_sum(total: float, uncertainty: float) -> str:
+    if not np.isfinite(total) or not np.isfinite(uncertainty):
+        return "Σ = unavailable"
+    return f"Σ = {total:.5g} ± {uncertainty:.2g}"
+
+
+def _draw_box_sum_annotation(
+    ax_image,
+    roi_extents: tuple[float, float, float, float],
+    total: float,
+    uncertainty: float,
+):
+    x0, x1, y0, y1 = roi_extents
+    x0, x1 = sorted((float(x0), float(x1)))
+    y0, y1 = sorted((float(y0), float(y1)))
+    annotation = ax_image.annotate(
+        _format_box_sum(total, uncertainty),
+        xy=(x0, y1),
+        xytext=(4, -4),
+        textcoords="offset points",
+        ha="left",
+        va="top",
+        clip_on=True,
+        bbox={
+            "boxstyle": "round,pad=0.25",
+            "facecolor": "white",
+            "edgecolor": "#666666",
+            "alpha": 0.82,
+        },
+        zorder=10,
+    )
+    annotation.set_gid("nfit-roi-total")
+    return annotation
+
+
 def _draw_mdhisto_roi_cuts(
     model: MDHistoSliceViewer,
     view: dict[str, np.ndarray],
     roi_extents: tuple[float, float, float, float],
     ax_xcut,
     ax_ycut,
+    *,
+    ax_image=None,
 ) -> None:
     x0, x1, y0, y1 = roi_extents
     x0, x1 = sorted((float(x0), float(x1)))
@@ -1767,6 +1869,9 @@ def _draw_mdhisto_roi_cuts(
         z = model._display_values(view)
         errors = np.asarray(view["errors"], dtype=float)
         selected = np.ix_(y_mask, x_mask)
+        total, total_error, _count = integrated_box_sum(
+            z[selected], errors[selected]
+        )
         x_cut, x_error = inverse_variance_weighted_profile(
             z[selected], errors[selected], axis=0
         )
@@ -1794,6 +1899,13 @@ def _draw_mdhisto_roi_cuts(
         ax_ycut.errorbar(
             y_cut, view["y_centers"][y_mask], xerr=y_error, fmt="-", lw=1.2, capsize=0
         )
+        if ax_image is not None:
+            _draw_box_sum_annotation(
+                ax_image,
+                (x0, x1, y0, y1),
+                total,
+                total_error,
+            )
     ax_xcut.set_ylabel("Weighted mean")
     ax_xcut.set_xlabel(model._axis_label(model.x_dim))
     ax_ycut.set_xlabel("Weighted mean")
@@ -1916,6 +2028,7 @@ class MDHistoSliceViewer:
         channel: str = "signal",
         cmap: str = "viridis",
         color_scale: str = "linear",
+        color_alpha: float = 0.0,
         auto_limits: str = "min/max",
         integrate: bool = False,
         masked: bool = True,
@@ -1966,6 +2079,7 @@ class MDHistoSliceViewer:
         if self.cmap == "gray":
             self.cmap = "grey"
         self.color_scale = color_scale
+        self.color_alpha = float(color_alpha)
         self.auto_limits = auto_limits
         self.power_gamma = 0.5
         self.sigma_n = 3.0
@@ -2155,7 +2269,7 @@ class MDHistoSliceViewer:
             view["y_edges"],
             values,
             shading="auto",
-            cmap=self._effective_cmap(),
+            cmap=self._display_cmap(),
             norm=norm,
         )
         self.ax_image.set_xlabel(self._axis_label(self.x_dim))
@@ -2679,6 +2793,11 @@ class MDHistoSliceViewer:
     def _effective_cmap(self) -> str:
         cmap = "gray" if self._is_boolean_channel() or self.cmap == "grey" else self.cmap
         return f"{cmap}_r" if self.cmap_reversed else cmap
+
+    def _display_cmap(self):
+        """Return the rendered colormap without changing value normalization."""
+
+        return exponential_colormap(self._effective_cmap(), self.color_alpha)
 
     def _is_boolean_channel(self) -> bool:
         return self.channel in {"combined_mask", "file_mask", "nfit_mask"}

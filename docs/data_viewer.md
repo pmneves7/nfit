@@ -74,6 +74,20 @@ $y_i$ is a contributing bin value, $\sigma_i$ is its one-sigma uncertainty,
 and $\bar y$ is the reduced value with uncertainty $\sigma_{\bar y}$.
 Masked bins and invalid uncertainties are excluded.
 
+The selected rectangle also shows its total integrated sum in its upper-left
+corner:
+
+$$
+Y_{\mathrm{box}}=\sum_i y_i,
+\qquad
+\sigma_{Y_{\mathrm{box}}}=\sqrt{\sum_i\sigma_i^2}.
+$$
+
+The sum uses the finite, displayed bins inside the rectangle. Its one-sigma
+uncertainty assumes that their errors are independent. Copied figure scripts
+produce the same annotation when histogram axes and rectangle extents are
+included.
+
 Plot smoothing is specified in displayed-bin widths. It affects only the
 rendered figure and exported figure recipe, not fitting, rebinning, or numerical
 data exports. With **Fill adjacent NaN bins** checked, Gaussian smoothing uses
@@ -120,6 +134,19 @@ default direction. `cubehelix` and `CMRmap` provide grayscale-friendly
 sequential choices, while `gnuplot2` provides a higher-contrast specialized
 ramp and `twilight` and `twilight_shifted` cover periodic phase or angle data.
 Each menu row includes a preview swatch of the actual map.
+The **alpha** color-shift control redistributes colors within the existing
+color range without changing that range or moving colorbar ticks. For a
+normalized color coordinate $x$ between zero and one, nfit samples the chosen
+colormap at
+
+$$
+f_\alpha(x)=\frac{\exp(\alpha x)-1}{\exp(\alpha)-1},
+$$
+
+with $f_0(x)=x$. Positive alpha values concentrate more of the color change at
+the high end of the range; negative values do the reverse. The scripting
+equivalent is `color_alpha=` in `plot_mdhisto_slice` and
+`plot_mdhisto_tiled_slices`.
 Choose installation-local defaults for newly opened continuous image plots and
 waterfall trace sequences under **File → Preferences… → Colormaps**. These
 defaults apply across projects on the current computer and are not written to
@@ -165,8 +192,9 @@ as other continuous maps. Their original directions are preserved; use
 Reverse if you prefer low values dark and high values light.
 
 Stored plots and duplicated viewers restore the color controls to match the
-rendered plot, including the reversed colormap, scale, automatic-limit method
-and its numeric parameters, power exponent, and automatic or manual limits.
+rendered plot, including the reversed colormap, scale, alpha color shift,
+automatic-limit method and its numeric parameters, power exponent, and
+automatic or manual limits.
 Older recipes without numeric color parameters use the viewer defaults.
 
 ### Custom colormap files

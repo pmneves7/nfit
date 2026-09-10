@@ -358,7 +358,7 @@ class TiledSliceController(_ViewerController):
                 panel.view["y_edges"],
                 panel.values,
                 shading="auto",
-                cmap=self.model._effective_cmap(),
+                cmap=self.model._display_cmap(),
                 norm=norm,
             )
             if self.show_tile_labels:
@@ -666,7 +666,7 @@ class FitComparisonController(_ViewerController):
                 view["y_edges"],
                 values,
                 shading="auto",
-                cmap=self.model._effective_cmap(),
+                cmap=self.model._display_cmap(),
                 norm=norm,
             )
             ax.set_title(title)
@@ -734,19 +734,26 @@ class FitComparisonController(_ViewerController):
             self.ax_residual_cut.clear()
         if self.ax_residual_ycut is not None:
             self.ax_residual_ycut.clear()
+        self._clear_roi_sum_annotation()
 
         if np.any(x_mask) and np.any(y_mask):
             x = x_centers[x_mask]
             y = y_centers[y_mask]
             data_z = self.model._display_values(data_view)
             errors = np.asarray(data_view.get("errors"), dtype=float)
+            selected = np.ix_(y_mask, x_mask)
+            if errors.shape == data_z.shape:
+                self._show_roi_sum_annotation(
+                    data_z[selected],
+                    errors[selected],
+                    extents,
+                )
             x_coverage, y_coverage = self._histogram_cut_coverage(
                 data_view, x_mask, y_mask
             )
             x_insufficient = x_coverage < self.coverage_threshold
             y_insufficient = y_coverage < self.coverage_threshold
             if errors.shape == data_z.shape:
-                selected = np.ix_(y_mask, x_mask)
                 data_cut, err_cut = self._helper("inverse_variance_weighted_profile")(
                     data_z[selected], errors[selected], axis=0
                 )
@@ -915,6 +922,7 @@ class FitComparisonController(_ViewerController):
         model.iqr_n = self.model.iqr_n
         model.percentile_n = self.model.percentile_n
         model.power_gamma = self.model.power_gamma
+        model.color_alpha = self.model.color_alpha
         return model
 
 
@@ -1095,7 +1103,7 @@ class StandardSliceController(_ViewerController):
             view["y_edges"],
             values,
             shading="auto",
-            cmap=self.model._effective_cmap(),
+            cmap=self.model._display_cmap(),
             norm=norm,
         )
         self.ax_image.set_xlabel(self.model._axis_label(self.model.x_dim))

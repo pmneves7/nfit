@@ -28,6 +28,9 @@ from nfit.mdhisto import MDHistoAxis, MDHistoChannel, MDHistoData
 from nfit.plotting import (
     MDHistoSliceViewer,
     _DropdownSelect,
+    exponential_colormap,
+    integrated_box_sum,
+    plot_mdhisto_slice,
 )
 from tests.plotting_test_data import (
     tiny_1d_mdhisto_data as _tiny_1d_mdhisto_data,
@@ -85,6 +88,78 @@ def test_mdhisto_slice_viewer_auto_color_limits():
     viewer.auto_limits = "Nth percentile"
     viewer.percentile_n = 10.0
     assert viewer._color_limits(values) == (1.3, 70.90000000000002)
+
+
+def test_exponential_colormap_warps_colors_but_not_normalization():
+    from matplotlib import colormaps
+
+    data = _tiny_mdhisto_data()
+    base = MDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    shifted = MDHistoSliceViewer(data, x_dim=3, y_dim=2, color_alpha=4.0)
+    values = base._display_values(base.slice_arrays())
+
+    base_norm = base._color_norm(values)
+    shifted_norm = shifted._color_norm(values)
+    assert (shifted_norm.vmin, shifted_norm.vmax) == (
+        base_norm.vmin,
+        base_norm.vmax,
+    )
+    assert shifted._display_cmap()(0.5) != pytest.approx(
+        colormaps[base._effective_cmap()](0.5)
+    )
+    expected_coordinate = np.expm1(4.0 * 0.5) / np.expm1(4.0)
+    assert shifted._display_cmap()(0.5) == pytest.approx(
+        colormaps[base._effective_cmap()](expected_coordinate),
+        abs=0.01,
+    )
+    assert exponential_colormap("viridis", 0.0).name == "viridis"
+
+
+def test_integrated_box_sum_propagates_independent_errors():
+    total, uncertainty, count = integrated_box_sum(
+        np.array([[1.0, 2.0], [3.0, np.nan]]),
+        np.array([[0.1, 0.2], [0.3, 0.4]]),
+    )
+
+    assert total == pytest.approx(6.0)
+    assert uncertainty == pytest.approx(np.sqrt(0.1**2 + 0.2**2 + 0.3**2))
+    assert count == 3
+
+
+def test_static_box_histogram_labels_total_with_propagated_error():
+    import matplotlib.pyplot as plt
+
+    data = _tiny_mdhisto_data()
+    model = MDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    view = model.slice_arrays()
+    extents = (
+        float(view["x_centers"][0]),
+        float(view["x_centers"][-1]),
+        float(view["y_centers"][0]),
+        float(view["y_centers"][-1]),
+    )
+    expected, expected_error, _count = integrated_box_sum(
+        model._display_values(view),
+        view["errors"],
+    )
+
+    fig = plot_mdhisto_slice(
+        data,
+        x_dim=3,
+        y_dim=2,
+        show_histogram_axes=True,
+        roi_extents=extents,
+    )
+    annotations = [
+        artist
+        for artist in fig.axes[0].texts
+        if artist.get_gid() == "nfit-roi-total"
+    ]
+
+    assert len(annotations) == 1
+    assert f"{expected:.5g}" in annotations[0].get_text()
+    assert f"{expected_error:.2g}" in annotations[0].get_text()
+    plt.close(fig)
 
 
 def test_mdhisto_slice_viewer_swaps_display_axes():
@@ -606,6 +681,33 @@ def test_qt_histogram_tool_recomputes_coverage_over_selected_box():
 
     assert viewer.ax_xcut.lines
     assert np.all(np.isnan(viewer.ax_xcut.lines[0].get_ydata()))
+
+
+def test_qt_histogram_box_shows_sum_and_propagated_uncertainty():
+    pytest.importorskip("PySide6")
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+    viewer.show_box_check.setChecked(True)
+    view = viewer._current_slice
+    extents = (
+        float(view["x_edges"][0]),
+        float(view["x_edges"][-1]),
+        float(view["y_edges"][0]),
+        float(view["y_edges"][-1]),
+    )
+    expected, expected_error, _count = integrated_box_sum(
+        viewer.model._display_values(view),
+        view["errors"],
+    )
+
+    viewer._set_roi_extents(extents, update_cuts=True, draw=False)
+
+    assert viewer.roi_sum_text is not None
+    assert f"{expected:.5g}" in viewer.roi_sum_text.get_text()
+    assert f"{expected_error:.2g}" in viewer.roi_sum_text.get_text()
+    viewer.show_box_check.setChecked(False)
+    assert viewer.roi_sum_text is None
 
 
 def test_qt_plot_smoothing_is_axis_specific_and_does_not_modify_dataset_values():
@@ -1695,11 +1797,27 @@ def test_qt_color_scale_preserves_manual_view_and_power_gamma():
 
     viewer.scale_combo.setCurrentText("power")
     viewer.gamma_spin.setValue(0.8)
+    original_limits = (viewer.image.norm.vmin, viewer.image.norm.vmax)
+    original_ticks = viewer.colorbar.get_ticks().copy()
+    original_midpoint_color = viewer.image.cmap(0.5)
+    viewer.alpha_spin.setValue(3.0)
 
     np.testing.assert_allclose(viewer.ax_image.get_xlim(), (-0.3, 0.7))
     np.testing.assert_allclose(viewer.ax_image.get_ylim(), (-0.5, 0.5))
     assert not viewer.gamma_spin.isHidden()
     assert viewer.model.power_gamma == pytest.approx(0.8)
+    assert viewer.model.color_alpha == pytest.approx(3.0)
+    assert (viewer.image.norm.vmin, viewer.image.norm.vmax) == pytest.approx(
+        original_limits
+    )
+    np.testing.assert_allclose(viewer.colorbar.get_ticks(), original_ticks)
+    assert viewer.image.cmap(0.5) != pytest.approx(original_midpoint_color)
+    assert viewer.current_plot_settings()["color_alpha"] == pytest.approx(3.0)
+    assert "color_alpha=3.0" in viewer.figure_script()
+    restored = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+    restored.apply_plot_settings(viewer.current_plot_settings())
+    assert restored.model.color_alpha == pytest.approx(3.0)
+    assert restored.alpha_spin.value() == pytest.approx(3.0)
 
 
 def test_qt_repeated_redraws_reuse_colorbar_without_locator_recursion():
