@@ -1828,24 +1828,11 @@ def _draw_box_sum_annotation(
     total: float,
     uncertainty: float,
 ):
-    x0, x1, y0, y1 = roi_extents
-    x0, x1 = sorted((float(x0), float(x1)))
-    y0, y1 = sorted((float(y0), float(y1)))
-    annotation = ax_image.annotate(
+    del roi_extents  # Kept in the helper signature for compatibility.
+    annotation = ax_image.set_title(
         _format_box_sum(total, uncertainty),
-        xy=(x0, y1),
-        xytext=(4, -4),
-        textcoords="offset points",
-        ha="left",
-        va="top",
-        clip_on=True,
-        bbox={
-            "boxstyle": "round,pad=0.25",
-            "facecolor": "white",
-            "edgecolor": "#666666",
-            "alpha": 0.82,
-        },
-        zorder=10,
+        loc="left",
+        pad=6.0,
     )
     annotation.set_gid("nfit-roi-total")
     return annotation

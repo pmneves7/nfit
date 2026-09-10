@@ -124,8 +124,8 @@ $y_i$ is a contributing bin value, $\sigma_i$ is its one-sigma uncertainty,
 and $\bar y$ is the reduced value with uncertainty $\sigma_{\bar y}$.
 Masked bins and invalid uncertainties are excluded.
 
-The selected rectangle also shows its total integrated sum in its upper-left
-corner:
+The selected rectangle also shows its total integrated sum above the plot,
+left-aligned beneath the optional other-axis binning title:
 
 $$
 Y_{\mathrm{box}}=\sum_i y_i,

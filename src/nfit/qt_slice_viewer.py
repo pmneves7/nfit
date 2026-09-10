@@ -3819,12 +3819,8 @@ class QtMDHistoSliceViewer:
     def _clear_roi_sum_annotation(self) -> None:
         annotation = self.roi_sum_text
         self.roi_sum_text = None
-        if annotation is None or annotation.axes is None:
-            return
-        try:
-            annotation.remove()
-        except ValueError:
-            pass
+        if annotation is not None:
+            annotation.set_text("")
 
     def _show_roi_sum_annotation(
         self,

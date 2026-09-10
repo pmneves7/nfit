@@ -150,15 +150,10 @@ def test_static_box_histogram_labels_total_with_propagated_error():
         show_histogram_axes=True,
         roi_extents=extents,
     )
-    annotations = [
-        artist
-        for artist in fig.axes[0].texts
-        if artist.get_gid() == "nfit-roi-total"
-    ]
+    title = fig.axes[0].get_title(loc="left")
 
-    assert len(annotations) == 1
-    assert f"{expected:.5g}" in annotations[0].get_text()
-    assert f"{expected_error:.2g}" in annotations[0].get_text()
+    assert f"{expected:.5g}" in title
+    assert f"{expected_error:.2g}" in title
     plt.close(fig)
 
 
@@ -688,6 +683,7 @@ def test_qt_histogram_box_shows_sum_and_propagated_uncertainty():
     from nfit.qt_slice_viewer import QtMDHistoSliceViewer
 
     viewer = QtMDHistoSliceViewer(_tiny_mdhisto_data(), x_dim=3, y_dim=2)
+    viewer.show_binning_title_check.setChecked(True)
     viewer.show_box_check.setChecked(True)
     view = viewer._current_slice
     extents = (
@@ -706,6 +702,8 @@ def test_qt_histogram_box_shows_sum_and_propagated_uncertainty():
     assert viewer.roi_sum_text is not None
     assert f"{expected:.5g}" in viewer.roi_sum_text.get_text()
     assert f"{expected_error:.2g}" in viewer.roi_sum_text.get_text()
+    assert viewer.ax_image.get_title(loc="left") == viewer.roi_sum_text.get_text()
+    assert viewer.figure._suptitle.get_text()
     viewer.show_box_check.setChecked(False)
     assert viewer.roi_sum_text is None
 
