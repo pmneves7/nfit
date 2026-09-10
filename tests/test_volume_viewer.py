@@ -27,10 +27,33 @@ from nfit.qt_volume_viewer import (
     rotate_camera,
     rotation_frame_angles,
     sample_transfer_curve,
+    smooth_volume_arrays,
     supports_volume_view,
     volume_channel_names,
     volume_render_bin_count,
 )
+
+
+def test_volume_smoothing_can_preserve_nan_gaps():
+    from nfit.qt_volume_viewer import VolumeArrays
+
+    values = np.asarray([[[1.0]], [[np.nan]], [[3.0]]])
+    arrays = VolumeArrays(
+        x_edges=np.arange(4.0),
+        y_edges=np.arange(2.0),
+        z_edges=np.arange(2.0),
+        color=values,
+        opacity=values,
+    )
+
+    filled = smooth_volume_arrays(arrays, (1.0, 0.0, 0.0))
+    preserved = smooth_volume_arrays(
+        arrays, (1.0, 0.0, 0.0), fill_nans=False
+    )
+
+    assert np.isfinite(filled.color[1, 0, 0])
+    assert np.isnan(preserved.color[1, 0, 0])
+    assert np.isnan(preserved.opacity[1, 0, 0])
 
 
 def _axis(name, size):
@@ -492,6 +515,11 @@ def test_volume_panel_exposes_independent_channels_curves_and_camera_exports(mon
     reset_limits = panel.findChild(QtWidgets.QPushButton, "volume_reset_axis_limits_button")
     reset_limits.click()
     y_smoothing = panel.findChild(QtWidgets.QDoubleSpinBox, "volume_y_smoothing_spin")
+    fill_nans = panel.findChild(
+        QtWidgets.QCheckBox, "volume_smoothing_fill_nans_check"
+    )
+    assert fill_nans.isChecked()
+    assert fill_nans.toolTip()
     y_smoothing.setValue(1.0)
     canonical = np.asarray(panel.current_grid.cell_data["color_channel"])
     rendered = np.asarray(panel.current_render_grid.cell_data["color_channel"])

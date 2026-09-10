@@ -327,6 +327,7 @@ class TiledSliceController(_ViewerController):
             masked=self.model.masked,
             smoothing_sigma_x=self.smoothing_x,
             smoothing_sigma_y=self.smoothing_y,
+            smoothing_fill_nans=self.smoothing_fill_nans,
         )
         self._current_tiled_slices = slices
         self._current_slice = slices[0].view
@@ -443,6 +444,7 @@ class WaterfallController(_ViewerController):
                 masked=self.model.masked,
                 coverage_threshold=self.waterfall_coverage_threshold,
                 smoothing_sigma_x=self.smoothing_x,
+                smoothing_fill_nans=self.smoothing_fill_nans,
                 include_model=self.show_fit,
                 unmask_model=self.unmask_model,
             )
@@ -473,6 +475,7 @@ class WaterfallController(_ViewerController):
                 masked=self.model.masked,
                 smoothing_sigma_x=self.smoothing_x,
                 smoothing_sigma_waterfall=self.smoothing_y,
+                smoothing_fill_nans=self.smoothing_fill_nans,
                 include_model=self.show_fit,
                 unmask_model=self.unmask_model,
             )

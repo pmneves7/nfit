@@ -543,6 +543,17 @@ def _build_smoothing_controls(viewer: Any, controls_layout: Any) -> None:
     viewer.smoothing_y_label = QtWidgets.QLabel("Y sigma")
     smoothing_layout.addWidget(viewer.smoothing_y_label, 1, 0)
     smoothing_layout.addWidget(viewer.smoothing_y_spin, 1, 1)
+    viewer.smoothing_fill_nans_check = QtWidgets.QCheckBox("Fill adjacent NaN bins")
+    viewer.smoothing_fill_nans_check.setObjectName("slice_smoothing_fill_nans_check")
+    viewer.smoothing_fill_nans_check.setChecked(viewer.smoothing_fill_nans)
+    viewer.smoothing_fill_nans_check.setToolTip(
+        "Allow plot-only Gaussian smoothing to extend into adjacent bins with no "
+        "finite value. Uncheck to keep those pixels empty."
+    )
+    viewer.smoothing_fill_nans_check.toggled.connect(
+        viewer._set_smoothing_fill_nans
+    )
+    smoothing_layout.addWidget(viewer.smoothing_fill_nans_check, 2, 0, 1, 2)
     smoothing_layout.setColumnStretch(1, 1)
     controls_layout.addWidget(smoothing_group)
 

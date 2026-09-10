@@ -171,6 +171,7 @@ def plot_mdhisto_slice(
     power_gamma: float = 0.5,
     smoothing_sigma_x: float = 0.0,
     smoothing_sigma_y: float = 0.0,
+    smoothing_fill_nans: bool = True,
     xlim: tuple[float, float] | None = None,
     ylim: tuple[float, float] | None = None,
     font_size: float = 10.0,
@@ -217,6 +218,7 @@ def plot_mdhisto_slice(
         model.slice_arrays(),
         sigma_x=smoothing_sigma_x,
         sigma_y=smoothing_sigma_y,
+        fill_nans=smoothing_fill_nans,
     )
     with plt.rc_context({"font.size": float(font_size)}):
         fig = plt.figure(figsize=figsize, constrained_layout=True)
@@ -285,6 +287,7 @@ def prepare_mdhisto_tiled_slices(
     masked: bool = True,
     smoothing_sigma_x: float = 0.0,
     smoothing_sigma_y: float = 0.0,
+    smoothing_fill_nans: bool = True,
 ) -> list[TiledSlice]:
     """Prepare coarse third-axis bins as a sequence of 2D slices.
 
@@ -395,6 +398,7 @@ def prepare_mdhisto_tiled_slices(
             panel.slice_arrays(),
             sigma_x=smoothing_sigma_x,
             sigma_y=smoothing_sigma_y,
+            fill_nans=smoothing_fill_nans,
         )
         coordinate = float(coordinates[index])
         if not exact_coordinates and abs(coordinate) < width * 1.e-10:
@@ -474,6 +478,7 @@ def plot_mdhisto_tiled_slices(
     power_gamma: float = 0.5,
     smoothing_sigma_x: float = 0.0,
     smoothing_sigma_y: float = 0.0,
+    smoothing_fill_nans: bool = True,
     xlim: tuple[float, float] | None = None,
     ylim: tuple[float, float] | None = None,
     font_size: float = 10.0,
@@ -508,6 +513,7 @@ def plot_mdhisto_tiled_slices(
         masked=masked,
         smoothing_sigma_x=smoothing_sigma_x,
         smoothing_sigma_y=smoothing_sigma_y,
+        smoothing_fill_nans=smoothing_fill_nans,
     )
     if not slices:
         raise ValueError("the tiled-slice settings produced no panels")
@@ -622,6 +628,7 @@ def plot_mdhisto_line(
     axis_dim: int | str | None = None,
     channel: str = "signal",
     smoothing_sigma: float = 0.0,
+    smoothing_fill_nans: bool = True,
     ax=None,
 ):
     """Render a one-dimensional MDHisto channel as a line plot.
@@ -645,16 +652,22 @@ def plot_mdhisto_line(
     index = [0] * data.signal.ndim
     index[axis_index] = slice(None)
     y = np.asarray(values[tuple(index)], dtype=float)
+    source_finite = np.isfinite(y)
     y = gaussian_smooth_nan(y, (max(float(smoothing_sigma), 0.0),))
+    if not smoothing_fill_nans:
+        y = np.where(source_finite, y, np.nan)
     x = data.axes[axis_index].centers
     if ax is None:
         _, ax = plt.subplots()
     if channel_name == "signal":
         yerr = np.asarray(_mdhisto_channel_array(data, "errors")[tuple(index)], dtype=float)
+        source_error_finite = np.isfinite(yerr)
         yerr = gaussian_smooth_uncertainty(
             yerr,
             (max(float(smoothing_sigma), 0.0),),
         )
+        if not smoothing_fill_nans:
+            yerr = np.where(source_error_finite, yerr, np.nan)
         ax.errorbar(x, y, yerr=yerr, fmt="-", lw=1.2)
     else:
         ax.plot(x, y, "-", lw=1.2)
@@ -690,6 +703,7 @@ def prepare_mdhisto_waterfall(
     masked: bool = True,
     smoothing_sigma_x: float = 0.0,
     smoothing_sigma_waterfall: float = 0.0,
+    smoothing_fill_nans: bool = True,
     include_model: bool = False,
     unmask_model: bool = False,
 ) -> list[WaterfallTrace]:
@@ -741,6 +755,7 @@ def prepare_mdhisto_waterfall(
                 model.slice_arrays(),
                 sigma_x=smoothing_sigma_x,
                 sigma_y=0.0,
+                fill_nans=smoothing_fill_nans,
             )
             values = np.asarray(model._display_values(view), dtype=float).reshape(-1)
             errors = _waterfall_channel_errors(model, view, values.shape)
@@ -758,6 +773,7 @@ def prepare_mdhisto_waterfall(
                     fit_model.slice_arrays(),
                     sigma_x=smoothing_sigma_x,
                     sigma_y=0.0,
+                    fill_nans=smoothing_fill_nans,
                 )
                 model_values = np.asarray(
                     fit_model._display_values(fit_view),
@@ -799,6 +815,7 @@ def prepare_mdhisto_waterfall(
         model.slice_arrays(),
         sigma_x=smoothing_sigma_x,
         sigma_y=smoothing_sigma_waterfall,
+        fill_nans=smoothing_fill_nans,
     )
     values = np.asarray(model._display_values(view), dtype=float)
     errors = _waterfall_channel_errors(model, view, values.shape)
@@ -824,6 +841,7 @@ def prepare_mdhisto_waterfall(
             fit_model.slice_arrays(),
             sigma_x=smoothing_sigma_x,
             sigma_y=smoothing_sigma_waterfall,
+            fill_nans=smoothing_fill_nans,
         )
         model_values = np.asarray(
             fit_model._display_values(fit_view),
@@ -881,6 +899,7 @@ def plot_mdhisto_waterfall(
     trace_label_color: str | None = None,
     smoothing_sigma_x: float = 0.0,
     smoothing_sigma_waterfall: float = 0.0,
+    smoothing_fill_nans: bool = True,
     masked: bool = True,
     xlim: tuple[float, float] | None = None,
     ylim: tuple[float, float] | None = None,
@@ -907,6 +926,7 @@ def plot_mdhisto_waterfall(
         masked=masked,
         smoothing_sigma_x=smoothing_sigma_x,
         smoothing_sigma_waterfall=smoothing_sigma_waterfall,
+        smoothing_fill_nans=smoothing_fill_nans,
         include_model=show_model,
         unmask_model=unmask_model,
     )
@@ -2873,6 +2893,7 @@ def smooth_mdhisto_view(
     *,
     sigma_x: float = 0.0,
     sigma_y: float = 0.0,
+    fill_nans: bool = True,
 ) -> dict[str, np.ndarray]:
     """Return a plot-only smoothed copy of a 1D or 2D slice-view mapping."""
 
@@ -2902,5 +2923,7 @@ def smooth_mdhisto_view(
             smoothed = gaussian_smooth_uncertainty(array, sigma)
         else:
             smoothed = gaussian_smooth_nan(array, sigma)
+        if not fill_nans:
+            smoothed = np.where(np.isfinite(array), smoothed, np.nan)
         result[name] = smoothed
     return result

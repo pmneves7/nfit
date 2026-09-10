@@ -76,10 +76,14 @@ Masked bins and invalid uncertainties are excluded.
 
 Plot smoothing is specified in displayed-bin widths. It affects only the
 rendered figure and exported figure recipe, not fitting, rebinning, or numerical
-data exports. Gaussian smoothing uses nearby finite display pixels to fill
-adjacent NaN pixels, including pixels hidden by a mask. Mask channels still show
-the unchanged masks, and the stored histogram, masks, and uncertainties are
-never changed.
+data exports. With **Fill adjacent NaN bins** checked, Gaussian smoothing uses
+nearby finite display pixels to fill adjacent NaN pixels, including pixels
+hidden by a mask. Uncheck it to smooth measured pixels while preserving empty
+pixels as gaps. Slice, line, waterfall, and tiled-slice views retain the choice
+independently for each dataset and in saved plot recipes. The volume viewer
+offers the same choice in its own smoothing panel. Mask channels still show the
+unchanged masks, and the stored histogram, masks, and uncertainties are never
+changed.
 
 ## Model and residual channels
 

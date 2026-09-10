@@ -217,6 +217,7 @@ class QtMDHistoSliceViewer:
         self.smoothing_x_spin = None
         self.smoothing_y_spin = None
         self.smoothing_y_label = None
+        self.smoothing_fill_nans_check = None
         self.gamma_label = None
         self.gamma_spin = None
         self.limit_n_label = None
@@ -308,6 +309,7 @@ class QtMDHistoSliceViewer:
         self.axis_linewidth = 1.5
         self.smoothing_x = 0.0
         self.smoothing_y = 0.0
+        self.smoothing_fill_nans = True
         self.marker = "o"
         self.line_style = "none"
         self.marker_size = 5.0
@@ -638,6 +640,7 @@ class QtMDHistoSliceViewer:
             "manual_vmax": self.model.manual_vmax,
             "smoothing_x": self.smoothing_x,
             "smoothing_y": self.smoothing_y,
+            "smoothing_fill_nans": self.smoothing_fill_nans,
             "xlim": xlim,
             "ylim": ylim,
             "font_size": self.font_size,
@@ -743,8 +746,14 @@ class QtMDHistoSliceViewer:
         self.model.autoscale = bool(settings.get("autoscale", self.model.autoscale))
         self.smoothing_x = float(settings.get("smoothing_x", self.smoothing_x))
         self.smoothing_y = float(settings.get("smoothing_y", self.smoothing_y))
+        self.smoothing_fill_nans = bool(
+            settings.get("smoothing_fill_nans", True)
+        )
         self._set_spin_silent(self.smoothing_x_spin, self.smoothing_x)
         self._set_spin_silent(self.smoothing_y_spin, self.smoothing_y)
+        self._set_checkbox_silent(
+            self.smoothing_fill_nans_check, self.smoothing_fill_nans
+        )
         self._set_font_size(float(settings.get("font_size", self.font_size)))
         self._set_axis_linewidth(float(settings.get("axis_linewidth", self.axis_linewidth)))
         self._set_show_binning_title(
@@ -1094,6 +1103,7 @@ class QtMDHistoSliceViewer:
                 f"    power_gamma={self.model.power_gamma!r},",
                 f"    smoothing_sigma_x={self.smoothing_x!r},",
                 f"    smoothing_sigma_y={self.smoothing_y!r},",
+                f"    smoothing_fill_nans={self.smoothing_fill_nans!r},",
                 f"    xlim={self._export_limits('x')!r},",
                 f"    ylim={self._export_limits('y')!r},",
                 f"    font_size={self.font_size!r},",
@@ -1150,6 +1160,7 @@ class QtMDHistoSliceViewer:
                 f"    power_gamma={self.model.power_gamma!r},",
                 f"    smoothing_sigma_x={self.smoothing_x!r},",
                 f"    smoothing_sigma_y={self.smoothing_y!r},",
+                f"    smoothing_fill_nans={self.smoothing_fill_nans!r},",
                 f"    xlim={self._export_limits('x')!r},",
                 f"    ylim={self._export_limits('y')!r},",
                 f"    font_size={self.font_size!r},",
@@ -1242,6 +1253,7 @@ class QtMDHistoSliceViewer:
                 f"    trace_label_color={self.waterfall_trace_label_color!r},",
                 f"    smoothing_sigma_x={self.smoothing_x!r},",
                 f"    smoothing_sigma_waterfall={self.smoothing_y!r},",
+                f"    smoothing_fill_nans={self.smoothing_fill_nans!r},",
                 f"    xlim={self._export_limits('x')!r},",
                 f"    ylim={self._export_limits('y')!r},",
                 f"    font_size={self.font_size!r},",
@@ -1266,6 +1278,7 @@ class QtMDHistoSliceViewer:
                 f"    axis_dim={self.data.axes[self.model.x_dim].name!r},",
                 f"    channel={self.model.channel!r},",
                 f"    smoothing_sigma={self.smoothing_x!r},",
+                f"    smoothing_fill_nans={self.smoothing_fill_nans!r},",
                 ")",
                 "for container in ax.containers:",
                 "    for artist in getattr(container, 'lines', []):",
@@ -1722,6 +1735,7 @@ class QtMDHistoSliceViewer:
             cmap_reversed=bool(self.model.cmap_reversed),
             smoothing_x=float(self.smoothing_x),
             smoothing_y=float(self.smoothing_y),
+            smoothing_fill_nans=bool(self.smoothing_fill_nans),
             tile_dim=self.tile_dim,
             tile_range=self.tile_range,
             tile_step=float(self.tile_step),
@@ -1807,6 +1821,7 @@ class QtMDHistoSliceViewer:
             self.residual_percent = int(state.residual_percent)
             self.smoothing_x = float(state.smoothing_x)
             self.smoothing_y = float(state.smoothing_y)
+            self.smoothing_fill_nans = bool(state.smoothing_fill_nans)
             self.tile_dim = state.tile_dim
             self.tile_range = tuple(state.tile_range)
             self.tile_step = float(state.tile_step)
@@ -1853,6 +1868,9 @@ class QtMDHistoSliceViewer:
             self._sync_tiled_color_controls()
             self._set_spin_silent(self.smoothing_x_spin, self.smoothing_x)
             self._set_spin_silent(self.smoothing_y_spin, self.smoothing_y)
+            self._set_checkbox_silent(
+                self.smoothing_fill_nans_check, self.smoothing_fill_nans
+            )
             self._set_combo_silent(self.marker_combo, _option_name(_MARKER_OPTIONS, self.marker))
             self._set_combo_silent(self.line_style_combo, _option_name(_LINE_STYLE_OPTIONS, self.line_style))
             self._set_spin_silent(self.marker_size_spin, self.marker_size)
@@ -2329,6 +2347,12 @@ class QtMDHistoSliceViewer:
             self.smoothing_y = max(float(value), 0.0)
         self.update_plot()
 
+    def _set_smoothing_fill_nans(self, checked: bool) -> None:
+        if self._restoring_dataset_state:
+            return
+        self.smoothing_fill_nans = bool(checked)
+        self.update_plot()
+
     def _smoothed_slice_view(self, view: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         if getattr(self.model, "is_point_list", False):
             return view
@@ -2336,6 +2360,7 @@ class QtMDHistoSliceViewer:
             view,
             sigma_x=self.smoothing_x,
             sigma_y=self.smoothing_y,
+            fill_nans=self.smoothing_fill_nans,
         )
 
     def _toggle_cmap_reverse(self) -> None:

@@ -46,6 +46,7 @@ class _DatasetViewState:
     cmap_reversed: bool = False
     smoothing_x: float = 0.0
     smoothing_y: float = 0.0
+    smoothing_fill_nans: bool = True
     tile_dim: int | None = None
     tile_range: tuple[float, float] = (0.0, 0.0)
     tile_step: float = 1.0

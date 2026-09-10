@@ -646,6 +646,15 @@ def test_qt_macs_plot_preserves_empty_bins():
 
     assert np.isnan(viewer._current_slice["signal"][1, 1])
     assert np.ma.getmaskarray(viewer.image.get_array())[1, 1]
+    assert viewer.smoothing_fill_nans_check.isChecked()
+    assert viewer.smoothing_fill_nans_check.toolTip()
+    viewer.smoothing_x_spin.setValue(1.0)
+    viewer.smoothing_y_spin.setValue(1.0)
+    assert np.isfinite(viewer._current_slice["signal"][1, 1])
+    viewer.smoothing_fill_nans_check.setChecked(False)
+    assert np.isnan(viewer._current_slice["signal"][1, 1])
+    assert viewer.current_plot_settings()["smoothing_fill_nans"] is False
+    assert "smoothing_fill_nans=False" in viewer.figure_script()
     assert "empty_bin_fill_neighbors" not in viewer.current_plot_settings()
     assert "empty_bin_fill_neighbors" not in viewer.figure_script()
 

@@ -228,16 +228,23 @@ def crop_volume_arrays(
 def smooth_volume_arrays(
     arrays: VolumeArrays,
     sigma: Sequence[float],
+    *,
+    fill_nans: bool = True,
 ) -> VolumeArrays:
     """Return a render-only Gaussian-smoothed copy of volume channels."""
 
     sigma_xyz = tuple(max(float(value), 0.0) for value in sigma)
+    color = gaussian_smooth_nan(arrays.color, sigma_xyz)
+    opacity = gaussian_smooth_nan(arrays.opacity, sigma_xyz)
+    if not fill_nans:
+        color = np.where(np.isfinite(arrays.color), color, np.nan)
+        opacity = np.where(np.isfinite(arrays.opacity), opacity, np.nan)
     return VolumeArrays(
         x_edges=arrays.x_edges.copy(),
         y_edges=arrays.y_edges.copy(),
         z_edges=arrays.z_edges.copy(),
-        color=gaussian_smooth_nan(arrays.color, sigma_xyz),
-        opacity=gaussian_smooth_nan(arrays.opacity, sigma_xyz),
+        color=color,
+        opacity=opacity,
     )
 
 
@@ -934,7 +941,11 @@ def _make_volume_panel(
             camera = self.plotter.camera_position if self.current_grid is not None else None
             arrays = self._arrays()
             self.current_grid = self._grid(arrays)
-            render_arrays = smooth_volume_arrays(arrays, self._smoothing_sigma())
+            render_arrays = smooth_volume_arrays(
+                arrays,
+                self._smoothing_sigma(),
+                fill_nans=self.smoothing_fill_nans_check.isChecked(),
+            )
             render_grid = self._grid(render_arrays)
             self.current_render_grid = scale_rectilinear_grid(render_grid, self._axis_scale())
             self.current_surface = None
