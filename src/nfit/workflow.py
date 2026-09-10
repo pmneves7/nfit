@@ -228,7 +228,7 @@ class WorkflowPlan:
 def composite_workflow_script(
     project: NfitProject, group_name: str, *, node_id: str | None = None
 ) -> str:
-    """Export a project-backed composite with editable grid and metadata axes."""
+    """Export a composite with editable grid, metadata axes, and INS conventions."""
     from .project_data import _composite_scope, data_group_composite_config
 
     path = getattr(project, "_project_path", None)
@@ -245,7 +245,8 @@ def composite_workflow_script(
     return f'''"""Rebuild a discrete metadata composite from a saved nfit project.
 
 Save source membership, import options, masks, scales, and backgrounds in the
-project before running. Edit the coordinate recipes and spatial grid below.
+project before running. Edit the coordinate recipes, spatial grid, and
+spectral_channels INS settings in REBIN_CONFIG below.
 """
 from pathlib import Path
 from nfit import load_project, composite_dataset_data, set_metadata_dimensions

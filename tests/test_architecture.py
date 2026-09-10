@@ -10,6 +10,7 @@ import pytest
 
 PACKAGE_ROOT = Path(__file__).parents[1] / "src" / "nfit"
 GUI_INDEPENDENT_MODULES = (
+    PACKAGE_ROOT / "composite_spectral.py",
     PACKAGE_ROOT / "rebin_cache.py",
     PACKAGE_ROOT / "project_composites.py",
     PACKAGE_ROOT / "project_data.py",
@@ -21,6 +22,7 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "analysis" / "runner.py",
 )
 PROJECT_GUI_CLIENT_MODULES = (
+    PACKAGE_ROOT / "project_composite_physics.py",
     PACKAGE_ROOT / "analysis_gui.py",
     PACKAGE_ROOT / "metadata_dimensions_gui.py",
     PACKAGE_ROOT / "performance_benchmark.py",

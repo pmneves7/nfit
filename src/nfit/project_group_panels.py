@@ -626,6 +626,12 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     metadata_layout.addStretch(1)
     controls.addTab(metadata_tab, "Metadata dimensions")
 
+    from .project_composite_physics import composite_physics_panel
+
+    physics_panel = composite_physics_panel(self, group, config)
+    if physics_panel is not None:
+        controls.addTab(physics_panel, "Physics")
+
     from .metadata_dimensions import MetadataDimension, metadata_rebin_axis_config
     from .project_rebin_panels import rebin_bin_information_widget
 

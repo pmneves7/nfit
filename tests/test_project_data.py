@@ -600,7 +600,7 @@ def test_dataset_details_text_summarizes_axes_source_and_metadata(tmp_path, monk
         QtWidgets.QTreeWidget, "dataset_metadata_tree"
     )
     assert metadata_tree is not None
-    assert metadata_tree.maximumHeight() == 260
+    assert metadata_tree.maximumHeight() == 16777215
     assert metadata_tree.headerItem().text(0) == "Field"
     assert metadata_tree.headerItem().text(1) == "Value"
     top_level = {
@@ -1492,6 +1492,7 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
     assert [tabs.tabText(index) for index in range(tabs.count())] == [
         "Rebin settings",
         "Metadata dimensions",
+        "Physics",
         "Bin information",
     ]
     binning_combo = explorer.details_widget.findChild(

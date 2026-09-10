@@ -40,6 +40,56 @@ configuration marked **Use for fitting** contributes during optimization.
 Visualization configurations can use different axes, limits, or resolutions,
 and receive model and residual channels from the final fitted parameters.
 
+## Composite neutron representations
+
+In a collection's **Composite dataset → Physics** tab, enable paired channels
+and choose **Plot and fit** to select scattering cross section or dynamical
+susceptibility χ″ (the imaginary part of the susceptibility). The viewer also
+retains the imported signal and both named representations. Settings belong to
+the selected composite binning and are saved with the project. Conversion follows
+rebinning and background subtraction; parent composites use underlying child
+signals so child display settings cannot apply the conversion twice. Materialized
+composites retain the underlying signal and the conversion recipe.
+
+A temperature metadata dimension in kelvin takes precedence and supplies the
+conversion temperature separately at each coordinate. Preserve this dimension
+for temperature scans: averaging different temperatures first cannot recover
+their individual detailed-balance corrections. Without this dimension, nfit uses
+automatic source temperatures only when every source agrees within 0.1% (absolute
+tolerance 10⁻⁶ K). Otherwise set **Nominal temperature (K)** deliberately for a
+collection measured at one nominal temperature, or add a temperature dimension
+for a series. Missing or ambiguous temperatures stop conversion with an explanation.
+A nominal temperature is an explicit approximation for small temperature drifts.
+
+Review the imported quantity, units, and corrections before enabling conversion.
+Common source conventions and fixed incident/final energies are proposed when
+unambiguous. If the imported cross section includes the neutron wavevector ratio
+k_f/k_i, supply the fixed incident energy Ei or final energy Ef in meV appropriate
+to the whole composite. Different instrument-energy settings should remain in
+separate composites. The shared normalization, magnetic form factor, polarization,
+and susceptibility units follow [physics conventions](physics_conventions.md).
+
+The scripting API uses the same saved recipe:
+
+```python
+from nfit import composite_dataset_data
+from nfit.project_data import data_group_composite_config
+
+config = data_group_composite_config(group)
+config["spectral_channels"] = {
+    "enabled": True,
+    "fit_representation": "chi_double_prime",
+    "temperature_K": 5.0,  # K; omit when using a temperature metadata dimension
+    "kf_ki_state": "removed",
+}
+data = composite_dataset_data(group)
+```
+
+**Export composite workflow** includes these settings in the editable
+`REBIN_CONFIG`. Dataset Physics pages group crystal information side by side and
+separate representation selection from correction conventions. The Metadata tab
+uses its full height for the scrollable metadata tree.
+
 ## Slices, lines, and maps
 
 Choose the displayed axes and use the remaining-axis controls to select one bin

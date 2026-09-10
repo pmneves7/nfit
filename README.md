@@ -40,6 +40,8 @@ The package provides:
   with automatic refresh of dependent composites and open viewers;
 - folder-level enable controls for masks and backgrounds, plus a shared scale
   editor for all backgrounds in a folder;
+- paired neutron cross-section and dynamical-susceptibility channels for datasets
+  and composites, with temperature-coordinate conversion for temperature series;
 - local, MMP, generalized-paramagnon/damped-mode, conserved-ferromagnetic,
   relaxational or inertial Heisenberg-RPA, and coupled-susceptibility models
   for inelastic, quasistatic elastic, and optional bulk-response comparisons,

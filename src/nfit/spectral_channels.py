@@ -467,3 +467,54 @@ def with_paired_spectral_channels(
         metadata=metadata,
         auxiliary_channels=channels,
     )
+
+
+def updated_spectral_channel_config(config, key, value):
+    """Update one representation setting and reconcile dependent units."""
+    config = normalized_spectral_channel_config(config)
+    if key == "source_representation" and value != config.get(key):
+        config["source_unit"] = "arbitrary"
+    if key == "source_unit":
+        if str(value).startswith("spin^2/"):
+            config["moment_unit"] = "spin_squared"
+        elif str(value).startswith("mu_B^2/"):
+            config["moment_unit"] = "mu_B_squared"
+    if key == "normalization_basis" and config["source_unit"] != "arbitrary":
+        if value == "per_magnetic_ion":
+            label = str(config.get("normalization_label", "") or "").strip()
+            suffix = f"/{label}" if label else "/magnetic ion"
+        else:
+            suffix = {
+                "per_formula_unit": "/f.u.",
+                "per_unit_cell": "/unit cell",
+                "unknown": "",
+            }[str(value)]
+        if config["source_representation"] == "cross_section":
+            source_unit = str(config["source_unit"])
+            if source_unit.startswith("1/meV"):
+                prefix = "1/meV"
+            elif source_unit.startswith("mbarn/"):
+                prefix = "mbarn/sr/meV"
+            else:
+                prefix = "barn/sr/meV"
+        else:
+            prefix = (
+                "spin^2/meV"
+                if str(config["source_unit"]).startswith("spin^2/")
+                else "mu_B^2/meV"
+            )
+        config["source_unit"] = prefix + suffix
+    if key == "normalization_label" and config["source_unit"] != "arbitrary":
+        suffix = f"/{str(value).strip()}" if str(value).strip() else "/magnetic ion"
+        for prefix in (
+            "mbarn/sr/meV",
+            "barn/sr/meV",
+            "mu_B^2/meV",
+            "spin^2/meV",
+            "1/meV",
+        ):
+            if str(config["source_unit"]).startswith(prefix):
+                config["source_unit"] = prefix + suffix
+                break
+    config[key] = value
+    return normalized_spectral_channel_config(config)

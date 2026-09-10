@@ -909,12 +909,14 @@ def composite_dataset_data(
     progress_callback: Any | None = None,
     config_override: Mapping[str, Any] | None = None,
     include_source_masks: bool = True,
+    apply_spectral_channels: bool = True,
 ) -> MDHistoData | PointListData | PointData4D:
     """Build a composite using its saved rebin configuration and worker ceiling.
 
     ``node`` selects a nested collection. Saved plots can pass a coordinate
     recipe snapshot through ``metadata_dimensions_override``; an empty list
-    explicitly requests no metadata dimensions.
+    explicitly requests no metadata dimensions. ``apply_spectral_channels=False``
+    returns the underlying composite before its saved INS conversion.
     """
     from ._parallel import thread_budget
 
@@ -925,12 +927,22 @@ def composite_dataset_data(
         composite_builder = _backend_value(
             "_composite_dataset_data", _composite_dataset_data
         )
-        return composite_builder(
+        result = composite_builder(
             group,
             progress_callback=progress_callback,
             config_override=config_override,
             include_source_masks=include_source_masks,
             metadata_dimensions_override=metadata_dimensions_override,
+        )
+        if not apply_spectral_channels:
+            return result
+        from .composite_spectral import apply_composite_spectral_channels
+
+        return apply_composite_spectral_channels(
+            result, config, _composite_candidates(group, include_backgrounds=bool(
+                group.metadata.get("metadata_dimensions", [])
+                if metadata_dimensions_override is None else metadata_dimensions_override
+            )),
         )
 
 
@@ -1174,6 +1186,7 @@ def _composite_dataset_data(
                 ).hexdigest()
                 child_data = _cached_composite_dataset_data(
                     child,
+                    apply_spectral_channels=False,
                     progress_callback=progress_callback,
                     config_override=None if same_config else config,
                     binning_id=None if same_config else f"dependency-{variant}",
@@ -1181,6 +1194,7 @@ def _composite_dataset_data(
             else:
                 child_data = composite_dataset_data(
                     child,
+                    apply_spectral_channels=False,
                     progress_callback=progress_callback,
                     config_override=config,
                     include_source_masks=False,
@@ -1444,6 +1458,7 @@ def _apply_composite_backgrounds(
         if source_group is not None:
             source_data = _cached_composite_dataset_data(
                 _CompositeScope(root, source_group),
+                apply_spectral_channels=False,
                 force_rebin=True,
                 progress_callback=progress_callback,
             )
@@ -1546,7 +1561,18 @@ def _cached_composite_dataset_data(
     progress_callback: Any | None = None,
     config_override: dict[str, Any] | None = None,
     binning_id: str | None = None,
+    apply_spectral_channels: bool = True,
 ) -> MDHistoData | PointListData | PointData4D | None:
+    from .composite_spectral import apply_composite_spectral_channels
+
+    def finish(data):
+        if not apply_spectral_channels:
+            return data
+        return apply_composite_spectral_channels(
+            data, config_override if config_override is not None else data_group_composite_config(group),
+            _composite_candidates(group, include_backgrounds=bool(group.metadata.get("metadata_dimensions"))),
+        )
+
     signature = _composite_cache_signature(
         group, config_override=config_override, binning_id=binning_id
     )
@@ -1554,7 +1580,7 @@ def _cached_composite_dataset_data(
     cached = _COMPOSITE_DATA_CACHE.get(cache_key)
     if cached is not None and cached[0] == signature:
         _COMPOSITE_DATA_CACHE.move_to_end(cache_key)
-        return cached[1]
+        return finish(cached[1])
     config = (
         data_group_composite_config(group)
         if config_override is None
@@ -1566,13 +1592,14 @@ def _cached_composite_dataset_data(
         and not config.get("auto_rebin", True)
     )
     if cached is not None and deferred:
-        return cached[1]
+        return finish(cached[1])
     if deferred:
         return None
     result = composite_dataset_data(
         group,
         progress_callback=progress_callback,
         config_override=config,
+        apply_spectral_channels=False,
     )
     config["stale"] = False
     signature = _composite_cache_signature(
@@ -1585,7 +1612,7 @@ def _cached_composite_dataset_data(
         _COMPOSITE_DATA_CACHE_LIMIT,
         _COMPOSITE_DATA_CACHE_MAX_BYTES,
     )
-    return result
+    return finish(result)
 
 
 def _peek_cached_composite_dataset_data(
@@ -1644,7 +1671,8 @@ def composite_dataset_entry(
                     first.parameters[SPECTRAL_CHANNEL_CONFIG_KEY]
                 )
             }
-            if first is not None and SPECTRAL_CHANNEL_CONFIG_KEY in first.parameters
+            if (SPECTRAL_CHANNEL_CONFIG_KEY not in config
+                and first is not None and SPECTRAL_CHANNEL_CONFIG_KEY in first.parameters)
             else {}
         ),
         enabled=True,
@@ -1669,13 +1697,26 @@ def materialize_composite_dataset(
         scope,
         progress_callback=progress_callback,
         config_override=config_override,
+        apply_spectral_channels=False,
     )
     if not isinstance(data, MDHistoData):
         raise TypeError("materialized composites currently require gridded histogram data")
+    from .composite_spectral import apply_composite_spectral_channels, composite_spectral_config
+
+    config = config_override if config_override is not None else data_group_composite_config(scope)
+    sources = _composite_candidates(scope, include_backgrounds=bool(scope.metadata.get("metadata_dimensions")))
+    prepared = apply_composite_spectral_channels(data, config, sources)
+    parameters = {}
+    if SPECTRAL_CHANNEL_CONFIG_KEY in config:
+        parameters[SPECTRAL_CHANNEL_CONFIG_KEY] = composite_spectral_config(config, sources)
+        temperature = prepared.metadata.get("spectral_observable", {}).get("temperature_K")
+        if temperature is not None and np.ndim(temperature) == 0:
+            parameters["temperature"] = float(temperature)
     source_name = scope.name
     entry = DatasetEntry(
         name=_unique_dataset_name(name or f"{source_name} composite", group.dataset_names),
         data=data,
+        parameters=parameters,
         kind="project_artifact",
         data_type=("powder_inelastic" if len(data.axes) == 2 else "single_crystal_inelastic"),
         metadata={

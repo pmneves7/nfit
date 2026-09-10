@@ -1173,12 +1173,21 @@ def _dataset_spectral_channels_group_box(
     self,
     dataset: DatasetEntry,
     group: DataGroup | None,
+    *,
+    config_override=None,
+    setting_changed=None,
+    status_override=None,
 ) -> Any:
     """Build INS representation, unit, and correction controls."""
 
     from PySide6 import QtWidgets
 
-    config = self._dataset_spectral_channel_config(dataset)
+    from .form_factors import available_ions
+    from .project_coordinates import _parse_parameter_text
+    from .project_rebinning import _parameter_to_text
+
+    config = config_override if config_override is not None else self._dataset_spectral_channel_config(dataset)
+    set_setting = setting_changed or self._set_dataset_spectral_channel_setting
     box = QtWidgets.QGroupBox("INS representations")
     form = QtWidgets.QFormLayout(box)
     form.setContentsMargins(10, 8, 10, 8)
@@ -1195,7 +1204,7 @@ def _dataset_spectral_channels_group_box(
         "to convert between them."
     )
     enabled.toggled.connect(
-        lambda checked: self._set_dataset_spectral_channel_setting(
+        lambda checked: set_setting(
             dataset, group, "enabled", bool(checked)
         )
     )
@@ -1211,7 +1220,7 @@ def _dataset_spectral_channels_group_box(
         "intensity are treated as cross-section-shaped data with an unknown scale."
     )
     source.currentIndexChanged.connect(
-        lambda _index, combo=source: self._set_dataset_spectral_channel_setting(
+        lambda _index, combo=source: set_setting(
             dataset, group, "source_representation", str(combo.currentData())
         )
     )
@@ -1261,7 +1270,7 @@ def _dataset_spectral_channels_group_box(
         "the beam flux and illuminated formula-unit count are not calibrated."
     )
     units.currentIndexChanged.connect(
-        lambda _index, combo=units: self._set_dataset_spectral_channel_setting(
+        lambda _index, combo=units: set_setting(
             dataset, group, "source_unit", str(combo.currentData())
         )
     )
@@ -1279,7 +1288,7 @@ def _dataset_spectral_channels_group_box(
         "viewer channel. Both named channels remain selectable in the viewer."
     )
     fit_representation.currentIndexChanged.connect(
-        lambda _index, combo=fit_representation: self._set_dataset_spectral_channel_setting(
+        lambda _index, combo=fit_representation: set_setting(
             dataset, group, "fit_representation", str(combo.currentData())
         )
     )
@@ -1300,11 +1309,20 @@ def _dataset_spectral_channels_group_box(
         "perform a hidden rescaling; the upstream calibration must use the same basis."
     )
     basis.currentIndexChanged.connect(
-        lambda _index, combo=basis: self._set_dataset_spectral_channel_setting(
+        lambda _index, combo=basis: set_setting(
             dataset, group, "normalization_basis", str(combo.currentData())
         )
     )
     form.addRow("Normalization", basis)
+
+    advanced = QtWidgets.QGroupBox("Corrections and conventions")
+    advanced_columns = QtWidgets.QHBoxLayout(advanced)
+    advanced_form = QtWidgets.QFormLayout()
+    advanced_columns.addLayout(advanced_form, 1)
+    advanced_form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+    form.addRow(advanced)
+    main_form = form
+    form = advanced_form
 
     normalization_label = QtWidgets.QLineEdit(
         str(config.get("normalization_label", "") or "")
@@ -1320,7 +1338,7 @@ def _dataset_spectral_channels_group_box(
         "without rescaling the imported values."
     )
     normalization_label.editingFinished.connect(
-        lambda editor=normalization_label: self._set_dataset_spectral_channel_setting(
+        lambda editor=normalization_label: set_setting(
             dataset, group, "normalization_label", editor.text().strip()
         )
     )
@@ -1336,7 +1354,7 @@ def _dataset_spectral_channels_group_box(
         "Leave 0 to retain arbitrary units."
     )
     calibration.editingFinished.connect(
-        lambda editor=calibration: self._set_dataset_spectral_channel_setting(
+        lambda editor=calibration: set_setting(
             dataset,
             group,
             "signal_per_mbarn",
@@ -1356,7 +1374,7 @@ def _dataset_spectral_channels_group_box(
         "in both representations; choose an ion to remove it from χ″."
     )
     ion.currentIndexChanged.connect(
-        lambda _index, combo=ion: self._set_dataset_spectral_channel_setting(
+        lambda _index, combo=ion: set_setting(
             dataset, group, "form_factor_ion", str(combo.currentData())
         )
     )
@@ -1379,7 +1397,7 @@ def _dataset_spectral_channels_group_box(
         "three-component trace, use 2/3; for one Cartesian component, use 2."
     )
     polarization.currentIndexChanged.connect(
-        lambda _index, combo=polarization: self._set_dataset_spectral_channel_setting(
+        lambda _index, combo=polarization: set_setting(
             dataset, group, "polarization_mode", str(combo.currentData())
         )
     )
@@ -1389,11 +1407,12 @@ def _dataset_spectral_channels_group_box(
         _parameter_to_text(config["polarization_scalar"])
     )
     polarization_scalar.setObjectName("ins_polarization_scalar")
+    polarization_scalar.setEnabled(config["polarization_mode"] == "custom_scalar")
     polarization_scalar.setToolTip(
         "Positive custom polarization factor P(Q), used only with Custom scalar."
     )
     polarization_scalar.editingFinished.connect(
-        lambda editor=polarization_scalar: self._set_dataset_spectral_channel_setting(
+        lambda editor=polarization_scalar: set_setting(
             dataset,
             group,
             "polarization_scalar",
@@ -1401,6 +1420,10 @@ def _dataset_spectral_channels_group_box(
         )
     )
     form.addRow("Custom P", polarization_scalar)
+
+    form = QtWidgets.QFormLayout()
+    form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+    advanced_columns.addLayout(form, 1)
 
     moment = QtWidgets.QComboBox()
     moment.setObjectName("ins_moment_unit")
@@ -1412,7 +1435,7 @@ def _dataset_spectral_channels_group_box(
         "no extra g². Spin-operator susceptibility is multiplied by g²."
     )
     moment.currentIndexChanged.connect(
-        lambda _index, combo=moment: self._set_dataset_spectral_channel_setting(
+        lambda _index, combo=moment: set_setting(
             dataset, group, "moment_unit", str(combo.currentData())
         )
     )
@@ -1420,12 +1443,13 @@ def _dataset_spectral_channels_group_box(
 
     g_factor = QtWidgets.QLineEdit(_parameter_to_text(config["g_factor"]))
     g_factor.setObjectName("ins_g_factor")
+    g_factor.setEnabled(config["moment_unit"] == "spin_squared")
     g_factor.setToolTip(
         "Landé g factor. It is applied exactly once, and only when χ″ is "
         "declared in spin² rather than magnetic-moment μ_B²."
     )
     g_factor.editingFinished.connect(
-        lambda editor=g_factor: self._set_dataset_spectral_channel_setting(
+        lambda editor=g_factor: set_setting(
             dataset, group, "g_factor", float(_parse_parameter_text(editor.text()))
         )
     )
@@ -1441,7 +1465,7 @@ def _dataset_spectral_channels_group_box(
         "factor. Included data require fixed Ei or Ef so nfit can remove it from χ″."
     )
     kinematic.currentIndexChanged.connect(
-        lambda _index, combo=kinematic: self._set_dataset_spectral_channel_setting(
+        lambda _index, combo=kinematic: set_setting(
             dataset, group, "kf_ki_state", str(combo.currentData())
         )
     )
@@ -1465,7 +1489,7 @@ def _dataset_spectral_channels_group_box(
         editor.setObjectName(object_name)
         editor.setToolTip(tooltip)
         editor.editingFinished.connect(
-            lambda ed=editor, setting=key: self._set_dataset_spectral_channel_setting(
+            lambda ed=editor, setting=key: set_setting(
                 dataset,
                 group,
                 setting,
@@ -1486,14 +1510,14 @@ def _dataset_spectral_channels_group_box(
         status_text = "Provide fixed Ei or Ef to remove k_f/k_i."
     else:
         status_text = "Cross-section and χ″ channels are available."
-    status = QtWidgets.QLabel(status_text)
+    status = QtWidgets.QLabel(status_override or status_text)
     status.setObjectName("ins_channel_status")
     status.setWordWrap(True)
     status.setToolTip(
         "Readiness of the paired INS conversion. The imported signal remains "
         "available even when a required conversion input is missing."
     )
-    form.addRow("Status", status)
+    main_form.addRow("Status", status)
     return box
 
 
