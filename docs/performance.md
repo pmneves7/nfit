@@ -100,7 +100,11 @@ geometry.
 
 Cache entries are process-local and evicted by least-recent use. Each GUI data
 cache has both an entry-count limit and an estimated numerical-array memory
-budget; an entry larger than its cache budget is used but not retained. The
+budget. Completed viewer and composite binnings that leave memory are retained
+as temporary disk artifacts, including results larger than the memory budget.
+Reopening the viewer or saving cached binnings reads those artifacts instead of
+repeating the reduction. Temporary artifacts are removed when the cache is
+cleared or nfit exits. The
 budgets count distinct NumPy array payloads, not small Python-object overhead.
 The prepared-table cache defaults to 128 MiB and the model-overlay cache to
 256 MiB. Viewer and composite cache capacities use one sixteenth of physical
@@ -113,8 +117,9 @@ Caches also have defensive entry-count limits. The composite cache accepts up
 to 64 entries within its memory budget so projects with several dataset-group
 composites do not repeatedly evict and rebuild one another while reopening a
 viewer.
-Caches are performance aids, not stored scientific state: recomputation after
-eviction produces the same result.
+Parent composites also retain child reductions on matching grids; saving the
+children later reuses those results. Changed source data, masks, backgrounds,
+or numerical bin settings invalidate the corresponding cached results.
 
 Single-crystal MDEvent detector normalization groups runs with identical
 detector geometry and evaluates all requested symmetry operations in the

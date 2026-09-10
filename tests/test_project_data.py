@@ -73,6 +73,82 @@ def test_live_derived_dataset_keeps_owner_in_viewer_binning_aliases():
     assert len(datasets) == 2
 
 
+def test_composite_preserves_nonidentity_histogram_coordinates():
+    basis = [[1, 1, 0, 0], [0, 0, 1, 0], [1, -1, 0, 0], [0, 0, 0, 1]]
+    axes = tuple(
+        MDHistoAxis(name, edges, "meV" if i == 3 else "rlu", "energy" if i == 3 else "momentum")
+        for i, (name, edges) in enumerate(zip(
+            ["parallel", "vertical", "transverse", "E"],
+            [[0.5, 1.5, 2.5], [1.5, 2.5, 3.5], [-0.1, 0.1], [2.75, 3.25]],
+            strict=True,
+        ))
+    )
+    signal = np.arange(1., 5.).reshape(2, 2, 1, 1)
+    data = MDHistoData(axes, signal, np.ones_like(signal), np.zeros_like(signal, dtype=bool), np.ones_like(signal), metadata={"rebin": {"vectors": basis}})
+    group = DataGroup("HHL", datasets=[DatasetEntry("source", data, kind="mdhisto")])
+    config = dict(enabled=True, mean_weighting="uniform", minimum_coverage=0., axes=[
+        dict(name=axis.name, vector=vector, lower=float(axis.centers[0]), upper=float(axis.centers[-1]), step_size=float(np.diff(axis.values)[0]), mode="step", fractional=False)
+        for axis, vector in zip(axes, basis, strict=True)
+    ])
+    result = project_gui._composite_mdhisto_data(group, config)
+    np.testing.assert_allclose(result.signal, signal)
+    np.testing.assert_allclose(result.errors, data.errors)
+    np.testing.assert_allclose(result.auxiliary_channels["coverage_fraction"].values, 1.)
+
+
+def test_save_reuses_binnings_evicted_from_memory(tmp_path, monkeypatch):
+    project_gui._COMPOSITE_DATA_CACHE.clear()
+    monkeypatch.setattr(project_gui, "_COMPOSITE_DATA_CACHE_MAX_BYTES", 1)
+    # The service owns the budget; the GUI alias is retained for compatibility.
+    from nfit import project_composites
+    monkeypatch.setattr(project_composites, "_COMPOSITE_DATA_CACHE_MAX_BYTES", 1)
+    subgroups = []
+    for i in range(3):
+        source = tmp_path / f"source-{i}.nxs"
+        source.write_bytes(b"placeholder")
+        node = DatasetGroup(str(i), datasets=[DatasetEntry(str(i), _tiny_mdhisto_data(i + 1.), kind="mdhisto", metadata={"source_file": str(source)})])
+        config = project_gui.data_group_composite_config(project_gui._composite_scope(DataGroup("temporary"), node))
+        config.update(enabled=True, minimum_coverage=0.)
+        subgroups.append(node)
+    root = DataGroup("root", subgroups=subgroups)
+    project = NfitProject([root], settings={"cache_binnings": True})
+    expected, _ = project_gui.slice_viewer_datasets(root)
+    assert not project_gui._COMPOSITE_DATA_CACHE
+    with monkeypatch.context() as checks:
+        checks.setattr("nfit.rebin_cache.read_dataset_artifact", lambda *a: pytest.fail("freshness checks must not read arrays"))
+        assert not project_gui.project_binnings_need_refresh(project)
+    monkeypatch.setattr(project_composites, "composite_dataset_data", lambda *a, **k: pytest.fail("saving current binnings must not rebin"))
+    path = tmp_path / "overflow.nfit"
+    save_project(project, path)
+    assert len(read_project_manifest(path)["settings"][project_gui.PROJECT_BINNING_CACHE_ENTRIES_KEY]) == 3
+    restored = load_project(path)
+    actual, _ = project_gui.slice_viewer_datasets(restored.data_groups[0])
+    for left, right in zip(expected, actual, strict=True):
+        np.testing.assert_allclose(left.signal, right.signal, equal_nan=True)
+        np.testing.assert_allclose(left.errors, right.errors, equal_nan=True)
+        np.testing.assert_array_equal(left.mask, right.mask)
+        np.testing.assert_array_equal(left.num_events, right.num_events)
+    restored.data_groups[0].subgroups[0].metadata[project_gui.GROUP_COMPOSITE_KEY]["minimum_coverage"] = 0.5
+    assert project_gui.project_binnings_need_refresh(restored)
+    project_gui._COMPOSITE_DATA_CACHE.clear()
+
+
+def test_hierarchical_rebin_retains_matching_child_caches(monkeypatch):
+    from nfit import project_composites
+    project_gui._COMPOSITE_DATA_CACHE.clear()
+    child = DatasetGroup("child", datasets=[DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")])
+    parent = DatasetGroup("parent", subgroups=[child])
+    root = DataGroup("root", subgroups=[parent])
+    child_scope = project_gui._composite_scope(root, child)
+    config = project_gui.data_group_composite_config(child_scope)
+    config.update(enabled=True, minimum_coverage=0., mean_weighting="uniform")
+    parent.metadata[project_gui.GROUP_COMPOSITE_KEY] = copy.deepcopy(config)
+    project_gui._cached_composite_dataset_data(project_gui._composite_scope(root, parent))
+    assert project_gui._peek_cached_composite_dataset_data(child_scope) is not None
+    monkeypatch.setattr(project_composites, "composite_dataset_data", lambda *a, **k: pytest.fail("child already computed"))
+    assert project_gui.prepare_project_binning_cache(NfitProject([root])) == 0
+
+
 def test_composite_progress_reports_dataset_count_and_global_point_work():
     events = []
     report = project_gui._composite_progress_callback(events.append, 6)

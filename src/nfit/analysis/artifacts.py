@@ -15,13 +15,16 @@ from ..project_archive import read_project_artifact
 from .core import DatasetOutput, TableOutput
 
 
-def write_dataset_artifact(data: MDHistoData | PointListData, destination: str | Path) -> None:
+def write_dataset_artifact(
+    data: MDHistoData | PointListData, destination: str | Path, *, compressed: bool = True
+) -> None:
     target = Path(destination)
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = _payload(data)
     with tempfile.NamedTemporaryFile(dir=target.parent, suffix=".npz", delete=False) as stream:
         temporary = Path(stream.name)
-        np.savez_compressed(stream, **payload)
+        writer = np.savez_compressed if compressed else np.savez
+        writer(stream, **payload)
     try:
         temporary.replace(target)
     except Exception:

@@ -87,9 +87,9 @@ def rebin_bin_information_widget(
     size.setWordWrap(True)
     size.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
     size.setToolTip(
-        "Rebin caches live in memory. A project also embeds them when File > Cache binnings "
-        "is enabled; otherwise an on-disk array is created only by materializing a rebinned "
-        "dataset. Compressed file size varies."
+        "Rebin caches use memory with temporary disk overflow for larger results. "
+        "File > Cache binnings also embeds them in the project for reuse after reopening. "
+        "Compressed project size varies."
     )
     layout.addWidget(size)
 

@@ -475,7 +475,7 @@ _COMPOSITE_DATA_CACHE_MAX_BYTES = _project_data._COMPOSITE_DATA_CACHE_MAX_BYTES
 
 PROJECT_CACHE_BINNINGS_KEY = "cache_binnings"
 PROJECT_BINNING_CACHE_ENTRIES_KEY = "binning_cache_entries"
-PROJECT_BINNING_CACHE_FORMAT_VERSION = 3
+PROJECT_BINNING_CACHE_FORMAT_VERSION = 4
 
 
 def _ensure_dataset_data_loaded(dataset: DatasetEntry) -> Any:
@@ -5061,6 +5061,11 @@ def _project_binning_is_current(
     config: dict[str, Any],
 ) -> bool:
     if kind == "dataset":
+        key = target.id if config is _fit_dataset_rebin_config(target) else f"{target.id}:{binning_id}"
+        if hasattr(_VIEWER_VIEW_CACHE, "has_signature"):
+            return _VIEWER_VIEW_CACHE.has_signature(
+                key, _viewer_view_signature(target, effective_dataset_masks(group, target), config)
+            )
         return (
             _peek_cached_dataset_view(
                 target,
@@ -5071,6 +5076,17 @@ def _project_binning_is_current(
             is not None
         )
     fit = config is _fit_data_group_composite_config(target)
+    if hasattr(_COMPOSITE_DATA_CACHE, "has_signature"):
+        return _COMPOSITE_DATA_CACHE.has_signature(
+            _composite_cache_key(target, None if fit else binning_id),
+            (
+                _composite_cache_signature(target)
+                if fit
+                else _composite_cache_signature(
+                    target, config_override=config, binning_id=binning_id
+                )
+            ),
+        )
     return _peek_cached_composite_dataset_data(
         target,
         config_override=(None if fit else config),

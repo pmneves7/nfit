@@ -398,6 +398,10 @@ enabled configurations have zero fit weight: they are not prepared during
 optimizer or sampler iterations, but nfit evaluates the fitted model on them
 once afterward for plotting. A dataset and a collection each have their own
 independent list of named configurations.
+When combining histograms, nfit reconstructs physical coordinates from each
+source's saved axis vectors before projecting into the output basis. This
+preserves peak positions and coverage when combining already rebinned HHL
+histograms or histograms with custom axis labels.
 Viewer aliases for named binnings preserve live analysis ownership, so
 source-linked clone and histogram-arithmetic datasets remain evaluable after a
 project is reopened.

@@ -8,6 +8,7 @@ stacking, background alignment, and materialization.  It is GUI-independent;
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -38,7 +39,7 @@ from .mdhisto import (
 from .performance import initialize_rebin_performance
 from .pipeline import BackgroundSpec, DataGroup, DatasetEntry, DatasetGroup, MaskSpec
 from .project_archive import replace_dataset_artifact
-from .project_coordinates import _identity_vector
+from .project_coordinates import _identity_vector, _mdhisto_rebin_source_axis_vectors
 from .project_history import _dataset_group_paths
 from .project_imports import (
     GROUP_COMPOSITE_KEY,
@@ -50,6 +51,7 @@ from .project_masks import _mdhisto_with_nfit_masks, _point_data_with_nfit_masks
 from .project_point_lists import prepared_point_list_data
 from .raw_dgs import bin_raw_dgs_group
 from .rebin import rebin_nd
+from .rebin_cache import RebinCache
 from .spectral_channels import SPECTRAL_CHANNEL_CONFIG_KEY
 from .symmetry import SymmetrySpec, symmetry_config
 
@@ -166,7 +168,7 @@ _validate_mdhisto_rebin_basis = _backend_function("_validate_mdhisto_rebin_basis
 _viewer_view_signature = _backend_function("_viewer_view_signature")
 effective_dataset_masks = _backend_function("effective_dataset_masks")
 
-_COMPOSITE_DATA_CACHE: OrderedDict[Any, tuple[str, Any]] = OrderedDict()
+_COMPOSITE_DATA_CACHE: OrderedDict[Any, tuple[str, Any]] = RebinCache()
 _COMPOSITE_DATA_CACHE_LIMIT = 64
 # Large four-dimensional event reductions commonly retain about 0.5 GiB per
 # result.  A 256 MiB budget therefore discarded every such entry immediately,
@@ -808,6 +810,27 @@ def _source_data_for_group_composite(
     return data
 
 
+def _composite_numerical_config(group, config):
+    """Exclude UI/runtime controls and options unused by event reducers."""
+    result = copy.deepcopy(dict(config))
+    for key in ("stale", "auto_rebin", "workers", "max_batch_mb", "_binning_id"):
+        result.pop(key, None)
+    node = group.node if isinstance(group, _CompositeScope) else group
+    is_event = "mdevent" in node.metadata
+    if is_event:
+        for key in ("fractional", "mean_weighting", "normalize"):
+            result.pop(key, None)
+    for axis in result.get("axes", []):
+        for key in ("auto_lower_value", "auto_upper_value"):
+            axis.pop(key, None)
+        for key in ("auto_lower", "auto_upper"):
+            if not axis.get(key):
+                axis.pop(key, None)
+        if is_event:
+            axis.pop("fractional", None)
+    return result
+
+
 def _composite_cache_signature(
     group: DataGroup,
     _trail: frozenset[Any] = frozenset(),
@@ -826,7 +849,7 @@ def _composite_cache_signature(
     )
     child_scopes = _hierarchical_composite_scopes(group)
     payload = [
-        json.dumps(config, sort_keys=True, default=str),
+        json.dumps(_composite_numerical_config(group, config), sort_keys=True, default=str),
         group.metadata.get("metadata_dimensions", []),
         metadata_dimension_preview(group) if group.metadata.get("metadata_dimensions") else [],
         [[child.name, _composite_cache_signature(child, trail)] for child in child_scopes],
@@ -1141,12 +1164,26 @@ def _composite_dataset_data(
     if child_scopes:
         child_entries = []
         for child in child_scopes:
-            child_data = composite_dataset_data(
-                child,
-                progress_callback=progress_callback,
-                config_override=config,
-                include_source_masks=include_source_masks,
-            )
+            if include_source_masks:
+                requested = _composite_numerical_config(child, config)
+                native = _composite_numerical_config(child, data_group_composite_config(child))
+                same_config = requested == native
+                variant = hashlib.sha256(
+                    json.dumps(requested, sort_keys=True, default=str).encode()
+                ).hexdigest()
+                child_data = _cached_composite_dataset_data(
+                    child,
+                    progress_callback=progress_callback,
+                    config_override=None if same_config else config,
+                    binning_id=None if same_config else f"dependency-{variant}",
+                )
+            else:
+                child_data = composite_dataset_data(
+                    child,
+                    progress_callback=progress_callback,
+                    config_override=config,
+                    include_source_masks=False,
+                )
             if not isinstance(child_data, MDHistoData):
                 raise TypeError(
                     "hierarchical composites currently require gridded child composites"
@@ -1751,6 +1788,11 @@ def _composite_mdhisto_data(
             first_data = data
         source_grids = np.meshgrid(*(axis.centers for axis in data.axes), indexing="ij")
         coords = np.stack(source_grids, axis=-1)
+        if len(data.axes) == 4:
+            # Histogram axes are coordinates in their own basis, not HKLE.
+            # Reconstruct physical coordinates before projecting into the
+            # common output basis (including for already rebinned children).
+            coords = coords @ np.vstack(_mdhisto_rebin_source_axis_vectors(data))
         if metadata_dimensions:
             metadata_grids = []
             for dimension in metadata_dimensions:

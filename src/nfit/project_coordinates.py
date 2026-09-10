@@ -53,8 +53,11 @@ def _mdhisto_rebin_source_axis_vectors(data: MDHistoData) -> list[np.ndarray | N
     vectors: list[np.ndarray | None] = []
     if len(data.axes) != 4:
         return [None for _axis in data.axes]
-    for axis in data.axes:
-        vectors.append(np.asarray(_mdhisto_rebin_axis_vector(axis, len(vectors), len(data.axes)), dtype=float))
+    for index, axis in enumerate(data.axes):
+        vector = _mdhisto_axis_coordinate_vector(data, index)
+        if vector is None:
+            vector = np.asarray(_mdhisto_rebin_axis_vector(axis, index, len(data.axes)), dtype=float)
+        vectors.append(vector)
     return vectors
 
 
