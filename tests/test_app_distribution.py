@@ -97,6 +97,25 @@ def test_beta_workflow_uses_node24_actions():
     assert "download-artifact@v4" not in workflow
 
 
+def test_linux_smoke_runner_installs_debian_runtime_dependencies():
+    root = Path(__file__).resolve().parents[1]
+    workflow = (root / ".github/workflows/build-beta-installers.yml").read_text(
+        encoding="utf-8"
+    )
+    build_script = (root / "tools/distribution/build.py").read_text(
+        encoding="utf-8"
+    )
+    for package in (
+        "libegl1",
+        "libgl1",
+        "libopengl0",
+        "libxkbcommon0",
+        "libxcb-cursor0",
+    ):
+        assert package in workflow
+        assert package in build_script
+
+
 def test_release_selection_is_version_and_platform_aware():
     result = release()
     assert result.installer_url == (

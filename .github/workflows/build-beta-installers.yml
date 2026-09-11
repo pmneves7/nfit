@@ -24,6 +24,12 @@ jobs:
             runner: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
+      - name: Install Linux desktop runtime libraries
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libegl1 libgl1 libopengl0 libxkbcommon0 libxcb-cursor0
       - uses: mamba-org/setup-micromamba@v3
         with:
           environment-file: environment.yml
