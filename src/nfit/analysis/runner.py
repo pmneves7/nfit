@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -239,7 +239,7 @@ def execute_to_artifacts(
     return AnalysisResultRecord(
         recipe_hash=current_recipe,
         input_fingerprints={item.dataset_id: item.fingerprint for item in inputs},
-        outputs=refs, status="success", created_at=datetime.now(timezone.utc).isoformat(),
+        outputs=refs, status="success", created_at=datetime.now(UTC).isoformat(),
         duration_seconds=time.monotonic() - started,
         warnings=execution.warnings, diagnostics=execution.diagnostics,
     )

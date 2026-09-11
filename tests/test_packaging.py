@@ -1,6 +1,7 @@
+import tomllib
 from pathlib import Path
 
-import tomllib
+from packaging.requirements import Requirement
 
 
 def _project_metadata() -> dict:
@@ -13,7 +14,7 @@ def test_distribution_name_and_gui_entry_point_are_pip_ready():
 
     assert project["name"] == "nfit"
     assert project["scripts"]["nfit"] == "nfit.project_gui:main"
-    assert "pyside6>=6.6" in project["dependencies"]
+    assert "pyside6>=6.11.2" in project["dependencies"]
     assert "colorcet>=3.1" in project["dependencies"]
     assert "cmcrameri>=1.10" in project["dependencies"]
     assert "cmocean>=4.0.3" in project["dependencies"]
@@ -24,7 +25,16 @@ def test_distribution_name_and_gui_entry_point_are_pip_ready():
 def test_release_metadata_has_author_license_and_urls():
     project = _project_metadata()
 
-    assert project["version"] == "0.86.1"
+    assert project["version"] == "0.86.2"
     assert project["authors"] == [{"name": "Paul M. Neves", "email": "pneves1@jhu.edu"}]
     assert project["license"] == {"text": "MIT"}
     assert project["urls"]["Repository"] == "https://github.com/pmneves7/nfit"
+
+
+def test_numpy_requirement_excludes_versions_without_trapezoid():
+    # Sum rules, closures, and raw DGS import use np.trapezoid (NumPy 2.0+).
+    requirements = {
+        requirement.name: requirement
+        for requirement in map(Requirement, _project_metadata()["dependencies"])
+    }
+    assert not requirements["numpy"].specifier.contains("1.26.4")

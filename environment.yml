@@ -2,23 +2,38 @@ name: nfit
 channels:
   - conda-forge
 dependencies:
-  - python=3.11
-  - numpy
-  - scipy
-  - matplotlib
-  - h5py
+  - python=3.14
+  - numpy>=2.5
+  - scipy>=1.18
+  - matplotlib>=3.11.1
+  - h5py>=3.16
   - emcee
   - gemmi
-  - numba
+  - numba>=0.67
   - periodictable
   - threadpoolctl
-  - pyside6
+  - pyside6>=6.11.2
+  - pyvista>=0.48.4
+  - pyvistaqt>=0.13.1
+  - vtk-base>=9.6.2
+  - ase
+  - seekpath
+  - colorcet
+  - cmocean
+  - palettable
+  - imageio
+  - imageio-ffmpeg
   - pytest
-  - sphinx<9
-  - myst-parser<5
-  - myst-nb
-  - furo
+  - pytest-cov
+  - ruff
+  - python-build
+  - twine
+  - sphinx>=9.1,<10
+  - myst-parser>=5.1,<6
+  - furo>=2025.12.19
   - sphinx-copybutton
   - pip
   - pip:
+      # The conda-forge 1.10 build reports version 0.0.0 in Python metadata.
+      - cmcrameri==1.10
       - -e ".[dev,docs]"

@@ -81,9 +81,16 @@ conda activate nfit
 ```
 
 If you downloaded a ZIP or chose another location, replace `~/code/nfit` with
-that folder's path. The `conda env create` command downloads Python 3.11 and
+that folder's path. The `conda env create` command downloads Python 3.14 and
 all libraries required by this project. When it completes, your prompt should
 start with `(nfit)`.
+
+The package requires Python 3.12 or newer. The development environment uses
+standard CPython 3.14, NumPy 2.5, SciPy 1.18, and Numba 0.67 or newer.
+Conda resolves Numba and its matching llvmlite together. The environment also
+installs Qt, PyVista, and VTK from conda-forge so that compiled dependencies
+are managed by the same package manager. The optional GPU backend requires
+a separate compatible CuPy installation on supported hardware.
 
 ### 4. Run nfit
 
@@ -128,6 +135,41 @@ Run the environment update after pulling changes, especially when
 `environment.yml` changed. If `git pull` says that local changes would be
 overwritten, do not force it; ask the collaborator who manages the project for
 help preserving your work.
+
+Before upgrading an existing Python 3.11 environment, keep a rollback copy:
+
+```bash
+conda create -n nfit-backup --clone nfit
+conda env update -f environment.yml
+conda activate nfit
+python -m pip check
+python -m pytest -q
+```
+
+Close running nfit windows before upgrading. Restart nfit afterward so that
+the application loads the new Python and Qt libraries. Keep the backup until
+imports, fitting, and the 2D and 3D viewers work with your projects.
+On macOS, rebuild any local app launcher after changing Python's minor version;
+the launcher embeds the Python shared-library path.
+
+### Reproduce the tested macOS environment
+
+For an Apple Silicon Mac, `environments/nfit-osx-arm64.explicit.txt` records
+the exact conda packages and checksums used for validation. From the repository
+root, create a separate environment without resolving newer versions:
+
+```bash
+conda create -n nfit-repro --file environments/nfit-osx-arm64.explicit.txt
+conda activate nfit-repro
+python -m pip install --no-deps cmcrameri==1.10 -e .
+python -m pip check
+python -m pytest -q
+```
+
+The explicit file is specific to macOS ARM64. Use `environment.yml` on other
+platforms or when intentionally updating dependencies. cmcrameri is installed
+from PyPI because the conda-forge 1.10 build has incorrect version metadata;
+the compiled numerical and graphics libraries come from conda-forge.
 
 ### Quick troubleshooting
 
@@ -207,7 +249,8 @@ nfit
 
 A local `nfit.app` opens the current checkout using the Python environment that
 built it. It does not bundle Python or require rebuilding after ordinary code
-updates. Keep that environment and checkout at their existing paths.
+updates. Rebuild it after changing Python's minor version. Keep that environment
+and checkout at their existing paths.
 
 From the repository, with the nfit environment active, run:
 
