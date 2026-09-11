@@ -49,10 +49,13 @@ values remain part of project and plot configurations and workflow scripts.
 Use **Calibrate this machine…** for representative 3-D hard-binning and 4-D
 fractional-binning workloads. Use **Benchmark this rebin…** in dataset or
 composite rebin controls for the full selected configuration, including axes,
-symmetry, masks, and output-grid settings. Both test batch targets of 32, 192,
-and 512 MiB with worker ceilings of 1, 2, 4, and 8, capped by the nfit CPU
-allocation and deduplicated. Calibration does not test every possible workload
-or worker count and cannot establish a universal optimum.
+symmetry, masks, and output-grid settings. Candidate ranges scale to the CPU
+allocation and currently available memory detected for the process. Small
+machines retain low worker and 32, 192, and 512 MiB batch candidates. Larger
+machines add intermediate and full CPU-allocation trials and batch targets up
+to one eighth of available RAM, capped at 64 GiB. Linux cgroup memory limits
+are honored. Calibration does not test every possible workload or worker count
+and cannot establish a universal optimum.
 
 Each candidate runs in a fresh process, warms up once, and reports the median
 of two subsequent runtimes. Peak memory is the **trial process's peak resident

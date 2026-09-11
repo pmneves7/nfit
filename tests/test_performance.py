@@ -62,12 +62,63 @@ def test_recommendation_prefers_resources_within_tolerance():
 
 
 def test_benchmark_candidates_include_the_machine_worker_ceiling(monkeypatch):
-    from nfit import _parallel
+    from nfit import _parallel, performance_benchmark
 
     monkeypatch.setattr(_parallel, "num_threads", lambda: 24)
+    monkeypatch.setattr(performance_benchmark, "_available_memory_mib", lambda: 8192)
 
-    workers = {candidate["workers"] for candidate in benchmark_candidates()}
+    candidates = benchmark_candidates()
+    workers = {candidate["workers"] for candidate in candidates}
     assert workers == {1, 4, 8, 24}
+    assert {candidate["max_batch_mb"] for candidate in candidates} == {
+        32,
+        192,
+        512,
+        1024,
+    }
+
+
+def test_benchmark_candidates_scale_to_large_allocations(monkeypatch):
+    from nfit import _parallel, performance_benchmark
+
+    monkeypatch.setattr(_parallel, "num_threads", lambda: 256)
+    monkeypatch.setattr(
+        performance_benchmark, "_available_memory_mib", lambda: 2 * 1024**2
+    )
+    candidates = benchmark_candidates()
+    assert {candidate["workers"] for candidate in candidates} == {
+        1,
+        8,
+        64,
+        128,
+        256,
+    }
+    assert {candidate["max_batch_mb"] for candidate in candidates} == {
+        32,
+        192,
+        512,
+        4096,
+        65_536,
+    }
+
+
+def test_macos_available_memory_uses_free_inactive_and_speculative_pages(
+    monkeypatch,
+):
+    from nfit import performance_benchmark
+
+    output = """Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free: 100.
+Pages active: 900.
+Pages inactive: 200.
+Pages speculative: 50.
+"""
+    monkeypatch.setattr(
+        performance_benchmark.subprocess,
+        "check_output",
+        lambda *args, **kwargs: output,
+    )
+    assert performance_benchmark._darwin_available_memory_bytes() == 350 * 16384
 
 
 def _project():

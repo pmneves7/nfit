@@ -8,22 +8,29 @@ from PySide6 import QtCore, QtWidgets
 
 from .file_dialogs import get_save_file_name
 from .performance import load_performance_settings, save_performance_settings
-from .performance_benchmark import BenchmarkCancelled, benchmark_rebin, export_benchmark_script
+from .performance_benchmark import (
+    BenchmarkCancelled,
+    benchmark_candidates,
+    benchmark_rebin,
+    export_benchmark_script,
+)
 
 
 class _BenchmarkWorker(QtCore.QThread):
     row = QtCore.Signal(object)
     outcome = QtCore.Signal(object)
 
-    def __init__(self, project, target, parent):
+    def __init__(self, project, target, candidates, parent):
         super().__init__(parent)
         self.project = project
         self.target = target
+        self.candidates = candidates
         self.cancel = threading.Event()
 
     def run(self):
         try:
             result = benchmark_rebin(self.project, **self.target,
+                                     candidates=self.candidates,
                                      cancel=self.cancel.is_set, progress=self.row.emit)
         except BenchmarkCancelled:
             result = "Cancelled. No settings changed."
@@ -42,9 +49,14 @@ class BenchmarkDialog(QtWidgets.QDialog):
         self.apply = apply
         self.worker = None
         self.result = None
+        self.candidates = benchmark_candidates()
+        memory_targets = sorted({row["max_batch_mb"] for row in self.candidates})
+        worker_targets = sorted({row["workers"] for row in self.candidates})
         layout = QtWidgets.QVBoxLayout(self)
         info = QtWidgets.QLabel(
-            "Tests batch targets of 32, 192 and 512 MiB with up to 8 workers. "
+            f"Tests batch targets of {', '.join(map(str, memory_targets))} MiB "
+            f"with worker ceilings of {', '.join(map(str, worker_targets))}. "
+            "The range is scaled to this process's detected CPU and available-memory allocation. "
             "Each trial warms up once, then times two runs in a separate process. "
             "This may take several minutes and use substantial CPU and memory. "
             "Peak memory includes the whole trial process, not the live application.\n\n"
@@ -93,7 +105,9 @@ class BenchmarkDialog(QtWidgets.QDialog):
         self.export.setEnabled(False)
         self.close_button.setText("Cancel")
         self.status.setText("Running isolated trials…")
-        self.worker = _BenchmarkWorker(self.project, self.target, self)
+        self.worker = _BenchmarkWorker(
+            self.project, self.target, self.candidates, self
+        )
         self.worker.row.connect(self._row)
         self.worker.outcome.connect(self._outcome)
         self.worker.finished.connect(self._finished)
