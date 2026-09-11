@@ -97,6 +97,16 @@ def test_beta_workflow_uses_node24_actions():
     assert "download-artifact@v4" not in workflow
 
 
+def test_beta_workflow_exports_the_release_version_without_nested_shell_quotes():
+    workflow = (
+        Path(__file__).resolve().parents[1]
+        / ".github/workflows/build-beta-installers.yml"
+    ).read_text(encoding="utf-8")
+    assert 'value="$(python -c \'import tomllib;' in workflow
+    assert 'echo "value=$value" >> "$GITHUB_OUTPUT"' in workflow
+    assert 'echo "value=$(python -c' not in workflow
+
+
 def test_linux_smoke_runner_installs_debian_runtime_dependencies():
     root = Path(__file__).resolve().parents[1]
     workflow = (root / ".github/workflows/build-beta-installers.yml").read_text(
