@@ -19,8 +19,9 @@ def test_file_dialog_uses_project_then_remembers_selected_directory(monkeypatch,
     selected_path = selected_dir / "scan.nxs"
     starts = []
 
-    def choose(_parent, _caption, start, _filter):
+    def choose(_parent, _caption, start, _filter, **kwargs):
         starts.append(Path(start))
+        assert "options" in kwargs
         return str(selected_path), "Data files (*)"
 
     monkeypatch.setattr(QtWidgets.QFileDialog, "getOpenFileName", choose)
@@ -33,9 +34,35 @@ def test_file_dialog_uses_project_then_remembers_selected_directory(monkeypatch,
 
     monkeypatch.setattr(
         QtWidgets.QFileDialog,
+        "getOpenFileNames",
+        lambda _parent, _caption, start, _filter, **kwargs: (
+            (starts.append(Path(start)) or [str(selected_path)]),
+            "Data files (*)" if "options" in kwargs else "",
+        ),
+    )
+    paths, selected_filter = file_dialogs.get_open_file_names(
+        None, "Import", "", "Data files (*)"
+    )
+    assert paths == [str(selected_path)]
+    assert selected_filter == "Data files (*)"
+    assert starts[-1] == selected_dir
+
+    monkeypatch.setattr(
+        QtWidgets.QFileDialog,
         "getSaveFileName",
-        lambda _parent, _caption, start, _filter: (starts.append(Path(start)) or "", ""),
+        lambda _parent, _caption, start, _filter, **_kwargs: (
+            starts.append(Path(start)) or "",
+            "",
+        ),
     )
     file_dialogs.get_save_file_name(None, "Save", "result.npz", "NumPy (*.npz)")
     assert starts[-1] == selected_dir / "result.npz"
     application.processEvents()
+
+
+def test_linux_file_dialogs_avoid_desktop_portals(monkeypatch):
+    monkeypatch.setattr(file_dialogs.sys, "platform", "linux")
+
+    assert file_dialogs._dialog_options() & (
+        QtWidgets.QFileDialog.Option.DontUseNativeDialog
+    )

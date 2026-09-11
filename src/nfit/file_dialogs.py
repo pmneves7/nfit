@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -63,11 +64,23 @@ def _initial_path(directory: str, project_path: str | Path | None) -> str:
     return str(base / requested) if requested is not None else str(base)
 
 
+def _dialog_options() -> QtWidgets.QFileDialog.Option:
+    """Use the bundled chooser where Linux desktop portals can block Qt."""
+
+    if sys.platform.startswith("linux"):
+        return QtWidgets.QFileDialog.Option.DontUseNativeDialog
+    return QtWidgets.QFileDialog.Option(0)
+
+
 def get_open_file_name(
     parent: Any, caption: str, directory: str = "", file_filter: str = "", *, project_path=None
 ):
     result = QtWidgets.QFileDialog.getOpenFileName(
-        parent, caption, _initial_path(directory, project_path), file_filter
+        parent,
+        caption,
+        _initial_path(directory, project_path),
+        file_filter,
+        options=_dialog_options(),
     )
     if result[0]:
         remember_file_dialog_path(result[0])
@@ -78,7 +91,11 @@ def get_open_file_names(
     parent: Any, caption: str, directory: str = "", file_filter: str = "", *, project_path=None
 ):
     result = QtWidgets.QFileDialog.getOpenFileNames(
-        parent, caption, _initial_path(directory, project_path), file_filter
+        parent,
+        caption,
+        _initial_path(directory, project_path),
+        file_filter,
+        options=_dialog_options(),
     )
     if result[0]:
         remember_file_dialog_path(result[0][0])
@@ -89,7 +106,11 @@ def get_save_file_name(
     parent: Any, caption: str, directory: str = "", file_filter: str = "", *, project_path=None
 ):
     result = QtWidgets.QFileDialog.getSaveFileName(
-        parent, caption, _initial_path(directory, project_path), file_filter
+        parent,
+        caption,
+        _initial_path(directory, project_path),
+        file_filter,
+        options=_dialog_options(),
     )
     if result[0]:
         remember_file_dialog_path(result[0])
