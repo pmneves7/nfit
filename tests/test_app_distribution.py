@@ -4,6 +4,7 @@ import ast
 import hashlib
 import io
 import json
+import tarfile
 from pathlib import Path
 from urllib.request import Request
 
@@ -186,6 +187,45 @@ def test_release_selection_is_version_and_platform_aware():
         is None
     )
     assert release(github_release().replace(b"v0.87.0", b"v0.88.0rc1")) is None
+
+
+def test_portable_linux_release_selects_tar_archive():
+    payload = github_release(
+        name="nfit-0.87.0-linux-x86_64.tar.gz",
+    )
+    result = updates.parse_github_release(
+        payload,
+        repository="pmneves7/nfit",
+        current_version="0.86.2",
+        target="linux-x86_64",
+        portable_linux=True,
+    )
+
+    assert result is not None
+    assert result.filename == "nfit-0.87.0-linux-x86_64.tar.gz"
+
+
+def test_portable_linux_update_atomically_replaces_bundle(tmp_path):
+    bundle = tmp_path / "nfit"
+    bundle.mkdir()
+    (bundle / "nfit").write_text("old executable")
+    payload = tmp_path / "payload" / "nfit"
+    (payload / "_internal").mkdir(parents=True)
+    (payload / "nfit").write_text("new executable")
+    archive = tmp_path / "nfit-1.0.0-linux-x86_64.tar.gz"
+    with tarfile.open(archive, "w:gz") as stream:
+        stream.add(payload, arcname="nfit")
+
+    executable = updates.install_portable_linux_update(archive, bundle)
+
+    assert executable == bundle / "nfit"
+    assert executable.read_text() == "new executable"
+    backups = list(tmp_path.glob(".nfit-backup-*"))
+    assert len(backups) == 1
+    assert (backups[0] / "nfit").read_text() == "old executable"
+    updates.cleanup_portable_linux_backups(bundle)
+    assert not list(tmp_path.glob(".nfit-backup-*"))
+    assert not list(tmp_path.glob(".nfit-install-*"))
 
 
 @pytest.mark.parametrize(

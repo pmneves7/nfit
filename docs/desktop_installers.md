@@ -137,8 +137,11 @@ Installed copies check the latest published GitHub Release shortly after
 startup. A failed background check does not interrupt offline use. When a newer
 installer is available, nfit asks before downloading it, shows progress, checks
 its size and GitHub-provided SHA-256 digest, and asks again before closing nfit
-and opening the native installer. Canceling a download removes the partial
-file. Update checks can also be run or disabled from the **File** menu.
+and installing it. On macOS and Windows, nfit opens the native installer. A
+Linux tar installation atomically replaces its user-local bundle and relaunches
+nfit; a system-wide Linux installation opens the `.deb` package. Canceling a
+download removes the partial file. Update checks can also be run or disabled
+from the **File** menu.
 
 During private beta testing, the installer contains a fine-grained GitHub token
 limited to read-only access to the `pmneves7/nfit` repository. Published beta

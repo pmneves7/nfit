@@ -107,6 +107,36 @@ def test_approved_install_saves_and_quits_before_opening(
     assert events == ["quit", "open"]
 
 
+def test_portable_linux_update_uses_background_installer(
+    controller, monkeypatch, tmp_path
+):
+    value, gui, _app = controller
+    events = []
+    bundle = tmp_path / "nfit"
+    installer = tmp_path / "nfit-update.tar.gz"
+    value._portable_linux_bundle = bundle
+    monkeypatch.setattr(
+        gui.QtWidgets.QMessageBox,
+        "question",
+        lambda *args: gui.QtWidgets.QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(
+        gui,
+        "launch_portable_linux_update",
+        lambda archive, root: events.append(("install", archive, root)),
+    )
+    monkeypatch.setattr(
+        gui.QtGui.QDesktopServices,
+        "openUrl",
+        lambda _url: events.append(("open",)) or True,
+    )
+    value.quit_application = lambda: events.append(("quit",)) or True
+
+    value._downloaded(installer)
+
+    assert events == [("quit",), ("install", installer, bundle)]
+
+
 def test_splash_shows_branding_progress_and_offline_help(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6 import QtCore, QtWidgets

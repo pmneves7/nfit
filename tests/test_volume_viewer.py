@@ -542,7 +542,7 @@ def test_volume_panel_exposes_independent_channels_curves_and_camera_exports(mon
     monkeypatch.setattr(
         QtWidgets.QFileDialog,
         "getSaveFileName",
-        lambda _parent, title, *_args: (
+        lambda _parent, title, *_args, **_kwargs: (
             ("/private/tmp/view.png", "PNG image (*.png)")
             if "current" in title
             else ("/private/tmp/rotation.mp4", "MP4 movie (*.mp4)")

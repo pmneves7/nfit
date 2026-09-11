@@ -17,6 +17,8 @@ from .app_updates import (
     UpdateError,
     check_for_update,
     download_installer,
+    launch_portable_linux_update,
+    portable_linux_bundle_root,
 )
 
 
@@ -52,6 +54,7 @@ class UpdateController(QtCore.QObject):
         self.quit_application = quit_application
         self.settings = settings or QtCore.QSettings("nfit", "nfit")
         self.configuration = update_configuration()
+        self._portable_linux_bundle = portable_linux_bundle_root()
         self._worker: _Worker | None = None
         self._progress = None
         self._cancelled = threading.Event()
@@ -143,6 +146,7 @@ class UpdateController(QtCore.QObject):
                 self.configuration.repository,
                 application_version(),
                 token=self.configuration.token,
+                portable_linux=self._portable_linux_bundle is not None,
             )
         )
 
@@ -247,11 +251,15 @@ class UpdateController(QtCore.QObject):
 
     def _downloaded(self, installer: Path) -> None:
         self._close_progress()
+        portable_linux = (
+            installer.name.endswith(".tar.gz")
+            and self._portable_linux_bundle is not None
+        )
         choice = QtWidgets.QMessageBox.question(
             self.window,
             "Install nfit update",
-            "The installer has been downloaded and verified. Close nfit and open "
-            "the installer now?\n\nYou will be prompted to save any unsaved "
+            "The update has been downloaded and verified. Close nfit and install "
+            "it now?\n\nYou will be prompted to save any unsaved "
             "project changes.",
             QtWidgets.QMessageBox.StandardButton.Yes
             | QtWidgets.QMessageBox.StandardButton.No,
@@ -260,6 +268,18 @@ class UpdateController(QtCore.QObject):
         if choice != QtWidgets.QMessageBox.StandardButton.Yes:
             return
         if not self.quit_application():
+            return
+        if portable_linux:
+            try:
+                launch_portable_linux_update(
+                    installer, self._portable_linux_bundle
+                )
+            except OSError as error:
+                QtWidgets.QMessageBox.warning(
+                    None,
+                    "Install nfit update",
+                    f"The portable update helper could not be started:\n{error}",
+                )
             return
         if not QtGui.QDesktopServices.openUrl(
             QtCore.QUrl.fromLocalFile(str(installer))

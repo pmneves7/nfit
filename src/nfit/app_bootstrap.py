@@ -68,7 +68,19 @@ def main(argv: list[str] | None = None, *, startup_splash=None) -> int:
     parser.add_argument("--smoke-output", type=Path)
     parser.add_argument("--run-script", type=Path, help="Run an exported Python script using the bundled nfit runtime.")
     parser.add_argument("--benchmark-worker", nargs=4, metavar=("SNAPSHOT", "OUTPUT", "MIB", "WORKERS"), help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--install-portable-update",
+        nargs=3,
+        metavar=("ARCHIVE", "BUNDLE", "PARENT_PID"),
+        help=argparse.SUPPRESS,
+    )
     args = parser.parse_args(argv)
+    if args.install_portable_update:
+        from .app_updates import complete_portable_linux_update
+
+        archive, bundle, parent_pid = args.install_portable_update
+        complete_portable_linux_update(Path(archive), Path(bundle), int(parent_pid))
+        return 0
     if args.benchmark_worker:
         from .performance_benchmark import _trial
 

@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import ssl
+import subprocess
+import sys
+import tarfile
 import tempfile
+import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -125,6 +131,7 @@ def parse_github_release(
     repository: str,
     current_version: str,
     target: str | None = None,
+    portable_linux: bool = False,
 ) -> Release | None:
     """Select and validate the native installer in a GitHub release response."""
     repository = validate_repository(repository)
@@ -141,7 +148,11 @@ def parse_github_release(
             return None
         key = platform_key() if target is None else target
         system = key.split("-", 1)[0]
-        suffix = INSTALLER_SUFFIXES.get(system)
+        suffix = (
+            ".tar.gz"
+            if system == "linux" and portable_linux
+            else INSTALLER_SUFFIXES.get(system)
+        )
         if suffix is None:
             return None
         filename = f"nfit-{latest}-{key}{suffix}"
@@ -181,6 +192,7 @@ def check_for_update(
     *,
     token: str = "",
     target: str | None = None,
+    portable_linux: bool = False,
 ) -> Release | None:
     """Check the latest published GitHub release without changing the app."""
     url = latest_release_url(repository)
@@ -191,6 +203,101 @@ def check_for_update(
         repository=repository,
         current_version=current_version,
         target=target,
+        portable_linux=portable_linux,
+    )
+
+
+def portable_linux_bundle_root() -> Path | None:
+    """Return the writable frozen Linux bundle that may update itself."""
+
+    if sys.platform != "linux" or not bool(getattr(sys, "frozen", False)):
+        return None
+    executable = Path(sys.executable).resolve()
+    bundle = executable.parent
+    if executable.name != "nfit" or not (bundle / "_internal").is_dir():
+        return None
+    if bundle == Path("/opt/nfit") or not os.access(bundle.parent, os.W_OK):
+        return None
+    cleanup_portable_linux_backups(bundle)
+    return bundle
+
+
+def cleanup_portable_linux_backups(bundle: Path) -> None:
+    """Remove backups after the replacement process is no longer using them."""
+
+    for backup in Path(bundle).resolve().parent.glob(".nfit-backup-*"):
+        shutil.rmtree(backup, ignore_errors=True)
+
+
+def install_portable_linux_update(archive: Path, bundle: Path) -> Path:
+    """Atomically replace one user-writable Linux bundle from a verified tar."""
+
+    archive = Path(archive).resolve()
+    bundle = Path(bundle).resolve()
+    if not archive.name.endswith(".tar.gz") or bundle.name != "nfit":
+        raise UpdateError("The portable Linux update paths are invalid.")
+    if not bundle.is_dir() or not (bundle / "nfit").is_file():
+        raise UpdateError("The current portable nfit installation was not found.")
+    staging = Path(tempfile.mkdtemp(prefix=".nfit-install-", dir=bundle.parent))
+    backup = bundle.parent / f".nfit-backup-{uuid.uuid4().hex}"
+    replacement = staging / "nfit"
+    try:
+        with tarfile.open(archive, "r:gz") as stream:
+            stream.extractall(staging, filter="data")
+        executable = replacement / "nfit"
+        if not executable.is_file() or not (replacement / "_internal").is_dir():
+            raise UpdateError("The portable Linux update has an invalid layout.")
+        bundle.rename(backup)
+        try:
+            replacement.rename(bundle)
+        except BaseException:
+            backup.rename(bundle)
+            raise
+        return bundle / "nfit"
+    except (OSError, tarfile.TarError) as error:
+        raise UpdateError(
+            f"The portable Linux update could not be installed: {error}"
+        ) from error
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def launch_portable_linux_update(archive: Path, bundle: Path) -> None:
+    """Start the frozen helper that waits for this process, updates, and relaunches."""
+
+    subprocess.Popen(
+        [
+            sys.executable,
+            "--install-portable-update",
+            str(Path(archive).resolve()),
+            str(Path(bundle).resolve()),
+            str(os.getpid()),
+        ],
+        close_fds=True,
+        start_new_session=True,
+    )
+
+
+def complete_portable_linux_update(
+    archive: Path, bundle: Path, parent_pid: int
+) -> None:
+    """Wait for the GUI to exit, replace its bundle, and launch the new version."""
+
+    deadline = time.monotonic() + 300.0
+    while time.monotonic() < deadline:
+        try:
+            os.kill(parent_pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        raise UpdateError("Timed out waiting for nfit to close before updating.")
+    executable = install_portable_linux_update(archive, bundle)
+    subprocess.Popen(
+        [str(executable)],
+        close_fds=True,
+        start_new_session=True,
+        cwd=str(Path.home()),
     )
 
 
