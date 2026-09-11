@@ -175,3 +175,16 @@ def test_splash_logo_is_true_vector_artwork():
     assert "<radialGradient" in logo
     assert "<image" not in logo
     assert "data:image" not in logo
+
+
+def test_splash_prefers_the_embedded_build_version(monkeypatch, tmp_path):
+    from tools.distribution import startup_splash
+
+    config = tmp_path / "nfit/resources/distribution.json"
+    config.parent.mkdir(parents=True)
+    config.write_text('{"version": "0.89.3"}', encoding="utf-8")
+    monkeypatch.setattr(startup_splash, "_resource_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        startup_splash, "metadata_version", lambda _name: "0.89.2"
+    )
+    assert startup_splash._application_version() == "0.89.3"

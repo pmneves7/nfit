@@ -9,6 +9,7 @@ from urllib.request import Request
 
 import pytest
 
+from nfit import app_distribution
 from nfit import app_updates as updates
 from nfit.app_distribution import local_help_index
 from tools.distribution import build as distribution_build
@@ -48,6 +49,18 @@ def test_help_finds_bundled_pages_before_checkout(tmp_path):
     bundled.parent.mkdir(parents=True)
     bundled.write_text("bundled")
     assert local_help_index(source_file=source) == bundled
+
+
+def test_embedded_build_version_overrides_stale_package_metadata(monkeypatch):
+    monkeypatch.setattr(
+        app_distribution,
+        "update_configuration",
+        lambda: app_distribution.UpdateConfiguration(version="0.89.3"),
+    )
+    monkeypatch.setattr(
+        app_distribution, "metadata_version", lambda _name: "0.89.2"
+    )
+    assert app_distribution.application_version() == "0.89.3"
 
 
 def test_local_mathjax_is_pinned_and_used():
@@ -95,6 +108,7 @@ def test_beta_workflow_uses_node24_actions():
     assert "setup-micromamba@v2" not in workflow
     assert "upload-artifact@v4" not in workflow
     assert "download-artifact@v4" not in workflow
+    assert "python -m pip install --no-deps --editable ." in workflow
 
 
 def test_beta_workflow_exports_the_release_version_without_nested_shell_quotes():

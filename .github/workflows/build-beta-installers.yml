@@ -36,6 +36,9 @@ jobs:
           environment-name: nfit
           cache-environment: true
           init-shell: bash
+      - name: Refresh nfit package metadata
+        shell: bash -el {0}
+        run: python -m pip install --no-deps --editable .
       - name: Require the private beta credential
         shell: bash -el {0}
         env:

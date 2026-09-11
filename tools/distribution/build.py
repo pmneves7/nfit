@@ -78,6 +78,7 @@ def build(
             {
                 "github_repository": github_repository,
                 "github_token": github_token,
+                "version": version,
             }
         ),
         encoding="utf-8",

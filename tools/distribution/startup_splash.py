@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import sys
-from importlib.metadata import version
+from importlib.metadata import version as metadata_version
 from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtSvg, QtWidgets
@@ -42,6 +43,20 @@ def _help_index() -> Path | None:
         root / "nfit/resources/help/index.html",
         root / "docs/_build/html/index.html",
     )
+
+
+def _application_version() -> str:
+    """Read the build version before importing the full nfit package."""
+    config = _resource_root() / "nfit/resources/distribution.json"
+    try:
+        build_version = json.loads(config.read_text(encoding="utf-8")).get(
+            "version", ""
+        )
+        if isinstance(build_version, str) and build_version:
+            return build_version
+    except (OSError, ValueError, TypeError):
+        pass
+    return metadata_version("nfit")
 
 
 def _render_svg(path: Path, size: QtCore.QSize) -> QtGui.QPixmap:
@@ -101,7 +116,7 @@ class StartupSplash(QtWidgets.QWidget):
         layout.addWidget(logo)
 
         details = QtWidgets.QLabel(
-            f"Version {version('nfit')}\n"
+            f"Version {_application_version()}\n"
             "Paul M. Neves · Johns Hopkins University"
         )
         details.setObjectName("startup_details")

@@ -6,7 +6,7 @@ import json
 import platform
 import sys
 from dataclasses import dataclass
-from importlib.metadata import version
+from importlib.metadata import version as metadata_version
 from pathlib import Path
 
 
@@ -16,11 +16,12 @@ class UpdateConfiguration:
 
     repository: str = ""
     token: str = ""
+    version: str = ""
 
 
 def application_version() -> str:
-    """Return the installed distribution's version, also bundled by PyInstaller."""
-    return version("nfit")
+    """Return the authoritative build version, with package metadata as fallback."""
+    return update_configuration().version or metadata_version("nfit")
 
 
 def platform_key() -> str:
@@ -43,9 +44,15 @@ def update_configuration() -> UpdateConfiguration:
         data = json.loads(path.read_text(encoding="utf-8"))
         repository = data.get("github_repository", "")
         token = data.get("github_token", "")
-        if not isinstance(repository, str) or not isinstance(token, str):
+        build_version = data.get("version", "")
+        if not all(
+            isinstance(value, str)
+            for value in (repository, token, build_version)
+        ):
             return UpdateConfiguration()
-        return UpdateConfiguration(repository=repository, token=token)
+        return UpdateConfiguration(
+            repository=repository, token=token, version=build_version
+        )
     except (OSError, ValueError, TypeError):
         return UpdateConfiguration()
 
