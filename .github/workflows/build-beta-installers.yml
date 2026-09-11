@@ -1,0 +1,78 @@
+name: Build beta installers
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS Apple silicon
+            runner: macos-15
+          - label: macOS Intel
+            runner: macos-15-intel
+          - label: Windows x86-64
+            runner: windows-2025
+          - label: Linux x86-64
+            runner: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          environment-name: nfit
+          cache-environment: true
+          init-shell: bash
+      - name: Require the private beta credential
+        shell: bash -el {0}
+        env:
+          NFIT_GITHUB_READ_TOKEN: ${{ secrets.NFIT_GITHUB_READ_TOKEN }}
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          if [[ "$REPOSITORY_PRIVATE" == "true" && -z "$NFIT_GITHUB_READ_TOKEN" ]]; then
+            echo "Add a repository secret named NFIT_GITHUB_READ_TOKEN before building private beta installers."
+            exit 1
+          fi
+      - name: Build and smoke-test installer
+        shell: bash -el {0}
+        env:
+          NFIT_GITHUB_READ_TOKEN: ${{ secrets.NFIT_GITHUB_READ_TOKEN }}
+          QT_QPA_PLATFORM: offscreen
+        run: python tools/distribution/build.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nfit-${{ runner.os }}-${{ runner.arch }}
+          path: dist/installers/*
+          if-no-files-found: error
+
+  draft-release:
+    name: Assemble draft release
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist/installers
+          merge-multiple: true
+      - id: version
+        name: Read package version
+        shell: bash
+        run: echo "value=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')" >> "$GITHUB_OUTPUT"
+      - name: Create private beta draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.value }}
+        shell: bash
+        run: |
+          gh release create "v$VERSION" dist/installers/* \
+            --draft \
+            --title "nfit $VERSION beta" \
+            --notes "Private beta build. Review the installers, then publish this draft to make it visible to installed beta copies."

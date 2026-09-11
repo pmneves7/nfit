@@ -9,7 +9,7 @@ heat capacity, and general point tables.
 nfit was authored by Paul M. Neves (Johns Hopkins University,
 pneves1@jhu.edu) with use of LLM coding tools.
 
-Current package version: 0.86.2.
+Current package version: 0.87.0.
 
 Start with [Getting started](getting_started.md), then use
 [GUI workflows](gui_workflows.md) for interactive work or the
@@ -21,6 +21,7 @@ Start with [Getting started](getting_started.md), then use
 :caption: Start here
 
 getting_started
+desktop_installers
 gui_workflows
 workflow_scripts
 data_import

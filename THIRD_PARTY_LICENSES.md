@@ -1,5 +1,11 @@
 # Third-party licenses
 
+## MathJax
+
+The offline HTML documentation bundles MathJax 3.2.2 under the Apache License
+2.0. Its license text is distributed with the vendored script at
+`docs/_static/mathjax/LICENSE`.
+
 ## SasView sasdata NDRebin
 
 `src/nfit/rebin.py` adapts the `NDRebin` implementation from SasView
@@ -33,4 +39,3 @@ LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
 ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-

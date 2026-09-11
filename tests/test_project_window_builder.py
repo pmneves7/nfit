@@ -159,12 +159,17 @@ def test_project_window_builder_constructs_and_connects_project_actions(monkeypa
             for action in toolbar.actions()
         ] == ["File", "Help"]
 
-        actions = {
+        all_actions = {
             action.text(): action
             for action in explorer.file_menu.actions()
             if not action.isSeparator() and action.menu() is None
         }
-        assert list(actions) == list(action_callbacks)
+        assert list(all_actions) == [
+            *action_callbacks,
+            "Check for updates…",
+            "Update settings…",
+        ]
+        actions = {name: all_actions[name] for name in action_callbacks}
         for action in actions.values():
             action.setEnabled(True)
             action.trigger()
@@ -178,6 +183,8 @@ def test_project_window_builder_constructs_and_connects_project_actions(monkeypa
         assert actions["Save"].shortcut().matches(
             QtGui.QKeySequence.StandardKey.Save
         ) != QtGui.QKeySequence.SequenceMatch.NoMatch
+        assert all_actions["Check for updates…"].toolTip()
+        assert all_actions["Update settings…"].toolTip()
         assert explorer._external_change_timer.parent() is explorer.window
         assert explorer._external_change_timer.interval() == 1500
     finally:

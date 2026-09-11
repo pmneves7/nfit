@@ -89,7 +89,8 @@ def benchmark_rebin(project=None, *, dataset_id=None, group_name=None, node_id=N
                 raise BenchmarkCancelled()
             result_path = root / "result.json"
             result_path.unlink(missing_ok=True)
-            command = [sys.executable, "-m", "nfit.performance_benchmark", str(snapshot),
+            worker_args = ["--benchmark-worker"] if getattr(sys, "frozen", False) else ["-m", "nfit.performance_benchmark"]
+            command = [sys.executable, *worker_args, str(snapshot),
                        str(result_path), str(candidate["max_batch_mb"]), str(candidate["workers"])]
             with (root / "trial.log").open("w+") as log:
                 process = subprocess.Popen(command, stdout=log, stderr=log)
@@ -148,11 +149,10 @@ def export_benchmark_script(path, project=None, **target) -> None:
 
 
 def _trial(snapshot, output, mb, workers):
-    import resource
-
     import numpy as np
 
     from ._parallel import thread_budget
+    from .performance import peak_process_memory_mib
     from .rebin import rebin_nd
 
     with Path(snapshot).open("rb") as stream:
@@ -195,8 +195,7 @@ def _trial(snapshot, output, mb, workers):
             start = time.perf_counter()
             run()
             times.append(time.perf_counter() - start)
-    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    peak_mib = rss / (1024**2 if sys.platform == "darwin" else 1024)
+    peak_mib = peak_process_memory_mib()
     Path(output).write_text(json.dumps(dict(max_batch_mb=mb, workers=workers,
                                           seconds=statistics.median(times), peak_mib=peak_mib)))
 

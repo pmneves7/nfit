@@ -263,15 +263,23 @@ def test_project_explorer_preserves_tree_expansion_and_toolbar_font(monkeypatch,
     assert shortcuts == {
         "New": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.New),
         "Open": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.Open),
-            "Reload from Disk": _standard_shortcut_text(
-                QtGui, QtGui.QKeySequence.StandardKey.Refresh
-            ),
-            "Cache binnings": "",
-            "Save": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.Save),
+        "Reload from Disk": _standard_shortcut_text(
+            QtGui, QtGui.QKeySequence.StandardKey.Refresh
+        ),
+        "Cache binnings": "",
+        "Save": _standard_shortcut_text(
+            QtGui, QtGui.QKeySequence.StandardKey.Save
+        ),
         "Save As": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.SaveAs),
         "Preferences…": "",
-        "Close": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.Close),
-        "Quit": _standard_shortcut_text(QtGui, QtGui.QKeySequence.StandardKey.Quit),
+        "Close": _standard_shortcut_text(
+            QtGui, QtGui.QKeySequence.StandardKey.Close
+        ),
+        "Quit": _standard_shortcut_text(
+            QtGui, QtGui.QKeySequence.StandardKey.Quit
+        ),
+        "Check for updates…": "",
+        "Update settings…": "",
     }
 
 

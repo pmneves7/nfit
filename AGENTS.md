@@ -81,6 +81,9 @@ different Python.
   `analysis_window_builder.py`: focused Qt presentation helpers.
 - `src/nfit/qt_slice_viewer.py`, `qt_slice_modes.py`, and `plotting_core.py`:
   interactive viewer coordination, slice-mode controllers, and plot primitives.
+- `src/nfit/app_distribution.py`, `app_updates.py`, `app_updates_gui.py`, and
+  `tools/distribution/`: desktop packaging metadata, verified updates, installers,
+  and startup presentation.
 - `src/nfit/fit_config.py`, `fit_config_electronic.py`, and
   `fit_config_heisenberg_rpa.py`: model-component compilation and parameter mapping.
 - `src/nfit/fitting.py`: optimizer-facing fitting framework.

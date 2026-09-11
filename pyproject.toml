@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nfit"
-version = "0.86.2"
+version = "0.87.0"
 description = "Reduced magnetic-scattering analysis for nearly magnetic metals"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -13,6 +13,7 @@ authors = [
   { name = "Paul M. Neves", email = "pneves1@jhu.edu" }
 ]
 dependencies = [
+  "packaging>=25",
   "numpy>=2.5",
   "scipy>=1.18",
   "matplotlib>=3.11.1",
@@ -60,6 +61,9 @@ Issues = "https://github.com/pmneves7/nfit/issues"
 nfit = "nfit.project_gui:main"
 
 [project.optional-dependencies]
+distribution = [
+  "pyinstaller>=6.22,<7",
+]
 dev = [
   "build>=1",
   "pytest>=7",

@@ -36,4 +36,4 @@ dependencies:
   - pip:
       # The conda-forge 1.10 build reports version 0.0.0 in Python metadata.
       - cmcrameri==1.10
-      - -e ".[dev,docs]"
+      - -e ".[dev,docs,distribution]"

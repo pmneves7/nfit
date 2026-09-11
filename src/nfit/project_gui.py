@@ -6424,7 +6424,12 @@ class NfitProjectExplorer:
 
     def run(self) -> int:
         self.show()
+        splash = getattr(self.app, "_nfit_startup_splash", None)
+        if splash is not None:
+            splash.close()
+            self.app._nfit_startup_splash = None
         self._interactive = True
+        self._update_controller.schedule_startup()
         if self._external_change_timer is not None:
             self._external_change_timer.start()
         interrupt_timer, previous_interrupt_handler = _install_cli_interrupt_handler(self.app)
@@ -9602,15 +9607,17 @@ class NfitProjectExplorer:
         return False
 
     def show_help(self) -> None:
-        """Open the documentation built alongside this source checkout."""
+        """Open bundled offline documentation or the local source build."""
         from PySide6 import QtCore, QtGui, QtWidgets
 
-        index = Path(__file__).resolve().parents[2] / "docs" / "_build" / "html" / "index.html"
-        if not index.is_file():
+        from .app_distribution import local_help_index
+
+        index = local_help_index(source_file=__file__)
+        if index is None:
             QtWidgets.QMessageBox.information(
                 self.window,
                 "Documentation not built",
-                f"Local documentation was not found at {index}.\n\n"
+                "The local documentation is missing.\n\n"
                 "Build it from the nfit source directory with:\n"
                 "python -m sphinx -b html docs docs/_build/html",
             )

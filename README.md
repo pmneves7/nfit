@@ -142,6 +142,10 @@ and software projects that informed nfit.
 nfit requires Python 3.12 or newer. The supplied conda environment uses
 Python 3.14 and a current NumPy/SciPy/Numba and Qt/VTK stack.
 
+Native macOS, Windows, and Linux beta installers provide a self-contained
+application with the nfit icon, a branded loading screen, offline help, and
+consent-based verified updates. See [Desktop installers and updates](docs/desktop_installers.md).
+
 If you are new to GitHub, Python, and Conda, follow the step-by-step
 [first-time setup guide](docs/getting_started.md#first-time-collaborator-setup).
 It covers accepting a GitHub invitation (or downloading a ZIP), installing Git

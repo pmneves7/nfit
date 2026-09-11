@@ -58,6 +58,9 @@ def build_project_window(
         title_row,
         actions_row,
     )
+    from .app_updates_gui import add_update_actions
+
+    add_update_actions(explorer)
 
 
 def _build_window_shell(
