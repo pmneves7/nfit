@@ -73,6 +73,21 @@ def test_cubic_first_brillouin_zone_and_labelled_path():
     )
 
 
+def test_scene_can_display_absolute_conventional_hkl_outside_first_zone():
+    direct = np.diag([4.0, 4.0, 4.0])
+    coordinate_reciprocal = 2.0 * np.pi * np.linalg.inv(direct).T
+    scene = build_brillouin_zone_scene(
+        direct,
+        [{"label": "higher", "k": [2.0, 0.0, 0.0]}],
+        coordinate_reciprocal_lattice=coordinate_reciprocal,
+    )
+
+    np.testing.assert_allclose(
+        scene.path_nodes[0].cartesian_inv_angstrom,
+        [np.pi, 0.0, 0.0],
+    )
+
+
 def test_f_centered_cubic_zone_uses_primitive_translation_lattice():
     lattice = {
         "a": 8.0,

@@ -296,14 +296,15 @@ def build_brillouin_zone_scene(
     band_path: list[dict[str, Any]] | tuple[dict[str, Any], ...],
     *,
     primitive_lattice: ArrayLike | None = None,
+    coordinate_reciprocal_lattice: ArrayLike | None = None,
 ) -> BrillouinZoneScene:
     """Build the first Brillouin zone and a labelled reduced-coordinate path.
 
-    ``primitive_lattice`` defines both the reciprocal translation lattice and
-    the reduced coordinates of ``band_path``. It defaults to
-    ``direct_lattice``. Supplying both supports a Hamiltonian represented in a
-    centered conventional cell while keeping path nodes in primitive
-    reciprocal coordinates.
+    ``primitive_lattice`` defines the reciprocal translation lattice. It
+    defaults to ``direct_lattice``. Path coordinates use that primitive
+    reciprocal basis unless ``coordinate_reciprocal_lattice`` supplies another
+    finite 3x3 column-vector basis. The latter allows experimental paths to
+    retain absolute conventional-cell HKLs, including points in higher zones.
     """
 
     direct = np.asarray(direct_lattice, dtype=float)
@@ -318,13 +319,22 @@ def build_brillouin_zone_scene(
             "primitive_lattice must be a finite 3x3 column-vector matrix"
         )
     primitive_reciprocal = 2.0 * np.pi * np.linalg.inv(primitive).T
+    coordinate_reciprocal = (
+        primitive_reciprocal
+        if coordinate_reciprocal_lattice is None
+        else np.asarray(coordinate_reciprocal_lattice, dtype=float)
+    )
+    if coordinate_reciprocal.shape != (3, 3) or not np.all(
+        np.isfinite(coordinate_reciprocal)
+    ):
+        raise ValueError("coordinate_reciprocal_lattice must be a finite 3x3 matrix")
     vertices, faces = _first_zone_faces(primitive_reciprocal)
     nodes = []
     for item in band_path:
         reduced = np.asarray(item.get("k", ()), dtype=float)
         if reduced.shape != (3,) or not np.all(np.isfinite(reduced)):
             raise ValueError("every band-path node requires three finite k coordinates")
-        cartesian = primitive_reciprocal @ reduced
+        cartesian = coordinate_reciprocal @ reduced
         nodes.append(
             BrillouinZoneNode(
                 label=str(item.get("label", "")),
@@ -425,21 +435,13 @@ def standard_band_path(
                 "Setyawan-Curtarolo paths require ASE"
             ) from exc
 
-        bravais = Cell(nfit_primitive.T).get_bravais_lattice(
-            eps=float(symprec)
-        )
-        ase_path = bravais.bandpath()
-        ase_reciprocal = np.asarray(
-            ase_path.cell.reciprocal(),
-            dtype=float,
-        )
-        nfit_reciprocal = np.linalg.inv(nfit_primitive).T
+        # Cell.bandpath() identifies the canonical Bravais lattice and then
+        # transforms its standard path back to this supplied primitive cell.
+        # Calling bandpath() on get_bravais_lattice() would leave low-symmetry
+        # paths in ASE's rotated or permuted canonical coordinates.
+        ase_path = Cell(nfit_primitive.T).bandpath(eps=float(symprec))
         point_coordinates = {
-            str(label): (
-                np.asarray(coordinate, dtype=float)
-                @ ase_reciprocal
-                @ np.linalg.inv(nfit_reciprocal.T)
-            )
+            str(label): np.asarray(coordinate, dtype=float)
             for label, coordinate in ase_path.special_points.items()
         }
         nodes: list[dict[str, Any]] = []

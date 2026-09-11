@@ -101,6 +101,14 @@ def _build_window_shell(viewer: Any) -> None:
     )
     viewer.open_new_viewer_button.clicked.connect(viewer.open_new_viewer)
     mode_layout.addWidget(viewer.open_new_viewer_button)
+    viewer.open_kpath_viewer_button = QtWidgets.QPushButton("K-path viewer")
+    viewer.open_kpath_viewer_button.setObjectName("data_viewer_open_kpath_button")
+    viewer.open_kpath_viewer_button.setToolTip(
+        "Open a dedicated, non-fitting momentum-path viewer for a dataset with "
+        "three HKL axes and one energy axis."
+    )
+    viewer.open_kpath_viewer_button.clicked.connect(viewer.open_kpath_viewer)
+    mode_layout.addWidget(viewer.open_kpath_viewer_button)
     viewer.save_plot_button = QtWidgets.QPushButton("Store plot")
     viewer.save_plot_button.setObjectName("data_viewer_store_plot_button")
     viewer.save_plot_button.setToolTip(

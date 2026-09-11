@@ -129,6 +129,37 @@ Copied scripts and saved plots preserve the overlay through
 `brillouin_zone_linewidth`, and `brillouin_zone_alpha` arguments to
 `plot_mdhisto_slice` or `plot_mdhisto_tiled_slices`.
 
+### Momentum-path plots
+
+For a histogram with three independent HKL axes and one energy-transfer axis,
+choose **K-path viewer** in the data viewer toolbar. This opens a dedicated
+non-fitting visualization. The source dataset and its rebin configuration are
+not changed.
+
+Path nodes use absolute conventional-cell `(H K L)` coordinates. They are not
+folded into the first Brillouin zone, so a custom path may deliberately pass
+through higher zones such as `(1 2 2)`. **Use standard path** constructs a
+Setyawan--Curtarolo path for the Bravais lattice recorded under **Crystal
+orientation**. The table can then be edited, extended, or replaced. **Break**
+starts a disconnected section before a node.
+
+**Path step** controls the longitudinal plotting resolution in inverse
+angstroms (Å⁻¹). **Tube radius** selects source momentum voxels by their
+shortest physical distance from each connected path segment. Within each
+path-energy pixel, nfit reports the inverse-variance weighted intensity
+
+$$
+\bar I=\frac{\sum_i I_i/\sigma_i^2}{\sum_i1/\sigma_i^2},\qquad
+\sigma_{\bar I}=\frac{1}{\sqrt{\sum_i1/\sigma_i^2}}.
+$$
+
+**Minimum voxels** can mask poorly sampled pixels. The viewer can label nodes
+with high-symmetry names, absolute HKL coordinates, or both, and can show or
+hide independently styled dashed vertical guides. **View path in 3D** reuses
+the Brillouin-zone viewer and displays the same absolute path without folding
+higher-zone nodes. **Copy script** exports the complete calculation through
+the public `prepare_mdhisto_kpath` and `plot_mdhisto_kpath` APIs.
+
 **Minimum coverage** applies independently to viewer reductions. A displayed
 pixel is masked when the measured fraction of its requested hidden-axis
 integration volume is below the cutoff. The same cutoff is recomputed over

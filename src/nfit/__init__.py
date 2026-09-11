@@ -338,6 +338,15 @@ from .importers import (
     read_delimited_text,
     split_name_and_unit,
 )
+from .kpath import (
+    KPathNode,
+    KPathSampling,
+    coerce_kpath_nodes,
+    plot_mdhisto_kpath,
+    prepare_mdhisto_kpath,
+    sample_kpath,
+    standard_kpath,
+)
 from .macs import import_macs_nexus, is_macs_nexus_file
 from .magnetization import curie_weiss_susceptibility
 from .mdevent import (
@@ -789,6 +798,8 @@ __all__ = [
     "BrillouinZoneScene",
     "BrillouinZoneSlice",
     "BrillouinZoneViewOptions",
+    "KPathNode",
+    "KPathSampling",
     "BasisState",
     "ElectronicMatrixInspection",
     "MatrixSubspaceBlock",
@@ -986,8 +997,11 @@ __all__ = [
     "brillouin_zone_script",
     "build_brillouin_zone_scene",
     "build_brillouin_zone_slice",
+    "coerce_kpath_nodes",
     "set_tight_binding_standard_path",
     "standard_band_path",
+    "standard_kpath",
+    "sample_kpath",
     "calculate_bands",
     "bare_lindhard_susceptibility",
     "bare_spin_susceptibility",
@@ -1154,6 +1168,8 @@ __all__ = [
     "plot_mdhisto_fit_line_comparison",
     "plot_mdhisto_line",
     "plot_mdhisto_slice",
+    "plot_mdhisto_kpath",
+    "prepare_mdhisto_kpath",
     "plot_mdhisto_tiled_slices",
     "plot_mdhisto_waterfall",
     "partition_response_points",

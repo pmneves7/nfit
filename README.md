@@ -114,6 +114,9 @@ The package provides:
   with large-volume safeguards, optional visualization-only smoothing across
   empty bins, per-panel tiled cursor inspection, optional metric- and
   centering-aware Brillouin-zone boundaries with scriptable line styling,
+  dedicated experimental momentum-path maps with automatic or absolute-HKL
+  higher-zone paths, propagated tube-average errors, symmetry guides, and 3D
+  inspection,
   customizable tiled-slice labels,
   independent, same-state viewer duplication and stored plot recipes that
   retain independent source/composite-rebin configurations, separate save/update

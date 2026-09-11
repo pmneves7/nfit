@@ -19,6 +19,7 @@ GUI_INDEPENDENT_MODULES = (
     PACKAGE_ROOT / "project_io.py",
     PACKAGE_ROOT / "project_models.py",
     PACKAGE_ROOT / "workflow.py",
+    PACKAGE_ROOT / "kpath.py",
     PACKAGE_ROOT / "analysis" / "runner.py",
 )
 PROJECT_GUI_CLIENT_MODULES = (

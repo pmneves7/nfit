@@ -288,6 +288,7 @@ class QtMDHistoSliceViewer:
         self._close_callback = None
         self._child_viewers = []
         self.open_new_viewer_button = None
+        self.open_kpath_viewer_button = None
         self.store_plot_status_label = None
         self.save_project_shortcut = None
         self._unmask_model_callback = None
@@ -1067,6 +1068,46 @@ class QtMDHistoSliceViewer:
         viewer.apply_plot_settings(settings)
         viewer.show()
         return viewer
+
+    def open_kpath_viewer(self):
+        """Open the current 4D HKL dataset in the dedicated path viewer."""
+
+        from PySide6 import QtWidgets
+
+        from .qt_brillouin_zone import prompt_brillouin_zone_context
+        from .qt_kpath_viewer import QtKPathViewer
+
+        if not isinstance(self.data, MDHistoData):
+            return None
+        context = self._effective_brillouin_zone_context()
+        if not context.get("spacegroup") or not isinstance(
+            context.get("lattice_parameters"), dict
+        ):
+            updated = prompt_brillouin_zone_context(
+                self.window, context, require_lattice=True
+            )
+            if updated is None:
+                return None
+            context = updated
+            self.crystal_contexts[self.dataset_index] = updated
+            if self._brillouin_zone_context_callback is not None:
+                self._brillouin_zone_context_callback(
+                    self.source_dataset_names[self.dataset_index], dict(updated)
+                )
+        try:
+            viewer = QtKPathViewer(
+                self.data,
+                lattice_parameters=dict(context["lattice_parameters"]),
+                spacegroup=str(context["spacegroup"]),
+                parent=self.window,
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window, "K-path viewer", f"Could not open the K-path viewer:\n{exc}"
+            )
+            return None
+        self._child_viewers.append(viewer)
+        return viewer.show()
 
     def set_open_new_viewer_callback(self, callback) -> None:
         """Set the project-aware factory used by :meth:`open_new_viewer`."""
@@ -3385,6 +3426,17 @@ class QtMDHistoSliceViewer:
         if self.brillouin_zone_group is not None:
             self.brillouin_zone_group.setVisible(
                 not is_point and not is_line and not is_waterfall
+            )
+        if self.open_kpath_viewer_button is not None:
+            axes = getattr(self.data, "axes", ())
+            self.open_kpath_viewer_button.setVisible(
+                isinstance(self.data, MDHistoData)
+                and len(axes) == 4
+                and sum(axis.kind == "momentum" for axis in axes) == 3
+                and sum(
+                    axis.kind == "energy" or axis.role == "energy_transfer"
+                    for axis in axes
+                ) == 1
             )
         if self.smoothing_y_spin is not None:
             self.smoothing_y_spin.setVisible(not is_line and not grouped_waterfall)
