@@ -107,6 +107,17 @@ def test_beta_workflow_exports_the_release_version_without_nested_shell_quotes()
     assert 'echo "value=$(python -c' not in workflow
 
 
+def test_beta_workflow_publishes_a_release_visible_to_repository_readers():
+    workflow = (
+        Path(__file__).resolve().parents[1]
+        / ".github/workflows/build-beta-installers.yml"
+    ).read_text(encoding="utf-8")
+    assert "Publish private beta release" in workflow
+    assert "gh release create" in workflow
+    assert "--draft" not in workflow
+    assert "--prerelease" not in workflow
+
+
 def test_linux_smoke_runner_installs_debian_runtime_dependencies():
     root = Path(__file__).resolve().parents[1]
     workflow = (root / ".github/workflows/build-beta-installers.yml").read_text(

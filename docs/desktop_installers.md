@@ -103,10 +103,12 @@ and opening the native installer. Canceling a download removes the partial
 file. Update checks can also be run or disabled from the **File** menu.
 
 During private beta testing, the installer contains a fine-grained GitHub token
-limited to read-only access to the `pmneves7/nfit` repository. This deliberately
-gives anyone who receives the installer equivalent read access; distributing
-the installer is the invitation mechanism. When the repository becomes public,
-build without that token and the same updater uses anonymous GitHub access.
+limited to read-only access to the `pmneves7/nfit` repository. Published beta
+releases remain private to GitHub accounts and tokens with repository read
+access. Anyone with that access can download the installers from the
+repository's **Releases** page, and installed copies can discover updates with
+the bundled credential. When the repository becomes public, build without that
+token and the same updater uses anonymous GitHub access.
 
 ## Building beta installers
 
@@ -115,16 +117,18 @@ repository **Contents: Read-only** permission. Store it as the repository Action
 secret `NFIT_GITHUB_READ_TOKEN`; never commit it to source. Run **Build beta
 installers** from the GitHub Actions page. Separate GitHub-hosted runners build
 and smoke-test Apple silicon macOS, Intel macOS, Windows x86-64, and Linux
-x86-64 installers, then assemble them into a draft GitHub Release.
+x86-64 installers, then publish them as a beta GitHub Release.
 
-Review the draft and publish it when it is ready for installed beta copies to
-discover. The initial installer can be given to each tester through a OneDrive
-**Anyone with the link** download or by inviting the tester to the repository.
-Later versions download directly through the bundled beta credential.
+The release is immediately visible to anyone with repository read access and
+is discoverable by installed beta copies. The repository remains private, so
+publishing the release does not make it or its installers public on the wider
+internet. An initial installer can still be given to a tester through a
+OneDrive **Anyone with the link** download.
 
-Drafts are listed under **Releases** on the repository page for signed-in
-collaborators with repository access. A draft is not visible to ordinary users
-and is not offered by nfit's update checker until it is published.
+Published beta releases are listed under **Releases** on the repository page
+for every signed-in user with repository read access. Drafts are visible only
+to collaborators who can manage releases and are not offered by nfit's update
+checker.
 
 To build on the current operating system instead, set
 `NFIT_GITHUB_READ_TOKEN` in the environment and run:
