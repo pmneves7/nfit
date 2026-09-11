@@ -6,10 +6,12 @@ supports reduced MDHisto data, file-backed MDEvent, compatible direct-geometry
 spectrometer events, NIST NCNR MACS NeXus data, powder cuts, magnetization,
 heat capacity, and general point tables.
 
-nfit was authored by Paul M. Neves (Johns Hopkins University,
-pneves1@jhu.edu) with use of LLM coding tools.
+nfit was authored and is maintained by Paul M. Neves (Johns Hopkins
+University, pneves1@jhu.edu). AI and large-language-model coding tools have
+assisted with portions of the code, tests, and documentation. Authorship and
+responsibility for the project remain with Paul M. Neves.
 
-Current package version: 0.88.1.
+Current package version: 0.88.2.
 
 Start with [Getting started](getting_started.md), then use
 [GUI workflows](gui_workflows.md) for interactive work or the

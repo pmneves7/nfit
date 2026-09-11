@@ -133,8 +133,10 @@ model equations, and the Python API.
 
 ## Authorship
 
-nfit was authored by Paul M. Neves (Johns Hopkins University,
-pneves1@jhu.edu) with use of LLM coding tools.
+nfit was authored and is maintained by Paul M. Neves (Johns Hopkins
+University, pneves1@jhu.edu). AI and large-language-model coding tools have
+assisted with portions of the code, tests, and documentation. Authorship and
+responsibility for the project remain with Paul M. Neves.
 See [References and software influences](docs/references.md) for the scientific
 and software projects that informed nfit.
 
@@ -143,9 +145,12 @@ and software projects that informed nfit.
 nfit requires Python 3.12 or newer. The supplied conda environment uses
 Python 3.14 and a current NumPy/SciPy/Numba and Qt/VTK stack.
 
-Native macOS, Windows, and Linux beta installers provide a self-contained
-application with the nfit icon, a branded loading screen, offline help, and
-consent-based verified updates. See [Desktop installers and updates](docs/desktop_installers.md).
+Native macOS, 64-bit Windows 10/11, and 64-bit Ubuntu 22.04 or newer beta
+installers provide a self-contained application with the nfit icon, a branded
+loading screen, offline help, and consent-based verified updates. Testers do
+not need Python, Conda, Git, or the source repository. See
+[Desktop installers and updates](docs/desktop_installers.md) for download,
+installation, system requirements, and update instructions.
 
 If you are new to GitHub, Python, and Conda, follow the step-by-step
 [first-time setup guide](docs/getting_started.md#first-time-collaborator-setup).

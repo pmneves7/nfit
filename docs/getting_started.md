@@ -1,5 +1,11 @@
 # Getting started
 
+Most beta testers should use a native application installer. It includes the
+Python environment and offline manual, and does not require Git, Python, or
+Conda. Follow [Desktop installers and updates](desktop_installers.md) for macOS,
+Windows, or Linux. The setup below is for contributors and users who want to run
+nfit from source.
+
 ## First-time collaborator setup
 
 These instructions are for someone who has not previously installed GitHub,
