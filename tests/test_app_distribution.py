@@ -102,6 +102,8 @@ def test_beta_workflow_exports_the_release_version_without_nested_shell_quotes()
         Path(__file__).resolve().parents[1]
         / ".github/workflows/build-beta-installers.yml"
     ).read_text(encoding="utf-8")
+    assert "actions/setup-python@v6" in workflow
+    assert 'python-version: "3.14"' in workflow
     assert 'value="$(python -c \'import tomllib;' in workflow
     assert 'echo "value=$value" >> "$GITHUB_OUTPUT"' in workflow
     assert 'echo "value=$(python -c' not in workflow
