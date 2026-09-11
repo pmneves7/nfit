@@ -274,6 +274,10 @@ ISAW representation.
 
 Apply the dialog to a dataset for a dataset-specific orientation or to a group
 for shared orientation and composite HKL conversion.
+The **Space group / centering** field in the same area records the
+Hermann--Mauguin symbol, or only its centering letter when that is all that is
+known. The data viewer combines this centering with the reciprocal metric to
+draw optional repeated Brillouin-zone boundaries.
 
 ## Dataset details and physical conventions
 

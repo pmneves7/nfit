@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from pprint import pformat
 from typing import Any
 
@@ -10,6 +11,13 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 FloatArray = NDArray[np.float64]
+
+
+@dataclass(frozen=True)
+class BrillouinZoneSlice:
+    """Line segments where reciprocal-lattice Voronoi cells meet a 2D view."""
+
+    segments: tuple[tuple[tuple[float, float], tuple[float, float]], ...]
 
 
 @dataclass(frozen=True)
@@ -126,6 +134,161 @@ def _first_zone_faces(
         if len(vertices) >= 4 and faces:
             return vertices, faces
     raise ValueError("could not construct a bounded first Brillouin zone")
+
+
+@lru_cache(maxsize=32)
+def _cached_first_zone_faces(
+    reciprocal_values: tuple[float, ...],
+) -> tuple[FloatArray, tuple[tuple[int, ...], ...]]:
+    reciprocal = np.asarray(reciprocal_values, dtype=float).reshape(3, 3)
+    vertices, faces = _first_zone_faces(reciprocal)
+    vertices.setflags(write=False)
+    return vertices, faces
+
+
+def _clip_polygon_half_plane(
+    polygon: FloatArray, normal: FloatArray, bound: float, *, tolerance: float
+) -> FloatArray:
+    """Clip a two-dimensional polygon to ``normal @ point <= bound``."""
+
+    if len(polygon) == 0:
+        return polygon
+    output: list[FloatArray] = []
+    previous = polygon[-1]
+    previous_value = float(normal @ previous - bound)
+    for current in polygon:
+        current_value = float(normal @ current - bound)
+        previous_inside = previous_value <= tolerance
+        current_inside = current_value <= tolerance
+        if previous_inside != current_inside:
+            fraction = previous_value / (previous_value - current_value)
+            output.append(previous + fraction * (current - previous))
+        if current_inside:
+            output.append(current)
+        previous = current
+        previous_value = current_value
+    return np.asarray(output, dtype=float).reshape((-1, 2))
+
+
+def build_brillouin_zone_slice(
+    *,
+    hkl_origin: ArrayLike,
+    x_hkl_vector: ArrayLike,
+    y_hkl_vector: ArrayLike,
+    xlim: tuple[float, float],
+    ylim: tuple[float, float],
+    q_matrix: ArrayLike,
+    spacegroup: str,
+) -> BrillouinZoneSlice:
+    """Intersect repeated Brillouin zones with an affine HKL plotting plane.
+
+    The reciprocal lattice is selected from the conventional-cell centering in
+    ``spacegroup``.  ``q_matrix`` supplies the reciprocal metric, so oblique and
+    non-cubic cells are drawn in the actual plotted HKL coordinates.
+    """
+
+    from .analysis.zones import generate_zone_centers, reciprocal_basis_hkl
+
+    origin = np.asarray(hkl_origin, dtype=float)
+    x_vector = np.asarray(x_hkl_vector, dtype=float)
+    y_vector = np.asarray(y_hkl_vector, dtype=float)
+    metric = np.asarray(q_matrix, dtype=float)
+    if any(value.shape != (3,) for value in (origin, x_vector, y_vector)):
+        raise ValueError("the HKL origin and plotting vectors must contain three values")
+    if metric.shape != (3, 3) or not np.all(np.isfinite(metric)):
+        raise ValueError("q_matrix must be a finite 3x3 matrix")
+    limits = np.asarray((*xlim, *ylim), dtype=float)
+    if not np.all(np.isfinite(limits)) or xlim[0] == xlim[1] or ylim[0] == ylim[1]:
+        raise ValueError("xlim and ylim must be finite, nonempty intervals")
+    plane = metric @ np.column_stack((x_vector, y_vector))
+    if np.linalg.matrix_rank(plane, tol=1.0e-12) < 2:
+        raise ValueError("Brillouin-zone boundaries require two independent HKL axes")
+
+    basis_hkl = reciprocal_basis_hkl(spacegroup, metric)
+    reciprocal = metric @ basis_hkl.T
+    vertices, _faces = _cached_first_zone_faces(
+        tuple(float(value) for value in reciprocal.ravel())
+    )
+    zone_radius = float(np.max(np.linalg.norm(vertices, axis=1)))
+    corners_xy = np.asarray(
+        [(x, y) for x in xlim for y in ylim], dtype=float
+    )
+    corners_hkl = origin + corners_xy @ np.vstack((x_vector, y_vector))
+    centers_hkl = generate_zone_centers(
+        basis_hkl, corners_hkl.min(axis=0), corners_hkl.max(axis=0), shell=2
+    )
+    centers_q = centers_hkl @ metric.T
+    origin_q = metric @ origin
+    viewport = np.asarray(
+        [(xlim[0], ylim[0]), (xlim[1], ylim[0]),
+         (xlim[1], ylim[1]), (xlim[0], ylim[1])],
+        dtype=float,
+    )
+    scale = max(float(np.ptp(limits)), 1.0)
+    tolerance = 1.0e-9 * scale
+    unique: dict[tuple[float, ...], tuple[tuple[float, float], tuple[float, float]]] = {}
+    for center_q in centers_q:
+        # A cell cannot intersect the plane when its center is farther away than
+        # the circumscribed radius of the first zone.
+        offset = center_q - origin_q
+        projection, *_ = np.linalg.lstsq(plane, offset, rcond=None)
+        if np.linalg.norm(offset - plane @ projection) > zone_radius + tolerance:
+            continue
+        polygon = viewport.copy()
+        differences = centers_q - center_q
+        neighbor_mask = (
+            (np.linalg.norm(differences, axis=1) > tolerance)
+            & (np.linalg.norm(differences, axis=1) <= 2.01 * zone_radius + tolerance)
+        )
+        for other_q, difference in zip(
+            centers_q[neighbor_mask], differences[neighbor_mask], strict=True
+        ):
+            normal = 2.0 * plane.T @ difference
+            bound = float(other_q @ other_q - center_q @ center_q - 2.0 * difference @ origin_q)
+            polygon = _clip_polygon_half_plane(
+                polygon, normal, bound, tolerance=tolerance
+            )
+            if len(polygon) == 0:
+                break
+        for start, end in zip(polygon, np.roll(polygon, -1, axis=0), strict=True):
+            midpoint = 0.5 * (start + end)
+            on_frame = (
+                abs(midpoint[0] - xlim[0]) <= tolerance
+                or abs(midpoint[0] - xlim[1]) <= tolerance
+                or abs(midpoint[1] - ylim[0]) <= tolerance
+                or abs(midpoint[1] - ylim[1]) <= tolerance
+            )
+            if on_frame or np.linalg.norm(end - start) <= tolerance:
+                continue
+            endpoints = sorted((tuple(map(float, start)), tuple(map(float, end))))
+            key = tuple(round(value, 9) for point in endpoints for value in point)
+            unique[key] = (endpoints[0], endpoints[1])
+    return BrillouinZoneSlice(tuple(unique[key] for key in sorted(unique)))
+
+
+def draw_brillouin_zone_slice(
+    ax: Any,
+    zone_slice: BrillouinZoneSlice,
+    *,
+    color: str = "#e57373",
+    linewidth: float = 1.0,
+    alpha: float = 0.75,
+) -> Any:
+    """Add a precomputed zone slice to a Matplotlib axes."""
+
+    from matplotlib.collections import LineCollection
+
+    if linewidth <= 0.0:
+        raise ValueError("Brillouin-zone line width must be positive")
+    if not 0.0 <= alpha <= 1.0:
+        raise ValueError("Brillouin-zone opacity must be between zero and one")
+    artist = LineCollection(
+        zone_slice.segments, color=color, linewidths=linewidth, alpha=alpha,
+        zorder=5, clip_on=True,
+    )
+    artist.set_gid("nfit-brillouin-zone-boundaries")
+    ax.add_collection(artist)
+    return artist
 
 
 def build_brillouin_zone_scene(

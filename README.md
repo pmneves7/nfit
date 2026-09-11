@@ -112,7 +112,8 @@ The package provides:
   plots;
 - interactive slice, waterfall, tiled 2D-slice, and volumetric visualization
   with large-volume safeguards, optional visualization-only smoothing across
-  empty bins, per-panel tiled cursor inspection,
+  empty bins, per-panel tiled cursor inspection, optional metric- and
+  centering-aware Brillouin-zone boundaries with scriptable line styling,
   customizable tiled-slice labels,
   independent, same-state viewer duplication and stored plot recipes that
   retain independent source/composite-rebin configurations, separate save/update

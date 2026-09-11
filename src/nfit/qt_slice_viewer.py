@@ -27,6 +27,7 @@ from .plotting_core import (
     default_tiled_slice_step,
     default_waterfall_offset,  # noqa: F401 - compatibility re-export
     default_waterfall_step,  # noqa: F401 - compatibility re-export
+    draw_mdhisto_brillouin_zones,
     draw_waterfall_traces,  # noqa: F401 - compatibility re-export
     integrated_box_sum,
     inverse_variance_weighted_profile,
@@ -95,6 +96,7 @@ _COLOR_OPTIONS = {
     "orange": "#ff7f0e",
     "green": "#2ca02c",
     "red": "#d62728",
+    "light red": "#e57373",
     "purple": "#9467bd",
     "brown": "#8c564b",
     "pink": "#e377c2",
@@ -114,6 +116,7 @@ class QtMDHistoSliceViewer:
         *,
         dataset_names: Sequence[str] | None = None,
         dataset_group_keys: Sequence[str] | None = None,
+        crystal_contexts: Sequence[dict[str, Any]] | None = None,
         x_dim: int | str = -1,
         y_dim: int | str = 0,
         channel: str = "signal",
@@ -140,6 +143,12 @@ class QtMDHistoSliceViewer:
             self.datasets,
             dataset_group_keys,
         )
+        if crystal_contexts is None:
+            self.crystal_contexts = [{} for _ in self.datasets]
+        else:
+            self.crystal_contexts = [dict(value) for value in crystal_contexts]
+            if len(self.crystal_contexts) != len(self.datasets):
+                raise ValueError("crystal_contexts length must match datasets length")
         self.dataset_index = 0
         self._initial_x_dim = x_dim
         self._initial_y_dim = y_dim
@@ -223,6 +232,11 @@ class QtMDHistoSliceViewer:
         self.smoothing_y_spin = None
         self.smoothing_y_label = None
         self.smoothing_fill_nans_check = None
+        self.brillouin_zone_group = None
+        self.show_brillouin_zone_check = None
+        self.brillouin_zone_color_combo = None
+        self.brillouin_zone_linewidth_spin = None
+        self.brillouin_zone_alpha_spin = None
         self.gamma_label = None
         self.gamma_spin = None
         self.alpha_label = None
@@ -277,6 +291,7 @@ class QtMDHistoSliceViewer:
         self.store_plot_status_label = None
         self.save_project_shortcut = None
         self._unmask_model_callback = None
+        self._brillouin_zone_context_callback = None
         self.view_mode_combo = None
         self.content_stack = None
         self.volume_panel = None
@@ -318,6 +333,10 @@ class QtMDHistoSliceViewer:
         self.smoothing_x = 0.0
         self.smoothing_y = 0.0
         self.smoothing_fill_nans = True
+        self.show_brillouin_zone_boundaries = False
+        self.brillouin_zone_color = "#e57373"
+        self.brillouin_zone_linewidth = 1.0
+        self.brillouin_zone_alpha = 0.75
         self.marker = "o"
         self.line_style = "none"
         self.marker_size = 5.0
@@ -448,6 +467,7 @@ class QtMDHistoSliceViewer:
         *,
         dataset_names: Sequence[str] | None = None,
         dataset_group_keys: Sequence[str] | None = None,
+        crystal_contexts: Sequence[dict[str, Any]] | None = None,
         selected_dataset_name: str | None = None,
         selected_binning_name: str | None = None,
     ) -> None:
@@ -479,6 +499,12 @@ class QtMDHistoSliceViewer:
             self.datasets,
             dataset_group_keys,
         )
+        if crystal_contexts is None:
+            self.crystal_contexts = [{} for _ in self.datasets]
+        else:
+            self.crystal_contexts = [dict(value) for value in crystal_contexts]
+            if len(self.crystal_contexts) != len(self.datasets):
+                raise ValueError("crystal_contexts length must match datasets length")
         if self.volume_panel is not None:
             self.content_stack.setCurrentIndex(0)
             self.view_mode_combo.setCurrentIndex(0)
@@ -650,6 +676,12 @@ class QtMDHistoSliceViewer:
             "smoothing_x": self.smoothing_x,
             "smoothing_y": self.smoothing_y,
             "smoothing_fill_nans": self.smoothing_fill_nans,
+            "show_brillouin_zone_boundaries": self.show_brillouin_zone_boundaries,
+            "brillouin_zone_spacegroup": self._effective_brillouin_zone_context().get("spacegroup"),
+            "brillouin_zone_lattice_parameters": self._effective_brillouin_zone_context().get("lattice_parameters"),
+            "brillouin_zone_color": self.brillouin_zone_color,
+            "brillouin_zone_linewidth": self.brillouin_zone_linewidth,
+            "brillouin_zone_alpha": self.brillouin_zone_alpha,
             "xlim": xlim,
             "ylim": ylim,
             "font_size": self.font_size,
@@ -763,6 +795,26 @@ class QtMDHistoSliceViewer:
         self.smoothing_y = float(settings.get("smoothing_y", self.smoothing_y))
         self.smoothing_fill_nans = bool(
             settings.get("smoothing_fill_nans", True)
+        )
+        self.show_brillouin_zone_boundaries = bool(
+            settings.get("show_brillouin_zone_boundaries", False)
+        )
+        context = self._effective_brillouin_zone_context()
+        if settings.get("brillouin_zone_spacegroup"):
+            context["spacegroup"] = str(settings["brillouin_zone_spacegroup"])
+        if settings.get("brillouin_zone_lattice_parameters"):
+            context["lattice_parameters"] = dict(
+                settings["brillouin_zone_lattice_parameters"]
+            )
+        self.crystal_contexts[self.dataset_index] = context
+        self.brillouin_zone_color = str(
+            settings.get("brillouin_zone_color", self.brillouin_zone_color)
+        )
+        self.brillouin_zone_linewidth = float(
+            settings.get("brillouin_zone_linewidth", self.brillouin_zone_linewidth)
+        )
+        self.brillouin_zone_alpha = float(
+            settings.get("brillouin_zone_alpha", self.brillouin_zone_alpha)
         )
         self._set_spin_silent(self.smoothing_x_spin, self.smoothing_x)
         self._set_spin_silent(self.smoothing_y_spin, self.smoothing_y)
@@ -966,6 +1018,21 @@ class QtMDHistoSliceViewer:
             bool(settings.get("roi_enabled", self.roi_button.isChecked())),
         )
         self._sync_color_controls()
+        self._set_checkbox_silent(
+            self.show_brillouin_zone_check,
+            self.show_brillouin_zone_boundaries,
+        )
+        bz_color_index = self.brillouin_zone_color_combo.findData(
+            self.brillouin_zone_color
+        )
+        if bz_color_index >= 0:
+            self.brillouin_zone_color_combo.setCurrentIndex(bz_color_index)
+        self._set_spin_silent(
+            self.brillouin_zone_linewidth_spin, self.brillouin_zone_linewidth
+        )
+        self._set_spin_silent(
+            self.brillouin_zone_alpha_spin, self.brillouin_zone_alpha
+        )
         self.update_plot(preserve_view=False)
         if settings.get("xlim") is not None:
             self.ax_image.set_xlim(*settings["xlim"])
@@ -992,6 +1059,7 @@ class QtMDHistoSliceViewer:
                 self.datasets,
                 dataset_names=self.dataset_names,
                 dataset_group_keys=self.dataset_group_keys,
+                crystal_contexts=self.crystal_contexts,
             )
             self._child_viewers.append(viewer)
         if viewer is None:
@@ -1053,6 +1121,11 @@ class QtMDHistoSliceViewer:
         """Set the project callback that rebuilds full-grid model channels."""
 
         self._unmask_model_callback = callback
+
+    def set_brillouin_zone_context_callback(self, callback) -> None:
+        """Persist crystal information entered from the viewer when available."""
+
+        self._brillouin_zone_context_callback = callback
 
     def set_close_callback(self, callback) -> None:
         """Notify the owning project when this viewer window closes."""
@@ -1128,6 +1201,12 @@ class QtMDHistoSliceViewer:
                 f"    roi_extents={self._roi_extents!r},",
                 f"    xcut_percent={self.xcut_percent!r},",
                 f"    ycut_percent={self.ycut_percent!r},",
+                f"    show_brillouin_zone_boundaries={self.show_brillouin_zone_boundaries!r},",
+                f"    brillouin_zone_spacegroup={self._effective_brillouin_zone_context().get('spacegroup')!r},",
+                f"    brillouin_zone_lattice_parameters={self._effective_brillouin_zone_context().get('lattice_parameters')!r},",
+                f"    brillouin_zone_color={self.brillouin_zone_color!r},",
+                f"    brillouin_zone_linewidth={self.brillouin_zone_linewidth!r},",
+                f"    brillouin_zone_alpha={self.brillouin_zone_alpha!r},",
                 ")",
                 f"fig.suptitle({self._binning_title_text()!r})",
                 "plt.show()",
@@ -1188,6 +1267,12 @@ class QtMDHistoSliceViewer:
                 f"    tile_label_si_prefix={self.tile_label_si_prefix!r},",
                 f"    show_tile_labels={self.show_tile_labels!r},",
                 f"    local_color_scales={self.tile_local_color_scales!r},",
+                f"    show_brillouin_zone_boundaries={self.show_brillouin_zone_boundaries!r},",
+                f"    brillouin_zone_spacegroup={self._effective_brillouin_zone_context().get('spacegroup')!r},",
+                f"    brillouin_zone_lattice_parameters={self._effective_brillouin_zone_context().get('lattice_parameters')!r},",
+                f"    brillouin_zone_color={self.brillouin_zone_color!r},",
+                f"    brillouin_zone_linewidth={self.brillouin_zone_linewidth!r},",
+                f"    brillouin_zone_alpha={self.brillouin_zone_alpha!r},",
                 f"    figsize={tuple(self.figure.get_size_inches())!r},",
                 ")",
                 f"fig.suptitle({self._binning_title_text()!r})",
@@ -1753,6 +1838,10 @@ class QtMDHistoSliceViewer:
             smoothing_x=float(self.smoothing_x),
             smoothing_y=float(self.smoothing_y),
             smoothing_fill_nans=bool(self.smoothing_fill_nans),
+            show_brillouin_zone_boundaries=bool(self.show_brillouin_zone_boundaries),
+            brillouin_zone_color=str(self.brillouin_zone_color),
+            brillouin_zone_linewidth=float(self.brillouin_zone_linewidth),
+            brillouin_zone_alpha=float(self.brillouin_zone_alpha),
             tile_dim=self.tile_dim,
             tile_range=self.tile_range,
             tile_step=float(self.tile_step),
@@ -1840,6 +1929,12 @@ class QtMDHistoSliceViewer:
             self.smoothing_x = float(state.smoothing_x)
             self.smoothing_y = float(state.smoothing_y)
             self.smoothing_fill_nans = bool(state.smoothing_fill_nans)
+            self.show_brillouin_zone_boundaries = bool(
+                state.show_brillouin_zone_boundaries
+            )
+            self.brillouin_zone_color = str(state.brillouin_zone_color)
+            self.brillouin_zone_linewidth = float(state.brillouin_zone_linewidth)
+            self.brillouin_zone_alpha = float(state.brillouin_zone_alpha)
             self.tile_dim = state.tile_dim
             self.tile_range = tuple(state.tile_range)
             self.tile_step = float(state.tile_step)
@@ -1889,6 +1984,22 @@ class QtMDHistoSliceViewer:
             self._set_spin_silent(self.smoothing_y_spin, self.smoothing_y)
             self._set_checkbox_silent(
                 self.smoothing_fill_nans_check, self.smoothing_fill_nans
+            )
+            self._set_checkbox_silent(
+                self.show_brillouin_zone_check,
+                self.show_brillouin_zone_boundaries,
+            )
+            color_index = self.brillouin_zone_color_combo.findData(
+                self.brillouin_zone_color
+            )
+            if color_index >= 0:
+                self.brillouin_zone_color_combo.setCurrentIndex(color_index)
+            self._set_spin_silent(
+                self.brillouin_zone_linewidth_spin,
+                self.brillouin_zone_linewidth,
+            )
+            self._set_spin_silent(
+                self.brillouin_zone_alpha_spin, self.brillouin_zone_alpha
             )
             self._set_combo_silent(self.marker_combo, _option_name(_MARKER_OPTIONS, self.marker))
             self._set_combo_silent(self.line_style_combo, _option_name(_LINE_STYLE_OPTIONS, self.line_style))
@@ -2367,6 +2478,100 @@ class QtMDHistoSliceViewer:
         else:
             self.smoothing_y = max(float(value), 0.0)
         self.update_plot()
+
+    def _set_show_brillouin_zone_boundaries(self, checked: bool) -> None:
+        if self._restoring_dataset_state:
+            return
+        if checked and not self._ensure_brillouin_zone_context():
+            self._set_checkbox_silent(self.show_brillouin_zone_check, False)
+            return
+        self.show_brillouin_zone_boundaries = bool(checked)
+        self.update_plot()
+
+    def _set_brillouin_zone_color(self, _index: int) -> None:
+        if self._restoring_dataset_state or self.brillouin_zone_color_combo is None:
+            return
+        self.brillouin_zone_color = str(
+            self.brillouin_zone_color_combo.currentData()
+        )
+        self.update_plot()
+
+    def _set_brillouin_zone_linewidth(self, value: float) -> None:
+        if self._restoring_dataset_state:
+            return
+        self.brillouin_zone_linewidth = float(value)
+        self.update_plot()
+
+    def _set_brillouin_zone_alpha(self, value: float) -> None:
+        if self._restoring_dataset_state:
+            return
+        self.brillouin_zone_alpha = float(value)
+        self.update_plot()
+
+    def _effective_brillouin_zone_context(self) -> dict[str, Any]:
+        context = dict(self.crystal_contexts[self.dataset_index])
+        metadata = self.data.metadata if isinstance(self.data.metadata, dict) else {}
+        for key in ("spacegroup", "lattice_parameters"):
+            if not context.get(key) and metadata.get(key):
+                context[key] = metadata[key]
+        crystal = metadata.get("crystal")
+        if not context.get("spacegroup") and isinstance(crystal, dict):
+            context["spacegroup"] = crystal.get("spacegroup")
+        return context
+
+    def _ensure_brillouin_zone_context(self) -> bool:
+        from .analysis.coordinates import rlu_to_q_matrix
+        from .qt_brillouin_zone import prompt_brillouin_zone_context
+
+        context = self._effective_brillouin_zone_context()
+        metadata = dict(self.data.metadata)
+        if context.get("lattice_parameters"):
+            metadata["lattice_parameters"] = context["lattice_parameters"]
+        try:
+            rlu_to_q_matrix(metadata)
+            require_lattice = False
+        except (KeyError, TypeError, ValueError):
+            require_lattice = True
+        if context.get("spacegroup") and not require_lattice:
+            return True
+        updated = prompt_brillouin_zone_context(
+            self.window, context, require_lattice=require_lattice
+        )
+        if updated is None:
+            return False
+        self.crystal_contexts[self.dataset_index] = updated
+        if self._brillouin_zone_context_callback is not None:
+            self._brillouin_zone_context_callback(
+                self.source_dataset_names[self.dataset_index], dict(updated)
+            )
+        return True
+
+    def _draw_brillouin_zone_overlay(
+        self, ax: Any | None = None, *, coordinate_overrides: dict[int, float] | None = None
+    ) -> None:
+        if not self.show_brillouin_zone_boundaries or getattr(self.model, "is_point_list", False):
+            return
+        target = self.ax_image if ax is None else ax
+        if target is None:
+            return
+        context = self._effective_brillouin_zone_context()
+        try:
+            draw_mdhisto_brillouin_zones(
+                target,
+                self.data,
+                x_dim=self.model.x_dim,
+                y_dim=self.model.y_dim,
+                selections=self.model.selections,
+                coordinate_overrides=coordinate_overrides,
+                spacegroup=context.get("spacegroup"),
+                lattice_parameters=context.get("lattice_parameters"),
+                color=self.brillouin_zone_color,
+                linewidth=self.brillouin_zone_linewidth,
+                alpha=self.brillouin_zone_alpha,
+            )
+        except (KeyError, TypeError, ValueError, np.linalg.LinAlgError):
+            # Axis changes can temporarily make an enabled HKL overlay inapplicable.
+            return
 
     def _set_smoothing_fill_nans(self, checked: bool) -> None:
         if self._restoring_dataset_state:
@@ -3177,6 +3382,10 @@ class QtMDHistoSliceViewer:
             self.color_group.setVisible(not is_line and not is_waterfall)
         if self.smoothing_group is not None:
             self.smoothing_group.setVisible(not is_point)
+        if self.brillouin_zone_group is not None:
+            self.brillouin_zone_group.setVisible(
+                not is_point and not is_line and not is_waterfall
+            )
         if self.smoothing_y_spin is not None:
             self.smoothing_y_spin.setVisible(not is_line and not grouped_waterfall)
         if self.smoothing_y_label is not None:

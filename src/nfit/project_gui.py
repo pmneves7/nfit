@@ -8939,12 +8939,20 @@ class NfitProjectExplorer:
                 prepared, names = _saved_plot_source_views(group, plot)
             except (TypeError, ValueError):
                 return None
-            viewer.replace_datasets(
-                prepared,
-                dataset_names=names,
-                dataset_group_keys=_waterfall_group_keys(group, names),
-                selected_dataset_name=names[0],
-            )
+            replacement = {
+                "dataset_names": names,
+                "dataset_group_keys": _waterfall_group_keys(group, names),
+                "selected_dataset_name": names[0],
+            }
+            if hasattr(viewer, "crystal_contexts"):
+                replacement["crystal_contexts"] = [
+                    {
+                        "spacegroup": group.spacegroup,
+                        "lattice_parameters": copy.deepcopy(group.lattice_parameters),
+                    }
+                    for _dataset in prepared
+                ]
+            viewer.replace_datasets(prepared, **replacement)
             viewer._nfit_editing_plot_id = plot.id
             viewer._nfit_plot_rebin_configs = copy.deepcopy(
                 plot.settings.get(PLOT_SOURCE_REBIN_CONFIGS_KEY, {})
@@ -9093,6 +9101,14 @@ class NfitProjectExplorer:
                     "dataset_group_keys": _waterfall_group_keys(group, names),
                     "selected_dataset_name": selected_name,
                 }
+                if hasattr(current_viewer, "crystal_contexts"):
+                    replacement["crystal_contexts"] = [
+                        {
+                            "spacegroup": group.spacegroup,
+                            "lattice_parameters": copy.deepcopy(group.lattice_parameters),
+                        }
+                        for _dataset in datasets
+                    ]
                 if getattr(current_viewer, "binning_combo", None) is not None:
                     replacement["selected_binning_name"] = selected_binning_name
                 current_viewer.replace_datasets(datasets, **replacement)
@@ -12064,6 +12080,20 @@ class NfitProjectExplorer:
             ub = _dataset_ub_for_editor(setup)
 
         layout = QtWidgets.QVBoxLayout(box)
+        spacegroup_row = QtWidgets.QHBoxLayout()
+        spacegroup_row.addWidget(QtWidgets.QLabel("Space group / centering"))
+        spacegroup_edit = QtWidgets.QLineEdit(str(root.spacegroup or ""))
+        spacegroup_edit.setObjectName("crystal_orientation_spacegroup")
+        spacegroup_edit.setPlaceholderText("P, I, F, C, or full symbol")
+        spacegroup_edit.setToolTip(
+            "Set the Hermann–Mauguin space group or lattice-centering letter. "
+            "The data viewer uses its centering to draw optional Brillouin-zone boundaries."
+        )
+        spacegroup_edit.editingFinished.connect(
+            lambda: self._set_group_spacegroup(root, spacegroup_edit.text())
+        )
+        spacegroup_row.addWidget(spacegroup_edit, 1)
+        layout.addLayout(spacegroup_row)
         if ub is None:
             matrix_text = "UB matrix: not set"
         else:
@@ -18299,6 +18329,30 @@ class NfitProjectExplorer:
             dataset_names=names,
             dataset_group_keys=group_keys,
         )
+        if hasattr(viewer, "crystal_contexts"):
+            viewer.crystal_contexts = [
+                {
+                    "spacegroup": group.spacegroup,
+                    "lattice_parameters": copy.deepcopy(group.lattice_parameters),
+                }
+                for _dataset in datasets
+            ]
+        if hasattr(viewer, "set_brillouin_zone_context_callback"):
+            def persist_crystal_context(_dataset_name, context, *, group=group):
+                group.spacegroup = str(context.get("spacegroup", "")).strip() or None
+                crystal = group.metadata.get("crystal")
+                if isinstance(crystal, dict) and group.spacegroup:
+                    crystal["spacegroup"] = group.spacegroup
+                lattice = context.get("lattice_parameters")
+                if isinstance(lattice, dict):
+                    group.lattice_parameters = {
+                        key: float(value) for key, value in lattice.items()
+                    }
+                self._record_data_group_state_change(group)
+                self._mark_dirty()
+                self._sync_details()
+
+            viewer.set_brillouin_zone_context_callback(persist_crystal_context)
         self._slice_viewers.setdefault(id(group), []).append(viewer)
         if hasattr(viewer, "set_close_callback"):
             viewer.set_close_callback(

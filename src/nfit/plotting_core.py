@@ -13,6 +13,67 @@ from .mdhisto import MDHistoData, mdhisto_coverage_fraction, mdhisto_measured_bi
 from .quantities import display_axis_label, display_channel_label, display_unit
 
 
+def draw_mdhisto_brillouin_zones(
+    ax: Any,
+    data: MDHistoData,
+    *,
+    x_dim: int,
+    y_dim: int,
+    selections: dict[int, tuple[float, float]] | None = None,
+    coordinate_overrides: dict[int, float] | None = None,
+    spacegroup: str | None = None,
+    lattice_parameters: dict[str, float] | None = None,
+    color: str = "#e57373",
+    linewidth: float = 1.0,
+    alpha: float = 0.75,
+) -> Any:
+    """Draw repeated BZ boundaries using the physical HKL axes of ``data``."""
+
+    from .analysis.coordinates import physical_axis_vectors, rlu_to_q_matrix
+    from .brillouin_zone import build_brillouin_zone_slice, draw_brillouin_zone_slice
+
+    metadata = dict(data.metadata)
+    if lattice_parameters is not None:
+        metadata["lattice_parameters"] = dict(lattice_parameters)
+    symbol = str(spacegroup or metadata.get("spacegroup", "")).strip()
+    if not symbol:
+        crystal = metadata.get("crystal")
+        if isinstance(crystal, dict):
+            symbol = str(crystal.get("spacegroup", "")).strip()
+    if not symbol:
+        raise ValueError("a space group or lattice-centering symbol is required")
+    q_matrix = rlu_to_q_matrix(metadata)
+    vectors = physical_axis_vectors(data)[:, :3]
+    if not np.any(vectors[x_dim]) or not np.any(vectors[y_dim]):
+        raise ValueError("Brillouin-zone boundaries require two HKL plotting axes")
+    selected = selections or {}
+    overrides = coordinate_overrides or {}
+    origin = np.zeros(3, dtype=float)
+    for dim, axis in enumerate(data.axes):
+        if dim in {x_dim, y_dim}:
+            continue
+        if dim in overrides:
+            coordinate = float(overrides[dim])
+        else:
+            low, high = selected.get(
+                dim, (float(axis.centers[0]), float(axis.centers[-1]))
+            )
+            coordinate = 0.5 * (float(low) + float(high))
+        origin += coordinate * vectors[dim]
+    zone_slice = build_brillouin_zone_slice(
+        hkl_origin=origin,
+        x_hkl_vector=vectors[x_dim],
+        y_hkl_vector=vectors[y_dim],
+        xlim=tuple(map(float, ax.get_xlim())),
+        ylim=tuple(map(float, ax.get_ylim())),
+        q_matrix=q_matrix,
+        spacegroup=symbol,
+    )
+    return draw_brillouin_zone_slice(
+        ax, zone_slice, color=color, linewidth=linewidth, alpha=alpha
+    )
+
+
 @dataclass(frozen=True)
 class WaterfallTrace:
     """One prepared trace in a waterfall plot."""
@@ -216,6 +277,12 @@ def plot_mdhisto_slice(
     xcut_percent: float = 20.0,
     ycut_percent: float = 16.0,
     axes_linewidth: float = 1.0,
+    show_brillouin_zone_boundaries: bool = False,
+    brillouin_zone_spacegroup: str | None = None,
+    brillouin_zone_lattice_parameters: dict[str, float] | None = None,
+    brillouin_zone_color: str = "#e57373",
+    brillouin_zone_linewidth: float = 1.0,
+    brillouin_zone_alpha: float = 0.75,
     figsize: tuple[float, float] = (8.0, 6.5),
 ):
     """Render a non-interactive MDHisto slice figure.
@@ -250,7 +317,6 @@ def plot_mdhisto_slice(
     model.percentile_n = float(percentile_n)
     model.power_gamma = float(power_gamma)
     model.color_alpha = float(color_alpha)
-
     view = smooth_mdhisto_view(
         model.slice_arrays(),
         sigma_x=smoothing_sigma_x,
@@ -294,6 +360,19 @@ def plot_mdhisto_slice(
             ax_image.set_xlim(*xlim)
         if ylim is not None:
             ax_image.set_ylim(*ylim)
+        if show_brillouin_zone_boundaries:
+            draw_mdhisto_brillouin_zones(
+                ax_image,
+                data,
+                x_dim=model.x_dim,
+                y_dim=model.y_dim,
+                selections=model.selections,
+                spacegroup=brillouin_zone_spacegroup,
+                lattice_parameters=brillouin_zone_lattice_parameters,
+                color=brillouin_zone_color,
+                linewidth=brillouin_zone_linewidth,
+                alpha=brillouin_zone_alpha,
+            )
         colorbar = fig.colorbar(image, cax=ax_colorbar)
         colorbar.set_label(model._channel_label())
         _apply_axes_linewidth((ax_image, ax_colorbar, ax_xcut, ax_ycut), colorbar, axes_linewidth)
@@ -534,6 +613,12 @@ def plot_mdhisto_tiled_slices(
     tile_label_si_prefix: str = "",
     show_tile_labels: bool = True,
     local_color_scales: bool = False,
+    show_brillouin_zone_boundaries: bool = False,
+    brillouin_zone_spacegroup: str | None = None,
+    brillouin_zone_lattice_parameters: dict[str, float] | None = None,
+    brillouin_zone_color: str = "#e57373",
+    brillouin_zone_linewidth: float = 1.0,
+    brillouin_zone_alpha: float = 0.75,
     figsize: tuple[float, float] = (10.0, 8.0),
 ):
     """Render a grid of 2D slices with global or per-panel color scales."""
@@ -580,6 +665,7 @@ def plot_mdhisto_tiled_slices(
     model.percentile_n = float(percentile_n)
     model.power_gamma = float(power_gamma)
     model.color_alpha = float(color_alpha)
+    tile_index = _resolve_mdhisto_dim(data, tile_dim)
     if local_color_scales and not model.autoscale:
         raise ValueError("local_color_scales requires autoscale=True")
     combined = np.concatenate([panel.values.ravel() for panel in slices])
@@ -643,6 +729,20 @@ def plot_mdhisto_tiled_slices(
                 ax.set_xlim(*xlim)
             if ylim is not None:
                 ax.set_ylim(*ylim)
+            if show_brillouin_zone_boundaries:
+                draw_mdhisto_brillouin_zones(
+                    ax,
+                    data,
+                    x_dim=model.x_dim,
+                    y_dim=model.y_dim,
+                    selections=selections,
+                    coordinate_overrides={tile_index: panel.coordinate},
+                    spacegroup=brillouin_zone_spacegroup,
+                    lattice_parameters=brillouin_zone_lattice_parameters,
+                    color=brillouin_zone_color,
+                    linewidth=brillouin_zone_linewidth,
+                    alpha=brillouin_zone_alpha,
+                )
             axes.append(ax)
             if local_color_scales:
                 colorbar_axis = fig.add_subplot(grid[row, plot_column + 1])
@@ -1498,6 +1598,12 @@ def plot_mdhisto_fit_comparison(
     cmap: str = "viridis",
     color_scale: str = "linear",
     auto_limits: str = "min/max",
+    show_brillouin_zone_boundaries: bool = False,
+    brillouin_zone_spacegroup: str | None = None,
+    brillouin_zone_lattice_parameters: dict[str, float] | None = None,
+    brillouin_zone_color: str = "#e57373",
+    brillouin_zone_linewidth: float = 1.0,
+    brillouin_zone_alpha: float = 0.75,
     figsize: tuple[float, float] | None = None,
 ):
     """Plot data, fit, and optionally residual for matching MDHisto datasets."""
@@ -1526,6 +1632,12 @@ def plot_mdhisto_fit_comparison(
         cmap=cmap,
         color_scale=color_scale,
         auto_limits=auto_limits,
+        show_brillouin_zone_boundaries=show_brillouin_zone_boundaries,
+        brillouin_zone_spacegroup=brillouin_zone_spacegroup,
+        brillouin_zone_lattice_parameters=brillouin_zone_lattice_parameters,
+        brillouin_zone_color=brillouin_zone_color,
+        brillouin_zone_linewidth=brillouin_zone_linewidth,
+        brillouin_zone_alpha=brillouin_zone_alpha,
         figsize=figsize,
     )
 
@@ -1599,6 +1711,12 @@ def _plot_mdhisto_fit_slice_comparison(
     cmap: str,
     color_scale: str,
     auto_limits: str,
+    show_brillouin_zone_boundaries: bool,
+    brillouin_zone_spacegroup: str | None,
+    brillouin_zone_lattice_parameters: dict[str, float] | None,
+    brillouin_zone_color: str,
+    brillouin_zone_linewidth: float,
+    brillouin_zone_alpha: float,
     figsize: tuple[float, float] | None,
 ):
     import matplotlib.pyplot as plt
@@ -1658,6 +1776,19 @@ def _plot_mdhisto_fit_slice_comparison(
         ax.set_title(title)
         ax.set_xlabel(model._axis_label(model.x_dim))
         ax.set_ylabel(model._axis_label(model.y_dim))
+        if show_brillouin_zone_boundaries:
+            draw_mdhisto_brillouin_zones(
+                ax,
+                data,
+                x_dim=data_model.x_dim,
+                y_dim=data_model.y_dim,
+                selections=data_model.selections,
+                spacegroup=brillouin_zone_spacegroup,
+                lattice_parameters=brillouin_zone_lattice_parameters,
+                color=brillouin_zone_color,
+                linewidth=brillouin_zone_linewidth,
+                alpha=brillouin_zone_alpha,
+            )
         colorbar = fig.colorbar(artist, ax=ax)
         colorbar.set_label("Residual (sigma)" if title == "Residual" else model._channel_label())
     return fig

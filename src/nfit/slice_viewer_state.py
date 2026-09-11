@@ -47,6 +47,10 @@ class _DatasetViewState:
     smoothing_x: float = 0.0
     smoothing_y: float = 0.0
     smoothing_fill_nans: bool = True
+    show_brillouin_zone_boundaries: bool = False
+    brillouin_zone_color: str = "#e57373"
+    brillouin_zone_linewidth: float = 1.0
+    brillouin_zone_alpha: float = 0.75
     tile_dim: int | None = None
     tile_range: tuple[float, float] = (0.0, 0.0)
     tile_step: float = 1.0

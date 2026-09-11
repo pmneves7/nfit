@@ -105,6 +105,30 @@ are retained, for example `[K,-K,0]=[0.9,1.1] r.l.u., ΔE=[1,2] meV`. The option
 is preserved independently for each dataset view and included in saved or
 copied figure scripts.
 
+### Brillouin-zone boundaries
+
+For a two-dimensional HKL map, enable **Brillouin-zone boundaries → Show
+boundaries** to overlay the intersections of repeated first Brillouin zones
+with the displayed reciprocal-space plane. The overlay follows oblique
+projected axes and hidden-axis coordinates, and tiled views recompute it for
+each tile. It is a presentation layer only; it does not alter data, masks,
+integration, or fitting.
+
+The reciprocal metric comes from the dataset's UB matrix or lattice parameters.
+The space-group symbol supplies the conventional-cell centering (`P`, `I`, `F`,
+`A`, `B`, `C`, or `R`). A complete Hermann--Mauguin symbol is accepted, but
+point symmetry does not otherwise change the Wigner--Seitz boundary. Set this
+information in **Crystal orientation**. If either the metric or centering is
+missing when the overlay is enabled, the viewer prompts for it and stores the
+result on the data group. Color, line thickness in points, and opacity are
+independent viewer settings.
+
+Copied scripts and saved plots preserve the overlay through
+`show_brillouin_zone_boundaries`, `brillouin_zone_spacegroup`,
+`brillouin_zone_lattice_parameters`, `brillouin_zone_color`,
+`brillouin_zone_linewidth`, and `brillouin_zone_alpha` arguments to
+`plot_mdhisto_slice` or `plot_mdhisto_tiled_slices`.
+
 **Minimum coverage** applies independently to viewer reductions. A displayed
 pixel is masked when the measured fraction of its requested hidden-axis
 integration volume is below the cutoff. The same cutoff is recomputed over

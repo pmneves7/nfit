@@ -160,6 +160,7 @@ def render_plot(
             iqr_n=float(settings.get("iqr_n", 1.5)),
             percentile_n=float(settings.get("percentile_n", 1.0)),
             power_gamma=float(settings.get("power_gamma", 0.5)),
+            color_alpha=float(settings.get("color_alpha", 0.0)),
             smoothing_sigma_x=float(settings.get("smoothing_x", 0.0)),
             smoothing_sigma_y=float(settings.get("smoothing_y", 0.0)),
             smoothing_fill_nans=bool(settings.get("smoothing_fill_nans", True)),
@@ -175,6 +176,18 @@ def render_plot(
             local_color_scales=bool(
                 settings.get("tile_local_color_scales", False)
             ),
+            show_brillouin_zone_boundaries=bool(
+                settings.get("show_brillouin_zone_boundaries", False)
+            ),
+            brillouin_zone_spacegroup=settings.get("brillouin_zone_spacegroup"),
+            brillouin_zone_lattice_parameters=settings.get(
+                "brillouin_zone_lattice_parameters"
+            ),
+            brillouin_zone_color=settings.get("brillouin_zone_color", "#e57373"),
+            brillouin_zone_linewidth=float(
+                settings.get("brillouin_zone_linewidth", 1.0)
+            ),
+            brillouin_zone_alpha=float(settings.get("brillouin_zone_alpha", 0.75)),
             figsize=tuple(settings.get("figsize", (10.0, 8.0))),
         )
     elif plot_type == "mdhisto_line":
@@ -208,6 +221,18 @@ def render_plot(
             cmap=settings.get("cmap", "viridis"),
             color_scale=settings.get("color_scale", "linear"),
             auto_limits=settings.get("auto_limits", "min/max"),
+            show_brillouin_zone_boundaries=bool(
+                settings.get("show_brillouin_zone_boundaries", False)
+            ),
+            brillouin_zone_spacegroup=settings.get("brillouin_zone_spacegroup"),
+            brillouin_zone_lattice_parameters=settings.get(
+                "brillouin_zone_lattice_parameters"
+            ),
+            brillouin_zone_color=settings.get("brillouin_zone_color", "#e57373"),
+            brillouin_zone_linewidth=float(
+                settings.get("brillouin_zone_linewidth", 1.0)
+            ),
+            brillouin_zone_alpha=float(settings.get("brillouin_zone_alpha", 0.75)),
             figsize=tuple(settings.get("figsize", (8.0, 6.5))),
         )
     elif plot_type == "mdhisto_slice":
@@ -231,6 +256,7 @@ def render_plot(
             iqr_n=float(settings.get("iqr_n", 1.5)),
             percentile_n=float(settings.get("percentile_n", 1.0)),
             power_gamma=float(settings.get("power_gamma", 0.5)),
+            color_alpha=float(settings.get("color_alpha", 0.0)),
             smoothing_sigma_x=float(settings.get("smoothing_x", 0.0)),
             smoothing_sigma_y=float(settings.get("smoothing_y", 0.0)),
             smoothing_fill_nans=bool(settings.get("smoothing_fill_nans", True)),
@@ -242,6 +268,18 @@ def render_plot(
             roi_extents=_quad(settings.get("roi_extents")),
             xcut_percent=float(settings.get("xcut_percent", 20.0)),
             ycut_percent=float(settings.get("ycut_percent", 16.0)),
+            show_brillouin_zone_boundaries=bool(
+                settings.get("show_brillouin_zone_boundaries", False)
+            ),
+            brillouin_zone_spacegroup=settings.get("brillouin_zone_spacegroup"),
+            brillouin_zone_lattice_parameters=settings.get(
+                "brillouin_zone_lattice_parameters"
+            ),
+            brillouin_zone_color=settings.get("brillouin_zone_color", "#e57373"),
+            brillouin_zone_linewidth=float(
+                settings.get("brillouin_zone_linewidth", 1.0)
+            ),
+            brillouin_zone_alpha=float(settings.get("brillouin_zone_alpha", 0.75)),
             figsize=tuple(settings.get("figsize", (8.0, 6.5))),
         )
     else:

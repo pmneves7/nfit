@@ -10,6 +10,7 @@ from nfit import (
     brillouin_zone_scene,
     brillouin_zone_script,
     build_brillouin_zone_scene,
+    build_brillouin_zone_slice,
     create_model_component,
     primitive_lattice_vectors,
     set_tight_binding_standard_path,
@@ -20,6 +21,37 @@ from nfit.electronic_builder import (
     orbital_manifold_preset,
 )
 from nfit.model_plots import tight_binding_band_structure
+
+
+def test_cubic_hk_slice_has_half_integer_zone_boundaries():
+    zone = build_brillouin_zone_slice(
+        hkl_origin=(0.0, 0.0, 0.0),
+        x_hkl_vector=(1.0, 0.0, 0.0),
+        y_hkl_vector=(0.0, 1.0, 0.0),
+        xlim=(-1.2, 1.2),
+        ylim=(-1.2, 1.2),
+        q_matrix=np.eye(3),
+        spacegroup="P 1",
+    )
+
+    coordinates = np.asarray(zone.segments).reshape(-1, 2)
+    assert np.any(np.isclose(coordinates[:, 0], 0.5))
+    assert np.any(np.isclose(coordinates[:, 1], -0.5))
+
+
+def test_centering_changes_repeated_zone_boundaries():
+    common = dict(
+        hkl_origin=(0.0, 0.0, 0.0),
+        x_hkl_vector=(1.0, 0.0, 0.0),
+        y_hkl_vector=(0.0, 1.0, 0.0),
+        xlim=(-1.2, 1.2),
+        ylim=(-1.2, 1.2),
+        q_matrix=np.eye(3),
+    )
+    primitive = build_brillouin_zone_slice(**common, spacegroup="P")
+    face_centered = build_brillouin_zone_slice(**common, spacegroup="F")
+
+    assert primitive.segments != face_centered.segments
 
 
 def test_cubic_first_brillouin_zone_and_labelled_path():

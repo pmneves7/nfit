@@ -69,6 +69,41 @@ def test_qt_slice_viewer_apply_masks_toggle_shows_masked_bins():
     assert viewer.slice_arrays()["combined_mask"][2, 3]
 
 
+def test_static_and_qt_slice_views_draw_scriptable_brillouin_zone_boundaries():
+    pytest.importorskip("PySide6")
+    from matplotlib.collections import LineCollection
+
+    from nfit.qt_slice_viewer import QtMDHistoSliceViewer
+
+    data = _tiny_mdhisto_data().with_updates(
+        metadata={
+            "lattice_parameters": {
+                "a": 4.0, "b": 4.0, "c": 4.0,
+                "alpha": 90.0, "beta": 90.0, "gamma": 90.0,
+            },
+            "spacegroup": "P 1",
+        }
+    )
+    figure = plot_mdhisto_slice(
+        data,
+        x_dim=3,
+        y_dim=2,
+        show_brillouin_zone_boundaries=True,
+    )
+    assert any(
+        isinstance(artist, LineCollection)
+        and artist.get_gid() == "nfit-brillouin-zone-boundaries"
+        for artist in figure.axes[0].collections
+    )
+
+    viewer = QtMDHistoSliceViewer(data, x_dim=3, y_dim=2)
+    viewer.show_brillouin_zone_check.setChecked(True)
+    settings = viewer.current_plot_settings()
+    assert settings["show_brillouin_zone_boundaries"] is True
+    assert settings["brillouin_zone_spacegroup"] == "P 1"
+    assert "show_brillouin_zone_boundaries=True" in viewer.figure_script()
+
+
 def test_mdhisto_slice_viewer_auto_color_limits():
     data = _tiny_mdhisto_data()
     viewer = MDHistoSliceViewer(data, x_dim=3, y_dim=2)

@@ -47,6 +47,9 @@ def build_slice_viewer(
     _build_hidden_axis_controls(viewer, controls_layout)
     _build_color_controls(viewer, controls_layout)
     _build_smoothing_controls(viewer, controls_layout)
+    _build_brillouin_zone_controls(
+        viewer, controls_layout, color_options=color_options
+    )
     _build_histogram_tool_controls(viewer, controls_layout)
     _build_line_controls(
         viewer,
@@ -566,6 +569,66 @@ def _build_smoothing_controls(viewer: Any, controls_layout: Any) -> None:
     smoothing_layout.addWidget(viewer.smoothing_fill_nans_check, 2, 0, 1, 2)
     smoothing_layout.setColumnStretch(1, 1)
     controls_layout.addWidget(smoothing_group)
+
+
+def _build_brillouin_zone_controls(
+    viewer: Any, controls_layout: Any, *, color_options: Mapping[str, str]
+) -> None:
+    group = QtWidgets.QGroupBox("Brillouin-zone boundaries")
+    viewer.brillouin_zone_group = group
+    layout = QtWidgets.QGridLayout(group)
+    viewer.show_brillouin_zone_check = QtWidgets.QCheckBox("Show boundaries")
+    viewer.show_brillouin_zone_check.setToolTip(
+        "Overlay repeated first-Brillouin-zone boundaries on HKL slices. "
+        "If crystal information is missing, nfit asks for it when enabled."
+    )
+    viewer.show_brillouin_zone_check.setChecked(
+        viewer.show_brillouin_zone_boundaries
+    )
+    viewer.show_brillouin_zone_check.toggled.connect(
+        viewer._set_show_brillouin_zone_boundaries
+    )
+    layout.addWidget(viewer.show_brillouin_zone_check, 0, 0, 1, 2)
+    viewer.brillouin_zone_color_combo = QtWidgets.QComboBox()
+    for name, value in color_options.items():
+        if value != "none":
+            viewer.brillouin_zone_color_combo.addItem(name, value)
+    color_index = viewer.brillouin_zone_color_combo.findData(
+        viewer.brillouin_zone_color
+    )
+    if color_index >= 0:
+        viewer.brillouin_zone_color_combo.setCurrentIndex(color_index)
+    viewer.brillouin_zone_color_combo.setToolTip("Choose the boundary-line color.")
+    viewer.brillouin_zone_color_combo.currentIndexChanged.connect(
+        viewer._set_brillouin_zone_color
+    )
+    layout.addWidget(QtWidgets.QLabel("Color"), 1, 0)
+    layout.addWidget(viewer.brillouin_zone_color_combo, 1, 1)
+    viewer.brillouin_zone_linewidth_spin = _make_float_spinbox(0.1, 10.0)
+    viewer.brillouin_zone_linewidth_spin.setSingleStep(0.1)
+    viewer.brillouin_zone_linewidth_spin.setValue(
+        viewer.brillouin_zone_linewidth
+    )
+    viewer.brillouin_zone_linewidth_spin.setToolTip(
+        "Set the boundary-line thickness in points."
+    )
+    viewer.brillouin_zone_linewidth_spin.valueChanged.connect(
+        viewer._set_brillouin_zone_linewidth
+    )
+    layout.addWidget(QtWidgets.QLabel("Thickness"), 2, 0)
+    layout.addWidget(viewer.brillouin_zone_linewidth_spin, 2, 1)
+    viewer.brillouin_zone_alpha_spin = _make_float_spinbox(0.0, 1.0)
+    viewer.brillouin_zone_alpha_spin.setSingleStep(0.05)
+    viewer.brillouin_zone_alpha_spin.setValue(viewer.brillouin_zone_alpha)
+    viewer.brillouin_zone_alpha_spin.setToolTip(
+        "Set boundary opacity from transparent (0) to opaque (1)."
+    )
+    viewer.brillouin_zone_alpha_spin.valueChanged.connect(
+        viewer._set_brillouin_zone_alpha
+    )
+    layout.addWidget(QtWidgets.QLabel("Opacity"), 3, 0)
+    layout.addWidget(viewer.brillouin_zone_alpha_spin, 3, 1)
+    controls_layout.addWidget(group)
 
 
 def _build_histogram_tool_controls(viewer: Any, controls_layout: Any) -> None:

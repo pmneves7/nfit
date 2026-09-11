@@ -361,6 +361,9 @@ class TiledSliceController(_ViewerController):
                 cmap=self.model._display_cmap(),
                 norm=norm,
             )
+            self._viewer._draw_brillouin_zone_overlay(
+                axis, coordinate_overrides={self.tile_dim: panel.coordinate}
+            )
             if self.show_tile_labels:
                 axis.text(
                     0.97,
@@ -669,6 +672,7 @@ class FitComparisonController(_ViewerController):
                 cmap=self.model._display_cmap(),
                 norm=norm,
             )
+            self._viewer._draw_brillouin_zone_overlay(ax)
             ax.set_title(title)
             ax.set_xlabel(model._axis_label(model.x_dim))
             ax.set_ylabel(model._axis_label(model.y_dim))
@@ -1108,6 +1112,7 @@ class StandardSliceController(_ViewerController):
         )
         self.ax_image.set_xlabel(self.model._axis_label(self.model.x_dim))
         self.ax_image.set_ylabel(self.model._axis_label(self.model.y_dim))
+        self._viewer._draw_brillouin_zone_overlay()
         self._viewer._draw_bragg_peak_overlay()
 
     def _draw_bragg_peak_overlay(self) -> None:
