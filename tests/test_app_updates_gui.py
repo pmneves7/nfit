@@ -123,7 +123,7 @@ def test_splash_shows_branding_progress_and_offline_help(monkeypatch):
         progress = splash.findChild(QtWidgets.QProgressBar, "startup_progress")
         logo = splash.findChild(QtWidgets.QLabel, "startup_logo")
         assert "Paul M. Neves" in details.text()
-        assert "Version 0.87.0" in details.text()
+        assert "Version 0.87.1" in details.text()
         assert documentation.openExternalLinks()
         assert documentation.toolTip()
         assert progress.minimum() == 0 and progress.maximum() == 0

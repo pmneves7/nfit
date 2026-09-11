@@ -11,6 +11,7 @@ import pytest
 
 from nfit import app_updates as updates
 from nfit.app_distribution import local_help_index
+from tools.distribution import build as distribution_build
 
 
 def github_release(**asset_changes):
@@ -58,6 +59,42 @@ def test_local_mathjax_is_pinned_and_used():
     config = {}
     exec((root / "docs/conf.py").read_text(), config)
     assert config["mathjax_path"] == "mathjax/tex-svg-full.js"
+
+
+def test_linux_bundle_uses_matching_conda_openssl_pair(tmp_path):
+    prefix = tmp_path / "conda"
+    libraries = prefix / "lib"
+    libraries.mkdir(parents=True)
+    bundle = tmp_path / "bundle"
+    internal = bundle / "_internal"
+    internal.mkdir(parents=True)
+    for name in ("libcrypto.so.3", "libssl.so.3"):
+        (libraries / name).write_bytes(f"conda:{name}".encode())
+        (internal / name).write_bytes(f"system:{name}".encode())
+
+    installed = distribution_build._install_linux_openssl_libraries(
+        bundle, prefix=prefix
+    )
+
+    assert installed == (
+        internal / "libcrypto.so.3",
+        internal / "libssl.so.3",
+    )
+    assert installed[0].read_bytes() == b"conda:libcrypto.so.3"
+    assert installed[1].read_bytes() == b"conda:libssl.so.3"
+
+
+def test_beta_workflow_uses_node24_actions():
+    workflow = (
+        Path(__file__).resolve().parents[1]
+        / ".github/workflows/build-beta-installers.yml"
+    ).read_text(encoding="utf-8")
+    assert "mamba-org/setup-micromamba@v3" in workflow
+    assert "actions/upload-artifact@v7" in workflow
+    assert "actions/download-artifact@v7" in workflow
+    assert "setup-micromamba@v2" not in workflow
+    assert "upload-artifact@v4" not in workflow
+    assert "download-artifact@v4" not in workflow
 
 
 def test_release_selection_is_version_and_platform_aware():

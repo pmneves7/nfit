@@ -24,7 +24,7 @@ jobs:
             runner: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
-      - uses: mamba-org/setup-micromamba@v2
+      - uses: mamba-org/setup-micromamba@v3
         with:
           environment-file: environment.yml
           environment-name: nfit
@@ -46,7 +46,7 @@ jobs:
           NFIT_GITHUB_READ_TOKEN: ${{ secrets.NFIT_GITHUB_READ_TOKEN }}
           QT_QPA_PLATFORM: offscreen
         run: python tools/distribution/build.py
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: nfit-${{ runner.os }}-${{ runner.arch }}
           path: dist/installers/*
@@ -58,7 +58,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: dist/installers
           merge-multiple: true

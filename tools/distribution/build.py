@@ -25,6 +25,32 @@ def run(*command: str, **kwargs) -> None:
     subprocess.run(list(map(str, command)), check=True, **kwargs)
 
 
+def _install_linux_openssl_libraries(
+    bundle: Path, *, prefix: Path | None = None
+) -> tuple[Path, Path]:
+    """Replace system OpenSSL copies with the pair used by the Conda build.
+
+    PyInstaller can discover Ubuntu's older libcrypto while collecting h5py,
+    even though another collected library such as libs2n was linked against the
+    newer OpenSSL in the active Conda environment. Keeping libcrypto and libssl
+    from one prefix prevents that ABI mismatch in the standalone application.
+    """
+    prefix = Path(sys.prefix) if prefix is None else Path(prefix)
+    destination = bundle / "_internal"
+    installed = []
+    for name in ("libcrypto.so.3", "libssl.so.3"):
+        source = prefix / "lib" / name
+        if not source.is_file():
+            raise FileNotFoundError(
+                f"The active build environment is missing {source}"
+            )
+        target = destination / name
+        target.unlink(missing_ok=True)
+        shutil.copy2(source.resolve(), target)
+        installed.append(target)
+    return installed[0], installed[1]
+
+
 def build(
     *,
     github_repository: str = "pmneves7/nfit",
@@ -86,6 +112,8 @@ def build(
     command.append(str(TOOLS / "entry.py"))
     run(*command, cwd=ROOT)
     bundle = work / "bundle" / ("nfit.app" if sys.platform == "darwin" else "nfit")
+    if sys.platform == "linux":
+        _install_linux_openssl_libraries(bundle)
     if sys.platform == "darwin":
         info_path = bundle / "Contents/Info.plist"
         info = plistlib.loads(info_path.read_bytes())
