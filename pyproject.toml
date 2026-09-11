@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nfit"
-version = "0.89.0"
+version = "0.89.1"
 description = "Reduced magnetic-scattering analysis for nearly magnetic metals"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -14,6 +14,7 @@ authors = [
 ]
 dependencies = [
   "packaging>=25",
+  "certifi>=2026.7.22",
   "numpy>=2.5",
   "scipy>=1.18",
   "matplotlib>=3.11.1",

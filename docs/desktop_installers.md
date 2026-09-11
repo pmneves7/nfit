@@ -6,9 +6,11 @@ the nfit icon and full startup logo, and a local copy of this documentation.
 
 ## Installing a beta build
 
-Open the private OneDrive link supplied by the project owner and download only
+Open the repository's [GitHub Releases](https://github.com/pmneves7/nfit/releases/latest)
+page while signed into an account with repository access, then download only
 the installer for your computer. The version in the filename changes with each
-beta release.
+beta release. A OneDrive link supplied by the project owner can also provide
+the initial installer.
 
 ### macOS
 
@@ -54,6 +56,42 @@ sudo apt install ./nfit-<version>-linux-x86_64.deb
 Using `apt` installs the required Linux desktop libraries at the same time.
 After installation, open nfit from the application menu or run
 `/opt/nfit/nfit`.
+
+Without administrator access, download
+`nfit-<version>-linux-x86_64.tar.gz` from the same release and run:
+
+```bash
+mkdir -p "$HOME/.local/opt"
+tar -xzf nfit-<version>-linux-x86_64.tar.gz -C "$HOME/.local/opt"
+"$HOME/.local/opt/nfit/nfit"
+```
+
+This uses the same standalone application but does not install missing system
+libraries or create an application-menu entry. Replace the extracted `nfit`
+directory with the archive from a newer release to update it.
+
+## Uninstalling nfit
+
+On macOS, quit nfit and move **nfit** from the Applications folder to the
+Trash. Empty the Trash when convenient. This removes the application; saved
+project files elsewhere on the computer are left in place.
+
+On Windows, quit nfit, open **Settings > Apps > Installed apps**, find
+**nfit**, and select **Uninstall**. The same uninstaller is available as
+**Uninstall nfit** in the nfit folder of the Start menu.
+
+On Ubuntu or another Debian-based Linux system, run:
+
+```bash
+sudo apt remove nfit
+```
+
+For an installation extracted without administrator access, remove the
+directory used during extraction, normally `$HOME/.local/opt/nfit`. If you
+created a desktop-menu entry manually, also remove
+`$HOME/.local/share/applications/nfit.desktop`.
+
+These procedures leave user-created `.nfit` project files untouched.
 
 The beta installers are not yet signed. macOS may require **Open Anyway** in
 **System Settings > Privacy & Security** after the first launch attempt.

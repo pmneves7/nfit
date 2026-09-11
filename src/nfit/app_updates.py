@@ -6,14 +6,16 @@ import hashlib
 import json
 import re
 import shutil
+import ssl
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
+import certifi
 from packaging.version import InvalidVersion, Version
 
 from .app_distribution import platform_key
@@ -96,7 +98,12 @@ def _open_github(url: str, token: str, *, binary: bool = False):
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
-        return build_opener(_GitHubRedirect()).open(
+        # Frozen Conda applications bundle OpenSSL separately from the host OS.
+        # Point it at a known CA bundle instead of relying on platform-specific
+        # certificate discovery, which is unreliable in packaged macOS/Linux apps.
+        context = ssl.create_default_context()
+        context.load_verify_locations(cafile=certifi.where())
+        return build_opener(_GitHubRedirect(), HTTPSHandler(context=context)).open(
             Request(url, headers=headers), timeout=30
         )
     except HTTPError as error:

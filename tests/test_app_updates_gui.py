@@ -109,9 +109,13 @@ def test_approved_install_saves_and_quits_before_opening(
 
 def test_splash_shows_branding_progress_and_offline_help(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-    from PySide6 import QtWidgets
+    from PySide6 import QtCore, QtWidgets
 
-    from tools.distribution.startup_splash import StartupSplash
+    from tools.distribution.startup_splash import (
+        StartupSplash,
+        _logo_path,
+        _render_svg,
+    )
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     splash = StartupSplash()
@@ -129,6 +133,9 @@ def test_splash_shows_branding_progress_and_offline_help(monkeypatch):
         assert progress.minimum() == 0 and progress.maximum() == 0
         assert progress.toolTip()
         assert logo.pixmap() is not None and not logo.pixmap().isNull()
+        rendered = _render_svg(_logo_path(), QtCore.QSize(420, 235))
+        assert rendered.size() == QtCore.QSize(840, 470)
+        assert rendered.devicePixelRatio() == 2.0
     finally:
         splash.close()
         app.processEvents()
@@ -159,3 +166,12 @@ def test_frozen_entry_shows_splash_before_importing_nfit():
         if isinstance(node, ast.ImportFrom) and node.module
     )
     assert "nfit" not in imported_roots
+
+
+def test_splash_logo_is_true_vector_artwork():
+    logo = (
+        Path(__file__).parents[1] / "docs/_static/nfit-logo.svg"
+    ).read_text(encoding="utf-8")
+    assert "<radialGradient" in logo
+    assert "<image" not in logo
+    assert "data:image" not in logo

@@ -6,7 +6,7 @@ import sys
 from importlib.metadata import version
 from pathlib import Path
 
-from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtSvg, QtWidgets
 
 
 def _resource_root() -> Path:
@@ -44,6 +44,22 @@ def _help_index() -> Path | None:
     )
 
 
+def _render_svg(path: Path, size: QtCore.QSize) -> QtGui.QPixmap:
+    """Render vector artwork at twice the display resolution for crisp HiDPI output."""
+    renderer = QtSvg.QSvgRenderer(str(path))
+    if not renderer.isValid():
+        return QtGui.QPixmap()
+    renderer.setAspectRatioMode(QtCore.Qt.AspectRatioMode.KeepAspectRatio)
+    rendered_size = size * 2
+    pixmap = QtGui.QPixmap(rendered_size)
+    pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+    painter = QtGui.QPainter(pixmap)
+    renderer.render(painter)
+    painter.end()
+    pixmap.setDevicePixelRatio(2.0)
+    return pixmap
+
+
 class StartupSplash(QtWidgets.QWidget):
     """Show branding and an indeterminate loading indicator during startup."""
 
@@ -69,22 +85,16 @@ class StartupSplash(QtWidgets.QWidget):
         logo.setObjectName("startup_logo")
         logo.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         logo_path = _logo_path()
+        logo_size = QtCore.QSize(420, 235)
         pixmap = (
-            QtGui.QPixmap(str(logo_path))
+            _render_svg(logo_path, logo_size)
             if logo_path is not None
             else QtGui.QPixmap()
         )
         if pixmap.isNull() and (icon_path := _icon_path()) is not None:
             pixmap = QtGui.QPixmap(str(icon_path))
         if not pixmap.isNull():
-            logo.setPixmap(
-                pixmap.scaled(
-                    420,
-                    235,
-                    QtCore.Qt.AspectRatioMode.KeepAspectRatio,
-                    QtCore.Qt.TransformationMode.SmoothTransformation,
-                )
-            )
+            logo.setPixmap(pixmap)
         else:
             logo.setText("nfit")
             logo.setStyleSheet("font: 48pt serif;")

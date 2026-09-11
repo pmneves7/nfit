@@ -137,6 +137,14 @@ def test_linux_smoke_runner_installs_debian_runtime_dependencies():
         assert package in build_script
 
 
+def test_windows_installer_exposes_a_start_menu_uninstaller():
+    installer = (
+        Path(__file__).resolve().parents[1] / "tools/distribution/windows.iss"
+    ).read_text(encoding="utf-8")
+    assert 'Name: "{autoprograms}\\Uninstall nfit"' in installer
+    assert 'Filename: "{uninstallexe}"' in installer
+
+
 def test_release_selection_is_version_and_platform_aware():
     result = release()
     assert result.installer_url == (
@@ -210,6 +218,31 @@ def test_github_redirects_require_https_and_strip_the_token():
         handler.redirect_request(
             request, None, 302, "redirect", {}, "http://example.org/file"
         )
+
+
+def test_github_requests_use_the_certifi_ca_bundle(monkeypatch):
+    calls = []
+
+    class FakeOpener:
+        def open(self, request, timeout):
+            calls.append((request, timeout))
+            return io.BytesIO(b"{}")
+
+    class FakeContext:
+        def load_verify_locations(self, *, cafile):
+            calls.append(("cafile", cafile))
+
+    context = FakeContext()
+    monkeypatch.setattr(updates.ssl, "create_default_context", lambda: context)
+    monkeypatch.setattr(updates, "build_opener", lambda *handlers: FakeOpener())
+
+    with updates._open_github(
+        "https://api.github.com/repos/pmneves7/nfit/releases/latest", "token"
+    ) as response:
+        assert response.read() == b"{}"
+
+    assert calls[0] == ("cafile", updates.certifi.where())
+    assert calls[1][1] == 30
 
 
 def test_verified_download_is_the_only_returned_installer(monkeypatch, tmp_path):

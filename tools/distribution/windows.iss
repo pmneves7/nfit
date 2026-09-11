@@ -24,6 +24,7 @@ RestartApplications=no
 Source: "{#BundleDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 [Icons]
 Name: "{autoprograms}\nfit"; Filename: "{app}\nfit.exe"
+Name: "{autoprograms}\Uninstall nfit"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\nfit"; Filename: "{app}\nfit.exe"; Tasks: desktopicon
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked

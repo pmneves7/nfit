@@ -6,15 +6,15 @@ Preserve these design files for future editing:
 - `nfit-01.svg`: full wordmark, with the neutron sphere and “n” followed by “fit”.
 - `nfit-02.svg`: neutron sphere with “n”, for the application icon.
 
-Both SVGs have lettering converted to vector paths and require no installed
-fonts. Each SVG contains an embedded 512 × 512 PNG sphere, rather than a
-vector sphere. The icon sphere has slightly flattened top and left edges;
-check the source image cropping before producing final application icons.
+Both SVGs use vector paths for the lettering and a radial-gradient vector
+sphere, so they require no installed fonts and remain sharp at any size.
 
 Keep the Illustrator source for editing and export text as outlines in future
 SVG revisions. Check artboard bounds and small icon sizes before integrating
 exports into the application or documentation. Preserve the design sources
-when generating platform icon files.
+when generating platform icon files. The PNG icon derivatives remain necessary
+because operating-system application icons use raster representations at fixed
+sizes.
 
 The documentation wordmark is copied to `docs/_static/nfit-logo.svg`. The
 application icon (`src/nfit/resources/nfit-icon.png`, 512 px) and documentation
