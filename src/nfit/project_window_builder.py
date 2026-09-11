@@ -147,6 +147,13 @@ def _build_window_shell(
     self.preferences_action.setObjectName("preferences_action")
     self.preferences_action.setToolTip("Open application preferences, including the custom colormap folder.")
     self.preferences_action.setStatusTip(self.preferences_action.toolTip())
+    from .app_distribution import application_version
+
+    self.version_action = menu.addAction(f"nfit version {application_version()}")
+    self.version_action.setObjectName("version_action")
+    self.version_action.setEnabled(False)
+    self.version_action.setToolTip("Version of the nfit build currently running.")
+    self.version_action.setStatusTip(self.version_action.toolTip())
     menu.addSeparator()
     close_action = menu.addAction("Close", self.close_project)
     close_action.setShortcut(QtGui.QKeySequence.StandardKey.Close)

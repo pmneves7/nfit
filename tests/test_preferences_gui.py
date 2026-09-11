@@ -48,6 +48,8 @@ def test_preferences_colormap_folder_and_controls(qt_app, monkeypatch, tmp_path)
         assert "Restart nfit" in labels
         assert "NFIT_COLORMAP_DIR" in labels
         assert "parula(256)" in labels
+        assert dialog.version_label.text().startswith("nfit version ")
+        assert dialog.version_label.toolTip()
     finally:
         dialog.close()
 
@@ -80,6 +82,41 @@ def test_preferences_folder_open_failure(qt_app, monkeypatch, tmp_path):
     open_user_colormap_folder()
     assert len(warnings) == 1
     assert "Could not open" in warnings[0][2]
+
+
+@pytest.mark.parametrize(
+    ("platform", "environment", "expected"),
+    [
+        ("darwin", {}, ("Library", "Application Support", "nfit", "colormaps")),
+        ("win32", {"APPDATA": "appdata"}, ("appdata", "nfit", "colormaps")),
+        ("linux", {"XDG_CONFIG_HOME": "config"}, ("config", "nfit", "colormaps")),
+    ],
+)
+def test_default_colormap_folder_uses_native_nfit_application_data(
+    monkeypatch, tmp_path, platform, environment, expected
+):
+    import nfit.colormaps as colormaps
+
+    monkeypatch.delenv("NFIT_COLORMAP_DIR", raising=False)
+    monkeypatch.setattr(colormaps.sys, "platform", platform)
+    monkeypatch.setattr(colormaps.Path, "home", classmethod(lambda cls: tmp_path))
+    for name, relative_path in environment.items():
+        monkeypatch.setenv(name, str(tmp_path / relative_path))
+    assert colormaps.user_colormap_directory() == tmp_path.joinpath(*expected)
+
+
+def test_legacy_colormap_folder_is_moved_to_application_data(monkeypatch, tmp_path):
+    import nfit.colormaps as colormaps
+
+    monkeypatch.delenv("NFIT_COLORMAP_DIR", raising=False)
+    monkeypatch.setattr(colormaps.Path, "home", classmethod(lambda cls: tmp_path))
+    legacy = tmp_path / "nfit_colormaps"
+    legacy.mkdir()
+    (legacy / "custom.csv").write_text("0 0 0\n1 1 1\n")
+    colormaps._migrate_legacy_user_colormap_directory()
+    destination = colormaps.user_colormap_directory()
+    assert not legacy.exists()
+    assert (destination / "custom.csv").is_file()
 
 
 def test_file_menu_opens_preferences(qt_app, monkeypatch):

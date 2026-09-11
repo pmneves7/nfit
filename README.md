@@ -128,8 +128,8 @@ The package provides:
   retain independent source/composite-rebin configurations, separate save/update
   actions for stored plots, and provide named,
   previewed Matplotlib, cmcrameri, Colorcet, cmocean, MyCarta, and CartoColors
-  color maps, plus drop-in custom RGB palette files accessible through
-  **File → Preferences**, installation-local continuous and waterfall colormap
+  color maps, plus drop-in custom RGB palette files in nfit's application-data
+  folder, accessible through **File → Preferences**, installation-local continuous and waterfall colormap
   defaults, and display-only Gaussian interpolation into adjacent empty bins,
   with toolbar **Help** opening the local documentation;
 - machine-local rebin performance defaults, cancellable machine calibration and

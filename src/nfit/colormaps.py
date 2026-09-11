@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import warnings
 from pathlib import Path
 
@@ -295,7 +296,41 @@ MYCARTA_COLORMAPS, CARTOCOLORS_COLORMAPS = _palettable_colormaps()
 def user_colormap_directory() -> Path:
     """Return the drop-in RGB-table directory (override with NFIT_COLORMAP_DIR)."""
 
-    return Path(os.environ.get("NFIT_COLORMAP_DIR", str(Path.home() / "nfit_colormaps"))).expanduser()
+    override = os.environ.get("NFIT_COLORMAP_DIR")
+    if override:
+        return Path(override).expanduser()
+    return _nfit_application_data_directory() / "colormaps"
+
+
+def _nfit_application_data_directory() -> Path:
+    """Return nfit's conventional per-user application-data directory."""
+
+    if sys.platform == "win32":
+        root = os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))
+        return Path(root) / "nfit"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "nfit"
+    root = os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))
+    return Path(root) / "nfit"
+
+
+def _migrate_legacy_user_colormap_directory() -> None:
+    """Move the former top-level palette folder into nfit application data once."""
+
+    if os.environ.get("NFIT_COLORMAP_DIR"):
+        return
+    legacy = Path.home() / "nfit_colormaps"
+    destination = user_colormap_directory()
+    if not legacy.is_dir() or destination.exists():
+        return
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        legacy.replace(destination)
+    except OSError as exc:
+        warnings.warn(
+            f"Could not move legacy colormap folder {legacy} to {destination}: {exc}",
+            stacklevel=2,
+        )
 
 
 def load_colormap_file(path: str | Path) -> str:
@@ -475,6 +510,7 @@ def open_user_colormap_folder(parent=None) -> None:
 
     from PySide6 import QtCore, QtGui, QtWidgets
 
+    _migrate_legacy_user_colormap_directory()
     directory = user_colormap_directory()
     try:
         directory.mkdir(parents=True, exist_ok=True)

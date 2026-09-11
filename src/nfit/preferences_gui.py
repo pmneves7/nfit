@@ -6,6 +6,7 @@ import os
 
 from PySide6 import QtCore, QtWidgets
 
+from .app_distribution import application_version
 from .application_preferences import (
     application_settings,
     default_continuous_colormap,
@@ -118,6 +119,10 @@ class PreferencesDialog(QtWidgets.QDialog):
         from .performance_gui import PerformancePage
 
         self.tabs.addTab(PerformancePage(self), "Performance")
+        self.version_label = QtWidgets.QLabel(f"nfit version {application_version()}")
+        self.version_label.setObjectName("preferences_version")
+        self.version_label.setToolTip("Version of the nfit build currently running.")
+        layout.addWidget(self.version_label)
         buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)
         buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Close).setToolTip("Close application preferences.")
         buttons.rejected.connect(self.reject)

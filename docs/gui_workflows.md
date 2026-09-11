@@ -17,10 +17,10 @@ Click **Help** beside **File** in the project explorer toolbar to open the local
 documentation home page (`docs/_build/html/index.html`) in your default web
 browser. If it has not been built, Help shows the build command instead.
 
-Open **File → Preferences…** for application-wide preferences. The **Colormaps**
+The **File** menu shows the running nfit version. Open **File → Preferences…** for application-wide preferences. The **Colormaps**
 page sets the defaults for newly opened continuous and waterfall plots, shows
 the shared custom-palette folder, opens it in your file manager, and explains
-the [RGB file format](data_viewer.md#custom-colormap-files). Preferences are
+the [RGB file format](data_viewer.md#custom-colormap-files). Preferences also show the running version. Preferences are
 local to this nfit installation and are never stored in a project. Custom
 palettes are shared across projects; restart nfit after adding or editing files.
 The **Performance** page stores defaults for new rebin configurations and offers
@@ -137,6 +137,9 @@ File choosers remember their last successfully selected directory for the local
 nfit installation. Before a directory has been remembered, they start beside
 the open project; an unsaved project falls back to the operating system's
 Documents directory and then the user's home directory.
+On Linux, nfit uses Qt's bundled file chooser so opening or cancelling a file
+dialog remains responsive in remote desktop sessions where a desktop portal is
+unavailable or incomplete.
 
 ## Reproducibility
 

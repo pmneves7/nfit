@@ -8,6 +8,7 @@ import pytest
 
 import nfit.project_gui as project_gui
 import nfit.project_window_builder as project_window_builder
+from nfit.app_distribution import application_version
 from nfit.project_gui import NfitProject, NfitProjectExplorer
 
 
@@ -165,7 +166,16 @@ def test_project_window_builder_constructs_and_connects_project_actions(monkeypa
             if not action.isSeparator() and action.menu() is None
         }
         assert list(all_actions) == [
-            *action_callbacks,
+            "New",
+            "Open",
+            "Reload from Disk",
+            "Cache binnings",
+            "Save",
+            "Save As",
+            "Preferences…",
+            f"nfit version {application_version()}",
+            "Close",
+            "Quit",
             "Check for updates…",
             "Update settings…",
         ]
@@ -185,6 +195,8 @@ def test_project_window_builder_constructs_and_connects_project_actions(monkeypa
         ) != QtGui.QKeySequence.SequenceMatch.NoMatch
         assert all_actions["Check for updates…"].toolTip()
         assert all_actions["Update settings…"].toolTip()
+        assert explorer.version_action.toolTip()
+        assert not explorer.version_action.isEnabled()
         assert explorer._external_change_timer.parent() is explorer.window
         assert explorer._external_change_timer.interval() == 1500
     finally:
