@@ -558,13 +558,14 @@ def _dataset_axes_group_box(
     rebin_layout = QtWidgets.QVBoxLayout(rebin_box)
     rebin_layout.setContentsMargins(10, 8, 10, 8)
 
+    binnings = dataset_rebin_binnings(dataset)
     selected_binning = self._selected_dataset_binning(dataset)
     config = selected_binning["config"]
     binning_row = QtWidgets.QHBoxLayout()
     binning_row.addWidget(QtWidgets.QLabel("Binning"))
     binning_combo = QtWidgets.QComboBox()
     binning_combo.setObjectName("dataset_rebin_binning")
-    for item in dataset_rebin_binnings(dataset):
+    for item in binnings:
         binning_combo.addItem(
             f"{item['name']}{' (fit)' if item['fit'] else ''}", item["id"]
         )
@@ -946,6 +947,16 @@ def _dataset_axes_group_box(
     rebin_now_button.clicked.connect(
         lambda _checked=False: self.rebin_dataset_now(dataset, group)
     )
+    rebin_all_button = QtWidgets.QPushButton("Rebin all now")
+    rebin_all_button.setObjectName("dataset_rebin_all_now")
+    rebin_all_button.setEnabled(_dataset_can_rebin(dataset))
+    rebin_all_button.setVisible(len(binnings) > 1)
+    rebin_all_button.setToolTip(
+        "Compute every enabled named binning for this dataset and update open data viewers."
+    )
+    rebin_all_button.clicked.connect(
+        lambda _checked=False: self.rebin_all_dataset_binnings_now(dataset, group)
+    )
     save_rebin_button = QtWidgets.QPushButton("Save rebin to disk")
     save_rebin_button.setObjectName("dataset_rebin_save")
     save_rebin_button.setEnabled(_dataset_can_rebin(dataset))
@@ -1016,6 +1027,7 @@ def _dataset_axes_group_box(
     controls_layout.addWidget(status_label, footer_row + 3, 0, 1, last_column + 1)
     action_row = QtWidgets.QHBoxLayout()
     action_row.addWidget(rebin_now_button)
+    action_row.addWidget(rebin_all_button)
     action_row.addWidget(create_button)
     action_row.addWidget(save_rebin_button)
     action_row.addStretch(1)

@@ -478,13 +478,17 @@ rebin it uses the exact cached grid.
 Automatic rebinning turns off when an edit raises the estimate above 5,000,000
 point contributions or 2,000,000 output bins. It may be manually re-enabled;
 otherwise the job remains pending until **Rebin now** or an operation requires
-current rebinned data. **Workers** sets the saved worker ceiling for this
-configuration; the rebinner can use fewer workers. **Benchmark this rebin…**
-compares batch targets and worker ceilings using isolated runs of the full
-current configuration, without updating live data. Review the timing and process
+current rebinned data. When a dataset or composite has multiple named binnings,
+**Rebin all now** computes every enabled binning. Both manual rebin actions
+refresh open data viewers so newly computed named binnings appear immediately.
+For composites, **Create dataset from composite** is placed at the right side of
+the action row. **Workers** sets the saved worker ceiling for this configuration;
+the rebinner can use fewer workers. **Benchmark this rebin…** compares batch
+targets and worker ceilings using isolated runs of the full current
+configuration, without updating live data. Review the timing and process
 peak-memory table before choosing **Apply recommendation**. The same controls
-are available for composites. Defaults for new configurations live in
-**File → Preferences → Performance**; see [benchmark details](performance.md#performance-preferences-and-benchmarks).
+are available for composites. Defaults for new configurations live in **File →
+Preferences → Performance**; see [benchmark details](performance.md#performance-preferences-and-benchmarks).
 
 All rebin workflows use the same compact progress dialog. When a task prepares
 several datasets or dataset-group composites, it uses two levels: the upper bar

@@ -721,10 +721,15 @@ def test_dataset_rebin_config_updates_slice_viewer_materializes_and_saves(monkey
     assert dataset_rebin_config(dataset)["max_batch_mb"] == 64
     create_button = rebin_panel.findChild(QtWidgets.QPushButton, "dataset_rebin_create")
     rebin_now_button = rebin_panel.findChild(QtWidgets.QPushButton, "dataset_rebin_now")
+    rebin_all_button = rebin_panel.findChild(
+        QtWidgets.QPushButton, "dataset_rebin_all_now"
+    )
     save_rebin_button = rebin_panel.findChild(QtWidgets.QPushButton, "dataset_rebin_save")
     assert create_button is not None
     assert rebin_now_button is not None
     assert rebin_now_button.text() == "Rebin now"
+    assert rebin_all_button is not None and rebin_all_button.isHidden()
+    assert rebin_all_button.toolTip()
     assert create_button.text() == "Create dataset from rebin"
     assert save_rebin_button is not None
     assert save_rebin_button.text() == "Save rebin to disk"
@@ -829,6 +834,10 @@ def test_dataset_rebin_panel_selects_and_edits_named_binning(monkeypatch):
         "Default (fit)",
         "Wide view",
     ]
+    rebin_all_button = explorer.details_widget.findChild(
+        QtWidgets.QPushButton, "dataset_rebin_all_now"
+    )
+    assert rebin_all_button is not None and not rebin_all_button.isHidden()
     explorer._select_dataset_binning(dataset, auxiliary_id)
     project_gui.dataset_rebin_config(dataset)["axes"][0]["step_size"] = 0.125
 
@@ -840,6 +849,37 @@ def test_dataset_rebin_panel_selects_and_edits_named_binning(monkeypatch):
         QtWidgets.QCheckBox, "dataset_rebin_fit_binning"
     ).toolTip()
     explorer.window.close()
+
+
+def test_rebin_all_dataset_binnings_populates_viewer_entries_and_refreshes(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+    project_gui._VIEWER_VIEW_CACHE.clear()
+    dataset = DatasetEntry("scan", _grid_mdhisto_data(), kind="mdhisto")
+    group = DataGroup("Datagroup1", datasets=[dataset])
+    fit = project_data.dataset_rebin_config(dataset)
+    fit.update(enabled=True, minimum_coverage=0.0, stale=True)
+    auxiliary_id = project_data.add_dataset_rebin_binning(dataset, name="Overview")
+    auxiliary = project_data.dataset_rebin_config_by_id(dataset, auxiliary_id)
+    auxiliary.update(enabled=True, minimum_coverage=0.0, stale=True)
+    auxiliary["axes"][0].update(mode="bins", num_bins=1)
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    refreshes = []
+    monkeypatch.setattr(explorer, "_make_rebin_progress_callback", lambda *a, **k: None)
+    monkeypatch.setattr(explorer, "_close_rebin_progress", lambda _progress: None)
+    monkeypatch.setattr(explorer, "_set_dataset_details", lambda *_args: None)
+    monkeypatch.setattr(explorer, "refresh_slice_viewer", refreshes.append)
+
+    assert explorer.rebin_all_dataset_binnings_now(dataset, group)
+    assert fit["stale"] is False
+    assert auxiliary["stale"] is False
+    assert refreshes == [group]
+    assert project_gui._peek_cached_dataset_view(dataset) is not None
+    assert project_gui._peek_cached_dataset_view(
+        dataset, rebin_config=auxiliary, cache_id=auxiliary_id
+    ) is not None
+    _datasets, names = project_gui.slice_viewer_datasets(group, force_rebin=False)
+    assert names == ["scan", "scan · Overview"]
 
 
 def test_named_visualization_binning_is_zero_weight_and_viewer_selectable(monkeypatch):
@@ -1196,6 +1236,7 @@ def test_large_dataset_rebin_defaults_manual_and_defers_refresh(monkeypatch):
     rebin_now_button.click()
     QtWidgets.QApplication.processEvents()
     assert dataset_rebin_config(dataset)["stale"] is False
+    assert refreshes == [group]
     forced = dataset_for_slice_viewer(dataset)
     assert forced is not None
     assert forced.shape[0] >= 1
@@ -1519,6 +1560,23 @@ def test_data_group_composite_controls_show_summary_and_update_config(monkeypatc
     )
     assert rebin_now_button is not None
     assert rebin_now_button.toolTip()
+    rebin_all_button = explorer.details_widget.findChild(
+        QtWidgets.QPushButton, "group_composite_rebin_all_now"
+    )
+    assert rebin_all_button is not None and rebin_all_button.isHidden()
+    assert rebin_all_button.toolTip()
+    materialize_button = explorer.details_widget.findChild(
+        QtWidgets.QPushButton, "group_composite_create"
+    )
+    controls_layout = materialize_button.parentWidget().layout()
+    action_layout = next(
+        controls_layout.itemAt(index).layout()
+        for index in range(controls_layout.count())
+        if controls_layout.itemAt(index).layout() is not None
+        and controls_layout.itemAt(index).layout().indexOf(materialize_button) >= 0
+    )
+    assert action_layout.indexOf(rebin_now_button) < action_layout.indexOf(materialize_button)
+    assert action_layout.itemAt(action_layout.indexOf(materialize_button) - 1).spacerItem()
     copy_button = explorer.details_widget.findChild(
         QtWidgets.QPushButton, "group_composite_copy_settings"
     )
@@ -1633,9 +1691,55 @@ def test_large_data_group_composite_defaults_manual_and_defers_refresh(monkeypat
 
     assert explorer.rebin_composite_now(group) is True
     assert config["stale"] is False
+    assert refresh_calls == [group]
     datasets, names = project_gui.slice_viewer_datasets(group, force_rebin=False)
     assert names == ["Datagroup1 Composite"]
     np.testing.assert_allclose(datasets[0].signal[~datasets[0].mask], 1.5)
+
+
+def test_rebin_all_composite_binnings_populates_viewer_entries_and_refreshes(
+    monkeypatch,
+):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    project_gui._COMPOSITE_DATA_CACHE.clear()
+    group = DataGroup(
+        "Datagroup1",
+        datasets=[
+            DatasetEntry("first", _tiny_mdhisto_data(1.0), kind="mdhisto"),
+            DatasetEntry("second", _tiny_mdhisto_data(2.0), kind="mdhisto"),
+        ],
+    )
+    fit = project_gui.data_group_composite_config(group)
+    fit.update(enabled=True, minimum_coverage=0.0, stale=True)
+    auxiliary_id = project_data.add_data_group_composite_binning(
+        group, name="Overview"
+    )
+    auxiliary = project_data.data_group_composite_config_by_id(group, auxiliary_id)
+    auxiliary.update(enabled=True, minimum_coverage=0.0, stale=True)
+    auxiliary["axes"][0].update(mode="bins", num_bins=1)
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer.tree.setCurrentItem(explorer.tree.topLevelItem(0).child(0))
+    rebin_all_button = explorer.details_widget.findChild(
+        QtWidgets.QPushButton, "group_composite_rebin_all_now"
+    )
+    assert rebin_all_button is not None and not rebin_all_button.isHidden()
+    refreshes = []
+    monkeypatch.setattr(explorer, "_make_rebin_progress_callback", lambda *a, **k: None)
+    monkeypatch.setattr(explorer, "_close_rebin_progress", lambda _progress: None)
+    monkeypatch.setattr(explorer, "_sync_details", lambda: None)
+    monkeypatch.setattr(explorer, "refresh_slice_viewer", refreshes.append)
+
+    assert explorer.rebin_all_composite_binnings_now(group)
+    assert fit["stale"] is False
+    assert auxiliary["stale"] is False
+    assert refreshes == [group]
+    assert project_gui._peek_cached_composite_dataset_data(group) is not None
+    assert project_gui._peek_cached_composite_dataset_data(
+        group, config_override=auxiliary, binning_id=auxiliary_id
+    ) is not None
+    _datasets, names = project_gui.slice_viewer_datasets(group, force_rebin=False)
+    assert names == ["Datagroup1 Composite", "Datagroup1 Composite · Overview"]
 
 
 def test_crossing_rebin_size_threshold_disables_auto_until_user_reenables(monkeypatch):

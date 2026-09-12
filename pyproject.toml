@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nfit"
-version = "0.89.10"
+version = "0.89.11"
 description = "Reduced magnetic-scattering analysis for nearly magnetic metals"
 readme = "README.md"
 requires-python = ">=3.12"

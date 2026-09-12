@@ -333,7 +333,7 @@ class QtMDHistoSliceViewer:
         self.axis_linewidth = 1.5
         self.smoothing_x = 0.0
         self.smoothing_y = 0.0
-        self.smoothing_fill_nans = True
+        self.smoothing_fill_nans = False
         self.show_brillouin_zone_boundaries = False
         self.brillouin_zone_color = "#e57373"
         self.brillouin_zone_linewidth = 1.0
@@ -795,7 +795,7 @@ class QtMDHistoSliceViewer:
         self.smoothing_x = float(settings.get("smoothing_x", self.smoothing_x))
         self.smoothing_y = float(settings.get("smoothing_y", self.smoothing_y))
         self.smoothing_fill_nans = bool(
-            settings.get("smoothing_fill_nans", True)
+            settings.get("smoothing_fill_nans", False)
         )
         self.show_brillouin_zone_boundaries = bool(
             settings.get("show_brillouin_zone_boundaries", False)

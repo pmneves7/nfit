@@ -218,7 +218,7 @@ def _build_smoothing_controls(panel, layout, QtWidgets) -> None:
         grid.addWidget(spin, 1, column)
     panel.smoothing_fill_nans_check = QtWidgets.QCheckBox("Fill adjacent NaN bins")
     panel.smoothing_fill_nans_check.setObjectName("volume_smoothing_fill_nans_check")
-    panel.smoothing_fill_nans_check.setChecked(True)
+    panel.smoothing_fill_nans_check.setChecked(False)
     panel.smoothing_fill_nans_check.setToolTip(
         "Allow plot-only Gaussian smoothing to extend into adjacent bins with no "
         "finite value. Uncheck to preserve those gaps in the rendered volume."

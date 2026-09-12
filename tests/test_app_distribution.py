@@ -137,6 +137,15 @@ def test_beta_workflow_publishes_a_release_visible_to_repository_readers():
     assert "--prerelease" not in workflow
 
 
+def test_public_beta_build_does_not_embed_the_private_repository_token():
+    workflow = (
+        Path(__file__).resolve().parents[1]
+        / ".github/workflows/build-beta-installers.yml"
+    ).read_text(encoding="utf-8")
+    assert 'if [[ "$REPOSITORY_PRIVATE" != "true" ]]' in workflow
+    assert "unset NFIT_GITHUB_READ_TOKEN" in workflow
+
+
 def test_beta_workflow_runs_on_main_push_and_remains_manually_runnable():
     workflow = (
         Path(__file__).resolve().parents[1]

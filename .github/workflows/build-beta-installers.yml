@@ -57,7 +57,12 @@ jobs:
         env:
           NFIT_GITHUB_READ_TOKEN: ${{ secrets.NFIT_GITHUB_READ_TOKEN }}
           QT_QPA_PLATFORM: offscreen
-        run: python tools/distribution/build.py
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          if [[ "$REPOSITORY_PRIVATE" != "true" ]]; then
+            unset NFIT_GITHUB_READ_TOKEN
+          fi
+          python tools/distribution/build.py
       - uses: actions/upload-artifact@v7
         with:
           name: nfit-${{ runner.os }}-${{ runner.arch }}

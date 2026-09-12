@@ -2071,6 +2071,68 @@ def _report_effective_dataset_batch(
     )
 
 
+def _named_binning_progress_callback(
+    progress_callback: Any | None,
+    *,
+    name: str,
+    index: int,
+    total: int,
+    kind: str,
+) -> Any | None:
+    """Wrap detailed rebin progress with its named-binning batch position."""
+
+    if progress_callback is None:
+        return None
+
+    def report(event: dict[str, Any]) -> None:
+        progress_callback(
+            {
+                **event,
+                "batch_total": total,
+                "batch_completed": index,
+                "batch_name": name,
+                "batch_kind": kind,
+                "batch_item_complete": False,
+            }
+        )
+
+    progress_callback(
+        {
+            "stage": "rebin_batch",
+            "batch_total": total,
+            "batch_completed": index,
+            "batch_name": name,
+            "batch_kind": kind,
+            "batch_item_complete": False,
+            "message": f"preparing {kind} {name}",
+        }
+    )
+    return report
+
+
+def _finish_named_binning_progress(
+    progress_callback: Any | None,
+    *,
+    name: str,
+    completed: int,
+    total: int,
+    kind: str,
+) -> None:
+    if progress_callback is None:
+        return
+    progress_callback(
+        {
+            "stage": "rebin_batch",
+            "batch_total": total,
+            "batch_completed": completed,
+            "batch_name": name,
+            "batch_kind": kind,
+            "batch_item_complete": True,
+            "message": f"finished {kind} {name}",
+        }
+    )
+
+
 def _composite_scopes(group: DataGroup):
     yield group
     for subgroup in group.iter_subgroups():
@@ -7677,6 +7739,135 @@ class NfitProjectExplorer:
         self._set_dataset_details(entry, group)
         return True
 
+    def rebin_all_dataset_binnings_now(
+        self, entry: DatasetEntry, group: DataGroup | None
+    ) -> bool:
+        """Recompute every enabled named binning owned by one dataset."""
+
+        from PySide6 import QtWidgets
+
+        if group is None or not _dataset_can_rebin(entry):
+            return False
+        binnings = [
+            item
+            for item in dataset_rebin_binnings(entry)
+            if bool(item["config"].get("enabled", False))
+        ]
+        if not binnings:
+            return False
+
+        def task(progress_callback: Any | None) -> int:
+            completed = 0
+            for item in binnings:
+                item_progress = _named_binning_progress_callback(
+                    progress_callback,
+                    name=str(item["name"]),
+                    index=completed,
+                    total=len(binnings),
+                    kind="binning",
+                )
+                view = dataset_for_slice_viewer(
+                    entry,
+                    extra_masks=effective_dataset_masks(group, entry),
+                    force_rebin=True,
+                    progress_callback=item_progress,
+                    rebin_config=item["config"],
+                    cache_id=None if item["fit"] else item["id"],
+                )
+                if view is None:
+                    raise ValueError(f"Could not prepare binning {item['name']!r}.")
+                completed += 1
+                _finish_named_binning_progress(
+                    progress_callback,
+                    name=str(item["name"]),
+                    completed=completed,
+                    total=len(binnings),
+                    kind="binning",
+                )
+            return completed
+
+        def on_success(completed: int) -> None:
+            if completed:
+                self.refresh_slice_viewer(group)
+                self._set_dataset_details(entry, group)
+
+        if self._interactive:
+            return self._start_background_task(
+                title="Rebinning all dataset binnings...",
+                progress_window_title="Rebin progress",
+                failure_title="Rebin all now",
+                task=task,
+                on_success=on_success,
+                success_message="All dataset binnings finished.",
+                finishing_progress_event={
+                    "stage": "rebin_ui",
+                    "message": "refreshing data viewers and bin information",
+                },
+            )
+        progress = self._make_rebin_progress_callback(
+            "Rebinning all dataset binnings...", aggregate=True
+        )
+        try:
+            completed = task(progress)
+        except RebinCancellationRequested:
+            return False
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window, "Rebin all now", f"Could not rebin all dataset binnings:\n{exc}"
+            )
+            return False
+        finally:
+            self._close_rebin_progress(progress)
+        on_success(completed)
+        return bool(completed)
+
+    def _confirm_composite_rebin_memory(
+        self,
+        group: DataGroup | _CompositeScope,
+        binnings: list[dict[str, Any]],
+    ) -> bool:
+        """Confirm any risky MDEvent grids before starting one or more rebins."""
+
+        from PySide6 import QtWidgets
+
+        candidates = _composite_candidates(group)
+        if not candidates or _dataset_composite_kind(candidates[0]) != "mdevent":
+            return True
+        risky = []
+        for item in binnings:
+            config = item["config"]
+            _lower, _upper, num_bins = _composite_rebin_bounds(config)
+            estimate, available, warn = assess_mdevent_memory(
+                num_bins, max_batch_bytes=_rebin_max_batch_bytes(config)
+            )
+            if warn:
+                risky.append((item, num_bins, estimate, available))
+        if not risky:
+            return True
+        item, num_bins, estimate, available = max(risky, key=lambda values: values[2])
+        grid = " x ".join(str(value) for value in num_bins)
+        prefix = (
+            f"{len(risky)} requested binnings may exceed available memory. "
+            f"The largest is {item['name']!r}: "
+            if len(risky) > 1
+            else "The requested "
+        )
+        answer = QtWidgets.QMessageBox.warning(
+            self.window,
+            "MDEvent memory estimate",
+            f"{prefix}{grid} grid ({math.prod(num_bins):,} bins) is estimated to peak at "
+            f"{estimate / 1024**3:.1f} GB. Currently available RAM is "
+            f"{available / 1024**3:.1f} GB.\n\nContinuing may cause heavy swapping or terminate nfit. "
+            "Do you want to continue anyway?",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+            return False
+        for risky_item, _bins, _estimate, _available in risky:
+            risky_item["config"]["_allow_memory_overcommit_once"] = True
+        return True
+
     def rebin_composite_now(self, group: DataGroup | _CompositeScope) -> bool:
         from PySide6 import QtWidgets
 
@@ -7687,26 +7878,8 @@ class NfitProjectExplorer:
         if not bool(config.get("enabled", False)):
             return False
         cache_id = None if selected["fit"] else selected["id"]
-        if _dataset_composite_kind(_composite_candidates(group)[0]) == "mdevent":
-            _lower, _upper, num_bins = _composite_rebin_bounds(config)
-            estimate, available, warn = assess_mdevent_memory(
-                num_bins, max_batch_bytes=_rebin_max_batch_bytes(config)
-            )
-            if warn:
-                grid = " x ".join(str(value) for value in num_bins)
-                answer = QtWidgets.QMessageBox.warning(
-                    self.window,
-                    "MDEvent memory estimate",
-                    f"The requested {grid} grid ({math.prod(num_bins):,} bins) is estimated to peak at "
-                    f"{estimate / 1024**3:.1f} GB. Currently available RAM is "
-                    f"{available / 1024**3:.1f} GB.\n\nContinuing may cause heavy swapping or terminate nfit. "
-                    "Do you want to continue anyway?",
-                    QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
-                    QtWidgets.QMessageBox.StandardButton.No,
-                )
-                if answer != QtWidgets.QMessageBox.StandardButton.Yes:
-                    return False
-                config["_allow_memory_overcommit_once"] = True
+        if not self._confirm_composite_rebin_memory(group, [selected]):
+            return False
         if self._interactive:
             def task(progress_callback: Any) -> Any:
                 return _cached_composite_dataset_data(
@@ -7763,6 +7936,93 @@ class NfitProjectExplorer:
         self._request_overlay_refresh(root)
         self._sync_details()
         return True
+
+    def rebin_all_composite_binnings_now(
+        self, group: DataGroup | _CompositeScope
+    ) -> bool:
+        """Recompute every enabled named composite binning for one collection."""
+
+        from PySide6 import QtWidgets
+
+        if group is None:
+            return False
+        binnings = [
+            item
+            for item in data_group_composite_binnings(group)
+            if bool(item["config"].get("enabled", False))
+        ]
+        if not binnings:
+            return False
+        if not self._confirm_composite_rebin_memory(group, binnings):
+            return False
+
+        def task(progress_callback: Any | None) -> int:
+            completed = 0
+            for item in binnings:
+                item_progress = _named_binning_progress_callback(
+                    progress_callback,
+                    name=str(item["name"]),
+                    index=completed,
+                    total=len(binnings),
+                    kind="binning",
+                )
+                data = _cached_composite_dataset_data(
+                    group,
+                    force_rebin=True,
+                    progress_callback=item_progress,
+                    config_override=None if item["fit"] else item["config"],
+                    binning_id=None if item["fit"] else item["id"],
+                )
+                if data is None:
+                    raise ValueError(f"Could not prepare binning {item['name']!r}.")
+                completed += 1
+                _finish_named_binning_progress(
+                    progress_callback,
+                    name=str(item["name"]),
+                    completed=completed,
+                    total=len(binnings),
+                    kind="binning",
+                )
+            return completed
+
+        root = _composite_root(group)
+
+        def on_success(completed: int) -> None:
+            if completed:
+                self.refresh_slice_viewer(root)
+                self._sync_details()
+
+        if self._interactive:
+            return self._start_background_task(
+                title="Rebinning all composite binnings...",
+                progress_window_title="Rebin progress",
+                failure_title="Rebin all now",
+                task=task,
+                on_success=on_success,
+                success_message="All composite binnings finished.",
+                finishing_progress_event={
+                    "stage": "rebin_ui",
+                    "message": "refreshing data viewers and bin information",
+                },
+            )
+        progress = self._make_rebin_progress_callback(
+            "Rebinning all composite binnings...", aggregate=True
+        )
+        try:
+            completed = task(progress)
+        except RebinCancellationRequested:
+            return False
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(
+                self.window,
+                "Rebin all now",
+                f"Could not rebin all composite binnings:\n{exc}",
+            )
+            return False
+        finally:
+            self._close_rebin_progress(progress)
+        on_success(completed)
+        return bool(completed)
 
     def materialize_composite_for_group(
         self, group: DataGroup | _CompositeScope

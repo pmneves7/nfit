@@ -518,7 +518,7 @@ def test_volume_panel_exposes_independent_channels_curves_and_camera_exports(mon
     fill_nans = panel.findChild(
         QtWidgets.QCheckBox, "volume_smoothing_fill_nans_check"
     )
-    assert fill_nans.isChecked()
+    assert not fill_nans.isChecked()
     assert fill_nans.toolTip()
     y_smoothing.setValue(1.0)
     canonical = np.asarray(panel.current_grid.cell_data["color_channel"])

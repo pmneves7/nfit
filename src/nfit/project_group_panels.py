@@ -172,13 +172,14 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     )
     layout = QtWidgets.QVBoxLayout(box)
     layout.setContentsMargins(10, 8, 10, 8)
+    binnings = data_group_composite_binnings(group)
     selected_binning = self._selected_composite_binning(group)
     config = selected_binning["config"]
     binning_row = QtWidgets.QHBoxLayout()
     binning_row.addWidget(QtWidgets.QLabel("Binning"))
     binning_combo = QtWidgets.QComboBox()
     binning_combo.setObjectName("group_composite_binning")
-    for item in data_group_composite_binnings(group):
+    for item in binnings:
         binning_combo.addItem(
             f"{item['name']}{' (fit)' if item['fit'] else ''}", item["id"]
         )
@@ -604,6 +605,17 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     )
     rebin_now_button.clicked.connect(lambda: self.rebin_composite_now(group))
     action_row.addWidget(rebin_now_button)
+    rebin_all_button = QtWidgets.QPushButton("Rebin all now")
+    rebin_all_button.setObjectName("group_composite_rebin_all_now")
+    rebin_all_button.setEnabled(can_combine)
+    rebin_all_button.setVisible(len(binnings) > 1)
+    rebin_all_button.setToolTip(
+        "Compute every enabled named composite binning for this collection and update open data viewers."
+    )
+    rebin_all_button.clicked.connect(
+        lambda: self.rebin_all_composite_binnings_now(group)
+    )
+    action_row.addWidget(rebin_all_button)
     materialize_button = QtWidgets.QPushButton("Create dataset from composite")
     materialize_button.setObjectName("group_composite_create")
     materialize_button.setEnabled(can_combine)
@@ -614,8 +626,8 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     materialize_button.clicked.connect(
         lambda: self.materialize_composite_for_group(group)
     )
-    action_row.addWidget(materialize_button)
     action_row.addStretch(1)
+    action_row.addWidget(materialize_button)
     controls_layout.addLayout(action_row, footer_row + 4, 0, 1, len(headers))
     controls.addTab(settings_tab, "Rebin settings")
 

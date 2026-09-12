@@ -123,7 +123,7 @@ def render_plot(
             trace_label_color=settings.get("waterfall_trace_label_color"),
             smoothing_sigma_x=float(settings.get("smoothing_x", 0.0)),
             smoothing_sigma_waterfall=float(settings.get("smoothing_y", 0.0)),
-            smoothing_fill_nans=bool(settings.get("smoothing_fill_nans", True)),
+            smoothing_fill_nans=bool(settings.get("smoothing_fill_nans", False)),
             xlim=_pair(settings.get("xlim")),
             ylim=_pair(settings.get("ylim")),
             font_size=float(settings.get("font_size", 12.0)),
@@ -163,7 +163,7 @@ def render_plot(
             color_alpha=float(settings.get("color_alpha", 0.0)),
             smoothing_sigma_x=float(settings.get("smoothing_x", 0.0)),
             smoothing_sigma_y=float(settings.get("smoothing_y", 0.0)),
-            smoothing_fill_nans=bool(settings.get("smoothing_fill_nans", True)),
+            smoothing_fill_nans=bool(settings.get("smoothing_fill_nans", False)),
             xlim=_pair(settings.get("xlim")),
             ylim=_pair(settings.get("ylim")),
             font_size=float(settings.get("font_size", 12.0)),
@@ -199,7 +199,7 @@ def render_plot(
             axis_dim=axis,
             channel=settings.get("channel", "signal"),
             smoothing_sigma=float(settings.get("smoothing_x", 0.0)),
-            smoothing_fill_nans=bool(settings.get("smoothing_fill_nans", True)),
+            smoothing_fill_nans=bool(settings.get("smoothing_fill_nans", False)),
         )
         figure = ax.figure
     elif plot_type == "fit_comparison":
@@ -259,7 +259,7 @@ def render_plot(
             color_alpha=float(settings.get("color_alpha", 0.0)),
             smoothing_sigma_x=float(settings.get("smoothing_x", 0.0)),
             smoothing_sigma_y=float(settings.get("smoothing_y", 0.0)),
-            smoothing_fill_nans=bool(settings.get("smoothing_fill_nans", True)),
+            smoothing_fill_nans=bool(settings.get("smoothing_fill_nans", False)),
             xlim=_pair(settings.get("xlim")),
             ylim=_pair(settings.get("ylim")),
             font_size=float(settings.get("font_size", 12.0)),

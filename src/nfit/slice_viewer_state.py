@@ -46,7 +46,7 @@ class _DatasetViewState:
     cmap_reversed: bool = False
     smoothing_x: float = 0.0
     smoothing_y: float = 0.0
-    smoothing_fill_nans: bool = True
+    smoothing_fill_nans: bool = False
     show_brillouin_zone_boundaries: bool = False
     brillouin_zone_color: str = "#e57373"
     brillouin_zone_linewidth: float = 1.0
