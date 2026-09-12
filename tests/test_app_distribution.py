@@ -131,8 +131,19 @@ def test_beta_workflow_publishes_a_release_visible_to_repository_readers():
     ).read_text(encoding="utf-8")
     assert "Publish private beta release" in workflow
     assert "gh release create" in workflow
+    assert "gh release upload" in workflow
+    assert "--clobber" in workflow
     assert "--draft" not in workflow
     assert "--prerelease" not in workflow
+
+
+def test_beta_workflow_runs_on_main_push_and_remains_manually_runnable():
+    workflow = (
+        Path(__file__).resolve().parents[1]
+        / ".github/workflows/build-beta-installers.yml"
+    ).read_text(encoding="utf-8")
+    assert "  push:\n    branches:\n      - main\n" in workflow
+    assert "  workflow_dispatch:\n" in workflow
 
 
 def test_linux_smoke_runner_installs_debian_runtime_dependencies():

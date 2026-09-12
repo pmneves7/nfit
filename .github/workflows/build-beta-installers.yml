@@ -1,6 +1,9 @@
 name: Build beta installers
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -86,6 +89,13 @@ jobs:
           VERSION: ${{ steps.version.outputs.value }}
         shell: bash
         run: |
-          gh release create "v$VERSION" dist/installers/* \
-            --title "nfit $VERSION beta" \
-            --notes "Private beta build for users with read access to the nfit repository."
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            gh release edit "v$VERSION" \
+              --title "nfit $VERSION beta" \
+              --notes "Private beta build for users with read access to the nfit repository."
+            gh release upload "v$VERSION" dist/installers/* --clobber
+          else
+            gh release create "v$VERSION" dist/installers/* \
+              --title "nfit $VERSION beta" \
+              --notes "Private beta build for users with read access to the nfit repository."
+          fi

@@ -158,10 +158,12 @@ token and the same updater uses anonymous GitHub access.
 
 Create a fine-grained personal access token for `pmneves7/nfit` with only the
 repository **Contents: Read-only** permission. Store it as the repository Actions
-secret `NFIT_GITHUB_READ_TOKEN`; never commit it to source. Run **Build beta
-installers** from the GitHub Actions page. Separate GitHub-hosted runners build
-and smoke-test Apple silicon macOS, Intel macOS, Windows x86-64, and Linux
-x86-64 installers, then publish them as a beta GitHub Release.
+secret `NFIT_GITHUB_READ_TOKEN`; never commit it to source. Every push to
+`main` automatically runs **Build beta installers**. It can also be run again
+manually from the GitHub Actions page; an existing release for the same version
+is updated safely. Separate GitHub-hosted runners build and smoke-test Apple
+silicon macOS, Intel macOS, Windows x86-64, and Linux x86-64 installers, then
+publish them as a beta GitHub Release.
 
 The release is immediately visible to anyone with repository read access and
 is discoverable by installed beta copies. The repository remains private, so
