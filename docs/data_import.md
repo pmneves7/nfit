@@ -6,9 +6,11 @@ definitions and unit conversions are collected in
 
 ## Importing files
 
-Select a workspace or dataset group, choose the data type and importer, then use
-**Add files**. Numbered acquisitions can instead be generated from a path,
-prefix, suffix, and numor expression:
+Select a workspace or dataset group and choose **Import dataset**. After you
+select one or more files, nfit raises a separate data-type prompt and, when
+needed, an importer prompt. These prompts remain above the project window on
+Linux remote desktops. Numbered acquisitions can instead be generated from a
+path, prefix, suffix, and numor expression:
 
 ```text
 409981:409995

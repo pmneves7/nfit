@@ -148,6 +148,7 @@ from .project_history import (
     snapshot_data_group_state,
 )
 from .project_import_dialogs import (
+    prompt_import_choice,
     prompt_macs_nexus_options,
     prompt_powder_ins_csv_options,
 )
@@ -7404,37 +7405,30 @@ class NfitProjectExplorer:
         )
 
     def _prompt_import_data_type(self) -> tuple[str, str | None] | None:
-        from PySide6 import QtWidgets
-
         types = available_data_types()
-        labels = [label for _name, label in types]
         default_index = next((i for i, (name, _label) in enumerate(types) if name == DEFAULT_DATA_TYPE), 0)
-        label, accepted = QtWidgets.QInputDialog.getItem(
+        data_type = prompt_import_choice(
             self.window,
-            "Data type",
-            "What type of data is this?",
-            labels,
-            default_index,
-            editable=False,
+            title="Data type",
+            prompt="What type of data is this?",
+            choices=[(label, name) for name, label in types],
+            default_index=default_index,
+            object_name="import_data_type",
         )
-        if not accepted:
+        if data_type is None:
             return None
-        data_type = types[labels.index(label)][0]
         importer_name = default_importer_for_data_type(data_type)
         importer_specs = importers_for_data_type(data_type)
         if len(importer_specs) > 1:
-            importer_labels = [spec.label for spec in importer_specs]
-            picked, ok = QtWidgets.QInputDialog.getItem(
+            importer_name = prompt_import_choice(
                 self.window,
-                "Importer",
-                "Which importer should read this file?",
-                importer_labels,
-                0,
-                editable=False,
+                title="Importer",
+                prompt="Which importer should read this file?",
+                choices=[(spec.label, spec.name) for spec in importer_specs],
+                object_name="importer_choice",
             )
-            if not ok:
+            if importer_name is None:
                 return None
-            importer_name = importer_specs[importer_labels.index(picked)].name
         return data_type, importer_name
 
     def _prompt_importer_options(

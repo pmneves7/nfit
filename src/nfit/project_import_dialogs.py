@@ -7,6 +7,7 @@ and validation details for importers with structured option forms.
 from __future__ import annotations
 
 import copy
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +15,79 @@ import numpy as np
 
 from .importers import inspect_powder_ins_csv
 
-__all__ = ["prompt_macs_nexus_options", "prompt_powder_ins_csv_options"]
+__all__ = [
+    "prompt_import_choice",
+    "prompt_macs_nexus_options",
+    "prompt_powder_ins_csv_options",
+]
+
+
+def prompt_import_choice(
+    parent: Any,
+    *,
+    title: str,
+    prompt: str,
+    choices: list[tuple[str, str]],
+    default_index: int = 0,
+    object_name: str = "import_choice",
+) -> str | None:
+    """Show an explicitly raised import choice dialog and return its value."""
+
+    from PySide6 import QtCore, QtWidgets
+
+    if not choices:
+        return None
+    dialog = QtWidgets.QDialog(parent)
+    dialog.setObjectName(f"{object_name}_dialog")
+    dialog.setWindowTitle(title)
+    dialog.setMinimumWidth(440)
+    dialog.setWindowModality(
+        QtCore.Qt.WindowModality.WindowModal
+        if parent is not None
+        else QtCore.Qt.WindowModality.ApplicationModal
+    )
+    if sys.platform.startswith("linux"):
+        dialog.setWindowFlag(QtCore.Qt.WindowType.WindowStaysOnTopHint, True)
+
+    layout = QtWidgets.QVBoxLayout(dialog)
+    label = QtWidgets.QLabel(prompt)
+    label.setWordWrap(True)
+    layout.addWidget(label)
+
+    combo = QtWidgets.QComboBox()
+    combo.setObjectName(object_name)
+    combo.setToolTip(prompt)
+    for choice_label, value in choices:
+        combo.addItem(choice_label, value)
+    combo.setCurrentIndex(max(0, min(int(default_index), combo.count() - 1)))
+    layout.addWidget(combo)
+
+    buttons = QtWidgets.QDialogButtonBox(
+        QtWidgets.QDialogButtonBox.StandardButton.Ok
+        | QtWidgets.QDialogButtonBox.StandardButton.Cancel
+    )
+    buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Ok).setToolTip(
+        "Continue with the selected import option."
+    )
+    buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Cancel).setToolTip(
+        "Cancel the dataset import."
+    )
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    layout.addWidget(buttons)
+
+    # Static QInputDialog helpers can create an invisible modal after an
+    # external GTK chooser exits under ThinLinc. Realize and raise this window
+    # before entering its modal loop so the user can always interact with it.
+    dialog.show()
+    dialog.raise_()
+    dialog.activateWindow()
+    application = QtWidgets.QApplication.instance()
+    if application is not None:
+        application.processEvents()
+    if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+        return None
+    return str(combo.currentData())
 
 
 def prompt_macs_nexus_options(
