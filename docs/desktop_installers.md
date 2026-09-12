@@ -7,10 +7,8 @@ the nfit icon and full startup logo, and a local copy of this documentation.
 ## Installing a beta build
 
 Open the repository's [GitHub Releases](https://github.com/pmneves7/nfit/releases/latest)
-page while signed into an account with repository access, then download only
-the installer for your computer. The version in the filename changes with each
-beta release. A OneDrive link supplied by the project owner can also provide
-the initial installer.
+page and download only the installer for your computer. The version in the
+filename changes with each beta release. No GitHub account is required.
 
 ### macOS
 
@@ -146,38 +144,24 @@ nfit; a system-wide Linux installation opens the `.deb` package. Canceling a
 download removes the partial file. Update checks can also be run or disabled
 from the **File** menu.
 
-During private beta testing, the installer contains a fine-grained GitHub token
-limited to read-only access to the `pmneves7/nfit` repository. Published beta
-releases remain private to GitHub accounts and tokens with repository read
-access. Anyone with that access can download the installers from the
-repository's **Releases** page, and installed copies can discover updates with
-the bundled credential. When the repository becomes public, build without that
-token and the same updater uses anonymous GitHub access.
+Published installers check the public `pmneves7/nfit` releases anonymously.
+No GitHub credential is included in public builds.
 
 ## Building beta installers
 
-Create a fine-grained personal access token for `pmneves7/nfit` with only the
-repository **Contents: Read-only** permission. Store it as the repository Actions
-secret `NFIT_GITHUB_READ_TOKEN`; never commit it to source. Every push to
-`main` automatically runs **Build beta installers**. It can also be run again
+Every push to `main` automatically runs **Build beta installers**. It can also be run again
 manually from the GitHub Actions page; an existing release for the same version
 is updated safely. Separate GitHub-hosted runners build and smoke-test Apple
 silicon macOS, Intel macOS, Windows x86-64, and Linux x86-64 installers, then
 publish them as a beta GitHub Release.
 
-The release is immediately visible to anyone with repository read access and
-is discoverable by installed beta copies. The repository remains private, so
-publishing the release does not make it or its installers public on the wider
-internet. An initial installer can still be given to a tester through a
-OneDrive **Anyone with the link** download.
+The release is public immediately and is discoverable by installed beta copies.
 
-Published beta releases are listed under **Releases** on the repository page
-for every signed-in user with repository read access. Drafts are visible only
-to collaborators who can manage releases and are not offered by nfit's update
-checker.
+Published beta releases are listed under **Releases** on the repository page.
+Drafts are visible only to collaborators who can manage releases and are not
+offered by nfit's update checker.
 
-To build on the current operating system instead, set
-`NFIT_GITHUB_READ_TOKEN` in the environment and run:
+To build on the current operating system instead, run:
 
 ```bash
 /Users/pmneves/anaconda3/envs/nfit/bin/python tools/distribution/build.py

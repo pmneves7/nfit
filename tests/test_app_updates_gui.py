@@ -151,6 +151,9 @@ def test_splash_shows_branding_progress_and_offline_help(monkeypatch):
     splash = StartupSplash()
     try:
         details = splash.findChild(QtWidgets.QLabel, "startup_details")
+        beta_notice = splash.findChild(
+            QtWidgets.QLabel, "startup_beta_notice"
+        )
         documentation = splash.findChild(
             QtWidgets.QLabel, "startup_documentation"
         )
@@ -158,6 +161,8 @@ def test_splash_shows_branding_progress_and_offline_help(monkeypatch):
         logo = splash.findChild(QtWidgets.QLabel, "startup_logo")
         assert "Paul M. Neves" in details.text()
         assert "Version 0.87.1" in details.text()
+        assert "EXPERIMENTAL BETA SOFTWARE" in beta_notice.text()
+        assert "AI coding tools" in beta_notice.text()
         assert documentation.openExternalLinks()
         assert documentation.toolTip()
         assert progress.minimum() == 0 and progress.maximum() == 0

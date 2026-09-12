@@ -124,12 +124,14 @@ def test_beta_workflow_exports_the_release_version_without_nested_shell_quotes()
     assert 'echo "value=$(python -c' not in workflow
 
 
-def test_beta_workflow_publishes_a_release_visible_to_repository_readers():
+def test_beta_workflow_publishes_an_experimental_release():
     workflow = (
         Path(__file__).resolve().parents[1]
         / ".github/workflows/build-beta-installers.yml"
     ).read_text(encoding="utf-8")
-    assert "Publish private beta release" in workflow
+    assert "Publish experimental beta release" in workflow
+    assert "Experimental beta software" in workflow
+    assert "AI coding tools" in workflow
     assert "gh release create" in workflow
     assert "gh release upload" in workflow
     assert "--clobber" in workflow
@@ -142,8 +144,22 @@ def test_public_beta_build_does_not_embed_the_private_repository_token():
         Path(__file__).resolve().parents[1]
         / ".github/workflows/build-beta-installers.yml"
     ).read_text(encoding="utf-8")
-    assert 'if [[ "$REPOSITORY_PRIVATE" != "true" ]]' in workflow
-    assert "unset NFIT_GITHUB_READ_TOKEN" in workflow
+    assert "secrets.NFIT_GITHUB_READ_TOKEN" not in workflow
+    assert "github_token" not in workflow
+
+
+def test_pypi_workflow_uses_trusted_publishing_and_manual_version_confirmation():
+    workflow = (
+        Path(__file__).resolve().parents[1]
+        / ".github/workflows/publish-pypi.yml"
+    ).read_text(encoding="utf-8")
+    assert "workflow_dispatch:" in workflow
+    assert "REQUESTED_VERSION" in workflow
+    assert "python -m build" in workflow
+    assert "python -m twine check" in workflow
+    assert "id-token: write" in workflow
+    assert "pypa/gh-action-pypi-publish@release/v1" in workflow
+    assert "password:" not in workflow
 
 
 def test_beta_workflow_runs_on_main_push_and_remains_manually_runnable():

@@ -115,8 +115,8 @@ def _open_github(url: str, token: str, *, binary: bool = False):
     except HTTPError as error:
         if error.code in (401, 403, 404):
             raise AuthenticationRequired(
-                "This build cannot access the private nfit beta releases. "
-                "Ask the maintainer for a current installer."
+                "The nfit release could not be accessed. Check that it still "
+                "exists or ask the maintainer for a current installer."
             ) from error
         raise UpdateError(f"GitHub returned HTTP {error.code}.") from error
     except (URLError, OSError) as error:

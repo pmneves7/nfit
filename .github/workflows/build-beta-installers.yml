@@ -42,27 +42,11 @@ jobs:
       - name: Refresh nfit package metadata
         shell: bash -el {0}
         run: python -m pip install --no-deps --editable .
-      - name: Require the private beta credential
-        shell: bash -el {0}
-        env:
-          NFIT_GITHUB_READ_TOKEN: ${{ secrets.NFIT_GITHUB_READ_TOKEN }}
-          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
-        run: |
-          if [[ "$REPOSITORY_PRIVATE" == "true" && -z "$NFIT_GITHUB_READ_TOKEN" ]]; then
-            echo "Add a repository secret named NFIT_GITHUB_READ_TOKEN before building private beta installers."
-            exit 1
-          fi
       - name: Build and smoke-test installer
         shell: bash -el {0}
         env:
-          NFIT_GITHUB_READ_TOKEN: ${{ secrets.NFIT_GITHUB_READ_TOKEN }}
           QT_QPA_PLATFORM: offscreen
-          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
-        run: |
-          if [[ "$REPOSITORY_PRIVATE" != "true" ]]; then
-            unset NFIT_GITHUB_READ_TOKEN
-          fi
-          python tools/distribution/build.py
+        run: python tools/distribution/build.py
       - uses: actions/upload-artifact@v7
         with:
           name: nfit-${{ runner.os }}-${{ runner.arch }}
@@ -70,7 +54,7 @@ jobs:
           if-no-files-found: error
 
   beta-release:
-    name: Publish private beta release
+    name: Publish experimental beta release
     needs: build
     runs-on: ubuntu-22.04
     steps:
@@ -88,7 +72,7 @@ jobs:
         run: |
           value="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
           echo "value=$value" >> "$GITHUB_OUTPUT"
-      - name: Publish private beta release
+      - name: Publish experimental beta release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.value }}
@@ -97,10 +81,10 @@ jobs:
           if gh release view "v$VERSION" >/dev/null 2>&1; then
             gh release edit "v$VERSION" \
               --title "nfit $VERSION beta" \
-              --notes "Private beta build for users with read access to the nfit repository."
+              --notes "Experimental beta software developed by Paul M. Neves with assistance from AI coding tools. Validate scientific results independently."
             gh release upload "v$VERSION" dist/installers/* --clobber
           else
             gh release create "v$VERSION" dist/installers/* \
               --title "nfit $VERSION beta" \
-              --notes "Private beta build for users with read access to the nfit repository."
+              --notes "Experimental beta software developed by Paul M. Neves with assistance from AI coding tools. Validate scientific results independently."
           fi

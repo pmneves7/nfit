@@ -124,6 +124,17 @@ class StartupSplash(QtWidgets.QWidget):
         details.setStyleSheet("font-size: 13px;")
         layout.addWidget(details)
 
+        beta_notice = QtWidgets.QLabel(
+            "EXPERIMENTAL BETA SOFTWARE\n"
+            "Developed with assistance from AI coding tools"
+        )
+        beta_notice.setObjectName("startup_beta_notice")
+        beta_notice.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        beta_notice.setStyleSheet(
+            "color: #8a3b00; font-size: 14px; font-weight: 700;"
+        )
+        layout.addWidget(beta_notice)
+
         help_index = _help_index()
         documentation_url = (
             QtCore.QUrl.fromLocalFile(str(help_index)).toString()
@@ -154,7 +165,7 @@ class StartupSplash(QtWidgets.QWidget):
             "nfit is loading its scientific and graphical components."
         )
         layout.addWidget(progress)
-        self.setFixedSize(520, 405)
+        self.setFixedSize(520, 455)
 
     def show_status(self, text: str) -> None:
         self.status.setText(text)

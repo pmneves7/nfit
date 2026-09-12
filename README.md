@@ -1,6 +1,14 @@
 # nfit
 
-<img src="docs/_static/nfit-logo.svg" alt="nfit logo" width="240">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/_static/nfit-logo-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/_static/nfit-logo.svg">
+  <img src="docs/_static/nfit-logo.svg" alt="nfit logo" width="240">
+</picture>
+
+> **Experimental beta software:** nfit is under active development and may
+> contain incomplete or incorrect behavior. Validate scientific results independently.
+> Paul M. Neves developed nfit with assistance from AI coding tools.
 
 `nfit` analyzes magnetic neutron-scattering and related bulk measurements.
 It works with physical coordinates such as `H`, `K`, `L`, `|Q|`, and energy

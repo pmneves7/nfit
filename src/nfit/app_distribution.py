@@ -34,8 +34,8 @@ def platform_key() -> str:
 def update_configuration() -> UpdateConfiguration:
     """Return repository access embedded in an installer build.
 
-    Beta installers may contain a repository-scoped, read-only token. Source
-    checkouts and future public builds work without a token.
+    Public installers and source checkouts work without a token. The token
+    field remains readable for compatibility with older private beta builds.
     """
     path = Path(__file__).parent / "resources" / "distribution.json"
     if not path.is_file():

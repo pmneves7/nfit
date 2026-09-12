@@ -6,19 +6,14 @@ Conda. Follow [Desktop installers and updates](desktop_installers.md) for macOS,
 Windows, or Linux. The setup below is for contributors and users who want to run
 nfit from source.
 
-## First-time collaborator setup
+## First-time source setup
 
-These instructions are for someone who has not previously installed GitHub,
-Git, Python, or Conda. They work on macOS, Windows, and Linux. Allow a few
+These instructions are for someone who has not previously installed Git,
+Python, or Conda. They work on macOS, Windows, and Linux. Allow a few
 gigabytes of free disk space and a reliable internet connection; the first
 environment setup can take several minutes.
 
 ### 1. Get a copy of the repository
-
-If the project owner invited you to the private GitHub repository, first
-accept the invitation sent by GitHub. You need a free GitHub account to accept
-an invitation and to contribute changes. Create one at
-[github.com](https://github.com/) if needed.
 
 Then choose one of these ways to obtain the code:
 
@@ -34,21 +29,16 @@ share your changes.
    - Windows: open **Git Bash** (installed with Git) or **Miniforge Prompt**.
    - Linux: open your usual terminal application.
 3. In the terminal, choose a folder for code and clone the repository. Replace
-   the example URL with the **Code > HTTPS** URL copied from the repository's
-   GitHub page:
+   the public repository:
 
    ```bash
    mkdir -p ~/code
    cd ~/code
-   git clone https://github.com/OWNER/nfit.git
+   git clone https://github.com/pmneves7/nfit.git
    cd nfit
    ```
 
-   GitHub may ask you to sign in or create a personal access token. Follow the
-   browser prompt; GitHub no longer accepts an account password at the terminal
-   prompt for HTTPS Git operations.
-
-**No GitHub account or Git: download a ZIP.** On the repository page, select
+**No Git or GitHub account: download a ZIP.** On the repository page, select
 **Code > Download ZIP**, unzip it, and open a terminal in the resulting
 `nfit` folder. You can run the software this way, but you will not be able to
 pull updates or contribute through GitHub until you set up an account and Git.
