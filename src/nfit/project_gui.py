@@ -3591,6 +3591,29 @@ def evaluate_current_state_model(
     return current
 
 
+def defer_current_state_model_evaluation(
+    group: DataGroup,
+    current: FitTimelineEntry | None = None,
+) -> FitTimelineEntry:
+    """Record a Current state without loading lazy datasets on the GUI thread."""
+
+    ensure_fit_history(group)
+    if current is None or current.kind != "current":
+        current = _top_level_current_state_entry(group)
+    if current is None:
+        source = _last_result_at_level(group.fits) or group.fits[0]
+        current = current_state_fit_entry(group, source)
+        group.fits.append(current)
+    current.channels = {}
+    current.metadata = dict(current.metadata)
+    current.metadata["model_evaluation_status"] = "deferred until data are viewed or fitted"
+    current.metadata["model_evaluation_datasets"] = []
+    current.metadata.pop("model_evaluation_errors", None)
+    current.metadata.pop("model_evaluation_error", None)
+    _set_fit_current_snapshot(current, group)
+    return current
+
+
 def _compiled_problem_for_fit_entry(
     group: DataGroup,
     fit_entry: FitTimelineEntry,
@@ -14844,7 +14867,10 @@ class NfitProjectExplorer:
         """Record a live model evaluation after importing or enabling data."""
 
         current = self._active_fit_entry(group)
-        current = evaluate_current_state_model(group, current)
+        if any(dataset.enabled and dataset.data is None for dataset in group.iter_datasets()):
+            current = defer_current_state_model_evaluation(group, current)
+        else:
+            current = evaluate_current_state_model(group, current)
         self._set_active_fit_state(group, current)
         self._request_overlay_refresh(group)
         return current

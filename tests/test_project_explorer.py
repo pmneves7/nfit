@@ -302,7 +302,10 @@ def test_import_and_reenable_advance_to_evaluated_current_state(
 
     current = group.fits[-1]
     assert current.kind == "current"
-    assert current.metadata["model_evaluation_status"] == "no compatible model prediction"
+    assert (
+        current.metadata["model_evaluation_status"]
+        == "deferred until data are viewed or fitted"
+    )
 
     dataset = group.datasets[0]
     dataset.replace_data(_grid_mdhisto_data())
@@ -313,6 +316,32 @@ def test_import_and_reenable_advance_to_evaluated_current_state(
     assert dataset.enabled
     assert group.fits[-1].kind == "current"
     assert "model_evaluation_status" in group.fits[-1].metadata
+
+
+def test_import_does_not_evaluate_models_that_require_lazy_data(monkeypatch, tmp_path):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    pytest.importorskip("PySide6.QtWidgets")
+    group = DataGroup("Datagroup1")
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    evaluated = []
+    monkeypatch.setattr(
+        project_gui,
+        "evaluate_current_state_model",
+        lambda *_args, **_kwargs: evaluated.append(True),
+    )
+
+    explorer.import_dataset_paths(
+        group,
+        [tmp_path / "scan.nxs"],
+        data_type="single_crystal_inelastic",
+    )
+
+    assert not evaluated
+    assert group.fits[-1].channels == {}
+    assert (
+        group.fits[-1].metadata["model_evaluation_status"]
+        == "deferred until data are viewed or fitted"
+    )
 
 
 def test_project_explorer_tree_hierarchy_fonts(monkeypatch):

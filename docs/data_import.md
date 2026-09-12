@@ -72,6 +72,11 @@ For every file, supply temperature, the signal representation, units, and
 normalization basis. A matrix has no uncertainty layer, so **Map σ** supplies a
 uniform one-sigma uncertainty. NaNs are masked.
 
+File-backed datasets remain lazy after import. nfit records the new project
+state immediately and waits to load, rebin, and evaluate model predictions until
+the data are viewed or fitted. This keeps large HYSPEC and other NeXus imports
+responsive while preserving the complete local source path in the project.
+
 With a complete convention, nfit exposes paired cross-section and $\chi''$
 channels without changing the imported values. Powder Heisenberg models average
 the single-crystal response over momentum directions and require lattice
