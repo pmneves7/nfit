@@ -35,6 +35,7 @@ from .analysis.core import (
 )
 from .analysis.fingerprint import dataset_entry_fingerprint, recipe_hash
 from .analysis.registry import analysis_definition, default_analysis_parameters
+from .application_preferences import application_settings
 from .cache_utils import lru_store as _lru_store
 from .dataset import PointData4D, PointListData
 from .file_dialogs import (
@@ -485,13 +486,18 @@ PROJECT_BINNING_CACHE_ENTRIES_KEY = "binning_cache_entries"
 PROJECT_BINNING_CACHE_FORMAT_VERSION = 5
 
 
-def _ensure_dataset_data_loaded(dataset: DatasetEntry) -> Any:
+def _ensure_dataset_data_loaded(
+    dataset: DatasetEntry,
+    *,
+    progress_callback: Any | None = None,
+) -> Any:
     """Load data while preserving the project GUI's injectable loader seam."""
 
     return _ensure_dataset_data_loaded_impl(
         dataset,
         mdhisto_loader=load_mantid_mdhisto_nxs,
         dataset_file_loader=_load_nfit_dataset_file,
+        progress_callback=progress_callback,
     )
 
 
@@ -538,7 +544,15 @@ def dataset_for_slice_viewer(
         rebin_config=rebin_config,
         cache_id=cache_id,
     ) is None:
-        _ensure_dataset_data_loaded(dataset)
+        if progress_callback is None:
+            # Preserve the long-standing one-argument injection seam used by
+            # extensions and tests that replace the GUI loader.
+            _ensure_dataset_data_loaded(dataset)
+        else:
+            _ensure_dataset_data_loaded(
+                dataset,
+                progress_callback=progress_callback,
+            )
     return _project_data.dataset_for_slice_viewer(
         dataset,
         extra_masks=extra_masks,
@@ -5800,7 +5814,16 @@ class _RebinProgressDialog:
         self.dialog = QtWidgets.QDialog(owner)
         self.dialog.setObjectName("rebin_progress_dialog")
         self.dialog.setWindowTitle("Rebin progress")
-        self.dialog.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
+        self.dialog.setWindowModality(
+            QtCore.Qt.WindowModality.WindowModal
+            if owner is not None
+            else QtCore.Qt.WindowModality.ApplicationModal
+        )
+        if platform.system() == "Linux":
+            self.dialog.setWindowFlag(
+                QtCore.Qt.WindowType.WindowStaysOnTopHint,
+                True,
+            )
         self.dialog.setFixedWidth(680)
         layout = QtWidgets.QVBoxLayout(self.dialog)
 
@@ -9400,6 +9423,14 @@ class NfitProjectExplorer:
         ):
             return self._make_rebin_progress_callback(
                 "Rebinning composite datasets...",
+                aggregate=True,
+            )
+        if not use_composite and any(
+            dataset.kind == "mdevent" and dataset.data is None
+            for dataset in group.iter_datasets()
+        ):
+            return self._make_rebin_progress_callback(
+                "Loading MDEvent data...",
                 aggregate=True,
             )
         if not any(
@@ -19618,9 +19649,7 @@ def _restore_cli_interrupt_handler(previous_handler: Any | None) -> None:
 
 
 def _settings():
-    from PySide6 import QtCore
-
-    return QtCore.QSettings("nfit", "nfit")
+    return application_settings()
 
 
 def _unique_dataset_name(base: str, existing: list[str]) -> str:

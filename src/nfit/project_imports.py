@@ -93,6 +93,7 @@ class _SourceLoadContext:
 
     mdhisto_loader: Callable[..., MDHistoData]
     dataset_file_loader: DatasetFileLoader | None
+    progress_callback: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -113,6 +114,18 @@ _SOURCE_NOT_HANDLED = object()
 _SOURCE_FORMAT_HANDLERS: tuple[_SourceFormatHandler, ...]
 _MDHISTO_SOURCE_SUFFIXES = frozenset({".nxs", ".h5", ".hdf5"})
 _LAZY_SOURCE_SUFFIXES = _MDHISTO_SOURCE_SUFFIXES | {".npz"}
+
+
+def _mdevent_composite_defaults() -> dict[str, Any]:
+    """Return the viewer-ready default for an imported MDEvent collection."""
+
+    return {
+        "enabled": True,
+        "auto_rebin": False,
+        "stale": True,
+        "fractional": False,
+        "mean_weighting": "uniform",
+    }
 
 
 def available_data_types() -> list[tuple[str, str]]:
@@ -202,6 +215,7 @@ def import_mdevent_dataset_group(
         mask_path=mask_path,
         progress_callback=progress_callback,
     )
+    subgroup.metadata[GROUP_COMPOSITE_KEY] = _mdevent_composite_defaults()
     names = {item.name for item in group.iter_subgroups()}
     subgroup.name = _unique_name(subgroup.name, names)
     (into.subgroups if into is not None else group.subgroups).append(subgroup)
@@ -725,6 +739,7 @@ def _load_dataset_source(
     dataset_file_loader: DatasetFileLoader | None = None,
     handler_names: Collection[str] | None = None,
     entry_import: bool = False,
+    progress_callback: Any | None = None,
 ) -> Any:
     """Load through the first applicable source handler.
 
@@ -736,6 +751,7 @@ def _load_dataset_source(
     context = _SourceLoadContext(
         mdhisto_loader=mdhisto_loader or load_mantid_mdhisto_nxs,
         dataset_file_loader=dataset_file_loader,
+        progress_callback=progress_callback,
     )
     handlers = list(_SOURCE_FORMAT_HANDLERS)
     if handler_names is not None:
@@ -931,7 +947,7 @@ def _npz_can_reload(dataset: DatasetEntry) -> bool | None:
     return _npz_can_load(dataset)
 
 
-def _mdevent_source_load(dataset: DatasetEntry, _context: _SourceLoadContext) -> Any:
+def _mdevent_source_load(dataset: DatasetEntry, context: _SourceLoadContext) -> Any:
     source = _dataset_source_path(dataset)
     if (
         dataset.kind != "mdevent"
@@ -939,7 +955,10 @@ def _mdevent_source_load(dataset: DatasetEntry, _context: _SourceLoadContext) ->
         or source.suffix.lower() not in _LAZY_SOURCE_SUFFIXES
     ):
         return _SOURCE_NOT_HANDLED
-    loaded = load_mdevent_run_points(dataset)
+    loaded = load_mdevent_run_points(
+        dataset,
+        progress_callback=context.progress_callback,
+    )
     loaded = dataset.replace_data(loaded, source_backed=True)
     dataset.kind = dataset.kind or source.suffix.lstrip(".").lower()
     dataset.metadata["import_status"] = "loaded"
@@ -1083,6 +1102,7 @@ def _ensure_dataset_data_loaded(
     *,
     mdhisto_loader: Callable[..., MDHistoData] | None = None,
     dataset_file_loader: DatasetFileLoader | None = None,
+    progress_callback: Any | None = None,
 ) -> Any:
     """Return canonical loaded data, using one path for all lazy consumers."""
 
@@ -1092,6 +1112,7 @@ def _ensure_dataset_data_loaded(
         dataset,
         mdhisto_loader=mdhisto_loader,
         dataset_file_loader=dataset_file_loader,
+        progress_callback=progress_callback,
     )
 
 

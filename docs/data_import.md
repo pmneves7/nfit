@@ -81,7 +81,16 @@ responsive while preserving the complete local source path in the project.
 On Linux, nfit uses the desktop's GTK file chooser through Zenity or Yad when
 either is available. This avoids rendering failures in Qt's bundled chooser on
 remote desktops such as ThinLinc. The Qt fallback is kept above the project
-window.
+window. nfit also avoids Qt's atomic settings lock on Linux, allowing the
+remembered directory and other preferences to work when the home directory is
+on NFS.
+
+Opening an individual run from a file-backed MDEvent collection scans the shared
+event file for that run. nfit displays chunk-by-chunk progress during this scan;
+large files can take time to read even though only one run is selected.
+New MDEvent collections enable their composite dataset by default so **View in
+data viewer** can reduce the selected collection without an extra setup step.
+Automatic rebinning remains off for these large sources.
 
 With a complete convention, nfit exposes paired cross-section and $\chi''$
 channels without changing the imported values. Powder Heisenberg models average

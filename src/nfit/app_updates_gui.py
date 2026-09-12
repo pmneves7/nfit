@@ -20,6 +20,7 @@ from .app_updates import (
     launch_portable_linux_update,
     portable_linux_bundle_root,
 )
+from .application_preferences import application_settings
 
 
 class _Worker(QtCore.QObject):
@@ -52,7 +53,7 @@ class UpdateController(QtCore.QObject):
         super().__init__(window)
         self.window = window
         self.quit_application = quit_application
-        self.settings = settings or QtCore.QSettings("nfit", "nfit")
+        self.settings = application_settings() if settings is None else settings
         self.configuration = update_configuration()
         self._portable_linux_bundle = portable_linux_bundle_root()
         self._worker: _Worker | None = None

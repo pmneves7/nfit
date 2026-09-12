@@ -2552,6 +2552,36 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
     assert not diagnostics.window.isVisible()
 
 
+def test_unloaded_mdevent_viewer_uses_visible_progress_dialog(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtCore = pytest.importorskip("PySide6.QtCore")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+
+    dataset = DatasetEntry(
+        "run 100",
+        data=None,
+        kind="mdevent",
+        data_type="single_crystal_inelastic",
+        metadata={"source_file": "/data/events.nxs"},
+    )
+    explorer = NfitProjectExplorer(NfitProject([DataGroup("Data", datasets=[dataset])]))
+    monkeypatch.setattr(project_gui.platform, "system", lambda: "Linux")
+
+    progress = explorer._rebin_progress_callback_for_group(
+        explorer.project.data_groups[0],
+        use_composite=False,
+    )
+
+    assert progress is not None
+    dialog = progress._nfit_progress_dialog
+    assert dialog.isVisible()
+    assert dialog.windowModality() == QtCore.Qt.WindowModality.WindowModal
+    assert dialog.windowFlags() & QtCore.Qt.WindowType.WindowStaysOnTopHint
+    explorer._close_rebin_progress(progress)
+    dialog.deleteLater()
+    QtWidgets.QApplication.processEvents()
+
+
 def test_cache_binnings_file_action_is_project_specific(monkeypatch):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     pytest.importorskip("PySide6.QtWidgets")

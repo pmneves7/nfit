@@ -578,13 +578,18 @@ def effective_dataset_masks(group: DataGroup, dataset: DatasetEntry) -> list[Mas
     return search(group) or []
 
 
-def _ensure_dataset_data_loaded(dataset: DatasetEntry) -> Any:
+def _ensure_dataset_data_loaded(
+    dataset: DatasetEntry,
+    *,
+    progress_callback: Any | None = None,
+) -> Any:
     """Load data through the GUI-compatible project import service."""
 
     return _ensure_dataset_data_loaded_impl(
         dataset,
         mdhisto_loader=load_mantid_mdhisto_nxs,
         dataset_file_loader=_load_nfit_dataset_file,
+        progress_callback=progress_callback,
     )
 
 
@@ -1131,7 +1136,10 @@ def _viewer_data_before_scale_uncached(
                 extra_masks=extra_masks,
             )
         return derived
-    loaded = _ensure_dataset_data_loaded(dataset)
+    loaded = _ensure_dataset_data_loaded(
+        dataset,
+        progress_callback=progress_callback,
+    )
     if data_type_container(dataset.data_type) == "point_list" or isinstance(loaded, PointListData):
         if not isinstance(loaded, PointListData):
             return None

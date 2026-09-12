@@ -227,7 +227,12 @@ def append_mdevent_file(group: DatasetGroup, path: str | Path) -> list[DatasetEn
     return added
 
 
-def load_mdevent_run_points(dataset: DatasetEntry, *, batch_size: int = 1_000_000) -> PointData4D:
+def load_mdevent_run_points(
+    dataset: DatasetEntry,
+    *,
+    batch_size: int = 1_000_000,
+    progress_callback: Any | None = None,
+) -> PointData4D:
     """Load one logical run by scanning shared event chunks once."""
 
     import h5py
@@ -240,11 +245,31 @@ def load_mdevent_run_points(dataset: DatasetEntry, *, batch_size: int = 1_000_00
     pieces: list[np.ndarray] = []
     with h5py.File(source, "r") as handle:
         events = handle[f"{info.workspace_path.strip('/')}/event_data/event_data"]
+        total = int(events.shape[0])
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "stage": "mdevent_scan",
+                    "iteration": 0,
+                    "total": total,
+                    "message": f"reading MDEvents for run {dataset.metadata.get('run_number', '')}".rstrip(),
+                }
+            )
         for start in range(0, events.shape[0], batch_size):
-            block = np.asarray(events[start : min(start + batch_size, events.shape[0]), :], dtype=float)
+            stop = min(start + batch_size, events.shape[0])
+            block = np.asarray(events[start:stop, :], dtype=float)
             selected = block[:, EVENT_COLUMNS["experiment_index"]].astype(np.int64) == experiment_index
             if np.any(selected):
                 pieces.append(block[selected])
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "stage": "mdevent_scan",
+                        "iteration": int(stop),
+                        "total": total,
+                        "message": f"read {int(stop):,}/{total:,} MDEvents",
+                    }
+                )
     events_array = np.concatenate(pieces, axis=0) if pieces else np.empty((0, 9), dtype=float)
     hkl = events_array[:, 5:8] @ transform.T
     signal = events_array[:, 0]

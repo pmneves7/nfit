@@ -110,7 +110,12 @@ def test_mdevent_metadata_grouping_and_hkl_run_loading(tmp_path):
 
     info = inspect_mdevent_workspace(source)
     group = mdevent_dataset_group(source)
-    points = load_mdevent_run_points(group.datasets[0], batch_size=1)
+    progress = []
+    points = load_mdevent_run_points(
+        group.datasets[0],
+        batch_size=1,
+        progress_callback=progress.append,
+    )
 
     assert info.event_count == 2
     assert [run.run_number for run in info.runs] == ["100", "101"]
@@ -120,6 +125,9 @@ def test_mdevent_metadata_grouping_and_hkl_run_loading(tmp_path):
     np.testing.assert_allclose(points.K, [0.0])
     np.testing.assert_allclose(points.L, [0.0])
     np.testing.assert_allclose(points.E, [0.0])
+    assert [event["iteration"] for event in progress] == [0, 1, 2]
+    assert all(event["stage"] == "mdevent_scan" for event in progress)
+    assert progress[-1]["total"] == 2
 
 
 def test_detector_normalization_zero_values_define_mask(tmp_path):
@@ -431,6 +439,7 @@ def test_mdevent_group_gui_exposes_shared_setup_and_defaults_manual(tmp_path, mo
     ub = explorer.details_widget.findChild(QtWidgets.QLineEdit, "mdevent_ub_matrix")
     assert all(widget is not None and widget.toolTip() for widget in (norm, mask, ei, t0, ub))
     config = data_group_composite_config(_composite_scope(root, subgroup))
+    assert config["enabled"] is True
     assert config["auto_rebin"] is False
     assert len(config["axes"]) == 4
     coordinate_mode = explorer.details_widget.findChild(

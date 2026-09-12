@@ -8,6 +8,23 @@ def qt_app(monkeypatch):
     return widgets.QApplication.instance() or widgets.QApplication([])
 
 
+def test_application_settings_avoid_atomic_locking_on_linux(qt_app, monkeypatch, tmp_path):
+    from nfit import application_preferences
+
+    monkeypatch.setattr(application_preferences.sys, "platform", "linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    settings = application_preferences.application_settings()
+    settings.setValue("files/last_directory", "/data/run")
+    settings.sync()
+    restored = application_preferences.application_settings()
+
+    assert not settings.isAtomicSyncRequired()
+    assert restored.value("files/last_directory") == "/data/run"
+    assert restored.fileName() == str(tmp_path / "nfit" / "settings.json")
+    assert not list((tmp_path / "nfit").glob("*.lock*"))
+
+
 def test_preferences_colormap_folder_and_controls(qt_app, monkeypatch, tmp_path):
     from PySide6 import QtCore, QtGui, QtWidgets
 

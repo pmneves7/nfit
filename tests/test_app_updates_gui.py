@@ -143,6 +143,7 @@ def test_splash_shows_branding_progress_and_offline_help(monkeypatch):
 
     from tools.distribution.startup_splash import (
         StartupSplash,
+        _application_version,
         _logo_path,
         _render_svg,
     )
@@ -160,7 +161,7 @@ def test_splash_shows_branding_progress_and_offline_help(monkeypatch):
         progress = splash.findChild(QtWidgets.QProgressBar, "startup_progress")
         logo = splash.findChild(QtWidgets.QLabel, "startup_logo")
         assert "Paul M. Neves" in details.text()
-        assert "Version 0.87.1" in details.text()
+        assert f"Version {_application_version()}" in details.text()
         assert "EXPERIMENTAL BETA SOFTWARE" in beta_notice.text()
         assert "AI coding tools" in beta_notice.text()
         assert documentation.openExternalLinks()
