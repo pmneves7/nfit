@@ -152,6 +152,7 @@ def test_linux_smoke_runner_installs_debian_runtime_dependencies():
     ):
         assert package in workflow
         assert package in build_script
+    assert "Recommends: zenity" in build_script
 
 
 def test_windows_installer_exposes_a_start_menu_uninstaller():

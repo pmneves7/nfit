@@ -137,9 +137,11 @@ File choosers remember their last successfully selected directory for the local
 nfit installation. Before a directory has been remembered, they start beside
 the open project; an unsaved project falls back to the operating system's
 Documents directory and then the user's home directory.
-On Linux, nfit uses Qt's bundled file chooser so opening or cancelling a file
-dialog remains responsive in remote desktop sessions where a desktop portal is
-unavailable or incomplete.
+When opening files on Linux, nfit uses the desktop's GTK file chooser when
+Zenity or Yad is available. This keeps opening and cancelling responsive in
+remote desktop sessions where Qt's bundled chooser or a desktop portal does
+not render correctly. An explicitly raised Qt chooser remains available as a
+fallback.
 
 ## Reproducibility
 

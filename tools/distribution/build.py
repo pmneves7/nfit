@@ -187,6 +187,7 @@ def build(
             "Maintainer: Paul M. Neves <pneves1@jhu.edu>\n"
             "Depends: libc6 (>= 2.35), libgl1, libegl1, libopengl0, "
             "libxkbcommon0, libxcb-cursor0\n"
+            "Recommends: zenity\n"
             "Section: science\nPriority: optional\nDescription: Magnetic-scattering analysis and fitting\n")
         desktop = staging / "usr/share/applications/nfit.desktop"
         desktop.parent.mkdir(parents=True)

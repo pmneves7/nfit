@@ -120,7 +120,10 @@ offline after installation.
 
 The Debian package declares `libc6 (>= 2.35)`, `libgl1`, `libegl1`,
 `libopengl0`, `libxkbcommon0`, and `libxcb-cursor0`; `apt install` resolves
-these automatically.
+these automatically. It also recommends Zenity for a reliable native open-file
+chooser, especially in remote Linux desktop sessions. Tar installations use
+Zenity or Yad when either is already available and otherwise use nfit's Qt
+fallback for opening files.
 
 For a source installation, nfit requires Python 3.12 or newer. The supplied
 `environment.yml` is the tested developer environment and currently selects

@@ -76,6 +76,10 @@ File-backed datasets remain lazy after import. nfit records the new project
 state immediately and waits to load, rebin, and evaluate model predictions until
 the data are viewed or fitted. This keeps large HYSPEC and other NeXus imports
 responsive while preserving the complete local source path in the project.
+On Linux, nfit uses the desktop's GTK file chooser through Zenity or Yad when
+either is available. This avoids rendering failures in Qt's bundled chooser on
+remote desktops such as ThinLinc. The Qt fallback is kept above the project
+window.
 
 With a complete convention, nfit exposes paired cross-section and $\chi''$
 channels without changing the imported values. Powder Heisenberg models average
