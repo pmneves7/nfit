@@ -1,10 +1,10 @@
 # nfit documentation
 
-:::{warning}
+```{warning}
 **nfit is experimental beta software.** It is under active development and may
 contain incomplete or incorrect behavior. Validate scientific results independently.
 Paul M. Neves developed nfit with assistance from AI coding tools.
-:::
+```
 
 `nfit` analyzes magnetic neutron-scattering and related bulk measurements in
 physical coordinates such as `H`, `K`, `L`, `|Q|`, and energy transfer. It
@@ -17,7 +17,7 @@ University, pneves1@jhu.edu). AI and large-language-model coding tools have
 assisted with portions of the code, tests, and documentation. Authorship and
 responsibility for the project remain with Paul M. Neves.
 
-Current package version: 0.89.13.
+Current package version: 0.89.14.
 
 Start with [Getting started](getting_started.md), then use
 [GUI workflows](gui_workflows.md) for interactive work or the

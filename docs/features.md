@@ -1,10 +1,10 @@
 # Feature overview
 
-:::{warning}
+```{warning}
 **nfit is experimental beta software.** It is under active development and may
 contain incomplete or incorrect behavior. Validate scientific results independently.
 Paul M. Neves developed nfit with assistance from AI coding tools.
-:::
+```
 
 This page gives the detailed capability inventory. Start with
 [Getting started](getting_started.md) for installation and first use or

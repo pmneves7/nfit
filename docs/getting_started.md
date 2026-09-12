@@ -1,10 +1,29 @@
 # Getting started
 
+## Choose an installation method
+
 Most beta testers should use a native application installer. It includes the
 Python environment and offline manual, and does not require Git, Python, or
 Conda. Follow [Desktop installers and updates](desktop_installers.md) for macOS,
-Windows, or Linux. The setup below is for contributors and users who want to run
-nfit from source.
+Windows, or Linux.
+
+To install nfit as a Python package, use Python 3.12 or newer in a virtual or
+Conda environment:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install nfit
+nfit
+```
+
+This installs the graphical application and creates the `nfit` command. Update
+it later with `python -m pip install --upgrade nfit`. On Linux, the native
+`.deb` installer is usually simpler because it also installs the required
+desktop system libraries.
+
+The remaining setup is for developers and users who want an editable source
+checkout. It installs the test, documentation, and distribution tools in
+addition to the application.
 
 ## First-time source setup
 
@@ -15,7 +34,7 @@ environment setup can take several minutes.
 
 ### 1. Get a copy of the repository
 
-Then choose one of these ways to obtain the code:
+Choose one of these ways to obtain the code:
 
 **Recommended: clone with Git.** This makes it easy to receive updates and
 share your changes.
@@ -194,7 +213,7 @@ conda activate nfit
 To refresh the editable installation explicitly:
 
 ```bash
-python -m pip install -e ".[dev,docs]"
+python -m pip install -e ".[dev,docs,distribution]"
 ```
 
 ### Validate the checkout
