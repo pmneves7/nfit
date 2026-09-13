@@ -146,6 +146,11 @@ convention. The finite-energy extension follows the cross-correlation method
 described by Ye *et al.* in
 [Direct mapping of single-crystal diffuse scattering using the CORELLI instrument](https://doi.org/10.1107/S160057671800403X).
 
+Multi-channel reconstructions distribute independent energy-transfer channels
+across the available worker budget and accumulate directly into disjoint output
+slices. This avoids allocating a complete multidimensional grid for every
+worker, which is especially important for fine reciprocal-space grids.
+
 All requested energy channels reuse the same measured neutrons, so their
 statistical errors are correlated. `MDHistoData.errors` stores the propagated
 diagonal variance only; the returned metadata records this limitation. Optional

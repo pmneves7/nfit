@@ -23,6 +23,8 @@ from typing import Any
 
 import numpy as np
 
+from . import _parallel
+
 try:
     from . import _corelli_numba as _CORELLI_NUMBA
 except Exception:  # Numba remains optional for portable source installations.
@@ -470,8 +472,10 @@ def bin_corelli_group(
                                 if incident_flux is None
                                 else incident_flux.cumulative
                             )
-                            workers = max(
-                                1, _trajectory_worker_count(data_sum.size) // 3
+                            workers = (
+                                min(_parallel.num_threads(), energy_centres.size)
+                                if energy_centres.size > 1
+                                else max(1, _trajectory_worker_count(data_sum.size) // 3)
                             )
                             common = (
                                 np.ascontiguousarray(total_tof),

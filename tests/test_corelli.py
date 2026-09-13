@@ -174,7 +174,7 @@ def test_corelli_compiled_paths_match_numpy(tmp_path, monkeypatch):
     settings = {
         "lower": [0.0, -1.0],
         "upper": [100.0, 1.0],
-        "num_bins": [1, 1],
+        "num_bins": [1, 3],
         "max_batch_bytes": 128,
     }
     monkeypatch.setattr(corelli_module, "CORELLI_NUMBA_MIN_HYPOTHESES", 0)
@@ -182,7 +182,7 @@ def test_corelli_compiled_paths_match_numpy(tmp_path, monkeypatch):
     hkle_settings = {
         "lower": [-100.0, -100.0, -100.0, -1.0],
         "upper": [100.0, 100.0, 100.0, 1.0],
-        "num_bins": [1, 1, 1, 1],
+        "num_bins": [1, 1, 1, 3],
         "max_batch_bytes": 128,
     }
     compiled_hkle = corelli_module.bin_corelli_group(group, **hkle_settings)

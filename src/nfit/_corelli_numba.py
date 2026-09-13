@@ -251,6 +251,156 @@ def hkle_kernel(
     return np.sum(values, axis=0), np.sum(variances, axis=0), np.sum(counts, axis=0)
 
 
+@njit(fastmath=False, nogil=True, parallel=True)
+def hkle_energy_kernel(
+    tofs,
+    pulse_ns,
+    directions,
+    l2,
+    he3,
+    solid,
+    flux_rows,
+    delta_e_centres,
+    l1,
+    source_to_chopper,
+    energy_min,
+    energy_max,
+    tdc_ns,
+    period_ns,
+    sequence,
+    duty,
+    timing_offset_ns,
+    flux_axis,
+    cumulative_flux,
+    q_to_hkl,
+    basis_inverse,
+    symmetry,
+    edge0,
+    edge1,
+    edge2,
+    energy_edges,
+    shape,
+    use_he3,
+    use_ki_kf,
+):
+    """Accumulate independent energy channels into disjoint output slices."""
+
+    energy_count = delta_e_centres.size
+    output_size = shape[0] * shape[1] * shape[2] * shape[3]
+    values = np.zeros(output_size)
+    variances = np.zeros(output_size)
+    counts = np.zeros(output_size)
+    for energy_index in prange(energy_count):
+        delta_e = delta_e_centres[energy_index]
+        for event in range(tofs.size):
+            ei = _incident_energy(
+                tofs[event], l2[event], delta_e, l1, energy_min, energy_max
+            )
+            if ei <= 0.0:
+                continue
+            ef = ei - delta_e
+            ki = math.sqrt(ei / ENERGY_TO_K2)
+            kf = math.sqrt(ef / ENERGY_TO_K2)
+            crossing_us = (
+                _t0(ei) * (1.0 - source_to_chopper / (l1 + l2[event]))
+                + TOF_FACTOR * source_to_chopper / math.sqrt(ei)
+            )
+            correlation, valid = _correlation_weight(
+                pulse_ns[event] + crossing_us * 1000.0,
+                tdc_ns,
+                period_ns,
+                sequence,
+                duty,
+                timing_offset_ns,
+            )
+            if not valid:
+                continue
+            flux = _flux_density(
+                flux_rows[event], ki, flux_axis, cumulative_flux
+            )
+            weight, valid = _event_weight(
+                correlation,
+                ki,
+                kf,
+                he3[event],
+                solid[event],
+                flux,
+                use_he3,
+                use_ki_kf,
+            )
+            if not valid:
+                continue
+            q0 = -kf * directions[event, 0]
+            q1 = -kf * directions[event, 1]
+            q2 = ki - kf * directions[event, 2]
+            h = (
+                q0 * q_to_hkl[0, 0]
+                + q1 * q_to_hkl[1, 0]
+                + q2 * q_to_hkl[2, 0]
+            )
+            k = (
+                q0 * q_to_hkl[0, 1]
+                + q1 * q_to_hkl[1, 1]
+                + q2 * q_to_hkl[2, 1]
+            )
+            l = (
+                q0 * q_to_hkl[0, 2]
+                + q1 * q_to_hkl[1, 2]
+                + q2 * q_to_hkl[2, 2]
+            )
+            for operation in range(symmetry.shape[0]):
+                sh = (
+                    h * symmetry[operation, 0, 0]
+                    + k * symmetry[operation, 0, 1]
+                    + l * symmetry[operation, 0, 2]
+                )
+                sk = (
+                    h * symmetry[operation, 1, 0]
+                    + k * symmetry[operation, 1, 1]
+                    + l * symmetry[operation, 1, 2]
+                )
+                sl = (
+                    h * symmetry[operation, 2, 0]
+                    + k * symmetry[operation, 2, 1]
+                    + l * symmetry[operation, 2, 2]
+                )
+                c0 = (
+                    sh * basis_inverse[0, 0]
+                    + sk * basis_inverse[1, 0]
+                    + sl * basis_inverse[2, 0]
+                )
+                c1 = (
+                    sh * basis_inverse[0, 1]
+                    + sk * basis_inverse[1, 1]
+                    + sl * basis_inverse[2, 1]
+                )
+                c2 = (
+                    sh * basis_inverse[0, 2]
+                    + sk * basis_inverse[1, 2]
+                    + sl * basis_inverse[2, 2]
+                )
+                i0 = _bin_index(c0, edge0)
+                i1 = _bin_index(c1, edge1)
+                i2 = _bin_index(c2, edge2)
+                if (
+                    i0 < 0
+                    or i0 >= shape[0]
+                    or i1 < 0
+                    or i1 >= shape[1]
+                    or i2 < 0
+                    or i2 >= shape[2]
+                ):
+                    continue
+                flat = (
+                    ((i0 * shape[1] + i1) * shape[2] + i2) * shape[3]
+                    + energy_index
+                )
+                values[flat] += weight
+                variances[flat] += weight * weight
+                counts[flat] += 1.0
+    return values, variances, counts
+
+
 def _run(kernel, *args, workers):
     previous = get_num_threads()
     set_num_threads(max(1, min(int(workers), previous)))
@@ -265,4 +415,5 @@ def run_powder(*args, workers):
 
 
 def run_hkle(*args, workers):
-    return _run(hkle_kernel, *args, workers=workers)
+    kernel = hkle_energy_kernel if np.asarray(args[7]).size > 1 else hkle_kernel
+    return _run(kernel, *args, workers=workers)
