@@ -2267,7 +2267,7 @@ def test_isaw_ub_round_trip_uses_transposed_file_convention(tmp_path):
         " 0 0 0 0 0 0 0\n"
     )
     ub, lattice = project_gui.read_isaw_ub(path)
-    np.testing.assert_allclose(ub[:, 0], [0.07074842, -0.05057369, 0.08492118])
+    np.testing.assert_allclose(ub[:, 0], [-0.05057369, 0.08492118, 0.07074842])
     output = tmp_path / "roundtrip.mat"
     project_gui.write_isaw_ub(output, ub, lattice)
     restored, restored_lattice = project_gui.read_isaw_ub(output)
@@ -2276,12 +2276,27 @@ def test_isaw_ub_round_trip_uses_transposed_file_convention(tmp_path):
     assert float(output.read_text().splitlines()[3].split()[6]) == pytest.approx(8.227**3, rel=1e-4)
 
 
-def test_ub_from_lattice_orientation_uses_beam_x_and_vertical_z():
+def test_isaw_ub_matches_mantid_ipns_coordinate_conversion(tmp_path):
+    path = tmp_path / "mantid-example.mat"
+    path.write_text(
+        "0.0 0.5 0.0\n"
+        "0.0 0.0 0.25\n"
+        "0.2 0.0 0.0\n"
+        "2.0 4.0 5.0 90.0 90.0 90.0 40.0\n"
+        "0 0 0 0 0 0 0\n"
+    )
+
+    ub, _lattice = project_gui.read_isaw_ub(path)
+
+    np.testing.assert_allclose(ub, np.diag([0.5, 0.25, 0.2]))
+
+
+def test_ub_from_lattice_orientation_uses_beam_z_and_vertical_y():
     lattice = {"a": 4.0, "b": 5.0, "c": 6.0, "alpha": 90.0, "beta": 90.0, "gamma": 90.0}
     ub = project_gui.ub_from_lattice_orientation(lattice, [1, 0, 0], [0, 1, 0])
-    np.testing.assert_allclose(ub @ [1, 0, 0], [0.25, 0.0, 0.0], atol=1e-12)
-    np.testing.assert_allclose(ub @ [0, 1, 0], [0.0, 0.2, 0.0], atol=1e-12)
-    assert np.cross(ub @ [1, 0, 0], ub @ [0, 1, 0])[2] > 0.0
+    np.testing.assert_allclose(ub @ [1, 0, 0], [0.0, 0.0, 0.25], atol=1e-12)
+    np.testing.assert_allclose(ub @ [0, 1, 0], [0.2, 0.0, 0.0], atol=1e-12)
+    assert np.cross(ub @ [1, 0, 0], ub @ [0, 1, 0])[1] > 0.0
 
 
 def test_single_crystal_dataset_and_group_expose_ub_setup(monkeypatch):

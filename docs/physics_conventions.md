@@ -79,6 +79,10 @@ scattering label “momentum transfer” usually means its wavevector.
 The instrument UB convention omits $2\pi$: $\mathbf Q_{\rm sample}=2\pi UB(H,K,L)^T$.
 Here $U$ is the sample orientation rotation and the $B$ inside UB is the
 crystallographic reciprocal basis without $2\pi$, unlike the electronic $B$ above.
+Internally, raw SNS instrument coordinates use beam $+z$ and vertical $+y$.
+ISAW UB files use the IPNS frame with beam $+x$ and vertical $+z$; nfit applies
+the same row permutation as Mantid's `LoadIsawUB` while reading and its inverse
+while writing.
 
 ## Spin operators and equilibrium averages
 

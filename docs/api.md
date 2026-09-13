@@ -71,8 +71,9 @@ the three coverage/count cases and a numerical example.
 
 The GUI module also provides `read_isaw_ub`, `write_isaw_ub`, and
 `ub_from_lattice_orientation` for scripting the same UB workflow. ISAW matrices
-are transposed on disk, and orientation construction uses the IPNS frame with
-beam `+x` and vertical `+z`.
+are transposed on disk in the IPNS frame with beam `+x` and vertical `+z`.
+Reading converts them to nfit's Mantid/SNS frame with beam `+z` and vertical
+`+y`; writing performs the inverse conversion.
 
 Use `slice_viewer(data)` for the PySide6 interactive viewer. It accepts one
 `MDHistoData` object or a sequence with optional `dataset_names` and supports

@@ -403,7 +403,9 @@ plane spacing $d$ in Å. Physical scattering wavevector is
 $\mathbf Q=2\pi\mathbf Q'$; $U$ is the orientation rotation and $B$ here
 is the crystallographic reciprocal basis without $2\pi$. **UB from NeXus** reads embedded orientation metadata.
 **UB from ISAW** and **Save ISAW** use the conventional transposed three-row
-ISAW representation.
+ISAW representation. They also apply Mantid's coordinate permutation between
+the file's IPNS frame (beam $+x$, vertical $+z$) and nfit's SNS instrument frame
+(beam $+z$, vertical $+y$).
 
 Apply the dialog to a dataset for a dataset-specific orientation or to a group
 for shared orientation and composite HKL conversion.

@@ -3007,8 +3007,13 @@ def _optional_int(value: Any) -> int | None:
     return int(value)
 
 
+_ISAW_TO_MANTID_COORDINATES = np.asarray(
+    [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]], dtype=float
+)
+
+
 def read_isaw_ub(path: str | Path) -> tuple[np.ndarray, dict[str, float]]:
-    """Read an ISAW ``.mat`` file; its first three rows store ``UB.T``."""
+    """Read an ISAW ``.mat`` file into Mantid/SNS instrument coordinates."""
 
     rows = []
     for line in Path(path).read_text(encoding="utf-8").splitlines():
@@ -3017,7 +3022,8 @@ def read_isaw_ub(path: str | Path) -> tuple[np.ndarray, dict[str, float]]:
             rows.append([float(value) for value in values])
     if len(rows) < 4 or any(len(row) < 3 for row in rows[:3]) or len(rows[3]) < 6:
         raise ValueError("ISAW UB files require three matrix rows and one six-value lattice row")
-    ub = np.asarray([row[:3] for row in rows[:3]], dtype=float).T
+    ub_ipns = np.asarray([row[:3] for row in rows[:3]], dtype=float).T
+    ub = _ISAW_TO_MANTID_COORDINATES @ ub_ipns
     lattice = dict(zip(("a", "b", "c", "alpha", "beta", "gamma"), rows[3][:6], strict=True))
     if not np.all(np.isfinite(ub)) or abs(np.linalg.det(ub)) < 1e-14:
         raise ValueError("ISAW UB matrix must be finite and invertible")
@@ -3025,14 +3031,15 @@ def read_isaw_ub(path: str | Path) -> tuple[np.ndarray, dict[str, float]]:
 
 
 def write_isaw_ub(path: str | Path, ub: Any, lattice: dict[str, Any]) -> None:
-    """Write UB using the transposed IPNS/ISAW matrix convention."""
+    """Write a Mantid/SNS-frame UB in transposed IPNS/ISAW convention."""
 
     matrix = np.asarray(ub, dtype=float)
     if matrix.shape != (3, 3) or not np.all(np.isfinite(matrix)):
         raise ValueError("UB must be a finite 3 x 3 matrix")
     names = ("a", "b", "c", "alpha", "beta", "gamma")
     values = [float(lattice[name]) for name in names]
-    lines = [" ".join(f"{value: .8f}" for value in row) for row in matrix.T]
+    matrix_ipns = _ISAW_TO_MANTID_COORDINATES.T @ matrix
+    lines = [" ".join(f"{value: .8f}" for value in row) for row in matrix_ipns.T]
     alpha, beta, gamma = np.deg2rad(values[3:6])
     volume = values[0] * values[1] * values[2] * np.sqrt(
         max(1.0 + 2.0 * np.cos(alpha) * np.cos(beta) * np.cos(gamma)
@@ -3044,7 +3051,7 @@ def write_isaw_ub(path: str | Path, ub: Any, lattice: dict[str, Any]) -> None:
 
 
 def ub_from_lattice_orientation(lattice: dict[str, Any], u: Any, v: Any) -> np.ndarray:
-    """Build an IPNS-frame UB with ``u`` along beam x and ``u-v`` plane horizontal."""
+    """Build a Mantid/SNS-frame UB with ``u`` along the incident beam."""
 
     basis = reciprocal_basis_from_lattice_parameters(
         *(float(lattice[name]) for name in ("a", "b", "c", "alpha", "beta", "gamma"))
@@ -3057,7 +3064,8 @@ def ub_from_lattice_orientation(lattice: dict[str, Any], u: Any, v: Any) -> np.n
     z_axis = np.cross(q_u, q_v)
     z_axis /= np.linalg.norm(z_axis)
     y_axis = np.cross(z_axis, x_axis)
-    return np.vstack((x_axis, y_axis, z_axis)) @ basis
+    ub_ipns = np.vstack((x_axis, y_axis, z_axis)) @ basis
+    return _ISAW_TO_MANTID_COORDINATES @ ub_ipns
 
 
 class UBSetupDialog:
@@ -3089,7 +3097,7 @@ class UBSetupDialog:
                 form.addWidget(QtWidgets.QLabel(label), vector_row, component * 2)
                 edit = QtWidgets.QLineEdit(_format_number(value))
                 edit.setObjectName(f"ub_orientation_{name}_{component}")
-                edit.setToolTip("Reciprocal-lattice orientation vector. u points along the incident beam (+x); u and v define the horizontal plane, with +z vertical.")
+                edit.setToolTip("Reciprocal-lattice orientation vector. u points along the incident beam (+z); u and v define the horizontal plane, with +y vertical.")
                 form.addWidget(edit, vector_row, component * 2 + 1)
                 self.orientation_edits[(name, component)] = edit
         outer.addLayout(form)
@@ -3110,7 +3118,7 @@ class UBSetupDialog:
         self._set_matrix(np.asarray(ub, dtype=float))
         buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Apply | QtWidgets.QDialogButtonBox.StandardButton.Cancel)
         save = buttons.addButton("Save ISAW", QtWidgets.QDialogButtonBox.ButtonRole.ActionRole)
-        save.setToolTip("Save a .mat file with UB transposed on disk, using the IPNS x-beam/z-vertical convention.")
+        save.setToolTip("Save a .mat file with UB transposed and converted to the IPNS x-beam/z-vertical convention.")
         save.clicked.connect(self._save_isaw)
         buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Apply).clicked.connect(self._accept)
         buttons.rejected.connect(self.dialog.reject)
@@ -12365,7 +12373,7 @@ class NfitProjectExplorer:
         layout.addWidget(correction, 4, 0, 1, 2)
         layout.addWidget(QtWidgets.QLabel("UB matrix"), 5, 0)
         ub = QtWidgets.QLineEdit(_parameter_to_text(config.get("ub_matrix", np.eye(3).tolist())))
-        ub.setToolTip("Shared IPNS/ISAW UB matrix. Raw Q is rotated into the sample frame and converted with (2*pi*UB)^-1 before binning.")
+        ub.setToolTip("Shared Mantid/SNS-frame UB matrix. Raw Q is rotated into the sample frame and converted with (2*pi*UB)^-1 before binning.")
         ub.editingFinished.connect(lambda: self._set_raw_dgs_group_ub(node, ub))
         layout.addWidget(ub, 5, 1, 1, 3)
         return box
@@ -12507,7 +12515,7 @@ class NfitProjectExplorer:
         layout.addWidget(corrections, 4, 3)
         ub_label = QtWidgets.QLabel("UB matrix")
         ub_label.setToolTip(
-            "Shared IPNS/ISAW UB matrix used to convert reconstructed sample-frame Q to HKL."
+            "Shared Mantid/SNS-frame UB matrix used to convert reconstructed sample-frame Q to HKL. ISAW files are converted when loaded."
         )
         layout.addWidget(ub_label, 5, 0)
         ub = QtWidgets.QLineEdit(
@@ -12592,7 +12600,7 @@ class NfitProjectExplorer:
         button.setObjectName("open_ub_setup")
         button.setToolTip(
             "Open the UB editor. It can calculate UB from lattice and u/v vectors, load NeXus or ISAW .mat files, "
-            "and save the IPNS/ISAW convention where the matrix is transposed on disk."
+            "and convert between the internal Mantid/SNS frame and the transposed IPNS/ISAW convention on disk."
         )
         button.clicked.connect(lambda: self._open_ub_setup(root, target))
         button_row.addWidget(button)
