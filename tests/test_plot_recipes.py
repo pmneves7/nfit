@@ -26,6 +26,30 @@ def test_plot_recipe_renders_and_exports_backend_script(tmp_path):
     compile(script, "generated_plot.py", "exec")
 
 
+def test_plot_recipe_restores_major_gridlines_and_shared_style():
+    entry = new_plot_entry(
+        "Map",
+        "dataset-id",
+        {
+            "x_dim": "H",
+            "y_dim": "K",
+            "show_major_gridlines": True,
+            "brillouin_zone_color": "#123456",
+            "brillouin_zone_linewidth": 2.25,
+            "brillouin_zone_alpha": 0.6,
+        },
+        plot_type="mdhisto_slice",
+    )
+
+    axis = render_plot(entry, _data()).axes[0]
+    gridlines = [line for line in axis.get_xgridlines() if line.get_visible()]
+
+    assert gridlines
+    assert all(line.get_color() == "#123456" for line in gridlines)
+    assert all(line.get_linewidth() == 2.25 for line in gridlines)
+    assert all(line.get_alpha() == 0.6 for line in gridlines)
+
+
 def test_slice_recipe_preserves_empty_bins_from_legacy_fill_recipe():
     axes = (
         MDHistoAxis("H", np.arange(4.0), "rlu", "momentum"),

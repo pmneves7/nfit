@@ -234,6 +234,7 @@ class QtMDHistoSliceViewer:
         self.smoothing_fill_nans_check = None
         self.brillouin_zone_group = None
         self.show_brillouin_zone_check = None
+        self.show_major_gridlines_check = None
         self.brillouin_zone_color_combo = None
         self.brillouin_zone_linewidth_spin = None
         self.brillouin_zone_alpha_spin = None
@@ -335,9 +336,10 @@ class QtMDHistoSliceViewer:
         self.smoothing_y = 0.0
         self.smoothing_fill_nans = False
         self.show_brillouin_zone_boundaries = False
+        self.show_major_gridlines = False
         self.brillouin_zone_color = "#e57373"
-        self.brillouin_zone_linewidth = 1.0
-        self.brillouin_zone_alpha = 0.75
+        self.brillouin_zone_linewidth = 1.5
+        self.brillouin_zone_alpha = 1.0
         self.marker = "o"
         self.line_style = "none"
         self.marker_size = 5.0
@@ -678,6 +680,7 @@ class QtMDHistoSliceViewer:
             "smoothing_y": self.smoothing_y,
             "smoothing_fill_nans": self.smoothing_fill_nans,
             "show_brillouin_zone_boundaries": self.show_brillouin_zone_boundaries,
+            "show_major_gridlines": self.show_major_gridlines,
             "brillouin_zone_spacegroup": self._effective_brillouin_zone_context().get("spacegroup"),
             "brillouin_zone_lattice_parameters": self._effective_brillouin_zone_context().get("lattice_parameters"),
             "brillouin_zone_color": self.brillouin_zone_color,
@@ -800,6 +803,11 @@ class QtMDHistoSliceViewer:
         self.show_brillouin_zone_boundaries = bool(
             settings.get("show_brillouin_zone_boundaries", False)
         )
+        self.show_major_gridlines = bool(
+            settings.get("show_major_gridlines", False)
+        )
+        if self.show_brillouin_zone_boundaries and self.show_major_gridlines:
+            self.show_major_gridlines = False
         context = self._effective_brillouin_zone_context()
         if settings.get("brillouin_zone_spacegroup"):
             context["spacegroup"] = str(settings["brillouin_zone_spacegroup"])
@@ -1023,6 +1031,10 @@ class QtMDHistoSliceViewer:
             self.show_brillouin_zone_check,
             self.show_brillouin_zone_boundaries,
         )
+        self._set_checkbox_silent(
+            self.show_major_gridlines_check,
+            self.show_major_gridlines,
+        )
         bz_color_index = self.brillouin_zone_color_combo.findData(
             self.brillouin_zone_color
         )
@@ -1243,6 +1255,7 @@ class QtMDHistoSliceViewer:
                 f"    xcut_percent={self.xcut_percent!r},",
                 f"    ycut_percent={self.ycut_percent!r},",
                 f"    show_brillouin_zone_boundaries={self.show_brillouin_zone_boundaries!r},",
+                f"    show_major_gridlines={self.show_major_gridlines!r},",
                 f"    brillouin_zone_spacegroup={self._effective_brillouin_zone_context().get('spacegroup')!r},",
                 f"    brillouin_zone_lattice_parameters={self._effective_brillouin_zone_context().get('lattice_parameters')!r},",
                 f"    brillouin_zone_color={self.brillouin_zone_color!r},",
@@ -1309,6 +1322,7 @@ class QtMDHistoSliceViewer:
                 f"    show_tile_labels={self.show_tile_labels!r},",
                 f"    local_color_scales={self.tile_local_color_scales!r},",
                 f"    show_brillouin_zone_boundaries={self.show_brillouin_zone_boundaries!r},",
+                f"    show_major_gridlines={self.show_major_gridlines!r},",
                 f"    brillouin_zone_spacegroup={self._effective_brillouin_zone_context().get('spacegroup')!r},",
                 f"    brillouin_zone_lattice_parameters={self._effective_brillouin_zone_context().get('lattice_parameters')!r},",
                 f"    brillouin_zone_color={self.brillouin_zone_color!r},",
@@ -1880,6 +1894,7 @@ class QtMDHistoSliceViewer:
             smoothing_y=float(self.smoothing_y),
             smoothing_fill_nans=bool(self.smoothing_fill_nans),
             show_brillouin_zone_boundaries=bool(self.show_brillouin_zone_boundaries),
+            show_major_gridlines=bool(self.show_major_gridlines),
             brillouin_zone_color=str(self.brillouin_zone_color),
             brillouin_zone_linewidth=float(self.brillouin_zone_linewidth),
             brillouin_zone_alpha=float(self.brillouin_zone_alpha),
@@ -1973,6 +1988,7 @@ class QtMDHistoSliceViewer:
             self.show_brillouin_zone_boundaries = bool(
                 state.show_brillouin_zone_boundaries
             )
+            self.show_major_gridlines = bool(state.show_major_gridlines)
             self.brillouin_zone_color = str(state.brillouin_zone_color)
             self.brillouin_zone_linewidth = float(state.brillouin_zone_linewidth)
             self.brillouin_zone_alpha = float(state.brillouin_zone_alpha)
@@ -2029,6 +2045,10 @@ class QtMDHistoSliceViewer:
             self._set_checkbox_silent(
                 self.show_brillouin_zone_check,
                 self.show_brillouin_zone_boundaries,
+            )
+            self._set_checkbox_silent(
+                self.show_major_gridlines_check,
+                self.show_major_gridlines,
             )
             color_index = self.brillouin_zone_color_combo.findData(
                 self.brillouin_zone_color
@@ -2526,7 +2546,19 @@ class QtMDHistoSliceViewer:
         if checked and not self._ensure_brillouin_zone_context():
             self._set_checkbox_silent(self.show_brillouin_zone_check, False)
             return
+        if checked:
+            self.show_major_gridlines = False
+            self._set_checkbox_silent(self.show_major_gridlines_check, False)
         self.show_brillouin_zone_boundaries = bool(checked)
+        self.update_plot()
+
+    def _set_show_major_gridlines(self, checked: bool) -> None:
+        if self._restoring_dataset_state:
+            return
+        if checked:
+            self.show_brillouin_zone_boundaries = False
+            self._set_checkbox_silent(self.show_brillouin_zone_check, False)
+        self.show_major_gridlines = bool(checked)
         self.update_plot()
 
     def _set_brillouin_zone_color(self, _index: int) -> None:
@@ -2587,13 +2619,25 @@ class QtMDHistoSliceViewer:
             )
         return True
 
-    def _draw_brillouin_zone_overlay(
+    def _draw_gridline_overlay(
         self, ax: Any | None = None, *, coordinate_overrides: dict[int, float] | None = None
     ) -> None:
-        if not self.show_brillouin_zone_boundaries or getattr(self.model, "is_point_list", False):
+        if getattr(self.model, "is_point_list", False):
             return
         target = self.ax_image if ax is None else ax
         if target is None:
+            return
+        if self.show_major_gridlines:
+            target.grid(
+                True,
+                which="major",
+                axis="both",
+                color=self.brillouin_zone_color,
+                linewidth=self.brillouin_zone_linewidth,
+                alpha=self.brillouin_zone_alpha,
+            )
+            return
+        if not self.show_brillouin_zone_boundaries:
             return
         context = self._effective_brillouin_zone_context()
         try:

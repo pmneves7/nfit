@@ -122,7 +122,8 @@ nfit provides:
 - interactive slice, waterfall, tiled 2D-slice, and volumetric visualization
   with large-volume safeguards, optional visualization-only smoothing across
   empty bins, per-panel tiled cursor inspection, optional metric- and
-  centering-aware Brillouin-zone boundaries with scriptable line styling,
+  centering-aware Brillouin-zone boundaries or major-tick gridlines with
+  shared scriptable line styling,
   dedicated experimental momentum-path maps with automatic or absolute-HKL
   higher-zone paths, propagated tube-average errors, symmetry guides, and 3D
   inspection,

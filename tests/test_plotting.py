@@ -103,6 +103,50 @@ def test_static_and_qt_slice_views_draw_scriptable_brillouin_zone_boundaries():
     assert settings["brillouin_zone_spacegroup"] == "P 1"
     assert "show_brillouin_zone_boundaries=True" in viewer.figure_script()
 
+    assert viewer.brillouin_zone_linewidth == pytest.approx(1.5)
+    assert viewer.brillouin_zone_alpha == pytest.approx(1.0)
+    viewer.show_major_gridlines_check.setChecked(True)
+    assert viewer.show_major_gridlines
+    assert not viewer.show_brillouin_zone_boundaries
+    assert not viewer.show_brillouin_zone_check.isChecked()
+    assert any(line.get_visible() for line in viewer.ax_image.get_xgridlines())
+    settings = viewer.current_plot_settings()
+    assert settings["show_major_gridlines"] is True
+    assert "show_major_gridlines=True" in viewer.figure_script()
+
+    viewer.show_brillouin_zone_check.setChecked(True)
+    assert viewer.show_brillouin_zone_boundaries
+    assert not viewer.show_major_gridlines
+    assert not viewer.show_major_gridlines_check.isChecked()
+
+
+def test_static_major_gridlines_use_shared_style_and_exclude_zone_boundaries():
+    data = _tiny_mdhisto_data()
+    figure = plot_mdhisto_slice(
+        data,
+        x_dim=3,
+        y_dim=2,
+        show_major_gridlines=True,
+    )
+    axis = figure.axes[0]
+    gridlines = [
+        line
+        for line in (*axis.get_xgridlines(), *axis.get_ygridlines())
+        if line.get_visible()
+    ]
+
+    assert gridlines
+    assert all(line.get_linewidth() == pytest.approx(1.5) for line in gridlines)
+    assert all(line.get_alpha() == pytest.approx(1.0) for line in gridlines)
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        plot_mdhisto_slice(
+            data,
+            x_dim=3,
+            y_dim=2,
+            show_brillouin_zone_boundaries=True,
+            show_major_gridlines=True,
+        )
+
 
 def test_mdhisto_slice_viewer_auto_color_limits():
     data = _tiny_mdhisto_data()

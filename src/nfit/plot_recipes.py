@@ -179,15 +179,16 @@ def render_plot(
             show_brillouin_zone_boundaries=bool(
                 settings.get("show_brillouin_zone_boundaries", False)
             ),
+            show_major_gridlines=bool(settings.get("show_major_gridlines", False)),
             brillouin_zone_spacegroup=settings.get("brillouin_zone_spacegroup"),
             brillouin_zone_lattice_parameters=settings.get(
                 "brillouin_zone_lattice_parameters"
             ),
             brillouin_zone_color=settings.get("brillouin_zone_color", "#e57373"),
             brillouin_zone_linewidth=float(
-                settings.get("brillouin_zone_linewidth", 1.0)
+                settings.get("brillouin_zone_linewidth", 1.5)
             ),
-            brillouin_zone_alpha=float(settings.get("brillouin_zone_alpha", 0.75)),
+            brillouin_zone_alpha=float(settings.get("brillouin_zone_alpha", 1.0)),
             figsize=tuple(settings.get("figsize", (10.0, 8.0))),
         )
     elif plot_type == "mdhisto_line":
@@ -224,15 +225,16 @@ def render_plot(
             show_brillouin_zone_boundaries=bool(
                 settings.get("show_brillouin_zone_boundaries", False)
             ),
+            show_major_gridlines=bool(settings.get("show_major_gridlines", False)),
             brillouin_zone_spacegroup=settings.get("brillouin_zone_spacegroup"),
             brillouin_zone_lattice_parameters=settings.get(
                 "brillouin_zone_lattice_parameters"
             ),
             brillouin_zone_color=settings.get("brillouin_zone_color", "#e57373"),
             brillouin_zone_linewidth=float(
-                settings.get("brillouin_zone_linewidth", 1.0)
+                settings.get("brillouin_zone_linewidth", 1.5)
             ),
-            brillouin_zone_alpha=float(settings.get("brillouin_zone_alpha", 0.75)),
+            brillouin_zone_alpha=float(settings.get("brillouin_zone_alpha", 1.0)),
             figsize=tuple(settings.get("figsize", (8.0, 6.5))),
         )
     elif plot_type == "mdhisto_slice":
@@ -271,15 +273,16 @@ def render_plot(
             show_brillouin_zone_boundaries=bool(
                 settings.get("show_brillouin_zone_boundaries", False)
             ),
+            show_major_gridlines=bool(settings.get("show_major_gridlines", False)),
             brillouin_zone_spacegroup=settings.get("brillouin_zone_spacegroup"),
             brillouin_zone_lattice_parameters=settings.get(
                 "brillouin_zone_lattice_parameters"
             ),
             brillouin_zone_color=settings.get("brillouin_zone_color", "#e57373"),
             brillouin_zone_linewidth=float(
-                settings.get("brillouin_zone_linewidth", 1.0)
+                settings.get("brillouin_zone_linewidth", 1.5)
             ),
-            brillouin_zone_alpha=float(settings.get("brillouin_zone_alpha", 0.75)),
+            brillouin_zone_alpha=float(settings.get("brillouin_zone_alpha", 1.0)),
             figsize=tuple(settings.get("figsize", (8.0, 6.5))),
         )
     else:

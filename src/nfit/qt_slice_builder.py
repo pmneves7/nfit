@@ -47,7 +47,7 @@ def build_slice_viewer(
     _build_hidden_axis_controls(viewer, controls_layout)
     _build_color_controls(viewer, controls_layout)
     _build_smoothing_controls(viewer, controls_layout)
-    _build_brillouin_zone_controls(
+    _build_gridline_controls(
         viewer, controls_layout, color_options=color_options
     )
     _build_histogram_tool_controls(viewer, controls_layout)
@@ -579,13 +579,15 @@ def _build_smoothing_controls(viewer: Any, controls_layout: Any) -> None:
     controls_layout.addWidget(smoothing_group)
 
 
-def _build_brillouin_zone_controls(
+def _build_gridline_controls(
     viewer: Any, controls_layout: Any, *, color_options: Mapping[str, str]
 ) -> None:
-    group = QtWidgets.QGroupBox("Brillouin-zone boundaries")
+    group = QtWidgets.QGroupBox("Gridlines")
     viewer.brillouin_zone_group = group
     layout = QtWidgets.QGridLayout(group)
-    viewer.show_brillouin_zone_check = QtWidgets.QCheckBox("Show boundaries")
+    viewer.show_brillouin_zone_check = QtWidgets.QCheckBox(
+        "Brillouin-zone boundaries"
+    )
     viewer.show_brillouin_zone_check.setToolTip(
         "Overlay repeated first-Brillouin-zone boundaries on HKL slices. "
         "If crystal information is missing, nfit asks for it when enabled."
@@ -597,6 +599,18 @@ def _build_brillouin_zone_controls(
         viewer._set_show_brillouin_zone_boundaries
     )
     layout.addWidget(viewer.show_brillouin_zone_check, 0, 0, 1, 2)
+    viewer.show_major_gridlines_check = QtWidgets.QCheckBox(
+        "Major-tick gridlines"
+    )
+    viewer.show_major_gridlines_check.setToolTip(
+        "Draw conventional horizontal and vertical gridlines at the major ticks. "
+        "This option and Brillouin-zone boundaries are mutually exclusive."
+    )
+    viewer.show_major_gridlines_check.setChecked(viewer.show_major_gridlines)
+    viewer.show_major_gridlines_check.toggled.connect(
+        viewer._set_show_major_gridlines
+    )
+    layout.addWidget(viewer.show_major_gridlines_check, 1, 0, 1, 2)
     viewer.brillouin_zone_color_combo = QtWidgets.QComboBox()
     for name, value in color_options.items():
         if value != "none":
@@ -606,36 +620,38 @@ def _build_brillouin_zone_controls(
     )
     if color_index >= 0:
         viewer.brillouin_zone_color_combo.setCurrentIndex(color_index)
-    viewer.brillouin_zone_color_combo.setToolTip("Choose the boundary-line color.")
+    viewer.brillouin_zone_color_combo.setToolTip(
+        "Choose the shared line color for either gridline mode."
+    )
     viewer.brillouin_zone_color_combo.currentIndexChanged.connect(
         viewer._set_brillouin_zone_color
     )
-    layout.addWidget(QtWidgets.QLabel("Color"), 1, 0)
-    layout.addWidget(viewer.brillouin_zone_color_combo, 1, 1)
+    layout.addWidget(QtWidgets.QLabel("Color"), 2, 0)
+    layout.addWidget(viewer.brillouin_zone_color_combo, 2, 1)
     viewer.brillouin_zone_linewidth_spin = _make_float_spinbox(0.1, 10.0)
     viewer.brillouin_zone_linewidth_spin.setSingleStep(0.1)
     viewer.brillouin_zone_linewidth_spin.setValue(
         viewer.brillouin_zone_linewidth
     )
     viewer.brillouin_zone_linewidth_spin.setToolTip(
-        "Set the boundary-line thickness in points."
+        "Set the shared line thickness in points for either gridline mode."
     )
     viewer.brillouin_zone_linewidth_spin.valueChanged.connect(
         viewer._set_brillouin_zone_linewidth
     )
-    layout.addWidget(QtWidgets.QLabel("Thickness"), 2, 0)
-    layout.addWidget(viewer.brillouin_zone_linewidth_spin, 2, 1)
+    layout.addWidget(QtWidgets.QLabel("Thickness"), 3, 0)
+    layout.addWidget(viewer.brillouin_zone_linewidth_spin, 3, 1)
     viewer.brillouin_zone_alpha_spin = _make_float_spinbox(0.0, 1.0)
     viewer.brillouin_zone_alpha_spin.setSingleStep(0.05)
     viewer.brillouin_zone_alpha_spin.setValue(viewer.brillouin_zone_alpha)
     viewer.brillouin_zone_alpha_spin.setToolTip(
-        "Set boundary opacity from transparent (0) to opaque (1)."
+        "Set the shared gridline opacity from transparent (0) to opaque (1)."
     )
     viewer.brillouin_zone_alpha_spin.valueChanged.connect(
         viewer._set_brillouin_zone_alpha
     )
-    layout.addWidget(QtWidgets.QLabel("Opacity"), 3, 0)
-    layout.addWidget(viewer.brillouin_zone_alpha_spin, 3, 1)
+    layout.addWidget(QtWidgets.QLabel("Opacity"), 4, 0)
+    layout.addWidget(viewer.brillouin_zone_alpha_spin, 4, 1)
     controls_layout.addWidget(group)
 
 

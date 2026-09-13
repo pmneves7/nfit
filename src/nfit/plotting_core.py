@@ -24,8 +24,8 @@ def draw_mdhisto_brillouin_zones(
     spacegroup: str | None = None,
     lattice_parameters: dict[str, float] | None = None,
     color: str = "#e57373",
-    linewidth: float = 1.0,
-    alpha: float = 0.75,
+    linewidth: float = 1.5,
+    alpha: float = 1.0,
 ) -> Any:
     """Draw repeated BZ boundaries using the physical HKL axes of ``data``."""
 
@@ -71,6 +71,33 @@ def draw_mdhisto_brillouin_zones(
     )
     return draw_brillouin_zone_slice(
         ax, zone_slice, color=color, linewidth=linewidth, alpha=alpha
+    )
+
+
+def _validate_gridline_modes(
+    show_brillouin_zone_boundaries: bool,
+    show_major_gridlines: bool,
+) -> None:
+    if show_brillouin_zone_boundaries and show_major_gridlines:
+        raise ValueError(
+            "Brillouin-zone boundaries and major-tick gridlines are mutually exclusive"
+        )
+
+
+def _draw_major_gridlines(
+    ax: Any,
+    *,
+    color: str,
+    linewidth: float,
+    alpha: float,
+) -> None:
+    ax.grid(
+        True,
+        which="major",
+        axis="both",
+        color=color,
+        linewidth=float(linewidth),
+        alpha=float(alpha),
     )
 
 
@@ -278,11 +305,12 @@ def plot_mdhisto_slice(
     ycut_percent: float = 16.0,
     axes_linewidth: float = 1.0,
     show_brillouin_zone_boundaries: bool = False,
+    show_major_gridlines: bool = False,
     brillouin_zone_spacegroup: str | None = None,
     brillouin_zone_lattice_parameters: dict[str, float] | None = None,
     brillouin_zone_color: str = "#e57373",
-    brillouin_zone_linewidth: float = 1.0,
-    brillouin_zone_alpha: float = 0.75,
+    brillouin_zone_linewidth: float = 1.5,
+    brillouin_zone_alpha: float = 1.0,
     figsize: tuple[float, float] = (8.0, 6.5),
 ):
     """Render a non-interactive MDHisto slice figure.
@@ -295,6 +323,10 @@ def plot_mdhisto_slice(
 
     import matplotlib.pyplot as plt
 
+    _validate_gridline_modes(
+        show_brillouin_zone_boundaries,
+        show_major_gridlines,
+    )
     model = MDHistoSliceViewer(
         data,
         x_dim=x_dim,
@@ -369,6 +401,13 @@ def plot_mdhisto_slice(
                 selections=model.selections,
                 spacegroup=brillouin_zone_spacegroup,
                 lattice_parameters=brillouin_zone_lattice_parameters,
+                color=brillouin_zone_color,
+                linewidth=brillouin_zone_linewidth,
+                alpha=brillouin_zone_alpha,
+            )
+        elif show_major_gridlines:
+            _draw_major_gridlines(
+                ax_image,
                 color=brillouin_zone_color,
                 linewidth=brillouin_zone_linewidth,
                 alpha=brillouin_zone_alpha,
@@ -614,17 +653,22 @@ def plot_mdhisto_tiled_slices(
     show_tile_labels: bool = True,
     local_color_scales: bool = False,
     show_brillouin_zone_boundaries: bool = False,
+    show_major_gridlines: bool = False,
     brillouin_zone_spacegroup: str | None = None,
     brillouin_zone_lattice_parameters: dict[str, float] | None = None,
     brillouin_zone_color: str = "#e57373",
-    brillouin_zone_linewidth: float = 1.0,
-    brillouin_zone_alpha: float = 0.75,
+    brillouin_zone_linewidth: float = 1.5,
+    brillouin_zone_alpha: float = 1.0,
     figsize: tuple[float, float] = (10.0, 8.0),
 ):
     """Render a grid of 2D slices with global or per-panel color scales."""
 
     import matplotlib.pyplot as plt
 
+    _validate_gridline_modes(
+        show_brillouin_zone_boundaries,
+        show_major_gridlines,
+    )
     slices = prepare_mdhisto_tiled_slices(
         data,
         x_dim=x_dim,
@@ -739,6 +783,13 @@ def plot_mdhisto_tiled_slices(
                     coordinate_overrides={tile_index: panel.coordinate},
                     spacegroup=brillouin_zone_spacegroup,
                     lattice_parameters=brillouin_zone_lattice_parameters,
+                    color=brillouin_zone_color,
+                    linewidth=brillouin_zone_linewidth,
+                    alpha=brillouin_zone_alpha,
+                )
+            elif show_major_gridlines:
+                _draw_major_gridlines(
+                    ax,
                     color=brillouin_zone_color,
                     linewidth=brillouin_zone_linewidth,
                     alpha=brillouin_zone_alpha,
@@ -1599,15 +1650,20 @@ def plot_mdhisto_fit_comparison(
     color_scale: str = "linear",
     auto_limits: str = "min/max",
     show_brillouin_zone_boundaries: bool = False,
+    show_major_gridlines: bool = False,
     brillouin_zone_spacegroup: str | None = None,
     brillouin_zone_lattice_parameters: dict[str, float] | None = None,
     brillouin_zone_color: str = "#e57373",
-    brillouin_zone_linewidth: float = 1.0,
-    brillouin_zone_alpha: float = 0.75,
+    brillouin_zone_linewidth: float = 1.5,
+    brillouin_zone_alpha: float = 1.0,
     figsize: tuple[float, float] | None = None,
 ):
     """Plot data, fit, and optionally residual for matching MDHisto datasets."""
 
+    _validate_gridline_modes(
+        show_brillouin_zone_boundaries,
+        show_major_gridlines,
+    )
     non_singleton = [dim for dim, size in enumerate(data.shape) if size > 1]
     if len(non_singleton) == 1:
         return plot_mdhisto_fit_line_comparison(
@@ -1633,6 +1689,7 @@ def plot_mdhisto_fit_comparison(
         color_scale=color_scale,
         auto_limits=auto_limits,
         show_brillouin_zone_boundaries=show_brillouin_zone_boundaries,
+        show_major_gridlines=show_major_gridlines,
         brillouin_zone_spacegroup=brillouin_zone_spacegroup,
         brillouin_zone_lattice_parameters=brillouin_zone_lattice_parameters,
         brillouin_zone_color=brillouin_zone_color,
@@ -1712,6 +1769,7 @@ def _plot_mdhisto_fit_slice_comparison(
     color_scale: str,
     auto_limits: str,
     show_brillouin_zone_boundaries: bool,
+    show_major_gridlines: bool,
     brillouin_zone_spacegroup: str | None,
     brillouin_zone_lattice_parameters: dict[str, float] | None,
     brillouin_zone_color: str,
@@ -1785,6 +1843,13 @@ def _plot_mdhisto_fit_slice_comparison(
                 selections=data_model.selections,
                 spacegroup=brillouin_zone_spacegroup,
                 lattice_parameters=brillouin_zone_lattice_parameters,
+                color=brillouin_zone_color,
+                linewidth=brillouin_zone_linewidth,
+                alpha=brillouin_zone_alpha,
+            )
+        elif show_major_gridlines:
+            _draw_major_gridlines(
+                ax,
                 color=brillouin_zone_color,
                 linewidth=brillouin_zone_linewidth,
                 alpha=brillouin_zone_alpha,
