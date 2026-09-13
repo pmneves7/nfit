@@ -454,6 +454,7 @@ def bin_corelli_group(
                         direction = positions / l2[:, None]
                         if (
                             _CORELLI_NUMBA is not None
+                            and energy_centres.size > 1
                             and total_tof.size * energy_centres.size
                             >= CORELLI_NUMBA_MIN_HYPOTHESES
                         ):

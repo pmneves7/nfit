@@ -115,7 +115,9 @@ equation, evaluates the pseudorandom chopper transmission at the reconstructed
 incident time, and accumulates the event with the open or absorbing-segment
 weight. This produces signed intensities directly in a four-dimensional HKLE
 histogram or a powder $|\mathbf Q|,\Delta E$ histogram. The compiled Numba
-kernel parallelizes event processing within each file. Work is
+kernel parallelizes independent channels for a multi-channel energy grid;
+single-channel elastic reconstruction uses the vectorized event path to avoid
+large worker-private three-dimensional grids. Work is
 proportional to the number of raw events times the number of requested energy
 bins, so use the energy interval and resolution needed for the scientific
 question rather than a large exploratory range at fine resolution.

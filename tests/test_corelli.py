@@ -198,6 +198,32 @@ def test_corelli_compiled_paths_match_numpy(tmp_path, monkeypatch):
     np.testing.assert_allclose(compiled_hkle.num_events, numpy_hkle.num_events)
 
 
+def test_corelli_single_energy_uses_vectorized_path(tmp_path, monkeypatch):
+    from nfit import corelli as corelli_module
+
+    source = tmp_path / "CORELLI_7.nxs.h5"
+    _write_corelli(source)
+    group = corelli_dataset_group([source])
+    group.metadata["raw_dgs"]["timing_offset_ns"] = 0
+    group.metadata["raw_dgs"]["bad_pulse_threshold"] = 0
+
+    class UnexpectedCompiledBackend:
+        def run_hkle(self, *args, **kwargs):
+            raise AssertionError("single-energy reconstruction should stay vectorized")
+
+    monkeypatch.setattr(corelli_module, "_CORELLI_NUMBA", UnexpectedCompiledBackend())
+    monkeypatch.setattr(corelli_module, "CORELLI_NUMBA_MIN_HYPOTHESES", 0)
+    result = bin_corelli_group(
+        group,
+        lower=[-100.0, -100.0, -100.0, -1.0],
+        upper=[100.0, 100.0, 100.0, 1.0],
+        num_bins=[1, 1, 1, 1],
+        max_batch_bytes=128,
+    )
+
+    assert result.num_events.item() == 1.0
+
+
 def test_corelli_flux_maps_grouped_bank_spectra_to_detector_ids(tmp_path):
     h5py = pytest.importorskip("h5py")
     source = tmp_path / "flux.nxs"
