@@ -118,7 +118,59 @@ def raw_dgs_dataset_group(
 ) -> DatasetGroup:
     """Create lightweight raw-run entries sharing reduction and sample setup."""
 
-    infos = [inspect_raw_dgs_run(path) for path in paths]
+    resolved_paths = [Path(path) for path in paths]
+    if resolved_paths:
+        from .corelli import (
+            corelli_dataset_group,
+            inspect_corelli_run,
+            is_corelli_raw_nexus_file,
+        )
+
+        if is_corelli_raw_nexus_file(resolved_paths[0]):
+            first_corelli = inspect_corelli_run(resolved_paths[0])
+            corelli_infos = [first_corelli]
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "stage": "raw_dgs_import",
+                        "iteration": 1,
+                        "total": len(resolved_paths),
+                        "message": (
+                            "reading CORELLI run metadata "
+                            f"1/{len(resolved_paths):,}"
+                        ),
+                    }
+                )
+            for index, path in enumerate(resolved_paths[1:], start=2):
+                try:
+                    corelli_infos.append(inspect_corelli_run(path))
+                except ValueError as error:
+                    raise ValueError(
+                        "CORELLI correlation runs cannot share a group with "
+                        "fixed-Ei raw runs"
+                    ) from error
+                if progress_callback is not None:
+                    progress_callback(
+                        {
+                            "stage": "raw_dgs_import",
+                            "iteration": index,
+                            "total": len(resolved_paths),
+                            "message": (
+                                "reading CORELLI run metadata "
+                                f"{index:,}/{len(resolved_paths):,}"
+                            ),
+                        }
+                    )
+            return corelli_dataset_group(
+                resolved_paths,
+                solid_angle_path=normalization_path,
+                mask_path=mask_path,
+                name=name,
+                progress_callback=progress_callback,
+                _run_infos=corelli_infos,
+            )
+
+    infos = [inspect_raw_dgs_run(path) for path in resolved_paths]
     if not infos:
         raise ValueError("select at least one raw direct-geometry NeXus file")
     first = infos[0]
@@ -223,6 +275,25 @@ def bin_raw_dgs_group(
     """
 
     config = group.metadata["raw_dgs"]
+    if config.get("format") == "corelli-correlation-nexus":
+        from .corelli import bin_corelli_group
+
+        return bin_corelli_group(
+            group,
+            lower=lower,
+            upper=upper,
+            num_bins=num_bins,
+            step_size=step_size,
+            bin_edges=bin_edges,
+            minimum_samples=minimum_samples,
+            datasets=datasets,
+            vectors=vectors,
+            axis_names=axis_names,
+            max_batch_bytes=max_batch_bytes,
+            progress_callback=progress_callback,
+            symmetry_operations=symmetry_operations,
+            coordinate_mode=coordinate_mode,
+        )
     selected = list(group.datasets if datasets is None else datasets)
     if coordinate_mode not in {"hkle", "powder"}:
         raise ValueError("raw direct-geometry coordinate mode must be 'hkle' or 'powder'")

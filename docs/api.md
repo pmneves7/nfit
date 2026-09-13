@@ -403,6 +403,44 @@ response and cross-section normalization), [Tight binding](tight_binding.md)
    :members:
 ```
 
+## CORELLI correlation-chopper reconstruction
+
+Raw phase-tagged CORELLI events are supported through `nfit.corelli`.
+`inspect_corelli_run(path)` reads only run metadata and event-array sizes.
+`corelli_dataset_group(paths, ...)` creates one file-backed collection with a
+shared UB matrix, wavelength interval, timing offset, and optional solid-angle,
+incident-flux, and detector-mask files. `bin_corelli_group(...)` streams the
+selected files into a finite-energy HKLE histogram, while
+`bin_corelli_powder_group(...)` accumulates directly into
+$|\mathbf Q|,\Delta E$.
+
+The ordinary `raw_dgs_dataset_group` and `bin_raw_dgs_group` entry points detect
+CORELLI and dispatch to these functions, so GUI and scripting imports use the
+same implementation. The compiled path fuses the incident-energy solve,
+chopper-phase lookup, corrections, coordinate transform, and histogram update.
+It bounds event chunks and worker-local accumulators by the configured memory
+and CPU limits. This permits hundreds of run files without loading them at
+once; runtime still scales with raw event count times requested $\Delta E$
+channels.
+
+At each requested $\Delta E$ bin center, the reducer solves
+
+```{math}
+t = C\left(\frac{L_1}{\sqrt{E_i}}+
+               \frac{L_2}{\sqrt{E_i-\Delta E}}\right),
+```
+
+where $L_1$ and $L_2$ are the source-to-sample and sample-to-detector paths,
+$E_i$ is incident energy in meV, $t$ is event time of flight in microseconds,
+and $C=2286.271549\ \mu\mathrm{s}\,\sqrt{\mathrm{meV}}/\mathrm{m}$. The
+resulting chopper crossing time uses the instrument T0 formula and
+source-to-chopper distance. The elastic limit follows Mantid's
+`CorelliCrossCorrelate` sequence and signed-weight convention. Returned errors
+contain diagonal signed-weight variances; different energy channels have
+unrepresented covariance because they reuse events. See
+[Raw CORELLI finite-energy reconstruction](data_import.md#raw-corelli-finite-energy-reconstruction)
+for setup and normalization limits.
+
 ## Compatible direct-geometry spectrometer TOF reduction
 
 Compatible direct-geometry spectrometer event NeXus files are supported through

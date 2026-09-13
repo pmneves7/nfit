@@ -12302,6 +12302,8 @@ class NfitProjectExplorer:
         from PySide6 import QtWidgets
 
         config = node.metadata["raw_dgs"]
+        if config.get("format") == "corelli-correlation-nexus":
+            return self._corelli_group_box(node)
         box = QtWidgets.QGroupBox("Raw TOF shared setup")
         box.setToolTip("Shared configuration for all raw direct-geometry runs. nfit reads the detector geometry from each NeXus file and streams events directly into the HKLE composite.")
         layout = QtWidgets.QGridLayout(box)
@@ -12366,6 +12368,165 @@ class NfitProjectExplorer:
         ub.setToolTip("Shared IPNS/ISAW UB matrix. Raw Q is rotated into the sample frame and converted with (2*pi*UB)^-1 before binning.")
         ub.editingFinished.connect(lambda: self._set_raw_dgs_group_ub(node, ub))
         layout.addWidget(ub, 5, 1, 1, 3)
+        return box
+
+    def _corelli_group_box(self, node: DatasetGroup) -> Any:
+        """Shared controls for native CORELLI correlation reconstruction."""
+        from PySide6 import QtWidgets
+
+        config = node.metadata["raw_dgs"]
+        box = QtWidgets.QGroupBox("CORELLI finite-energy reconstruction")
+        box.setToolTip(
+            "Reconstruct signed finite-energy CORELLI intensity from raw event TOF, "
+            "pulse time, and correlation-chopper phase."
+        )
+        layout = QtWidgets.QGridLayout(box)
+        file_rows = (
+            (
+                "Solid-angle workspace",
+                "normalization_file",
+                "Optional CORELLI solid-angle/vanadium MatrixWorkspace. Positive detector "
+                "values correct event weights; zero or negative values mask detectors.",
+            ),
+            (
+                "Incident-flux workspace",
+                "flux_file",
+                "Optional CORELLI cumulative flux MatrixWorkspace. nfit differentiates each "
+                "bank spectrum and corrects reconstructed events at their incident wavevector.",
+            ),
+            (
+                "Detector mask",
+                "mask_file",
+                "Optional Mantid detector-mask XML or MatrixWorkspace. Listed XML detector "
+                "IDs, or zero, negative, or invalid workspace values, exclude events.",
+            ),
+        )
+        for row, (label, key, tooltip) in enumerate(file_rows):
+            field_label = QtWidgets.QLabel(label)
+            field_label.setToolTip(tooltip)
+            layout.addWidget(field_label, row, 0)
+            edit = QtWidgets.QLineEdit(str(config.get(key) or ""))
+            edit.setObjectName(f"raw_dgs_{key}")
+            edit.setToolTip(tooltip)
+            edit.editingFinished.connect(
+                lambda edit=edit, key=key: self._set_raw_dgs_group_value(
+                    node, key, edit.text().strip() or None
+                )
+            )
+            layout.addWidget(edit, row, 1, 1, 2)
+            browse = QtWidgets.QPushButton("Browse…")
+            browse.setObjectName(f"raw_dgs_{key}_browse")
+            browse.setToolTip(f"Choose the {label.lower()} NeXus file.")
+            browse.clicked.connect(
+                lambda _checked=False, edit=edit, key=key, label=label: self._browse_raw_dgs_setup_file(
+                    node, key, label, edit
+                )
+            )
+            layout.addWidget(browse, row, 3)
+
+        numeric_fields = (
+            (
+                "Timing offset (ns)",
+                "timing_offset_ns",
+                14_000.0,
+                0.0,
+                1.0e7,
+                0,
+                "Correlation-chopper TDC timing offset in nanoseconds. Use the value calibrated "
+                "for the experiment cycle; 14,000 ns is the 2026A autoreduction value.",
+            ),
+            (
+                "Minimum wavelength (Å)",
+                "wavelength_min_angstrom",
+                0.6,
+                0.01,
+                100.0,
+                5,
+                "Shortest reconstructed incident wavelength in angstrom.",
+            ),
+            (
+                "Maximum wavelength (Å)",
+                "wavelength_max_angstrom",
+                2.5,
+                0.01,
+                100.0,
+                5,
+                "Longest reconstructed incident wavelength in angstrom.",
+            ),
+        )
+        for column, (label, key, default, minimum, maximum, decimals, tooltip) in enumerate(
+            numeric_fields
+        ):
+            field_label = QtWidgets.QLabel(label)
+            field_label.setToolTip(tooltip)
+            layout.addWidget(field_label, 3, column)
+            spin = QtWidgets.QDoubleSpinBox()
+            spin.setObjectName(f"raw_dgs_{key}")
+            spin.setRange(minimum, maximum)
+            spin.setDecimals(decimals)
+            spin.setValue(float(config.get(key, default)))
+            spin.setToolTip(tooltip)
+            spin.valueChanged.connect(
+                lambda value, key=key: self._set_raw_dgs_group_value(
+                    node, key, float(value)
+                )
+            )
+            layout.addWidget(spin, 4, column)
+
+        corrections = QtWidgets.QWidget()
+        corrections_layout = QtWidgets.QVBoxLayout(corrections)
+        corrections_layout.setContentsMargins(0, 0, 0, 0)
+        ki_kf = QtWidgets.QCheckBox("Apply ki/kf correction")
+        ki_kf.setObjectName("raw_dgs_ki_kf_normalization")
+        ki_kf.setChecked(bool(config.get("ki_kf_normalization", True)))
+        ki_kf.setToolTip(
+            "Multiply each reconstructed hypothesis by the incident-to-final wavevector "
+            "ratio ki/kf and apply the square of that factor to its variance."
+        )
+        ki_kf.toggled.connect(
+            lambda checked: self._set_raw_dgs_group_value(
+                node, "ki_kf_normalization", bool(checked)
+            )
+        )
+        corrections_layout.addWidget(ki_kf)
+        he3 = QtWidgets.QCheckBox("Apply He-3 detector efficiency")
+        he3.setObjectName("raw_dgs_he3_detector_efficiency_correction")
+        he3.setChecked(
+            bool(config.get("he3_detector_efficiency_correction", True))
+        )
+        he3.setToolTip(
+            "Correct each reconstructed hypothesis for the wavelength-dependent "
+            "He-3 tube efficiency from the embedded instrument definition."
+        )
+        he3.toggled.connect(
+            lambda checked: self._set_raw_dgs_group_value(
+                node, "he3_detector_efficiency_correction", bool(checked)
+            )
+        )
+        corrections_layout.addWidget(he3)
+        layout.addWidget(corrections, 4, 3)
+        ub_label = QtWidgets.QLabel("UB matrix")
+        ub_label.setToolTip(
+            "Shared IPNS/ISAW UB matrix used to convert reconstructed sample-frame Q to HKL."
+        )
+        layout.addWidget(ub_label, 5, 0)
+        ub = QtWidgets.QLineEdit(
+            _parameter_to_text(config.get("ub_matrix", np.eye(3).tolist()))
+        )
+        ub.setObjectName("raw_dgs_ub_matrix")
+        ub.setToolTip(ub_label.toolTip())
+        ub.editingFinished.connect(lambda: self._set_raw_dgs_group_ub(node, ub))
+        layout.addWidget(ub, 5, 1, 1, 3)
+        caveat = QtWidgets.QLabel(
+            "Energy channels share measured events and therefore have correlated statistical "
+            "errors. Stored errors contain the diagonal variance."
+        )
+        caveat.setWordWrap(True)
+        caveat.setToolTip(
+            "CORELLI cross correlation reconstructs every requested energy channel from the "
+            "same phase-tagged detector events."
+        )
+        layout.addWidget(caveat, 6, 0, 1, 4)
         return box
 
     def _ub_setup_group_box(
@@ -12540,11 +12701,21 @@ class NfitProjectExplorer:
         self, node: DatasetGroup, key: str, label: str, edit: Any
     ) -> None:
         current = str(node.metadata["raw_dgs"].get(key) or "")
+        file_filter = "Mantid NeXus workspace (*.nxs *.nx5 *.h5 *.hdf5);;All files (*)"
+        if (
+            key == "mask_file"
+            and node.metadata["raw_dgs"].get("format")
+            == "corelli-correlation-nexus"
+        ):
+            file_filter = (
+                "Mantid detector mask (*.xml *.nxs *.nx5 *.h5 *.hdf5);;"
+                "All files (*)"
+            )
         path, _selected_filter = get_open_file_name(
             self.window,
             f"Choose {label.lower()}",
             current,
-            "Mantid NeXus workspace (*.nxs *.nx5 *.h5 *.hdf5);;All files (*)",
+            file_filter,
         )
         if not path:
             return

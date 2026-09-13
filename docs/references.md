@@ -12,6 +12,11 @@ endorsement.
   neutron community. See O. Arnold *et al.*, *Nucl. Instrum. Methods Phys. Res.
   A* **764**, 156–166 (2014),
   [doi:10.1016/j.nima.2014.07.029](https://doi.org/10.1016/j.nima.2014.07.029).
+- **CORELLI correlation reconstruction** follows the phase-tagged event method
+  described by F. Ye *et al.*, *J. Appl. Cryst.* **51**, 315–322 (2018),
+  [doi:10.1107/S160057671800403X](https://doi.org/10.1107/S160057671800403X).
+  Mantid's `CorelliCrossCorrelate` implementation establishes nfit's elastic-limit
+  timing and signed chopper-sequence convention.
 - **SHIVER** (Spectroscopy HIstogram Visualizer for Event Reduction) informed
   nfit's direct-geometry, multiple-orientation, HKLE histogramming workflow.
   See the [SHIVER documentation](https://shiver.readthedocs.io/).

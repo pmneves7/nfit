@@ -52,6 +52,14 @@ from .brillouin_zone import (
     set_tight_binding_standard_path,
     standard_band_path,
 )
+from .corelli import (
+    CorelliRunInfo,
+    bin_corelli_group,
+    bin_corelli_powder_group,
+    corelli_dataset_group,
+    inspect_corelli_run,
+    is_corelli_raw_nexus_file,
+)
 from .cross_section import (
     KB_MEV_PER_K,
     MAGNETIC_CROSS_SECTION_BARN_PER_MU_B_SQ,
@@ -1213,6 +1221,12 @@ __all__ = [
     "bin_mdevent_group",
     "bin_mdevent_powder_group",
     "append_mdevent_file",
+    "CorelliRunInfo",
+    "bin_corelli_group",
+    "bin_corelli_powder_group",
+    "corelli_dataset_group",
+    "inspect_corelli_run",
+    "is_corelli_raw_nexus_file",
     "RawDGSRunInfo",
     "bin_raw_dgs_group",
     "bin_raw_dgs_powder_group",

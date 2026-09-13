@@ -138,9 +138,9 @@ electronic-response implementation.
   stacking. Loaded points and histograms already support aligned pointwise
   coordinates; asynchronous logs are rejected until an adapter aligns them.
 
-- Extend the workflow graph to grouped raw direct-geometry and MDEvent
-  reductions, portable standalone expansion of live project-composite analysis
-  dependencies, plots, and complete active project state. Composite-backed
+- Extend the workflow graph to grouped raw direct-geometry, CORELLI, and
+  MDEvent reductions, portable standalone expansion of live project-composite
+  analysis dependencies, plots, and complete active project state. Composite-backed
   analysis scripts currently rerun the saved project recipe directly.
 - Add target-specific export from plots, workspaces, and whole
   projects. Each export should contain the dependency closure needed for that

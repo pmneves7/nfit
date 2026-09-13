@@ -16,6 +16,10 @@ nfit provides:
   ARCS, CNCS, HYSPEC, and SEQUOIA single-crystal or direct-powder workflows,
   including processed-vanadium normalization, with project-owned composite
   materialization and scaled powder or aligned-histogram background subtraction;
+- native finite-energy CORELLI correlation-chopper reconstruction from raw
+  phase-tagged events into single-crystal HKLE or powder
+  $|\mathbf Q|,\Delta E$ histograms, with solid-angle, incident-flux, detector-mask,
+  proton-charge, He-3 efficiency, and $k_i/k_f$ corrections;
 - reduced CORELLI correlation-chopper elastic and WAND² monochromatic
   single-crystal Mantid histograms, including reciprocal projections, UB and
   unit-cell metadata, wavelength when saved, and invalid-bin masking;

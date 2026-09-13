@@ -97,6 +97,64 @@ channels without changing the imported values. Powder Heisenberg models average
 the single-crystal response over momentum directions and require lattice
 parameters for the reciprocal-coordinate conversion.
 
+## Raw CORELLI finite-energy reconstruction
+
+Select one or more raw `CORELLI_*.nxs.h5` files and choose **Single crystal
+inelastic**. nfit creates one lightweight run entry and one shared reduction
+configuration for the complete selection. Numbered-file selection is practical
+for experiments containing hundreds of runs: metadata remains in the project,
+but detector events are read from one file in bounded chunks and discarded
+after accumulation. Detector geometry and optional calibration workspaces are
+loaded once for the batch. Progress reports both metadata files and the combined
+event count.
+
+CORELLI records detector time of flight together with correlation-chopper
+phase, rather than assigning a unique incident energy to each neutron. For each
+requested $\Delta E=E_i-E_f$ bin center, nfit solves the two-flight-path timing
+equation, evaluates the pseudorandom chopper transmission at the reconstructed
+incident time, and accumulates the event with the open or absorbing-segment
+weight. This produces signed intensities directly in a four-dimensional HKLE
+histogram or a powder $|\mathbf Q|,\Delta E$ histogram. The compiled Numba
+kernel parallelizes event processing within each file. Work is
+proportional to the number of raw events times the number of requested energy
+bins, so use the energy interval and resolution needed for the scientific
+question rather than a large exploratory range at fine resolution.
+
+The **CORELLI finite-energy reconstruction** panel configures the shared batch:
+
+- **Solid-angle workspace** accepts the processed Mantid solid-angle workspace.
+  nfit uses its positive values and calibrated detector positions; non-positive
+  values exclude detectors.
+- **Incident-flux workspace** accepts the bank-grouped cumulative CORELLI flux
+  workspace. nfit differentiates its momentum curves and corrects each
+  hypothesis at its reconstructed incident wavevector $k_i$.
+- **Detector mask** accepts a Mantid detector-mask XML file or processed
+  MatrixWorkspace.
+- **Timing offset** is the chopper TDC offset in nanoseconds. The default is
+  14,000 ns, matching the tested 2026A autoreduction; use the cycle-specific
+  calibrated value for other experiments.
+- **Minimum and maximum wavelength** bound reconstructed incident energies.
+- **Apply ki/kf correction** and the He-3 detector-efficiency setting apply
+  their factors to both the signed event weight and its variance.
+- **UB matrix** maps reconstructed sample-frame momentum to HKL.
+
+The reducer reads each run's three sample-axis angles and correlation-chopper
+sequence, speed, and TDC log. At $\Delta E=0$, its incident energy, crossing
+time, sequence interval, and signed weight follow Mantid's
+[CorelliCrossCorrelate](https://docs.mantidproject.org/v6.16.1/algorithms/CorelliCrossCorrelate-v1.html)
+convention. The finite-energy extension follows the cross-correlation method
+described by Ye *et al.* in
+[Direct mapping of single-crystal diffuse scattering using the CORELLI instrument](https://doi.org/10.1107/S160057671800403X).
+
+All requested energy channels reuse the same measured neutrons, so their
+statistical errors are correlated. `MDHistoData.errors` stores the propagated
+diagonal variance only; the returned metadata records this limitation. Optional
+solid-angle and flux files provide pointwise event corrections, followed by
+retained proton-charge and chopper-duty normalization. The current native path
+does not construct Mantid's full four-dimensional MDNorm trajectory
+denominator, so treat absolute intensities and cross-channel covariance as
+experimental and validate them against an appropriate reference reduction.
+
 ## Reduced CORELLI and WAND² data
 
 nfit imports three-dimensional reciprocal-space `MDHistoWorkspace` files saved
@@ -127,11 +185,11 @@ in the HKL frame with the vanadium as `NormalisationWorkspace`, a wavelength of
 and wavelength. The normalization has already been applied to the saved
 histogram; do not apply the vanadium a second time in nfit.
 
-These import paths consume reduced histograms. They do not yet reproduce the
-CORELLI correlation-chopper or WAND² detector reduction from raw acquisition
-files. Keep the reduction configuration or Mantid script alongside the reduced
-file so its calibration, mask, normalization, projection, and binning choices
-remain auditable.
+These import paths consume reduced histograms. Raw CORELLI files can instead use
+nfit's finite-energy reconstruction above. nfit does not yet reproduce the WAND²
+detector reduction from raw acquisition files. Keep the reduction configuration
+or Mantid script alongside every reduced file so its calibration, mask,
+normalization, projection, and binning choices remain auditable.
 
 ## NIST NCNR MACS NeXus data
 

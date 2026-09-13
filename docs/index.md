@@ -9,15 +9,16 @@ Paul M. Neves developed nfit with assistance from AI coding tools.
 `nfit` analyzes magnetic neutron-scattering and related bulk measurements in
 physical coordinates such as `H`, `K`, `L`, `|Q|`, and energy transfer. It
 supports reduced MDHisto data, file-backed MDEvent, compatible direct-geometry
-spectrometer events, NIST NCNR MACS NeXus data, powder cuts, magnetization,
-heat capacity, and general point tables.
+spectrometer events, raw finite-energy CORELLI correlation-chopper reconstruction,
+NIST NCNR MACS NeXus data, powder cuts, magnetization, heat capacity, and general
+point tables.
 
 nfit was authored and is maintained by Paul M. Neves (Johns Hopkins
 University, pneves1@jhu.edu). AI and large-language-model coding tools have
 assisted with portions of the code, tests, and documentation. Authorship and
 responsibility for the project remain with Paul M. Neves.
 
-Current package version: 0.91.0.
+Current package version: 0.92.0.
 
 Start with [Getting started](getting_started.md), then use
 [GUI workflows](gui_workflows.md) for interactive work or the

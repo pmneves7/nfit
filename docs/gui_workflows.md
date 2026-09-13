@@ -84,7 +84,7 @@ desktop while leaving a small margin for window controls.
 The detailed workflows are divided by task:
 
 - [Importing and preparing data](data_import.md) covers file import, MACS,
-  raw direct-geometry and MDEvent reduction, UB matrices, rebinning,
+  raw direct-geometry, CORELLI, and MDEvent reduction, UB matrices, rebinning,
   conditions, masks, and backgrounds.
 - [Models and fitting](gui_fitting.md) covers model components, constraints,
   fit timelines, optimizers, posterior sampling, diagnostics, and scripts.
