@@ -354,6 +354,10 @@ The shared event table stays on disk. Enable **Combine datasets**, configure the
 four output axes and bounds, and select **Rebin now** to create the normalized
 HKLE dataset.
 
+nfit reads Mantid's saved goniometer rotation matrix when present. For MDEvent
+files that store only named goniometer axes and angles, including some SEQUOIA
+reductions, it reconstructs the same rotation from that axis metadata.
+
 Each coordinate-axis row is an HKLE basis vector. The four rows must be linearly
 independent; momentum rows use only H, K, and L, while the energy row uses E.
 Bounds and resolution are expressed in that basis.

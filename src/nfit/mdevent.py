@@ -845,7 +845,7 @@ def _trajectory_normalization(
                 charge = float(dataset.metadata["proton_charge"])
                 ei = config.get("incident_energy_override") or float(dataset.metadata["incident_energy"])
                 original_bounds = np.asarray(experiment["logs/processed_histogram_bins/value"][()], dtype=float)
-                gonio = np.asarray(experiment["logs/goniometer/rotation_matrix"][()], dtype=float).reshape(3, 3)
+                gonio = _read_goniometer_matrix(experiment)
                 ub = np.asarray(config["ub_matrix"], dtype=float)
                 canonical_inverse = np.linalg.inv(gonio @ (2.0 * np.pi * ub))
                 inverses = [basis_inverse[:3, :3].T @ operation @ canonical_inverse for operation in symmetry]
@@ -1201,9 +1201,57 @@ def _read_run(group, index):
         index, str(log("run_number", index)), float(log("Ei")), float(log("gd_prtn_chrg")),
         float(log("omega")), float(log("phi")), float(log("chi")), float(log("duration")),
         None if t0 is None else float(t0),
-        np.asarray(group["logs/goniometer/rotation_matrix"][()], dtype=float).reshape(3, 3),
+        _read_goniometer_matrix(group),
         np.asarray(group["logs/RUBW_MATRIX/value"][()], dtype=float).reshape(3, 3),
     )
+
+
+def _read_goniometer_matrix(experiment):
+    """Read Mantid's matrix or reconstruct it from saved goniometer axes."""
+
+    goniometer = experiment["logs/goniometer"]
+    if "rotation_matrix" in goniometer:
+        return np.asarray(goniometer["rotation_matrix"][()], dtype=float).reshape(3, 3)
+    axes = sorted(
+        (name for name in goniometer if re.fullmatch(r"axis\d+", name)),
+        key=lambda name: int(name.removeprefix("axis")),
+    )
+    if not axes:
+        raise ValueError("MDEvent experiment has no saved goniometer rotation")
+    result = np.eye(3)
+    for name in axes:
+        axis_group = goniometer[name]
+        axis = np.asarray(axis_group["rotationaxis"][()], dtype=float).reshape(3)
+        norm = float(np.linalg.norm(axis))
+        if not np.isfinite(norm) or norm <= 0.0:
+            continue
+        axis /= norm
+        angle_dataset = axis_group["angle"]
+        angle = float(_scalar(angle_dataset))
+        unit = angle_dataset.attrs.get("unit", "deg")
+        if isinstance(unit, bytes):
+            unit = unit.decode(errors="replace")
+        if str(unit).casefold().startswith("deg"):
+            angle = np.deg2rad(angle)
+        sense = angle_dataset.attrs.get("sense", "CCW")
+        if isinstance(sense, bytes):
+            sense = sense.decode(errors="replace")
+        if str(sense).casefold() == "cw":
+            angle = -angle
+        cross = np.asarray(
+            [
+                [0.0, -axis[2], axis[1]],
+                [axis[2], 0.0, -axis[0]],
+                [-axis[1], axis[0], 0.0],
+            ]
+        )
+        rotation = (
+            np.eye(3) * np.cos(angle)
+            + (1.0 - np.cos(angle)) * np.outer(axis, axis)
+            + np.sin(angle) * cross
+        )
+        result = rotation @ result
+    return result
 
 
 def _parse_dimension(value):

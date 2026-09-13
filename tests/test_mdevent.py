@@ -130,6 +130,27 @@ def test_mdevent_metadata_grouping_and_hkl_run_loading(tmp_path):
     assert progress[-1]["total"] == 2
 
 
+def test_mdevent_reconstructs_missing_goniometer_matrix_from_axes(tmp_path):
+    h5py = pytest.importorskip("h5py")
+    source = tmp_path / "events.nxs"
+    _write_mdevent(source)
+    with h5py.File(source, "r+") as handle:
+        workspace = handle["MDEventWorkspace"]
+        for index in range(2):
+            goniometer = workspace[f"experiment{index}/logs/goniometer"]
+            del goniometer["rotation_matrix"]
+            axis = goniometer.create_group("axis0")
+            angle = axis.create_dataset("angle", data=[90.0])
+            angle.attrs["unit"] = "deg"
+            angle.attrs["sense"] = "CCW"
+            axis.create_dataset("rotationaxis", data=[0.0, 1.0, 0.0])
+
+    info = inspect_mdevent_workspace(source)
+
+    expected = np.asarray([[0.0, 0.0, 1.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]])
+    np.testing.assert_allclose(info.runs[0].goniometer, expected, atol=1.0e-15)
+
+
 def test_detector_normalization_zero_values_define_mask(tmp_path):
     path = tmp_path / "van.nxs"
     _write_normalization(path, 0.0)
