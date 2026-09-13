@@ -1,10 +1,10 @@
 """Streaming TOF reduction for compatible direct-geometry spectrometer NeXus files.
 
 The implementation deliberately reads one bank (and then one event chunk) at a
-time. A compatible run can therefore be combined into an HKLE histogram without
-materialising its event table. This is an adapter for direct-geometry
-spectrometers with the expected NeXus layout, not a generic reducer for every
-direct-geometry NeXus file.
+time. A compatible run can therefore be combined into an HKLE or radial powder
+histogram without materialising its event table. This is an adapter for
+direct-geometry spectrometers with the expected NeXus layout, not a generic
+reducer for every direct-geometry NeXus file.
 """
 
 from __future__ import annotations
@@ -25,9 +25,11 @@ from .mdevent import (
     ENERGY_TO_K2,
     FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER,
     _accumulate_detector_trajectory,
+    _accumulate_powder_detector_trajectory,
     _flat_bin_indices,
     _requested_edges,
     _symmetry_matrices,
+    _trajectory_worker_count,
     _validated_minimum_samples,
     load_detector_normalization,
 )
@@ -120,6 +122,15 @@ def raw_dgs_dataset_group(
     if not infos:
         raise ValueError("select at least one raw direct-geometry NeXus file")
     first = infos[0]
+    energy_lower = min(-0.95 * info.incident_energy for info in infos)
+    energy_upper = max(0.95 * info.incident_energy for info in infos)
+    q_upper = max(
+        math.sqrt(info.incident_energy / ENERGY_TO_K2)
+        + math.sqrt((info.incident_energy - energy_lower) / ENERGY_TO_K2)
+        for info in infos
+    )
+    hkl_transform = np.linalg.inv(2.0 * np.pi * first.ub_matrix)
+    hkl_limits = q_upper * np.sum(np.abs(hkl_transform), axis=1)
     shared = {
         "format": "raw-direct-geometry-nexus",
         "source_files": [str(info.path) for info in infos],
@@ -135,6 +146,16 @@ def raw_dgs_dataset_group(
         "ki_kf_normalization": True,
         "he3_detector_efficiency_correction": True,
         "normalization": "proton_charge_and_detector_trajectory",
+        "dimensions": [
+            {"name": name, "lower": -q_upper, "upper": q_upper}
+            for name in ("Q_lab_x", "Q_lab_y", "Q_lab_z")
+        ]
+        + [{"name": "DeltaE", "lower": energy_lower, "upper": energy_upper}],
+        "hkl_bounds": [
+            (-float(limit), float(limit)) for limit in hkl_limits
+        ]
+        + [(energy_lower, energy_upper)],
+        "q_modulus_bounds": [0.0, q_upper],
     }
     datasets = []
     for index, info in enumerate(infos, start=1):
@@ -188,6 +209,7 @@ def bin_raw_dgs_group(
     max_batch_bytes: int = 192 * 1024 * 1024,
     progress_callback: Any | None = None,
     symmetry_operations: Iterable[Iterable[Iterable[float]]] | None = None,
+    coordinate_mode: str = "hkle",
 ) -> MDHistoData:
     """Reduce raw direct-geometry event banks into an HKLE histogram.
 
@@ -195,38 +217,69 @@ def bin_raw_dgs_group(
     and ki/kf corrections and are divided by an MDNorm-style detector-
     trajectory denominator. The retained proton charge is integrated from the
     raw pulse log in microampere-hours.
-    Shiver's ``NormFilename`` convention is preserved here: its non-positive
-    detector values are a mask, not a per-detector signal scale.
+    Shiver's ``NormFilename`` convention is preserved here: non-positive
+    detector values mask events, while positive values supply MDNorm's
+    detector solid-angle weights.
     """
 
     config = group.metadata["raw_dgs"]
     selected = list(group.datasets if datasets is None else datasets)
+    if coordinate_mode not in {"hkle", "powder"}:
+        raise ValueError("raw direct-geometry coordinate mode must be 'hkle' or 'powder'")
+    powder = coordinate_mode == "powder"
+    expected_dimensions = 2 if powder else 4
     lo, hi, bins = (
         np.asarray(tuple(values), dtype=dtype)
         for values, dtype in ((lower, float), (upper, float), (num_bins, int))
     )
-    if lo.shape != (4,) or hi.shape != (4,) or bins.shape != (4,) or np.any(bins <= 0):
-        raise ValueError("raw direct-geometry HKLE binning requires four positive bin counts")
+    expected_shape = (expected_dimensions,)
+    if (
+        lo.shape != expected_shape
+        or hi.shape != expected_shape
+        or bins.shape != expected_shape
+        or np.any(bins <= 0)
+    ):
+        label = "|Q| and energy" if powder else "four"
+        raise ValueError(
+            f"raw direct-geometry {coordinate_mode} binning requires {label} positive bin counts"
+        )
+    if powder and lo[0] < 0.0:
+        raise ValueError("powder |Q| lower bound must be nonnegative")
     edges = _requested_edges(lo, hi, bins, step_size, bin_edges=bin_edges)
     minimum_samples = _validated_minimum_samples(minimum_samples)
     shape = tuple(edge.size - 1 for edge in edges)
-    basis = (
-        np.eye(4) if vectors is None else np.asarray(tuple(tuple(v) for v in vectors), dtype=float)
-    )
-    if basis.shape != (4, 4) or np.linalg.matrix_rank(basis) != 4:
-        raise ValueError("raw direct-geometry coordinate axes must form an invertible 4D basis")
-    if np.any(basis[:3, 3]) or np.any(basis[3, :3]) or basis[3, 3] != 1.0:
-        raise ValueError("raw direct-geometry momentum axes cannot mix energy")
-    basis_inverse = np.linalg.inv(basis)
-    symmetry = _symmetry_matrices(symmetry_operations)
-    names = tuple(axis_names or (_axis_name(row, index) for index, row in enumerate(basis)))
+    basis = None
+    basis_inverse = None
+    symmetry = (np.eye(3),)
+    names = ("|Q|", "DeltaE")
+    if not powder:
+        basis = (
+            np.eye(4)
+            if vectors is None
+            else np.asarray(tuple(tuple(v) for v in vectors), dtype=float)
+        )
+        if basis.shape != (4, 4) or np.linalg.matrix_rank(basis) != 4:
+            raise ValueError("raw direct-geometry coordinate axes must form an invertible 4D basis")
+        if np.any(basis[:3, 3]) or np.any(basis[3, :3]) or basis[3, 3] != 1.0:
+            raise ValueError("raw direct-geometry momentum axes cannot mix energy")
+        basis_inverse = np.linalg.inv(basis)
+        symmetry = _symmetry_matrices(symmetry_operations)
+        names = tuple(
+            axis_names or (_axis_name(row, index) for index, row in enumerate(basis))
+        )
     data_sum = np.zeros(shape)
     variance_sum = np.zeros(shape)
     event_count = np.zeros(shape)
-    # Shiver's GenerateDGSMDE uses NormFilename only to construct a detector
-    # mask. Its MakeSlice call does not pass this workspace to MDNorm as a
-    # SolidAngleWorkspace, so matching that path must not weight by vanadium.
-    detector_norm = None
+    # GenerateDGSMDE uses NormFilename to mask raw events, and MakeSlice passes
+    # the same workspace to MDNorm as its SolidAngleWorkspace.  The event
+    # numerator is therefore unscaled while the trajectory denominator carries
+    # the positive processed-vanadium values.
+    normalization_path = config.get("normalization_file")
+    detector_norm = (
+        load_detector_normalization(normalization_path)
+        if normalization_path
+        else None
+    )
     detector_mask = _combined_detector_mask(config)
     total = sum(int(dataset.metadata.get("event_count", 0)) for dataset in selected)
     processed = 0
@@ -251,9 +304,13 @@ def bin_raw_dgs_group(
                 "maximum_meV": energy_bounds[1],
             }
         )
-        ub = np.asarray(config["ub_matrix"], dtype=float)
-        hkl_transform = np.linalg.inv(2.0 * np.pi * ub)
-        gonio = _goniometer(info.omega, info.phi, info.chi)
+        if powder:
+            hkl_transform = None
+            gonio = None
+        else:
+            ub = np.asarray(config["ub_matrix"], dtype=float)
+            hkl_transform = np.linalg.inv(2.0 * np.pi * ub)
+            gonio = _goniometer(info.omega, info.phi, info.chi)
         rows = max(1, int(max_batch_bytes) // 96)
         import h5py
 
@@ -327,22 +384,29 @@ def bin_raw_dgs_group(
                                     math.sqrt(ei / ENERGY_TO_K2) - kf * direction[:, 2],
                                 )
                             )
-                            q_sample = q_lab @ gonio
-                            hkl = q_sample @ hkl_transform.T
-                            for operation in symmetry:
-                                coords = (
-                                    np.column_stack((hkl @ operation.T, energy)) @ basis_inverse
+                            if powder:
+                                coordinate_blocks = (
+                                    np.column_stack((np.linalg.norm(q_lab, axis=1), energy)),
                                 )
+                            else:
+                                q_sample = q_lab @ gonio
+                                hkl = q_sample @ hkl_transform.T
+                                coordinate_blocks = tuple(
+                                    np.column_stack((hkl @ operation.T, energy))
+                                    @ basis_inverse
+                                    for operation in symmetry
+                                )
+                            weights = np.ones(ids_valid.size)
+                            if config.get("he3_detector_efficiency_correction", True):
+                                weights *= _he3_tube_efficiency_correction(
+                                    kf, he3_exponents
+                                )
+                            if _use_ki_kf_correction(config):
+                                weights *= math.sqrt(ei / ENERGY_TO_K2) / kf
+                            for coords in coordinate_blocks:
                                 flat = _flat_bin_indices(coords, edges, shape)
                                 keep = flat >= 0
                                 if np.any(keep):
-                                    weights = np.ones(ids_valid.size)
-                                    if config.get("he3_detector_efficiency_correction", True):
-                                        weights *= _he3_tube_efficiency_correction(
-                                            kf, he3_exponents
-                                        )
-                                    if _use_ki_kf_correction(config):
-                                        weights *= math.sqrt(ei / ENERGY_TO_K2) / kf
                                     ravel = data_sum.ravel()
                                     ravel += np.bincount(
                                         flat[keep], weights=weights[keep], minlength=ravel.size
@@ -365,17 +429,28 @@ def bin_raw_dgs_group(
                                 "message": f"reducing raw events {processed:,}/{total:,}",
                             }
                         )
-    normalization = _trajectory_normalization(
-        group,
-        selected,
-        edges,
-        shape,
-        basis_inverse,
-        detector_norm,
-        detector_mask,
-        symmetry,
-        energy_bounds_by_dataset_id,
-    )
+    if powder:
+        normalization = _powder_trajectory_normalization(
+            group,
+            selected,
+            edges,
+            shape,
+            detector_norm,
+            detector_mask,
+            energy_bounds_by_dataset_id,
+        )
+    else:
+        normalization = _trajectory_normalization(
+            group,
+            selected,
+            edges,
+            shape,
+            basis_inverse,
+            detector_norm,
+            detector_mask,
+            symmetry,
+            energy_bounds_by_dataset_id,
+        )
     covered = normalization > 0.0
     with np.errstate(divide="ignore", invalid="ignore"):
         signal = data_sum / normalization
@@ -385,16 +460,22 @@ def bin_raw_dgs_group(
     zeros = covered & (event_count == 0)
     errors[zeros] = FELDMAN_COUSINS_ZERO_COUNT_68_PERCENT_UPPER * rms / normalization[zeros]
     mask = ~covered | (event_count < minimum_samples)
-    axes = tuple(
-        MDHistoAxis(
-            name,
-            edge,
-            "meV" if index == 3 else "r.l.u.",
-            "energy" if index == 3 else "momentum",
-            frame="General Frame" if index == 3 else "HKL",
+    if powder:
+        axes = (
+            MDHistoAxis("|Q|", edges[0], "1/angstrom", "momentum", frame="Q modulus"),
+            MDHistoAxis("DeltaE", edges[1], "meV", "energy", frame="General Frame"),
         )
-        for index, (name, edge) in enumerate(zip(names, edges, strict=True))
-    )
+    else:
+        axes = tuple(
+            MDHistoAxis(
+                name,
+                edge,
+                "meV" if index == 3 else "r.l.u.",
+                "energy" if index == 3 else "momentum",
+                frame="General Frame" if index == 3 else "HKL",
+            )
+            for index, (name, edge) in enumerate(zip(names, edges, strict=True))
+        )
     return MDHistoData(
         axes=axes,
         signal=signal,
@@ -405,23 +486,70 @@ def bin_raw_dgs_group(
             "raw_dgs": config,
             "raw_dgs_energy_windows_meV": resolved_energy_windows,
             "rebin": {
-                "vectors": basis.tolist(),
+                **({"vectors": basis.tolist()} if basis is not None else {}),
                 "bin_edges": [edge.tolist() for edge in edges],
                 "minimum_samples": minimum_samples,
             },
             "signal_semantics": "density",
-            "signal_semantics_source": "nfit_raw_tof_reduction",
+            "signal_semantics_source": (
+                "nfit_raw_tof_powder_reduction"
+                if powder
+                else "nfit_raw_tof_reduction"
+            ),
             "normalization_denominator": normalization,
             "zero_event_bins_are_measured": True,
             "zero_count_error_model": "feldman_cousins_68_percent_upper_limit_scaled_by_rms_event_weight",
             "event_weight_rms": rms,
-            "symmetry_operations_hkl": [operation.tolist() for operation in symmetry],
+            **(
+                {
+                    "powder_reduction": {
+                        "coordinates": "|Q|,DeltaE",
+                        "normalization": "proton_charge_and_detector_trajectory",
+                    }
+                }
+                if powder
+                else {
+                    "symmetry_operations_hkl": [
+                        operation.tolist() for operation in symmetry
+                    ]
+                }
+            ),
             "ki_kf_normalization": _use_ki_kf_correction(config),
             "he3_detector_efficiency_correction": bool(
                 config.get("he3_detector_efficiency_correction", True)
             ),
             "proton_charge_units": "microampere-hour (retained raw pulse charge in picocoulombs divided by 3.6e9)",
         },
+    )
+
+
+def bin_raw_dgs_powder_group(
+    group: DatasetGroup,
+    *,
+    lower: Iterable[float],
+    upper: Iterable[float],
+    num_bins: Iterable[int],
+    step_size: Iterable[float] | None = None,
+    bin_edges: Iterable[Iterable[float] | None] | None = None,
+    minimum_samples: float = 0.0,
+    datasets: Iterable[DatasetEntry] | None = None,
+    max_batch_bytes: int = 192 * 1024 * 1024,
+    progress_callback: Any | None = None,
+) -> MDHistoData:
+    """Reduce raw direct-geometry detector events to ``|Q|, DeltaE``."""
+
+    return bin_raw_dgs_group(
+        group,
+        lower=lower,
+        upper=upper,
+        num_bins=num_bins,
+        step_size=step_size,
+        bin_edges=bin_edges,
+        minimum_samples=minimum_samples,
+        datasets=datasets,
+        max_batch_bytes=max_batch_bytes,
+        progress_callback=progress_callback,
+        coordinate_mode="powder",
     )
 
 
@@ -509,13 +637,99 @@ def _trajectory_normalization(
             np.asarray([item[3] for item in payloads]),
             *[np.asarray(edge) for edge in edges],
             np.asarray(shape, dtype=np.int64),
-            workers=1,
+            workers=_trajectory_worker_count(int(np.prod(shape))),
         )
         return np.asarray(flat).reshape(shape)
     for inverse, ei, energy_bounds, charge, direction, solid in payloads:
         for index in np.flatnonzero(solid > 0.0):
             _accumulate_detector_trajectory(
                 result, edges, inverse, direction[index], ei, energy_bounds, charge * solid[index]
+            )
+    return result
+
+
+def _powder_trajectory_normalization(
+    group,
+    datasets,
+    edges,
+    shape,
+    detector_norm,
+    detector_mask,
+    energy_bounds_by_dataset_id,
+):
+    """Accumulate the radial MDNorm-style denominator for raw runs."""
+
+    config = group.metadata["raw_dgs"]
+    result = np.zeros(shape)
+    payloads = []
+    detector_payload = None
+    shared_detector_geometry = True
+    for dataset in datasets:
+        info = inspect_raw_dgs_run(dataset.metadata["source_file"])
+        geometry = _detector_geometry(info.path)
+        direction = geometry.positions / np.linalg.norm(
+            geometry.positions, axis=1
+        )[:, None]
+        solid = (
+            np.ones(geometry.detector_ids.size)
+            if detector_norm is None
+            else detector_norm.value_for_ids(geometry.detector_ids)
+        )
+        if detector_mask is not None:
+            solid[detector_mask.value_for_ids(geometry.detector_ids) <= 0.0] = 0.0
+        import h5py
+
+        with h5py.File(info.path, "r") as handle:
+            charge = _retained_proton_charge_uah(
+                handle["entry"],
+                float(config.get("bad_pulse_threshold", 95.0)),
+            )
+        incident_energy = float(
+            config.get("incident_energy_override") or info.incident_energy
+        )
+        energy_bounds = energy_bounds_by_dataset_id[dataset.id]
+        scattering_angles = np.arccos(np.clip(direction[:, 2], -1.0, 1.0))
+        current_detector_payload = (geometry.detector_ids, scattering_angles, solid)
+        if detector_payload is None:
+            detector_payload = current_detector_payload
+        else:
+            shared_detector_geometry &= all(
+                first.shape == current.shape and np.array_equal(first, current)
+                for first, current in zip(
+                    detector_payload, current_detector_payload, strict=True
+                )
+            )
+        payloads.append(
+            (incident_energy, energy_bounds, charge, scattering_angles, solid)
+        )
+    if (
+        _MDEVENT_NUMBA is not None
+        and hasattr(_MDEVENT_NUMBA, "run_powder_trajectory_normalization")
+        and detector_payload is not None
+        and shared_detector_geometry
+    ):
+        _, scattering_angles, solid = detector_payload
+        flat = _MDEVENT_NUMBA.run_powder_trajectory_normalization(
+            scattering_angles,
+            solid,
+            np.asarray([item[0] for item in payloads]),
+            np.asarray([item[1] for item in payloads]),
+            np.asarray([item[2] for item in payloads]),
+            np.asarray(edges[0]),
+            np.asarray(edges[1]),
+            np.asarray(shape, dtype=np.int64),
+            workers=_trajectory_worker_count(int(np.prod(shape))),
+        )
+        return np.asarray(flat).reshape(shape)
+    for incident_energy, energy_bounds, charge, scattering_angles, solid in payloads:
+        for detector_index in np.flatnonzero(solid > 0.0):
+            _accumulate_powder_detector_trajectory(
+                result,
+                edges,
+                float(scattering_angles[detector_index]),
+                incident_energy,
+                energy_bounds,
+                charge * float(solid[detector_index]),
             )
     return result
 

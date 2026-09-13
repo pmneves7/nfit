@@ -50,7 +50,7 @@ from .project_imports import (
 )
 from .project_masks import _mdhisto_with_nfit_masks, _point_data_with_nfit_masks
 from .project_point_lists import prepared_point_list_data
-from .raw_dgs import bin_raw_dgs_group
+from .raw_dgs import bin_raw_dgs_group, bin_raw_dgs_powder_group
 from .rebin import rebin_nd
 from .rebin_cache import RebinCache
 from .spectral_channels import SPECTRAL_CHANNEL_CONFIG_KEY
@@ -413,9 +413,7 @@ def data_group_composite_config(
         mdevent if isinstance(mdevent, dict) else raw_dgs if isinstance(raw_dgs, dict) else None
     )
     coordinate_mode = str(config.get("coordinate_mode", "hkle"))
-    if coordinate_mode not in {"hkle", "powder"} or (
-        coordinate_mode == "powder" and not isinstance(mdevent, dict)
-    ):
+    if coordinate_mode not in {"hkle", "powder"}:
         coordinate_mode = "hkle"
     config["coordinate_mode"] = coordinate_mode
     axes = config.get("axes")
@@ -423,16 +421,20 @@ def data_group_composite_config(
         dimensions = list(event_config.get("dimensions", []))
         hkl_bounds = list(event_config.get("hkl_bounds", []))
         if coordinate_mode == "powder":
-            q_limits = []
-            for index in range(3):
-                source_dim = dimensions[index] if index < len(dimensions) else {}
-                q_limits.append(
-                    max(
-                        abs(float(source_dim.get("lower", 0.0))),
-                        abs(float(source_dim.get("upper", 0.0))),
+            q_bounds = event_config.get("q_modulus_bounds")
+            if isinstance(q_bounds, (list, tuple)) and len(q_bounds) == 2:
+                q_upper = max(float(q_bounds[1]), 0.0) or 5.0
+            else:
+                q_limits = []
+                for index in range(3):
+                    source_dim = dimensions[index] if index < len(dimensions) else {}
+                    q_limits.append(
+                        max(
+                            abs(float(source_dim.get("lower", 0.0))),
+                            abs(float(source_dim.get("upper", 0.0))),
+                        )
                     )
-                )
-            q_upper = float(np.linalg.norm(q_limits)) or 5.0
+                q_upper = float(np.linalg.norm(q_limits)) or 5.0
             energy = dimensions[3] if len(dimensions) > 3 else {}
             energy_lower = float(energy.get("lower", -50.0))
             energy_upper = float(energy.get("upper", 50.0))
@@ -1291,29 +1293,35 @@ def _composite_dataset_data(
                 "raw direct-geometry composites must be imported inside a dataset group"
             )
         lower, upper, num_bins = _composite_rebin_bounds(config)
-        result = bin_raw_dgs_group(
-            node,
-            lower=lower,
-            upper=upper,
-            num_bins=num_bins,
-            step_size=_composite_rebin_step_sizes(config),
-            bin_edges=_composite_rebin_bin_edges(config),
-            minimum_samples=_rebin_minimum_samples(config),
-            datasets=_composite_candidates(group),
-            vectors=[
-                axis.get("vector", _identity_vector(index, 4))
-                for index, axis in enumerate(config.get("axes", []))
-            ],
-            axis_names=[
-                str(axis.get("name", ("H", "K", "L", "DeltaE")[index]))
-                for index, axis in enumerate(config.get("axes", []))
-            ],
-            max_batch_bytes=_rebin_max_batch_bytes(config),
-            progress_callback=progress_callback,
-            symmetry_operations=_rebin_symmetry_matrices(
-                config, _composite_root(group).lattice_parameters
-            ),
-        )
+        common = {
+            "lower": lower,
+            "upper": upper,
+            "num_bins": num_bins,
+            "step_size": _composite_rebin_step_sizes(config),
+            "bin_edges": _composite_rebin_bin_edges(config),
+            "minimum_samples": _rebin_minimum_samples(config),
+            "datasets": _composite_candidates(group),
+            "max_batch_bytes": _rebin_max_batch_bytes(config),
+            "progress_callback": progress_callback,
+        }
+        if config.get("coordinate_mode") == "powder":
+            result = bin_raw_dgs_powder_group(node, **common)
+        else:
+            result = bin_raw_dgs_group(
+                node,
+                vectors=[
+                    axis.get("vector", _identity_vector(index, 4))
+                    for index, axis in enumerate(config.get("axes", []))
+                ],
+                axis_names=[
+                    str(axis.get("name", ("H", "K", "L", "DeltaE")[index]))
+                    for index, axis in enumerate(config.get("axes", []))
+                ],
+                symmetry_operations=_rebin_symmetry_matrices(
+                    config, _composite_root(group).lattice_parameters
+                ),
+                **common,
+            )
     elif kind == "mdhisto":
         result = _composite_mdhisto_data(
             group,

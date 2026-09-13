@@ -2432,7 +2432,11 @@ def test_interactive_multistream_import_can_reuse_existing_group(monkeypatch):
     ]
 
 
-def test_raw_dgs_nexus_import_creates_a_file_backed_reduction_group(tmp_path):
+def test_raw_dgs_nexus_import_creates_a_file_backed_reduction_group(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
     h5py = pytest.importorskip("h5py")
     source = tmp_path / "SEQ_409981.nxs.h5"
     with h5py.File(source, "w") as handle:
@@ -2451,4 +2455,36 @@ def test_raw_dgs_nexus_import_creates_a_file_backed_reduction_group(tmp_path):
     assert group.subgroups[0].metadata["raw_dgs"]["energy_max_fraction"] == 0.95
     ok, _message = project_gui.data_group_composite_status(group.subgroups[0])
     assert ok
-    assert project_gui.slice_viewer_datasets(group) == ([], [])
+    config = project_gui.data_group_composite_config(group.subgroups[0])
+    assert config["enabled"] is True
+    assert config["auto_rebin"] is False
+
+    explorer = NfitProjectExplorer(NfitProject([group]))
+    explorer._refresh_tree(select_dataset_group=group.subgroups[0])
+    widgets = [
+        explorer.details_widget.findChild(QtWidgets.QLineEdit, name)
+        for name in ("raw_dgs_normalization_file", "raw_dgs_mask_file")
+    ] + [
+        explorer.details_widget.findChild(QtWidgets.QPushButton, name)
+        for name in (
+            "raw_dgs_normalization_file_browse",
+            "raw_dgs_mask_file_browse",
+        )
+    ]
+    assert all(widget is not None and widget.toolTip() for widget in widgets)
+    coordinate_mode = explorer.details_widget.findChild(
+        QtWidgets.QComboBox, "group_composite_coordinate_mode"
+    )
+    assert coordinate_mode is not None and coordinate_mode.toolTip()
+    assert [coordinate_mode.itemData(index) for index in range(coordinate_mode.count())] == [
+        "hkle",
+        "powder",
+    ]
+    coordinate_mode.setCurrentIndex(1)
+    powder_config = project_gui.data_group_composite_config(group.subgroups[0])
+    assert powder_config["coordinate_mode"] == "powder"
+    assert [axis["name"] for axis in powder_config["axes"]] == ["|Q|", "DeltaE"]
+    assert powder_config["axes"][0]["lower"] == 0.0
+    assert powder_config["axes"][0]["upper"] == pytest.approx(
+        group.subgroups[0].metadata["raw_dgs"]["q_modulus_bounds"][1] or 5.0
+    )

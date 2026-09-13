@@ -1,7 +1,13 @@
 import numpy as np
 import pytest
 
-from nfit import bin_raw_dgs_group, inspect_raw_dgs_run, raw_dgs, raw_dgs_dataset_group
+from nfit import (
+    bin_raw_dgs_group,
+    bin_raw_dgs_powder_group,
+    inspect_raw_dgs_run,
+    raw_dgs,
+    raw_dgs_dataset_group,
+)
 from nfit.raw_dgs import (
     TOF_US_PER_M_SQRT_MEV,
     _energy_transfer_bounds,
@@ -60,6 +66,8 @@ def test_raw_dgs_metadata_and_streamed_hkle_binning(tmp_path):
     assert info.incident_energy == 20.0
     assert group.metadata["raw_dgs"]["energy_min_fraction"] == -0.95
     assert group.metadata["raw_dgs"]["energy_max_fraction"] == 0.95
+    assert group.metadata["raw_dgs"]["q_modulus_bounds"][0] == 0.0
+    assert group.metadata["raw_dgs"]["q_modulus_bounds"][1] > 0.0
     result = bin_raw_dgs_group(
         group,
         lower=[-10, -10, -10, -100],
@@ -209,6 +217,100 @@ def test_raw_dgs_detector_mask_removes_events(tmp_path):
     )
     assert result.mask.item()
     assert result.num_events.item() == 0.0
+
+
+def test_raw_dgs_uses_processed_vanadium_as_trajectory_weight(tmp_path):
+    source = tmp_path / "SEQ_42.nxs.h5"
+    vanadium = tmp_path / "van.nxs"
+    _write_raw_dgs(source)
+    h5py = pytest.importorskip("h5py")
+    with h5py.File(vanadium, "w") as handle:
+        entry = handle.create_group("mantid_workspace_1")
+        detector = entry.create_group("instrument").create_group("detector")
+        detector.create_dataset("detector_list", data=[42])
+        workspace = entry.create_group("workspace")
+        workspace.create_dataset("values", data=[[2.0]])
+        workspace.create_dataset("errors", data=[[0.0]])
+    unnormalized_group = raw_dgs_dataset_group([source])
+    group = raw_dgs_dataset_group([source], normalization_path=vanadium)
+
+    unnormalized = bin_raw_dgs_group(
+        unnormalized_group,
+        lower=[-10, -10, -10, -100],
+        upper=[10, 10, 10, 20],
+        num_bins=[1, 1, 1, 1],
+    )
+    normalized = bin_raw_dgs_group(
+        group,
+        lower=[-10, -10, -10, -100],
+        upper=[10, 10, 10, 20],
+        num_bins=[1, 1, 1, 1],
+    )
+    assert normalized.signal.item() == pytest.approx(
+        unnormalized.signal.item() / 2.0
+    )
+    assert normalized.errors.item() == pytest.approx(
+        unnormalized.errors.item() / 2.0
+    )
+    assert normalized.metadata["normalization_denominator"].item() == pytest.approx(
+        2.0 * unnormalized.metadata["normalization_denominator"].item()
+    )
+
+
+def test_raw_dgs_powder_binning_is_radial_and_uses_vanadium(tmp_path):
+    source = tmp_path / "SEQ_42.nxs.h5"
+    vanadium = tmp_path / "van.nxs"
+    _write_raw_dgs(source)
+    h5py = pytest.importorskip("h5py")
+    with h5py.File(vanadium, "w") as handle:
+        entry = handle.create_group("mantid_workspace_1")
+        detector = entry.create_group("instrument").create_group("detector")
+        detector.create_dataset("detector_list", data=[42])
+        workspace = entry.create_group("workspace")
+        workspace.create_dataset("values", data=[[2.0]])
+        workspace.create_dataset("errors", data=[[0.0]])
+    group = raw_dgs_dataset_group([source], normalization_path=vanadium)
+
+    result = bin_raw_dgs_powder_group(
+        group,
+        lower=[0.0, -100.0],
+        upper=[20.0, 20.0],
+        num_bins=[1, 1],
+    )
+
+    assert result.shape == (1, 1)
+    assert result.axes[0].name == "|Q|"
+    assert result.axes[0].units == "1/angstrom"
+    assert result.num_events.item() == 1.0
+    assert np.isfinite(result.signal.item()) and result.signal.item() > 0.0
+    assert result.metadata["signal_semantics_source"] == (
+        "nfit_raw_tof_powder_reduction"
+    )
+    assert result.metadata["powder_reduction"]["coordinates"] == "|Q|,DeltaE"
+
+
+def test_raw_dgs_powder_numba_matches_python_trajectory_path(monkeypatch, tmp_path):
+    if raw_dgs._MDEVENT_NUMBA is None:
+        pytest.skip("Numba trajectory extension is unavailable")
+    source = tmp_path / "SEQ_42.nxs.h5"
+    _write_raw_dgs(source)
+    group = raw_dgs_dataset_group([source])
+    settings = {
+        "lower": [0.0, -19.0],
+        "upper": [10.0, 19.0],
+        "num_bins": [4, 3],
+    }
+
+    accelerated = bin_raw_dgs_powder_group(group, **settings)
+    monkeypatch.setattr(raw_dgs, "_MDEVENT_NUMBA", None)
+    python = bin_raw_dgs_powder_group(group, **settings)
+
+    np.testing.assert_allclose(
+        accelerated.metadata["normalization_denominator"],
+        python.metadata["normalization_denominator"],
+    )
+    np.testing.assert_allclose(accelerated.signal, python.signal, equal_nan=True)
+    np.testing.assert_allclose(accelerated.errors, python.errors, equal_nan=True)
 
 
 def test_raw_dgs_uses_mantid_ki_over_kf_event_weight(monkeypatch, tmp_path):

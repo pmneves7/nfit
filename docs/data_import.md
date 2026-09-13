@@ -197,7 +197,7 @@ scripts.
 ## Compatible direct-geometry spectrometer data
 
 This importer supports raw event NeXus files from compatible direct-geometry
-spectrometers, including CNCS, HYSPEC, and SEQUOIA. It requires the expected
+spectrometers, including ARCS, CNCS, HYSPEC, and SEQUOIA. It requires the expected
 event banks and run logs plus an embedded Mantid instrument definition. It is
 not a universal direct-geometry NeXus importer.
 
@@ -207,14 +207,25 @@ $E_i$ and $T_0$ overrides. The accepted energy-transfer interval is expressed
 as fractions of each run's $E_i$ and defaults to
 $-0.95E_i\leq\Delta E\leq0.95E_i$. The same limits define event selection and
 detector-trajectory normalization. Individual detector-event runs are not
-plotted directly; enable the group composite and rebin them to an HKLE
-histogram.
+plotted directly. The imported group starts with **Combine enabled datasets
+into one effective dataset** selected; choose **Rebin now** after setting the
+desired output grid. Its initial rebin configuration uses non-fractional point
+assignment and uniform combination weighting.
 
 nfit streams detector banks and event chunks rather than loading the complete
 event table. It obtains detector geometry and flight paths from the embedded
 instrument definition, applies available detector-efficiency and $k_i/k_f$
-corrections, converts $\mathbf Q=\mathbf k_i-\mathbf k_f$ to HKL, and normalizes
-by retained proton charge and detector-trajectory coverage.
+corrections, and normalizes by retained proton charge and detector-trajectory
+coverage. **Output coordinates** selects a four-dimensional single-crystal
+HKLE histogram or a two-dimensional powder $|\mathbf Q|,\Delta E$ histogram.
+The powder path bins radially from detector events without first allocating an
+intermediate four-dimensional volume.
+
+Use **Vanadium normalization** to select a processed vanadium workspace.
+Non-positive values exclude detectors, while positive values weight their
+normalization trajectories. **Detector mask** can supply an additional
+workspace whose non-positive or invalid values exclude detectors. Both fields
+have **Browse** buttons in the raw-reduction setup panel.
 
 ### Raw TOF reduction sequence
 
@@ -229,7 +240,8 @@ For each enabled run, nfit:
    momentum, then applies the configured $\Delta E/E_i$ limits;
 6. applies detector-efficiency and optional $k_i/k_f$ corrections;
 7. bins corrected events and their variances; and
-8. divides by independently accumulated trajectory coverage.
+8. divides by independently accumulated trajectory coverage, weighted by the
+   positive processed-vanadium values when a normalization file is supplied.
 
 Bins without detector coverage are masked. Covered bins with no events are
 measured zeros and retain a finite uncertainty.

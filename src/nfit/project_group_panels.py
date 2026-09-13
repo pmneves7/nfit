@@ -280,7 +280,9 @@ def _group_composite_group_box(self, group: DataGroup | _CompositeScope) -> Any:
     settings_tab.setObjectName("group_composite_settings_tab")
     controls_layout = QtWidgets.QGridLayout(settings_tab)
     controls_layout.setContentsMargins(0, 0, 0, 0)
-    if isinstance(group.metadata.get("mdevent"), dict):
+    if isinstance(group.metadata.get("mdevent"), dict) or isinstance(
+        group.metadata.get("raw_dgs"), dict
+    ):
         coordinate_row = QtWidgets.QHBoxLayout()
         coordinate_label = QtWidgets.QLabel("Output coordinates")
         coordinate_combo = QtWidgets.QComboBox()

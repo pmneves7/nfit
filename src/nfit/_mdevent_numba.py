@@ -142,3 +142,111 @@ def run_trajectory_normalization(*args, workers: int):
         return trajectory_normalization(*args)
     finally:
         set_num_threads(previous)
+
+
+@njit(fastmath=False, nogil=True, parallel=True)
+def powder_trajectory_normalization(
+    theta,
+    solid,
+    incident_energies,
+    energy_limits,
+    proton_charges,
+    q_edges,
+    energy_edges,
+    shape,
+):
+    """Accumulate radial detector trajectories for raw or stored DGS runs."""
+
+    workers = get_num_threads()
+    output_size = shape[0] * shape[1]
+    partial = np.zeros((workers, output_size), dtype=np.float64)
+    detectors = theta.size
+    total = incident_energies.size * detectors
+    max_intersections = 2 * q_edges.size + energy_edges.size + 2
+    scratch = np.empty((workers, max_intersections), dtype=np.float64)
+    for task in prange(total):
+        run = task // detectors
+        detector = task - run * detectors
+        detector_weight = solid[detector]
+        if not np.isfinite(detector_weight) or detector_weight <= 0.0:
+            continue
+        ei = incident_energies[run]
+        if ei <= 0.0:
+            continue
+        ki = np.sqrt(ei / ENERGY_TO_K2)
+        kfa = np.sqrt(max(ei - energy_limits[run, 0], 0.0) / ENERGY_TO_K2)
+        kfb = np.sqrt(max(ei - energy_limits[run, 1], 0.0) / ENERGY_TO_K2)
+        low_kf = min(kfa, kfb)
+        high_kf = max(kfa, kfb)
+        cosine = np.cos(theta[detector])
+        sine_squared = max(0.0, 1.0 - cosine * cosine)
+        thread = get_thread_id()
+        intersections = scratch[thread]
+        count = 2
+        intersections[0] = low_kf
+        intersections[1] = high_kf
+        for boundary in q_edges:
+            discriminant = boundary * boundary - ki * ki * sine_squared
+            if discriminant < 0.0:
+                continue
+            root = np.sqrt(discriminant)
+            first = ki * cosine - root
+            second = ki * cosine + root
+            if low_kf < first < high_kf:
+                intersections[count] = first
+                count += 1
+            if low_kf < second < high_kf and abs(second - first) > 1e-14:
+                intersections[count] = second
+                count += 1
+        for boundary in energy_edges:
+            value = np.sqrt(max(ei - boundary, 0.0) / ENERGY_TO_K2)
+            if low_kf < value < high_kf:
+                intersections[count] = value
+                count += 1
+        for i in range(1, count):
+            value = intersections[i]
+            j = i - 1
+            while j >= 0 and intersections[j] > value:
+                intersections[j + 1] = intersections[j]
+                j -= 1
+            intersections[j + 1] = value
+        weight = proton_charges[run] * detector_weight
+        for i in range(count - 1):
+            first = intersections[i]
+            second = intersections[i + 1]
+            if second - first <= 1e-12:
+                continue
+            middle = 0.5 * (first + second)
+            q_value = np.sqrt(
+                max(
+                    0.0,
+                    ki * ki
+                    + middle * middle
+                    - 2.0 * ki * middle * cosine,
+                )
+            )
+            energy = ei - ENERGY_TO_K2 * middle * middle
+            q_index = np.searchsorted(q_edges, q_value, side="right") - 1
+            energy_index = np.searchsorted(energy_edges, energy, side="right") - 1
+            if q_value == q_edges[-1]:
+                q_index = q_edges.size - 2
+            if energy == energy_edges[-1]:
+                energy_index = energy_edges.size - 2
+            if (
+                0 <= q_index < q_edges.size - 1
+                and 0 <= energy_index < energy_edges.size - 1
+            ):
+                flat = q_index * shape[1] + energy_index
+                partial[thread, flat] += (
+                    weight * ENERGY_TO_K2 * (second * second - first * first)
+                )
+    return np.sum(partial, axis=0)
+
+
+def run_powder_trajectory_normalization(*args, workers: int):
+    previous = get_num_threads()
+    set_num_threads(max(1, min(int(workers), previous)))
+    try:
+        return powder_trajectory_normalization(*args)
+    finally:
+        set_num_threads(previous)

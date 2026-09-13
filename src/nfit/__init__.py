@@ -526,6 +526,7 @@ from .quantities import (
 from .raw_dgs import (
     RawDGSRunInfo,
     bin_raw_dgs_group,
+    bin_raw_dgs_powder_group,
     inspect_raw_dgs_run,
     is_raw_dgs_nexus_file,
     raw_dgs_dataset_group,
@@ -1214,6 +1215,7 @@ __all__ = [
     "append_mdevent_file",
     "RawDGSRunInfo",
     "bin_raw_dgs_group",
+    "bin_raw_dgs_powder_group",
     "inspect_raw_dgs_run",
     "is_raw_dgs_nexus_file",
     "raw_dgs_dataset_group",

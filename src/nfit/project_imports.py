@@ -272,6 +272,7 @@ def import_dataset_paths(
             mask_path=normalization,
             progress_callback=progress_callback,
         )
+        subgroup.metadata[GROUP_COMPOSITE_KEY] = _mdevent_composite_defaults()
         subgroup.name = _unique_name(
             subgroup.name,
             {item.name for item in group.iter_subgroups()},

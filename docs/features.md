@@ -12,8 +12,9 @@ This page gives the detailed capability inventory. Start with
 
 nfit provides:
 
-- native MDHisto, single-crystal and direct-powder MDEvent, and compatible
-  direct-geometry spectrometer workflows, with project-owned composite
+- native MDHisto, single-crystal and direct-powder MDEvent, and compatible raw
+  ARCS, CNCS, HYSPEC, and SEQUOIA single-crystal or direct-powder workflows,
+  including processed-vanadium normalization, with project-owned composite
   materialization and scaled powder or aligned-histogram background subtraction;
 - NIST NCNR MACS NeXus import with separate energy-analyzed SPEC and
   energy-integrated DIFF streams, DAVE-compatible analyzer-energy recovery,

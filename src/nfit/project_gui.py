@@ -12306,14 +12306,24 @@ class NfitProjectExplorer:
         box.setToolTip("Shared configuration for all raw direct-geometry runs. nfit reads the detector geometry from each NeXus file and streams events directly into the HKLE composite.")
         layout = QtWidgets.QGridLayout(box)
         for row, (label, key, tooltip) in enumerate((
-            ("Normalization mask", "normalization_file", "Optional processed vanadium workspace. For the Shiver-compatible raw TOF workflow, zero or negative spectra exclude those detectors; positive values are not used as signal weights."),
+            ("Vanadium normalization", "normalization_file", "Optional processed vanadium workspace. Zero or negative spectra exclude those detectors; positive values weight detector trajectories in the MDNorm-style normalization denominator."),
             ("Detector mask", "mask_file", "Optional detector workspace. Zero, negative, or invalid values exclude detector events before TOF-to-HKLE conversion and trajectory normalization."),
         )):
             layout.addWidget(QtWidgets.QLabel(label), row, 0)
             edit = QtWidgets.QLineEdit(str(config.get(key) or ""))
+            edit.setObjectName(f"raw_dgs_{key}")
             edit.setToolTip(tooltip)
             edit.editingFinished.connect(lambda edit=edit, key=key: self._set_raw_dgs_group_value(node, key, edit.text().strip() or None))
-            layout.addWidget(edit, row, 1, 1, 3)
+            layout.addWidget(edit, row, 1, 1, 2)
+            browse = QtWidgets.QPushButton("Browse…")
+            browse.setObjectName(f"raw_dgs_{key}_browse")
+            browse.setToolTip(f"Choose the {label.lower()} NeXus file.")
+            browse.clicked.connect(
+                lambda _checked=False, edit=edit, key=key, label=label: self._browse_raw_dgs_setup_file(
+                    node, key, label, edit
+                )
+            )
+            layout.addWidget(browse, row, 3)
         for column, (label, key, tooltip) in enumerate((
             ("Ei override", "incident_energy_override", "Shared incident-energy override in meV. Leave unset to apply Mantid's local GetEi path for each run: monitor fitting where applicable, or the instrument's requested-Ei formula."),
             ("T0 override", "t0_override", "Shared time-zero correction in microseconds, subtracted from raw event TOF before calculating final energy. Leave unset to apply Mantid's local GetEi path per run, including formula-derived T0 on instruments that define one."),
@@ -12525,6 +12535,21 @@ class NfitProjectExplorer:
             edit.setText(_parameter_to_text(node.metadata["raw_dgs"].get("ub_matrix")))
             return
         self._set_raw_dgs_group_value(node, "ub_matrix", matrix.tolist())
+
+    def _browse_raw_dgs_setup_file(
+        self, node: DatasetGroup, key: str, label: str, edit: Any
+    ) -> None:
+        current = str(node.metadata["raw_dgs"].get(key) or "")
+        path, _selected_filter = get_open_file_name(
+            self.window,
+            f"Choose {label.lower()}",
+            current,
+            "Mantid NeXus workspace (*.nxs *.nx5 *.h5 *.hdf5);;All files (*)",
+        )
+        if not path:
+            return
+        edit.setText(path)
+        self._set_raw_dgs_group_value(node, key, path)
 
     def _set_raw_dgs_group_value(self, node: DatasetGroup, key: str, value: Any) -> None:
         config = node.metadata["raw_dgs"]
@@ -14404,7 +14429,7 @@ class NfitProjectExplorer:
     def _set_group_composite_coordinate_mode(
         self, group: DataGroup | _CompositeScope, value: str
     ) -> None:
-        """Switch an MDEvent composite between HKLE and powder coordinates."""
+        """Switch an event-data composite between HKLE and powder coordinates."""
 
         mode = "powder" if value == "powder" else "hkle"
         config = data_group_composite_config(group)

@@ -502,7 +502,7 @@ from .project_view_data import (
 from .project_view_data import (
     _with_viewer_dataset_metadata as _with_viewer_dataset_metadata,
 )
-from .raw_dgs import bin_raw_dgs_group  # noqa: F401
+from .raw_dgs import bin_raw_dgs_group, bin_raw_dgs_powder_group  # noqa: F401
 from .rebin import rebin_nd, rebin_nd_symmetry  # noqa: F401
 from .rebin_cache import RebinCache
 from .spectral_channels import (  # noqa: F401

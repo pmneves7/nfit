@@ -411,15 +411,18 @@ embedded Mantid instrument definition; it is not a generic importer for every
 direct-geometry instrument.
 `inspect_raw_dgs_run(path)` reads run metadata without reading event arrays;
 `raw_dgs_dataset_group(paths, ...)` creates lightweight entries sharing one raw
-reduction setup; and `bin_raw_dgs_group(...)` resolves detector positions from
-the embedded IDF and streams banks into an HKLE histogram. It accepts the same
-coordinate-basis and progress-callback conventions as the MDEvent reducer.
+reduction setup; `bin_raw_dgs_group(...)` resolves detector positions from the
+embedded IDF and streams banks into an HKLE histogram; and
+`bin_raw_dgs_powder_group(...)` bins the same events directly into
+$|\mathbf Q|,\Delta E$. The HKLE reducer accepts the same coordinate-basis and
+progress-callback conventions as the MDEvent reducer.
 
 This native reducer integrates retained raw proton-pulse charge in
 microampere-hours and builds an MDNorm-style detector-trajectory denominator.
-For Shiver-compatible raw imports, processed vanadium and explicit mask files
-are binary detector masks rather than detector-value weights. By default it
-applies Mantid's wavelength-dependent He-3 tube-efficiency correction, when
+For Shiver-compatible raw imports, non-positive processed-vanadium values mask
+detectors and positive values weight the MDNorm-style trajectory denominator.
+An explicit mask file supplies additional detector exclusions. By default the
+reducer applies Mantid's wavelength-dependent He-3 tube-efficiency correction, when
 the embedded IDF supplies tube geometry and pressure, thickness, and
 temperature parameters, followed by the `ki/kf` direct-geometry correction.
 Both corrections multiply the event uncertainty by the same factor and are
