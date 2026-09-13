@@ -97,6 +97,42 @@ channels without changing the imported values. Powder Heisenberg models average
 the single-crystal response over momentum directions and require lattice
 parameters for the reciprocal-coordinate conversion.
 
+## Reduced CORELLI and WAND² data
+
+nfit imports three-dimensional reciprocal-space `MDHistoWorkspace` files saved
+by Mantid for CORELLI and WAND². Choose **Single crystal elastic** in the data
+type prompt. The saved signal, one-sigma uncertainty, Mantid mask, event-count
+array, axis projections, UB matrix, and unit-cell parameters are loaded without
+running Mantid. Invalid infinite values and invalid variances are added to the
+mask so they do not set viewer color limits or enter fits. The Mantid
+`QConvention` value remains in the dataset metadata.
+
+For CORELLI, use the correlation-chopper elastic output from the reduction.
+The Garnet-style configuration used for the tested IPTS-37086 files sets
+`Instrument: CORELLI` and `Elastic: true`, along with the detector calibration,
+tube calibration, mask, background, flux, and solid-angle files. nfit recognizes
+the resulting `_cc.nxs` and `_cc_sub_bkg.nxs` names as correlation-chopper
+elastic products and records that provenance. A combined file whose embedded
+instrument name is blank can still be identified from a source path containing
+`CORELLI`. Mantid documents the underlying elastic-isolation operation in
+[CorelliCrossCorrelate](https://docs.mantidproject.org/v6.16.1/algorithms/CorelliCrossCorrelate-v1.html).
+
+For WAND², the tested IPTS-35621 workflow loads the sample and vanadium with
+Mantid
+[LoadWANDSCD](https://docs.mantidproject.org/v6.1.0/algorithms/LoadWANDSCD-v1.html),
+then calls
+[ConvertWANDSCDtoQ](https://docs.mantidproject.org/v6.8.0/algorithms/ConvertWANDSCDtoQ-v1.html)
+in the HKL frame with the vanadium as `NormalisationWorkspace`, a wavelength of
+1.486 Å, and monitor normalization. nfit reads the saved WAND instrument name
+and wavelength. The normalization has already been applied to the saved
+histogram; do not apply the vanadium a second time in nfit.
+
+These import paths consume reduced histograms. They do not yet reproduce the
+CORELLI correlation-chopper or WAND² detector reduction from raw acquisition
+files. Keep the reduction configuration or Mantid script alongside the reduced
+file so its calibration, mask, normalization, projection, and binning choices
+remain auditable.
+
 ## NIST NCNR MACS NeXus data
 
 The MACS importer recognizes the instrument from NeXus content rather than the

@@ -16,6 +16,9 @@ nfit provides:
   ARCS, CNCS, HYSPEC, and SEQUOIA single-crystal or direct-powder workflows,
   including processed-vanadium normalization, with project-owned composite
   materialization and scaled powder or aligned-histogram background subtraction;
+- reduced CORELLI correlation-chopper elastic and WAND² monochromatic
+  single-crystal Mantid histograms, including reciprocal projections, UB and
+  unit-cell metadata, wavelength when saved, and invalid-bin masking;
 - NIST NCNR MACS NeXus import with separate energy-analyzed SPEC and
   energy-integrated DIFF streams, DAVE-compatible analyzer-energy recovery,
   monitor normalization, detector masks, and viewer-ready

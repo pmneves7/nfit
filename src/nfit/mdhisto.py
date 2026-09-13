@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from dataclasses import InitVar, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -148,6 +149,7 @@ class MDHistoData:
     ``axes`` are ordered to match the array dimensions of ``signal``, ``errors``,
     ``mask``, and ``num_events``. Mantid stores the mask as bin flags; this class
     preserves those flags as booleans rather than inverting their meaning.
+    Importers may additionally mask invalid numerical bins.
     """
 
     axes: tuple[MDHistoAxis, ...]
@@ -354,8 +356,10 @@ def load_mantid_mdhisto_nxs(
     The importer reads ``/MDHistoWorkspace/data`` by default, including axis
     names, axis values, units, signal, one-sigma errors, Mantid mask flags, and
     event counts. ``errors`` are returned as ``sqrt(errors_squared)`` because
-    Mantid stores variances in the file. Bulky non-data metadata groups such as
-    ``experiment0`` are not copied unless ``copy_metadata=True``.
+    Mantid stores variances in the file. Non-finite values, invalid variances,
+    and invalid event counts are added to the saved mask. Bulky non-data
+    metadata groups such as ``experiment0`` are not copied unless
+    ``copy_metadata=True``.
     """
 
     try:
@@ -371,7 +375,20 @@ def load_mantid_mdhisto_nxs(
         axis_names = _signal_axis_names(signal_dataset)
         axes = tuple(_read_axis(data, axis_name) for axis_name in axis_names)
 
+        signal = np.asarray(signal_dataset[()], dtype=float)
         errors_squared = np.asarray(data["errors_squared"][()], dtype=float)
+        mask = np.asarray(data["mask"][()], dtype=bool)
+        num_events = np.asarray(data["num_events"][()], dtype=float)
+        invalid_variance = ~np.isfinite(errors_squared) | (errors_squared < 0.0)
+        invalid_bins = (
+            ~np.isfinite(signal)
+            | invalid_variance
+            | ~np.isfinite(num_events)
+            | (num_events < 0.0)
+        )
+        mask = mask | invalid_bins
+        errors_squared[invalid_variance] = np.nan
+        errors = np.sqrt(errors_squared, out=errors_squared)
         metadata: dict[str, Any] = {
             "source_file": str(file_path),
             "workspace_path": workspace_path,
@@ -394,13 +411,29 @@ def load_mantid_mdhisto_nxs(
         oriented_lattice = _read_oriented_lattice_metadata(workspace)
         if oriented_lattice:
             metadata["oriented_lattice"] = oriented_lattice
+            if "orientation_matrix" in oriented_lattice:
+                metadata["ub_matrix"] = copy.deepcopy(
+                    oriented_lattice["orientation_matrix"]
+                )
+            lattice_parameters = {
+                key: float(oriented_lattice[key])
+                for key in ("a", "b", "c", "alpha", "beta", "gamma")
+                if key in oriented_lattice
+            }
+            if len(lattice_parameters) == 6:
+                metadata["lattice_parameters"] = lattice_parameters
+        metadata.update(_read_mantid_reduction_metadata(workspace, file_path, axes))
+        invalid_count = int(np.count_nonzero(invalid_bins))
+        if invalid_count:
+            metadata["invalid_bin_count"] = invalid_count
+            metadata["invalid_bins_masked"] = True
 
         return MDHistoData(
             axes=axes,
-            signal=np.asarray(signal_dataset[()], dtype=float),
-            errors=np.sqrt(errors_squared),
-            mask=np.asarray(data["mask"][()], dtype=bool),
-            num_events=np.asarray(data["num_events"][()], dtype=float),
+            signal=signal,
+            errors=errors,
+            mask=mask,
+            num_events=num_events,
             coordinate_system=coordinate_system,
             visual_normalization=visual_normalization,
             metadata=metadata,
@@ -453,15 +486,21 @@ def _read_optional_scalar(group: Any, name: str) -> int | None:
 def _read_oriented_lattice_metadata(workspace: Any) -> dict[str, Any]:
     """Read common Mantid oriented-lattice fields when present."""
 
-    wanted = {
-        "orientation_matrix",
-        "ub_matrix",
-        "a",
-        "b",
-        "c",
-        "alpha",
-        "beta",
-        "gamma",
+    aliases = {
+        "orientation_matrix": "orientation_matrix",
+        "ub_matrix": "ub_matrix",
+        "a": "a",
+        "b": "b",
+        "c": "c",
+        "alpha": "alpha",
+        "beta": "beta",
+        "gamma": "gamma",
+        "unit_cell_a": "a",
+        "unit_cell_b": "b",
+        "unit_cell_c": "c",
+        "unit_cell_alpha": "alpha",
+        "unit_cell_beta": "beta",
+        "unit_cell_gamma": "gamma",
     }
     found: dict[str, Any] = {}
 
@@ -469,17 +508,116 @@ def _read_oriented_lattice_metadata(workspace: Any) -> dict[str, Any]:
         parts = name.lower().split("/")
         if "oriented_lattice" not in parts:
             return
-        key = parts[-1]
-        if key not in wanted:
+        source_key = parts[-1]
+        key = aliases.get(source_key)
+        if key is None:
             return
         if not hasattr(obj, "shape") or not hasattr(obj, "dtype"):
             return
-        value = _decode_value(obj[()])
+        raw = np.asarray(obj[()])
+        value = _decode_value(raw.item()) if raw.size == 1 else _decode_value(raw)
         found[key] = value
         found[f"{key}_path"] = obj.name
 
     workspace.visititems(visit)
     return found
+
+
+def _read_mantid_reduction_metadata(
+    workspace: Any,
+    file_path: Path,
+    axes: tuple[MDHistoAxis, ...],
+) -> dict[str, Any]:
+    """Return compact instrument and reduction provenance from a saved workspace."""
+
+    metadata: dict[str, Any] = {}
+    instrument, source = _mantid_instrument_name(workspace, file_path)
+    if instrument:
+        metadata["instrument_name"] = instrument
+        metadata["instrument_name_source"] = source
+
+    q_convention = _decode_value(workspace.attrs.get("QConvention", ""))
+    if str(q_convention).strip():
+        metadata["q_convention"] = str(q_convention).strip()
+
+    has_energy = any(axis.kind == "energy" for axis in axes)
+    momentum_count = sum(axis.kind == "momentum" for axis in axes)
+    if not has_energy and momentum_count >= 2:
+        metadata["suggested_data_type"] = "single_crystal_elastic"
+
+    wavelength = _mantid_log_scalar(workspace, "wavelength")
+    if wavelength is not None and wavelength > 0.0:
+        metadata["incident_wavelength"] = wavelength
+        metadata["incident_wavelength_unit"] = "angstrom"
+
+    reduction: dict[str, Any] = {"format": "Mantid MDHistoWorkspace"}
+    stem = file_path.stem.casefold()
+    if instrument == "CORELLI" and re.search(r"(?:^|_)cc(?:_|$)", stem):
+        reduction.update(
+            {
+                "scattering_mode": "elastic",
+                "elastic_discrimination": "correlation_chopper",
+                "correlation_chopper": True,
+                "correlation_chopper_source": "source_filename",
+            }
+        )
+    elif instrument == "WAND²" and not has_energy:
+        reduction["scattering_mode"] = "monochromatic_elastic"
+    metadata["reduction_provenance"] = reduction
+    return metadata
+
+
+def _mantid_instrument_name(workspace: Any, file_path: Path) -> tuple[str, str]:
+    for name in sorted(workspace):
+        if not name.casefold().startswith("experiment"):
+            continue
+        experiment = workspace[name]
+        try:
+            value = experiment["instrument/name"][()]
+        except (KeyError, TypeError):
+            continue
+        text = _first_text(value).strip()
+        if text:
+            return _canonical_mantid_instrument(text), "nexus"
+
+    path_text = str(file_path).upper()
+    if "CORELLI" in path_text:
+        return "CORELLI", "source_path"
+    if "WAND" in path_text or "HB2C" in path_text:
+        return "WAND²", "source_path"
+    return "", ""
+
+
+def _canonical_mantid_instrument(name: str) -> str:
+    compact = str(name).strip().upper()
+    if compact in {"WAND", "WAND2", "WAND²", "HB2C"}:
+        return "WAND²"
+    return compact
+
+
+def _first_text(value: Any) -> str:
+    decoded = _decode_value(value)
+    while isinstance(decoded, list):
+        if not decoded:
+            return ""
+        decoded = decoded[0]
+    return str(decoded).replace("\x00", "")
+
+
+def _mantid_log_scalar(workspace: Any, log_name: str) -> float | None:
+    for name in sorted(workspace):
+        if not name.casefold().startswith("experiment"):
+            continue
+        try:
+            values = np.asarray(
+                workspace[name][f"logs/{log_name}/value"][()], dtype=float
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+        finite = values[np.isfinite(values)]
+        if finite.size:
+            return float(finite.reshape(-1)[0])
+    return None
 
 
 def _copy_metadata_tree(group: Any, *, max_dataset_items: int = 16) -> dict[str, Any]:

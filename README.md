@@ -37,7 +37,8 @@ provides double-click startup and a Dock icon using your existing environment.
 A few of its main capabilities are:
 
 - import, combine, mask, rebin, and visualize multidimensional neutron data,
-  including raw ARCS, CNCS, HYSPEC, and SEQUOIA single-crystal or powder data;
+  including raw ARCS, CNCS, HYSPEC, and SEQUOIA single-crystal or powder data,
+  plus reduced CORELLI correlation-chopper and WAND² single-crystal data;
 - fit magnetic response models alongside bulk magnetization and heat-capacity data;
 - construct and inspect crystal, tight-binding, Lindhard, and RPA models;
 - save complete `.nfit` projects and export editable analysis scripts; and
