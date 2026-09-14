@@ -340,6 +340,7 @@ def test_project_can_embed_and_restore_current_composite_binning(tmp_path, monke
     assert {
         entry["format_version"] for entry in entries
     } == {project_gui.PROJECT_BINNING_CACHE_FORMAT_VERSION}
+    assert all(isinstance(entry.get("signature"), str) for entry in entries)
     with zipfile.ZipFile(path) as archive:
         assert entries[0]["member"] in archive.namelist()
 
@@ -407,7 +408,7 @@ def test_persisted_binning_restore_primes_dependencies_before_caching(tmp_path, 
     def mutating_signature(scope):
         nonlocal mutated
         if not mutated:
-            restored_dataset.replace_data(restored_dataset.data)
+            restored_dataset.replace_data(restored_dataset.data, source_backed=True)
             mutated = True
         return original_signature(scope)
 
@@ -418,13 +419,30 @@ def test_persisted_binning_restore_primes_dependencies_before_caching(tmp_path, 
 
     assert not project_gui.project_binnings_need_refresh(restored)
 
+    legacy = project_gui._project_from_dict(read_project_manifest(path))
+    for entry in legacy.settings[project_gui.PROJECT_BINNING_CACHE_ENTRIES_KEY]:
+        entry["format_version"] = 4
+        entry.pop("signature", None)
+    project_gui._VIEWER_VIEW_CACHE.clear()
+    project_gui._COMPOSITE_DATA_CACHE.clear()
+    project_gui._restore_project_binning_cache(legacy, path)
+    assert not project_gui.project_binnings_need_refresh(legacy)
+
     incompatible = project_gui._project_from_dict(read_project_manifest(path))
     for entry in incompatible.settings[project_gui.PROJECT_BINNING_CACHE_ENTRIES_KEY]:
-        entry["format_version"] = project_gui.PROJECT_BINNING_CACHE_FORMAT_VERSION - 1
+        entry["format_version"] = 3
     project_gui._VIEWER_VIEW_CACHE.clear()
     project_gui._COMPOSITE_DATA_CACHE.clear()
     project_gui._restore_project_binning_cache(incompatible, path)
     assert project_gui.project_binnings_need_refresh(incompatible)
+
+    changed = project_gui._project_from_dict(read_project_manifest(path))
+    changed_dataset = next(changed.data_groups[0].iter_datasets())
+    project_gui.dataset_rebin_config(changed_dataset)["minimum_coverage"] = 0.5
+    project_gui._VIEWER_VIEW_CACHE.clear()
+    project_gui._COMPOSITE_DATA_CACHE.clear()
+    project_gui._restore_project_binning_cache(changed, path)
+    assert project_gui.project_binnings_need_refresh(changed)
 
 
 def test_project_cache_persists_every_named_dataset_binning(tmp_path):

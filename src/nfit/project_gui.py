@@ -483,7 +483,8 @@ _COMPOSITE_DATA_CACHE_MAX_BYTES = _project_data._COMPOSITE_DATA_CACHE_MAX_BYTES
 
 PROJECT_CACHE_BINNINGS_KEY = "cache_binnings"
 PROJECT_BINNING_CACHE_ENTRIES_KEY = "binning_cache_entries"
-PROJECT_BINNING_CACHE_FORMAT_VERSION = 5
+PROJECT_BINNING_CACHE_FORMAT_VERSION = 6
+PROJECT_BINNING_CACHE_COMPATIBLE_FORMATS = frozenset({4, 5, 6})
 
 
 def _ensure_dataset_data_loaded(
@@ -5352,6 +5353,11 @@ def _project_binning_artifacts(
                     {
                         "type": "dataset",
                         "format_version": PROJECT_BINNING_CACHE_FORMAT_VERSION,
+                        "signature": _viewer_view_signature(
+                            dataset,
+                            effective_dataset_masks(group, dataset),
+                            config,
+                        ),
                         "group_index": group_index,
                         "dataset_id": dataset.id,
                         "binning_id": binning["id"],
@@ -5390,6 +5396,15 @@ def _project_binning_artifacts(
                     {
                         "type": "composite",
                         "format_version": PROJECT_BINNING_CACHE_FORMAT_VERSION,
+                        "signature": (
+                            _composite_cache_signature(scope)
+                            if is_fit
+                            else _composite_cache_signature(
+                                scope,
+                                config_override=config,
+                                binning_id=binning["id"],
+                            )
+                        ),
                         "group_index": group_index,
                         "node_id": node_id,
                         "binning_id": binning["id"],
@@ -5407,12 +5422,18 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
     entries = project.settings.get(PROJECT_BINNING_CACHE_ENTRIES_KEY, [])
     if not isinstance(entries, list):
         return
-    resolved: list[tuple[str, Any, Any, str, dict[str, Any], bool]] = []
+    resolved: list[
+        tuple[str, Any, Any, str, dict[str, Any], bool, int, str | None]
+    ] = []
     for entry in entries:
         if not isinstance(entry, dict):
             continue
         try:
-            if int(entry.get("format_version", 0)) != PROJECT_BINNING_CACHE_FORMAT_VERSION:
+            format_version = int(entry.get("format_version", 0))
+            if format_version not in PROJECT_BINNING_CACHE_COMPATIBLE_FORMATS:
+                continue
+            saved_signature = entry.get("signature")
+            if saved_signature is not None and not isinstance(saved_signature, str):
                 continue
             group = project.data_groups[int(entry["group_index"])]
             data = read_project_dataset_artifact(path, str(entry["member"]))
@@ -5432,6 +5453,8 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
                         binning_id,
                         config,
                         config is _fit_dataset_rebin_config(dataset),
+                        format_version,
+                        saved_signature,
                     )
                 )
             elif entry.get("type") == "composite":
@@ -5458,6 +5481,8 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
                         binning_id,
                         config,
                         config is _fit_data_group_composite_config(scope),
+                        format_version,
+                        saved_signature,
                     )
                 )
         except (IndexError, KeyError, OSError, StopIteration, TypeError, ValueError):
@@ -5468,7 +5493,7 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
     # dependency before capturing the signatures installed in the caches; a
     # one-pass restore can otherwise invalidate entries restored earlier in
     # archive order.
-    for kind, target, _data, binning_id, config, is_fit in resolved:
+    for kind, target, _data, binning_id, config, is_fit, _version, _saved in resolved:
         if kind == "dataset":
             group, dataset = target
             _viewer_view_signature(
@@ -5483,7 +5508,7 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
                     config_override=config,
                     binning_id=binning_id,
                 )
-    for kind, target, data, binning_id, config, is_fit in resolved:
+    for kind, target, data, binning_id, config, is_fit, version, saved in resolved:
         if kind == "dataset":
             group, dataset = target
             signature = _viewer_view_signature(
@@ -5491,6 +5516,8 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
                 effective_dataset_masks(group, dataset),
                 config,
             )
+            if version >= 6 and saved != signature:
+                continue
             _lru_store(
                 _VIEWER_VIEW_CACHE,
                 dataset.id if is_fit else f"{dataset.id}:{binning_id}",
@@ -5508,6 +5535,8 @@ def _restore_project_binning_cache(project: NfitProject, path: Path) -> None:
                     binning_id=binning_id,
                 )
             )
+            if version >= 6 and saved != signature:
+                continue
             _lru_store(
                 _COMPOSITE_DATA_CACHE,
                 _composite_cache_key(target, None if is_fit else binning_id),

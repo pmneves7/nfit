@@ -155,9 +155,11 @@ are expensive to load or rebin, enable **File → Cache binnings** before saving
 The project then embeds current dataset and composite binnings and restores them
 on the next open. Saving does not recompute current entries; it updates only
 missing or signature-stale binnings. This project-specific option defaults off
-so ordinary project files remain small. Embedded caches carry a format version;
-nfit discards caches produced by an older numerical pipeline and recomputes them
-from their source data instead of treating potentially changed reductions as current.
+so ordinary project files remain small. Embedded caches carry a numerical format
+version and a signature of the source, rebin settings, masks, and backgrounds.
+nfit reuses compatible cache formats and discards a cache when its saved
+signature no longer matches the live recipe. Incompatible older formats are
+recomputed from their source data.
 Source-backed cache signatures use the source path, size, and modification time,
 so lazily loading an unchanged source after opening a project does not invalidate
 its restored binning. Editing one named binning invalidates only that result;
