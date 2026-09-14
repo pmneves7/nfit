@@ -493,7 +493,30 @@ def test_cache_survives_source_load_and_refreshes_only_changed_named_binning(tmp
     project = NfitProject(
         [group], settings={project_gui.PROJECT_CACHE_BINNINGS_KEY: True}
     )
-    assert project_gui.prepare_project_binning_cache(project) == 2
+    progress_events = []
+    assert (
+        project_gui.prepare_project_binning_cache(
+            project, progress_callback=progress_events.append
+        )
+        == 2
+    )
+    boundary_events = [
+        event for event in progress_events if event.get("stage") == "rebin_batch"
+    ]
+    assert [
+        (
+            event["rebin_name"],
+            event["rebin_completed"],
+            event["rebin_total"],
+            bool(event.get("batch_item_complete")),
+        )
+        for event in boundary_events
+    ] == [
+        ("Default", 0, 2, False),
+        ("Default", 1, 2, True),
+        ("Overview", 1, 2, False),
+        ("Overview", 2, 2, True),
+    ]
 
     dataset.replace_data(dataset.data, source_backed=True)
     assert not project_gui.project_binnings_need_refresh(project)
@@ -505,7 +528,24 @@ def test_cache_survives_source_load_and_refreshes_only_changed_named_binning(tmp
     assert not project_gui._project_binning_is_current(
         "dataset", group, dataset, auxiliary_id, auxiliary
     )
-    assert project_gui.prepare_project_binning_cache(project) == 1
+    refresh_events = []
+    assert (
+        project_gui.prepare_project_binning_cache(
+            project, progress_callback=refresh_events.append
+        )
+        == 1
+    )
+    refresh_boundary_events = [
+        event for event in refresh_events if event.get("stage") == "rebin_batch"
+    ]
+    assert [
+        (
+            event["rebin_name"],
+            event["rebin_completed"],
+            event["rebin_total"],
+        )
+        for event in refresh_boundary_events
+    ] == [("Overview", 1, 2), ("Overview", 2, 2)]
     assert not project_gui.project_binnings_need_refresh(project)
 
     dataset.replace_data(dataset.data)

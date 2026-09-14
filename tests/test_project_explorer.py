@@ -2487,8 +2487,28 @@ def test_auxiliary_project_windows_standard_close_shortcut(monkeypatch):
     assert rebin_dialog._nfit_current_label.text() == (
         "Current dataset group: MACS SPEC 5meV 2K"
     )
+    rebin(
+        {
+            "stage": "rebin",
+            "iteration": 80,
+            "total": 100,
+            "batch_total": 8,
+            "batch_completed": 2,
+            "batch_name": "MACS SPEC 5meV 2K · Fd-3m",
+            "batch_kind": "dataset group",
+            "rebin_total": 3,
+            "rebin_completed": 1,
+            "rebin_name": "Fd-3m",
+            "message": "rebinning 7 datasets",
+        }
+    )
+    assert rebin_dialog._nfit_current_label.text() == (
+        "Current dataset group: MACS SPEC 5meV 2K · "
+        "1/3 rebins completed · Current rebin: Fd-3m"
+    )
+    assert len(rebin_dialog.findChildren(QtWidgets.QProgressBar)) == 2
     assert rebin_dialog._nfit_label.text().startswith(
-        "rebinning 7 datasets (75.0%)"
+        "rebinning 7 datasets (80.0%)"
     )
     assert "elapsed " in rebin_dialog._nfit_label.text()
     assert "remaining ~" in rebin_dialog._nfit_label.text()

@@ -162,7 +162,9 @@ Source-backed cache signatures use the source path, size, and modification time,
 so lazily loading an unchanged source after opening a project does not invalidate
 its restored binning. Editing one named binning invalidates only that result;
 other fit or visualization binnings remain available when their own inputs and
-settings are unchanged.
+settings are unchanged. When an operation processes multiple named binnings,
+the progress dialog reports how many binnings are complete and identifies the
+current binning in the existing status area.
 
 ## Heisenberg RPA
 

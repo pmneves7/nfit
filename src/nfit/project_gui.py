@@ -2108,6 +2108,9 @@ def _named_binning_progress_callback(
                 "batch_name": name,
                 "batch_kind": kind,
                 "batch_item_complete": False,
+                "rebin_total": total,
+                "rebin_completed": index,
+                "rebin_name": name,
             }
         )
 
@@ -2119,6 +2122,9 @@ def _named_binning_progress_callback(
             "batch_name": name,
             "batch_kind": kind,
             "batch_item_complete": False,
+            "rebin_total": total,
+            "rebin_completed": index,
+            "rebin_name": name,
             "message": f"preparing {kind} {name}",
         }
     )
@@ -2143,6 +2149,9 @@ def _finish_named_binning_progress(
             "batch_name": name,
             "batch_kind": kind,
             "batch_item_complete": True,
+            "rebin_total": total,
+            "rebin_completed": completed,
+            "rebin_name": name,
             "message": f"finished {kind} {name}",
         }
     )
@@ -5224,17 +5233,54 @@ def prepare_project_binning_cache(
 ) -> int:
     """Recompute only stale/missing configured binnings and return their count."""
 
+    targets = _project_binning_targets(project)
     stale = [
         target
-        for target in _project_binning_targets(project)
+        for target in targets
         if not _project_binning_is_current(
             target[0], target[2], target[3], target[4], target[5]
         )
     ]
     state = {"total": len(stale), "completed": 0}
+    rebin_totals: dict[tuple[str, int], int] = {}
+    for kind, _name, _group, target, _binning_id, _config in targets:
+        key = (kind, id(target))
+        rebin_totals[key] = rebin_totals.get(key, 0) + 1
+    stale_totals: dict[tuple[str, int], int] = {}
+    for kind, _name, _group, target, _binning_id, _config in stale:
+        key = (kind, id(target))
+        stale_totals[key] = stale_totals.get(key, 0) + 1
+    rebin_completed = {
+        key: total - stale_totals.get(key, 0)
+        for key, total in rebin_totals.items()
+    }
     for kind, name, group, target, binning_id, config in stale:
+        rebin_key = (kind, id(target))
+        rebin_total = rebin_totals[rebin_key]
+        rebin_index = rebin_completed.get(rebin_key, 0)
+        rebin_name = name.rsplit(" · ", 1)[-1]
+        rebin_progress = {"completed": rebin_index}
+
+        def item_progress(
+            event: dict[str, Any],
+            *,
+            _total: int = rebin_total,
+            _name: str = rebin_name,
+            _progress: dict[str, int] = rebin_progress,
+        ) -> None:
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        **event,
+                        "rebin_total": _total,
+                        "rebin_completed": _progress["completed"],
+                        "rebin_name": _name,
+                    }
+                )
+
+        callback = item_progress if progress_callback is not None else None
         _report_effective_dataset_batch(
-            progress_callback,
+            callback,
             state,
             name=name,
             kind=kind,
@@ -5246,7 +5292,7 @@ def prepare_project_binning_cache(
                 extra_masks=effective_dataset_masks(group, target),
                 force_rebin=True,
                 force_masks=True,
-                progress_callback=progress_callback,
+                progress_callback=callback,
                 rebin_config=config,
                 cache_id=(None if config is _fit_dataset_rebin_config(target) else binning_id),
             )
@@ -5255,12 +5301,14 @@ def prepare_project_binning_cache(
             _cached_composite_dataset_data(
                 target,
                 force_rebin=True,
-                progress_callback=progress_callback,
+                progress_callback=callback,
                 config_override=(None if fit else config),
                 binning_id=(None if fit else binning_id),
             )
+        rebin_completed[rebin_key] = rebin_index + 1
+        rebin_progress["completed"] += 1
         _report_effective_dataset_batch(
-            progress_callback,
+            callback,
             state,
             name=name,
             kind=kind,
@@ -5806,6 +5854,9 @@ class _RebinProgressDialog:
         self._title = title
         self._batch_name = ""
         self._batch_kind = ""
+        self._rebin_name = ""
+        self._rebin_completed = 0
+        self._rebin_total = 0
         self._batch_started_at = time.monotonic()
         self._detail_started_at = self._batch_started_at
         self._batch_completed = 0
@@ -5905,6 +5956,24 @@ class _RebinProgressDialog:
         )
         self.detail_label.setText(f"{self._detail_base_text} · {detail_timer}")
 
+    def _refresh_current_label(self) -> None:
+        parts = []
+        if self._rebin_total > 1:
+            if self._batch_name and self._batch_kind != "binning":
+                batch_name = self._batch_name
+                rebin_suffix = f" · {self._rebin_name}"
+                if self._rebin_name and batch_name.endswith(rebin_suffix):
+                    batch_name = batch_name[: -len(rebin_suffix)]
+                parts.append(f"Current {self._batch_kind}: {batch_name}")
+            parts.append(
+                f"{self._rebin_completed:,}/{self._rebin_total:,} rebins completed"
+            )
+            if self._rebin_name:
+                parts.append(f"Current rebin: {self._rebin_name}")
+        elif self._batch_name:
+            parts.append(f"Current {self._batch_kind}: {self._batch_name}")
+        self.current_label.setText(" · ".join(parts))
+
     def reset(self, title: str | None = None) -> None:
         from PySide6 import QtWidgets
 
@@ -5916,6 +5985,8 @@ class _RebinProgressDialog:
         self._batch_completed = self._batch_total = 0
         self._detail_completed = self._detail_total = 0
         self._batch_name = self._batch_kind = ""
+        self._rebin_name = ""
+        self._rebin_completed = self._rebin_total = 0
         self._batch_base_text = self._title
         self._detail_base_text = self._title
         self._detail_start_key = None
@@ -5950,6 +6021,16 @@ class _RebinProgressDialog:
                     self._detail_start_key = start_key
                     self._detail_started_at = time.monotonic()
 
+        if event.get("rebin_name") is not None:
+            self._rebin_name = str(event["rebin_name"])
+        rebin_total = max(int(event.get("rebin_total") or 0), 0)
+        if rebin_total:
+            self._rebin_total = rebin_total
+            self._rebin_completed = min(
+                max(int(event.get("rebin_completed") or 0), 0),
+                rebin_total,
+            )
+
         batch_total = max(int(event.get("batch_total") or 0), 0)
         batch_completed = min(
             max(int(event.get("batch_completed") or 0), 0), batch_total
@@ -5959,6 +6040,8 @@ class _RebinProgressDialog:
             self._batch_completed = batch_completed
             multi_item = batch_total > 1
             self._set_batch_visible(multi_item)
+            if self._rebin_total > 1:
+                self.current_label.setVisible(True)
             if multi_item:
                 self.batch_bar.setRange(0, batch_total)
                 self.batch_bar.setValue(batch_completed)
@@ -5970,11 +6053,8 @@ class _RebinProgressDialog:
                     f"{batch_completed:,}/{batch_total:,} {plural_kind} binned "
                     f"({percentage:.1f}%)"
                 )
-                self.current_label.setText(
-                    f"Current {self._batch_kind}: {self._batch_name}"
-                    if self._batch_name
-                    else ""
-                )
+        if self.current_label.isVisible():
+            self._refresh_current_label()
 
         total = max(int(event.get("total") or 0), 0)
         iteration = max(int(event.get("iteration") or 0), 0)
